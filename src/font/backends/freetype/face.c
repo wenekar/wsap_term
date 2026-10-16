@@ -27,11 +27,6 @@ static struct cfg_face_spec { char *path; int index; bool is_emoji; bool deferre
     cfg_specs[MAX_FACES];
 _Atomic unsigned ft_sync_epoch;
 
-const char *face_configured_family(void)
-{
-    return font_get_family();
-}
-
 bool size_face(FT_Face face, int px)
 {
     if (FT_Set_Pixel_Sizes(face, 0, px) == 0)

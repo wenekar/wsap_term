@@ -259,13 +259,13 @@ static void wrapped_anchor_survives_resize(void)
     wsap_vtcore_scroll(t, -1);
     assert(view_row_is(t, 0, "KLMNOPQRST"));
     tt_select(t, 0, 0, 2, 0);
-    char *selected = tt_selection_text(t);
+    char *selected = wsap_vtcore_selection_text(t);
     assert(selected && !strcmp(selected, "KLM"));
     free(selected);
     assert(tt_resize(t, 6, 3));
     assert_offset_agrees(t);
     assert(view_row_is(t, 0, "ghijKL"));
-    selected = tt_selection_text(t);
+    selected = wsap_vtcore_selection_text(t);
     assert(selected && !strcmp(selected, "KLM"));
     free(selected);
     feed_lines(t, "N", 5);

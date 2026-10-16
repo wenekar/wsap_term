@@ -11,11 +11,6 @@ static void write_seq(struct wsap_vtcore *t, const char *s)
     for (; *s; s++) tt_write(t, s, 1);
 }
 
-static void write_buf(struct wsap_vtcore *t, const char *s, size_t len)
-{
-    tt_write(t, s, len);
-}
-
 static char reply[256];
 static void capture_reply(void *ud, const char *s, size_t len)
 {
@@ -143,7 +138,7 @@ static void test_osc52(void)
 
     reset_captures();
     static const char bulk[] = "\033]52;c;aGVsbG8=\007";
-    write_buf(t, bulk, sizeof(bulk) - 1);
+    tt_write(t, bulk, sizeof(bulk) - 1);
     assert(clip_count == 1 && clip_len == 5 && !memcmp(clip_data, "hello", 5));
 
     reset_captures();
@@ -152,7 +147,7 @@ static void test_osc52(void)
     for (int i = 0; i < 400; i += 4)
         memcpy(big + 7 + i, "QUJD", 4);
     big[407] = '\007';
-    write_buf(t, big, sizeof(big));
+    tt_write(t, big, sizeof(big));
     assert(clip_count == 1 && clip_len == 300);
     for (int i = 0; i < 300; i += 3)
         assert(!memcmp(clip_data + i, "ABC", 3));
@@ -185,13 +180,13 @@ static void test_sgr_reset_keeps_link(void)
     reset_captures();
 
     static const char seq[] = "\033]8;;https://reset.dev\033\\\033[0mX";
-    write_buf(t, seq, sizeof(seq) - 1);
+    tt_write(t, seq, sizeof(seq) - 1);
     assert(tt_cell(t, 0, 0)->attrs & WSAP_VTCORE_ATTR_LINK);
     assert_link(t, 0, 0, "https://reset.dev");
 
     static const char seq2[] = "\033]8;;https://second.dev\033\\\033[0m";
-    write_buf(t, seq2, sizeof(seq2) - 1);
-    write_buf(t, "Y", 1);
+    tt_write(t, seq2, sizeof(seq2) - 1);
+    tt_write(t, "Y", 1);
     assert(tt_cell(t, 1, 0)->attrs & WSAP_VTCORE_ATTR_LINK);
     assert_link(t, 1, 0, "https://second.dev");
 
@@ -241,7 +236,7 @@ static void test_osc8(void)
     assert_link(t, 0, 5, "https://params.dev");
 
     for (int i = 0; i < 30; i++)
-        write_buf(t, "filler\r\n", 8);
+        tt_write(t, "filler\r\n", 8);
     assert(tt_history(t) > 0);
     wsap_vtcore_scroll(t, tt_history(t));
     assert(tt_view_cell(t, 0, 0)->attrs & WSAP_VTCORE_ATTR_LINK);
@@ -253,7 +248,7 @@ static void test_osc8(void)
         char seq[64];
         int n = snprintf(seq, sizeof(seq),
                          "\033]8;;https://h/%d\033\\A\010", i);
-        write_buf(t, seq, (size_t)n);
+        tt_write(t, seq, (size_t)n);
     }
     assert_link(t, 0, 6, "https://h/8299");
     assert_link(t, -1, 0, NULL);
@@ -295,7 +290,7 @@ static void test_osc_misc(void)
     assert(text_is(wsap_vtcore_cwd, t, "/a b"));
 
     const char *bulk = "\033]7;file://h/bulk%20dir\007";
-    write_buf(t, bulk, strlen(bulk));
+    tt_write(t, bulk, strlen(bulk));
     assert(text_is(wsap_vtcore_cwd, t, "/bulk dir"));
 
     write_seq(t, "\033]7;https://x/y\007");

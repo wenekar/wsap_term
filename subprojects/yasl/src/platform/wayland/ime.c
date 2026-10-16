@@ -31,11 +31,6 @@ void ime_reset(struct wayland_surface *w)
     show_preedit(w, NULL, -1, -1);
 }
 
-void ime_send_caret(struct wayland_surface *w)
-{
-    wayland_surface_update_text_input(w);
-}
-
 /* yasl's purposes are its own values. The protocol's values differ, so map
  * each one. Unknown values fall back to normal text. */
 static uint32_t content_purpose(unsigned purpose)
@@ -110,7 +105,7 @@ void wayland_surface_set_ime_caret(struct wayland_surface *w, struct yasl_privat
                w->ime_caret.width == caret.width && w->ime_caret.height == caret.height))
         return;
     w->ime_caret = caret;
-    ime_send_caret(w);
+    wayland_surface_update_text_input(w);
 }
 
 static void text_input_enter(void *data, struct zwp_text_input_v3 *text_input,

@@ -463,7 +463,6 @@ void surface_unlock_pointer(struct wayland_surface *w);
 extern const struct zwp_text_input_v3_listener text_input_listener;
 void ime_reset(struct wayland_surface *w);
 void keyboard_text_reset(struct seat *s);
-void ime_send_caret(struct wayland_surface *w);
 bool wayland_surface_update_text_input(struct wayland_surface *w);
 
 int  surface_init_shell(struct wayland_surface *w, const char *title);

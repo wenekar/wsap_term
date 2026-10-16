@@ -191,6 +191,7 @@ Reports go in `benchmarks/`.
 | `tools/analyze.sh` | Run static checks. |
 | `python3 tools/dev/dirgraph.py build` | Check library dependencies. |
 | `python3 tools/loc_per_function.py src` | Count code lines per function. |
+| `python3 tools/dev/one_liners.py build` | List one-line functions and how code uses them. |
 | `python3 tools/build_macos_icon.py` | Build the macOS icon with resvg and iconutil. |
 
 See [performance reports](../benchmarks/) for results and methods.

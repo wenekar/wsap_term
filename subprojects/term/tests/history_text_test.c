@@ -25,7 +25,7 @@ static void feed(struct wsap_vtcore *term, const char *text)
 
 static void expect_history(struct wsap_vtcore *term, int rows, const char *expected)
 {
-    char *text = tt_history_text(term, rows);
+    char *text = wsap_vtcore_history_text(term, rows);
     assert(text);
     if (strcmp(text, expected)) {
         fprintf(stderr, "history: got \"%s\" want \"%s\"\n", text, expected);
@@ -43,10 +43,10 @@ static void unicode_and_selection(void)
     expect_history(term, 0, "");
     wsap_vtcore_select_start(term, (struct wsap_vtcore_vector2i){0}, false, WSAP_VTCORE_SELECT_CELL);
     wsap_vtcore_select_extend(term, (struct wsap_vtcore_vector2i){ .x = 4 }, false);
-    char *before = tt_selection_text(term);
+    char *before = wsap_vtcore_selection_text(term);
     assert(before);
     expect_history(term, 100, "é👩‍💻界\n");
-    char *after = tt_selection_text(term);
+    char *after = wsap_vtcore_selection_text(term);
     assert(after && !strcmp(before, after));
     free(before);
     free(after);
@@ -111,7 +111,7 @@ static void concurrent_history(void)
     pthread_t thread;
     assert(pthread_create(&thread, NULL, write_history, &writer) == 0);
     do {
-        char *text = tt_history_text(term, 10);
+        char *text = wsap_vtcore_history_text(term, 10);
         assert(text);
         size_t n = strlen(text);
         size_t line_len = sizeof(history_line) - 1;

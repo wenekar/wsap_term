@@ -446,7 +446,7 @@ static void test_resize_reflow(void)
     assert(row_is(t, 0, "abcde") && row_is(t, 1, "fghij") && row_is(t, 2, "klM"));
     assert(tt_cursor_y(t) == 2 && tt_cursor_x(t) == 3);
     tt_select(t, 0, 0, 2, 2);
-    char *text = tt_selection_text(t);
+    char *text = wsap_vtcore_selection_text(t);
     assert(text && !strcmp(text, "abcdefghijklM"));
     free(text);
     tt_resize(t, 20, 4);
@@ -929,7 +929,7 @@ static void test_keyboard_negotiation(void)
 static void expect_selection(struct wsap_vtcore *t, int x1, int y1, int x2, int y2, const char *want)
 {
     tt_select(t, x1, y1, x2, y2);
-    char *text = tt_selection_text(t);
+    char *text = wsap_vtcore_selection_text(t);
     if (!text || strcmp(text, want))
         fprintf(stderr, "selection: got '%s', want '%s'\n", text ? text : "NULL", want);
     assert(text && !strcmp(text, want));
@@ -1584,7 +1584,7 @@ static void test_bulk_rows_survive_edits(void)
     wsap_vtcore_scroll(bytes, 50);
     tt_select(bulk, 0, 0, COLS - 1, 2);
     tt_select(bytes, 0, 0, COLS - 1, 2);
-    char *a = tt_selection_text(bulk), *b = tt_selection_text(bytes);
+    char *a = wsap_vtcore_selection_text(bulk), *b = wsap_vtcore_selection_text(bytes);
     assert(a && b && !strcmp(a, b) && strlen(a) >= COLS);
     free(a);
     free(b);
@@ -2098,11 +2098,11 @@ int main(void)
     t = tt_new(40, 4);
     write_seq(t, "hello 世界  \r\nsecond line\r\nhttps://example.com/path.");
     tt_select(t, 9, 0, 0, 0);
-    char *text = tt_selection_text(t);
+    char *text = wsap_vtcore_selection_text(t);
     assert(text && !strcmp(text, "hello 世界"));
     free(text);
     tt_select(t, 5, 1, 0, 0);
-    text = tt_selection_text(t);
+    text = wsap_vtcore_selection_text(t);
     assert(text && !strcmp(text, "hello 世界\nsecond"));
     free(text);
     assert(tt_selected(t, 0, 0) && tt_selected(t, 5, 1));
@@ -2113,18 +2113,18 @@ int main(void)
     assert(!tt_link_at(t, 10, 1));
     write_seq(t, "\033[?2004h");
     assert(wsap_vtcore_modes(t).bracketed_paste);
-    text = tt_selection_text(t);
+    text = wsap_vtcore_selection_text(t);
     assert(text && !strcmp(text, "hello 世界\nsecond"));
     free(text);
     write_seq(t, "\033[?2004l\r\nlast\r\n");
     assert(!wsap_vtcore_modes(t).bracketed_paste);
     wsap_vtcore_scroll(t, 1);
     tt_select(t, 0, 0, 9, 0);
-    text = tt_selection_text(t);
+    text = wsap_vtcore_selection_text(t);
     assert(text && !strcmp(text, "hello 世界"));
     free(text);
     tt_resize(t, 50, 4);
-    text = tt_selection_text(t);
+    text = wsap_vtcore_selection_text(t);
     assert(text && !strcmp(text, "hello 世界"));
     free(text);
     wsap_vtcore_free(t);
@@ -2223,12 +2223,12 @@ int main(void)
     t = tt_new(8, 4);
     write_seq(t, "abcdefghijkl");
     tt_select(t, 0, 0, 3, 1);
-    text = tt_selection_text(t);
+    text = wsap_vtcore_selection_text(t);
     assert(text && !strcmp(text, "abcdefghijkl"));
     free(text);
     write_seq(t, "\033[2J\033[Habcd\r\nefgh");
     tt_select(t, 0, 0, 3, 1);
-    text = tt_selection_text(t);
+    text = wsap_vtcore_selection_text(t);
     assert(text && !strcmp(text, "abcd\nefgh"));
     free(text);
     wsap_vtcore_free(t);
@@ -2370,7 +2370,7 @@ int main(void)
     assert(tt_cell(t, 6, 0)->width == 0);
 
     tt_select(t, 0, 0, 6, 0);
-    text = tt_selection_text(t);
+    text = wsap_vtcore_selection_text(t);
     assert(text && !strcmp(text, clusters));
     free(text);
     wsap_vtcore_free(t);

@@ -23,7 +23,7 @@ static char *logical_text(struct wsap_vtcore *t)
     wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ .x = 0, .y = 0 }, false, WSAP_VTCORE_SELECT_CELL);
     wsap_vtcore_scroll_to(t, 0);
     wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = size.x - 1, .y = size.y - 1 }, true);
-    char *text = tt_selection_text(t);
+    char *text = wsap_vtcore_selection_text(t);
     wsap_vtcore_select_clear(t);
     if (!text) return NULL;
     size_t out = 0;

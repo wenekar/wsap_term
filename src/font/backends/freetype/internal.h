@@ -53,7 +53,6 @@ void defer_named_face(const char *name);
 bool size_face(FT_Face face, int px);
 void ft_size_faces(int px);
 struct font_metrics ft_measure_cell(FT_Face face);
-const char *face_configured_family(void);
 void face_snapshot_configured(void);
 void face_reload_configured(void);
 void ft_reload_family(void);

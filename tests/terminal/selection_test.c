@@ -15,7 +15,7 @@ static bool pointer_selects_text(struct wsap_vtcore *t)
 }
 static void selected_text(struct wsap_vtcore *t, const char *expected)
 {
-    char *text = tt_selection_text(t);
+    char *text = wsap_vtcore_selection_text(t);
     if ((expected && (!text || strcmp(text, expected))) || (!expected && text)) {
         fprintf(stderr, "selection_test: got '%s' expected '%s'\n", text ? text : "(null)", expected ? expected : "(null)");
     }
@@ -147,7 +147,7 @@ static void selection_wide_line_columns(void)
     wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = COLS - 1, .y = ROWS - 1 }, false);
     assert(wsap_vtcore_has_selection(t));
 
-    char *text = tt_selection_text(t);
+    char *text = wsap_vtcore_selection_text(t);
     assert(text);
     size_t len = strlen(text);
     assert(len % 3 == 0);
@@ -167,7 +167,7 @@ static void selection_cluster_test(void)
             feed(t, "\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7"
                     "\xE2\x80\x8D\xF0\x9F\x91\xA6\xE2\x80\x8D\xF0\x9F\x91\xA5");
     tt_select(t, 0, 0, 79, 29);
-    char *text = tt_selection_text(t);
+    char *text = wsap_vtcore_selection_text(t);
     assert(text);
     assert(strlen(text) == (size_t)(80u * 30u / 2u) * 25u);
     wsap_vtcore_text_free(text);
@@ -195,7 +195,7 @@ static void selection_massive_line_test(void)
     selection_handle_pointer(&s, t, (struct vector2i){ .x = 20, .y = 5 }, false, PTR_RELEASE, 1020);
     assert(wsap_vtcore_has_selection(t));
 
-    char *text = tt_selection_text(t);
+    char *text = wsap_vtcore_selection_text(t);
     assert(text);
     assert(strlen(text) > 0);
     wsap_vtcore_text_free(text);
@@ -203,7 +203,7 @@ static void selection_massive_line_test(void)
     selection_handle_pointer(&s, t, (struct vector2i){ .x = 10, .y = 5 }, false, PTR_PRESS, 1100);
     selection_handle_pointer(&s, t, (struct vector2i){ .x = 10, .y = 5 }, false, PTR_RELEASE, 1110);
     assert(wsap_vtcore_has_selection(t));
-    text = tt_selection_text(t);
+    text = wsap_vtcore_selection_text(t);
     assert(text);
     assert(strlen(text) > 0);
     wsap_vtcore_text_free(text);
@@ -213,7 +213,7 @@ static void selection_massive_line_test(void)
     wsap_vtcore_scroll_to(t, 0);
     wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = COLS - 1, .y = ROWS - 1 }, true);
     assert(wsap_vtcore_has_selection(t));
-    text = tt_selection_text(t);
+    text = wsap_vtcore_selection_text(t);
     assert(text);
     assert(strlen(text) >= GLYPHS);
     wsap_vtcore_text_free(text);

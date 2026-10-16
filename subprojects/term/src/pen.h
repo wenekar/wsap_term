@@ -33,11 +33,6 @@ struct text_pen {
     uint32_t sl;
 };
 
-static inline struct text_pen text_pen(uint32_t fg, uint32_t bg, uint32_t sl)
-{
-    return (struct text_pen){ fg, bg, sl };
-}
-
 static inline uint32_t pen_sl(const struct pen_attr *p)
 {
     uint32_t sl;

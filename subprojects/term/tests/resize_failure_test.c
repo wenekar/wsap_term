@@ -118,7 +118,7 @@ int main(void)
     resized = tt_resize(term, 21, 40);
     assert(resized);
     int history = tt_history(term);
-    char *before = tt_history_text(term, 1000);
+    char *before = wsap_vtcore_history_text(term, 1000);
     assert(before);
 
     fail_reallocs = true;
@@ -128,7 +128,7 @@ int main(void)
     assert(tt_cols(term) == 21);
     assert(tt_rows(term) == 40);
     assert(tt_history(term) == history);
-    char *after = tt_history_text(term, 1000);
+    char *after = wsap_vtcore_history_text(term, 1000);
     assert(after && !strcmp(before, after));
     free(before);
     free(after);

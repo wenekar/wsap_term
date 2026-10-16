@@ -53,11 +53,6 @@ static uint32_t view_palette(struct wsap_vtcore *t, int entry)
     return argb;
 }
 
-static uint32_t palette_at(struct wsap_vtcore *t, int index)
-{
-    return view_palette(t, index);
-}
-
 static uint32_t color_of(struct wsap_vtcore *t, wsap_vtcore_color c)
 {
     return wsap_vtcore_color_is_slot(c) ? view_palette(t, (int)(c & 0x1FFu)) : c;
@@ -192,7 +187,7 @@ static void test_zero_theme_selects_builtin_theme(void)
     assert(color_of(t, WSAP_VTCORE_COLOR_BG) == def.bg);
     assert(view_palette(t, WSAP_VTCORE_PALETTE_CURSOR) == def.cursor);
     for (int i = 0; i < 16; i++)
-        assert(palette_at(t, i) == def.ansi[i]);
+        assert(view_palette(t, i) == def.ansi[i]);
     wsap_vtcore_free(t);
 }
 
@@ -204,7 +199,7 @@ static void test_theme_option_sets_colors(void)
     assert(color_of(t, WSAP_VTCORE_COLOR_BG) == theme.bg);
     assert(view_palette(t, WSAP_VTCORE_PALETTE_CURSOR) == theme.cursor);
     for (int i = 0; i < 16; i++)
-        assert(palette_at(t, i) == theme.ansi[i]);
+        assert(view_palette(t, i) == theme.ansi[i]);
     wsap_vtcore_free(t);
 }
 
@@ -213,8 +208,8 @@ static void test_palette_corners_match_theme(void)
     struct wsap_vtcore *t = new_term();
     uint32_t fg = color_of(t, WSAP_VTCORE_COLOR_FG), bg = color_of(t, WSAP_VTCORE_COLOR_BG);
 
-    assert(channel_equal(palette_at(t, 16), bg, 3));
-    assert(channel_equal(palette_at(t, 231), fg, 3));
+    assert(channel_equal(view_palette(t, 16), bg, 3));
+    assert(channel_equal(view_palette(t, 231), fg, 3));
     wsap_vtcore_free(t);
 }
 
@@ -223,27 +218,27 @@ static void test_palette_grayscale_interpolates_bg_to_fg(void)
     struct wsap_vtcore *t = new_term();
     uint32_t fg = color_of(t, WSAP_VTCORE_COLOR_FG), bg = color_of(t, WSAP_VTCORE_COLOR_BG);
 
-    assert(channel_equal(palette_at(t, 232), bg, 12));
-    assert(channel_equal(palette_at(t, 255), fg, 12));
+    assert(channel_equal(view_palette(t, 232), bg, 12));
+    assert(channel_equal(view_palette(t, 255), fg, 12));
     wsap_vtcore_free(t);
 }
 
 static void test_derived_palette_follows_theme(void)
 {
     struct wsap_vtcore *t = new_term();
-    uint32_t cube_before = palette_at(t, 100);
-    uint32_t gray_before = palette_at(t, 240);
+    uint32_t cube_before = view_palette(t, 100);
+    uint32_t gray_before = view_palette(t, 240);
 
     struct wsap_vtcore_theme theme = light_theme();
     wsap_vtcore_set_theme(t, &theme);
     assert(color_of(t, WSAP_VTCORE_COLOR_FG) == theme.fg);
     assert(color_of(t, WSAP_VTCORE_COLOR_BG) == theme.bg);
-    assert(palette_at(t, 1) == theme.ansi[1]);
-    assert(palette_at(t, 100) != cube_before);
-    assert(palette_at(t, 240) != gray_before);
+    assert(view_palette(t, 1) == theme.ansi[1]);
+    assert(view_palette(t, 100) != cube_before);
+    assert(view_palette(t, 240) != gray_before);
 
-    assert(channel_equal(palette_at(t, 232), theme.fg, 12));
-    assert(channel_equal(palette_at(t, 255), theme.bg, 12));
+    assert(channel_equal(view_palette(t, 232), theme.fg, 12));
+    assert(channel_equal(view_palette(t, 255), theme.bg, 12));
     wsap_vtcore_free(t);
 }
 
@@ -270,36 +265,36 @@ static void test_osc4_override_lifetime(void)
     struct wsap_vtcore_theme def;
     wsap_vtcore_theme_default(&def);
     struct wsap_vtcore *t = new_term_with_theme(&def);
-    uint32_t derived = palette_at(t, 100);
+    uint32_t derived = view_palette(t, 100);
 
     uint32_t custom = argb(0x12, 0x34, 0x56);
     write_seq(t, "\033]4;100;#123456\033\\");
-    assert(palette_at(t, 100) == custom);
+    assert(view_palette(t, 100) == custom);
 
     wsap_vtcore_set_theme(t, &def);
-    assert(palette_at(t, 100) == custom);
+    assert(view_palette(t, 100) == custom);
 
     write_seq(t, "\033]104;100\033\\");
-    assert(palette_at(t, 100) == derived);
+    assert(view_palette(t, 100) == derived);
 
     write_seq(t, "\033]4;100;#123456\033\\");
     struct wsap_vtcore_theme theme = light_theme();
     wsap_vtcore_set_theme(t, &theme);
-    assert(palette_at(t, 100) != custom);
+    assert(view_palette(t, 100) != custom);
     wsap_vtcore_free(t);
 }
 
 static void test_osc104_resets_all(void)
 {
     struct wsap_vtcore *t = new_term();
-    uint32_t c0 = palette_at(t, 0), c200 = palette_at(t, 200);
+    uint32_t c0 = view_palette(t, 0), c200 = view_palette(t, 200);
     write_seq(t, "\033]4;0;rgb:01/02/03;200;rgb:04/05/06\033\\");
-    assert(palette_at(t, 0) == argb(1, 2, 3));
-    assert(palette_at(t, 200) == argb(4, 5, 6));
+    assert(view_palette(t, 0) == argb(1, 2, 3));
+    assert(view_palette(t, 200) == argb(4, 5, 6));
 
     write_seq(t, "\033]104\033\\");
-    assert(palette_at(t, 0) == c0);
-    assert(palette_at(t, 200) == c200);
+    assert(view_palette(t, 0) == c0);
+    assert(view_palette(t, 200) == c200);
     wsap_vtcore_free(t);
 }
 
@@ -308,7 +303,7 @@ static void test_osc4_set_and_query(void)
     struct wsap_vtcore *t = new_term();
 
     write_seq(t, "\033]4;1;#ff0000\033\\");
-    assert(palette_at(t, 1) == argb(0xFF, 0x00, 0x00));
+    assert(view_palette(t, 1) == argb(0xFF, 0x00, 0x00));
 
     response_len = 0;
     write_seq(t, "\033]4;1;?\033\\");
@@ -321,8 +316,8 @@ static void test_osc4_multiple_set(void)
 {
     struct wsap_vtcore *t = new_term();
     write_seq(t, "\033]4;1;#ff0000;2;#00ff00\033\\");
-    assert(palette_at(t, 1) == argb(0xFF, 0x00, 0x00));
-    assert(palette_at(t, 2) == argb(0x00, 0xFF, 0x00));
+    assert(view_palette(t, 1) == argb(0xFF, 0x00, 0x00));
+    assert(view_palette(t, 2) == argb(0x00, 0xFF, 0x00));
     wsap_vtcore_free(t);
 }
 
@@ -397,19 +392,19 @@ static void test_osc_is_per_terminal(void)
     struct wsap_vtcore *b = new_term();
     uint32_t fg = color_of(b, WSAP_VTCORE_COLOR_FG);
     uint32_t bg = color_of(b, WSAP_VTCORE_COLOR_BG);
-    uint32_t c1 = palette_at(b, 1);
+    uint32_t c1 = view_palette(b, 1);
 
     write_seq(a, "\033]4;1;#010203\033\\\033]10;#040506\033\\\033]11;#070809\033\\");
-    assert(palette_at(a, 1) == argb(1, 2, 3));
+    assert(view_palette(a, 1) == argb(1, 2, 3));
     assert(color_of(a, WSAP_VTCORE_COLOR_FG) == argb(4, 5, 6));
     assert(color_of(a, WSAP_VTCORE_COLOR_BG) == argb(7, 8, 9));
 
-    assert(palette_at(b, 1) == c1);
+    assert(view_palette(b, 1) == c1);
     assert(color_of(b, WSAP_VTCORE_COLOR_FG) == fg);
     assert(color_of(b, WSAP_VTCORE_COLOR_BG) == bg);
 
     struct wsap_vtcore *c = new_term();
-    assert(palette_at(c, 1) == c1);
+    assert(view_palette(c, 1) == c1);
     assert(color_of(c, WSAP_VTCORE_COLOR_FG) == fg);
 
     wsap_vtcore_free(c);

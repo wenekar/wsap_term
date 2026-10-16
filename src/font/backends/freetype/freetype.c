@@ -128,7 +128,7 @@ void ft_reload_family(void)
     release_all_faces();
     configured_faces = MAX_FACES;
     fallback_coverage_reset();
-    load_named_face(face_configured_family());
+    load_named_face(font_get_family());
     if (!num_faces) load_named_face(FT_LAST_RESORT_FAMILY);
     if (!num_faces) load_named_face("monospace");
     if (num_faces) {

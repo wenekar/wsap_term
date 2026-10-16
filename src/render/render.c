@@ -39,7 +39,6 @@ static inline void futex_wake_val(_Atomic int *addr, int count) {
 static __thread uint32_t *run_codepoints;
 static __thread int run_capacity;
 
-static inline uint32_t blend_pixel(uint32_t fg, uint32_t bg, uint8_t a);
 static inline uint32_t blend_glyph_px(uint32_t fg, uint32_t bg, uint8_t a);
 static const uint32_t *blend_pair_lut(uint32_t fg, uint32_t bg);
 
@@ -103,7 +102,7 @@ static inline void blend_pixels8(uint32_t *dst, const uint8_t *alpha, uint32_t f
 {
     for (int i = 0; i < 8; i++)
         dst[i] = (lut && dst[i] == bg) ? lut[alpha[i]]
-                                     : blend_pixel(fg, dst[i], alpha[i]);
+                                     : render_blend_px(fg, dst[i], alpha[i]);
 }
 #elif defined(__AVX2__)
 #include <immintrin.h>
@@ -325,11 +324,6 @@ static inline void blit_tile(uint32_t *dst, size_t stride,
 #endif
 }
 
-static inline uint32_t blend_pixel(uint32_t fg, uint32_t bg, uint8_t a)
-{
-    return render_blend_px(fg, bg, a);
-}
-
 static const uint32_t *blend_pair_lut(uint32_t fg, uint32_t bg)
 {
     uint64_t tag = (uint64_t)fg << 32 | bg;
@@ -353,7 +347,7 @@ static const uint32_t *blend_pair_lut(uint32_t fg, uint32_t bg)
 static inline uint32_t blend_glyph_px(uint32_t fg, uint32_t bg, uint8_t a)
 {
     const uint32_t *lut = blend_pair_lut(fg, bg);
-    return lut ? lut[a] : blend_pixel(fg, bg, a);
+    return lut ? lut[a] : render_blend_px(fg, bg, a);
 }
 
 static inline uint32_t blend_premul_glyph_px(uint32_t premul, uint32_t bg, bool faint)
@@ -526,7 +520,7 @@ static void paint_glyph(uint32_t *row_px, int width, int x0, int ch,
                             dst[x] = fg;
                         } else if (a) {
                             dst[x] = (lut && dst[x] == bg0) ? lut[a]
-                                : blend_pixel(fg, dst[x], a);
+                                : render_blend_px(fg, dst[x], a);
                         }
                     }
                 }

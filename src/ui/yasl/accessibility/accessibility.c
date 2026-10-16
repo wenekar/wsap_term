@@ -729,11 +729,6 @@ static size_t text_end_offset(const char *text, gint offset)
                       : text_char_to_byte(text, offset);
 }
 
-static bool variant_node_id(const char *path, uint64_t *id)
-{
-    return path_node_id(path, id);
-}
-
 static void return_object_method(GDBusMethodInvocation *invocation,
                                  GVariant *object)
 {
@@ -786,7 +781,7 @@ static void atspi_method_call(GDBusConnection *connection, const gchar *sender,
 
     bool is_root = strcmp(object_path, ATSPI_ROOT_PATH) == 0;
     uint64_t id = 0;
-    (void)variant_node_id(object_path, &id);
+    (void)path_node_id(object_path, &id);
 
     if (strcmp(interface_name, ATSPI_APPLICATION_IFACE) == 0)
     {

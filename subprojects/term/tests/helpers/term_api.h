@@ -93,11 +93,6 @@ static inline uint32_t tt_cell_cp(struct wsap_vtcore *t, const struct wsap_vtcor
     return cp;
 }
 
-static inline bool tt_is_cluster(const struct wsap_vtcore_cell *cell)
-{
-    return (cell->text & WSAP_VTCORE_TEXT_CLUSTER) != 0;
-}
-
 static inline struct wsap_vtcore_span tt_row_selection(struct wsap_vtcore *t, int row)
 {
     return wsap_vtcore_snapshot_row_selection(tt_snapshot_for(t), row);
@@ -115,16 +110,6 @@ static inline void tt_select(struct wsap_vtcore *t, int x1, int y1, int x2, int 
     struct wsap_vtcore_vector2i a = { .x = x1, .y = y1 }, b = { .x = x2, .y = y2 };
     wsap_vtcore_select_start(t, forward ? a : b, false, WSAP_VTCORE_SELECT_CELL);
     wsap_vtcore_select_extend(t, forward ? b : a, true);
-}
-
-static inline char *tt_selection_text(const struct wsap_vtcore *t)
-{
-    return wsap_vtcore_selection_text(t);
-}
-
-static inline char *tt_history_text(struct wsap_vtcore *t, int max_rows)
-{
-    return wsap_vtcore_history_text(t, max_rows);
 }
 
 static inline char *tt_link_at(struct wsap_vtcore *t, int col, int row)

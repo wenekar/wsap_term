@@ -1168,7 +1168,7 @@ static void apply_position(const struct css_sheet *sheet, const struct css_index
         apply_rule_props(r, out);
 }
 
-static void resolve_style(const struct css_sheet *sheet, const char *class_name,
+void css_style_resolve_ex(const struct css_sheet *sheet, const char *class_name,
                           const char *id_name, const char *tag_name,
                           unsigned pseudo_flags, const char *ancestor_path,
                           struct css_style *out)
@@ -1209,14 +1209,6 @@ static void resolve_style(const struct css_sheet *sheet, const char *class_name,
     for (int64_t last = next_candidate(ix, &q, -1); last >= 0;
          last = next_candidate(ix, &q, last))
         apply_position(sheet, ix, (uint32_t)last, &q, out);
-}
-
-void css_style_resolve_ex(const struct css_sheet *sheet, const char *class_name,
-                          const char *id_name, const char *tag_name,
-                          unsigned pseudo_flags, const char *ancestor_path,
-                          struct css_style *out)
-{
-    resolve_style(sheet, class_name, id_name, tag_name, pseudo_flags, ancestor_path, out);
 }
 
 void css_style_resolve(const struct css_sheet *sheet, const char *class_name,

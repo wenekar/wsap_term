@@ -27,11 +27,6 @@ static inline struct wsap_vtcore_vector2i term_vec_from_geom(struct vector2i v)
     return (struct wsap_vtcore_vector2i){ .x = v.x, .y = v.y };
 }
 
-static inline struct vector2i geom_vec_from_term(struct wsap_vtcore_vector2i v)
-{
-    return (struct vector2i){ .x = v.x, .y = v.y };
-}
-
 struct tab {
     alignas(64) struct session session;
     struct window *window;
