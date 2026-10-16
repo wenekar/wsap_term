@@ -4,12 +4,6 @@ This document describes five hot path loops in the terminal project.
 It details memory access patterns and memory read counts for each loop.
 It also describes direct indexed or hashed alternatives to replace them.
 
-Write documentation and comments in ASD-STE100 style:
-- Use short sentences.
-- Use simple words.
-- Use active voice.
-- State one fact or instruction per sentence.
-
 ---
 
 ## 1. OSC 8 Hyperlink De-duplication

@@ -1,7 +1,3 @@
-/* Include snapshot.c to inspect its private arena accounting. The static
- * library supplies the terminal implementation; this translation unit's
- * snapshot symbols satisfy the test's references before the archive is read.
- */
 #include <assert.h>
 #include "../src/snapshot.c"
 
@@ -18,8 +14,6 @@ int main(void)
         assert(wsap_vtcore_snapshot_update(s, t));
     }
 
-    /* A fixed viewport holds fewer than 24 * 8 cluster records at once.
-     * Dead records are compacted before they can dominate this arena. */
     assert(wsap_vtcore_history_rows(t) == 5);
     assert(s->arena_len < 8192);
 

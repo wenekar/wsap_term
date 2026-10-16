@@ -82,7 +82,6 @@ static void action_sink(void *userdata,
     event_wr = accessibility->event_wr;
     pthread_mutex_unlock(&accessibility->mutex);
 
-    /* The loop watches the eventfd, so this write wakes it. */
     if (event_wr >= 0) {
         uint64_t wake = 1;
         ssize_t ignored = write(event_wr, &wake, sizeof(wake));

@@ -41,10 +41,6 @@ static inline void cpu_relax(void)
 #endif
 }
 
-/* A chunk the consumer gets in one call. It must be well below
- * PTY_RING_SIZE, or the drain budget in on_ring_event() cannot preempt a
- * whole-ring callback: it is only checked after the callback returns.
- * Keep it equal to the non-ring fallback read size. */
 #define PTY_RING_MAX_CHUNK (256 * 1024)
 #define PTY_RING_MIN_FREE (64 * 1024)
 #define PTY_SIGNAL_INTERVAL_NS 1000000ull
@@ -56,7 +52,6 @@ enum { PFD_SRC0, PFD_SRC1, PFD_SPACE, PFD_SYNC, PFD_COUNT };
 
 enum pump_result { PUMP_EMPTY, PUMP_FULL, PUMP_EOF };
 
-/* Producer state. `src` is the source of the byte just before `head`. */
 struct worker {
     struct pty_ring *r;
     struct pollfd pfd[PFD_COUNT];
@@ -94,9 +89,6 @@ static void flush_deferred(struct worker *w)
         event_signal(w->r->event_wr);
 }
 
-/* Wake the consumer for `bytes` new bytes, or defer the wakeup so a
- * flood costs one wakeup per interval. `urgent` means the producer
- * paused or ended, so the batch is complete and must not wait. */
 static void notify(struct worker *w, size_t bytes, bool urgent)
 {
     struct pty_ring *r = w->r;
@@ -112,16 +104,12 @@ static void notify(struct worker *w, size_t bytes, bool urgent)
         w->signal_deferred = true;
 }
 
-/* Block until the consumer frees space. Returns false on stop or error. */
 static bool wait_for_space(struct worker *w)
 {
     struct pty_ring *r = w->r;
     for (;;) {
         if (atomic_load_explicit(&r->stop, memory_order_relaxed))
             return false;
-        /* Pairs with the fence in on_ring_event between its tail
-         * store and need_space load: at least one side sees the
-         * other's store, so the space wakeup cannot be lost. */
         atomic_store_explicit(&r->need_space, 1, memory_order_relaxed);
         atomic_thread_fence(memory_order_seq_cst);
         size_t tail = atomic_load_explicit(&r->tail, memory_order_acquire);
@@ -138,7 +126,6 @@ static bool wait_for_space(struct worker *w)
     }
 }
 
-/* Read source `i` into the ring until it is empty or the ring is full. */
 static enum pump_result pump(struct worker *w, unsigned i)
 {
     struct pty_ring *r = w->r;
@@ -168,14 +155,6 @@ static enum pump_result pump(struct worker *w, unsigned i)
         if (n <= 0) {
             if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
 #if defined(__APPLE__)
-                /* A full previous chunk means the producer is still
-                 * saturating the pty; the next 1 KiB lands within a
-                 * few microseconds, so retry briefly before paying
-                 * a poll syscall. On Linux this measured as a ~20%
-                 * throughput loss: each iteration does an acquire
-                 * load of the consumer-owned tail cacheline, and
-                 * pipe chunks are large enough that the pipe stays
-                 * busy without the retry. */
                 if (w->head != start && !short_read &&
                     ++spin <= PTY_SPIN_ITERS) {
                     cpu_relax();
@@ -196,8 +175,6 @@ static enum pump_result pump(struct worker *w, unsigned i)
 #if defined(__APPLE__)
         spin = 0;
 #endif
-        /* The switch is recorded before the bytes are published, so the
-         * consumer sees it no later than the first byte it applies to. */
         if (i != w->src) {
             r->switch_at[w->switch_head % PTY_RING_SWITCHES] = w->head;
             atomic_store_explicit(&r->switch_head, ++w->switch_head,
@@ -207,14 +184,8 @@ static enum pump_result pump(struct worker *w, unsigned i)
         short_read = (size_t)n < to_read && n < 1024;
         w->head += (size_t)n;
         atomic_store_explicit(&r->head, w->head, memory_order_release);
-        /* tail is not reloaded here: a stale value merely shrinks
-         * to_read, and skipping the reload avoids pulling the
-         * consumer-owned cacheline on every read. */
     }
 
-    /* A short final chunk means the producer paused, so the batch is
-     * complete; signal it now rather than letting it wait out the
-     * interval. */
     if (w->head != start || result == PUMP_EOF)
         notify(w, w->head - start, result == PUMP_EOF || short_read);
     return result;
@@ -225,7 +196,6 @@ static void close_source(struct worker *w, unsigned i)
     w->pfd[i].fd = -1;
 }
 
-/* Read source `i` until it is empty, waiting for space as needed. */
 static void drain_source(struct worker *w, unsigned i)
 {
     while (w->pfd[i].fd >= 0) {
@@ -241,8 +211,6 @@ static void drain_source(struct worker *w, unsigned i)
     }
 }
 
-/* Read what source `i` holds now. A writer that never stops cannot hold
- * the end back: one ring of bytes is the most this reads. */
 static void drain_now(struct worker *w, unsigned i)
 {
     size_t start = w->head;
@@ -259,8 +227,6 @@ static void drain_now(struct worker *w, unsigned i)
     }
 }
 
-/* Mark the ring's end at `head` and wake the consumer. The worker and
- * pty_ring_end() can both get here; the first one sets the mark. */
 static void publish_end(struct pty_ring *r, size_t head)
 {
     size_t none = 0;
@@ -294,8 +260,6 @@ static bool sync_peer_trusted(int fd)
 #endif
 }
 
-/* Answer each pending barrier request: drain the transport the child
- * leaves, then acknowledge. See pty/sync.h. */
 static void serve_sync(struct worker *w)
 {
     for (;;) {
@@ -324,7 +288,6 @@ static void serve_sync(struct worker *w)
 static void *pty_ring_worker(void *arg)
 {
     struct pty_ring *r = arg;
-    /* Drain throughput is user-facing; ask the scheduler for P-cores. */
     platform_thread_interactive();
     struct worker w = {
         .r = r,
@@ -375,10 +338,7 @@ static void *pty_ring_worker(void *arg)
         if (w.pfd[PFD_SYNC].revents & POLLIN)
             serve_sync(&w);
     }
-    /* A deferred wakeup must not die with the worker, or the tail of
-     * the output would sit undrained in the ring. */
     flush_deferred(&w);
-    /* Pairs with pty_ring_end(): one of the two sees the other's store. */
     atomic_store(&r->worker_done, 1);
     if (!atomic_load_explicit(&r->stop, memory_order_relaxed) &&
         atomic_load(&r->end_requested) && !w.end_done)
@@ -451,8 +411,6 @@ static void on_ring_event(void *ud, int fd, short revents)
     if (any && r->cbs.drained)
         r->cbs.drained(r->ud);
 
-    /* Last, because ended may stop the ring. Output after the end can come
-     * in the same chunk, so the consumer may pass the mark. */
     size_t end = atomic_load_explicit(&r->end_at, memory_order_acquire);
     if (end && tail - (end - 1) <= PTY_RING_SIZE && !r->ended) {
         r->ended = true;
@@ -541,7 +499,6 @@ void pty_ring_end(struct pty_ring *r)
         return;
     atomic_store(&r->end_requested, 1);
     event_signal(r->space_wr);
-    /* Pairs with the worker's exit: one of the two sees the other's store. */
     if (atomic_load(&r->worker_done))
         publish_end(r, atomic_load_explicit(&r->head, memory_order_acquire));
 }

@@ -10,18 +10,15 @@
 #include <limits.h>
 #include <math.h>
 
-/* Bar sizes used when the sheet has no rule for them. */
 #define BAR_TRACK_IDLE 8
 #define BAR_TRACK_HOVER 12
 #define BAR_THUMB_MIN 24
 #define BAR_THUMB_COLOR 0xFF7F849C
-/* Track color on hover or press, when the sheet gives the track no background. */
 #define BAR_TRACK_HOVER_COLOR 0x1A7F849C
 #define BAR_HIDE_AFTER_MS 900
 
 enum bar_state { BAR_IDLE, BAR_HOVER, BAR_PRESSED };
 
-/* Part handles, interned once for the process. */
 static struct {
     ui_part_id track, thumb;
 } sv_parts;
@@ -34,7 +31,6 @@ static void sv_parts_init(void)
     sv_parts.thumb = ui_part_intern("scrollbar-thumb");
 }
 
-/* The track and thumb of one pointer state. */
 struct bar_skin {
     int track_w;
     int thumb_w;
@@ -46,7 +42,6 @@ struct bar_skin {
     uint32_t thumb_color;
 };
 
-/* The track and thumb in the local frame. */
 struct bar {
     struct rect2i track;
     struct rect2i thumb;
@@ -64,7 +59,6 @@ static struct ui_widget *sv_child(const struct ui_scrollview *sv)
     return sv ? sv->widget.first_child : NULL;
 }
 
-/* Overlay is the zero state, so a zeroed scrollview is an overlay bar. */
 static bool is_overlay(const struct ui_scrollview *sv)
 {
     return !sv->impl.fixed_bar;
@@ -77,7 +71,6 @@ static int sv_step(const struct ui_scrollview *sv)
     return ui_px(sv->widget.style_scale.dpi_scale, 3 * UI_DEFAULT_CELL_H);
 }
 
-/* The pixel range. Line mode scrolls nothing, so its range is zero. */
 static int sv_max_offset(const struct ui_scrollview *sv)
 {
     if (sv->impl.has_metrics)
@@ -98,7 +91,6 @@ static struct bar_skin bar_skin(const struct ui_scrollview *sv, int state)
     struct insets2i pad = ui_ctx_insets(scale, track.padding, 0);
     int track_w = ui_ctx_size(scale, track.width,
         ui_ctx_px(scale, state == BAR_IDLE ? BAR_TRACK_IDLE : BAR_TRACK_HOVER));
-    /* Without a thumb width rule, the thumb fills the track. */
     int inner = track_w - pad.l - pad.r;
     return (struct bar_skin){
         .track_w = track_w,
@@ -116,8 +108,6 @@ static struct bar_skin bar_skin(const struct ui_scrollview *sv, int state)
     };
 }
 
-/* The model the bar draws. In pixel mode the view offset is counted back
- * from the bottom, as in line mode. */
 static struct ui_scroll_metrics bar_metrics(const struct ui_scrollview *sv)
 {
     if (sv->impl.has_metrics)
@@ -135,7 +125,6 @@ static bool bar_visible(const struct ui_scrollview *sv)
     return !sv->impl.bar_off && (!is_overlay(sv) || sv->impl.shown);
 }
 
-/* The width the child gives up to the bar. An overlay bar takes none. */
 static int bar_reserve(const struct ui_scrollview *sv)
 {
     if (sv->impl.bar_off || is_overlay(sv))
@@ -144,15 +133,11 @@ static int bar_reserve(const struct ui_scrollview *sv)
     return s.margin.l + s.track_w + s.margin.r;
 }
 
-/* Without overlay the bar keeps its idle size, so hover and press only
- * change its colors. The child's reserve is the idle size too. */
 static int geometry_state(const struct ui_scrollview *sv, int state)
 {
     return is_overlay(sv) ? state : BAR_IDLE;
 }
 
-/* The track and thumb for one state. False when there is nothing to
- * scroll or the bar is off. */
 static bool bar_geometry(const struct ui_scrollview *sv, int state,
                          struct bar *out)
 {
@@ -197,7 +182,6 @@ static void set_bar_state(struct ui_scrollview *sv, int state)
     if (sv->impl.bar_state == state)
         return;
     sv->impl.bar_state = state;
-    /* Leaving hover starts the hide delay. */
     if (state == BAR_IDLE)
         sv->impl.hide_at = 0;
     else
@@ -223,7 +207,6 @@ static void emit_offset(struct ui_scrollview *sv, int offset)
     });
 }
 
-/* Moves the view so the thumb's grab point sits at local y. */
 static void bar_drag_to(struct ui_scrollview *sv, int y)
 {
     struct bar g = {0};
@@ -253,7 +236,6 @@ static bool wheel(struct ui_scrollview *sv, const struct ui_pointer_event *p)
     float delta = p->scroll_delta != 0.0f
         ? p->scroll_delta : (float)p->scroll_lines;
     float pixels = sv->impl.scroll_remainder - delta * sv_step(sv);
-    /* Past any content height, and inside the range of int. */
     const float limit = (float)(1 << 24);
     pixels = isnan(pixels) ? 0.0f : fminf(fmaxf(pixels, -limit), limit);
     int dy = (int)pixels;
@@ -262,14 +244,11 @@ static bool wheel(struct ui_scrollview *sv, const struct ui_pointer_event *p)
     return sv->impl.scroll_y != before;
 }
 
-/* The track the pointer hits: the hover width, or the pressed width during
- * a drag. Overlay hides the bar, not its hit area, so hover can show it. */
 static int hit_state(const struct ui_scrollview *sv)
 {
     return sv->impl.bar_state == BAR_PRESSED ? BAR_PRESSED : BAR_HOVER;
 }
 
-/* True when local lies on the track drawn in state. */
 static bool over_track(const struct ui_scrollview *sv, struct vector2i local,
                        int state)
 {
@@ -277,10 +256,6 @@ static bool over_track(const struct ui_scrollview *sv, struct vector2i local,
     return bar_geometry(sv, state, &g) && rect2i_contains(g.track, local);
 }
 
-/* Gives the event to the child under the point, then to the child's
- * ancestors up to the scrollview. True when one of them took it. False
- * leaves the event to bubble on from the scrollview. A captured child
- * already had the event, so it gets nothing twice. */
 static bool forward_to_child(struct ui_scrollview *sv,
                              const struct ui_event *event)
 {
@@ -326,8 +301,6 @@ static bool scrollview_event(struct ui_widget *widget,
     struct vector2i local = ui_widget_to_local(widget, p->pos);
     bool captured = ui_widget_is_captured(widget);
     struct bar g = {0};
-    /* The track takes events that the child would otherwise get. The bar
-     * passes on what it does not take, so the child sees all of them. */
     switch (p->kind) {
     case UI_POINTER_LEAVE:
         if (!captured)
@@ -342,13 +315,11 @@ static bool scrollview_event(struct ui_widget *widget,
             set_bar_state(sv, BAR_IDLE);
             return false;
         }
-        /* Motion over the track shows the bar, then goes on to the child. */
         set_bar_state(sv, BAR_HOVER);
         return forward_to_child(sv, event);
     case UI_POINTER_PRESS:
         if (!over_track(sv, local, hit_state(sv)))
             return false;
-        /* A hidden bar, Shift, and other buttons go to the child. */
         if (!bar_visible(sv) || p->button != 0 || (p->mods & UI_MOD_SHIFT))
             return !captured && forward_to_child(sv, event);
         set_bar_state(sv, BAR_PRESSED);
@@ -368,8 +339,6 @@ static bool scrollview_event(struct ui_widget *widget,
         set_bar_state(sv, over_track(sv, local, BAR_HOVER) ? BAR_HOVER : BAR_IDLE);
         return true;
     case UI_POINTER_SCROLL:
-        /* On a track the child takes the wheel first when the view has no
-         * pixels to scroll, or when the bar is hidden. */
         if ((sv->impl.has_metrics || !bar_visible(sv)) &&
             over_track(sv, local, hit_state(sv)) && forward_to_child(sv, event))
             return true;
@@ -379,9 +348,6 @@ static bool scrollview_event(struct ui_widget *widget,
     }
 }
 
-/* The track takes the pointer before the child does, shown or hidden. The
- * hit area is the hover width. Presses that the bar does not take go to
- * the child in scrollview_event. */
 static bool scrollview_hit_front(const struct ui_widget *widget,
                                  struct vector2i pos)
 {
@@ -389,9 +355,6 @@ static bool scrollview_hit_front(const struct ui_widget *widget,
     return over_track(sv, ui_widget_to_local(widget, pos), hit_state(sv));
 }
 
-/* The child's shape applies only inside the child's own bounds. The track
- * is the bar, not the child, so the track never shows the child's shape,
- * even where the child covers it. */
 static enum ui_cursor scrollview_cursor(const struct ui_widget *widget,
                                         struct vector2i pos)
 {
@@ -407,8 +370,6 @@ static enum ui_cursor scrollview_cursor(const struct ui_widget *widget,
     return child->ops->cursor(child, pos);
 }
 
-/* A press on the track keeps focus. A press on the rest of the scrollview
- * clears focus. */
 static bool scrollview_keeps_press_focus(const struct ui_widget *widget,
                                          struct vector2i pos)
 {
@@ -434,7 +395,6 @@ static void scrollview_paint_front(const struct ui_widget *widget,
         ui_paint_rect(paint, g.thumb, s.thumb_color);
 }
 
-/* Shown while hovered or pressed, and for a moment after. */
 static uint64_t scrollview_tick(struct ui_widget *widget, uint64_t now_ms)
 {
     struct ui_scrollview *sv = sv_of(widget);
@@ -490,7 +450,6 @@ static void scrollview_layout(struct ui_widget *widget, struct rect2i bounds)
         return;
     int tw = bar_reserve(sv);
     int child_w = geom_clamp_i(geom_sat_i((int64_t)bounds.width - tw), 0, bounds.width);
-    /* Line mode: the host draws the child, so it fills the viewport. */
     int child_h = sv->impl.has_metrics ? bounds.height : child->measured_size.y;
     ui_widget_place(child, (struct rect2i){
         .pos = { .x = bounds.pos.x,
@@ -515,7 +474,6 @@ static void scrollview_reveal(struct ui_widget *widget, struct ui_widget *descen
     struct ui_scrollview *sv = ui_container_of(widget, struct ui_scrollview, widget);
     struct rect2i row = descendant->bounds;
     struct rect2i view = widget->bounds;
-    /* A list can own focus while its individual rows own selection. */
     if (row.height > view.height) return;
     int dy = row.y < view.y ? row.y - view.y :
         row.y + row.height > view.y + view.height
@@ -635,7 +593,6 @@ void ui_scrollview_set_metrics(struct ui_scrollview *sv,
     sv->impl.has_metrics = true;
     sv->impl.metrics = metrics;
     if (first) {
-        /* Line mode moves no pixels, so the child goes back to the top. */
         sv->impl.scroll_y = 0;
         sv->impl.scroll_remainder = 0.0f;
         ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_LAYOUT);

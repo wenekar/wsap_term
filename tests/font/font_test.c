@@ -20,18 +20,13 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-
-/* The scale set_scale() picked; NULL is the default instance. */
 static struct font_instance *scaled;
 
-/* The instance the checks draw with. */
 static struct font_instance *cur(void)
 {
     return scaled ? scaled : font_instance_default();
 }
 
-/* init_fonts(), then the instance the checks draw with, measured again
- * over the new faces and active on this thread. */
 static bool init_fonts(void)
 {
     if (!font_backend_init())
@@ -92,8 +87,8 @@ static void check(const char *what, bool ok)
 
 struct column {
     uint32_t cp;
-    uint16_t flags;     /* enum font_style */
-    uint8_t width;      /* the terminal cell width: 1, 2, or 0 for a trail */
+    uint16_t flags;
+    uint8_t width;
     bool color;
 };
 
@@ -105,8 +100,6 @@ struct shaped {
     unsigned luma;
 };
 
-/* A terminal cell as the font sees it: the code point to draw (a grapheme
- * handle for a cluster) and the font style. */
 struct font_cell {
     uint32_t cp;
     uint16_t style;
@@ -131,7 +124,6 @@ static struct font_cell font_cell_of(const struct wsap_vtcore_snapshot *snap,
     return fc;
 }
 
-/* Write utf8 to a new terminal and return the first cols cells of row 0. */
 static int term_font_cells(const char *utf8, int width, struct font_cell *out, int cap)
 {
     struct wsap_vtcore *t = wsap_vtcore_new(&(struct wsap_vtcore_options){
@@ -823,7 +815,6 @@ static void count_shaped_cells(void *ctx, const struct glyph_span *span)
     *(int *)ctx += span->count;
 }
 
-/* The number of cells of a segment that show shaped glyphs. */
 static int shaped_cells(const uint32_t *cps, int n, uint16_t style)
 {
     int shaped = 0;
@@ -853,10 +844,6 @@ static void test_programming_ligatures(void)
           shaped_cells(arabic, 4, 0) == 4);
 }
 
-/* A run with a space in it still shapes. The fit check used to reject any
- * cell the blit did not cover, and a space leaves such a cell, so a
- * comment like "// x" fell back to isolated per-cell glyphs and reported
- * the most expensive, uncached result. */
 static void test_run_with_space_shapes(void)
 {
     static const struct {
@@ -899,8 +886,6 @@ static void copy_span_alpha(const struct glyph_span *span, uint8_t *out)
     }
 }
 
-/* Changes the font and fetches a new glyph inside emit, then reads the span
- * again. */
 static void bump_and_fetch(void *ctx, const struct glyph_span *span)
 {
     struct bump_in_emit *b = ctx;
@@ -920,7 +905,6 @@ static void bump_and_fetch(void *ctx, const struct glyph_span *span)
     free(after);
 }
 
-/* A font change during emit must not free the span that emit reads. */
 static void test_font_change_in_emit(void)
 {
     const uint32_t cps[] = { '-', '>', ' ', '-', '>', ' ', '-', '>' };
@@ -934,28 +918,11 @@ static void test_font_change_in_emit(void)
     glyph_cache_rebuild(cur());
 }
 
-/* Several readers over a churning run cache, with the frame boundary modelled
- * the way the paint pool does it. Each iteration is one frame. A frame ends
- * when every thread has finished it. Then one thread frees the retired run
- * entries, as the renderer does once the workers joined, and each thread
- * flushes its own deferred buffers at the start of its next job.
- *
- * This exercises concurrent intern, lookup and eviction, and the deferred
- * free that glyph_cache_flush_frame() performs at the end of the frame.
- *
- * Note what it does NOT prove. It does not reproduce the eviction-while-read
- * hazard, so it does not fail without the deferred free. Two things make that
- * hazard hard to hit: a lookup bumps the stamp of the entry it returns, which
- * makes it the last eviction candidate in its set, and a set only evicts once
- * it is full, which needs runs that share a set. Treat this as a concurrency
- * exercise, not as the regression test for that bug. */
 #define STRESS_THREADS 4
 #define STRESS_ITERS 400
 
 static pthread_barrier_t stress_frame;
 
-/* Every thread has left the frame, so no reader holds a buffer that the frame
- * retired. */
 static void stress_end_frame(int id)
 {
     pthread_barrier_wait(&stress_frame);
@@ -969,7 +936,6 @@ static uint64_t stress_touch(const struct glyph *cells, const uint32_t *tiles,
 {
     uint64_t acc = 0;
     for (int i = 0; i < n; i++) {
-        /* Touch the storage the entry owns, so ASan sees the read. */
         acc += cells[i].row_masks ? 1u : 0u;
         if (cells[i].row_masks && cells[i].mask_words > 0)
             acc += cells[i].row_masks[0];
@@ -985,10 +951,6 @@ struct stress_job {
     uint64_t acc;
 };
 
-/* Keeps the span across more glyph and tile lookups. Meanwhile the other
- * threads shape and can evict the entry that holds the span's cells, and
- * their next flush can then free it under us. emit must not shape, so the
- * nested lookups are fetches only. */
 static void stress_hold_span(void *ctx, const struct glyph_span *span)
 {
     struct stress_job *job = ctx;
@@ -1010,13 +972,8 @@ static void *stress_worker(void *arg)
     struct stress_job job = { .fi = font_instance_default(), .id = (int)(uintptr_t)arg };
     for (; job.iter < STRESS_ITERS; job.iter++) {
         int iter = job.iter, id = job.id;
-        /* What paint_worker does at the start of every job. The buffers it
-         * frees were retired in an earlier frame, so no reader is left. */
         glyph_cache_flush_deferred();
 
-        /* Vary the run so the cache keeps evicting, and keep some runs
-         * repeated so the lookup path hits a lot. The arrow makes every run
-         * emit a span. */
         uint32_t cps[FONT_RUN_MAX];
         int n = 6 + (iter + id * 7) % 8;
         for (int i = 0; i < n; i++) {
@@ -1029,11 +986,8 @@ static void *stress_worker(void *arg)
         glyph_cache_shape_segment(job.fi, cps, n, 0, stress_hold_span, &job);
         stress_end_frame(id);
     }
-    /* Same teardown a paint worker does when it leaves the pool, or its
-     * thread-local free list is lost with the thread. */
     glyph_cache_thread_detach();
     font_thread_detach();
-    /* Keep the work so the loop cannot be dropped. */
     return (void *)(uintptr_t)(job.acc & 1u);
 }
 
@@ -1048,10 +1002,8 @@ static void run_cache_survives_concurrent_eviction(void)
     for (int i = 0; i < STRESS_THREADS; i++)
         assert(pthread_join(th[i], NULL) == 0);
     pthread_barrier_destroy(&stress_frame);
-    /* The frame ended, so no reader is left. */
     glyph_cache_set_parallel(false);
     glyph_cache_flush_frame();
-    /* Same teardown a paint worker does when it leaves the pool. */
     glyph_cache_thread_detach();
     check("the run cache survives concurrent eviction",
           font_instance_default() != NULL);
@@ -1156,8 +1108,6 @@ static void test_cell_tiling(void)
 
 }
 
-/* A frame at new default colors recolors the cached tiles. Each tile equals
- * the tile from a cache rebuilt at the new colors. */
 static void test_tile_colors(void)
 {
     struct font_instance *fi = font_instance_default();
@@ -1205,7 +1155,6 @@ static void test_tile_colors(void)
     free(at_a); free(at_b); free(fresh);
 }
 
-/* Rasterizes at the default size at scale_120 from now on. */
 static void set_scale(uint32_t scale_120)
 {
     struct font_instance *fi =
@@ -1262,7 +1211,6 @@ static void test_scaled_cells(void)
           GLYPH_CELL_W == base_w && GLYPH_CELL_H == base_h);
 }
 
-/* Sizes are instances: several live at once, each with its own cell. */
 static void test_font_sizes(void)
 {
     struct font_instance *base = font_instance_default();
@@ -1291,8 +1239,6 @@ static void test_font_sizes(void)
     font_bind_thread(base);
 }
 
-/* A glyph takes the cell of the instance it renders for. The size that
- * this thread rendered at before does not matter. */
 static void test_render_binds_own_instance(void)
 {
     struct font_instance *small = font_instance_acquire(8, 120);
@@ -1693,8 +1639,6 @@ out:
     rmdir(dir);
 }
 
-/* Calls fn on each installed regular roman font file, with the family name
- * FreeType reads from it and its character set, until fn returns true. */
 static bool each_regular_font(bool (*fn)(const char *file, const char *family,
                                          FcCharSet *cs, void *ctx),
                               void *ctx)
@@ -1741,9 +1685,6 @@ static bool each_regular_font(bool (*fn)(const char *file, const char *family,
     return found;
 }
 
-/* Finds the file fontconfig gives for family at weight and slant. It fails
- * when that file is the regular file or does not have the weight and slant.
- * A regular weight accepts only a file lighter than demibold. */
 static bool match_sibling(const char *regular, const char *family, int weight,
                           int slant, char out[PATH_MAX], FcCharSet **cs)
 {
@@ -1793,7 +1734,6 @@ static bool styled_family_fn(const char *file, const char *family,
     return true;
 }
 
-/* A regular font file and its bold sibling. */
 static bool find_styled_family(char paths[2][PATH_MAX])
 {
     paths[0][0] = paths[1][0] = 0;
@@ -1978,8 +1918,6 @@ static void test_deferred_face_retry(void)
     font_instance_render_glyph(cur(), 0x10FFFF, 0, &unknown);
 }
 
-/* The ink each cell of a segment shows: a span's shaped glyph, or else the
- * cell's own glyph. A span is valid only during the callback. */
 struct segment_ink {
     bool shaped[FONT_RUN_MAX];
     uint64_t ink[FONT_RUN_MAX];
@@ -2076,8 +2014,6 @@ static void test_bold_face(void)
     font_instance_render_glyph(cur(), 0x10FFFF, 0, &unknown);
 }
 
-/* FNV-1a 64 over the width, the color flag, and the alpha bytes and ink
- * mask of each row of g. */
 static uint64_t golden_ink_hash(const struct glyph *g)
 {
     uint64_t h = UINT64_C(14695981039346656037);
@@ -2100,9 +2036,6 @@ static uint64_t golden_ink_hash(const struct glyph *g)
     return h;
 }
 
-/* Each style draws the ink it drew on the reference machine with the
- * default family. The plain A tells whether this machine has the same
- * fonts. */
 static void test_variant_golden(void)
 {
     static const struct { uint32_t cp; uint16_t style; uint64_t hash; } golden[] = {
@@ -2134,8 +2067,6 @@ static void test_variant_golden(void)
     check("bold, italic, and bold italic A and g draw the reference ink", same);
 }
 
-/* The ink of 'e' in each of the four styles, with only files installed and
- * the family of files[0] configured. */
 static bool sandbox_variant_ink(const char *const *files, int n, uint64_t ink[4])
 {
     static const uint16_t styles[4] = {
@@ -2178,8 +2109,6 @@ static bool four_faces_fn(const char *file, const char *family, FcCharSet *cs,
     return true;
 }
 
-/* Each style draws its own face. Without a bold italic face, bold italic
- * text uses the bold face before the italic face. */
 static void test_variant_preference(void)
 {
     struct family_files f = {0};
@@ -2246,8 +2175,6 @@ static bool bold_only_fn(const char *file, const char *family, FcCharSet *cs,
     return b->cp != 0;
 }
 
-/* Bold text draws a code point that only the bold face of the family
- * covers. */
 static void test_bold_only_coverage(void)
 {
     struct bold_only b = {0};

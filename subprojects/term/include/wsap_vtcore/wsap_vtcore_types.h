@@ -1,9 +1,6 @@
 #ifndef WSAP_VTCORE_TYPES_H
 #define WSAP_VTCORE_TYPES_H
 
-/* Marks the public functions. The library builds with hidden symbols, so
- * only these are visible outside a shared build. A host can define it
- * first, for example as __declspec(dllimport). */
 #ifndef WSAP_VTCORE_API
 #if defined(__GNUC__) || defined(__clang__)
 #define WSAP_VTCORE_API __attribute__((visibility("default")))

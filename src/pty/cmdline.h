@@ -1,16 +1,10 @@
 #ifndef PTY_CMDLINE_H
 #define PTY_CMDLINE_H
 
-/* Command classification shared by the spawner and the preload shim.
- * Header-only so libfastpty can use it without linking against pty code. */
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 
-/* Commands whose output must go to the pty itself, not the fast pipe.
- * For example, setuid launchers drop LD_PRELOAD, so their children cannot
- * see the shim. */
 static const char *const PTY_TTY_CMDS[] = {
     "sudo", "doas", "su", "pkexec", "bwrap", "agy", "codex",
 };
@@ -46,9 +40,6 @@ static inline bool pty_is_wrapper_cmd(const char *basename)
                       sizeof(PTY_WRAPPER_CMDS) / sizeof(PTY_WRAPPER_CMDS[0]));
 }
 
-/* True when argv runs a tty command, directly or behind leading wrappers
- * like `env` or `nice`. Once a wrapper is seen, any later argument that
- * names a tty command counts, since wrapper options are not parsed. */
 static inline bool pty_argv_needs_tty(char *const argv[])
 {
     for (size_t i = 0; argv[i]; i++) {

@@ -2,8 +2,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-/* Include the implementation to inspect snapshot arena accounting. Link
- * against the static library so snapshot.c is compiled only here. */
 #include "../src/snapshot.c"
 
 static int fail_realloc;

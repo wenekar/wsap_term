@@ -38,8 +38,6 @@ static void lint(struct ui_surface *surface, struct ui_widget *root)
 static struct ui_dropdown_item many_items[40];
 static char many_labels[40][12];
 
-/* A list taller than the popup has a bar. The bar is an overlay, so it
- * starts hidden, shows on hover, and hides after its delay. */
 static void long_list_bar_test(void)
 {
     struct ui_widget root;
@@ -79,8 +77,6 @@ static void long_list_bar_test(void)
     struct vector2i off_track = { .x = view.x + 10, .y = view.y + 10 };
     motion.data.pointer.pos = off_track;
     ui_surface_dispatch(&surface, &motion);
-    /* The list's caret also sets deadlines, so the test ticks past the
-     * bar's delay rather than to the surface's next deadline. */
     ui_surface_tick(&surface, 1000);
     assert(ui_scrollview_is_shown(&dropdown.scroll));
     ui_surface_tick(&surface, 5000);
@@ -133,7 +129,6 @@ int main(void)
     assert(changes.count == 1);
 
     assert(ui_dropdown_open(&dropdown));
-    /* A horizontal wheel step can arrive as a press. */
     struct ui_event wheel = ui_event_pointer((struct ui_pointer_event){
         .kind = UI_POINTER_PRESS, .pos = { .x = 470, .y = 350 }, .button = UI_POINTER_WHEEL_BUTTON + 2,
     }, 0);

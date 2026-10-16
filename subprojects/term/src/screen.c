@@ -20,8 +20,6 @@ static void *grow(struct grow_buf *b, size_t bytes)
     return b->data;
 }
 
-/* Make s an empty screen of cols x rows. It keeps its buffers when they are
- * large enough, so a resize back and forth allocates nothing. */
 static bool screen_setup(struct screen *s, int cols, int rows, uint64_t *next_uid)
 {
     int stride = (cols + 15) & ~15;
@@ -86,7 +84,6 @@ static void screen_push_row_inner(struct wsap_vtcore *t, struct srow *row)
     int cols = t->scr.cols;
     if (row->kind == ROW_TEXT && !(wrapped && row->len < cols)) {
         struct text_row *tr = &row->text;
-        /* Fill blanks are cells of the row, as a cells row stores them. */
         int fill = (tr->fill_to < cols ? tr->fill_to : cols) - tr->cells;
         if (fill > 0) {
             text_row_unshare(tr);
@@ -96,7 +93,6 @@ static void screen_push_row_inner(struct wsap_vtcore *t, struct srow *row)
         wsap_vtcore_hist_push_text(&t->hist, tr, wrapped);
         return;
     }
-    /* The rest of a wrapped row is part of the line: blanks up to the edge. */
     if (WSAP_VTCORE_EXPECT(wrapped && row->len < cols, 0)) {
         srow_settle(row, cols);
         if (!(row->flags & RF_TAIL_PADDED))
@@ -110,8 +106,6 @@ static void screen_push_row_inner(struct wsap_vtcore *t, struct srow *row)
 void wsap_vtcore_screen_push_row(struct wsap_vtcore *t, struct srow *row)
 {
     screen_push_row_inner(t, row);
-    /* The push can drop more rows than it adds, so the view learns the new
-     * history size here and not before. */
     if (WSAP_VTCORE_EXPECT(t->view.anchor.active, 0))
         wsap_vtcore_hist_view_note_push(&t->view, &t->hist, t->cols);
 }
@@ -126,7 +120,6 @@ static void screen_free(struct screen *s)
     *s = (struct screen){ 0 };
 }
 
-/* Read the history count without changing its rows. */
 int wsap_vtcore_screen_history_rows(const struct wsap_vtcore *t)
 {
     if (!t || !screen_has_history(t))
@@ -230,8 +223,6 @@ void wsap_vtcore_scroll(struct wsap_vtcore *t, int lines)
 {
     if (!t)
         return;
-    /* Read the alternate flag inside the writer section. A read before
-     * wsap_vtcore_write_begin races with a feed on another thread. */
     wsap_vtcore_write_begin(t);
     if (t->alternate) {
         wsap_vtcore_write_end(t);
@@ -370,7 +361,6 @@ void wsap_vtcore_screen_erase_all(struct wsap_vtcore *t)
 }
 
 #if defined(WSAP_VTCORE_KERNEL_AVX2)
-/* The inner columns [1, len - 1): the callers probed both ends. */
 WSAP_VTCORE_TARGET_AVX2
 static bool text_has_text_avx2(const uint8_t *text, int len)
 {
@@ -414,12 +404,10 @@ static inline bool text_has_text(const uint8_t *text, int len)
 {
     if (len <= 0)
         return false;
-    /* Probe column 0 first. Most terminal lines start with visible text. */
     if (text[0] > ' ')
         return true;
     if (len == 1)
         return false;
-    /* Probe the line tail next. Indented lines often end with visible text. */
     if (text[len - 1] > ' ')
         return true;
 
@@ -455,12 +443,10 @@ static inline bool cells_has_text(const struct cell *cells, int len)
 {
     if (len <= 0)
         return false;
-    /* Probe column 0 first. */
     if (cells[0].c > ' ')
         return true;
     if (len == 1)
         return false;
-    /* Probe the line tail next. */
     if (cells[len - 1].c > ' ')
         return true;
 
@@ -560,7 +546,6 @@ void wsap_vtcore_screen_erase(struct wsap_vtcore *t, int mode)
     }
 }
 
-/* Reset a recycled row's contents and identity; callers choose its version. */
 static inline void reset_scrolled_row(struct wsap_vtcore *t, struct srow *row, bool def)
 {
     row->kind = ROW_CELLS;
@@ -610,7 +595,6 @@ void wsap_vtcore_screen_scroll_region(struct wsap_vtcore *t, int top, int bottom
     if (count > height)
         count = height;
 
-    /* Whole active screen scroll: optimize using ring rotation. */
     if (top == 0 && bottom == t->rows - 1) {
         struct screen *s = &t->scr;
         int rows = s->rows;
@@ -653,7 +637,6 @@ void wsap_vtcore_screen_scroll_region(struct wsap_vtcore *t, int top, int bottom
             t->full_gen++;
             return;
         } else {
-            /* Full screen scroll down */
             if (!t->alternate && t->prompt_y >= 0) {
                 t->prompt_y += count;
                 if (t->prompt_y >= rows) {
@@ -774,7 +757,6 @@ void wsap_vtcore_screen_set_alternate(struct wsap_vtcore *t, bool enabled)
         t->scroll_bottom = t->rows - 1;
         t->left_margin = 0;
         t->right_margin = t->cols - 1;
-        /* The alternate screen has no history to show. */
         t->view.anchor = (struct view_anchor){0};
         wsap_vtcore_select_clear(t);
         t->full_gen++;
@@ -801,14 +783,12 @@ void wsap_vtcore_screen_set_alternate(struct wsap_vtcore *t, bool enabled)
         t->scroll_bottom = t->rows - 1;
         t->left_margin = 0;
         t->right_margin = t->cols - 1;
-        /* The alternate screen has no history to show. */
         t->view.anchor = (struct view_anchor){0};
         wsap_vtcore_select_clear(t);
         t->full_gen++;
     }
 }
 
-/* The caller has checked that requested is in [0, WSAP_VTCORE_SCROLLBACK_MAX]. */
 static int scrollback_lines(int requested)
 {
     return requested == 0 ? WSAP_VTCORE_SCROLLBACK_DEFAULT : requested;
@@ -816,8 +796,6 @@ static int scrollback_lines(int requested)
 
 static atomic_int tables_state;
 
-/* Build the shared lookup tables once. A second caller waits until the first
- * is done. */
 static void tables_init(void)
 {
     if (atomic_load_explicit(&tables_state, memory_order_acquire) == 2)
@@ -838,7 +816,6 @@ bool wsap_vtcore_tables_ready(void)
     return atomic_load_explicit(&tables_state, memory_order_relaxed) == 2;
 }
 
-/* A name is 1 to 63 printable ASCII bytes. DCS replies echo it. */
 static bool name_valid(const char *s)
 {
     for (size_t i = 0; s[i]; i++) {
@@ -959,8 +936,6 @@ void wsap_vtcore_free(struct wsap_vtcore *t)
     free(t);
 }
 
-/* ---- Resize & Reflow ---- */
-
 struct reflow_target {
     int cols, rows;
     struct cell *cells;
@@ -975,7 +950,7 @@ struct reflow_target {
     } *out;
     struct cell *out_cells;
     int out_cap;
-    struct grow_buf *out_buf, *cells_buf;   /* they keep their size across resizes */
+    struct grow_buf *out_buf, *cells_buf;
 };
 
 static inline struct cell *reflow_out_row_cells(const struct reflow_target *r, int i)
@@ -983,8 +958,6 @@ static inline struct cell *reflow_out_row_cells(const struct reflow_target *r, i
     return r->out_cells + (size_t)i * (size_t)r->cols;
 }
 
-/* Returns false when a row buffer cannot grow. The caller then stops the
- * reflow before the terminal changes. */
 static bool reflow_target_end_row(struct reflow_target *r, bool wrapped)
 {
     if (r->count == r->out_cap) {
@@ -1138,8 +1111,6 @@ static bool reflow_append(struct reflow_target *r, const struct cell *cells, int
     return true;
 }
 
-/* Move up to max_pull rows from the end of history to the top of dst. A line
- * that does not fit whole leaves its first rows in history, still open. */
 static int pull_history_rows(struct wsap_vtcore *t, struct screen *dst_scr, int cols, int max_pull)
 {
     struct hist *h = &t->hist;
@@ -1201,7 +1172,6 @@ static int pull_history_rows(struct wsap_vtcore *t, struct screen *dst_scr, int 
     return pull;
 }
 
-/* The spare screen, set up as cols x rows, for a resize to build into. */
 static bool resize_target(struct wsap_vtcore *t, struct screen *out, int cols, int rows,
                           const struct screen *from)
 {
@@ -1220,7 +1190,6 @@ static void copy_srow_resized(struct srow *dst, struct srow *src, int old_cols, 
 {
     int new_len = src->len < cols ? src->len : cols;
     if (src->kind == ROW_TEXT && src->len <= cols) {
-        /* The text fits the new width: copy it into the new buffers. */
         struct text_row *d = &dst->text;
         const struct text_row *s = &src->text;
         memcpy(d->text, s->text, s->text_len);
@@ -1265,8 +1234,6 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
             return false;
         }
 
-        /* Allocate the replacement before scrolling rows into history. A
-         * failed height shrink must leave the active screen and cursor alone. */
         if (rows < old_rows && t->cursor_y >= rows) {
             int shift = t->cursor_y - rows + 1;
             for (int i = 0; i < shift; i++)
@@ -1274,8 +1241,6 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
             t->cursor_y -= shift;
             t->saved.y = t->saved.y >= shift ? t->saved.y - shift : 0;
         }
-        /* Scrolling can advance the screen's history mapping when there is
-         * no history buffer, so capture its final value after the scroll. */
         new_scr.top_id = active_scr->top_id;
         new_scr.top_seg = active_scr->top_seg;
 
@@ -1360,8 +1325,6 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
         wsap_vtcore_gstore_unpin(t->gstore);
         return false;
     }
-    /* The open history line reflows with the screen. It is read here and
-     * removed only after the reflow succeeds. The prompt line never rewraps. */
     if (hist_is_open(&t->hist) && t->prompt_y != 0) {
         uint64_t n = wsap_vtcore_hist_line_cells(&t->hist, hist_end_id(&t->hist) - 1);
         struct cell *pulled = n ? grow(&t->resize.pull, n * sizeof(*pulled)) : NULL;
@@ -1449,8 +1412,6 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
     if (r.x && !reflow_target_end_row(&r, false))
         goto reflow_failed;
 
-    /* The reflow succeeded. From here the history and the screen change, and
-     * nothing below can fail. */
     if (hist_is_open(&t->hist)) {
         if (t->prompt_y == 0)
             wsap_vtcore_hist_close_open_line(&t->hist);

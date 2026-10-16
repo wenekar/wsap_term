@@ -26,10 +26,8 @@ struct probe_child {
     bool consume_motion;
 };
 
-/* The color the probe paints. Bar fills are every other fill. */
 #define PROBE_COLOR 0xff123456u
 
-/* Puts child in the scrollview in place of any earlier child. */
 static bool replace_child(struct ui_scrollview *sv, struct ui_widget *child)
 {
     struct ui_widget *old = ui_scrollview_child(sv);
@@ -111,7 +109,6 @@ static struct ui_event press_event(struct vector2i pos, uint64_t time_ms)
     }, time_ms);
 }
 
-/* Measures sv at the size of rect, then lays it out at rect. */
 static void fit(struct ui_scrollview *sv, struct rect2i rect)
 {
     ui_widget_measure(&sv->widget, (struct ui_constraints){
@@ -120,20 +117,17 @@ static void fit(struct ui_scrollview *sv, struct rect2i rect)
     ui_widget_layout(&sv->widget, rect);
 }
 
-/* Makes root the surface root, sized 100 by 50. */
 static void set_root_100x50(struct ui_surface *ctx, struct ui_widget *root)
 {
     ui_surface_set_root(ctx, root);
     ui_surface_resize(ctx, (struct vector2i){ .x = 100, .y = 50 });
 }
 
-/* The offset that shows the last line of the content. */
 static int max_offset(const struct ui_scrollview *sv)
 {
     return ui_scrollview_content_height(sv) - ui_scrollview_viewport_height(sv);
 }
 
-/* A scrollview with the bar off, for tests that are not about the bar. */
 static void init_plain(struct ui_scrollview *sv)
 {
     ui_scrollview_init(sv);
@@ -214,7 +208,6 @@ static void test_scroll_and_forward(void)
     assert(!ui_widget_event(&sv.widget, &ev));
     assert(ui_scrollview_offset(&sv) == 0);
 
-    /* A sideways wheel step does not scroll the view up or down. */
     ev = scroll_event((struct vector2i){ .x = 5, .y = 5 }, -1);
     ev.data.pointer.button = UI_POINTER_WHEEL_BUTTON + 3;
     assert(!ui_widget_event(&sv.widget, &ev));
@@ -238,8 +231,6 @@ static struct ui_event smooth_scroll_event(float delta)
     }, 0);
 }
 
-/* A wild smooth-scroll delta clamps or drops, and later wheel events
- * still scroll normally. */
 static void test_extreme_scroll_deltas(void)
 {
     struct ui_scrollview sv = {0};
@@ -523,10 +514,6 @@ static void test_capture_released_before_fallback(void)
     ui_surface_destroy(&ctx);
 }
 
-/* ---- The bar. A scrollview in a frame, with the probe as its child. ---- */
-
-/* The frame records the presses it gets. It sits at frame_pos in the
- * surface, as the terminal view sits under the tab bar. */
 struct fixture {
     struct ui_surface surface;
     struct ui_widget root;
@@ -571,8 +558,6 @@ static bool on_action(struct ui_widget *source, const struct ui_action *action,
     return true;
 }
 
-/* The bar starts on. In overlay mode, the default, it starts hidden. The
- * child is content_h tall. */
 static void setup(struct fixture *f, const char *css, struct vector2i frame_pos,
                   struct vector2i frame_size, int content_h)
 {
@@ -628,7 +613,6 @@ static void set_metrics(struct fixture *f, int history, int visible, int offset)
     ui_surface_prepare(&f->surface);
 }
 
-/* Overlay on, with 300 lines of history and 30 visible, and the bar shown. */
 static void show_overlay_bar(struct fixture *f)
 {
     ui_scrollview_set_overlay(&f->sv, true);
@@ -636,8 +620,6 @@ static void show_overlay_bar(struct fixture *f)
     ui_scrollview_flash(&f->sv);
 }
 
-/* The rect of the named debug part of widget, or an empty rect when the
- * widget reports none. */
 static struct rect2i named_part(const struct ui_widget *widget, const char *name)
 {
     struct ui_debug_parts parts = {0};
@@ -650,8 +632,6 @@ static struct rect2i named_part(const struct ui_widget *widget, const char *name
     return r;
 }
 
-/* The part's rect in surface space, or an empty rect when the scrollview
- * reports none. */
 static struct rect2i part(struct fixture *f, const char *name)
 {
     return named_part(&f->sv.widget, name);
@@ -664,13 +644,11 @@ static const struct ui_scene *paint(struct fixture *f)
     return &f->scene;
 }
 
-/* True for a plain or rounded rect fill. */
 static bool is_fill(const struct ui_scene_op *op)
 {
     return op->kind == UI_SCENE_OP_RECT || op->kind == UI_SCENE_OP_ROUNDED_RECT;
 }
 
-/* The index of the first filled rect of this color, or -1. */
 static int fill_index(const struct ui_scene *scene, uint32_t color)
 {
     for (int i = 0; i < scene->n_ops; i++)
@@ -679,7 +657,6 @@ static int fill_index(const struct ui_scene *scene, uint32_t color)
     return -1;
 }
 
-/* The number of filled rects that the probe did not paint. */
 static int bar_fills(const struct ui_scene *scene)
 {
     int n = 0;
@@ -701,7 +678,6 @@ static struct vector2i center(struct rect2i r)
     return (struct vector2i){ .x = r.x + r.width / 2, .y = r.y + r.height / 2 };
 }
 
-/* Ticks to now, then past the bar's hide deadline, which must lie after now. */
 static void run_to_hide(struct fixture *f, uint64_t now)
 {
     ui_surface_tick(&f->surface, now);
@@ -710,8 +686,6 @@ static void run_to_hide(struct fixture *f, uint64_t now)
     ui_surface_tick(&f->surface, deadline);
 }
 
-/* CSS sets the track and thumb of each state: width, margin, padding,
- * color, and the thumb's minimum height. Line metrics set the thumb. */
 static void css_drives_track_and_thumb_test(void)
 {
     const int W = 100, H = 400;
@@ -728,11 +702,9 @@ static void css_drives_track_and_thumb_test(void)
     ui_scrollview_set_overlay(&f.sv, true);
     set_metrics(&f, 300, 30, 150);
 
-    /* A hidden bar draws no track and no thumb. */
     assert(rect2i_is_empty(part(&f, "scroll-track")));
     assert(rect2i_is_empty(part(&f, "scroll-thumb")));
 
-    /* Shown and idle, the track is the idle width. */
     ui_scrollview_flash(&f.sv);
     struct rect2i track = part(&f, "scroll-track");
     assert(track.width == 10 && track.x == W - 2 - 10);
@@ -744,11 +716,9 @@ static void css_drives_track_and_thumb_test(void)
     assert(thumb.y >= 4 && rect2i_end(thumb).y <= H - 6);
     int idle = fill_index(s, 0xFF112233);
     assert(idle >= 0 && rect2i_eq(s->ops[idle].rect, thumb));
-    /* The bar draws after the child, so it lies over the child's paint. */
     int content = fill_index(s, PROBE_COLOR);
     assert(content >= 0 && idle > content);
 
-    /* Hover widens the track, and the widened track takes the pointer. */
     assert(!pointer(&f, UI_POINTER_MOTION, center(track), 0, 0));
     s = paint(&f);
     track = part(&f, "scroll-track");
@@ -777,9 +747,6 @@ static void css_drives_track_and_thumb_test(void)
     teardown(&f);
 }
 
-/* The thumb is to the track as the screen is to all the lines, but never
- * shorter than its minimum or longer than the track. The child is as tall
- * as the view, so only the metrics give the bar a range. */
 static void thumb_size_follows_metrics_test(void)
 {
     struct fixture f;
@@ -805,8 +772,6 @@ static void thumb_size_follows_metrics_test(void)
     teardown(&f);
 }
 
-/* Dragging the thumb reports offsets while the pointer is anywhere; the
- * ends of the travel are all the history and none of it. */
 static void drag_reports_offsets_test(void)
 {
     struct fixture f;
@@ -816,7 +781,6 @@ static void drag_reports_offsets_test(void)
 
     struct rect2i thumb = part(&f, "scroll-thumb");
     assert(pointer(&f, UI_POINTER_PRESS, center(thumb), 0, 0));
-    /* A press on the thumb keeps the view where it is, give or take a line. */
     assert(f.changes == 0 || (f.offset >= 19 && f.offset <= 21));
 
     assert(pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = 10, .y = -50 }, 0, 0));
@@ -831,8 +795,6 @@ static void drag_reports_offsets_test(void)
     teardown(&f);
 }
 
-/* A press on the track in line mode reports the offset, and the child does
- * not move. */
 static void line_mode_press_reports_offset_test(void)
 {
     struct fixture f;
@@ -851,7 +813,6 @@ static void line_mode_press_reports_offset_test(void)
     teardown(&f);
 }
 
-/* In line mode the wheel is left to the host. In pixel mode it scrolls. */
 static void wheel_follows_mode_test(void)
 {
     struct fixture f;
@@ -870,7 +831,6 @@ static void wheel_follows_mode_test(void)
     teardown(&f);
 }
 
-/* Under a tab bar the bar paints where it takes presses. */
 static void paints_where_it_hits_test(void)
 {
     const int BAR_H = 37;
@@ -891,9 +851,6 @@ static void paints_where_it_hits_test(void)
     teardown(&f);
 }
 
-/* A press the bar declines goes to the child under the track, so Shift
- * selects text through the track. Only a press the child also declines
- * reaches the scrollview's parent. */
 static void declined_press_reaches_parent_test(void)
 {
     struct fixture f;
@@ -901,7 +858,6 @@ static void declined_press_reaches_parent_test(void)
     show_overlay_bar(&f);
     struct vector2i on_track = center(part(&f, "scroll-track"));
 
-    /* Shift and a secondary button are declined. The child takes them. */
     assert(pointer(&f, UI_POINTER_PRESS, on_track, 0, UI_MOD_SHIFT));
     assert(f.content.presses == 1 && f.frame_presses == 0 && f.changes == 0);
     pointer(&f, UI_POINTER_RELEASE, on_track, 0, UI_MOD_SHIFT);
@@ -910,17 +866,14 @@ static void declined_press_reaches_parent_test(void)
     assert(f.content.presses == 2 && f.frame_presses == 0 && f.changes == 0);
     pointer(&f, UI_POINTER_RELEASE, on_track, 1, 0);
 
-    /* Off the track the child takes the press as usual. */
     assert(pointer(&f, UI_POINTER_PRESS, (struct vector2i){ .x = 10, .y = 10 }, 0, 0));
     assert(f.content.presses == 3 && f.frame_presses == 0);
     pointer(&f, UI_POINTER_RELEASE, (struct vector2i){ .x = 10, .y = 10 }, 0, 0);
 
-    /* Shown, a plain press on the track is the bar's. */
     assert(pointer(&f, UI_POINTER_PRESS, on_track, 0, 0));
     assert(f.content.presses == 3 && f.changes == 1);
     pointer(&f, UI_POINTER_RELEASE, on_track, 0, 0);
 
-    /* When the child declines the declined press, the parent gets it. */
     f.content.handle_press = false;
     assert(pointer(&f, UI_POINTER_PRESS, on_track, 0, UI_MOD_SHIFT));
     assert(f.content.presses == 4 && f.frame_presses == 1);
@@ -928,8 +881,6 @@ static void declined_press_reaches_parent_test(void)
     teardown(&f);
 }
 
-/* A hidden overlay bar takes no press. The child under its track gets it.
- * Hover still shows the bar. */
 static void hidden_bar_takes_no_press_test(void)
 {
     struct fixture f;
@@ -948,8 +899,6 @@ static void hidden_bar_takes_no_press_test(void)
     teardown(&f);
 }
 
-/* Without overlay the bar keeps its idle width in every state. The child
- * keeps the columns that the bar does not draw, even on hover. */
 static void idle_bar_leaves_child_columns_test(void)
 {
     struct fixture f;
@@ -960,7 +909,6 @@ static void idle_bar_leaves_child_columns_test(void)
     assert(track.width == 8 && track.x == 92);
     assert(f.content.widget.bounds.width == 92);
 
-    /* The last 4 px of the child lie left of the track. */
     struct vector2i edge = { .x = 90, .y = 10 };
     pointer(&f, UI_POINTER_MOTION, edge, 0, 0);
     assert(part(&f, "scroll-track").width == 8);
@@ -970,8 +918,6 @@ static void idle_bar_leaves_child_columns_test(void)
     teardown(&f);
 }
 
-/* A press on the bar keeps focus where it was. A press on a child that is
- * not focusable clears focus, as before. */
 static void bar_press_keeps_focus_test(void)
 {
     struct fixture f;
@@ -1001,8 +947,6 @@ static void bar_press_keeps_focus_test(void)
     teardown(&f);
 }
 
-/* A press on blank space, below the child and off the bar, clears focus.
- * Only the track keeps it. */
 static void blank_press_clears_focus_test(void)
 {
     struct fixture f;
@@ -1027,8 +971,6 @@ static void blank_press_clears_focus_test(void)
     teardown(&f);
 }
 
-/* The child consumes motion, but the bar still shows under the pointer. The
- * child still gets every motion. */
 static void hover_shows_bar_when_child_consumes_motion_test(void)
 {
     struct fixture f;
@@ -1038,21 +980,18 @@ static void hover_shows_bar_when_child_consumes_motion_test(void)
     f.content.consume_motion = true;
     assert(!ui_scrollview_is_shown(&f.sv));
 
-    /* The track is hit at its hover width while the bar is hidden. */
     struct vector2i on_track = { .x = 100 - 4, .y = 100 };
     pointer(&f, UI_POINTER_MOTION, on_track, 0, 0);
     assert(ui_scrollview_is_shown(&f.sv));
     assert(f.content.motions == 1);
     assert(part(&f, "scroll-track").width == 12);
 
-    /* Off the track the child keeps the motion, and the bar goes idle. */
     pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = 10, .y = 10 }, 0, 0);
     assert(f.content.motions == 2);
     assert(part(&f, "scroll-track").width == 8);
     teardown(&f);
 }
 
-/* The debug parts report the bar as it draws. A hidden bar reports nothing. */
 static void debug_track_reports_drawn_bar_test(void)
 {
     struct fixture f;
@@ -1074,7 +1013,6 @@ static void debug_track_reports_drawn_bar_test(void)
     teardown(&f);
 }
 
-/* A child that asks for the text cursor everywhere it covers. */
 static enum ui_cursor text_cursor(const struct ui_widget *widget,
                                   struct vector2i pos)
 {
@@ -1083,7 +1021,6 @@ static enum ui_cursor text_cursor(const struct ui_widget *widget,
     return UI_CURSOR_TEXT;
 }
 
-/* Declines every event. It still takes the pointer, so it is hit. */
 static bool text_event(struct ui_widget *widget, const struct ui_event *event)
 {
     (void)widget;
@@ -1108,9 +1045,6 @@ static enum ui_cursor cursor_after_motion(struct ui_surface *surface,
     return ui_surface_cursor(surface);
 }
 
-/* A selectable child covers the whole view, track included. The track must
- * still show the arrow, not the child's text cursor. The child keeps the
- * text cursor on its own body. */
 static void track_cursor_is_not_child_cursor_test(void)
 {
     const struct vector2i view = { .x = 100, .y = 200 };
@@ -1146,8 +1080,6 @@ static void track_cursor_is_not_child_cursor_test(void)
     css_sheet_clear(&sheet);
 }
 
-/* Clearing the metrics returns to pixel mode. The wheel scrolls the child
- * again, and a drag on the thumb moves it without reporting an offset. */
 static void clear_metrics_returns_to_pixel_mode_test(void)
 {
     struct fixture f;
@@ -1174,8 +1106,6 @@ static void clear_metrics_returns_to_pixel_mode_test(void)
     teardown(&f);
 }
 
-/* Shown on hover and on flash, it hides at its own deadline once the
- * pointer leaves, and then needs no more ticks. */
 static void hides_after_idle_test(void)
 {
     struct fixture f;
@@ -1207,8 +1137,6 @@ static void hides_after_idle_test(void)
     teardown(&f);
 }
 
-/* Overlay is on by default, so the bar starts hidden. Overlay off shows the
- * bar at all times. Overlay on again hides it. */
 static void overlay_gates_bar_test(void)
 {
     struct fixture f;
@@ -1231,7 +1159,6 @@ static void overlay_gates_bar_test(void)
     teardown(&f);
 }
 
-/* Pushing the same metrics every frame lets the window go idle. */
 static void same_metrics_request_no_frame_test(void)
 {
     struct fixture f;
@@ -1246,7 +1173,6 @@ static void same_metrics_request_no_frame_test(void)
     teardown(&f);
 }
 
-/* Hiding mid-drag ends the drag. */
 static void hide_ends_drag_test(void)
 {
     struct fixture f;
@@ -1255,14 +1181,12 @@ static void hide_ends_drag_test(void)
     assert(pointer(&f, UI_POINTER_PRESS, center(part(&f, "scroll-thumb")), 0, 0));
     ui_scrollview_hide(&f.sv);
     int changes = f.changes;
-    /* Captured, this would scroll to the top. */
     pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = 10, .y = 0 }, 0, 0);
     assert(f.changes == changes);
     assert(!ui_scrollview_is_shown(&f.sv));
     teardown(&f);
 }
 
-/* Off, the bar takes no room, no press, and no part. On again, it returns. */
 static void set_scrollbar_off_test(void)
 {
     struct fixture f;
@@ -1285,7 +1209,6 @@ static void set_scrollbar_off_test(void)
     teardown(&f);
 }
 
-/* Dragging the thumb in pixel mode moves the child to the bottom. */
 static void pixel_drag_scrolls_child_test(void)
 {
     struct fixture f;
@@ -1308,7 +1231,6 @@ static void pixel_drag_scrolls_child_test(void)
     teardown(&f);
 }
 
-/* A pixel wheel step scrolls the view by three cell heights. */
 static void pixel_wheel_scrolls_test(void)
 {
     struct fixture f;
@@ -1319,9 +1241,6 @@ static void pixel_wheel_scrolls_test(void)
     teardown(&f);
 }
 
-/* The track and thumb styles come from the sheet. A new sheet restyles the
- * bar on the next prepare. The host sheet sits over the default sheet, so
- * the rules here set every size they need. */
 static void part_sheet_drives_bar_test(void)
 {
     struct fixture f;
@@ -1359,7 +1278,6 @@ static void part_sheet_drives_bar_test(void)
     css_sheet_clear(&narrow);
 }
 
-/* The color of the fill that covers rect exactly, or 0 when none does. */
 static uint32_t fill_color_at(const struct ui_scene *scene, struct rect2i rect)
 {
     for (int i = 0; i < scene->n_ops; i++)
@@ -1369,9 +1287,6 @@ static uint32_t fill_color_at(const struct ui_scene *scene, struct rect2i rect)
     return 0;
 }
 
-/* Overlay is on by default. The bar starts hidden, so it draws nothing and
- * a press on its track reaches the child. Hover shows it, and it hides
- * after its delay. */
 static void overlay_default_test(void)
 {
     struct fixture f;
@@ -1380,7 +1295,6 @@ static void overlay_default_test(void)
     assert(rect2i_is_empty(part(&f, "scroll-track")));
     assert(bar_fills(paint(&f)) == 0);
 
-    /* The idle track is the rightmost 8 px. The child takes this press. */
     struct vector2i on_track = { .x = 96, .y = 50 };
     assert(pointer(&f, UI_POINTER_PRESS, on_track, 0, 0));
     assert(f.content.presses == 1 && f.changes == 0);
@@ -1396,8 +1310,6 @@ static void overlay_default_test(void)
     teardown(&f);
 }
 
-/* Overlay takes no room. The bar widens over the child on hover, and the
- * child keeps its full width and its place. */
 static void hover_widens_without_moving_child_test(void)
 {
     struct fixture f;
@@ -1415,8 +1327,6 @@ static void hover_widens_without_moving_child_test(void)
     teardown(&f);
 }
 
-/* Hover colors the track with the sheet's hover color. The thumb keeps its
- * own hover color. */
 static void track_hover_color_test(void)
 {
     struct fixture f;
@@ -1428,15 +1338,11 @@ static void track_hover_color_test(void)
 
     pointer(&f, UI_POINTER_MOTION, center(part(&f, "scroll-track")), 0, 0);
     s = paint(&f);
-    /* The default sheet's track hover color: #bac2de at 15% alpha. */
     assert(fill_color_at(s, part(&f, "scroll-track")) == 0x26BAC2DE);
     assert(has_fill_op(s, part(&f, "scroll-thumb"), 0xFFBAC2DE));
     teardown(&f);
 }
 
-/* A wheel step that moves the view flashes the bar. A step that does not
- * move it leaves the bar hidden. A page key that moves the view flashes it
- * too. */
 static void wheel_flashes_bar_test(void)
 {
     struct fixture f;
@@ -1463,8 +1369,6 @@ static void wheel_flashes_bar_test(void)
     teardown(&f);
 }
 
-/* A wheel step during a drag moves the view and keeps the drag. The bar
- * hides only after the drag ends and its delay passes. */
 static void wheel_flash_keeps_drag_test(void)
 {
     struct fixture f;

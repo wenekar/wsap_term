@@ -37,8 +37,6 @@ void window_redraw(struct window *w)
 {
     if (!w || !w->surface || w->closed)
         return;
-    /* Asked from inside a draw, the next frame waits for the system to show
-     * this one; drawing it at once would only drop frames. */
     if (w->drawing) {
         yasl_surface_request_frame(w->surface);
         return;
@@ -146,8 +144,6 @@ void window_native_remove(struct window *w, struct yasl_surface *s)
     w->natives[w->native_count] = (struct window_native){0};
 }
 
-/* Logs the first failure of a run, so a stuck surface does not flood the
- * log. err 0 has no errno to report. */
 static bool native_report(struct window_native *n, bool ok, const char *what, int err)
 {
     if (n && !ok && !n->failing)
@@ -173,8 +169,6 @@ static void native_compose(struct window *w, struct window_native *n,
     window_compose_frame(w, &frame);
 }
 
-/* Render falls back to CPU pixels inside a Metal frame. Every frame is
- * stale, so the pixels keep nothing between frames. */
 static uint32_t *native_pixels(struct window_native *n, struct vector2i size)
 {
     if (size.x <= 0 || size.y <= 0)
@@ -221,8 +215,6 @@ void window_native_draw(struct window *w, struct yasl_surface *s)
     w->drawing = true;
     if (n->metal_layer) {
         struct metal_draw d = { .w = w, .n = n };
-        /* No drawable came in time. Nothing drew, so n is still this
-         * surface's. Ask the system for the next frame. */
         if (!window_metal_draw(n->metal_layer, s, metal_compose, &d)) {
             native_report(n, false, "metal drawable", 0);
             window_redraw(w);
@@ -341,8 +333,6 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
     if (spec->size.y > 0)
         size.y = spec->size.y;
 
-    /* The first window runs the display on the host's loop; later windows
-     * find it running with the same options. */
     int init = yasl_init(&(struct yasl_options){
         .app_id = app_name(),
         .loop = host->loop,
@@ -411,7 +401,6 @@ bool window_present(struct window *w, struct window_frame *frame,
     if (!w || w->closed || !frame || !frame->surface)
         return false;
     struct window_native *n = native_find(w, frame->surface);
-    /* Render presents a Metal frame itself. */
     if (frame->target.drawable)
         return native_report(n, frame->target.presented, "metal present", 0);
     int status;

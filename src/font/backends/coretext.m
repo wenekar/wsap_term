@@ -90,17 +90,10 @@ struct font_handle {
     CTFontRef bold;
     CTFontRef bold_italic;
     int pixel_size;
-    /* The fonts have the nominal point size. This is the number of device
-     * pixels in one CoreText unit; every measurement and every drawing
-     * goes through it. */
     CGFloat scale;
-    /* Tells apart faces in the per-thread raster cache. */
     uint32_t serial;
-    /* HarfBuzz shapes with the tables of each style font. enum
-     * font_variant is the index. */
     hb_face_t *hb_face[FONT_VARIANT_COUNT];
     hb_font_t *hb_font[FONT_VARIANT_COUNT];
-    /* Pre-computed fallback descriptors and lazily instantiated fonts. */
     CFArrayRef cascade_descriptors;
     CTFontRef cascade_fonts[CT_CASCADE_MAX];
     CFIndex cascade_loaded;
@@ -155,7 +148,6 @@ static void ct_configure_context(CGContextRef ctx, bool color)
     CGContextSetShouldSubpixelQuantizeFonts(ctx, !(options & CT_NO_QUANTIZE));
 }
 
-/* A rect in CoreText units, in device pixels. */
 static CGRect ct_device_rect(CGRect r, CGFloat scale)
 {
     if (CGRectIsNull(r))
@@ -164,7 +156,6 @@ static CGRect ct_device_rect(CGRect r, CGFloat scale)
                       r.size.width * scale, r.size.height * scale);
 }
 
-/* Map each UTF-16 unit to its input cell. Expand stored clusters first. */
 static CFStringRef ct_string(const uint32_t *cps, int count, int *cell_map)
 {
     UniChar chars[FONT_RUN_MAX * WSAP_VTCORE_GRAPHEME_MAX_LEN * 2];
@@ -225,7 +216,6 @@ static hb_blob_t *ct_reference_table(hb_face_t *face, hb_tag_t tag, void *ud)
                           (void *)data, (hb_destroy_func_t)CFRelease);
 }
 
-/* The variation instance CoreText draws, so HarfBuzz shapes the same one. */
 static void copy_variations(CTFontRef font, hb_font_t *hb)
 {
     CFDictionaryRef vars = CTFontCopyVariation(font);
@@ -256,7 +246,6 @@ static void ct_open_hb(struct font_handle *face, enum font_variant variant,
         (void *)CFRetain(font), (hb_destroy_func_t)CFRelease);
     hb_face_set_upem(face->hb_face[variant], CTFontGetUnitsPerEm(font));
     hb_font_t *hb = hb_font_create(face->hb_face[variant]);
-    /* HarfBuzz positions come out in 26.6 device pixels. */
     int scale = (int)lround(CTFontGetSize(font) * face->scale * 64);
     hb_font_set_scale(hb, scale, scale);
     copy_variations(font, hb);
@@ -264,7 +253,6 @@ static void ct_open_hb(struct font_handle *face, enum font_variant variant,
     face->hb_font[variant] = hb;
 }
 
-/* Registers every font file in dir for this process. */
 static void register_font_dir(NSString *dir)
 {
     if (!dir)
@@ -423,8 +411,6 @@ static CTFontRef ct_load_base_font(const char *family_list, CGFloat pt)
 
         CTFontRef font = NULL;
         if (!strcmp(norm, "sfmono")) {
-            /* SF Mono is not registered by family name; the fixed-pitch
-             * UI font resolves to it on systems that ship it. */
             CTFontRef ui = CTFontCreateUIFontForLanguage(kCTFontUIFontUserFixedPitch, pt, NULL);
             if (ui && ct_font_name_matches(ui, name))
                 font = ui;
@@ -451,9 +437,6 @@ static CTFontRef ct_load_base_font(const char *family_list, CGFloat pt)
     return CTFontCreateWithName(CFSTR("Menlo"), pt, NULL);
 }
 
-/* The fonts open at the nominal point size, so CoreText picks the optical
- * size and the tracking of that size. The display scale and the 96 DPI
- * point conversion go into face->scale. */
 static font_handle_t *ct_face_open(const char *family_list, struct font_size size)
 {
     int pt = font_size_resolve(size).pt;
@@ -553,8 +536,6 @@ static bool ct_face_metrics(font_handle_t *face, struct font_metrics *out)
         .cell_h = cell_h,
         .baseline = asc,
         .pixel_size = face->pixel_size,
-        /* CoreText uses the cell height here, not the height of '('.
-         * This is a known gap. The fix needs macOS. */
         .ink_rows = cell_h,
     };
     return true;
@@ -646,8 +627,6 @@ static CGContextRef ct_scratch_get(struct ct_scratch *scratch, bool color,
     }
     *row_bytes = scratch->row_bytes;
     CGContextSaveGState(scratch->context);
-    /* The graphics state leaves out the text matrix, and CTLineDraw moves
-     * its text position. A glyph drawn after a cluster would land offset. */
     CGContextSetTextMatrix(scratch->context, CGAffineTransformIdentity);
     CGContextClearRect(scratch->context, CGRectMake(0, 0, scratch->width, scratch->height));
     return scratch->context;
@@ -665,16 +644,12 @@ static void ct_scratch_destroy(struct ct_scratch *scratch)
     memset(scratch, 0, sizeof(*scratch));
 }
 
-/* scale is the device pixels in one CoreText unit. The stroke is at least
- * half a device pixel wide. */
 static void ct_configure_synthetic_bold(CGContextRef ctx, CTFontRef font, CGFloat scale)
 {
     CGContextSetTextDrawingMode(ctx, kCGTextFillStroke);
     CGContextSetLineWidth(ctx, fmax(0.5 / scale, CTFontGetSize(font) * 0.04));
 }
 
-/* Draw one glyph or one cluster into the same cell canvas. bb and advance
- * are in device pixels; units is the device pixels in one CoreText unit. */
 static bool ct_rasterize_ink(CTFontRef font, CGGlyph gid, CTLineRef line,
         CGRect bb, int advance, CGFloat units, bool color, uint16_t style,
         const struct font_metrics *m, struct glyph *out)
@@ -886,16 +861,12 @@ static bool ct_rasterize_glyph(font_handle_t *face, uint32_t cp, uint16_t style,
     return ok;
 }
 
-/* The ink of one glyph id: an alpha bitmap and its place relative to the
- * pen on the baseline. Ink starts on a whole pixel, as in
- * ct_rasterize_glyph(). */
 struct ct_raster {
     uint8_t *alpha;
     CTFontRef font;
     int w, h;
     int left, above;
     uint32_t serial;
-    /* The run that last used the entry. A run never evicts its own. */
     uint32_t use_pass;
     uint16_t gid;
     uint8_t variant;
@@ -1066,8 +1037,6 @@ static void ct_blit_scaled(struct glyph *g, const struct ct_raster *src, const s
     }
 }
 
-/* Blits src, scaled to dst, into g. Overlapping ink keeps the larger
- * alpha. */
 static void ct_blit(struct glyph *g, const struct ct_raster *src, const struct box *dst)
 {
     if (!src || !src->alpha || dst->w <= 0 || dst->h <= 0 || src->w <= 0 || src->h <= 0)
@@ -1083,9 +1052,6 @@ struct ct_ink {
     struct box box;
 };
 
-/* Places the glyphs of the core cell by cell, as font_fit_cells() does
- * for FreeType: each glyph sits in the cell of its cluster, the union of
- * the ink sits on the baseline, and ink taller than a cell shrinks. */
 static bool ct_fit_cells(const struct ct_ink *ink, int drawn, int n_cells,
                          struct glyph *cells)
 {
@@ -1147,7 +1113,6 @@ static bool ct_fit_cells(const struct ct_ink *ink, int drawn, int n_cells,
     return true;
 }
 
-/* CoreText shapes the full window and picks a font for each run. */
 static enum font_run_result ct_shape_fallback(font_handle_t *face,
         const struct font_window *w, const struct font_metrics *m, struct glyph *cells)
 {
@@ -1217,7 +1182,6 @@ static enum font_run_result ct_shape_fallback(font_handle_t *face,
                 anchor -= advances[k].width;
                 secondary -= advances[k].width;
             }
-            /* A bidi boundary has two caret positions. Use this run's edge. */
             if (fabs(positions[k].x - secondary) < fabs(positions[k].x - anchor))
                 anchor = secondary;
             ink[drawn++] = (struct ct_ink){
@@ -1238,7 +1202,6 @@ done:
     return result;
 }
 
-/* Hashes the run only. CoreText finds the coverage when it shapes. */
 static uint64_t ct_scan_run(const uint32_t *cps, int len, uint16_t style,
                             uint64_t *hash, int *dead_at)
 {

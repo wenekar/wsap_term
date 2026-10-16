@@ -82,7 +82,6 @@ static inline size_t scan_printable_span_avx2(const char *buf, size_t len, unsig
 static inline size_t scan_printable_span(const char *buf, size_t len,
                                          unsigned char hi)
 {
-    /* A short span costs less inline than as a call. */
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
     if (len >= 64 && wsap_vtcore_use_avx512())
         return scan_printable_span_avx512(buf, len, hi);
@@ -177,15 +176,10 @@ static inline size_t scan_printable_span(const char *buf, size_t len,
     return len;
 }
 
-/* Copy n bytes with loads that stay inside [src, src + n). Short text runs
- * are common; a libc call costs more than the copy. */
 static inline WSAP_VTCORE_ALWAYS_INLINE void bytes_copy_small(uint8_t *restrict dst,
                                                                    const char *restrict src, int n)
 {
     if (WSAP_VTCORE_EXPECT((unsigned)(n - 16) <= 16u, 1)) {
-        /* 16 to 32 bytes: two overlapping 16-byte copies. Both loads stay
-         * inside [src, src + n). This is the usual history line length, and
-         * two copies cost less here than the loop below. */
         memcpy(dst, src, 16);
         memcpy(dst + n - 16, src + n - 16, 16);
     } else if (n > 256) {
@@ -248,7 +242,6 @@ static inline size_t scan_crlf_pairs_avx2(const char *buf, size_t len)
 }
 #endif
 
-/* The length of the prefix of buf made of "\r\n" pairs; always even. */
 static inline size_t scan_crlf_pairs(const char *buf, size_t len)
 {
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
@@ -307,7 +300,6 @@ static inline size_t scan_byte_run_avx2(const char *buf, size_t len, char byte)
 }
 #endif
 
-/* The length of the prefix of buf made of byte. */
 static inline size_t scan_byte_run(const char *buf, size_t len, char byte)
 {
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
@@ -438,8 +430,6 @@ static int scan_ascii_lf_avx2(const char *buf, int len, uint16_t *ends)
 }
 #endif
 
-/* Find complete ASCII lines. Stop at the first byte other than text or LF.
- * The caller supplies len + 65 entries. len must fit in uint16_t. */
 static WSAP_VTCORE_NOINLINE WSAP_VTCORE_MAYBE_UNUSED int scan_ascii_lf(const char *buf, int len, uint16_t *ends)
 {
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
@@ -687,7 +677,6 @@ WSAP_VTCORE_ALWAYS_INLINE
 static inline void put_ascii_chunk(struct cell * restrict dst, const char * restrict src, int n,
                                   uint32_t fg, uint32_t bg, uint32_t flags)
 {
-    /* A short chunk costs less inline than as a call. */
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
     if (n >= 16 && wsap_vtcore_use_avx512()) {
         put_ascii_chunk_avx512(dst, src, n, fg, bg, flags);

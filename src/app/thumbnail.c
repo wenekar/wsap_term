@@ -42,7 +42,6 @@ static uint64_t content_signature(const struct wsap_vtcore_snapshot *snapshot,
     return (h ^ font_instance_version(font)) * 1099511628211ull;
 }
 
-/* Store the horizontal pixel range for one destination column. */
 struct sample_range {
     int x0;
     int x1;
@@ -62,7 +61,6 @@ static void resample(uint32_t *dst, struct vector2i dst_size,
             return;
     }
 
-    /* Precompute horizontal pixel ranges for all columns. */
     for (int x = 0; x < dst_size.x; x++) {
         int x0 = (int)((int64_t)x * src_size.x / dst_size.x);
         int x1 = (int)((int64_t)(x + 1) * src_size.x / dst_size.x);

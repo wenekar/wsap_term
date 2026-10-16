@@ -19,9 +19,6 @@ enum ui_key {
     UI_KEY_CHAR,
 };
 
-/* Editing units do not depend on the host platform. WORD moves forward
- * to the next word start. WORD_END moves forward to the next word end.
- * Both move backward to the previous word start. */
 enum ui_edit_unit {
     UI_EDIT_CHARACTER,
     UI_EDIT_WORD,
@@ -95,22 +92,18 @@ static inline enum ui_edit_command ui_edit_command_for_key(enum ui_key key,
     return UI_EDIT_NONE;
 }
 
-/* Only widgets whose ops set key_release receive UI_KEY_RELEASE. */
 enum ui_key_action : uint8_t {
     UI_KEY_PRESS = 0,
     UI_KEY_REPEAT,
     UI_KEY_RELEASE,
 };
 
-/* native is the host's own key event, for a widget that encodes keys the
- * UI key set does not name. It is valid during dispatch only. */
 struct ui_key_event {
     enum ui_key key;
     enum ui_key_action action;
     unsigned mods;
     uint32_t text;
     const void *native;
-    /* The host maps its editing modifiers to this unit. */
     enum ui_edit_unit edit_unit;
     enum ui_edit_command edit_command;
     bool text_deferred;

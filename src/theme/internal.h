@@ -10,8 +10,6 @@
 #include <wsap_vtcore/wsap_vtcore.h>
 #include "ui/css.h"
 
-/* Refcounted: the committed look, a preview, and the catalog cache may
- * all hold the same appearance. */
 struct appearance {
     struct wsap_vtcore_theme palette;
     struct css_sheet chrome;
@@ -19,16 +17,12 @@ struct appearance {
     int refs;
 };
 
-/* The one way to build an appearance. base seeds the palette, and
- * conf_path entries override it. Any path may be NULL. Returns one
- * reference. */
 struct appearance *appearance_load(const char *name, const char *css_path,
                                    const char *conf_path,
                                    const struct wsap_vtcore_theme *base);
 struct appearance *appearance_ref(struct appearance *ap);
 void appearance_unref(struct appearance *ap);
 
-/* Zero when the file is missing. */
 struct file_stamp {
     struct timespec mtime;
     off_t size;
@@ -40,7 +34,6 @@ struct theme_entry {
     struct look_theme info;
     struct appearance *built;
     struct file_stamp css_stamp, conf_stamp;
-    /* Fast-reject filters for linear scans. */
     uint32_t name_len;
     uint32_t label_len;
     char name_c0;
@@ -53,12 +46,9 @@ struct theme_catalog {
     bool scanned;
 };
 
-/* Keeps the cache of every entry whose paths did not change. */
 void theme_catalog_scan(struct theme_catalog *c);
 void theme_catalog_destroy(struct theme_catalog *c);
-/* Matches a name, or a label ignoring case. */
 struct theme_entry *theme_catalog_find(struct theme_catalog *c, const char *ref);
-/* Borrowed; rebuilt when the entry's files changed since the last build. */
 struct appearance *theme_entry_appearance(struct theme_entry *e,
                                           const struct wsap_vtcore_theme *base);
 

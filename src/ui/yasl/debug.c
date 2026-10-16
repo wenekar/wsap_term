@@ -69,8 +69,6 @@ bool dbg_inject_scratch(struct window *w)
     return ok;
 }
 
-/* Scenes are captured while a client may ask for them, or while the
- * overlay draws on them. */
 static bool capturing(const struct window *w)
 {
     const struct window_ui *ui = window_ui_of(w);

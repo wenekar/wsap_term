@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The yasl Cocoa content view. The accessibility category below extends it. */
 @interface YaslView : NSView
 @end
 
@@ -77,7 +76,6 @@ static NSString *role_for_node(enum ui_accessibility_role role)
     case UI_ACCESSIBILITY_ROLE_GROUP: return NSAccessibilityGroupRole;
     case UI_ACCESSIBILITY_ROLE_DIALOG: return NSAccessibilitySheetRole;
     case UI_ACCESSIBILITY_ROLE_LABEL: return NSAccessibilityStaticTextRole;
-    /* AppKit has no public constant for this accessibility role. */
     case UI_ACCESSIBILITY_ROLE_HEADING: return @"AXHeading";
     case UI_ACCESSIBILITY_ROLE_BUTTON:
     case UI_ACCESSIBILITY_ROLE_TOGGLE_BUTTON: return NSAccessibilityButtonRole;

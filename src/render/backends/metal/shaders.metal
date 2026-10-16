@@ -14,14 +14,12 @@ struct Uniforms {
     float2 viewport_size;
 };
 
-/* --- UI Shape Pipeline --- */
-
 struct UiShapeVertexIn {
-    float4 rect;     // x, y, width, height in pixels
-    float4 color;    // Unpacked RGBA [0, 1]
-    float radius;    // Corner radius in pixels
-    uint mode;       // 0: rect, 1: rounded, 2: circle, 3: shadow
-    uint alpha;      // Alpha (0..255) or shadow blur
+    float4 rect;
+    float4 color;
+    float radius;
+    uint mode;
+    uint alpha;
 };
 
 struct UiShapeVertexOut {
@@ -63,7 +61,6 @@ static inline float sd_rounded_box(float2 p, float2 half_size, float r)
     return length(max(q, float2(0.0f))) + min(max(q.x, q.y), 0.0f) - r;
 }
 
-/* Abramowitz and Stegun 7.1.26 polynomial approximation for erf */
 static inline float erf_approx(float x)
 {
     float s = sign(x);
@@ -87,7 +84,6 @@ fragment float4 ui_shape_fragment(UiShapeVertexOut in [[stage_in]])
     float cov = 1.0f;
 
     if (in.v_mode == 3u) {
-        // Mode 3: Analytical Gaussian Drop Shadow
         float blur = float(in.v_alpha);
         float sigma = blur * 0.5f;
         float extent = ceil(1.5f * blur);
@@ -98,12 +94,10 @@ fragment float4 ui_shape_fragment(UiShapeVertexOut in [[stage_in]])
         alpha = 1.0f;
         cov = sigma > 0.0f ? clamp(normal_cdf(-d / sigma), 0.0f, 1.0f) : step(d, 0.0f);
     } else if (in.v_mode == 2u) {
-        // Mode 2: Circle SDF with anti-aliasing
         float2 center = in.v_rect.xy + in.v_radius + 0.5f;
         float d = length(in.v_pix - center);
         cov = clamp(in.v_radius + 0.5f - d, 0.0f, 1.0f);
     } else if (in.v_mode == 1u) {
-        // Mode 1: Rounded Rectangle SDF with anti-aliasing
         float r = min(in.v_radius, min(in.v_rect.z, in.v_rect.w) * 0.5f);
         float2 center = in.v_rect.xy + in.v_rect.zw * 0.5f;
         float2 q = abs(in.v_pix - center) - in.v_rect.zw * 0.5f + r;
@@ -114,14 +108,11 @@ fragment float4 ui_shape_fragment(UiShapeVertexOut in [[stage_in]])
     return float4(col.rgb, col.a * alpha * cov);
 }
 
-/* --- Glyph & Textured Quad Pipeline --- */
-
-/* uv is in texels for the atlas modes and normalized for images. */
 struct GlyphVertexIn {
     float4 rect;
     float4 uv;
     float4 color;
-    uint mode; // 0: solid, 1: mono alpha atlas, 2: color atlas, 3: image, 4: ASCII R8 atlas
+    uint mode;
 };
 
 struct GlyphVertexOut {

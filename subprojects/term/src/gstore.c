@@ -10,22 +10,22 @@
 
 struct gentry {
     union {
-        uint32_t offset;    /* Offset into arena for code points past index 1 */
-        uint32_t next_free; /* Next entry in free list (1-based, 0 = none) */
+        uint32_t offset;
+        uint32_t next_free;
     };
-    uint16_t len;           /* Number of code points */
-    bool mark;              /* Reachable in current GC sweep */
-    bool allocated;         /* True if actively holding a cluster */
-    uint32_t cp0;           /* First code point (inlined) */
-    uint32_t cp1;           /* Second code point (inlined) */
+    uint16_t len;
+    bool mark;
+    bool allocated;
+    uint32_t cp0;
+    uint32_t cp1;
 };
 
 _Static_assert(sizeof(struct gentry) == 16,
                "struct gentry must stay 16 bytes (4 entries per cache line)");
 
 struct gslot {
-    uint32_t hash;          /* 32-bit hash of cluster code points */
-    uint32_t entry_idx;     /* 1-based index into g->entries (0 = empty) */
+    uint32_t hash;
+    uint32_t entry_idx;
 };
 
 struct gstore {
@@ -37,7 +37,7 @@ struct gstore {
     struct gentry *entries;
     uint32_t entries_count;
     uint32_t entries_cap;
-    uint32_t free_head; /* 1-based index, 0 = none */
+    uint32_t free_head;
 
     uint32_t live_count;
     uint32_t last_live;
@@ -234,7 +234,6 @@ void wsap_vtcore_gstore_sweep(struct gstore *g, struct wsap_vtcore *t)
         }
     }
 
-    /* Compact the code point arena for clusters with n > 2. */
     uint32_t new_arena_len = 0;
     uint32_t *packed = g->arena ? malloc(g->arena_cap * sizeof(*packed)) : NULL;
     if (packed) {
@@ -253,7 +252,6 @@ void wsap_vtcore_gstore_sweep(struct gstore *g, struct wsap_vtcore *t)
         g->arena_len = new_arena_len;
     }
 
-    /* Rebuild open-addressing slot table and free list. */
     g->free_head = 0;
     uint32_t live = 0;
     if (g->slots)

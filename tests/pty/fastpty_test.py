@@ -1,4 +1,3 @@
-"""Exercise output routing through the actual preload library and exec boundary."""
 
 import errno
 import os
@@ -150,8 +149,6 @@ with tempfile.TemporaryDirectory(prefix="fastpty-test-") as directory:
                     "fish": (tty_out, b"OUT:pipe\nERR:pipe\n", b"", b""),
                 }[scenario]
                 if scenario.startswith("termios"):
-                    # The probe's own output and nothing else: a fullmatch here
-                    # is what proves the shim injects no side-channel bytes.
                     match = re.fullmatch(rb"OFLAG:(\d+):(\d+):(\d+)\n", fast)
                     assert match, fast
                     expected = (b"", match.group(0), b"", b"")

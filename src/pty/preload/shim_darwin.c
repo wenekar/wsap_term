@@ -4,8 +4,6 @@
 #include <termios.h>
 #include <unistd.h>
 
-/* Bind each fp_* wrapper to its libc original via the dyld interpose
- * section; DYLD_INSERT_LIBRARIES does the rest. */
 #define FP_INTERPOSE(name)                                                 \
     __attribute__((used, section("__DATA,__interpose")))                   \
     static const struct { const void *replacement, *original; }            \

@@ -1,12 +1,6 @@
 #ifndef PTY_PRELOAD_SHIM_H
 #define PTY_PRELOAD_SHIM_H
 
-/* Internal interface for the fastpty preload shim. Both platforms share
- * the tty wrappers (shim.c) and the raw-mode routing (route.c). Linux
- * adds the exec-family hooks (shim_linux.c) and the LD_PRELOAD list
- * surgery (preload_env.c). Darwin binds the wrappers through the
- * __interpose table in shim_darwin.c. */
-
 #include <stddef.h>
 #include <sys/types.h>
 #include <termios.h>
@@ -26,8 +20,6 @@ int fp_ttyname_r(int fd, char *buf, size_t n);
 int fp_ioctl(int fd, unsigned long request, ...);
 #endif
 
-/* Wrapper symbol names: exported as the libc name on Linux (LD_PRELOAD),
- * prefixed fp_ on Darwin where the interpose table does the binding. */
 #ifdef __APPLE__
 #define FP_SHIM(name) fp_##name
 #else
@@ -37,17 +29,9 @@ int fp_ioctl(int fd, unsigned long request, ...);
 int fp_is_fast_pipe(int fd);
 int fp_tty_fd(void);
 
-/* Move stdout and stderr off the fast pipe onto the terminal. `saved`
- * gets the old fds, or -1. With `sync`, the move first passes the
- * barrier in pty/sync.h. Returns 1 when an fd moved, 0 when none was on
- * the pipe, and -1 on failure, with nothing moved. */
 int fp_stdio_to_tty(int saved[2], int sync);
-/* Put the `saved` fds back on stdout and stderr. Keeps errno. */
 void fp_stdio_restore(int saved[2]);
 
-/* Called after `t` was applied to `fd`. Moves stdout and stderr between
- * the fast pipe and the terminal when the terminal enters or leaves raw
- * mode. A no-op where the platform has no transport barrier. */
 void fp_termios_changed(int fd, const struct termios *t);
 
 #ifndef __APPLE__

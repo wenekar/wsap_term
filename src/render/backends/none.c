@@ -1,5 +1,3 @@
-/* The GPU backend of a build that draws on the CPU only. Its targets have
- * no gpu, so the renderer never calls these. */
 
 #include <assert.h>
 

@@ -36,7 +36,6 @@ void terminal_send_input(struct window *w, const char *data, size_t len)
     if (tab) {
         struct wsap_vtcore *t = tab->session.term;
         session_on_keystroke(&tab->session, yasl_time_ns() / 1000000);
-        /* A keystroke restarts the blink phase with the cursor shown. */
         if (wsap_vtcore_cursor(t).blink)
             window_redraw(w);
         bool changed = false;
@@ -147,7 +146,6 @@ void terminal_handle_shortcut(struct window *w, enum input_shortcut sc)
     }
 }
 
-/* A key passes to term by value, so both enums must keep one order. */
 _Static_assert(INPUT_KEY_COUNT == (int)WSAP_VTCORE_KEY_COUNT &&
                INPUT_KEY_F1 == (int)WSAP_VTCORE_KEY_F1 && INPUT_KEY_KP_0 == (int)WSAP_VTCORE_KEY_KP_0 &&
                INPUT_KEY_CAPS_LOCK == (int)WSAP_VTCORE_KEY_CAPS_LOCK &&
@@ -156,7 +154,6 @@ _Static_assert(INPUT_KEY_COUNT == (int)WSAP_VTCORE_KEY_COUNT &&
                INPUT_RELEASE == (int)WSAP_VTCORE_KEY_RELEASE,
                "input and term key codes differ");
 
-/* Encodes key for the program. True when the protocol sent bytes. */
 bool terminal_key(struct window *w, const struct input_key_event *key)
 {
     if (key->action != INPUT_RELEASE)

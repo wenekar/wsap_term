@@ -1,4 +1,3 @@
-"""Create a test name that points to its shared runner."""
 
 import os
 import sys

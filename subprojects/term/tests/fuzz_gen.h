@@ -1,12 +1,6 @@
 #ifndef WSAP_TERM_FUZZ_GEN_H
 #define WSAP_TERM_FUZZ_GEN_H
 
-/*
- * The input generator that write-fuzz-test and model-test share. gen()
- * makes whole sequences, malformed UTF-8, and raw bytes. The model handles
- * every byte that gen() makes.
- */
-
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -87,13 +81,10 @@ static inline void gen(int ops, int cols, int rows)
         "a", "hello", "x y", "0123456789", "日本", "é", "中文字",
         "e\xcc\x81", "👍", "   ",
     };
-    /* Include valid text, malformed UTF-8, and incomplete UTF-8. */
     static const char *utf8_3[] = {
         "中", "文", "字", "€", "ｱ", "\xe2\x83\x90", "\xed\xa0\x80",
         "\xe0\x80\xaf", "\xef\xbf\xbd", "한", "a", "\xe2\x80\x8d", "\xe3\x80",
     };
-    /* Emoji, flags, modifiers, ZWJ sequences, presentation selectors,
-     * stacked marks, and C1 controls in UTF-8 form. */
     static const char *clusters[] = {
         "😀", "\xf0\x9f\x87\xa9\xf0\x9f\x87\xaa", "👍🏽", "👨‍👩‍👧", "❤️", "☺︎",
         "a\xcc\x81\xcc\x82", "\xe2\x80\x8b", "\xc2\x85", "\xc2\x84", "\xc2\x8d",
@@ -117,7 +108,6 @@ static inline void gen(int ops, int cols, int rows)
         "\033[14t", "\033P$qm\033\\", "\033P$qr\033\\", "\033[?6$p",
         "\033[4$p", "\033[20$p",
     };
-    /* C0 controls inside CSI, cancelled sequences, and ignored strings. */
     static const char *odd[] = {
         "\033[2\n;3H", "\033[1\bC", "\033[3\x18m", "\033[1\x1a;2H",
         "\033[\1772C", "\x0b", "\x0c", "\x7f", "\x18", "\x1a",
@@ -155,7 +145,6 @@ static inline void gen(int ops, int cols, int rows)
         case 20: putf("\033[%d;%d;1;1$r", rn(rows) + 1, rn(cols) + 1); break;
         case 21: put("\033[1;7m"); break;
         case 22: case 23: {
-            /* Keep ESC out of raw bytes so later input reaches the fast paths. */
             int n = 64 + rn(400);
             for (int k = 0; k < n; k++) {
                 unsigned char b = (unsigned char)rnd();

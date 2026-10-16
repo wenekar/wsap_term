@@ -45,7 +45,6 @@ static const char *row_text(struct wsap_vtcore *t, int r, char *buf)
     int n = 0;
     for (int c = 0; c < tt_cols(t); c++) {
         uint32_t cp = tt_cell_cp(t, &cells[c]);
-        /* '?' stands for any code point outside ASCII. */
         buf[n++] = !cp ? ' ' : cp < 0x80 ? (char)cp : '?';
     }
     while (n > 0 && buf[n - 1] == ' ') n--;
@@ -77,21 +76,12 @@ static void write_both(struct wsap_vtcore *whole, struct wsap_vtcore *bytes, con
     write_seq(bytes, s);
 }
 
-/* The view version of s after it copies t. A renderer redraws when the
- * version changes. */
 static uint64_t view_version(struct wsap_vtcore_snapshot *s, struct wsap_vtcore *t)
 {
     wsap_vtcore_snapshot_update(s, t);
     return wsap_vtcore_snapshot_view(s)->version;
 }
 
-/*
- * Regression: diff renderers (Claude Code, Ink) skip unchanged spaces with
- * CUF. Cells the cursor skips must read as blanks, even on a row whose cells
- * still hold old glyphs: a row recycled by scrolling, or a row whose tail
- * an erase dropped without filling. Stale glyphs showed up in place of
- * every skipped space.
- */
 static void test_skipped_cells_read_blank(void)
 {
     static const char *const lines[] = {
@@ -99,7 +89,6 @@ static void test_skipped_cells_read_blank(void)
         "a…b\033[1Cc",
         "\033[1m\033[38;2;1;2;3mab\033[0m\033[2Ccd",
     };
-    /* row_text() reads U+2026 as '?'. */
     static const char *const want[] = { "ab cd   ef", "a?b c", "ab  cd" };
     for (size_t k = 0; k < sizeof(lines) / sizeof(lines[0]); k++) {
         struct wsap_vtcore *whole = tt_new(20, 4);
@@ -131,9 +120,6 @@ static void test_skipped_cells_read_blank(void)
     wsap_vtcore_free(bytes);
 }
 
-/* Compare the first rows of both viewports cell by cell. Each terminal gets
- * its own snapshot. A cluster has a different handle in each snapshot, so
- * the test compares its code points. */
 static void assert_same_rows(struct wsap_vtcore *a, struct wsap_vtcore *b, int rows)
 {
     struct wsap_vtcore_snapshot *sa = wsap_vtcore_snapshot_new();
@@ -197,7 +183,6 @@ static void test_read_boundaries(void)
         wsap_vtcore_free(actual);
     }
 
-    /* The byte that ends an unfinished sequence is not lost. */
     struct wsap_vtcore *t = tt_new(16, 4);
     write_seq(t, "\xc3XQ");
     assert(tt_cell_cp(t, tt_cell(t, 0, 0)) == 0xFFFD);
@@ -312,9 +297,7 @@ static void test_random_read_boundaries(void)
 static void test_csi_recovery(void)
 {
     static const struct { const char *input, *first, *second; } cases[] = {
-        /* CR and LF run inside the CSI; B ends it as CUD (ECMA-48 5.5). */
         {"A\033[\r\nB!", "A", ""},
-        /* 0xFF cancels the CSI and prints U+FFFD. */
         {"A\033[\xff" "BC", "A?BC", ""},
         {"A\033[\033[2JZ", " Z", ""},
         {"\033[ 31mX", "X", ""},
@@ -389,7 +372,6 @@ static void test_parameter_limits(void)
     write_seq(t, "\033[38;5;999999999999999999999mX");
     assert(tt_cell(t, 0, 0)->fg == WSAP_VTCORE_COLOR_FG);
 
-    /* A renderer sees the cursor move to another row. */
     struct wsap_vtcore_snapshot *snap = wsap_vtcore_snapshot_new();
     uint64_t version = view_version(snap, t);
     write_seq(t, "\033[3d");
@@ -666,7 +648,6 @@ static void test_top_region_scrollback(void)
         wsap_vtcore_free(t);
     }
 
-    /* Retain the same history as a full screen after the ring wraps. */
     struct wsap_vtcore *t = tt_new(12, 6);
     struct wsap_vtcore *reference = tt_new(12, 4);
     const char *footer = "\033[5;1H\033[31mPROMPT\r\nSTATUS\033[m\033[1;4r";
@@ -720,7 +701,6 @@ static void test_editor_scrolling(void)
     assert(row_is(t, 0, "HEAD") && row_is(t, 1, "A"));
     assert(row_is(t, 2, "C") && row_is(t, 3, "D") && row_is(t, 4, ""));
     assert(row_is(t, 5, "FOOT"));
-    /* DL moves the cursor to the left margin (xterm). */
     assert(tt_cursor_x(t) == 0 && tt_cursor_y(t) == 2);
     write_seq(t, "\033[L");
     assert(row_is(t, 2, "") && row_is(t, 3, "C") && row_is(t, 4, "D"));
@@ -1061,7 +1041,6 @@ static void test_invalid_utf8_runs(void)
         write_seq(split, "\033[4;1H\n");
         tt_write(bulk, input, n);
         for (size_t i = 0; i < n; i++) tt_write(split, input + i, 1);
-        /* Each byte is a maximal invalid subpart: one U+FFFD each. */
         for (int c = 0; c < 96; c++)
             assert(tt_cell_cp(bulk, tt_cell(bulk, c, 3)) == 0xFFFD);
         for (int c = 0; c < 3; c++)
@@ -1089,8 +1068,6 @@ static void test_recycled_scrollback_blanks(void)
     }
 }
 
-/* Scrolling the view by any amount lands inside the scrollback, and a
- * scroll that cannot move leaves the frame alone. */
 static void test_scroll_view_clamps_extreme_deltas(void)
 {
     struct wsap_vtcore *t = tt_new(20, 3);
@@ -1174,7 +1151,6 @@ static void test_full_width_line_endings(void)
     wsap_vtcore_free(t);
 }
 
-/* CRLFs at every mask boundary, followed by complete or interrupted lines. */
 static void test_batched_line_masks(void)
 {
     static const char *const tails[] = {
@@ -1190,7 +1166,6 @@ static void test_batched_line_masks(void)
             memset(input + n, 'z', 128);
             n += 128;
             struct wsap_vtcore *bulk = tt_new(80, 3), *bytes = tt_new(80, 3);
-            /* A nondefault pen exercises the queued bulk path, not streaming. */
             write_both(bulk, bytes, "\033[3;1H\033[31m");
             tt_write(bulk, input, n);
             for (size_t i = 0; i < n; i++) tt_write(bytes, input + i, 1);
@@ -1205,16 +1180,6 @@ static void test_batched_line_masks(void)
     }
 }
 
-/* Compare the screen, cursor, and scrollback for each input mode.
- *
- * Input mode          | Byte-wise | 64 KiB bulk | 512 KiB single write
- * Raw LF              | Reference | Must match  | Must match
- * Newline conversion  | Reference | Must match  | Must match
- *
- * The input length selects the stream path. The 512 KiB write also has
- * enough newlines to test the backward scan when newline conversion is
- * active.
- */
 static void test_bulk_line_flood(void)
 {
     static const struct wsap_vtcore_vector2i geoms[] = {
@@ -1252,7 +1217,6 @@ static void test_bulk_line_flood(void)
         unsigned flags = g % 2 != 0 ? WSAP_VTCORE_FEED_ONLCR : 0;
         for (size_t i = 0; i < n; i += 65536)
             wsap_vtcore_feed(bulk, buf + i, n - i < 65536 ? n - i : 65536, flags);
-        /* One large write has enough newlines to discard old output. */
         wsap_vtcore_feed(stream, buf, n, flags);
         for (size_t i = 0; i < n; i++) wsap_vtcore_feed(bytes, buf + i, 1, flags);
 
@@ -1272,7 +1236,6 @@ static void test_bulk_line_flood(void)
     }
 }
 
-/* Dense LF input must keep its text through edits and buffer moves. */
 static void test_ascii_flood_edits(void)
 {
     static const int widths[] = {1, 2, 7, 120};
@@ -1316,8 +1279,6 @@ static void test_ascii_flood_edits(void)
     }
 }
 
-/* Newline modes: 0 is a plain line feed, 1 is LNM (CSI 20 h), and 2 is
- * newline conversion on the feed. */
 static void test_margin_linefeed_bursts(void)
 {
     static const char *bursts[] = {
@@ -1370,11 +1331,6 @@ static void test_alt_linefeed_burst_after_resize(void)
     wsap_vtcore_free(bytes);
 }
 
-/*
- * Regression: the alternate screen scrolls by moving its top row. A resize
- * changed the row count but kept that top row, so rows came back out of
- * order, and further line feeds indexed past the row tables.
- */
 static void test_alt_resize_keeps_row_order(void)
 {
     const char *setup = "\033[?1049h\033[5;1H\n\n\n"
@@ -1387,7 +1343,6 @@ static void test_alt_resize_keeps_row_order(void)
     assert(row_is(grow, 5, "") && row_is(grow, 7, ""));
     wsap_vtcore_free(grow);
 
-    /* The cursor is on the last row, so shrinking scrolls A and B off. */
     struct wsap_vtcore *shrink = tt_new(20, 5);
     write_seq(shrink, setup);
     tt_resize(shrink, 20, 3);
@@ -1402,7 +1357,6 @@ static void test_alt_shrink_then_flood(void)
     for (int i = 0; i < 35; i++)
         tt_write(t, "x\n", 2);
     tt_resize(t, 80, 10);
-    /* More lines than the ring holds, one write per line. */
     char line[32];
     for (int i = 0; i < 6000; i++) {
         int len = snprintf(line, sizeof(line), "\rline %04d\n", i);
@@ -1412,8 +1366,6 @@ static void test_alt_shrink_then_flood(void)
     wsap_vtcore_free(t);
 }
 
-/* Regression: ED 3 on the alternate screen kept the history count, so the
- * normal screen came back with blank history rows. */
 static void test_alt_erase_scrollback(void)
 {
     struct wsap_vtcore *t = tt_new(20, 5);
@@ -1425,8 +1377,6 @@ static void test_alt_erase_scrollback(void)
     wsap_vtcore_free(t);
 }
 
-/* Regression: a snapshot knew its terminal by address. A new terminal that
- * reused a freed one's memory then showed the old terminal's rows. */
 static void test_snapshot_follows_new_terminal(void)
 {
     struct wsap_vtcore_snapshot *s = wsap_vtcore_snapshot_new();
@@ -1441,8 +1391,6 @@ static void test_snapshot_follows_new_terminal(void)
     wsap_vtcore_snapshot_free(s);
 }
 
-/* The getters take a NULL snapshot and an out-of-range row like a NULL
- * terminal: they return the empty value. The view keeps its address. */
 static void test_snapshot_null_and_range(void)
 {
     uint32_t cps[4] = { 0xAAAA, 0xAAAA, 0xAAAA, 0xAAAA };
@@ -1472,15 +1420,12 @@ static void test_snapshot_null_and_range(void)
     struct wsap_vtcore_span off = wsap_vtcore_snapshot_row_selection(s, 2);
     assert(off.begin == 0 && off.end == 0);
 
-    /* A cluster cell gives its count with no buffer, and with cap 0 it
-     * writes nothing. */
     uint32_t text = wsap_vtcore_snapshot_row(s, 0)[0].text;
     assert(text & WSAP_VTCORE_TEXT_CLUSTER);
     assert(wsap_vtcore_snapshot_cluster(s, text, NULL, 0) == 2);
     assert(wsap_vtcore_snapshot_cluster(s, text, cps, 0) == 2);
     assert(cps[0] == 0xAAAA);
     assert(wsap_vtcore_snapshot_cluster(s, text, NULL, 4) == 2);
-    /* A plain code point is one code point, and cap 0 writes nothing. */
     assert(wsap_vtcore_snapshot_cluster(s, 'a', NULL, 0) == 1);
     assert(wsap_vtcore_snapshot_cluster(s, 'a', cps, 0) == 1);
     assert(cps[0] == 0xAAAA);
@@ -1535,7 +1480,6 @@ static void test_string_payloads(void)
     }
 }
 
-/* wsap_vtcore_new() refuses a name that a DCS reply could echo unsafely. */
 static void test_host_name_rejected(void)
 {
     static const char *const bad[] = {
@@ -1585,8 +1529,6 @@ static void test_lnm_mode_alone_is_not_sticky(void)
     wsap_vtcore_free(t);
 }
 
-/* A C0 control ends an unfinished UTF-8 sequence, which prints U+FFFD. A
- * lone continuation byte prints U+FFFD too. */
 static void test_c0_ends_utf8_sequence(void)
 {
     static const char input[] = "\xc3\n\xa9z";
@@ -1601,9 +1543,6 @@ static void test_c0_ends_utf8_sequence(void)
     }
 }
 
-/* A bulk stream of long lines must behave like byte-wise input after every
- * later operation that touches those rows: overwriting, scroll-region
- * rotation, reflow, alternate-screen round trips, and selection. */
 static void test_bulk_rows_survive_edits(void)
 {
     enum { COLS = 40, ROWS = 6 };
@@ -1619,20 +1558,17 @@ static void test_bulk_rows_survive_edits(void)
     for (size_t i = 0; i < sizeof(flood); i++) tt_write(bytes, flood + i, 1);
     assert_same_screen(bulk, bytes);
 
-    /* Overwrite the middle of a streamed row, then erase part of another. */
     const char *edit = "\033[m\033[2;5HXYZ\033[3;1H\033[K\033[4;10H\033[1K";
     write_seq(bulk, edit);
     write_seq(bytes, edit);
     assert_same_screen(bulk, bytes);
     assert(tt_view_cell(bulk, 4, 1)->text == 'X');
 
-    /* Scroll region rotation moves row pointers between ring slots. */
     const char *region = "\033[2;5r\033[5;1H\n\n\033[T\033[r";
     write_seq(bulk, region);
     write_seq(bytes, region);
     assert_same_screen(bulk, bytes);
 
-    /* Alternate screen and back, then view history. */
     write_seq(bulk, "\033[?1049hALT\033[?1049l");
     write_seq(bytes, "\033[?1049hALT\033[?1049l");
     assert_same_screen(bulk, bytes);
@@ -1644,7 +1580,6 @@ static void test_bulk_rows_survive_edits(void)
     wsap_vtcore_scroll_to(bulk, 0);
     wsap_vtcore_scroll_to(bytes, 0);
 
-    /* Selection text reads rows straight from history. */
     wsap_vtcore_scroll(bulk, 50);
     wsap_vtcore_scroll(bytes, 50);
     tt_select(bulk, 0, 0, COLS - 1, 2);
@@ -1656,7 +1591,6 @@ static void test_bulk_rows_survive_edits(void)
     wsap_vtcore_scroll_to(bulk, 0);
     wsap_vtcore_scroll_to(bytes, 0);
 
-    /* Reflow narrower and wider keeps history identical. */
     tt_resize(bulk, 29, ROWS);
     tt_resize(bytes, 29, ROWS);
     assert_same_screen(bulk, bytes);
@@ -1689,8 +1623,6 @@ static void test_erase_keeps_used_rows(void)
 
 static void test_blank_rows(void)
 {
-    /* ED 2 pushes used rows to scrollback; the erased screen reads as
-     * default-color blanks through every accessor. */
     struct wsap_vtcore *t = tt_new(10, 4);
     write_seq(t, "one\r\ntwo\r\nthree");
     write_seq(t, "\033[2J");
@@ -1706,7 +1638,6 @@ static void test_blank_rows(void)
     assert(row_is(t, 0, "one") && row_is(t, 1, "two") && row_is(t, 2, "three"));
     wsap_vtcore_scroll_to(t, 0);
 
-    /* A scrolled-in blank row reads as blanks, then accepts new text. */
     write_seq(t, "\033[4;1Hlast\r\n\r\n\r\n");
     for (int x = 0; x < 10; x++)
         assert(tt_view_cell(t, x, 3)->text == ' ');
@@ -1714,7 +1645,6 @@ static void test_blank_rows(void)
     assert(row_is(t, 3, "     hi"));
     wsap_vtcore_free(t);
 
-    /* A spaces-only row does not extend ED 2 history. */
     t = tt_new(10, 6);
     write_seq(t, "top\033[6;1H     ");
     assert(tt_history(t) == 0);
@@ -1724,14 +1654,12 @@ static void test_blank_rows(void)
     assert(row_is(t, 0, "top"));
     wsap_vtcore_scroll_to(t, 0);
 
-    /* Blank rows survive a resize and still read as blanks. */
     tt_resize(t, 20, 6);
     for (int x = 0; x < 20; x++)
         assert(tt_cell(t, x, 5)->text == ' ' &&
                tt_cell(t, x, 5)->bg == WSAP_VTCORE_COLOR_BG);
     wsap_vtcore_free(t);
 
-    /* Erasing a blank row with a color still produces a colored row. */
     t = tt_new(10, 4);
     write_seq(t, "\033[2J\033[41m\033[2K");
     assert(tt_cell(t, 0, 0)->bg != WSAP_VTCORE_COLOR_BG);
@@ -1780,9 +1708,6 @@ static void test_csi_text_chunks(void)
     }
 }
 
-/* A terminal grows past its first reservation: taller than 256 rows and
- * wider than 2048 columns, on both screens. History and the saved screen
- * keep their text. */
 static void test_grow_past_reservation(void)
 {
     struct wsap_vtcore *t = tt_new(40, 10);
@@ -1888,7 +1813,6 @@ static void test_concurrent_feed_and_snapshot(void)
         struct wsap_vtcore_cursor c = wsap_vtcore_cursor(t);
         (void)c;
 
-        /* Every reader is safe while another thread feeds. */
         wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ .x = 0, .y = 0 }, false, WSAP_VTCORE_SELECT_WORD);
         wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = 40, .y = 10 }, false);
         (void)wsap_vtcore_has_selection(t);
@@ -1906,9 +1830,6 @@ static void test_concurrent_feed_and_snapshot(void)
     bool ok = wsap_vtcore_snapshot_update(snap, t);
     assert(ok);
 
-    /* The reader changed only the view and the selection. The screen and
-     * the history must match a terminal that got the same bytes on one
-     * thread. */
     struct wsap_vtcore *ref = wsap_vtcore_new(&opt);
     assert(ref != NULL);
     for (int i = 0; i < 2000; i++)
@@ -1972,8 +1893,6 @@ static void *lock_probe_worker(void *arg)
     return NULL;
 }
 
-/* wsap_vtcore_lock() nests on the owning thread. Another thread waits until the
- * last wsap_vtcore_unlock(). */
 static void test_lock_reentrant_across_threads(void)
 {
     struct wsap_vtcore *t = wsap_vtcore_new(&(struct wsap_vtcore_options){
@@ -2042,7 +1961,6 @@ int main(void)
     assert(wsap_vtcore_unicode_width(0x1FAEB) == 2);
     assert(wsap_vtcore_unicode_emoji_presentation(0x1FAEB));
     {
-        /* A Jamo Extended-B vowel draws inside its leading consonant. */
         struct wsap_vtcore *t = wsap_vtcore_new(&(struct wsap_vtcore_options){ .size = { .x = 10, .y = 2 } });
         wsap_vtcore_feed(t, "\xe1\x84\x80\xed\x9e\xb0", 6, 0);
         assert(wsap_vtcore_cursor(t).pos.x == 2);
@@ -2457,8 +2375,6 @@ int main(void)
     free(text);
     wsap_vtcore_free(t);
 
-    /* BS with a pending wrap clears the wrap and moves left from the last
-     * column, as in xterm and the VT100. */
     t = tt_new(5, 2);
     write_seq(t, "12345");
     assert(row_is(t, 0, "12345"));
@@ -2473,7 +2389,6 @@ int main(void)
     assert(tt_cursor_x(t) == 3 && tt_cursor_y(t) == 0);
     wsap_vtcore_free(t);
 
-    /* A renderer sees each cursor move within the row. */
     t = tt_new(10, 2);
     struct wsap_vtcore_snapshot *snap = wsap_vtcore_snapshot_new();
     write_seq(t, "abc");
@@ -2512,7 +2427,6 @@ int main(void)
     assert(row_is(t, 0, "$ /mnt/work"));
     wsap_vtcore_free(t);
 
-    /* A renderer sees both switches between the screens. */
     t = tt_new(20, 4);
     snap = wsap_vtcore_snapshot_new();
     write_seq(t, "$ /mnt/work");

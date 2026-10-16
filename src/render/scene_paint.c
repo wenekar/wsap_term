@@ -137,8 +137,6 @@ static void paint_rounded_rect(uint32_t *px, int width, int height,
     }
 }
 
-/* painted is the box that casts the shadow, grown by the extent of the
- * blur. Every pixel is one read from the shadow mask and one blend. */
 static void paint_shadow(uint32_t *px, int width, int height,
                          struct rect2i painted, int radius, int blur,
                          struct rect2i clip, uint32_t color)
@@ -344,10 +342,6 @@ bool ui_scene_paint_clipped(struct font_instance *fi, uint32_t *px, int width, i
         const struct ui_scene_op *op = &scene->ops[i];
         switch (op->kind) {
         case UI_SCENE_OP_PUSH_CLIP:
-            /* clips_cap counts the clips open when the scene was built, which
-             * is not the deepest nesting its ops contain. Do not push past the
-             * stack. Keep narrowing the clip either way, so the painted area
-             * stays correct; only the restore level is lost. */
             if (clip_n < clip_cap)
                 clip_stack[clip_n++] = clip;
             clip = rect2i_intersect(clip, op->rect);

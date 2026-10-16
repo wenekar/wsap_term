@@ -6,10 +6,6 @@
 #include "ui/yasl/client.h"
 #include "ui/yasl/window.h"
 
-/* The app asks every window for terminal data, such as the frame source.
- * A window that shows other content must answer as no terminal, and must
- * not read its content as one. */
-
 static const int other_kind;
 
 int main(void)

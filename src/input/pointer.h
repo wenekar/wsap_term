@@ -6,7 +6,6 @@
 
 #include "util/geom.h"
 
-/* Logical buttons. These values are independent of terminal protocols. */
 enum pointer_button {
     POINTER_BUTTON_PRIMARY = 0,
     POINTER_BUTTON_MIDDLE,
@@ -30,8 +29,6 @@ enum pointer_kind : uint8_t {
     PTR_LEAVE,
 };
 
-/* What made a pointer event. A touch or pen event moves and presses
- * like a mouse. */
 enum pointer_device : uint8_t {
     POINTER_DEVICE_MOUSE = 0,
     POINTER_DEVICE_TOUCH,
@@ -39,12 +36,8 @@ enum pointer_device : uint8_t {
     POINTER_DEVICE_ERASER,
 };
 
-/* A pen's axes, packed to keep an input event in one cache line. All
- * zero is a pen that reports none of them. */
 struct pointer_pen {
-    /* 0 to 65535, as the tablet reports it. */
     uint16_t pressure;
-    /* Degrees from the perpendicular, toward positive x and y. */
     int8_t tilt_x, tilt_y;
 };
 
@@ -66,7 +59,6 @@ static inline struct pointer_event pointer_event(
     };
 }
 
-/* Wheel events name their direction. */
 static inline bool pointer_wheel_is_horizontal(int button)
 {
     return button == POINTER_WHEEL_LEFT || button == POINTER_WHEEL_RIGHT;

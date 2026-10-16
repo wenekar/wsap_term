@@ -12,11 +12,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The terminal view: the widget over the terminal grid. It is the default
- * focus, so it takes keys and text. It takes the pointer for links,
- * selection, mouse reporting, scrolling, and the context menu, and draws
- * the input method's composition. The renderer draws the grid itself. */
-
 static struct terminal *view_terminal(const struct ui_widget *widget)
 {
     return ui_container_of((struct ui_widget *)widget, struct terminal,
@@ -40,7 +35,6 @@ static enum pointer_kind pointer_kind(enum ui_pointer_kind k)
     }
 }
 
-/* Terminal state changed under the pointer: draw the next frame. */
 static void changed(struct terminal_view *view)
 {
     ui_widget_invalidate(&view->widget, UI_WIDGET_INVALIDATE_PAINT);
@@ -55,8 +49,6 @@ static struct vector2i cell_at(const struct tab *t, struct vector2i local)
     };
 }
 
-/* A pointer drag selects text unless the program reads the mouse. The
- * alternate screen has no history to select into, so it counts as reading. */
 bool terminal_pointer_selects_text(const struct wsap_vtcore *t)
 {
     if (!t)
@@ -65,15 +57,12 @@ bool terminal_pointer_selects_text(const struct wsap_vtcore *t)
     return m.mouse == WSAP_VTCORE_MOUSE_OFF && !m.alternate;
 }
 
-/* A button passes to term by value, so both enums must keep one order. */
 _Static_assert(POINTER_BUTTON_NONE == (int)WSAP_VTCORE_MOUSE_BUTTON_NONE &&
                POINTER_BUTTON_EXTRA_4 == (int)WSAP_VTCORE_MOUSE_BUTTON_EXTRA_4 &&
                POINTER_WHEEL_UP == (int)WSAP_VTCORE_MOUSE_WHEEL_UP &&
                POINTER_WHEEL_RIGHT == (int)WSAP_VTCORE_MOUSE_WHEEL_RIGHT,
                "pointer and term mouse buttons differ");
 
-/* Sends the event to the program when it reads the mouse. True when the
- * program took it. */
 static bool report_mouse(struct window *w, struct tab *t,
                          const struct ui_pointer_event *p, struct vector2i local)
 {
@@ -98,7 +87,6 @@ static void scroll_lines(struct window *w, struct tab *t, int lines)
 {
     struct wsap_vtcore_modes modes_now = wsap_vtcore_modes(t->session.term);
     if (modes_now.alternate && modes_now.mouse == WSAP_VTCORE_MOUSE_OFF) {
-        /* The alternate screen has no history: the keys scroll the program. */
         struct wsap_vtcore_modes modes = terminal_input_modes(w);
         struct wsap_vtcore_key_event key = {
             .key = lines > 0 ? WSAP_VTCORE_KEY_UP : WSAP_VTCORE_KEY_DOWN,
@@ -135,8 +123,6 @@ static void select_text(struct window *w, struct tab *t,
     }
 }
 
-/* A secondary press opens the context menu, or goes to the program when
- * it reads the mouse. */
 static void secondary_press(struct window *w, struct tab *t,
                             const struct ui_pointer_event *p,
                             struct vector2i local)
@@ -147,9 +133,6 @@ static void secondary_press(struct window *w, struct tab *t,
         report_mouse(w, t, p, local);
 }
 
-/* The pointer belongs to this window, not to the program: nothing in the
- * program reads it, or Shift forces text selection. The cursor, the
- * context menu, and a drag all ask this, so they agree. */
 static bool pointer_is_local(struct window *w, const struct tab *t)
 {
     return (window_modifiers(w) & INPUT_MOD_SHIFT) ||
@@ -171,7 +154,6 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
     }
     if (event->kind == UI_EVENT_KEY) {
         const struct input_key_event *key = event->data.key.native;
-        /* Without bytes, the key's text still goes to the UI as text. */
         if (!key || !terminal_key(w, key))
             ui_surface_keep_key_text(ui_widget_surface(widget));
         return true;
@@ -211,8 +193,6 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
     }
     wsap_vtcore_text_free(url);
 
-    /* A smooth scroll gathers into whole lines. Each whole step goes to
-     * the program as one wheel report, or scrolls the view. */
     if (p->kind == UI_POINTER_SCROLL && !ui_pointer_is_horizontal_wheel(p) &&
         (p->scroll_lines || p->scroll_delta != 0.0f)) {
         int lines = p->scroll_lines;
@@ -256,8 +236,6 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
     return false;
 }
 
-/* Text, a link, or the shape the program asks for. With the program
- * reading the mouse, Shift selects as if it did not. */
 static enum ui_cursor view_cursor(const struct ui_widget *widget,
                                   struct vector2i pos)
 {
@@ -287,8 +265,6 @@ static struct {
     ui_part_id drop_target;
 } view_parts;
 
-/* Interns the part names once for the process. Every later call returns
- * at once. */
 static void view_parts_init(void)
 {
     if (view_parts.drop_target)
@@ -296,7 +272,6 @@ static void view_parts_init(void)
     view_parts.drop_target = ui_part_intern("terminal-drop-target");
 }
 
-/* A drop the view would take tints it and rings it. */
 static void paint_drop_hover(const struct ui_widget *widget,
                              struct ui_paint_context *paint)
 {
@@ -353,8 +328,6 @@ static void view_paint(const struct ui_widget *widget,
     }, p->fg);
     if (p->cursor_begin < 0)
         return;
-    /* A range is the conversion target: it gets a heavier underline. A
-     * plain caret is a bar. */
     int x0 = box.x + geom_sat_i((int64_t)ui_text_run_cells(
                  p->text, (size_t)p->cursor_begin) * style.advance);
     int x1 = box.x + geom_sat_i((int64_t)ui_text_run_cells(
@@ -468,7 +441,6 @@ static bool terminal_view_accessibility_text(struct terminal_view *view,
     int rows = term_view->size.y;
     int cols = term_view->size.x;
     int last_row = -1;
-    /* Find the last row with content or selection. Scan backwards to exit early. */
     for (int y = rows - 1; y >= 0; y--) {
         struct wsap_vtcore_span selection = wsap_vtcore_snapshot_row_selection(snapshot, y);
         if (selection.end > selection.begin) {
@@ -603,8 +575,6 @@ static bool view_accessibility(const struct ui_widget *widget,
     return true;
 }
 
-/* The view's own deadlines: the end of the visual bell and the next blink
- * flip. The window's UI timer wakes the frame at the earlier one. */
 static uint64_t view_tick(struct ui_widget *widget, uint64_t now_ms)
 {
     const struct terminal_view *view = view_of(widget);
@@ -625,7 +595,6 @@ static const struct ui_widget_ops VIEW_OPS = {
     .key_release = true,
 };
 
-/* The scrollview's bar asks for an offset. The view applies it. */
 static bool scrollview_action(struct ui_widget *source,
                               const struct ui_action *action, void *userdata)
 {
@@ -639,8 +608,6 @@ static bool scrollview_action(struct ui_widget *source,
     return true;
 }
 
-/* The scrollview holds the view. It starts in line mode, so the view fills
- * the viewport until the first prepare sets the metrics. */
 void terminal_view_init(struct terminal *tw)
 {
     view_parts_init();
@@ -691,7 +658,6 @@ void terminal_view_set_preedit(struct terminal *tw, const char *text,
         memcpy(next.text, text, off);
     else
         next = (struct terminal_preedit){0};
-    /* A caret past the kept text sits at its end. */
     bool shown = off && cursor_begin >= 0;
     next.cursor_begin = shown ? (cursor_begin < (int)off ? cursor_begin : (int)off) : -1;
     next.cursor_end = shown ? (cursor_end < (int)off ? cursor_end : (int)off) : -1;

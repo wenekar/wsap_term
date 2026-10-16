@@ -14,8 +14,6 @@ static bool blinking(const struct window *w)
     return cursor.visible && cursor.blink;
 }
 
-/* The cursor flips every half period, counted from the last keystroke in
- * the active terminal; the draw path computes the same phase. */
 uint64_t terminal_next_blink_ms(struct window *w, uint64_t now_ms)
 {
     if (!blinking(w))

@@ -1,17 +1,10 @@
 #ifndef WSAP_TEST_FLOOD_H
 #define WSAP_TEST_FLOOD_H
 
-/*
- * Output that floods a terminal, for the renderer benchmarks. Each kind is
- * deterministic for a seed, so two builds see the same text.
- */
-
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
-/* Output that floods the terminal. Each call fills buf with the next
- * chunk of one kind of output. */
 enum flood_kind { FLOOD_BYTES, FLOOD_PRINTABLE, FLOOD_CODE, FLOOD_LOG };
 
 static inline size_t flood_chunk(enum flood_kind kind, uint32_t *seed, char *buf, size_t cap)

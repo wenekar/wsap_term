@@ -7,8 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Grows *buf so that it holds at least need elements of size elem.
- * Capacity doubles. On failure *buf and *cap do not change. */
 static inline bool util_grow(void *buf, int *cap, int need, size_t elem)
 {
     if (need <= *cap)

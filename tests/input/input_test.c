@@ -147,8 +147,6 @@ int main(void)
     }
 
     {
-        /* A diagonal swipe sends both axes. Steps on one axis fold
-         * together; the two axes stay apart. */
         struct input_queue q = {0};
         struct input_event down = {
             .kind = INPUT_MOUSE,

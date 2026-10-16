@@ -14,7 +14,6 @@ static __thread hb_buffer_t *shape_buffer;
 
 #define RASTER_CACHE_SIZE 16384
 
-/* 32 bytes: the cache is probed on every glyph the fitter places. */
 struct raster_entry {
     FT_BitmapGlyph glyph;
     int advance_px;
@@ -76,8 +75,6 @@ static unsigned raster_hash(int slot, uint32_t gid, unsigned style)
     return (unsigned)h & (RASTER_CACHE_SIZE - 1);
 }
 
-/* raster_entry.style holds the variant, RASTER_OBLIQUE, and
- * RASTER_EMBOLDEN. */
 enum { RASTER_OBLIQUE = 4, RASTER_EMBOLDEN = 8 };
 _Static_assert((FONT_STYLE_VARIANT_MASK & (RASTER_OBLIQUE | RASTER_EMBOLDEN)) == 0,
                "the synthesis bits sit above the variant bits");
@@ -274,7 +271,6 @@ enum font_shape_result font_shape(int slot, const uint32_t *cps, int len,
     bool emoji = faces[slot].is_emoji;
     bool bold = (flags & FONT_STYLE_BOLD) && !emoji;
 
-    /* An emoji face has no styled variants. */
     enum font_variant variant = FONT_VARIANT_PLAIN;
     enum font_variant want = emoji ? FONT_VARIANT_PLAIN : font_variant_of(flags);
     if (want)
@@ -516,10 +512,6 @@ bool font_fit_cells(const struct shaped_run *run, int n_cells, struct glyph *cel
     struct box fitted = ft_place_ink(ri.left, -ri.top, run_w, run_h,
                                      n_cells * GLYPH_CELL_W, n_cells * GLYPH_CELL_W,
                                   GLYPH_CELL_H, false);
-    /* A cell the blit covered must hold ink. A cell it did not cover is
-     * blank by definition: the run substituted a ligature, or the cell was
-     * a space. Rejecting those turned every run with a comment ligature or
-     * a space into the most expensive, uncached result. */
     uint8_t covered[FONT_RUN_MAX];
     memset(covered, 0, sizeof(covered[0]) * (size_t)n_cells);
     for (int i = 0; i < ri.drawn; i++) {

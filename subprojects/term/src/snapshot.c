@@ -4,28 +4,21 @@
 #include <stdlib.h>
 #include <string.h>
 
-/*
- * A snapshot keeps one converted copy of each viewport row. An update
- * copies a row again only when the terminal reports a new key for it.
- * Cluster cells refer to an arena of [length, code points...] records that
- * the snapshot owns, so a renderer never reads the terminal's cluster table.
- */
 struct wsap_vtcore_snapshot {
     struct wsap_vtcore_view view;
     uint32_t palette[WSAP_VTCORE_PALETTE_SIZE];
-    uint64_t source;                /* serial of the terminal it copied */
+    uint64_t source;
 
-    struct wsap_vtcore_cell *cells;        /* rows * cols */
-    struct wsap_vtcore_cell *stage;        /* rows * cols: changed rows, before apply() */
-    uint64_t *keys;                 /* per row */
-    uint32_t *row_clusters;         /* arena records each row holds */
-    struct wsap_vtcore_span *selection;    /* per row */
+    struct wsap_vtcore_cell *cells;
+    struct wsap_vtcore_cell *stage;
+    uint64_t *keys;
+    uint32_t *row_clusters;
+    struct wsap_vtcore_span *selection;
     size_t cell_cap;
     int row_cap;
 
     uint32_t *arena;
     uint32_t arena_len, arena_cap, arena_dead;
-    /* A rebuild writes its records here, then swaps it with arena. */
     uint32_t *spare;
     uint32_t spare_cap;
 };
@@ -52,8 +45,6 @@ void wsap_vtcore_snapshot_free(struct wsap_vtcore_snapshot *s)
     free(s);
 }
 
-/* Make room for cols x rows. A failed call keeps the old contents, so the
- * snapshot stays readable. */
 static bool reserve(struct wsap_vtcore_snapshot *s, int cols, int rows)
 {
     size_t cells = (size_t)cols * (size_t)rows;
@@ -85,17 +76,12 @@ static bool reserve(struct wsap_vtcore_snapshot *s, int cols, int rows)
     return true;
 }
 
-/* The arena that phase 1 appends cluster records to: the live arena after
- * its records, or the spare arena for a rebuild. Records past arena_len are
- * not visible, so a failed update leaves nothing behind. */
 struct arena_out {
     uint32_t **buf;
     uint32_t *cap;
     uint32_t len;
 };
 
-/* Make room for need words. False when memory runs out or an offset would not
- * fit below WSAP_VTCORE_TEXT_CLUSTER. */
 static bool arena_reserve(struct arena_out *a, uint64_t need)
 {
     if (need > WSAP_VTCORE_TEXT_CLUSTER)
@@ -111,8 +97,6 @@ static bool arena_reserve(struct arena_out *a, uint64_t need)
     return true;
 }
 
-/* Append a cluster record and set *text to it. False when arena_reserve()
- * fails. */
 static bool arena_add(struct arena_out *a, const struct gstore *g, uint32_t handle,
                       uint32_t *text)
 {
@@ -133,7 +117,6 @@ static bool arena_add(struct arena_out *a, const struct gstore *g, uint32_t hand
     return true;
 }
 
-/* Convert one stored row into dst. False when a cluster record does not fit. */
 static bool convert_row(struct arena_out *a, const struct gstore *g,
                         struct wsap_vtcore_cell *dst, const struct cell *src, int cols)
 {
@@ -157,24 +140,20 @@ static bool convert_row(struct arena_out *a, const struct gstore *g,
     return true;
 }
 
-/* A row that keeps its old copy. */
 #define ROW_KEPT UINT32_MAX
-/* The most arena words reserved so that apply() can convert rows directly. */
 #define DIRECT_MAX_WORDS (1u << 16)
 
-/* What one update does. Phase 1 fills it in and changes no snapshot field. */
 struct plan {
-    bool all;                   /* rebuild every row and swap in the spare arena */
-    int scrolled;               /* rows the content moved up */
-    uint32_t arena_len;         /* arena length with the new records */
-    const uint64_t *keys;       /* key of each new row */
-    const uint32_t *words;      /* arena words of each staged row, or ROW_KEPT */
-    int staged;                 /* rows that are not ROW_KEPT */
-    bool direct;                /* apply() converts the rows; the arena has room */
-    const int *c0, *c1;         /* selected columns of each row */
+    bool all;
+    int scrolled;
+    uint32_t arena_len;
+    const uint64_t *keys;
+    const uint32_t *words;
+    int staged;
+    bool direct;
+    const int *c0, *c1;
 };
 
-/* Phase 2: write the plan into the snapshot. Nothing here can fail. */
 static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, const struct plan *p)
 {
     int cols = t->cols, rows = t->rows;
@@ -191,9 +170,6 @@ static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, c
 
     bool changed = p->all;
     size_t row_bytes = (size_t)cols * sizeof(struct wsap_vtcore_cell);
-    /* Staged rows: copy the smaller part. Either the kept rows go into the
-     * stage, which then becomes the cells, or the staged rows go into the
-     * cells. A scroll moves every kept row anyway, so it swaps. */
     bool swap = !p->direct && (k > 0 || p->staged * 2 > rows);
     if (p->direct && k > 0)
         memmove(s->cells, s->cells + (size_t)k * cols, (size_t)(rows - k) * row_bytes);
@@ -222,7 +198,6 @@ static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, c
         if (!p->all)
             s->arena_dead += s->row_clusters[y];
         if (p->direct) {
-            /* Phase 1 reserved room for the worst case, so this cannot fail. */
             struct arena_out a = { &s->arena, &s->arena_cap, s->arena_len };
             (void)convert_row(&a, t->gstore, s->cells + (size_t)y * cols,
                               wsap_vtcore_screen_view_row(t, y), cols);
@@ -273,8 +248,6 @@ static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, c
         s->view.version++;
 }
 
-/* Phase 1 for one update. Allocates and checks everything that can fail,
- * then hands the plan to apply(). A false return leaves the content as it was. */
 static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, struct wsap_vtcore *t)
 {
     if (!s || !t)
@@ -287,8 +260,6 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
 
     if (!reserve(s, cols, rows))
         return false;
-    /* Scratch for rows above 256: new keys, staged arena words, then the
-     * selection spans. */
     uint64_t stack_keys[256];
     uint32_t stack_words[256];
     int stack[2][256];
@@ -307,7 +278,6 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
     }
     struct plan p = { .keys = new_keys, .words = words, .c0 = c0, .c1 = c1 };
 
-    /* Reclaim cluster records once most of the arena is garbage. */
     if (s->arena_dead > 4096 && s->arena_dead * 2 > s->arena_len)
         all = true;
 
@@ -320,7 +290,6 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
 
     if (!all && rows > 1) {
         int cand_k = 0;
-        /* Find candidate scroll offset k by checking where top rows moved. */
         uint64_t key0 = new_keys[0];
         if (key0) {
             for (int k = 1; k < rows; k++) {
@@ -360,8 +329,6 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
         }
     }
 
-    /* Mark the rows that change. A row that scrolled in from below has no
-     * old copy. */
     for (int y = 0; y < rows; y++) {
         if (!all && y + scrolled < rows && s->keys[y + scrolled] == new_keys[y]) {
             words[y] = ROW_KEPT;
@@ -371,10 +338,6 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
         }
     }
 
-    /* Nothing a reader sees may change before apply(). A few rows convert in
-     * apply(), straight into the cells, once the arena has room for the most
-     * they can add. More rows convert here into the stage, with their cluster
-     * records after the live ones, or in the spare arena for a rebuild. */
     struct arena_out a = all ? (struct arena_out){ &s->spare, &s->spare_cap, 0 }
                              : (struct arena_out){ &s->arena, &s->arena_cap, s->arena_len };
     uint64_t worst = (uint64_t)p.staged * (uint64_t)cols * (1 + WSAP_VTCORE_GRAPHEME_MAX_LEN);

@@ -9,7 +9,6 @@
 static uint8_t unicode_fast_class[65536];
 static int8_t unicode_width_bmp[65536];
 
-/* Runs of code points with one fast class, for the AVX-512 width cache. */
 #define WSAP_VTCORE_WIDTH_RUNS_MAX 1024
 static uint16_t width_run_lo[WSAP_VTCORE_WIDTH_RUNS_MAX];
 static uint16_t width_run_hi[WSAP_VTCORE_WIDTH_RUNS_MAX];
@@ -179,7 +178,6 @@ static inline void store_narrow_cells(uint64_t * restrict dst, __m512i base, __m
 #undef WSAP_VTCORE_NARROW_QUAD
 }
 
-/* Both cell and history writers validate and classify the same UTF-8 block. */
 WSAP_VTCORE_TARGET_AVX512
 static inline bool classify_3byte_block(__m512i in, struct width_ranges *ranges,
                                        struct width_cache *wc, __m512i *cps)
@@ -239,8 +237,6 @@ decode_3byte_blocks(uint64_t * restrict dst, const char * restrict buf, int len,
     return i;
 }
 
-/* decode_3byte_blocks() that writes the history format: a narrow block
- * copies its 48 bytes, a wide block puts 0xF5 before each character. */
 WSAP_VTCORE_TARGET_AVX512
 static WSAP_VTCORE_NOINLINE int
 text_3byte_blocks(uint8_t * restrict dst, const char * restrict buf, int len, int cols_left,
@@ -291,9 +287,6 @@ struct text_run_bytes wsap_vtcore_text_run_bytes(uint8_t *restrict dst, const ch
 {
     if (WSAP_VTCORE_EXPECT(last == 0x200D || wsap_vtcore_grapheme_is_handle(last), 0))
         return (struct text_run_bytes){ .last = last, .narrow = true };
-    /* Unlike wsap_vtcore_text_run(), this fills up to the edge and up to the end of
-     * buf: the cells path writes those characters one by one with the same
-     * result, and a text row should not settle for them. */
     int i = 0, cx = 0, o = 0, chars = 0;
     bool wide = false, narrow = true;
     (void)wc;
@@ -383,7 +376,6 @@ static inline int try_3byte_blocks(uint64_t * restrict dst, const char * restric
                               base_narrow_quad, wc, out_cols, last_cp);
 }
 
-/* Two wide cells side by side: cp and next_cp. */
 WSAP_VTCORE_TARGET_AVX512
 static inline void store_wide_pair(uint64_t *dst, uint32_t fg, uint32_t bg, uint32_t flags,
                                    uint32_t cp, uint32_t next_cp)
@@ -458,12 +450,6 @@ static inline uint64_t *store_cell_wide(uint64_t * restrict dst,
 }
 
 #if defined(WSAP_VTCORE_KERNEL_AVX2)
-/*
- * Decode runs of 3-byte UTF-8 four code points at a time. A quad stops the
- * run when a byte is not a 3-byte sequence, a code point is overlong or a
- * surrogate, or a code point has no fast width class. The scalar loop then
- * handles that code point, so both paths store the same cells.
- */
 WSAP_VTCORE_TARGET_AVX2
 static inline int decode_3byte_quads(uint64_t **dst_io, const char *buf, int len,
                                      int cols_left, const struct cell_bases *b,
@@ -521,8 +507,6 @@ static inline int decode_3byte_quads(uint64_t **dst_io, const char *buf, int len
 }
 #endif
 
-/* One body for every level. isa is a constant in each copy below, so each
- * copy keeps only its own kernels. */
 static inline WSAP_VTCORE_ALWAYS_INLINE struct text_run_result
 text_run_body(struct cell *restrict row, const char *restrict buf, int len, int max_cols,
               uint32_t fg, uint32_t bg, uint32_t flags, uint32_t last,

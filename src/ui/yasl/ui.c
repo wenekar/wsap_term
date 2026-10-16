@@ -14,7 +14,6 @@ struct window_ui *window_ui_of(const struct window *w)
     return w->ui.mounted ? ui_of(w) : NULL;
 }
 
-/* The UI font follows the surface's scale. */
 static void update_ui_font(struct window *w)
 {
     struct window_ui *ui = ui_of(w);
@@ -79,7 +78,6 @@ void window_ui_restyle(struct window *w)
     if (surface)
         ui_surface_resize(&ui->screen, window_size(w));
     ui_surface_set_sheet(&ui->screen, ui->sheet);
-    /* A theme preview repaints an open menu in its popups too. */
     for (int i = 0; i < ui->menu_popups; i++) {
         ui_surface_set_sheet(&ui->menu_popup[i].ui, ui->sheet);
         ui_surface_set_scale(&ui->menu_popup[i].ui, scale);
@@ -132,7 +130,6 @@ void window_ui_configure(struct window *w, struct window_geometry g)
     if (old == scale && vector2i_eq(g.size, ui_surface_viewport(&ui->screen)))
         return;
     if (old != scale) {
-        /* The menu opened at a point in the old pixels. */
         if (old > 0)
             ui->menu_at = (struct vector2i){
                 .x = (int)((float)ui->menu_at.x * scale / old + 0.5f),
@@ -156,8 +153,6 @@ void window_ui_state_changed(struct window *w)
 
 void window_ui_closing(struct window *w)
 {
-    /* Popups go before their parent. Both are safe to destroy inside
-     * their own callbacks: they call back no more. */
     window_menu_close(w);
     window_accessibility_stop(w);
 }

@@ -1,6 +1,3 @@
-# Each directory lists its own sources in its meson.build. This file
-# links them into libraries, lowest layer first. A library uses only the
-# layers above it in this list.
 
 subdir('util')
 subdir('platform')
@@ -15,7 +12,6 @@ subdir('theme')
 subdir('render')
 subdir('terminal')
 subdir('app')
-
 
 base_lib = static_library(
     'wsap-base',

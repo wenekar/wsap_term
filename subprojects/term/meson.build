@@ -15,14 +15,11 @@ project('wsap_vtcore', 'c',
 
 cc = meson.get_compiler('c')
 m_dep = cc.find_library('m', required: false)
-# The writer lock is a pthread mutex on POSIX and an SRWLOCK on Windows.
 thread_dep = dependency('threads')
 if get_option('arch_flag') != ''
   add_project_arguments(get_option('arch_flag'), language: 'c')
 endif
 
-# A host sees include/ only. The sources also find the public headers
-# without the wsap_vtcore/ prefix.
 wsap_vtcore_inc = include_directories('include')
 wsap_vtcore_private_inc = include_directories('src', 'include/wsap_vtcore')
 
@@ -35,15 +32,12 @@ wsap_vtcore_dep = declare_dependency(
 )
 meson.override_dependency('wsap_vtcore', wsap_vtcore_dep)
 
-# The private headers too. Only the wsap_vtcore tests and benchmarks use it.
 wsap_vtcore_internal_dep = declare_dependency(
   include_directories: [wsap_vtcore_inc, wsap_vtcore_private_inc],
   link_with: wsap_vtcore_lib.get_static_lib(),
   dependencies: [m_dep, thread_dep],
 )
 
-# The short forms of wsap_vtcore.h that the tests use. A host project can use
-# them in its own tests.
 wsap_vtcore_test_dep = declare_dependency(
   include_directories: include_directories('tests/helpers'),
   dependencies: wsap_vtcore_dep,

@@ -118,7 +118,6 @@ enum wsap_vtcore_mouse_button {
     WSAP_VTCORE_MOUSE_BUTTON_MIDDLE,
     WSAP_VTCORE_MOUSE_BUTTON_SECONDARY,
     WSAP_VTCORE_MOUSE_BUTTON_NONE,
-    /* Extra buttons 8 through 11 in xterm mouse reporting (encoded as 128..131). */
     WSAP_VTCORE_MOUSE_BUTTON_EXTRA_1,
     WSAP_VTCORE_MOUSE_BUTTON_EXTRA_2,
     WSAP_VTCORE_MOUSE_BUTTON_EXTRA_3,
@@ -139,27 +138,19 @@ enum wsap_vtcore_mouse_event_kind {
 
 struct wsap_vtcore_key_event {
     enum wsap_vtcore_key_action action;
-    uint16_t key;           /* enum wsap_vtcore_key; WSAP_VTCORE_KEY_NONE for a text key */
-    uint16_t keypad;        /* the WSAP_VTCORE_KEY_KP_* key when the key is on the keypad */
-    unsigned mods;          /* enum wsap_vtcore_mod */
-    uint32_t codepoint;     /* the code point of the key without modifiers */
-    uint32_t shifted;       /* the code point of the key with Shift */
-    uint32_t base;          /* the code point of the key in the US layout */
-    uint32_t text;          /* the code point the key types, or 0 */
-    bool text_deferred;     /* an input method sends the text later */
+    uint16_t key;
+    uint16_t keypad;
+    unsigned mods;
+    uint32_t codepoint;
+    uint32_t shifted;
+    uint32_t base;
+    uint32_t text;
+    bool text_deferred;
 };
 
 struct wsap_vtcore_mouse_event {
-    struct wsap_vtcore_vector2i pos;   /* Grid cell coordinates (col, row) */
-    struct wsap_vtcore_vector2i pixel; /* Absolute pixel position in terminal grid */
-    /*
-     * Button identifier:
-     * - Press and release: the button that changed state
-     *   (WSAP_VTCORE_MOUSE_BUTTON_*).
-     * - Motion: the held button for drag events, or
-     *   WSAP_VTCORE_MOUSE_BUTTON_NONE for hover.
-     * - Scroll: the wheel direction (WSAP_VTCORE_MOUSE_WHEEL_*).
-     */
+    struct wsap_vtcore_vector2i pos;
+    struct wsap_vtcore_vector2i pixel;
     int button;
     unsigned mods;
     int scroll_lines;
@@ -167,16 +158,13 @@ struct wsap_vtcore_mouse_event {
     enum wsap_vtcore_mouse_event_kind kind;
 };
 
-/* The keys that are down. An all-zero value has no keys down. */
 struct wsap_vtcore_keyboard_state {
     uint64_t down[(WSAP_VTCORE_KEY_COUNT + 63) / 64];
 };
 
-/* Record a press, repeat, or release in s. */
 WSAP_VTCORE_API void wsap_vtcore_keyboard_update(struct wsap_vtcore_keyboard_state *s, const struct wsap_vtcore_key_event *ev);
 WSAP_VTCORE_API bool wsap_vtcore_keyboard_key_down(const struct wsap_vtcore_keyboard_state *s, enum wsap_vtcore_key key);
 
-/* Kitty keyboard protocol flags, as in wsap_vtcore_modes.keyboard. */
 enum wsap_vtcore_keyboard_flag {
     WSAP_VTCORE_KEYBOARD_DISAMBIGUATE = 1,
     WSAP_VTCORE_KEYBOARD_EVENT_TYPES = 2,
@@ -186,10 +174,10 @@ enum wsap_vtcore_keyboard_flag {
 };
 
 enum wsap_vtcore_input_status {
-    WSAP_VTCORE_INPUT_UNHANDLED = 0,   /* the terminal does not use the event */
-    WSAP_VTCORE_INPUT_CONSUMED,        /* the terminal uses the event but sends nothing */
-    WSAP_VTCORE_INPUT_BYTES,           /* send the len bytes in buf to the program */
-    WSAP_VTCORE_INPUT_BUFFER_FULL,     /* buf is too small; len is 0 */
+    WSAP_VTCORE_INPUT_UNHANDLED = 0,
+    WSAP_VTCORE_INPUT_CONSUMED,
+    WSAP_VTCORE_INPUT_BYTES,
+    WSAP_VTCORE_INPUT_BUFFER_FULL,
 };
 
 struct wsap_vtcore_input_result {
@@ -201,4 +189,4 @@ struct wsap_vtcore_input_result {
 }
 #endif
 
-#endif /* WSAP_VTCORE_INPUT_H */
+#endif

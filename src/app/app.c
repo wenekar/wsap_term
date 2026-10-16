@@ -24,8 +24,6 @@
 static void app_stop(struct app *a);
 static int run_loop(struct app *a);
 
-/* The app owns frame order. UI prepares first, then content updates its
- * snapshot, then render paints once and the surface presents it. */
 static void app_compose_frame(struct window *w, struct window_frame *frame,
                               void *ud)
 {
@@ -176,9 +174,6 @@ static struct terminal_theme_picker app_theme_picker(struct app *a)
     };
 }
 
-/* Windows: the app opens each window and decides what it shows. */
-
-/* The terminal calls this for tear-off and New Window. */
 static struct window *open_window(void *ud, struct tab *tab, const char *cwd,
                                   struct vector2i size)
 {
@@ -243,8 +238,6 @@ static void open_settings(struct app *a)
     }
 }
 
-/* Commands: the windows hand shortcuts to the app. */
-
 static bool host_command(void *ud, struct window *w, enum input_shortcut action)
 {
     (void)w;
@@ -257,13 +250,10 @@ static bool host_command(void *ud, struct window *w, enum input_shortcut action)
     }
 }
 
-/* Host hooks: the window host reports events to the app. */
-
 static void host_empty(void *ud, struct window *last)
 {
     struct app *a = ud;
     app_stats_report_final(&a->stats, last);
-    /* A macOS app stays open without windows, as the platform expects. */
 #ifndef __APPLE__
     yasl_loop_quit(a->loop);
 #endif
@@ -280,8 +270,6 @@ static void host_reopen(void *ud)
     if (!a->host.count)
         app_open_terminal(a, NULL, NULL, (struct vector2i){0});
 }
-
-/* Config: the app applies and saves the settings. */
 
 static bool host_option_set(void *ud, const char *key, const char *value)
 {
@@ -306,15 +294,11 @@ bool app_apply_config(struct app *a, const struct app_config *draft)
     if (!opts_copy(&app_config_spec, &next, draft))
         return false;
     bool new_look = !same_look(&a->config, &next);
-    /* The windows keep their pointers into a->config, which stays in place. */
     struct app_config previous = a->config;
     struct font_settings pf = app_config_font_settings(&previous);
     a->config = next;
     struct font_settings nf = app_config_font_settings(&a->config);
-    /* Before the restyle, which refits the tab fonts. */
     font_apply_settings(&pf, &nf);
-    /* A new look restyles every window when it is published. Other changes
-     * restyle here, and the theme file is not read again. */
     if (!new_look) {
         look_changed(a);
     } else if (!look_apply(a->look, &a->config.palette, a->config.theme)) {
@@ -333,17 +317,12 @@ bool app_save_config(struct app *a, const struct app_config *draft,
     return opts_save(&app_config_spec, draft, a->config_path, keys, count);
 }
 
-/* Signals: the app reacts to routed signals. */
-
-/* Runs from the loop for each routed signal. */
 static void on_signal(void *ud, int signo)
 {
     struct app *a = ud;
     if (signo == SIGCHLD) {
         session_reap_exited();
     } else if (signo == SIGUSR1) {
-        /* The arguments of the start: the same file, and the command line
-         * still wins over it. */
         struct app_config reloaded = {0};
         char *path = NULL;
         if (opts_load(&app_config_spec, &reloaded, a->argc, a->argv, &path) != 0 ||
@@ -365,8 +344,6 @@ bool app_watch_signals(struct app *a)
                                    on_signal, a) == 0;
 }
 
-/* Lifecycle: the app starts, runs, and stops. */
-
 static void free_args(char **args)
 {
     for (char **p = args; p && *p; p++)
@@ -386,7 +363,6 @@ static char **copy_args(int argc, char **argv)
     return copy;
 }
 
-/* Frees what app_create() set up. Safe on a partly built app. */
 static void app_free(struct app *a)
 {
     renderer_destroy(a->renderer);
@@ -470,7 +446,6 @@ void app_destroy(struct app *a)
 {
     if (!a)
         return;
-    /* The inspector must not call the app after this. */
     window_debug_set_hooks(NULL);
     app_stop(a);
     window_host_destroy(&a->host);
@@ -507,7 +482,6 @@ static int run_loop(struct app *a)
         app_stats_stop(&a->stats);
         return 1;
     }
-    /* The display, the terminals and the timers all run on this loop. */
     int result = yasl_loop_run(a->loop);
     if (result < 0)
         fprintf(stderr, "[%s] loop: %s\n", app_name(), strerror(-result));
@@ -516,8 +490,6 @@ static int run_loop(struct app *a)
     return result < 0 ? 1 : 0;
 }
 
-/* Closes every window and ends app_run(). The last close reports the host
- * empty, which also ends the run. */
 static void app_stop(struct app *a)
 {
     while (a->host.count > 0)

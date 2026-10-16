@@ -8,7 +8,6 @@
 static uint32_t default_lut[256];
 static _Atomic bool default_lut_ready;
 static _Atomic uint32_t default_lut_fg, default_lut_bg;
-/* The colors that default-color tiles blend between. */
 static _Atomic uint32_t tile_fg = 0xFFFFFFFFu, tile_bg = 0xFF1E1E2Eu;
 
 static __thread uint32_t *tile_scratch;

@@ -54,7 +54,6 @@ def find_built_binary(repo_root: Path, name: str) -> Path:
     )
 
 def compile_terminfo(repo_root: Path, dest: Path) -> None:
-    """Compile the terminfo entry into dest. A failure leaves dest without it."""
     env = dict(
         os.environ,
         WSAP_TERMINFO_SRC=str(repo_root / "assets" / "terminfo" / "wsap_term.terminfo"),
@@ -63,7 +62,7 @@ def compile_terminfo(repo_root: Path, dest: Path) -> None:
     )
     with contextlib.suppress(OSError):
         subprocess.run(
-            ["sh", str(repo_root / "tools" / "install-terminfo.sh")],
+            ["sh", str(repo_root / "assets" / "terminfo" / "install-terminfo.sh")],
             env=env,
             check=False,
             stdout=subprocess.DEVNULL,
@@ -87,7 +86,7 @@ def stage_linux_payload(repo_root: Path, staging_usr: Path) -> None:
         libfastpty = find_built_binary(repo_root, "libfastpty.so")
         shutil.copy2(libfastpty, bin_dir / "libfastpty.so")
 
-    wsap_ssh = repo_root / "tools" / "wsap-ssh"
+    wsap_ssh = repo_root / "assets" / "shell" / "wsap-ssh"
     if wsap_ssh.is_file():
         shutil.copy2(wsap_ssh, bin_dir / "wsap-ssh")
 
@@ -115,7 +114,7 @@ def stage_linux_payload(repo_root: Path, staging_usr: Path) -> None:
     if shell_src.is_dir():
         shell_dest = share_dir / "wsap_term" / "shell"
         shell_dest.mkdir(parents=True, exist_ok=True)
-        for f in shell_src.iterdir():
+        for f in (shell_src / "wsap-ssh.sh", shell_src / "wsap-ssh.fish"):
             if f.is_file():
                 shutil.copy2(f, shell_dest / f.name)
 

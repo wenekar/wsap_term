@@ -11,10 +11,6 @@
 #include "util/time.h"
 #include "yasl/yasl.h"
 
-/* A program's last output reaches the terminal before its exit does. The
- * child writes a flood that takes many loop steps to read, sets the title
- * as its last act, and exits at once. The exit must find the title set. */
-
 struct watch {
     struct session *session;
     struct yasl_loop *loop;
@@ -31,8 +27,6 @@ static void on_exited(void *ud)
     yasl_loop_quit(w->loop);
 }
 
-/* A slow consumer, like a render-bound terminal: the child exits long
- * before its output is read. */
 static void on_title(void *ud)
 {
     (void)ud;
@@ -61,8 +55,6 @@ int main(void)
     assert(loop);
     assert(yasl_loop_watch_signals(loop, (const int[]){SIGCHLD}, 1, on_signal, NULL) == 0);
 
-    /* A session runs a command without a shell, so the child is a script.
-     * Each line of its flood sets the title. */
     char script[] = "/tmp/wsap-exit-order-XXXXXX";
     int fd = mkstemp(script);
     assert(fd >= 0);

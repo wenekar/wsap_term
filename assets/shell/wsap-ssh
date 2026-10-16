@@ -1,20 +1,4 @@
 #!/bin/sh
-# ssh wrapper that makes wsap_term usable on remote hosts.
-#
-# Mirrors Ghostty's ssh-terminfo / ssh-env shell integration:
-#   * pushes wsap_term's terminfo to the remote on first connect (cached per
-#     host), falling back to TERM=xterm-256color when the remote has no tic
-#   * forwards COLORTERM/TERM_PROGRAM via SendEnv -- best effort, since sshd
-#     silently drops anything absent from its AcceptEnv
-#
-# Only TERM is guaranteed to cross an ssh connection; everything else is at
-# the server's discretion. Hence the knobs:
-#   WSAP_SSH=0            bypass entirely, plain ssh
-#   WSAP_SSH_TERMINFO=0   skip the terminfo push
-#   WSAP_SSH_FORCE_ENV=1  wrap the remote login shell so COLORTERM is set
-#                         regardless of AcceptEnv
-#   WSAP_SSH_SETUP_RC=1   append the COLORTERM export to the remote shell rc
-#                         once per host -- the most durable option
 set -u
 
 SSH=${WSAP_SSH_BIN:-ssh}
@@ -32,7 +16,6 @@ esac
 
 shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 
-# ssh options that consume a value; anything else is a bare flag.
 takes_arg() {
     case $1 in
         B|b|c|D|E|e|F|I|i|J|L|l|m|O|o|P|p|Q|R|S|W|w) return 0 ;;
@@ -40,8 +23,6 @@ takes_arg() {
     esac
 }
 
-# Walk argv to find the destination. Everything at or before it is connection
-# setup; everything after it is a remote command.
 dest=
 nconn=0
 i=0
@@ -72,7 +53,6 @@ done
 [ -n "$dest" ] || exec "$SSH" "$@"
 [ $# -gt "$nconn" ] && has_cmd=1 || has_cmd=0
 
-# Connection args only (options + destination), safely requoted for eval.
 conn=
 i=0
 for arg do
@@ -81,9 +61,6 @@ for arg do
     conn="$conn $(shq "$arg")"
 done
 
-# Terminfo to push: the local database first, so local customisation travels,
-# then the description shipped next to this script. Without either there is
-# nothing to install remotely and TERM has to degrade.
 read_ti_file() {
     [ -n "${1:-}" ] && [ -r "$1" ] && cat "$1"
 }
@@ -103,8 +80,6 @@ if [ -z "$ti_src" ]; then
     [ -n "$ti_src" ] || ti_src=$(read_ti_file "/usr/share/terminfo/$TI_NAME.terminfo")
 fi
 
-# Cache key: resolved user@host:port plus a digest of the terminfo itself, so
-# editing the description re-pushes automatically.
 id=$(eval "$SSH -G $conn" 2>/dev/null | awk '
     $1 == "user" { u = $2 }
     $1 == "hostname" { h = $2 }
@@ -121,8 +96,6 @@ if [ "$need_push" = 1 ] && [ -f "$CACHE" ] && grep -qxF "$key" "$CACHE" 2>/dev/n
     need_push=0
 fi
 
-# Share one connection across the setup passes and the session, so password
-# auth is prompted for at most once.
 ctl=
 if [ "$need_push" = 1 ] || [ "${WSAP_SSH_SETUP_RC:-0}" = 1 ]; then
     ctl=${XDG_RUNTIME_DIR:-/tmp}/wsap-ssh-$$
@@ -140,7 +113,7 @@ if [ "$need_push" = 1 ]; then
         term=$FALLBACK_TERM
     fi
 elif [ -n "$ti_src" ] && [ "${WSAP_SSH_TERMINFO:-1}" != 0 ]; then
-    : # cached, terminfo already present
+    :
 else
     term=$FALLBACK_TERM
     if [ -z "$ti_src" ] && [ "${WSAP_SSH_TERMINFO:-1}" != 0 ]; then
@@ -165,8 +138,6 @@ fi
 
 conn="-o SendEnv=COLORTERM -o SendEnv=TERM_PROGRAM -o SetEnv=COLORTERM=truecolor -o SetEnv=TERM_PROGRAM=wsap_term $conn"
 
-# Last resort when the remote sshd will not accept our env: run the login
-# shell under an explicit COLORTERM. Only safe for interactive sessions.
 if [ "${WSAP_SSH_FORCE_ENV:-0}" = 1 ] && [ "$has_cmd" = 0 ] && [ -t 0 ]; then
     exec env TERM="$term" COLORTERM="${COLORTERM:-truecolor}" sh -c \
         "exec $SSH -t $conn 'exec env COLORTERM=truecolor \${SHELL:-/bin/sh} -l'"

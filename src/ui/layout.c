@@ -7,7 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/* Keep the upstream implementation in one translation unit. */
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-parameter"
@@ -342,7 +341,6 @@ static struct vector2i solve(struct ui_widget *root,
         }
         if (layout->failed)
             break;
-        /* Wrapped content uses the width that the solver assigns. */
         bool changed = false;
         for (size_t i = 0; i < pass.count; i++) {
             struct layout_node *node = &pass.nodes[i];

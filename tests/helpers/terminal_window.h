@@ -4,7 +4,6 @@
 #include "terminal/terminal.h"
 #include "ui/yasl/window.h"
 
-/* A terminal window with no surface and no tab, for tests. */
 static inline struct window *test_terminal_window(struct window_host *host,
                                                   const struct terminal_config *config)
 {

@@ -6,26 +6,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/*
- * Shaping of terminal text.
- *
- * glyph_cache_shape_segment() takes a segment: cells of one style and one pair of
- * colors. It splits the segment into runs of one script. In a simple
- * script it shapes only windows: each run of input code points with the
- * reach of the font's lookups around it (see font/glyph/layout.h). Code points
- * in the reach are replaced by their stand-ins, so windows that differ
- * only in context the font cannot tell apart share one cache entry. A
- * complex script, or a font the analysis cannot read, shapes the run in
- * full.
- *
- * What a cell shows depends only on the text of its segment. It does not
- * depend on earlier frames or on how fast the text arrived.
- */
-
 #define WHOLE_RUN_CHUNK 16
 
 static __thread struct glyph priv_run_cells[RUN_CACHE_MAX];
-/* Per segment: each code point's stand-in and role. */
 static __thread uint32_t *seg_canon;
 static __thread uint8_t *seg_roles;
 static __thread int seg_capacity;
@@ -87,9 +70,6 @@ static struct run_hit run_shape_and_cache(struct font_instance *fi,
     uint32_t *tiles = NULL;
     uint32_t tile_cap = 0;
 
-    /* Cache every result. A plain or unavailable window still costs a
-     * scan and a shape to derive, and most windows are plain. Only a
-     * shaped window carries cells and tiles. */
     struct run_data *new_d = buf_new(BK_RUN_DATA, 1, sizeof(*new_d));
     if (new_d && result == FONT_RUN_SHAPED) {
         produced = run_build_cached_payload(fi, w->core_len, &tiles, &tile_cap);
@@ -120,9 +100,6 @@ static struct run_hit run_shape_and_cache(struct font_instance *fi,
             atomic_store_explicit(&victim->stamp,
                 atomic_fetch_add_explicit(&fi->run_stamp, 1, memory_order_relaxed) + 1,
                 memory_order_relaxed);
-            /* The evicted entry was published, so a worker may still be
-             * reading its cells and tiles. Defer its free to the end of the
-             * frame when other threads can read it. */
             if (victim_d) {
                 if (atomic_load_explicit(&cache_parallel, memory_order_relaxed))
                     buf_retire_run(victim_d);
@@ -142,8 +119,6 @@ static struct run_hit run_shape_and_cache(struct font_instance *fi,
     };
 }
 
-/* Shapes a window through the run cache. The cells stay valid until the
- * next lookup on this thread. */
 static struct run_hit run_fetch(struct font_instance *fi, const struct font_window *w,
                                 int *dead_until)
 {
@@ -157,7 +132,6 @@ static struct run_hit run_fetch(struct font_instance *fi, const struct font_wind
     if (be->scan_run) {
         be->scan_run(w->cps, w->len, style, &hash, &dead_at);
     } else {
-        /* Not reached now. Both backends set scan_run. */
         hash = hash64_step(HASH64_BASIS, style);
         for (int i = 0; i < w->len; i++)
             hash = hash64_step(hash, w->cps[i]);
@@ -248,8 +222,6 @@ struct segment {
     struct font_instance *fi;
     const struct font_layout *layout;
     const uint32_t *cps;
-    /* The stand-in of each code point: the code point itself when it is
-     * an input or complex. */
     const uint32_t *canon;
     const uint8_t *roles;
     uint16_t style;
@@ -272,7 +244,6 @@ static void emit_span(const struct segment *s, const struct run_hit *hit,
     s->emit(s->ctx, &span);
 }
 
-/* Shapes [a, b) in full, WHOLE_RUN_CHUNK cells at a time. */
 static void shape_whole(const struct segment *s, int a, int b)
 {
     for (int c = a; c + 1 < b;) {
@@ -294,8 +265,6 @@ static bool is_input(const struct segment *s, int i)
     return s->roles[i] == LAYOUT_INPUT;
 }
 
-/* Shapes the window [ws, we) for its core [cs, ce), and emits the input
- * runs of the core. */
 static void shape_window(const struct segment *s, int ws, int we, int cs, int ce)
 {
     while (cs < ce && !is_input(s, cs)) cs++;
@@ -306,8 +275,6 @@ static void shape_window(const struct segment *s, int ws, int we, int cs, int ce
     uint32_t top = 0;
     for (int t = 0; t < we - ws; t++)
         top |= canon[t];
-    /* Context never changes, so the canonical window changes exactly when
-     * the real one does. */
     if (top < LAYOUT_PAIR_CPS && !font_layout_may_change(s->layout, canon, we - ws))
         return;
     const struct font_window w = {
@@ -329,8 +296,6 @@ static void shape_window(const struct segment *s, int ws, int we, int cs, int ce
     }
 }
 
-/* Shapes the windows of [a, b), a run of one simple script with no
- * complex code point. */
 static void shape_islands(const struct segment *s, const struct font_layout *l,
                           int a, int b)
 {
@@ -344,7 +309,6 @@ static void shape_islands(const struct segment *s, const struct font_layout *l,
         while (last < b && is_input(s, last)) last++;
         int ws = first - back > a ? first - back : a;
         int we = last + ahead < b ? last + ahead : b;
-        /* Take in every input run within reach of the window. */
         for (int q = last; q < we;) {
             if (!is_input(s, q)) {
                 q++;
@@ -406,8 +370,6 @@ void glyph_cache_shape_segment(struct font_instance *fi, const uint32_t *cps, in
     if (!l)
         return;
 
-    /* Most segments hold no input code point, and nothing in them needs
-     * shaping. */
     uint32_t *canon = seg_canon;
     uint8_t *roles = seg_roles;
     bool any = l->opaque, letter = false;
@@ -427,7 +389,6 @@ void glyph_cache_shape_segment(struct font_instance *fi, const uint32_t *cps, in
         .fi = fi, .layout = l, .cps = cps, .canon = canon, .roles = roles,
         .style = style, .emit = emit, .ctx = ctx,
     };
-    /* ASCII text is one run: Latin with a letter, else Common. */
     if (top < 128 && !l->opaque) {
         s.script = letter ? HB_SCRIPT_LATIN : HB_SCRIPT_COMMON;
         shape_islands(&s, l, 0, count);
@@ -455,7 +416,6 @@ void glyph_cache_shape_segment(struct font_instance *fi, const uint32_t *cps, in
                 shape_islands(&s, l, a, b);
                 int c = b;
                 while (c < e && roles[c] == LAYOUT_COMPLEX) c++;
-                /* Code points the face does not map shape with a fallback face. */
                 if (c - b > 1)
                     shape_whole(&s, b, c);
                 a = c;

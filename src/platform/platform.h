@@ -57,8 +57,6 @@ int platform_fastpipe_create(int fds[2], int buf_size);
 
 int platform_exe_path(char *out, size_t n);
 
-/* Writes the resource directory of the app bundle that holds the
- * executable. Returns -1 when the executable is not in a bundle. */
 int platform_resource_dir(char *out, size_t n);
 
 void platform_locale_default(char *out, size_t n);
@@ -71,7 +69,6 @@ void platform_open_url(const char *url);
 void platform_notify(const char *title, const char *body);
 void platform_bell(void);
 
-/* True when the desktop asks for high-contrast colors and controls. */
 bool platform_prefers_high_contrast(void);
 
 #endif

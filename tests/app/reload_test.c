@@ -9,8 +9,6 @@
 #include "app/app.h"
 #include "yasl/yasl.h"
 
-/* The app reloads its config without losing what it was started with. */
-
 static char dir[64];
 
 static void write_file(const char *path, const char *content)
@@ -21,8 +19,6 @@ static void write_file(const char *path, const char *content)
     assert(fclose(f) == 0);
 }
 
-/* SIGUSR1 reloads the file the app started with, and the command line
- * still wins over it. */
 static void test_reload_keeps_command_line(void)
 {
     char path[128];
@@ -33,7 +29,6 @@ static void test_reload_keeps_command_line(void)
     int status = 0;
     struct app *a = app_create(5, argv, &status);
     assert(a);
-    /* The caller's arguments may not outlive app_create(). */
     strcpy(width, "999");
     assert(a->config.window.size.x == 700 && a->config.window.size.y == 400);
 

@@ -3,15 +3,11 @@ dl_dep = cc.find_library('dl', required: false)
 python = find_program('python3', native: true, version: '>=3.10')
 bash = find_program('bash', native: true)
 
-# The tests check their steps with assert, so NDEBUG must stay off.
 test_c_args = ['-UNDEBUG']
 
-# The host terminal may preload a library into every child. Keep it out.
 test_env = environment()
 test_env.set('LD_PRELOAD', '')
 test_env.set('DYLD_INSERT_LIBRARIES', '')
-# An LTO archive holds the compiler's bitcode. A system nm from another
-# LLVM cannot read it, so clang uses the llvm-nm of its own toolchain.
 nm = find_program('nm', native: true)
 if cc.get_id() == 'clang'
   llvm_nm = run_command(cc.cmd_array() + ['-print-prog-name=llvm-nm'],
@@ -22,7 +18,6 @@ if cc.get_id() == 'clang'
 endif
 test_env.set('NM', nm.full_path())
 
-# [name, sources, dependencies, suites]
 wsap_vtcore_tests = [
   ['unicode-test', files('unicode/unicode_test.c'), [], []],
   ['term-input-test', files('input_test.c'), [], []],
@@ -60,8 +55,6 @@ foreach entry : wsap_vtcore_tests
   )
 endforeach
 
-# Without -march, the core runs the best kernels the CPU supports. Run the
-# tests again on the lower levels, so each one is covered.
 if host_machine.cpu_family() == 'x86_64' and cc.get_argument_syntax() == 'gcc' and \
     cc.get_define('__AVX2__', args: get_option('arch_flag') != '' ? [get_option('arch_flag')] : []) == ''
   foreach level : ['base', 'avx2']
@@ -75,8 +68,6 @@ if host_machine.cpu_family() == 'x86_64' and cc.get_argument_syntax() == 'gcc' a
   endforeach
 endif
 
-# The amalgamation is the core as one wsap_vtcore.c, the way a host builds
-# it. The tests that use only wsap_vtcore.h run again against it.
 wsap_vtcore_amalgamation = custom_target(
   'term-amalgamation',
   output: ['wsap_vtcore.c', 'wsap_vtcore.h'],
@@ -129,8 +120,6 @@ if cc.has_link_argument('-Wl,--wrap=realloc') and cc.has_link_argument('-Wl,--wr
   )
 endif
 
-# The project version comes in as a define, so the header macros cannot
-# drift from meson.build.
 version_test = executable('version-test', 'version_test.c',
   c_args: test_c_args + ['-DWSAP_VTCORE_TEST_PROJECT_VERSION="@0@"'.format(meson.project_version())],
   dependencies: [wsap_vtcore_internal_dep],
@@ -145,8 +134,6 @@ test('term-cross-test', bash,
   timeout: 600,
 )
 
-# The bridge is a shared library that Python loads, so a sanitized build
-# cannot run it.
 kitty_tests = get_option('kitty').require(
   host_machine.system() == 'linux' and get_option('b_sanitize') == 'none',
   error_message: 'The Kitty tests need an unsanitized Linux build',

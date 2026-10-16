@@ -128,8 +128,6 @@ static void focus_cycle_test(void)
     ui_surface_destroy(&context);
 }
 
-/* Tab moves the focus, and the focus ring moves with it. The key itself
- * changes no widget, so the move alone asks for the frame. */
 static void tab_focus_requests_frame_test(void)
 {
     struct probe a = {0}, b = {0};
@@ -224,8 +222,6 @@ static void destroy_focused_clears_focus_test(void)
     assert(leaf_probe.focus_in == 1);
 
     ui_widget_destroy(&leaf);
-    /* The dying widget is flagged destroyed before detach runs, so it does
-     * not receive FOCUS_OUT; focus is still cleared. */
     assert(leaf_probe.focus_out == 0);
     assert(ui_surface_focused(&context) == NULL);
 

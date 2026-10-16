@@ -62,8 +62,6 @@ static FILE *temp_open(const char *path, char *temp, size_t size)
     return f;
 }
 
-/* Syncs and closes F, then renames TEMP over PATH. On failure, removes
- * TEMP and sets errno. */
 static bool temp_commit(FILE *f, const char *temp, const char *path)
 {
     int err = 0;
@@ -123,7 +121,6 @@ static bool parse_int(const struct opt *o, const char *val, void *field)
     return true;
 }
 
-/* Zero, or min..max. */
 static bool parse_size(const struct opt *o, const char *val, void *field)
 {
     int v;
@@ -202,7 +199,6 @@ static const char *bool_choice(const struct opt *o, size_t index)
     return index < 2 ? choices[index] : NULL;
 }
 
-/* Lists each value once. An alias repeats an earlier value. */
 static const char *enum_choice(const struct opt *o, size_t index)
 {
     for (const struct enum_name *e = o->names; e->name; e++) {
@@ -279,8 +275,6 @@ static const struct opt *opt_find(const struct opts_spec *spec, const char *key,
     return NULL;
 }
 
-/* The one way a value reaches a field. An empty value resets the key to
- * its default. On a bad value the field keeps its value. */
 static bool opt_apply(const struct opts_spec *spec, void *base,
                       const struct opt *o, const char *val, const char *origin)
 {
@@ -390,8 +384,6 @@ struct arg {
 
 enum args_result { ARGS_OK, ARGS_HELP, ARGS_BAD };
 
-/* Splits argv into "--key=value" and "--key value" pairs. args holds
- * argc entries. */
 static enum args_result split_args(const struct opts_spec *spec, int argc,
                                    char **argv, struct arg *args, int *n)
 {
@@ -427,8 +419,6 @@ static bool is_config_arg(const struct arg *a)
     return a->klen == strlen(name) && !strncmp(a->key, name, a->klen);
 }
 
-/* The config path from --config, then the environment, then the default
- * file. NONE, in any case, means no file. */
 static const char *find_config(const struct opts_spec *spec, char *buf, size_t n,
                                const struct arg *args, int nargs)
 {
@@ -520,7 +510,6 @@ bool opts_copy(const struct opts_spec *spec, void *dst, const void *src)
         if (o->type != &OPT_TYPE_TEXT)
             continue;
         const char *value = *(const char *const *)field_of_const(o, src);
-        /* Skip empty values and fields that an alias already copied. */
         if (!value || *(const char *const *)field_of_const(o, dst))
             continue;
         if (!parse_text(o, value, field_of(o, dst))) {

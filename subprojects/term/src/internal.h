@@ -39,8 +39,6 @@ struct keyboard_mode {
     unsigned flags, saved[KEYBOARD_STACK_SIZE], depth;
 };
 
-/* What DECSC saves, as in xterm: the cursor, the pen, origin mode, the
- * pending wrap, and the character sets. */
 struct wsap_vtcore_saved_cursor {
     int x, y;
     uint32_t fg, bg, ul;
@@ -57,20 +55,15 @@ struct wsap_vtcore_saved_cursor {
     bool pending_wrap : 1;
 };
 
-/*
- * A row stores cells, text, or default-pen ASCII. A text row uses the history
- * format. An ASCII row stores only its pointer and length. A screen read or
- * edit sets its text fields first. Other changes settle text into cells.
- */
 enum { ROW_CELLS, ROW_TEXT, ROW_ASCII };
 enum { RF_WRAPPED = 1, RF_WIDE = 4, RF_CLUSTER = 8, RF_TAIL_PADDED = 16 };
 
 struct srow {
-    struct cell *cells;                  /* stride >= cols, from a per-screen slab */
+    struct cell *cells;
     uint8_t *ascii;
-    struct text_row text;                /* TEXT: the content; len == text.cells, or cols with a wrap pad */
-    uint64_t uid;                        /* new id when the row scrolls in or clears */
-    uint32_t version;                    /* bumped on every change */
+    struct text_row text;
+    uint64_t uid;
+    uint32_t version;
     uint16_t len;
     uint8_t kind, flags;
 };
@@ -80,11 +73,9 @@ struct screen {
     struct cell *cells_slab;
     uint8_t *text_slab;
     size_t cells_cap, text_cap;
-    /* Without history: the line of row 0, counted as rows leave the top. */
     uint64_t top_id;
     int rows, cols, top;
     int stride;
-    /* Capacity of the buffers above. A resize reuses them. */
     int slot_cap;
     uint32_t top_seg;
 };
@@ -94,21 +85,16 @@ struct wsap_vtcore_sel_point {
     uint32_t cell_off;
 };
 
-/* A buffer that only grows, so work that repeats does not allocate. */
 struct grow_buf {
     void *data;
     size_t cap;
 };
 
-/* What a resize needs besides the screens. It keeps its buffers, so a
- * resize allocates nothing once the terminal has seen its sizes. */
 struct resize_scratch {
     struct grow_buf row, rows, cells, line, pull, rest, lens;
 };
 
-
 struct wsap_vtcore {
-    /* The writer section. A waiting thread sleeps on it. */
     wsap_vtcore_mutex write_lock;
     _Atomic uint64_t writer_tid;
     uint32_t write_depth;
@@ -168,7 +154,7 @@ struct wsap_vtcore {
 
     struct screen scr;
     struct screen alt_scr;
-    struct screen spare;                 /* the buffers a resize builds into */
+    struct screen spare;
     struct resize_scratch resize;
     struct grow_buf ascii_ends;
     struct grow_buf ascii_tail;
@@ -199,7 +185,6 @@ struct wsap_vtcore {
     int sb_capacity;
 
     struct keyboard_mode keyboard[2];
-    /* The DECSC slot. Cold: it stays out of the hot fields above. */
     struct wsap_vtcore_saved_cursor saved;
 
     uint8_t *tabs;
@@ -209,7 +194,6 @@ struct wsap_vtcore {
     bool custom_tabs;
 
     char osc_buf[256];
-    /* The host's name. A DCS sequence can change tcap_name, not this. */
     char name[64];
     char tcap_name[64];
 
@@ -224,8 +208,6 @@ struct wsap_vtcore {
     struct wsap_vtcore_callbacks cb;
     struct palette palette;
     struct gstore *gstore;
-    /* Unique for the life of the process. A snapshot compares it, not the
-     * address, because a new terminal can reuse a freed one's memory. */
     uint64_t serial;
 };
 
@@ -243,7 +225,6 @@ static inline void reset_sgr(struct wsap_vtcore *t)
     t->cur_ul = 0;
 }
 
-/* The DECSC slot before any save: home, the default pen, and ASCII. */
 static inline struct wsap_vtcore_saved_cursor wsap_vtcore_saved_cursor_initial(void)
 {
     return (struct wsap_vtcore_saved_cursor){
@@ -265,8 +246,6 @@ static inline struct wsap_vtcore_saved_cursor wsap_vtcore_cursor_save(const stru
     };
 }
 
-/* Take the pen, origin mode, and character sets from s. The caller places
- * the cursor. */
 static inline void wsap_vtcore_cursor_apply(struct wsap_vtcore *t, const struct wsap_vtcore_saved_cursor *s)
 {
     t->cur_fg = s->fg;
@@ -367,7 +346,6 @@ static inline bool wsap_vtcore_str_was_truncated(struct wsap_vtcore *t)
     return truncated;
 }
 
-/* Every thread has its own anchor, so its address names the thread. */
 extern _Thread_local char wsap_vtcore_thread_anchor;
 
 static inline void wsap_vtcore_write_begin(struct wsap_vtcore *t)

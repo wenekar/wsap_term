@@ -4,16 +4,11 @@
 #include "terminal/drop.h"
 #include "terminal/internal.h"
 
-/* The terminal window's widgets: the tab bar over the scrollview, which
- * holds the terminal view and its scrollbar, and the hover card and the
- * palette over both. The children never change; the overlays hide. */
-
 static struct terminal *root_terminal(const struct ui_widget *widget)
 {
     return ui_container_of((struct ui_widget *)widget, struct terminal, root);
 }
 
-/* The bar takes the height it wants; the view takes the rest. */
 static struct vector2i root_measure(const struct ui_widget *widget,
                                     struct ui_constraints constraints)
 {
@@ -49,9 +44,6 @@ static void push_labels(struct terminal *tw)
 {
     int n = tw->tab_count;
     if (n > tw->tab_labels_cap) {
-        /* Room for a few more, so opening tabs one at a time does not
-         * realloc on every tab. The bar keeps its own copy of the text
-         * and does the same. */
         size_t want = (size_t)n < 8 ? 8 : (size_t)n;
         struct ui_tab_label *labels = realloc(tw->tab_labels,
                                               want * sizeof(*labels));
@@ -68,7 +60,6 @@ static void push_labels(struct terminal *tw)
     ui_tabbar_set_tabs(&tw->tabbar, tw->tab_labels, n);
 }
 
-/* The setters compare first: pushing the same model is free. */
 static void root_prepare(struct ui_widget *widget)
 {
     struct terminal *tw = root_terminal(widget);
@@ -83,8 +74,6 @@ static void root_prepare(struct ui_widget *widget)
                                                  : (struct ui_scroll_metrics){0});
 }
 
-/* The events the children pass on: paste, file drops, shortcuts, and the
- * native window's focus. The view takes keys and text. */
 static bool root_event(struct ui_widget *widget, const struct ui_event *event)
 {
     struct window *w = root_terminal(widget)->window;
@@ -130,7 +119,6 @@ static void preview_hover(struct window *w, int index)
     ui_tab_preview_hover(&tw->tab_preview, index, anchor);
 }
 
-/* A drag inside the bar shows no card; one out of it carries the card. */
 static void preview_drag(struct window *w, const struct ui_action *a)
 {
     struct terminal *tw = terminal_of(w);
@@ -148,8 +136,6 @@ static void tab_moved(struct window *w, const struct ui_action *a)
         terminal_reorder_tab(w, a->index, a->to);
         return;
     }
-    /* The new window has one tab and so no bar: its top edge follows
-     * the pointer. */
     struct window *nw = terminal_detach_tab(w, a->index);
     if (nw && window_surface(nw))
         window_place_under_pointer(nw, window_logical(w, (struct vector2i){ .x = a->pos.x }));
@@ -211,7 +197,6 @@ void terminal_root_attach(struct window *w)
     terminal_tab_preview_init(w);
 }
 
-/* Destroying the root destroys the subtree; the storage is tw's. */
 void terminal_root_release(struct terminal *tw)
 {
     ui_widget_destroy(&tw->root);

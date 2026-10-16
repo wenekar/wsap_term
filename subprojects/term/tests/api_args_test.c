@@ -3,7 +3,6 @@
 #include <stdbool.h>
 #include <string.h>
 
-/* A feed that returns false must not move the cursor or change a cell. */
 static void expect_unchanged(struct wsap_vtcore *t, int x, int y, uint32_t cp)
 {
     assert(tt_cursor_x(t) == x);
@@ -24,7 +23,6 @@ static void test_feed_unknown_flag(void)
     expect_unchanged(t, 3, 0, 'a');
     assert(!wsap_vtcore_feed(t, "xy", 2, 1u << 31));
     expect_unchanged(t, 3, 0, 'a');
-    /* Unknown bits are rejected even when there are no bytes. */
     assert(!wsap_vtcore_feed(t, "", 0, 1u << 1));
 
     assert(wsap_vtcore_feed(t, "\nz", 2, WSAP_VTCORE_FEED_ONLCR));
@@ -44,7 +42,6 @@ static void test_feed_null_buffer(void)
     assert(!wsap_vtcore_feed(t, NULL, 4096, WSAP_VTCORE_FEED_ONLCR));
     expect_unchanged(t, 3, 0, 'a');
 
-    /* A zero length is a no-op, so a NULL buffer is fine. */
     assert(wsap_vtcore_feed(t, NULL, 0, 0));
     assert(wsap_vtcore_feed(t, "", 0, WSAP_VTCORE_FEED_ONLCR));
     expect_unchanged(t, 3, 0, 'a');

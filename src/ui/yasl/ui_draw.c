@@ -19,8 +19,6 @@ struct ui_scene *window_ui_scene_scratch(struct window *w)
     return ui->scene_scratch;
 }
 
-/* Builds the scene, with the inspector overlay on top. NULL when the
- * scene could not be built. */
 static struct ui_scene *build_ui(struct window *w, struct ui_surface *ui,
                                  int surface_id)
 {
@@ -36,7 +34,6 @@ void window_ui_prepare_frame(struct window *w, uint64_t now_ms)
     struct ui_surface *ui = &ui_of(w)->screen;
     (void)ui_surface_take_frame_request(ui);
     bool animating = ui_surface_tick(&ui_of(w)->screen, now_ms);
-    /* The tick may open a submenu: show it before building the scene. */
     window_menu_sync(w);
     if (animating)
         window_redraw(w);
@@ -69,7 +66,6 @@ bool window_ui_build_frame(struct window *w, struct yasl_surface *surface,
         (void)ui_surface_tick(ui, now_ms);
     }
     out->font = window_ui_of(w)->ui_font;
-    /* A popup shows what lies behind its shadow margin, so it stays clear. */
     out->background = main ? window_ui_of(w)->background : 0;
     out->gpu_off = window_debug_wants_pixels(w, surface_id);
     if (window_suspended(w) && main) {
@@ -79,7 +75,6 @@ bool window_ui_build_frame(struct window *w, struct yasl_surface *surface,
     }
     struct ui_scene *scene = build_ui(w, ui, surface_id);
     if (main) {
-        /* What is under the pointer may have changed without it moving. */
         window_ui_update_cursor(w);
         ui_damage_track(&window_ui_of(w)->ui_damage, scene, &out->damage);
         window_accessibility_publish(w);

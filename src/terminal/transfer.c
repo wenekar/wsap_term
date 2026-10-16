@@ -2,8 +2,6 @@
 
 #include <stdlib.h>
 
-/* Moving tabs between windows. */
-
 struct tab_flight {
     struct tab *tab;
     struct window *carried;
@@ -12,7 +10,6 @@ struct tab_flight {
     bool taken;
     int origin_index;
     struct vector2i size;
-    /* The grab point in logical units, for yasl. */
     struct window_logical_point grab;
     struct window_host *host;
     struct window *(*open_window)(void *ud, struct tab *tab, const char *cwd,
@@ -237,7 +234,6 @@ void terminal_tab_drag(struct window *w, enum yasl_drop_action ev,
         break;
     case YASL_DROP_RELEASE:
     case YASL_DROP_CANCEL:
-        /* CANCEL comes to the origin when the drop landed on no window. */
         if (ev == YASL_DROP_RELEASE && !f->taken)
             f->taken = tab_drop(w, f, pos);
         set_over(f, NULL);

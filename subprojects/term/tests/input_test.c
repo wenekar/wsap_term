@@ -344,7 +344,6 @@ int main(void)
     MOUSE(2, 1, .button = WSAP_VTCORE_MOUSE_WHEEL_LEFT); expect("\033[<66;3;2M");
     MOUSE(2, 1, .button = WSAP_VTCORE_MOUSE_WHEEL_RIGHT); expect("\033[<67;3;2M");
 
-    /* Ensure Alt modifier does not collide with extra buttons */
     MOUSE(2, 1, .button = WSAP_VTCORE_MOUSE_BUTTON_PRIMARY, .mods = WSAP_VTCORE_MOD_ALT); expect("\033[<8;3;2M");
     MOUSE(2, 1, .button = WSAP_VTCORE_MOUSE_BUTTON_EXTRA_1, .mods = WSAP_VTCORE_MOD_ALT); expect("\033[<136;3;2M");
     MOUSE(2, 1, .button = WSAP_VTCORE_MOUSE_BUTTON_MIDDLE, .mods = WSAP_VTCORE_MOD_ALT); expect("\033[<9;3;2M");
@@ -352,7 +351,6 @@ int main(void)
     MOUSE(2, 1, .kind = WSAP_VTCORE_MOUSE_RELEASE, .button = WSAP_VTCORE_MOUSE_BUTTON_EXTRA_1); expect("\033[<128;3;2m");
 
     {
-        /* A host sizes the paste buffer from the text alone. */
         static const char text[] = "ls\r\n\033[31m\u202erm\x7f\t\xe4\xb8\xad";
         static const char want[] = "\033[200~ls\r[31mrm\t\xe4\xb8\xad\033[201~";
         char buf[sizeof(text) - 1 + WSAP_VTCORE_PASTE_EXTRA];
@@ -384,7 +382,6 @@ int main(void)
     }
 
     {
-        /* UTF-8 writes must report overflow without crossing the capacity. */
         struct wsap_vtcore_key_event key = { .action = WSAP_VTCORE_KEY_PRESS, .text = 0x4e2d };
         struct wsap_vtcore_mouse_event mouse = {
             .kind = WSAP_VTCORE_MOUSE_PRESS, .button = WSAP_VTCORE_MOUSE_BUTTON_PRIMARY,

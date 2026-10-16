@@ -1,11 +1,6 @@
 #ifndef WSAP_VTCORE_CELL_H
 #define WSAP_VTCORE_CELL_H
 
-/*
- * The cell layout that the terminal stores. Only src/term uses it. A
- * snapshot converts these cells to the public struct wsap_vtcore_cell.
- */
-
 #include "wsap_vtcore.h"
 
 enum cell_flags {
@@ -29,7 +24,6 @@ enum cell_flags {
 
 #define CELL_ANY_UNDERLINE WSAP_VTCORE_ATTR_UNDERLINE_MASK
 
-/* c is a code point or a grapheme handle. pad holds the OSC 8 link id. */
 struct cell {
     uint32_t c;
     uint32_t fg;

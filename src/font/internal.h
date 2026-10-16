@@ -9,12 +9,10 @@
 #include <stdint.h>
 #include <string.h>
 
-/* The metrics bound to this thread. */
 extern __thread struct font_metrics font_thread_metrics;
 #define GLYPH_CELL_H font_thread_metrics.cell_h
 #define GLYPH_CELL_W font_thread_metrics.cell_w
 
-/* The rows of g. A glyph without planes has the bound cell height. */
 static inline int glyph_rows(const struct glyph *g)
 {
     return g->height ? g->height : GLYPH_CELL_H;

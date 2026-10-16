@@ -22,17 +22,12 @@ typedef void *mtl_pass_desc_t;
 
 struct metal_render;
 
-/* Shared backend state. Render resets the frame flags before each draw. */
 struct framebuffer_gpu {
     struct metal_render *metal;
     struct framebuffer_history *history;
-    /* What an empty frame shows under the UI. */
     uint32_t clear_color;
-    /* The GPU drew into this frame; the pixels need no upload. */
     bool presented;
-    /* The GPU gave up this frame; the rest of it goes to the CPU. */
     bool disabled;
-    /* It gave up after it drew, so the CPU must draw the whole frame. */
     bool redraw;
 };
 
@@ -51,14 +46,9 @@ void metal_render_clear(struct metal_render *r, uint32_t color);
 bool metal_render_scene(struct metal_render *r, const struct ui_scene *scene,
                         struct font_instance *font);
 
-/* Draws a CPU frame of XRGB pixels over the viewport. The pixels must
- * stay valid until metal_render_submit() returns. */
 bool metal_render_pixels(struct metal_render *r, const uint32_t *pixels,
                          struct vector2i size);
 
-/* A NULL drawable submits an offscreen frame and waits for completion.
- * With transaction, the drawable presents in the current Core Animation
- * transaction; the layer must have presentsWithTransaction set. */
 bool metal_render_submit(struct metal_render *r, mtl_drawable_t drawable,
                          mtl_pass_desc_t pass_desc, struct vector2i viewport,
                          bool transaction);

@@ -14,15 +14,11 @@ void *window_metal_attach(struct yasl_surface *s, void *device)
     CAMetalLayer *layer = (CAMetalLayer *)yasl_metal_get_layer(s);
     if (!layer)
         return NULL;
-    /* yasl sizes the layer and picks BGRA8; the renderer draws with this
-     * device into that format. */
     layer.device = (id<MTLDevice>)device;
     layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
     return layer;
 }
 
-/* A live resize presents in the Core Animation transaction, so the frame
- * shows together with the new window size. */
 static bool in_live_resize(struct yasl_surface *s)
 {
     struct yasl_native native = {0};
@@ -54,7 +50,6 @@ bool window_metal_draw(void *layer, struct yasl_surface *s,
             drew = true;
         }
     }
-    /* Send the resize frame before another callback asks for a drawable. */
     if (drew && transaction)
         [CATransaction flush];
     return drew;

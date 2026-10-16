@@ -166,8 +166,6 @@ static inline bool ui_scene_ripple(struct ui_scene *scene, struct rect2i clip,
            ui_scene_pop_clip(scene);
 }
 
-/* Copies text into dst (cap bytes with the NUL), cut at a UTF-8 boundary.
- * False when dst already held that text. */
 static inline bool ui_text_copy(char *dst, size_t cap, const char *text)
 {
     if (!text)
@@ -192,7 +190,6 @@ static inline bool ui_text_copy(char *dst, size_t cap, const char *text)
     return true;
 }
 
-/* The cell size text lays out in, from the style scale. */
 static inline struct ui_text_style ui_widget_text_style(
     const struct css_scale_context *scale)
 {

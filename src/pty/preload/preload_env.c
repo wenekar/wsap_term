@@ -4,11 +4,6 @@
 
 #include "pty/preload/shim.h"
 
-/* LD_PRELOAD list surgery for the exec hooks. fp_preload holds the
- * preload list this library itself arrived on; exec'd children either
- * get it merged in (normal commands) or stripped out (privilege
- * commands must not run with our interpositions loaded). */
-
 typedef int (*fp_token_cb)(const char *tok, size_t len, void *ud);
 
 static int preload_each_token(const char *list, fp_token_cb cb, void *ud)
@@ -93,8 +88,6 @@ static int preload_merge_cb(const char *tok, size_t n, void *ud)
     return 0;
 }
 
-/* Copy envp, drop its LD_PRELOAD entries, and return the first such
- * entry's value via *existing_out (NULL if none). */
 static char **env_copy_without_preload(char *const envp[],
                                        const char **existing_out)
 {
@@ -117,8 +110,6 @@ static char **env_copy_without_preload(char *const envp[],
     return env;
 }
 
-/* New envp with fp_preload merged into LD_PRELOAD. *entry_out receives
- * the malloc'd LD_PRELOAD string; free(*entry_out) and free(env). */
 char **fp_env_with_preload(char *const envp[], char **entry_out)
 {
     const char *existing;
@@ -153,7 +144,6 @@ char **fp_env_with_preload(char *const envp[], char **entry_out)
     return env;
 }
 
-/* New envp with every fp_preload token stripped from LD_PRELOAD. */
 char **fp_env_without_fast_preload(char *const envp[], char **entry_out)
 {
     const char *existing;

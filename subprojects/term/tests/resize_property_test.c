@@ -16,8 +16,6 @@ static unsigned random_below(unsigned limit)
     return (unsigned)(state % limit);
 }
 
-/* Select from the oldest retained row to the end of the live screen.
- * Selection text joins wrapped rows and trims blank cells on other rows. */
 static char *logical_text(struct wsap_vtcore *t)
 {
     struct wsap_vtcore_vector2i size = wsap_vtcore_size(t);
@@ -46,13 +44,11 @@ static uint32_t cell_at(struct wsap_vtcore *t, struct wsap_vtcore_snapshot *s, i
     return wsap_vtcore_snapshot_row(s, y)[x].text;
 }
 
-/* A height change that pulls rows back from history moves the saved
- * cursor with its row. DECRC then prints next to the saved text. */
 static int saved_cursor_follows_history(struct wsap_vtcore_snapshot *s)
 {
     static const struct { int cols, rows, grow_cols, grow_rows; } cases[] = {
-        { 8, 3, 8, 5 },     /* same width: rows come back from history */
-        { 8, 3, 10, 5 },    /* new width: reflow */
+        { 8, 3, 8, 5 },
+        { 8, 3, 10, 5 },
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         struct wsap_vtcore_options opt = {
@@ -77,8 +73,6 @@ static int saved_cursor_follows_history(struct wsap_vtcore_snapshot *s)
     return 0;
 }
 
-/* Narrowing a full screen with the cursor at the top wraps more rows than
- * the ring holds. The cursor row must survive and stay on screen. */
 static int narrow_resize_keeps_cursor_row(struct wsap_vtcore_snapshot *s)
 {
     struct wsap_vtcore_options opt = { .size = { .x = 40, .y = 12 }, .scrollback = 5 };

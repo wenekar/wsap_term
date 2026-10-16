@@ -48,9 +48,6 @@ static void build_pattern(void)
     pattern_len = n;
 }
 
-/* High-entropy stand-in for `cat /dev/random`, but seeded so two runs of the
- * benchmark see identical bytes. Every byte value occurs, so a one-byte magic
- * prefilter matches roughly every 256 bytes. */
 static void build_pattern_random(void)
 {
     uint64_t s = 0x9E3779B97F4A7C15ull;

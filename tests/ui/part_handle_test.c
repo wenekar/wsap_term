@@ -15,7 +15,6 @@
 #include "ui/widgets/scrollview.h"
 #include "ui/widgets/tabbar.h"
 
-/* The ancestor rules come last. A later rule wins at equal specificity. */
 static const char SHEET_A[] =
     ".tab { background: #111111; color: #222222; }"
     ".tab:hover { background: #333333; }"
@@ -69,7 +68,6 @@ struct probe {
     size_t name_count;
 };
 
-/* Every (part, pseudo) pair must match a fresh string-API resolution. */
 static void expect_parts_match_fresh(const struct probe *probe)
 {
     for (size_t i = 0; i < probe->name_count; i++) {
@@ -104,7 +102,6 @@ static void intern_handles_test(void)
     assert(ui_part_intern("") == 0);
     assert(ui_part_name(0) == NULL);
 
-    /* Enough names to grow the table. Every handle keeps its name. */
     enum { COUNT = 600 };
     static ui_part_id ids[COUNT];
     char name[32];
@@ -171,7 +168,6 @@ static void cache_matches_string_api_test(void)
     };
     const size_t probe_count = sizeof(probes) / sizeof(probes[0]);
 
-    /* First use fills the cache. The values must match the sheet. */
     struct css_style active =
         ui_widget_part(&tabbar.widget, ui_part_intern("tab active"), 0);
     assert(active.has_bg_color && active.bg_color == 0xFF444444);
@@ -180,15 +176,12 @@ static void cache_matches_string_api_test(void)
     assert(tab_text.has_text_color && tab_text.text_color == 0xFF0A0B0C);
     expect_all_probes_match(probes, probe_count);
 
-    /* A value from one part must stay correct after other parts resolve. */
     ui_part_id menu_item = ui_part_intern("menu-item");
     struct css_style item = ui_widget_part(&list.widget, menu_item, 0);
     expect_all_probes_match(probes, probe_count);
     assert(item.has_border_color && item.border_color == 0xFF123456);
 
-    /* A returned value is a copy. A later sheet change leaves it alone. */
     struct css_style item_before_sheet_b = item;
-    /* Sheet change with no prepare pass: the next call must see sheet B. */
     ui_surface_set_sheet(&surface, &sheet_b);
     expect_all_probes_match(probes, probe_count);
     assert(item_before_sheet_b.border_color == 0xFF123456);
@@ -199,7 +192,6 @@ static void cache_matches_string_api_test(void)
     tab_text = ui_widget_part(&tabbar.widget, ui_part_intern("tab"), 0);
     assert(tab_text.text_color == 0xFF0D0E0F);
 
-    /* Ancestor identity change: the descendant rule stops matching. */
     ui_widget_set_style_identity(&root.widget, "other", NULL, "box");
     expect_all_probes_match(probes, probe_count);
     item = ui_widget_part(&list.widget, menu_item, 0);
@@ -209,7 +201,6 @@ static void cache_matches_string_api_test(void)
     item = ui_widget_part(&list.widget, menu_item, 0);
     assert(item.has_border_color && item.border_color == 0xFF654321);
 
-    /* Own identity change: the tab bar's own class is on the ancestor path. */
     ui_widget_set_style_identity(&tabbar.widget, "tab-bar-x", NULL, "tab-bar");
     expect_all_probes_match(probes, probe_count);
     tab_text = ui_widget_part(&tabbar.widget, ui_part_intern("tab"), 0);
@@ -219,13 +210,11 @@ static void cache_matches_string_api_test(void)
     assert(tab_text.text_color == 0xFF0D0E0F);
     expect_all_probes_match(probes, probe_count);
 
-    /* Reparenting: a detached widget resolves against the default sheet. */
     assert(ui_widget_remove_child(&root.widget, &list.widget));
     expect_parts_match_fresh(&probes[1]);
     assert(ui_widget_add_child(&root.widget, &list.widget));
     expect_all_probes_match(probes, probe_count);
 
-    /* Zero handle: the no-class style. A NULL widget gives an all-zero style. */
     struct css_style no_class = ui_widget_part_style(&list.widget, NULL, 0);
     struct css_style zero_handle = ui_widget_part(&list.widget, 0, 0);
     assert(memcmp(&zero_handle, &no_class, sizeof(no_class)) == 0);
@@ -239,8 +228,6 @@ static void cache_matches_string_api_test(void)
     css_sheet_clear(&sheet_b);
 }
 
-/* Runs fn in a child process. The child must abort. An unknown handle is a
- * programming error, and it stops the process in every build. */
 static void expect_abort(void (*fn)(void))
 {
     fflush(NULL);
@@ -255,7 +242,6 @@ static void expect_abort(void (*fn)(void))
     assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
 }
 
-/* The table cannot hold UINT32_MAX names, so this handle is always unknown. */
 static void name_unknown_handle(void)
 {
     ui_part_name((ui_part_id)UINT32_MAX);

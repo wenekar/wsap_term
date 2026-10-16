@@ -40,7 +40,6 @@ static bool vector_enabled, vector_accept, vector_submitted;
 static bool native_gpu_failure_frame;
 extern struct framebuffer_gpu *render_test_gpu_instance(void);
 extern void render_test_gpu_redraw_failure(bool fail);
-/* A GPU backend the test steers: it skips, draws, or fails on demand. */
 struct framebuffer_gpu { int unused; };
 static struct framebuffer_gpu fake_gpu;
 
@@ -125,7 +124,6 @@ static struct damage_list draw_scene(struct renderer *r, struct framebuffer *tar
     return render_draw(r, target, &frame);
 }
 
-/* A terminal without a theme uses the built-in theme. */
 static struct wsap_vtcore_theme default_theme(void)
 {
     struct wsap_vtcore_theme theme;
@@ -270,7 +268,6 @@ static void scale_respawn_test(void)
     assert(r);
     test_render_paint_full(px, w, h, true, t);
 
-    /* Painting at another scale is another font, not a new pool. */
     int before = live_thread_count();
     struct font_instance *big = font_instance_acquire(
         font_instance_size_pt(font_instance_default()), 180);
@@ -349,7 +346,6 @@ static void style_cache_test(void)
     wsap_vtcore_free(bold);
 }
 
-/* Variation selectors choose color emoji or monochrome text. */
 static void presentation_test(void)
 {
     static const char *const text[] = {
@@ -600,12 +596,6 @@ static void color_glyph_blend_test(void)
     wsap_vtcore_free(t);
 }
 
-/*
- * A frame at new default colors paints default-colored text in the new
- * colors: plain cells, cached tiles, and shaped spans. Each paint equals a
- * paint from a cache rebuilt at the new colors. More than 3 rows paint in
- * parallel.
- */
 static void frame_colors_test(int rows)
 {
     static const char line[] =
@@ -653,13 +643,6 @@ static void frame_colors_test(int rows)
     wsap_vtcore_free(t);
 }
 
-/*
- * Regression: cells stored the colors current when they were written, so
- * a theme change left text already on screen in the old theme until the
- * program redrew it (the user ran `clear`). Existing default-colored and
- * ANSI-colored cells must repaint in the new theme, through the cached
- * incremental path, with no write to the terminal.
- */
 static void theme_recolors_existing_text_test(void)
 {
     uint32_t saved_bg = DEFAULT_BG;
@@ -859,7 +842,6 @@ static void benchmark(void)
         wsap_vtcore_free(st);
     }
 }
-/* Keep one snapshot across frames. Compare the result with a full paint. */
 static void scroll_pixels_test(void)
 {
     struct wsap_vtcore *t = tt_new(40, 8);
@@ -895,11 +877,9 @@ static void scroll_pixels_test(void)
         draw_terminal_with_history(r, &render_history, px[buf],
                                    w, h, buf, &frame);
         assert(!memcmp(px[buf], full, bytes));
-        /* Paint a snapshot twice. Its scroll delta must not move it again. */
         draw_terminal_with_history(r, &render_history, px[buf],
                                    w, h, buf, &frame);
         assert(!memcmp(px[buf], full, bytes));
-        /* This buffer now holds the preceding frame on the next iteration. */
         draw_terminal_with_history(r, &render_history, px[1 - buf],
                                    w, h, 1 - buf, &frame);
         assert(!memcmp(px[1 - buf], full, bytes));
@@ -1093,7 +1073,6 @@ static void popup_cleared_target_test(void)
     draw_scene(r, &t, &scene, NULL, (struct rect2i){0}, 0);
     assert(px[6 * w + 6] == ink);
 
-    /* A main frame repaints only its damage; none means no pixels. */
     memset(px, 0, sizeof(px));
     draw_scene(r, &t, &scene, &(struct ui_damage){0}, (struct rect2i){0}, 0);
     assert(px[6 * w + 6] == 0);
@@ -1142,8 +1121,6 @@ static void overlay_grid_repaint_test(void)
     (void)render_draw(r, &rt, &input);
     assert(window_pixels[probe] == ink);
 
-    /* The row under the UI changes: the terminal repaints it, and the UI
-     * paints over it again although the UI itself did not change. */
     feed(t, "\033[2;1HZZZZ");
     input.damage = &none;
     test_frame_init(&input.grid, t, false);
@@ -1198,8 +1175,6 @@ static void vector_fallback_test(void)
     wsap_vtcore_free(t);
 }
 
-/* A target without a GPU frame, as a screenshot draws into, never
- * reaches the GPU backend: the CPU paints the pixels. */
 static void cpu_target_skips_gpu_test(void)
 {
     struct wsap_vtcore *t = tt_new(8, 2);
@@ -1231,8 +1206,6 @@ static void cpu_target_skips_gpu_test(void)
     wsap_vtcore_free(t);
 }
 
-
-/* An image op copies its pixels 1:1 and stays inside the clip. */
 static void image_op_paints_and_clips_test(void)
 {
     uint32_t src[4 * 3];
@@ -1291,7 +1264,6 @@ static void image_op_paints_and_clips_test(void)
     framebuffer_history_release(&history);
     renderer_destroy(r);
 
-    /* An image op outside the clip must not paint. */
     ui_scene_init(&scene);
     assert(ui_scene_push_clip(&scene, (struct rect2i){
         .pos = { .x = 0, .y = 0 }, .size = { .x = 2, .y = 2 } }));
@@ -1303,7 +1275,6 @@ static void image_op_paints_and_clips_test(void)
     for (int i = 0; i < 48; i++)
         assert(clip_px[i] == 0);
 
-    /* An image extending past surface bounds must clip to the surface. */
     ui_scene_init(&scene);
     assert(ui_scene_image(&scene, (struct vector2i){ .x = 6, .y = 4 }, &img));
     assert(ui_scene_paint_clipped(test_font(), clip_px, 8, 6, &scene,
@@ -1315,8 +1286,6 @@ static void image_op_paints_and_clips_test(void)
     ui_scene_destroy(&scene);
 }
 
-/* A blend rect's alpha replaces the alpha byte of its color, so a full
- * blend paints opaque pixels even from a bare RGB color. */
 static void blend_rect_alpha_test(void)
 {
     struct ui_scene scene = {0};
@@ -1331,7 +1300,6 @@ static void blend_rect_alpha_test(void)
     assert(px[0] == 0xFF112233u && px[1 * 4 + 1] == 0xFF112233u);
     assert(px[2 * 4 + 2] == 0xFF000000u);
 
-    /* Blending with alpha below 255 must also keep the opaque alpha channel. */
     ui_scene_init(&scene);
     assert(ui_scene_blend_rect(&scene, (struct rect2i){
         .size = { .x = 2, .y = 2 } }, 0x000000, 254));
@@ -1344,7 +1312,6 @@ static void blend_rect_alpha_test(void)
     ui_scene_destroy(&scene);
 }
 
-/* Blending before render_init() must build the sRGB LUTs. */
 static void uninitialized_srgb_luts_test(void)
 {
     unsigned blended = render_blend_channel(255, 0, 128);
@@ -1353,7 +1320,6 @@ static void uninitialized_srgb_luts_test(void)
     assert((px & 0xFF) == 128);
 }
 
-/* A frame with repaint requested must emit damage for unchanged terminal rows. */
 static void repaint_emits_damage_test(void)
 {
     struct wsap_vtcore *t = tt_new(8, 2);
@@ -1389,7 +1355,6 @@ static void repaint_emits_damage_test(void)
     wsap_vtcore_free(t);
 }
 
-/* A frame drawn without framebuffer history must not use uninitialized state. */
 static void null_history_draw_test(void)
 {
     struct wsap_vtcore *t = tt_new(8, 2);
@@ -1425,7 +1390,6 @@ static void null_history_draw_test(void)
     wsap_vtcore_free(t);
 }
 
-/* Rounded rectangles with radius matching half the width or height must stay symmetric. */
 static void pill_rounded_rect_symmetry_test(void)
 {
     struct ui_scene scene = {0};

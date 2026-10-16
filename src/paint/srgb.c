@@ -6,8 +6,6 @@
 
 #include "paint/blend.h"
 
-/* Built by the first blend that needs them. The glyph cache blends its
- * tiles with them, so they sit below the renderer. */
 uint16_t render_srgb_to_linear[258];
 alignas(64) uint8_t render_linear_to_srgb[65540];
 _Atomic bool render_srgb_luts_ready;

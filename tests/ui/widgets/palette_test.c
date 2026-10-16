@@ -14,7 +14,6 @@ static const struct ui_palette_cmd CMDS[] = {
 };
 #define N_CMDS ((int)(sizeof(CMDS) / sizeof(CMDS[0])))
 
-/* A palette over a focusable button, in an 800x600 surface. */
 struct fixture {
     struct ui_surface surface;
     struct ui_widget root;
@@ -130,7 +129,6 @@ static void filter_and_activate_test(void)
     assert(key(&f, UI_KEY_ENTER, 0, 0));
     assert(f.activated == 3 && f.closed == 1);
     assert(!ui_palette_is_open(&f.palette));
-    /* The focus goes back to where it was before the palette opened. */
     assert(ui_surface_focused(&f.surface) == ui_button_widget(&f.behind));
     teardown(&f);
 }
@@ -182,7 +180,6 @@ static void keys_move_the_selection_test(void)
     assert(ui_list_selected(&f.palette.list) == 1);
     key(&f, UI_KEY_TAB, UI_MOD_SHIFT, 0);
     assert(ui_list_selected(&f.palette.list) == 0);
-    /* Tab alone does nothing: the focus stays in the palette. */
     assert(key(&f, UI_KEY_TAB, 0, 0));
     assert(ui_list_selected(&f.palette.list) == 0);
     assert(ui_surface_focused(&f.surface) == ui_input_widget(&f.palette.input));
@@ -193,9 +190,6 @@ static void keys_move_the_selection_test(void)
     teardown(&f);
 }
 
-/* Typing narrows the list, arrows move the selection, and Escape closes
- * the palette. Each one changes what the palette shows, so each asks for
- * the frame. */
 static void palette_keys_request_frame_test(void)
 {
     struct fixture f;
@@ -226,7 +220,6 @@ static void pointer_test(void)
 
     assert(ui_palette_open(&f.palette, CMDS, N_CMDS));
     ui_surface_prepare(&f.surface);
-    /* A press inside the panel but off the rows keeps it open. */
     struct rect2i panel = ui_palette_widget(&f.palette)->bounds;
     click(&f, (struct vector2i){ .x = panel.x + 1, .y = rect2i_end(panel).y - 1 });
     assert(ui_palette_is_open(&f.palette));
@@ -247,7 +240,6 @@ static void paints_inside_its_panel_test(void)
         const struct ui_scene_op *op = &f.scene.ops[i];
         if (op->kind == UI_SCENE_OP_PUSH_CLIP || op->kind == UI_SCENE_OP_POP_CLIP)
             continue;
-        /* The button behind the palette paints before it. */
         if (!rect2i_contains(panel, op->rect.pos))
             continue;
         if (op->kind == UI_SCENE_OP_TEXT && op->text_len == 14 &&
@@ -258,7 +250,6 @@ static void paints_inside_its_panel_test(void)
     teardown(&f);
 }
 
-/* The palette sizes from the parent: half its width, near its top. */
 static void follows_parent_resize_test(void)
 {
     struct fixture f;
@@ -307,7 +298,6 @@ static void themed_scaled_and_empty_query_test(void)
     css_sheet_clear(&sheet);
 }
 
-/* The query text lines up with the labels of the items below it. */
 static void query_lines_up_with_labels_test(void)
 {
     struct fixture f;

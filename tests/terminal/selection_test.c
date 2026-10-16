@@ -8,8 +8,6 @@
 
 static void feed(struct wsap_vtcore *t, const char *s) { tt_write(t, s, strlen(s)); }
 
-/* The pointer selects text when the program does not take mouse input and
- * the normal screen is active. */
 static bool pointer_selects_text(struct wsap_vtcore *t)
 {
     struct wsap_vtcore_modes modes = wsap_vtcore_modes(t);
@@ -116,8 +114,6 @@ static void alternate_test(struct wsap_vtcore *t)
     feed(t, "\033[?1049h\033[?25l\033[?1000hAPP\033[?1049h");
     assert(!pointer_selects_text(t));
     assert(tt_cell(t, 0, 0)->text == 'A');
-    /* The alternate screen shows no history. The check after the exit
-     * shows that its scrolling did not add history rows. */
     feed(t, "\n\n\n\n\n\033[2J");
     assert(tt_history(t) == 0);
     wsap_vtcore_scroll(t, 10);
@@ -136,25 +132,16 @@ static void alternate_test(struct wsap_vtcore *t)
     feed(t, "\033[?1049l");
 }
 
-/* A long selection of multi-code-point graphemes must copy every byte.
- * The text buffer starts small, so the copy has to grow it. */
-/* Selecting across a long line of wide cells must copy every glyph. A wide
- * line cannot give the column of a row by multiplying, so the selection
- * code walks the line to find where each row starts. That walk must agree
- * with the decoded row widths, or the selection ends early or late. */
 static void selection_wide_line_columns(void)
 {
     enum { COLS = 40, ROWS = 10, GLYPHS = 400 };
     struct wsap_vtcore *t = tt_new(COLS, ROWS);
-    /* U+65E5 is a wide cell and three UTF-8 bytes. */
     for (int i = 0; i < GLYPHS; i++)
         feed(t, "\xE6\x97\xA5");
     feed(t, "\r\n");
-    /* Close the line and push it into history. */
     feed(t, "x\r\ny\r\n");
     int total = tt_history(t);
     assert(total > 0);
-    /* Sit where the view shows the tail of the wide line. */
     wsap_vtcore_scroll_to(t, total - 3);
     wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ .x = 0, .y = 0 }, false, WSAP_VTCORE_SELECT_CELL);
     wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = COLS - 1, .y = ROWS - 1 }, false);
@@ -162,8 +149,6 @@ static void selection_wide_line_columns(void)
 
     char *text = tt_selection_text(t);
     assert(text);
-    /* Every selected cell of a wide line is a whole glyph, so the copy is
-     * a whole number of three-byte glyphs and holds no partial one. */
     size_t len = strlen(text);
     assert(len % 3 == 0);
     for (size_t i = 0; i + 2 < len; i += 3)
@@ -177,7 +162,6 @@ static void selection_wide_line_columns(void)
 static void selection_cluster_test(void)
 {
     struct wsap_vtcore *t = tt_new(80, 30);
-    /* A ZWJ emoji family: several code points and over 20 bytes per cell. */
     for (int row = 0; row < 30; row++)
         for (int col = 0; col < 80; col++)
             feed(t, "\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7"
@@ -185,32 +169,25 @@ static void selection_cluster_test(void)
     tt_select(t, 0, 0, 79, 29);
     char *text = tt_selection_text(t);
     assert(text);
-    /* Each emoji is two cells wide and 25 UTF-8 bytes long. The copy
-     * must hold every byte of every cell the selection covers. */
     assert(strlen(text) == (size_t)(80u * 30u / 2u) * 25u);
     wsap_vtcore_text_free(text);
     wsap_vtcore_free(t);
 }
 
-/* A very long wrapped line with wide characters must select without delay.
- * The selection code must locate cells and extract text fast. */
 static void selection_massive_line_test(void)
 {
     enum { COLS = 80, ROWS = 24, GLYPHS = 10000 };
     struct wsap_vtcore *t = tt_new(COLS, ROWS);
     assert(t);
 
-    /* Write a single long line with wide characters (U+65E5) and ASCII. */
     for (int i = 0; i < GLYPHS; i++)
         feed(t, (i % 2 == 0) ? "\xE6\x97\xA5" : "a");
     feed(t, "\r\n");
 
-    /* Add follow-up rows to push the line into history. */
     feed(t, "done\r\n");
     int hist = tt_history(t);
     assert(hist > 0);
 
-    /* Scroll back to the middle of the massive line. */
     wsap_vtcore_scroll_to(t, hist / 2);
     struct text_selection s = {0};
     selection_handle_pointer(&s, t, (struct vector2i){ .x = 10, .y = 5 }, false, PTR_PRESS, 1000);
@@ -223,7 +200,6 @@ static void selection_massive_line_test(void)
     assert(strlen(text) > 0);
     wsap_vtcore_text_free(text);
 
-    /* Test double-click word selection on the massive line. */
     selection_handle_pointer(&s, t, (struct vector2i){ .x = 10, .y = 5 }, false, PTR_PRESS, 1100);
     selection_handle_pointer(&s, t, (struct vector2i){ .x = 10, .y = 5 }, false, PTR_RELEASE, 1110);
     assert(wsap_vtcore_has_selection(t));
@@ -232,7 +208,6 @@ static void selection_massive_line_test(void)
     assert(strlen(text) > 0);
     wsap_vtcore_text_free(text);
 
-    /* Test selecting across the entire massive line. */
     wsap_vtcore_scroll_to(t, hist);
     wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ .x = 0, .y = 0 }, false, WSAP_VTCORE_SELECT_CELL);
     wsap_vtcore_scroll_to(t, 0);
@@ -246,8 +221,6 @@ static void selection_massive_line_test(void)
     wsap_vtcore_free(t);
 }
 
-/* A second click inside the window's interval selects the word. The same
- * gap outside the interval only starts a new cell selection. */
 static void double_click_interval_test(struct wsap_vtcore *t)
 {
     feed(t, "hello world\r\nnext row");

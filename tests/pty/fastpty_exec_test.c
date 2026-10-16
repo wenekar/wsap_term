@@ -99,9 +99,6 @@ int main(int argc, char **argv)
         return 0;
     }
     if (!strcmp(argv[1], "probe-route")) {
-        /* A burst in cooked mode, then a marker in raw mode. The burst
-         * keeps the pipe backlogged at each switch, so without a
-         * barrier the raw marker would overtake it. */
         assert(argc == 3);
         int rounds = atoi(argv[2]);
         struct termios cooked, raw;
@@ -121,9 +118,6 @@ int main(int argc, char **argv)
         return 0;
     }
     if (!strcmp(argv[1], "probe-reuse")) {
-        /* The shim keeps a terminal fd of its own. An app that closes
-         * that number and reuses it must not have its new file closed
-         * by the shim's next lookup. */
         struct termios tio;
         assert(tcgetattr(1, &tio) == 0);
         int null_fd = open("/dev/null", O_RDWR | O_CLOEXEC);

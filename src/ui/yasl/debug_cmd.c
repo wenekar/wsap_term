@@ -36,8 +36,6 @@ static enum dbg_status cmd_fail(struct dbg_cmd *cmd, const char *fmt, ...)
     return DBG_FAILED;
 }
 
-/* ---- windows ------------------------------------------------------ */
-
 static struct window *window_at(int index)
 {
     struct window_host *host = window_ui_host_last;
@@ -93,8 +91,6 @@ static void write_widget_ref(struct json_writer *j, const struct ui_debug_view *
     json_obj_end(j);
 }
 
-/* ---- argument helpers --------------------------------------------- */
-
 static bool parse_int(const char *s, int *out)
 {
     char *end;
@@ -139,8 +135,6 @@ static enum dbg_status find(struct dbg_cmd *cmd, const struct ui_debug_view *vie
     *out = ui_debug_find(view->root, sel);
     return *out ? DBG_OK : cmd_fail(cmd, "no widget matches '%s'", sel);
 }
-
-/* ---- inspection --------------------------------------------------- */
 
 static enum dbg_status cmd_windows(struct dbg_cmd *cmd, struct json_writer *j)
 {
@@ -242,8 +236,6 @@ static enum dbg_status cmd_lint(struct dbg_cmd *cmd, struct json_writer *j)
     return st;
 }
 
-/* ---- overlay ------------------------------------------------------ */
-
 static const struct {
     const char *name;
     unsigned flag;
@@ -277,8 +269,6 @@ static bool overlay_flag(const char *name, unsigned *out)
     return false;
 }
 
-/* overlay [on|off|toggle|all|default|FLAG|+FLAG|-FLAG ...]
- *         [select SELECTOR|none] */
 static enum dbg_status cmd_overlay(struct dbg_cmd *cmd, struct json_writer *j)
 {
     struct window *w = cmd->window;
@@ -330,8 +320,6 @@ static enum dbg_status cmd_overlay(struct dbg_cmd *cmd, struct json_writer *j)
     return DBG_OK;
 }
 
-/* ---- frames ------------------------------------------------------- */
-
 static enum dbg_status wait_frame(struct dbg_cmd *cmd, enum dbg_pending_kind kind,
                                   const char *path)
 {
@@ -354,8 +342,6 @@ static enum dbg_status cmd_screenshot(struct dbg_cmd *cmd, struct json_writer *j
     return wait_frame(cmd, DBG_PENDING_SHOT, cmd->argv[1]);
 }
 
-/* ---- input injection ---------------------------------------------- */
-
 static enum dbg_status injected(struct dbg_cmd *cmd, bool ok)
 {
     return ok ? DBG_OK : cmd_fail(cmd, "out of memory");
@@ -366,8 +352,6 @@ static uint32_t ascii_upper(uint32_t cp)
     return cp >= 'a' && cp <= 'z' ? cp - 'a' + 'A' : cp;
 }
 
-/* What the Wayland keyboard path produces for a chord, routed through
- * the keymap, so shortcuts fire as they do for real keys. */
 static bool inject_key(struct window *w, unsigned mods, uint32_t cp, uint16_t key)
 {
     struct window_debug *dbg = dbg_state(w);
@@ -424,7 +408,6 @@ static enum dbg_status cmd_key(struct dbg_cmd *cmd, struct json_writer *j)
     return injected(cmd, ok);
 }
 
-/* One key press per ASCII character; other characters go as text. */
 static enum dbg_status cmd_type(struct dbg_cmd *cmd, struct json_writer *j)
 {
     int n = 0;
@@ -505,8 +488,6 @@ static bool inject_pointer(struct dbg_cmd *cmd, enum pointer_kind kind,
     });
 }
 
-/* move X Y | down X Y [BUTTON] | up X Y [BUTTON] | click X Y [BUTTON]
- * | scroll X Y LINES | leave */
 static enum dbg_status cmd_pointer(struct dbg_cmd *cmd, struct json_writer *j)
 {
     const char *verb = cmd->argv[0];
@@ -574,14 +555,9 @@ static enum dbg_status cmd_font(struct dbg_cmd *cmd, struct json_writer *j)
     return DBG_OK;
 }
 
-/* ---- dispatch ----------------------------------------------------- */
-
 enum {
-    /* Acts on a window. */
     CMD_WINDOW = 1 << 0,
-    /* Waits for a frame or feeds input, so it needs the running loop. */
     CMD_LOOP = 1 << 1,
-    /* Queues input; the window drains it after the reply. */
     CMD_INJECTS = 1 << 2,
 };
 
@@ -639,8 +615,6 @@ static enum dbg_status cmd_help(struct dbg_cmd *cmd, struct json_writer *j)
     return DBG_OK;
 }
 
-/* Splits on whitespace; "double quotes" group, backslash escapes. A line
- * of n bytes holds at most n / 2 + 1 words. */
 static int tokenize(char *line, char **argv)
 {
     int argc = 0;
@@ -670,7 +644,6 @@ static int tokenize(char *line, char **argv)
     return argc;
 }
 
-/* Pulls -w/-p/-m out of argv. */
 static enum dbg_status take_options(struct dbg_cmd *cmd)
 {
     int out = 0, window = -1;
@@ -707,8 +680,6 @@ static enum dbg_status take_options(struct dbg_cmd *cmd)
     return DBG_OK;
 }
 
-/* Find a command in the command table.
- * Compare the first character before strcmp() to reject mismatches quickly. */
 static size_t find_command(const struct dbg_cmd *cmd)
 {
     size_t i = 0;
@@ -776,7 +747,6 @@ bool dbg_run_line(struct dbg_client *c, char *line)
         return true;
     }
     dbg_reply_ok(c, &j);
-    /* The drain may close the window; the host frees it later. */
     if (flags & CMD_INJECTS)
         window_drain_input(w);
     return true;

@@ -10,8 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ---- parts --------------------------------------------------------- */
-
 void ui_debug_part_text(struct ui_debug_parts *out, const char *name,
                         int index, struct rect2i rect,
                         const char *text, size_t len)
@@ -57,16 +55,12 @@ void ui_debug_collect_parts(const struct ui_widget *widget,
         widget->ops->debug_parts(widget, out);
 }
 
-/* ---- tree navigation ---------------------------------------------- */
-
 const char *ui_debug_type_name(const struct ui_widget *widget)
 {
     return widget && widget->ops && widget->ops->name
         ? widget->ops->name : "widget";
 }
 
-/* Membership by address only: never dereferences candidate, so it is
- * safe on pointers that may be stale (scene scope owners, selections). */
 static bool in_tree(const struct ui_widget *root,
                     const struct ui_widget *candidate)
 {
@@ -172,7 +166,6 @@ const struct ui_widget *ui_debug_find(const struct ui_widget *root,
     return find_by(root, 0, selector);
 }
 
-/* "content" describes the box model, not a hit region. */
 static bool part_is_region(const struct ui_debug_part *part)
 {
     return strcmp(part->name, "content") != 0;
@@ -194,9 +187,6 @@ static bool part_hit(const struct ui_widget *w, struct vector2i p,
     return false;
 }
 
-/* A widget that reports parts occupies only its parts; one that does not
- * occupies its bounds. Tabbar paints into a window-sized canvas, so its
- * bounds alone would claim the whole window. */
 static bool occupies(const struct ui_widget *w, struct vector2i p)
 {
     if (!rect2i_contains(w->bounds, p))
@@ -222,10 +212,6 @@ const struct ui_widget *ui_debug_widget_at(const struct ui_widget *root,
     return occupies(root, p) ? root : NULL;
 }
 
-/* ---- scene helpers ------------------------------------------------- */
-
-/* Scopes are in paint order, so the last node scope that holds the op is
- * the innermost one. */
 const struct ui_widget *ui_debug_op_owner(const struct ui_debug_view *view,
                                           int op_index)
 {
@@ -280,8 +266,6 @@ static bool op_is_fill(const struct ui_scene_op *op)
            op->kind == UI_SCENE_OP_ROUNDED_RECT ||
            (op->kind == UI_SCENE_OP_BLEND_RECT && op->alpha > 0);
 }
-
-/* ---- JSON: widgets ------------------------------------------------- */
 
 static void write_color(struct json_writer *j, uint32_t argb)
 {
@@ -612,7 +596,6 @@ void ui_debug_write_hit(struct json_writer *j,
     }
     json_arr_end(j);
 
-    /* Topmost first: the op the user actually sees at p. */
     json_key(j, "ops");
     json_arr_begin(j);
     if (view->scene) {
@@ -659,10 +642,6 @@ void ui_debug_write_scene(struct json_writer *j,
     json_obj_end(j);
 }
 
-/* ---- lint ---------------------------------------------------------- */
-
-/* Where the text starts, at mid height: overflowing text still starts
- * on the surface it overflows. */
 static bool rect_contains_text_start(struct rect2i r, struct rect2i box)
 {
     struct vector2i c = {
@@ -672,10 +651,6 @@ static bool rect_contains_text_start(struct rect2i r, struct rect2i box)
     return rect2i_contains(r, c);
 }
 
-/* The rect a text op sits on. Parts win (they are the widget's own row
- * and slot geometry); then the nearest earlier fill that is row-sized;
- * then the owner's bounds when row-sized. Row-sized means at most three
- * cells tall, so a panel background never counts as a row. */
 static bool text_surface(const struct ui_debug_view *view, int index,
                          const struct ui_widget *owner,
                          const struct ui_debug_parts *parts,
@@ -770,8 +745,6 @@ int ui_debug_lint_scene(const struct ui_debug_view *view,
                 });
         }
 
-        /* Compare doubled centers so boxes of different heights that
-         * are centered on the same line do not count. */
         for (int k = 0; k < i; k++) {
             const struct ui_scene_op *prev = &s->ops[k];
             if (prev->kind != UI_SCENE_OP_TEXT ||
@@ -809,7 +782,6 @@ static const char *lint_kind_name(enum ui_debug_lint_kind kind)
     return "?";
 }
 
-/* Every finding, in a buffer the caller frees. */
 static struct ui_debug_lint *lint_all(const struct ui_debug_view *view, int *n)
 {
     *n = ui_debug_lint_scene(view, NULL, 0);
@@ -855,8 +827,6 @@ void ui_debug_write_lint(struct json_writer *j,
     json_obj_end(j);
     free(found);
 }
-
-/* ---- overlay ------------------------------------------------------- */
 
 #define OV_BOUNDS_ALPHA 170
 #define OV_BAND_ALPHA   70
@@ -906,7 +876,6 @@ static void ov_outline(struct overlay_ctx *o, struct rect2i r, uint32_t rgb,
             rgb, alpha);
 }
 
-/* Fills outer minus inner as four bands. */
 static void ov_band(struct overlay_ctx *o, struct rect2i outer,
                     struct rect2i inner, uint32_t rgb, uint8_t alpha)
 {
@@ -1013,8 +982,6 @@ bool ui_debug_overlay_append(struct ui_scene *scene,
     };
     unsigned flags = overlay->flags;
 
-    /* Read the built scene before appending: the overlay's own ops must
-     * not feed back into the lint or the text boxes. */
     const struct ui_scene *built = view->scene ? view->scene : scene;
     int built_ops = built->n_ops;
     struct ui_debug_lint *found = NULL;
@@ -1064,8 +1031,6 @@ bool ui_debug_overlay_append(struct ui_scene *scene,
     if (focus) {
         static struct ui_debug_parts parts;
         ui_debug_collect_parts(focus, &parts);
-        /* A widget with hit regions paints into a canvas; its bounds do
-         * not describe a box. */
         bool has_regions = false;
         for (int i = 0; i < parts.n; i++)
             has_regions |= part_is_region(&parts.items[i]);

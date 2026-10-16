@@ -15,15 +15,12 @@ static struct ui_label *label_of(const struct ui_widget *widget)
     return ui_container_of((struct ui_widget *)widget, struct ui_label, widget);
 }
 
-/* Part handles for the label's CSS parts. */
 static struct {
     ui_part_id selection;
     ui_part_id link;
     ui_part_id focus;
 } parts;
 
-/* Interns the part names once for the process. Every later call returns
- * at once. */
 static void label_parts_init(void)
 {
     if (parts.selection)
@@ -38,7 +35,6 @@ static struct css_style label_part(const struct ui_label *label, ui_part_id part
     return ui_widget_part(&label->widget, part, label->widget.impl.style_pseudo);
 }
 
-/* Measurement, paint, and pointer input use the same line iterator. */
 struct label_line {
     size_t start, len, next;
     int cells;
@@ -52,7 +48,6 @@ struct label_iter {
     bool segment, done;
 };
 
-/* Keep zero-width marks with the preceding code point. */
 static size_t next_offset(const char *text, size_t len, size_t off, int *cells)
 {
     if (off >= len) {
@@ -135,7 +130,6 @@ static bool next_line(struct label_iter *it, struct label_line *line)
         }
         line->ellipsis = true;
     } else if (pos == it->off && pos < it->end && wrap <= UI_LABEL_WRAP_CHAR) {
-        /* A wide code point in a narrow box still consumes whole bytes. */
         pos = next_offset(text, it->end, pos, &used);
     }
     line->len = pos - it->off;
@@ -204,7 +198,6 @@ static struct rect2i line_rect(const struct ui_label *label, struct rect2i conte
     int dx = label->impl.align == UI_LABEL_ALIGN_CENTER ? free / 2
            : label->impl.align == UI_LABEL_ALIGN_RIGHT ? free : 0;
     int dy = 0;
-    /* Keep the original vertical centering for a single visual line. */
     struct label_iter it = line_iter(label, content.width);
     struct label_line first, second;
     if (row == 0 && next_line(&it, &first) && !next_line(&it, &second))
@@ -355,7 +348,6 @@ static void label_parts(const struct ui_widget *widget, struct ui_debug_parts *p
     }
 }
 
-/* Return a byte boundary nearest to the pointer's cell. */
 static size_t offset_at(const struct ui_label *label, struct vector2i pos)
 {
     struct rect2i content = content_rect(label, label->widget.bounds.size);

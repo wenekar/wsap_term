@@ -10,8 +10,6 @@
 #include "ui/widget.h"
 #include "util/json.h"
 
-/* A widget that paints its bounds and, optionally, one text run at a
- * fixed offset inside a named part. */
 struct probe {
     struct ui_widget widget;
     uint32_t color;
@@ -99,8 +97,6 @@ static void selectors_resolve_test(void)
     assert(!ui_debug_path(&root.widget, &stray.widget, path, sizeof(path)));
 }
 
-/* The visible widget wins: later siblings paint on top. A widget that
- * reports hit regions occupies only them, not its whole bounds. */
 static void widget_at_matches_what_is_visible_test(void)
 {
     struct probe root, under, over, canvas;
@@ -141,7 +137,6 @@ static void ops_are_attributed_to_their_widget_test(void)
     assert(ui_debug_op_owner(&view, child_op) == &child.widget);
     assert(ui_debug_op_owner(&view, 0) == &root.widget);
 
-    /* A destroyed widget is never reported, even from an old trace. */
     ui_widget_remove_child(&root.widget, &child.widget);
     assert(ui_debug_op_owner(&view, child_op) != &child.widget);
 }
@@ -174,8 +169,6 @@ static void lint_flags_off_center_text_test(void)
     assert(lint_count(&root, UI_DEBUG_LINT_OVERFLOW) == 1);
 }
 
-/* The overlay draws after the UI's own ops, leaves them untouched, and
- * never makes a scene invalid, however large it already is. */
 static void overlay_never_breaks_the_scene_test(void)
 {
     struct probe root, child;

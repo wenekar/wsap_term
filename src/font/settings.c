@@ -2,7 +2,6 @@
 
 #include <string.h>
 
-/* True when exactly one family is NULL, or both are names that differ. */
 static bool family_differs(const char *a, const char *b)
 {
     return (a || b) && (!a || !b || strcmp(a, b) != 0);
@@ -11,7 +10,6 @@ static bool family_differs(const char *a, const char *b)
 void font_apply_settings(const struct font_settings *prev,
                          const struct font_settings *next)
 {
-    /* No previous settings: set every value. */
     if (!prev) {
         font_set_family(next->family);
         font_set_configured_size(next->size_pt);

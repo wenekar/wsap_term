@@ -6,7 +6,6 @@
 #include "ui/internal/tree.h"
 #include "ui/widget.h"
 
-
 struct probe {
     int measures;
     int layouts;
@@ -161,7 +160,6 @@ static void context_clock_test(void)
     struct ui_event key = ui_event_key((struct ui_key_event){
         .key = UI_KEY_ENTER,
     }, 10);
-    /* A handled key draws only when the widget invalidates. */
     assert(ui_surface_dispatch(&context, &key));
     assert(!ui_surface_frame_pending(&context));
 
@@ -393,7 +391,6 @@ struct typed_widget_probe {
 
 static void add_children_test(void)
 {
-    /* 1. Macro and basic batch addition. */
     struct typed_widget_probe parent_probe = {0};
     struct typed_widget_probe child_a = {0};
     struct typed_widget_probe child_b = {0};
@@ -421,25 +418,20 @@ static void add_children_test(void)
     assert(child_b.widget.parent == UI_WIDGET(&parent_probe));
     assert(child_c.widget.parent == UI_WIDGET(&parent_probe));
 
-    /* 2. Zero count succeeds and changes nothing. */
     assert(ui_widget_add_children(UI_WIDGET(&parent_probe), NULL, 0));
     assert(ui_widget_child_count(UI_WIDGET(&parent_probe)) == 3);
 
-    /* 3. NULL parent fails. */
     struct ui_widget extra = {0};
     ui_widget_init(&extra, NULL, NULL);
     assert(!ui_widget_add_children(NULL, (struct ui_widget *[]){ &extra }, 1));
 
-    /* 4. Destroyed parent fails. */
     struct ui_widget dead_parent = {0};
     ui_widget_init(&dead_parent, NULL, NULL);
     ui_widget_destroy(&dead_parent);
     assert(!ui_widget_add_children(&dead_parent, (struct ui_widget *[]){ &extra }, 1));
 
-    /* 5. NULL list with count > 0 fails. */
     assert(!ui_widget_add_children(UI_WIDGET(&parent_probe), NULL, 2));
 
-    /* 6. List with NULL entry fails atomically without adding other items. */
     struct ui_widget p2 = {0}, c1 = {0}, c2 = {0};
     ui_widget_init(&p2, NULL, NULL);
     ui_widget_init(&c1, NULL, NULL);
@@ -448,21 +440,17 @@ static void add_children_test(void)
     assert(ui_widget_child_count(&p2) == 0);
     assert(c1.parent == NULL && c2.parent == NULL);
 
-    /* 7. Child equal to parent fails. */
     assert(!ui_widget_add_children(&p2, (struct ui_widget *[]){ &p2 }, 1));
     assert(ui_widget_child_count(&p2) == 0);
 
-    /* 8. Duplicate child in array fails atomically. */
     assert(!ui_widget_add_children(&p2, (struct ui_widget *[]){ &c1, &c2, &c1 }, 3));
     assert(ui_widget_child_count(&p2) == 0);
     assert(c1.parent == NULL && c2.parent == NULL);
 
-    /* 9. Already-parented child fails atomically. */
     assert(!ui_widget_add_children(&p2, (struct ui_widget *[]){ &c1, UI_WIDGET(&child_a) }, 2));
     assert(ui_widget_child_count(&p2) == 0);
     assert(c1.parent == NULL);
 
-    /* 10. Destroyed child fails atomically. */
     struct ui_widget dead_child = {0};
     ui_widget_init(&dead_child, NULL, NULL);
     ui_widget_destroy(&dead_child);
@@ -470,7 +458,6 @@ static void add_children_test(void)
     assert(ui_widget_child_count(&p2) == 0);
     assert(c1.parent == NULL);
 
-    /* 11. Child limit enforced atomically. */
     static const struct ui_widget_ops LIMITED_OPS = { .child_limit = 2 };
     struct ui_widget limited = {0}, lim_a = {0}, lim_b = {0}, lim_c = {0};
     ui_widget_init(&limited, &LIMITED_OPS, NULL);
@@ -487,7 +474,6 @@ static void add_children_test(void)
     assert(ui_widget_child_count(&limited) == 2);
     assert(lim_c.parent == NULL);
 
-    /* 12. Ancestor cycle rejected. */
     assert(!ui_widget_add_children(UI_WIDGET(&child_a), (struct ui_widget *[]){ UI_WIDGET(&parent_probe) }, 1));
 
     ui_widget_destroy(&limited);

@@ -1,16 +1,9 @@
-"""Test harness for running Kitty's parser.py test suite.
-
-Provides :class:`BaseTest`, :class:`CmdDump`, and re-exports ``parse_bytes``
-from ``kitty_parser`` (written by a separate subagent).
-"""
 
 import unittest
 
 from kitty_parser import parse_bytes
 
-
 class CmdDump(list):
-    """Collects parser events, matching Kitty's ``CmdDump``."""
 
     def __call__(self, window_id, *a):
         if a and a[0] == 'bytes':
@@ -34,13 +27,11 @@ class CmdDump(list):
             q.append(('draw', current))
         return tuple(q)
 
-
 class BaseTest(unittest.TestCase):
-    """Base test class matching Kitty's test API."""
 
     def ae(self, a, b, msg=None):
         self.assertEqual(a, b, msg)
 
     def create_screen(self, cols=5):
         from screen import Screen
-        return Screen(cols, 5)  # 5 rows like Kitty
+        return Screen(cols, 5)

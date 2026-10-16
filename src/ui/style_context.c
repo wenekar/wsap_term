@@ -172,10 +172,6 @@ static void apply_widget_subtree(struct ui_style_context *context,
     widget->style_scale = context ? context->scale
                                 : (struct css_scale_context){0};
     if (changed) {
-        /* Child bounds can stay fixed while their content changes size.
-         * A new sheet can change part styles too, so it always measures.
-         * A hover in the same sheet often changes only colors: then a
-         * repaint is enough, and the rest of the tree keeps its layout. */
         bool layout = !same_sheet || !css_style_layout_eq(&before, &widget->style);
         ui_widget_invalidate(widget, layout ? UI_WIDGET_INVALIDATE_MEASURE
                                             : UI_WIDGET_INVALIDATE_PAINT);
@@ -223,9 +219,6 @@ struct css_style ui_widget_part_style(const struct ui_widget *widget,
     return style;
 }
 
-/* Part handles. Names live for the whole process, so a handle is valid on
- * every surface. The UI runs on one thread, so the table has no lock. The
- * table is open addressing over the ids, which start at 1. */
 struct part_table {
     char **names;
     uint32_t count;
@@ -256,9 +249,6 @@ static void part_bucket_insert(uint32_t *buckets, uint32_t cap, uint32_t id,
     buckets[slot] = id;
 }
 
-/* Part handles have no error value besides 0, which means no part. A
- * failure that returned 0 would style the widget with no class and hide
- * the bug, so these paths stop the process instead. */
 static void part_abort(const char *message)
 {
     fprintf(stderr, "wsap: %s\n", message);
@@ -340,8 +330,6 @@ static uint64_t part_context_generation(const struct ui_widget *widget)
     return surface ? ui_style_context_generation(&surface->impl.style) : 0;
 }
 
-/* The cache is not part of what the widget shows, so the parameter stays
- * const. The slot list is the only thing written through the cast. */
 struct css_style ui_widget_part(const struct ui_widget *widget,
                                 ui_part_id part, unsigned pseudo_flags)
 {

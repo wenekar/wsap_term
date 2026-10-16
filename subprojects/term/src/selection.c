@@ -38,7 +38,6 @@ static char *link_at_text(const struct wsap_vtcore *t, struct wsap_vtcore_vector
     char *out = NULL;
     if (url && col >= start + (int)(url - text)) {
         size_t n = strlen(url);
-        /* Bitmask matching trailing punctuation characters: .,;:!?)]}>"' */
         static const uint64_t mask[4] = {
             0xCC00528600000000ULL,
             0x2000000020000000ULL,
@@ -94,11 +93,6 @@ static inline int sel_point_cmp(struct wsap_vtcore_sel_point a, struct wsap_vtco
     return 0;
 }
 
-/*
- * The lines that one call reads. History holds every row of its closed
- * lines and the first rows of the open line. The screen holds the rest; pos
- * gives the line and segment of each screen row.
- */
 struct lines {
     const struct wsap_vtcore *t;
     int cols;
@@ -109,8 +103,6 @@ struct lines {
     struct line_pos stack[256];
 };
 
-/* False when a screen taller than the stack array needs memory and none is
- * left. L can still be passed to lines_free(). */
 static bool lines_init(struct lines *L, const struct wsap_vtcore *t)
 {
     L->t = t;
@@ -166,7 +158,6 @@ static int screen_row_of(const struct lines *L, uint64_t id, int seg)
     return -1;
 }
 
-/* Segments of line id across history and the screen. */
 static int line_total_segs(const struct lines *L, uint64_t id)
 {
     int segs = hist_segs(L, id);
@@ -177,7 +168,6 @@ static int line_total_segs(const struct lines *L, uint64_t id)
     return segs;
 }
 
-/* The cells of one segment, padded to the width. */
 static const struct cell *line_seg_cells(const struct lines *L, uint64_t id, int seg,
                                          struct cell *scratch, bool *out_wrapped)
 {
@@ -214,7 +204,6 @@ static const struct cell *line_seg_cells(const struct lines *L, uint64_t id, int
     return buf;
 }
 
-/* A line whose segments may not hold exactly cols cells each. */
 static bool line_has_wide(const struct lines *L, uint64_t id)
 {
     const struct wsap_vtcore *t = L->t;
@@ -246,7 +235,6 @@ static inline int seg_display_cols(int cols, const struct cell *cells, bool wrap
     return cols;
 }
 
-/* The display column where segment seg of line id starts. */
 static uint32_t line_seg_start_off(const struct lines *L, uint64_t id, int seg)
 {
     if (seg <= 0)
@@ -280,7 +268,6 @@ static uint32_t line_seg_start_off(const struct lines *L, uint64_t id, int seg)
     return off;
 }
 
-/* The line and segment of view row y. */
 static bool view_row_line(const struct lines *L, int y, uint64_t *id, int *seg)
 {
     const struct wsap_vtcore *t = L->t;
@@ -400,7 +387,6 @@ static void unit_span(const struct lines *L, int x, int y, bool right_half,
     *last = sel_point_next(L, view_to_sel_point(L, right, y));
 }
 
-/* Clamp the selection to the retained lines. A read does not change it. */
 static bool selection_bounds(const struct lines *L, struct wsap_vtcore_sel_point *start,
                              struct wsap_vtcore_sel_point *end)
 {
@@ -775,8 +761,6 @@ static char *range_text_inner(const struct wsap_vtcore *t,
                 uint32_t cp = cells[c].c;
                 if (cells[c].flags & (CELL_TRAIL | CELL_WRAP_PAD))
                     continue;
-                /* One cell expands to WSAP_VTCORE_GRAPHEME_MAX_LEN code points of up
-                 * to 4 bytes each. Leave room for all of them. */
                 if (!text_reserve(&text, &cap, n + (size_t)WSAP_VTCORE_GRAPHEME_MAX_LEN * 4 + 1))
                     break;
                 if (cp > 0 && cp < 128) {

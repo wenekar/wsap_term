@@ -18,6 +18,4 @@ preload = shared_library(
     install_dir: exe_install_dir,
 )
 
-# `make release` and `make install` build only this, not the tests and
-# benchmarks. Add every new installed target here.
 alias_target('install-targets', program, preload)

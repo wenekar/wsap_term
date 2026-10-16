@@ -1,5 +1,3 @@
-/* Synthetic input to matching frame submission and compositor presentation.
- * See input-latency-bench.md for methodology and limitations. */
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -27,7 +25,6 @@ static void sleep_ns(uint64_t ns)
     struct timespec ts = { .tv_sec = ns / 1000000000ull, .tv_nsec = ns % 1000000000ull };
     while (nanosleep(&ts, &ts) < 0 && errno == EINTR) {}
 }
-/* ---------------------------------------------------------------- inject */
 
 #if defined(__linux__)
 #include <linux/uinput.h>
@@ -44,8 +41,6 @@ static bool uinput_open(void)
                 "(group 'input' on most distributions)\n", strerror(errno));
         return false;
     }
-    /* libinput only classifies the device as a keyboard if it carries a
-     * plausible key range, so claim the usual block rather than one code. */
     bool ok = ioctl(uinput_fd, UI_SET_EVBIT, EV_KEY) == 0;
     for (int code = KEY_ESC; ok && code <= KEY_COMPOSE; code++)
         ok = ioctl(uinput_fd, UI_SET_KEYBIT, code) == 0;
@@ -90,9 +85,6 @@ static void uinput_close(void)
 #include <xkbcommon/xkbcommon.h>
 #include "virtual-keyboard-unstable-v1-client-protocol.h"
 
-/* zwp_virtual_keyboard_v1 types into the compositor named by
- * WAYLAND_DISPLAY. Unlike uinput it reaches only that compositor, so it
- * also works against a private headless one. */
 static struct wl_display *wl_dpy;
 static struct wl_seat *wl_seat;
 static struct zwp_virtual_keyboard_manager_v1 *vk_manager;
@@ -187,8 +179,6 @@ static void wayland_close(void)
 }
 #endif
 
-/* WSAP_LATENCY_INJECTOR=wayland selects the Wayland virtual keyboard;
- * the default is uinput. */
 static bool use_wayland(void)
 {
 #if defined(WSAP_LATENCY_WAYLAND)
@@ -248,7 +238,7 @@ static bool injector_open(void)
 
 static bool post(bool down)
 {
-    CGEventRef ev = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)0 /* A */, down);
+    CGEventRef ev = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)0  , down);
     if (!ev)
         return false;
     CGEventPost(kCGHIDEventTap, ev);
@@ -263,7 +253,6 @@ static const char *injector_name(void) { return "CGEventPost (HID tap)"; }
 #else
 #error "no input injector for this platform"
 #endif
-
 
 static volatile sig_atomic_t stopped;
 static void on_signal(int sig) { stopped = sig; }
@@ -391,8 +380,6 @@ int main(int argc, char **argv)
         execl(bin, bin, (char *)NULL);
         _exit(127);
     }
-    /* A virtual keyboard is what gives a keyboard-less compositor's seat
-     * its keyboard, so the terminal cannot take focus before it exists. */
     bool injector_ready = use_wayland() && injector_open();
     if (use_wayland() && !injector_ready) goto cleanup;
     uint64_t deadline = now_ns() + 15000000000ull;

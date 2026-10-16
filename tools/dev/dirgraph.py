@@ -9,10 +9,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-
-# Higher ranks may include lower ranks. Keep this table in sync with
-# the library order in AGENTS.md. The term core is the subproject in
-# subprojects/term; every layer may include its public headers.
 RANKS = {
     "util": 1,
     "platform": 1,
@@ -68,13 +64,10 @@ ALLOWED_DEPENDENCIES = {
     "terminal": {"ui_yasl", "session", "ui", "input", "font", "paint", "base"},
     "app": {"base", "pty", "session", "input", "paint", "font", "ui", "theme", "render", "ui_yasl", "terminal"},
 }
-# Only these libraries may include yasl headers. Everything else stays
-# platform-free; the binding library and the app own the window system.
 YASL_LIBRARIES = {"base", "pty", "session", "ui_yasl", "terminal", "app"}
 YASL_PREFIX = "yasl/"
 INCLUDE = re.compile(r'^\s*#\s*include\s*["<]([^">]+)[">]')
 SOURCE_SUFFIXES = {".c", ".h", ".m", ".mm"}
-
 
 def layer_for(path: str) -> tuple[int, str] | None:
     if path == "main.c":
@@ -83,7 +76,6 @@ def layer_for(path: str) -> tuple[int, str] | None:
         if path == layer or path.startswith(layer + "/"):
             return rank, layer
     return None
-
 
 def library_for(path: str) -> str | None:
     if path == "main.c":
@@ -98,7 +90,6 @@ def library_for(path: str) -> str | None:
             return library
     return None
 
-
 def resolve_include(source: Path, included: str, src: Path, headers: set[str]) -> str | None:
     candidates = ((source.parent / included), (src / included))
     for candidate in candidates:
@@ -109,7 +100,6 @@ def resolve_include(source: Path, included: str, src: Path, headers: set[str]) -
         if relative in headers:
             return relative
     return None
-
 
 def is_private_violation(source: str, target: str) -> bool:
     parts = Path(target).parts
@@ -125,9 +115,7 @@ def is_private_violation(source: str, target: str) -> bool:
         owner = Path(target).parent.as_posix()
     return not (source == owner or source.startswith(owner + "/"))
 
-
 def scan(src: Path) -> list[str]:
-    # Tests do not belong to a production library. They may include private headers.
     errors: list[str] = []
     headers = {p.relative_to(src).as_posix() for p in src.rglob("*") if p.is_file()}
     for source in sorted(p for p in src.rglob("*") if p.is_file() and p.suffix in SOURCE_SUFFIXES):
@@ -160,7 +148,6 @@ def scan(src: Path) -> list[str]:
                 errors.append(f"{relative}:{number}: includes private header {included}")
     return errors
 
-
 def scan_private_owner(src: Path, owner: str) -> list[str]:
     errors: list[str] = []
     headers = {p.relative_to(src).as_posix() for p in src.rglob("*") if p.is_file()}
@@ -172,7 +159,6 @@ def scan_private_owner(src: Path, owner: str) -> list[str]:
             if included and included.startswith(owner + "/") and is_private_violation(relative, included):
                 errors.append(f"{relative}:{number}: includes private header {included}")
     return errors
-
 
 def find_cycles(src: Path) -> list[str]:
     headers = {p.relative_to(src).as_posix() for p in src.rglob("*") if p.is_file()}
@@ -210,7 +196,6 @@ def find_cycles(src: Path) -> list[str]:
     for node in sorted(graph):
         visit(node)
     return [" -> ".join(cycle + (cycle[0],)) for cycle in sorted(found)]
-
 
 def self_test() -> int:
     with tempfile.TemporaryDirectory(prefix="dirgraph-") as temp:
@@ -258,7 +243,6 @@ def self_test() -> int:
     print("self-test passed: private headers, rank violations, and yasl includes are rejected")
     return 0
 
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", nargs="?", default=".", help="source tree or Meson build directory")
@@ -292,7 +276,6 @@ def main() -> int:
     for cycle in cycles:
         print(f"Cycle: {cycle}")
     return 1 if errors or cycles else 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

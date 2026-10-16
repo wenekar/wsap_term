@@ -38,16 +38,12 @@ static struct wsap_vtcore *new_term_with_theme(const struct wsap_vtcore_theme *t
     return t;
 }
 
-/* Feed one byte at a time, so each sequence also crosses feed boundaries. */
 static void write_seq(struct wsap_vtcore *t, const char *s)
 {
     for (; *s; s++)
         wsap_vtcore_feed(t, s, 1, 0);
 }
 
-/* The ARGB value of a palette entry (0-255 or WSAP_VTCORE_PALETTE_*) as a new
- * snapshot of the terminal shows it. Each read uses its own snapshot, so a
- * read never depends on a snapshot of a terminal that a test freed. */
 static uint32_t view_palette(struct wsap_vtcore *t, int entry)
 {
     struct wsap_vtcore_snapshot *s = wsap_vtcore_snapshot_new();
@@ -67,7 +63,6 @@ static uint32_t color_of(struct wsap_vtcore *t, wsap_vtcore_color c)
     return wsap_vtcore_color_is_slot(c) ? view_palette(t, (int)(c & 0x1FFu)) : c;
 }
 
-/* A cell of the viewport, copied out of a new snapshot. */
 static struct wsap_vtcore_cell cell_at(struct wsap_vtcore *t, int col, int row)
 {
     struct wsap_vtcore_snapshot *s = wsap_vtcore_snapshot_new();
@@ -100,7 +95,6 @@ static void expect_reply(const char *expected)
     assert(!strcmp(response, expected));
 }
 
-/* A theme that differs from the built-in theme in every entry. */
 static struct wsap_vtcore_theme light_theme(void)
 {
     struct wsap_vtcore_theme theme = {
@@ -187,7 +181,6 @@ static void test_parse_invalid(void)
     assert(!wsap_vtcore_color_parse("12345", &c));
 }
 
-/* A terminal without a theme shows the built-in theme. */
 static void test_zero_theme_selects_builtin_theme(void)
 {
     struct wsap_vtcore_theme def;
@@ -203,7 +196,6 @@ static void test_zero_theme_selects_builtin_theme(void)
     wsap_vtcore_free(t);
 }
 
-/* A theme in the options sets the default colors and the ANSI colors. */
 static void test_theme_option_sets_colors(void)
 {
     struct wsap_vtcore_theme theme = light_theme();
@@ -236,7 +228,6 @@ static void test_palette_grayscale_interpolates_bg_to_fg(void)
     wsap_vtcore_free(t);
 }
 
-/* The 256-color cube and the gray ramp follow a new theme. */
 static void test_derived_palette_follows_theme(void)
 {
     struct wsap_vtcore *t = new_term();
@@ -251,13 +242,11 @@ static void test_derived_palette_follows_theme(void)
     assert(palette_at(t, 100) != cube_before);
     assert(palette_at(t, 240) != gray_before);
 
-    /* A light theme puts the lighter color at the dark end of the ramp. */
     assert(channel_equal(palette_at(t, 232), theme.fg, 12));
     assert(channel_equal(palette_at(t, 255), theme.bg, 12));
     wsap_vtcore_free(t);
 }
 
-/* Text colored by a palette slot takes the new color after a theme change. */
 static void test_theme_change_recolors_existing_text(void)
 {
     struct wsap_vtcore *t = new_term();
@@ -276,8 +265,6 @@ static void test_theme_change_recolors_existing_text(void)
     wsap_vtcore_free(t);
 }
 
-/* OSC 4 colors stay when the same theme is set again, OSC 104 restores one
- * entry, and a different theme drops them. */
 static void test_osc4_override_lifetime(void)
 {
     struct wsap_vtcore_theme def;
@@ -325,7 +312,6 @@ static void test_osc4_set_and_query(void)
 
     response_len = 0;
     write_seq(t, "\033]4;1;?\033\\");
-    /* xterm names the index in the reply. */
     expect_reply("\033]4;1;rgb:ffff/0000/0000\033\\");
 
     wsap_vtcore_free(t);
@@ -386,7 +372,6 @@ static void test_osc12_set_and_query(void)
     wsap_vtcore_free(t);
 }
 
-/* OSC 12 reports the theme cursor color before a program sets one. */
 static void test_osc12_query_default(void)
 {
     struct wsap_vtcore_theme theme = light_theme();
@@ -406,7 +391,6 @@ static void test_osc12_query_default(void)
     wsap_vtcore_free(t);
 }
 
-/* Color changes from one terminal do not reach another terminal. */
 static void test_osc_is_per_terminal(void)
 {
     struct wsap_vtcore *a = new_term();
@@ -424,7 +408,6 @@ static void test_osc_is_per_terminal(void)
     assert(color_of(b, WSAP_VTCORE_COLOR_FG) == fg);
     assert(color_of(b, WSAP_VTCORE_COLOR_BG) == bg);
 
-    /* A new terminal also starts from its theme. */
     struct wsap_vtcore *c = new_term();
     assert(palette_at(c, 1) == c1);
     assert(color_of(c, WSAP_VTCORE_COLOR_FG) == fg);

@@ -62,32 +62,9 @@ struct css_scale_context {
     float cell_h;
 };
 
-/* Supported property subset and resolution semantics:
- *
- *   width/height/min-width/min-height/max-width/max-height/gap/border-width/border-radius
- *     css_value; px | % | em | rem | ch | auto. % resolves against the
- *     parent space after padding and gaps for layout sizes; em/rem against
- *     scale.cell_h; ch against scale.cell_w; px multiplies dpi_scale.
- *     "auto" (the all-zero value) means unset — the widget falls back
- *     to its natural size or C-side default.
- *   padding/margin
- *     1-4 css_values in top/right/bottom/left order, same units.
- *     Boxes use padding. Margins apply only to widget parts.
- *   flex-direction (row|column), align-items, justify-content
- *     box-layout properties; the has_* flags distinguish an unset enum
- *     from its zero value since 0 is a valid member of each enum.
- *   width/height: grow shares available space with other grow items.
- *   background(-color), color, border-color, ripple-color, opacity,
- *   transition-duration, box-shadow, cursor
- *     paint/behavior properties consumed by widgets that support them.
- *
- * Within a sheet, later rules win at equal specificity; id selectors
- * outrank class selectors, which outrank tag selectors. */
-
 float css_value_resolve(struct css_value v, float parent_dim, float auto_val,
                         const struct css_scale_context *ctx);
 
-/* AUTO takes the parent's shape. */
 enum ui_cursor {
     UI_CURSOR_AUTO = 0,
     UI_CURSOR_DEFAULT,
@@ -175,20 +152,13 @@ struct css_sheet {
     struct css_rule *rules;
     int rule_count;
     int rule_cap;
-    /* Lookup index over rules. Owned by the sheet. NULL when the sheet has
-     * no rules, or when the index could not be built. */
     struct css_index *index;
 };
 
-/* Appends the parsed rules and rebuilds the index. A zero sheet is empty
- * and valid. A sheet whose index failed to build resolves to empty styles. */
 bool css_parse(struct css_sheet *sheet, const char *css_text);
 bool css_sheet_append(struct css_sheet *dst, const struct css_sheet *src);
 void css_sheet_clear(struct css_sheet *sheet);
 
-/* Build the built-in sheet. The sheet must be zeroed, or one that
- * css_init_default() or css_parse() already built. Any other pointer value
- * in sheet->rules or sheet->index is freed. */
 void css_init_default(struct css_sheet *sheet);
 
 const struct css_sheet *css_default_sheet(void);
@@ -208,8 +178,6 @@ void css_style_resolve_ex(const struct css_sheet *sheet,
                           const char *ancestor_path,
                           struct css_style *out_style);
 
-/* True when a and b give a widget the same size and give its children
- * the same places. They can differ in colors and other paint. */
 bool css_style_layout_eq(const struct css_style *a, const struct css_style *b);
 
 #endif

@@ -79,13 +79,6 @@ static const uint8_t wsap_vtcore_utf8_acc_codep[256] = {
 0, 1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 };
 
-/*
- * Decode one code point at the start of buf and return the bytes it used.
- * Each maximal invalid subpart gives U+FFFD (Unicode 3.9); the byte that
- * ends a subpart stays unused, so the caller reads it again. A C0 control
- * ends an unfinished sequence the same way. An unfinished sequence at the
- * end of buf gives *cp = 0 and keeps the state.
- */
 static inline int wsap_vtcore_utf8_decode_ground(uint32_t *state, uint32_t *codep,
                                      const char *buf, size_t len, uint32_t *cp) {
     uint32_t st = *state;
@@ -202,8 +195,6 @@ wsap_vtcore_utf8_sanitize(char *dst, size_t cap, const char *src)
     dst[i] = '\0';
 }
 
-/* A sanitized copy of src. Sanitizing only drops bytes, so the copy is
- * never longer than src. */
 static inline char *wsap_vtcore_utf8_sanitize_dup(const char *src)
 {
     size_t cap = strlen(src) + 1;

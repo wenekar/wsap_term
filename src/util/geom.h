@@ -114,7 +114,6 @@ static inline bool rect2i_contains(struct rect2i r, struct vector2i p)
     return p.x >= r.x && p.x < end.x && p.y >= r.y && p.y < end.y;
 }
 
-/* True when the rects overlap or share an edge. */
 static inline bool rect2i_touches(struct rect2i a, struct rect2i b)
 {
     struct vector2i ae = rect2i_end(a), be = rect2i_end(b);
@@ -151,8 +150,6 @@ static inline struct rect2i rect2i_union(struct rect2i a, struct rect2i b)
     if (rect2i_is_empty(b)) return a;
     int x0 = a.x < b.x ? a.x : b.x;
     int y0 = a.y < b.y ? a.y : b.y;
-    /* Compute the endpoints and the spans in int64_t. A rect near INT_MAX
-     * overflows a plain int addition, and the width subtraction too. */
     int64_t a_end_x = (int64_t)a.x + a.width;
     int64_t a_end_y = (int64_t)a.y + a.height;
     int64_t b_end_x = (int64_t)b.x + b.width;

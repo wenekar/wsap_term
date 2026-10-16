@@ -3,9 +3,6 @@
 #define _DARWIN_C_SOURCE
 #endif
 
-/* Code that runs in the child between fork() and exec. It makes only
- * async-signal-safe calls; pty_plan prepared everything else. */
-
 #include "pty/internal.h"
 #include "platform/platform.h"
 #include "util/proc.h"
@@ -16,9 +13,6 @@
 #include <termios.h>
 #include <unistd.h>
 
-/* Put the slave on stdin and the output transport on stdout/stderr, then
- * close everything else. Both sources move above 2 first, so a source that
- * already sits on 0..2 is not overwritten before it is copied. */
 static void route_fds(int slave_fd, int out_fd)
 {
     int in = fcntl(slave_fd, F_DUPFD, 3);

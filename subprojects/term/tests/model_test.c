@@ -1,20 +1,3 @@
-/*
- * Compare the terminal with the reference model (model.c) through the
- * public API: every history page and screen row through a snapshot, the
- * cursor, the modes, the history size, and the reply bytes.
- *
- * Each seed makes a random geometry and history limit, then runs four
- * steps of generated input. The terminal gets each step in random chunks,
- * so the fast paths and the byte parser both run. One step in four ends
- * with a random resize. Every step ends with queries (DSR, DECRQSS,
- * DECRQM), so hidden state such as the pen, the margins, and the modes
- * shows in the replies.
- *
- * On a mismatch the test shrinks the input, prints a short C string that
- * reproduces it, and fails.
- *
- * Usage: model-test [seeds] [first-seed]
- */
 #include "model.h"
 #include "fuzz_gen.h"
 #include "wsap_vtcore/wsap_vtcore.h"
@@ -24,13 +7,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Queries that make hidden state visible. They change nothing. */
 static const char probe[] =
     "\033[6n\033P$qm\033\\\033P$qr\033\\\033P$q q\033\\"
     "\033[?6$p\033[?7$p\033[4$p\033[20$p";
 
 struct event {
-    char *bytes;        /* NULL for a resize */
+    char *bytes;
     size_t len;
     unsigned flags;
     struct wsap_vtcore_vector2i size;
@@ -106,7 +88,6 @@ static char glyph(uint32_t cp)
     return cp >= 32 && cp < 127 ? (char)cp : cp ? '?' : '.';
 }
 
-/* Print every retained row of both, side by side. */
 static void dump_all(struct model *m, struct wsap_vtcore *t, struct wsap_vtcore_snapshot *snap, FILE *log)
 {
     int total = wsap_vtcore_scrollback(t).total, mtotal = model_history(m);
@@ -141,8 +122,6 @@ static void dump_all(struct model *m, struct wsap_vtcore *t, struct wsap_vtcore_
     fprintf(log, "  cursor term %d,%d model %d,%d\n", c.pos.x, c.pos.y, mc.pos.x, mc.pos.y);
 }
 
-/* Returns NULL when the terminal matches the model, else a description.
- * Details go to log when it is not NULL. */
 static const char *compare(struct model *m, struct wsap_vtcore *t, struct wsap_vtcore_snapshot *snap,
                            struct replies *got, char *why, size_t cap, FILE *log)
 {
@@ -184,7 +163,6 @@ static const char *compare(struct model *m, struct wsap_vtcore *t, struct wsap_v
                  md.app_keypad, mm.app_keypad);
         return why;
     }
-    /* Visit each retained row. Wide-line totals can start as estimates. */
     int total = model_history(m);
     wsap_vtcore_scroll_to(t, 0);
     wsap_vtcore_scroll(t, INT_MAX);
@@ -246,7 +224,6 @@ static const char *compare(struct model *m, struct wsap_vtcore *t, struct wsap_v
 
 enum chunking { CHUNK_RANDOM, CHUNK_WHOLE, CHUNK_BYTES };
 
-/* Run a script. Returns the event index of the first mismatch, or -1. */
 static int run(const struct script *s, enum chunking chunks, uint64_t chunk_seed,
                char *why, size_t cap, bool verbose)
 {
@@ -303,7 +280,6 @@ static bool fails(const struct script *s, char *why, size_t cap)
            run(s, CHUNK_BYTES, 1, why, cap, false) >= 0;
 }
 
-/* Remove byte ranges and events while the script still fails. */
 static void shrink(struct script *s)
 {
     char why[512];
@@ -362,7 +338,6 @@ static void report(struct script *s, int seed, const char *why)
     fprintf(stderr, "shrunk mismatch after event %d: %s\n", at, buf2);
 }
 
-/* Fixed cases that the generator reaches rarely. */
 static int fixed_cases(void)
 {
     static const struct {

@@ -85,14 +85,14 @@ if tic.found()
         'dev-terminfo',
         input: files('assets/terminfo/wsap_term.terminfo'),
         output: 'dev-terminfo.stamp',
-        command: [find_program('sh', native: true), files('tools/install-terminfo.sh')],
+        command: [find_program('sh', native: true), files('assets/terminfo/install-terminfo.sh')],
         env: {
             'WSAP_TERMINFO_SRC': meson.project_source_root() / 'assets' / 'terminfo' / 'wsap_term.terminfo',
             'WSAP_TERMINFO_DEST': dev_terminfo_dir,
             'WSAP_TERMINFO_STALE': '',
         },
         capture: true,
-        depend_files: files('tools/install-terminfo.sh'),
+        depend_files: files('assets/terminfo/install-terminfo.sh'),
         build_by_default: true,
     )
     add_project_arguments(
@@ -110,11 +110,6 @@ add_project_arguments(
     language: project_languages,
 )
 
-# GCC 16 drops stores and calls from a cloned function when LTO specializes
-# it on a constant argument. In ui_tabbar_set_tabs the clone lost the
-# calloc that fills the title array, so the bar read a null array and the
-# terminal build crashed. The same code is correct at -O3 without LTO and
-# under -O2, so only the clone is at fault. Turn cloning off and keep LTO.
 if get_option('b_lto')
     add_project_arguments(
         cc.get_supported_arguments('-fno-ipa-cp-clone'),
@@ -215,9 +210,6 @@ yasl_dep = dependency(
     fallback: 'yasl',
     default_options: ['default_library=static'],
 )
-# The term core is the in-tree subproject subprojects/term. Project arguments
-# do not reach it, so it gets the -march and the asserts of this build through
-# its options.
 term_dep = dependency(
     'wsap_vtcore',
     fallback: 'term',
@@ -249,12 +241,10 @@ asan_strict = sanitizer_common + ':detect_stack_use_after_return=1:strict_string
 if system == 'linux'
     asan_strict += ':detect_leaks=1'
 elif system == 'darwin'
-    # macOS system frameworks trip strict string checks. See tests/asan.supp.
     asan_strict += ':suppressions=' + meson.current_source_dir() / 'tests' / 'asan.supp'
 endif
 tsan_strict = sanitizer_common + ':history_size=7:second_deadlock_stack=1'
 if system == 'linux'
-    # GLib is not built with TSan. See tests/tsan.supp.
     tsan_strict += ':suppressions=' + meson.current_source_dir() / 'tests' / 'tsan.supp'
 endif
 msan_strict = sanitizer_common + ':print_stats=1'
@@ -318,9 +308,6 @@ add_test_setup(
     exclude_suites: ['extlib'],
 )
 
-# On macOS the program installs as a real app bundle. The bundle holds the
-# executable itself, so the process has a bundle identity. A prefix under
-# $HOME is a per-user install, so its bundle goes to ~/Applications.
 exe_install_dir = get_option('bindir')
 if system == 'darwin'
     fs = import('fs')
@@ -387,8 +374,8 @@ install_data(
     install_dir: get_option('datadir') / 'wsap_term' / 'terminfo',
 )
 install_data(
-    'tools/wsap-ssh',
-    'tools/install-terminfo.sh',
+    'assets/shell/wsap-ssh',
+    'assets/terminfo/install-terminfo.sh',
     install_dir: get_option('bindir'),
     install_mode: 'rwxr-xr-x',
 )

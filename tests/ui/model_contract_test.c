@@ -1,6 +1,3 @@
-/* Contracts of the widget model that screens and widget authors rely on:
- * hidden subtrees, placement, tick deadlines, key releases, paste, and
- * action IDs. */
 
 #include <assert.h>
 #include <string.h>
@@ -145,7 +142,6 @@ static void placement_test(void)
     ui_surface_prepare(&surface);
     assert(child.widget.bounds.x == 10 && child.widget.bounds.y == 20);
 
-    /* No room below: it flips above the anchor. */
     anchor.y = 85;
     ui_widget_set_placement(&child.widget, (struct ui_placement){
         .kind = UI_PLACE_BELOW, .anchor = anchor,
@@ -201,12 +197,10 @@ static void deadline_test(void)
     assert(ui_surface_next_deadline(&surface) == 600);
     (void)ui_surface_take_frame_request(&surface);
 
-    /* The timer is due: it settles and the surface goes idle. */
     assert(!ui_surface_tick(&surface, 600));
     assert(ui_surface_next_deadline(&surface) == 0);
     assert(!ui_surface_frame_pending(&surface));
 
-    /* A hidden widget does not tick. */
     timer.due = 700;
     int ticks = timer.ticks;
     ui_widget_set_hidden(&timer.widget, true);

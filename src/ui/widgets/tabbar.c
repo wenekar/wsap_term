@@ -27,7 +27,6 @@
 #define TB_PART_DRAG   (2ULL << 32)
 #define TB_PART_DROP   (3ULL << 32)
 
-/* Fallbacks for a theme that sets no color. */
 #define UI_TABBAR_BG         0xFF181825
 #define UI_TABBAR_TAB_BG     0xFF1E1E2E
 #define UI_TABBAR_ACTIVE_BG  0xFF313244
@@ -38,8 +37,6 @@
 #define UI_TABBAR_CLOSE      0xFF9399B2
 #define UI_TABBAR_PREVIEW_BG 0xEE1E1E2Eu
 
-/* The bar's look and metrics, read from its parts for one call. Nothing
- * keeps a snapshot between calls. */
 struct tb_theme {
     uint32_t bar_bg;
     uint32_t border_color;
@@ -59,8 +56,6 @@ struct tb_theme {
     uint32_t new_tab_hover_fg;
     uint32_t new_tab_hover_bg;
     uint32_t sep_color;
-    /* The hover card, as the cross-window drag image draws it. The same
-     * ".tab-preview" rule fills the real card, so the two agree. */
     uint32_t preview_bg;
     uint32_t preview_shadow;
     struct vector2i preview_shadow_offset;
@@ -93,8 +88,6 @@ struct tb_theme {
     int new_tab_w, new_tab_h;
 };
 
-/* Part handles, interned on first use. The bar is the last one set, so
- * a set bar handle means the table is complete. */
 static struct {
     ui_part_id tab, tab_active, tab_drop, tab_close, tab_new, tab_sep,
         tab_preview, bar;
@@ -173,7 +166,6 @@ static inline const struct css_scale_context *tb_ctx(const struct ui_tabbar *tb)
     return &tb->widget.style_scale;
 }
 
-/* The bar's height from its part style, with the C-side fallback. */
 static int bar_css_height(const struct css_scale_context *ctx,
                           const struct css_style *bar)
 {
@@ -182,7 +174,6 @@ static int bar_css_height(const struct css_scale_context *ctx,
     return h < 1 ? (int)roundf(def_h) : h;
 }
 
-/* The bar's height at rest. Reads only the bar part. */
 static int tb_css_height(const struct ui_tabbar *tb)
 {
     tb_intern_parts();
@@ -190,8 +181,6 @@ static int tb_css_height(const struct ui_tabbar *tb)
     return bar_css_height(tb_ctx(tb), &bar);
 }
 
-/* Reads the bar's look into t. Every caller that draws, lays out, or hits
- * takes one snapshot first. */
 static void tb_theme_read(const struct ui_tabbar *tb, struct tb_theme *t)
 {
     *t = (struct tb_theme){0};
@@ -306,7 +295,6 @@ static void tb_theme_read(const struct ui_tabbar *tb, struct tb_theme *t)
     if (t->tab_height > inner_h || t->tab_height < 1)
         t->tab_height = inner_h;
 
-
     t->tab_radius = ui_ctx_size(ctx, idle.border_radius, 4.0f);
     t->tab_pad = ui_ctx_size(ctx, idle.padding.left, (float)ui_ctx_px(ctx, UI_TABBAR_PAD_DP));
 
@@ -417,9 +405,6 @@ static struct tb_layout tb_layout_for(const struct ui_tabbar *tb,
         share = 1.0f;
     l.share = share;
 
-    /* Every tab takes an equal share of what is left. The width and
-     * min-width on ".tab" are colors-and-metrics only: the bar does not
-     * lay a tab out to a width the sheet asks for. */
     int slots = n_tabs + (tb->impl.external_drag ? 1 : 0);
     int available = avail_full - l.gap * slots;
     l.tab_width = slots > 0 ? available / slots : 0;
@@ -864,9 +849,6 @@ bool ui_tabbar_begin_open(struct ui_tabbar *tb, int index, uint64_t now_ms)
 
     if (tb->impl.tab_cap == 2 && !tb->impl.reveal.start_ms) {
         tb->impl.reveal.value = 0.0f;
-        /* set_target does nothing when the target already matches, so a bar
-         * that had settled at full height would keep this zeroed value and
-         * never animate back. Clear the target so the call always arms. */
         tb->impl.reveal.to = 0.0f;
     }
     if (tb->impl.tab_cap == 2)
@@ -1529,8 +1511,6 @@ static bool tabbar_emit_scene(struct ui_tabbar *tb, const struct tb_theme *t,
             else
                 ui_scene_rect(scene, r, bg);
 
-            /* The ring is the drop accent, so it follows ".tab.drop-preview"
-             * like the slot it will land in. */
             uint32_t bcol = ui_color_opacity(t->drop_preview_bg, 0.8f);
             if (radius > 0)
                 ui_scene_rounded_rect(scene, r, radius, bcol);
@@ -1582,7 +1562,6 @@ static bool tabbar_emit_scene(struct ui_tabbar *tb, const struct tb_theme *t,
 
     return true;
 }
-
 
 static struct ui_tabbar *tb_of(const struct ui_widget *widget)
 {
@@ -1686,8 +1665,6 @@ static bool tabbar_key(struct ui_tabbar *tb, const struct ui_key_event *key)
     }
 }
 
-/* Where the pointer holds the dragged tab, from the tab's top left, as
- * ui_tabbar_build_drag_scene() gives the hotspot. */
 static struct vector2i grab_point(const struct ui_tabbar *tb,
                                   const struct tb_theme *t)
 {
@@ -1734,7 +1711,6 @@ static bool drag_moved(struct ui_tabbar *tb, const struct tb_theme *t,
     enum ui_tab_drag_state state = tb->impl.drag_state;
     if (state == UI_TAB_DRAG_PENDING)
         return true;
-    /* Out of the bar: a drag between windows may take the tab over. */
     if (state == UI_TAB_DRAG_DETACH) {
         struct ui_action tear = {
             .kind = UI_ACTION_TEAR_OFF, .index = tab, .pos = grab_point(tb, t),
@@ -1796,8 +1772,6 @@ static bool pressed(struct ui_tabbar *tb, const struct tb_theme *t,
     return true;
 }
 
-/* Whether pos is over the bar now. hover() can reach the host, and the
- * host may restyle the bar there, so the height is read again. */
 static bool over_bar(const struct ui_tabbar *tb, const struct ui_widget *widget,
                      struct vector2i pos)
 {
@@ -1883,7 +1857,6 @@ static bool tb_hit_test(const struct ui_widget *widget, struct vector2i pos)
     return hit.index >= 0 || hit.on_new;
 }
 
-/* The close box and the new-tab button are links; a tab is not. */
 static enum ui_cursor tb_cursor(const struct ui_widget *widget,
                                 struct vector2i pos)
 {
@@ -1910,7 +1883,6 @@ static uint64_t tb_tick(struct ui_widget *widget, uint64_t now_ms)
     return animating ? now_ms : 0;
 }
 
-/* The bar takes its current height: it grows while it animates in. */
 static struct vector2i tb_measure(const struct ui_widget *widget,
                                   struct ui_constraints constraints)
 {
@@ -2126,8 +2098,6 @@ void ui_tabbar_init(struct ui_tabbar *tb)
     };
     ui_widget_init(&tb->widget, &TABBAR_OPS, NULL);
     tb->impl.new_accessibility_id = ui_widget_accessibility_id_allocate();
-    /* A tag, not the class: ".tab-bar" sizes the bar, and the bar's
-     * height animates. */
     ui_widget_set_style_identity(&tb->widget, NULL, NULL, "tab-bar");
 }
 
@@ -2145,9 +2115,6 @@ static bool same_labels(const struct ui_tabbar *tb,
     return true;
 }
 
-/* Grows the title array until it holds n. The array keeps room for a
- * few more titles, so opening tabs one at a time does not copy it on
- * every tab. False when the array did not fit. */
 static bool reserve_labels(struct ui_tabbar *tb, int n)
 {
     size_t have = (size_t)tb->impl.labels_cap;
@@ -2165,8 +2132,6 @@ static bool reserve_labels(struct ui_tabbar *tb, int n)
     return true;
 }
 
-/* Same labels: nothing to repaint. A caller that sets them on every
- * prepare must not keep the window from going idle. */
 void ui_tabbar_set_tabs(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
                         int n_tabs)
 {
@@ -2182,11 +2147,6 @@ void ui_tabbar_set_tabs(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
         struct ui_tab_label *l = &tb->impl.labels[i];
         if (!l->text || strcmp(l->text, text)) {
             char *copy = strdup(text);
-            /* Stop rather than leave the count stale: the tabs already
-             * taken keep their new titles and the rest keep the old ones
-             * until the next prepare, but the bar still learns how many
-             * tabs it has and repaints. same_labels sees the difference
-             * and the next call finishes the job. */
             if (!copy)
                 break;
             free((char *)l->text);
@@ -2348,10 +2308,6 @@ void ui_tabbar_set_external_drag(struct ui_tabbar *tb, bool active,
     tb_theme_read(tb, &theme);
     external_drag_at(tb, &theme, active, ui_widget_to_local(&tb->widget, pos),
                      tb->impl.n_tabs, tb->impl.size);
-    /* The host calls this on every pointer motion while a foreign tab is
-     * over the window. Only the flag reaches the bar height, so only a
-     * flip of it needs a measure; a slot that moved only moves the drop
-     * preview, and neither changing needs a frame at all. */
     if (tb->impl.external_drag != was_drag)
         ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_MEASURE);
     else if (tb->impl.external_slot != was_slot)

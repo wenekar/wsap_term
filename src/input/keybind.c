@@ -79,10 +79,6 @@ static const struct name_entry key_names[] = {
     {"space",       ' '},
 };
 
-/* Find a name in the table.
- * Compare the first character before calling strcasecmp().
- * This rejects mismatches quickly.
- * Matching stays case-insensitive. */
 static bool lookup_name(const struct name_entry *tab, size_t n,
                         const char *s, unsigned *out)
 {
@@ -327,7 +323,6 @@ static void rebuild_hash(struct input_keymap *km)
                 break;
             }
             if (slot->chord == chord) {
-                /* Earlier binding in km->binds wins. */
                 break;
             }
             idx = (idx + 1) & mask;
@@ -435,7 +430,6 @@ enum input_shortcut input_keymap_lookup(const struct input_keymap *km,
     if (!km->hash_valid)
         rebuild_hash((struct input_keymap *)km);
 
-    /* Rank 3: physical key, keypad key, or layout character. */
     if (ev->key != INPUT_KEY_NONE) {
         const struct input_keymap_slot *s =
             hash_lookup(km, make_chord(mods, chord_token(0, (uint16_t)ev->key)));
@@ -455,7 +449,6 @@ enum input_shortcut input_keymap_lookup(const struct input_keymap *km,
             return (enum input_shortcut)s->action;
     }
 
-    /* Rank 2: shifted character. */
     if (ev->shifted && lower(ev->shifted) != lower(ev->codepoint)) {
         const struct input_keymap_slot *s =
             hash_lookup(km, make_chord(mods, chord_token(ev->shifted, INPUT_KEY_NONE)));
@@ -463,7 +456,6 @@ enum input_shortcut input_keymap_lookup(const struct input_keymap *km,
             return (enum input_shortcut)s->action;
     }
 
-    /* Rank 1: physical base character. */
     if (ev->base && lower(ev->base) != lower(ev->codepoint)) {
         const struct input_keymap_slot *s =
             hash_lookup(km, make_chord(mods, chord_token(ev->base, INPUT_KEY_NONE)));

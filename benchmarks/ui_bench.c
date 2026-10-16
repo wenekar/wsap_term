@@ -57,7 +57,6 @@ static struct stats calc_stats(double *samples, int n)
 #define WARMUP_RUNS 3
 #define SAMPLE_RUNS 9
 
-/* Benchmark 1: Text Run Cells (ASCII fast-path vs Unicode) */
 static void bench_text_run(void)
 {
     const char *ascii = "File  Edit  View  Terminal  Tabs  Help  Configuration  Options  Preferences";
@@ -68,7 +67,6 @@ static void bench_text_run(void)
     const int iters = 100000;
     volatile int sink = 0;
 
-    /* Warmup */
     for (int w = 0; w < WARMUP_RUNS; w++) {
         for (int i = 0; i < iters; i++) {
             sink += ui_text_run_cells(ascii, ascii_len);
@@ -106,7 +104,6 @@ static void bench_text_run(void)
            ((double)mixed_len * iters / st_mixed.med) / 1e6);
 }
 
-/* Benchmark 2: CSS Style Resolution */
 static void bench_css_resolve(void)
 {
     struct ui_style_context sctx;
@@ -121,7 +118,6 @@ static void bench_css_resolve(void)
 
     const int iters = 50000;
 
-    /* Warmup */
     for (int w = 0; w < WARMUP_RUNS; w++) {
         for (int i = 0; i < iters; i++) {
             const char *cls = test_classes[i % n_classes];
@@ -150,13 +146,11 @@ static void bench_css_resolve(void)
            (st.med / iters) * 1e9);
 }
 
-/* Benchmark 3: Scene emission & Scene Summarize (Hashing / Damage) */
 static void bench_scene_pipeline(void)
 {
     struct ui_scene scene = {0};
     ui_scene_init(&scene);
 
-    /* Construct representative UI frame: tabbar, menu/list, buttons */
     static char owners[16];
     for (int g = 0; g < 16; g++) {
         ui_scene_begin_node(&scene, &owners[g], (struct vector2i){ .x = g * 50 });
@@ -175,7 +169,6 @@ static void bench_scene_pipeline(void)
 
     ui_damage_track(&tracker, &scene, &dmg);
 
-    /* Warmup */
     for (int w = 0; w < WARMUP_RUNS; w++) {
         for (int i = 0; i < iters; i++)
             ui_damage_track(&tracker, &scene, &dmg);
@@ -196,7 +189,6 @@ static void bench_scene_pipeline(void)
            (st.med / iters) * 1e6);
 }
 
-/* Benchmark 4: Layout & Measure Tree (Box layout) */
 static void bench_layout_tree(void)
 {
     struct ui_box root;
@@ -236,7 +228,6 @@ static void bench_layout_tree(void)
     ui_surface_set_root(&surface, &root.widget);
     ui_surface_resize(&surface, bounds.size);
 
-    /* Warmup */
     for (int w = 0; w < WARMUP_RUNS; w++) {
         for (int i = 0; i < iters; i++) {
             ui_widget_measure(&root.widget, constraints);
@@ -274,7 +265,6 @@ static void bench_blend_rect(void)
 
     struct ui_scene scene = {0};
     ui_scene_init(&scene);
-    /* Draw 10 translucent overlays (like active tabs, hover states, menus) */
     for (int i = 0; i < 10; i++) {
         struct rect2i r = {
             .pos = { .x = 100 + i * 50, .y = 50 + i * 30 },
@@ -283,7 +273,6 @@ static void bench_blend_rect(void)
         ui_scene_blend_rect(&scene, r, 0xFF89B4FA, 128);
     }
 
-    /* Warmup */
     for (int k = 0; k < WARMUP_RUNS; k++)
         ui_scene_paint(font_instance_default(), buf, w, h, &scene);
 

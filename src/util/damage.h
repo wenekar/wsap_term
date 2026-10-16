@@ -7,10 +7,6 @@
 
 #define DAMAGE_RECTS_MAX 8
 
-/* The damage of one frame. A rect that touches the last one merges with
- * it. Past DAMAGE_RECTS_MAX rects, n is -1 and only bounds is kept. A
- * frame that reports no damage at all, or calls damage_add_all(),
- * damages the whole target. All zero is a frame with no report yet. */
 struct damage_list {
     struct rect2i bounds;
     struct rect2i rects[DAMAGE_RECTS_MAX];
@@ -19,7 +15,6 @@ struct damage_list {
     bool all;
 };
 
-/* An empty rect reports that nothing changed. */
 static inline void damage_add(struct damage_list *d, struct rect2i r)
 {
     d->any = true;

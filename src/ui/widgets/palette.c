@@ -57,7 +57,6 @@ static void free_cmds(struct ui_palette *p)
     p->impl.n_cmds = 0;
 }
 
-/* Every character of the query appears in the label, in order. */
 static bool matches(const char *query, const char *label)
 {
     for (; *query; query++) {
@@ -70,7 +69,6 @@ static bool matches(const char *query, const char *label)
     return true;
 }
 
-/* The rows that fit in half the parent's height. */
 static int fitting_rows(const struct ui_palette *p, int parent_height)
 {
     const struct ui_list_metrics *m = &p->list.impl.metrics;
@@ -187,14 +185,12 @@ static bool palette_event(struct ui_widget *widget, const struct ui_event *event
 {
     struct ui_palette *p = palette_of(widget);
     if (event->kind == UI_EVENT_KEY) {
-        /* Releases pass by. The palette does not act on them. */
         if (event->data.key.action == UI_KEY_RELEASE)
             return false;
         return palette_key(p, &event->data.key);
     }
     if (event->kind != UI_EVENT_POINTER)
         return false;
-    /* The palette is modal: it sees the presses that miss its parts. */
     const struct ui_pointer_event *ptr = &event->data.pointer;
     if (ui_pointer_is_button_press(ptr) &&
         !rect2i_contains(widget->bounds, ptr->pos))
@@ -210,7 +206,6 @@ static void palette_style_changed(struct ui_widget *widget)
     });
 }
 
-/* Half the parent's width, at least 44 cells, inside a one-cell margin. */
 static int panel_width(const struct ui_palette *p, int parent_width)
 {
     int margin = cell_h(p);
@@ -254,7 +249,6 @@ static void palette_layout(struct ui_widget *widget, struct rect2i bounds)
 {
     struct ui_palette *p = palette_of(widget);
     struct rect2i inner = rect2i_inset(bounds, border_width(p));
-    /* The query text lines up with the item labels below it. */
     int offset = ui_list_label_inset(&p->list) - ui_input_text_inset(&p->input);
     if (offset < 0)
         offset = 0;

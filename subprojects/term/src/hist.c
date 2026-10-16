@@ -8,21 +8,6 @@
 #include <string.h>
 #include <stdio.h>
 
-/*
- * Text format. A NARROW part is raw ASCII, one byte per cell. Other parts are
- * UTF-8 with prefix bytes that UTF-8 never uses:
- *   0xF5 cp          wide
- *   0xF6 cp          wide, emoji presentation
- *   0xF7 cp          narrow, text presentation
- *   0xF8 k cp...     cluster of k & 0x1f code points; k & 0x80 wide,
- *                    k & 0x40 emoji, k & 0x20 text presentation
- * Trail cells and wrap pads are not stored.
- *
- * Attribute runs follow the text. A run is a header byte that names the
- * fields that differ from the previous run, a LEB128 cell count, then those
- * fields. Cells after the last run use the default pen.
- */
-
 #define RUN_FG   (1u << 0)
 #define RUN_BG   (1u << 1)
 #define RUN_ATTR (1u << 2)
@@ -40,11 +25,8 @@
 
 #define NO_TEXT UINT32_MAX
 #define ROWS_UNKNOWN 255
-/* Bytes one cell can need, except a cluster. */
 #define CELL_BYTES 5
 #define CLUSTER_BYTES (2 + WSAP_VTCORE_GRAPHEME_MAX_LEN * 4)
-
-/* ---- Parts and pages ---- */
 
 static inline struct hline *part(const struct hist *h, uint64_t seq)
 {
@@ -61,7 +43,6 @@ static inline struct hline *open_part(const struct hist *h)
     return hist_is_open(h) ? part(h, h->head - 1) : NULL;
 }
 
-/* Grow the ring so n more parts fit. The caller checks the fast path first. */
 static WSAP_VTCORE_NOINLINE bool ring_grow(struct hist *h, uint64_t n)
 {
     uint64_t cap = h->ring ? (uint64_t)h->ring_mask + 1 : 65536;
@@ -97,8 +78,6 @@ static WSAP_VTCORE_NOINLINE bool ring_grow(struct hist *h, uint64_t n)
     return true;
 }
 
-/* Room for n more parts. The check runs on the write path per batch, so
- * keep it inline and leave only the rehash to a call. */
 static inline bool ring_fit(struct hist *h, uint64_t n)
 {
     if (WSAP_VTCORE_EXPECT(h->ring && h->head - h->tail + n <= (uint64_t)h->ring_mask + 1, 1))
@@ -138,7 +117,6 @@ static bool cont_push(struct hist *h, uint64_t seq)
     return true;
 }
 
-/* Keep the CONT list to the parts in (tail, head). */
 static void cont_trim(struct hist *h)
 {
     while (h->cont_count && cont_at(h, 0) <= h->tail) {
@@ -149,8 +127,6 @@ static void cont_trim(struct hist *h)
         h->cont_count--;
 }
 
-/* The first part of line id. Line starts are the parts without CONT, and the
- * tail part, which always starts the base line. */
 static uint64_t line_first(const struct hist *h, uint64_t id)
 {
     uint64_t want = h->tail + (id - h->base_id);
@@ -192,7 +168,6 @@ static WSAP_VTCORE_ALWAYS_INLINE inline void page_drop_ref(struct hist *h, uint3
     }
 }
 
-/* Take a counted line out of counted_rows. Call it while the line is whole. */
 static void rows_uncount(struct hist *h, uint64_t id)
 {
     if (id < h->rows_id)
@@ -207,7 +182,6 @@ static void line_gone(struct hist *h)
         h->rows_id = h->base_id;
 }
 
-/* Drop the tail part. A line whose later parts remain keeps its id. */
 static bool evict_part(struct hist *h)
 {
     if (h->tail == h->head)
@@ -217,7 +191,6 @@ static bool evict_part(struct hist *h)
         return false;
     bool cut = h->tail + 1 < h->head && (part(h, h->tail + 1)->flags & HLINE_CONT);
     if (cut) {
-        /* The line loses its head: count every line again. */
         h->index_epoch++;
         if (h->base_cell_id != h->base_id) {
             h->base_cell_id = h->base_id;
@@ -260,8 +233,6 @@ static WSAP_VTCORE_NOINLINE void evict_line_parts(struct hist *h)
 
 static void evict_line(struct hist *h);
 
-/* Drop n refs to one page at once. Same effect as n calls to
- * page_drop_ref, because the count cannot pass zero. */
 static inline void page_drop_n(struct hist *h, uint32_t pg, uint32_t n)
 {
     if ((h->page_parts[pg] -= n) == 0) {
@@ -306,7 +277,6 @@ static inline bool same_page_narrow_rows_avx2(const struct hline *p, uint32_t pa
 }
 #endif
 
-/* Check 16 narrow rows. Each descriptor has four words. */
 static inline bool same_page_narrow_rows(const struct hline *p, uint32_t page)
 {
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
@@ -364,8 +334,6 @@ static inline bool same_page_rows_64(const struct hline *p, uint32_t page,
 }
 #endif
 
-/* Drop whole lines in one pass. Update page references once per run.
- * Use the normal path for open lines, continuations, and unknown row counts. */
 static uint64_t evict_simple_run(struct hist *h, uint64_t k)
 {
     if (k == 0 || h->tail == h->head || !h->ring)
@@ -373,7 +341,6 @@ static uint64_t evict_simple_run(struct hist *h, uint64_t k)
     const struct hline *ring = h->ring;
     uint32_t rmask = h->ring_mask;
     uint64_t tail = h->tail, head = h->head, base = h->base_id;
-    /* Neither side moves inside the loop, so count the lines once. */
     uint64_t counted = h->rows_id > base ? h->rows_id - base : 0;
     uint64_t rows_take = 0;
     uint64_t n = 0;
@@ -544,10 +511,6 @@ static uint64_t evict_simple_run(struct hist *h, uint64_t k)
     return n;
 }
 
-/* Make room for n more lines. Takes the simple lines in one pass, then
- * falls back to one line at a time for the rest. The count is guarded
- * before the subtraction: an unguarded `lines + n - line_limit` wraps when
- * there is nothing to evict. */
 static inline void evict_for(struct hist *h, uint64_t n)
 {
     uint64_t have = h->lines;
@@ -567,7 +530,6 @@ static inline void evict_for(struct hist *h, uint64_t n)
     }
 }
 
-/* Drop the oldest line with all its parts. It is never the open line. */
 static inline WSAP_VTCORE_ALWAYS_INLINE void evict_line(struct hist *h)
 {
     if (h->tail == h->head)
@@ -612,11 +574,8 @@ static WSAP_VTCORE_NOINLINE int page_next(struct hist *h)
     }
 }
 
-/* A page with need free bytes at its end. It becomes the current page. */
 static inline int page_for(struct hist *h, size_t need)
 {
-    /* No page can hold a request larger than the usable area. Returning a page
-     * here would let the caller copy past the end of the mapping. */
     if (need > HIST_PAGE_USABLE)
         return -1;
     uint32_t pg = h->cur_page;
@@ -624,8 +583,6 @@ static inline int page_for(struct hist *h, size_t need)
         return (int)pg;
     return page_next(h);
 }
-
-/* ---- Attribute runs ---- */
 
 static inline int put_varint(uint8_t *p, uint32_t v)
 {
@@ -690,7 +647,6 @@ static inline uint16_t get_u16(const uint8_t *p) { uint16_t v; memcpy(&v, p, 2);
 static inline uint8_t *emit_run(uint8_t *p, const struct pen_attr *base, const struct pen_attr *pen,
                                 uint32_t count)
 {
-    /* Most runs change only colors and cover fewer than 128 cells. */
     if (WSAP_VTCORE_EXPECT(count < 0x80 && pen_sl(pen) == pen_sl(base), 1)) {
         uint32_t dfg = pen->fg != base->fg, dbg = pen->bg != base->bg;
         p[0] = (uint8_t)(dfg | (dbg << 1));
@@ -751,15 +707,12 @@ void wsap_vtcore_hist_runs_emit_slow(struct hist_runs *r)
     r->len = (uint32_t)(emit_run(r->data + r->len, &r->base, &r->pen, r->count) - r->data);
 }
 
-/* Emit the pending run unless it is a default tail, which readers imply. */
 static void runs_finish(struct hist_runs *r)
 {
     if (r->count && !pen_attr_is_default(&r->pen))
         hist_runs_switch(r, text_pen_from_attr(&r->pen));
     r->count = 0;
 }
-
-/* ---- Encoding ---- */
 
 static inline size_t put_utf8(uint8_t *dst, uint32_t cp)
 {
@@ -784,7 +737,6 @@ static inline size_t put_utf8(uint8_t *dst, uint32_t cp)
     return 3;
 }
 
-/* Decode one code point that this file wrote. It does not validate. */
 static inline int get_utf8(const uint8_t *s, const uint8_t *end, uint32_t *cp)
 {
     uint8_t b = s[0];
@@ -808,14 +760,11 @@ static inline int get_utf8(const uint8_t *s, const uint8_t *end, uint32_t *cp)
 struct enc {
     uint32_t bytes;
     uint32_t cells;
-    uint8_t flags;      /* HAS_* flags; NARROW when every cell was one ASCII byte */
+    uint8_t flags;
     uint16_t wide;
 };
 
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
-/* The prefix of cells where (lane & keep) - target <= span holds in every
- * lane. Their code points go to dst as bytes. Eight cells per step; the
- * last step uses masked loads. */
 WSAP_VTCORE_TARGET_AVX512
 static inline int narrow_prefix_avx512(const struct cell *cells, int len, uint8_t *dst,
                                        __m512i keep, __m512i target, __m512i span)
@@ -832,7 +781,6 @@ static inline int narrow_prefix_avx512(const struct cell *cells, int len, uint8_
         __mmask16 ok1 = _mm512_mask_cmple_epu32_mask(m1, _mm512_sub_epi32(_mm512_and_si512(v1, keep), target), span);
         __m512i cp = _mm512_permutex2var_epi32(v0, idx, v1);
         if (ok0 != m0 || ok1 != m1) {
-            /* Keep the cells before the first failing one. */
             uint32_t bad = (uint32_t)(~ok0 & m0) | ((uint32_t)(~ok1 & m1) << 16);
             int good = wsap_vtcore_ctz32(bad) / 4;
             _mm_mask_storeu_epi8(dst + k, (__mmask16)((1u << good) - 1), _mm512_cvtepi32_epi8(cp));
@@ -871,8 +819,6 @@ static inline int narrow_uniform_prefix_avx512(const struct cell *cells, int len
 }
 #endif
 
-/* The prefix of cells that are printable ASCII with any pen. Their bytes go
- * to dst. */
 static inline int narrow_any_pen_prefix(const struct cell *cells, int len, uint8_t *dst)
 {
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
@@ -888,8 +834,6 @@ static inline int narrow_any_pen_prefix(const struct cell *cells, int len, uint8
     return k;
 }
 
-/* Add the pens of n cells to r, one run per change. Cells carry no
- * underline color, so no pen here has one. */
 static WSAP_VTCORE_NOINLINE uint32_t runs_scan(struct hist_runs *r, const struct cell *cells, int n)
 {
     uint32_t links = 0;
@@ -941,8 +885,6 @@ static WSAP_VTCORE_NOINLINE uint32_t runs_scan(struct hist_runs *r, const struct
     return links;
 }
 
-/* The prefix of cells that are printable ASCII with the pen of cells[0].
- * Their bytes go to dst. */
 static inline int narrow_uniform_prefix(const struct cell *cells, int len, uint8_t *dst)
 {
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
@@ -962,9 +904,6 @@ static inline int narrow_uniform_prefix(const struct cell *cells, int len, uint8
 }
 
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
-/* Encode a prefix of cells with the pen of cells[0] and no clusters, eight
- * cells at a time. Return the cells used; runcells counts the cells that
- * are not trail cells. */
 WSAP_VTCORE_TARGET_AVX512
 static int uniform_utf8_prefix(const struct cell *cells, int len, uint8_t *dst, struct enc *o,
                                uint32_t *runcells)
@@ -973,8 +912,6 @@ static int uniform_utf8_prefix(const struct cell *cells, int len, uint8_t *dst, 
     const __m512i target = _mm512_setr_epi32(
         0, (int)cells[0].fg, (int)cells[0].bg, (int)sl, 0, (int)cells[0].fg, (int)cells[0].bg, (int)sl,
         0, (int)cells[0].fg, (int)cells[0].bg, (int)sl, 0, (int)cells[0].fg, (int)cells[0].bg, (int)sl);
-    /* The code point lane only checks that the value is below 0x10000. The
-     * flags lane allows WIDE and TRAIL. */
     const __m512i keep = _mm512_setr_epi32(
         (int)0xFFFF0000u, -1, -1, (int)(STYLE_FLAGS | CELL_WRAP_PAD | CELL_EMOJI | CELL_TEXT | 0xFFFF0000u),
         (int)0xFFFF0000u, -1, -1, (int)(STYLE_FLAGS | CELL_WRAP_PAD | CELL_EMOJI | CELL_TEXT | 0xFFFF0000u),
@@ -1002,10 +939,6 @@ static int uniform_utf8_prefix(const struct cell *cells, int len, uint8_t *dst, 
                                                      _mm256_set1_epi32(0x800));
         if ((m_wide & ~ge800) || (surrogate & ~m_trail))
             break;
-        /* Lane bytes, low first: F5 E? 8? 8?. A wide lane keeps all four, a
-         * three-byte lane the last three. A two-byte lane turns byte 2 into
-         * its lead byte (C0 | cp >> 6) and keeps the last two. ASCII keeps
-         * byte 3 only. */
         __m256i b1 = _mm256_and_si256(_mm256_srli_epi32(ch, 4), _mm256_set1_epi32(0x00000F00));
         __m256i b2 = _mm256_and_si256(_mm256_slli_epi32(ch, 10), _mm256_set1_epi32(0x003F0000));
         __m256i b3 = _mm256_and_si256(_mm256_slli_epi32(ch, 24), _mm256_set1_epi32(0x3F000000));
@@ -1080,9 +1013,6 @@ static size_t encode_shaped(uint8_t *dst, uint32_t cp, uint16_t f, const struct 
     return b + put_utf8(dst + b, cp);
 }
 
-/* Encode cells[0..n) into dst and add their pens to r. Stop before a
- * cluster that could overflow cap. Return the cells used. The caller
- * reserved (n + 1) * RUN_MAX bytes in r. */
 static int encode_cells(struct hist_runs *r, const struct cell *cells, int n, uint8_t *dst,
                         size_t cap, const struct gstore *g, struct enc *o)
 {
@@ -1106,7 +1036,6 @@ static int encode_cells(struct hist_runs *r, const struct cell *cells, int n, ui
     }
     const struct cell *ci = &cells[i];
     if (i > 0 && !(ci->flags & SHAPE_FLAGS) && ci->c - 0x20u < 0x60u) {
-        /* The pen changed inside ASCII: a pass for the bytes, one for the pens. */
         i += narrow_any_pen_prefix(ci, n - i, dst + i);
         uint32_t links = runs_scan(r, cells, i);
         *o = (struct enc){ .bytes = (uint32_t)i, .cells = (uint32_t)i,
@@ -1120,7 +1049,6 @@ static int encode_cells(struct hist_runs *r, const struct cell *cells, int n, ui
     }
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
     if (wsap_vtcore_use_avx512() && n - i >= 8 && ((cells[i].flags & SHAPE_FLAGS) || cells[i].c >= 0x80)) {
-        /* Text with one pen, eight cells per step. */
         struct enc u;
         uint32_t runcells = 0;
         const struct cell *cu = &cells[i];
@@ -1140,7 +1068,6 @@ static int encode_cells(struct hist_runs *r, const struct cell *cells, int n, ui
     }
 #endif
 
-    /* The pending run and the delta base stay in registers. */
     uint32_t pfg = r->pen.fg, pbg = r->pen.bg, psl = pen_sl(&r->pen);
     uint32_t bfg = r->base.fg, bbg = r->base.bg, bsl = pen_sl(&r->base);
     uint32_t count = r->count;
@@ -1197,7 +1124,6 @@ static int encode_cells(struct hist_runs *r, const struct cell *cells, int n, ui
         flags &= (uint8_t)~HLINE_NARROW;
         uint16_t shape = f & (CELL_WIDE | CELL_EMOJI | CELL_TEXT);
         if ((shape == 0 || shape == CELL_WIDE) && cp - 0x80u < 0xD800u - 0x80u) {
-            /* Narrow or wide text below the surrogates: inline. */
             if (shape) {
                 dst[bytes++] = PREFIX_WIDE;
                 flags |= HLINE_HAS_WIDE;
@@ -1221,23 +1147,13 @@ static int encode_cells(struct hist_runs *r, const struct cell *cells, int n, ui
     return i;
 }
 
-/* ---- Writing ---- */
-
 static inline uint8_t row_count_byte(uint64_t rows)
 {
     return rows < ROWS_UNKNOWN ? (uint8_t)rows : ROWS_UNKNOWN;
 }
 
-/*
- * The fixed half of a narrow descriptor: wide 0, attr_len 0,
- * HLINE_NARROW, and wrap_rows 1. Only `cells` varies inside it, so a
- * one-row narrow line shares one 64-bit constant. Byte 8 is cells,
- * byte 14 is flags, and byte 15 is wrap_rows.
- */
 #define HLINE_NARROW_TAIL ((uint64_t)HLINE_NARROW << 48 | 1ULL << 56)
 
-/* Every blank part is the same 16 bytes: no text, no cells, one row.
- * Reading the constant beats zeroing 16 bytes and patching fields. */
 static const struct hline HLINE_BLANK = {
     .off = NO_TEXT, .flags = HLINE_NARROW, .wrap_rows = 1,
 };
@@ -1251,10 +1167,6 @@ static inline void part_put_narrow_rows(struct hline *p, uint32_t off, uint32_t 
     memcpy(p, v, sizeof(v));
 }
 
-/* Store the descriptor of one narrow line that holds a single row and uses
- * the default pen. This is the common case on the write path. The whole
- * 16 bytes leave in one store. The compound literal form instead costs a
- * 16-byte zero store plus four field patches. */
 static inline void part_put_narrow(struct hline *p, uint32_t off, uint32_t len)
 {
     uint64_t v[2] = {
@@ -1266,13 +1178,11 @@ static inline void part_put_narrow(struct hline *p, uint32_t off, uint32_t len)
 
 static void walk_advance(struct hist *h);
 
-/* Descriptor estimate. A viewport read accounts for wide wrap pads. */
 static inline uint64_t cheap_rows(uint64_t cells, uint64_t wide, int cols)
 {
     return rows_narrow(cols == 1 ? cells - wide : cells, cols);
 }
 
-/* Count the last line, which just closed, when it is next in order. */
 static inline void count_closed(struct hist *h, struct hline *first, uint64_t rows)
 {
     if (rows && h->wrap_cols && h->rows_id == hist_end_id(h) - 1) {
@@ -1282,8 +1192,6 @@ static inline void count_closed(struct hist *h, struct hline *first, uint64_t ro
     }
 }
 
-/* A whole line in one push: text, runs, and one descriptor. It returns false
- * when a cluster does not fit; nothing is committed then. */
 static bool push_line(struct hist *h, const struct cell *cells, int len, const char *ascii,
                       const struct pen_attr *pen, const struct gstore *g)
 {
@@ -1331,9 +1239,6 @@ static bool push_line(struct hist *h, const struct cell *cells, int len, const c
     return true;
 }
 
-/* A whole line of printable ASCII cells with one pen: the bytes, at most one
- * run, one descriptor. Return false, with nothing committed, for any other
- * line. */
 static inline bool push_uniform_line(struct hist *h, const struct cell *cells, int len)
 {
     if (h->lines >= h->line_limit)
@@ -1369,7 +1274,6 @@ static inline bool push_uniform_line(struct hist *h, const struct cell *cells, i
     return true;
 }
 
-/* Start a line. The caller made sure that no line is open. */
 static struct hline *begin_line(struct hist *h, size_t need)
 {
     if (h->lines >= h->line_limit)
@@ -1393,7 +1297,6 @@ static struct hline *begin_line(struct hist *h, size_t need)
     return p;
 }
 
-/* Write the runs of the open part after its text. */
 static void close_part(struct hist *h, struct hline *p)
 {
     runs_finish(&h->runs);
@@ -1433,8 +1336,6 @@ void wsap_vtcore_hist_close_open_line(struct hist *h)
     count_closed(h, part(h, first), rows);
 }
 
-/* Make room in the open part for text_need bytes and runs_need run bytes.
- * Relocate a small part or continue the line in a new part. */
 static struct hline *open_room(struct hist *h, struct hline *p, size_t text_need,
                                size_t runs_need, uint32_t add_cells)
 {
@@ -1459,8 +1360,6 @@ static struct hline *open_room(struct hist *h, struct hline *p, size_t text_need
             h->page_used[pg] = p->text_len;
             return p;
         }
-        /* The part is alone on its page, or no other page is free and the
-         * evictions left it alone: move it to the page start. */
         if (h->page_parts[old_pg] == 1) {
             memmove(h->pages[old_pg], h->pages[old_pg] + start, p->text_len);
             p->off = old_pg << 16;
@@ -1472,8 +1371,6 @@ static struct hline *open_room(struct hist *h, struct hline *p, size_t text_need
         }
     }
 
-    /* Continue the line in a new part. The old part stays OPEN until the new
-     * part exists, so a page eviction does not drop the line. */
     struct pen_attr pen = h->runs.pen;
     runs_finish(&h->runs);
     uint32_t pg0 = p->off >> 16;
@@ -1486,8 +1383,6 @@ static struct hline *open_room(struct hist *h, struct hline *p, size_t text_need
     h->page_used[pg0] = end;
     int pg = page_next(h);
     if (pg < 0) {
-        /* Only the open part is left and no page is free. Drop its content
-         * and reuse its page. The line keeps its id. */
         if (h->tail + 1 != h->head || h->page_parts[pg0] != 1)
             return NULL;
         h->page_used[pg0] = 0;
@@ -1521,10 +1416,6 @@ static struct hline *open_room(struct hist *h, struct hline *p, size_t text_need
     };
     h->page_parts[pg]++;
     if (!cont_push(h, h->head - 1)) {
-        /* Without the index entry, line_first() would map the next logical
-         * line to this part and scrollback would show the wrong text. Put
-         * the line back the way it was: the old part is open again and the
-         * new part never existed. */
         h->page_parts[pg]--;
         h->head--;
         p->flags |= HLINE_OPEN;
@@ -1577,7 +1468,6 @@ void wsap_vtcore_hist_push_row(struct hist *h, const struct cell *cells, int len
         struct enc e;
         i += encode_cells(&h->runs, cells + i, n, part_text(h, p) + p->text_len, cap, g, &e);
         part_add(h, p, &e);
-        /* A cluster did not fit: continue the line in a new part. */
         if (i < len && !(p = open_room(h, p, HIST_PAGE_USABLE, 0, 0)))
             return;
     }
@@ -1601,7 +1491,6 @@ void wsap_vtcore_hist_push_ascii(struct hist *h, const char *bytes, int n, const
             wsap_vtcore_hist_push_blank(h, 1);
             return;
         }
-        /* A default-pen line: one copy and one descriptor. */
         if (!wrapped && h->lines >= h->line_limit)
             evict_line(h);
         uint32_t pg = h->cur_page;
@@ -1648,8 +1537,6 @@ void wsap_vtcore_hist_push_ascii(struct hist *h, const char *bytes, int n, const
         walk_advance(h);
 }
 
-/* Add the runs of a text row to the open part pen by pen, when its bytes
- * cannot be copied because the delta bases differ. */
 static void text_row_readd(struct hist *h, const struct text_row *row)
 {
     const struct hist_runs *rr = &row->runs;
@@ -1676,8 +1563,6 @@ void wsap_vtcore_hist_push_text(struct hist *h, const struct text_row *row, bool
             return;
         }
         if (!wrapped && pen_attr_is_default(&row->start)) {
-            /* A whole line whose runs start from the default pen: copy the
-             * text and the runs, then one descriptor. */
             if (h->lines >= h->line_limit)
                 evict_line(h);
             int pg = page_for(h, (size_t)row->text_len + rr->len + RUN_MAX);
@@ -1713,8 +1598,6 @@ void wsap_vtcore_hist_push_text(struct hist *h, const struct text_row *row, bool
         if (!p)
             return;
     }
-    /* The runs copy when their delta base is the pen of the open part, else
-     * they are added again pen by pen, which can take more room. */
     if (h->runs.count)
         hist_runs_switch(&h->runs, text_pen_from_attr(&h->runs.pen));
     bool copy = pen_attr_equal(&h->runs.base, &row->start);
@@ -1752,8 +1635,6 @@ struct hist_stream_state {
     const char *first;
 };
 
-/* Write the narrow descriptors of ends[i..stop) in blocks, while a block
- * fits before the ring wraps. Return the first line left for the caller. */
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
 WSAP_VTCORE_TARGET_AVX512
 static int lf_rows_avx512(struct hist *restrict h, const uint16_t *restrict ends, int i, int stop,
@@ -1781,7 +1662,6 @@ static int lf_rows_avx512(struct hist *restrict h, const uint16_t *restrict ends
             rs = _mm512_max_epu32(lens, rs);
             nr = (uint32_t)_mm512_reduce_add_epi32(rs);
         } else if (_mm512_cmpgt_epu32_mask(lens, _mm512_set1_epi32((int)cols))) {
-            /* For a 16-bit numerator, this reciprocal gives exact division. */
             __m512i num = _mm512_max_epi32(_mm512_sub_epi32(lens, _mm512_set1_epi32(1)),
                                           _mm512_setzero_si512());
             __m512i even = _mm512_srli_epi64(_mm512_mul_epu32(num, recip), 32);
@@ -2031,9 +1911,6 @@ void wsap_vtcore_hist_push_ascii_lf(struct hist *restrict h, const char *restric
 static_assert(sizeof(struct hist_ascii_line) == 16, "a line is two 64-bit lanes");
 static_assert(offsetof(struct hist_ascii_line, len) == 8, "len is in the second 64-bit lane");
 
-/* Write the narrow one-row descriptors of lines[i..stream_end) in blocks,
- * while a block fits before the ring wraps. first is the first byte of
- * the page copy at base. Return the first line left for the caller. */
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
 WSAP_VTCORE_TARGET_AVX512
 static int stream_lines_avx512(struct hist *restrict h, const struct hist_ascii_line *lines,
@@ -2208,16 +2085,12 @@ void wsap_vtcore_hist_push_ascii_lines(struct hist *h, const struct hist_ascii_l
             i++;
             continue;
         }
-        /* A batch of unwrapped default-pen lines that fit the current page:
-         * one copy and one descriptor each. A blank line joins the batch
-         * instead of ending it. */
         if (page_for(h, l->len) < 0)
             return;
         uint32_t pg = h->cur_page;
         uint32_t room = HIST_PAGE_USABLE - h->page_used[pg];
         int end = i;
         uint32_t bytes = 0;
-        /* Keep separators in the page to copy a contiguous input batch once. */
         int stream_end = i;
         uint32_t extra_rows = 0;
         while (stream_end < count && stream_end - i < (int)h->line_limit) {
@@ -2281,7 +2154,6 @@ void wsap_vtcore_hist_push_ascii_lines(struct hist *h, const struct hist_ascii_l
                 h->all_blank = false;
             continue;
         }
-        /* line_limit does not move inside this scan. */
         int batch_max = (int)h->line_limit;
         while (end < count && !lines[end].wrapped &&
                bytes + lines[end].len <= room && end - i < batch_max) {
@@ -2294,21 +2166,16 @@ void wsap_vtcore_hist_push_ascii_lines(struct hist *h, const struct hist_ascii_l
             return;
         bool count_rows = h->wrap_cols && h->rows_id == hist_end_id(h);
         uint64_t rows_add = 0;
-        /* Lines that took a page slot. A blank line takes none. */
         uint32_t n_text = 0;
         bool any_text = false;
         uint32_t off = h->page_used[pg];
         uint8_t *page = h->pages[pg];
-        /* The ring and head cannot move inside this loop: eviction and the
-         * ring growth both ran above. Keep them in registers. */
         struct hline *ring = h->ring;
         uint32_t rmask = h->ring_mask;
         uint64_t head = h->head;
         uint32_t page_off = pg << 16;
         for (; i < end; i++) {
             uint32_t len = lines[i].len;
-            /* A blank line: no text, no page slot, one row. The scan does
-             * not stop on it, so the batch keeps its room and its setup. */
             if (WSAP_VTCORE_EXPECT(len == 0, 0)) {
                 ring[head++ & rmask] = HLINE_BLANK;
                 rows_add++;
@@ -2351,7 +2218,6 @@ void wsap_vtcore_hist_push_blank(struct hist *h, size_t n)
     if (n == 0)
         return;
     if (h->all_blank && h->lines == h->line_limit) {
-        /* Every line is blank and has one row: only the ids move. */
         bool all = h->rows_id == hist_end_id(h);
         h->base_id += n;
         if (all || h->rows_id < h->base_id)
@@ -2367,13 +2233,9 @@ void wsap_vtcore_hist_push_blank(struct hist *h, size_t n)
         h->all_blank = true;
     }
     evict_for(h, n);
-    /* Ring room for the whole run at once. Growing it later would
-     * invalidate the pointers the loop below keeps in registers. */
     if (!ring_fit(h, n))
         return;
     bool count = h->wrap_cols && h->rows_id == hist_end_id(h);
-    /* The ring and head cannot move here: eviction ran above and the
-     * reserve cannot grow the ring again. Keep both in registers. */
     struct hline *ring = h->ring;
     uint32_t rmask = h->ring_mask;
     uint64_t head = h->head;
@@ -2387,19 +2249,15 @@ void wsap_vtcore_hist_push_blank(struct hist *h, size_t n)
     }
 }
 
-/* ---- Reading ---- */
-
-/* Walks the attribute runs of one part, cell by cell. */
 struct runs_iter {
     const uint8_t *p, *end;
-    bool pending;               /* the open part: the pending run follows */
+    bool pending;
     struct pen_attr pending_pen;
     uint32_t pending_count;
     struct pen_attr pen;
-    uint32_t left;              /* cells left in the run; UINT32_MAX: default tail */
+    uint32_t left;
 };
 
-/* Runs held in a hist_runs (the open part, or a text row) from pen start. */
 static void runs_iter_runs(struct runs_iter *it, const struct hist_runs *r, const struct pen_attr *start)
 {
     *it = (struct runs_iter){
@@ -2426,7 +2284,6 @@ static void runs_iter_init(struct runs_iter *it, const struct hist *h, const str
     }
 }
 
-/* Take up to n cells of the current run. it->pen is their pen. */
 static inline uint32_t runs_take(struct runs_iter *it, uint32_t n)
 {
     while (WSAP_VTCORE_EXPECT(it->left == 0, 0)) {
@@ -2497,8 +2354,6 @@ static inline const uint8_t *text_skip(const uint8_t *s, const uint8_t *end)
     return s;
 }
 
-/* Read one cell: its code point (a handle for a cluster when g is set) and
- * its shape flags. */
 static const uint8_t *text_cell(const uint8_t *s, const uint8_t *end, struct gstore *g,
                                 uint32_t *cp, uint16_t *shape)
 {
@@ -2621,7 +2476,6 @@ int wsap_vtcore_hist_line_rows(const struct hist *h, uint64_t id, int cols)
     return line_rows_walk(h, first, line_end(h, first), cols);
 }
 
-/* Walk the open line from where the last walk stopped. */
 static void walk_advance(struct hist *h)
 {
     int cols = h->wrap_cols;
@@ -2662,8 +2516,6 @@ static inline void put_cell(struct cell *out, uint32_t cp, uint16_t shape, const
     *out = (struct cell){ cp, pen->fg, pen->bg, (uint16_t)(shape | pen->flags), pen->link };
 }
 
-/* A line is narrow when every part stores one ASCII byte per cell. Then a
- * cell offset is also a byte offset, in every part. */
 static bool line_narrow(const struct hist *h, uint64_t first, uint64_t end)
 {
     for (uint64_t s = first; s < end; s++)
@@ -2679,8 +2531,6 @@ int wsap_vtcore_hist_decode_segments(const struct hist *h, uint64_t id, int star
         return 0;
     uint64_t first = line_first(h, id), end = line_end(h, first);
 
-    /* A narrow line has one byte per cell, so a segment starts at a known
-     * cell offset. Walk the parts to reach it, not the text before it. */
     if (line_narrow(h, first, end)) {
         uint64_t skip = (uint64_t)start_seg * (uint64_t)cols;
         int seg_idx = 0;
@@ -2853,7 +2703,6 @@ int wsap_vtcore_hist_decode_segment(const struct hist *h, uint64_t id, int seg, 
     return got > 0 ? len : 0;
 }
 
-/* Write the cells of parts [first, end) in one row, without wrapping. */
 static int decode_line(const struct hist *h, uint64_t first, uint64_t end,
                        struct cell *out, int cap, struct gstore *g)
 {
@@ -2891,7 +2740,6 @@ int wsap_vtcore_hist_text_decode(const struct text_row *row, struct cell *out, i
     struct runs_iter it;
     runs_iter_runs(&it, &row->runs, &row->start);
     if (row->flags & HLINE_NARROW) {
-        /* One byte per cell: one block store per run. */
         int take = row->text_len < cap ? row->text_len : cap;
         for (int x = 0; x < take;) {
             int k = (int)runs_take(&it, (uint32_t)(take - x));
@@ -2959,8 +2807,6 @@ void wsap_vtcore_hist_mark_links(const struct hist *h, void (*mark)(void *ud, ui
             mark(ud, it.pending_pen.link);
     }
 }
-
-/* ---- Removing from the end ---- */
 
 static void drop_head_part(struct hist *h)
 {
@@ -3049,8 +2895,6 @@ int wsap_vtcore_hist_pop_tail_cells(struct hist *h, int n, struct cell *out, str
     return take;
 }
 
-/* ---- Rows ---- */
-
 void wsap_vtcore_hist_set_width(struct hist *h, int cols)
 {
     if (h->wrap_cols == cols)
@@ -3097,7 +2941,6 @@ void wsap_vtcore_hist_refine_rows(struct hist *h, uint64_t id, int cols, int row
     h->counted_rows = h->counted_rows - old + (uint64_t)rows;
 }
 
-/* Fill descriptor counts only. This never reads the encoded text. */
 void wsap_vtcore_hist_prepare_rows(struct hist *h, int cols)
 {
     if (cols != h->wrap_cols)
@@ -3136,7 +2979,6 @@ uint64_t wsap_vtcore_hist_rows(const struct hist *h, int cols)
     return total;
 }
 
-/* Locate a row boundary by its cell offset. Wide wrap pads do not count. */
 uint64_t wsap_vtcore_hist_segment_cell(const struct hist *h, uint64_t id, int seg, int cols)
 {
     if (!line_valid(h, id))
@@ -3202,8 +3044,6 @@ int wsap_vtcore_hist_cell_segment(const struct hist *h, uint64_t id, uint64_t ce
     }
     return row;
 }
-
-/* ---- Life cycle ---- */
 
 bool wsap_vtcore_hist_init(struct hist *h, int line_limit, size_t byte_cap)
 {

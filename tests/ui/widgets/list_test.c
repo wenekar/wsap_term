@@ -14,7 +14,6 @@ static const struct ui_list_item ITEMS[] = {
 };
 #define N_ITEMS ((int)(sizeof(ITEMS) / sizeof(ITEMS[0])))
 
-/* A list shown at its measured size in the top left of a surface. */
 struct fixture {
     struct ui_surface surface;
     struct ui_widget root;
@@ -150,9 +149,6 @@ static void hover_follows_pointer_test(void)
     teardown(&f);
 }
 
-/* The rows are not hit-test widgets, so the list has to name the shape for
- * the row under the pointer. The row's own rule decides it, and a gap
- * between rows has no row, so it falls through to the parent. */
 static void cursor_names_the_hovered_row_test(void)
 {
     struct fixture f;
@@ -165,7 +161,6 @@ static void cursor_names_the_hovered_row_test(void)
     teardown(&f);
 }
 
-/* The shape comes from the sheet, not from a constant in the list. */
 static void cursor_follows_the_sheet_test(void)
 {
     struct css_sheet sheet = { 0 };
@@ -241,7 +236,6 @@ static bool destroy_on_change(struct ui_widget *source,
     return false;
 }
 
-/* A handler may destroy the list while a click selects an item. */
 static void handler_can_destroy_list_during_release_test(void)
 {
     struct fixture f;
@@ -257,8 +251,6 @@ static void handler_can_destroy_list_during_release_test(void)
     teardown(&f);
 }
 
-/* Regression: a hovered row's opaque fill must stay inside the panel's
- * rounded corner at every scale. */
 static void hover_fill_stays_inside_rounded_corner_test(void)
 {
     struct css_sheet sheet = {0};
@@ -288,8 +280,6 @@ static void hover_fill_stays_inside_rounded_corner_test(void)
     css_sheet_clear(&sheet);
 }
 
-/* Regression: labels hugged the top left of their rows, and separators
- * filled their whole row. */
 static void rows_center_and_inset_text(struct css_scale_context scale)
 {
     const struct ui_list_item items[] = {
@@ -376,7 +366,6 @@ static void many_long_items_are_kept_test(void)
     ui_widget_destroy(ui_list_widget(&l));
 }
 
-/* A pinned list keeps its rows while the theme changes. */
 static void pinned_geometry_survives_theme_change_test(void)
 {
     struct css_sheet roomy = {0};
@@ -413,8 +402,6 @@ static bool row_filled_with(struct fixture *f, int index, uint32_t rgb)
     return false;
 }
 
-/* Each row takes the rule for its own submenu and disabled flags. The
- * rule for both flags applies only to the row that has both. */
 static void item_flags_pick_their_class_rule_test(void)
 {
     const struct ui_list_item items[] = {

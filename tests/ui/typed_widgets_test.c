@@ -9,14 +9,12 @@
 #include "ui/widgets/label.h"
 #include "ui/box.h"
 
-/* A box with the class the panel tests style. */
 static void panel_init(struct ui_box *panel)
 {
     ui_box_init(panel);
     ui_widget_set_style_identity(&panel->widget, "panel", NULL, "panel");
 }
 
-/* A labelled button under a box, styled by css, in a surface. */
 static void button_in_surface(struct css_sheet *sheet, const char *css,
                               struct ui_surface *surface, struct ui_box *box,
                               struct ui_button *button)
@@ -31,7 +29,6 @@ static void button_in_surface(struct css_sheet *sheet, const char *css,
     ui_surface_set_root(surface, &box->widget);
 }
 
-/* Sets the test cell metrics and sizes the surface to 200 by 60. */
 static void size_200x60(struct ui_surface *surface)
 {
     ui_surface_set_scale(surface, (struct css_scale_context){ .dpi_scale = 1.0f,
@@ -509,7 +506,6 @@ static void zero_state_test(void)
     ui_scrollview_flash(&scroll);
     assert(scroll.widget.ops != NULL);
 
-    /* Test that these zero-init widgets can be mounted into a surface tree. */
     struct ui_surface surface = {0};
     struct ui_scene scene = {0};
     ui_surface_init(&surface, NULL, NULL);

@@ -13,7 +13,6 @@ static void track_pointer(struct window *w, struct input_mouse_event *m)
     w->pointer.inside = true;
 }
 
-/* Native input the window tracks before the UI sees it. */
 static void track_native(struct window *w, struct input_event *ev)
 {
     switch (ev->kind) {

@@ -7,10 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* --wrap redirects calls after LTO has analyzed their side effects. Keep
- * these accesses observable so it cannot fold away the wrapper's changes.
- * The countdown fails the allocation after it reaches zero. malloc and
- * realloc share it, so a sweep over the countdown hits every site. */
 static volatile int alloc_countdown = -1;
 static volatile bool alloc_was_failed;
 
@@ -43,19 +39,17 @@ void *__wrap_realloc(void *p, size_t size)
     return __real_realloc(p, size);
 }
 
-/* Code points of a cluster cell are copied up to this many. */
 #define CPS_MAX 32
 #define CPS_SLOT (CPS_MAX + 1)
 
-/* A copy of everything a renderer can read from a snapshot. */
 struct frame {
     struct wsap_vtcore_view view;
     uint32_t palette[WSAP_VTCORE_PALETTE_SIZE];
     int cols, rows;
-    struct wsap_vtcore_cell *cells;    /* rows * cols */
-    uint32_t *cps;              /* per cell: count, then code points */
-    uint64_t *keys;             /* per row */
-    struct wsap_vtcore_span *sel;      /* per row */
+    struct wsap_vtcore_cell *cells;
+    uint32_t *cps;
+    uint64_t *keys;
+    struct wsap_vtcore_span *sel;
 };
 
 static void frame_capture(const struct wsap_vtcore_snapshot *s, struct frame *f)
@@ -108,8 +102,6 @@ static bool same_view(const struct frame *a, const struct frame *b)
            memcmp(a->palette, b->palette, sizeof(a->palette)) == 0;
 }
 
-/* The same state as before a call: view, cells, keys, selection, and the
- * arena records behind the cluster cells. */
 static bool frame_same(const struct frame *a, const struct frame *b)
 {
     if (!same_view(a, b))
@@ -121,8 +113,6 @@ static bool frame_same(const struct frame *a, const struct frame *b)
            memcmp(a->sel, b->sel, (size_t)a->rows * sizeof(*a->sel)) == 0;
 }
 
-/* What a renderer paints. Arena offsets, keys, and version numbers may differ
- * between an incremental snapshot and a fresh one. */
 static bool frame_shows_same(const struct frame *a, const struct frame *b)
 {
     const struct wsap_vtcore_view *x = &a->view, *y = &b->view;
@@ -151,9 +141,6 @@ static bool frame_shows_same(const struct frame *a, const struct frame *b)
     return true;
 }
 
-/* One update with the k-th allocation failing, from the state the caller
- * built. A failed update must leave s as it was, and the retry must succeed.
- * Returns true when an allocation was failed. */
 static bool update_failing_at(struct wsap_vtcore_snapshot *s, struct wsap_vtcore *t, int k)
 {
     struct frame before, after;
@@ -174,9 +161,6 @@ static bool update_failing_at(struct wsap_vtcore_snapshot *s, struct wsap_vtcore
     return injected;
 }
 
-/* Run attempt(k) for k = 0, 1, ... until one injects no failure. Each
- * attempt builds its own state, so every site fails from the same start.
- * Returns the number of failed updates. */
 static int sweep(bool (*attempt)(int k))
 {
     int k = 0;
@@ -187,10 +171,6 @@ static int sweep(bool (*attempt)(int k))
     return k;
 }
 
-/* Update s from t with the k-th allocation failing, for k = 0, 1, ... until
- * an update succeeds. Every failed attempt must leave s as it was. Progress
- * from earlier attempts stays, so this covers the later steps of a long run
- * rather than each site from one start. Returns the number of failures. */
 static int update_each_failure(struct wsap_vtcore_snapshot *s, struct wsap_vtcore *t)
 {
     struct frame before, after;
@@ -215,7 +195,6 @@ static int update_each_failure(struct wsap_vtcore_snapshot *s, struct wsap_vtcor
     return failures;
 }
 
-/* A renderer sees the same picture as a fresh capture of t. */
 static void expect_matches_fresh(struct wsap_vtcore *t, const struct wsap_vtcore_snapshot *s)
 {
     struct wsap_vtcore_snapshot *fresh = wsap_vtcore_snapshot_new();
@@ -229,7 +208,6 @@ static void expect_matches_fresh(struct wsap_vtcore *t, const struct wsap_vtcore
     wsap_vtcore_snapshot_free(fresh);
 }
 
-/* A US flag and a ZWJ family: two regional indicators, and five code points. */
 static const char flag_us[] = "\xf0\x9f\x87\xba\xf0\x9f\x87\xb8";
 static const char family[] = "\xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x91\xa7";
 
@@ -239,8 +217,6 @@ static uint32_t cluster_cps(const struct wsap_vtcore_snapshot *s, const struct w
     return (uint32_t)wsap_vtcore_snapshot_cluster(s, cell->text, cps, cap);
 }
 
-/* A new terminal and an empty snapshot. The first update grows every buffer
- * and the arena, so each allocation site in the update is hit. */
 static bool first_update_at(int k)
 {
     struct wsap_vtcore_options options = { .size = { 8, 3 }, .scrollback = 5 };
@@ -266,8 +242,6 @@ static bool first_update_at(int k)
     return injected;
 }
 
-/* A 32 by 16 screen full of clusters. The arena needs more than its first
- * 256 words, so the arena growth is one of the failing sites. */
 static bool full_cluster_screen_at(int k)
 {
     struct wsap_vtcore_options options = { .size = { 32, 16 }, .scrollback = 5 };
@@ -300,7 +274,6 @@ static bool full_cluster_screen_at(int k)
     return injected;
 }
 
-/* The screen grows, so cells, keys, row clusters, and selection all reserve. */
 static bool resize_at(int k)
 {
     struct wsap_vtcore_options options = { .size = { 8, 3 }, .scrollback = 5 };
@@ -327,8 +300,6 @@ static bool resize_at(int k)
     return injected;
 }
 
-/* More than 256 rows moves the scratch keys and spans, and the selection's
- * row list, off the stack. */
 static bool tall_screen_at(int k)
 {
     struct wsap_vtcore_options options = { .size = { 8, 300 }, .scrollback = 5 };
@@ -357,7 +328,6 @@ static bool tall_screen_at(int k)
     return injected;
 }
 
-/* Without failures, the selection of a tall screen reaches the last row. */
 static void tall_selection_is_kept(void)
 {
     struct wsap_vtcore_options options = { .size = { 8, 300 }, .scrollback = 5 };
@@ -379,8 +349,6 @@ static void tall_selection_is_kept(void)
     wsap_vtcore_free(t);
 }
 
-/* On a screen taller than 256 rows, selecting needs memory. When none is
- * left, the call fails and the selection stays as it was. */
 static void tall_selection_fails_cleanly(void)
 {
     struct wsap_vtcore_options options = { .size = { 8, 300 }, .scrollback = 5 };
@@ -420,8 +388,6 @@ static void tall_selection_fails_cleanly(void)
     wsap_vtcore_free(t);
 }
 
-/* Scroll with clusters in most lines. Each step fails every allocation in
- * turn, then retries, and must match a fresh capture. */
 static void scrolling_fails_cleanly(void)
 {
     struct wsap_vtcore_options options = { .size = { 8, 3 }, .scrollback = 5 };
@@ -453,17 +419,12 @@ static void scrolling_fails_cleanly(void)
 
 int main(void)
 {
-    /* Four reserve() buffers and the arena. */
     int failures = sweep(first_update_at);
     assert(failures >= 5);
-    /* Four reserve() buffers and the arena, with a larger arena. */
     failures = sweep(full_cluster_screen_at);
     assert(failures >= 5);
-    /* Four reserve() buffers and the arena, after the screen grows. */
     failures = sweep(resize_at);
     assert(failures >= 5);
-    /* Four reserve() buffers, the scratch array, the selection's row list,
-     * and the arena. */
     failures = sweep(tall_screen_at);
     assert(failures >= 7);
     tall_selection_is_kept();

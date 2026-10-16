@@ -17,7 +17,6 @@ static void request_frame(void *userdata)
     ((struct host_probe *)userdata)->requests++;
 }
 
-
 static void paint_widget(const struct ui_widget *widget,
                          struct ui_paint_context *paint)
 {
@@ -146,8 +145,6 @@ static bool scene_has_color(const struct ui_scene *scene, uint32_t color)
     return false;
 }
 
-/* A hover that only changes colors repaints without measuring the rest
- * of the tree again. A hover that changes padding still lays out. */
 static void hover_restyle_test(void)
 {
     struct css_sheet sheet = {0};
@@ -367,8 +364,6 @@ static void set_scale_rescales_styled_size_test(void)
     assert(child.measured_size.x == 20 && child.measured_size.y == 10);
     assert(child.bounds.width == 20 && child.bounds.height == 10);
 
-    /* A scale-only update re-resolves px sizes on the next build
-     * without a resize. */
     ui_surface_set_scale(&surface, (struct css_scale_context){
         .dpi_scale = 2.0f, .cell_w = 8.0f, .cell_h = 16.0f });
     assert(ui_surface_build_scene(&surface, &scene));
@@ -416,7 +411,6 @@ static void nested_scale_change_keeps_text_visible_test(void)
     ui_surface_set_root(&surface, &root);
     ui_surface_resize(&surface, (struct vector2i){ .x = 240, .y = 80 });
 
-    /* Keep the viewport fixed while the font and display scale change. */
     const int scales[] = { 1, 2, 1, 2 };
     for (size_t i = 0; i < sizeof(scales) / sizeof(scales[0]); i++) {
         int scale = scales[i];
@@ -536,7 +530,6 @@ static void scratch_arena_and_dialog_test(void)
     ui_surface_set_root(&surface, UI_WIDGET(&root));
     ui_surface_resize(&surface, (struct vector2i){ .x = 400, .y = 300 });
 
-    /* 1. Scratch alloc test. */
     void *p1 = ui_surface_scratch_alloc(&surface, 64);
     assert(p1 != NULL);
     void *p2 = ui_surface_scratch_alloc(&surface, 128);
@@ -547,7 +540,6 @@ static void scratch_arena_and_dialog_test(void)
     assert(p3 == p1);
     ui_surface_scratch_reset(&surface);
 
-    /* 2. Show dialog test. */
     struct dialog_action_probe probe = { .activated_id = -1 };
     struct ui_widget *dialog = ui_dialog_show(&surface, &(struct ui_dialog_desc){
         .title = "Confirm",
@@ -567,13 +559,11 @@ static void scratch_arena_and_dialog_test(void)
     assert(ui_surface_build_scene(&surface, &scene));
     assert(dialog->bounds.width > 0 && dialog->bounds.height > 0);
 
-    /* 3. Simulate pressing the focused button (Enter). */
     struct ui_event enter = ui_event_key((struct ui_key_event){
         .key = UI_KEY_ENTER,
     }, 0);
     ui_surface_dispatch(&surface, &enter);
 
-    /* Dialog should have activated ID 101 and automatically closed. */
     assert(probe.activated_id == 101);
     assert(!ui_surface_has_modal(&surface));
 

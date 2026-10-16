@@ -292,8 +292,6 @@ static void test_insets2i(void)
 
 static void test_rect2i_union_saturation(void)
 {
-    /* An endpoint past INT_MAX must saturate. The plain int addition that
-     * rect2i_union used to do overflows here, which UBSan reports. */
     struct rect2i far = { .pos = { .x = INT_MAX - 1, .y = 0 },
                           .size = { .x = 10, .y = 1 } };
     struct rect2i origin = { .pos = { .x = 0, .y = 0 },
@@ -303,7 +301,6 @@ static void test_rect2i_union_saturation(void)
     assert(u.width == INT_MAX);
     assert(u.height == 1);
 
-    /* An ordinary union is unchanged. */
     struct rect2i n = rect2i_union(
         (struct rect2i){ .pos = { .x = 0, .y = 0 }, .size = { .x = 2, .y = 2 } },
         (struct rect2i){ .pos = { .x = 5, .y = 5 }, .size = { .x = 3, .y = 3 } });

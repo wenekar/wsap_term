@@ -387,7 +387,6 @@ static void test_xtversion(void)
     wsap_vtcore_free(t);
 }
 
-/* wsap_vtcore_options.name feeds XTVERSION and the TN and name capabilities. */
 static void test_host_name(void)
 {
     struct wsap_vtcore_options opt = {
@@ -404,7 +403,6 @@ static void test_host_name(void)
     assert_tcap(t, "TN", "myterm");
     assert_tcap(t, "name", "myterm");
 
-    /* A DCS +p sets the capability value. The XTVERSION name does not change. */
     response_len = 0;
     write_seq(t, "\033P+p6f74686572\033\\");
     expect_no_response();
@@ -414,7 +412,6 @@ static void test_host_name(void)
     expect_response("\033P>|myterm\033\\");
     wsap_vtcore_free(t);
 
-    /* NULL and "" both select the default. */
     opt.name = "";
     t = wsap_vtcore_new(&opt);
     assert(t);
@@ -444,8 +441,6 @@ static void test_bel_terminator(void)
     wsap_vtcore_free(t);
 }
 
-/* A query far past the old 256-byte DCS buffer is answered in full,
- * whether it arrives byte by byte or in one write. */
 static void test_dcs_long_query(void)
 {
     enum { NAMES = 60 };

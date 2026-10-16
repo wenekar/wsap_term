@@ -1,7 +1,5 @@
 #include "terminal/internal.h"
 
-/* Paints tab index into the thumbnail, at most width pixels wide and no
- * wider than the window. False if there is nothing to show. */
 static bool paint_thumbnail(struct window *w, int index, int width)
 {
     struct terminal *tw = terminal_of(w);

@@ -26,14 +26,12 @@ int main(int argc, char **argv)
     });
     if (!t) return 1;
 
-    /* Bare LFs also return to column 0, as a tty with ONLCR does. */
     for (int it = 0; it < iters; it++) {
         wsap_vtcore_feed(t, buf, chunk, WSAP_VTCORE_FEED_ONLCR);
         if ((it & 7) == 0)
             fprintf(stderr, "iter %d ok (sb=%d)\n", it, wsap_vtcore_scrollback(t).total);
     }
 
-    /* Read every row of the viewport, as a renderer does. */
     struct wsap_vtcore_snapshot *snap = wsap_vtcore_snapshot_new();
     if (!snap || !wsap_vtcore_snapshot_update(snap, t)) return 1;
     for (int r = 0; r < wsap_vtcore_size(t).y; r++)

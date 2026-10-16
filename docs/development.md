@@ -1,8 +1,5 @@
 # Development notes
 
-This document contains repository layout, backend, testing, and performance
-details for contributors.
-
 For the UI API and a screen example, see [UI library](ui-library-state.md).
 
 ## Native windows
@@ -151,122 +148,74 @@ Grouped tests must use `int main(void)` and return a status explicitly.
 Add tests with arguments or symbol overrides to `standalone_tests` in
 `tests/meson.build`.
 
-Run the automated regression suite with:
+| Command | Scope |
+| --- | --- |
+| `make test` | Regular host tests in `$(BUILD_DIR)-test`. |
+| `make test-asan` | Address, leak, and undefined behavior checks. |
+| `make test-tsan` | Thread checks. |
+| `make test-msan` | Memory checks without the `extlib` suite. |
+| `make test-sanitizers` | All sanitizer targets. |
+| `make test-fuzz` | 50,000 parser fuzz seeds. |
+| `meson test -C build --suite isa --print-errorlogs` | ISA tests. |
 
-```sh
-meson setup build/sanitize --buildtype=debugoptimized -Doptimization=1 \
-  -Db_lto=false -Db_lundef=false -Db_sanitize=address,undefined
-meson test -C build/sanitize --print-errorlogs
-```
+Linux tests need Wayland server libraries, protocol files, and `wayland-scanner`.
+`make test` also enables Sway and Kitty tests on Linux.
+The Sway suite needs `swaymsg` and `grim`.
+Font tests need CJK, color emoji, and musical symbol fonts.
+COLRv1 tests need a COLRv1 font.
 
-This configuration enables AddressSanitizer and UndefinedBehaviorSanitizer.
+`python3 tools/test-matrix.py` runs sanitizer checks across CPU targets.
+On x86-64, the default targets are native, x86-64-v2, x86-64-v3, and znver5.
+The CPU and compiler must support each target.
+Use `--isas` for native only.
 
-A preload in the environment can stop a sanitizer build from starting. The
-preload shim loads before the sanitizer runtime, and every test then aborts
-with "ASan runtime does not come first in initial library list". Clear the
-variable for the run:
+## Benchmarks
 
-```sh
-env -u LD_PRELOAD meson test -C build/sanitize --print-errorlogs
-```
-
-The window regression fixture also requires `wayland-server`,
-`wayland-protocols`, and `wayland-scanner`; it starts its own compositor over a
-socket pair and does not require a desktop session.
-The font suite requires installed CJK, color emoji, and musical-symbol fonts;
-Noto Sans CJK, Noto Color Emoji, and Noto Music are suitable choices.
-
-## Performance benchmark
-
-The Linux window backend's design, local idle measurements, and regression
-commands are recorded in [window-backend.md](../benchmarks/window-backend.md).
-
-Measure parser/screen throughput with:
+Run benchmarks from an optimized build without sanitizers.
 
 ```sh
 meson test -C build --benchmark term-write-bench --verbose
+meson test -C build --benchmark render-bench --verbose
+meson compile -C build term-live-bench
 ```
 
-The benchmark feeds repeated ASCII, mixed UTF-8, color, cursor, and erase
-sequences to a 120-column, 40-row terminal. Each case warms up with 16 buffers,
-then times 512 buffers of approximately 64 KiB. It excludes PTY transport,
-rendering, and compositor work.
+The live profile needs a desktop session.
+It uses `perf` on Linux and `sample` on macOS.
+Reports go in `benchmarks/`.
 
-For the parser refactor, both versions were built with the same driver using
-GCC 16.2.1 and `-O3 -march=native` on an AMD Ryzen 7 9700X. Medians of seven
-runs per version, alternating which version ran first:
+| Tool | Purpose |
+| --- | --- |
+| `benchmarks/run-termbench.sh [size] [test]` | Run termbench in the terminal. |
+| `benchmarks/run-termbench-headless.sh` | Compare builds on one headless Linux host. |
+| `tools/ab.sh CASE N BIN_A BIN_B` | Alternate benchmark runs and report medians. |
+| `tools/analyze.sh` | Run static checks. |
+| `python3 tools/dev/dirgraph.py build` | Check library dependencies. |
+| `python3 tools/loc_per_function.py src` | Count code lines per function. |
+| `python3 tools/build_macos_icon.py` | Build the macOS icon with resvg and iconutil. |
+| `python3 tools/strip_comments.py FILE...` | Remove comments under the [cleanup rules](../AGENT_COMMENT_CLEANUP.md). |
 
-| Workload | Before (MiB/s) | After (MiB/s) | Change |
-| --- | ---: | ---: | ---: |
-| ASCII | 375.27 | 615.73 | +64.1% |
-| Mixed UTF-8 | 454.11 | 515.26 | +13.5% |
-| Colors | 716.40 | 705.04 | -1.6% |
-| Cursor commands | 765.93 | 818.71 | +6.9% |
-| Erase | 170.80 | 170.12 | -0.4% |
+See [performance reports](../benchmarks/) for results and methods.
 
-These are local synthetic measurements, not end-to-end terminal speedups.
-Small differences are within the observed run-to-run variation.
+## Sanitizers
 
-For an end-to-end live profile, run `meson compile -C build term-live-bench` from an active
-Wayland session on Linux (requires `perf`) or on macOS (requires `sample(1)`).
-The raw or symbolized profile is written under `benchmarks/`.
+Sanitizer targets use separate build directories.
+They clear `LD_PRELOAD` and `DYLD_INSERT_LIBRARIES` before each run.
+The preload shim and its exec helper remain unsanitized.
 
-Grapheme clustering later cost about 4% on the mixed UTF-8 case, measured the
-same way against the commit before it, and left the other cases unchanged. Each
-non-ASCII character needs its width class looked up once, which the clustering
-rules and the cell span share, and the Unicode property tables are consulted
-only once the cheaper checks cannot settle the boundary.
-
-## Sanitizer test scopes
-
-The Clang MemorySanitizer build has a dedicated project-owned UI scope:
+For a direct MemorySanitizer run:
 
 ```sh
-meson setup build-msan-clang --wipe \
-  --native-file <(printf '[binaries]\\nc = '\''clang'\\''\\ncpp = '\''clang++'\\''\\n') \
-  --buildtype=debugoptimized -Doptimization=1 -Db_lto=false \
-  -Db_lundef=false -Db_sanitize=memory
 meson test -C build-msan-clang --suite msan-safe --print-errorlogs
 ```
 
-`msan-safe` is an explicit allowlist of core and typed-UI tests. Tests which
-initialize fontconfig, Wayland, xcursor, or other third-party libraries remain
-in the normal `unit`/`extlib` suites because those dependencies are commonly
-not built with MemorySanitizer instrumentation. They are not silently excluded
-from ordinary test runs, and a project-owned test must be added to `msan-safe`
-only after it passes without suppressing project reports.
+`msan-safe` lists core and UI tests that pass without suppressions.
+Tests that use uninstrumented system libraries stay in `unit` and `extlib`.
+`ui-debug-test` uses uninstrumented yyjson and stays outside `msan-safe`.
 
-`ui-debug-test` is not in `msan-safe`. It serializes the widget tree with
-yyjson, and the installed yyjson reports its own pool as uninitialized before
-the test does any work. MemorySanitizer takes no function name suppression, so
-the test stays out for the same reason the fontconfig and Wayland tests do.
+`tests/tsan.supp` suppresses GLib finalizers.
+`tests/asan.supp` suppresses the macOS CoreGraphics PDF lexer overread.
+Keep suppressions limited to system code.
 
-### ThreadSanitizer
-
-Every terminal call enters the terminal's writer section, a spin lock.
-`term-test` feeds on one thread while another calls every public reader, so a
-call that skips the section is reported.
-
-`tests/tsan.supp` names GLib finalizers only. GLib is not built with TSan,
-so TSan cannot see the atomic reference counts that order those frees.
-Project code uses pthread locks where it shares state with a GLib thread,
-because TSan cannot see a `GMutex` either.
-
-```sh
-printf "[binaries]\nc = 'clang'\ncpp = 'clang++'\n" > build-tsan.ini
-meson setup build-tsan --native-file build-tsan.ini \
-  --buildtype=debugoptimized -Doptimization=1 -Db_lto=false \
-  -Db_lundef=false -Db_sanitize=thread
-meson test -C build-tsan --timeout-multiplier 4 --print-errorlogs
-```
-
-Write the machine file to a real path. A process substitution is not read
-correctly here.
-
-The routine suite runs `write-fuzz-test` with 1,000 seeds.
-Each seed keeps the same parser and screen checks.
+The regular suite runs `write-fuzz-test` with 1,000 seeds.
 Set `-Dwrite_fuzz_seeds=50000` for the full workload.
-The standalone binary defaults to 50,000 seeds.
-`make test-fuzz` builds the test and runs 50,000 seeds without a timeout.
-It does not change the seed count for the routine suite.
-Long fuzz runs can need the timeout multiplier under a sanitizer.
+`make test-fuzz` runs 50,000 seeds without a timeout.

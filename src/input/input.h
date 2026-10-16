@@ -123,15 +123,10 @@ struct input_key_event {
     enum input_action action;
     unsigned mods;
 
-    /* Layout character without Shift. */
     uint32_t codepoint;
-    /* Layout character with Shift. */
     uint32_t shifted;
-    /* Character at this position on a US keyboard. */
     uint32_t base;
-    /* Character after the native modifiers were applied. */
     uint32_t text;
-    /* Native text follows in INPUT_TEXT events. */
     bool text_deferred;
 };
 
@@ -145,8 +140,6 @@ struct input_mouse_event {
     enum pointer_kind kind;
     enum pointer_device device;
     struct pointer_pen pen;
-    /* 0 for the main surface, n for the menu popup at depth n. pos is in
-     * that surface's pixels. */
     int popup;
 };
 
@@ -182,11 +175,8 @@ enum input_shortcut {
 };
 
 enum input_text_source : uint8_t {
-    /* An independent IME commit or injected text. */
     INPUT_TEXT_COMMIT = 0,
-    /* Text from the preceding key press or repeat. */
     INPUT_TEXT_KEY,
-    /* Text from a key that the shortcut router consumed. */
     INPUT_TEXT_SHORTCUT,
 };
 
@@ -201,7 +191,6 @@ enum input_kind {
     INPUT_SHORTCUT,
 };
 
-/* Owned bytes in a paste or file drop. No NUL terminator is required. */
 struct input_data {
     char *data;
     size_t len;
@@ -219,9 +208,7 @@ struct input_event {
             enum input_text_source source;
         } text;
 
-        /* Paste data contains len bytes. Do not assume a NUL terminator. */
         struct input_data paste;
-        /* File drops contain a text/uri-list. The receiver chooses its use. */
         struct input_data drop;
         struct { enum input_shortcut action; } shortcut;
     };
@@ -245,12 +232,9 @@ enum input_push_result {
     INPUT_PUSH_EVICTED_MOTION,
 };
 
-/* Success transfers owned paste or drop data to the queue.
- * Failure leaves that data with the caller. Other events are copied. */
 enum input_push_result input_queue_add(struct input_queue *q,
                                         const struct input_event *ev);
 
-/* Copies all bytes or returns zero. The queue owns the copy. */
 size_t input_queue_push_drop_files(struct input_queue *q, const char *uris,
                                   size_t len);
 size_t input_queue_push_paste(struct input_queue *q, const char *data,
@@ -265,26 +249,20 @@ static inline int input_scroll_clamp(int lines)
     return lines;
 }
 
-/* Copy text in UTF-8 chunks. Return the number of accepted bytes.
- * Stop at the first rejected chunk. Every chunk keeps source. */
 size_t input_queue_push_text(struct input_queue *q, const char *text,
                            size_t len, enum input_text_source source);
 
-/* Success transfers the event to out. Release it after dispatch. */
 bool input_queue_take(struct input_queue *q, struct input_event *out);
 
 void input_queue_reset(struct input_queue *q);
 
-/* Free owned event data. Other event kinds need no cleanup. */
 void input_event_release(struct input_event *ev);
 
-/* Tracks held logical keys. All zero means no keys are held. */
 struct input_keyboard_state {
     uint64_t down[(INPUT_KEY_COUNT + 63) / 64];
 };
 
 void input_keyboard_reset(struct input_keyboard_state *s);
-/* Apply a press, repeat, or release. Unknown keys have no effect. */
 void input_keyboard_update(struct input_keyboard_state *s,
                            const struct input_key_event *ev);
 
@@ -307,8 +285,6 @@ extern const struct input_shortcut_policy input_platform_shortcuts;
 #define INPUT_SHORTCUT_KEY_COUNT 768
 
 struct input_shortcut_state {
-    /* Two key routes per byte. Zero passes the key through.
-     * Clear all routes when focus changes. */
     uint8_t routes[(INPUT_SHORTCUT_KEY_COUNT + 1) / 2];
 };
 
@@ -319,10 +295,6 @@ enum input_key_route {
     INPUT_KEY_DROPPED,
 };
 
-/* Match shortcuts and queue INPUT_SHORTCUT events.
- * PASSTHROUGH leaves ordinary key queueing to the caller.
- * Consume repeats and releases for a consumed press.
- * A dropped shortcut stays consumed. Do not queue it as a key. */
 enum input_key_route input_shortcut_route_key(const struct input_keymap *km,
         struct input_queue *q,
         struct input_shortcut_state *st,

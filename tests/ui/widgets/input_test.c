@@ -6,7 +6,6 @@
 #include "paint/scene.h"
 #include "ui/ui.h"
 
-/* An input that fills a surface and has the focus. */
 struct fixture {
     struct ui_surface surface;
     struct ui_input in;
@@ -249,7 +248,6 @@ static void placeholder_test(void)
     teardown(&f);
 }
 
-/* The caret blinks while the field has focus, and only then. */
 static void blink_test(void)
 {
     struct fixture f;
@@ -322,8 +320,6 @@ static bool scene_has_text_color(const struct ui_scene *s, const char *t,
     return false;
 }
 
-/* The text, placeholder, selection, and caret colors come from the part
- * rules, and a new sheet changes them. */
 static void part_colors_test(void)
 {
     struct css_sheet sheet_a = {0};
@@ -374,12 +370,9 @@ static void pointer_test(void)
     int s, e;
     assert(ui_input_selection(&f.in, &s, &e) && s == 0 && e == 2);
     assert(pointer(&f, UI_POINTER_RELEASE, inset - 5, 0));
-    /* After the release, motion does not move the caret. */
     int caret = ui_input_caret(&f.in);
     assert(!pointer(&f, UI_POINTER_MOTION, inset + 30, 0));
     assert(ui_input_caret(&f.in) == caret);
-    /* A secondary press keeps the caret. It asks for the edit menu
-     * at the press point. */
     pointer(&f, UI_POINTER_PRESS, inset + 10, 2);
     assert(ui_input_caret(&f.in) == caret);
     assert(f.menus == 1 && f.menu_at.x == inset + 10);
@@ -399,7 +392,6 @@ static void keys_for_the_parent_pass_through_test(void)
     teardown(&f);
 }
 
-/* An input in a box keeps its layout from frame to frame. */
 static void attached_layout_is_stable_test(void)
 {
     struct ui_box box;
@@ -428,7 +420,6 @@ static void attached_layout_is_stable_test(void)
                   rect2i_contains(widget->bounds, scene.ops[i].rect.pos);
     assert(inside);
 
-    /* Pointer positions are in surface space. */
     int x = 40 + ui_input_text_inset(&in) + 30;
     struct ui_event press = ui_event_pointer((struct ui_pointer_event){
         .kind = UI_POINTER_PRESS, .pos = { .x = x, .y = 40 } }, 1);
@@ -442,7 +433,6 @@ static void attached_layout_is_stable_test(void)
     ui_scene_destroy(&scene);
 }
 
-/* Text that fits must start at the content edge after layout. */
 static void assert_text_at_start(struct fixture *f)
 {
     assert(ui_surface_build_scene(&f->surface, &f->scene));
@@ -529,7 +519,6 @@ static void mac_editing_test(void)
     teardown(&f);
 }
 
-/* The host keeps the last copied text, as a clipboard does. */
 static void keep_copied(void *userdata, const char *text)
 {
     char **copied = userdata;
@@ -537,7 +526,6 @@ static void keep_copied(void *userdata, const char *text)
     *copied = strdup(text);
 }
 
-/* A Copy shortcut copies the focused input's selection and keeps the text. */
 static void copy_shortcut_test(void)
 {
     char *copied = NULL;
@@ -570,8 +558,6 @@ static void copy_shortcut_test(void)
     free(copied);
 }
 
-/* Typing, moving the caret, and select all change what the input shows.
- * The input asks for the frame. The key itself asks for none. */
 static void edit_requests_frame_test(void)
 {
     struct fixture f;

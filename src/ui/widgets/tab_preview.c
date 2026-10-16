@@ -11,7 +11,6 @@
 
 #define SHOW_DELAY_MS 500
 #define REFRESH_MS    500
-/* The gap between the hovered tab and the card, before scaling. */
 #define BELOW_GAP_PX  6
 
 struct ui_tab_preview_skin {
@@ -27,8 +26,6 @@ struct ui_tab_preview_skin {
     int width;
 };
 
-/* Part handles, interned once for the process. Index 1 is the dragged
- * card. */
 static struct {
     ui_part_id card[2];
     ui_part_id title;
@@ -108,7 +105,6 @@ static struct card card_layout(const struct ui_tab_preview *p,
     return l;
 }
 
-/* Takes title and picture of tab index from the source. */
 static bool capture(struct ui_tab_preview *p, int index)
 {
     const struct ui_tab_preview_source *src = &p->impl.source;
@@ -154,7 +150,6 @@ void ui_tab_preview_hide(struct ui_tab_preview *p)
         ui_widget_invalidate(&p->widget, UI_WIDGET_INVALIDATE_MEASURE);
 }
 
-/* Shows the pending tab after the delay, then keeps its picture fresh. */
 static uint64_t preview_tick(struct ui_widget *widget, uint64_t now_ms)
 {
     struct ui_tab_preview *p = preview_of(widget);
@@ -268,8 +263,6 @@ void ui_tab_preview_init(struct ui_tab_preview *p)
     tab_preview_parts_init();
     *p = (struct ui_tab_preview){ .impl.index = -1, .impl.pending = -1 };
     ui_widget_init(&p->widget, &TAB_PREVIEW_OPS, NULL);
-    /* A tag, not the class: ".tab-preview" sizes the card part, which
-     * is narrower while dragging. */
     ui_widget_set_style_identity(&p->widget, NULL, NULL, "tab-preview");
     ui_widget_set_pointer_transparent(&p->widget, true);
     ui_widget_set_placement(&p->widget, (struct ui_placement){
@@ -312,7 +305,6 @@ void ui_tab_preview_hover(struct ui_tab_preview *p, int index,
     if (p->impl.pending != index) {
         p->impl.pending = index;
         p->impl.show_at = 0;
-        /* The next tick starts the delay. */
         ui_widget_invalidate(&p->widget, UI_WIDGET_INVALIDATE_PAINT);
     }
 }

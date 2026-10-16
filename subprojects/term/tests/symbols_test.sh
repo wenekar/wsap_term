@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# Every global symbol of the library starts with wsap_vtcore_. A host links
-# the library next to its own code, so a bare name such as palette_init can
-# collide with a host symbol. Every function that wsap_vtcore.h declares is also
-# defined, so the library cannot leave one out. A shared build exports
-# exactly the functions of wsap_vtcore.h.
 set -euo pipefail
 lib=$1
 src=${2:-$(dirname "$0")/../include/wsap_vtcore}
@@ -16,7 +11,6 @@ if [[ $(uname -s) == Darwin ]]; then
     exported_args=(-g -U -P)
 fi
 syms=$("$nm" "${defined_args[@]}" "$lib")
-# ASan adds an __odr_asan.<name> symbol for each global variable.
 defined=$(awk 'NF >= 2 && $2 ~ /^[A-Z]$/ && $2 != "U" { print $1 }' <<<"$syms" |
           grep -v '^_*odr_asan\.' | sed 's/^_//' | sort -u)
 
@@ -53,7 +47,6 @@ if [[ -n $missing ]]; then
     status=1
 fi
 
-# The shared library exports wsap_vtcore.h and nothing else.
 shared=${3:-}
 if [[ -n $shared ]]; then
     exported=$("$nm" "${exported_args[@]}" "$shared" | awk '$2 ~ /^[TDBRVW]$/ { print $1 }' |

@@ -56,7 +56,6 @@ static bool has_suffix(const char *s, size_t len, const char *suffix, size_t sle
     return len > slen && !memcmp(s + len - slen, suffix, slen);
 }
 
-/* Directories scan in precedence order, so the first path found wins. */
 static void scan_dir(struct theme_catalog *c, const char *dir)
 {
     DIR *d = opendir(dir);
@@ -147,8 +146,6 @@ void theme_catalog_scan(struct theme_catalog *c)
     char user_dir[PATH_MAX];
     if (xdg_config_path(user_dir, sizeof(user_dir), "wsap_term/themes"))
         scan_dir(c, user_dir);
-    /* The source tree's themes match this binary better than an older
-     * installed copy. */
 #ifdef WSAP_DEV_THEMES_DIR
     scan_dir(c, WSAP_DEV_THEMES_DIR);
 #endif

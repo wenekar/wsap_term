@@ -10,7 +10,6 @@ struct ui_scroll_metrics terminal_scroll_metrics(const struct wsap_vtcore *term)
     };
 }
 
-/* The blink phase counts from the last keystroke in the tab. */
 static bool cursor_visible(const struct window *w, const struct tab *tab, uint64_t now_ms)
 {
     struct wsap_vtcore_cursor cursor = wsap_vtcore_cursor(tab->session.term);
@@ -24,14 +23,11 @@ static bool cursor_visible(const struct window *w, const struct tab *tab, uint64
     return (elapsed / 500) % 2 == 0;
 }
 
-/* The view scrolled: show where it is for a moment. */
 void terminal_show_scrollbar(struct window *w)
 {
     ui_scrollview_flash(&terminal_of(w)->scrollview);
 }
 
-/* Puts the input method at the terminal cursor: its candidate window
- * opens there, and the text it composes is drawn there. */
 static void update_ime(struct window *w, const struct wsap_vtcore *t)
 {
     const struct font_metrics *m = terminal_metrics(w);

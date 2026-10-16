@@ -14,7 +14,6 @@ struct look {
     struct appearance *preview;
     void (*changed)(void *ud);
     void *ud;
-    /* The preview's catalog index plus one. */
     int previewed;
 };
 
@@ -187,7 +186,6 @@ bool look_apply(struct look *look, const struct wsap_vtcore_theme *base, const c
     look->previewed = 0;
     look->base = *base;
     look->committed = next;
-    /* Cached themes used the prior base palette. */
     for (int i = 0; i < look->catalog.count; i++) {
         appearance_unref(look->catalog.items[i].built);
         look->catalog.items[i].built = NULL;

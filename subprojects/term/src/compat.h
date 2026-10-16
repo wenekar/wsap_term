@@ -1,13 +1,6 @@
 #ifndef WSAP_VTCORE_COMPAT_H
 #define WSAP_VTCORE_COMPAT_H
 
-/*
- * Compiler and libc differences, kept in one place. GCC and Clang use their
- * builtins. MSVC uses its intrinsics. Any other compiler, and any build with
- * WSAP_VTCORE_NO_COMPILER_BUILTINS, uses plain C. Plain C gives the same results,
- * only slower.
- */
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -63,8 +56,6 @@
 #define WSAP_VTCORE_EXPECT(x, v) (x)
 #endif
 
-/* wsap_vtcore_ctz32(0) is 32, wsap_vtcore_clz32(0) is 32, wsap_vtcore_ctz64(0) is 64, and
- * wsap_vtcore_clz64(0) is 64 on every path. */
 #if defined(WSAP_VTCORE_HAVE_BUILTINS)
 
 static inline int wsap_vtcore_ctz32(uint32_t x) { return x ? __builtin_ctz(x) : 32; }
@@ -119,7 +110,6 @@ static inline int wsap_vtcore_popcount32(uint32_t x)
 }
 #endif
 
-/* Without builtins, the 64-bit forms are built from the 32-bit ones. */
 static inline int wsap_vtcore_ctz64(uint64_t x)
 {
     uint32_t lo = (uint32_t)x;
@@ -139,7 +129,6 @@ static inline int wsap_vtcore_popcount64(uint64_t x)
 
 #endif
 
-/* Smallest power of two >= x, branchlessly via CLZ. Returns UINT32_MAX on overflow. */
 static inline uint32_t wsap_vtcore_next_pow2_32(uint32_t x)
 {
     uint32_t v = x <= 1 ? 1 : x - 1;
@@ -148,7 +137,6 @@ static inline uint32_t wsap_vtcore_next_pow2_32(uint32_t x)
     return (x <= 1) ? 1 : (lz == 0 ? UINT32_MAX : res);
 }
 
-/* Smallest power of two >= x, branchlessly via CLZ. Returns UINT64_MAX on overflow. */
 static inline uint64_t wsap_vtcore_next_pow2_64(uint64_t x)
 {
     uint64_t v = x <= 1 ? 1 : x - 1;
@@ -157,8 +145,6 @@ static inline uint64_t wsap_vtcore_next_pow2_64(uint64_t x)
     return (x <= 1) ? 1 : (lz == 0 ? UINT64_MAX : res);
 }
 
-/* Grows cap by doubling until >= need, branchlessly.
- * If cap >= need, returns cap. Otherwise returns next power of two >= need. */
 static inline uint32_t wsap_vtcore_grow_cap32(uint32_t cap, uint32_t need)
 {
     return cap >= need ? cap : wsap_vtcore_next_pow2_32(need);
@@ -178,8 +164,6 @@ static inline size_t wsap_vtcore_grow_cap(size_t cap, size_t need)
 #endif
 }
 
-
-/* A spin-wait hint. Compilers without one get a no-op. */
 static inline void wsap_vtcore_cpu_relax(void)
 {
 #if defined(WSAP_VTCORE_COMPILER_GNU)
@@ -197,21 +181,15 @@ static inline void wsap_vtcore_cpu_relax(void)
 #endif
 }
 
-/* The writer lock. POSIX uses a mutex with priority inheritance where the
- * platform has it, so a waiter lifts the thread that holds the lock. Windows
- * uses an SRWLOCK. Neither nests, so wsap_vtcore_write_begin() counts re-entry. */
 #if defined(_WIN32)
 typedef SRWLOCK wsap_vtcore_mutex;
 #else
 typedef pthread_mutex_t wsap_vtcore_mutex;
-/* Strict C11 can hide PTHREAD_PRIO_INHERIT in pthread.h, as zig's aarch64
- * glibc headers do. Every POSIX system that has the option uses 1 for it. */
 #if !defined(PTHREAD_PRIO_INHERIT)
 #define PTHREAD_PRIO_INHERIT 1
 #endif
 #endif
 
-/* Returns false when the lock cannot be made. */
 static inline bool wsap_vtcore_mutex_init(wsap_vtcore_mutex *m)
 {
 #if defined(_WIN32)
@@ -230,7 +208,6 @@ static inline bool wsap_vtcore_mutex_init(wsap_vtcore_mutex *m)
 #endif
 }
 
-/* A normal mutex fails only when it is broken, so the result is ignored. */
 static inline void wsap_vtcore_mutex_lock(wsap_vtcore_mutex *m)
 {
 #if defined(_WIN32)
@@ -249,7 +226,6 @@ static inline void wsap_vtcore_mutex_unlock(wsap_vtcore_mutex *m)
 #endif
 }
 
-/* An SRWLOCK has no destroy. */
 static inline void wsap_vtcore_mutex_destroy(wsap_vtcore_mutex *m)
 {
 #if defined(_WIN32)
@@ -259,7 +235,6 @@ static inline void wsap_vtcore_mutex_destroy(wsap_vtcore_mutex *m)
 #endif
 }
 
-/* strdup is POSIX, so the core copies strings itself. */
 static inline char *wsap_vtcore_strdup(const char *s)
 {
     size_t n = strlen(s) + 1;
@@ -269,7 +244,6 @@ static inline char *wsap_vtcore_strdup(const char *s)
     return copy;
 }
 
-/* ASCII-only prefix test, as strncasecmp() does in the C locale. */
 static inline bool wsap_vtcore_has_prefix_ci(const char *s, const char *prefix)
 {
     for (; *prefix; prefix++, s++) {
@@ -283,10 +257,6 @@ static inline bool wsap_vtcore_has_prefix_ci(const char *s, const char *prefix)
     return true;
 }
 
-/* Allocates size bytes that start on an align-byte boundary. align must be a
- * power of two. The raw pointer is stored just before the block, so
- * wsap_vtcore_aligned_free() can release it. C11 aligned_alloc() and POSIX
- * posix_memalign() are not on every toolchain. */
 static inline void *wsap_vtcore_aligned_alloc(size_t align, size_t size)
 {
     if (size > SIZE_MAX - align - sizeof(void *))

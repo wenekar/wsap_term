@@ -124,10 +124,6 @@ static void *reap_after_grace(void *arg)
     return NULL;
 }
 
-/* Hang up the child and return at once. A shell may need time to save
- * history on SIGHUP, so a background thread reaps it and only sends
- * SIGKILL once the grace period ends. SIGCONT wakes a stopped child so
- * it can see the hangup. */
 void pty_destroy(struct pty *p)
 {
     if (!p)

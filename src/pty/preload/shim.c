@@ -13,9 +13,6 @@
 
 #include "pty/preload/shim.h"
 
-/* fp_real_* resolves to the libc implementation: dlsym(RTLD_NEXT) on
- * Linux, a direct call on Darwin (the interpose entry already points at
- * the original). */
 #ifdef __APPLE__
 #define FP_REAL(ret, name, params, args, fail) \
     static ret fp_real_##name params { return name args; }
@@ -51,8 +48,6 @@ FP_REAL(int, ttyname_r, (int fd, char *buf, size_t n), (fd, buf, n), ENOTTY)
         return fp_real_##name args; \
     }
 
-/* WSAP_PIPE_ID is "dev:ino". Inode numbers alone repeat across file
- * systems, so a FIFO elsewhere could pass for the fast pipe. */
 static unsigned long long fast_pipe_dev, fast_pipe_ino;
 static int fast_pipe_init = 0;
 
@@ -75,9 +70,6 @@ int fp_is_fast_pipe(int fd)
            (unsigned long long)st.st_dev == fast_pipe_dev;
 }
 
-/* The terminal fd the shim opened, and the file it refers to. The app
- * may close that fd number and reuse it. The identity check detects
- * this, and the shim then forgets the number instead of closing it. */
 static int cached_fd = -1;
 static dev_t cached_dev;
 static ino_t cached_ino;
@@ -98,8 +90,6 @@ static int open_tty(const char *path)
     return fd;
 }
 
-/* WSAP_PTY_PATH names the terminal's slave, so the shim finds it even in
- * a process that has no controlling terminal or that redirected stdin. */
 int fp_tty_fd(void)
 {
     if (cached_fd >= 0) {

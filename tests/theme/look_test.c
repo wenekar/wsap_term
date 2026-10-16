@@ -31,7 +31,6 @@ static struct look *open_look(const char *theme)
     return look;
 }
 
-/* The colors the look gives to every terminal. */
 static uint32_t look_fg(const struct look *a)
 {
     return look_palette(a)->fg;
@@ -162,7 +161,6 @@ static void test_theme_preview_cancel_and_rescan(void)
     look_destroy(a);
 }
 
-/* A rescan keeps unchanged themes built, and rebuilds edited ones. */
 static void test_theme_rescan_reloads_edited_files(void)
 {
     struct look *a = open_look(NULL);
@@ -180,7 +178,6 @@ static void test_theme_rescan_reloads_edited_files(void)
     assert(look_preview(a, theme_index(a, "my-custom-theme")));
     assert(tab_bar_bg(a) == 0xFF405060u);
 
-    /* A second save in the same second, with the same size. */
     write_file(user_themes, "my-custom-theme.css",
                ".tab-bar { background: #708090; }\n/* longer now */\n");
     look_rescan(a);
@@ -189,8 +186,6 @@ static void test_theme_rescan_reloads_edited_files(void)
     look_destroy(a);
 }
 
-/* A theme without a palette keeps the config palette, whether it is the
- * startup theme or picked from the list later. */
 static void test_theme_keeps_config_palette(void)
 {
     struct wsap_vtcore_theme base;
@@ -212,9 +207,6 @@ static void test_theme_keeps_config_palette(void)
     look_destroy(a);
 }
 
-
-/* The user directory holds one theme of its own and a CSS override for
- * breeze-dark, whose palette still comes from the shipped theme. */
 static void setup_user_themes(char *root, size_t n)
 {
     assert(getcwd(root, n));

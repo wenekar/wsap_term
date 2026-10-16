@@ -100,7 +100,6 @@ static void test_wide_and_wrap(void)
     wsap_vtcore_hist_push_row(&h, row, 4, false, NULL);
 
     assert(wsap_vtcore_hist_line_rows(&h, 0, 4) == 1);
-    /* Width 2: 'A' and a pad, then the wide cell, then 'B'. */
     assert(wsap_vtcore_hist_line_rows(&h, 0, 2) == 3);
 
     struct cell out[4];
@@ -162,7 +161,6 @@ static void test_open_lines_and_pop(void)
     assert(wsap_vtcore_hist_decode_segment(&h, 0, 0, 10, out, NULL) == 3);
     assert(out[0].c == '1' && out[2].c == '3');
 
-    /* Pop from an open line with a pen. */
     wsap_vtcore_hist_close_open_line(&h);
     struct cell color[2] = {
         { .c = 'A', .fg = 0xff0000, .bg = 0x00ff00, .flags = CELL_BOLD },
@@ -177,7 +175,6 @@ static void test_open_lines_and_pop(void)
     assert(wsap_vtcore_hist_decode_segment(&h, 1, 0, 10, out, NULL) == 1);
     assert(out[0].c == 'A' && out[0].fg == 0xff0000 && (out[0].flags & CELL_BOLD));
 
-    /* Popping a whole line returns its cells and removes it. */
     struct cell all[4];
     assert(wsap_vtcore_hist_pop_line(&h, all, 4, NULL) == 1);
     assert(all[0].c == 'A');
@@ -203,7 +200,6 @@ static void test_open_line_joins(void)
     assert(wsap_vtcore_hist_decode_segment(&h, 1, 0, 10, out, NULL) == 2);
     assert(out[0].c == 'Z' && out[1].c == 'W');
 
-    /* ASCII joins a wide open line. */
     struct cell wide[2] = { { .c = 0x4e2d, .fg = 0x123456, .bg = WSAP_VTCORE_COLOR_BG, .flags = CELL_WIDE },
                             { .c = 0, .fg = 0x123456, .bg = WSAP_VTCORE_COLOR_BG, .flags = CELL_TRAIL } };
     wsap_vtcore_hist_push_row(&h, wide, 2, true, NULL);
@@ -295,13 +291,11 @@ static void test_blank_lines(void)
     assert(wsap_vtcore_hist_decode_segment(&h, hist_end_id(&h) - 1, 0, 32, out, NULL) == 7);
     assert(out[5].c == '1' && out[6].c == '9');
 
-    /* A blank row closes an open line and adds no line. */
     wsap_vtcore_hist_push_ascii(&h, "open", 4, NULL, true);
     uint64_t before = hist_end_id(&h);
     wsap_vtcore_hist_push_blank(&h, 1);
     assert(!hist_is_open(&h) && hist_end_id(&h) == before);
 
-    /* More blank rows than the limit keep the id count going. */
     wsap_vtcore_hist_push_blank(&h, 1000);
     assert(lines(&h) == 10 && hist_end_id(&h) == before + 1000);
     wsap_vtcore_hist_push_blank(&h, 5);
@@ -367,7 +361,6 @@ static void test_long_lines(void)
     struct hist h;
     assert(wsap_vtcore_hist_init(&h, 100, 64 * 1024 * 4));
 
-    /* A line past the part limit keeps one id. */
     char chunk[1024];
     memset(chunk, 'X', sizeof(chunk));
     for (int i = 0; i < 64; i++)
@@ -394,7 +387,6 @@ static void test_long_lines(void)
     assert(wsap_vtcore_hist_decode_segment(&h, 2, 0, 1000, out, NULL) == 4 && out[0].c == 't');
     assert(wsap_vtcore_hist_rows(&h, 1000) == 133);
 
-    /* One long ASCII push splits into parts but reads back whole. */
     wsap_vtcore_hist_free(&h);
     assert(wsap_vtcore_hist_init(&h, 100, 64 * 1024 * 8));
     int big_len = 150000;
@@ -419,7 +411,6 @@ static void test_page_limits(void)
     struct hist h;
     struct cell out[1000];
 
-    /* One page: old lines leave to make room. */
     assert(wsap_vtcore_hist_init(&h, 10000, HIST_PAGE_SIZE));
     char line64[64];
     memset(line64, 'M', sizeof(line64));
@@ -430,7 +421,6 @@ static void test_page_limits(void)
     assert(out[0].c == 'M');
     wsap_vtcore_hist_free(&h);
 
-    /* A line limit of one keeps the long line as one line. */
     assert(wsap_vtcore_hist_init(&h, 1, 64 * 1024 * 4));
     char chunk[1024];
     memset(chunk, 'Z', sizeof(chunk));
@@ -443,7 +433,6 @@ static void test_page_limits(void)
     assert(wsap_vtcore_hist_decode_segment(&h, hist_first_id(&h), 0, 10, out, NULL) == 4);
     wsap_vtcore_hist_free(&h);
 
-    /* A line longer than the arena drops its head but keeps its id. */
     assert(wsap_vtcore_hist_init(&h, 10, HIST_PAGE_SIZE));
     wsap_vtcore_hist_push_ascii(&h, "PREFIX", 6, NULL, true);
     for (int i = 0; i < 100; i++)
@@ -454,7 +443,6 @@ static void test_page_limits(void)
     assert(wsap_vtcore_hist_decode_segment(&h, 0, 0, 6, out, NULL) == 6 && out[0].c == 'Z');
     wsap_vtcore_hist_free(&h);
 
-    /* A small open line moves to a new page instead of splitting. */
     assert(wsap_vtcore_hist_init(&h, 10, HIST_PAGE_SIZE));
     for (int i = 0; i < 60; i++)
         wsap_vtcore_hist_push_ascii(&h, chunk, sizeof(chunk), NULL, false);
@@ -480,7 +468,6 @@ static void test_nul_and_wide_pop(void)
     assert(out[0].c == 'A' && out[1].c == ' ' && out[2].c == 'B' && out[3].c == 'C');
     wsap_vtcore_hist_free(&h);
 
-    /* A pop does not split a wide cell. */
     assert(wsap_vtcore_hist_init(&h, 10, 64 * 1024 * 4));
     struct cell wide[4] = { dc('A'), dc(0x4E2D), dc(0), dc('B') };
     wide[1].flags = CELL_WIDE;
@@ -548,7 +535,6 @@ static void test_utf8_and_disabled(void)
     wsap_vtcore_hist_free(&h);
 }
 
-/* Random rows of every kind, pushed and compared with a plain copy. */
 static void test_fuzz_rows(void)
 {
     enum { LIMIT = 40, COLS = 24, ITER = 4000 };
@@ -598,7 +584,6 @@ static void test_fuzz_rows(void)
         }
         int slot = (int)((ref_end - 1) % (LIMIT + 1));
         if (!open && len == 0 && !wrapped) {
-            /* A blank line. */
         } else {
             memcpy(&ref[slot][ref_len[slot]], row, (size_t)n * sizeof(row[0]));
             ref_len[slot] += n;

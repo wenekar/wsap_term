@@ -1,9 +1,5 @@
 #!/bin/bash
 
-# Usage: run-termbench.sh [size] [test]
-# Env: RUNS (default 5) timed runs, WARMUP (default 1) discarded runs.
-# The script does not build wsap_term. Build it first.
-
 set -euo pipefail
 
 SIZE="${1:-normal}"

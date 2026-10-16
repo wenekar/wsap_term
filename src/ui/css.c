@@ -95,7 +95,6 @@ static struct css_value parse_value(const char *s)
     if (!end || end == s || !isfinite(val))
         return (struct css_value){ .unit = CSS_UNIT_NONE };
 
-    /* A space right after the number ends the token — unitless means px. */
     if (isspace((unsigned char)*end))
         return (struct css_value){ .val = val, .unit = CSS_UNIT_PX };
 
@@ -149,9 +148,6 @@ float css_value_resolve(struct css_value v, float parent_dim, float auto_val,
     switch (v.unit) {
     case CSS_UNIT_PX:      result = v.val * dpi; break;
     case CSS_UNIT_PERCENT:
-        /* Percentages only resolve against a definite basis; an
-         * INT_MAX-ish offer (unbounded measure, scroll content height)
-         * falls back to the auto value. */
         if (parent_dim >= 1e9f)
             return auto_val;
         result = (v.val / 100.0f) * parent_dim;
@@ -294,7 +290,6 @@ static const struct prop_info props[] = {
     PROP_COLOR("ripple",       ripple_color, has_ripple_color, 21),
 };
 
-/* Map flag index to property info. */
 static const struct prop_info *const prop_by_flag[32] = {
     [1]  = &props[0],
     [2]  = &props[1],
@@ -540,11 +535,6 @@ static bool sheet_push(struct css_sheet *sheet, const struct css_rule *proto,
     return true;
 }
 
-/* Index over the rules. Each rule has a position in apply order: tier
- * (tag, class, id), then class rank, then source order. A rule with a
- * usable key sits in the group of that key. A lookup visits only the
- * groups its own tag, id, and class tokens name, plus the keyless group. */
-
 enum key_kind {
     KEY_ANY = 0,
     KEY_TAG,
@@ -622,8 +612,6 @@ static uint32_t rule_rank(const struct css_rule *r)
     return r->is_class ? (uint32_t)r->class_rank : 1;
 }
 
-/* The key comes from the last compound, cut at its pseudo-class. An empty
- * key stays KEY_ANY, so such a rule is checked on every lookup. */
 static struct key_slot rule_key(const struct css_rule *r, uint32_t pos)
 {
     struct key_slot k = { .text = NULL, .len = 0, .pos = pos, .kind = KEY_ANY };
@@ -665,9 +653,6 @@ static void css_index_free(struct css_index *ix)
     free(ix);
 }
 
-/* Rebuilds the index of a sheet. An empty sheet has no index. A failed
- * build leaves the sheet without an index, and it resolves to empty
- * styles. */
 static bool css_index_build(struct css_sheet *sheet)
 {
     css_index_free(sheet->index);
@@ -820,8 +805,6 @@ static bool append_rules(struct css_sheet *dst, const struct css_sheet *src)
 
 bool css_sheet_append(struct css_sheet *dst, const struct css_sheet *src)
 {
-    /* Appending a sheet to itself cannot work: the loop bound and the write
-     * index are the same field, so it grows without bound. */
     if (!dst || !src || dst == src)
         return false;
     bool ok = append_rules(dst, src);
@@ -1019,8 +1002,6 @@ static void apply_rule_props(const struct css_rule *r, struct css_style *out)
         char *dst = (char *)out + p->offset;
         const char *src = (const char *)&r->style + p->offset;
         if (p->kind == P_INSETS) {
-            /* Merge per edge: edges that failed to parse (CSS_UNIT_NONE)
-             * must not erase a lower-precedence rule's value. */
             const struct css_value *srcv = (const struct css_value *)src;
             struct css_value *dstv = (struct css_value *)dst;
             for (int e = 0; e < 4; e++)
@@ -1059,8 +1040,6 @@ static void apply_rule_props(const struct css_rule *r, struct css_style *out)
     }
 }
 
-/* Size of the candidate buffer. A lookup with more candidates finds each
- * next rule by a search instead. */
 #define CSS_CANDIDATE_CAP 64
 
 struct lookup {
@@ -1119,8 +1098,6 @@ static bool take_group(const struct css_index *ix, const struct css_key *k,
     return true;
 }
 
-/* Collects the positions of every group the lookup names. False when
- * they do not fit in buf. */
 static bool gather_candidates(const struct css_index *ix, const struct lookup *q,
                               uint32_t *buf, uint32_t *n)
 {
@@ -1163,7 +1140,6 @@ static int64_t min_after(const struct css_index *ix, const struct css_key *k,
     return (best < 0 || v < best) ? v : best;
 }
 
-/* Smallest apply position above last, over the groups the lookup names. */
 static int64_t next_candidate(const struct css_index *ix, const struct lookup *q, int64_t last)
 {
     int64_t best = min_after(ix, &ix->keys[0], last, -1);

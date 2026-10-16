@@ -6,10 +6,6 @@
 #include "ui/yasl/window.h"
 #include "yasl/yasl.h"
 
-/* A tab that rings the visual bell and exits closes its window at once.
- * Nothing on the loop may still hold that window once it is freed: run under
- * ASan, a timer that does reads freed memory when it fires. */
-
 static void step_until_closed(struct window_host *host)
 {
     uint64_t deadline = yasl_time_ns() + 5000000000ull;
@@ -23,7 +19,6 @@ int main(void)
     struct test_app app;
     test_app_init(&app, "printf '\\a'", (struct vector2i){ .x = 800, .y = 480 });
     app.app->config.terminal.visual_bell = true;
-    /* A tab closes when its shell is reaped. */
     assert(app_watch_signals(app.app));
     struct window_host *host = &app.app->host;
 
@@ -33,7 +28,6 @@ int main(void)
     step_until_closed(host);
     window_host_reap(host);
 
-    /* Run the loop well past the bell's flash. */
     uint64_t end = yasl_time_ns() + 300000000ull;
     while (yasl_time_ns() < end)
         assert(yasl_loop_step(host->loop, 20) >= 0);

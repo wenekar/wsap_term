@@ -1,11 +1,3 @@
-/*
- * Screen specs: one case per control, escape sequence, and CSI final that
- * the write core handles. Expected results follow xterm. A case that shows
- * a deliberate difference from xterm says so.
- *
- * Rows read as text: '#' is U+FFFD, '?' is any other code point outside
- * ASCII or a cluster, '_' is the right half of a wide glyph.
- */
 #include "wsap_vtcore/wsap_vtcore.h"
 
 #include <stdio.h>
@@ -17,8 +9,6 @@ struct spec {
     int cols, rows;
     const char *line[4];
     int x, y;
-    /* Optional checks. attr_x < 0 skips the cell check; history < 0 skips
-     * the history check; reply NULL skips the reply check. */
     int attr_x, attr_y;
     uint16_t attrs;
     wsap_vtcore_color fg, bg;
@@ -35,7 +25,6 @@ struct spec {
 #define BLUE (WSAP_VTCORE_COLOR_SLOT | 4)
 
 static const struct spec cases[] = {
-    /* Printing and C0 controls. */
     CASE("print", "abc", "abc", "", "", 3, 0),
     CASE("delayed wrap", "abcdefghZ", "abcdefgh", "Z", "", 1, 1),
     CASE("carriage return", "abc\rZ", "Zbc", "", "", 1, 0),
@@ -44,7 +33,6 @@ static const struct spec cases[] = {
     CASE("form feed is a line feed", "ab\x0cZ", "ab", "  Z", "", 3, 1),
     CASE("backspace", "abc\bZ", "abZ", "", "", 3, 0),
     CASE("backspace at column 0", "\bZ", "Z", "", "", 1, 0),
-    /* The cursor sits on the last column; BS moves left from there. */
     CASE("backspace clears pending wrap", "abcdefgh\bZ", "abcdefZh", "", "", 7, 0),
     CASE("tab", "a\tZ", "a      Z", "", "", 7, 0),
     CASE("tab stops at the last column", "\t\tZ", "       Z", "", "", 7, 0),
@@ -63,7 +51,6 @@ static const struct spec cases[] = {
     CASE("shift out to DEC graphics", "\033)0a\x0eq\x0fq", "a?q", "", "", 3, 0),
     CASE("DEC graphics in G0", "\033(0x\033(Bx", "?x", "", "", 2, 0),
 
-    /* UTF-8. Each maximal invalid subpart prints U+FFFD (Unicode 3.9). */
     CASE("UTF-8 truncated before ASCII", "a\xe3\x80z", "a#z", "", "", 3, 0),
     CASE("UTF-8 lone continuation", "a\x80z", "a#z", "", "", 3, 0),
     CASE("UTF-8 surrogate", "\xed\xa0\x80z", "###z", "", "", 4, 0),
@@ -76,7 +63,6 @@ static const struct spec cases[] = {
     CASE("UTF-8 C1 CSI", "\xc2\x9b" "3CZ", "   Z", "", "", 4, 0),
     CASE("wide glyph", "a中b", "a?_b", "", "", 4, 0),
     CASE("wide glyph wraps with a pad", "abcdefg中", "abcdefg", "?_", "", 2, 1),
-    /* A mark joins the glyph left of the cursor, never the row above. */
     CASE("combining mark at column 0 has no base", "abcdefgh\r\n\xcc\x81Z",
          "abcdefgh", "Z", "", 1, 1),
     CASE("combining mark at right margin", "\033[?69h\033[2;4s\033[1;2Habc\xcc\x81Z",
@@ -86,7 +72,6 @@ static const struct spec cases[] = {
     { .name = "wide glyph on one column", .input = "中", .cols = 1, .rows = 1,
       .line = { "?" }, AT(0, 0), .attr_x = -1, .history = 0 },
 
-    /* CSI cursor moves. */
     CASE("CUP", "abc\033[2;3HZ", "abc", "  Z", "", 3, 1),
     CASE("CUP clamps", "\033[9;9HZ", "", "", "       Z", 7, 2),
     CASE("CUU", "\033[3;4H\033[2AZ", "   Z", "", "", 4, 0),
@@ -100,7 +85,6 @@ static const struct spec cases[] = {
     CASE("HPR", "a\033[2aZ", "a  Z", "", "", 4, 0),
     CASE("VPA", "a\033[3dZ", "a", "", " Z", 2, 2),
     CASE("VPR", "a\033[2eZ", "a", "", " Z", 2, 2),
-    /* Vertical moves stop at a margin when they start inside the region. */
     CASE("CUU stops at the top margin", "\033[2;3r\033[3;1H\033[5AZ", "", "Z", "", 1, 1),
     CASE("CUD stops at the bottom margin", "\033[1;2r\033[5BZ", "", "Z", "", 1, 1),
     { .name = "CUU from below the region", .input = "\033[2;3r\033[4;1H\033[9AZ",
@@ -108,7 +92,6 @@ static const struct spec cases[] = {
     { .name = "CUD from above the region", .input = "\033[2;3r\033[1;1H\033[9BZ",
       .cols = 8, .rows = 4, .line = { "", "", "Z", "" }, AT(1, 2), NO_EXTRA },
 
-    /* Erase, insert, delete. */
     CASE("EL 0", "abcdef\033[1;3H\033[K", "ab", "", "", 2, 0),
     CASE("EL 1", "abcdef\033[1;3H\033[1K", "   def", "", "", 2, 0),
     CASE("EL 2", "abcdef\033[2K", "", "", "", 6, 0),
@@ -121,16 +104,12 @@ static const struct spec cases[] = {
     CASE("REP", "a\033[3b", "aaaa", "", "", 4, 0),
     CASE("insert mode", "abcd\r\033[4hZ", "Zabcd", "", "", 1, 0),
     CASE("insert mode at the row end", "abc\033[4hZ", "abcZ", "", "", 4, 0),
-    /* IL and DL also move the cursor to the left margin. */
     CASE("IL", "a\r\nb\r\nc\033[2;3H\033[L", "a", "", "b", 0, 1),
     CASE("DL", "a\r\nb\r\nc\033[2;3H\033[M", "a", "c", "", 0, 1),
     CASE("SU", "a\r\nb\r\nc\033[S", "b", "c", "", 1, 2),
     CASE("SD", "a\r\nb\r\nc\033[T", "", "a", "b", 1, 2),
     CASE("CHT", "\033[1IZ", "       Z", "", "", 7, 0),
     CASE("CBT", "\033[2;3H\033[1ZZ", "", "Z", "", 1, 1),
-    /* ED 2 moves rows up to the last one with a glyph to history. A row
-     * that DCH emptied does not count. This keeps rows in history where
-     * xterm does not. */
     { .name = "ED 2 keeps text in history", .input = "x\r\nabc\r\033[3P\033[2J",
       .cols = 8, .rows = 3, ROWS3("", "", ""), AT(0, 1), .attr_x = -1, .history = 1 },
     { .name = "ED 2 after ECH reads cells", .input = "x\r\nabc\r\033[3X\033[2J",
@@ -138,7 +117,6 @@ static const struct spec cases[] = {
     { .name = "ED 3", .input = "a\r\nb\r\nc\r\nd\033[3J", .cols = 8, .rows = 3,
       ROWS3("b", "c", "d"), AT(1, 2), .attr_x = -1, .history = 0 },
 
-    /* ESC sequences. */
     CASE("IND", "a\033D Z", "a", "  Z", "", 3, 1),
     CASE("NEL", "abc\033EZ", "abc", "Z", "", 1, 1),
     CASE("RI", "\033[2;1HZ\033M", "", "Z", "", 1, 0),
@@ -152,7 +130,6 @@ static const struct spec cases[] = {
     CASE("reset", "abc\033cZ", "Z", "", "", 1, 0),
     CASE("screen alignment", "\033#8", "EEEEEEEE", "EEEEEEEE", "EEEEEEEE", 0, 0),
 
-    /* Modes. */
     CASE("autowrap off", "\033[?7labcdefghi", "abcdefgi", "", "", 7, 0),
     CASE("alternate", "abc\033[?1049hZ", "Z", "", "", 1, 0),
     CASE("alternate restores", "abc\033[?1049hZ\033[?1049lQ", "abcQ", "", "", 4, 0),
@@ -160,7 +137,6 @@ static const struct spec cases[] = {
     CASE("margin", "\033[2;3r\033[3;1Ha\033D", "", "a", "", 1, 2),
     CASE("line feed mode", "ab\033[20h\nZ", "ab", "Z", "", 1, 1),
 
-    /* Parsing. C0 controls run inside a CSI (ECMA-48 5.5, xterm). */
     CASE("C0 inside CSI", "\033[2\n;3HZ", "", "  Z", "", 3, 1),
     CASE("CAN cancels CSI", "\033[31\x18Z", "Z", "", "", 1, 0),
     CASE("high byte cancels CSI", "\033[3\xffZ", "#Z", "", "", 2, 0),
@@ -169,7 +145,6 @@ static const struct spec cases[] = {
     CASE("DCS is swallowed", "a\033Pxyz\033\\b", "ab", "", "", 2, 0),
     CASE("APC is swallowed", "a\033_x\033\\b", "ab", "", "", 2, 0),
 
-    /* Attributes. */
     {
         .name = "SGR", .input = "\033[1;3;4;9;53;38;5;123;48;2;1;2;3mX",
         .cols = 8, .rows = 3, ROWS3("X", "", ""), AT(1, 0),
@@ -184,7 +159,6 @@ static const struct spec cases[] = {
         .attr_x = 0, .attr_y = 0, .fg = 0xff010203u, .bg = WSAP_VTCORE_COLOR_BG, .history = -1,
     },
     {
-        /* 48:2:: takes the next three fields as RGB; the trailing 0 resets. */
         .name = "SGR colon form is not two semicolon colors",
         .input = "\033[48:2::::38;2;;;mX",
         .cols = 8, .rows = 3, ROWS3("X", "", ""), AT(1, 0),
@@ -207,8 +181,6 @@ static const struct spec cases[] = {
         .attr_x = 0, .attr_y = 0, .fg = WSAP_VTCORE_COLOR_FG, .bg = WSAP_VTCORE_COLOR_BG, .history = -1,
     },
     {
-        /* A rectangle edge on the right half of a wide glyph changes both
-         * halves. */
         .name = "DECCARA on half a wide glyph", .input = "a中b\033[1;3;1;3;1$r",
         .cols = 8, .rows = 3, ROWS3("a?_b", "", ""), AT(4, 0),
         .attr_x = 1, .attr_y = 0, .attrs = WSAP_VTCORE_ATTR_BOLD,
@@ -226,12 +198,10 @@ static const struct spec cases[] = {
         .fg = WSAP_VTCORE_COLOR_FG, .bg = BLUE, .history = -1,
     },
 
-    /* Replies. */
     { .name = "DSR 5", .input = "\033[5n", .cols = 8, .rows = 3, ROWS3("", "", ""),
       AT(0, 0), NO_EXTRA, .reply = "\033[0n" },
     { .name = "DSR 6", .input = "ab\033[6n", .cols = 8, .rows = 3, ROWS3("ab", "", ""),
       AT(2, 0), NO_EXTRA, .reply = "\033[1;3R" },
-    /* The cursor stays on the last column while a wrap is pending. */
     { .name = "DSR 6 with a pending wrap", .input = "abcdefgh\033[6n", .cols = 8, .rows = 3,
       ROWS3("abcdefgh", "", ""), AT(7, 0), NO_EXTRA, .reply = "\033[1;8R" },
     { .name = "DSR 6 in origin mode", .input = "\033[2;3r\033[?6h\033[6n", .cols = 8, .rows = 3,
@@ -244,7 +214,6 @@ static const struct spec cases[] = {
       AT(0, 0), NO_EXTRA, .reply = "\033[>0;10;0c" },
     { .name = "DECRQSS SGR", .input = "\033[1;31m\033P$qm\033\\", .cols = 8, .rows = 3,
       ROWS3("", "", ""), AT(0, 0), NO_EXTRA, .reply = "\033P1$r0;1;31m\033\\" },
-    /* SGR 58 has no short form for colors 0 to 15. */
     { .name = "DECRQSS underline color", .input = "\033[58;5;3m\033P$qm\033\\",
       .cols = 8, .rows = 3, ROWS3("", "", ""), AT(0, 0), NO_EXTRA,
       .reply = "\033P1$r0;58:5:3m\033\\" },
@@ -344,7 +313,6 @@ int main(void)
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
         failed += run(&cases[i], s, false) | run(&cases[i], s, true);
 
-    /* ONLCR is a feed option. A plain line feed keeps the column. */
     struct wsap_vtcore_options opt = { .size = { .x = 8, .y = 2 } };
     struct wsap_vtcore *t = wsap_vtcore_new(&opt);
     if (!t) return 1;
@@ -355,7 +323,6 @@ int main(void)
     }
     wsap_vtcore_free(t);
 
-    /* A long stream can skip old rows. A bare CR must keep the last rows. */
     opt.size = (struct wsap_vtcore_vector2i){ .x = 8, .y = 3 };
     opt.scrollback = 5;
     t = wsap_vtcore_new(&opt);

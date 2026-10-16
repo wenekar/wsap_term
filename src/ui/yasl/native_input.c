@@ -10,7 +10,6 @@
 #include "loop/latency_probe.h"
 #include "ui/yasl/internal.h"
 
-/* Convert a physical YASL key to an input key. */
 static enum input_key native_key(enum yasl_key key)
 {
     if (key >= YASL_KEY_F1 && key <= YASL_KEY_F25)
@@ -71,7 +70,6 @@ static bool is_keypad(enum yasl_key key)
     return key >= YASL_KEY_KP_0 && key <= YASL_KEY_KP_CLEAR;
 }
 
-/* Find the unshifted character for the US key at this position. */
 static uint32_t us_base(enum yasl_key key)
 {
     if (key >= YASL_KEY_A && key <= YASL_KEY_Z)
@@ -95,7 +93,6 @@ static uint32_t us_base(enum yasl_key key)
     }
 }
 
-/* Get the typed character after Shift and Caps Lock modifiers. */
 static uint32_t typed_label(const struct yasl_event *in)
 {
     bool letter = in->key.key >= YASL_KEY_A && in->key.key <= YASL_KEY_Z;
@@ -114,7 +111,6 @@ static enum input_action action_of(unsigned action)
     return INPUT_ACTION_NONE;
 }
 
-/* Convert YASL modifier bits to input modifiers. */
 int input_modifiers_from_yasl(uint32_t mods)
 {
     unsigned out = mods & (YASL_MOD_SHIFT | YASL_MOD_ALT | YASL_MOD_CTRL | YASL_MOD_SUPER);
@@ -146,7 +142,6 @@ static enum pointer_button button_of(unsigned button)
     return POINTER_BUTTON_NONE;
 }
 
-/* Track the held pointer button. */
 static enum pointer_button event_button(struct window *w, const struct yasl_event *in)
 {
     if (in->action == YASL_POINTER_DOWN) {
@@ -163,7 +158,6 @@ static enum pointer_button event_button(struct window *w, const struct yasl_even
     return w->button_held ? w->held_button : POINTER_BUTTON_NONE;
 }
 
-/* Route and queue a key event. */
 static void queue_key(struct window *w, const struct yasl_event *in)
 {
     uint32_t label = typed_label(in);
@@ -195,14 +189,12 @@ static void queue_key(struct window *w, const struct yasl_event *in)
     input_queue_add(&w->input, &(struct input_event){ .kind = INPUT_KEY, .key = ev });
 }
 
-/* yasl reports logical units. The UI works in device pixels. */
 static struct vector2i device_pos(const struct window *w, const struct yasl_event *in)
 {
     double scale = window_scale_120(w) / 120.0;
     return (struct vector2i){ .x = (int)lround(in->x * scale), .y = (int)lround(in->y * scale) };
 }
 
-/* Find the surface index in the window. Zero means the main surface. */
 static int popup_of(const struct window *w, const struct yasl_surface *s)
 {
     for (int i = 1; i < w->native_count; i++)
@@ -334,7 +326,6 @@ void window_native_input(struct window *w, const struct yasl_event *in)
                               key_text ? INPUT_TEXT_KEY : INPUT_TEXT_COMMIT);
         break;
     case YASL_EVENT_TEXT_EDIT:
-        /* The terminal's text snapshot is empty, so an edit only inserts. */
         input_queue_push_text(&w->input, in->text, in->length, INPUT_TEXT_COMMIT);
         break;
     case YASL_EVENT_CLIPBOARD:

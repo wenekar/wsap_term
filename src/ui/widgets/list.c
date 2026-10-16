@@ -13,8 +13,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Part handles for the item CSS classes. Item variants index by
- * submenu (bit 0) and disabled (bit 1). */
 static const char *const ITEM_CLASSES[4] = {
     "menu-item",
     "menu-item submenu",
@@ -29,8 +27,6 @@ static struct {
     ui_part_id shortcut;
 } parts;
 
-/* Interns the part names once for the process. Every later call returns
- * at once. */
 static void list_parts_init(void)
 {
     if (parts.item[0])
@@ -68,7 +64,6 @@ static bool has_selectable_item(const struct ui_list *l)
     return false;
 }
 
-/* The shortcut column: a check mark, the key chord, and a submenu arrow. */
 static char *shortcut_text(const struct ui_list_item *it)
 {
     const char *check = (it->flags & UI_LIST_ITEM_CHECKED) ? "\xe2\x9c\x93" : "";
@@ -272,7 +267,6 @@ static void list_paint(const struct ui_widget *widget,
     const struct css_style *style = &widget->style;
     const struct css_scale_context *scale = &widget->style_scale;
     struct rect2i bounds = ui_paint_bounds(paint);
-    /* The rows sit inside the edge pad; a larger corner would cut them. */
     int max_radius = l->impl.metrics.edge_pad;
     if (style->has_shadow && !insets2i_eq(l->impl.metrics.shadow,
                                           (struct insets2i){0})) {
@@ -321,7 +315,6 @@ static void row_paint(const struct ui_widget *widget,
     struct css_style item = ui_widget_part(&l->widget, item_part(it), pseudo);
     paint_box(paint, box, &item, scale, -1);
 
-    /* Text sits on the unstyled geometry, so hover rules cannot move it. */
     struct ui_text_style text = { .advance = m->cell_w, .cell_h = m->cell_h };
     int text_y = box.y + (box.height - m->cell_h) / 2;
     struct css_style label = ui_widget_part(&l->widget, parts.label, pseudo);
@@ -517,7 +510,6 @@ static bool list_event(struct ui_widget *widget, const struct ui_event *event)
     const struct ui_pointer_event *p = &event->data.pointer;
     switch (p->kind) {
     case UI_POINTER_MOTION:
-        /* Ancestors see motion too: a menu tracks where the pointer heads. */
         set_hovered(l, row_at(l, p->pos));
         return false;
     case UI_POINTER_LEAVE:
@@ -544,11 +536,6 @@ static bool list_event(struct ui_widget *widget, const struct ui_event *event)
     }
 }
 
-/* The rows are not hit-test widgets, so the hovered row never reaches
- * ui_surface_cursor on its own. The row's own class decides the shape, so
- * ".menu-item:disabled { cursor: default }" works. A gap between rows has
- * no row, so it falls through to the parent instead of pointing at
- * nothing. */
 static enum ui_cursor list_cursor(const struct ui_widget *widget,
                                   struct vector2i pos)
 {

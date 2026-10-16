@@ -1,11 +1,4 @@
 #!/bin/bash
-# Runs a private wsap_term on headless weston, drives a few scenarios
-# through the inspector socket, and reports the Wayland damage of every
-# commit per scenario. It never touches other wsap_term processes.
-#
-#   scripts/wsap-damage-probe [OUTDIR]
-#
-# OUTDIR keeps wl.log (WAYLAND_DEBUG=client), marks, and shot.png.
 set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 OUT=${1:-$(mktemp -d)}

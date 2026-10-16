@@ -110,7 +110,6 @@ static bool damage_touches(const struct ui_damage *d, struct rect2i r)
     return false;
 }
 
-/* Two nodes, a and b, each drawing one rect in its own frame. */
 static void emit_two(struct ui_scene *s, struct rect2i ra, struct rect2i rb,
                      bool with_b)
 {
@@ -159,7 +158,6 @@ static void scene_damage_test(void)
     assert(d.all);
 }
 
-/* One node with a part per tab; only the tab that changed is damage. */
 static void emit_tabs(struct ui_scene *s, const char *second)
 {
     static int bar;
@@ -194,8 +192,6 @@ static void scene_part_damage_test(void)
     assert(!damage_touches(&d, r_at(400, 0, 200, 30)));
 }
 
-/* A clip that narrows changes what its nested nodes paint, even though
- * their own ops stay the same. */
 static void scene_clip_damage_test(void)
 {
     static int outer, inner;

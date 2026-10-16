@@ -216,7 +216,6 @@ static font_handle_t *ft_face_open(const char *family_list, struct font_size siz
 {
     if (!ft_thread_ready())
         return NULL;
-    /* FreeType rasterizes at the device pixel size directly. */
     int pixel_size = font_size_px(size);
 
     struct font_handle *face = calloc(1, sizeof(*face));
@@ -276,7 +275,6 @@ static bool ft_rasterize_glyph(font_handle_t *face, uint32_t codepoint, uint16_t
     return ft_fit_coverable(&codepoint, 1, style, font_prefers_emoji(codepoint, style), out);
 }
 
-/* True when shaping left every glyph of the core as the cmap gives it. */
 static bool core_unchanged(const struct shaped_run *run, const struct font_window *w)
 {
     FT_Face ft = faces[run->slot].styles[run->variant];
@@ -294,7 +292,6 @@ static bool core_unchanged(const struct shaped_run *run, const struct font_windo
     return seen == w->core_len;
 }
 
-/* Keeps the glyphs of the core, with clusters counted from its start. */
 static void keep_core(struct shaped_run *run, const struct font_window *w)
 {
     int n = 0;

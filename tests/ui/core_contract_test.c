@@ -16,7 +16,6 @@ static void click(struct ui_surface *surface, struct vector2i pos)
     ui_surface_dispatch(surface, &release);
 }
 
-/* Inits surface with root at 8 by 16 cells, sized to size. */
 static void setup_surface(struct ui_surface *surface, struct ui_widget *root,
                           struct vector2i size)
 {

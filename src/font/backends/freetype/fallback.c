@@ -888,8 +888,6 @@ static uint64_t scan_run_coverage(const uint32_t *cps, int len, uint64_t *hash,
     return cfg_and;
 }
 
-/* One pass hashes the run and scans its coverage. Returns the bit mask
- * of configured faces that cover the run. */
 uint64_t ft_scan_run(const uint32_t *cps, int len, uint16_t style,
                      uint64_t *hash, int *dead_at)
 {

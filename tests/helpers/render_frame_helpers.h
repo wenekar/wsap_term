@@ -1,12 +1,6 @@
 #ifndef WSAP_TEST_RENDER_FRAME_HELPERS_H
 #define WSAP_TEST_RENDER_FRAME_HELPERS_H
 
-/*
- * Paint helpers for renderer tests. The renderer reads a snapshot, never a
- * live terminal. Each helper copies the terminal into a new snapshot, as the
- * application does before it paints.
- */
-
 #include <assert.h>
 #include <stdlib.h>
 
@@ -24,7 +18,6 @@ static inline void test_frame_history_cleanup(void)
     framebuffer_history_release(&test_frame_history);
 }
 
-/* The font the helpers paint with; a test may swap it. */
 static struct font_instance *test_font_override;
 
 static inline struct font_instance *test_font(void)
@@ -32,7 +25,6 @@ static inline struct font_instance *test_font(void)
     return test_font_override ? test_font_override : font_instance_default();
 }
 
-/* A copy of term, or NULL for no terminal (an empty frame). */
 static inline struct wsap_vtcore_snapshot *test_snapshot_of(struct wsap_vtcore *term)
 {
     if (!term)
@@ -45,11 +37,6 @@ static inline struct wsap_vtcore_snapshot *test_snapshot_of(struct wsap_vtcore *
     return snap;
 }
 
-/*
- * Fill frame from a copy of term. The copy stays valid until the next call,
- * so a test can paint the same frame more than once. It shows the terminal
- * as it was at this call.
- */
 static inline void test_frame_init(struct terminal_frame *frame, struct wsap_vtcore *term,
                                    bool cursor_visible)
 {

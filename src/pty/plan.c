@@ -112,7 +112,6 @@ static void set_terminal_env(struct pty_env *env)
     pty_env_set(env, "LANG", locale);
 }
 
-/* Put the preload shim ahead of any library the user already preloads. */
 static void set_preload_env(struct pty_env *env)
 {
     char exe_dir[4096] = { 0 };
@@ -161,7 +160,6 @@ static void set_transport_env(struct pty_env *env, int slave_fd, int pipe_wr,
 #endif
     pty_env_set(env, "WSAP_FAST_PIPE", "1");
 
-    /* The shim knows the pipe by device and inode. */
     struct stat pipe_st;
     if (fstat(pipe_wr, &pipe_st) == 0) {
         char id_buf[64];
@@ -173,9 +171,6 @@ static void set_transport_env(struct pty_env *env, int slave_fd, int pipe_wr,
     set_preload_env(env);
 }
 
-/* Split a command line into words. Blanks separate words; single quotes
- * are literal; double quotes allow \" \\ \$ \` escapes; a backslash
- * outside quotes escapes the next character. No expansion happens. */
 static char **split_cmdline(const char *cmd, char **buf_out)
 {
     size_t len = strlen(cmd);
@@ -225,7 +220,6 @@ static char **split_cmdline(const char *cmd, char **buf_out)
     return argv;
 }
 
-/* execvp's PATH search, done ahead of fork() against the child's PATH. */
 static char *resolve_path(const char *file, const char *path_env)
 {
     if (strchr(file, '/'))

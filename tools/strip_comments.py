@@ -167,7 +167,7 @@ def strip_py(src):
     result = re.sub(r"\n{3,}", "\n\n", result)
     return result
 
-C_SUFFIXES = (".c", ".h", ".cpp", ".inc", ".vert", ".frag", ".comp", ".css")
+C_SUFFIXES = (".c", ".h", ".cpp", ".m", ".mm", ".metal", ".inc", ".vert", ".frag", ".comp", ".css")
 HASH_SUFFIXES = (".py", ".build", ".options", ".gitignore")
 HASH_NAMES = ("Makefile",)
 SHELL_SUFFIXES = (".sh", ".bash", ".zsh", ".ksh", ".fish")

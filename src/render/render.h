@@ -13,8 +13,6 @@ struct font_instance;
 struct renderer;
 struct ui_scene;
 
-/* All layer data for one output frame. Pointers are borrowed until
- * render_draw returns. */
 struct render_frame {
     struct font_instance *font;
     struct font_instance *ui_font;
@@ -33,12 +31,8 @@ struct damage_list render_draw(struct renderer *r, struct framebuffer *target,
 
 struct renderer *renderer_create(void);
 void renderer_destroy(struct renderer *r);
-/* The native graphics device borrowed from the backend, or NULL. */
 void *renderer_device(struct renderer *r);
 
-/* Loads the fonts. Returns false when the font system fails to start.
- * The calls are counted: each successful render_init() needs one
- * render_shutdown(), and the last one stops the font system. */
 bool render_init(void);
 void render_shutdown(void);
 void render_warm_caches(void);

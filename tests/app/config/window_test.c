@@ -25,7 +25,6 @@ static struct ui_widget *find(struct window *window, const char *selector)
     return widget;
 }
 
-/* The open settings window, or a new headless one. */
 static bool settings_apply(void *ud, const struct app_config *draft)
 {
     return app_apply_config(ud, draft);
@@ -216,7 +215,6 @@ int main(void)
     click(window, "#settings-save");
     assert(app.app->config.terminal.cursor_style == WSAP_VTCORE_CURSOR_UNDERLINE);
 
-    /* Escape closes an open dropdown, and the window stays open. */
     edit(window, "#settings-search", "cursor shape");
     ui_surface_focus(window_ui_surface(window), find(window, "#cursor-style")->first_child);
     key(window, UI_KEY_ENTER, 0);
@@ -248,8 +246,6 @@ int main(void)
     window_ui_test_route(window, &escape);
     assert(window_closed(window));
 
-    /* An outside config change reaches the open form. The edited field
-     * keeps its edit. The other fields show the new value. */
     window_host_reap(&app.app->host);
     window = open_settings(app.app);
     assert(window);
@@ -277,7 +273,6 @@ int main(void)
     window_host_reap(&app.app->host);
     assert(app.app->host.count == 0);
 
-    /* Close Tab closes the settings window, with nothing focused. */
     window_host_reap(&app.app->host);
     window = open_settings(app.app);
     assert(window);

@@ -16,7 +16,6 @@ extern __thread int ft_applied_px;
 #endif
 #define UNICODE_LIMIT 0x110000u
 
-/* enum font_variant indexes each FONT_VARIANT_COUNT array. */
 struct ft_face_slot {
     FT_Face styles[FONT_VARIANT_COUNT];
     hb_font_t *hb[FONT_VARIANT_COUNT];
@@ -160,7 +159,6 @@ struct shaped_run {
     alignas(16) struct shaped_glyph glyphs[FONT_RUN_MAX];
 };
 
-/* script is an hb_script_t, or 0 to guess it from the text. */
 enum font_shape_result font_shape(int slot, const uint32_t *cps, int len,
                                   uint16_t flags, uint32_t script,
                                   bool require_substitution, struct shaped_run *out);

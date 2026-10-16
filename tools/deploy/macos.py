@@ -90,7 +90,6 @@ def _bundle_frameworks(binary: Path, frameworks_dir: Path) -> None:
     )
 
 def _sign(bundle_dir: Path) -> None:
-    """Ad-hoc sign nested code first, then seal the bundle."""
     codesign = shutil.which("codesign")
     if not codesign:
         return
@@ -142,9 +141,6 @@ def build_package(
     shell = repo_root / "assets" / "shell"
     if shell.is_dir():
         shutil.copytree(shell, resources_dir / "shell", dirs_exist_ok=True)
-        ssh_bin = repo_root / "tools" / "wsap-ssh"
-        if ssh_bin.is_file():
-            shutil.copy2(ssh_bin, resources_dir / "shell" / "wsap-ssh")
 
     compile_terminfo(repo_root, resources_dir / "terminfo")
 

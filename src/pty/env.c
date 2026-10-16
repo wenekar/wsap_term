@@ -22,7 +22,6 @@ static bool env_reserve(struct pty_env *e, size_t n)
     return true;
 }
 
-/* Find an entry by name. Compare the first byte before the full string. */
 static size_t env_find(const struct pty_env *e, const char *name, size_t n)
 {
     if (n > 0) {
@@ -40,7 +39,6 @@ static size_t env_find(const struct pty_env *e, const char *name, size_t n)
     return e->len;
 }
 
-/* Take ownership of `entry`, whose name is its first `n` bytes. */
 static void env_insert(struct pty_env *e, char *entry, size_t n)
 {
     if (!entry || !env_reserve(e, e->len + 2)) {

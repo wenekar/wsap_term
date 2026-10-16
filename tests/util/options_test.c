@@ -90,7 +90,6 @@ static char *read_text(const char *path)
     return buf;
 }
 
-/* Loads with argv given as a NULL-terminated list after the program name. */
 static int load(struct cfg *c, char **args, int n, char **config_path)
 {
     char *argv[32] = { (char *)"wsap_options" };

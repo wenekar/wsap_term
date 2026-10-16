@@ -1,16 +1,9 @@
-/*
- * The CSS index picks the rules that a lookup can match. Each case checks
- * the resolved style against fixed values. A lost rule or a rule applied
- * out of order changes the result.
- */
 #include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
 
 #include "ui/css.h"
 
-/* Far more rules than the lookup buffer of the index holds, so the
- * resolver takes its overflow path. */
 #define WIDE_RULES 300
 _Static_assert(WIDE_RULES % 6 == 0, "the cases below cycle through 2 and 3 rules");
 
@@ -25,7 +18,6 @@ static struct css_style resolve(const struct css_sheet *sheet, const char *cls,
     return st;
 }
 
-/* The text color set by the winning rule, or 0 when no rule sets it. */
 static uint32_t color(const struct css_sheet *sheet, const char *cls,
                       const char *id, const char *tag)
 {
@@ -65,7 +57,6 @@ static void class_rank_and_source_order_test(void)
     assert(color(&s, "b a", NULL, NULL) == 2);
     assert(color(&s, "a", NULL, NULL) == 1);
     assert(color(&s, "a a", NULL, NULL) == 1);
-    /* Source order decides between equal ranks, not the order of the list. */
     assert(color(&s, "a c", NULL, NULL) == 3);
     assert(color(&s, "c a", NULL, NULL) == 3);
     struct css_style st = resolve(&s, "b", NULL, NULL, 0, NULL);
@@ -86,8 +77,6 @@ static void groups_merge_in_apply_order_test(void)
     css_sheet_clear(&s);
 }
 
-/* A selector with an empty last compound has no key. Every lookup checks
- * it, in source order with the keyed rules. */
 static void keyless_rules_test(void)
 {
     struct css_sheet s;
@@ -129,9 +118,6 @@ static void append_rule(size_t *len, const char *fmt, ...)
     *len += (size_t)n;
 }
 
-/* One class names more rules than the lookup buffer holds. The overflow
- * path must still visit the keyless, tag, and id groups, and apply all
- * rules in the same order as the normal path. */
 static void overflow_one_group_test(void)
 {
     size_t len = 0;
@@ -177,8 +163,6 @@ static void overflow_one_group_test(void)
     css_sheet_clear(&s);
 }
 
-/* Two classes overflow the lookup buffer together. Their rules still
- * apply in source order. */
 static void overflow_two_groups_test(void)
 {
     size_t len = 0;

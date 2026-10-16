@@ -18,7 +18,6 @@ struct width_cache {
     uint8_t next;
 };
 
-/* wsap_vtcore_new() builds the shared tables before any terminal can use them. */
 bool wsap_vtcore_tables_ready(void);
 void wsap_vtcore_text_tables_init(void);
 
@@ -35,17 +34,14 @@ struct text_run_result wsap_vtcore_text_run(struct cell *restrict row, const cha
                                     uint32_t flags, uint32_t last, struct width_cache *restrict wc);
 
 struct text_run_bytes {
-    int bytes;          /* input used */
+    int bytes;
     int cols;
-    int out;            /* bytes written */
+    int out;
     int chars;
     uint32_t last;
-    bool wide, narrow;  /* narrow: every character was one ASCII byte */
+    bool wide, narrow;
 };
 
-/* wsap_vtcore_text_run() with the same rules, that writes the text in the history
- * format instead of cells: raw UTF-8, a wide character after 0xF5. dst has
- * room for 4 bytes per column. */
 struct text_run_bytes wsap_vtcore_text_run_bytes(uint8_t *restrict dst, const char *restrict buf, int len,
                                           int max_cols, uint32_t last, struct width_cache *restrict wc);
 

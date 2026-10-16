@@ -57,7 +57,6 @@ static uint64_t client_poll(void *ud, uint64_t id, uint64_t interval_ns)
     return 0;
 }
 
-/* Sends lines and runs the app loop until `replies` lines come back. */
 static void exchange(struct client *c, const char *lines, int replies)
 {
     assert(send(c->fd, lines, strlen(lines), 0) == (ssize_t)strlen(lines));
@@ -107,8 +106,6 @@ static uint64_t quit_loop(void *ud, uint64_t id, uint64_t interval_ns)
     return 0;
 }
 
-/* The inspector keeps the scene it captured: building the next scene
- * in the same buffers does not change what it reports. */
 static void capture_survives_next_build_test(void)
 {
     struct test_app ta;
@@ -119,7 +116,6 @@ static void capture_survives_next_build_test(void)
                           .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
                       });
     ui_surface_resize(window_ui_surface(w), (struct vector2i){ .x = 800, .y = 600 });
-    /* The overlay makes the window capture its scenes. */
     window_debug_toggle_overlay(w);
 
     struct ui_scene *scene = window_ui_scene_scratch(w);
@@ -159,7 +155,6 @@ int main(void)
                           .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
                       });
     ui_surface_resize(window_ui_surface(w), (struct vector2i){ .x = 800, .y = 600 });
-    /* A frame after the tab bar has grown in. */
     ui_surface_tick(window_ui_surface(w), window_frame_time_ms(w) + 100000);
 
     window_debug_set_hooks(&(struct window_debug_hooks){ .option_set = record_option });
@@ -167,7 +162,6 @@ int main(void)
     struct stat st;
     assert(stat(path, &st) == 0 && S_ISSOCK(st.st_mode));
     assert((st.st_mode & 0077) == 0);
-    /* A second server, or a non-socket path, is refused. */
     assert(!window_debug_server_start(loop, windows, path));
 
     static struct client c;
@@ -177,7 +171,6 @@ int main(void)
     snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path);
     assert(connect(c.fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
 
-    /* One reply per line, in order, errors included. */
     exchange(&c, "windows\ntree --depth 2\nbogus\nwidget tabbar\n", 4);
     assert(strstr(line_at(&c, 0), "{\"ok\":true,\"result\":[{\"index\":0,"));
     assert(strstr(line_at(&c, 0), "\"tabs\":2"));
@@ -189,20 +182,16 @@ int main(void)
     assert(!strncmp(line_at(&c, 2), "{\"ok\":false,\"error\":\"unknown command", 36));
     assert(strstr(line_at(&c, 3), "\"name\":\"tab\",\"index\":1"));
 
-    /* Waiting for a frame fails cleanly when there is no surface. */
     exchange(&c, "screenshot /nonexistent.png\n", 1);
     assert(!strncmp(line_at(&c, 4), "{\"ok\":false,", 12));
 
-    /* The count covers the spaces that join the words. */
     exchange(&c, "text a b\n", 1);
     assert(!strncmp(line_at(&c, 5), "{\"ok\":true,\"result\":3}", 22));
 
-    /* The font command sets the option through the app's hook. */
     exchange(&c, "font Mono\n", 1);
     assert(!strncmp(line_at(&c, 6), "{\"ok\":true,", 11));
     assert(!strcmp(font_asked, "Mono"));
 
-    /* A client hanging up must not stop the app loop. */
     close(c.fd);
     bool fired = false;
     assert(yasl_loop_add_timer(loop, MS_TO_NS(20), mark_fired, &fired) != 0);
@@ -214,7 +203,6 @@ int main(void)
     assert(stat(path, &st) < 0 && errno == ENOENT);
     rmdir(dir);
 
-    /* Debuggers get the same protocol without the server. */
     char *reply = window_debug_eval("tree --depth 0");
     assert(reply && strstr(reply, "\"ok\":true") &&
            strstr(reply, "\"type\":\"window-root\""));
@@ -225,7 +213,6 @@ int main(void)
     reply = window_debug_eval("key a");
     assert(reply && !strncmp(reply, "{\"ok\":false,", 12));
     free(reply);
-    /* The app's hook still answers the font command without a server. */
     reply = window_debug_eval("font Sans");
     assert(reply && !strncmp(reply, "{\"ok\":true,", 11));
     assert(!strcmp(font_asked, "Sans"));

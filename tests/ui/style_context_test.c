@@ -7,7 +7,6 @@
 #include "ui/widgets/label.h"
 #include "ui/box.h"
 
-/* A box with the class the panel tests style. */
 static void panel_init(struct ui_box *panel)
 {
     ui_box_init(panel);
@@ -62,8 +61,6 @@ static void set_sheet_rebuilds_same_pointer_test(void)
         ui_widget_resolved_style(ui_box_widget(&panel));
     assert(style && style->has_bg_color && style->bg_color == 0xFF112233);
 
-    /* Reparse the sheet in place and hand back the same pointer: the
-     * widget must pick up the new contents on the next apply. */
     css_sheet_clear(&sheet);
     assert(css_parse(&sheet, ".panel { background: #445566; }"));
     ui_style_context_set_sheet(&context, &sheet);
@@ -103,8 +100,6 @@ static void scale_feeds_widget_resolution_test(void)
     size = ui_widget_measure(&widget, ui_constraints_unbounded());
     assert(size.x == 20 && size.y == 10);
 
-    /* A child added after the last apply is styled on the next pass
-     * even though the parent's generation already matched. */
     struct ui_widget child = {0};
     ui_widget_init(&child, NULL, NULL);
     ui_widget_set_style_identity(&child, "fixed", NULL, NULL);
@@ -136,7 +131,7 @@ static void generic_style_sizing_test(void)
 
     struct ui_label label = {0};
     ui_label_init(&label);
-    ui_label_set_text(&label, "ab"); /* natural 16x16 */
+    ui_label_set_text(&label, "ab");
 
     ui_widget_set_style_identity(&label.widget, "wide", NULL, "label");
     ui_style_context_apply(&context, &label.widget);

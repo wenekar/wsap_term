@@ -47,8 +47,6 @@ static const uint32_t *blend_pair_lut(uint32_t fg, uint32_t bg);
 static __thread struct blend_pair { uint64_t tag, pending; uint32_t lut[256]; }
     blend_pairs[BLEND_PAIR_SLOTS];
 
-
-
 static void run_buffers_free(void)
 {
     free(run_codepoints);
@@ -567,7 +565,6 @@ static void draw_decorations(uint32_t *row_px, int width, int x0, int cw, int ch
         return;
     int ys[5], n_dec = 0;
     enum wsap_vtcore_underline ul = wsap_vtcore_attr_underline(attrs);
-    /* Curly, dotted, and dashed underlines draw as a single line. */
     if ((ul != WSAP_VTCORE_UNDERLINE_NONE && ul != WSAP_VTCORE_UNDERLINE_DOUBLE) ||
         (attrs & WSAP_VTCORE_ATTR_LINK))
         ys[n_dec++] = ch - 2;
@@ -596,8 +593,6 @@ struct row_paint {
     const struct wsap_vtcore_cell *cells;
     int width, cols, cursor, cw, ch, sel_c0, sel_c1;
     bool plain_cells;
-    /* While a segment shapes: its first column, and the first column
-     * not painted yet. */
     int base, next;
 };
 
@@ -764,7 +759,6 @@ static void paint_grid_margins(const struct font_metrics *m,
                   (size_t)(height - bottom) * width, frame->default_bg);
 }
 
-/* Grows the row tables to rows entries. New rows read as never painted. */
 static bool renderer_reserve_rows(struct renderer_history *h, int rows)
 {
     if (rows <= h->rows_cap)
@@ -913,8 +907,6 @@ static void pool_wake_all(void)
 static void *paint_worker(void *arg)
 {
     int id = (int)(uintptr_t)arg;
-    /* An eager preload. The result does not matter: every backend call
-     * re-checks the thread state. */
     (void)font_thread_attach();
     int seen = 0;
     for (;;) {
@@ -1016,7 +1008,6 @@ static void paint_rows_parallel(struct font_instance *fi,
     if (!pool_count) {
         for (int row = 0; row < rows; row++)
             paint_row(fi, frame, px, width, row);
-        /* One thread painted the frame, so no reader is left. */
         glyph_cache_flush_frame();
         return;
     }
@@ -1042,13 +1033,9 @@ static void paint_rows_parallel(struct font_instance *fi,
     pthread_mutex_unlock(&pool_mu);
 #endif
     glyph_cache_set_parallel(false);
-    /* Every worker has joined, so no thread still reads a run entry. Free the
-     * entries they retired during the frame. */
     glyph_cache_flush_frame();
 }
 
-/* Each successful render_init() has one render_shutdown(); the last one
- * stops the font system. So a user stops only what it started. */
 static int render_users;
 
 bool render_init(void)
@@ -1225,7 +1212,6 @@ static struct render_damage renderer_paint_frame(struct renderer_history *h,
         size_t shift_px = (size_t)k * ch * width;
         size_t keep_px = (size_t)(rows - k) * ch * width;
         memmove(px, px + shift_px, keep_px * sizeof(uint32_t));
-        /* The old cursor pixels moved with their row. Repaint that row. */
         if (h->buf_cur_y[buf] >= 0)
             h->buf_cur_y[buf] = h->buf_cur_y[buf] >= k ? h->buf_cur_y[buf] - k : -1;
         memmove(&h->buf_rows[buf][0], &h->buf_rows[buf][k],
@@ -1247,8 +1233,6 @@ static struct render_damage renderer_paint_frame(struct renderer_history *h,
             emit_run = NULL;
         }
     }
-    /* Most rows changed (the screen scrolled): one parallel repaint beats
-     * repainting them one by one. */
     if (!full && rows > 3) {
         int changed = 0;
         for (int row = 0; row < rows; row++)
@@ -1272,8 +1256,6 @@ static struct render_damage renderer_paint_frame(struct renderer_history *h,
             .pos = { .x = 0, .y = origin },
             .size = { .x = width, .y = height } });
     }
-    /* Paint rows that differ in this buffer. Report rows that differ from
-     * the last frame sent to the surface. */
     bool moved = h->buf_cur_x[buf] != cx || h->buf_cur_y[buf] != cy || h->buf_cur_style[buf] != style;
     bool front_moved = h->front_cur_x != cx || h->front_cur_y != cy ||
                        h->front_cur_style != style;
@@ -1387,7 +1369,6 @@ static void draw_terminal_frame(struct renderer *r, struct renderer_history *h,
     if (origin >= height)
         return;
     struct font_instance *fi = term_font(r);
-    /* The GPU path has no glyph_cache_begin_frame(). */
     glyph_cache_refresh(fi);
     const struct font_metrics *m = font_instance_metrics(fi);
     const struct render_backend_view view = {
@@ -1435,8 +1416,6 @@ static void draw_terminal_frame(struct renderer *r, struct renderer_history *h,
         });
 }
 
-/* Asks the terminal to repaint the rows under r, a surface rect inside
- * the terminal area. */
 static void invalidate_terminal(struct renderer_history *h, struct renderer *r,
                                 int buf,
                                 struct rect2i terminal, struct rect2i in)
@@ -1518,9 +1497,6 @@ static void fill_rect(uint32_t *px, int width, struct rect2i rr, uint32_t c)
         fill_pixels32(px + (size_t)y * width + rr.x, c, rr.width);
 }
 
-/* Paints only pixels that were refreshed this frame: terminal rows the
- * terminal repainted, and areas outside the terminal filled with base.
- * So a translucent op never blends over its own earlier output. */
 static void render_ui_scene(struct renderer_history *h, struct renderer *r,
                             struct framebuffer *t,
                             const struct ui_scene *scene)
@@ -1611,8 +1587,6 @@ struct damage_list render_draw(struct renderer *r, struct framebuffer *target,
 
     target->presented = false;
     struct framebuffer fb = *target;
-    /* Painting records damage. A target with no list gets one here, so
-     * every paint path can record. */
     struct damage_list recorded = {0};
     if (!fb.damage)
         fb.damage = &recorded;

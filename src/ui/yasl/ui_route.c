@@ -2,7 +2,6 @@
 #include "ui/yasl/ui_input.h"
 #include "ui/yasl/internal.h"
 
-/* The edit command a shortcut stands for. Widgets run it on focus. */
 static enum ui_edit_command shortcut_edit(enum input_shortcut action)
 {
     switch (action) {
@@ -13,8 +12,6 @@ static enum ui_edit_command shortcut_edit(enum input_shortcut action)
     }
 }
 
-/* Keys and text go to the key surface. Pointer input goes to its surface.
- * Keyboard-path dispatches draw only through invalidation. */
 static enum window_input_result ui_input(struct window *w, const struct input_event *ev)
 {
     uint64_t now_ms = window_frame_time_ms(w);
@@ -57,7 +54,6 @@ static enum window_input_result ui_input(struct window *w, const struct input_ev
     return WINDOW_INPUT_HANDLED;
 }
 
-
 static enum yasl_cursor cursor_for(enum ui_cursor cursor)
 {
     switch (cursor) {
@@ -87,8 +83,6 @@ void window_ui_hide_pointer(struct window *w)
     window_ui_update_cursor(w);
 }
 
-/* While a menu is open, all input goes to the UI surfaces. A press on
- * the window under menu popups closes the menu. */
 static enum window_input_result menu_input(struct window *w, const struct input_event *ev)
 {
     if (!ui_menu_is_open(&ui_of(w)->menu))
@@ -118,7 +112,6 @@ void window_ui_route(struct window *w, struct input_event *ev)
             ui_of(w)->replace_key_text = false;
             ui_surface_cancel_capture(&ui_of(w)->screen);
         }
-        /* The content hears the window's focus even while a menu is open. */
         if (ui_of(w)->spec.root) {
             struct ui_event focus = ui_event_window_focus(ev->focus.focused,
                                                           window_frame_time_ms(w));

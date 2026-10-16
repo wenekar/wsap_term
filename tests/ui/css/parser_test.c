@@ -91,8 +91,6 @@ static void test_invalid_declarations_do_not_override(void)
     css_sheet_clear(&sheet);
 }
 
-/* Every spelling a theme can use for a cursor has to reach the style. An
- * unknown one is dropped silently, so "none" used to leave the default. */
 static void test_every_cursor_keyword(void)
 {
     struct css_sheet sheet = {0};
@@ -113,7 +111,6 @@ static void test_every_cursor_keyword(void)
         css_style_resolve(&sheet, cls, NULL, NULL, CSS_PSEUDO_NONE, &style);
         assert(style.has_cursor);
     }
-    /* "none" is the one that has no other spelling and no other producer. */
     struct css_style none_style;
     css_style_resolve(&sheet, "k9", NULL, NULL, CSS_PSEUDO_NONE, &none_style);
     assert(none_style.cursor == UI_CURSOR_NONE);

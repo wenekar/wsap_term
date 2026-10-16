@@ -42,7 +42,6 @@ static void clear_env(void)
     unsetenv("XDG_CONFIG_HOME");
 }
 
-/* Loads the config and drops the path, which these tests do not check. */
 static int load(struct app_config *c, int argc, char **argv)
 {
     char *path = NULL;
@@ -256,8 +255,6 @@ static void test_precedence(void)
     clear_env();
     opts_destroy(&app_config_spec,&c);
 
-    /* An empty argument resets the key, as an empty value in the file
-     * does. */
     char *reset[] = { (char *)"--font-size=", (char *)"--width", (char *)"" };
     assert(parse_args(&c, conf, 3, reset) == 0);
     assert(c.window.font_size == FONT_DEFAULT_SIZE_PT && !c.window.size.x);
@@ -294,7 +291,6 @@ static void test_config_selection(void)
     assert(stat(created, &st) != 0);
     const char *width = "width";
     assert(opts_set(&app_config_spec,&c, width, "333"));
-    /* No config path, so there is nothing to save to. */
     assert(!opts_save(&app_config_spec, &c, NULL, &width, 1));
     assert(stat(created, &st) != 0);
 
@@ -323,8 +319,6 @@ static void test_errors(void)
     assert(!c.window.size.x && c.terminal.cursor_style == WSAP_VTCORE_CURSOR_BLOCK);
     opts_destroy(&app_config_spec,&c);
 
-    /* An overlong line is skipped whole, even the last one without a
-     * newline; its first bytes do not pass for a setting. */
     char overlong[2100] = "height = 480\nfont = ";
     size_t head = strlen(overlong);
     memset(overlong + head, 'x', sizeof(overlong) - head - 1);
@@ -335,7 +329,6 @@ static void test_errors(void)
     assert(!c.window.font_family || !strchr(c.window.font_family, 'x'));
     opts_destroy(&app_config_spec,&c);
 
-    /* A line that just fills the read buffer still counts. */
     char full[1100] = "font = ";
     head = strlen(full);
     memset(full + head, 'y', 1023 - head);
@@ -357,7 +350,6 @@ static void test_errors(void)
     opts_destroy(&app_config_spec,&c);
 }
 
-/* Uncommenting the generated file must reproduce the built-in defaults. */
 static void test_generated_file_matches_defaults(void)
 {
     char gen[4096], conf[4096];
@@ -399,7 +391,6 @@ static void test_generated_file_matches_defaults(void)
     opts_destroy(&app_config_spec,&got);
 }
 
-/* Turning vsync off does not also go fullscreen. */
 static void test_vsync_and_fullscreen_are_separate(void)
 {
     char conf[4096];
@@ -502,8 +493,6 @@ static void test_option_values(void)
     opts_destroy(&app_config_spec,&config);
 }
 
-/* Each accepted hinting or antialias string maps to one canonical name.
- * NULL means the key rejects the string. */
 static void test_hinting_names(void)
 {
     static const struct { const char *key, *in, *out; } cases[] = {

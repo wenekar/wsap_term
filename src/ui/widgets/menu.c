@@ -29,15 +29,12 @@ static void emit(struct ui_menu *m, struct ui_widget *source,
         }, m->impl.actions.userdata);
 }
 
-/* Hosts derive what they show from the generation. The level widgets
- * invalidate, so a host in a surface gets a frame. */
 static void changed(struct ui_menu *m)
 {
     m->impl.generation++;
     ui_widget_invalidate(&m->levels[0].widget, UI_WIDGET_INVALIDATE_MEASURE);
 }
 
-/* The item under the pointer, else the selected one, of the top level. */
 static int highlighted(struct ui_menu *m)
 {
     struct ui_menu_level *top = top_level(m);
@@ -111,7 +108,6 @@ static void activate(struct ui_menu *m, struct ui_menu_level *level, int index)
     ui_menu_close(m);
 }
 
-/* Where the child of level depth sits, in the surface space of depth. */
 static struct rect2i child_rect(const struct ui_menu *m, int depth)
 {
     const struct ui_menu_level *child = &m->levels[depth + 1];
@@ -134,8 +130,6 @@ static void pointer_moved(struct ui_menu *m, struct ui_menu_level *level,
     int hovered = ui_list_hovered(&level->list);
     bool child_open = depth + 1 < m->impl.n_levels;
     if (child_open && hovered != m->levels[depth + 1].parent_item) {
-        /* Off the item that opened the child: keep the child open while
-         * the pointer heads for it. */
         struct rect2i sub = child_rect(m, depth);
         int dx = pos.x - m->impl.last_pointer.x;
         bool toward = (sub.x > m->impl.last_pointer.x && dx > 0) ||
@@ -300,8 +294,6 @@ static bool level_event(struct ui_widget *widget, const struct ui_event *event)
     }
 }
 
-/* The level's list reports item changes; the menu turns them into its
- * own actions. */
 static bool level_action(struct ui_widget *source, const struct ui_action *action,
                          void *userdata)
 {
@@ -312,8 +304,6 @@ static bool level_action(struct ui_widget *source, const struct ui_action *actio
     return true;
 }
 
-/* Level 0 shows while the menu is open, wherever its host puts it: it
- * runs the menu's timers. */
 static uint64_t level_tick(struct ui_widget *widget, uint64_t now_ms)
 {
     struct ui_menu_level *level = level_of(widget);
@@ -385,7 +375,6 @@ bool ui_menu_open(struct ui_menu *m, const ui_menu_item *items, int n)
     struct ui_menu_level *root = &m->levels[0];
     if (!ui_list_set_items(&root->list, items, n))
         return false;
-    /* A new menu lays out in the current theme, then keeps that geometry. */
     root->list.impl.metrics.valid = false;
     root->list.widget.impl.style_valid = false;
     ui_list_pin_metrics(&root->list, NULL);
@@ -439,7 +428,6 @@ struct rect2i ui_menu_level_anchor(const struct ui_menu *m, int depth)
     const struct ui_menu_level *child = &m->levels[depth];
     struct rect2i row = ui_list_item_rect(&m->levels[depth - 1].list,
                                           child->parent_item);
-    /* The first rows line up: the child sits one edge pad higher. */
     row.y -= child->list.impl.metrics.edge_pad;
     return row;
 }
@@ -474,8 +462,6 @@ static struct ui_menu_layer *layer_of(const struct ui_widget *widget)
                            widget);
 }
 
-/* The layer's children are the menu's inline levels, each placed beside
- * the item that opened it. */
 static void layer_prepare(struct ui_widget *widget)
 {
     struct ui_menu_layer *layer = layer_of(widget);
@@ -487,7 +473,6 @@ static void layer_prepare(struct ui_widget *widget)
     layer->impl.shown = gen;
     int first = layer->impl.first_level;
     int count = ui_menu_level_count(m);
-    /* Levels that stay keep their place, and so the focus. */
     for (struct ui_widget *c = widget->first_child, *next; c; c = next) {
         next = c->next_sibling;
         int depth = level_of(c)->depth;

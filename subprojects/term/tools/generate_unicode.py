@@ -93,7 +93,6 @@ def main():
 
     categories = unicode_categories(args.unicode_data)
     assigned = {cp for cps in categories.values() for cp in cps}
-    # Conjoining Hangul vowels and finals draw inside the leading consonant.
     jamo = list(range(0x1160, 0x1200)) + [cp for cp in range(0xD7B0, 0xD800) if cp in assigned]
     zero = merge(categories.get("Mn", []) + categories.get("Me", []) +
                  categories.get("Cf", []) + jamo)

@@ -57,7 +57,6 @@ static void init(struct fixture *f, const char *text, struct vector2i size)
     ui_surface_resize(&f->surface, size);
 }
 
-/* A column box holds two selectable labels. Blank space lies below them. */
 static void init_tree(struct fixture *f)
 {
     *f = (struct fixture){0};
@@ -360,7 +359,6 @@ static void narrow_box_keeps_utf8_whole_test(void)
 {
     struct fixture f;
     init(&f, "中é", (struct vector2i){ .x = 8, .y = 48 });
-    /* The wide cell is clipped. It must not split into invalid UTF-8. */
     assert(ui_surface_build_scene(&f.surface, &f.scene));
     expect_text(&f, 0, "中");
     expect_text(&f, 1, "é");
@@ -418,7 +416,6 @@ static void link_hover_and_focus_styles_test(void)
     destroy(&f);
 }
 
-/* Double-click on "world" in the first label. */
 static void select_word(struct fixture *f, uint64_t time)
 {
     struct vector2i word = { .x = 60, .y = 8 };

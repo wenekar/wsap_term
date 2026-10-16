@@ -4,9 +4,6 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
-/* The cache is small because one theme uses one or two shadow styles.
- * Building a table costs a few milliseconds, and only a theme change or
- * a DPI change asks for a table that is not already in the cache. */
 #define UI_SHADOW_CACHE_SLOTS 4
 
 #define UI_SHADOW_TAU 6.283185307179586
@@ -18,13 +15,9 @@ struct shadow_slot {
     bool ready;
 };
 
-/* Scenes are built and painted on one thread, so the cache needs no
- * lock. A build is a pure function of radius and blur, so a race would
- * at worst repeat the work. */
 static struct shadow_slot shadow_cache[UI_SHADOW_CACHE_SLOTS];
 static int shadow_next;
 
-/* Cumulative distribution of the standard normal. */
 static double shadow_phi(double z)
 {
     return 0.5 * erfc(-z * 0.70710678118654752440);
@@ -39,14 +32,6 @@ static uint8_t shadow_quantize(double v)
     return (uint8_t)(v * 255.0 + 0.5);
 }
 
-/* Builds the top left corner tile. The tile spans the pixels that the
- * corner arc can still reach: extent pixels outside the box, then the
- * arc itself, then extent more pixels where the arc has faded out.
- *
- * Blurring the box is a convolution. Split it by rows of the box: row v
- * starts at l(v) and runs to the far side, so its blur along x is one
- * normal CDF. Rows below the arc have a straight edge and close in one
- * analytic term, which leaves a short numeric integral over the arc. */
 static uint8_t *shadow_build_tile(int radius, int extent, double sigma)
 {
     int c = radius + 2 * extent;

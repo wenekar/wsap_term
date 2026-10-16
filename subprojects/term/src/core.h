@@ -17,17 +17,13 @@ struct span {
     int old_len;
 };
 
-/* Begin writing a span of cells. Settle cursor row, repair left edge. */
 static inline struct span sc_span_begin(struct wsap_vtcore *t, int want);
 
-/* Finish writing a span of cells. Repair right edge, raise len, bump gen. */
 static inline void sc_span_end(struct wsap_vtcore *t, struct span *s, int cols,
                                uint8_t row_flags, uint32_t last);
 
-/* Print ASCII characters through span and SIMD chunking. */
 static inline void sc_print_ascii(struct wsap_vtcore *t, const char *s, int n);
 
-/* Print one glyph (single codepoint or cluster handle). */
 void wsap_vtcore_sc_print_glyph(struct wsap_vtcore *t, uint32_t cp, int width, uint16_t flags);
 
 static inline void sc_print_cell(struct wsap_vtcore *t, uint32_t cp, int width, uint16_t flags)
@@ -63,13 +59,10 @@ static inline void sc_print_cell(struct wsap_vtcore *t, uint32_t cp, int width, 
     wsap_vtcore_sc_print_glyph(t, cp, width, flags);
 }
 
-/* Extend the last printed glyph into a grapheme cluster. */
 bool wsap_vtcore_sc_extend_cluster(struct wsap_vtcore *t, uint32_t cp, int klass);
 
-/* Multi-line or region-constrained line feed helper. */
 void wsap_vtcore_sc_linefeed_slow(struct wsap_vtcore *t, size_t n);
 
-/* Line feed: move down or scroll with BCE. */
 static inline void sc_linefeed(struct wsap_vtcore *t, size_t n)
 {
     if (WSAP_VTCORE_EXPECT(n == 1 && t->scroll_top == 0 &&
@@ -85,7 +78,6 @@ static inline void sc_linefeed(struct wsap_vtcore *t, size_t n)
     wsap_vtcore_sc_linefeed_slow(t, n);
 }
 
-/* Carriage return: move cursor to left margin. */
 static inline void sc_cr(struct wsap_vtcore *t)
 {
     t->pending_wrap = false;
@@ -95,7 +87,6 @@ static inline void sc_cr(struct wsap_vtcore *t)
     }
 }
 
-/* Move cursor to (x, y), margin-aware. */
 static inline void sc_move(struct wsap_vtcore *t, int x, int y)
 {
     t->pending_wrap = false;
@@ -114,10 +105,8 @@ static inline void sc_move(struct wsap_vtcore *t, int x, int y)
         wsap_vtcore_row(t, y)->version++;
 }
 
-/* Advance cursor by n tab stops. */
 void wsap_vtcore_sc_tab(struct wsap_vtcore *t, int n);
 
-/* Erase cells in span [from, to) on physical row y. */
 static inline void sc_erase_span(struct wsap_vtcore *t, int y, int from, int to)
 {
     t->pending_wrap = false;
@@ -127,7 +116,6 @@ static inline void sc_erase_span(struct wsap_vtcore *t, int y, int from, int to)
     t->scr.slot[p].version++;
 }
 
-/* Restore saved cursor state and position. */
 static inline void sc_restore_cursor(struct wsap_vtcore *t, const struct wsap_vtcore_saved_cursor *s)
 {
     wsap_vtcore_cursor_apply(t, s);
@@ -135,22 +123,16 @@ static inline void sc_restore_cursor(struct wsap_vtcore *t, const struct wsap_vt
     t->pending_wrap = s->pending_wrap;
 }
 
-/* Change attributes in a rectangular or stream area (DECCARA). */
 void wsap_vtcore_sc_deccara(struct wsap_vtcore *t, const struct csi *csi);
 
-/* Screen alignment pattern (DECALN). */
 void wsap_vtcore_sc_decaln(struct wsap_vtcore *t);
 
-/* Reset screen and cursor state for full reset (RIS). */
 void wsap_vtcore_sc_reset(struct wsap_vtcore *t);
 
-/* Set cursor style (DECSCUSR). */
 void wsap_vtcore_sc_set_cursor_style(struct wsap_vtcore *t, int ps);
 
-/* Bulk streaming of ASCII lines with raw rows and skip-ahead. */
 size_t wsap_vtcore_sc_bulk_ascii_lines(struct wsap_vtcore *t, const char *buf, size_t len);
 
-/* Fast CSI parser. */
 int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem);
 
 static inline struct span sc_span_begin(struct wsap_vtcore *t, int want)
@@ -205,7 +187,6 @@ static inline void sc_span_end(struct wsap_vtcore *t, struct span *s, int cols,
     }
 }
 
-/* Move the cursor after cols columns written at x, of avail. */
 static inline void sc_text_advance(struct wsap_vtcore *t, int x, int cols, int avail)
 {
     if (cols < avail) {
@@ -217,8 +198,6 @@ static inline void sc_text_advance(struct wsap_vtcore *t, int x, int cols, int a
     }
 }
 
-/* Append ASCII at the cursor, with the pen,
- * when the cursor row takes text. Return the bytes taken. */
 static inline int sc_text_ascii(struct wsap_vtcore *t, const char *s, int n, struct text_pen pen)
 {
     if (WSAP_VTCORE_EXPECT(t->insert_mode || t->lr_margin_mode, 0))
@@ -268,7 +247,6 @@ static inline void sc_print_ascii(struct wsap_vtcore *t, const char *s, int n)
     }
 }
 
-/* Write a short ASCII span without settling an already writable row. */
 static inline bool sc_ascii_fast(struct wsap_vtcore *t, const char *s, int n,
                                  struct text_pen pen)
 {
@@ -307,7 +285,6 @@ static inline bool sc_ascii_fast(struct wsap_vtcore *t, const char *s, int n,
     return true;
 }
 
-/* Fast inline check for 1-character write (fg-char fast path). */
 static inline bool sc_put1_fast(struct wsap_vtcore *t, char ch, struct text_pen pen)
 {
     int cx = t->cursor_x;
@@ -321,7 +298,6 @@ static inline bool sc_put1_fast(struct wsap_vtcore *t, char ch, struct text_pen 
         struct text_row *tr = &row->text;
         if (WSAP_VTCORE_EXPECT(cx != tr->cells || !tr->cells || cx + 1 == cols, 0))
             return sc_text_ascii(t, &ch, 1, pen) == 1;
-        /* One character in the middle of a text row. */
         tr->text[tr->text_len++] = (uint8_t)ch;
         tr->cells++;
         hist_runs_add_pen(&tr->runs, pen, 1);

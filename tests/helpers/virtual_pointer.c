@@ -1,14 +1,3 @@
-/* A pointer for tests on a headless wlroots compositor, which has no
- * input device of its own. It reads one command per line on stdin:
- *
- *   X Y        move to layout pixel X, Y
- *   press      press the left button
- *   release    release it
- *   rpress     press the right button
- *   rrelease   release it
- *
- * and answers each with "ok" once the compositor has it. Usage:
- * virtual-pointer WIDTH HEIGHT, the layout's size. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

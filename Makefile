@@ -1,7 +1,5 @@
 ifeq ($(shell uname -s),Darwin)
 BUILD_DIR ?= build-homebrew
-# LTO objects are LLVM bitcode. Apple ar and ranlib cannot read bitcode from a
-# newer LLVM, so the archiver must come from the same toolchain as the compiler.
 LLVM_BIN ?= $(shell brew --prefix llvm)/bin
 MESON_ENV ?= CC=$(LLVM_BIN)/clang OBJC=$(LLVM_BIN)/clang AR=$(LLVM_BIN)/llvm-ar NM=$(LLVM_BIN)/llvm-nm
 else

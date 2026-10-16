@@ -87,12 +87,6 @@ extlib_tests = [
     'resize-alloc-test',
 ]
 
-# ui-debug-test is absent on purpose. It serializes the widget tree with
-# yyjson, and the installed yyjson reports its own pool as uninitialized before
-# the test does any work. A six line program that only calls yyjson_mut_obj
-# reproduces it. MemorySanitizer takes no function name suppression, so this
-# test stays out for the same reason the fontconfig and Wayland tests do. It
-# still runs in the unit suite.
 msan_safe_tests = [
     'ui-scene-test',
     'ui-widget-test',
@@ -117,7 +111,6 @@ msan_safe_tests = [
     'css-selector-test',
 ]
 
-# Keep argument handlers, allocation overrides, and backend stubs separate.
 standalone_tests = [
     'pty-fast-test', 'font-test',
     'font-coretext-test', 'render-test', 'resize-alloc-test',
@@ -265,7 +258,6 @@ test(
     suite: 'unit',
 )
 
-
 if get_option('integration_tests')
     integration_env = environment()
     integration_env.set('BIN', program.full_path())
@@ -399,7 +391,6 @@ if get_option('integration_tests')
         timeout: 180,
     )
 endif
-
 
 options_test = executable(
     'options-test',

@@ -129,7 +129,6 @@ void ui_widget_set_style_identity(struct ui_widget *widget,
     widget->impl.style_id = id_name;
     widget->impl.style_tag = tag_name;
     widget->impl.style_valid = false;
-    /* Descendant part styles read this class through their ancestor path. */
     ui_widget_part_cache_stale_subtree(widget);
     ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_MEASURE);
 }
@@ -140,8 +139,6 @@ void ui_widget_set_style_pseudo(struct ui_widget *widget, unsigned pseudo_flags)
         return;
     widget->impl.style_pseudo = pseudo_flags;
     widget->impl.style_valid = false;
-    /* The next style pass resolves the style and measures again only if
-     * the layout changed. */
     ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
 }
 
@@ -214,7 +211,6 @@ void ui_widget_set_hidden(struct ui_widget *widget, bool hidden)
     if (!widget || widget->impl.destroyed || widget->impl.hidden == hidden)
         return;
     widget->impl.hidden = hidden;
-    /* Styling skips hidden subtrees. */
     widget->impl.style_valid = false;
     struct ui_surface *surface = widget->impl.surface;
     if (hidden && surface)
@@ -451,8 +447,6 @@ static void clear_surface(struct ui_widget *widget, struct ui_surface *origin)
 {
     if (widget->impl.surface == origin)
         widget->impl.surface = NULL;
-    /* Inheritance, ancestor selectors, and the sheet may differ wherever
-     * the widget lands next. */
     widget->impl.style_valid = false;
     ui_widget_part_cache_stale(widget);
     for (struct ui_widget *c = widget->first_child; c; c = c->next_sibling)
@@ -535,7 +529,6 @@ static int clamp_axis(int v, int lo, int hi)
     return v > hi ? hi : v < lo ? lo : v;
 }
 
-/* Where the default layout puts a child of a parent at bounds. */
 static struct rect2i placed_rect(const struct ui_widget *child,
                                  struct rect2i bounds)
 {

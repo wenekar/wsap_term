@@ -220,7 +220,6 @@ bool wsap_vtcore_sc_extend_cluster(struct wsap_vtcore *t, uint32_t cp, int klass
     return true;
 }
 
-/* n blank default rows scroll off the top, after the screen rows. */
 static void push_blank_lines(struct wsap_vtcore *t, size_t n)
 {
     if (screen_has_history(t)) {
@@ -241,7 +240,6 @@ static void scroll_up_bce(struct wsap_vtcore *t, size_t count)
     }
     size_t rem = count - rows;
     if (!using_default_colors(t)) {
-        /* Rows past the history limit would leave again at once. */
         size_t keep = screen_has_history(t) ? t->hist.line_limit : 0;
         for (size_t i = rows + (rem < keep ? rem : keep); i > 0; i--)
             wsap_vtcore_screen_scroll_up(t);
@@ -254,7 +252,6 @@ static void scroll_up_bce(struct wsap_vtcore *t, size_t count)
             skip = t->scr.slot[y].len == 0 && !(t->scr.slot[y].flags & RF_WRAPPED);
     }
     if (skip) {
-        /* The screen is blank, or all of it leaves history again. */
         for (size_t y = 0; y < rows; y++)
             screen_new_row(t, &t->scr.slot[y]);
         push_blank_lines(t, count);
@@ -537,8 +534,6 @@ static void flush_orig_rows(struct wsap_vtcore *t, struct screen *s,
         uintptr_t limit = begin + t->ascii_tail.cap;
         uintptr_t base = (uintptr_t)first->text.text;
         if (first->kind == ROW_ASCII && base >= begin && base < limit) {
-            /* The LF stream stores checked lines here, including each LF.
-             * A read or edit changes the row kind before it can change text. */
             uint16_t ends[64 + 65];
             ends[0] = 0;
             int span = 0, lines = 0, closed = y;
@@ -741,8 +736,6 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_wrapped(struct wsap_vtcore *t, c
 }
 
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
-/* Cut *count at the first line longer than half a history page. Check
- * whole blocks of 32 lines. Return the line where the check stopped. */
 WSAP_VTCORE_TARGET_AVX512
 static int long_lines_avx512(const uint16_t *ends, int *count)
 {
@@ -849,8 +842,6 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_lf(struct wsap_vtcore *t, const 
     return ends[count];
 }
 
-/* Bit i of the result is set when buf[i] is not printable ASCII. *nl gets
- * the line feeds. Both cover 64 bytes. */
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
 WSAP_VTCORE_TARGET_AVX512
 static inline uint64_t line_masks_avx512(const char *buf, uint64_t *nl)
@@ -954,8 +945,6 @@ static void stream_queue_finish(struct stream_emit_ctx *ctx)
         if (s->top >= rows)
             s->top -= rows;
     }
-    /* Rows that stay on the screen become text rows. A row that
-     * continues the row above starts from its pen. */
     int cur_y = ctx->orig_rem;
     bool prev_wrapped = false;
     for (int j = k; j < ctx->q_count && cur_y < rows - 1; j++) {
@@ -1040,8 +1029,6 @@ static void stream_queue_finish(struct stream_emit_ctx *ctx)
     clamp_selection_after_scroll(t);
 }
 
-/* One body for every level. isa is a constant in each copy below, so each
- * copy keeps only its own kernels. */
 static inline WSAP_VTCORE_ALWAYS_INLINE size_t bulk_ascii_lines_body(struct wsap_vtcore *t, const char *buf,
                                                               size_t len, int isa)
 {
@@ -1083,7 +1070,6 @@ static inline WSAP_VTCORE_ALWAYS_INLINE size_t bulk_ascii_lines_body(struct wsap
     };
 
     while (i < len) {
-        /* Scan each block once. Keep the unfinished line in the input buffer. */
         if (lnm && !t->pending_wrap) {
             size_t scan = i;
             while (scan + 64 <= len) {
@@ -1160,7 +1146,6 @@ narrow_done:
                     continue;
                 }
 
-                /* Consume up to three complete lines from this mask. */
                 int consumed = 0;
                 for (int line = 0; line < 3 && consumed < 64; line++) {
                     uint64_t rest = mask >> consumed;

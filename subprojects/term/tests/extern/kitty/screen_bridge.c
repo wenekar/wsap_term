@@ -1,8 +1,3 @@
-/* Test-only entry points for the Kitty screen wrapper in screen.py.
- * Python calls only these functions, so it needs no struct layouts other
- * than the public struct wsap_vtcore_cell. The kitty_screen_* accessors read
- * properties that wsap_vtcore.h does not expose. They compile against the current
- * terminal layout rather than duplicating byte offsets in Python. */
 #include "internal.h"
 #include "screen.h"
 
@@ -16,13 +11,10 @@ struct wsap_vtcore *kitty_term_new(int cols, int rows, kitty_reply_fn reply, voi
     });
 }
 
-/* One snapshot serves every cell read. */
 static struct wsap_vtcore_snapshot *snap;
 
 void kitty_term_free(struct wsap_vtcore *t)
 {
-    /* A new terminal can get the address of the freed one. The snapshot
-     * would then keep its rows, so it goes away too. */
     wsap_vtcore_snapshot_free(snap);
     snap = NULL;
     wsap_vtcore_free(t);
@@ -46,8 +38,6 @@ int kitty_term_cursor_style(struct wsap_vtcore *t) { return (int)wsap_vtcore_cur
 bool kitty_term_cursor_blink(struct wsap_vtcore *t) { return wsap_vtcore_cursor(t).blink; }
 bool kitty_term_application_cursor(struct wsap_vtcore *t) { return wsap_vtcore_modes(t).app_cursor; }
 
-/* Update the snapshot from the live screen, as a renderer reads it.
- * Returns NULL when the cell is out of range or memory runs out. */
 static struct wsap_vtcore_snapshot *cell_snapshot(struct wsap_vtcore *t, int col, int row)
 {
     struct wsap_vtcore_vector2i size = wsap_vtcore_size(t);
@@ -70,8 +60,6 @@ bool kitty_term_cell(struct wsap_vtcore *t, int col, int row, struct wsap_vtcore
     return true;
 }
 
-/* The code points of a cell's text: one, or a whole grapheme cluster.
- * Returns the number of code points and writes at most cap of them. */
 int kitty_term_cell_text(struct wsap_vtcore *t, int col, int row, uint32_t *cps, int cap)
 {
     struct wsap_vtcore_snapshot *s = cell_snapshot(t, col, row);
@@ -101,8 +89,6 @@ int kitty_screen_row_length(struct wsap_vtcore *t, int row)
     return r ? (int)r->len : 0;
 }
 
-/* A tab stores a marker cell that a snapshot shows as a blank. Kitty keeps
- * the tab in its line text, so the wrapper asks for the marker. */
 bool kitty_screen_cell_is_tab(struct wsap_vtcore *t, int col, int row)
 {
     if (col < 0 || col >= t->cols || row < 0 || row >= t->rows)

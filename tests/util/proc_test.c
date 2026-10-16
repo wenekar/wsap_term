@@ -12,8 +12,6 @@
 
 #include "util/proc.h"
 
-/* A working directory that does not fit is rejected, not cut short to
- * the name of a parent directory. */
 int main(void)
 {
     char parent[] = "/tmp/proc-test-XXXXXX";

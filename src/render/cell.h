@@ -16,7 +16,6 @@ static inline bool render_cell_selected(int c, int sel_c0, int sel_c1)
     return c >= sel_c0 && c <= sel_c1;
 }
 
-/* The font style bits a cell draws with. */
 static inline uint16_t render_cell_style(const struct wsap_vtcore_cell *cell)
 {
     return (uint16_t)((cell->attrs & WSAP_VTCORE_ATTR_BOLD ? FONT_STYLE_BOLD : 0) |
@@ -26,25 +25,19 @@ static inline uint16_t render_cell_style(const struct wsap_vtcore_cell *cell)
                       (cell->width == 2 ? FONT_STYLE_WIDE : 0));
 }
 
-/* True when the cell draws a line: an underline, strike, overline, or link. */
 static inline bool render_cell_decorated(uint16_t attrs)
 {
     return attrs & (WSAP_VTCORE_ATTR_UNDERLINE_MASK | WSAP_VTCORE_ATTR_STRIKE |
                     WSAP_VTCORE_ATTR_OVERLINE | WSAP_VTCORE_ATTR_LINK);
 }
 
-/* True when the cell can be part of a shaped segment. */
 static inline bool render_cell_shapeable(const struct wsap_vtcore_cell *cell,
                                          bool (*aligned_symbol)(uint32_t cp))
 {
-    /* Cell-aligned symbols all sit at U+2500 and above. */
     return cell->text > ' ' && !(cell->text & WSAP_VTCORE_TEXT_CLUSTER) && cell->width == 1 &&
            (cell->text < 0x2500 || !aligned_symbol(cell->text));
 }
 
-/* The end of the segment that starts at c: the cells that shape together
- * because they share the style and the colors. c + 1 when cell c does not
- * shape. */
 static inline int render_segment_end(const struct wsap_vtcore_cell *cells, int c, int cols,
                                      bool (*aligned_symbol)(uint32_t cp))
 {
@@ -69,7 +62,6 @@ static inline bool render_cell_is_cursor(const struct wsap_vtcore_cell *cell, in
         (cell->width == 0 && c - 1 == cursor);
 }
 
-/* An empty cell in the default colors, already resolved to ARGB. */
 static inline struct wsap_vtcore_cell render_blank_cell(const struct terminal_frame *frame)
 {
     return (struct wsap_vtcore_cell){
@@ -77,7 +69,6 @@ static inline struct wsap_vtcore_cell render_blank_cell(const struct terminal_fr
     };
 }
 
-/* A cell with its palette slots resolved to the ARGB they paint as now. */
 static inline struct wsap_vtcore_cell render_cell_colors(const struct terminal_frame *frame,
                                                   struct wsap_vtcore_cell cell)
 {

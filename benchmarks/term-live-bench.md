@@ -4,7 +4,6 @@ Run the benchmark with:
 
 ```sh
 meson compile -C build wsap_term
-# or using the live benchmark script:
 ./benchmarks/term-live-bench.sh
 ```
 

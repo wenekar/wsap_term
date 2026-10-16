@@ -35,8 +35,6 @@ static inline unsigned render_lum16(uint32_t rgb)
              722u * render_srgb_to_linear[rgb & 255] + 5000) / 10000;
 }
 
-/* The coverage that makes a linear blend as bright as a blend of the
- * sRGB values fg_s and bg_s. */
 static inline uint8_t render_srgb_coverage(int fg_s, int bg_s, uint8_t a)
 {
     int mix = fg_s * a + bg_s * (255 - a);

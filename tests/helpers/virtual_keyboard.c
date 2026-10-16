@@ -1,12 +1,3 @@
-/* A keyboard for tests on a headless wlroots compositor, which has no
- * input device of its own. It reads one command per line on stdin:
- *
- *   press CODE     press the evdev key CODE
- *   release CODE   release it
- *
- * and answers each with "ok" once the compositor has it. The keymap is
- * the default US layout. wlroots takes modifiers only from the modifiers
- * request, so the helper tracks them and sends them after each key. */
 #define _GNU_SOURCE
 #include <stdbool.h>
 #include <stdio.h>
@@ -53,7 +44,6 @@ static uint32_t now_ms(void)
     return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
 }
 
-/* The keymap as a file, which the protocol hands over by fd. */
 static int keymap_fd(struct xkb_keymap *keymap, uint32_t *size)
 {
     char *text = xkb_keymap_get_as_string(keymap, XKB_KEYMAP_FORMAT_TEXT_V1);
@@ -74,7 +64,6 @@ static void key(struct zwp_virtual_keyboard_v1 *keyboard, struct xkb_state *stat
     zwp_virtual_keyboard_v1_key(keyboard, now_ms(), code,
                                 down ? WL_KEYBOARD_KEY_STATE_PRESSED
                                      : WL_KEYBOARD_KEY_STATE_RELEASED);
-    /* xkb codes are evdev codes plus 8. */
     xkb_state_update_key(state, code + 8, down ? XKB_KEY_DOWN : XKB_KEY_UP);
     zwp_virtual_keyboard_v1_modifiers(
         keyboard, xkb_state_serialize_mods(state, XKB_STATE_MODS_DEPRESSED),

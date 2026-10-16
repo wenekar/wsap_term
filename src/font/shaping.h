@@ -4,7 +4,6 @@
 #include "font/font.h"
 #include <hb.h>
 
-/* Keep separator lines separate. Short operators can still form ligatures. */
 static inline void font_shape_text(hb_font_t *font, hb_buffer_t *buffer,
                                    const uint32_t *cps, int len)
 {

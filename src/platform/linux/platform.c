@@ -35,7 +35,6 @@ int platform_fastpipe_create(int fds[2], int buf_size)
 
 int platform_exe_path(char *out, size_t n)
 {
-    /* readlink truncates silently; a full buffer may hold a cut path. */
     ssize_t len = readlink("/proc/self/exe", out, n);
     if (len <= 0 || (size_t)len >= n)
         return -1;

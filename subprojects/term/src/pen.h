@@ -20,8 +20,6 @@ struct wsap_vtcore_pen {
     bool inverse : 1;
 };
 
-/* The pen of a stored cell. A cell has no underline color, so neither has
- * this. */
 struct pen_attr {
     uint32_t fg;
     uint32_t bg;
@@ -29,9 +27,6 @@ struct pen_attr {
     uint16_t link;
 };
 
-/* A pen as three words: fg, bg, and flags | link << 16 (the layout of
- * pen_attr.flags and .link). The hot path reads and writes whole words, so
- * a store is never read back through a wider load. */
 struct text_pen {
     uint32_t fg;
     uint32_t bg;

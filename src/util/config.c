@@ -33,8 +33,6 @@ bool config_parse_file(const char *path, config_kv_fn fn, void *ctx)
     while (fgets(buf, sizeof(buf), f)) {
         line++;
         if (!strchr(buf, '\n') && !feof(f)) {
-            /* Skip the rest of an overlong line, the last one too. A
-             * line that just fills buf is not overlong. */
             bool overlong = false;
             int c;
             while ((c = fgetc(f)) != EOF && c != '\n')

@@ -199,7 +199,6 @@ termbench writes a pre-generated buffer, so the producer tops out at
 
 ```sh
 env -u LD_PRELOAD taskset -c 5 build/benchmarks/termbench normal ManyLine > /dev/null
-# ManyLine: 0.4383s (2.2815gb/s)
 ```
 
 Live ManyLine through wsap_term is about 1.38 gb/s, which is 60% of that.

@@ -10,8 +10,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-/* WSAP_FAST_PIPE=1 forces the pipe on and WSAP_FAST_PIPE=0 forces it
- * off. Any other value keeps the platform default. */
 static bool pipe_enabled(void)
 {
     const char *env = getenv("WSAP_FAST_PIPE");

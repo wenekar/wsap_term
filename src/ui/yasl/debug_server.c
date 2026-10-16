@@ -40,7 +40,6 @@ static struct {
     char path[sizeof(((struct sockaddr_un *)0)->sun_path)];
 } srv = { .listen_fd = -1, .listen_watch = -1 };
 
-/* Kept apart from srv: they outlive the server. */
 static struct window_debug_hooks hooks;
 
 void window_debug_set_hooks(const struct window_debug_hooks *h)
@@ -52,8 +51,6 @@ const struct window_debug_hooks *dbg_hooks(void)
 {
     return &hooks;
 }
-
-/* ---- replies ------------------------------------------------------ */
 
 static void client_flush(struct dbg_client *c)
 {
@@ -134,8 +131,6 @@ void dbg_reply_err(struct dbg_client *c, const char *msg)
     send_json(c, &j);
 }
 
-/* ---- pending frames ----------------------------------------------- */
-
 static void client_process(struct dbg_client *c);
 
 static uint64_t resume_clients(void *ud, uint64_t id, uint64_t interval_ns)
@@ -147,8 +142,6 @@ static uint64_t resume_clients(void *ud, uint64_t id, uint64_t interval_ns)
     return 0;
 }
 
-/* Buffered lines resume from the loop, never from inside the frame or
- * timer that answered: they may inject input or close windows. */
 static void pending_finish(int i)
 {
     struct dbg_client *c = srv.pending[i].client;
@@ -274,8 +267,6 @@ void window_debug_destroy(struct window *w)
     window_debug_free(w);
 }
 
-/* ---- clients ------------------------------------------------------ */
-
 static void client_close(struct dbg_client *c)
 {
     for (int i = 0; i < srv.n_pending; i++)
@@ -295,7 +286,6 @@ static void client_close(struct dbg_client *c)
     free(c);
 }
 
-/* Runs buffered lines until one leaves a reply pending. */
 static void client_process(struct dbg_client *c)
 {
     while (!c->waiting && !c->dead) {
@@ -402,8 +392,6 @@ static void listen_ready(void *ud, int fd, short revents)
     }
 }
 
-/* ---- the socket --------------------------------------------------- */
-
 static int unix_socket(bool nonblock)
 {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -420,7 +408,6 @@ static int unix_socket(bool nonblock)
     return fd;
 }
 
-/* Replaces a stale socket left by a crashed run, never another file. */
 static bool clear_stale_socket(const char *path)
 {
     struct stat st;

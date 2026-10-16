@@ -25,8 +25,6 @@ static const struct css_scale_context SCALE = {
     .dpi_scale = 1, .cell_w = 8, .cell_h = 16,
 };
 
-/* A tab bar at the top of a root, at origin, as tall as it measures. The
- * rest of the surface is empty. */
 struct fixture {
     struct ui_surface surface;
     struct ui_widget root;
@@ -35,7 +33,6 @@ struct fixture {
     struct vector2i origin;
     struct ui_action log[MAX_ACTIONS];
     int n_log;
-    /* The handler takes a UI_ACTION_TEAR_OFF. */
     bool take_tear_off;
     struct ui_tab_label labels[MAX_TABS];
     char names[MAX_TABS][16];
@@ -110,7 +107,6 @@ static void set_tabs(struct fixture *f, const struct ui_tab_label *labels,
     ui_surface_prepare(&f->surface);
 }
 
-/* Shows n tabs named "tab0", "tab1", ...; active is the active one or -1. */
 static void show(struct fixture *f, int n, int active)
 {
     assert(n <= MAX_TABS);
@@ -123,7 +119,6 @@ static void show(struct fixture *f, int n, int active)
     set_tabs(f, f->labels, n);
 }
 
-/* A bar of n tabs in a surface width wide. */
 static void setup(struct fixture *f, int n, int width)
 {
     setup_with(f, NULL, (struct vector2i){ .x = width, .y = 300 },
@@ -328,7 +323,6 @@ static int count_separators(const struct ui_scene *scene, uint32_t color)
     return n;
 }
 
-/* Tab index of a settled bar of n tabs in a surface width wide. */
 static struct rect2i settled_rect(int n, int width, int index)
 {
     struct fixture f;
@@ -338,7 +332,6 @@ static struct rect2i settled_rect(int n, int width, int index)
     return r;
 }
 
-/* Opens a tab at slot the way a host does: state, labels, animation. */
 static void open_tab(struct fixture *f, int slot, int n_after, uint64_t now_ms)
 {
     assert(ui_tabbar_insert_tab(&f->tb, slot));
@@ -499,8 +492,6 @@ static void tabbar_keyboard_navigation_test(void)
     teardown(&f);
 }
 
-/* Arrows move the keyboard marker, and Escape drops the focus. Both change
- * what the bar paints, so each key asks for the frame. */
 static void tabbar_key_requests_frame_test(void)
 {
     struct fixture f;
@@ -599,8 +590,6 @@ static void height_scales_with_dpi(void)
     css_sheet_clear(&sheet);
 }
 
-/* A new sheet or a new host background shows in the next scene, after the
- * bar has already been painted once. */
 static void restyled_bar_repaints_test(void)
 {
     struct fixture f;
@@ -625,8 +614,6 @@ static void restyled_bar_repaints_test(void)
     css_sheet_clear(&sheet);
 }
 
-/* A host background change asks the host for a frame. A bar that is
- * already settled asks for none. */
 static void bg_color_requests_frame_test(void)
 {
     struct fixture f;
@@ -644,12 +631,9 @@ static void bg_color_requests_frame_test(void)
     teardown(&f);
 }
 
-/* A sheet swap that changes the bar height relays the bar out. The bar
- * and its tabs take the new height. */
 static void sheet_swap_relayouts_bar_test(void)
 {
     struct css_sheet tall = {0}, high = {0};
-    /* A tab taller than the bar takes the bar's inner height. */
     assert(css_parse(&tall, ".tab-bar { height: 24px; } .tab { height: 100px; }"));
     assert(css_parse(&high, ".tab-bar { height: 40px; } .tab { height: 100px; }"));
     struct fixture f;
@@ -678,7 +662,6 @@ struct restyle_on_highlight {
     struct rect2i tab_after;
 };
 
-/* The host restyles the bar from inside the highlight callback. */
 static bool restyle_on_highlight(struct ui_widget *source,
                                  const struct ui_action *action,
                                  void *userdata)
@@ -694,8 +677,6 @@ static bool restyle_on_highlight(struct ui_widget *source,
     return true;
 }
 
-/* A pointer move that restyles the bar shorter, under the pointer. The
- * bar must not claim the move: the pointer is below the new bar. */
 static void host_restyle_during_motion_test(void)
 {
     struct css_sheet tall = {0}, low = {0};
@@ -843,8 +824,6 @@ static void tabbar_drag_sort_detach_attach_test(void)
     teardown(&f);
 }
 
-/* A tab dragged straight across, out of the side of the window, detaches:
- * that is the way to another window beside this one. */
 static void sideways_exit_detaches_test(void)
 {
     struct fixture f;
@@ -927,8 +906,6 @@ static void incoming_tab_has_translucent_drop_preview(void)
     teardown(&f);
 }
 
-/* Rects, debug parts, and input all use surface space, wherever the bar
- * sits. */
 static void bar_away_from_the_origin_uses_surface_space(void)
 {
     struct fixture f;
@@ -1005,10 +982,6 @@ static void tabbar_build_drag_preview_test(void)
     teardown(&f);
 }
 
-/* The cross-window drag image draws the hover card, so it takes the card's
- * colors and metrics from the same rule. A theme that restyles
- * ".tab-preview" used to get the hover card in the new style and the drag
- * image in the default one. */
 static void drag_image_card_follows_the_sheet_test(void)
 {
     struct css_sheet sheet = {0};
@@ -1028,19 +1001,17 @@ static void drag_image_card_follows_the_sheet_test(void)
     struct vector2i size, hotspot;
     assert(ui_tabbar_build_drag_scene(&f.tb, 1, &img, &scene, &size, &hotspot));
 
-    /* The card under the tab takes the sheet background, radius and
-     * padding: a 20px picture plus 2px of padding each way. */
     bool card = false, shadow = false;
     for (int i = 0; i < scene.n_ops; i++) {
         const struct ui_scene_op *op = &scene.ops[i];
         if (op->kind == UI_SCENE_OP_ROUNDED_RECT && op->radius == 3 &&
             (op->color & 0xFFFFFFu) == 0x7F849Cu) {
-            assert(op->rect.pos.y == tab.size.y + 3);   /* sheet gap */
+            assert(op->rect.pos.y == tab.size.y + 3);
             assert(op->rect.size.x == 24 && op->rect.size.y == 24);
             card = true;
         }
         if (op->kind == UI_SCENE_OP_SHADOW && op->color == 0xFF000000u &&
-            op->blur == 2)                             /* sheet blur */
+            op->blur == 2)
             shadow = true;
     }
     assert(card && shadow);
@@ -1049,8 +1020,6 @@ static void drag_image_card_follows_the_sheet_test(void)
     css_sheet_clear(&sheet);
 }
 
-/* The drag between windows starts once the tab detaches, and pictures
- * the tab from the bar: a two-tab bar must still lay the tab out then. */
 static void detaching_tab_still_has_drag_image_test(void)
 {
     struct fixture f;
@@ -1483,8 +1452,6 @@ static void fifty_tabs_frame_time_sub_half_ms(void)
     double per_frame_ms = elapsed_ns / ITERATIONS / 1e6;
     fprintf(stderr, "50 tabs open animation frame: %.4f ms/frame "
             "(%d iterations)\n", per_frame_ms, ITERATIONS);
-/* Shadow memory slows every load and store, so each sanitizer gets the
- * looser bound. A build with no sanitizer keeps the tight one. */
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_MEMORY__) || \
     defined(__SANITIZE_THREAD__)
     assert(per_frame_ms < 5.0);
@@ -1652,7 +1619,6 @@ static void release_detach_commits_and_releases_test(void)
     assert(count(&f, UI_ACTION_MOVE) == 1);
     const struct ui_action *move = last(&f, UI_ACTION_MOVE);
     assert(move->index == 1 && move->to == -1);
-    /* pos.x is where the pointer held the tab. */
     assert(move->pos.x == 5);
     assert(ui_surface_captured(&f.surface) == NULL);
     teardown(&f);
@@ -1704,8 +1670,6 @@ static void release_without_movement_cancels_and_releases_test(void)
     teardown(&f);
 }
 
-/* Regression: a handler that took the torn-off tab left the bar holding
- * the pointer, so the release still ended the bar's own drag. */
 static void taken_tear_off_ends_the_gesture_test(void)
 {
     struct fixture f;
@@ -1754,7 +1718,6 @@ static void capture_lost_cancels_the_drag_once_test(void)
     ui_surface_cancel_capture(&f.surface);
     assert(f.n_log == 1);
 
-    /* A press that never moved was never reported, so nothing cancels. */
     press(&f, at(tab_rect(&f, 2), 5, 5), 0, 1100);
     clear_log(&f);
     ui_surface_cancel_capture(&f.surface);
@@ -1762,12 +1725,6 @@ static void capture_lost_cancels_the_drag_once_test(void)
     teardown(&f);
 }
 
-/* A host may set the same labels on every prepare. That must not keep the
- * window from going idle. */
-/* A bar that grew in once holds its target at full height with the clock
- * stopped. Closing a tab without the close animation and attaching another
- * one in that slot asks begin_open to grow the bar again, and the target it
- * sets is already the one the bar holds. */
 static void reopen_after_a_close_animates_again(void)
 {
     struct fixture f;
@@ -1786,7 +1743,6 @@ static void reopen_after_a_close_animates_again(void)
     assert(ui_tabbar_insert_tab(&f.tb, 1));
     show(&f, 2, -1);
     assert(ui_tabbar_begin_open(&f.tb, 1, t));
-    /* Still growing, so it is not at its steady height yet. */
     assert(ui_tabbar_height(&f.tb) < ui_tabbar_steady_height(&f.tb));
     while (tick(&f, t))
         t += 16;
@@ -1794,9 +1750,6 @@ static void reopen_after_a_close_animates_again(void)
     teardown(&f);
 }
 
-/* The host calls set_external_drag on every pointer motion while a
- * foreign tab is over the window. A motion that moves nothing must not ask
- * for a frame, or the window can never go idle. */
 static void still_external_drag_requests_nothing(void)
 {
     struct fixture f;
@@ -1813,7 +1766,6 @@ static void still_external_drag_requests_nothing(void)
     ui_tabbar_set_external_drag(&f.tb, true, at_slot);
     assert(!ui_surface_take_frame_request(&f.surface));
 
-    /* The flag flipping does need the bar to resize. */
     ui_tabbar_set_external_drag(&f.tb, false, at_slot);
     assert(ui_surface_take_frame_request(&f.surface));
     teardown(&f);
@@ -1912,8 +1864,6 @@ static bool damage_touches(const struct ui_damage *d, struct rect2i r)
     return false;
 }
 
-/* Regression: the tab bar was one damage unit, so a new title in one tab
- * repainted the whole bar. Only the tab whose title changed is damage. */
 static void title_change_damages_only_its_tab(void)
 {
     struct fixture f;
@@ -1941,8 +1891,6 @@ static void title_change_damages_only_its_tab(void)
     teardown(&f);
 }
 
-/* The bar copies its labels. More tabs than it held before, fewer, and
- * none must all paint from its own copy. */
 static void labels_grow_and_shrink(void)
 {
     struct fixture f;
@@ -1964,7 +1912,6 @@ static void labels_grow_and_shrink(void)
     memset(scratch, 'x', sizeof(scratch) - 1);
     assert(find_text(build(&f), "borrowed"));
 
-    /* A tab without a title shows a placeholder. */
     set_tabs(&f, NULL, 2);
     assert(find_text(build(&f), "shell"));
 

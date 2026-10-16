@@ -36,9 +36,6 @@
 #define GPU_IMAGE_CACHE 4
 #define GPU_UPLOAD_ALIGN 16
 
-/* The ASCII atlas holds '!' through '~' in each bold and italic style.
- * Its lookup table covers all of 0..127 in each style, so the index is
- * cp | style << 7 and one compare checks the range. */
 #define ASCII_FIRST '!'
 #define ASCII_GLYPHS ('~' - '!' + 1)
 #define ASCII_STYLE_MASK FONT_STYLE_VARIANT_MASK
@@ -50,18 +47,15 @@ _Static_assert(GPU_GLYPH_SLOTS <= UINT16_MAX,
 _Static_assert(ASCII_STYLE_MASK == 3,
                "the ASCII atlas indexes its styles by the low style bits");
 
-/* The glyph pipeline modes. The shader reads the same values. */
 enum glyph_mode {
     GLYPH_SOLID = 0,
-    GLYPH_MONO = 1,  /* coverage in the alpha of the main atlas */
-    GLYPH_COLOR = 2, /* color pixels in the main atlas */
+    GLYPH_MONO = 1,
+    GLYPH_COLOR = 2,
     GLYPH_IMAGE = 3,
-    GLYPH_ASCII = 4, /* coverage in the red byte of the ASCII atlas */
-    GLYPH_SUBPIXEL = 5, /* RGB coverage in the main atlas */
+    GLYPH_ASCII = 4,
+    GLYPH_SUBPIXEL = 5,
 };
 
-/* The pixels of a glyph: a cell of an atlas texture. mode tells the
- * texture: GLYPH_ASCII is the ASCII atlas, the other modes the main one. */
 struct atlas_glyph {
     uint16_t cell;
     uint16_t width;
@@ -69,9 +63,6 @@ struct atlas_glyph {
     uint8_t mode;
 };
 
-/* A glyph in the atlas. It is valid while its generation matches the
- * atlas reset count. A valid slot owns its cell, so the cell holds its
- * pixels. */
 struct gpu_glyph_slot {
     uint64_t key;
     uint32_t generation;
@@ -82,22 +73,12 @@ struct gpu_glyph_slot {
 _Static_assert(sizeof(struct gpu_glyph_slot) == 24,
                "gpu_glyph_slot must stay 24 bytes");
 
-/* Cells with new pixels. The next submit copies them to the texture. */
 struct atlas_uploads {
     uint16_t *cells;
     uint8_t *pixels;
     uint32_t count, cap;
 };
 
-/* Printable ASCII in one byte per pixel. Each glyph has a fixed cell,
- * so a lookup is an index and no glyph is evicted. A cell gets its
- * pixels at the first lookup after a reset. Metal orders the write
- * after the GPU reads of earlier frames.
- *
- * The mode of an entry is its state. GLYPH_SOLID (zero) means no
- * lookup since the reset. GLYPH_ASCII means the texture holds the
- * glyph. GLYPH_MONO means the main atlas draws it: the glyph has
- * color or no ink, or it is a control character or a space. */
 struct ascii_atlas {
     id<MTLTexture> texture;
     struct atlas_glyph glyphs[ASCII_TABLE];
@@ -105,13 +86,6 @@ struct ascii_atlas {
     int cols;
 };
 
-/* The atlas is a grid of equal cells. Each cell records the frame that
- * last drew it. Every frame draws all cached terminal rows, so a cell
- * that missed this frame and the last one has no draw that points to
- * it. Only such a cell is reused. Metal orders the reuse after the GPU
- * reads of earlier frames. New pixels wait in a CPU list until the
- * next submit copies them to the GPU. Plain ASCII skips this grid and
- * uses the ASCII atlas, which has the same cell size. */
 struct glyph_atlas {
     id<MTLTexture> texture;
     struct gpu_glyph_slot slots[GPU_GLYPH_SLOTS];
@@ -130,8 +104,6 @@ struct glyph_atlas {
 typedef const struct glyph *(*glyph_fetch_fn)(struct font_instance *fi, uint32_t cp,
                                             uint16_t flags);
 
-/* A cached terminal glyph. tex is the texel origin of its atlas cell,
- * so a frame draws it without a division. */
 struct gpu_draw {
     struct atlas_glyph glyph;
     uint16_t tex_x, tex_y;
@@ -152,12 +124,11 @@ struct gpu_bg_span {
     uint32_t bg;
 };
 
-/* uv is in texels for the atlas modes and normalized for images. */
 struct metal_glyph_vertex {
     simd_float4 rect;
     simd_float4 uv;
     simd_float4 color;
-    uint32_t mode; /* enum glyph_mode */
+    uint32_t mode;
 };
 
 struct metal_shape_vertex {
@@ -177,8 +148,6 @@ enum metal_cmd_type {
     CMD_SHAPES = 1,
 };
 
-/* A glyph command binds texture at index 0 and ascii at index 1. A nil
- * texture binds a placeholder, which only solid quads may use. */
 struct metal_cmd {
     enum metal_cmd_type type;
     struct rect2i scissor;
@@ -266,7 +235,6 @@ struct metal_render {
     struct rect2i *clip_stack;
     int clip_stack_cap;
 
-    /* The CPU frame, for frames the GPU path did not draw. */
     id<MTLTexture> pixels_tex;
     const uint32_t *pixels_src;
     struct vector2i pixels_size;
@@ -309,8 +277,6 @@ static bool ensure_shape_verts(struct metal_render *r, uint32_t extra)
     return true;
 }
 
-/* A nil texture matches any texture, so solid quads, main atlas glyphs,
- * and ASCII glyphs share one draw. */
 static struct metal_cmd *add_cmd(struct metal_render *r, enum metal_cmd_type type,
                                  struct rect2i scissor, id<MTLTexture> texture,
                                  id<MTLTexture> ascii)
@@ -344,8 +310,6 @@ static struct metal_cmd *add_cmd(struct metal_render *r, enum metal_cmd_type typ
     return cmd;
 }
 
-/* Appends a glyph vertex. The caller made room, and the last command
- * binds the texture that mode samples. */
 static inline void emit_glyph_quad(struct metal_render *r,
                                    float x0, float y0, float x1, float y1,
                                    float u0, float v0, float u1, float v1,
@@ -359,7 +323,6 @@ static inline void emit_glyph_quad(struct metal_render *r,
     };
 }
 
-/* tex is the texture that mode samples. */
 static void batch_glyph_quad(struct metal_render *r, struct rect2i scissor,
                              float x0, float y0, float x1, float y1,
                              float u0, float v0, float u1, float v1,
@@ -389,8 +352,6 @@ static void batch_shape_quad(struct metal_render *r, struct rect2i scissor,
     cmd->count++;
 }
 
-/* --- Glyph atlas --- */
-
 static int pick_atlas_size(struct vector2i cell, size_t cell_count)
 {
     if (cell.x <= 0 || cell.y <= 0)
@@ -411,7 +372,6 @@ static inline size_t upload_align(size_t bytes)
     return (bytes + GPU_UPLOAD_ALIGN - 1) & ~(size_t)(GPU_UPLOAD_ALIGN - 1);
 }
 
-/* Returns the pixels to fill for cell. Every cell of u has cell_bytes. */
 static void *uploads_add(struct atlas_uploads *u, int cell, size_t cell_bytes)
 {
     if (u->count == u->cap) {
@@ -448,8 +408,6 @@ static void ascii_release(struct ascii_atlas *s)
     *s = (struct ascii_atlas){0};
 }
 
-/* Makes the ASCII texture for cell. Without a texture, the main atlas
- * draws ASCII too. */
 static void ascii_layout(struct ascii_atlas *s, id<MTLDevice> device, struct vector2i cell)
 {
     ascii_release(s);
@@ -472,7 +430,6 @@ static void ascii_layout(struct ascii_atlas *s, id<MTLDevice> device, struct vec
     s->cols = cols;
 }
 
-/* Empties the atlas and the ASCII atlas. */
 static void atlas_reset(struct glyph_atlas *a)
 {
     if (++a->reset_count == 0) {
@@ -503,8 +460,6 @@ static void atlas_release(struct glyph_atlas *a)
     a->capacity = 0;
 }
 
-/* Sets the cell grid and the texture size. A new layout starts empty.
- * The ASCII texture changes only with the cell size. */
 static bool atlas_layout(struct glyph_atlas *a, id<MTLDevice> device,
                          struct vector2i cell, int size)
 {
@@ -556,7 +511,6 @@ static inline struct rect2i grid_rect(int cols, struct vector2i cell_size, int c
     };
 }
 
-/* The texels of g in its atlas texture. */
 static inline struct rect2i atlas_rect(const struct glyph_atlas *a, const struct atlas_glyph *g)
 {
     int cols = g->mode == GLYPH_ASCII ? a->ascii.cols : a->cols;
@@ -568,8 +522,6 @@ static inline void atlas_mark(struct glyph_atlas *a, int cell)
     a->cell_used[cell] = a->frame;
 }
 
-/* Returns the probed slot from base whose cell was drawn least
- * recently. Only a miss with every probed slot in use needs it. */
 __attribute__((cold, noinline))
 static struct gpu_glyph_slot *atlas_victim(struct glyph_atlas *a, unsigned base)
 {
@@ -582,9 +534,6 @@ static struct gpu_glyph_slot *atlas_victim(struct glyph_atlas *a, unsigned base)
     return victim;
 }
 
-/* Returns the slot that holds key in style, or NULL. On a miss, *fill
- * is the slot to fill: an empty one, or else the victim. A hit reads
- * only the slots. */
 static inline struct gpu_glyph_slot *atlas_lookup(struct glyph_atlas *a, uint64_t key,
                                                   uint16_t style,
                                                   struct gpu_glyph_slot **fill)
@@ -604,8 +553,6 @@ static inline struct gpu_glyph_slot *atlas_lookup(struct glyph_atlas *a, uint64_
     return NULL;
 }
 
-/* Returns a free cell. Past the first fill, the clock hand finds a cell
- * that no draw from this frame or the last one uses. */
 static int atlas_take_cell(struct glyph_atlas *a)
 {
     if (a->alloc < a->capacity)
@@ -672,8 +619,6 @@ static void pack_alpha(uint32_t *dst, const uint8_t *alpha, int width)
         dst[x] = ((uint32_t)alpha[x] << 24) | 0x00ffffffu;
 }
 
-/* Puts glyph in slot under key. NULL means the glyph has no pixels, or
- * the atlas has no free cell. */
 __attribute__((cold, noinline))
 static const struct atlas_glyph *atlas_insert(struct glyph_atlas *a, struct gpu_glyph_slot *slot,
                                               uint64_t key, uint16_t style,
@@ -749,8 +694,6 @@ static inline const struct atlas_glyph *atlas_hit_slot(struct glyph_atlas *a,
     return &slot->glyph;
 }
 
-/* Returns the atlas glyph for glyph, and adds the glyph when it is new.
- * NULL means the glyph has no pixels, or the atlas has no free cell. */
 static inline const struct atlas_glyph *atlas_fetch_glyph(struct glyph_atlas *a, uint64_t key,
                                                           uint16_t style,
                                                           const struct glyph *glyph, int rows)
@@ -760,8 +703,6 @@ static inline const struct atlas_glyph *atlas_fetch_glyph(struct glyph_atlas *a,
     return slot ? atlas_hit_slot(a, slot) : atlas_insert(a, fill, key, style, glyph, rows);
 }
 
-/* Fills the ASCII entry of cp in style at its first lookup. NULL means
- * the main atlas draws the glyph. */
 __attribute__((cold, noinline))
 static const struct atlas_glyph *ascii_fill(struct glyph_atlas *a, uint32_t cp, uint16_t style,
                                             glyph_fetch_fn get, struct font_instance *font,
@@ -798,9 +739,6 @@ static const struct atlas_glyph *ascii_fill(struct glyph_atlas *a, uint32_t cp, 
     return entry;
 }
 
-/* Returns the ASCII atlas glyph for cp in style. NULL means the main
- * atlas draws it. A hit is one compare and one load; only the first
- * lookup of an entry calls get. */
 static inline const struct atlas_glyph *ascii_ensure(struct glyph_atlas *a, uint32_t cp,
                                                      uint16_t style, glyph_fetch_fn get,
                                                      struct font_instance *font, int rows)
@@ -813,8 +751,6 @@ static inline const struct atlas_glyph *ascii_ensure(struct glyph_atlas *a, uint
     return g->mode == GLYPH_SOLID ? ascii_fill(a, cp, style, get, font, rows) : NULL;
 }
 
-/* Returns the glyph of one code point: from the ASCII atlas, or else
- * from the main atlas under key. Only a miss calls get. */
 static inline const struct atlas_glyph *atlas_fetch_cp(struct glyph_atlas *a, uint64_t key,
                                                        uint32_t cp, uint16_t style,
                                                        glyph_fetch_fn get,
@@ -834,8 +770,6 @@ static size_t uploads_bytes(const struct atlas_uploads *u, struct vector2i cell,
     return upload_align((size_t)u->count * (size_t)cell.x * (size_t)cell.y * bpp);
 }
 
-/* Copies the staged cells into staging at offset and records one blit
- * per cell. Returns the aligned end offset. */
 static size_t uploads_encode(struct atlas_uploads *u, id<MTLTexture> texture, int cols,
                              struct vector2i cell, size_t bpp,
                              id<MTLBlitCommandEncoder> blit, id<MTLBuffer> staging,
@@ -886,7 +820,6 @@ static void atlas_uploads_done(struct glyph_atlas *a)
     a->ascii.uploads.count = 0;
 }
 
-/* Adds the quad of glyph g with its top left cell corner at pos. */
 static void batch_atlas_glyph(struct metal_render *r, struct glyph_atlas *a,
                               struct rect2i scissor, struct vector2i pos,
                               const struct atlas_glyph *g, uint32_t fg, float alpha)
@@ -903,8 +836,6 @@ static void batch_atlas_glyph(struct metal_render *r, struct glyph_atlas *a,
                      (float)src.x, (float)src.y, (float)end.x, (float)end.y, color,
                      (enum glyph_mode)g->mode, ascii ? a->ascii.texture : a->texture);
 }
-
-/* --- Frame building --- */
 
 static void discard_pending(struct metal_render *r)
 {
@@ -935,8 +866,6 @@ void metal_render_clear(struct metal_render *r, uint32_t color)
 
 #define GPU_CELL_QUADS_MAX 6
 
-/* Appends the quads of one cached cell to the terminal command. The
- * caller made room for GPU_CELL_QUADS_MAX quads. */
 static inline void emit_cell(struct metal_render *r, struct glyph_atlas *a,
                              const struct gpu_draw *d, int cw, int ch, int origin_y)
 {
@@ -944,8 +873,6 @@ static inline void emit_cell(struct metal_render *r, struct glyph_atlas *a,
     float alpha = (attrs & WSAP_VTCORE_ATTR_FAINT) ? 0.5f : 1.0f;
 
     if (d->glyph.width) {
-        /* The store goes to a dummy for ASCII, so mixed text does not
-         * branch here. */
         uint32_t sink, *used = d->glyph.mode == GLYPH_ASCII ? &sink
                                                              : a->cell_used + d->glyph.cell;
         *used = a->frame;
@@ -1001,13 +928,9 @@ struct row_scan {
     const struct wsap_vtcore_cell *cells;
     struct gpu_draw *draws;
     int row, sel0, sel1, cursor, glyph_rows, draw_count;
-    /* While a segment shapes: its first column, and the first column
-     * not scanned yet. */
     int base, next;
 };
 
-/* Writes the draw of one cell from its own glyph. False when the cell
- * draws nothing. */
 static inline __attribute__((always_inline)) bool scan_cell(struct glyph_atlas *a, const struct terminal_frame *frame,
                              const struct render_backend_view *view,
                              const struct wsap_vtcore_cell *cells, int col, int row,
@@ -1207,15 +1130,10 @@ enum render_backend_result metal_render_terminal(
     int atlas_size = pick_atlas_size(cell, (size_t)cols * rows);
     if (vector2i_eq(a->cell_size, cell) && a->size > atlas_size)
         atlas_size = a->size;
-    /* Every reset changes the reset count. Cached draws hold atlas cells
-     * and texel origins, so a reset rescans every row. */
     uint32_t resets_before = a->reset_count;
-    /* Another output can reuse glyph atlas cells between these frames. */
     bool full = r->output->atlas_frame != a->frame;
     if (!atlas_layout(a, r->device, cell, atlas_size))
         return RENDER_BACKEND_FAILED;
-    /* The terminal atlas counts terminal frames, not submits: each one
-     * draws every cached row, which is what the reuse rule needs. */
     if (++a->frame == 0) {
         a->frame = 1;
         atlas_reset(a);
@@ -1258,9 +1176,6 @@ enum render_backend_result metal_render_terminal(
             if (a->overflow) break;
         }
         if (!a->overflow) break;
-        /* The screen needs more cells than the reuse rule gives. A
-         * larger atlas, or an empty one with every row rescanned, has
-         * no old draws to protect. */
         if (a->size < GPU_ATLAS_MAX_SIZE) {
             if (!atlas_layout(a, r->device, cell, a->size * 2))
                 return RENDER_BACKEND_FAILED;
@@ -1281,8 +1196,6 @@ enum render_backend_result metal_render_terminal(
 
     metal_render_clear(r, default_bg);
 
-    /* One command binds both atlases for the whole terminal, so the
-     * quads go straight into the vertex array. */
     struct metal_cmd *cmd = add_cmd(r, CMD_GLYPHS, full_scissor, a->texture, a->ascii.texture);
     if (!cmd)
         return RENDER_BACKEND_FAILED;
@@ -1362,8 +1275,6 @@ static void stage_scene_glyphs(struct glyph_atlas *a, const struct ui_scene *sce
     }
 }
 
-/* Puts every glyph of the scene in the UI atlas before any quad uses
- * it, so a retry never leaves a quad on a replaced texture. */
 static bool prepare_ui_atlas(struct metal_render *r, const struct ui_scene *scene,
                              struct font_instance *font)
 {
@@ -1548,8 +1459,6 @@ bool metal_render_pixels(struct metal_render *r, const uint32_t *pixels,
     return !r->failed;
 }
 
-/* --- Submission --- */
-
 static bool ensure_buffer(id<MTLDevice> device, id<MTLBuffer> *buffer, size_t bytes)
 {
     if (*buffer && (*buffer).length >= bytes)
@@ -1682,8 +1591,6 @@ bool metal_render_submit(struct metal_render *r, mtl_drawable_t drawable,
         [cmd presentDrawable:drawable];
     [cmd commit];
     if (drawable && transaction) {
-        /* The layer shows this frame in the current Core Animation
-         * transaction, together with the new window size. */
         [cmd waitUntilScheduled];
         [drawable present];
     }
@@ -1700,8 +1607,6 @@ bool metal_render_submit(struct metal_render *r, mtl_drawable_t drawable,
     discard_pending(r);
     return ok;
 }
-
-/* --- Lifetime --- */
 
 static id<MTLRenderPipelineState> make_pipeline(id<MTLDevice> device, id<MTLLibrary> lib,
                                                 NSString *vertex_name, NSString *fragment_name)
@@ -1845,7 +1750,6 @@ enum render_backend_result render_gpu_terminal(struct framebuffer_gpu *g,
         g->presented = true;
         return RENDER_BACKEND_DREW;
     }
-    /* SKIP makes the CPU paint the terminal; the UI follows it there. */
     g->disabled = true;
     g->presented = false;
     return RENDER_BACKEND_SKIP;

@@ -15,7 +15,6 @@
 #define RUN_CACHE_SETS_BITS 11
 #define RUN_CACHE_WAYS   4
 #define RUN_CACHE_SIZE   ((1 << RUN_CACHE_SETS_BITS) * RUN_CACHE_WAYS)
-/* The longest window the run cache keeps. */
 #define RUN_CACHE_MAX    FONT_RUN_MAX
 #define TILE_CACHE_BITS  11
 #define TILE_CACHE_SIZE  (1 << TILE_CACHE_BITS)
@@ -37,8 +36,6 @@ static inline uint16_t glyph_style(uint16_t style)
                     FONT_STYLE_TEXT | FONT_STYLE_WIDE);
 }
 
-/* Freelist buffer management. key is the glyph_key() of a cache slot
- * buffer. Other buffers do not use it. */
 struct bufhead {
     alignas(max_align_t) struct bufhead *next;
     uint32_t cap;
@@ -53,10 +50,6 @@ void *buf_new(uint8_t kind, uint32_t cap, size_t size);
 void buf_retire(void *p);
 void buf_retire_run(void *p);
 
-/* A cache slot holds one glyph or tile buffer, or NULL. The buffer header
- * holds the key. A fill publishes a buffer with one release store, and no
- * thread writes a published buffer in parallel mode. So one acquire load
- * gives a reader the whole entry, and a reader never sees a torn entry. */
 struct cache_slot {
     _Atomic(void *) payload;
 };
@@ -69,9 +62,6 @@ static inline void *cache_slot_lookup(struct cache_slot *slot, uint32_t key)
     return NULL;
 }
 
-/* produce fills a buffer for cp and flags. It rewrites old in place when old
- * is not NULL, and allocates when it is NULL. NULL from produce means the
- * entry cannot be cached, and slow gives the result instead. */
 struct slot_fill_ops {
     void *(*produce)(uint32_t cp, uint16_t flags, void *old, void *ctx);
     void *(*slow)(uint32_t cp, uint16_t flags, void *ctx);
@@ -81,8 +71,6 @@ struct slot_fill_ops {
 void *cache_slot_fill(struct cache_slot *slot, uint32_t key, uint32_t cp, uint16_t flags,
                       const struct slot_fill_ops *ops);
 
-/* Run cache structures */
-/* One shaped window. cells and tiles hold the core_len cells of the core. */
 struct run_data {
     uint64_t hash;
     struct glyph *cells;
@@ -101,7 +89,6 @@ struct run_slot {
     _Atomic uint64_t stamp;
 };
 
-/* The font instance embedding metrics and caches inline */
 struct font_instance {
     struct font_metrics m;
     int size_pt;
@@ -120,8 +107,6 @@ struct font_instance {
     _Atomic(struct cache_slot *) cjk;
     uint32_t *ascii_tiles[128];
     struct run_slot runs[RUN_CACHE_SIZE];
-    /* The layout of each variant, built on first use. enum font_variant
-     * is the index. */
     _Atomic(struct font_layout *) layouts[FONT_VARIANT_COUNT];
     struct cache_slot tiles[TILE_CACHE_SIZE];
     _Atomic uint64_t run_stamp;
@@ -132,7 +117,6 @@ static inline size_t tile_pixels(const struct font_instance *fi)
     return (size_t)fi->m.cell_w * (size_t)fi->m.cell_h;
 }
 
-/* Tile operations (tile.c) */
 void build_default_lut(void);
 void glyph_tile_set_colors(uint32_t fg, uint32_t bg);
 uint32_t glyph_tile_fg(void);
@@ -144,11 +128,9 @@ bool fill_run_tiles(const struct font_instance *fi, uint32_t *tiles,
 void prime_ascii_tile(struct font_instance *fi, uint32_t c, const struct glyph *g);
 void tile_worker_cleanup(void);
 
-/* Run operations (run.c) */
 void run_worker_cleanup(void);
 void instance_drop_layouts(struct font_instance *fi);
 
-/* Single glyph operations (cache.c) */
 void release_glyphs(struct glyph *gs, int n);
 const struct glyph *glyph_scratch_fill(const struct font_instance *fi, uint32_t cp, uint16_t style);
 

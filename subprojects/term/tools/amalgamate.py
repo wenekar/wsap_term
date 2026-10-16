@@ -1,16 +1,5 @@
 #!/usr/bin/env python3
-"""Write the wsap_vtcore core as one wsap_vtcore.c and one wsap_vtcore.h.
-
-wsap_vtcore.h joins the public headers. wsap_vtcore.c joins every source
-file and puts each private header in at its first include. A host compiles
-wsap_vtcore.c once, with any C11 compiler, and links libm and the thread
-library.
-
-    amalgamate.py WSAP_VTCORE_DIR OUT_DIR [DEPFILE]
-
-WSAP_VTCORE_DIR is the directory with src/ and include/. DEPFILE lists every file
-read, for the build system.
-"""
+"""Usage: amalgamate.py WSAP_VTCORE_DIR OUT_DIR [DEPFILE]"""
 
 import re
 import sys
@@ -19,11 +8,9 @@ from pathlib import Path
 INCLUDE = re.compile(r'^\s*#\s*include\s+"([^"]+)"')
 PUBLIC = ("wsap_vtcore_types.h", "wsap_vtcore_input.h", "wsap_vtcore.h")
 
-
 class Joiner:
     def __init__(self, root: Path):
         self.root = root
-        # The sources find the public headers without the wsap_vtcore/ prefix.
         self.search = (root / "src", root / "include" / "wsap_vtcore")
         self.seen: set[Path] = set()
 
@@ -35,11 +22,7 @@ class Joiner:
         raise SystemExit(f"{base}: cannot find {name}")
 
     def emit(self, path: Path, out: list[str]) -> None:
-        """Copy path to out. Replace each local include with the file,
-        the first time only."""
         self.seen.add(path)
-        rel = path.relative_to(self.root)
-        out.append(f"/* ---- {rel} ---- */\n")
         for line in path.read_text().splitlines(keepends=True):
             m = INCLUDE.match(line)
             if not m:
@@ -48,13 +31,10 @@ class Joiner:
             dep = self.resolve(m.group(1), path.parent)
             if dep not in self.seen:
                 self.emit(dep, out)
-        out.append(f"/* ---- end {rel} ---- */\n")
-
 
 def sources(src: Path) -> list[Path]:
     files = sorted(src.glob("*.c")) + sorted((src / "osc").glob("*.c"))
     return [f.resolve() for f in files]
-
 
 def main() -> int:
     if len(sys.argv) not in (3, 4):
@@ -73,13 +53,10 @@ def main() -> int:
 
     body = Joiner(root)
     text = [banner,
-            "/* The private headers have helpers that only some platforms or\n"
-            " * callers outside the core use. Clang warns about them here. */\n"
             "#if defined(__clang__)\n"
             '#pragma clang diagnostic ignored "-Wunused-function"\n'
             "#endif\n",
             '#include "wsap_vtcore.h"\n']
-    # The public headers are in wsap_vtcore.h, so the sources skip them.
     body.seen.update((public / name).resolve() for name in PUBLIC)
     for src in sources(root / "src"):
         body.emit(src, text)
@@ -89,7 +66,6 @@ def main() -> int:
         deps = " ".join(str(p).replace(" ", "\\ ") for p in read)
         Path(sys.argv[3]).write_text(f"{out_dir / 'wsap_vtcore.c'}: {deps}\n")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -15,7 +15,6 @@ static const char *op_title(struct window *w)
     return s ? session_title(s) : NULL;
 }
 
-/* Shows the active tab's title on the window. */
 static void update_title(struct window *w)
 {
     window_set_title(w, op_title(w));
@@ -71,7 +70,6 @@ static void tab_bell(void *ud)
         return;
     struct window *w = t->window;
     struct terminal *tw = terminal_of(w);
-    /* The view's tick ends the flash: its deadline wakes the next frame. */
     if (tw && tw->config->visual_bell) {
         tw->view.visual_bell_until_ms = yasl_time_ns() / 1000000 + 100;
         window_redraw(w);
@@ -116,7 +114,6 @@ static struct vector2i terminal_size(const struct window *w)
     return window_surface(w) ? window_size(w) : window_default_size(window_host(w)->config);
 }
 
-/* The grid a tab's font fits in the window, under the tab bar. */
 static struct vector2i session_grid(const struct window *w, const struct tab *t,
                                     struct vector2i px)
 {
@@ -133,8 +130,6 @@ static struct vector2i session_grid(const struct window *w, const struct tab *t,
     return vector2i_max(grid, vector2i_splat(1));
 }
 
-/* Gives t its size at w's scale. False when the font cannot be had; t
- * keeps the font it has. */
 static bool tab_fit_font(struct tab *t, const struct window *w, int size_pt)
 {
     uint32_t scale = window_scale_120(w);
@@ -159,7 +154,6 @@ static void refresh_layout(struct window *w)
     window_redraw(w);
 }
 
-/* The scrollbar shows the active tab; another tab starts with it hidden. */
 static void deactivate_scrollbar(struct window *w)
 {
     ui_scrollview_hide(&terminal_of(w)->scrollview);
@@ -272,7 +266,6 @@ static bool new_tab_in(struct window *w, const char *cwd)
     const struct terminal_config *config = tw->config;
     struct vector2i size = terminal_size(w);
     struct tab *cur = terminal_active_tab(w);
-    /* A new tab starts at the size of the tab it opens next to. */
     int font_size = cur ? cur->font_size : window_host(w)->config->font_size;
     struct tab probe = { .font_size = font_size };
     tab_fit_font(&probe, w, font_size);
@@ -461,7 +454,6 @@ struct window *terminal_new_window(struct window *from)
         : NULL;
 }
 
-/* Zoom is per tab: only the active tab changes size. */
 void terminal_adjust_font_size(struct window *w, int delta_pt)
 {
     struct tab *t = terminal_active_tab(w);
@@ -473,14 +465,11 @@ void terminal_adjust_font_size(struct window *w, int delta_pt)
     window_redraw(w);
 }
 
-/* ---- content ops -------------------------------------------------- */
-
 static void op_resize(struct window *w, struct vector2i size)
 {
     terminal_resize_sessions(w, size);
 }
 
-/* The blink resumes from the next frame's deadline. */
 static void op_suspended(struct window *w, bool suspended)
 {
     (void)suspended;
@@ -494,7 +483,6 @@ static bool same_text(const char *a, const char *b)
     return strcmp(a, b) == 0;
 }
 
-/* The scale or config changed. Re-reads what the terminal depends on. */
 static void op_restyle(struct window *w)
 {
     struct terminal *tw = terminal_of(w);
@@ -518,7 +506,6 @@ static void op_restyle(struct window *w)
             wsap_vtcore_set_cursor_default(t->session.term, cfg->cursor_style, !cfg->cursor_blink);
     }
     if (family_changed) {
-        /* On a failed copy the old name stays, so the next change tries again. */
         char *family = wcfg->font_family ? strdup(wcfg->font_family) : NULL;
         if (family || !wcfg->font_family) {
             free(tw->applied_font_family);
@@ -532,7 +519,6 @@ static void op_restyle(struct window *w)
         terminal_resize_sessions(w, window_size(w));
     if (font_changed)
         window_repaint_all(w);
-    /* A blink setting change takes effect from the next frame's deadline. */
     window_redraw(w);
 }
 
@@ -629,8 +615,6 @@ static struct terminal *terminal_new(struct window_host *host,
     return tw;
 }
 
-/* Mounts a terminal on w, which has no UI yet. The caller closes w on
- * failure; a mounted terminal is freed with w. */
 bool terminal_mount(struct window *w, const struct terminal_spec *spec)
 {
     if (spec->tab && spec->tab->window)
@@ -655,9 +639,7 @@ bool terminal_mount(struct window *w, const struct terminal_spec *spec)
     }
     terminal_root_attach(w);
     terminal_palette_init(w);
-    /* With nothing focused, keys and text go to the grid. */
     ui_surface_set_default_focus(window_ui_surface(w), &tw->view.widget);
-    /* Adopting the tab is the last step that can fail. */
     if (spec->tab) {
         if (terminal_add_tab(w, spec->tab, -1) < 0)
             return false;

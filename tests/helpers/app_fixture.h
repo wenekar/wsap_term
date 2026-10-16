@@ -6,9 +6,6 @@
 
 #include "app/app.h"
 
-/* A real app over the built-in defaults, as main() would build it. The
- * app loads its own settings, so the fixture passes them as arguments.
- * --config NONE keeps the developer's config file out of the tests. */
 struct test_app {
     struct app *app;
 };

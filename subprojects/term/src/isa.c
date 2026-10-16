@@ -1,8 +1,3 @@
-/*
- * The instruction set level. See simd.h. The level is picked once, before
- * the first terminal exists, so every call in a process uses the same
- * kernels.
- */
 #include "wsap_vtcore.h"
 #include "simd.h"
 
@@ -16,8 +11,6 @@ static atomic_int isa_state;
 static const char *const level_names[] = { "base", "avx2", "avx512" };
 
 #if defined(WSAP_VTCORE_ISA_RUNTIME)
-/* The AVX-512 kernels also need VBMI and VBMI2. Every CPU with VBMI except
- * Cannon Lake has VBMI2. */
 static int cpu_level(void)
 {
     __builtin_cpu_init();
@@ -38,8 +31,6 @@ static int cpu_level(void)
 static int pick_level(void)
 {
     int level = cpu_level();
-    /* WSAP_VTCORE_ISA can only lower the level, never below the floor the
-     * compiler flags fix. */
     const char *want = getenv("WSAP_VTCORE_ISA");
     for (int i = WSAP_VTCORE_ISA_FLOOR; want && i < level; i++)
         if (!strcmp(want, level_names[i]))
@@ -47,7 +38,6 @@ static int pick_level(void)
     return level;
 }
 
-/* The first caller picks the level. A second caller waits until it is set. */
 void wsap_vtcore_isa_init(void)
 {
     if (atomic_load_explicit(&isa_state, memory_order_acquire) == 2)

@@ -35,14 +35,9 @@ bool mkdir_parents(const char *path)
     if (n < 0 || n >= (int)sizeof(dir))
         return false;
     char *slash = strrchr(dir, '/');
-    /* No slash means the parent is the current directory, which needs no
-     * mkdir. Return true so the caller can write the file. */
     if (!slash)
         return true;
     *slash = 0;
-    /* A path directly under the root leaves dir empty. The parent is "/",
-     * which exists. Returning here also keeps the walk below on a non-empty
-     * string. */
     if (!dir[0])
         return true;
     for (char *p = dir + 1; *p; p++) {

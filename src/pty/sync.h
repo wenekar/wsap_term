@@ -1,15 +1,6 @@
 #ifndef PTY_SYNC_H
 #define PTY_SYNC_H
 
-/* Transport-switch barrier shared by the ring worker and the preload
- * shim. Header-only so libfastpty can use it without linking pty code.
- *
- * Before a child moves its output from one transport to the other, it
- * connects to the terminal's sync socket and sends one request byte that
- * names the transport it leaves. The worker drains that transport into
- * the ring and echoes the byte back. Everything the child wrote before
- * the request is then ahead of everything it writes after the switch. */
-
 #include <fcntl.h>
 #include <stddef.h>
 #include <string.h>
@@ -26,9 +17,6 @@
 #define PTY_SYNC_SEND_FLAGS 0
 #endif
 
-/* Fill an address for `name`. Returns the address length, or 0 when
- * the name does not fit. Abstract namespace on Linux, filesystem path
- * on other systems. */
 static inline socklen_t pty_sync_addr(struct sockaddr_un *addr,
                                       const char *name)
 {
@@ -46,7 +34,6 @@ static inline socklen_t pty_sync_addr(struct sockaddr_un *addr,
 #endif
 }
 
-/* Open a close-on-exec socket of the barrier's type. */
 static inline int pty_sync_socket(void)
 {
 #if defined(__linux__)

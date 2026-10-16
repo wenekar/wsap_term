@@ -1,7 +1,3 @@
-# wsap_term terminfo description
-# Supports 24-bit direct truecolor, styled/colored underlines, kitty keyboard,
-# bracketed paste, synchronized output, OSC 52 clipboard, OSC 8 hyperlinks,
-# and extended SGR attributes.
 
 wsap_term|wsap_term-256color|wsap_term terminal emulator,
 	am, bce, hs, km, mc5i, mir, msgr, npc, xenl, AX, RGB, Tc, Su, XT,

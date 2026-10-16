@@ -1,12 +1,6 @@
 #ifndef WSAP_TEST_TERM_API_H
 #define WSAP_TEST_TERM_API_H
 
-/*
- * Short forms of the public terminal API for tests. Cell reads go through
- * a snapshot, the same way a renderer reads, so tests check only what the
- * terminal shows.
- */
-
 #include "wsap_vtcore/wsap_vtcore.h"
 
 #include <stdbool.h>
@@ -14,7 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The history size the tests assume. */
 #define TEST_SCROLLBACK 4096
 
 static inline struct wsap_vtcore *tt_new_opts(int cols, int rows, const struct wsap_vtcore_callbacks *cb)
@@ -50,8 +43,6 @@ static inline int tt_cursor_y(const struct wsap_vtcore *t) { return wsap_vtcore_
 static inline int tt_history(const struct wsap_vtcore *t) { return wsap_vtcore_scrollback(t).total; }
 static inline int tt_view_offset(const struct wsap_vtcore *t) { return wsap_vtcore_scrollback(t).offset; }
 
-/* One snapshot serves every read. It follows whichever terminal a test
- * reads last. */
 static struct wsap_vtcore_snapshot *tt_snapshot_for(struct wsap_vtcore *t)
 {
     static struct wsap_vtcore_snapshot *snap;
@@ -65,7 +56,6 @@ static const struct wsap_vtcore_cell tt_blank_cell = {
     .text = ' ', .fg = WSAP_VTCORE_COLOR_FG, .bg = WSAP_VTCORE_COLOR_BG, .width = 1,
 };
 
-/* A cell of the viewport. Out-of-range columns read as a blank cell. */
 static inline const struct wsap_vtcore_cell *tt_view_cell(struct wsap_vtcore *t, int col, int row)
 {
     struct wsap_vtcore_snapshot *s = tt_snapshot_for(t);
@@ -77,7 +67,6 @@ static inline const struct wsap_vtcore_cell *tt_view_cell(struct wsap_vtcore *t,
     return &cells[col];
 }
 
-/* A cell of the live screen, whatever the viewport shows. */
 static inline const struct wsap_vtcore_cell *tt_cell(struct wsap_vtcore *t, int col, int row)
 {
     int offset = tt_view_offset(t);
@@ -89,15 +78,12 @@ static inline const struct wsap_vtcore_cell *tt_cell(struct wsap_vtcore *t, int 
     return cell;
 }
 
-/* The code points of a cell's text: one, or a whole cluster. The snapshot
- * that the last read used must still describe the terminal. */
 static inline int tt_cell_cps(struct wsap_vtcore *t, const struct wsap_vtcore_cell *cell,
                               uint32_t *cps, int cap)
 {
     return wsap_vtcore_snapshot_cluster(tt_snapshot_for(t), cell->text, cps, cap);
 }
 
-/* The first code point of a cell's text. */
 static inline uint32_t tt_cell_cp(struct wsap_vtcore *t, const struct wsap_vtcore_cell *cell)
 {
     uint32_t cp = 0;
@@ -112,7 +98,6 @@ static inline bool tt_is_cluster(const struct wsap_vtcore_cell *cell)
     return (cell->text & WSAP_VTCORE_TEXT_CLUSTER) != 0;
 }
 
-/* The selected columns [begin, end) of a viewport row. */
 static inline struct wsap_vtcore_span tt_row_selection(struct wsap_vtcore *t, int row)
 {
     return wsap_vtcore_snapshot_row_selection(tt_snapshot_for(t), row);
@@ -124,7 +109,6 @@ static inline bool tt_selected(struct wsap_vtcore *t, int col, int row)
     return col >= span.begin && col < span.end;
 }
 
-/* Select from one viewport cell to another, both inclusive. */
 static inline void tt_select(struct wsap_vtcore *t, int x1, int y1, int x2, int y2)
 {
     bool forward = y1 < y2 || (y1 == y2 && x1 <= x2);
@@ -133,8 +117,6 @@ static inline void tt_select(struct wsap_vtcore *t, int x1, int y1, int x2, int 
     wsap_vtcore_select_extend(t, forward ? b : a, true);
 }
 
-/* The helpers below return new strings. The caller frees them. */
-/* NULL when nothing is selected. */
 static inline char *tt_selection_text(const struct wsap_vtcore *t)
 {
     return wsap_vtcore_selection_text(t);
@@ -145,7 +127,6 @@ static inline char *tt_history_text(struct wsap_vtcore *t, int max_rows)
     return wsap_vtcore_history_text(t, max_rows);
 }
 
-/* NULL when there is no link. */
 static inline char *tt_link_at(struct wsap_vtcore *t, int col, int row)
 {
     return wsap_vtcore_link_at(t, (struct wsap_vtcore_vector2i){ .x = col, .y = row });
@@ -156,7 +137,6 @@ static inline bool tt_resize(struct wsap_vtcore *t, int cols, int rows)
     return wsap_vtcore_resize(t, (struct wsap_vtcore_vector2i){ .x = cols, .y = rows });
 }
 
-/* The ARGB value of a color in the terminal's current palette. */
 static inline uint32_t tt_color(struct wsap_vtcore *t, wsap_vtcore_color c)
 {
     return wsap_vtcore_view_color(wsap_vtcore_snapshot_view(tt_snapshot_for(t)), c);

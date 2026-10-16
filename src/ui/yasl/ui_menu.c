@@ -2,7 +2,6 @@
 #include "ui/yasl/internal.h"
 #include "ui/yasl/inspector.h"
 
-/* A popup root takes presses that miss its level. */
 static bool popup_root_event(struct ui_widget *widget,
                              const struct ui_event *event)
 {
@@ -34,7 +33,6 @@ static bool popup_open(const struct window_ui_menu_popup *p)
     return p->surface != NULL;
 }
 
-/* Close the popup surface and release its resources. */
 static void close_popup(struct window *w, int depth)
 {
     struct window_ui_menu_popup *p = &ui_of(w)->menu_popup[depth];
@@ -56,7 +54,6 @@ static void close_popups_from(struct window *w, int depth)
         close_popup(w, --ui_of(w)->menu_popups);
 }
 
-/* Measure the menu level in its UI surface. */
 static struct vector2i measure_popup(struct window *w, int depth)
 {
     struct window_ui_menu_popup *p = &ui_of(w)->menu_popup[depth];
@@ -73,9 +70,6 @@ static struct vector2i measure_popup(struct window *w, int depth)
     return size;
 }
 
-/* Level 0 opens at the bottom left of its anchor. Deeper levels open at the
- * top right of theirs. Every level grows down and right. It slides or flips
- * to stay on screen. */
 static struct yasl_popup_options popup_options(struct window *w, int depth,
                                                struct vector2i size, struct rect2i anchor)
 {
@@ -93,7 +87,6 @@ static struct yasl_popup_options popup_options(struct window *w, int depth,
     };
 }
 
-/* Open a native popup surface for the given level. */
 static bool open_popup(struct window *w, int depth, struct rect2i anchor)
 {
     if (!(yasl_get_features() & YASL_FEATURE_POPUPS))

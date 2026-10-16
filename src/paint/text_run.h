@@ -39,7 +39,6 @@ static inline int ui_text_run_cells(const char *text, size_t len)
     size_t off = 0;
     int cells = 0;
     while (off < len) {
-        /* Fast path: scan printable ASCII span [0x20, 0x7e] using AVX-512 / AVX2 / NEON */
         size_t span = wsap_vtcore_scan_printable_span(text + off, len - off, 0x7f);
         if (span > 0) {
             cells += (int)span;

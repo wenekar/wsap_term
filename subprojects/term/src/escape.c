@@ -15,7 +15,6 @@ static int sgr_color_param(const struct wsap_vtcore *t, char *buf, size_t sz, in
 {
     if (wsap_vtcore_color_is_slot(c) && (c & 0x1FFu) < 256) {
         int i = (int)(c & 0xFFu);
-        /* The underline color has no short form. */
         if (i < 16 && base != 50)
             return snprintf(buf, sz, ";%d", i < 8 ? base + i : base + 60 + i - 8);
         return snprintf(buf, sz, ";%d:5:%d", base + 8, i);
@@ -319,8 +318,6 @@ static void restore_dectabsr(struct wsap_vtcore *t, const char *p, const char *e
     if (any && --stop >= 0 && stop < t->tabs_cap) t->tabs[stop] = 1;
 }
 
-/* Grows the DCS string to hold extra more bytes, up to WSAP_VTCORE_OSC_MAX.
- * False when nothing more fits. */
 static bool dcs_reserve(struct wsap_vtcore *t, size_t extra)
 {
     size_t need = (size_t)t->dcs_len + extra;
@@ -606,8 +603,6 @@ static void mode_set(struct wsap_vtcore *t, int mode, bool enabled, bool priv)
     }
 }
 
-/* Vertical moves stop at a margin when they start inside the scroll
- * region (xterm, DEC STD 070). */
 static inline void move_v(struct wsap_vtcore *t, int n, bool col0)
 {
     int top = t->cursor_y >= t->scroll_top ? t->scroll_top : 0;
@@ -686,7 +681,6 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
         if (csi->prefix || t->cursor_y < t->scroll_top || t->cursor_y > t->scroll_bottom) break;
         wsap_vtcore_screen_scroll_region(t, t->cursor_y, t->scroll_bottom,
                                   csi_count(csi), csi->final == 'L', false);
-        /* IL and DL move the cursor to the left margin (xterm). */
         sc_move(t, t->lr_margin_mode ? t->left_margin : 0, t->cursor_y);
         break;
     case 'S':
@@ -751,7 +745,6 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
     case 'n':
         if (!csi->prefix && csi->params[0] == 5) send_response(t, "\033[0n");
         else if (!csi->prefix && csi->params[0] == 6) {
-            /* Report the cursor cell, also with a pending wrap (xterm). */
             char reply[48];
             snprintf(reply, sizeof(reply), "\033[%d;%dR", t->cursor_y - cursor_top(t) + 1,
                      t->cursor_x - cursor_left(t) + 1);
@@ -860,7 +853,6 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
     }
 }
 
-/* Formats one trace line and hands it to the host's trace callback. */
 static void esc_tracef(const struct wsap_vtcore *t, const char *fmt, ...)
 {
     char line[512];
@@ -871,7 +863,6 @@ static void esc_tracef(const struct wsap_vtcore *t, const char *fmt, ...)
     t->cb.trace(t->cb.ud, line);
 }
 
-/* The guard keeps formatting off the parser path when tracing is off. */
 #define ESC_TRACE(t, ...) \
     do { if ((t)->cb.trace) esc_tracef((t), __VA_ARGS__); } while (0)
 
@@ -983,8 +974,6 @@ void wsap_vtcore_escape_byte(struct wsap_vtcore *t, unsigned char ch)
             ESC_TRACE(t, "  CSI cancelled by 0x%02x", ch);
             t->state = ST_GROUND;
         } else if (ch < 0x20) {
-            /* Other C0 controls run inside the sequence (ECMA-48 5.5,
-             * xterm). */
             wsap_vtcore_text_ground(t, ch);
         }
         break;

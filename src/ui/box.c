@@ -12,9 +12,6 @@ static int box_nonneg(int value)
     return value > 0 ? value : 0;
 }
 
-/* The effective layout parameters: struct fields overlaid by the resolved
- * style. basis is the box's own extent (offered constraints at measure
- * time, bounds at layout time) used to resolve % values. */
 struct ui_box_params ui_box_params(const struct ui_box *box,
                                        struct vector2i basis)
 {

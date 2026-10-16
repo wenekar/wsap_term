@@ -33,24 +33,12 @@ The runner service must have Homebrew on its `PATH`.
 Font tests need CJK, emoji, and musical symbol fonts.
 Metal tests need access to the GPU.
 
-The runner directory on this Mac is `~/actions-runner-wsap-term`.
-The runner name is `wsap-term-macos-wenekarHost`.
-The runner uses a launchd user service.
-Keep the Mac awake and keep the user logged in for jobs to run.
-Use these commands to check or stop the service:
-
-```sh
-cd ~/actions-runner-wsap-term
-./svc.sh status
-./svc.sh stop
-./svc.sh start
-```
+Keep the Mac awake and the runner user logged in.
 
 ## Linux runner
 
 The Linux job stays disabled until the repository variable
 `WSAP_LINUX_CI` has the value `true`.
-This prevents jobs from waiting for the future runner.
 
 Prepare a Linux host with a C23 compiler, Meson 1.12.0 or newer,
 Python 3.10 or newer, Ninja, pkg-config, and `tic`.

@@ -97,8 +97,6 @@ static void test_utf8_sanitize(void)
     assert(dst[0] == 'x');
 }
 
-/* Each maximal invalid subpart gives U+FFFD. The byte that ends a subpart
- * stays unused. */
 static void test_ground_invalid_subparts(void)
 {
     uint32_t state = WSAP_VTCORE_UTF8_ACCEPT, codep = 0, cp = 0xdead;

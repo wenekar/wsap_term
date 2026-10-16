@@ -6,7 +6,6 @@
 
 #define UI_DAMAGE_MAX_RECTS 16
 
-/* Surface-space rects whose pixels changed. */
 struct ui_damage {
     struct rect2i rects[UI_DAMAGE_MAX_RECTS];
     int n;

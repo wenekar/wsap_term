@@ -1,4 +1,6 @@
-# Headless Terminal Core Migration Plan (Revision 5)
+# Headless terminal core migration
+
+Historical plan. See [the core guide](../../subprojects/term/README.md) for the current API.
 
 ## 1. Objective and Scope
 
@@ -48,10 +50,6 @@ Every external header currently in `subprojects/term/` is audited below with its
 struct term;
 struct term_snapshot;
 
-/*
- * Canonical vector geometry for the standalone terminal.
- * Application code explicitly converts to/from repository geometry at boundaries.
- */
 struct term_vector2i {
     int x;
     int y;
@@ -67,7 +65,6 @@ struct term_span {
     int end;
 };
 
-/* Color definition: direct ARGB (0xFFRRGGBB) or palette slot */
 typedef uint32_t term_color;
 
 #define TERM_COLOR_SLOT  0x01000000u
@@ -89,7 +86,6 @@ static inline bool term_color_is_slot(term_color c)
     return (c >> 24) == (TERM_COLOR_SLOT >> 24);
 }
 
-/* Palette entries in snapshot view */
 enum {
     TERM_PALETTE_FG     = 256,
     TERM_PALETTE_BG     = 257,
@@ -97,7 +93,6 @@ enum {
     TERM_PALETTE_SIZE   = 259,
 };
 
-/* Cell visual attributes */
 enum term_attr {
     TERM_ATTR_NONE             = 0,
     TERM_ATTR_BOLD             = 1u << 0,
@@ -129,16 +124,12 @@ static inline enum term_underline term_attr_underline(uint16_t attrs)
 
 #define TERM_TEXT_CLUSTER 0x80000000u
 
-/*
- * 16-byte cell structure. Alignment is 4 bytes.
- * Four cells fill one 64-byte cache line.
- */
 struct term_cell {
-    uint32_t text;      /* UTF-32 codepoint, or (TERM_TEXT_CLUSTER | id), or 0 */
-    term_color fg;      /* Direct ARGB or palette slot */
-    term_color bg;      /* Direct ARGB or palette slot */
-    uint16_t attrs;     /* enum term_attr and underline style */
-    uint8_t  width;     /* 1 = regular, 2 = wide leading, 0 = trailing/padding */
+    uint32_t text;
+    term_color fg;
+    term_color bg;
+    uint16_t attrs;
+    uint8_t  width;
     uint8_t  reserved;
 };
 
@@ -163,52 +154,39 @@ void term_theme_default(struct term_theme *theme);
 void term_theme_high_contrast(struct term_theme *theme);
 bool term_theme_set_key(struct term_theme *p, const char *key, const char *val);
 
-/*
- * Host callbacks.
- * Run during term_feed() or term_focus() on the calling thread.
- * Do not call back into the terminal inside a callback.
- */
 struct term_callbacks {
     void *ud;
-    /* Replies to queries (e.g. DSR ESC[6n, DA, Kitty keyboard, OSC color queries) */
     void (*reply)(void *ud, const char *bytes, size_t len);
-    /* Window title update (OSC 0/2) */
     void (*title)(void *ud, const char *title);
-    /* Clipboard write (OSC 52). OSC 52 read queries ('?') are deliberately ignored. */
     void (*clipboard)(void *ud, const char *selection, const char *data, size_t len);
-    /* Desktop notifications (OSC 777 / OSC 99) */
     void (*notify)(void *ud, const char *title, const char *body);
-    /* Visual or audible alert (BEL) */
     void (*bell)(void *ud);
 };
 
 struct term_options {
-    struct term_vector2i size;  /* columns and rows; each at least 1 */
-    int scrollback;             /* history lines; 0 selects default */
+    struct term_vector2i size;
+    int scrollback;
     struct term_theme theme;
     enum term_cursor_style cursor_style;
-    bool cursor_steady;         /* false: cursor blinks */
+    bool cursor_steady;
     struct term_callbacks callbacks;
 };
 
 struct term *term_new(const struct term_options *opts);
 void         term_free(struct term *t);
 
-/* Enter and leave writer section (sequence lock / writer_tid) */
 void         term_lock(struct term *t);
 void         term_unlock(struct term *t);
 
-/* Returns false on allocation failure. session_resize() relies on this to avoid PTY resize. */
 bool         term_resize(struct term *t, struct term_vector2i size);
 
 enum term_feed_flags {
-    TERM_FEED_ONLCR = 1u << 0,  /* Linefeed implies carriage return */
+    TERM_FEED_ONLCR = 1u << 0,
 };
 
 void         term_feed(struct term *t, const char *bytes, size_t len, unsigned flags);
 void         term_focus(struct term *t, bool focused);
 
-/* Theme and appearance updates */
 void         term_set_theme(struct term *t, const struct term_theme *theme);
 void         term_set_cursor_style(struct term *t, enum term_cursor_style style);
 void         term_set_cursor_blink(struct term *t, bool blink);
@@ -233,7 +211,7 @@ struct term_view {
     bool                 reverse_video;
     uint64_t             version;
     uint64_t             palette_version;
-    const uint32_t      *palette; /* TERM_PALETTE_SIZE ARGB entries */
+    const uint32_t      *palette;
 };
 
 struct term_snapshot *term_snapshot_new(void);
@@ -245,7 +223,6 @@ const struct term_cell *term_snapshot_row(const struct term_snapshot *s, int y);
 uint64_t                term_snapshot_row_key(const struct term_snapshot *s, int y);
 struct term_span        term_snapshot_row_selection(const struct term_snapshot *s, int y);
 
-/* Expands grapheme cluster into array of UTF-32 codepoints; preserves existing signature. */
 int term_snapshot_cluster(const struct term_snapshot *s, uint32_t text,
                           uint32_t *cps, int cap);
 
@@ -256,7 +233,6 @@ static inline uint32_t term_view_color(const struct term_view *v, term_color c)
     return v->palette[c & 0x1FFu];
 }
 
-/* State and history inspection */
 struct term_vector2i term_size(const struct term *t);
 struct term_cursor   term_cursor(const struct term *t);
 const char          *term_cwd(const struct term *t);
@@ -265,10 +241,9 @@ int                  term_history_rows(const struct term *t);
 char                *term_history_text(struct term *t, int max_rows);
 char                *term_link_at(const struct term *t, struct term_vector2i cell);
 
-/* Viewport scrolling */
 struct term_scrollback {
-    int offset;     /* rows between the viewport and the live screen */
-    int total;      /* history rows at the current width */
+    int offset;
+    int total;
 };
 
 struct term_scrollback term_scrollback(const struct term *t);
@@ -277,10 +252,6 @@ void                   term_scroll_to(struct term *t, int offset);
 void                   term_scroll_to_top(struct term *t);
 void                   term_scroll_to_bottom(struct term *t);
 
-/*
- * Text selection.
- * right_half: pointer is on the right half of the cell (starts selection after it).
- */
 enum term_select_unit {
     TERM_SELECT_CELL,
     TERM_SELECT_WORD,
@@ -315,20 +286,19 @@ enum term_mod {
     TERM_MOD_NUM   = 1u << 7,
 };
 
-/* Keyboard state tracks which keys are down; updated by host */
 struct term_keyboard_state {
     uint64_t down[4];
 };
 
 struct term_key_event {
     enum term_key_action action;
-    uint16_t key;               /* enum term_key */
-    uint16_t keypad;            /* enum term_key keypad variant, or 0 */
-    unsigned mods;              /* enum term_mod bitmask */
-    uint32_t codepoint;         /* Unshifted layout character */
-    uint32_t shifted;           /* Shifted layout character */
-    uint32_t base;              /* US layout character */
-    uint32_t text;              /* Character after native modifiers */
+    uint16_t key;
+    uint16_t keypad;
+    unsigned mods;
+    uint32_t codepoint;
+    uint32_t shifted;
+    uint32_t base;
+    uint32_t text;
 };
 
 enum term_mouse_event_kind {
@@ -340,14 +310,13 @@ enum term_mouse_event_kind {
 
 struct term_mouse_event {
     enum term_mouse_event_kind kind;
-    int button;                 /* 0 = Left, 1 = Middle, 2 = Right */
-    struct term_vector2i pos;   /* Grid cell coordinates (col, row) */
-    struct term_vector2i pixel; /* Absolute pixel position in terminal grid */
+    int button;
+    struct term_vector2i pos;
+    struct term_vector2i pixel;
     unsigned mods;
     int scroll_lines;
 };
 
-/* Mouse reporting modes (DEC mode numbers) */
 enum term_mouse {
     TERM_MOUSE_OFF    = 0,
     TERM_MOUSE_X10    = 9,
@@ -365,10 +334,10 @@ enum term_mouse_encoding {
 };
 
 struct term_modes {
-    unsigned keyboard;                      /* Kitty keyboard flags */
-    enum term_mouse mouse;                  /* Stored as enum, not uint8_t */
+    unsigned keyboard;
+    enum term_mouse mouse;
     enum term_mouse_encoding mouse_encoding;
-    struct term_vector2i grid;              /* Grid dimensions (cols, rows) for bounds checks */
+    struct term_vector2i grid;
     bool app_cursor;
     bool app_keypad;
     bool backarrow_bs;
@@ -382,10 +351,10 @@ struct term_modes {
 struct term_modes term_modes(const struct term *t);
 
 enum term_input_status {
-    TERM_INPUT_UNHANDLED = 0,   /* No encoding under current modes; allows selection or UI fallback */
-    TERM_INPUT_CONSUMED,        /* Consumed by protocol without bytes (e.g. modifier release) */
-    TERM_INPUT_BYTES,           /* Valid bytes written to out */
-    TERM_INPUT_BUFFER_FULL,     /* Buffer capacity exceeded */
+    TERM_INPUT_UNHANDLED = 0,
+    TERM_INPUT_CONSUMED,
+    TERM_INPUT_BYTES,
+    TERM_INPUT_BUFFER_FULL,
 };
 
 struct term_input_result {

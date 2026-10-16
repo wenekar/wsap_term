@@ -1,4 +1,3 @@
-"""Make a C string from the Metal source."""
 
 import json
 import sys

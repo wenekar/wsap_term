@@ -54,7 +54,6 @@ static void format_color(const struct opt *o, const void *field, char *buf, size
     snprintf(buf, n, "#%06x", *(const uint32_t *)field & 0xFFFFFFu);
 }
 
-/* The choices offer "auto" first, then each value from min up to max. */
 static const char *hint_style_choice(const struct opt *o, size_t index)
 {
     if (!index)

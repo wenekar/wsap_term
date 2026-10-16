@@ -57,7 +57,6 @@ static void test_coretext_glyph_rendering(void)
     struct font_instance *fi = font_instance_default();
     struct glyph g = {0};
 
-    /* Basic ASCII rendering */
     assert(font_instance_render_glyph(fi, 'A', 0, &g));
     assert(g.width > 0);
     assert(!g.has_color);
@@ -71,7 +70,6 @@ static void test_coretext_glyph_rendering(void)
     assert(has_ink);
     glyph_release(&g);
 
-    /* CJK wide glyph rendering */
     memset(&g, 0, sizeof(g));
     assert(font_instance_render_glyph(fi, 0x4E2D, FONT_STYLE_WIDE, &g));
     assert(g.width >= font_instance_metrics(font_instance_default())->cell_w * 2);
@@ -85,7 +83,6 @@ static void test_coretext_glyph_rendering(void)
     assert(has_ink);
     glyph_release(&g);
 
-    /* Apple Color Emoji rendering */
     memset(&g, 0, sizeof(g));
     assert(font_instance_render_glyph(fi, 0x1F600, FONT_STYLE_WIDE | FONT_STYLE_EMOJI, &g));
     assert(g.has_color);
@@ -100,7 +97,6 @@ static void test_coretext_glyph_rendering(void)
     assert(has_ink);
     glyph_release(&g);
 
-    /* Procedural box drawing */
     memset(&g, 0, sizeof(g));
     assert(font_instance_render_glyph(fi, 0x2500, 0, &g));
     assert(!g.has_color);
@@ -131,7 +127,6 @@ static void test_coretext_scaling(void)
     font_bind_thread(base);
 }
 
-/* F and the question mark have wider ink at the top. */
 static bool upper_ink_wider(const struct glyph *g, int rows)
 {
     int top = rows, bottom = -1;
@@ -157,9 +152,6 @@ static bool upper_ink_wider(const struct glyph *g, int rows)
     return upper > lower;
 }
 
-/* What each cell of a segment shows: the shaped glyph of a span, or else
- * the cell's own glyph. A span is valid only during the callback, so the
- * collector keeps what the checks read. */
 struct shown_cells {
     int rows, shaped;
     bool span[FONT_RUN_MAX];
@@ -212,7 +204,6 @@ static void test_coretext_glyph_orientation(void)
             glyph_release(&g);
         }
 
-        /* A cell of a segment stands upright, shaped or not. */
         const uint32_t cps[] = { 'F', 0x0301 };
         assert(show_segment(fi, cps, 2).upper_wider[0]);
 
@@ -362,13 +353,9 @@ static void test_coretext_worker_lifecycle(void)
     struct font_instance *fi = font_instance_default();
     for (int pass = 0; pass < 4; pass++) {
         pthread_t threads[3];
-        /* The workers share one instance, so the cache must be in parallel
-         * mode. In serial mode a run cache CAS loser frees its cells before
-         * emit reads them. */
         glyph_cache_set_parallel(true);
         for (int i = 0; i < 3; i++) assert(!pthread_create(&threads[i], NULL, render_worker, fi));
         for (int i = 0; i < 3; i++) assert(!pthread_join(threads[i], NULL));
-        /* Every worker has joined, so no reader is left. */
         glyph_cache_set_parallel(false);
         glyph_cache_flush_frame();
     }

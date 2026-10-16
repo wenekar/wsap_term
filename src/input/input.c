@@ -47,8 +47,6 @@ static bool is_motion(const struct input_event *ev)
     return ev->kind == INPUT_MOUSE && ev->mouse.kind == PTR_MOTION;
 }
 
-/* Wheel events fold together only on one axis. A diagonal swipe sends
- * both axes, and a sum across them has no meaning. */
 static bool scrolls_merge(const struct input_event *a, const struct input_event *b)
 {
     return a->kind == INPUT_MOUSE && a->mouse.kind == PTR_SCROLL &&
@@ -77,8 +75,6 @@ enum input_push_result input_queue_add(struct input_queue *q,
             *prev = *ev;
             return INPUT_PUSH_OK;
         }
-        /* Fold adjacent wheel events together. Trackpads can emit many tiny
-         * events per frame, and queueing each one delays input dispatch. */
         if (scrolls_merge(prev, ev)) {
             prev->mouse.scroll_lines = input_scroll_clamp(
                 prev->mouse.scroll_lines + ev->mouse.scroll_lines);
@@ -140,10 +136,6 @@ bool input_queue_take(struct input_queue *q, struct input_event *out)
     if (out->kind == INPUT_PASTE || out->kind == INPUT_DROP_FILES) q->text_bytes -= out->paste.len;
     q->head = queue_next(q->head);
 
-    /* Drain a run of compatible wheel events as one event. Producers normally
-     * merge adjacent scrolls already, but doing this here also covers events
-     * inserted through other queue paths. Stop at every non-scroll event so
-     * keys and clicks retain their ordering. */
     while (q->head != q->tail) {
         const struct input_event *next = &q->ev[q->head];
         if (!scrolls_merge(out, next))
@@ -248,14 +240,12 @@ enum input_key_route input_shortcut_route_key(const struct input_keymap *km,
         shortcut_set_route(st, key_id, SHORTCUT_KEY_PASSTHROUGH);
         return route ? INPUT_KEY_SWALLOWED : INPUT_KEY_PASSTHROUGH;
     }
-    /* A repeat cannot start a shortcut after an ordinary press. */
     if (key->action == INPUT_REPEAT) {
         if (route == SHORTCUT_KEY_PASSTHROUGH)
             return INPUT_KEY_PASSTHROUGH;
         if (route == SHORTCUT_KEY_CONSUMED)
             return INPUT_KEY_SWALLOWED;
     }
-    /* A fresh press also clears state from a missed release. */
     if (key->action == INPUT_PRESS)
         shortcut_set_route(st, key_id, SHORTCUT_KEY_PASSTHROUGH);
 
@@ -266,7 +256,6 @@ enum input_key_route input_shortcut_route_key(const struct input_keymap *km,
             ? INPUT_KEY_SWALLOWED : INPUT_KEY_PASSTHROUGH;
 
     enum shortcut_key_route matched = shortcut_key_route(sc);
-    /* A held key cannot change its shortcut action. */
     if (key->action == INPUT_REPEAT && route != matched)
         return INPUT_KEY_SWALLOWED;
     shortcut_set_route(st, key_id, matched);

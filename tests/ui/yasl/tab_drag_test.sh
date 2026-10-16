@@ -1,7 +1,4 @@
 #!/bin/bash
-# Drags tabs between windows on a headless Sway with a virtual pointer,
-# and checks where they land through the UI inspector. Sway carries no
-# windows, so a tab dropped off every bar opens its window on release.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -12,7 +9,6 @@ command -v sway >/dev/null || { echo "SKIP: sway is not installed"; exit 77; }
 command -v python3 >/dev/null || { echo "SKIP: python3 is not installed"; exit 77; }
 
 TMP="$(mktemp -d)"
-# A private runtime directory keeps the test's Sway out of the session.
 export XDG_RUNTIME_DIR="$TMP"
 unset WAYLAND_DISPLAY SWAYSOCK LD_PRELOAD
 SWAY_PID=""
@@ -73,14 +69,12 @@ for _ in $(seq 1 50); do [[ -S "$TMP/dbg.sock" ]] && break; sleep 0.1; done
 [[ -S "$TMP/dbg.sock" ]] || fail "the terminal did not open its inspector socket"
 
 dbg() { WSAP_DEBUG_SOCKET="$TMP/dbg.sock" python3 "$ROOT/scripts/wsap-debug" "$@"; }
-# The tab counts of the windows, in the host's order.
 tabs() {
 	dbg windows | python3 -c 'import json,sys; print(" ".join(str(w["tabs"]) for w in json.load(sys.stdin)))'
 }
 titles() {
 	dbg windows | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin)[$1]['tab_titles']))"
 }
-# The layout positions of the windows' contents, oldest first.
 windows_at() {
 	swaymsg -t get_tree -r | python3 -c '
 import json, sys
@@ -94,7 +88,6 @@ walk(json.load(sys.stdin))
 for con, x, y in sorted(found):
     print(con, x, y)'
 }
-# Where tab INDEX of window WIN is, in layout pixels: its center.
 tab_at() {
 	local win=$1 index=$2 x y
 	read -r _ x y < <(windows_at | sed -n "$((win + 1))p")
@@ -108,8 +101,6 @@ ptr() {
 	echo "$*" >&"${VP[1]}"
 	read -r -t 5 -u "${VP[0]}" reply || fail "virtual pointer stopped"
 }
-# drag X0 Y0 X1 Y1 [X2 Y2 ...]: press at the first point, glide through
-# the others, release at the last.
 drag() {
 	local px=$1 py=$2 x y i
 	shift 2
@@ -180,8 +171,6 @@ swaymsg -q "[con_id=${CONS[0]}] move position 0 0"
 swaymsg -q "[con_id=${CONS[1]}] move position 850 0"
 sleep 0.3
 
-# The regression: straight across out of a two-tab window, never leaving
-# the bar's height, into the other window's top edge.
 read -r x y < <(tab_at 0 1)
 CHECK_PREVIEW_WIN=1
 drag "$x" "$y" 1200 "$y"

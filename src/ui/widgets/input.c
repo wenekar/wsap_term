@@ -43,7 +43,6 @@ static int border_width(const struct ui_input *in)
         ? ui_css_resolve_int(s->border_width, 0, 0, input_scale(in), true) : 0;
 }
 
-/* The text box inside the border and padding, in the local frame. */
 static struct rect2i content_rect(const struct ui_input *in)
 {
     struct rect2i r = rect2i_apply_insets(
@@ -95,7 +94,6 @@ static struct ui_input_history *history_snapshot(const struct ui_input *in)
     return entry;
 }
 
-/* Keep one history entry for each typing or deletion group. */
 static void history_record(struct ui_input *in, int group)
 {
     if (in->impl.editing) return;
@@ -118,7 +116,6 @@ static void history_record(struct ui_input *in, int group)
     in->impl.edit_group = group;
 }
 
-/* Keeps the caret cell inside the content box. */
 static void update_scroll(struct ui_input *in)
 {
     if (!in->widget.bounds.width)
@@ -140,7 +137,6 @@ static void update_scroll(struct ui_input *in)
         in->impl.scroll_cells = 0;
 }
 
-/* The caret shows at once after an edit or a move, then blinks. */
 static void caret_moved(struct ui_input *in)
 {
     in->impl.blink_on = true;
@@ -182,7 +178,6 @@ static void delete_selection(struct ui_input *in)
         delete_range(in, lo, hi);
 }
 
-/* Copies the printable bytes of utf8 into out, cap bytes with the NUL. */
 static int clean_text(char *out, size_t cap, const char *utf8)
 {
     char tmp[UI_INPUT_CAP];
@@ -254,8 +249,6 @@ bool ui_input_selection(const struct ui_input *in, int *start, int *end)
     return true;
 }
 
-/* Part handles for the styled parts. Interned once, before the first
- * paint, by input_ensure_init(). */
 static struct {
     ui_part_id text;
     ui_part_id empty;
@@ -574,8 +567,6 @@ static bool handle_pointer(struct ui_input *in, const struct ui_pointer_event *p
     case UI_POINTER_PRESS:
         if (!rect2i_contains(widget->bounds, p->pos))
             return false;
-        /* A secondary press asks for the edit menu. It does not select
-         * text or capture the pointer. */
         if (p->button == 2) {
             ui_widget_focus(widget);
             ui_widget_notify(widget, (struct ui_action){
@@ -759,7 +750,6 @@ static bool input_accessibility_action(
     return false;
 }
 
-/* The caret blinks while the field has focus. */
 static uint64_t input_tick(struct ui_widget *widget, uint64_t now_ms)
 {
     struct ui_input *in = input_of(widget);
@@ -795,7 +785,6 @@ static void input_layout(struct ui_widget *widget, struct rect2i bounds)
     update_scroll(input_of(widget));
 }
 
-/* The text color of part, else of fallback, else color. */
 static uint32_t part_text_color(const struct ui_widget *widget,
                                 ui_part_id part, ui_part_id fallback,
                                 uint32_t color)

@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# The core compiles as strict C11 for the platforms a host may embed
-# it on. zig cc supplies the cross compilers. The aarch64 targets build the
-# NEON paths, and windows-gnu builds the Windows path of compat.h. The
-# amalgamation, one wsap_vtcore.c, compiles the same way.
 set -euo pipefail
 root=${1:-$(dirname "$0")/..}
 cd "$root/src"

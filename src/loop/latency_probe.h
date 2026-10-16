@@ -13,8 +13,6 @@ enum latency_stage {
     LATENCY_STAGE_PTY_READ, LATENCY_STAGE_RENDER_START,
     LATENCY_STAGE_COMMIT, LATENCY_STAGE_COUNT
 };
-/* Shared with input-latency-bench. yasl reports no presentation
- * feedback, so the presentation fields stay zero. */
 struct latency_probe_shm {
     _Atomic uint32_t focused;
     _Atomic uint32_t ready;

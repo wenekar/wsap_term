@@ -58,10 +58,8 @@ int main(void)
 
     fail_next_calloc = true;
     bool resized = tt_resize(term, 20, 2);
-    /* The resize must reach the failing allocation. */
     assert(!fail_next_calloc);
 
-    /* A failed resize must leave the old terminal geometry usable as a unit. */
     assert(!resized);
     assert(tt_cols(term) == 10);
     assert(tt_rows(term) == 2);
@@ -73,7 +71,6 @@ int main(void)
     assert(tt_cursor_y(term) == 1);
     assert(tt_cell(term, 0, 1)->text == '1');
 
-    /* The failed lazy allocation must not prevent a later resize retry. */
     resized = tt_resize(term, 20, 2);
     assert(resized);
     assert(tt_cols(term) == 20);
@@ -89,7 +86,6 @@ int main(void)
     resized = tt_resize(term, 20, 3);
     assert(!fail_next_calloc);
 
-    /* A failed resize keeps the margins that fit the old width. */
     assert(!resized);
     assert(tt_cols(term) == 10);
     tt_write(term, "abcdefg", 7);
@@ -105,7 +101,6 @@ int main(void)
     tt_write(term, "\033[?1049h", 8);
     assert(!fail_next_calloc);
 
-    /* A failed alternate-screen allocation keeps the normal screen active. */
     assert(!wsap_vtcore_modes(term).alternate);
     assert(tt_cell(term, 0, 0)->text == 'n');
     assert(tt_cell(term, 5, 0)->text == 'l');
@@ -113,9 +108,6 @@ int main(void)
     assert(tt_cell(term, 0, 0)->text == 'n');
     wsap_vtcore_free(term);
 
-    /* A reflow that cannot grow its row buffers fails before it changes the
-     * history, so the old geometry and text survive the failed resize. The
-     * first resize sizes the buffers, so only the reflow's growth fails. */
     term = tt_new(20, 40);
     assert(term);
     for (int i = 0; i < 40; i++) {
@@ -146,8 +138,6 @@ int main(void)
     assert(tt_cols(term) == 10);
     wsap_vtcore_free(term);
 
-    /* A failed same-width height shrink must not scroll rows into history or
-     * move the cursor. The same resize must succeed when allocation recovers. */
     term = tt_new(8, 4);
     assert(term);
     const char four_rows[] = "A\r\nB\r\nC\r\nD";
@@ -176,7 +166,6 @@ int main(void)
     assert(tt_history(term) == 2);
     wsap_vtcore_free(term);
 
-    /* The alternate screen uses the same allocation-before-scroll path. */
     term = tt_new(8, 4);
     assert(term);
     tt_write(term, "\033[?1049h", 8);

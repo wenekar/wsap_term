@@ -113,9 +113,6 @@ int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
             reset_sgr(t);
             fg = t->cur_fg;
             bg = t->cur_bg;
-            /* Recompute instead of zeroing. The cached flags carry the link
-             * id, and reset_sgr leaves cur_link set, so zeroing here would
-             * drop the hyperlink from every cell written after the reset. */
             flags_pad = wsap_vtcore_flags_pad(t);
             flags_ok = true;
             p += p[0] == 'm' ? 1 : 2;

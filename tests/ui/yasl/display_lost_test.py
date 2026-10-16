@@ -1,6 +1,3 @@
-"""When the display server dies and cannot come back, the terminal exits. X11
-has no reconnect, so the terminal runs on a rootful Xwayland inside a private
-headless Weston, and the test stops Xwayland."""
 import json
 import os
 from pathlib import Path
@@ -13,7 +10,6 @@ import time
 
 ROOT = Path(__file__).resolve().parents[3]
 
-
 def wait_for(predicate, timeout):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -21,7 +17,6 @@ def wait_for(predicate, timeout):
             return True
         time.sleep(0.02)
     return predicate()
-
 
 def answers(path):
     try:
@@ -32,7 +27,6 @@ def answers(path):
             return json.loads(s.makefile('rb').readline()).get('ok', False)
     except (OSError, ValueError):
         return False
-
 
 def main():
     missing = [tool for tool in ('weston', 'Xwayland') if not shutil.which(tool)]
@@ -100,7 +94,6 @@ def main():
                     process.kill()
                     process.wait()
             log.close()
-
 
 if __name__ == '__main__':
     main()

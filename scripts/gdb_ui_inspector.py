@@ -1,23 +1,4 @@
 #!/usr/bin/env python3
-"""UI inspector commands for gdb. See docs/ui-debugging.md.
-
-    gdb -ex "source scripts/gdb_ui_inspector.py" build/bin/wsap_term [core]
-
-ui-cmd LINE
-    Runs one inspector protocol line in the stopped process and prints
-    the reply, e.g. `ui-cmd tree --depth 1`, `ui-cmd hit 120 12`,
-    `ui-cmd lint`, `ui-cmd -p 0 widget /`. Needs a live process; the
-    socket server does not have to be running. Input injection and
-    frame waits need a running loop and are refused.
-
-ui-tree [EXPR] [--depth N]
-    Prints the widget tree under EXPR (a struct ui_widget or pointer),
-    default the primary window's root. Reads memory only, so it also
-    works on core files.
-
-ui-widget EXPR
-    Prints one widget's fields and resolved box style. Core-safe.
-"""
 
 try:
     import gdb

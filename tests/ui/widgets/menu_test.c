@@ -20,7 +20,6 @@ static const ui_menu_item ITEMS[] = {
 };
 #define N_ITEMS ((int)(sizeof(ITEMS) / sizeof(ITEMS[0])))
 
-/* A menu shown inline by a menu layer, in an 800x600 surface. */
 struct fixture {
     struct ui_surface surface;
     struct ui_widget root;
@@ -181,7 +180,6 @@ static void open_and_keyboard_test(void)
     assert(f.highlight == 10);
     key(&f, UI_KEY_RIGHT);
     assert(ui_menu_level_count(&f.menu) == 2 && f.submenus == 1);
-    /* Opening by key selects the first row. */
     assert(f.highlight == 100);
     key(&f, UI_KEY_ENTER);
     assert(f.activated == 100 && f.closes == 1);
@@ -199,8 +197,6 @@ static void open_and_keyboard_test(void)
     teardown(&f);
 }
 
-/* Arrows move the highlight and Escape closes the menu. Each changes what
- * the menu shows, so each key asks for the frame. */
 static void menu_keys_request_frame_test(void)
 {
     struct fixture f;
@@ -218,8 +214,6 @@ static void menu_keys_request_frame_test(void)
     teardown(&f);
 }
 
-/* Regression: a submenu opened with its panel top at the trigger row, so
- * its first row sat one list edge pad below the row that opened it. */
 static void submenu_first_row_aligns_with_trigger_test(void)
 {
     struct fixture f;
@@ -236,8 +230,6 @@ static void submenu_first_row_aligns_with_trigger_test(void)
     teardown(&f);
 }
 
-/* Regression: closing a submenu by key left the host believing a submenu
- * item was still highlighted, so a theme preview outlived its submenu. */
 static void closing_submenu_reports_parent_highlight_test(void)
 {
     static const enum ui_key keys[] = {
@@ -271,7 +263,6 @@ static void pointer_test(void)
     assert(f.activated == 1 && f.closes == 1);
 
     open(&f, ITEMS, N_ITEMS);
-    /* A disabled item does nothing. */
     struct vector2i off = center(item_rect(&f, 0, 2));
     pointer(&f, UI_POINTER_PRESS, off, 4);
     pointer(&f, UI_POINTER_RELEASE, off, 5);
@@ -294,11 +285,9 @@ static void hover_delay_and_aim_test(void)
     assert(ui_surface_next_deadline(&f.surface) == 1400);
     tick(&f, 1450);
     assert(ui_menu_level_count(&f.menu) == 2);
-    /* Hover opens the submenu without selecting in it. */
     assert(f.highlight != 100);
     assert(ui_list_selected(level_list(&f, 1)) == -1);
 
-    /* Moving off the trigger toward the submenu keeps it open. */
     struct rect2i quit = item_rect(&f, 0, 4);
     pointer(&f, UI_POINTER_MOTION,
             (struct vector2i){ .x = rect2i_end(quit).x - 2, .y = quit.y + 2 },
@@ -306,7 +295,6 @@ static void hover_delay_and_aim_test(void)
     assert(ui_menu_level_count(&f.menu) == 2);
     tick(&f, 1600);
     assert(ui_menu_level_count(&f.menu) == 2);
-    /* The grace runs out. */
     tick(&f, 1800);
     assert(ui_menu_level_count(&f.menu) == 1);
 
@@ -315,7 +303,6 @@ static void hover_delay_and_aim_test(void)
     assert(ui_menu_level_count(&f.menu) == 2);
     pointer(&f, UI_POINTER_MOTION, center(item_rect(&f, 1, 0)), 2510);
     assert(f.highlight == 100);
-    /* Moving away from the submenu closes it at once. */
     pointer(&f, UI_POINTER_MOTION, center(trigger), 2520);
     pointer(&f, UI_POINTER_MOTION, center(item_rect(&f, 0, 0)), 2530);
     assert(ui_menu_level_count(&f.menu) == 1);
@@ -329,7 +316,6 @@ static const ui_menu_item TWO_SUBMENUS[] = {
     { .label = "Export", .action = 11, .flags = UI_LIST_ITEM_SUBMENU },
 };
 
-/* A sibling submenu at the same depth shows its own items. */
 static void sibling_submenu_replaces_the_level_test(void)
 {
     struct fixture f;
@@ -359,10 +345,6 @@ static bool scene_has_color(const struct ui_scene *s, uint32_t argb)
     return false;
 }
 
-/* Regression: hovering a theme previews it, and the preview restyled the
- * open menu. Themes differ in padding, so the rows moved under a still
- * pointer, the hover changed, another theme previewed, and the menu never
- * settled. An open menu repaints in a new sheet but keeps its geometry. */
 static void open_menu_keeps_its_geometry_test(void)
 {
     static struct css_sheet roomy;
@@ -386,13 +368,11 @@ static void open_menu_keeps_its_geometry_test(void)
     assert(scene_has_color(&f.scene, 0xFF654321u));
     assert(scene_has_color(&f.scene, 0xFF123456u));
 
-    /* A submenu opened during the preview keeps the menu's geometry. */
     key(&f, UI_KEY_DOWN);
     key(&f, UI_KEY_DOWN);
     key(&f, UI_KEY_RIGHT);
     assert(item_rect(&f, 1, 0).height == item.height);
 
-    /* The new look applies from the next open. */
     ui_menu_close(&f.menu);
     ui_surface_prepare(&f.surface);
     open(&f, ITEMS, N_ITEMS);
@@ -415,8 +395,6 @@ static void panel_decoration_test(void)
     struct insets2i shadow = ui_menu_level_shadow(&f.menu, 0);
     assert(shadow.l > 0 && shadow.b > shadow.t);
 
-    /* The shadow is one op, painted before the panel. Its rect is the
-     * panel grown by the blur, so clipping and damage cover it all. */
     int extent = ui_shadow_extent(4);
     int shadow_ops = 0, first_panel_op = -1;
     bool border = false, fill = false;

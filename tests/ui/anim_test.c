@@ -77,7 +77,6 @@ static void test_ripple_math(void)
     assert(!ui_ripple_eval(&r, 1300, &radius, &alpha));
 }
 
-
 int main(void)
 {
     test_easing_curves();

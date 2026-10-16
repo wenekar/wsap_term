@@ -23,7 +23,6 @@ headless Sway without touching the desktop session:
 ```sh
 XDG_RUNTIME_DIR=$(mktemp -d) WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
     WLR_RENDERER=pixman sway --unsupported-gpu -c /dev/null &
-# then, with XDG_RUNTIME_DIR and WAYLAND_DISPLAY pointing at that Sway:
 WSAP_LATENCY_INJECTOR=wayland ./build/benchmarks/input-latency-bench 300 20
 ```
 

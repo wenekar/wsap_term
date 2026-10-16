@@ -1,6 +1,3 @@
-"""The terminal exits cleanly when its last tab closes and on SIGTERM: with
-status 0 and nothing on stdout. Runs a private headless Sway and closes the
-tab through the inspector socket."""
 import json
 from pathlib import Path
 import signal
@@ -9,8 +6,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'helpers'))
-from headless_sway import HeadlessSway, require, wait_for  # noqa: E402
-
+from headless_sway import HeadlessSway, require, wait_for
 
 def ask(path, line):
     try:
@@ -23,7 +19,6 @@ def ask(path, line):
         return None
     return json.loads(reply) if reply else None
 
-
 def check(terminal, how):
     try:
         out, _ = terminal.communicate(timeout=5)
@@ -35,7 +30,6 @@ def check(terminal, how):
     if out:
         raise AssertionError(f'FAIL: the terminal wrote {out[:120]!r} to stdout after '
                              f'{how}; with stats off it must write nothing')
-
 
 def main():
     require('sway')
@@ -53,7 +47,6 @@ def main():
                 terminal.send_signal(signal.SIGTERM)
             check(terminal, how)
         print('PASS: the terminal exits with status 0 and a clean stdout')
-
 
 if __name__ == '__main__':
     main()

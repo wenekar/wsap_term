@@ -1,30 +1,3 @@
-/*
- * Per-frame UI benchmark.
- *
- * Each timed frame runs ui_surface_tick, a full scene build, ui_damage_track,
- * and a CPU paint of the whole buffer. Input between frames runs untimed.
- *
- * The timer covers the UI steps only. The paint is an upper bound for
- * the paint step. The app paints only the damaged bands, and it can use
- * the GPU path. The timer does not cover the window's own frame. It skips
- * the content draw (the window_ui_spec prepare and draw hooks), the
- * accessibility publish, the cursor update, the menu sync, the timer
- * re-arm, the debug hooks, and the band bookkeeping. It builds only a
- * tab bar and a list, not the whole window tree.
- *
- * Usage: ui-frame-bench [--frames N] [--limit SCENARIO=US]...
- *
- * Environment (the arguments win):
- *   UI_FRAME_BENCH_FRAMES            timed frames per scenario
- *   UI_FRAME_BENCH_LIMIT_IDLE_US     median limit, microseconds
- *   UI_FRAME_BENCH_LIMIT_HOVER_US
- *   UI_FRAME_BENCH_LIMIT_TAB_OPEN_US
- *   UI_FRAME_BENCH_LIMIT_MENU_20_US
- *
- * A scenario with a limit fails when its median is above the limit.
- * A scenario without one only reports. The program exits 1 on a failed
- * limit and 2 on bad input or a failed frame.
- */
 #define _POSIX_C_SOURCE 200809L
 
 #include "font/font.h"
@@ -86,7 +59,6 @@ static const char *const SCENARIO_ENV[SCENARIO_COUNT] = {
     "UI_FRAME_BENCH_LIMIT_MENU_20_US",
 };
 
-/* No limit unless set. */
 struct limit {
     bool set;
     double us;
@@ -107,7 +79,6 @@ struct bench {
     uint64_t now_ms;
 };
 
-/* Collects the timed frames of one scenario. */
 struct run {
     struct bench *b;
     double *samples;
@@ -149,8 +120,6 @@ static void set_labels(struct bench *b)
     ui_surface_prepare(&b->surface);
 }
 
-/* Starts the surface and its root. The root is always initialized, so
- * teardown is valid after any failure. */
 static bool bench_setup(struct bench *b, struct vector2i viewport)
 {
     b->viewport = viewport;
@@ -172,8 +141,6 @@ static void bench_teardown(struct bench *b)
     memset(b, 0, sizeof(*b));
 }
 
-/* A tab bar with n tabs, settled. The bar gets a no-op action handler, as
- * the app's bar does. */
 static bool setup_tabbar(struct bench *b, int n_tabs)
 {
     if (!bench_setup(b, (struct vector2i){ .x = TABBAR_VIEWPORT_W, .y = TABBAR_VIEWPORT_H }))
@@ -192,7 +159,6 @@ static bool setup_tabbar(struct bench *b, int n_tabs)
     return true;
 }
 
-/* A list of MENU_ROWS plain items, shown in the top left. */
 static bool setup_menu(struct bench *b)
 {
     static char labels[MENU_ROWS][24];
@@ -216,7 +182,6 @@ static bool setup_menu(struct bench *b)
     return true;
 }
 
-/* One frame, timed. Returns false when the frame fails. */
 static bool timed_frame(struct bench *b, uint64_t now_ms, double *out_us)
 {
     (void)ui_surface_take_frame_request(&b->surface);
@@ -281,7 +246,6 @@ static bool run_hover(struct run *r)
     return true;
 }
 
-/* One open cycle: insert the last tab, animate it in, then remove it. */
 static bool run_tab_open(struct run *r)
 {
     struct bench *b = r->b;
@@ -349,7 +313,6 @@ struct stats {
     double worst;
 };
 
-/* Sorts samples in place. Uses the nearest-rank p99. */
 static struct stats calc_stats(double *samples, int n)
 {
     qsort(samples, (size_t)n, sizeof(double), cmp_double);
@@ -394,7 +357,6 @@ static int scenario_from_name(const char *name)
     return -1;
 }
 
-/* Parses NAME=US. */
 static bool parse_limit_arg(const char *arg, struct limit *limits)
 {
     const char *eq = strchr(arg, '=');

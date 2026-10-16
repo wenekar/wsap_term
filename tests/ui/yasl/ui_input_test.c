@@ -46,7 +46,6 @@ static void key_test(void)
     ev.codepoint = 0;
     assert(ui_key_from_input(&ev).key == UI_KEY_NONE);
 
-    /* A widget that encodes keys the UI does not name reads native. */
     ev.action = INPUT_RELEASE;
     uk = ui_key_from_input(&ev);
     assert(uk.action == UI_KEY_RELEASE && uk.native == &ev);

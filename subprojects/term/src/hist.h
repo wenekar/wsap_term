@@ -10,52 +10,41 @@
 #include <stdint.h>
 #include <string.h>
 
-/*
- * History of logical lines. A line is stored once, independent of the
- * terminal width. A line id counts logical lines: a line that needs more than
- * one storage part keeps one id. Ids never change while the line is retained.
- */
-
 #define HIST_PAGE_SIZE 65536
 #define HIST_PAGE_SLACK 64
 #define HIST_PAGE_USABLE (HIST_PAGE_SIZE - HIST_PAGE_SLACK)
 #define HIST_MAX_PART_CELLS 65535
 
 enum hline_flags {
-    HLINE_NARROW      = 1 << 0,   /* one ASCII byte per cell */
+    HLINE_NARROW      = 1 << 0,
     HLINE_HAS_WIDE    = 1 << 1,
     HLINE_HAS_CLUSTER = 1 << 2,
     HLINE_HAS_LINK    = 1 << 3,
-    HLINE_CONT        = 1 << 4,   /* continues the line of the previous part */
-    HLINE_ROWS_EXACT  = 1 << 6,   /* first part: cached row count is exact */
-    HLINE_OPEN        = 1 << 5,   /* the part that grows; only the last part */
+    HLINE_CONT        = 1 << 4,
+    HLINE_ROWS_EXACT  = 1 << 6,
+    HLINE_OPEN        = 1 << 5,
 };
 
-/* One storage part. The first part of a line holds the line's row count. */
 struct hline {
-    uint32_t off;           /* page << 16 | offset in the page */
-    uint32_t text_len;      /* bytes */
-    uint16_t cells;         /* display width */
-    uint16_t wide;          /* wide glyphs; a one-column view clips them */
-    uint16_t attr_len;      /* 0: every cell has the default pen */
+    uint32_t off;
+    uint32_t text_len;
+    uint16_t cells;
+    uint16_t wide;
+    uint16_t attr_len;
     uint8_t flags;
-    uint8_t wrap_rows;      /* first part: rows of the line at wrap_cols; 255: count them */
+    uint8_t wrap_rows;
 };
 
 _Static_assert(sizeof(struct hline) == 16, "struct hline must stay 16 bytes");
 
-/* Attribute runs of the open part. They move to the page when it closes.
- * count comes before the pens, so a wide store of the pens never covers
- * it. */
 struct hist_runs {
     uint8_t *data;
     uint32_t len, cap;
-    uint32_t count;         /* cells of the pending run */
-    struct pen_attr base;   /* pen of the last emitted run */
-    struct pen_attr pen;    /* pen of the pending run */
+    uint32_t count;
+    struct pen_attr base;
+    struct pen_attr pen;
 };
 
-/* Totals for 16 closed lines in one page. A sequence and epoch validate it. */
 struct hist_block {
     uint64_t seq, epoch;
     uint32_t page, refs, rows;
@@ -68,36 +57,24 @@ struct hist_ascii_line {
     uint8_t wrapped;
 };
 
-/*
- * One row of text in the history format, built by appending. A screen text
- * row holds one, so a row that scrolls into history moves by copy. The runs
- * start from the pen start; their buffer never grows, because every run
- * covers at least one cell and the caller sizes it for a full row.
- */
 struct text_row {
     uint8_t *text;
-    uint8_t *storage;           /* owned buffer, when text uses compact ASCII storage */
+    uint8_t *storage;
     uint16_t text_len;
     uint16_t cells;
     uint16_t wide;
-    uint16_t fill_to;           /* blanks with pen fill follow the text up to here */
-    uint8_t flags;              /* HLINE_NARROW, HLINE_HAS_WIDE, HLINE_HAS_LINK */
+    uint16_t fill_to;
+    uint8_t flags;
     struct pen_attr start;
     struct pen_attr fill;
     struct hist_runs runs;
 };
 
-/* Bytes a text row of cols cells may need: text, and runs. */
 #define TEXT_ROW_BYTES(cols) ((size_t)(cols) * 4 + 16)
 #define TEXT_ROW_RUNS(cols) (((size_t)(cols) + 2) * 22)
 
-/* Emit the pending run in the general form. */
 void wsap_vtcore_hist_runs_emit_slow(struct hist_runs *r);
 
-/* Close the pending run and start one with the given pen. The caller
- * sized the buffer. A run that changes only colors and covers fewer than
- * 128 cells is a header byte (bit 0 fg, bit 1 bg), a count byte, and the
- * changed colors. */
 static inline void hist_runs_switch(struct hist_runs *r, struct text_pen pen)
 {
     if (r->count) {
@@ -133,8 +110,6 @@ static inline void hist_runs_add(struct hist_runs *r, const struct pen_attr *pen
     hist_runs_add_pen(r, text_pen_from_attr(pen), n);
 }
 
-/* Start a text row. Each field gets its own store of its own width, because
- * the first append reads them back at once. */
 static inline void text_row_start(struct text_row *row, const struct pen_attr *start)
 {
     if (row->storage) row->text = row->storage;
@@ -159,7 +134,6 @@ static inline void text_row_unshare(struct text_row *row)
     }
 }
 
-/* Write the cells of a text row to out; return the cell count. */
 int wsap_vtcore_hist_text_decode(const struct text_row *row, struct cell *out, int cap, struct gstore *g);
 void wsap_vtcore_hist_text_mark_links(const struct text_row *row, void (*mark)(void *ud, uint16_t link), void *ud);
 
@@ -183,29 +157,25 @@ struct hist_dec_cache {
 struct hist {
     struct hline *ring;
     struct hist_block *blocks;
-    uint64_t tail, head;        /* part sequence numbers [tail, head) */
-    uint64_t base_id;           /* line id of the part at tail */
-    uint64_t *cont;             /* CONT parts after tail, oldest first */
+    uint64_t tail, head;
+    uint64_t base_id;
+    uint64_t *cont;
     uint8_t **pages;
     uint32_t *page_used;
     uint32_t *page_parts;
     uint32_t *page_rows;
     uint8_t *page_simple;
     uint16_t *free_pages;
-    uint32_t *exact_rows;       /* counts that exceed the descriptor byte */
+    uint32_t *exact_rows;
     struct hist_runs runs;
     struct hist_dec_cache dec;
 
-    /* Rows at wrap_cols. counted_rows covers [base_id, rows_id).
-     * Snapshot capture counts later closed lines from descriptors.
-     * A wide open line keeps a walk that resumes where it stopped. */
     uint64_t rows_id;
     uint64_t counted_rows;
     uint64_t walk_seq;
 
-    /* Changes when retained line ids can name different content. */
     uint64_t index_epoch;
-    uint64_t base_cell_id, base_cell; /* removed prefix and its line */
+    uint64_t base_cell_id, base_cell;
     uint64_t last_id, last_cells, last_wide;
 
     uint32_t ring_mask;
@@ -229,29 +199,19 @@ bool wsap_vtcore_hist_init(struct hist *h, int line_limit, size_t byte_cap);
 void wsap_vtcore_hist_free(struct hist *h);
 void wsap_vtcore_hist_clear(struct hist *h);
 
-/* Push one screen row. It joins the open line, or starts a new line. A
- * wrapped row leaves the line open for the next row. */
 void wsap_vtcore_hist_push_row(struct hist *h, const struct cell *cells, int len, bool wrapped,
                    const struct gstore *g);
 void wsap_vtcore_hist_push_ascii(struct hist *h, const char *bytes, int n,
                      const struct pen_attr *pen, bool wrapped);
 void wsap_vtcore_hist_push_ascii_lines(struct hist *h, const struct hist_ascii_line *lines,
                            int count, const struct pen_attr *pen);
-/* Ends include LF. ends[0] is the start of the first line. */
 void wsap_vtcore_hist_push_ascii_lf(struct hist *h, const char *bytes, const uint16_t *ends, int count);
-/* Push a text row as one screen row, like wsap_vtcore_hist_push_row(). */
 void wsap_vtcore_hist_push_text(struct hist *h, const struct text_row *row, bool wrapped);
-/* Push n empty unwrapped rows. The first one closes an open line. */
 void wsap_vtcore_hist_push_blank(struct hist *h, size_t n);
 void wsap_vtcore_hist_close_open_line(struct hist *h);
 
-/* Remove the last line. Write its cells to out (at most cap) and return the
- * number of cells in the line. */
 int wsap_vtcore_hist_pop_line(struct hist *h, struct cell *out, int cap, struct gstore *g);
-/* Copy the last line's cells to out, as wsap_vtcore_hist_pop_line() does, and keep the line.
- * Return the number of cells in the line. */
 int wsap_vtcore_hist_peek_last_line(const struct hist *h, struct cell *out, int cap, struct gstore *g);
-/* Take up to n cells back off the end of the last line. Return the count. */
 int wsap_vtcore_hist_pop_tail_cells(struct hist *h, int n, struct cell *out, struct gstore *g);
 
 static inline uint64_t hist_first_id(const struct hist *h)
@@ -283,11 +243,8 @@ int wsap_vtcore_hist_cell_segment(const struct hist *h, uint64_t id, uint64_t ce
 
 void wsap_vtcore_hist_mark_links(const struct hist *h, void (*mark)(void *ud, uint16_t link), void *ud);
 
-/* Set the width that pushed rows have. It costs O(1): the stored row counts
- * become stale. Reads count them without changing the history. */
 void wsap_vtcore_hist_set_width(struct hist *h, int cols);
 
-/* Rows of all retained lines at cols. */
 uint64_t wsap_vtcore_hist_rows(const struct hist *h, int cols);
 uint64_t wsap_vtcore_hist_line_estimate(const struct hist *h, uint64_t id, int cols);
 uint64_t wsap_vtcore_hist_estimated_rows(const struct hist *h, int cols);

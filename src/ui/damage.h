@@ -12,7 +12,6 @@ struct ui_damage_record {
     bool used;
 };
 
-/* This tracker remembers the scopes from the last scene. */
 struct ui_damage_tracker {
     struct ui_damage_record *records;
     int n, cap;

@@ -6,8 +6,6 @@
 #include <stdint.h>
 #include <string.h>
 
-/* Linear light for each byte value of an sRGB channel. The entries are the
- * transfer curve, evaluated once and stored, so every host reads the same ones. */
 static const float srgb_linear[256] = {
     0x0p+0f,        0x1.3e4568p-12f, 0x1.3e4568p-11f, 0x1.dd681cp-11f,
     0x1.3e4568p-10f, 0x1.8dd6c2p-10f, 0x1.dd681cp-10f, 0x1.167cbap-9f,
@@ -115,8 +113,6 @@ void wsap_vtcore_theme_high_contrast(struct wsap_vtcore_theme *theme)
     *theme = high_contrast_theme;
 }
 
-/* Finds the slot for key and the default it resets to. Keys are
- * foreground, background, and color0 to color15. */
 static uint32_t *palette_slot(struct wsap_vtcore_theme *p, const char *key,
                               uint32_t *fallback)
 {
@@ -369,12 +365,6 @@ static struct lab lab_lerp(float t, struct lab a, struct lab b)
     return r;
 }
 
-/*
- * Derive the 256-color palette from a theme. Entries 0-15 are the theme's
- * ANSI colors. The 6x6x6 cube and the gray ramp interpolate in Lab space
- * between the background, the ANSI colors, and the foreground, so they match
- * the theme instead of the fixed xterm values.
- */
 static void derive_palette(uint32_t *p, const struct wsap_vtcore_theme *theme)
 {
     struct lab base8[8];

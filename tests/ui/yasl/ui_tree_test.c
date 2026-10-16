@@ -15,7 +15,6 @@
 #include "ui/internal/tree.h"
 #include "terminal/internal.h"
 
-/* Sets the test cell metrics on the window and sizes it to viewport. */
 static void apply_test_scale(struct window *w, struct vector2i viewport)
 {
     ui_surface_set_scale(window_ui_surface(w), (struct css_scale_context){
@@ -40,7 +39,6 @@ static void close_terminal_window(struct window *w, struct test_app *a)
     test_app_fini(a);
 }
 
-/* Runs the UI's animations to their end, as frames would. */
 static void settle_tabbar(struct window *w, struct vector2i viewport)
 {
     (void)viewport;
@@ -56,7 +54,6 @@ static void settle_tabbar(struct window *w, struct vector2i viewport)
     }
 }
 
-/* Opens a terminal window with two settled tabs, sized to viewport. */
 static struct window *open_two_tabs(struct test_app *a, struct vector2i viewport)
 {
     struct window *w = open_terminal_window(a, viewport);
@@ -67,7 +64,6 @@ static struct window *open_two_tabs(struct test_app *a, struct vector2i viewport
     return w;
 }
 
-/* Writes enough lines into the active tab to give it scrollback. */
 static void fill_scrollback(struct window *w)
 {
     struct tab *s = terminal_active_tab(w);
@@ -77,8 +73,6 @@ static void fill_scrollback(struct window *w)
 
 static int find_ops(const struct ui_scene *whole, const struct ui_scene *part);
 
-/* Opens the window's menu inline at `at`, as window_menu_open() does on a
- * window without native popups. */
 static void open_menu(struct window *w, const ui_menu_item *items, int n,
                       struct vector2i at, ui_action_fn fn, void *userdata,
                       ui_menu_submenu_fn submenu)
@@ -95,7 +89,6 @@ static struct vector2i center(struct rect2i r)
     return (struct vector2i){ .x = r.x + r.width / 2, .y = r.y + r.height / 2 };
 }
 
-/* A pointer event at time 0. */
 static struct ui_event make_pointer(enum ui_pointer_kind kind,
                                      struct vector2i pos, int button)
 {
@@ -141,7 +134,6 @@ static void layout_places_children_test(void)
     };
     assert(rect2i_eq(terminal_view_rect(w), want_content));
 
-    /* The scrollview holds the view, and both fill the content area. */
     struct ui_widget *sv = ui_scrollview_widget(&tw->scrollview);
     assert(sv->bounds.x == want_content.pos.x);
     assert(sv->bounds.y == want_content.pos.y);
@@ -152,8 +144,6 @@ static void layout_places_children_test(void)
     close_terminal_window(w, &a);
 }
 
-/* The tab bar paints the same inside the chrome as on its own, inside
- * its own height. */
 static void tabbar_scene_in_chrome_test(void)
 {
     struct test_app a;
@@ -188,7 +178,6 @@ static bool op_equal(const struct ui_scene *sa, const struct ui_scene_op *a,
                    a->text_len);
 }
 
-/* The index where part's ops appear, in order, inside whole; -1 if not. */
 static int find_ops(const struct ui_scene *whole, const struct ui_scene *part)
 {
     for (int base = 0; base + part->n_ops <= whole->n_ops; base++) {
@@ -202,8 +191,6 @@ static int find_ops(const struct ui_scene *whole, const struct ui_scene *part)
     return -1;
 }
 
-/* A widget paints the same inside the chrome as on its own: the scene
- * places it by its surface bounds. */
 static void scrollbar_scene_in_chrome_test(void)
 {
     struct test_app a;
@@ -245,7 +232,6 @@ static void palette_scene_at_rect_test(void)
     struct rect2i prect = ui_palette_widget(&tw->palette)->bounds;
     assert(ui_widget_build_scene(ui_palette_widget(&tw->palette), &ref));
     assert(ref.n_ops > 0);
-    /* The palette paints last, over the terminal, inside its panel. */
     int base = find_ops(&composed, &ref);
     assert(base == composed.n_ops - ref.n_ops);
     assert(composed.ops[base].rect.x >= prect.x);
@@ -293,9 +279,6 @@ static void dispatch_reaches_term_view_test(void)
     close_terminal_window(w, &a);
 }
 
-/* A press on the normal grid selects, and the bar under the pointer asks
- * for the text cursor. pointer_is_local gates the drag, so the gate must not
- * close the ordinary case. */
 static void primary_grid_press_selects_test(void)
 {
     struct test_app a;
@@ -315,7 +298,6 @@ static void primary_grid_press_selects_test(void)
     close_terminal_window(w, &a);
 }
 
-/* OSC 22 sets or clears the pointer shape. */
 static void terminal_pointer_shape_test(void)
 {
     struct test_app a;
@@ -512,7 +494,6 @@ static void inline_submenu_holds_focus_test(void)
     struct ui_widget *top = ui_menu_level_widget(window_ui_menu(w), 1);
     assert(top);
     assert(ui_widget_surface(top) == window_ui_surface(w));
-    /* The keys keep reaching the menu while its submenu is open. */
     assert(ui_widget_has_focus(ui_menu_level_widget(window_ui_menu(w), 0)));
     struct ui_event down = ui_event_key(
         (struct ui_key_event){ .key = UI_KEY_DOWN }, 0);
@@ -564,8 +545,6 @@ static void close_tab_releases_scrollbar_capture_test(void)
     close_terminal_window(w, &a);
 }
 
-/* A paste can arrive in the same batch as the close, so the window
- * closes with the paste still queued. The window frees it. */
 static void closed_window_frees_queued_paste_test(void)
 {
     struct test_app a;
@@ -577,8 +556,6 @@ static void closed_window_frees_queued_paste_test(void)
     close_terminal_window(w, &a);
 }
 
-/* The terminal view takes a secondary press: it opens the context menu
- * when the window has a surface. */
 static void right_press_reaches_term_view_test(void)
 {
     struct test_app a;
@@ -602,7 +579,6 @@ static void surface_tick_reaches_tabbar_test(void)
     assert(terminal_new_tab(w));
     assert(terminal_new_tab(w));
 
-    /* The bar grows in over the frames after the second tab opens. */
     uint64_t now = window_frame_time_ms(w);
     int steady = ui_tabbar_steady_height(&tw->tabbar);
     assert(steady > 0);
@@ -650,9 +626,6 @@ static struct ui_widget *rebuild_child(struct ui_widget *parent, struct window *
     return ui_widget_child_at(parent, index);
 }
 
-/* The chrome is part of the widget tree, in paint order, so inspection,
- * lifecycle, and focus traversal see what the window draws. An inline
- * menu sits above the content. */
 static void chrome_is_in_widget_tree_test(void)
 {
     struct test_app a;
@@ -671,7 +644,6 @@ static void chrome_is_in_widget_tree_test(void)
     assert(rebuild_child(root, w, 1) == sv);
     assert(rebuild_child(sv, w, 0) == &tw->view.widget);
     assert(rebuild_child(root, w, 2) == ui_tab_preview_widget(&tw->tab_preview));
-    /* The palette is a hidden overlay until it opens. */
     assert(rebuild_child(root, w, 3) == palette);
     assert(ui_widget_child_count(root) == 4);
     assert(ui_widget_is_hidden(palette));
@@ -681,11 +653,9 @@ static void chrome_is_in_widget_tree_test(void)
     ui_palette_close(&tw->palette);
     assert(ui_widget_is_hidden(rebuild_child(root, w, 3)));
 
-    /* Another tab keeps the same chrome. */
     terminal_select_tab(w, 0);
     assert(rebuild_child(sv, w, 0) == &tw->view.widget);
 
-    /* The menu layer sits over the content and shows the open levels. */
     struct ui_widget *layer = ui_menu_layer_widget(window_ui_menu_layer(w));
     assert(rebuild_child(window_ui_root(w), w, 1) == layer);
     assert(ui_widget_is_hidden(layer));
@@ -702,10 +672,6 @@ static void chrome_is_in_widget_tree_test(void)
     close_terminal_window(w, &a);
 }
 
-/* A window with nothing new must not ask for another frame. Paint
- * invalidation is cleared after every scene build, so a layout that always
- * re-invalidates paint makes the window request frames forever and it can
- * never go idle. */
 static void idle_window_requests_no_frame(void)
 {
     struct test_app a;
@@ -714,9 +680,6 @@ static void idle_window_requests_no_frame(void)
     assert(terminal_new_tab(w));
     settle_tabbar(w, viewport);
 
-    /* The first build fills the window in, so it asks for a frame. Every
-     * build after that must leave nothing pending, or the window never
-     * goes idle. */
     static struct ui_scene scene;
     assert(ui_surface_build_scene(window_ui_surface(w), &scene));
     (void)ui_surface_take_frame_request(window_ui_surface(w));
@@ -727,7 +690,6 @@ static void idle_window_requests_no_frame(void)
     assert(ui_surface_build_scene(window_ui_surface(w), &scene));
     assert(!ui_surface_frame_pending(window_ui_surface(w)));
 
-    /* A new tab is a real change, and must still ask for a frame. */
     assert(terminal_new_tab(w));
     settle_tabbar(w, viewport);
     assert(ui_surface_build_scene(window_ui_surface(w), &scene));
@@ -735,9 +697,6 @@ static void idle_window_requests_no_frame(void)
     close_terminal_window(w, &a);
 }
 
-/* ---- The scrollview's bar over the terminal view. ---- */
-
-/* A terminal window with scrollback, so that the bar has a track. */
 static struct window *open_scrolled_terminal(struct test_app *a,
                                              struct vector2i viewport)
 {
@@ -759,7 +718,6 @@ static bool send_pointer(struct window *w, enum ui_pointer_kind kind,
     return handled;
 }
 
-/* A point on the bar's track, inside both its idle and hover widths. */
 static struct vector2i bar_point(struct window *w)
 {
     struct rect2i sv = terminal_of(w)->scrollview.widget.bounds;
@@ -767,8 +725,6 @@ static struct vector2i bar_point(struct window *w)
                               .y = sv.y + sv.height / 2 };
 }
 
-/* Hover shows a hidden bar in every terminal mode. The view takes motion
- * in each of them, so the bar must see it first. */
 static void hover_reveals_bar_in_every_mode_test(void)
 {
     struct test_app a;
@@ -781,12 +737,10 @@ static void hover_reveals_bar_in_every_mode_test(void)
 
     send_pointer(w, UI_POINTER_MOTION, on_bar, 0, 0);
     assert(ui_scrollview_is_shown(sv));
-    /* The track is the bar, so it shows the arrow, not the view's I-beam. */
     assert(ui_surface_cursor(window_ui_surface(w)) == UI_CURSOR_DEFAULT);
     send_pointer(w, UI_POINTER_LEAVE, on_bar, 0, 0);
     ui_scrollview_hide(sv);
 
-    /* The program reads every motion: the view reports it. */
     const char mouse_any[] = "\x1b[?1003h\x1b[?1006h";
     wsap_vtcore_feed(t, mouse_any, strlen(mouse_any), 0);
     assert(wsap_vtcore_modes(t).mouse != WSAP_VTCORE_MOUSE_OFF);
@@ -795,15 +749,12 @@ static void hover_reveals_bar_in_every_mode_test(void)
     send_pointer(w, UI_POINTER_LEAVE, on_bar, 0, 0);
     ui_scrollview_hide(sv);
 
-    /* Shift held, with the program reading the mouse. */
     send_pointer(w, UI_POINTER_MOTION, on_bar, 0, UI_MOD_SHIFT);
     assert(ui_scrollview_is_shown(sv));
 
     close_terminal_window(w, &a);
 }
 
-/* A press on a hidden bar is the view's press: a selection starts, and the
- * offset stays where it was. */
 static void hidden_bar_press_reaches_view_test(void)
 {
     struct test_app a;
@@ -824,8 +775,6 @@ static void hidden_bar_press_reaches_view_test(void)
     close_terminal_window(w, &a);
 }
 
-/* A press on the shown track scrolls the view to the pressed place. The
- * bar keeps showing. */
 static void shown_bar_press_scrolls_view_test(void)
 {
     struct test_app a;
@@ -849,8 +798,6 @@ static void shown_bar_press_scrolls_view_test(void)
     close_terminal_window(w, &a);
 }
 
-/* Shift and secondary presses on the shown track reach the view and not
- * the bar. Shift starts a selection. The offset does not move. */
 static void shown_bar_shift_and_secondary_press_reach_view_test(void)
 {
     struct test_app a;
@@ -877,8 +824,6 @@ static void shown_bar_shift_and_secondary_press_reach_view_test(void)
     window_menu_close(w);
     ui_surface_prepare(window_ui_surface(w));
 
-    /* With the program reading the mouse, a grid press goes to the program
-     * and does not start a selection. The bar does not get in the way. */
     const char mouse_on[] = "\x1b[?1000h\x1b[?1006h";
     wsap_vtcore_feed(term, mouse_on, strlen(mouse_on), 0);
     assert(!terminal_pointer_selects_text(term));
@@ -889,8 +834,6 @@ static void shown_bar_shift_and_secondary_press_reach_view_test(void)
     close_terminal_window(w, &a);
 }
 
-/* A press on the track keeps focus where it was, shown or hidden. A press
- * on the grid clears it. */
 static void bar_press_keeps_tab_focus_test(void)
 {
     struct test_app a;
@@ -923,8 +866,6 @@ static void bar_press_keeps_tab_focus_test(void)
     close_terminal_window(w, &a);
 }
 
-/* The wheel scrolls the view over the track, as it does elsewhere, and
- * flashes the bar. */
 static void wheel_over_bar_scrolls_view_test(void)
 {
     struct test_app a;
@@ -944,8 +885,6 @@ static void wheel_over_bar_scrolls_view_test(void)
     close_terminal_window(w, &a);
 }
 
-/* The bar shows the active tab. A tab that opens or gets selected starts
- * with the bar hidden. */
 static void tab_change_hides_bar_test(void)
 {
     struct test_app a;

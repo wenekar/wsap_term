@@ -17,13 +17,10 @@ void wsap_vtcore_screen_insert_chars(struct wsap_vtcore *t, int count);
 
 const struct cell *wsap_vtcore_screen_view_row(const struct wsap_vtcore *t, int y);
 uint64_t wsap_vtcore_screen_view_row_key(const struct wsap_vtcore *t, int y);
-/* The selected columns [c0, c1] of each view row; c1 < c0 when none. */
-/* False when memory runs out; c0 and c1 are then not complete. */
 bool wsap_vtcore_selection_view_spans(const struct wsap_vtcore *t, int *c0, int *c1);
 
 int wsap_vtcore_screen_history_rows(const struct wsap_vtcore *t);
 
-/* Rows of history above the live screen. The view owns the offset. */
 int wsap_vtcore_view_offset(const struct wsap_vtcore *t);
 
 static inline bool screen_has_history(const struct wsap_vtcore *t)
@@ -113,7 +110,6 @@ static inline void init_ascii_text_row(struct text_row *tr, uint8_t *text, uint1
     static_assert(offsetof(struct text_row, start) + 16 <= offsetof(struct text_row, runs),
                   "the store at start stays before runs");
 #endif
-    /* The extra lanes cover unused fill data and run padding. */
 #if defined(__x86_64__) || defined(_M_X64)
     __m128i pen = _mm_setr_epi32(WSAP_VTCORE_COLOR_FG, WSAP_VTCORE_COLOR_BG, 0, WSAP_VTCORE_COLOR_FG);
     _mm_storeu_si128((__m128i *)&tr->start, pen);
@@ -145,8 +141,6 @@ static inline struct srow *screen_get_row(const struct screen *s, int y)
     return row;
 }
 
-/* The row at y, or NULL when y is outside the screen. A view row that
- * resolves to no screen row must not index the ring. */
 static inline struct srow *screen_row_at(const struct screen *s, int y)
 {
     if (y < 0 || y >= s->rows)
@@ -159,8 +153,6 @@ static inline struct srow *wsap_vtcore_row(const struct wsap_vtcore *t, int y)
     return screen_get_row(&t->scr, y);
 }
 
-/* Write the cells of a text row to out: its text, then its fill blanks.
- * Return the cells written. */
 static inline int text_row_decode(const struct srow *row, struct cell *out, int cols)
 {
     srow_materialize_text((struct srow *)row);
@@ -174,7 +166,6 @@ static inline int text_row_decode(const struct srow *row, struct cell *out, int 
     return n;
 }
 
-/* The cells of a text row, cols wide, for a reader. */
 static inline void text_row_cells(const struct srow *row, struct cell *out, int cols)
 {
     int n = text_row_decode(row, out, cols);
@@ -182,8 +173,6 @@ static inline void text_row_cells(const struct srow *row, struct cell *out, int 
         fill_cells(out + n, cols - n, WSAP_VTCORE_COLOR_FG, WSAP_VTCORE_COLOR_BG);
 }
 
-/* Turn a text row into a cells row. Only the write core does this. Its
- * cells past the text are still blank when RF_TAIL_PADDED says so. */
 static inline void srow_settle(struct srow *row, int cols)
 {
     srow_materialize_text(row);
@@ -196,13 +185,6 @@ static inline void srow_settle(struct srow *row, int cols)
     }
 }
 
-/*
- * The cursor row as a row that text can append to: a text row with the
- * cursor at its end, or an empty row on the bottom line of a full-screen
- * region with history, which becomes a text row. Rows there scroll into
- * history, so they keep the history format. NULL when neither holds. The
- * caller has handled a pending wrap, insert mode, and margins.
- */
 static inline struct srow *text_append_row(struct wsap_vtcore *t)
 {
     struct srow *row = wsap_vtcore_row(t, t->cursor_y);
@@ -216,8 +198,6 @@ static inline struct srow *text_append_row(struct wsap_vtcore *t)
                t->scroll_top != 0 || t->scroll_bottom != t->rows - 1 || !screen_has_history(t)) {
         return NULL;
     }
-    /* A row that continues a text row starts from that row's last pen, so
-     * history can copy its runs. */
     struct pen_attr start = pen_attr_default();
     if (t->cursor_y > 0) {
         const struct srow *prev = wsap_vtcore_row(t, t->cursor_y - 1);
@@ -236,8 +216,6 @@ static inline struct srow *text_append_row(struct wsap_vtcore *t)
     return row;
 }
 
-/* Take nbytes bytes that a writer put at the end of the row text: chars
- * characters in cells columns, with the pen. Runs count characters. */
 static inline void text_commit(struct srow *row, int nbytes, int chars, int cells, uint8_t hflags,
                                struct text_pen pen)
 {
@@ -271,11 +249,6 @@ static inline struct cell *row_cells(const struct wsap_vtcore *t, int p)
     return row->cells;
 }
 
-/* Screen rows carry no line ids. A row's logical line follows from the
- * history tail and the RF_WRAPPED chain above it, so a scroll, a wrap change,
- * or a resize can never leave a stale id behind. */
-
-/* The logical line of screen row 0, and the row's segment in it. */
 static inline struct line_pos screen_top_line(const struct wsap_vtcore *t)
 {
     if (!screen_has_history(t))
@@ -292,7 +265,6 @@ static inline struct line_pos line_pos_next(struct line_pos p, const struct srow
                                      : (struct line_pos){ p.id + 1, 0 };
 }
 
-/* The oldest line that history or the screen still holds. */
 static inline uint64_t first_retained_line(const struct wsap_vtcore *t)
 {
     if (screen_has_history(t) && t->hist.lines)
@@ -432,10 +404,8 @@ static inline void clamp_selection_after_scroll(struct wsap_vtcore *t)
     }
 }
 
-/* Move a row that leaves the top of the normal screen into history. */
 void wsap_vtcore_screen_push_row(struct wsap_vtcore *t, struct srow *row);
 
-/* Count a row that leaves the top of a screen without history. */
 static inline void screen_drop_top(struct screen *s, const struct srow *row)
 {
     struct line_pos p = line_pos_next((struct line_pos){ s->top_id, s->top_seg }, row);
@@ -443,8 +413,6 @@ static inline void screen_drop_top(struct screen *s, const struct srow *row)
     s->top_seg = p.seg;
 }
 
-/* Clear a row that enters at the bottom. With a colored pen it is a text row
- * that is all fill: blanks in the pen colors, which text can append over. */
 static inline void screen_new_row(struct wsap_vtcore *t, struct srow *row)
 {
     row->uid = ++t->next_row_uid;

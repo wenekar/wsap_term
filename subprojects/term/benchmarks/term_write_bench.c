@@ -17,9 +17,6 @@ static int cmp_double(const void *a, const void *b)
     return (d > 0) - (d < 0);
 }
 
-/* Timed sample: iterations full-buffer writes split at raw byte offsets, so a
- * chunk smaller than len cuts UTF-8/CSI sequences mid-stream and exercises the
- * parser's save-and-resume path, like real PTY reads do. */
 static double run_sample(struct wsap_vtcore *t, const char *buf, size_t len,
                          size_t chunk, int iterations, unsigned flags)
 {
@@ -31,8 +28,6 @@ static double run_sample(struct wsap_vtcore *t, const char *buf, size_t len,
     return now() - start;
 }
 
-/* The history size of the recorded baseline. Keep it, so results stay
- * comparable with the reports in benchmarks/. */
 enum { BENCH_SCROLLBACK = 4096 };
 
 int main(int argc, char **argv)
@@ -86,9 +81,6 @@ int main(int argc, char **argv)
             for (size_t i = 0; i < len; i += n)
                 memcpy(buf + i, cases[c].text, n);
         } else if (!strncmp(cases[c].name, "fg", 2)) {
-            /* Random truecolor per character, like termbench's FGPerChar and
-             * FGBGPerChar. Repeating a few colors would let the branch
-             * predictor learn the digit-count branches. */
             bool bg = !strncmp(cases[c].name, "fgbg", 4);
             unsigned state = seed;
             size_t n = 0;
@@ -112,8 +104,6 @@ int main(int argc, char **argv)
             for (size_t i = 0; i < len; i++)
                 buf[i] = crlf && (i & 1) == 0 ? '\r' : '\n';
         } else if (!strcmp(cases[c].name, "editor")) {
-            /* Full-screen redraw: CUP to each row followed by a full line of
-             * text, like a vim/htop frame. */
             size_t n = 0;
             for (int r = 1; r <= 40 && n + 140 < sizeof(buf); r++) {
                 n += (size_t)snprintf(buf + n, sizeof(buf) - n, "\033[%d;1H", r);
@@ -133,8 +123,6 @@ int main(int argc, char **argv)
         }
         if (!header) {
             header = true;
-            /* MiB/s counts input bytes: bytes/cell and work/byte differ per
-             * case, so only compare rows sharing case and chunk size. */
             printf("# %-9s %6s %10s %10s %10s %8s\n",
                    "case", "chunk", "MiB/s med", "min", "max", "ns/B");
         }
@@ -156,8 +144,6 @@ int main(int argc, char **argv)
                 fprintf(stderr, "wsap_vtcore_new failed: WSAP_VTCORE_COLS must be 0 to %d\n", WSAP_VTCORE_MAX_COLS);
                 return EXIT_FAILURE;
             }
-            /* manyline has bare LFs: each one also returns the cursor to
-             * column 0, as a tty with ONLCR does. */
             unsigned flags = !strcmp(cases[c].name, "manyline") ? WSAP_VTCORE_FEED_ONLCR : 0;
             if (!strncmp(cases[c].name, "margin-", 7)) {
                 const char setup[] = "\033[5;36r\033[36;1H";
@@ -166,8 +152,6 @@ int main(int argc, char **argv)
                 const char setup[] = "\033[40;1H";
                 wsap_vtcore_feed(t, setup, sizeof(setup) - 1, 0);
             }
-            /* Untimed warmup reaches steady-state scroll so rep 1 isn't a
-             * cold outlier. */
             run_sample(t, buf, len, ck, 16, flags);
             for (int r = 0; r < reps; r++)
                 samples[r] = run_sample(t, buf, len, ck, iterations, flags);

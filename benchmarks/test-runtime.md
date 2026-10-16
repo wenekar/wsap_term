@@ -23,10 +23,8 @@ preserving all behavioral and specification test coverage.
 ## Reproducing measurements
 
 ```sh
-# Full test suite execution
 meson test -C build
 
-# Execution of specific test binaries
 ./build/subprojects/term/tests/term-test
 ```
 

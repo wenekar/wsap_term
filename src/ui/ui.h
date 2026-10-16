@@ -1,10 +1,6 @@
 #ifndef WSAP_UI_H
 #define WSAP_UI_H
 
-/* The screen API. A surface shows one widget tree and owns its focus,
- * input, style, and frames. Widgets report through one action handler
- * type, set on a control or on any ancestor. A new widget type also
- * includes ui/widget_impl.h. */
 #include "ui/action.h"
 #include "ui/box.h"
 #include "ui/describe.h"

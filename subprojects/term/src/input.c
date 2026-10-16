@@ -655,7 +655,6 @@ struct wsap_vtcore_input_result wsap_vtcore_input_encode_mouse(const struct wsap
     return sb_result(&sb, buf);
 }
 
-/* Bidi controls can make pasted text look different from what runs. */
 static bool is_direction_format(uint32_t cp)
 {
     return cp == 0x061c ||

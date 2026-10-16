@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-# Code outside src/ui uses the UI only through its public headers:
-# ui/ui.h for screens and ui/widget_impl.h for new widget types. It never
-# reads a field under .impl and never includes ui/internal/.
-#
-# The files below still break the rule. Each one leaves this list when it
-# moves to the public API; the list only shrinks.
 set -euo pipefail
 cd "${1:-$(dirname "$0")/../..}"
 
@@ -43,10 +37,8 @@ while IFS= read -r file; do
         echo "$file: uses UI internals" >&2
         status=1
     fi
-# src/ui/yasl is the platform binding, not UI core, so it is checked too.
 done < <({ find src tests benchmarks -name '*.[chm]' -not -path 'src/ui/*'; find src/ui/yasl -name '*.[chm]'; } | sort)
 
-# An allowed file that no longer breaks the rule leaves the list.
 for file in "${allowed[@]}"; do
     if ! grep -qE '(\.|->)impl\b|#include "ui/internal/' "$file"; then
         echo "$file: uses only public UI headers; remove it from the list" >&2

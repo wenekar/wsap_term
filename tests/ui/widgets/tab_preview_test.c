@@ -8,8 +8,6 @@
 
 static uint32_t pixels[400 * 300];
 
-/* A hover card over a 400x300 surface, with a source that pictures any
- * tab below `tabs` and counts its captures. */
 struct fixture {
     struct ui_surface surface;
     struct ui_widget root;
@@ -103,8 +101,6 @@ static const struct ui_scene_op *find_op(const struct ui_scene *s,
 static const struct rect2i TAB0 = { .pos = { .x = 10 }, .size = { .x = 150, .y = 30 } };
 static const struct rect2i TAB1 = { .pos = { .x = 170 }, .size = { .x = 150, .y = 30 } };
 
-/* The card waits before it shows, then shows the title above the
- * picture, below the hovered tab. CSS sets the picture width. */
 static void hover_shows_card_below_tab_after_delay_test(void)
 {
     struct fixture f;
@@ -118,7 +114,6 @@ static void hover_shows_card_below_tab_after_delay_test(void)
     assert(!ui_tab_preview_is_visible(&f.card) && f.captures == 0);
     tick(&f, due);
     assert(ui_tab_preview_is_visible(&f.card));
-    /* 120px less the padding and the default border. */
     assert(f.last_width == ui_tab_preview_image_width(&f.card, false));
     assert(f.last_width >= 100 && f.last_width <= 112);
 
@@ -152,8 +147,6 @@ static void hover_shows_card_below_tab_after_delay_test(void)
     teardown(&f);
 }
 
-/* Once shown, the card moves to the next hovered tab at once, and
- * refreshes its picture while it stays. */
 static void shown_card_follows_hover_and_refreshes_test(void)
 {
     struct fixture f;
@@ -178,14 +171,12 @@ static void shown_card_follows_hover_and_refreshes_test(void)
     tick(&f, refresh);
     assert(f.captures == captures + 1);
 
-    /* The tab went away: the card goes with it. */
     f.tabs = 1;
     tick(&f, ui_surface_next_deadline(&f.surface));
     assert(!ui_tab_preview_is_visible(&f.card));
     teardown(&f);
 }
 
-/* After a press, the card stays away until the pointer leaves the tabs. */
 static void suppress_lasts_until_pointer_leaves_tabs_test(void)
 {
     struct fixture f;
@@ -205,8 +196,6 @@ static void suppress_lasts_until_pointer_leaves_tabs_test(void)
     teardown(&f);
 }
 
-/* A dragged tab's card is centered on the pointer at once, and stays
- * inside the surface near its edge. */
 static void dragged_card_follows_pointer_inside_surface_test(void)
 {
     struct fixture f;
@@ -224,14 +213,11 @@ static void dragged_card_follows_pointer_inside_surface_test(void)
     assert(b.x >= 0 && b.y >= 0);
     assert(rect2i_end(b).x <= 400 && rect2i_end(b).y <= 300);
 
-    /* Hovering does not take over a drag. */
     ui_tab_preview_hover(&f.card, 0, TAB0);
     assert(f.title[4] == '2');
     teardown(&f);
 }
 
-/* The default theme gives a hovered tab a bigger picture than a dragged
- * one. */
 static void hover_picture_is_larger_than_drag_picture_test(void)
 {
     struct fixture f;
@@ -250,9 +236,6 @@ static bool has_text_color(const struct ui_scene *s, uint32_t color)
     return false;
 }
 
-/* A new sheet restyles a shown card at the next prepare: the hover card
- * and the dragged card take the new widths, and the title takes the new
- * color. */
 static void restyled_sheet_updates_card_and_title_test(void)
 {
     struct fixture f;

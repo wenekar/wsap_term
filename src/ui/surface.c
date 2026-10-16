@@ -105,8 +105,6 @@ static struct ui_constraints viewport_constraints(const struct ui_surface *s)
     return (struct ui_constraints){ .max = s->impl.viewport };
 }
 
-/* One measure and layout pass. Work raised inside measure or layout
- * callbacks waits for the next frame. */
 static void measure_and_layout(struct ui_surface *surface)
 {
     struct ui_widget *root = surface->impl.root;
@@ -270,7 +268,6 @@ void ui_surface_forget(struct ui_surface *surface, struct ui_widget *subtree)
         surface->impl.hovered = NULL;
         leave(hovered);
     }
-    /* A focus-out handler may move the focus into the subtree once more. */
     for (int pass = 0; pass < 2; pass++) {
         struct ui_widget *focused = surface->impl.focused;
         if (!focused || !ui_widget_is_ancestor(subtree, focused))
@@ -308,7 +305,6 @@ void ui_surface_sync_modal(struct ui_surface *surface)
     struct ui_widget *modal = ui_widget_modal(surface->impl.root);
     if (modal == surface->impl.modal &&
         (modal || !surface->impl.restore_focus)) {
-        /* The focus stays inside a modal, even when its focused part goes. */
         if (modal && !ui_widget_is_ancestor(modal, surface->impl.focused))
             ui_surface_focus(surface, first_focusable(modal));
         return;
@@ -346,9 +342,6 @@ enum ui_cursor ui_surface_cursor(const struct ui_surface *surface)
         return UI_CURSOR_DEFAULT;
     const struct ui_widget *w = surface->impl.captured ? surface->impl.captured
                                                        : surface->impl.hovered;
-    /* A widget that was hidden since the last pointer event, such as a menu
-     * closed by a click or by Escape, still sits in hovered. Skipping it
-     * here keeps a stale hover from pinning the shape over the grid. */
     for (; w && ui_widget_visible(w); w = w->parent) {
         enum ui_cursor c = w->ops && w->ops->cursor
             ? w->ops->cursor(w, surface->impl.pointer) : UI_CURSOR_AUTO;
@@ -422,8 +415,6 @@ static bool dispatch_pointer(struct ui_surface *surface,
            ui_widget_bubble(target, event);
 }
 
-/* The path from the capture start down to a keyboard target holds this
- * many widgets at most. A deeper path runs no capture. */
 #define UI_CAPTURE_PATH_MAX 64
 
 static struct ui_widget *keyboard_target(const struct ui_surface *surface)
@@ -438,8 +429,6 @@ static struct ui_widget *keyboard_target(const struct ui_surface *surface)
     return surface->impl.root;
 }
 
-/* Runs the capture functions from the start down to target, outermost
- * first. True when one of them handled the event. */
 static bool capture_keyboard(struct ui_surface *surface,
                              struct ui_widget *target,
                              const struct ui_event *event)
@@ -460,7 +449,6 @@ static bool capture_keyboard(struct ui_surface *surface,
         return false;
     for (size_t i = depth; i > 0; i--) {
         struct ui_widget *c = path[i - 1];
-        /* A capture function may remove or destroy widgets on the path. */
         if (c->impl.destroyed || c->impl.surface != surface)
             break;
         if (c->impl.key_capture &&
@@ -542,7 +530,6 @@ bool ui_surface_dispatch(struct ui_surface *surface,
     }
     surface->impl.busy = false;
     release_retired_dialogs(surface);
-    /* Frames on the keyboard path come from invalidation. */
     if (handled && !keyboard_path(event->kind))
         ui_surface_request_frame(surface);
     return handled;
@@ -574,12 +561,10 @@ void ui_surface_focus(struct ui_surface *surface, struct ui_widget *widget)
         widget = NULL;
     if (surface->impl.focused == widget)
         return;
-    /* The focus ring moves with the focus. */
     ui_surface_request_frame(surface);
     struct ui_widget *previous = surface->impl.focused;
     surface->impl.focused = NULL;
     send(previous, ui_event_focus(false, 0));
-    /* The focus-out handler moved the focus itself. */
     if (surface->impl.focused)
         return;
     if (widget && retired(surface, widget))
@@ -617,7 +602,6 @@ void ui_surface_set_context_target(struct ui_surface *surface, struct ui_widget 
         ? target : NULL;
 }
 
-/* Focusable widgets in tree order, around the focused one. */
 struct focus_walk {
     const struct ui_widget *focused;
     struct ui_widget *first, *last;

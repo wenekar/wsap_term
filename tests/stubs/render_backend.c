@@ -29,8 +29,6 @@ bool render_gpu_submit(struct framebuffer_gpu *g, struct framebuffer *fb)
     return g == &test_gpu;
 }
 
-/* render-test steers render_gpu_terminal() itself; the UI scene always
- * falls back to the CPU. */
 bool render_gpu_ui_scene(struct framebuffer_gpu *g, const struct ui_scene *scene,
                          struct font_instance *font)
 {

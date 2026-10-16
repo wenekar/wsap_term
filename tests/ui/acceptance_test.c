@@ -1,5 +1,3 @@
-/* Integrated screen test. It covers typing, focus, scrolling, resize,
- * theme changes, actions, and focus removal through public APIs. */
 
 #include "ui/ui.h"
 
@@ -130,7 +128,6 @@ static struct vector2i center(const struct ui_widget *w)
     };
 }
 
-/* Typing + tab traversal + keyboard activation. */
 static void test_focus_and_typing(void)
 {
     struct screen s;
@@ -157,13 +154,11 @@ static void test_focus_and_typing(void)
     dispatch_key(&surface, UI_KEY_CHAR, ' ');
     assert(s.cancel_clicks == 1);
 
-    /* Traversal descends into the scrolled content. */
     assert(ui_surface_focus_next(&surface));
     assert(ui_surface_focused(&surface) == UI_WIDGET(&s.more));
     dispatch_key(&surface, UI_KEY_ENTER, 0);
     assert(s.more_clicks == 1);
 
-    /* Wraps back to the input; typing goes to it again. */
     assert(ui_surface_focus_next(&surface));
     assert(ui_surface_focused(&surface) == UI_WIDGET(&s.input));
     dispatch_key(&surface, UI_KEY_CHAR, '!');
@@ -173,8 +168,6 @@ static void test_focus_and_typing(void)
     ui_scene_destroy(&scene);
 }
 
-/* Click the in-content button after wheel-scrolling; the clip keeps it
- * unreachable before scrolling. */
 static void test_click_after_scroll(void)
 {
     struct screen s;
@@ -186,15 +179,11 @@ static void test_click_after_scroll(void)
     assert(ui_scrollview_content_height(&s.scroll) >
            ui_scrollview_viewport_height(&s.scroll));
 
-    /* Unscrolled: the button sits below the viewport — a press at its
-     * (out-of-view) position must not reach it. */
     struct vector2i hidden = center(UI_WIDGET(&s.more));
     assert(!rect2i_contains(UI_WIDGET(&s.scroll)->bounds, hidden));
     click_at(&surface, hidden);
     assert(s.more_clicks == 0);
 
-    /* Wheel-scroll through the event path: SCROLL inside the viewport
-     * moves the offset, SCROLL outside it does not. */
     struct vector2i inside = {
         .x = UI_WIDGET(&s.scroll)->bounds.x + 2,
         .y = UI_WIDGET(&s.scroll)->bounds.y + 2,
@@ -209,8 +198,6 @@ static void test_click_after_scroll(void)
     ui_surface_dispatch(&surface, &wheel);
     assert(ui_scrollview_offset(&s.scroll) == offset);
 
-    /* Scroll until the button is inside the viewport. The widget bounds
-     * include the current offset, so restore it to get the content position. */
     int content_top = UI_WIDGET(&s.more)->bounds.y - UI_WIDGET(&s.scroll)->bounds.y +
                       ui_scrollview_offset(&s.scroll);
     ui_scrollview_scroll_to(&s.scroll, content_top);
@@ -224,8 +211,6 @@ static void test_click_after_scroll(void)
     ui_scene_destroy(&scene);
 }
 
-/* A smaller viewport re-lays out through the normal update path and
- * clamps the scroll offset. */
 static void test_resize(void)
 {
     struct screen s;
@@ -248,13 +233,10 @@ static void test_resize(void)
     assert(UI_WIDGET(&s.root)->bounds.height == 40);
     assert(UI_WIDGET(&s.scroll)->bounds.height < 40);
 
-    /* Still functional after resize: focus and typing work. */
     assert(ui_surface_focus_next(&surface));
     dispatch_key(&surface, UI_KEY_CHAR, 'x');
     assert(!strcmp(ui_input_text(&s.input), "x"));
 
-    /* Growing the viewport past the content height clamps the offset to
-     * the new maximum during the next layout pass. */
     ui_surface_set_scale(&surface, (struct css_scale_context){
                           .dpi_scale = 1.0f, .cell_w = 8, .cell_h = 16,
                       });
@@ -268,8 +250,6 @@ static void test_resize(void)
     ui_scene_destroy(&scene);
 }
 
-/* Editing the sheet in place and re-setting the same pointer must refresh
- * geometry on the next build — no forced resize. */
 static void test_theme_change(void)
 {
     struct screen s;
@@ -295,8 +275,6 @@ static void test_theme_change(void)
     css_sheet_clear(&sheet);
 }
 
-/* Removing the focused widget clears focus, delivers FOCUS_OUT, and stops
- * key delivery — no stale references remain. */
 static void test_remove_focused_control(void)
 {
     struct screen s;
@@ -312,7 +290,6 @@ static void test_remove_focused_control(void)
     assert(ui_surface_focused(&surface) == NULL);
     assert(ui_widget_surface(UI_WIDGET(&s.ok)) == NULL);
 
-    /* Keys no longer reach the removed control; traversal skips it. */
     dispatch_key(&surface, UI_KEY_ENTER, 0);
     assert(s.ok_clicks == 0);
     assert(ui_surface_focus_next(&surface));
@@ -320,7 +297,6 @@ static void test_remove_focused_control(void)
     assert(ui_surface_focus_next(&surface));
     assert(ui_surface_focused(&surface) == UI_WIDGET(&s.cancel));
 
-    /* The detached widget is still valid storage and can reattach. */
     assert(ui_widget_add_child(UI_WIDGET(&s.buttons), UI_WIDGET(&s.ok)));
     assert(ui_surface_build_scene(&surface, &scene));
 

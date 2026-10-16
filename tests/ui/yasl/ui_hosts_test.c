@@ -11,9 +11,6 @@
 #include "terminal/internal.h"
 #include "ui/ui.h"
 
-/* The terminal window's chrome acts on the real tabs: these tests press
- * the tab bar and the scrollbar through the window's UI surface. */
-
 struct fixture {
     struct test_app app;
     struct window *w;
@@ -25,7 +22,6 @@ static void open_window(struct fixture *f, int tabs)
     test_app_init(&f->app, "/bin/cat", (struct vector2i){ .x = 800, .y = 480 });
     f->w = test_terminal_window(&f->app.app->host, &f->app.app->config.terminal);
     assert(f->w);
-    /* No native surface: the UI surface takes the size. */
     ui_surface_set_scale(window_ui_surface(f->w), (struct css_scale_context){
         .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
     });
@@ -41,7 +37,6 @@ static void close_window(struct fixture *f)
     test_app_fini(&f->app);
 }
 
-/* Runs the UI through its animations, as frames would. */
 static void settle(struct fixture *f)
 {
     struct ui_surface *ui = window_ui_surface(f->w);
@@ -112,7 +107,6 @@ static void tab_bar_opens_selects_and_closes_tabs_test(void)
     assert(terminal_tab_count(f.w) == 2);
     assert(f.tw->tabs[0] != doomed && f.tw->tabs[1] != doomed);
 
-    /* A middle press closes a tab too. */
     click(&f, tab_center(&f, 1), 1);
     settle(&f);
     assert(terminal_tab_count(f.w) == 1);
@@ -140,8 +134,6 @@ static void dragging_a_tab_reorders_tabs_test(void)
     close_window(&f);
 }
 
-/* Dragging the scrollbar's thumb scrolls the active tab, from the top
- * of all its history to none of it. */
 static void scrollbar_scrolls_the_active_tab_test(void)
 {
     struct fixture f;

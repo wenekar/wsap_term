@@ -76,7 +76,6 @@ bool wsap_vtcore_hist_view_sync(struct hist_view *v, const struct hist *h, int c
         memset(v->fenwick, 0, ((size_t)v->cap + 1) * sizeof(*v->fenwick));
         for (uint64_t id = first; id < end; id++)
             v->counts[(uint32_t)id & (v->cap - 1)] = (uint32_t)wsap_vtcore_hist_line_estimate(h, id, cols);
-        /* Build all tree nodes in one pass. */
         for (uint32_t i = 1; i <= v->cap; i++) {
             v->fenwick[i] += v->counts[i - 1];
             uint32_t parent = i + (i & -i);
@@ -87,7 +86,6 @@ bool wsap_vtcore_hist_view_sync(struct hist_view *v, const struct hist *h, int c
     } else {
         for (uint64_t id = v->first_id; id < first; id++)
             set_count(v, id, 0);
-        /* Only the old final line can grow or close. */
         if (v->end_id > first && wsap_vtcore_hist_line_cells(h, v->end_id - 1) != v->last_cells)
             set_count(v, v->end_id - 1, (uint32_t)wsap_vtcore_hist_line_estimate(h, v->end_id - 1, cols));
         for (uint64_t id = v->end_id; id < end; id++)
@@ -103,7 +101,6 @@ bool wsap_vtcore_hist_view_sync(struct hist_view *v, const struct hist *h, int c
     return true;
 }
 
-/* The anchor line is a visited line, even before the next capture. */
 static uint64_t anchor_extra(const struct hist_view *v, const struct hist *h, int cols)
 {
     uint64_t id = v->anchor.line_id;
@@ -121,7 +118,6 @@ uint64_t wsap_vtcore_hist_view_rows(const struct hist_view *v, const struct hist
     return rows + anchor_extra(v, h, cols);
 }
 
-/* Rows of the retained lines before id, in logical order. */
 static uint64_t before(const struct hist_view *v, uint64_t id)
 {
     if (id <= v->first_id)
@@ -134,7 +130,6 @@ static uint64_t before(const struct hist_view *v, uint64_t id)
     return v->total_rows - p_start + prefix(v, stop - v->cap);
 }
 
-/* Physical slot of a row in tree order. */
 static uint32_t select_slot(const struct hist_view *v, uint64_t row, int *seg)
 {
     uint32_t slot = 0;
@@ -240,7 +235,6 @@ void wsap_vtcore_hist_view_scroll_to(struct hist_view *v, const struct hist *h, 
         v->anchor = (struct view_anchor){0};
         return;
     }
-    /* Allocation failure uses the read-only history walk. */
     uint64_t total = wsap_vtcore_hist_view_rows(v, h, cols);
     if ((uint64_t)offset > total)
         offset = rows_as_int(total);
@@ -255,7 +249,6 @@ void wsap_vtcore_hist_view_scroll_to(struct hist_view *v, const struct hist *h, 
     v->cols = cols;
 }
 
-/* Relative movement visits only the logical lines it crosses. */
 void wsap_vtcore_hist_view_scroll(struct hist_view *v, const struct hist *h, int cols,
                       struct line_pos screen_top, int lines)
 {
@@ -301,7 +294,6 @@ void wsap_vtcore_hist_view_scroll(struct hist_view *v, const struct hist *h, int
     v->cols = cols;
 }
 
-/* A viewport walks exact segments from its anchor, never an estimated row. */
 bool wsap_vtcore_hist_view_row_pos(const struct hist_view *v, const struct hist *h, int cols,
                        int screen_rows, struct line_pos screen_top, int y,
                        struct hist_view_pos *pos)
@@ -333,7 +325,6 @@ bool wsap_vtcore_hist_view_row_pos(const struct hist_view *v, const struct hist 
     return false;
 }
 
-/* Wide line counts become exact when the viewport visits them. */
 void wsap_vtcore_hist_view_refine(struct hist_view *v, struct hist *h, int cols, int rows)
 {
     if (!v->anchor.active || !current(v, h, cols))

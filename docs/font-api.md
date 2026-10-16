@@ -1,9 +1,6 @@
 # Font API
 
-This document is the contract of the font API in `src/font/font.h` and
-`src/font/glyph_cache.h`. It gives the words, the owner and the lifetime of
-each pointer, the stale checks, the thread rules, and the counters. The code
-is the authority. If this document and the code disagree, fix the document.
+The font API is in `src/font/font.h` and `src/font/glyph_cache.h`.
 
 ## Vocabulary
 

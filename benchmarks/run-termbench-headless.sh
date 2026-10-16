@@ -1,11 +1,4 @@
 #!/bin/bash
-# Run benchmarks/run-termbench.sh against a private headless Sway, for
-# machines with no graphical session (CI, remote shells, agents).
-#
-# Absolute numbers are NOT comparable to a real session: pixman software
-# rendering and headless frame pacing differ from a GPU-backed compositor.
-# Use this only to compare two builds on the same machine, and confirm
-# anything that matters on a real session with run-termbench.sh directly.
 
 set -euo pipefail
 

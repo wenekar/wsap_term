@@ -46,8 +46,6 @@ static inline void emit_decoded(struct wsap_vtcore *t, uint32_t cp, uint16_t fla
         emit_codepoint(t, cp, klass, flags);
 }
 
-/* A byte that cannot continue a UTF-8 sequence ends it: the unfinished
- * sequence prints U+FFFD (Unicode 3.9, maximal subparts). */
 void wsap_vtcore_text_utf8_interrupt(struct wsap_vtcore *t)
 {
     if (WSAP_VTCORE_EXPECT(t->utf8_state == WSAP_VTCORE_UTF8_ACCEPT, 1))
@@ -69,7 +67,6 @@ void wsap_vtcore_text_ground(struct wsap_vtcore *t, unsigned char ch)
     if (WSAP_VTCORE_EXPECT(ch == 0x1b, 0)) {
         wsap_vtcore_escape_begin(t);
     } else if (ch == '\n' || ch == 0x0b || ch == 0x0c) {
-        /* VT and FF act as LF (xterm). */
         if (wsap_vtcore_lnm(t)) sc_cr(t);
         sc_linefeed(t, 1);
     } else if (ch == '\r') {
@@ -98,7 +95,6 @@ void wsap_vtcore_text_ground(struct wsap_vtcore *t, unsigned char ch)
         } else if (st == WSAP_VTCORE_UTF8_REJECT) {
             t->utf8_state = WSAP_VTCORE_UTF8_ACCEPT;
             emit_decoded(t, 0xFFFD, wsap_vtcore_current_flags(t));
-            /* The byte that ended an unfinished sequence starts anew. */
             if (before != WSAP_VTCORE_UTF8_ACCEPT)
                 wsap_vtcore_text_ground(t, ch);
         }
@@ -190,7 +186,6 @@ static inline bool try_text_run(struct wsap_vtcore *t, const char *buf, size_t l
     return wrote;
 }
 
-/* The feed flags this build knows. wsap_vtcore_feed() rejects any other bit. */
 #define WSAP_VTCORE_FEED_KNOWN WSAP_VTCORE_FEED_ONLCR
 
 static void wsap_vtcore_feed_inner(struct wsap_vtcore *t, const char *buf, size_t len, unsigned flags)

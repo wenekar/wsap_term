@@ -19,7 +19,6 @@ __thread int ft_applied_px = FONT_DEFAULT_PIXEL_SIZE;
 
 const char embedded_cards_path[] = "embedded:playing-cards";
 
-/* pick_face_style() tries the variants in this order. */
 const enum font_variant font_style_order[3] = {
     FONT_VARIANT_BOLD_ITALIC, FONT_VARIANT_BOLD, FONT_VARIANT_ITALIC
 };
@@ -388,8 +387,6 @@ void face_reload_configured(void)
     }
 }
 
-/* The cell of face at the applied size. Without a sized face it gives the
- * bound metrics. */
 struct font_metrics ft_measure_cell(FT_Face face)
 {
     if (!face || !face->size)
@@ -421,9 +418,6 @@ struct font_metrics ft_measure_cell(FT_Face face)
     return t;
 }
 
-/* Raster and vector caches key on the pixel size, so they keep what
- * other sizes drew. Hb fonts cache the scale, so they go. A size that is
- * already applied changes nothing. */
 void ft_size_faces(int px)
 {
     if (px == ft_applied_px)

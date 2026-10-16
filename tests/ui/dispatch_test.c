@@ -7,15 +7,12 @@
 #include "ui/ui.h"
 #include "ui/widget_impl.h"
 
-/* A widget that counts what it receives. */
 struct probe {
     int keys, texts, shortcuts, drops, captures;
     bool handle_key;
     bool keep_text;
-    /* Invalidate the widget when a key arrives. */
     bool invalidate_key;
     bool handle_capture;
-    /* Answer for text, shortcut, drop, and pointer events. */
     bool handle_other;
     int shortcut_action;
     enum ui_edit_command shortcut_edit;
@@ -73,7 +70,6 @@ static void probe_init(struct probe *p)
     ui_widget_init(&p->widget, &PROBE_OPS, p);
 }
 
-/* Makes root the surface root, sized 200 by 100. */
 static void set_root_200x100(struct ui_surface *s, struct ui_widget *root)
 {
     ui_surface_set_root(s, root);
@@ -88,7 +84,6 @@ static void key_press(struct ui_surface *s)
     ui_surface_dispatch(s, &key);
 }
 
-/* With nothing focused, keys go to the default focus. */
 static void default_focus_test(void)
 {
     struct probe root, child;
@@ -107,12 +102,10 @@ static void default_focus_test(void)
     key_press(&s);
     assert(child.keys == 1 && root.keys == 0);
 
-    /* With no default focus, the root takes the key. */
     ui_surface_set_default_focus(&s, NULL);
     key_press(&s);
     assert(child.keys == 1 && root.keys == 1);
 
-    /* A hidden default focus falls back to the root. */
     ui_surface_set_default_focus(&s, &child.widget);
     ui_widget_set_hidden(&child.widget, true);
     key_press(&s);
@@ -122,7 +115,6 @@ static void default_focus_test(void)
     ui_widget_destroy(&root.widget);
 }
 
-/* A focused widget still takes keys ahead of the default focus. */
 static void focus_beats_default_test(void)
 {
     struct probe root, first, second;
@@ -145,7 +137,6 @@ static void focus_beats_default_test(void)
     ui_widget_destroy(&root.widget);
 }
 
-/* A capture on an ancestor runs before the focused label handles the key. */
 static void capture_before_label_test(void)
 {
     struct probe root;
@@ -171,7 +162,6 @@ static void capture_before_label_test(void)
     assert(root.captures == 1);
     assert(!ui_label_selection(&label, &lo, &hi));
 
-    /* A capture that declines lets the label see the key. */
     root.handle_capture = false;
     assert(ui_surface_dispatch(&s, &select_all));
     assert(root.captures == 2);
@@ -181,8 +171,6 @@ static void capture_before_label_test(void)
     ui_widget_destroy(&root.widget);
 }
 
-/* With a modal open, the capture path starts at the modal. The root's
- * capture does not run, even though the root holds the modal. */
 static void capture_starts_at_modal_test(void)
 {
     struct probe root, modal, child;
@@ -210,7 +198,6 @@ static void capture_starts_at_modal_test(void)
     ui_widget_destroy(&root.widget);
 }
 
-/* A shortcut or a file drop bubbles from the focused widget to an ancestor. */
 static void shortcut_bubbles_test(void)
 {
     struct probe root, leaf;
@@ -237,8 +224,6 @@ static void shortcut_bubbles_test(void)
     ui_widget_destroy(&root.widget);
 }
 
-/* A key handler that keeps its text lets the text reach the UI. The flag
- * clears at the next dispatch. */
 static void keep_key_text_test(void)
 {
     struct probe root;
@@ -262,8 +247,6 @@ static void keep_key_text_test(void)
     ui_widget_destroy(&root.widget);
 }
 
-/* A handled key draws only when a widget invalidates. A handled pointer
- * event still requests the frame. */
 static void frame_requests_test(void)
 {
     struct probe root;

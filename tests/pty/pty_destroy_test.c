@@ -102,8 +102,6 @@ int main(void)
     assert(p.pid == 0);
     assert(pty_master_fd(&p) == -1);
 
-    /* The child is reaped in the background; kill(pid, 0) succeeds on
-     * a zombie, so ESRCH means it was reaped, not only that it exited. */
     bool reaped = false;
     for (int i = 0; i < 500 && !reaped; i++) {
         reaped = kill(pid, 0) < 0 && errno == ESRCH;

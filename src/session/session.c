@@ -21,7 +21,6 @@
 
 static alignas(64) char session_read_buf[PTY_READ_BUF_SZ];
 
-/* Every live session. Children are process-wide, so the reaping is too. */
 static struct session *live_sessions;
 
 static void notify_output(struct session *s)
@@ -193,7 +192,6 @@ static void on_pty_data(void *ud, int fd, short revents)
         notify_output(s);
 }
 
-/* The term core, not pty, knows which Unicode version it implements. */
 static const char *const child_env[] = {
     "UNICODE_VERSION=" WSAP_VTCORE_UNICODE_DATA_VERSION,
     NULL,
@@ -360,10 +358,6 @@ bool session_cwd(const struct session *s, char *out, size_t sz)
     return target_pid != s->pty.pid && proc_read_pid_cwd_buf(s->pty.pid, out, sz);
 }
 
-/* Reaps first, then ends one session at a time: a host may destroy any
- * session from its exit callback. The exit reaches the host after the
- * child's last output: the ring reports it behind that output, and without
- * a ring the session reads the rest itself. */
 void session_reap_exited(void)
 {
     for (struct session *s = live_sessions; s; s = s->next_live) {

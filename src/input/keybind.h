@@ -47,10 +47,8 @@ bool input_keymap_format_action_chord(const struct input_keymap *km,
                                 enum input_shortcut action, char *out,
                                 size_t sz);
 bool input_parse_keybind_style(const char *s, enum input_keybind_style *out);
-/* "ctrl+shift+p", "escape", "f12": the chord syntax of keybind specs. */
 bool input_parse_chord(const char *s, unsigned *mods, uint32_t *codepoint,
                        uint16_t *key);
-/* Action names of keybind specs: "new_tab", "command_palette", .... */
 bool input_parse_action(const char *s, enum input_shortcut *out);
 
 struct input_keymap *input_keymap_active(void);

@@ -1,17 +1,3 @@
-/*
- * Reference model of the terminal. See model.h.
- *
- * Sources of truth, in order:
- * - xterm and ECMA-48 for controls, escape sequences, and modes.
- * - Unicode for UTF-8: each maximal invalid subpart becomes one U+FFFD.
- * - This terminal's design where xterm has no rule: reflow on resize, the
- *   row length that reflow keeps, history, and grapheme clusters.
- *
- * The model is slow on purpose. It has no lazy rows, no rings, and no SIMD.
- *
- * Known differences from xterm follow. For each one the model matches the
- * current terminal, and the macro names the phase that removes it.
- */
 #include "model.h"
 #include "wsap_vtcore/unicode/unicode.h"
 
@@ -21,10 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Phase 6: the history limit counts rows. It must count logical lines. */
 #define KNOWN_HISTORY_COUNTS_ROWS 0
-/* Phase 6: a column resize on the alternate screen also cuts the saved
- * normal screen and the history to the new width. */
 #define KNOWN_ALT_RESIZE_CUTS_NORMAL 0
 
 #define MAX_TABS 4096
@@ -35,27 +18,21 @@ struct cell {
     uint8_t n, width;
     uint16_t attrs;
     wsap_vtcore_color fg, bg;
-    bool pad;           /* the blank that a wide glyph left at a row end */
+    bool pad;
 };
 
-/*
- * A row. len is the length that reflow keeps: it covers every cell that
- * was written or erased in a color, and a default erase at the end of the
- * row shortens it. Cells at or after len are default blanks.
- */
 struct row {
     int len;
-    bool wrapped;       /* autowrap continued this row on the next one */
+    bool wrapped;
     struct cell c[];
 };
 
 struct pen {
     wsap_vtcore_color fg, bg, ul;
-    uint16_t attrs;     /* WSAP_VTCORE_ATTR_* style bits and the underline style */
+    uint16_t attrs;
     bool inverse;
 };
 
-/* What DECSC saves. */
 struct saved {
     int x, y;
     bool pending, origin;
@@ -72,13 +49,12 @@ enum { GROUND, ESC, CSI, STR, STR_ESC, CHARSET, HASH, DOCS };
 enum { OSC, DCS, IGNORE };
 
 struct model {
-    char name[64];      /* XTVERSION reply */
+    char name[64];
     int cols, rows, limit;
     struct row **scr;
     struct row **hist;
     int hist_len, hist_cap, hist_lines;
 
-    /* The normal screen while the alternate screen is active. */
     bool alternate;
     struct row **normal;
     int normal_cols, normal_rows;
@@ -98,10 +74,9 @@ struct model {
     int top, bottom;
     bool tabs[MAX_TABS];
     struct keyboard keyboard[2];
-    /* The last printed glyph, for REP and cluster joins. */
     uint32_t last[WSAP_VTCORE_GRAPHEME_MAX_LEN];
     int last_n;
-    int prompt;         /* screen row of the last OSC 133;A, or -1 */
+    int prompt;
     unsigned flags;
 
     int state, str_kind;
@@ -121,8 +96,6 @@ struct model {
     struct model_cell **out;
     int out_cap, out_cols;
 };
-
-/* ---- cells and rows ---- */
 
 static struct cell blank(wsap_vtcore_color fg, wsap_vtcore_color bg)
 {
@@ -144,7 +117,6 @@ static struct row *row_new(int cols)
     return r;
 }
 
-/* Cut len to n. The cells after it become default blanks. */
 static void row_cut(struct row *r, int n, int cols)
 {
     if (n >= r->len) return;
@@ -162,8 +134,6 @@ static bool is_ri(uint32_t cp)
     return cp - 0x1F1E6u <= 0x19u && wsap_vtcore_grapheme_regional_indicator(cp);
 }
 
-/* ---- replies ---- */
-
 static void __attribute__((format(printf, 2, 3))) reply(struct model *m, const char *fmt, ...)
 {
     char tmp[256];
@@ -180,8 +150,6 @@ static void __attribute__((format(printf, 2, 3))) reply(struct model *m, const c
     memcpy(m->reply + m->reply_len, tmp, (size_t)n);
     m->reply_len += (size_t)n;
 }
-
-/* ---- history ---- */
 
 static int history_limit(int requested)
 {
@@ -236,12 +204,8 @@ static void wsap_vtcore_hist_clear(struct model *m)
     m->hist_lines = 0;
 }
 
-/* ---- scrolling ---- */
-
 static void erase_row(struct model *m, int y);
 
-/* Scroll the whole screen up one row. On the normal screen the top row
- * goes to history. */
 static void scroll_up_full(struct model *m)
 {
     struct row *top = m->scr[0];
@@ -264,8 +228,6 @@ static void scroll_region(struct model *m, int top, int bottom, int n, bool down
         for (int i = 0; i < n; i++) scroll_up_full(m);
         return;
     }
-    /* A region at the top of the normal screen saves the rows that leave
-     * it. The rows below the region stay in place. */
     if (!down && history && top == 0 && !m->alternate) {
         for (int i = 0; i < n; i++) {
             scroll_up_full(m);
@@ -309,10 +271,6 @@ static void reverse_index(struct model *m)
         m->y--;
 }
 
-/* ---- erasing ---- */
-
-/* An erase that covers half of a wide glyph erases all of it. Erased cells
- * take the pen colors without inverse and lose their attributes. */
 static void erase_cells(struct model *m, int y, int from, int to)
 {
     struct row *r = m->scr[y];
@@ -341,7 +299,6 @@ static void erase_row(struct model *m, int y)
     erase_cells(m, y, 0, m->cols);
 }
 
-/* The last screen row that shows a glyph other than a space. */
 static int last_text_row(const struct model *m)
 {
     for (int y = m->rows - 1; y >= 0; y--)
@@ -359,8 +316,6 @@ static void erase_display(struct model *m, int mode)
         return;
     }
     if (mode == 2) {
-        /* The normal screen keeps its text: rows up to the last one with
-         * text move to history first. */
         int last = m->alternate ? -1 : last_text_row(m);
         for (int i = 0; i <= last; i++) scroll_up_full(m);
         for (int y = 0; y < m->rows; y++) erase_row(m, y);
@@ -380,10 +335,6 @@ static void erase_line(struct model *m, int mode)
     else if (mode == 2) erase_cells(m, m->y, 0, m->cols);
 }
 
-/* ---- wide glyph repair ---- */
-
-/* A write to [from, to) splits the wide glyphs at its edges. Their other
- * halves become blanks that keep their colors. */
 static void split_edges(struct model *m, struct row *r, int from, int to)
 {
     if (from >= to) return;
@@ -394,7 +345,6 @@ static void split_edges(struct model *m, struct row *r, int from, int to)
     (void)m;
 }
 
-/* Blank every half of a wide glyph in [from, to) that lost its partner. */
 static void repair_row(struct model *m, struct row *r, int from, int to)
 {
     if (from < 0) from = 0;
@@ -408,13 +358,10 @@ static void repair_row(struct model *m, struct row *r, int from, int to)
     }
 }
 
-/* Writing at x past len first fills the gap with default blanks. */
 static void fill_gap(struct row *r, int x)
 {
     if (x > r->len) r->len = x;
 }
-
-/* ---- printing ---- */
 
 static uint16_t presentation(const uint32_t *cps, int n)
 {
@@ -439,7 +386,6 @@ static void wrap_to_next_row(struct model *m)
     m->pending = false;
 }
 
-/* Put one glyph at the cursor with the pen colors and the given style. */
 static void put_glyph(struct model *m, const uint32_t *cps, int n, uint16_t attrs)
 {
     if (n > 1)
@@ -450,7 +396,6 @@ static void put_glyph(struct model *m, const uint32_t *cps, int n, uint16_t attr
     if (m->pending) wrap_to_next_row(m);
     int right = m->cols - 1;
     struct row *r = m->scr[m->y];
-    /* A wide glyph that does not fit wraps and leaves a pad blank. */
     if (width == 2 && m->cols > 1 && m->x == right && m->autowrap) {
         fill_gap(r, m->x);
         split_edges(m, r, m->x, right + 1);
@@ -492,7 +437,6 @@ static void put_glyph(struct model *m, const uint32_t *cps, int n, uint16_t attr
     }
 }
 
-/* Marks, emoji modifiers, and spacing marks extend the glyph before them. */
 static bool joins(uint32_t cp, int width)
 {
     if (cp < 0x300) return false;
@@ -507,11 +451,6 @@ static bool cluster_joins(const uint32_t *cps, int n, uint32_t cp, int width)
     return n == 1 && is_ri(cp) && is_ri(cps[0]);
 }
 
-/*
- * Try to add cp to the glyph left of the cursor. True when cp was used:
- * joined, or dropped because it has no glyph to join. The glyph keeps its
- * colors and style and is placed again, so it can grow to two cells.
- */
 static bool extend_cluster(struct model *m, uint32_t cp, int width)
 {
     bool after_join = m->last_n > 1 || (m->last_n == 1 && m->last[0] == 0x200D);
@@ -566,7 +505,6 @@ static void emit(struct model *m, uint32_t cp)
         0x23bb, 0x2500, 0x23bc, 0x23bd, 0x251c, 0x2524, 0x2534, 0x252c,
         0x2502, 0x2264, 0x2265, 0x03c0, 0x2260, 0x00a3, 0x00b7,
     };
-    /* C1 controls in UTF-8 form act as their ESC forms. */
     if (cp >= 0x80 && cp <= 0x9f) {
         static const char c1[32] = {
             [4] = 'D', [5] = 'E', [8] = 'H', [13] = 'M',
@@ -596,8 +534,6 @@ static void print_cp(struct model *m, uint32_t cp)
         emit(m, cp);
 }
 
-/* ---- cursor ---- */
-
 static int top_limit(const struct model *m) { return m->origin ? m->top : 0; }
 static int bottom_limit(const struct model *m) { return m->origin ? m->bottom : m->rows - 1; }
 
@@ -608,8 +544,6 @@ static void move_to(struct model *m, int x, int y)
     m->y = y < 0 ? 0 : y >= m->rows ? m->rows - 1 : y;
 }
 
-/* CUU, CUD, CNL, CPL, and VPR stop at a margin when they start inside the
- * scroll region (xterm, DEC STD 070). */
 static void move_v(struct model *m, int n, bool col0)
 {
     int lo = 0, hi = m->rows - 1;
@@ -666,8 +600,6 @@ static void tabs_default(struct model *m)
     for (int c = 8; c < MAX_TABS; c += 8) m->tabs[c] = true;
 }
 
-/* ---- insert and delete ---- */
-
 static void delete_chars(struct model *m, int n)
 {
     struct row *r = m->scr[m->y];
@@ -719,8 +651,6 @@ static void insert_chars(struct model *m, int n)
     repair_row(m, r, x - 1, end);
 }
 
-/* ---- SGR ---- */
-
 static void pen_reset(struct pen *p)
 {
     *p = (struct pen){ .fg = WSAP_VTCORE_COLOR_FG, .bg = WSAP_VTCORE_COLOR_BG };
@@ -736,7 +666,6 @@ static void set_underline(uint16_t *attrs, int style)
     *attrs = (uint16_t)((*attrs & ~WSAP_VTCORE_ATTR_UNDERLINE_MASK) | flags[style]);
 }
 
-/* 38, 48, and 58. Returns the parameters it used after the first. */
 static int extended_color(const struct model *m, int i, wsap_vtcore_color *color, bool *ok)
 {
     *ok = false;
@@ -811,7 +740,6 @@ static void sgr(struct model *m)
     }
 }
 
-/* The DECRQSS reply body for SGR. */
 static void sgr_report(const struct model *m, char *out, size_t cap)
 {
     const struct pen *p = &m->pen;
@@ -850,9 +778,6 @@ static void sgr_report(const struct model *m, char *out, size_t cap)
 #undef ADD
 }
 
-/* DECCARA: change attributes in a rectangle, or in a stream of cells when
- * DECSACE is not 2. A rectangle edge that splits a wide glyph changes both
- * of its halves. */
 static void cara_cell(struct model *m, struct cell *c)
 {
     if (m->nparam <= 4) {
@@ -932,8 +857,6 @@ static void deccara(struct model *m)
     if (bottom > top) cara_row(m, bottom, 0, right);
 }
 
-/* ---- screens and resize ---- */
-
 static void free_rows(struct row **rows, int n)
 {
     if (!rows) return;
@@ -949,7 +872,6 @@ static struct row **rows_new(int n, int cols)
     return rows;
 }
 
-/* Copy a row into a new width. Cells past the width drop. */
 static struct row *row_resized(const struct row *r, int old_cols, int cols)
 {
     struct row *n = row_new(cols);
@@ -992,10 +914,6 @@ static struct cell *reflow_dst(struct reflow *r)
     return r->cur->c;
 }
 
-/*
- * Append one logical line. Pads drop and wide glyphs wrap again. A cursor
- * keeps its cell. A cursor on a pad moves to the next glyph.
- */
 static void reflow_append(struct reflow *r, const struct cell *cells, int len,
                           int cursor, int saved)
 {
@@ -1105,12 +1023,6 @@ static void hist_reflow_tail(struct model *m)
     free(rf.out);
 }
 
-/*
- * Reflow the normal screen and its history to a new width. Logical lines
- * wrap again. Lines at or after the prompt row (OSC 133;A) are cut, not
- * wrapped. Blank rows below the cursor drop. Rows more than one screen
- * below the cursor drop.
- */
 static void reflow(struct model *m, int cols, int rows)
 {
     int old_cols = m->cols, old_rows = m->rows;
@@ -1214,8 +1126,6 @@ static void reflow(struct model *m, int cols, int rows)
         if (!r.prompt_set || r.prompt - start >= rows) m->prompt = -1;
         else m->prompt = r.prompt > start ? r.prompt - start : 0;
     }
-    /* A saved cursor on a row below the new screen moves to the last row
-     * and keeps its column. */
     if (r.saved_set && r.saved_y - start < rows) {
         m->saved.x = r.saved_x < cols ? r.saved_x : cols - 1;
         m->saved.y = r.saved_y < start ? 0 : r.saved_y - start;
@@ -1226,7 +1136,6 @@ static void reflow(struct model *m, int cols, int rows)
     if (m->saved.y >= rows) m->saved.y = rows - 1;
 }
 
-/* Resize without reflow: the alternate screen, or the same width. */
 static void resize_plain(struct model *m, int cols, int rows)
 {
     int old_cols = m->cols, old_rows = m->rows;
@@ -1251,8 +1160,6 @@ static void resize_plain(struct model *m, int cols, int rows)
         m->saved.y = m->saved.y >= shift ? m->saved.y - shift : 0;
     }
     if (rows != old_rows) {
-        /* Growth pulls rows back from history above the old rows. New
-         * blank rows take the pen colors. */
         int pull = 0;
         if (rows > old_rows && !m->alternate)
             pull = m->hist_len < rows - old_rows ? m->hist_len : rows - old_rows;
@@ -1279,8 +1186,6 @@ static void resize_plain(struct model *m, int cols, int rows)
         m->saved.y += pull;
         if (m->prompt >= 0) m->prompt += pull;
     }
-    /* A shrink that cuts the prompt row off the normal screen ends the
-     * prompt. */
     if (!m->alternate && m->prompt >= rows) m->prompt = -1;
     if (cols != old_cols) m->pending = false;
     if (m->x >= cols) m->x = cols - 1;
@@ -1340,8 +1245,6 @@ static void set_alternate(struct model *m, bool on)
     m->top = 0;
     m->bottom = m->rows - 1;
 }
-
-/* ---- modes and resets ---- */
 
 static void soft_reset(struct model *m)
 {
@@ -1442,8 +1345,6 @@ static void mode_set(struct model *m, int mode, bool on, bool priv)
         break;
     }
 }
-
-/* ---- CSI ---- */
 
 static int count(const struct model *m)
 {
@@ -1654,8 +1555,6 @@ static void csi_dispatch(struct model *m, unsigned char final)
     }
 }
 
-/* ---- strings ---- */
-
 static void osc_finish(struct model *m)
 {
     const char *s = m->str;
@@ -1714,16 +1613,12 @@ static void str_add(struct model *m, unsigned char c)
     m->str_len++;
 }
 
-/* A string longer than STR_KEEP keeps its true length, so it matches no
- * short request. */
 static void str_finish(struct model *m)
 {
     if (m->str_kind == OSC) osc_finish(m);
     else if (m->str_kind == DCS) dcs_finish(m);
     m->str_len = 0;
 }
-
-/* ---- the byte parser ---- */
 
 static void esc_dispatch(struct model *m, unsigned char ch)
 {
@@ -1800,8 +1695,6 @@ static void control(struct model *m, unsigned char c)
     }
 }
 
-/* Ground-state bytes: printable ASCII, C0 controls, DEL, and UTF-8. Each
- * maximal invalid UTF-8 subpart prints one U+FFFD. */
 static void ground(struct model *m, unsigned char c)
 {
     if (c < 0x20 || c == 0x7f) {
@@ -1877,7 +1770,6 @@ static void csi_byte(struct model *m, unsigned char c)
 
 static void feed_byte(struct model *m, unsigned char c)
 {
-    /* A byte of 0x80 or more cancels any sequence except a string. */
     if (c >= 0x80 && m->state != GROUND && m->state != STR) {
         m->state = GROUND;
         ground(m, c);
@@ -1896,8 +1788,6 @@ static void feed_byte(struct model *m, unsigned char c)
         }
         break;
     case CSI:
-        /* ESC restarts, CAN and SUB cancel, other C0 controls run inside
-         * the sequence (ECMA-48 5.5, xterm). */
         if (c == 0x1b) m->state = ESC;
         else if (c == 0x18 || c == 0x1a) m->state = GROUND;
         else if (c < 0x20) control(m, c);
@@ -1969,8 +1859,6 @@ static void feed_byte(struct model *m, unsigned char c)
         break;
     }
 }
-
-/* ---- public ---- */
 
 struct model *model_new(struct wsap_vtcore_vector2i size, int history, const char *name)
 {

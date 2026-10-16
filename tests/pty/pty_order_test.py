@@ -1,4 +1,3 @@
-"""Check PTY response order while fastpipe is active, using a private headless Sway."""
 import os
 from pathlib import Path
 import re
@@ -19,9 +18,6 @@ def write_all(fd, data):
 def child(report):
     tty.setraw(0)
     stop = threading.Event()
-    # Volume of concurrent fast-pipe traffic, matching what the old in-band
-    # termios markers used to contribute. The bytes are arbitrary; what this
-    # test measures is PTY reply ordering under fast-pipe write pressure.
     noise_block = bytes(range(32, 127)) * 14
 
     def pipe_traffic():

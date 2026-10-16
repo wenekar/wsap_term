@@ -98,7 +98,6 @@ bool proc_read_pid_cwd_buf(pid_t pid, char *out, size_t sz)
 #else
     char proc_path[64];
     snprintf(proc_path, sizeof(proc_path), "/proc/%d/cwd", (int)pid);
-    /* readlink truncates silently; a cut path may name a parent directory. */
     ssize_t len = readlink(proc_path, out, sz);
     if (len > 0 && (size_t)len < sz) {
         out[len] = '\0';

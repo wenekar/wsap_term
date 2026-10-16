@@ -239,8 +239,6 @@ static uint64_t hash_op(uint64_t h, const struct ui_scene *s,
     return h;
 }
 
-/* Folds the op into its scope. The active clip is part of what the op
- * paints, so it feeds both the hash and the ink. */
 static bool scene_commit(struct ui_scene *s, struct ui_scene_op *op)
 {
     struct ui_scene_scope *sc = scope_current(s);

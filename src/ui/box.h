@@ -26,16 +26,6 @@ enum ui_box_justify {
     UI_BOX_JUSTIFY_END,
 };
 
-/* A row, a column, or a stack of children. Hidden children take no
- * space.
- *
- * The setters give the defaults. CSS on the box overrides them:
- * flex-direction (row or column), align-items, justify-content, gap, and
- * padding per edge. Child axes use fit, grow, fixed, or percent sizing.
- *
- * Clay computes child sizes and positions. Grow children share space.
- * Fixed sizes do not shrink.
- * Fit sizes shrink to their minimum size. */
 struct ui_box {
     struct ui_widget widget;
     struct {
@@ -60,6 +50,5 @@ void ui_box_set_align(struct ui_box *box, enum ui_box_align align);
 void ui_box_set_justify(struct ui_box *box, enum ui_box_justify justify);
 void ui_box_set_gap(struct ui_box *box, int gap);
 void ui_box_set_padding(struct ui_box *box, struct insets2i padding);
-
 
 #endif

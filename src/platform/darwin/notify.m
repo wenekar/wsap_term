@@ -22,7 +22,6 @@
 static WSAPNotificationDelegate *notification_delegate;
 static bool auth_requested;
 
-/* UNUserNotificationCenter asserts when the executable is not in an app bundle. */
 static bool notifications_available(void)
 {
     static int available = -1;

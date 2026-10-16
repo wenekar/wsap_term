@@ -25,9 +25,6 @@
 #define ATSPI_EVENT_OBJECT_IFACE "org.a11y.atspi.Event.Object"
 #define ATSPI_EVENT_FOCUS_IFACE "org.a11y.atspi.Event.Focus"
 
-/* Keep this provider on GIO. The libatspi package is a client library, not a
- * server adapter, so the provider exports the small AT-SPI D-Bus surface it
- * needs directly. */
 static const char atspi_xml[] =
     "<node>"
     " <interface name='org.a11y.atspi.Accessible'>"
@@ -144,7 +141,6 @@ struct provider_window
     uint32_t scale_120;
     uint64_t focused_id;
     unsigned active_sinks;
-    /* The menu popup depth plus one; zero for a toplevel. */
     int popup_level;
     bool detaching;
 };
@@ -195,8 +191,6 @@ struct node_event
 
 struct provider_server
 {
-    /* A pthread lock, not a GMutex: ThreadSanitizer cannot see GLib's
-     * futex locks, and the AT-SPI thread shares this state. */
     pthread_mutex_t lock;
     pthread_cond_t idle;
     GThread *thread;
@@ -307,8 +301,6 @@ static size_t child_count_locked(uint64_t parent_id)
 static const struct ui_accessibility_node *child_at_locked(uint64_t parent_id,
                                                            size_t index)
 {
-    /* Tree snapshots already add siblings in order. App-level children are
-     * grouped by attachment order, then each window's root order. */
     if (!parent_id)
     {
         for (struct provider_window *w = server.windows; w; w = w->next)
@@ -374,8 +366,6 @@ static int index_in_parent_locked(uint64_t id)
 
 static uint32_t atspi_role(enum ui_accessibility_role role, uint32_t states)
 {
-    /* Values follow AtspiRole's stable D-Bus enum. Keep this local so GIO is
-     * the only Linux provider dependency; libatspi is a client library. */
     enum
     {
         ROLE_DIALOG = 16,
@@ -535,17 +525,16 @@ static void state_add(guint32 words[2], unsigned state)
 static GVariant *state_set(uint32_t states, bool is_app,
                            bool has_selectable_text)
 {
-    /* AT-SPI packs enum states into 32-bit words. */
     guint32 words[2] = {0};
-    state_add(words, 8);  /* ENABLED */
-    state_add(words, 24); /* SENSITIVE */
+    state_add(words, 8);
+    state_add(words, 24);
     if (!(states & UI_ACCESSIBILITY_STATE_HIDDEN))
     {
-        state_add(words, 25); /* SHOWING */
-        state_add(words, 30); /* VISIBLE */
+        state_add(words, 25);
+        state_add(words, 30);
     }
     if (is_app)
-        state_add(words, 1); /* ACTIVE */
+        state_add(words, 1);
     if (states & UI_ACCESSIBILITY_STATE_BUSY)
         state_add(words, 3);
     if (states & UI_ACCESSIBILITY_STATE_CHECKED)
@@ -567,7 +556,7 @@ static GVariant *state_set(uint32_t states, bool is_app,
     if (states & UI_ACCESSIBILITY_STATE_INVALID)
         state_add(words, 36);
     if (has_selectable_text)
-        state_add(words, 29); /* SELECTABLE_TEXT */
+        state_add(words, 29);
     if (states & UI_ACCESSIBILITY_STATE_READ_ONLY)
         state_add(words, 43);
     if (states & UI_ACCESSIBILITY_STATE_DISABLED)
@@ -763,8 +752,6 @@ static void atspi_method_call(GDBusConnection *connection, const gchar *sender,
     (void)sender;
     struct provider_server *s = user_data;
 
-    /* Socket.Embed writes Application.Id. Handle Properties.Set here because
-     * the set_property callback receives an invalid interface_name. */
     if (interface_name && strcmp(interface_name, DBUS_PROPERTIES_IFACE) == 0 &&
         strcmp(method_name, "Set") == 0)
     {
@@ -1245,7 +1232,6 @@ static void atspi_method_call(GDBusConnection *connection, const gchar *sender,
                                        : (struct rect2i){0};
             if (coord == 0)
             {
-                /* Wayland does not expose a toplevel's global screen origin. */
                 bounds.pos = (struct vector2i){0};
             }
             else if (coord == 2 && node && node->parent_id)
@@ -1332,11 +1318,11 @@ static void atspi_method_call(GDBusConnection *connection, const gchar *sender,
             if (node && owner)
             {
                 if (owner->popup_level)
-                    layer = 5; /* POPUP */
+                    layer = 5;
                 else if (node->role == UI_ACCESSIBILITY_ROLE_WINDOW)
-                    layer = 7; /* WINDOW */
+                    layer = 7;
                 else
-                    layer = 3; /* WIDGET */
+                    layer = 3;
             }
             pthread_mutex_unlock(&s->lock);
             g_dbus_method_invocation_return_value(invocation,

@@ -65,9 +65,6 @@ static bool palette_action(struct ui_widget *source,
     return true;
 }
 
-/* Runs after the palette's own input has seen an event. While the palette
- * is open, a paste, a drop, or a shortcut stops here, except the one that
- * closes the palette. */
 static bool palette_swallow(struct ui_widget *widget,
                             const struct ui_event *event, void *userdata)
 {

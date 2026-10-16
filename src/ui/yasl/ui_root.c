@@ -9,7 +9,6 @@ static struct window *root_window(const struct ui_widget *widget)
     return ui_container_of((struct ui_widget *)widget, struct window, ui.root);
 }
 
-/* The content fills the window, under the menu layer. */
 static void root_prepare(struct ui_widget *widget)
 {
     struct window *w = root_window(widget);
@@ -127,7 +126,6 @@ void window_ui_arm(struct window *w, uint64_t now_ms)
         if (d && (!next || d < next))
             next = d;
     }
-    /* A deadline due now already requested the next frame. */
     window_wake_at(w, next > now_ms ? next : 0);
 }
 
@@ -142,7 +140,6 @@ void window_ui_root_init(struct window *w)
     ui_surface_set_root(&ui_of(w)->screen, &ui_of(w)->root);
 }
 
-/* The content belongs to the window's content; unlink it first. */
 void window_ui_root_destroy(struct window *w)
 {
     struct ui_widget *content = ui_of(w)->spec.root;

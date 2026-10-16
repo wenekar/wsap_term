@@ -4,7 +4,6 @@ Run with:
 
 ```sh
 meson test -C build --benchmark transport-bench --verbose
-# or, pinned:
 taskset -c 4 ./build/benchmarks/transport-bench
 ```
 

@@ -10,9 +10,6 @@
 
 #define PTY_PIPE_SIZE (1024 * 1024)
 
-/* A child process on a pseudo-terminal. Child output arrives on the fast
- * pipe when one exists, and on the master otherwise. A zero value has no
- * child and no fds. */
 struct pty {
     unsigned master_handle;
     unsigned pipe_read_handle;
@@ -20,9 +17,6 @@ struct pty {
     pid_t pid;
 };
 
-/* What to run. A zero value runs the user's shell in the current
- * directory. `env` holds NAME=value entries for the child, ends with
- * NULL, and overrides the variables pty sets itself. */
 struct pty_spec {
     struct vector2i grid;
     const char *command;
@@ -40,7 +34,6 @@ static inline int pty_pipe_fd(const struct pty *p)
     return p && p->pipe_read_handle ? (int)(p->pipe_read_handle - 1) : -1;
 }
 
-/* Listening socket for the transport-switch barrier; see pty/sync.h. */
 static inline int pty_sync_fd(const struct pty *p)
 {
     return p && p->sync_handle ? (int)(p->sync_handle - 1) : -1;

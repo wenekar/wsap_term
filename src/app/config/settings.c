@@ -236,8 +236,6 @@ static void sync_hinting_choices(struct settings_form *form)
     validate(form, hinting);
 }
 
-/* Shows value in the row and checks it. Baseline also takes the value.
- * Show false leaves the editor as it is. */
 static void load_row(struct settings_form *form, struct settings_row *row,
                      const char *value, bool baseline, bool show)
 {
@@ -252,7 +250,6 @@ static bool format_row(const struct settings_row *row, const struct app_config *
     return opts_format(&app_config_spec, config, row->option.key, value, size);
 }
 
-/* Ends a batch of row updates. */
 static void finish_load(struct settings_form *form)
 {
     sync_hinting_choices(form);
@@ -279,7 +276,6 @@ static bool load_values(struct settings_form *form, const struct app_config *con
     return ok;
 }
 
-/* Whether a row's config value differs from the row's baseline. */
 static bool config_moved(const struct settings_form *form, const struct app_config *config)
 {
     for (size_t i = 0; i < form->count; i++) {
@@ -291,9 +287,6 @@ static bool config_moved(const struct settings_form *form, const struct app_conf
     return false;
 }
 
-/* The config changed outside the form. A row without an edit shows the
- * new value. A row with an edit keeps the edit. Both take the new value
- * as their baseline. */
 static void settings_restyle(struct window *w)
 {
     struct settings_form *form = window_ui_content(w);
@@ -465,7 +458,6 @@ static bool root_event(struct ui_widget *widget, const struct ui_event *event,
     return handle_root_event(form, event);
 }
 
-/* Mono antialiasing offers only auto, none, and full hinting. */
 static bool hinting_allowed(const char *antialias, const char *hinting)
 {
 #if defined(__APPLE__) && !defined(WSAP_USE_FREETYPE)
@@ -719,7 +711,6 @@ static bool add_field_descriptions(struct settings_form *form)
                 .align = UI_LABEL_ALIGN_LEFT,
             },
         };
-        /* The theme comes before its palette entries. */
         for (int combo = 1; combo >= 0; combo--)
             for (size_t i = 0; i < form->count; i++)
                 if (form->rows[i].category == (enum category)category && form->rows[i].combo == combo)
@@ -1023,8 +1014,6 @@ static void op_destroy(struct window *window)
     form_destroy(window_ui_content(window));
 }
 
-/* Keys reach the form before its focused widget. An open dropdown is
- * modal, so the capture path starts there and this root does not run. */
 static bool settings_capture(struct ui_widget *widget,
                              const struct ui_event *event, void *userdata)
 {
@@ -1032,7 +1021,6 @@ static bool settings_capture(struct ui_widget *widget,
     return handle_root_event(userdata, event);
 }
 
-/* Identifies the settings window; see window_ui_kind(). */
 static const int settings_kind;
 
 static struct window_ui_spec settings_spec(struct settings_form *form)
@@ -1060,7 +1048,6 @@ bool settings_mount(struct window *w, const struct settings_host *host)
     }
     form->window = w;
     ui_widget_set_key_capture(ui_view_root(form->view), settings_capture, form);
-    /* With nothing focused, keys and shortcuts still reach the form. */
     ui_surface_set_default_focus(window_ui_surface(w), ui_view_root(form->view));
     load_values(form, form->host.config, true);
     return true;

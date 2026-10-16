@@ -12,14 +12,6 @@
 #include "pty/preload/shim.h"
 #include "pty/sync.h"
 
-/* Raw-mode routing. A program that clears ICANON on the terminal is
- * interactive and needs neither the pipe's throughput nor its lack of
- * output processing, so its stdout and stderr move to the terminal. They
- * move back when ICANON returns. Each move first passes the barrier in
- * pty/sync.h, so output written before the move stays ahead of output
- * written after it. When the barrier fails, the output stays where it is:
- * a lost switch costs speed or line endings, never order. */
-
 #define FP_SYNC_TIMEOUT_MS 200
 
 static int routed_fd[2] = { -1, -1 };
@@ -99,8 +91,6 @@ int fp_stdio_to_tty(int saved[2], int sync)
     return 1;
 }
 
-/* Only a descriptor still on the terminal goes back. If the program
- * redirected it meanwhile, its copy of the pipe is dropped. */
 static void route_to_pipe(void)
 {
     for (int i = 0; i < 2; i++) {

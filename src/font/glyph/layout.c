@@ -5,32 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/*
- * The analysis reads the GSUB and GPOS lookups that HarfBuzz applies by
- * default to the scripts of the default shaper. It sorts glyphs three
- * ways:
- *
- * - An input glyph is one that a lookup can change or move: the first
- *   glyph of a rule, a glyph of a ligature, the glyphs that a nested
- *   lookup covers.
- * - Every set that a rule tests (a coverage table, a class, one glyph)
- *   splits the glyphs into members and others. Glyphs that no split
- *   separates are equal to every lookup, so one can stand in for another.
- * - The longest backtrack and lookahead bound how far a change can see.
- *
- * A rule changes only input glyphs, and it tests at most reach_back
- * glyphs before and reach_ahead glyphs after them. So the glyphs of a run
- * of input code points depend only on that run and its reach, and the
- * code points in the reach may be replaced by stand-ins.
- *
- * For Latin-1 the analysis also records which glyph pairs are adjacent in
- * the sequence of some rule that substitutes or positions, and which
- * glyphs a rule changes with no context at all. Before anything changes,
- * the first rule to match sees only cmap glyphs, so text without such a
- * pair or glyph shapes as it is. A rule of three or more glyphs needs two
- * such pairs in a row, so its pairs are kept apart.
- */
-
 #define REACH_MAX 8
 
 struct table {
@@ -50,12 +24,10 @@ struct analysis {
     hb_set_t *lookups;
     hb_set_t *pending;
     uint64_t next_id;
-    /* The glyph of each code point below LAYOUT_PAIR_CPS, 0 when unmapped. */
     unsigned ascii_gid[LAYOUT_PAIR_CPS];
     ascii_mask ascii_all;
     unsigned glyphs;
     unsigned back, ahead;
-    /* The lookup applies by itself, not only through a rule. */
     bool direct;
     bool bad;
 };
@@ -97,8 +69,6 @@ static void note_reach(struct analysis *a, unsigned back, unsigned ahead)
     if (ahead > a->ahead) a->ahead = ahead;
 }
 
-/* True the first time a set at off is seen. A set seen again splits the
- * glyphs the same way, so it is skipped. Input sets always count. */
 static bool first_visit(struct analysis *a, unsigned off, unsigned kind)
 {
     hb_codepoint_t key = (hb_codepoint_t)off << 2 | kind;
@@ -131,8 +101,6 @@ static void visit_coverage(struct analysis *a, unsigned off, bool input)
     }
 }
 
-/* Each class of the class definition is a set. Class 0, the glyphs it
- * does not list, needs no set of its own. */
 static void visit_classdef(struct analysis *a, unsigned off)
 {
     if (!off || !first_visit(a, off, 1))
@@ -232,8 +200,6 @@ static unsigned classdef_get(struct analysis *a, unsigned off, unsigned g)
     return 0;
 }
 
-/* One element of a rule sequence: the ASCII code points whose glyph it
- * matches. */
 enum elem_kind { ELEM_COVERAGE, ELEM_CLASS, ELEM_GLYPH, ELEM_ALL };
 
 static void elem_mask(struct analysis *a, enum elem_kind kind, unsigned off,
@@ -286,7 +252,6 @@ static void elem_mask(struct analysis *a, enum elem_kind kind, unsigned off,
     }
 }
 
-/* Records the sequence of a rule that changes glyphs. */
 static void note_sequence(struct analysis *a, const ascii_mask *seq, int n)
 {
     if (!a->direct || n <= 0)
@@ -328,7 +293,6 @@ static void visit_records(struct analysis *a, unsigned off, unsigned count)
     }
 }
 
-/* SequenceContextFormat1-3 (GSUB 5, GPOS 7). */
 static void visit_context(struct analysis *a, unsigned st)
 {
     unsigned format = u16(a, st);
@@ -385,7 +349,6 @@ static void visit_context(struct analysis *a, unsigned st)
     }
 }
 
-/* ChainedSequenceContextFormat1-3 (GSUB 6, GPOS 8). */
 static void visit_chain(struct analysis *a, unsigned st)
 {
     unsigned format = u16(a, st);
@@ -431,8 +394,6 @@ static void visit_chain(struct analysis *a, unsigned st)
                 visit_records(a, p + 2, records);
                 if (!records || !a->direct || back + input + ahead > SEQ_MAX || !input)
                     continue;
-                /* The sequence in text order: the backtrack is stored
-                 * nearest first. */
                 ascii_mask seq[SEQ_MAX];
                 enum elem_kind kind = format == 1 ? ELEM_GLYPH : ELEM_CLASS;
                 unsigned q = rule;
@@ -579,8 +540,6 @@ static void visit_gpos(struct analysis *a, unsigned type, unsigned st)
         elem_mask(a, ELEM_ALL, 0, 0, seq[1]);
         note_sequence(a, seq, 2);
         unsigned vf1 = u16(a, st + 4), vf2 = u16(a, st + 6);
-        /* A value for the second glyph moves a glyph that the first
-         * glyph's run does not hold. */
         if (vf2) {
             a->bad = true;
             break;
@@ -609,7 +568,6 @@ static void visit_gpos(struct analysis *a, unsigned type, unsigned st)
         note_sequence(a, seq, 2);
         break;
     case 4: case 5: case 6:
-        /* Mark attachment needs a mark, and marks are complex. */
         break;
     case 7:
         visit_context(a, st);
@@ -632,7 +590,6 @@ static void visit_lookup(struct analysis *a, unsigned index)
     unsigned lookup = list + u16(a, list + 2 + 2 * index);
     unsigned type = u16(a, lookup), flags = u16(a, lookup + 2);
     unsigned subtables = u16(a, lookup + 4);
-    /* Skipping base glyphs lets a rule test glyphs at any distance. */
     if (flags & 0x0002) {
         a->bad = true;
         return;
@@ -652,7 +609,6 @@ static void visit_lookup(struct analysis *a, unsigned index)
     }
 }
 
-/* Keep this table in sync with font_layout_script_simple(). */
 static const hb_script_t simple_scripts[] = {
     HB_SCRIPT_COMMON, HB_SCRIPT_LATIN, HB_SCRIPT_GREEK, HB_SCRIPT_CYRILLIC,
     HB_SCRIPT_ARMENIAN, HB_SCRIPT_GEORGIAN, HB_SCRIPT_HAN, HB_SCRIPT_HIRAGANA,
@@ -685,7 +641,6 @@ bool font_layout_script_simple(hb_script_t script)
     }
 }
 
-/* Code points that HarfBuzz treats in ways the analysis does not model. */
 static bool cp_complex(hb_unicode_funcs_t *uf, uint32_t cp)
 {
     switch (hb_unicode_general_category(uf, cp)) {
@@ -705,8 +660,6 @@ static bool cp_complex(hb_unicode_funcs_t *uf, uint32_t cp)
            !font_layout_script_simple(hb_unicode_script(uf, cp));
 }
 
-/* HarfBuzz applies these only around U+2044 FRACTION SLASH, which is
- * complex. */
 static const hb_feature_t fraction_off[] = {
     { HB_TAG('f', 'r', 'a', 'c'), 0, HB_FEATURE_GLOBAL_START, HB_FEATURE_GLOBAL_END },
     { HB_TAG('n', 'u', 'm', 'r'), 0, HB_FEATURE_GLOBAL_START, HB_FEATURE_GLOBAL_END },
@@ -831,8 +784,6 @@ static bool fill_map(struct font_layout *l, hb_face_t *face, const struct analys
     bool ok = reps && l->keys && l->values && hb_map_allocation_successful(mapping);
     hb_unicode_funcs_t *uf = hb_unicode_funcs_get_default();
 
-    /* Two passes: the first finds the smallest code point of each class,
-     * the second gives every code point its entry. */
     for (int pass = 0; ok && pass < 2; pass++) {
         hb_codepoint_t cp = HB_SET_VALUE_INVALID;
         while (hb_set_next(unicodes, &cp)) {
@@ -879,8 +830,6 @@ struct font_layout *font_layout_build(hb_face_t *face)
         return NULL;
     for (uint32_t cp = 0; cp < 128; cp++)
         l->ascii[cp] = entry(LAYOUT_COMPLEX, cp);
-    /* HarfBuzz applies AAT tables and the old kern table outside the
-     * OpenType lookups that the analysis reads. */
     if (!face || hb_aat_layout_has_substitution(face) ||
         hb_aat_layout_has_positioning(face) || hb_aat_layout_has_tracking(face) ||
         face_has_table(face, HB_TAG('k', 'e', 'r', 'n'))) {

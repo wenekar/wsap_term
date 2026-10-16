@@ -8,16 +8,6 @@ A second request reuses that window.
 The settings window stays windowed when terminals start fullscreen.
 Its text size does not change with the terminal font size.
 
-The form lives in `src/app/config/settings.c`.
-The app opens its window in `open_settings()` (`src/app/app.c`).
-`settings_mount()` then shows the form on that window.
-The app passes a `settings_host` to the form.
-The form reads the config through this host.
-The host applies and saves each change through app callbacks.
-The option table is in `src/app/config/config.c`.
-The value parser is in `src/util/options.c`.
-The window and terminal layers do not include app headers.
-
 ## Controls
 
 The form shows every public config option.
@@ -69,26 +59,3 @@ Font family, hinting, and antialiasing changes apply to open terminals.
 Shell command and history changes apply to new tabs.
 Window size, fullscreen, and vertical sync changes apply to new windows.
 Environment variables and command arguments still override the file at startup.
-
-## UI API
-
-`ui_dropdown` is a reusable control in `src/ui/ui.h`.
-It copies its labels and values.
-Set an overlay parent with stack layout before opening it.
-A user selection emits `UI_ACTION_CHANGE` with the original item index.
-A programmatic value change emits no action.
-Destroying the control also releases its popup.
-
-`ui_scrollview_set_scrollbar()` turns the scroll track on or off. It is on by default.
-CSS styles the `scrollbar` and `scrollbar-thumb` parts.
-The inspector reports the track and thumb rectangles.
-Scrollviews reveal focused descendants.
-
-## Checks
-
-`settings-window-test` covers search, validation, save errors, dropdowns,
-reset, cancel, and window reuse.
-`ui-dropdown-test` covers selection, modal focus, search, and cancellation.
-`settings-test` covers config saves and value metadata.
-`look-test` covers palette changes and theme cache refresh.
-Use the UI inspector to run lint and capture screenshots.

@@ -4,9 +4,6 @@
 #include "platform/platform.h"
 #include "terminal/internal.h"
 
-/* The terminal's context menu: clipboard actions, a link, and the theme
- * picker, which previews each theme as the pointer moves over it. */
-
 static bool menu_action(struct ui_widget *source, const struct ui_action *event,
                         void *ud)
 {

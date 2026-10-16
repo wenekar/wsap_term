@@ -411,7 +411,6 @@ void ui_dropdown_close(struct ui_dropdown *d)
     ui_widget_set_hidden(&d->layer, true);
     if (d->layer.parent)
         ui_widget_remove_child(d->layer.parent, &d->layer);
-    /* Reconcile modal focus before an action reaches the screen. */
     struct ui_surface *surface = ui_widget_surface(&d->widget);
     if (surface) ui_surface_prepare(surface);
 }

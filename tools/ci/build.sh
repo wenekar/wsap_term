@@ -4,7 +4,6 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 if [[ "$(uname -s)" == Darwin ]]; then
-    # LTO needs the compiler and archive tools from the same LLVM release.
     llvm_bin="$(brew --prefix llvm)/bin"
     export PATH="$llvm_bin:$PATH"
     export CC="$llvm_bin/clang"
@@ -18,7 +17,6 @@ fi
 unset LD_PRELOAD DYLD_INSERT_LIBRARIES
 export WSAP_NO_PRELOAD=1
 
-# Use a fresh configuration for each run on a persistent runner.
 meson setup --wipe build/ci \
     --buildtype=release \
     -Disa= \

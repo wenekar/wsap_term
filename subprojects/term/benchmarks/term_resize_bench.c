@@ -6,15 +6,9 @@
 #include <time.h>
 
 #define BUDGET_MS_DEFAULT 0.5
-/* Rows written past the history limit, so the history is full and wraps. */
 #define FILL_EXTRA_ROWS 512
 #define MAX_SAMPLES 4096
 
-/*
- * History sizes to measure. 4096 is the size of the recorded baseline.
- * The budget applies to every size. Today the larger sizes go over it; the
- * terminal redesign targets a resize cost that does not grow with history.
- */
 static const int history_sizes[] = { 100, 4096, 10000 };
 
 static double now(void)
@@ -30,7 +24,6 @@ static int cmp_double(const void *a, const void *b)
     return x < y ? -1 : x > y;
 }
 
-/* Content mixes, chosen so reflow cost spans no-op to worst case. */
 enum content { SHORT, WRAPPED, MIXED, PROMPT, WIDE, CONTENT_COUNT };
 static const char *content_names[] = {"short", "wrapped", "mixed", "prompt", "wide"};
 
@@ -43,7 +36,6 @@ static void emit_line(struct wsap_vtcore *t, enum content kind, int n, int cols)
         len = snprintf(line, sizeof(line), "%d: short output line\r\n", n);
         break;
     case WRAPPED:
-        /* ~3.5 screen rows at 120 cols: every resize must rewrap these. */
         for (int i = 0; i < 420; i++) line[len++] = 'a' + (n + i) % 26;
         line[len++] = '\r';
         line[len++] = '\n';
@@ -57,7 +49,6 @@ static void emit_line(struct wsap_vtcore *t, enum content kind, int n, int cols)
         line[len++] = '\n';
         break;
     case PROMPT:
-        /* OSC 133 marked prompt rows do not wrap; output rows do. */
         if (n % 3 == 0)
             len = snprintf(line, sizeof(line),
                            "\033]133;A\033\\user@host:~/very/long/project/path $ \033]133;B\033\\"
@@ -107,7 +98,6 @@ static void report(const char *content, const char *scenario, double *s, int n, 
            content, scenario, p50, p99, max, max <= budget_ms ? "ok" : "OVER");
 }
 
-/* One resize per freshly filled terminal: content never decays across samples. */
 static double bench_pair(enum content kind, int from_cols, int to_cols, int rows,
                          int history, double *out, int samples)
 {
@@ -125,7 +115,6 @@ static double bench_pair(enum content kind, int from_cols, int to_cols, int rows
     return worst;
 }
 
-/* A drag mutates progressively, so every step is timed on the same terminal. */
 static int bench_drag(enum content kind, int from_cols, int to_cols, int rows,
                       int history, double *out, int passes)
 {

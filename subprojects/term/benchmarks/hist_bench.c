@@ -11,7 +11,6 @@ static double now(void)
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
-/* Rows shaped like the term-write-bench lines that scroll into history. */
 static int make_row(const char *name, struct cell *row)
 {
     struct cell d = { ' ', WSAP_VTCORE_COLOR_FG, WSAP_VTCORE_COLOR_BG, 0, 0 };

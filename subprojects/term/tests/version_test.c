@@ -4,7 +4,6 @@
 #include <stdio.h>
 #include <string.h>
 
-/* The project version from meson.build. The build defines it. */
 #ifndef WSAP_VTCORE_TEST_PROJECT_VERSION
 #error "define WSAP_VTCORE_TEST_PROJECT_VERSION as the project version, such as \"0.1.0\""
 #endif

@@ -27,7 +27,6 @@ static bool action(struct ui_widget *source,
     (void)source;
     struct settings_screen *screen = userdata;
     if (event->kind == UI_ACTION_ACTIVATE && event->id == 1) {
-        /* Apply the settings here. */
         return true;
     }
     return false;

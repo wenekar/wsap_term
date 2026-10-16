@@ -55,8 +55,6 @@ void wsap_vtcore_osc_cleanup(struct wsap_vtcore *t)
     t->pointer_shape = NULL;
 }
 
-/* Reply to a color query. An OSC 4 reply names the index it answers for;
- * index is negative for OSC 10, 11, and 12. */
 static void send_color_query_reply(struct wsap_vtcore *t, int code, int index, uint32_t argb)
 {
     char resp[64], prefix[16] = "";

@@ -74,18 +74,6 @@ void glyph_cache_flush_deferred(void)
     }
 }
 
-/* Retired run cache entries wait here until the end of the frame.
- *
- * A worker keeps using the cells and tiles of a run entry while its span
- * callback runs. Another worker can evict that entry in the same frame and
- * retire it, and a worker frees its own retired buffers at the start of its
- * next job, which can be while the first worker still reads them. Freeing
- * here would be a use-after-free.
- *
- * The renderer calls glyph_cache_flush_frame() once every worker has joined,
- * where no reader can be left. Entries wait one frame at most. Outside a
- * parallel frame no other thread reads, so run.c retires directly instead and
- * nothing waits here. */
 static pthread_mutex_t retire_mu = PTHREAD_MUTEX_INITIALIZER;
 static struct bufhead *retire_pending;
 
@@ -134,10 +122,6 @@ const struct glyph *glyph_scratch_fill(const struct font_instance *fi, uint32_t 
     return &glyph_scratch;
 }
 
-/* In serial mode no other thread reads, so produce rewrites the slot buffer
- * in place. In parallel mode produce makes a new buffer. Two threads can fill
- * one slot at once. Each returns its own buffer, and the buffer that the
- * exchange replaces waits on a deferred list to the end of the frame. */
 void *cache_slot_fill(struct cache_slot *slot, uint32_t key, uint32_t cp, uint16_t flags,
                       const struct slot_fill_ops *ops)
 {
@@ -276,11 +260,6 @@ static void drop_all(struct font_instance *fi)
     atomic_store_explicit(&fi->run_stamp, 0, memory_order_relaxed);
 }
 
-/* Reopens the face and measures it again when the font changed after the
- * last build. It closes the old face first. A failed open leaves fi with no
- * face. A failed measure keeps the old metrics. No error goes to the caller.
- * The caller stores the new generation, so a failure is not retried on each
- * frame. */
 static void instance_reopen_if_stale(struct font_instance *fi)
 {
     if (atomic_load_explicit(&fi->built_gen, memory_order_relaxed) == font_generation())
@@ -320,9 +299,6 @@ void glyph_cache_rebuild(struct font_instance *fi)
     }
 }
 
-/* Rebuilds fi when the font changed or when its tiles use other colors than
- * the current tile colors. Paint workers read the cache in parallel mode, so
- * it does nothing there. */
 static void instance_refresh(struct font_instance *fi)
 {
     if (atomic_load_explicit(&cache_parallel, memory_order_relaxed))

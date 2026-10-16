@@ -29,9 +29,6 @@ static void on_data(void *ud, int fd, const char *buf, size_t len,
 {
     (void)backlog;
     struct capture *c = ud;
-    /* A slow consumer, like a render-bound terminal, keeps the ring full.
-     * Both transports then have data pending at the same time, which is
-     * when a switch without a barrier is read out of order. */
     usleep(CONSUME_DELAY_US);
     assert(c->len + len <= c->cap);
     char tag = fd == pty_pipe_fd(c->pty) ? 'p' : fd == pty_master_fd(c->pty) ? 't' : '?';
@@ -50,8 +47,6 @@ static uint64_t on_timeout(void *ud, uint64_t id, uint64_t interval_ns)
     return 0;
 }
 
-/* Build the stream the helper writes, with the transport each part must
- * use: bursts and A markers on the fast pipe, B markers on the pty. */
 static size_t expected_stream(char *bytes, char *source)
 {
     size_t n = 0;

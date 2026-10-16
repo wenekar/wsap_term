@@ -22,14 +22,9 @@ static inline bool is_subpixel_aa(enum font_aa_mode aa)
     return aa >= FONT_AA_RGB && aa <= FONT_AA_VBGR;
 }
 
-/* Only ft_apply_hinting resolves an auto axis. ft_init calls it when
- * fontconfig becomes ready. Each mode change calls it too. So while
- * fontconfig is ready, no axis is auto here. The getters and
- * font_hinting_init_library only read. */
 int font_ft_load_flags(void)
 {
     int hint = current_style == FONT_HINT_NONE ? FT_LOAD_NO_HINTING : 0;
-    /* Mono has no light hinting: any style but none is full. */
     if (current_aa == FONT_AA_MONO)
         return hint | FT_LOAD_TARGET_MONO | FT_LOAD_MONOCHROME;
     if (current_style == FONT_HINT_SLIGHT)
@@ -195,8 +190,6 @@ enum { NAME_STYLE = 1, NAME_AA = 2, NAME_CT = 4 };
 _Static_assert(FONT_HINT_AUTO == 0 && FONT_AA_AUTO == 0,
                "the auto names serve both axes");
 
-/* The first name of each value on an axis is its canonical one.
- * CoreText accepts only the names marked NAME_CT. */
 static const struct hint_name {
     const char *name;
     uint8_t value;

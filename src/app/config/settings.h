@@ -9,7 +9,6 @@ struct look;
 struct window;
 struct window_host;
 
-/* The app owns the values. The form copies these hooks. */
 struct settings_host {
     const struct app_config *config;
     const char *config_path;
@@ -20,10 +19,7 @@ struct settings_host {
     void *ud;
 };
 
-/* Shows the settings form on w, which has no UI yet. False on failure;
- * then the caller closes w. */
 bool settings_mount(struct window *w, const struct settings_host *host);
-/* The open settings window, or NULL. */
 struct window *settings_find(struct window_host *host);
 
 #endif

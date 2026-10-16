@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Interleaved A/B benchmark helper. usage: ab.sh CASE N BIN_A BIN_B...
-# Reports the median of N interleaved runs per binary.
 export LC_ALL=C
 cd "$(dirname "$0")/.."
 c=$1; N=$2; shift 2

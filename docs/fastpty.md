@@ -1,11 +1,8 @@
 # Fastpty implementation notes
 
-This document records implementation details for contributors working on the
-fast-pipe backend.
-
 ## Unicode environment
 
-Child shells receive `TERM=wsap_term`, `TERM_PROGRAM=wsap_term`, and
+Child shells receive `TERM=wsap_term-256color`, `TERM_PROGRAM=wsap_term`, and
 `UNICODE_VERSION=18.0.0`, with the Unicode version taken from the terminal's
 property-table version. `COLORTERM=truecolor` is exported for direct truecolor
 detection. An inherited `TERM_PROGRAM_VERSION` is cleared because it describes
@@ -42,10 +39,7 @@ A query for mode 20 reports only the child's LNM setting.
 
 A program that clears `ICANON` gets its output moved to the pty; see
 *Raw-mode routing* below. The kernel then applies that program's own OPOST
-setting, so a raw-mode program that clears OPOST gets a bare LF. An earlier
-design sent termios changes in-band instead, as 21-byte
-`magic[16] | 'T' | oflag-le32` records after each `tcsetattr`. It cost a
-`memchr` over every byte read and roughly halved high-entropy throughput.
+setting, so a raw-mode program that clears OPOST gets a bare LF.
 
 Set `WSAP_FAST_PIPE=0` to disable the fast pipe and fall back to ordinary pty
 output on all platforms; on opt-in platforms `WSAP_FAST_PIPE=1` remains

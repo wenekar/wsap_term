@@ -25,7 +25,6 @@ void window_host_destroy(struct window_host *host)
     while (host->count > 0)
         window_close(host->windows[host->count - 1]);
     window_host_reap(host);
-    /* Closing scheduled the service; nothing is left for it or the wake. */
     yasl_loop_del_timer(host->loop, host->service);
     yasl_loop_del_timer(host->loop, host->wake);
     int status = yasl_shutdown();
@@ -74,8 +73,6 @@ void window_host_reap(struct window_host *host)
     }
 }
 
-/* Draws every window that asked for a frame. A draw can close windows, which
- * shifts the array, so the scan restarts then; drawn windows no longer ask. */
 static void draw_windows(struct window_host *host)
 {
     for (int i = 0; i < host->count; i++) {
@@ -92,8 +89,6 @@ static void draw_windows(struct window_host *host)
     }
 }
 
-/* The one place that reaps, drains input and draws. It runs as a loop timer,
- * so no window callback is on the stack when it frees a window. */
 static uint64_t host_service(void *ud, uint64_t id, uint64_t interval_ns)
 {
     (void)id; (void)interval_ns;
@@ -118,8 +113,6 @@ void window_host_schedule(struct window_host *host)
 
 static void arm_wake(struct window_host *host);
 
-/* Asks a frame of each window whose wake time has come. The timer holds the
- * host and finds the windows in it, so it cannot reach a closed window. */
 static uint64_t host_wake(void *ud, uint64_t id, uint64_t interval_ns)
 {
     (void)id; (void)interval_ns;
@@ -138,7 +131,6 @@ static uint64_t host_wake(void *ud, uint64_t id, uint64_t interval_ns)
     return 0;
 }
 
-/* Keeps the wake timer at the earliest wake time of the open windows. */
 static void arm_wake(struct window_host *host)
 {
     uint64_t next = 0;
@@ -191,8 +183,6 @@ bool window_host_destroying(const struct window_host *host)
     return host->destroying;
 }
 
-/* The window that shows surface s, and whether s is its main surface rather
- * than a menu popup. */
 static struct window *window_of_surface(struct window_host *host,
                                         const struct yasl_surface *s, bool *main)
 {
@@ -257,13 +247,10 @@ static void dispatch_event(struct window_host *host, const struct yasl_event *ev
             host->hooks.reopen(host->hooks.ud);
         return;
     case YASL_EVENT_DISPLAY_LOST:
-        /* A display that cannot come back takes every window with it. While
-         * it reconnects, the windows wait for DISPLAY_RESTORED. */
         if (ev->action == YASL_LOST_FINAL && host->hooks.quit)
             host->hooks.quit(host->hooks.ud);
         return;
     case YASL_EVENT_DISPLAY_RESTORED:
-        /* The surfaces have new buffers; yasl closed the menu popups. */
         for (int i = 0; i < host->count; i++) {
             window_repaint_all(host->windows[i]);
             window_redraw(host->windows[i]);
@@ -279,14 +266,12 @@ static void dispatch_event(struct window_host *host, const struct yasl_event *ev
         return;
     switch (ev->type) {
     case YASL_EVENT_CLOSE:
-        /* A popup closes when the system dismisses its menu. */
         if (main)
             window_close(w);
         else
             window_menu_close(w);
         break;
     case YASL_EVENT_WINDOW:
-        /* A popup's geometry belongs to its menu level, not to the window. */
         if (main)
             window_geometry_event(w, ev);
         break;
@@ -302,8 +287,6 @@ static void dispatch_event(struct window_host *host, const struct yasl_event *ev
 void window_host_dispatch_event(struct window_host *host, const struct yasl_event *ev)
 {
     dispatch_event(host, ev);
-    /* Every event can leave input to drain, a frame to draw or a window to
-     * reap, so every event schedules the service. */
     window_host_schedule(host);
 }
 

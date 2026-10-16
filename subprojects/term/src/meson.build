@@ -1,11 +1,7 @@
 subdir('osc')
 
-# The SONAME carries the major version. An ABI break bumps it, so an old
-# binary keeps the old library.
 wsap_vtcore_soversion = meson.project_version().split('.')[0]
 
-# The x86-64 SIMD kernels pick their level at run time (see simd.h), so the
-# library needs no ISA flags. -march in c_args sets the lowest level.
 wsap_vtcore_lib = both_libraries('wsap_vtcore',
   'core.c',
   'escape.c',

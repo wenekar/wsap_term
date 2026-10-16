@@ -74,8 +74,6 @@ static bool dummy_symbol(uint32_t cp)
     return false;
 }
 
-/* A two-row terminal. Row 0 never changes. Row 1 shows a new glyph in
- * every frame, so the glyphs outnumber the atlas cells. */
 static uint32_t churn_cp = 0x100;
 static uint64_t churn_gen = 1;
 static struct wsap_vtcore_cell churn_rows[2][2];
@@ -216,9 +214,6 @@ static void test_alternating_outputs(id<MTLDevice> device)
     metal_render_destroy(r);
 }
 
-/* Mono glyphs whose ink width depends on the code point, the style, and
- * the font generation. Columns before the ink width have full coverage,
- * the column at the ink width has half coverage. */
 static uint64_t mono_font_gen = 1;
 
 static uint64_t mono_font_generation(const struct font_instance *fi)
@@ -261,8 +256,6 @@ static const struct wsap_vtcore_cell *mono_row(const struct terminal_frame *f, i
     return MONO_ROW;
 }
 
-/* Checks each cell of the middle pixel row: ink[i] full pixels, then one
- * pixel near half intensity, then the background. */
 static void check_mono_row(const uint32_t *pixels, const int ink[3])
 {
     for (int c = 0; c < 3; c++) {
@@ -313,7 +306,6 @@ static void test_ascii_mono_glyphs(id<MTLDevice> device)
 
     uint32_t pixels[30 * 20];
     for (int i = 0; i < 6; i++) {
-        /* The font changes after the third frame, so the glyphs change. */
         if (i == 3)
             mono_font_gen++;
         metal_render_begin(r);
@@ -336,10 +328,6 @@ static double bench_now(void)
     return t.tv_sec + t.tv_nsec / 1e9;
 }
 
-/* Times the Metal path through a flood, the way the app draws: one
- * snapshot, about 8 KiB of new output per frame. The time is the scan of
- * the terminal on the main thread. The submit, which also waits for a
- * free frame buffer, is reported apart. */
 static void metal_flood_benchmark(id<MTLDevice> device, enum flood_kind kind, const char *name)
 {
     int cols = 160, rows = 50;
@@ -502,7 +490,6 @@ int main(int argc, char **argv)
         assert(pixels[2] == 0xFF112233u);
         assert(pixels[3 * 20 + 3] == 0xFFFF0000u);
 
-        /* A negative clip must keep its original right edge. */
         ui_scene_init(&scene);
         metal_render_begin(r);
         metal_render_clear(r, 0xFF000000u);
@@ -517,7 +504,6 @@ int main(int argc, char **argv)
         assert(pixels[4 * 20 + 4] == 0xFF00FF00u);
         assert(pixels[5 * 20 + 5] == 0xFF000000u);
 
-        /* Images use XRGB pixels and ignore the source alpha byte. */
         uint32_t image_pixels[] = {0x00FF0000u, 0x000000FFu};
         struct ui_image image = { .pixels = image_pixels, .size = { .x = 2, .y = 1 } };
         ui_scene_init(&scene);
@@ -530,7 +516,6 @@ int main(int argc, char **argv)
             fromRegion:MTLRegionMake2D(0, 0, 20, 20) mipmapLevel:0];
         assert(pixels[0] == 0xFFFF0000u);
         assert(pixels[1] == 0xFF0000FFu);
-        /* Nested clips must restore each parent clip. */
         ui_scene_init(&scene);
         metal_render_begin(r);
         metal_render_clear(r, 0xFF000000u);
@@ -546,7 +531,6 @@ int main(int argc, char **argv)
         assert(pixels[0] == 0xFF800000u);
         ui_scene_destroy(&scene);
 
-        /* Repeated frames must preserve the glyph atlas and draw order. */
         for (int i = 0; i < 12; i++) {
             assert(metal_render_terminal(r, &history, &frame, &view) == RENDER_BACKEND_DREW);
             assert(metal_render_submit(r, nil, pass, (struct vector2i){ .x = 20, .y = 20 }, false));

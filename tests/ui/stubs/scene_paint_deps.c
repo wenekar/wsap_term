@@ -6,8 +6,6 @@
 #include "font/font.h"
 #include "paint/blend.h"
 
-/* A font that is only metrics: the instance's metrics come first, so
- * scene painting reads them from here. */
 struct font_metrics scene_paint_test_font = { .cell_w = 8, .cell_h = 16 };
 const struct glyph *(*scene_paint_glyph_hook)(uint32_t cp, uint16_t flags);
 

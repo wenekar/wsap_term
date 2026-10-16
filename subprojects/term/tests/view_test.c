@@ -6,16 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-/*
- * The scrollback view: the viewport can leave the live screen, and the
- * terminal then shows history rows. These tests cover what the view does
- * while the terminal keeps working underneath it.
- */
-
-/* The tests use small terminals, so a row fits in a short buffer. */
 #define VIEW_TEXT_CAP 256
 
-/* The text of a view row, trailing blanks cut. */
 static void view_row_text(struct wsap_vtcore *t, int row, char *buf, size_t cap)
 {
     const struct wsap_vtcore_cell *cells = wsap_vtcore_snapshot_row(tt_snapshot_for(t), row);
@@ -36,8 +28,6 @@ static bool view_row_is(struct wsap_vtcore *t, int row, const char *want)
     return !strcmp(got, want);
 }
 
-/* Every view row holds the text of the same row in want. A view row that
- * resolves to no row at all fails the text compare. */
 static void assert_view_rows_equal(struct wsap_vtcore *t, struct wsap_vtcore *want)
 {
     for (int row = 0; row < tt_rows(t); row++) {
@@ -48,9 +38,6 @@ static void assert_view_rows_equal(struct wsap_vtcore *t, struct wsap_vtcore *wa
     }
 }
 
-/* The view offset, in range, and the same as the snapshot reports. The two
- * must come from one field: a second copy of the offset is what let the
- * scrollbar and the rows disagree. */
 static void assert_offset_agrees(struct wsap_vtcore *t)
 {
     const struct wsap_vtcore_view *v = wsap_vtcore_snapshot_view(tt_snapshot_for(t));
@@ -60,7 +47,6 @@ static void assert_offset_agrees(struct wsap_vtcore *t)
     assert(sb.offset <= sb.total);
 }
 
-/* A terminal whose history is small enough to fill. */
 static struct wsap_vtcore *small_history_term(int cols, int rows, int scrollback)
 {
     struct wsap_vtcore_options opt = {
@@ -72,8 +58,6 @@ static struct wsap_vtcore *small_history_term(int cols, int rows, int scrollback
     return t;
 }
 
-/* Fill the history with count lines of "Lnn" and leave the cursor on the
- * last screen row. */
 static void feed_lines(struct wsap_vtcore *t, const char *tag, int count)
 {
     char line[64];
@@ -83,8 +67,6 @@ static void feed_lines(struct wsap_vtcore *t, const char *tag, int count)
     }
 }
 
-/* Output that arrives while the view sits in the history leaves the view
- * on the same text. */
 static void view_holds_text_while_output_arrives(void)
 {
     struct wsap_vtcore *t = tt_new(12, 5);
@@ -99,15 +81,11 @@ static void view_holds_text_while_output_arrives(void)
     feed_lines(t, "M", 4);
     feed_lines(reference, "M", 4);
     assert_offset_agrees(t);
-    /* Nothing was evicted, so the view still shows the rows it showed. */
     assert_view_rows_equal(t, reference);
     wsap_vtcore_free(t);
     wsap_vtcore_free(reference);
 }
 
-/* A view that sits at the top of the history keeps the oldest text there
- * when more output arrives. The history grows by a row, so the offset
- * grows with it. */
 static void view_at_the_top_keeps_the_oldest_text(void)
 {
     const int scrollback = 20;
@@ -122,8 +100,6 @@ static void view_at_the_top_keeps_the_oldest_text(void)
     assert(tt_view_offset(t) == total);
     assert(view_row_is(t, 0, "L00"));
 
-    /* Three more lines with room in the history: the oldest line stays on
-     * the top row of the view, and the offset grows with the history. */
     feed_lines(t, "M", 3);
     feed_lines(reference, "M", 3);
     assert_offset_agrees(t);
@@ -135,9 +111,6 @@ static void view_at_the_top_keeps_the_oldest_text(void)
     wsap_vtcore_free(reference);
 }
 
-/* Output larger than the history evicts the rows the view was anchored to.
- * The view then shows the oldest text the terminal still keeps, and the
- * offset stays inside the history. */
 static void view_survives_output_larger_than_history(void)
 {
     const int scrollback = 20;
@@ -154,7 +127,6 @@ static void view_survives_output_larger_than_history(void)
     assert(tt_history(t) == scrollback);
     assert(tt_view_offset(t) > 0);
 
-    /* The top of the history is where the view ends up. */
     wsap_vtcore_scroll(reference, INT_MAX);
     assert(tt_view_offset(reference) == tt_history(reference));
     assert(tt_view_offset(t) == tt_history(t));
@@ -163,15 +135,11 @@ static void view_survives_output_larger_than_history(void)
     wsap_vtcore_free(reference);
 }
 
-/* An eviction can drop a line that wraps to more rows than the push adds.
- * The offset then stops at the oldest row the terminal still keeps, and
- * never sits above the history. */
 static void view_survives_eviction_of_a_wrapped_line(void)
 {
     const int scrollback = 20;
     struct wsap_vtcore *t = small_history_term(12, 5, scrollback);
     struct wsap_vtcore *reference = small_history_term(12, 5, scrollback);
-    /* The oldest line wraps to three rows. */
     const char *wrapped = "0123456789012345678901234\r\n";
     tt_puts(t, wrapped);
     tt_puts(reference, wrapped);
@@ -181,14 +149,12 @@ static void view_survives_eviction_of_a_wrapped_line(void)
     wsap_vtcore_scroll_to(reference, INT_MAX);
     assert_offset_agrees(t);
 
-    /* The next line evicts the wrapped one: three rows go, one arrives. */
     for (int i = 0; i < 4; i++) {
         tt_puts(t, "n\r\n");
         tt_puts(reference, "n\r\n");
         assert_offset_agrees(t);
         assert(tt_view_offset(t) <= tt_history(t));
     }
-    /* The view sits on the oldest text the terminal still keeps. */
     wsap_vtcore_scroll_to(reference, INT_MAX);
     assert(tt_view_offset(t) == tt_view_offset(reference));
     assert_view_rows_equal(t, reference);
@@ -196,7 +162,6 @@ static void view_survives_eviction_of_a_wrapped_line(void)
     wsap_vtcore_free(reference);
 }
 
-/* A resize keeps the same retained text at the top of the view. */
 static void view_keeps_anchor_on_resize(void)
 {
     static const struct {
@@ -221,8 +186,6 @@ static void view_keeps_anchor_on_resize(void)
     }
 }
 
-/* The alternate screen has no history to show. The normal screen comes
- * back at its own bottom. */
 static void view_follows_the_alternate_screen(void)
 {
     struct wsap_vtcore *t = tt_new(12, 5);
@@ -242,8 +205,6 @@ static void view_follows_the_alternate_screen(void)
     wsap_vtcore_free(t);
 }
 
-/* The view offset has one owner. Every operation that moves or clears the
- * view leaves the public offset and the snapshot offset equal. */
 static void view_offset_has_one_owner(void)
 {
     struct wsap_vtcore *t = tt_new(12, 5);
@@ -260,8 +221,6 @@ static void view_offset_has_one_owner(void)
     wsap_vtcore_free(t);
 }
 
-/* ED2 and ED3 return the view to the live screen. RIS keeps the offset, as
- * it did before the view had an anchor of its own. */
 static void view_returns_to_bottom_on_erase(void)
 {
     struct wsap_vtcore *t = tt_new(12, 5);
@@ -291,7 +250,6 @@ static void view_returns_to_bottom_on_erase(void)
     wsap_vtcore_free(t);
 }
 
-/* Rewrap keeps the cell that selected the anchored segment in view. */
 static void wrapped_anchor_survives_resize(void)
 {
     struct wsap_vtcore *t = tt_new(10, 3);
@@ -320,7 +278,6 @@ static void wrapped_anchor_survives_resize(void)
     wsap_vtcore_free(t);
 }
 
-/* A wide glyph leaves a wrap pad. That pad does not move the anchor. */
 static void wide_anchor_survives_resize(void)
 {
     struct wsap_vtcore *t = tt_new(5, 3);
@@ -340,7 +297,6 @@ static void wide_anchor_survives_resize(void)
     wsap_vtcore_free(t);
 }
 
-/* Incremental and new snapshots must show the same retained rows. */
 static void snapshots_agree_after_eviction_and_rewrap(void)
 {
     struct wsap_vtcore *t = small_history_term(11, 5, 23);
@@ -416,9 +372,6 @@ static void snapshots_agree_after_prefix_eviction(void)
     wsap_vtcore_free(t);
 }
 
-/* A line that needs more than one storage part stays scannable. Every
- * scroll offset names one history row, and every view row shows the text
- * of the history row the offset puts there. */
 static void view_scrolls_a_line_that_needs_several_parts(void)
 {
     const int cols = 40, rows = 6, cells = 2000000;
@@ -433,7 +386,6 @@ static void view_scrolls_a_line_that_needs_several_parts(void)
     tt_write(t, "\r\n", 2);
     free(big);
 
-    /* The rows still on the screen are not history rows. */
     int total = tt_history(t);
     assert(total == cells / cols - (rows - 1));
     struct wsap_vtcore_snapshot *snap = wsap_vtcore_snapshot_new();

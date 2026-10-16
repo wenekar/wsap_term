@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Interactive Kitty keyboard smoke test; run inside ./wsap_term."""
 import os
 import select
 import termios

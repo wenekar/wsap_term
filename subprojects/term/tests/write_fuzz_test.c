@@ -1,11 +1,3 @@
-/*
- * Differential fuzz test for wsap_vtcore_feed. Each seed makes random terminal
- * output: text, controls, CSI and ESC sequences, raw bytes, and resizes.
- * One terminal gets the output in a few large writes; the bulk fast paths
- * handle it. A second terminal gets it one byte at a time; the generic
- * parser handles it. The two must show the same cursor, screen, and
- * scrollback.
- */
 #include "term_api.h"
 #include "fuzz_gen.h"
 
@@ -15,12 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Each terminal has its own snapshot, so cells of both stay readable at
- * the same time. */
 static struct wsap_vtcore_snapshot *snap_bulk, *snap_bytes;
 
-/* The code points of a cell's text. A cluster has handles that differ
- * between snapshots, so the test compares its code points. */
 static int cell_text(const struct wsap_vtcore_snapshot *s, const struct wsap_vtcore_cell *cell,
                      uint32_t *cps, int cap)
 {
@@ -87,8 +75,6 @@ int main(int argc, char **argv)
         int cols = 4 + rn(30), rows = 2 + rn(10);
         struct wsap_vtcore *bulk = tt_new(cols, rows);
         struct wsap_vtcore *bytes = tt_new(cols, rows);
-        /* A new terminal can get the address of a freed one, so each seed
-         * uses new snapshots. */
         snap_bulk = wsap_vtcore_snapshot_new();
         snap_bytes = wsap_vtcore_snapshot_new();
         assert(bulk && bytes && snap_bulk && snap_bytes);

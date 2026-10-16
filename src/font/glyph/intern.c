@@ -8,8 +8,6 @@
 #define MAX_CLUSTERS 65536
 #define INDEX_INIT_SIZE (2 * MAX_CLUSTERS)
 
-/* Each entry stores the cluster hash and its first two code points.
- * Clusters with two code points do not use the arena. */
 struct entry {
     uint64_t hash;
     uint32_t offset;
@@ -28,10 +26,6 @@ static size_t num_entries, entries_cap;
 static uint32_t *index_table;
 static size_t index_size;
 
-/* The table below is process-global, and the paint pool interns clusters from
- * several worker threads at once. Interning reallocs the arena and frees the
- * index table, so a concurrent reader in glyph_intern_expand() would read freed
- * memory. Every entry point that touches this state holds this lock. */
 static pthread_mutex_t grapheme_mu = PTHREAD_MUTEX_INITIALIZER;
 
 static void grapheme_reset(void)

@@ -25,7 +25,6 @@ static int spawn(struct pty *p, const char *cmd)
     });
 }
 
-/* Read child output. It arrives on the fast pipe when there is one. */
 static size_t drain_child(struct pty *p, unsigned char *out, size_t cap)
 {
     int fd = pty_pipe_fd(p) >= 0 ? pty_pipe_fd(p) : pty_master_fd(p);
@@ -132,7 +131,6 @@ static void test_spec_env_overrides(void)
     struct pty p = {0};
     assert(pty_spawn(&p, &(struct pty_spec){
         .grid = { .x = 80, .y = 24 },
-        /* BSD printenv prints only its first name. */
         .command = "/bin/sh -c 'echo $TERM $WSAP_SPEC_VAR'",
         .env = env,
     }) == 0);
@@ -222,9 +220,6 @@ static uint64_t now_ms(void)
     return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 
-/* A shell saves history on SIGHUP. Closing a tab must give it that
- * chance instead of killing it outright, and must not block the caller
- * while it does. */
 static void test_destroy_lets_child_handle_hangup(void)
 {
     char dir[] = "/tmp/wsap-hangup-XXXXXX";
@@ -332,7 +327,6 @@ static void output_mode_child(void)
     assert(read(STDIN_FILENO, &ack, 1) == 1);
 }
 
-/* Read after the child changes modes. Each write keeps its own line ending. */
 static void test_output_mode_changes(const char *program)
 {
     const char *value = getenv("WSAP_FAST_PIPE");

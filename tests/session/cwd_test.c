@@ -19,7 +19,6 @@ int main(void)
     assert(session_cwd(&s, out, strlen("/tmp") + 1));
     assert(!strcmp(out, "/tmp"));
 
-    /* Use the shell directory when OSC 7 names a file. */
     s.pty.pid = getpid();
     const char file[] = "\033]7;file:///dev/null\033\\";
     wsap_vtcore_feed(s.term, file, sizeof(file) - 1, 0);

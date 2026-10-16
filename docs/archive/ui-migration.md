@@ -1,8 +1,6 @@
 # UI migration: status and next phases
 
-This page is the handoff for the UI library work. It lists what is done,
-what is next, and what needs a decision. Write new work in the same style.
-Keep sentences short. Use one instruction per sentence.
+Historical UI migration plan. Status and paths can be out of date.
 
 ## Goal
 
@@ -140,23 +138,3 @@ These are open test or design gaps. Each one has a short fix.
   No live widget does this today.
 - Clearing a label's selection on focus loss is in progress. It is not merged.
   Check whether the text input has the same gap.
-
-## Rules for work in this area
-
-- Work on a branch. Merge only after a verifier passes the change.
-- Run the test subset for `ui-*`, `css-*`, `window-ui-*`, `view-test`,
-  `settings-test`, `settings-window-test`, `terminal-input-test`, and
-  `drop-test`.
-- Run `ui-frame-bench` only when no other process is benchmarking.
-- Use `scripts/wsap-debug lint` for every UI change. See
-  `docs/ui-debugging.md`.
-- Never stop the user's own terminal process.
-- Commit trailers name the model that did the work.
-
-## Housekeeping
-
-- Several worker worktrees under `.claude/worktrees/` stay locked by the
-  harness. Remove them after the lock clears. Their branches are merged.
-- Many `wt/*` branches are merged and can be deleted.
-- Scratch build directories live under the session scratchpad. They are not
-  part of the repository.

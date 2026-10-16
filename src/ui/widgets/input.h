@@ -11,13 +11,6 @@
 #define UI_INPUT_PLACEHOLDER_CAP 128
 #define UI_INPUT_BLINK_MS        500
 
-/* A one-line text field. It takes keys, text, and paste while focused,
- * and sends UI_ACTION_CHANGE on every edit. Escape, Enter, Tab, Up, Down,
- * Page Up, and Page Down go on to its ancestors. Click to place the caret,
- * drag to select text, and double-click to select all. A secondary click
- * sends UI_ACTION_MENU at the press point. CSS styles the field
- * under "text-input", and its parts under "text-input-text",
- * "text-input-selection", and "text-input-caret". */
 struct ui_input_history;
 
 struct ui_input {
@@ -52,21 +45,16 @@ bool ui_input_selection(const struct ui_input *in, int *start, int *end);
 
 void ui_input_set_text(struct ui_input *in, const char *utf8);
 void ui_input_set_placeholder(struct ui_input *in, const char *utf8);
-/* Sent as the id on UI_ACTION_CHANGE. */
 void ui_input_set_action_id(struct ui_input *in, int id);
 void ui_input_select_all(struct ui_input *in);
 void ui_input_clear(struct ui_input *in);
-/* Inserts at the caret, in place of any selection. */
 bool ui_input_insert_text(struct ui_input *in, const char *utf8);
 
-/* Commands use the same path for keys and context menu actions. */
 bool ui_input_command(struct ui_input *in, enum ui_edit_command command);
 bool ui_input_can_command(const struct ui_input *in, enum ui_edit_command command);
 
-/* Distance from the field's left edge to the first text cell. */
 int ui_input_text_inset(const struct ui_input *in);
 
-/* The input that widget is, or NULL when widget is another kind. */
 struct ui_input *ui_input_of(struct ui_widget *widget);
 
 static inline struct ui_widget *ui_input_widget(struct ui_input *in)

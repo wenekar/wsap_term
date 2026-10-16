@@ -21,7 +21,6 @@ enum render_backend_result {
     RENDER_BACKEND_FAILED,
 };
 
-/* A terminal frame for a GPU backend. The glyph calls take font. */
 struct render_backend_view {
     struct font_instance *font;
     int cols, rows;
@@ -51,12 +50,9 @@ bool render_gpu_begin(struct framebuffer_gpu *g, struct framebuffer *fb,
 bool render_gpu_redraw(struct framebuffer_gpu *g);
 bool render_gpu_submit(struct framebuffer_gpu *g, struct framebuffer *fb);
 
-/* The GPU backend linked into this build defines these. The renderer
- * calls them only for a target whose gpu is set. */
 enum render_backend_result render_gpu_terminal(struct framebuffer_gpu *g,
                                                const struct terminal_frame *frame,
                                                const struct render_backend_view *view);
-/* Text ops draw with font. False leaves the scene to the CPU. */
 bool render_gpu_ui_scene(struct framebuffer_gpu *g, const struct ui_scene *scene,
                          struct font_instance *font);
 

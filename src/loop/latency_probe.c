@@ -36,7 +36,6 @@ void latency_probe_init(void)
 
 static uint64_t active, rendered;
 static uint64_t stamps[LATENCY_STAGE_COUNT];
-/* The marker ended; its trailing byte is still due. */
 static uint64_t pending;
 
 static void sync_request(void)
@@ -90,7 +89,6 @@ void latency_probe_scan_output(const char *data, size_t len)
     }
 }
 
-/* The sample whose reply the last render drew, while it is not complete. */
 static uint64_t pending_frame_id(void)
 {
     if (!probe) return 0;

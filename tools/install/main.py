@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Unified post-installation driver for wsap_term."""
 
 import argparse
 import contextlib
@@ -17,7 +16,6 @@ except ImportError:
 
 @dataclass(frozen=True)
 class InstallContext:
-    """Environment, paths, and user context for post-installation."""
 
     root: Path
     destdir: str
@@ -29,7 +27,6 @@ class InstallContext:
 
     @classmethod
     def detect(cls) -> "InstallContext":
-        """Detect environment from Meson variables and process owner."""
         meson_root = os.environ.get("MESON_SOURCE_ROOT")
         root = (
             Path(meson_root).resolve()
@@ -64,7 +61,6 @@ class InstallContext:
         )
 
     def install_path(self, path: Path) -> Path:
-        """Map an install path through Meson's DESTDIR staging prefix."""
         try:
             relative = path.relative_to(self.prefix)
         except ValueError:
@@ -74,7 +70,6 @@ class InstallContext:
         return self.install_root / relative
 
     def chown_tree(self, path: Path) -> None:
-        """Recursively chown path to the original invoking user under sudo."""
         if (
             self.uid is None
             or self.gid is None
@@ -88,7 +83,6 @@ class InstallContext:
                 os.chown(item, self.uid, self.gid)
 
     def themes_dir(self) -> Path:
-        """User themes directory."""
         if self.uid is not None:
             return self.home / ".config" / "wsap_term" / "themes"
         xdg = os.environ.get("XDG_CONFIG_HOME")
@@ -96,10 +90,8 @@ class InstallContext:
             return Path(xdg) / "wsap_term" / "themes"
         return self.home / ".config" / "wsap_term" / "themes"
 
-
 def _compile_terminfo(ctx: InstallContext, source: Path, dest: Path) -> bool:
-    """Compile source into dest with tools/install-terminfo.sh."""
-    script = ctx.root / "tools" / "install-terminfo.sh"
+    script = ctx.root / "assets" / "terminfo" / "install-terminfo.sh"
     env = dict(
         os.environ,
         WSAP_TERMINFO_SRC=str(source),
@@ -113,7 +105,6 @@ def _compile_terminfo(ctx: InstallContext, source: Path, dest: Path) -> bool:
         return False
     return True
 
-
 def install_terminfo(
     ctx: InstallContext,
     source: Path | None = None,
@@ -121,7 +112,6 @@ def install_terminfo(
     datadir: Path = Path("share"),
     bindir: Path = Path("bin"),
 ) -> int:
-    """Compile and install the terminfo entry."""
     source = source or ctx.root / "assets" / "terminfo" / "wsap_term.terminfo"
     if not source.is_file():
         sys.stderr.write(f"Terminfo file not found: {source}\n")
@@ -145,13 +135,10 @@ def install_terminfo(
     )
     return 0
 
-
 def _is_root() -> bool:
     return hasattr(os, "geteuid") and os.geteuid() == 0
 
-
 def install_themes(ctx: InstallContext, source_dir: Path | None = None) -> int:
-    """Install default themes into user config directory."""
     if ctx.destdir:
         return 0
     source_dir = source_dir or ctx.root / "assets" / "themes"
@@ -170,9 +157,7 @@ def install_themes(ctx: InstallContext, source_dir: Path | None = None) -> int:
     sys.stdout.write(f"Installed themes to {dest}\n")
     return 0
 
-
 def sign_macos_bundle(ctx: InstallContext, app_dir: Path) -> int:
-    """Sign nested libraries and seal the installed app."""
     bundle = app_dir / "wsap_term.app"
     if not bundle.is_absolute():
         bundle = ctx.prefix / bundle
@@ -193,9 +178,7 @@ def sign_macos_bundle(ctx: InstallContext, app_dir: Path) -> int:
     sys.stdout.write(f"Signed app bundle at {bundle}\n")
     return 0
 
-
 def main() -> int:
-    """Run post-installation tasks."""
     parser = argparse.ArgumentParser(description="Post-installation driver")
     parser.add_argument(
         "subcommand",
@@ -220,7 +203,6 @@ def main() -> int:
     if args.subcommand == "themes":
         return install_themes(ctx)
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -11,9 +11,6 @@ void ui_damage_add(struct ui_damage *d, struct rect2i r)
 {
     if (!d || d->all || rect2i_is_empty(r))
         return;
-    /* Coalesce touching damage rectangles.
-     * Check swapped elements at the current index.
-     * Repeat until no rectangles merge. */
     bool merged;
     do {
         merged = false;
