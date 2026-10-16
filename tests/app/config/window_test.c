@@ -158,8 +158,9 @@ int main(void)
     assert(fd >= 0);
     FILE *file = fdopen(fd, "w");
     assert(file);
-    assert(fputs("# Keep this note.\nfont-size = 10\nunknown-key = keep\n", file) >= 0);
-    assert(!fclose(file));
+    int written = fputs("# Keep this note.\nfont-size = 10\nunknown-key = keep\n", file);
+    int closed = fclose(file);
+    assert(written >= 0 && closed == 0);
     struct test_app app;
     test_app_init(&app, NULL, (struct vector2i){0});
     app.app->config_path = strdup(path);

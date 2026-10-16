@@ -18,8 +18,9 @@ static void write_file(const char *dir, const char *name, const char *text)
     snprintf(path, sizeof(path), "%s/%s", dir, name);
     FILE *f = fopen(path, "w");
     assert(f);
-    assert(fputs(text, f) >= 0);
-    assert(fclose(f) == 0);
+    int written = fputs(text, f);
+    int closed = fclose(f);
+    assert(written >= 0 && closed == 0);
 }
 
 static struct look *open_look(const char *theme)

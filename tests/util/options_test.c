@@ -71,8 +71,9 @@ static void write_text(const char *path, const char *text)
 {
     FILE *f = fopen(path, "w");
     assert(f);
-    assert(fputs(text, f) >= 0);
-    assert(fclose(f) == 0);
+    int written = fputs(text, f);
+    int closed = fclose(f);
+    assert(written >= 0 && closed == 0);
 }
 
 static char *read_text(const char *path)
@@ -136,6 +137,7 @@ static void test_precedence(void)
     assert(c.size == 100);
     assert(path && strcmp(path, file) == 0);
     free(path);
+    path = NULL;
     opts_destroy(&SPEC, &c);
 
     setenv("OPTTEST_SIZE", "200", 1);
@@ -143,6 +145,7 @@ static void test_precedence(void)
     assert(load(&c, from_file, 2, &path) == 0);
     assert(c.size == 200);
     free(path);
+    path = NULL;
     opts_destroy(&SPEC, &c);
 
     memset(&c, 0, sizeof(c));
@@ -150,6 +153,7 @@ static void test_precedence(void)
     assert(load(&c, from_args, 4, &path) == 0);
     assert(c.size == 300);
     free(path);
+    path = NULL;
     opts_destroy(&SPEC, &c);
     unsetenv("OPTTEST_SIZE");
 }

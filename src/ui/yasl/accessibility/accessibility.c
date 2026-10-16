@@ -517,7 +517,9 @@ static const char *role_name(uint32_t role)
     }
 }
 
-static void state_add(guint32 words[2], unsigned state)
+#define ATSPI_STATE_WORDS 2
+
+static void state_add(guint32 words[ATSPI_STATE_WORDS], unsigned state)
 {
     words[state / 32] |= UINT32_C(1) << (state % 32);
 }
@@ -525,7 +527,7 @@ static void state_add(guint32 words[2], unsigned state)
 static GVariant *state_set(uint32_t states, bool is_app,
                            bool has_selectable_text)
 {
-    guint32 words[2] = {0};
+    guint32 words[ATSPI_STATE_WORDS] = {0};
     state_add(words, 8);
     state_add(words, 24);
     if (!(states & UI_ACCESSIBILITY_STATE_HIDDEN))
@@ -565,7 +567,7 @@ static GVariant *state_set(uint32_t states, bool is_app,
         words[24 / 32] &= ~(UINT32_C(1) << (24 % 32));
     }
     return g_variant_new_fixed_array(G_VARIANT_TYPE_UINT32, words,
-                                     G_N_ELEMENTS(words), sizeof(words[0]));
+                                     ATSPI_STATE_WORDS, sizeof(words[0]));
 }
 
 #ifndef YASL_SCALE_UNIT
@@ -747,7 +749,7 @@ static void atspi_method_call(GDBusConnection *connection, const gchar *sender,
     (void)sender;
     struct provider_server *s = user_data;
 
-    if (interface_name && strcmp(interface_name, DBUS_PROPERTIES_IFACE) == 0 &&
+    if (strcmp(interface_name, DBUS_PROPERTIES_IFACE) == 0 &&
         strcmp(method_name, "Set") == 0)
     {
         const char *property_interface = NULL;

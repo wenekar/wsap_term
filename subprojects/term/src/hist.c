@@ -1824,7 +1824,11 @@ static inline int lf_rows(struct hist *restrict h, const uint16_t *restrict ends
     state->rows = rows;
     state->text_count = text_count;
 #else
-    (void)h, (void)ends, (void)stop, (void)cols, (void)state;
+    (void)h;
+    (void)ends;
+    (void)stop;
+    (void)cols;
+    (void)state;
 #endif
     return i;
 }
@@ -2051,7 +2055,10 @@ static inline int stream_lines(struct hist *restrict h, const struct hist_ascii_
     state->head = head;
     state->text_count = text_count;
 #else
-    (void)h, (void)lines, (void)stream_end, (void)state;
+    (void)h;
+    (void)lines;
+    (void)stream_end;
+    (void)state;
 #endif
     return i;
 }

@@ -74,6 +74,10 @@ if available cppcheck; then
 		--suppress=constParameterCallback \
 		--suppress=knownConditionTrueFalse \
 		--suppress='negativeIndex:subprojects/term/src/escape.c' \
+		--suppress='*:src/ui/extern/*' \
+		--suppress='assertWithSideEffect:tests/*' \
+		--suppress='assertWithSideEffect:subprojects/term/tests/*' \
+		--library=gtk \
 		-Isrc -Isubprojects/term/include -Isubprojects/term/include/wsap_vtcore \
 		-Isubprojects/term/src -Isubprojects/term/tests/helpers \
 		src tests benchmarks subprojects/term/src subprojects/term/tests \

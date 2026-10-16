@@ -1,3 +1,4 @@
+test_c_args = ['-UNDEBUG']
 ui_test_deps = [m_dep, thread_dep, yyjson_dep, icu_dep]
 test_cases = [
     ['input-test', files('input/input_test.c'), input_lib, [m_dep]],
@@ -125,6 +126,7 @@ foreach entry : test_cases
             entry[0],
             entry[1],
             link_with: entry[2],
+            c_args: test_c_args,
             include_directories: inc,
             dependencies: entry[3] + test_common_deps,
         )}
@@ -139,7 +141,7 @@ foreach entry : test_cases
         obj = static_library(
             entry[0] + '-entry',
             entry[1],
-            c_args: ['-Dmain=' + symbol],
+            c_args: test_c_args + ['-Dmain=' + symbol],
             include_directories: inc,
             dependencies: entry[3] + test_common_deps,
             pic: false,
@@ -219,6 +221,7 @@ if backend == 'wayland'
     fastpty_helper = executable(
         'fastpty-exec-test',
         'pty/fastpty_exec_test.c',
+        c_args: test_c_args,
         override_options: ['b_sanitize=none'],
     )
 
@@ -237,6 +240,7 @@ if backend == 'wayland'
     pty_route_test = executable(
         'pty-route-test',
         'pty/pty_route_test.c',
+        c_args: test_c_args,
         link_with: pty_lib,
         dependencies: [thread_dep, dl_dep, yasl_dep],
         include_directories: inc,
@@ -403,6 +407,7 @@ options_test = executable(
         '../src/util/proc.c',
         '../src/util/name.c',
     ),
+    c_args: test_c_args,
     include_directories: inc,
 )
 test('options-test', options_test, env: test_env, suite: ['unit'], timeout: 180)
@@ -410,6 +415,7 @@ test('options-test', options_test, env: test_env, suite: ['unit'], timeout: 180)
 latency_probe_test = executable(
     'latency-probe-test',
     files('loop/latency_probe_test.c'),
+    c_args: test_c_args,
     include_directories: inc,
     link_with: base_lib,
 )

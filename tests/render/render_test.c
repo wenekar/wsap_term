@@ -1326,6 +1326,7 @@ static void repaint_emits_damage_test(void)
     feed(t, "ABCD");
     int w = 8 * CELL_W, h = 2 * CELL_H;
     uint32_t *px = calloc((size_t)w * h, sizeof(uint32_t));
+    assert(px);
     struct damage_list damage = {0};
     struct framebuffer_history history = {0};
     struct framebuffer target = {
@@ -1361,6 +1362,7 @@ static void null_history_draw_test(void)
     feed(t, "ABCD");
     int w = 8 * CELL_W, h = 2 * CELL_H;
     uint32_t *px = calloc((size_t)w * h, sizeof(uint32_t));
+    assert(px);
     struct damage_list damage = {0};
     struct framebuffer target = {
         .pixels = px,

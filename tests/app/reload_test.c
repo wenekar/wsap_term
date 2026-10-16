@@ -15,8 +15,9 @@ static void write_file(const char *path, const char *content)
 {
     FILE *f = fopen(path, "w");
     assert(f);
-    assert(fputs(content, f) >= 0);
-    assert(fclose(f) == 0);
+    int written = fputs(content, f);
+    int closed = fclose(f);
+    assert(written >= 0 && closed == 0);
 }
 
 static void test_reload_keeps_command_line(void)
