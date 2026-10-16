@@ -124,7 +124,7 @@ void fallback_destroy(void);
 void fallback_thread_reset(void);
 void fallback_coverage_reset(void);
 void build_cfg_usable(void);
-bool fallback_run_covered(const uint32_t *cps, int len, unsigned *gen);
+bool fallback_run_covered(const uint32_t *cps, int len);
 bool run_coverable(const uint32_t *cps, int len);
 uint64_t ft_scan_run(const uint32_t *cps, int len, uint16_t style,
                      uint64_t *hash, int *dead_at);

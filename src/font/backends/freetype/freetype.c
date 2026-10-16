@@ -326,7 +326,7 @@ static enum font_run_result ft_shape_run(font_handle_t *face, const struct font_
 
     struct font_face_query q = FONT_FACE_QUERY(cps[0], false);
     q.cfg_mask = cfg_and;
-    if (!cfg_and && !fallback_run_covered(cps, len, &q.cover_seen))
+    if (!cfg_and && !fallback_run_covered(cps, len))
         return FONT_RUN_UNAVAILABLE;
 
     bool retry_suffix = false;

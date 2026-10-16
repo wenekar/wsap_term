@@ -5,6 +5,12 @@ bench_cases = [
     ['ui-frame-bench', files('ui_frame_bench.c'), [ui_yasl_lib, ui_lib, font_lib, render_lib], deps + [m_dep]],
 ]
 
+if font_backend != 'coretext'
+    bench_cases += [
+        ['font-fallback-bench', files('font_fallback_bench.c'), font_lib, font_deps + [m_dep]],
+    ]
+endif
+
 if system == 'linux'
     bench_cases += [
         ['transport-bench', files('transport_bench.c'), pty_lib, [thread_dep, dl_dep]],
