@@ -162,7 +162,6 @@ Linux tests need Wayland server libraries, protocol files, and `wayland-scanner`
 `make test` also enables Sway and Kitty tests on Linux.
 The Sway suite needs `swaymsg` and `grim`.
 Font tests need CJK, color emoji, and musical symbol fonts.
-COLRv1 tests need a COLRv1 font.
 
 `python3 tools/test-matrix.py` runs sanitizer checks across CPU targets.
 On x86-64, the default targets are native, x86-64-v2, x86-64-v3, and znver5.

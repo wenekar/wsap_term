@@ -169,6 +169,4 @@ void raster_cache_clear(void);
 bool shape_buffer_live(void);
 void shape_thread_reset(void);
 
-bool colr_rasterize(FT_Face face, uint32_t gid, FT_BitmapGlyph bg);
-
 #endif

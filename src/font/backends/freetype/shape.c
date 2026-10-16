@@ -164,9 +164,6 @@ static const struct raster_entry *raster_fetch(int slot, enum font_variant varia
     e->hinting = raster_hint_key();
     e->fit_pass = fit_pass;
     e->valid = true;
-    if (FT_HAS_COLOR(face) && !oblique && !embolden &&
-        e->glyph->bitmap.pixel_mode != FT_PIXEL_MODE_BGRA)
-        colr_rasterize(face, gid, e->glyph);
     return e;
 }
 
