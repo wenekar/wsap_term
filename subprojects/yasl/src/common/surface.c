@@ -472,6 +472,14 @@ int yasl_surface_set_cursor(yasl_surface *s, enum yasl_cursor cursor)
     yasl_private_surface_set_cursor(s, (enum yasl_private_cursor)cursor);
     return 0;
 }
+
+int yasl_surface_set_background_color(yasl_surface *s, uint32_t bg)
+{
+    if (!yasl_public_surface(s, false))
+        return -errno;
+    yasl_private_surface_set_background_color(s, bg);
+    return 0;
+}
 void yasl_private_surface_notify_refresh(yasl_surface *s)
 {
     if (!s || !s->display)

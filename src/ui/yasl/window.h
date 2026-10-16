@@ -74,6 +74,7 @@ typedef void (*window_frame_composer)(struct window *w,
                                       struct window_frame *frame,
                                       void *ud);
 void window_set_background(struct window *w, uint32_t bg);
+uint32_t window_background(const struct window *w);
 
 struct window_spec {
     const char *title;

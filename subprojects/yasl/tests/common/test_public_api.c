@@ -36,6 +36,8 @@ int main(void)
     assert(yasl_surface_begin_move_resize(NULL, 0) == -ENODEV);
     assert(yasl_surface_show_window_menu(NULL, 1, 1) == -ENODEV);
     assert(yasl_surface_bell(NULL) == -ENODEV);
+    assert(yasl_surface_set_background_color(NULL, 0) == -ENODEV);
+    assert(yasl_surface_set_background_color(fake, 0) == -ENODEV);
     assert(yasl_surface_place_under_pointer(NULL, 1, 1) == -ENODEV);
     assert(yasl_drag_carry(NULL, 1, 1) == -ENODEV);
     assert(yasl_drag_start(NULL, NULL) == -ENODEV);

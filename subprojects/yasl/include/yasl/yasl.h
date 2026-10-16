@@ -154,6 +154,10 @@ enum yasl_edge { YASL_EDGE_TOP = 1, YASL_EDGE_BOTTOM = 2, YASL_EDGE_LEFT = 4, YA
 YASL_API int yasl_surface_begin_move_resize(yasl_surface *surface, unsigned edges);
 YASL_API int yasl_surface_show_window_menu(yasl_surface *surface, double x, double y);
 YASL_API int yasl_surface_bell(yasl_surface *surface);
+/** Sets the surface background color. The bg value uses 0xAARRGGBB or
+ * 0x00RRGGBB format. On macOS, this sets the window background color and
+ * updates the titlebar. Returns 0 on success, or a negative errno on failure. */
+YASL_API int yasl_surface_set_background_color(yasl_surface *surface, uint32_t bg);
 
 /* Popups */
 enum yasl_popup_adjust {

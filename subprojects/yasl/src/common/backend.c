@@ -424,9 +424,11 @@ void yasl_private_surface_set_cursor(struct yasl_surface *s, enum yasl_private_c
 
 void yasl_private_surface_set_background_color(struct yasl_surface *s, uint32_t bg)
 {
-    if (!s || !s->display->ops->surface_set_background_color)
+    if (!s)
         return;
-    s->display->ops->surface_set_background_color(s, bg);
+    s->bg_color = bg;
+    if (s->display && s->display->ops->surface_set_background_color)
+        s->display->ops->surface_set_background_color(s, bg);
 }
 
 const char *yasl_private_surface_ime_preedit(const struct yasl_surface *s)

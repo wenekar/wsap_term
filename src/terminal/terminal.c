@@ -219,6 +219,7 @@ void terminal_set_theme(struct window *w, const struct wsap_vtcore_theme *theme)
     for (int i = 0; i < tw->tab_count; i++)
         wsap_vtcore_set_theme(tw->tabs[i]->session.term, &tw->theme);
     ui_tabbar_set_bg_color(&tw->tabbar, tw->theme.bg);
+    window_set_background(w, tw->theme.bg);
     window_redraw(w);
 }
 

@@ -39,6 +39,7 @@ static void *wake_thread(void *unused)
 static void *wrong_thread(void *data)
 {
     assert(yasl_surface_set_title(data, "wrong") == -EPERM);
+    assert(yasl_surface_set_background_color(data, 0) == -EPERM);
     int w = 1, h = 1;
     assert(!yasl_cpu_pixels(data, &w, &h) && errno == EPERM && !w && !h);
     struct yasl_native native;
@@ -448,6 +449,7 @@ int main(int argc, char **argv)
 
     /* Title and window requests: each either works or reports ENOTSUP. */
     assert(yasl_surface_set_title(s, "CPU contract renamed") == 0);
+    assert(yasl_surface_set_background_color(s, 0xff1e1e2e) == 0);
     /* Weston configures a minimized fullscreen window at 0 x 0, then rejects
      * every frame, so the window leaves fullscreen before it minimizes. */
     int fullscreen = yasl_surface_request(s, YASL_REQUEST_FULLSCREEN);

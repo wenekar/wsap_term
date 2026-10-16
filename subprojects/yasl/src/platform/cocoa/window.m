@@ -1805,6 +1805,8 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
         w->window.acceptsMouseMovedEvents = YES;
         w->window.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
         w->window.titlebarAppearsTransparent = YES;
+        if ([w->window respondsToSelector:@selector(setTitlebarSeparatorStyle:)])
+            w->window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
         /* The full title: a byte-limited copy could split a UTF-8 sequence. */
         w->window.title = [NSString stringWithUTF8String:t] ?: @"YASL";
         w->window.colorSpace = [NSColorSpace sRGBColorSpace];
@@ -2003,15 +2005,22 @@ static bool impl_surface_minimize(struct yasl_surface *surface)
 
 void cocoa_surface_set_background_color(struct cocoa_surface *w, uint32_t bg)
 {
-    if (!w || w->closed) return;
+    if (!w || w->closed || w->is_popup) return;
     w->bg_color = bg;
-    double r = ((bg >> 16) & 0xff) / 255.0;
-    double g = ((bg >> 8) & 0xff) / 255.0;
-    double b = (bg & 0xff) / 255.0;
-    w->window.backgroundColor = [NSColor colorWithSRGBRed:r green:g blue:b alpha:1.0];
-    bool dark = 0.299 * r + 0.587 * g + 0.114 * b < 0.5;
-    w->window.appearance = [NSAppearance appearanceNamed:
-        dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
+    void (^apply)(void) = ^{
+        if (w->closed || !w->window) return;
+        double r = ((bg >> 16) & 0xff) / 255.0;
+        double g = ((bg >> 8) & 0xff) / 255.0;
+        double b = (bg & 0xff) / 255.0;
+        w->window.backgroundColor = [NSColor colorWithSRGBRed:r green:g blue:b alpha:1.0];
+        bool dark = 0.299 * r + 0.587 * g + 0.114 * b < 0.5;
+        w->window.appearance = [NSAppearance appearanceNamed:
+            dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
+    };
+    if ([NSThread isMainThread])
+        apply();
+    else
+        dispatch_async(dispatch_get_main_queue(), apply);
 }
 
 void cocoa_surface_set_cursor(struct cocoa_surface *w, enum yasl_private_cursor cursor)

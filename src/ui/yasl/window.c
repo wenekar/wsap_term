@@ -69,8 +69,19 @@ const char *window_title(const struct window *w)
 
 void window_set_background(struct window *w, uint32_t bg)
 {
-    (void)w;
-    (void)bg;
+    if (!w)
+        return;
+    if (w->has_bg && w->bg == bg)
+        return;
+    w->bg = bg;
+    w->has_bg = true;
+    if (w->surface)
+        yasl_surface_set_background_color(w->surface, bg);
+}
+
+uint32_t window_background(const struct window *w)
+{
+    return w ? w->bg : 0;
 }
 
 static bool fifo_push(struct window_fifo *f, const struct input_event *ev)
@@ -363,6 +374,8 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
     if (!w->surface || !window_native_add(w, w->surface))
         goto fail;
     w->natives[w->native_count - 1].metal_layer = layer;
+    if (w->has_bg)
+        yasl_surface_set_background_color(w->surface, w->bg);
 
     if (config->fullscreen && !spec->windowed)
         yasl_surface_request(w->surface, YASL_REQUEST_FULLSCREEN);

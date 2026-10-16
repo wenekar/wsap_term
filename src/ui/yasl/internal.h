@@ -114,6 +114,8 @@ struct window {
     bool drawing;
     uint32_t scale_120;
     int modifiers;
+    uint32_t bg;
+    bool has_bg;
 };
 
 bool window_host_add(struct window_host *host, struct window *w);

@@ -158,11 +158,30 @@ static void scrollbar_scrolls_the_active_tab_test(void)
     close_window(&f);
 }
 
+static void window_background_matches_terminal_theme_test(void)
+{
+    struct fixture f;
+    open_window(&f, 1);
+    struct wsap_vtcore_theme theme;
+    wsap_vtcore_theme_default(&theme);
+    theme.bg = 0xFF123456u;
+    terminal_set_theme(f.w, &theme);
+    settle(&f);
+    assert(window_background(f.w) == 0xFF123456u);
+
+    theme.bg = 0xFF654321u;
+    terminal_set_theme(f.w, &theme);
+    settle(&f);
+    assert(window_background(f.w) == 0xFF654321u);
+    close_window(&f);
+}
+
 int main(void)
 {
     tab_bar_opens_selects_and_closes_tabs_test();
     dragging_a_tab_reorders_tabs_test();
     scrollbar_scrolls_the_active_tab_test();
+    window_background_matches_terminal_theme_test();
     puts("PASS: the terminal's tab bar and scrollbar act on its tabs");
     return 0;
 }

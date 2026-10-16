@@ -66,9 +66,11 @@ static void root_prepare(struct ui_widget *widget)
     struct window *w = tw->window;
     push_labels(tw);
     const struct wsap_vtcore_view *view = wsap_vtcore_snapshot_view(tw->snapshot);
-        ui_tabbar_set_bg_color(&tw->tabbar, view->size.x
-                           ? view->palette[WSAP_VTCORE_PALETTE_BG]
-                           : tw->theme.bg);
+    uint32_t bg = view->size.x
+        ? view->palette[WSAP_VTCORE_PALETTE_BG]
+        : tw->theme.bg;
+    ui_tabbar_set_bg_color(&tw->tabbar, bg);
+    window_set_background(w, bg);
     struct wsap_vtcore *t = terminal_term(w);
     ui_scrollview_set_metrics(&tw->scrollview, t ? terminal_scroll_metrics(t)
                                                  : (struct ui_scroll_metrics){0});
