@@ -76,12 +76,16 @@ jobs:
             libdbus-1-dev \
             libegl1-mesa-dev \
             libvulkan-dev \
-            fonts-dejavu-core \
+            fontconfig \
+            fonts-dejavu \
+            fonts-jetbrains-mono \
+            fonts-firacode \
             fonts-noto-core \
             fonts-noto-cjk \
             fonts-noto-color-emoji \
             fonts-noto-extra \
             cmake
+          sudo fc-cache -f
           python3 -m pip install --break-system-packages "meson>=1.12.0"
       - name: Install yyjson
         run: |

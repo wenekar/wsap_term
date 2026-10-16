@@ -160,9 +160,11 @@ static void blit_direct(struct glyph *g, const FT_Bitmap *bm, const struct box *
                 if (sg > subpx_row[x * 3 + 1]) subpx_row[x * 3 + 1] = sg;
                 if (sb > subpx_row[x * 3 + 2]) subpx_row[x * 3 + 2] = sb;
                 uint8_t a = subpx_luma(sr, sg, sb);
+                if (a == 0 && (sr || sg || sb))
+                    a = 1;
                 if (a > alpha[x])
                     alpha[x] = a;
-                if (sr || sg || sb || alpha[x])
+                if (alpha[x])
                     glyph_mark(g, y, x);
             }
             continue;
@@ -249,9 +251,11 @@ static void blit_scaled(struct glyph *g, const FT_Bitmap *bm, const struct box *
                 if (sg > g->subpx[y][x * 3 + 1]) g->subpx[y][x * 3 + 1] = sg;
                 if (sb > g->subpx[y][x * 3 + 2]) g->subpx[y][x * 3 + 2] = sb;
                 uint8_t a = subpx_luma(sr, sg, sb);
+                if (a == 0 && (sr || sg || sb))
+                    a = 1;
                 if (a > g->alpha[y][x])
                     g->alpha[y][x] = a;
-                if (sr || sg || sb || g->alpha[y][x])
+                if (g->alpha[y][x])
                     glyph_mark(g, y, x);
             } else {
                 unsigned sum = 0, count = 0;
