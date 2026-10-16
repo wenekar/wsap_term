@@ -192,7 +192,6 @@ Reports go in `benchmarks/`.
 | `python3 tools/dev/dirgraph.py build` | Check library dependencies. |
 | `python3 tools/loc_per_function.py src` | Count code lines per function. |
 | `python3 tools/build_macos_icon.py` | Build the macOS icon with resvg and iconutil. |
-| `python3 tools/strip_comments.py FILE...` | Remove comments under the [cleanup rules](../AGENT_COMMENT_CLEANUP.md). |
 
 See [performance reports](../benchmarks/) for results and methods.
 

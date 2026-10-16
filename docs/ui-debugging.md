@@ -297,5 +297,4 @@ Do not put the socket in a directory that other users can write to.
 
 `scripts/gdb_buffer_inspector.py` traces Wayland buffer contents, damage
 rectangles, and pixel values across frame commits. `AGENTS.md` shows how
-to use it. The old `scripts/gdb_layout_inspector.py` and the
-`WSAP_DEBUG_LAYOUT*` variables targeted the removed `ui_node` tree.
+to use it.

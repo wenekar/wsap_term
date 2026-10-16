@@ -15,7 +15,6 @@
 | [Terminal core](../subprojects/term/README.md) | Standalone builds and embedding. |
 
 Performance reports are in [benchmarks](../benchmarks/).
-Historical plans are in [archive](archive/).
 
 ## Repository layout
 

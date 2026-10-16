@@ -74,8 +74,7 @@ if available cppcheck; then
 		--suppress=constParameterCallback \
 		--suppress=knownConditionTrueFalse \
 		--suppress='negativeIndex:subprojects/term/src/escape.c' \
-		--suppress='syntaxError:tests/resize_alloc_test.c' \
-		-Isrc -Isubprojects/term/include -Isubprojects/term/include/term \
+		-Isrc -Isubprojects/term/include -Isubprojects/term/include/wsap_vtcore \
 		-Isubprojects/term/src -Isubprojects/term/tests/helpers \
 		src tests benchmarks subprojects/term/src subprojects/term/tests \
 		subprojects/term/benchmarks

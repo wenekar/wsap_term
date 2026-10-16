@@ -1,8 +1,5 @@
 # Repository instructions
 
-If the user asks to delete, remove, or clean up comments, follow
-`AGENT_COMMENT_CLEANUP.md`.
-
 Write docs, comments, and summaries in ASD-STE100 style: short sentences,
 simple words, active voice, one instruction or fact per sentence.
 
