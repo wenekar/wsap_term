@@ -1,0 +1,204 @@
+#ifndef WSAP_VTCORE_INPUT_H
+#define WSAP_VTCORE_INPUT_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include "wsap_vtcore_types.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+enum wsap_vtcore_key {
+    WSAP_VTCORE_KEY_NONE = 0,
+
+    WSAP_VTCORE_KEY_RETURN,
+    WSAP_VTCORE_KEY_BACKSPACE,
+    WSAP_VTCORE_KEY_TAB,
+    WSAP_VTCORE_KEY_ESCAPE,
+
+    WSAP_VTCORE_KEY_UP,
+    WSAP_VTCORE_KEY_DOWN,
+    WSAP_VTCORE_KEY_RIGHT,
+    WSAP_VTCORE_KEY_LEFT,
+    WSAP_VTCORE_KEY_HOME,
+    WSAP_VTCORE_KEY_END,
+    WSAP_VTCORE_KEY_PAGE_UP,
+    WSAP_VTCORE_KEY_PAGE_DOWN,
+    WSAP_VTCORE_KEY_INSERT,
+    WSAP_VTCORE_KEY_DELETE,
+
+    WSAP_VTCORE_KEY_F1,  WSAP_VTCORE_KEY_F2,  WSAP_VTCORE_KEY_F3,  WSAP_VTCORE_KEY_F4,  WSAP_VTCORE_KEY_F5,
+    WSAP_VTCORE_KEY_F6,  WSAP_VTCORE_KEY_F7,  WSAP_VTCORE_KEY_F8,  WSAP_VTCORE_KEY_F9,  WSAP_VTCORE_KEY_F10,
+    WSAP_VTCORE_KEY_F11, WSAP_VTCORE_KEY_F12, WSAP_VTCORE_KEY_F13, WSAP_VTCORE_KEY_F14, WSAP_VTCORE_KEY_F15,
+    WSAP_VTCORE_KEY_F16, WSAP_VTCORE_KEY_F17, WSAP_VTCORE_KEY_F18, WSAP_VTCORE_KEY_F19, WSAP_VTCORE_KEY_F20,
+    WSAP_VTCORE_KEY_F21, WSAP_VTCORE_KEY_F22, WSAP_VTCORE_KEY_F23, WSAP_VTCORE_KEY_F24, WSAP_VTCORE_KEY_F25,
+    WSAP_VTCORE_KEY_F26, WSAP_VTCORE_KEY_F27, WSAP_VTCORE_KEY_F28, WSAP_VTCORE_KEY_F29, WSAP_VTCORE_KEY_F30,
+    WSAP_VTCORE_KEY_F31, WSAP_VTCORE_KEY_F32, WSAP_VTCORE_KEY_F33, WSAP_VTCORE_KEY_F34, WSAP_VTCORE_KEY_F35,
+
+    WSAP_VTCORE_KEY_KP_0, WSAP_VTCORE_KEY_KP_1, WSAP_VTCORE_KEY_KP_2, WSAP_VTCORE_KEY_KP_3, WSAP_VTCORE_KEY_KP_4,
+    WSAP_VTCORE_KEY_KP_5, WSAP_VTCORE_KEY_KP_6, WSAP_VTCORE_KEY_KP_7, WSAP_VTCORE_KEY_KP_8, WSAP_VTCORE_KEY_KP_9,
+    WSAP_VTCORE_KEY_KP_DECIMAL,
+    WSAP_VTCORE_KEY_KP_ENTER,
+    WSAP_VTCORE_KEY_KP_ADD,
+    WSAP_VTCORE_KEY_KP_SUBTRACT,
+    WSAP_VTCORE_KEY_KP_MULTIPLY,
+    WSAP_VTCORE_KEY_KP_DIVIDE,
+    WSAP_VTCORE_KEY_KP_EQUAL,
+    WSAP_VTCORE_KEY_KP_SEPARATOR,
+    WSAP_VTCORE_KEY_KP_LEFT,
+    WSAP_VTCORE_KEY_KP_RIGHT,
+    WSAP_VTCORE_KEY_KP_UP,
+    WSAP_VTCORE_KEY_KP_DOWN,
+    WSAP_VTCORE_KEY_KP_PAGE_UP,
+    WSAP_VTCORE_KEY_KP_PAGE_DOWN,
+    WSAP_VTCORE_KEY_KP_HOME,
+    WSAP_VTCORE_KEY_KP_END,
+    WSAP_VTCORE_KEY_KP_INSERT,
+    WSAP_VTCORE_KEY_KP_DELETE,
+    WSAP_VTCORE_KEY_KP_BEGIN,
+
+    WSAP_VTCORE_KEY_CAPS_LOCK,
+    WSAP_VTCORE_KEY_SCROLL_LOCK,
+    WSAP_VTCORE_KEY_NUM_LOCK,
+    WSAP_VTCORE_KEY_PRINT_SCREEN,
+    WSAP_VTCORE_KEY_PAUSE,
+    WSAP_VTCORE_KEY_MENU,
+
+    WSAP_VTCORE_KEY_MEDIA_PLAY,
+    WSAP_VTCORE_KEY_MEDIA_PAUSE,
+    WSAP_VTCORE_KEY_MEDIA_STOP,
+    WSAP_VTCORE_KEY_MEDIA_FORWARD,
+    WSAP_VTCORE_KEY_MEDIA_REWIND,
+    WSAP_VTCORE_KEY_MEDIA_NEXT,
+    WSAP_VTCORE_KEY_MEDIA_PREV,
+    WSAP_VTCORE_KEY_MEDIA_RECORD,
+    WSAP_VTCORE_KEY_VOLUME_DOWN,
+    WSAP_VTCORE_KEY_VOLUME_UP,
+    WSAP_VTCORE_KEY_MUTE,
+
+    WSAP_VTCORE_KEY_LSHIFT,
+    WSAP_VTCORE_KEY_LCTRL,
+    WSAP_VTCORE_KEY_LALT,
+    WSAP_VTCORE_KEY_LSUPER,
+    WSAP_VTCORE_KEY_LHYPER,
+    WSAP_VTCORE_KEY_LMETA,
+    WSAP_VTCORE_KEY_RSHIFT,
+    WSAP_VTCORE_KEY_RCTRL,
+    WSAP_VTCORE_KEY_RALT,
+    WSAP_VTCORE_KEY_RSUPER,
+    WSAP_VTCORE_KEY_RHYPER,
+    WSAP_VTCORE_KEY_RMETA,
+    WSAP_VTCORE_KEY_ISO_LEVEL3_SHIFT,
+    WSAP_VTCORE_KEY_ISO_LEVEL5_SHIFT,
+
+    WSAP_VTCORE_KEY_COUNT
+};
+
+enum wsap_vtcore_mod {
+    WSAP_VTCORE_MOD_SHIFT = 1,
+    WSAP_VTCORE_MOD_ALT   = 2,
+    WSAP_VTCORE_MOD_CTRL  = 4,
+    WSAP_VTCORE_MOD_SUPER = 8,
+    WSAP_VTCORE_MOD_HYPER = 16,
+    WSAP_VTCORE_MOD_META  = 32,
+    WSAP_VTCORE_MOD_CAPS  = 64,
+    WSAP_VTCORE_MOD_NUM   = 128,
+};
+
+enum wsap_vtcore_key_action {
+    WSAP_VTCORE_KEY_PRESS   = 1,
+    WSAP_VTCORE_KEY_REPEAT  = 2,
+    WSAP_VTCORE_KEY_RELEASE = 3,
+};
+
+enum wsap_vtcore_mouse_button {
+    WSAP_VTCORE_MOUSE_BUTTON_PRIMARY = 0,
+    WSAP_VTCORE_MOUSE_BUTTON_MIDDLE,
+    WSAP_VTCORE_MOUSE_BUTTON_SECONDARY,
+    WSAP_VTCORE_MOUSE_BUTTON_NONE,
+    /* Extra buttons 8 through 11 in xterm mouse reporting (encoded as 128..131). */
+    WSAP_VTCORE_MOUSE_BUTTON_EXTRA_1,
+    WSAP_VTCORE_MOUSE_BUTTON_EXTRA_2,
+    WSAP_VTCORE_MOUSE_BUTTON_EXTRA_3,
+    WSAP_VTCORE_MOUSE_BUTTON_EXTRA_4,
+    WSAP_VTCORE_MOUSE_WHEEL_UP = 16,
+    WSAP_VTCORE_MOUSE_WHEEL_DOWN,
+    WSAP_VTCORE_MOUSE_WHEEL_LEFT,
+    WSAP_VTCORE_MOUSE_WHEEL_RIGHT,
+};
+
+enum wsap_vtcore_mouse_event_kind {
+    WSAP_VTCORE_MOUSE_PRESS = 0,
+    WSAP_VTCORE_MOUSE_RELEASE,
+    WSAP_VTCORE_MOUSE_MOTION,
+    WSAP_VTCORE_MOUSE_SCROLL,
+    WSAP_VTCORE_MOUSE_LEAVE,
+};
+
+struct wsap_vtcore_key_event {
+    enum wsap_vtcore_key_action action;
+    uint16_t key;           /* enum wsap_vtcore_key; WSAP_VTCORE_KEY_NONE for a text key */
+    uint16_t keypad;        /* the WSAP_VTCORE_KEY_KP_* key when the key is on the keypad */
+    unsigned mods;          /* enum wsap_vtcore_mod */
+    uint32_t codepoint;     /* the code point of the key without modifiers */
+    uint32_t shifted;       /* the code point of the key with Shift */
+    uint32_t base;          /* the code point of the key in the US layout */
+    uint32_t text;          /* the code point the key types, or 0 */
+    bool text_deferred;     /* an input method sends the text later */
+};
+
+struct wsap_vtcore_mouse_event {
+    struct wsap_vtcore_vector2i pos;   /* Grid cell coordinates (col, row) */
+    struct wsap_vtcore_vector2i pixel; /* Absolute pixel position in terminal grid */
+    /*
+     * Button identifier:
+     * - Press and release: the button that changed state
+     *   (WSAP_VTCORE_MOUSE_BUTTON_*).
+     * - Motion: the held button for drag events, or
+     *   WSAP_VTCORE_MOUSE_BUTTON_NONE for hover.
+     * - Scroll: the wheel direction (WSAP_VTCORE_MOUSE_WHEEL_*).
+     */
+    int button;
+    unsigned mods;
+    int scroll_lines;
+    float scroll_delta;
+    enum wsap_vtcore_mouse_event_kind kind;
+};
+
+/* The keys that are down. An all-zero value has no keys down. */
+struct wsap_vtcore_keyboard_state {
+    uint64_t down[(WSAP_VTCORE_KEY_COUNT + 63) / 64];
+};
+
+/* Record a press, repeat, or release in s. */
+WSAP_VTCORE_API void wsap_vtcore_keyboard_update(struct wsap_vtcore_keyboard_state *s, const struct wsap_vtcore_key_event *ev);
+WSAP_VTCORE_API bool wsap_vtcore_keyboard_key_down(const struct wsap_vtcore_keyboard_state *s, enum wsap_vtcore_key key);
+
+/* Kitty keyboard protocol flags, as in wsap_vtcore_modes.keyboard. */
+enum wsap_vtcore_keyboard_flag {
+    WSAP_VTCORE_KEYBOARD_DISAMBIGUATE = 1,
+    WSAP_VTCORE_KEYBOARD_EVENT_TYPES = 2,
+    WSAP_VTCORE_KEYBOARD_ALTERNATE_KEYS = 4,
+    WSAP_VTCORE_KEYBOARD_ALL_KEYS = 8,
+    WSAP_VTCORE_KEYBOARD_ASSOCIATED_TEXT = 16,
+};
+
+enum wsap_vtcore_input_status {
+    WSAP_VTCORE_INPUT_UNHANDLED = 0,   /* the terminal does not use the event */
+    WSAP_VTCORE_INPUT_CONSUMED,        /* the terminal uses the event but sends nothing */
+    WSAP_VTCORE_INPUT_BYTES,           /* send the len bytes in buf to the program */
+    WSAP_VTCORE_INPUT_BUFFER_FULL,     /* buf is too small; len is 0 */
+};
+
+struct wsap_vtcore_input_result {
+    size_t len;
+    enum wsap_vtcore_input_status status;
+};
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* WSAP_VTCORE_INPUT_H */

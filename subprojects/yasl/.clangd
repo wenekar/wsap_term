@@ -1,0 +1,3 @@
+# Meson's Ninja backend generates this database during setup.
+CompileFlags:
+  CompilationDatabase: build

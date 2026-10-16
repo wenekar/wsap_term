@@ -1,0 +1,4 @@
+#!/bin/sh
+# The program lives in its app bundle. Run it from there so the process
+# has the bundle identity that macOS services require.
+exec "@APP_EXECUTABLE@" "$@"

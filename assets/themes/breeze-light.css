@@ -1,0 +1,91 @@
+
+.tab-bar {
+    background: #EFF0F1;
+    border-color: #EFF0F1;
+    height: 2.2em;
+    padding: 0.25em 0.5em;
+    gap: 0.4em;
+}
+
+.tab {
+    background: #FFFFFF;
+    color: #232629;
+    border-radius: 4px;
+    padding: 0 0.8em;
+    height: 1.6em;
+}
+
+.tab:hover {
+    background: #3DAEE94D;
+    color: #232629;
+}
+
+.tab.active {
+    background: #3DAEE9;
+    color: #FFFFFF;
+}
+
+.tab-close {
+    width: 1em;
+    height: 1em;
+    color: #707D8A;
+    border-radius: 0.25em;
+}
+
+.tab-close:hover {
+    background: #DA4453;
+    color: #FFFFFF;
+}
+
+.context-menu {
+    background: #FFFFFF;
+    border-color: #E3E5E7;
+    border-radius: 4px;
+    box-shadow: 0 2px 6px #00000033;
+}
+
+.menu-item {
+    color: #232629;
+}
+
+.menu-item:hover {
+    background: #3DAEE9;
+    color: #FFFFFF;
+}
+
+.menu-item.disabled {
+    color: #707D8A;
+}
+
+.text-input-text {
+    color: #232629;
+}
+
+.text-input-text.empty {
+    color: #707D8A;
+}
+
+.text-input-selection {
+    background: #3DAEE9;
+}
+
+.text-input-caret {
+    background: #232629;
+}
+
+.palette-empty {
+    color: #707D8A;
+}
+
+.scrollbar-thumb {
+    background: #707D8A;
+    border-radius: 4px;
+}
+
+.scrollbar-thumb:hover {
+    background: #3DAEE9;
+}
+
+.scrollbar-thumb:active {
+    background: #3DAEE9;
+}

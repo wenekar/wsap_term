@@ -1,0 +1,7 @@
+build/
+build-docs/
+.cache/
+*.o
+*.a
+*.so
+*.dylib

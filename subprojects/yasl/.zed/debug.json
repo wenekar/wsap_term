@@ -1,0 +1,56 @@
+[
+  {
+    "label": "YASL: debug hello",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": "YASL: build for debugger",
+    "stopOnEntry": true,
+    "program": "$ZED_WORKTREE_ROOT/build/yasl-hello",
+    "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "YASL: debug simple window",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": "YASL: build for debugger",
+    "stopOnEntry": true,
+    "program": "$ZED_WORKTREE_ROOT/build/yasl-example",
+    "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "YASL: debug tablet",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": "YASL: build for debugger",
+    "stopOnEntry": true,
+    "program": "$ZED_WORKTREE_ROOT/build/yasl-tablet",
+    "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "YASL: debug notepad",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": "YASL: build for debugger",
+    "stopOnEntry": true,
+    "program": "$ZED_WORKTREE_ROOT/build/yasl-notepad",
+    "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "YASL: debug game",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": "YASL: build for debugger",
+    "stopOnEntry": true,
+    "program": "$ZED_WORKTREE_ROOT/build/yasl-game",
+    "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "YASL: debug lifecycle test (no display required)",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": "YASL: build for debugger",
+    "stopOnEntry": true,
+    "program": "$ZED_WORKTREE_ROOT/build/tests/yasl-test",
+    "cwd": "$ZED_WORKTREE_ROOT"
+  }
+]

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 32 32" fill="none">
+  <title>wsap_term</title>
+  <desc>A mint terminal chevron and underscore on charcoal.</desc>
+  <rect x="1" y="1" width="30" height="30" rx="6" fill="#151B23"/>
+  <path d="M8 8L19 16L8 24V21L15 16L8 11Z" fill="#64E8BD"/>
+  <path d="M19 22H24V24H19Z" fill="#64E8BD"/>
+</svg>

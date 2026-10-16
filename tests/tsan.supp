@@ -1,0 +1,11 @@
+# ThreadSanitizer suppressions.
+#
+# GLib and GIO are not built with ThreadSanitizer. They free an object when
+# an atomic reference count reaches zero, and TSan cannot see that ordering.
+# So when the gdbus worker thread drops the last reference to an object that
+# the AT-SPI thread used, TSan reports a race in the free. Neither stack has
+# a frame in this project. Each entry names one GLib finalizer. Do not add a
+# library-wide entry: every GLib thread starts in g_thread_proxy, so it would
+# also hide races in project code.
+race:g_main_context_unref
+race:g_dbus_message_finalize

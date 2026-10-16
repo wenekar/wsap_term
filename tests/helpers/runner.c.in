@@ -1,0 +1,24 @@
+#include <stdio.h>
+#include <string.h>
+
+@DECLARATIONS@
+
+static const struct {
+    const char *name;
+    int (*run)(void);
+} tests[] = {
+@ENTRIES@
+};
+
+int main(int argc, char **argv)
+{
+    (void)argc;
+    const char *name = strrchr(argv[0], '/');
+    name = name ? name + 1 : argv[0];
+    for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i) {
+        if (!strcmp(name, tests[i].name))
+            return tests[i].run();
+    }
+    fprintf(stderr, "Unknown test: %s\n", name);
+    return 1;
+}

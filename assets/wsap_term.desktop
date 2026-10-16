@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=wsap_term
+Comment=Fast Wayland terminal emulator
+Exec=wsap_term
+TryExec=wsap_term
+Icon=wsap-term
+Terminal=false
+Categories=System;TerminalEmulator;
+StartupNotify=true
+StartupWMClass=wsap_term

@@ -1,0 +1,7 @@
+# AddressSanitizer suppressions for macOS system frameworks.
+#
+# strict_string_checks=1 makes the strndup interceptor check the full n bound.
+# Apple's CoreGraphics PDF lexer (pdf_lexer_scan) overreads by one byte when
+# CoreUI decodes a named vector image. The overread is inside a closed-source
+# framework. We cannot fix it. It does not touch our memory.
+interceptor_via_lib:CoreGraphics

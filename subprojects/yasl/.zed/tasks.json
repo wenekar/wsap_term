@@ -1,0 +1,68 @@
+[
+  {
+    "label": "YASL: configure debug build",
+    "command": "meson",
+    "args": ["setup", "build", "--backend=ninja", "--buildtype=debug"],
+    "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "YASL: reconfigure",
+    "command": "meson",
+    "args": ["setup", "--reconfigure", "build"],
+    "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "YASL: build",
+    "command": "meson",
+    "args": ["compile", "-C", "build"],
+    "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "YASL: build for debugger",
+    "command": "meson setup --reconfigure build --backend=ninja -Dbuildtype=debug -Ddebug=true -Doptimization=0 -Db_lto=false && meson compile -C build",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "shell": { "program": "sh" }
+  },
+  {
+    "label": "YASL: test",
+    "command": "meson",
+    "args": ["test", "-C", "build", "--print-errorlogs"],
+    "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "YASL: benchmark",
+    "command": "meson",
+    "args": ["test", "-C", "build", "--benchmark", "--verbose"],
+    "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "YASL: run hello",
+    "command": "meson compile -C build yasl-hello && exec ./build/yasl-hello",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "shell": { "program": "sh" }
+  },
+  {
+    "label": "YASL: run simple window",
+    "command": "meson compile -C build yasl-example && exec ./build/yasl-example",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "shell": { "program": "sh" }
+  },
+  {
+    "label": "YASL: run tablet",
+    "command": "meson compile -C build yasl-tablet && exec ./build/yasl-tablet",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "shell": { "program": "sh" }
+  },
+  {
+    "label": "YASL: run notepad",
+    "command": "meson compile -C build yasl-notepad && exec ./build/yasl-notepad",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "shell": { "program": "sh" }
+  },
+  {
+    "label": "YASL: run game",
+    "command": "meson compile -C build yasl-game && exec ./build/yasl-game",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "shell": { "program": "sh" }
+  }
+]

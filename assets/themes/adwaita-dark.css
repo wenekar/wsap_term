@@ -1,0 +1,91 @@
+
+.tab-bar {
+    background: #222226;
+    border-color: #222226;
+    height: 2.2em;
+    padding: 0.25em 0.5em;
+    gap: 0.4em;
+}
+
+.tab {
+    background: #1D1D20;
+    color: #9C9C9D;
+    border-radius: 9px;
+    padding: 0 0.8em;
+    height: 1.6em;
+}
+
+.tab:hover {
+    background: #262629;
+    color: #FFFFFF;
+}
+
+.tab.active {
+    background: #233751;
+    color: #99C1F1;
+}
+
+.tab-close {
+    width: 1em;
+    height: 1em;
+    color: #9C9C9D;
+    border-radius: 0.5em;
+}
+
+.tab-close:hover {
+    background: #C01C28;
+    color: #FFFFFF;
+}
+
+.context-menu {
+    background: #2E2E32;
+    border-color: #3F3F41;
+    border-radius: 12px;
+    box-shadow: 0 2px 6px #0000005A;
+}
+
+.menu-item {
+    color: #FFFFFF;
+}
+
+.menu-item:hover {
+    background: #3584E4;
+    color: #FFFFFF;
+}
+
+.menu-item.disabled {
+    color: #9C9C9D;
+}
+
+.text-input-text {
+    color: #FFFFFF;
+}
+
+.text-input-text.empty {
+    color: #9C9C9D;
+}
+
+.text-input-selection {
+    background: #3584E4;
+}
+
+.text-input-caret {
+    background: #FFFFFF;
+}
+
+.palette-empty {
+    color: #9C9C9D;
+}
+
+.scrollbar-thumb {
+    background: #9C9C9D;
+    border-radius: 4px;
+}
+
+.scrollbar-thumb:hover {
+    background: #99C1F1;
+}
+
+.scrollbar-thumb:active {
+    background: #3584E4;
+}

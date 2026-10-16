@@ -1,0 +1,25 @@
+option(
+  'arch_flag',
+  type: 'string',
+  value: '',
+  description: 'Compiler flag for the lowest instruction set, such as -march=x86-64-v3. Higher SIMD levels are picked at run time',
+)
+option(
+  'tests',
+  type: 'boolean',
+  value: true,
+  description: 'Build and register the wsap_vtcore tests and benchmarks',
+)
+option(
+  'write_fuzz_seeds',
+  type: 'integer',
+  min: 1,
+  value: 1000,
+  description: 'Seed count for write-fuzz-test',
+)
+option(
+  'kitty',
+  type: 'feature',
+  value: 'auto',
+  description: 'The Kitty parser compatibility tests. auto runs them on an unsanitized Linux build',
+)

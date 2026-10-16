@@ -1,0 +1,72 @@
+#!/bin/bash
+# Runs a private wsap_term on headless weston, drives a few scenarios
+# through the inspector socket, and reports the Wayland damage of every
+# commit per scenario. It never touches other wsap_term processes.
+#
+#   scripts/wsap-damage-probe [OUTDIR]
+#
+# OUTDIR keeps wl.log (WAYLAND_DEBUG=client), marks, and shot.png.
+set -u
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+OUT=${1:-$(mktemp -d)}
+mkdir -p "$OUT"
+rm -f "$OUT"/wl.log "$OUT"/marks "$OUT"/shot.png
+SOCK_NAME=wsap-probe-$$
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+
+setsid weston --backend=headless --renderer=pixman --width=1000 --height=600 \
+    --socket="$SOCK_NAME" >"$OUT/weston.log" 2>&1 < /dev/null &
+WESTON=$!
+for _ in $(seq 50); do [ -S "$XDG_RUNTIME_DIR/$SOCK_NAME" ] && break; sleep 0.1; done
+
+DBG="$OUT/dbg.sock"
+rm -f "$DBG"
+env -u LD_PRELOAD WAYLAND_DISPLAY="$SOCK_NAME" WAYLAND_DEBUG=client \
+    SHELL=/bin/sh PS1='$ ' ENV=/dev/null \
+    setsid "$REPO/build/bin/wsap_term" --debug-socket "$DBG" \
+    >"$OUT/term.log" 2>"$OUT/wl.log" < /dev/null &
+TERM_PID=$!
+for _ in $(seq 50); do [ -S "$DBG" ] && break; sleep 0.1; done
+
+D() { "$REPO/scripts/wsap-debug" -s "$DBG" "$@" >/dev/null 2>>"$OUT/dbg.err"; }
+mark() { echo "$1 $(wc -l < "$OUT/wl.log" | tr -d ' ')" >> "$OUT/marks"; }
+
+sleep 1.0
+D shortcut new_tab ";" frame
+sleep 1.0
+mark idle
+sleep 2.0
+mark title
+D text "printf '\\033]0;a-much-longer-title\\007'" ";" key enter ";" frame
+sleep 0.5
+D text "printf '\\033]0;x\\007'" ";" key enter ";" frame
+sleep 0.5
+mark end
+D screenshot "$OUT/shot.png"
+
+kill "$TERM_PID" 2>/dev/null
+sleep 0.3
+kill "$WESTON" 2>/dev/null
+wait 2>/dev/null
+
+python3 - "$OUT" <<'EOF'
+import re, sys
+out = sys.argv[1]
+lines = open(f"{out}/wl.log", errors="replace").read().splitlines()
+marks = [l.split() for l in open(f"{out}/marks")]
+dmg = re.compile(r"wl_surface#(\d+)\.damage_buffer\((-?\d+), (-?\d+), (\d+), (\d+)\)")
+commit = re.compile(r"wl_surface#(\d+)\.commit\(\)")
+for (name, start), (_, end) in zip(marks, marks[1:]):
+    print(f"== {name}")
+    rects = []
+    for l in lines[int(start):int(end)]:
+        m = dmg.search(l)
+        if m:
+            rects.append(tuple(int(v) for v in m.groups()[1:]))
+        elif commit.search(l):
+            area = sum(w * h for _, _, w, h in rects)
+            desc = " ".join(f"{x},{y} {w}x{h}" for x, y, w, h in rects) or "none"
+            print(f"  commit  area={area:>7}  {desc}")
+            rects = []
+EOF
+echo "logs: $OUT"

@@ -1,0 +1,18 @@
+wl_protocol_src = files(
+    'xdg-shell-protocol.c',
+    'xdg-decoration-protocol.c',
+    'cursor-shape-v1-protocol.c',
+    'fractional-scale-v1-protocol.c',
+    'viewporter-protocol.c',
+    'tablet-v2-protocol.c',
+    'text-input-unstable-v3-protocol.c',
+    'tearing-control-v1-protocol.c',
+    'presentation-time-protocol.c',
+    'xdg-toplevel-drag-v1-protocol.c',
+    'fifo-v1-protocol.c',
+    'commit-timing-v1-protocol.c',
+    'primary-selection-unstable-v1-protocol.c',
+    'relative-pointer-unstable-v1-protocol.c',
+    'pointer-constraints-unstable-v1-protocol.c',
+    'xdg-system-bell-v1-protocol.c',
+)

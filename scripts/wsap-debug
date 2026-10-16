@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Client for the wsap_term UI inspector socket.
+
+Start the terminal with --debug-socket PATH (or WSAP_DEBUG_SOCKET=PATH),
+then:
+
+    wsap-debug tree                    # widget tree of the primary window
+    wsap-debug hit 120 12              # what is under a point
+    wsap-debug lint                    # alignment findings in the last frame
+    wsap-debug overlay on              # draw the inspector overlay
+    wsap-debug shortcut new_tab ; wsap-debug frame
+    wsap-debug screenshot /tmp/w.png
+    wsap-debug -p 0 tree               # menu popup level 0
+    wsap-debug                         # interactive; one command per line
+
+Each command prints the "result" of the reply as JSON, or the error on
+stderr with exit status 1. Several commands can be chained with ';' in
+one invocation. docs/ui-debugging.md lists the protocol.
+"""
+
+import json
+import os
+import socket
+import sys
+
+
+def quote(word):
+    """Quote for the server's tokenizer: double quotes, backslash escapes."""
+    if word and not any(c in word for c in ' \t"\\'):
+        return word
+    return '"' + word.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def connect(path):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.connect(path)
+    return s, s.makefile("rb")
+
+
+def request(sock, reader, line):
+    sock.sendall(line.encode() + b"\n")
+    reply = reader.readline()
+    if not reply:
+        raise ConnectionError("inspector closed the connection")
+    return json.loads(reply)
+
+
+def show(reply, raw):
+    if not reply.get("ok"):
+        print("error: " + reply.get("error", "?"), file=sys.stderr)
+        return False
+    result = reply.get("result")
+    if raw:
+        print(json.dumps(result, separators=(",", ":")))
+    else:
+        print(json.dumps(result, indent=2))
+    return True
+
+
+def main(argv):
+    path = os.environ.get("WSAP_DEBUG_SOCKET")
+    raw = False
+    args = []
+    i = 0
+    while i < len(argv):
+        if argv[i] in ("-s", "--socket") and i + 1 < len(argv):
+            path = argv[i + 1]
+            i += 2
+        elif argv[i] == "--raw":
+            raw = True
+            i += 1
+        elif argv[i] in ("-h", "--help") and not args:
+            print(__doc__.strip())
+            return 0
+        else:
+            args.append(argv[i])
+            i += 1
+    if not path:
+        print("error: set WSAP_DEBUG_SOCKET or pass -s PATH", file=sys.stderr)
+        return 2
+    sock, reader = connect(path)
+
+    if args:
+        ok = True
+        command = []
+        for word in args + [";"]:
+            if word == ";":
+                if command:
+                    line = " ".join(quote(w) for w in command)
+                    ok = show(request(sock, reader, line), raw) and ok
+                command = []
+            else:
+                command.append(word)
+        return 0 if ok else 1
+
+    interactive = sys.stdin.isatty()
+    while True:
+        if interactive:
+            try:
+                line = input("wsap> ")
+            except EOFError:
+                print()
+                return 0
+        else:
+            line = sys.stdin.readline()
+            if not line:
+                return 0
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        show(request(sock, reader, line), raw)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except (ConnectionError, FileNotFoundError, ConnectionRefusedError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(2)

@@ -1,0 +1,76 @@
+option(
+    'window_backend',
+    type: 'combo',
+    choices: ['auto', 'wayland', 'metal'],
+    value: 'auto',
+    description: 'Window backend (Wayland is Linux-only, Metal is macOS-only)',
+)
+option(
+    'font_backend',
+    type: 'combo',
+    choices: ['auto', 'coretext', 'freetype'],
+    value: 'auto',
+    description: 'Font rasterization and discovery backend (CoreText is macOS-only)',
+)
+option(
+    'isa',
+    type: 'string',
+    value: 'native',
+    description: 'Compiler -march target; empty uses the compiler default. The term core picks its SIMD level at run time, at or above this target',
+)
+option(
+    'tests',
+    type: 'boolean',
+    value: true,
+    description: 'Build and register tests',
+)
+option(
+    'test_link_groups',
+    type: 'boolean',
+    value: true,
+    description: 'Share links for tests without stubs or allocation overrides',
+)
+option(
+    'benchmarks',
+    type: 'boolean',
+    value: true,
+    description: 'Build and register benchmarks',
+)
+option(
+    'write_fuzz_seeds',
+    type: 'integer',
+    min: 1,
+    value: 1000,
+    description: 'Seed count for write-fuzz-test in the test suite',
+)
+option(
+    'integration_tests',
+    type: 'boolean',
+    value: false,
+    description: 'Register tests requiring headless Sway and external tools',
+)
+option(
+    'kitty_tests',
+    type: 'boolean',
+    value: false,
+    description: 'Require the Kitty parser compatibility tests. They run on every unsanitized Linux build anyway',
+)
+option(
+    'hardening',
+    type: 'boolean',
+    value: true,
+    description: 'Compile-time memory safety hardening (fortify, stack protector, RELRO)',
+)
+option(
+    'package_format',
+    type: 'combo',
+    choices: ['auto', 'arch', 'deb', 'rpm', 'app', 'tar'],
+    value: 'auto',
+    description: 'Distribution package format for dist/deploy',
+)
+option(
+    'macos_app_dir',
+    type: 'string',
+    value: '',
+    description: 'Directory that receives wsap_term.app on macOS; empty picks ~/Applications for a prefix under $HOME, else /Applications',
+)
