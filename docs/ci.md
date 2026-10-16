@@ -1,8 +1,8 @@
 # GitHub Actions CI
 
 The workflow is `.github/workflows/ci.yml`.
-It runs on pushes, pull requests from this repository, and manual starts.
-It skips pull requests from forks.
+It runs only when you start it manually.
+Start CI from **Actions > CI > Run workflow**.
 The jobs use self-hosted runners with repository-specific labels.
 The checkout step does not keep GitHub credentials.
 
@@ -79,5 +79,5 @@ gh variable set WSAP_LINUX_CI --repo wenekar/wsap_term --body true
 
 You can also set the variable in
 **Settings > Secrets and variables > Actions > Variables**.
-Then start CI from the Actions tab or push a commit.
+Then start CI from **Actions > CI > Run workflow**.
 Remove the variable or set it to `false` to disable the Linux job.
