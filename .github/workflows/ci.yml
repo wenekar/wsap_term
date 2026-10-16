@@ -1,13 +1,16 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -17,12 +20,18 @@ defaults:
 jobs:
   macos:
     name: macOS build and tests
-    runs-on: [self-hosted, macOS, ARM64, wsap-term-macos]
+    runs-on: macos-14
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
+      - name: Install dependencies
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: |
+          brew install llvm meson ninja pkgconf yyjson harfbuzz icu4c
       - name: Build and test
         run: bash tools/ci/build.sh
       - name: Upload build and test logs
@@ -36,13 +45,51 @@ jobs:
 
   linux:
     name: Linux build and tests
-    if: vars.WSAP_LINUX_CI == 'true'
-    runs-on: [self-hosted, Linux, wsap-term-linux]
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-14 \
+            g++-14 \
+            ninja-build \
+            pkg-config \
+            ncurses-bin \
+            libwayland-bin \
+            libwayland-dev \
+            wayland-protocols \
+            libxkbcommon-dev \
+            libharfbuzz-dev \
+            libicu-dev \
+            libfreetype-dev \
+            libfontconfig-dev \
+            libglib2.0-dev \
+            libx11-dev \
+            libxi-dev \
+            libxext-dev \
+            libxrandr-dev \
+            libdbus-1-dev \
+            libegl1-mesa-dev \
+            libvulkan-dev \
+            fonts-dejavu-core \
+            fonts-noto-core \
+            fonts-noto-cjk \
+            fonts-noto-color-emoji \
+            fonts-noto-extra \
+            cmake
+          python3 -m pip install --break-system-packages "meson>=1.12.0"
+      - name: Install yyjson
+        run: |
+          git clone --depth 1 --branch 0.13.0 https://github.com/ibireme/yyjson.git /tmp/yyjson
+          cmake -S /tmp/yyjson -B /tmp/yyjson/build -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/yyjson/build
+          sudo cmake --install /tmp/yyjson/build
+          sudo ldconfig
       - name: Build and test
         run: bash tools/ci/build.sh
       - name: Upload build and test logs

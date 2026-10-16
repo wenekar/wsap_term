@@ -12,6 +12,14 @@ if [[ "$(uname -s)" == Darwin ]]; then
     export AR="$llvm_bin/llvm-ar"
     export NM="$llvm_bin/llvm-nm"
     export MACOSX_DEPLOYMENT_TARGET=14.0
+elif [[ "$(uname -s)" == Linux ]]; then
+    if command -v gcc-14 >/dev/null 2>&1; then
+        export CC="${CC:-gcc-14}"
+        export CXX="${CXX:-g++-14}"
+        export AR="${AR:-gcc-ar-14}"
+        export NM="${NM:-gcc-nm-14}"
+    fi
+    export PKG_CONFIG_PATH="${PKG_CONFIG_PATH:+$PKG_CONFIG_PATH:}/usr/local/lib/pkgconfig:/usr/local/lib/x86_64-linux-gnu/pkgconfig"
 fi
 
 unset LD_PRELOAD DYLD_INSERT_LIBRARIES
