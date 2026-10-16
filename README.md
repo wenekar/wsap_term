@@ -81,6 +81,9 @@ directory; the preload library stays beside the terminal executable.
 
 ## Tests
 
+GitHub Actions uses self-hosted macOS and Linux runners.
+See [CI setup](docs/ci.md) for runner labels and Linux setup.
+
 ```sh
 make test
 
