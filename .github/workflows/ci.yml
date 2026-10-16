@@ -85,6 +85,8 @@ jobs:
             fonts-noto-color-emoji \
             fonts-noto-extra \
             cmake
+          sudo rm -f /etc/fonts/conf.d/10-sub-pixel-*.conf
+          sudo ln -sf /usr/share/fontconfig/conf.avail/10-no-sub-pixel.conf /etc/fonts/conf.d/
           sudo fc-cache -f
           python3 -m pip install --break-system-packages "meson>=1.12.0"
       - name: Install yyjson
