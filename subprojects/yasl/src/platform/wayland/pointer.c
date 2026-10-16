@@ -521,10 +521,14 @@ static void pointer_frame(void *data, struct wl_pointer *pointer)
     pointer_frame_scroll(s, w);
 }
 
+#ifdef WL_POINTER_AXIS_RELATIVE_DIRECTION_SINCE_VERSION
 static void pointer_axis_relative_direction(void *data, struct wl_pointer *pointer, uint32_t axis, uint32_t direction)
 { (void)data; (void)pointer; (void)axis; (void)direction; }
+#endif
+#ifdef WL_POINTER_WARP_SINCE_VERSION
 static void pointer_warp(void *data, struct wl_pointer *pointer, wl_fixed_t x, wl_fixed_t y)
 { (void)data; (void)pointer; (void)x; (void)y; }
+#endif
 
 static void relative_motion(void *data, struct zwp_relative_pointer_v1 *pointer,
         uint32_t utime_hi, uint32_t utime_lo, wl_fixed_t dx, wl_fixed_t dy,
@@ -635,8 +639,12 @@ bool wayland_surface_set_pointer_mode(struct wayland_surface *w, enum yasl_priva
 }
 
 static const struct wl_pointer_listener pointer_listener = {
+#ifdef WL_POINTER_AXIS_RELATIVE_DIRECTION_SINCE_VERSION
     .axis_relative_direction = pointer_axis_relative_direction,
+#endif
+#ifdef WL_POINTER_WARP_SINCE_VERSION
     .warp = pointer_warp,
+#endif
     .enter = pointer_enter,
     .leave = pointer_leave,
     .motion = pointer_motion,
