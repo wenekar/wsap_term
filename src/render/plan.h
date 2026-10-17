@@ -32,7 +32,8 @@
  *    order where no move reads rows that an earlier move wrote.
  * 5. UI regions: ui_damage (NULL: the whole canvas) plus the band of each
  *    painted and moved row, clipped to the canvas. Each region that crosses
- *    the grid rows grows to whole row bands. The bottom margin is one band.
+ *    the grid rows grows to whole row bands. Only y grows, also for a region
+ *    beside the grid. The bottom margin is one band.
  *    The grid repaints whole bands, so the UI must repaint them too. Then
  *    the regions merge with
  *    ui_damage_add() into at most UI_DAMAGE_MAX_RECTS rects. Merging keeps
@@ -130,10 +131,12 @@ struct plan_input {
  * - `rows[in->rows]`: one op for each row. src is set for PLAN_MOVE.
  * - `moves[in->rows]`: n_moves blocks, in execution order.
  * - `windows[PLAN_WINDOWS_MAX(in->rows)]`: n_windows windows, ordered by
- *   row, then by x.
+ *   row, then by x. The windows of one row do not touch. plan_frame() also
+ *   uses this array as scratch space.
  * - `ui`: the UI regions. ui.all is true only when the region is the whole
- *   canvas.
+ *   canvas. Then ui.rects[0] is the canvas rect.
  * - `damage`: the output damage. damage.all is true for an invalid frame.
+ *   Then damage.rects[0] is the canvas rect.
  * - `shift`: the dominant shift, 0 when no row moves.
  * - `all`: the frame is invalid. Every row is PLAN_PAINT.
  */

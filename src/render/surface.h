@@ -90,9 +90,9 @@ void render_surface_release(struct render_surface *s);
 void render_surface_destroy(void *data);
 
 /*
- * Makes room for `rows` rows. It allocates only when rows > cap. It keeps
- * the contents. Returns false when the memory is missing. The surface is
- * then invalid.
+ * Makes room for `rows` rows. It allocates only on the first call and when
+ * rows > cap. It keeps the contents. Returns false when the memory is
+ * missing. The surface is then invalid.
  */
 bool render_surface_reserve(struct render_surface *s, int rows);
 
