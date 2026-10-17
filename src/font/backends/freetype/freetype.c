@@ -15,7 +15,6 @@
 #endif
 
 struct font_handle {
-    char *family;
     int pixel_size;
 };
 
@@ -62,43 +61,38 @@ static const char *env_first(const char *a, const char *b)
     return v ? v : getenv(b);
 }
 
-static bool ft_fit_over_faces(struct font_face_query *q, const uint32_t *cps,
-                              int len, uint16_t flags, bool require_substitution,
-                              bool skip_emoji, struct glyph *g)
-{
-    struct shaped_run run;
-    int i;
-    while ((i = font_next_face_covering(q, cps, len)) >= 0) {
-        if (skip_emoji && faces[i].is_emoji)
-            continue;
-        if (font_shape(i, cps, len, flags, 0, require_substitution, &run) ==
-            FONT_SHAPE_UNAVAILABLE)
-            continue;
-        if (font_fit_single(&run, g))
-            return true;
-    }
-    return false;
-}
-
 static bool ft_fit_coverable(const uint32_t *cps, int len, uint16_t flags,
                              bool emoji, struct glyph *g)
 {
     if (!run_coverable(cps, len))
         return false;
     struct font_face_query q = FONT_FACE_QUERY(cps[0], emoji);
-    return ft_fit_over_faces(&q, cps, len, flags, false, false, g);
+    struct shaped_run run;
+    int i;
+    while ((i = font_next_face_covering(&q, cps, len)) >= 0)
+        if (font_shape(i, cps, len, flags, 0, &run) != FONT_SHAPE_UNAVAILABLE &&
+            font_fit_single(&run, g))
+            return true;
+    return false;
 }
 
-static bool ft_init(void)
+static bool ft_new_library(void)
 {
-    if (ft_lib)
-        return true;
     if (FT_Init_FreeType(&ft_lib) != 0)
         return false;
     FT_Bool darken = 0;
     FT_Property_Set(ft_lib, "cff", "no-stem-darkening", &darken);
     FT_Property_Set(ft_lib, "autofit", "no-stem-darkening", &darken);
     font_hinting_init_library(ft_lib);
+    return true;
+}
+
+static bool ft_init(void)
+{
+    if (ft_lib)
+        return true;
+    if (!ft_new_library())
+        return false;
     if (!FcInit()) {
         FT_Done_FreeType(ft_lib);
         ft_lib = NULL;
@@ -178,12 +172,8 @@ static bool ft_thread_attach(void)
     if (ft_lib)
         FT_Done_FreeType(ft_lib);
     ft_lib = NULL;
-    if (FT_Init_FreeType(&ft_lib) != 0)
+    if (!ft_new_library())
         return false;
-    FT_Bool darken = 0;
-    FT_Property_Set(ft_lib, "cff", "no-stem-darkening", &darken);
-    FT_Property_Set(ft_lib, "autofit", "no-stem-darkening", &darken);
-    font_hinting_init_library(ft_lib);
     face_reload_configured();
     if (!num_faces)
         return false;
@@ -214,24 +204,17 @@ static bool ft_thread_ready(void)
 
 static font_handle_t *ft_face_open(const char *family_list, struct font_size size)
 {
+    (void)family_list;
     if (!ft_thread_ready())
         return NULL;
-    int pixel_size = font_size_px(size);
-
     struct font_handle *face = calloc(1, sizeof(*face));
-    if (!face)
-        return NULL;
-
-    face->family = family_list && family_list[0] ? strdup(family_list) : strdup(FT_LAST_RESORT_FAMILY);
-    face->pixel_size = pixel_size;
+    if (face)
+        face->pixel_size = font_size_px(size);
     return face;
 }
 
 static void ft_face_close(font_handle_t *face)
 {
-    if (!face)
-        return;
-    free(face->family);
     free(face);
 }
 
@@ -337,7 +320,7 @@ static enum font_run_result ft_shape_run(font_handle_t *face, const struct font_
             continue;
         if (q.vfail)
             retry_suffix = true;
-        enum font_shape_result r = font_shape(i, cps, len, style, w->script, false, &run);
+        enum font_shape_result r = font_shape(i, cps, len, style, w->script, &run);
         if (r == FONT_SHAPE_UNAVAILABLE) {
             retry_suffix = true;
             continue;
