@@ -588,9 +588,58 @@ struct row_paint {
     int width, cols, cursor, cw, ch, sel_c0, sel_c1;
     bool plain_cells;
     int base, next;
+    /* A glyph can draw into the cells to its right. The ink drawn so far in
+     * this row ends at this x. A tile overwrites its cell, so the columns
+     * before this x blend the glyph instead. */
+    int ink_end;
 };
 
-static void paint_cell(const struct row_paint *p, int c)
+/* The first `inked` columns of the cell already hold ink from the cells to
+ * the left. Blend the tile's glyph into them, and copy the rest of the tile.
+ * The tile pixels are this glyph blended over the default background. */
+static void paint_inked_tile(uint32_t *cell_px, int stride, const uint32_t *tile,
+                             int cw, int ch, const struct glyph *glyph, int inked,
+                             uint32_t fg)
+{
+    if (inked > cw)
+        inked = cw;
+    bool subpx = glyph->has_subpx_ink && glyph->subpx;
+    for (int y = 0; y < ch; y++) {
+        uint32_t *dst = cell_px + (size_t)y * stride;
+        memcpy(dst + inked, tile + (size_t)y * cw + inked,
+               (size_t)(cw - inked) * sizeof(*dst));
+        for (int x = 0; x < inked; x++) {
+            if (!glyph_inked(glyph, y, x))
+                continue;
+            if (subpx) {
+                const uint8_t *s = glyph_subpx_at(glyph, y, x);
+                dst[x] = render_blend_subpx(fg, dst[x], s[0], s[1], s[2]);
+            } else {
+                uint8_t a = glyph->alpha[y][x];
+                dst[x] = a == 255 ? fg : blend_glyph_px(fg, dst[x], a);
+            }
+        }
+    }
+}
+
+static inline void paint_tile(uint32_t *cell_px, int stride, const uint32_t *tile,
+                              int cw, int ch, const struct glyph *glyph, int inked,
+                              uint32_t fg)
+{
+    if (__builtin_expect(inked <= 0 || !glyph, 1))
+        blit_tile(cell_px, (size_t)stride, tile, cw, ch);
+    else
+        paint_inked_tile(cell_px, stride, tile, cw, ch, glyph, inked, fg);
+}
+
+static void row_add_ink(struct row_paint *p, int c, const struct glyph *glyph)
+{
+    int end = c * p->cw + glyph->x_offset + glyph->width;
+    if (end > p->ink_end)
+        p->ink_end = end;
+}
+
+static void paint_cell(struct row_paint *p, int c)
 {
     const struct terminal_frame *frame = p->frame;
     if (p->cells && p->cells[c].text <= ' ' && p->cells[c].width != 0 &&
@@ -609,11 +658,16 @@ static void paint_cell(const struct row_paint *p, int c)
         if (cell.fg == frame->default_fg && cell.bg == frame->default_bg && !faint)
             tile = glyph_cache_fetch_tile(p->fi, glyph_cp, style);
         if (tile) {
-            blit_tile(row_px + (size_t)c * cw, p->width, tile, cw, ch);
+            int inked = p->ink_end - c * cw;
+            paint_tile(row_px + (size_t)c * cw, p->width, tile, cw, ch,
+                       inked > 0 ? glyph_cache_fetch(p->fi, glyph_cp, style) : NULL,
+                       inked, cell.fg);
         } else {
             const struct glyph *glyph = glyph_cache_fetch(p->fi, glyph_cp, style);
-            if (glyph && glyph->width > 0 && glyph->row_masks)
+            if (glyph && glyph->width > 0 && glyph->row_masks) {
                 paint_glyph(row_px, p->width, c * cw, ch, glyph, cell.fg, faint);
+                row_add_ink(p, c, glyph);
+            }
         }
     }
     draw_decorations(row_px, p->width, c * cw, cw, ch, cell.attrs, cell.fg);
@@ -632,11 +686,14 @@ static void paint_span(void *ctx, const struct glyph_span *span)
                                                           p->sel_c1, p->cursor);
         bool faint = (ci.attrs & WSAP_VTCORE_ATTR_FAINT) != 0;
         if (span->tiles && ci.fg == p->frame->default_fg &&
-            ci.bg == p->frame->default_bg && !faint)
-            blit_tile(p->row_px + (size_t)c * cw, p->width,
-                      span->tiles + (size_t)i * cw * ch, cw, ch);
-        else
+            ci.bg == p->frame->default_bg && !faint) {
+            paint_tile(p->row_px + (size_t)c * cw, p->width,
+                       span->tiles + (size_t)i * cw * ch, cw, ch,
+                       &span->cells[i], p->ink_end - c * cw, ci.fg);
+        } else {
             paint_glyph(p->row_px, p->width, c * cw, ch, &span->cells[i], ci.fg, faint);
+            row_add_ink(p, c, &span->cells[i]);
+        }
         draw_decorations(p->row_px, p->width, c * cw, cw, ch, ci.attrs, ci.fg);
     }
     p->next = start + span->count;

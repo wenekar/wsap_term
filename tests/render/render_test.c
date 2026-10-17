@@ -717,6 +717,64 @@ static void theme_redraw_test(void)
     glyph_cache_rebuild(test_font());
 }
 
+/* A cell with explicit colors that equal the theme colors must look like a
+ * cell with the theme colors. Only cells with the theme colors use tiles, so
+ * this compares tiles with blended glyphs. Some of these glyphs draw into the
+ * next cell: italic tips, an icon, a circle, and LCD fringes. */
+static void explicit_theme_colors_test(enum font_aa_mode aa)
+{
+    enum { COLS = 96, ROWS = 5 };
+    char ascii[95];
+    for (int i = 0; i < 94; i++)
+        ascii[i] = (char)('!' + i);
+    ascii[94] = 0;
+    char text[1024];
+    snprintf(text, sizeof(text),
+             "%s\r\n\033[1m%s\033[22m\r\n\033[3m%s\r\nWAWAVATAYA7A%%A\033[23m\r\n"
+             "\xef\x84\x95" "A \xef\x84\x95" " B\xe2\x97\x8f" "C\xe2\x97\x8f\xe2\x97\x8f" "D",
+             ascii, ascii, ascii);
+
+    struct wsap_vtcore_theme theme = default_theme();
+    struct wsap_vtcore_theme other = theme;
+    other.fg = 0xFF305070u;
+    other.bg = 0xFFD0C0B0u;
+    char pen[96];
+    snprintf(pen, sizeof(pen), "\033[38;2;%u;%u;%um\033[48;2;%u;%u;%um\033[2J\033[H",
+             (theme.fg >> 16) & 255, (theme.fg >> 8) & 255, theme.fg & 255,
+             (theme.bg >> 16) & 255, (theme.bg >> 8) & 255, theme.bg & 255);
+
+    struct wsap_vtcore *themed = tt_new(COLS, ROWS), *explicit = tt_new(COLS, ROWS);
+    assert(themed && explicit);
+    wsap_vtcore_set_theme(explicit, &other);
+    feed(themed, "\033[?25l");
+    feed(themed, text);
+    feed(explicit, "\033[?25l");
+    feed(explicit, pen);
+    feed(explicit, text);
+
+    font_set_aa_mode(aa);
+    int w = COLS * CELL_W, h = ROWS * CELL_H;
+    size_t bytes = (size_t)w * h * sizeof(uint32_t);
+    uint32_t *want = malloc(bytes), *got = malloc(bytes);
+    assert(want && got);
+    test_render_paint_full(want, w, h, false, explicit);
+    test_render_paint_full(got, w, h, false, themed);
+    for (int i = 0; i < w * h; i++) {
+        if (got[i] == want[i])
+            continue;
+        fprintf(stderr, "AA mode %d: cell %d,%d pixel %d,%d is %08x, explicit colors give %08x\n",
+                aa, i % w / CELL_W, i / w / CELL_H, i % w % CELL_W, i / w % CELL_H,
+                got[i], want[i]);
+        break;
+    }
+    assert(!memcmp(want, got, bytes));
+    font_set_aa_mode(FONT_AA_GRAYSCALE);
+    free(want);
+    free(got);
+    wsap_vtcore_free(themed);
+    wsap_vtcore_free(explicit);
+}
+
 static void flood_benchmark(enum flood_kind kind, const char *name)
 {
     int cols = 160, rows = 50, frames = getenv("FLOOD_FRAMES") ? atoi(getenv("FLOOD_FRAMES")) : 200;
@@ -1434,6 +1492,8 @@ int main(int argc, char **argv)
         presentation_test();
         theme_redraw_test();
         theme_recolors_existing_text_test();
+        explicit_theme_colors_test(FONT_AA_GRAYSCALE);
+        explicit_theme_colors_test(FONT_AA_RGB);
         frame_colors_test(2);
         frame_colors_test(6);
         scroll_pixels_test();
@@ -1451,6 +1511,8 @@ int main(int argc, char **argv)
         test_font_override = font_instance_acquire(
             font_instance_size_pt(font_instance_default()), 180);
         assert(test_font_override);
+        explicit_theme_colors_test(FONT_AA_GRAYSCALE);
+        explicit_theme_colors_test(FONT_AA_RGB);
         clipped_target_test(); style_cache_test();
         scroll_pixels_test();
         incremental_test(); suffix_ligature_test(); run_drift_test(); cache_churn_test();
