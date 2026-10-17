@@ -21,13 +21,15 @@
  *   length.
  * - dashed underline: rows of the single underline, dashes longer than the
  *   gaps.
- * - strike: rows [(ch - t) / 2, (ch - t) / 2 + t).
+ * - strike: rows [(ch - t + 1) / 2, (ch - t + 1) / 2 + t). At t = 1 this is row ch / 2,
+ *   as in the old renderer.
  * - overline: rows [min(1, ch - t), min(1, ch - t) + t).
  * - cursor bar: columns [0, min(cw, 2t)), all rows.
  * - cursor underline: rows [ch - min(ch, 2t), ch), all columns.
  *
- * Pattern rule. The period of each dotted, dashed, and curly pattern
- * divides cw. Each cell starts at phase 0. So the pattern continues across
+ * Pattern rule. Each cell holds a whole number of periods of each dotted,
+ * dashed, and curly pattern. The period is cw / k, and it need not be a
+ * whole number of pixels. Each cell starts at phase 0. So the pattern continues across
  * cells, across both halves of a wide glyph, and across cached tiles.
  *
  * Draw order inside a cell: glyph, then underline, strike, overline, then
