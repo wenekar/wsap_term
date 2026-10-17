@@ -889,6 +889,7 @@ static void bench_step_cjk(struct wsap_vtcore *t, int f, uint32_t *seed)
 
 static void bench_run(const struct bench_case *c)
 {
+    static const struct ui_damage no_ui_damage = {0};
     int cols = 160, rows = 50;
     int frames = getenv("BENCH_FRAMES") ? atoi(getenv("BENCH_FRAMES")) : 2000;
     int warmup = 20;
@@ -939,6 +940,8 @@ static void bench_run(const struct bench_case *c)
             frame.ui_font = test_font();
             frame.terminal = grid;
             frame.paint = &scene;
+            /* The overlay changes only in the first frame. NULL means every UI pixel changed. */
+            frame.damage = f ? &no_ui_damage : NULL;
         }
         double begin = now();
         (void)render_draw(r, &target, &frame);

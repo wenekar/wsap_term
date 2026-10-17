@@ -30,15 +30,15 @@ The flood cases and the new cases draw to one persistent surface.
 | typing | One character per frame on a full screen of code |
 | idle | No input; one draw per frame |
 | scroll-region | One new line per frame in a DECSTBM region |
-| overlay-scroll | One new line per frame under a scrollbar-shaped UI overlay |
+| overlay-scroll | One new line per frame under a scrollbar-shaped UI overlay. The overlay changes only in the first frame. |
 | italic | About 4 KiB of italic code text per frame |
 | cjk-emoji | About 4 KiB of CJK, emoji, and ASCII per frame |
-| fresh-every-frame | One character per frame, with the target marked stale. The window does this today. |
+| fresh-every-frame | One character per frame, with the target marked stale. The window marks every frame stale today. The case draws no UI scene. |
 | plain, ligatures, mixed, random, scroll | The old cases |
 
 ## Baseline
 
-The baseline is commit `89612e0`, before the rewrite.
+The baseline renderer is the renderer of commit `b5798f2`. The bench cases come from the first commit of the rewrite series.
 
 | Case | Native median | Native min | Native max | x86-64 |
 |---|---:|---:|---:|---:|
