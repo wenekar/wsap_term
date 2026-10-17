@@ -34,8 +34,8 @@ static const char *const corpus[] = {
     "fn main() -> Result<(), E> { a != b && c <= d || e >= f; x == y } // => ===",
     "日本語のテキスト 한국어 中文 🙂🚀👍🏽 🇺🇸 👨‍👩‍👧 e\xcc\x81 a\xcc\x88",
     "\xef\x84\x95 icon \xe2\x97\x8f\xe2\x97\x8f dot ─│┌┐└┘ \xee\x82\xb0 powerline",
-    "\033[4:1msingle\033[4:2mdouble\033[4:3mcurly\033[4:4mdotted\033[4:5mdashed\033[0m "
-    "\033[9mstrike\033[0m \033[53mover\033[0m \033[2;4:3mfaint curly\033[0m",
+    ("\033[4:1msingle\033[4:2mdouble\033[4:3mcurly\033[4:4mdotted\033[4:5mdashed\033[0m "
+     "\033[9mstrike\033[0m \033[53mover\033[0m \033[2;4:3mfaint curly\033[0m"),
     "\033]8;;https://example.com\033\\a link\033]8;;\033\\ \033[48;5;94m   \033[4m   \033[0m",
 };
 
