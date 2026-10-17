@@ -16,7 +16,9 @@
  *   key array, a stamp array, and an index.
  * - One byte budget covers all classes. When a class needs room and the
  *   budget is full, the least recently used other class is freed first.
- *   After that, the class evicts its own tiles.
+ *   Only a class that no frame used in the last 8 frames is freed so. Else
+ *   the class takes slabs from the largest other class, while that class
+ *   stays at least as large. After that, the class evicts its own tiles.
  * - A class grows by whole slabs. A slab never moves, so a tile pointer
  *   stays valid until its slot is evicted.
  * - A class needs room for at least CELL_CACHE_MIN_TILES tiles. Else
@@ -33,6 +35,7 @@
  *      but only up to the claims that the last frame asked for. A slot used
  *      in the last frame is never evicted. So an idle frame evicts nothing.
  *      A claim that found the free list empty still counts as asked.
+ *      "The last frame" is the last frame of this class.
  *    - It resets each worker: pending table, hit log, claim count. It clears
  *      a worker's L0 table when the L0 domain changed (see below).
  * 2. Workers, during the phase: cell_cache_find(), cell_cache_claim().

@@ -46,6 +46,8 @@ struct pool;
  * - `grain` < 1 means 1. With n <= grain, with no workers, or with p NULL,
  *   the main thread runs everything and wakes no worker.
  * - Main thread only. One run at a time. `fn` must not call pool_run().
+ *   If it does, that call runs all of its items on the calling thread,
+ *   with the worker number of that thread.
  */
 typedef void (*pool_fn)(void *ctx, int worker, int begin, int end);
 void pool_run(struct pool *p, int n, int grain, pool_fn fn, void *ctx);
