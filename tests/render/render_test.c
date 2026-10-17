@@ -1540,9 +1540,9 @@ static void blend_rect_alpha_test(void)
 
 static void uninitialized_srgb_luts_test(void)
 {
-    unsigned blended = render_blend_channel(255, 0, 128);
+    unsigned blended = blend_channel(255, 0, 128);
     assert(blended > 180 && blended < 195);
-    uint32_t px = render_blend_px(0xFFFFFFFFu, 0xFF000000u, 128);
+    uint32_t px = blend_px(0xFFFFFFFFu, 0xFF000000u, 128);
     assert((px & 0xFF) == 128);
 }
 

@@ -41,7 +41,7 @@ static __thread int run_capacity;
 
 static inline uint32_t blend_glyph_px(uint32_t fg, uint32_t bg, uint8_t a);
 static const uint32_t *blend_pair_lut(uint32_t fg, uint32_t bg);
-static const struct render_subpx_lut *subpx_pair_lut(uint32_t fg, uint32_t bg);
+static const struct subpx_lut *subpx_pair_lut(uint32_t fg, uint32_t bg);
 
 #define BLEND_PAIR_SLOTS 16
 static __thread struct blend_pair { uint64_t tag, pending; uint32_t lut[256]; }
@@ -50,7 +50,7 @@ static __thread struct blend_pair { uint64_t tag, pending; uint32_t lut[256]; }
 #define SUBPX_PAIR_SLOTS 16
 static __thread struct subpx_pair {
     uint64_t tag, pending;
-    struct render_subpx_lut lut;
+    struct subpx_lut lut;
 } subpx_pairs[SUBPX_PAIR_SLOTS];
 
 static void run_buffers_free(void)
@@ -109,7 +109,7 @@ static inline void blend_pixels8(uint32_t *dst, const uint8_t *alpha, uint32_t f
 {
     for (int i = 0; i < 8; i++)
         dst[i] = (lut && dst[i] == bg) ? lut[alpha[i]]
-                                     : render_blend_px(fg, dst[i], alpha[i]);
+                                     : blend_px(fg, dst[i], alpha[i]);
 }
 #elif defined(__AVX2__)
 #include <immintrin.h>
@@ -143,10 +143,10 @@ static inline void fill_pixels32(uint32_t *dst, uint32_t color, int count)
 static inline __m256i blend8_chan(__m256i idx, __m256i a, __m256i ia, unsigned fgc)
 {
     __m256i lb = _mm256_and_si256(_mm256_i32gather_epi32(
-        (const int *)render_srgb_to_linear, idx, 2),
+        (const int *)srgb_to_linear, idx, 2),
         _mm256_set1_epi32(0xFFFF));
     __m256i s = _mm256_add_epi32(
-        _mm256_mullo_epi32(a, _mm256_set1_epi32(render_srgb_to_linear[fgc])),
+        _mm256_mullo_epi32(a, _mm256_set1_epi32(srgb_to_linear[fgc])),
         _mm256_mullo_epi32(ia, lb));
     __m256i t = _mm256_add_epi32(s, _mm256_set1_epi32(127));
     __m256i h = _mm256_srli_epi32(t, 8);
@@ -158,7 +158,7 @@ static inline __m256i blend8_chan(__m256i idx, __m256i a, __m256i ia, unsigned f
 
 static inline __m256i blend8_px(__m256i p, __m256i a, uint32_t fg)
 {
-    render_ensure_srgb_luts();
+    srgb_ensure_luts();
     const __m256i m8 = _mm256_set1_epi32(0xFF);
     __m256i ia = _mm256_sub_epi32(_mm256_set1_epi32(255), a);
     __m256i lin_b = blend8_chan(_mm256_and_si256(p, m8), a, ia, fg & 0xFF);
@@ -166,7 +166,7 @@ static inline __m256i blend8_px(__m256i p, __m256i a, uint32_t fg)
                                 a, ia, (fg >> 8) & 0xFF);
     __m256i lin_r = blend8_chan(_mm256_and_si256(_mm256_srli_epi32(p, 16), m8),
                                 a, ia, (fg >> 16) & 0xFF);
-    const int *enc = (const int *)render_linear_to_srgb;
+    const int *enc = (const int *)srgb_from_linear;
     __m256i b = _mm256_and_si256(_mm256_i32gather_epi32(enc, lin_b, 1), m8);
     __m256i g = _mm256_and_si256(_mm256_i32gather_epi32(enc, lin_g, 1), m8);
     __m256i r = _mm256_and_si256(_mm256_i32gather_epi32(enc, lin_r, 1), m8);
@@ -197,7 +197,7 @@ static const uint8_t *correct_pair_lut(int fg_l, int bg_l)
         return NULL;
     }
     for (int a = 0; a < 256; a++)
-        cp->lut[a] = render_correct_coverage(fg_l, bg_l, (uint8_t)a);
+        cp->lut[a] = blend_correct_coverage(fg_l, bg_l, (uint8_t)a);
     cp->tag = tag;
     cp->pending = 0;
     return cp->lut;
@@ -209,7 +209,7 @@ static inline __m256i correct8_coverage(__m256i p, const uint8_t *alpha,
     alignas(32) uint32_t px[8];
     alignas(16) uint8_t ca[8] = {0};
     _mm256_storeu_si256((__m256i *)px, p);
-    int fg_l = (int)render_lum16(fg);
+    int fg_l = (int)blend_lum16(fg);
     bool uniform = count == 8
         ? (_mm256_movemask_epi8(_mm256_cmpeq_epi32(p, _mm256_set1_epi32((int)px[0]))) == -1)
         : true;
@@ -222,21 +222,21 @@ static inline __m256i correct8_coverage(__m256i p, const uint8_t *alpha,
         }
     }
     if (uniform) {
-        int bg_l = (int)render_lum16(px[0]);
+        int bg_l = (int)blend_lum16(px[0]);
         const uint8_t *clut = correct_pair_lut(fg_l, bg_l);
         if (clut) {
             for (int i = 0; i < count; i++)
                 ca[i] = clut[alpha[i]];
         } else {
             for (int i = 0; i < count; i++)
-                ca[i] = render_correct_coverage(fg_l, bg_l, alpha[i]);
+                ca[i] = blend_correct_coverage(fg_l, bg_l, alpha[i]);
         }
     } else {
         for (int i = 0; i < count; i++) {
-            int bg_l = (int)render_lum16(px[i]);
+            int bg_l = (int)blend_lum16(px[i]);
             const uint8_t *clut = correct_pair_lut(fg_l, bg_l);
             ca[i] = clut ? clut[alpha[i]]
-                         : render_correct_coverage(fg_l, bg_l, alpha[i]);
+                         : blend_correct_coverage(fg_l, bg_l, alpha[i]);
         }
     }
     return _mm256_cvtepu8_epi32(_mm_loadl_epi64((const __m128i *)ca));
@@ -343,15 +343,15 @@ static const uint32_t *blend_pair_lut(uint32_t fg, uint32_t bg)
         bp->pending = tag;
         return NULL;
     }
-    int fg_l = (int)render_lum16(fg), bg_l = (int)render_lum16(bg);
+    int fg_l = (int)blend_lum16(fg), bg_l = (int)blend_lum16(bg);
     for (int a = 0; a < 256; a++)
-        bp->lut[a] = render_blend_px_lum(fg, bg, fg_l, bg_l, (uint8_t)a);
+        bp->lut[a] = blend_px_lum(fg, bg, fg_l, bg_l, (uint8_t)a);
     bp->tag = tag;
     bp->pending = 0;
     return bp->lut;
 }
 
-static const struct render_subpx_lut *subpx_pair_lut(uint32_t fg, uint32_t bg)
+static const struct subpx_lut *subpx_pair_lut(uint32_t fg, uint32_t bg)
 {
     uint64_t tag = (uint64_t)fg << 32 | bg;
     unsigned i = (unsigned)((tag * UINT64_C(0x9E3779B97F4A7C15)) >> 60) &
@@ -363,7 +363,7 @@ static const struct render_subpx_lut *subpx_pair_lut(uint32_t fg, uint32_t bg)
         sp->pending = tag;
         return NULL;
     }
-    render_build_subpx_lut(&sp->lut, fg, bg);
+    blend_build_subpx_lut(&sp->lut, fg, bg);
     sp->tag = tag;
     sp->pending = 0;
     return &sp->lut;
@@ -372,7 +372,7 @@ static const struct render_subpx_lut *subpx_pair_lut(uint32_t fg, uint32_t bg)
 static inline uint32_t blend_glyph_px(uint32_t fg, uint32_t bg, uint8_t a)
 {
     const uint32_t *lut = blend_pair_lut(fg, bg);
-    return lut ? lut[a] : render_blend_px(fg, bg, a);
+    return lut ? lut[a] : blend_px(fg, bg, a);
 }
 
 static inline uint32_t blend_premul_glyph_px(uint32_t premul, uint32_t bg, bool faint)
@@ -385,7 +385,7 @@ static inline uint32_t blend_premul_glyph_px(uint32_t premul, uint32_t bg, bool 
     for (int shift = 0; shift <= 16; shift += 8) {
         unsigned channel = (((premul >> shift) & 255) * 255 + a / 2) / a;
         if (channel > 255) channel = 255;
-        result |= render_blend_channel(channel, (bg >> shift) & 255, coverage) << shift;
+        result |= blend_channel(channel, (bg >> shift) & 255, coverage) << shift;
     }
     return result;
 }
@@ -522,7 +522,7 @@ static void paint_glyph(uint32_t *row_px, int width, int x0, int ch,
         bool in_bounds = x0_glyph >= 0 && x0_glyph + glyph->width <= width;
         if (in_bounds && !faint) {
             uint32_t bg0 = row_px[x0_glyph];
-            const struct render_subpx_lut *lut = subpx_pair_lut(fg, bg0);
+            const struct subpx_lut *lut = subpx_pair_lut(fg, bg0);
             for (int y = 0; y < ch; y++) {
                 if (!glyph_row_inked(glyph, y)) continue;
                 uint32_t *dst = row_px + (size_t)y * width + x0_glyph;
@@ -538,9 +538,9 @@ static void paint_glyph(uint32_t *row_px, int width, int x0, int ch,
                         uint8_t sg = subpx[x * 3 + 1];
                         uint8_t sb = subpx[x * 3 + 2];
                         if (lut && dst[x] == bg0)
-                            dst[x] = render_blend_subpx_lut(lut, bg0, sr, sg, sb);
+                            dst[x] = blend_subpx_lut(lut, bg0, sr, sg, sb);
                         else
-                            dst[x] = render_blend_subpx(fg, dst[x], sr, sg, sb);
+                            dst[x] = blend_subpx(fg, dst[x], sr, sg, sb);
                     }
                 }
             }
@@ -564,11 +564,11 @@ static void paint_glyph(uint32_t *row_px, int width, int x0, int ch,
                             sr = (uint8_t)((sr + 1) / 2);
                             sg = (uint8_t)((sg + 1) / 2);
                             sb = (uint8_t)((sb + 1) / 2);
-                            dst[dx] = render_blend_subpx(fg, dst[dx], sr, sg, sb);
+                            dst[dx] = blend_subpx(fg, dst[dx], sr, sg, sb);
                         } else {
-                            const struct render_subpx_lut *lut = subpx_pair_lut(fg, dst[dx]);
-                            dst[dx] = lut ? render_blend_subpx_lut(lut, dst[dx], sr, sg, sb)
-                                          : render_blend_subpx(fg, dst[dx], sr, sg, sb);
+                            const struct subpx_lut *lut = subpx_pair_lut(fg, dst[dx]);
+                            dst[dx] = lut ? blend_subpx_lut(lut, dst[dx], sr, sg, sb)
+                                          : blend_subpx(fg, dst[dx], sr, sg, sb);
                         }
                     }
                 }
@@ -609,7 +609,7 @@ static void paint_glyph(uint32_t *row_px, int width, int x0, int ch,
                             dst[x] = fg;
                         } else if (a) {
                             dst[x] = (lut && dst[x] == bg0) ? lut[a]
-                                : render_blend_px(fg, dst[x], a);
+                                : blend_px(fg, dst[x], a);
                         }
                     }
                 }
@@ -702,7 +702,7 @@ static void paint_inked_tile(uint32_t *cell_px, int stride, const uint32_t *tile
                 continue;
             if (subpx) {
                 const uint8_t *s = glyph_subpx_at(glyph, y, x);
-                dst[x] = render_blend_subpx(fg, dst[x], s[0], s[1], s[2]);
+                dst[x] = blend_subpx(fg, dst[x], s[0], s[1], s[2]);
             } else {
                 uint8_t a = glyph->alpha[y][x];
                 dst[x] = a == 255 ? fg : blend_glyph_px(fg, dst[x], a);
@@ -1071,7 +1071,7 @@ static struct renderer_history *renderer_history_get(
 void renderer_init(struct renderer *r)
 {
     memset(r, 0, sizeof(*r));
-    render_ensure_srgb_luts();
+    srgb_ensure_luts();
     r->gpu = render_gpu_create();
 }
 
@@ -1290,7 +1290,7 @@ bool render_init(void)
         render_users++;
         return true;
     }
-    render_build_srgb_luts();
+    srgb_build_luts();
     if (!font_system_init())
         return false;
     render_users = 1;
