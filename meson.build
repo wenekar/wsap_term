@@ -15,6 +15,7 @@ project(
 )
 
 cc = meson.get_compiler('c')
+fs = import('fs')
 python = find_program('python3', native: true, version: '>=3.10')
 system = host_machine.system()
 if system not in ['linux', 'darwin']
@@ -310,7 +311,6 @@ add_test_setup(
 
 exe_install_dir = get_option('bindir')
 if system == 'darwin'
-    fs = import('fs')
     app_dir = get_option('macos_app_dir')
     if app_dir == ''
         home = fs.expanduser('~')

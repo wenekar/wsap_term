@@ -119,6 +119,27 @@ standalone_tests = [
     'anim-test', 'ui-scene-text-test', 'css-clipping-test',
     'metal-render-test',
 ]
+
+# Tests of the new renderer. They link render_next_lib, not app_lib.
+render_next_tests = [
+    ['render-plan-test', 'render/plan_test.c'],
+    ['render-decor-test', 'render/decor_test.c'],
+    ['render-cache-test', 'render/cache_test.c'],
+    ['render-scene-test', 'render/scene_test.c'],
+    ['render-raster-test', 'render/raster_test.c'],
+    ['render-damage-test', 'render/damage_test.c'],
+    ['render-incremental-test', 'render/incremental_test.c'],
+]
+render_next_names = []
+if render_next_src.length() > 0
+    foreach entry : render_next_tests
+        if fs.exists(entry[1])
+            render_next_names += [entry[0]]
+            test_cases += [[entry[0], files(entry[1]), render_next_lib, deps]]
+        endif
+    endforeach
+endif
+standalone_tests += render_next_names
 test_groups = {}
 test_executables = {}
 foreach entry : test_cases
@@ -194,10 +215,10 @@ endforeach
 foreach entry : test_cases
     exe = test_executables[entry[0]]
     suites = ['unit']
-    if entry[0] in ['font-test', 'font-coretext-test', 'render-test', 'render-kernels-test', 'pty-fast-test']
+    if entry[0] in ['font-test', 'font-coretext-test', 'render-test', 'render-kernels-test', 'pty-fast-test'] or entry[0] in render_next_names
         suites += ['isa']
     endif
-    if entry[0] in extlib_tests
+    if entry[0] in extlib_tests or entry[0] in render_next_names
         suites += ['extlib']
     endif
     if entry[0] in msan_safe_tests

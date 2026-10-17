@@ -4,5 +4,16 @@ render_src = files(
     'term_frame.c',
 )
 
-subdir('cpu')
 subdir('backends')
+
+# Sources of the new renderer. They build into render_next_lib.
+render_next_src = []
+foreach f : ['render_next.c', 'plan.c', 'surface.c']
+    if fs.exists(f)
+        render_next_src += files(f)
+    endif
+endforeach
+
+subdir('frame')
+subdir('cpu')
+subdir('gpu')

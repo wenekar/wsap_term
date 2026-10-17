@@ -93,6 +93,18 @@ render_lib = static_library(
     install: false,
 )
 
+render_next_lib = []
+if render_next_src.length() > 0
+    render_next_lib = static_library(
+        'wsap-render-next',
+        render_next_src,
+        link_with: [base_lib, font_lib, paint_lib],
+        include_directories: inc,
+        dependencies: lib_deps + [term_dep],
+        install: false,
+    )
+endif
+
 ui_yasl_lib = static_library(
     'wsap-ui-yasl',
     ui_yasl_src,
