@@ -15,7 +15,7 @@
 
 #include "font/font.h"
 #include "font/glyph_cache.h"
-#include "render/term_frame_next.h"
+#include "render/term_frame.h"
 #include "util/hash.h"
 
 /*

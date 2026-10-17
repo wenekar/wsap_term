@@ -17,9 +17,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "paint/framebuffer_next.h"
+#include "paint/framebuffer.h"
 #include "render/plan.h"
-#include "render/term_frame_next.h"
+#include "render/term_frame.h"
 #include "util/geom.h"
 
 /*

@@ -31,7 +31,6 @@ struct terminal_frame_source {
     struct wsap_vtcore_snapshot *snapshot;
     struct font_instance *font;
     struct rect2i rect;
-    int origin_y;
     bool cursor_visible;
 };
 

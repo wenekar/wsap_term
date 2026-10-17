@@ -167,10 +167,9 @@ static bool native_report(struct window_native *n, bool ok, const char *what, in
 static void native_compose(struct window *w, struct window_native *n,
                            struct framebuffer target)
 {
-    n->damage = (struct damage_list){0};
     n->generation++;
-    target.stale = true;
-    target.damage = &n->damage;
+    /* Each frame is fresh for now, so the renderer paints every pixel. */
+    target.fresh = true;
     target.history = &n->history;
     struct window_frame frame = {
         .surface = n->surface,
@@ -404,29 +403,32 @@ void window_compose_frame(struct window *w, struct window_frame *frame)
     else if (w && frame) {
         struct damage_list damage = {0};
         damage_add_all(&damage);
-        (void)window_present(w, frame, &damage);
+        (void)window_present(w, frame, &damage, false);
     }
 }
 
+static struct yasl_damage yasl_damage_of(struct rect2i r)
+{
+    return (struct yasl_damage){ .x = r.x, .y = r.y, .width = r.width, .height = r.height };
+}
+
 bool window_present(struct window *w, struct window_frame *frame,
-                    const struct damage_list *damage)
+                    const struct damage_list *damage, bool presented)
 {
     if (!w || w->closed || !frame || !frame->surface)
         return false;
     struct window_native *n = native_find(w, frame->surface);
     if (frame->target.drawable)
-        return native_report(n, frame->target.presented, "metal present", 0);
+        return native_report(n, presented, "metal present", 0);
     int status;
-    if (damage && !damage->all && damage->n > 0) {
+    if (damage && !damage->all && damage->n < 0) {
+        /* An overflowed list presents its bounds. */
+        struct yasl_damage yd = yasl_damage_of(damage->bounds);
+        status = yasl_cpu_present_damage(frame->surface, &yd, 1);
+    } else if (damage && !damage->all && damage->n > 0) {
         struct yasl_damage yd[DAMAGE_RECTS_MAX];
-        for (int i = 0; i < damage->n; i++) {
-            yd[i] = (struct yasl_damage){
-                .x = damage->rects[i].x,
-                .y = damage->rects[i].y,
-                .width = damage->rects[i].width,
-                .height = damage->rects[i].height,
-            };
-        }
+        for (int i = 0; i < damage->n; i++)
+            yd[i] = yasl_damage_of(damage->rects[i]);
         status = yasl_cpu_present_damage(frame->surface, yd, damage->n);
     } else {
         status = yasl_cpu_present(frame->surface);

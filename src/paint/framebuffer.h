@@ -1,17 +1,9 @@
-#ifndef WSAP_PAINT_FRAMEBUFFER_NEXT_H
-#define WSAP_PAINT_FRAMEBUFFER_NEXT_H
+#ifndef WSAP_PAINT_FRAMEBUFFER_H
+#define WSAP_PAINT_FRAMEBUFFER_H
 
 /*
  * The canvas that render_draw() paints, and the renderer state of that
- * canvas.
- *
- * This is the milestone 4 interface. The integrator renames this file to
- * paint/framebuffer.h and deletes the old header. Do not include both
- * headers in one translation unit. They define the same struct names.
- *
- * Removed from the old struct framebuffer: buffer, cleared, stale, gpu,
- * presented, and damage. Removed from the old history: gpu_data and
- * gpu_destroy. FRAMEBUFFER_BUFFERS is gone: one surface has one canvas.
+ * canvas. One surface has one canvas and one history.
  */
 
 #include <stdbool.h>

@@ -1,25 +1,20 @@
-#ifndef RENDER_NEXT_H
-#define RENDER_NEXT_H
+#ifndef RENDER_H
+#define RENDER_H
 
 /*
  * The public renderer API.
  *
- * This is the milestone 4 interface. The integrator renames this file to
- * render/render.h and deletes the old header. Do not include both headers
- * in one translation unit. They define the same names.
- *
- * Removed from the old API: render_warm_caches(),
- * render_paint_full_terminal_frame(), render_frame.has_grid, and the
- * damage pointer in struct framebuffer. The test oracle for a full paint is
- * now a second renderer that draws a fresh surface.
+ * The app owns one renderer. Only the app calls render_draw(). The test
+ * oracle for a full paint is a second renderer that draws a frame with no
+ * history.
  */
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#include "paint/framebuffer_next.h"
-#include "render/term_frame_next.h"
+#include "paint/framebuffer.h"
+#include "render/term_frame.h"
 #include "util/damage.h"
 #include "util/geom.h"
 

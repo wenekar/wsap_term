@@ -3,11 +3,9 @@
 This directory turns a terminal snapshot and a UI scene into canvas pixels.
 The CPU path is the reference. The GPU path draws the same cells.
 
-The design is the render rewrite plan. Milestone 4 builds the new CPU
-renderer behind the headers listed here. Until the integrator switches over,
-three headers carry a `_next` suffix: `render/render_next.h`,
-`render/term_frame_next.h`, and `paint/framebuffer_next.h`. The integrator
-renames them and deletes the old renderer.
+The design is the render rewrite plan. Milestone 4 is the CPU renderer
+behind the headers listed here. Every system builds `gpu/none.c` in this
+milestone. Milestone 6 adds the Metal backend.
 
 ## Modules
 

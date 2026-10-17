@@ -23,7 +23,7 @@
 #include "font/glyph_cache.h"
 #include "paint/damage.h"
 #include "paint/scene.h"
-#include "render/render_next.h"
+#include "render/render.h"
 #include "term_api.h"
 
 #define TCHECK(cond, ...)                                                    \

@@ -35,10 +35,6 @@
  *   RENDER_GPU_UNUSED. render_gpu_present() returns false.
  *   render_gpu_surface_free() does nothing.
  *
- * Names: the old backend.h uses render_gpu_create, render_gpu_destroy, and
- * render_gpu_device. These names differ, so both can link while the old
- * renderer still exists.
- *
  * Threads: main thread only.
  */
 

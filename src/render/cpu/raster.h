@@ -64,7 +64,7 @@
 #include <stdint.h>
 
 #include "render/cpu/pair_lut.h"
-#include "render/term_frame_next.h"
+#include "render/term_frame.h"
 
 struct cell_cache;
 struct cell_cache_worker;

@@ -9,7 +9,6 @@
 #include "render/cpu/isa.h"
 #include "render/cpu/kernels.h"
 #include "render/cpu/pair_lut.h"
-#include "render/text_style.h"
 #include "util/geom.h"
 
 #include <limits.h>
@@ -31,6 +30,16 @@
  */
 
 #define SCENE_CHUNK 256
+
+_Static_assert((unsigned)UI_TEXT_BOLD == (unsigned)FONT_STYLE_BOLD &&
+                   (unsigned)UI_TEXT_ITALIC == (unsigned)FONT_STYLE_ITALIC,
+               "UI text bits must match font style bits");
+
+/* The font style of UI text: its bold and italic bits. */
+static inline uint16_t text_style(uint32_t ui_flags)
+{
+    return (uint16_t)(ui_flags & (UI_TEXT_BOLD | UI_TEXT_ITALIC));
+}
 
 static _Atomic(const struct render_kernels *) scene_kernels_cache;
 
@@ -70,6 +79,9 @@ static void paint_rect(const struct render_kernels *k, uint32_t *px,
     if (!rect2i_clip(&r, (struct vector2i){ .x = width, .y = height }))
         return;
     uint8_t a = alpha >= 0 ? (uint8_t)alpha : (uint8_t)(color >> 24);
+    /* A blend rect has its alpha apart from its color. The color is opaque. */
+    if (alpha >= 0)
+        color |= 0xFF000000u;
     struct vector2i end = rect2i_end(r);
     for (int y = r.y; y < end.y; y++)
         blend_run(k, px + (size_t)y * width + r.x, end.x - r.x, color, a);
@@ -314,7 +326,7 @@ static void paint_text(const struct render_kernels *k, struct font_instance *fi,
     clip = rect2i_intersect(clip, ui_scene_text_ink(s, op));
     if (rect2i_is_empty(clip))
         return;
-    uint16_t flags = render_text_style(op->style.flags);
+    uint16_t flags = text_style(op->style.flags);
     int64_t tx = op->rect.x;
     for (uint32_t i = 0; i < op->text_len;) {
         uint32_t cp;

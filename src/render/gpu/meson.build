@@ -1,6 +1,2 @@
-# Sources of the new renderer.
-foreach f : ['none.c']
-    if fs.exists(f)
-        render_next_src += files(f)
-    endif
-endforeach
+# Every system builds the CPU-only backend. Milestone 6 adds gpu/metal/.
+render_src += files('none.c')

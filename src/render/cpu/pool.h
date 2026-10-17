@@ -71,8 +71,7 @@ int pool_workers(const struct pool *p);
 /*
  * The default worker count. It is WSAP_RENDER_THREADS when that is a valid
  * count >= 0. Else it is min(nproc - 1, 3). An invalid value prints one
- * warning on stderr. WSAP_RENDER_THREADS replaces WSAP_POOL and
- * WSAP_NO_PARALLEL.
+ * warning on stderr.
  */
 int pool_default_workers(void);
 

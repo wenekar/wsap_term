@@ -87,25 +87,13 @@ theme_lib = static_library(
 
 render_lib = static_library(
     'wsap-render',
-    render_src + render_backend_src,
+    render_src,
     link_with: [base_lib, font_lib, paint_lib],
     include_directories: inc,
+    c_args: ['-ffp-contract=off'],
     dependencies: lib_deps + [term_dep],
     install: false,
 )
-
-render_next_lib = []
-if render_next_src.length() > 0
-    render_next_lib = static_library(
-        'wsap-render-next',
-        render_next_src,
-        link_with: [base_lib, font_lib, paint_lib],
-        include_directories: inc,
-        c_args: ['-ffp-contract=off'],
-        dependencies: lib_deps + [term_dep],
-        install: false,
-    )
-endif
 
 ui_yasl_lib = static_library(
     'wsap-ui-yasl',

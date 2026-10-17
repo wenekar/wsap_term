@@ -1,21 +1,15 @@
-#ifndef RENDER_TERM_FRAME_NEXT_H
-#define RENDER_TERM_FRAME_NEXT_H
+#ifndef RENDER_TERM_FRAME_H
+#define RENDER_TERM_FRAME_H
 
 /*
  * The terminal grid of one frame: a snapshot and the values that render
- * reads from it.
+ * reads from it. The source is render/frame/term_frame.c.
  *
- * This is the milestone 4 interface. The integrator renames this file to
- * render/term_frame.h. The source moves to render/frame/term_frame.c. Do
- * not include this header and the old render/term_frame.h in one
- * translation unit. They define the same struct.
- *
- * Changes from the old struct:
- * - origin_y, view_offset, and scrolled are gone. The grid position is
- *   render_grid.rect. Scrolled content is found through the row keys.
- * - full_gen is now palette_gen. It is the palette version of the view.
- * - selection_fg and selection_bg are new. The app sets them. Zero means
- *   the built-in colors below.
+ * - The frame has no position. The grid position is render_grid.rect.
+ *   The renderer finds scrolled content through the row keys.
+ * - `palette_gen` is the palette version of the view.
+ * - The app sets selection_fg and selection_bg. Zero means the built-in
+ *   colors below.
  */
 
 #include <stdbool.h>

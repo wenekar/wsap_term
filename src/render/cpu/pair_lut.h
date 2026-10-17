@@ -4,8 +4,7 @@
 /*
  * A per-worker cache of blend tables for (fg, bg) color pairs.
  *
- * It replaces the three table caches of the old render.c and scene_paint.c.
- * A table turns coverage into a final pixel for a known bg. Compose uses it
+ * The row raster and the scene painter share it. A table turns coverage into a final pixel for a known bg. Compose uses it
  * when the pixels under a glyph all have one color: a cell bg, or a uniform
  * run under UI text.
  *
