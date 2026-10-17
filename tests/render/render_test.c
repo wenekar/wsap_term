@@ -1408,11 +1408,15 @@ static void single_threaded_render_shutdown_cleanup_test(void)
     uint32_t *px = calloc((size_t)w * h, sizeof(uint32_t));
     assert(t && px);
 
+    const char *prev_env = getenv("WSAP_NO_PARALLEL");
     setenv("WSAP_NO_PARALLEL", "1", 1);
     struct terminal_frame frame;
     test_frame_init(&frame, t, false);
     render_paint_full_terminal_frame(test_font(), px, w, h, &frame);
-    unsetenv("WSAP_NO_PARALLEL");
+    if (prev_env)
+        setenv("WSAP_NO_PARALLEL", prev_env, 1);
+    else
+        unsetenv("WSAP_NO_PARALLEL");
 
     render_shutdown();
     free(px);

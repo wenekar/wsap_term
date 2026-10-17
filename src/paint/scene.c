@@ -51,8 +51,16 @@ bool ui_scene_copy(struct ui_scene *dst, const struct ui_scene *src)
         return false;
     if (dst == src)
         return true;
-    ui_scene_destroy(dst);
-    ui_scene_init(dst);
+    free(dst->stack);
+    dst->stack = NULL;
+    dst->scope_depth = 0;
+    dst->stack_cap = 0;
+    dst->n_ops = 0;
+    dst->n_scopes = 0;
+    dst->clip_depth = 0;
+    dst->text_len = 0;
+    dst->origin = (struct vector2i){0};
+    dst->overflow = false;
     if (!copy_into(&dst->ops, &dst->ops_cap, src->ops, src->n_ops,
                    sizeof(*src->ops)) ||
         !copy_into(&dst->scopes, &dst->scopes_cap, src->scopes,
