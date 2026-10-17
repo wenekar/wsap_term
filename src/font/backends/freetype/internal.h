@@ -67,7 +67,8 @@ bool font_hinting_has_auto_axis(void);
 bool supported_pixel_mode(const FT_Bitmap *bitmap);
 struct box ft_place_ink(int left, int above_baseline, int w, int h,
                         int advance, int cols, int max_rows, bool color);
-bool ft_prepare_canvas(struct glyph *g, struct box *ink);
+bool ft_prepare_canvas(struct glyph *g, struct box *ink, const struct box *inked);
+bool ft_blank_overhang(const struct glyph *g, int cols, struct box *inked);
 void ft_blit_bitmap(struct glyph *g, const FT_Bitmap *bm, const struct box *dst);
 
 static inline int bitmap_width(const FT_Bitmap *bm)

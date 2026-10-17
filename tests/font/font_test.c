@@ -250,6 +250,14 @@ static void ink_boxes(uint32_t cp, int *nw, int *nh, int *ww, int *wh)
     glyph_release(&wide);
 }
 
+static bool column_inked(const struct glyph *g, int x)
+{
+    for (int y = 0; y < GLYPH_CELL_H; y++)
+        if (glyph_inked(g, y, x))
+            return true;
+    return false;
+}
+
 static void test_raster_invariants(void)
 {
     static const struct { uint32_t cp; uint16_t flags; const char *name; } samples[] = {
@@ -295,6 +303,11 @@ static void test_raster_invariants(void)
         snprintf(label, sizeof(label), "%s ink fits its stored raster around %d columns",
                  samples[i].name, allocated / GLYPH_CELL_W);
         check(label, contained);
+        bool tight = (g.x_offset >= 0 || column_inked(&g, 0)) &&
+                     (g.x_offset + g.width <= allocated || column_inked(&g, g.width - 1));
+        snprintf(label, sizeof(label), "%s reaches past its cell only with ink",
+                 samples[i].name);
+        check(label, tight);
         glyph_release(&g);
     }
 }

@@ -328,6 +328,23 @@ static bool collect_run_ink(const struct shaped_run *run, bool by_cluster,
     return true;
 }
 
+static bool draw_run_ink(struct glyph *g, const struct run_ink *ri, struct box box,
+                         int run_w, int run_h, const struct box *inked)
+{
+    if (!ft_prepare_canvas(g, &box, inked))
+        return false;
+    g->has_color = ri->color;
+    if (ri->color && !g->color && !glyph_color_plane(g))
+        return false;
+
+    for (int i = 0; i < ri->drawn; i++) {
+        struct box dst = scale_box(&ri->boxes[i], box, ri->left, ri->top,
+                                   run_w, run_h);
+        ft_blit_bitmap(g, &ri->ras[i]->glyph->bitmap, &dst);
+    }
+    return true;
+}
+
 bool font_fit_single(const struct shaped_run *run, struct glyph *g)
 {
     if (!run || !g || run->count < 1 || run->count > FONT_RUN_MAX)
@@ -346,22 +363,21 @@ bool font_fit_single(const struct shaped_run *run, struct glyph *g)
     int run_w = ri.right - ri.left, run_h = ri.bottom - ri.top;
     if (run_w <= 0 || run_h <= 0)
         return false;
+    int cols = g->width;
     struct box box = ft_place_ink(ri.left, -ri.top, run_w, run_h, ri.advance,
-                                  g->width,
+                                  cols,
                                ri.color ? font_thread_metrics.ink_rows : GLYPH_CELL_H,
                                ri.color);
-    if (!ft_prepare_canvas(g, &box))
-        return false;
-    g->has_color = ri.color;
-    if (ri.color && !g->color && !glyph_color_plane(g))
+    if (!draw_run_ink(g, &ri, box, run_w, run_h, NULL))
         return false;
 
-    for (int i = 0; i < ri.drawn; i++) {
-        struct box dst = scale_box(&ri.boxes[i], box, ri.left, ri.top,
-                                   run_w, run_h);
-        ft_blit_bitmap(g, &ri.ras[i]->glyph->bitmap, &dst);
-    }
-    return true;
+    /* A glyph that stays in its cell can use a cached tile. Draw it again on
+     * a canvas without the blank columns past the cell. */
+    struct box inked;
+    if (!ft_blank_overhang(g, cols, &inked))
+        return true;
+    return glyph_reset(g, (unsigned)cols) &&
+           draw_run_ink(g, &ri, box, run_w, run_h, &inked);
 }
 
 bool font_fit_cells(const struct shaped_run *run, int n_cells, struct glyph *cells)
