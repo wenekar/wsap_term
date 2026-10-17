@@ -80,16 +80,18 @@ enum raster_spill_kind : uint8_t {
 
 /*
  * The spill of one cell, clipped to the cell area and to the window.
- * - [x0, x1) are grid-local columns. The spill covers every row of the
- *   grid row: ch rows.
- * - `offset` is the byte offset of its first row in the coverage arena.
- *   A row has (x1 - x0) * bpp bytes. bpp is 1 for ALPHA, 3 for SUBPX, and
- *   4 for COLOR (premultiplied 0xAARRGGBB words).
+ * - [x0, x1) are grid-local columns. [y0, y1) are the rows of the grid row
+ *   that can have ink: 0 <= y0 < y1 <= ch. The other rows have none.
+ * - `offset` is the byte offset of row y0 in the coverage arena. The arena
+ *   holds rows y0 to y1 - 1, one after the other. A row has (x1 - x0) * bpp
+ *   bytes. bpp is 1 for ALPHA, 3 for SUBPX, and 4 for COLOR (premultiplied
+ *   0xAARRGGBB words). A COLOR offset is a multiple of 4.
  * - ALPHA and SUBPX store the coverage after faint. `fg` is their color.
  * - COLOR stores the glyph pixels. `faint` is its faint bit.
  */
 struct raster_spill {
     int x0, x1;
+    int y0, y1;
     uint32_t fg;
     size_t offset;
     enum raster_spill_kind kind;
@@ -115,11 +117,15 @@ struct raster_spill_list {
  * - `cache`: this worker's cell cache state (seen filter, pending table,
  *   hit log, L0). NULL when the renderer has no cell cache.
  * - `spill`: the spill list.
+ * - `scratch`: room for one cell of `scratch_px` pixels. A cell that the
+ *   window cuts composes here first. It grows when it needs room.
  */
 struct raster_worker {
     struct pair_lut lut;
     struct cell_cache_worker *cache;
     struct raster_spill_list spill;
+    uint32_t *scratch;
+    size_t scratch_px;
 };
 
 /*

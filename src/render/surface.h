@@ -27,7 +27,9 @@
  * makes the frame invalid: everything paints.
  * - `canvas`: the canvas size.
  * - `grid`: the grid rect clipped to the canvas. Empty: no grid.
- * - `cells`: the visible columns and rows.
+ * - `cells`: the terminal size, frame cols and rows. With `grid` and `cell`
+ *   it also fixes the visible columns and rows. A terminal resize rewraps
+ *   rows and keeps their row keys, so it must repaint everything.
  * - `cell`: the cell size.
  * - `font_version`: font_instance_version() of the grid font.
  * - `palette_gen`, `default_fg`, `default_bg`, `cursor_color`,
@@ -56,7 +58,7 @@ bool render_surface_key_eq(const struct render_surface_key *a,
                            const struct render_surface_key *b);
 
 /*
- * - `rows`: the rows that the arrays describe. It equals key.cells.y.
+ * - `rows`: the rows that the arrays describe: the visible rows of the grid.
  * - `cap`: the allocated rows. The arrays have cap entries, and `ui` has
  *   cap + 1.
  * - `keys[r]`: the row key that canvas row r shows. 0 means unknown.
@@ -64,6 +66,10 @@ bool render_surface_key_eq(const struct render_surface_key *a,
  * - `reach[r]`: the spill reach of row r from its last full paint.
  * - `gpu`: per-surface GPU state, owned by render/gpu/. NULL without a GPU.
  *   render_surface_destroy() frees it with render_gpu_surface_free().
+ * - `ui_font_version`: font_instance_version() of the UI font of the last
+ *   frame, or 0. render_draw() sets it. A different UI font changes the UI
+ *   pixels but not the scene ops, so render_draw() then repaints all of the
+ *   UI. The other functions in this header do not touch it.
  */
 struct render_surface {
     bool valid;
@@ -74,6 +80,7 @@ struct render_surface {
     struct plan_span *ui;
     uint16_t *reach;
     void *gpu;
+    uint64_t ui_font_version;
 };
 
 /*
