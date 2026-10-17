@@ -161,7 +161,12 @@ Add tests with arguments or symbol overrides to `standalone_tests` in
 Linux tests need Wayland server libraries, protocol files, and `wayland-scanner`.
 `make test` also enables Sway and Kitty tests on Linux.
 The Sway suite needs `swaymsg` and `grim`.
-Font tests need CJK, color emoji, and musical symbol fonts.
+Font tests need JetBrains Mono, CJK, color emoji, and musical symbol fonts.
+JetBrains Mono is the reference family. Without it, some font checks fail or skip.
+The font tests set slight hinting and grayscale antialiasing.
+They also check the raster invariants with RGB subpixel antialiasing.
+The render tests set grayscale antialiasing.
+The fontconfig settings of the host do not change the results.
 
 `python3 tools/test-matrix.py` runs sanitizer checks across CPU targets.
 On x86-64, the default targets are native, x86-64-v2, x86-64-v3, and znver5.

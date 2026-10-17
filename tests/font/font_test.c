@@ -26,6 +26,15 @@ static struct font_instance *cur(void)
     return scaled ? scaled : font_instance_default();
 }
 
+/* The golden hashes, tiles, and cell widths expect slight hinting and
+ * grayscale antialiasing. Set them here, so the host fontconfig settings
+ * do not change the results. */
+static void use_reference_rendering(void)
+{
+    font_set_hint_style(FONT_HINT_SLIGHT);
+    font_set_aa_mode(FONT_AA_GRAYSCALE);
+}
+
 static bool init_fonts(void)
 {
     if (!font_backend_init())
@@ -1266,8 +1275,7 @@ static void test_hinting(void)
     check("subpixel RGB mode produces distinct per-channel coverages", has_distinct_rgb);
     glyph_release(&subpx_g);
 
-    font_set_hint_style(FONT_HINT_AUTO);
-    font_set_aa_mode(FONT_AA_AUTO);
+    use_reference_rendering();
 }
 
 static uint64_t glyph_ink_hash(const struct glyph *g)
@@ -2117,6 +2125,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "FAIL: font initialization\n");
         return 1;
     }
+    use_reference_rendering();
     font_instance_render_glyph(cur(), 0x10FFFF, 0, &unknown);
 
     test_variant_golden();
@@ -2156,6 +2165,10 @@ int main(int argc, char **argv)
     test_font_sizes();
     test_render_binds_own_instance();
     test_hinting();
+
+    font_set_aa_mode(FONT_AA_RGB);
+    test_raster_invariants();
+    use_reference_rendering();
 
     set_scale(180);
     test_cell_tiling();

@@ -355,7 +355,6 @@ static void presentation_test(void)
     struct wsap_vtcore *t = tt_new(2, 1);
     assert(t);
     wsap_vtcore_set_theme(t, &(struct wsap_vtcore_theme){ .fg = 0xFFFFFFFF, .bg = 0xFF000000 });
-    font_set_aa_mode(FONT_AA_GRAYSCALE);
     int w = 2 * CELL_W, h = CELL_H;
     uint32_t *pixels = malloc((size_t)w * h * sizeof(*pixels));
     assert(pixels);
@@ -375,7 +374,6 @@ static void presentation_test(void)
         assert(ink);
         assert(colored == (i == 0));
     }
-    font_set_aa_mode(FONT_AA_AUTO);
     free(pixels);
     wsap_vtcore_free(t);
 }
@@ -1420,6 +1418,9 @@ int main(int argc, char **argv)
     render_init();
     if (argc > 1 && !strcmp(argv[1], "--bench")) benchmark();
     else {
+        /* The pixel checks expect grayscale glyphs. Set them here, so the
+         * host fontconfig settings do not change the results. */
+        font_set_aa_mode(FONT_AA_GRAYSCALE);
         image_op_paints_and_clips_test();
         blend_rect_alpha_test();
         repaint_emits_damage_test();

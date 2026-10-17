@@ -3,7 +3,39 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'scripts/**'
+      - 'tools/deploy/**'
+      - 'tools/install/**'
+      - 'tools/ab.sh'
+      - 'tools/analyze.sh'
+      - 'tools/build_macos_icon.py'
+      - 'tools/generate_cards_font.py'
+      - 'tools/loc_per_function.py'
+      - 'tools/test-matrix.py'
+      - '.clangd'
+      - '.gitignore'
+      - 'LICENSE'
+      - 'Makefile'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'scripts/**'
+      - 'tools/deploy/**'
+      - 'tools/install/**'
+      - 'tools/ab.sh'
+      - 'tools/analyze.sh'
+      - 'tools/build_macos_icon.py'
+      - 'tools/generate_cards_font.py'
+      - 'tools/loc_per_function.py'
+      - 'tools/test-matrix.py'
+      - '.clangd'
+      - '.gitignore'
+      - 'LICENSE'
+      - 'Makefile'
   workflow_dispatch:
 
 permissions:
@@ -54,10 +86,9 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             gcc-14 \
             g++-14 \
-            ninja-build \
             pkg-config \
             ncurses-bin \
             libwayland-bin \
@@ -79,15 +110,9 @@ jobs:
             fontconfig \
             fonts-dejavu \
             fonts-jetbrains-mono \
-            fonts-firacode \
             fonts-noto-core \
             fonts-noto-cjk \
-            fonts-noto-color-emoji \
-            fonts-noto-extra \
-            cmake
-          sudo rm -f /etc/fonts/conf.d/10-sub-pixel-*.conf
-          sudo ln -sf /usr/share/fontconfig/conf.avail/10-no-sub-pixel.conf /etc/fonts/conf.d/
-          sudo fc-cache -f
+            fonts-noto-color-emoji
           python3 -m pip install --break-system-packages "meson>=1.12.0"
       - name: Install yyjson
         run: |
