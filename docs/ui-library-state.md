@@ -67,12 +67,14 @@ Destroying the view detaches and destroys its tree.
 Call `ui_view_destroy()` after event or action dispatch returns.
 
 Initialize the surface before mounting the view.
-Set its viewport and scale with `ui_surface_resize()` and
-`ui_surface_set_scale()`.
+Set its viewport and scale together with `ui_surface_configure()`.
+Use `ui_surface_resize()` or `ui_surface_set_scale()` to change one value.
 Set its theme with `ui_surface_set_sheet()`.
 Use CSS for gaps, padding, colors, and control sizes.
 
 Send keys and pointer input through `ui_surface_dispatch()`.
+Pointer input uses `struct pointer_event` from `input/pointer.h`.
+`PTR_NONE` is its zero value.
 The host sets `ui_key_event.edit_unit` for editing keys.
 Use `ui_edit_unit_for_mods()` with the host's binding policy.
 The input widget uses this unit for arrow movement and deletion.
@@ -288,8 +290,13 @@ The dispatcher checks the current control before it runs an action.
 It rejects hidden, disabled, ignored, and unsupported targets.
 The tree indexes IDs for lookup and duplicate checks.
 
-Linux maps the tree to AT-SPI.
-macOS maps it to AppKit accessibility elements.
+The yasl binding maps the tree through AccessKit C.
+AccessKit provides AT-SPI on Linux and AppKit accessibility on macOS.
+The binding keeps stable native IDs and maps text positions to UTF-8 offsets.
+It splits multiline values into text runs at hard line breaks.
+Activation wakes the UI thread to publish a fresh snapshot, also for idle windows.
+Inactive providers do not build terminal history snapshots.
+Callbacks use unique tokens. A detached token cannot name a new window.
 A Windows UI Automation provider can use the same tree and action sink later.
 Keep native platform types in the surface provider.
 Keep the UI tree and provider contract platform neutral.
@@ -299,8 +306,7 @@ Password nodes do not copy their value or text offsets into the tree.
 
 Each drawn frame publishes accessibility changes without a UI damage check.
 A terminal text change does not need to change the UI scene.
-Removed or detached macOS elements return empty results.
-They cannot run actions.
+Removed or detached elements cannot run actions.
 A provider with no action sink is read-only.
 
 The terminal view exposes up to 500 history rows before the current viewport.
@@ -312,7 +318,7 @@ It does not change the selection.
 
 Run `ui-accessibility-test` to check trees and action routing.
 Run `history-text-test` to check Unicode history and viewport limits.
-Run `darwin-native-app-test` to check AppKit output, ranges, order, and lifetime.
+Run `ui-accessibility-provider-test` to check native text, actions, and lifetime.
 These tests do not replace checks with VoiceOver and Orca.
 Visual bell flashes the terminal view when the bell rings.
 High contrast mode applies a high-contrast palette.

@@ -197,10 +197,8 @@ static struct vector2i device_pos(const struct window *w, const struct yasl_even
 
 static int popup_of(const struct window *w, const struct yasl_surface *s)
 {
-    for (int i = 1; i < w->native_count; i++)
-        if (w->natives[i].surface == s)
-            return i;
-    return 0;
+    const struct window_native *native = s ? yasl_surface_get_userdata(s) : NULL;
+    return native && native->window == w ? native->id : 0;
 }
 
 static void queue_mouse(struct window *w, const struct yasl_event *in)
@@ -213,8 +211,8 @@ static void queue_mouse(struct window *w, const struct yasl_event *in)
             .mods = (unsigned)input_modifiers_from_yasl(in->mods),
             .kind = pointer_kind_of(in->action),
             .device = POINTER_DEVICE_MOUSE,
-            .popup = popup_of(w, in->surface),
         },
+        .popup = popup_of(w, in->surface),
     };
     input_queue_add(&w->input, &ev);
 }
@@ -252,8 +250,8 @@ static void queue_pen(struct window *w, const struct yasl_event *in)
                 .tilt_x = (float)in->pen.tilt_x,
                 .tilt_y = (float)in->pen.tilt_y,
             },
-            .popup = popup_of(w, in->surface),
         },
+        .popup = popup_of(w, in->surface),
     };
     input_queue_add(&w->input, &ev);
 }
@@ -277,8 +275,8 @@ static void queue_wheel(struct window *w, const struct yasl_event *in,
             .scroll_delta = lines,
             .kind = PTR_SCROLL,
             .device = POINTER_DEVICE_MOUSE,
-            .popup = popup_of(w, in->surface),
         },
+        .popup = popup_of(w, in->surface),
     });
 }
 

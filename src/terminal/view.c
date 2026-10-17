@@ -24,14 +24,14 @@ static struct terminal_view *view_of(const struct ui_widget *widget)
                            widget);
 }
 
-static enum pointer_kind pointer_kind(enum ui_pointer_kind k)
+static enum wsap_vtcore_mouse_event_kind term_pointer_kind(enum pointer_kind kind)
 {
-    switch (k) {
-    case UI_POINTER_PRESS:   return PTR_PRESS;
-    case UI_POINTER_RELEASE: return PTR_RELEASE;
-    case UI_POINTER_MOTION:  return PTR_MOTION;
-    case UI_POINTER_SCROLL:  return PTR_SCROLL;
-    default:                 return PTR_LEAVE;
+    switch (kind) {
+    case PTR_PRESS:   return WSAP_VTCORE_MOUSE_PRESS;
+    case PTR_RELEASE: return WSAP_VTCORE_MOUSE_RELEASE;
+    case PTR_MOTION:  return WSAP_VTCORE_MOUSE_MOTION;
+    case PTR_SCROLL:  return WSAP_VTCORE_MOUSE_SCROLL;
+    default:          return WSAP_VTCORE_MOUSE_LEAVE;
     }
 }
 
@@ -64,7 +64,7 @@ _Static_assert(POINTER_BUTTON_NONE == (int)WSAP_VTCORE_MOUSE_BUTTON_NONE &&
                "pointer and term mouse buttons differ");
 
 static bool report_mouse(struct window *w, struct tab *t,
-                         const struct ui_pointer_event *p, struct vector2i local)
+                         const struct pointer_event *p, struct vector2i local)
 {
     struct wsap_vtcore_mouse_event mev = {
         .pos = term_vec_from_geom(cell_at(t, local)),
@@ -73,7 +73,7 @@ static bool report_mouse(struct window *w, struct tab *t,
         .mods = p->mods,
         .scroll_lines = p->scroll_lines,
         .scroll_delta = p->scroll_delta,
-        .kind = (enum wsap_vtcore_mouse_event_kind)pointer_kind(p->kind),
+        .kind = term_pointer_kind(p->kind),
     };
     struct wsap_vtcore_modes modes = terminal_input_modes(w);
     char buf[64];
@@ -105,7 +105,7 @@ static void scroll_lines(struct window *w, struct tab *t, int lines)
 }
 
 static void select_text(struct window *w, struct tab *t,
-                        const struct ui_pointer_event *p, struct vector2i local,
+                        const struct pointer_event *p, struct vector2i local,
                         uint64_t now_ms)
 {
     const struct font_metrics *m = tab_metrics(t);
@@ -114,8 +114,8 @@ static void select_text(struct window *w, struct tab *t,
     struct vector2i cell = cell_at(t, local);
     t->selection.double_click_ms = window_double_click_ms(w);
     selection_handle_pointer(&t->selection, t->session.term, cell,
-                             right_half, pointer_kind(p->kind), now_ms);
-    if (p->kind == UI_POINTER_RELEASE && wsap_vtcore_has_selection(t->session.term)) {
+                             right_half, p->kind, now_ms);
+    if (p->kind == PTR_RELEASE && wsap_vtcore_has_selection(t->session.term)) {
         char *text = wsap_vtcore_selection_text(t->session.term);
         if (text && window_surface(w))
             window_copy(w, YASL_PRIMARY, text);
@@ -124,7 +124,7 @@ static void select_text(struct window *w, struct tab *t,
 }
 
 static void secondary_press(struct window *w, struct tab *t,
-                            const struct ui_pointer_event *p,
+                            const struct pointer_event *p,
                             struct vector2i local)
 {
     if (terminal_pointer_selects_text(t->session.term))
@@ -164,26 +164,26 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
     }
     if (event->kind != UI_EVENT_POINTER || !t || !t->session.term)
         return false;
-    const struct ui_pointer_event *p = &event->data.pointer;
+    const struct pointer_event *p = &event->data.pointer;
     struct vector2i local = ui_widget_to_local(widget, p->pos);
-    if (p->kind == UI_POINTER_LEAVE) {
+    if (p->kind == PTR_LEAVE) {
         view->hover_link = false;
         return false;
     }
-    if (p->kind == UI_POINTER_PRESS && p->button == 2) {
+    if (p->kind == PTR_PRESS && p->button == 2) {
         secondary_press(w, t, p, local);
         return true;
     }
 
     char *url = wsap_vtcore_link_at(t->session.term, term_vec_from_geom(cell_at(t, local)));
     view->hover_link = url != NULL;
-    if (view->opening_link && p->button == 0 && p->kind == UI_POINTER_RELEASE) {
+    if (view->opening_link && p->button == 0 && p->kind == PTR_RELEASE) {
         view->opening_link = false;
         ui_widget_release_pointer(widget);
         wsap_vtcore_text_free(url);
         return true;
     }
-    if (url && p->button == 0 && p->kind == UI_POINTER_PRESS &&
+    if (url && p->button == 0 && p->kind == PTR_PRESS &&
         (p->mods & (INPUT_MOD_CTRL | INPUT_MOD_SUPER))) {
         platform_open_url(url);
         view->opening_link = true;
@@ -193,7 +193,7 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
     }
     wsap_vtcore_text_free(url);
 
-    if (p->kind == UI_POINTER_SCROLL && !ui_pointer_is_horizontal_wheel(p) &&
+    if (p->kind == PTR_SCROLL && !pointer_wheel_is_horizontal(p->button) &&
         (p->scroll_lines || p->scroll_delta != 0.0f)) {
         int lines = p->scroll_lines;
         if (p->scroll_delta != 0.0f) {
@@ -203,10 +203,10 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
         }
         if (!lines)
             return true;
-        struct ui_pointer_event step = *p;
+        struct pointer_event step = *p;
         step.scroll_lines = lines;
         step.scroll_delta = 0.0f;
-        step.button = lines > 0 ? UI_POINTER_WHEEL_BUTTON : UI_POINTER_WHEEL_BUTTON + 1;
+        step.button = lines > 0 ? POINTER_WHEEL_UP : POINTER_WHEEL_DOWN;
         if (!t->selection.pressed && report_mouse(w, t, &step, local))
             return true;
         scroll_lines(w, t, lines);
@@ -216,22 +216,22 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
     if (!t->selection.pressed && report_mouse(w, t, p, local))
         return true;
     if (p->button == 0 && pointer_is_local(w, t)) {
-        if (p->kind == UI_POINTER_PRESS)
+        if (p->kind == PTR_PRESS)
             ui_widget_capture_pointer(widget);
-        else if (p->kind == UI_POINTER_RELEASE)
+        else if (p->kind == PTR_RELEASE)
             ui_widget_release_pointer(widget);
         select_text(w, t, p, local, event->time_ms);
         changed(view);
         return true;
     }
-    if (p->button == 1 && p->kind == UI_POINTER_PRESS) {
+    if (p->button == 1 && p->kind == PTR_PRESS) {
         if (window_surface(w))
             window_paste(w, YASL_PRIMARY);
         return true;
     }
-    if (p->button >= UI_POINTER_WHEEL_BUTTON)
+    if (p->button >= POINTER_WHEEL_UP)
         return true;
-    if (p->kind == UI_POINTER_MOTION && p->button == 3)
+    if (p->kind == PTR_MOTION && p->button == 3)
         t->selection.pressed = false;
     return false;
 }

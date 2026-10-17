@@ -90,10 +90,10 @@ static bool key(struct fixture *f, enum ui_key k, unsigned mods, uint32_t ch)
 
 static void click(struct fixture *f, struct vector2i pos)
 {
-    struct ui_event press = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS, .pos = pos }, 0);
-    struct ui_event release = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_RELEASE, .pos = pos }, 0);
+    struct ui_event press = ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS, .pos = pos }, 0);
+    struct ui_event release = ui_event_pointer((struct pointer_event){
+        .kind = PTR_RELEASE, .pos = pos }, 0);
     ui_surface_dispatch(&f->surface, &press);
     ui_surface_dispatch(&f->surface, &release);
     ui_surface_prepare(&f->surface);

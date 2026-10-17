@@ -1,7 +1,7 @@
 #include "ui/yasl/internal.h"
 #include "ui/yasl/native_input.h"
 
-static void track_pointer(struct window *w, struct input_mouse_event *m)
+static void track_pointer(struct window *w, struct pointer_event *m)
 {
     if (m->kind == PTR_LEAVE) {
         w->pointer.inside = false;
@@ -33,7 +33,7 @@ static void track_native(struct window *w, struct input_event *ev)
 
 void window_drain_input(struct window *w)
 {
-    if (!w->surface || w->closed)
+    if (!w->native.surface || w->closed)
         return;
     struct input_event ev;
     while (!w->closed && (window_inject_pop(w, &ev) || input_queue_take(&w->input, &ev))) {

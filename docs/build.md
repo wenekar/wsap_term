@@ -1,5 +1,19 @@
 # Build and install
 
+## Accessibility dependency
+
+The yasl binding uses [AccessKit C](https://github.com/AccessKit/accesskit-c)
+for AT-SPI on Linux and AppKit accessibility on macOS.
+The UI core has no AccessKit dependency.
+
+Meson first checks for `accesskit-c-0.23` version 0.23.1 or later.
+If it is absent, Meson builds the release pinned in
+`subprojects/accesskit-c.wrap`. Cargo uses that release's lockfile.
+Install Rust and Cargo 1.87 or later with [rustup](https://rustup.rs/).
+The first build downloads the Rust dependencies.
+An installed AccessKit C library removes the need for Rust during the app build.
+For a cross build, set `-Daccesskit-c:triplet=TARGET` to the Rust target triple.
+
 ## Build targets
 
 | Command | Result |

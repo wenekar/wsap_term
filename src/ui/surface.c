@@ -185,17 +185,25 @@ void ui_surface_set_sheet(struct ui_surface *surface,
         ui_widget_invalidate(surface->impl.root, UI_WIDGET_INVALIDATE_MEASURE);
 }
 
-void ui_surface_set_scale(struct ui_surface *surface,
-                          struct css_scale_context scale)
+void ui_surface_configure(struct ui_surface *surface, struct vector2i viewport,
+                            struct css_scale_context scale)
 {
     if (!surface)
         return;
     uint64_t before = ui_style_context_generation(&surface->impl.style);
     ui_style_context_set_scale(&surface->impl.style, scale);
-    if (before != ui_style_context_generation(&surface->impl.style) &&
-        surface->impl.root)
+    bool changed = before != ui_style_context_generation(&surface->impl.style) ||
+                   !vector2i_eq(surface->impl.viewport, viewport);
+    surface->impl.viewport = viewport;
+    if (changed && surface->impl.root)
         ui_widget_invalidate(surface->impl.root, UI_WIDGET_INVALIDATE_MEASURE);
     ui_surface_prepare(surface);
+}
+
+void ui_surface_set_scale(struct ui_surface *surface,
+                          struct css_scale_context scale)
+{
+    ui_surface_configure(surface, ui_surface_viewport(surface), scale);
 }
 
 struct css_scale_context ui_surface_scale(const struct ui_surface *surface)
@@ -213,15 +221,7 @@ struct css_scale_context ui_surface_scale(const struct ui_surface *surface)
 
 void ui_surface_resize(struct ui_surface *surface, struct vector2i viewport)
 {
-    if (!surface)
-        return;
-    if (!vector2i_eq(surface->impl.viewport, viewport)) {
-        surface->impl.viewport = viewport;
-        if (surface->impl.root)
-            ui_widget_invalidate(surface->impl.root,
-                                 UI_WIDGET_INVALIDATE_MEASURE);
-    }
-    ui_surface_prepare(surface);
+    ui_surface_configure(surface, viewport, ui_surface_scale(surface));
 }
 
 struct vector2i ui_surface_viewport(const struct ui_surface *surface)
@@ -245,7 +245,7 @@ static void send(struct ui_widget *widget, struct ui_event event)
 static void leave(struct ui_widget *widget)
 {
     send(widget, ui_event_pointer(
-        (struct ui_pointer_event){ .kind = UI_POINTER_LEAVE }, 0));
+        (struct pointer_event){ .kind = PTR_LEAVE }, 0));
 }
 
 void ui_surface_cancel_capture(struct ui_surface *surface)
@@ -322,7 +322,7 @@ void ui_surface_sync_modal(struct ui_surface *surface)
         if (hovered && !ui_widget_is_ancestor(modal, hovered)) {
             surface->impl.hovered = NULL;
             struct ui_event out = ui_event_pointer(
-                (struct ui_pointer_event){ .kind = UI_POINTER_LEAVE }, 0);
+                (struct pointer_event){ .kind = PTR_LEAVE }, 0);
             ui_widget_bubble(hovered, &out);
         }
         if (!ui_widget_is_ancestor(modal, surface->impl.focused))
@@ -384,15 +384,15 @@ static bool is_interactive_widget(const struct ui_widget *widget,
 static bool dispatch_pointer(struct ui_surface *surface,
                              const struct ui_event *event)
 {
-    const struct ui_pointer_event *pe = &event->data.pointer;
-    if (pe->kind != UI_POINTER_LEAVE)
+    const struct pointer_event *pe = &event->data.pointer;
+    if (pe->kind != PTR_LEAVE)
         surface->impl.pointer = pe->pos;
     struct ui_widget *target = surface->impl.captured
         ? surface->impl.captured
         : ui_widget_hit_test(surface->impl.root, pe->pos);
-    if (pe->kind == UI_POINTER_LEAVE)
+    if (pe->kind == PTR_LEAVE)
         target = NULL;
-    if (pe->kind == UI_POINTER_PRESS && pe->button == 0 &&
+    if (pe->kind == PTR_PRESS && pe->button == 0 &&
         !surface->impl.modal && !is_interactive_widget(target, pe->pos)) {
         ui_surface_focus(surface, NULL);
         ui_surface_sync_modal(surface);
@@ -400,12 +400,12 @@ static bool dispatch_pointer(struct ui_surface *surface,
             ? surface->impl.captured
             : ui_widget_hit_test(surface->impl.root, pe->pos);
     }
-    if (pe->kind == UI_POINTER_MOTION || pe->kind == UI_POINTER_LEAVE) {
+    if (pe->kind == PTR_MOTION || pe->kind == PTR_LEAVE) {
         struct ui_widget *previous = surface->impl.hovered;
         surface->impl.hovered = NULL;
         if (previous && previous != target) {
             struct ui_event out = *event;
-            out.data.pointer.kind = UI_POINTER_LEAVE;
+            out.data.pointer.kind = PTR_LEAVE;
             ui_widget_bubble(previous, &out);
         }
         if (target && !retired(surface, target))

@@ -170,6 +170,41 @@ void ui_accessibility_tree_destroy(struct ui_accessibility_tree *tree)
     *tree = (struct ui_accessibility_tree){0};
 }
 
+bool ui_accessibility_tree_copy(struct ui_accessibility_tree *dst,
+                                 const struct ui_accessibility_tree *src)
+{
+    if (!dst || !src)
+        return false;
+    if (dst == src)
+        return true;
+    struct ui_accessibility_tree copy = {0};
+    for (size_t i = 0; i < src->count; i++) {
+        const struct ui_accessibility_node *node = &src->nodes[i];
+        const struct ui_accessibility_node_spec spec = {
+            .id = node->id,
+            .parent_id = node->parent_id,
+            .order = node->order,
+            .role = node->role,
+            .states = node->states,
+            .actions = node->actions,
+            .bounds = node->bounds,
+            .name = node->name,
+            .description = node->description,
+            .value = node->value,
+            .caret_offset = node->caret_offset,
+            .selection_start = node->selection_start,
+            .selection_end = node->selection_end,
+        };
+        if (!ui_accessibility_tree_add(&copy, &spec)) {
+            ui_accessibility_tree_destroy(&copy);
+            return false;
+        }
+    }
+    ui_accessibility_tree_destroy(dst);
+    *dst = copy;
+    return true;
+}
+
 const struct ui_accessibility_node *
 ui_accessibility_tree_find(const struct ui_accessibility_tree *tree,
                            uint64_t id)

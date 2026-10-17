@@ -191,10 +191,10 @@ static bool button_event(struct ui_widget *widget, const struct ui_event *event)
     if (event->kind != UI_EVENT_POINTER)
         return false;
 
-    const struct ui_pointer_event *pointer = &event->data.pointer;
+    const struct pointer_event *pointer = &event->data.pointer;
     bool inside = rect2i_contains(button->widget.bounds, pointer->pos);
     switch (pointer->kind) {
-    case UI_POINTER_MOTION: {
+    case PTR_MOTION: {
         unsigned state = button->impl.state;
         if (inside)
             state |= BUTTON_HOVERED;
@@ -203,17 +203,17 @@ static bool button_event(struct ui_widget *widget, const struct ui_event *event)
         button_set_state(button, state);
         return false;
     }
-    case UI_POINTER_LEAVE:
+    case PTR_LEAVE:
         button_set_state(button, button->impl.state & ~BUTTON_HOVERED);
         return false;
-    case UI_POINTER_PRESS:
+    case PTR_PRESS:
         if (!inside || pointer->button != 0)
             return false;
         button_set_state(button, button->impl.state | BUTTON_PRESSED);
         ui_widget_focus(widget);
         ui_widget_capture_pointer(widget);
         return true;
-    case UI_POINTER_RELEASE: {
+    case PTR_RELEASE: {
         if (pointer->button != 0)
             return false;
         ui_widget_release_pointer(widget);
@@ -223,8 +223,8 @@ static bool button_event(struct ui_widget *widget, const struct ui_event *event)
             button_clicked(button);
         return activate;
     }
-    case UI_POINTER_NONE:
-    case UI_POINTER_SCROLL:
+    case PTR_NONE:
+    case PTR_SCROLL:
         return false;
     }
     return false;

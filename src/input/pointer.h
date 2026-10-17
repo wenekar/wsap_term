@@ -22,7 +22,8 @@ enum pointer_button {
 };
 
 enum pointer_kind : uint8_t {
-    PTR_PRESS = 0,
+    PTR_NONE = 0,
+    PTR_PRESS,
     PTR_RELEASE,
     PTR_MOTION,
     PTR_SCROLL,
@@ -48,7 +49,14 @@ struct pointer_event {
     int scroll_lines;
     float scroll_delta;
     unsigned mods;
+    enum pointer_device device;
+    struct pointer_pen pen;
 };
+
+static inline bool pointer_is_button_press(const struct pointer_event *event)
+{
+    return event->kind == PTR_PRESS && event->button < POINTER_WHEEL_UP;
+}
 
 static inline struct pointer_event pointer_event(
         enum pointer_kind kind, struct vector2i pos, int button,

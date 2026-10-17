@@ -227,10 +227,10 @@ static void bar_drag_to(struct ui_scrollview *sv, int y)
         ? (int)((int64_t)top * sv_max_offset(sv) / travel) : 0);
 }
 
-static bool wheel(struct ui_scrollview *sv, const struct ui_pointer_event *p)
+static bool wheel(struct ui_scrollview *sv, const struct pointer_event *p)
 {
     if (sv->impl.has_metrics || !rect2i_contains(sv->widget.bounds, p->pos) ||
-        ui_pointer_is_horizontal_wheel(p))
+        pointer_wheel_is_horizontal(p->button))
         return false;
     int before = sv->impl.scroll_y;
     float delta = p->scroll_delta != 0.0f
@@ -297,16 +297,16 @@ static bool scrollview_event(struct ui_widget *widget,
     }
     if (event->kind != UI_EVENT_POINTER)
         return false;
-    const struct ui_pointer_event *p = &event->data.pointer;
+    const struct pointer_event *p = &event->data.pointer;
     struct vector2i local = ui_widget_to_local(widget, p->pos);
     bool captured = ui_widget_is_captured(widget);
     struct bar g = {0};
     switch (p->kind) {
-    case UI_POINTER_LEAVE:
+    case PTR_LEAVE:
         if (!captured)
             set_bar_state(sv, BAR_IDLE);
         return false;
-    case UI_POINTER_MOTION:
+    case PTR_MOTION:
         if (captured) {
             bar_drag_to(sv, local.y);
             return true;
@@ -317,7 +317,7 @@ static bool scrollview_event(struct ui_widget *widget,
         }
         set_bar_state(sv, BAR_HOVER);
         return forward_to_child(sv, event);
-    case UI_POINTER_PRESS:
+    case PTR_PRESS:
         if (!over_track(sv, local, hit_state(sv)))
             return false;
         if (!bar_visible(sv) || p->button != 0 || (p->mods & UI_MOD_SHIFT))
@@ -329,7 +329,7 @@ static bool scrollview_event(struct ui_widget *widget,
         ui_widget_capture_pointer(widget);
         bar_drag_to(sv, local.y);
         return true;
-    case UI_POINTER_RELEASE:
+    case PTR_RELEASE:
         if (!captured)
             return over_track(sv, local, hit_state(sv)) &&
                    forward_to_child(sv, event);
@@ -338,7 +338,7 @@ static bool scrollview_event(struct ui_widget *widget,
         ui_widget_release_pointer(widget);
         set_bar_state(sv, over_track(sv, local, BAR_HOVER) ? BAR_HOVER : BAR_IDLE);
         return true;
-    case UI_POINTER_SCROLL:
+    case PTR_SCROLL:
         if ((sv->impl.has_metrics || !bar_visible(sv)) &&
             over_track(sv, local, hit_state(sv)) && forward_to_child(sv, event))
             return true;

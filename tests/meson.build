@@ -262,6 +262,44 @@ test(
     suite: 'unit',
 )
 
+if system == 'linux'
+    dbus_run_session = find_program('dbus-run-session', required: false)
+    if dbus_run_session.found()
+        accessibility_provider_test = executable(
+            'ui-accessibility-provider-test',
+            files('ui/yasl/accessibility/provider_test.c'),
+            c_args: test_c_args,
+            include_directories: inc,
+            link_with: ui_yasl_lib,
+            dependencies: deps,
+        )
+        test(
+            'ui-accessibility-provider-test',
+            dbus_run_session,
+            args: ['--', accessibility_provider_test],
+            env: {
+                'GSETTINGS_BACKEND': 'memory',
+                'AT_SPI_BUS_ADDRESS': '',
+                'WSAP_NO_PRELOAD': '1',
+                'LD_PRELOAD': '',
+            },
+            suite: 'unit',
+            timeout: 60,
+        )
+    endif
+elif system == 'darwin'
+    accessibility_provider_test = executable(
+        'ui-accessibility-provider-test',
+        files('ui/yasl/accessibility/provider_test.m'),
+        objc_args: test_c_args,
+        include_directories: inc,
+        link_with: ui_yasl_lib,
+        dependencies: deps,
+    )
+    test('ui-accessibility-provider-test', accessibility_provider_test,
+         env: test_env, suite: 'unit')
+endif
+
 if get_option('integration_tests')
     integration_env = environment()
     integration_env.set('BIN', program.full_path())

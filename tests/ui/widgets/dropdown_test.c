@@ -67,8 +67,8 @@ static void long_list_bar_test(void)
 
     struct rect2i view = dropdown.scroll.widget.bounds;
     struct vector2i on_track = { .x = rect2i_end(view).x - 2, .y = view.y + 10 };
-    struct ui_event motion = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_MOTION, .pos = on_track,
+    struct ui_event motion = ui_event_pointer((struct pointer_event){
+        .kind = PTR_MOTION, .pos = on_track,
     }, 0);
     ui_surface_dispatch(&surface, &motion);
     ui_surface_prepare(&surface);
@@ -129,13 +129,13 @@ int main(void)
     assert(changes.count == 1);
 
     assert(ui_dropdown_open(&dropdown));
-    struct ui_event wheel = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS, .pos = { .x = 470, .y = 350 }, .button = UI_POINTER_WHEEL_BUTTON + 2,
+    struct ui_event wheel = ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS, .pos = { .x = 470, .y = 350 }, .button = POINTER_WHEEL_LEFT,
     }, 0);
     ui_surface_dispatch(&surface, &wheel);
     assert(ui_dropdown_is_open(&dropdown));
-    struct ui_event outside = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS, .pos = { .x = 470, .y = 350 },
+    struct ui_event outside = ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS, .pos = { .x = 470, .y = 350 },
     }, 0);
     assert(ui_surface_dispatch(&surface, &outside));
     assert(!ui_dropdown_is_open(&dropdown));

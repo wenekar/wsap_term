@@ -90,8 +90,6 @@ struct window *window_create(struct window_host *host, const struct window_spec 
 void window_compose_frame(struct window *w, struct window_frame *frame);
 bool window_present(struct window *w, struct window_frame *frame,
                     const struct damage_list *damage);
-bool window_native_add(struct window *w, struct yasl_surface *s);
-void window_native_remove(struct window *w, struct yasl_surface *s);
 void window_native_draw(struct window *w, struct yasl_surface *s);
 void window_close(struct window *w);
 

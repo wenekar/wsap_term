@@ -77,13 +77,12 @@ static void draw_windows(struct window_host *host)
 {
     for (int i = 0; i < host->count; i++) {
         struct window *w = host->windows[i];
-        if (!w->surface || w->closed || w->suspended || !w->needs_draw)
+        if (!w->native.surface || w->closed || w->suspended || !w->needs_draw)
             continue;
         w->needs_draw = false;
-        window_native_draw(w, w->surface);
-        for (int j = 1; j < w->native_count && !w->closed; j++)
-            if (w->natives[j].surface)
-                window_native_draw(w, w->natives[j].surface);
+        window_native_draw(w, w->native.surface);
+        for (int j = 0; j < w->ui.menu_popups && !w->closed; j++)
+            window_native_draw(w, w->ui.menu_popup[j].native.surface);
         if (i >= host->count || host->windows[i] != w)
             i = -1;
     }
@@ -97,7 +96,7 @@ static uint64_t host_service(void *ud, uint64_t id, uint64_t interval_ns)
     window_host_reap(host);
     for (int i = host->count - 1; i >= 0; i--) {
         struct window *w = host->windows[i];
-        if (w->surface && !w->closed)
+        if (w->native.surface && !w->closed)
             window_drain_input(w);
     }
     draw_windows(host);
@@ -183,21 +182,6 @@ bool window_host_destroying(const struct window_host *host)
     return host->destroying;
 }
 
-static struct window *window_of_surface(struct window_host *host,
-                                        const struct yasl_surface *s, bool *main)
-{
-    for (int i = 0; s && i < host->count; i++) {
-        struct window *w = host->windows[i];
-        for (int j = 0; j < w->native_count; j++) {
-            if (w->natives[j].surface == s) {
-                *main = s == w->surface;
-                return w;
-            }
-        }
-    }
-    return NULL;
-}
-
 static void window_geometry_event(struct window *w, const struct yasl_event *ev)
 {
     uint32_t scale_120 = (uint32_t)(ev->window.scale * 120.0 + 0.5);
@@ -260,10 +244,12 @@ static void dispatch_event(struct window_host *host, const struct yasl_event *ev
         break;
     }
 
-    bool main = false;
-    struct window *w = window_of_surface(host, ev->surface, &main);
-    if (!w)
+    struct window_native *native = ev->surface
+        ? yasl_surface_get_userdata(ev->surface) : NULL;
+    struct window *w = native ? native->window : NULL;
+    if (!w || w->host != host || w->closed)
         return;
+    bool main = native->id == 0;
     switch (ev->type) {
     case YASL_EVENT_CLOSE:
         if (main)

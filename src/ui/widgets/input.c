@@ -558,13 +558,13 @@ static int offset_at_x(const struct ui_input *in, int x)
     return pos;
 }
 
-static bool handle_pointer(struct ui_input *in, const struct ui_pointer_event *p,
+static bool handle_pointer(struct ui_input *in, const struct pointer_event *p,
                            uint64_t time_ms)
 {
     struct ui_widget *widget = &in->widget;
     int x = ui_widget_to_local(widget, p->pos).x;
     switch (p->kind) {
-    case UI_POINTER_PRESS:
+    case PTR_PRESS:
         if (!rect2i_contains(widget->bounds, p->pos))
             return false;
         if (p->button == 2) {
@@ -596,7 +596,7 @@ static bool handle_pointer(struct ui_input *in, const struct ui_pointer_event *p
         else
             caret_move_to(in, offset_at_x(in, x), false);
         return true;
-    case UI_POINTER_MOTION:
+    case PTR_MOTION:
         if (!in->impl.dragging)
             return false;
         if (in->impl.clicks > 1)
@@ -610,7 +610,7 @@ static bool handle_pointer(struct ui_input *in, const struct ui_pointer_event *p
         }
         caret_move_to(in, offset_at_x(in, x), true);
         return true;
-    case UI_POINTER_RELEASE:
+    case PTR_RELEASE:
         if (!in->impl.dragging)
             return false;
         in->impl.dragging = false;

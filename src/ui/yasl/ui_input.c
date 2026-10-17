@@ -79,25 +79,3 @@ struct ui_key_event ui_key_from_input(const struct input_key_event *ev)
     out.text_deferred = ev && ev->text_deferred;
     return out;
 }
-
-struct ui_pointer_event ui_pointer_from_input(const struct input_mouse_event *ev)
-{
-    struct ui_pointer_event out = {0};
-    if (!ev)
-        return out;
-    out.pos = ev->pos;
-    out.button = ev->button;
-    out.scroll_lines = ev->scroll_lines;
-    out.scroll_delta = ev->scroll_delta;
-    out.mods = ev->mods;
-    out.device = ev->device;
-    out.pen = ev->pen;
-    switch (ev->kind) {
-    case PTR_PRESS:   out.kind = UI_POINTER_PRESS; break;
-    case PTR_RELEASE: out.kind = UI_POINTER_RELEASE; break;
-    case PTR_MOTION:  out.kind = UI_POINTER_MOTION; break;
-    case PTR_SCROLL:  out.kind = UI_POINTER_SCROLL; break;
-    case PTR_LEAVE:   out.kind = UI_POINTER_LEAVE; break;
-    }
-    return out;
-}
