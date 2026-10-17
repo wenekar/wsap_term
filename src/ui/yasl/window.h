@@ -90,9 +90,9 @@ struct window *window_create(struct window_host *host, const struct window_spec 
 void window_compose_frame(struct window *w, struct window_frame *frame);
 /*
  * Shows the canvas of `frame`. `damage` lists the canvas pixels that
- * changed. NULL or full damage presents the whole canvas. `presented` is
- * the GPU result for a drawable frame. Returns true when the frame is on
- * screen.
+ * changed. NULL, full damage, or an empty list presents the whole canvas.
+ * An overflowed list presents its bounds. `presented` is the GPU result
+ * for a drawable frame. Returns true when the frame is on screen.
  */
 bool window_present(struct window *w, struct window_frame *frame,
                     const struct damage_list *damage, bool presented);
