@@ -54,19 +54,35 @@ bool glyph_tile_eligible(const struct font_instance *fi, const struct glyph *g)
 void fill_tile(const struct font_instance *fi, uint32_t *px, const struct glyph *g)
 {
     int cw = fi->m.cell_w, ch = fi->m.cell_h;
+    uint32_t bg = glyph_tile_bg();
     if (g->has_subpx_ink && g->subpx) {
-        uint32_t bg = glyph_tile_bg();
-        for (int y = 0; y < ch; y++)
-            for (int x = 0; x < cw; x++) {
-                uint8_t sr = g->subpx[y][x * 3 + 0];
-                uint8_t sg = g->subpx[y][x * 3 + 1];
-                uint8_t sb = g->subpx[y][x * 3 + 2];
-                px[(size_t)y * cw + x] = render_blend_subpx_lut(&default_subpx_lut, bg, sr, sg, sb);
+        for (int y = 0; y < ch; y++) {
+            uint32_t *row = px + (size_t)y * cw;
+            if (g->row_masks && !glyph_row_inked(g, y)) {
+                for (int x = 0; x < cw; x++)
+                    row[x] = bg;
+                continue;
             }
+            const uint8_t *subpx = g->subpx[y];
+            for (int x = 0; x < cw; x++) {
+                uint8_t sr = subpx[x * 3 + 0];
+                uint8_t sg = subpx[x * 3 + 1];
+                uint8_t sb = subpx[x * 3 + 2];
+                row[x] = render_blend_subpx_lut(&default_subpx_lut, bg, sr, sg, sb);
+            }
+        }
     } else {
-        for (int y = 0; y < ch; y++)
+        for (int y = 0; y < ch; y++) {
+            uint32_t *row = px + (size_t)y * cw;
+            if (g->row_masks && !glyph_row_inked(g, y)) {
+                for (int x = 0; x < cw; x++)
+                    row[x] = bg;
+                continue;
+            }
+            const uint8_t *alpha = g->alpha[y];
             for (int x = 0; x < cw; x++)
-                px[(size_t)y * cw + x] = default_lut[g->alpha[y][x]];
+                row[x] = default_lut[alpha[x]];
+        }
     }
 }
 

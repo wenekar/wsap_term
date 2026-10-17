@@ -419,15 +419,33 @@ static inline uint32_t resolve_cell_bg(const struct terminal_frame *frame,
     return terminal_frame_color(frame, rev ? cell->fg : cell->bg);
 }
 
-static void paint_row_backgrounds(const struct terminal_frame *frame,
+static inline void fill_cell_span(uint32_t *row_px, int width, int c0, int c1,
+                                  int cw, int ch, uint32_t bg)
+{
+    if (c0 >= c1)
+        return;
+    int x0 = c0 * cw, span_w = (c1 - c0) * cw;
+    if (x0 == 0 && span_w == width) {
+        fill_pixels32(row_px, bg, ch * width);
+        return;
+    }
+    for (int y = 0; y < ch; y++)
+        fill_pixels32(row_px + (size_t)y * width + x0, bg, span_w);
+}
+
+static bool paint_row_backgrounds(const struct terminal_frame *frame,
                                   uint32_t *row_px, int width, int cols,
                                   const struct wsap_vtcore_cell *cells, int cursor,
-                                  int cw, int ch, int sel_c0, int sel_c1)
+                                  int cw, int ch, int sel_c0, int sel_c1,
+                                  int first_col)
 {
+    bool restarted = false;
     if (!frame->reverse_video && sel_c0 > sel_c1 && (cursor < 0 || cursor >= cols)) {
         bool uniform = true;
         if (cells) {
-            for (int i = 0; i < cols; i++) {
+            for (int i = first_col; i < cols; i++) {
+                if (cells[i].text == 0 && cells[i].width != 0)
+                    continue;
                 if (cells[i].bg != WSAP_VTCORE_COLOR_BG &&
                     terminal_frame_color(frame, cells[i].bg) != frame->default_bg) {
                     uniform = false;
@@ -436,11 +454,20 @@ static void paint_row_backgrounds(const struct terminal_frame *frame,
             }
         }
         if (uniform) {
-            fill_pixels32(row_px, frame->default_bg, ch * width);
-            return;
+            fill_cell_span(row_px, width, first_col, cols, cw, ch, frame->default_bg);
+            if (cols * cw < width) {
+                for (int y = 0; y < ch; y++)
+                    fill_pixels32(row_px + (size_t)y * width + cols * cw,
+                                  frame->default_bg, width - cols * cw);
+            }
+            return false;
+        }
+        if (first_col > 0) {
+            first_col = 0;
+            restarted = true;
         }
     }
-    int c = 0;
+    int c = first_col;
     while (c < cols) {
         uint32_t bg = resolve_cell_bg(frame, cells, c, sel_c0, sel_c1, cursor);
         int end = c + 1;
@@ -458,6 +485,12 @@ static void paint_row_backgrounds(const struct terminal_frame *frame,
         }
         c = end;
     }
+    if (first_col > 0 && cols * cw < width) {
+        for (int y = 0; y < ch; y++)
+            fill_pixels32(row_px + (size_t)y * width + cols * cw,
+                          frame->default_bg, width - cols * cw);
+    }
+    return restarted;
 }
 
 static void paint_glyph(uint32_t *row_px, int width, int x0, int ch,
@@ -642,7 +675,7 @@ struct row_paint {
     uint32_t *row_px;
     const struct wsap_vtcore_cell *cells;
     int width, cols, cursor, cw, ch, sel_c0, sel_c1;
-    bool plain_cells;
+    bool plain_cells, bg_ready;
     int base, next;
     /* A glyph can draw into the cells to its right. The ink drawn so far in
      * this row ends at this x. A tile overwrites its cell, so the columns
@@ -695,15 +728,39 @@ static void row_add_ink(struct row_paint *p, int c, const struct glyph *glyph)
         p->ink_end = end;
 }
 
+static void ensure_row_bg(struct row_paint *p, int first_col, int cur_col)
+{
+    if (p->bg_ready)
+        return;
+    p->bg_ready = true;
+    bool restarted = paint_row_backgrounds(
+        p->frame, p->row_px, p->width, p->cols, p->cells,
+        p->cursor, p->cw, p->ch, p->sel_c0, p->sel_c1, first_col);
+    if ((first_col == 0 && cur_col > 0) || restarted)
+        p->ink_end = -1;
+}
+
 static void paint_cell(struct row_paint *p, int c)
 {
     const struct terminal_frame *frame = p->frame;
     if (p->cells && p->cells[c].text <= ' ' && p->cells[c].width != 0 &&
-        !render_cell_decorated(p->cells[c].attrs))
+        !render_cell_decorated(p->cells[c].attrs)) {
+        ensure_row_bg(p, c, c);
         return;
+    }
+    if (!p->bg_ready && p->cells && p->cells[c].width == 0 &&
+        p->cells[c].text <= ' ' && !render_cell_decorated(p->cells[c].attrs)) {
+        ensure_row_bg(p, 0, c);
+        return;
+    }
     struct wsap_vtcore_cell cell = p->plain_cells
         ? (p->cells ? render_cell_colors(frame, p->cells[c]) : render_blank_cell(frame))
         : render_resolve_cell(frame, p->cells, c, p->sel_c0, p->sel_c1, p->cursor);
+    if (cell.bg != frame->default_bg) {
+        ensure_row_bg(p, c, c);
+        if (p->ink_end == -1)
+            return;
+    }
     uint16_t style = render_cell_style(&cell);
     uint32_t *row_px = p->row_px;
     int cw = p->cw, ch = p->ch;
@@ -720,11 +777,22 @@ static void paint_cell(struct row_paint *p, int c)
                        inked, cell.fg);
         } else {
             const struct glyph *glyph = glyph_cache_fetch(p->fi, glyph_cp, style);
+            if (!p->bg_ready) {
+                int x0 = (glyph && glyph->width > 0 && glyph->row_masks)
+                    ? c * cw + glyph->x_offset : c * cw;
+                ensure_row_bg(p, x0 < c * cw ? 0 : c, c);
+                if (p->ink_end == -1)
+                    return;
+            }
             if (glyph && glyph->width > 0 && glyph->row_masks) {
                 paint_glyph(row_px, p->width, c * cw, ch, glyph, cell.fg, faint);
                 row_add_ink(p, c, glyph);
             }
         }
+    } else {
+        ensure_row_bg(p, c, c);
+        if (p->ink_end == -1)
+            return;
     }
     draw_decorations(row_px, p->width, c * cw, cw, ch, cell.attrs, cell.fg);
 }
@@ -732,27 +800,71 @@ static void paint_cell(struct row_paint *p, int c)
 static void paint_span(void *ctx, const struct glyph_span *span)
 {
     struct row_paint *p = ctx;
+    if (p->ink_end == -1)
+        return;
     int start = p->base + span->start;
-    for (; p->next < start; p->next++)
+    for (; p->next < start; p->next++) {
         paint_cell(p, p->next);
+        if (p->ink_end == -1)
+            return;
+    }
     int cw = p->cw, ch = p->ch;
     for (int i = 0; i < span->count; i++) {
         int c = start + i;
         struct wsap_vtcore_cell ci = render_resolve_cell(p->frame, p->cells, c, p->sel_c0,
                                                           p->sel_c1, p->cursor);
+        if (ci.bg != p->frame->default_bg) {
+            ensure_row_bg(p, c, c);
+            if (p->ink_end == -1)
+                return;
+        }
         bool faint = (ci.attrs & WSAP_VTCORE_ATTR_FAINT) != 0;
         if (span->tiles && ci.fg == p->frame->default_fg &&
             ci.bg == p->frame->default_bg && !faint) {
+            int inked = p->ink_end - c * cw;
             paint_tile(p->row_px + (size_t)c * cw, p->width,
                        span->tiles + (size_t)i * cw * ch, cw, ch,
-                       &span->cells[i], p->ink_end - c * cw, ci.fg);
+                       &span->cells[i], inked, ci.fg);
         } else {
-            paint_glyph(p->row_px, p->width, c * cw, ch, &span->cells[i], ci.fg, faint);
-            row_add_ink(p, c, &span->cells[i]);
+            const struct glyph *g = &span->cells[i];
+            if (!p->bg_ready) {
+                int x0 = (g->width > 0 && g->row_masks)
+                    ? c * cw + g->x_offset : c * cw;
+                ensure_row_bg(p, x0 < c * cw ? 0 : c, c);
+                if (p->ink_end == -1)
+                    return;
+            }
+            if (g->width > 0 && g->row_masks) {
+                paint_glyph(p->row_px, p->width, c * cw, ch, g, ci.fg, faint);
+                row_add_ink(p, c, g);
+            }
         }
         draw_decorations(p->row_px, p->width, c * cw, cw, ch, ci.attrs, ci.fg);
     }
     p->next = start + span->count;
+}
+
+static inline bool row_starts_with_tile_prefix(struct font_instance *fi,
+                                               const struct terminal_frame *frame,
+                                               const struct wsap_vtcore_cell *cells,
+                                               int cols)
+{
+    int limit = cols < 4 ? cols : 4;
+    if (limit <= 0)
+        return false;
+    for (int i = 0; i < limit; i++) {
+        struct wsap_vtcore_cell cell = cells[i];
+        if (cell.text <= ' ' || cell.width == 0 ||
+            (cell.attrs & WSAP_VTCORE_ATTR_FAINT))
+            return false;
+        cell = render_cell_colors(frame, cell);
+        if (cell.fg != frame->default_fg || cell.bg != frame->default_bg)
+            return false;
+        if (!glyph_cache_fetch_tile(fi, terminal_frame_glyph(frame, cell.text),
+                                    render_cell_style(&cell)))
+            return false;
+    }
+    return true;
 }
 
 static void paint_row_foreground(struct font_instance *fi,
@@ -761,12 +873,21 @@ static void paint_row_foreground(struct font_instance *fi,
                              const struct wsap_vtcore_cell *cells, int cursor,
                              int cw, int ch, int sel_c0, int sel_c1)
 {
+    bool bg_ready = !cells || cols <= 0 ||
+                    frame->reverse_video || sel_c0 <= sel_c1 ||
+                    (cursor >= 0 && cursor < cols) ||
+                    !row_starts_with_tile_prefix(fi, frame, cells, cols);
+    if (bg_ready)
+        (void)paint_row_backgrounds(frame, row_px, width, cols, cells, cursor, cw, ch,
+                                    sel_c0, sel_c1, 0);
+restart:
     struct row_paint p = {
         .fi = fi, .frame = frame, .row_px = row_px, .cells = cells,
         .width = width, .cols = cols, .cursor = cursor, .cw = cw, .ch = ch,
         .sel_c0 = sel_c0, .sel_c1 = sel_c1,
         .plain_cells = !frame->reverse_video && sel_c0 > sel_c1 &&
                        (cursor < 0 || cursor >= cols),
+        .bg_ready = bg_ready,
     };
     for (int c = 0; c < cols;) {
         int end = cells ? render_segment_end(cells, c, cols, is_cell_aligned_symbol) : c + 1;
@@ -776,13 +897,32 @@ static void paint_row_foreground(struct font_instance *fi,
             p.base = p.next = c;
             glyph_cache_shape_segment(fi, run_codepoints, end - c, render_cell_style(&cells[c]),
                                       paint_span, &p);
-            for (; p.next < end; p.next++)
+            if (p.ink_end == -1) {
+                bg_ready = true;
+                goto restart;
+            }
+            for (; p.next < end; p.next++) {
                 paint_cell(&p, p.next);
+                if (p.ink_end == -1) {
+                    bg_ready = true;
+                    goto restart;
+                }
+            }
         } else {
-            for (int i = c; i < end; i++)
+            for (int i = c; i < end; i++) {
                 paint_cell(&p, i);
+                if (p.ink_end == -1) {
+                    bg_ready = true;
+                    goto restart;
+                }
+            }
         }
         c = end;
+    }
+    if (!p.bg_ready && cols * cw < width) {
+        for (int y = 0; y < ch; y++)
+            fill_pixels32(row_px + (size_t)y * width + cols * cw,
+                          frame->default_bg, width - cols * cw);
     }
 }
 
@@ -815,7 +955,6 @@ static void paint_row(struct font_instance *fi, const struct terminal_frame *fra
     terminal_frame_row_selection(frame, row, cols, &sel_c0, &sel_c1);
     int cursor = row == frame->cursor_y ? frame->cursor_x : -1;
 
-    paint_row_backgrounds(frame, row_px, width, cols, cells, cursor, cw, ch, sel_c0, sel_c1);
     paint_row_foreground(fi, frame, row_px, width, cols, cells, cursor, cw, ch, sel_c0, sel_c1);
     draw_nonblock_cursor(frame, row_px, width, cursor, cols, cw, ch);
 }

@@ -111,24 +111,29 @@ struct render_subpx_lut {
     uint32_t b[256];
 };
 
+static inline void render_build_subpx_channel(uint32_t *out, int shift,
+                                              unsigned fg_c, unsigned bg_c)
+{
+    uint32_t bg_s = (uint32_t)bg_c << shift;
+    if (fg_c == bg_c) {
+        for (int c = 0; c < 256; c++)
+            out[c] = bg_s;
+        return;
+    }
+    out[0] = bg_s;
+    for (int c = 1; c < 255; c++) {
+        uint8_t a = render_correct_channel((int)fg_c, (int)bg_c, (uint8_t)c);
+        out[c] = (uint32_t)render_blend_channel(fg_c, bg_c, a) << shift;
+    }
+    out[255] = (uint32_t)fg_c << shift;
+}
+
 static inline void render_build_subpx_lut(struct render_subpx_lut *lut,
                                           uint32_t fg, uint32_t bg)
 {
-    unsigned fg_r = (fg >> 16) & 0xff;
-    unsigned fg_g = (fg >> 8) & 0xff;
-    unsigned fg_b = fg & 0xff;
-    unsigned bg_r = (bg >> 16) & 0xff;
-    unsigned bg_g = (bg >> 8) & 0xff;
-    unsigned bg_b = bg & 0xff;
-
-    for (int c = 0; c < 256; c++) {
-        uint8_t ar = render_correct_channel((int)fg_r, (int)bg_r, (uint8_t)c);
-        uint8_t ag = render_correct_channel((int)fg_g, (int)bg_g, (uint8_t)c);
-        uint8_t ab = render_correct_channel((int)fg_b, (int)bg_b, (uint8_t)c);
-        lut->r[c] = (uint32_t)render_blend_channel(fg_r, bg_r, ar) << 16;
-        lut->g[c] = (uint32_t)render_blend_channel(fg_g, bg_g, ag) << 8;
-        lut->b[c] = (uint32_t)render_blend_channel(fg_b, bg_b, ab);
-    }
+    render_build_subpx_channel(lut->r, 16, (fg >> 16) & 0xff, (bg >> 16) & 0xff);
+    render_build_subpx_channel(lut->g, 8, (fg >> 8) & 0xff, (bg >> 8) & 0xff);
+    render_build_subpx_channel(lut->b, 0, fg & 0xff, bg & 0xff);
 }
 
 static inline uint32_t render_blend_subpx_lut(const struct render_subpx_lut *lut,
