@@ -51,7 +51,7 @@ The baseline renderer is the renderer of commit `b5798f2`. The bench cases come 
 | typing | 0.0025 | 0.0022 | 0.0033 | 0.0037 |
 | idle | 0.0003 | 0.0002 | 0.0003 | 0.0003 |
 | scroll-region | 0.0291 | 0.0286 | 0.0298 | 0.0352 |
-| overlay-scroll | 0.0425 | 0.0413 | 0.0448 | 0.0545 |
+| overlay-scroll | 0.0648 | 0.0638 | 0.0669 | 0.0672 |
 | italic | 0.0325 | 0.0312 | 0.0331 | 0.0394 |
 | cjk-emoji | 0.1101 | 0.1091 | 0.1107 | 0.1035 |
 | fresh-every-frame | 0.0305 | 0.0297 | 0.0315 | 0.0455 |
@@ -72,6 +72,9 @@ Observations:
 - flood-bytes, flood-color, and flood-truecolor are faster in the
   x86-64 build than in the native build.
 - The scroll case is not faster than a full repaint.
+- overlay-scroll was measured again after its fix, in a later session
+  with the same method. The first version of the case repainted every
+  frame in full.
 
 ## After
 
