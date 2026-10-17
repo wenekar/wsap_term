@@ -196,9 +196,10 @@ struct yasl_private_damage_list {
 };
 
 /**
- * Adds rects to a pending damage list. Full damage (n == -1) stays full. Empty rects are
- * skipped. Count <= 0 or NULL rects make the list full. When the list would exceed
- * YASL_PRIVATE_DAMAGE_MAX rects, it becomes one rect that covers all pending damage.
+ * Adds rects to a pending damage list. Full damage (n == -1) stays full. Rects are clipped to
+ * non-negative coordinates first. Rects that are empty after the clip are skipped. Count <= 0
+ * or NULL rects make the list full. When the list would exceed YASL_PRIVATE_DAMAGE_MAX rects,
+ * it becomes one rect that covers all pending damage.
  * The bounds field always covers every rect in the list.
  */
 void yasl_private_damage_union(struct yasl_private_damage_list *list,

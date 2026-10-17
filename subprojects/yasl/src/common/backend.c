@@ -311,15 +311,14 @@ void yasl_private_surface_schedule_redraw(struct yasl_surface *s)
     s->display->ops->surface_schedule_redraw(s);
 }
 
-/* Union of two rects, computed in 64 bits so extreme edges cannot overflow. */
+/* Union of two rects. Both rects lie in [0, INT_MAX], so the result fits in int. */
 static struct yasl_private_rect2i rect_union(struct yasl_private_rect2i a, struct yasl_private_rect2i b)
 {
     int64_t x = a.x < b.x ? a.x : b.x, y = a.y < b.y ? a.y : b.y;
     int64_t r = (int64_t)a.x + a.width, r2 = (int64_t)b.x + b.width;
     int64_t bt = (int64_t)a.y + a.height, bt2 = (int64_t)b.y + b.height;
-    int64_t w = (r > r2 ? r : r2) - x, h = (bt > bt2 ? bt : bt2) - y;
-    return (struct yasl_private_rect2i){(int)x, (int)y, w > INT_MAX ? INT_MAX : (int)w,
-                                        h > INT_MAX ? INT_MAX : (int)h};
+    int64_t right = r > r2 ? r : r2, bottom = bt > bt2 ? bt : bt2;
+    return (struct yasl_private_rect2i){(int)x, (int)y, (int)(right - x), (int)(bottom - y)};
 }
 
 void yasl_private_damage_union(struct yasl_private_damage_list *list,
@@ -330,6 +329,13 @@ void yasl_private_damage_union(struct yasl_private_damage_list *list,
     for (int i = 0; i < count && list->n >= 0; i++) {
         struct yasl_private_rect2i r = rects[i];
         if (r.width <= 0 || r.height <= 0) continue;
+        /* Damage above or left of the canvas never shows. Clip it so the union cannot overflow. */
+        int64_t x0 = r.x < 0 ? 0 : r.x, y0 = r.y < 0 ? 0 : r.y;
+        int64_t x1 = (int64_t)r.x + r.width, y1 = (int64_t)r.y + r.height;
+        if (x1 > INT_MAX) x1 = INT_MAX;
+        if (y1 > INT_MAX) y1 = INT_MAX;
+        if (x1 <= x0 || y1 <= y0) continue;   /* empty after the clip: skip it */
+        r = (struct yasl_private_rect2i){ (int)x0, (int)y0, (int)(x1 - x0), (int)(y1 - y0) };
         bool first = list->n == 0;
         list->bounds = first ? r : rect_union(list->bounds, r);
         if (!list->merged && list->n < YASL_PRIVATE_DAMAGE_MAX) {
