@@ -220,8 +220,8 @@ static bool hover_tab(struct bench *b, int index)
     struct rect2i r;
     if (!ui_tabbar_tab_rect(&b->tabbar, index, &r))
         return false;
-    struct ui_event e = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_MOTION,
+    struct ui_event e = ui_event_pointer((struct pointer_event){
+        .kind = PTR_MOTION,
         .pos = { .x = r.x + r.width / 2, .y = r.y + r.height / 2 },
     }, b->now_ms);
     return ui_surface_dispatch(&b->surface, &e);

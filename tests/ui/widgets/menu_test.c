@@ -98,10 +98,10 @@ static void key(struct fixture *f, enum ui_key k)
     ui_surface_prepare(&f->surface);
 }
 
-static void pointer(struct fixture *f, enum ui_pointer_kind kind,
+static void pointer(struct fixture *f, enum pointer_kind kind,
                     struct vector2i pos, uint64_t time_ms)
 {
-    struct ui_event e = ui_event_pointer((struct ui_pointer_event){
+    struct ui_event e = ui_event_pointer((struct pointer_event){
         .kind = kind, .pos = pos,
     }, time_ms);
     ui_surface_dispatch(&f->surface, &e);
@@ -256,18 +256,18 @@ static void pointer_test(void)
     setup(&f, NULL);
     open(&f, ITEMS, N_ITEMS);
     struct vector2i p = center(item_rect(&f, 0, 0));
-    pointer(&f, UI_POINTER_MOTION, p, 1);
+    pointer(&f, PTR_MOTION, p, 1);
     assert(f.highlight == 1);
-    pointer(&f, UI_POINTER_PRESS, p, 2);
-    pointer(&f, UI_POINTER_RELEASE, p, 3);
+    pointer(&f, PTR_PRESS, p, 2);
+    pointer(&f, PTR_RELEASE, p, 3);
     assert(f.activated == 1 && f.closes == 1);
 
     open(&f, ITEMS, N_ITEMS);
     struct vector2i off = center(item_rect(&f, 0, 2));
-    pointer(&f, UI_POINTER_PRESS, off, 4);
-    pointer(&f, UI_POINTER_RELEASE, off, 5);
+    pointer(&f, PTR_PRESS, off, 4);
+    pointer(&f, PTR_RELEASE, off, 5);
     assert(ui_menu_is_open(&f.menu));
-    pointer(&f, UI_POINTER_PRESS, (struct vector2i){ .x = 700, .y = 500 }, 6);
+    pointer(&f, PTR_PRESS, (struct vector2i){ .x = 700, .y = 500 }, 6);
     assert(!ui_menu_is_open(&f.menu) && f.closes == 2);
     teardown(&f);
 }
@@ -278,7 +278,7 @@ static void hover_delay_and_aim_test(void)
     setup(&f, NULL);
     open(&f, ITEMS, N_ITEMS);
     struct rect2i trigger = item_rect(&f, 0, 3);
-    pointer(&f, UI_POINTER_MOTION, center(trigger), 1000);
+    pointer(&f, PTR_MOTION, center(trigger), 1000);
     assert(f.highlight == 10);
     tick(&f, 1200);
     assert(ui_menu_level_count(&f.menu) == 1);
@@ -289,7 +289,7 @@ static void hover_delay_and_aim_test(void)
     assert(ui_list_selected(level_list(&f, 1)) == -1);
 
     struct rect2i quit = item_rect(&f, 0, 4);
-    pointer(&f, UI_POINTER_MOTION,
+    pointer(&f, PTR_MOTION,
             (struct vector2i){ .x = rect2i_end(quit).x - 2, .y = quit.y + 2 },
             1460);
     assert(ui_menu_level_count(&f.menu) == 2);
@@ -298,13 +298,13 @@ static void hover_delay_and_aim_test(void)
     tick(&f, 1800);
     assert(ui_menu_level_count(&f.menu) == 1);
 
-    pointer(&f, UI_POINTER_MOTION, center(trigger), 2000);
+    pointer(&f, PTR_MOTION, center(trigger), 2000);
     tick(&f, 2500);
     assert(ui_menu_level_count(&f.menu) == 2);
-    pointer(&f, UI_POINTER_MOTION, center(item_rect(&f, 1, 0)), 2510);
+    pointer(&f, PTR_MOTION, center(item_rect(&f, 1, 0)), 2510);
     assert(f.highlight == 100);
-    pointer(&f, UI_POINTER_MOTION, center(trigger), 2520);
-    pointer(&f, UI_POINTER_MOTION, center(item_rect(&f, 0, 0)), 2530);
+    pointer(&f, PTR_MOTION, center(trigger), 2520);
+    pointer(&f, PTR_MOTION, center(item_rect(&f, 0, 0)), 2530);
     assert(ui_menu_level_count(&f.menu) == 1);
     assert(ui_surface_next_deadline(&f.surface) == 0 ||
            ui_menu_level_count(&f.menu) == 1);
@@ -357,7 +357,7 @@ static void open_menu_keeps_its_geometry_test(void)
     open(&f, ITEMS, N_ITEMS);
     struct rect2i bounds = ui_menu_level_widget(&f.menu, 0)->bounds;
     struct rect2i item = item_rect(&f, 0, 0);
-    pointer(&f, UI_POINTER_MOTION, center(item), 1);
+    pointer(&f, PTR_MOTION, center(item), 1);
     assert(ui_list_hovered(level_list(&f, 0)) == 0);
 
     ui_surface_set_sheet(&f.surface, &roomy);

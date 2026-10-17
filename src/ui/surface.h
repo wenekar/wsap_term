@@ -80,6 +80,8 @@ void ui_surface_set_sheet(struct ui_surface *surface,
 void ui_surface_set_scale(struct ui_surface *surface,
                           struct css_scale_context scale);
 struct css_scale_context ui_surface_scale(const struct ui_surface *surface);
+void ui_surface_configure(struct ui_surface *surface, struct vector2i viewport,
+                            struct css_scale_context scale);
 void ui_surface_resize(struct ui_surface *surface, struct vector2i viewport);
 struct vector2i ui_surface_viewport(const struct ui_surface *surface);
 

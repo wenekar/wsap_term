@@ -20,11 +20,11 @@ static void show(struct ui_surface *surface, struct ui_widget *root,
 
 static void click(struct ui_surface *surface, struct vector2i pos)
 {
-    struct ui_event press = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS, .pos = pos,
+    struct ui_event press = ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS, .pos = pos,
     }, 0);
-    struct ui_event release = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_RELEASE, .pos = pos,
+    struct ui_event release = ui_event_pointer((struct pointer_event){
+        .kind = PTR_RELEASE, .pos = pos,
     }, 1);
     ui_surface_dispatch(surface, &press);
     ui_surface_dispatch(surface, &release);

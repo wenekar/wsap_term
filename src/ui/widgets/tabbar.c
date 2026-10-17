@@ -1741,7 +1741,7 @@ static bool drag_released(struct ui_tabbar *tb, const struct tb_theme *t)
 }
 
 static bool pressed(struct ui_tabbar *tb, const struct tb_theme *t,
-                    const struct ui_pointer_event *pe,
+                    const struct pointer_event *pe,
                     struct vector2i local, uint64_t now_ms)
 {
     int n = tb->impl.n_tabs;
@@ -1801,8 +1801,8 @@ static bool tb_event(struct ui_widget *widget, const struct ui_event *event)
     }
     if (event->kind != UI_EVENT_POINTER)
         return false;
-    const struct ui_pointer_event *pe = &event->data.pointer;
-    if (pe->kind == UI_POINTER_RELEASE && tb->impl.pressed_tab >= 0) {
+    const struct pointer_event *pe = &event->data.pointer;
+    if (pe->kind == PTR_RELEASE && tb->impl.pressed_tab >= 0) {
         tb->impl.pressed_tab = -1;
         ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
     }
@@ -1813,18 +1813,18 @@ static bool tb_event(struct ui_widget *widget, const struct ui_event *event)
     int h = bar_height(tb, t->height, tb->impl.n_tabs);
     bool on_bar = local.y >= 0 && local.y < h;
     switch (pe->kind) {
-    case UI_POINTER_LEAVE:
+    case PTR_LEAVE:
         hover(tb, (struct tb_hit){ .index = -1 }, event->time_ms);
         if (!ui_widget_is_captured(widget))
             cancel_drag(tb);
         return true;
-    case UI_POINTER_MOTION:
+    case PTR_MOTION:
         if (tb->impl.drag_state != UI_TAB_DRAG_NONE)
             return drag_moved(tb, t, local, pe->pos);
         hover(tb, hit_at(tb, t, tb->impl.n_tabs, tb->impl.size, local),
               event->time_ms);
         return over_bar(tb, widget, pe->pos);
-    case UI_POINTER_PRESS:
+    case PTR_PRESS:
         if (!on_bar)
             return false;
         {
@@ -1836,7 +1836,7 @@ static bool tb_event(struct ui_widget *widget, const struct ui_event *event)
             }
         }
         return pressed(tb, t, pe, local, event->time_ms);
-    case UI_POINTER_RELEASE:
+    case PTR_RELEASE:
         if (pe->button == 0 && tb->impl.drag_state != UI_TAB_DRAG_NONE)
             return drag_released(tb, t);
         return on_bar;

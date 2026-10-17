@@ -77,27 +77,9 @@ static void editing_bindings_test(void)
     assert(ui_key_from_input(&ev).native == &ev);
 }
 
-static void pointer_test(void)
-{
-    struct input_mouse_event ev = {
-        .kind = PTR_SCROLL, .pos = { .x = 7, .y = 9 },
-        .button = -1, .scroll_lines = -3, .mods = 5,
-    };
-    struct ui_pointer_event p = ui_pointer_from_input(&ev);
-    assert(p.kind == UI_POINTER_SCROLL);
-    assert(p.pos.x == 7 && p.pos.y == 9);
-    assert(p.scroll_lines == -3 && p.mods == 5 && p.button == -1);
-
-    ev = (struct input_mouse_event){ .kind = PTR_PRESS, .button = 1 };
-    p = ui_pointer_from_input(&ev);
-    assert(p.kind == UI_POINTER_PRESS && p.button == 1);
-    assert(ui_pointer_from_input(NULL).kind == UI_POINTER_NONE);
-}
-
 int main(void)
 {
     key_test();
     editing_bindings_test();
-    pointer_test();
     return 0;
 }

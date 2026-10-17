@@ -73,6 +73,43 @@ static void text_copy_and_password(void)
     ui_accessibility_tree_destroy(&tree);
 }
 
+static void independent_snapshot_copy(void)
+{
+    struct ui_accessibility_tree source = {0};
+    struct ui_accessibility_tree copy = {0};
+    const struct ui_accessibility_node_spec root = {
+        .id = 1, .role = UI_ACCESSIBILITY_ROLE_GROUP, .name = "Root",
+    };
+    const struct ui_accessibility_node_spec field = {
+        .id = 2, .parent_id = 1, .role = UI_ACCESSIBILITY_ROLE_TEXT_FIELD,
+        .name = "Name", .description = "Display name", .value = "a😀z",
+        .states = UI_ACCESSIBILITY_STATE_FOCUSED,
+        .actions = UI_ACCESSIBILITY_ACTION_SET_VALUE,
+        .bounds = { .pos = { .x = 8, .y = 16 },
+                    .size = { .x = 80, .y = 24 } },
+        .caret_offset = 5, .selection_start = 1, .selection_end = 5,
+    };
+    assert(ui_accessibility_tree_add(&source, &root));
+    assert(ui_accessibility_tree_add(&source, &field));
+    assert(ui_accessibility_tree_copy(&copy, &source));
+    assert(ui_accessibility_tree_copy(&copy, &copy));
+    assert(!ui_accessibility_tree_copy(&copy, NULL));
+    ui_accessibility_tree_destroy(&source);
+    const struct ui_accessibility_node *node = ui_accessibility_tree_find(&copy, 2);
+    assert(node && node->parent_id == 1);
+    assert(!strcmp(node->name, "Name"));
+    assert(!strcmp(node->description, "Display name"));
+    assert(!strcmp(node->value, "a😀z"));
+    assert(node->role == field.role && node->states == field.states);
+    assert(node->actions == field.actions && rect2i_eq(node->bounds, field.bounds));
+    assert(node->caret_offset == 5 && node->selection_start == 1 &&
+           node->selection_end == 5);
+    assert(ui_accessibility_tree_find(&copy, 1));
+    assert(ui_accessibility_tree_copy(&copy, &source));
+    assert(!ui_accessibility_tree_find(&copy, 1));
+    ui_accessibility_tree_destroy(&copy);
+}
+
 static bool activated(struct ui_widget *widget, const struct ui_action *action,
                       void *userdata)
 {
@@ -154,6 +191,7 @@ int main(void)
 {
     tree_ids_and_reuse();
     text_copy_and_password();
+    independent_snapshot_copy();
     live_actions_and_modal_scope();
     puts("PASS: accessibility tree and actions");
     return 0;

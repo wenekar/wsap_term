@@ -52,7 +52,7 @@ static bool scrolls_merge(const struct input_event *a, const struct input_event 
     return a->kind == INPUT_MOUSE && a->mouse.kind == PTR_SCROLL &&
            b->kind == INPUT_MOUSE && b->mouse.kind == PTR_SCROLL &&
            a->mouse.mods == b->mouse.mods &&
-           a->mouse.popup == b->mouse.popup &&
+           a->popup == b->popup &&
            pointer_wheel_is_horizontal(a->mouse.button) ==
                pointer_wheel_is_horizontal(b->mouse.button);
 }

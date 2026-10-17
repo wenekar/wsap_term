@@ -109,6 +109,10 @@ bool ui_accessibility_tree_add(struct ui_accessibility_tree *tree,
 void ui_accessibility_tree_clear(struct ui_accessibility_tree *tree);
 void ui_accessibility_tree_destroy(struct ui_accessibility_tree *tree);
 
+/* Copy the tree and its strings. Keep dst unchanged on failure. */
+bool ui_accessibility_tree_copy(struct ui_accessibility_tree *dst,
+                                 const struct ui_accessibility_tree *src);
+
 const struct ui_accessibility_node *
 ui_accessibility_tree_find(const struct ui_accessibility_tree *tree,
                            uint64_t id);

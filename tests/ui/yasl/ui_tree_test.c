@@ -89,10 +89,10 @@ static struct vector2i center(struct rect2i r)
     return (struct vector2i){ .x = r.x + r.width / 2, .y = r.y + r.height / 2 };
 }
 
-static struct ui_event make_pointer(enum ui_pointer_kind kind,
+static struct ui_event make_pointer(enum pointer_kind kind,
                                      struct vector2i pos, int button)
 {
-    return ui_event_pointer((struct ui_pointer_event){
+    return ui_event_pointer((struct pointer_event){
         .kind = kind, .pos = pos, .button = button,
     }, 0);
 }
@@ -254,7 +254,7 @@ static void dispatch_reaches_tabbar_test(void)
     struct rect2i tab0_rect;
     assert(ui_tabbar_tab_rect(&tw->tabbar, 0, &tab0_rect));
 
-    struct ui_event ev = make_pointer(UI_POINTER_PRESS, center(tab0_rect), 0);
+    struct ui_event ev = make_pointer(PTR_PRESS, center(tab0_rect), 0);
     assert(ui_surface_dispatch(window_ui_surface(w), &ev));
     assert(terminal_active_index(w) == 0);
 
@@ -271,7 +271,7 @@ static void dispatch_reaches_term_view_test(void)
     struct tab *s = terminal_active_tab(w);
     assert(!s->selection.pressed);
 
-    struct ui_event ev = make_pointer(UI_POINTER_PRESS,
+    struct ui_event ev = make_pointer(PTR_PRESS,
                                        (struct vector2i){ .x = 10, .y = 100 }, 0);
     assert(ui_surface_dispatch(window_ui_surface(w), &ev));
     assert(s->selection.pressed);
@@ -289,7 +289,7 @@ static void primary_grid_press_selects_test(void)
     struct tab *t = terminal_active_tab(w);
     assert(terminal_pointer_selects_text(t->session.term));
 
-    struct ui_event ev = make_pointer(UI_POINTER_PRESS,
+    struct ui_event ev = make_pointer(PTR_PRESS,
                                        (struct vector2i){ .x = 10, .y = 100 }, 0);
     assert(ui_surface_dispatch(window_ui_surface(w), &ev));
     assert(t->selection.pressed);
@@ -317,7 +317,7 @@ static void terminal_pointer_shape_test(void)
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         wsap_vtcore_feed(t, cases[i].sequence, strlen(cases[i].sequence), 0);
-        struct ui_event ev = make_pointer(UI_POINTER_MOTION,
+        struct ui_event ev = make_pointer(PTR_MOTION,
             (struct vector2i){ .x = 10, .y = 100 }, 0);
         ui_surface_dispatch(window_ui_surface(w), &ev);
         assert(ui_surface_cursor(window_ui_surface(w)) == cases[i].cursor);
@@ -397,8 +397,8 @@ static void menu_level_pointer_consumed_test(void)
     open_menu(w, items, 1, (struct vector2i){ .x = 10, .y = 10 },
               menu_test_activate, &activated, NULL);
     struct vector2i at = center(ui_list_item_rect(menu_list(w, 0), 0));
-    struct ui_event press = make_pointer(UI_POINTER_PRESS, at, 0);
-    struct ui_event release = make_pointer(UI_POINTER_RELEASE, at, 0);
+    struct ui_event press = make_pointer(PTR_PRESS, at, 0);
+    struct ui_event release = make_pointer(PTR_RELEASE, at, 0);
     assert(ui_surface_dispatch(window_ui_surface(w), &press));
     assert(ui_surface_dispatch(window_ui_surface(w), &release));
     assert(activated == 7);
@@ -416,9 +416,9 @@ static void captured_pointer_translation_test(void)
     struct tab *s = terminal_active_tab(w);
 
     int y0 = tab_h + 8, y1 = tab_h + 24;
-    struct ui_event press = make_pointer(UI_POINTER_PRESS,
+    struct ui_event press = make_pointer(PTR_PRESS,
                                           (struct vector2i){ .x = 10, .y = y0 }, 0);
-    struct ui_event move = make_pointer(UI_POINTER_MOTION,
+    struct ui_event move = make_pointer(PTR_MOTION,
                                          (struct vector2i){ .x = 10, .y = y1 }, 0);
     assert(ui_surface_dispatch(window_ui_surface(w), &press));
     assert(s->selection.y == 0);
@@ -459,7 +459,7 @@ static void menu_hover_reaches_parent_test(void)
     ui_surface_prepare(window_ui_surface(w));
     assert(ui_menu_level_count(window_ui_menu(w)) == 2);
 
-    struct ui_event mv = make_pointer(UI_POINTER_MOTION,
+    struct ui_event mv = make_pointer(PTR_MOTION,
                                        center(ui_list_item_rect(menu_list(w, 0), 0)), 0);
     ui_surface_dispatch(window_ui_surface(w), &mv);
     assert(ui_list_hovered(menu_list(w, 0)) == 0);
@@ -525,7 +525,7 @@ static void close_tab_releases_scrollbar_capture_test(void)
     ui_surface_prepare(window_ui_surface(w));
     struct ui_widget *sv = ui_scrollview_widget(&tw->scrollview);
     assert(sv->bounds.y == tab_h);
-    struct ui_event press = make_pointer(UI_POINTER_PRESS,
+    struct ui_event press = make_pointer(PTR_PRESS,
         (struct vector2i){ .x = rect2i_end(sv->bounds).x - 2,
                            .y = sv->bounds.y + sv->bounds.height / 2 }, 0);
     assert(ui_surface_dispatch(window_ui_surface(w), &press));
@@ -538,7 +538,7 @@ static void close_tab_releases_scrollbar_capture_test(void)
     assert(terminal_tab_count(w) == 1);
     assert(ui_surface_captured(window_ui_surface(w)) == NULL);
 
-    struct ui_event move = make_pointer(UI_POINTER_MOTION,
+    struct ui_event move = make_pointer(PTR_MOTION,
                                          (struct vector2i){ .x = 10, .y = 100 }, 0);
     ui_surface_dispatch(window_ui_surface(w), &move);
 
@@ -563,7 +563,7 @@ static void right_press_reaches_term_view_test(void)
     struct window *w = open_terminal_window(&a, viewport);
     assert(terminal_new_tab(w));
 
-    struct ui_event press = make_pointer(UI_POINTER_PRESS,
+    struct ui_event press = make_pointer(PTR_PRESS,
                                           (struct vector2i){ .x = 10, .y = 100 }, 2);
     assert(ui_surface_dispatch(window_ui_surface(w), &press));
 
@@ -607,7 +607,7 @@ static void menu_level_fresh_bounds_test(void)
     struct rect2i want = lvl->bounds;
     assert(want.x == 100 && want.y == 100);
     assert(want.size.x > 0 && want.size.y > 0);
-    struct ui_event ev = make_pointer(UI_POINTER_PRESS, center(want), 0);
+    struct ui_event ev = make_pointer(PTR_PRESS, center(want), 0);
     assert(ui_surface_dispatch(window_ui_surface(w), &ev));
     assert(lvl->bounds.pos.x == want.pos.x && lvl->bounds.pos.y == want.pos.y);
     assert(lvl->bounds.size.x == want.size.x &&
@@ -707,10 +707,10 @@ static struct window *open_scrolled_terminal(struct test_app *a,
     return w;
 }
 
-static bool send_pointer(struct window *w, enum ui_pointer_kind kind,
+static bool send_pointer(struct window *w, enum pointer_kind kind,
                          struct vector2i pos, int button, unsigned mods)
 {
-    struct ui_event ev = ui_event_pointer((struct ui_pointer_event){
+    struct ui_event ev = ui_event_pointer((struct pointer_event){
         .kind = kind, .pos = pos, .button = button, .mods = mods,
     }, 0);
     bool handled = ui_surface_dispatch(window_ui_surface(w), &ev);
@@ -735,21 +735,21 @@ static void hover_reveals_bar_in_every_mode_test(void)
     struct vector2i on_bar = bar_point(w);
     assert(!ui_scrollview_is_shown(sv));
 
-    send_pointer(w, UI_POINTER_MOTION, on_bar, 0, 0);
+    send_pointer(w, PTR_MOTION, on_bar, 0, 0);
     assert(ui_scrollview_is_shown(sv));
     assert(ui_surface_cursor(window_ui_surface(w)) == UI_CURSOR_DEFAULT);
-    send_pointer(w, UI_POINTER_LEAVE, on_bar, 0, 0);
+    send_pointer(w, PTR_LEAVE, on_bar, 0, 0);
     ui_scrollview_hide(sv);
 
     const char mouse_any[] = "\x1b[?1003h\x1b[?1006h";
     wsap_vtcore_feed(t, mouse_any, strlen(mouse_any), 0);
     assert(wsap_vtcore_modes(t).mouse != WSAP_VTCORE_MOUSE_OFF);
-    send_pointer(w, UI_POINTER_MOTION, on_bar, 0, 0);
+    send_pointer(w, PTR_MOTION, on_bar, 0, 0);
     assert(ui_scrollview_is_shown(sv));
-    send_pointer(w, UI_POINTER_LEAVE, on_bar, 0, 0);
+    send_pointer(w, PTR_LEAVE, on_bar, 0, 0);
     ui_scrollview_hide(sv);
 
-    send_pointer(w, UI_POINTER_MOTION, on_bar, 0, UI_MOD_SHIFT);
+    send_pointer(w, PTR_MOTION, on_bar, 0, UI_MOD_SHIFT);
     assert(ui_scrollview_is_shown(sv));
 
     close_terminal_window(w, &a);
@@ -765,12 +765,12 @@ static void hidden_bar_press_reaches_view_test(void)
     struct tab *t = terminal_active_tab(w);
     assert(!ui_scrollview_is_shown(sv));
 
-    assert(send_pointer(w, UI_POINTER_PRESS, bar_point(w), 0, 0));
+    assert(send_pointer(w, PTR_PRESS, bar_point(w), 0, 0));
     assert(ui_surface_captured(window_ui_surface(w)) == view);
     assert(t->selection.pressed);
     assert(!ui_scrollview_is_shown(sv));
     assert(wsap_vtcore_scrollback(t->session.term).offset == 0);
-    send_pointer(w, UI_POINTER_RELEASE, bar_point(w), 0, 0);
+    send_pointer(w, PTR_RELEASE, bar_point(w), 0, 0);
 
     close_terminal_window(w, &a);
 }
@@ -789,11 +789,11 @@ static void shown_bar_press_scrolls_view_test(void)
 
     struct vector2i top = { .x = bar_point(w).x,
                             .y = ui_scrollview_widget(sv)->bounds.y + 2 };
-    assert(send_pointer(w, UI_POINTER_PRESS, top, 0, 0));
+    assert(send_pointer(w, PTR_PRESS, top, 0, 0));
     assert(ui_surface_captured(window_ui_surface(w)) == ui_scrollview_widget(sv));
     assert(wsap_vtcore_scrollback(t).offset > 0);
     assert(ui_scrollview_is_shown(sv));
-    send_pointer(w, UI_POINTER_RELEASE, top, 0, 0);
+    send_pointer(w, PTR_RELEASE, top, 0, 0);
 
     close_terminal_window(w, &a);
 }
@@ -810,26 +810,26 @@ static void shown_bar_shift_and_secondary_press_reach_view_test(void)
     terminal_show_scrollbar(w);
     ui_surface_prepare(window_ui_surface(w));
 
-    assert(send_pointer(w, UI_POINTER_PRESS, bar_point(w), 0, UI_MOD_SHIFT));
+    assert(send_pointer(w, PTR_PRESS, bar_point(w), 0, UI_MOD_SHIFT));
     assert(ui_surface_captured(window_ui_surface(w)) == view);
     assert(t->selection.pressed);
     assert(wsap_vtcore_scrollback(term).offset == 0);
-    send_pointer(w, UI_POINTER_RELEASE, bar_point(w), 0, UI_MOD_SHIFT);
+    send_pointer(w, PTR_RELEASE, bar_point(w), 0, UI_MOD_SHIFT);
     assert(ui_surface_captured(window_ui_surface(w)) == NULL);
 
-    assert(send_pointer(w, UI_POINTER_PRESS, bar_point(w), 2, 0));
+    assert(send_pointer(w, PTR_PRESS, bar_point(w), 2, 0));
     assert(ui_surface_captured(window_ui_surface(w)) != ui_scrollview_widget(sv));
     assert(wsap_vtcore_scrollback(term).offset == 0);
-    send_pointer(w, UI_POINTER_RELEASE, bar_point(w), 2, 0);
+    send_pointer(w, PTR_RELEASE, bar_point(w), 2, 0);
     window_menu_close(w);
     ui_surface_prepare(window_ui_surface(w));
 
     const char mouse_on[] = "\x1b[?1000h\x1b[?1006h";
     wsap_vtcore_feed(term, mouse_on, strlen(mouse_on), 0);
     assert(!terminal_pointer_selects_text(term));
-    assert(send_pointer(w, UI_POINTER_PRESS, (struct vector2i){ .x = 10, .y = 100 }, 0, 0));
+    assert(send_pointer(w, PTR_PRESS, (struct vector2i){ .x = 10, .y = 100 }, 0, 0));
     assert(!t->selection.pressed);
-    send_pointer(w, UI_POINTER_RELEASE, (struct vector2i){ .x = 10, .y = 100 }, 0, 0);
+    send_pointer(w, PTR_RELEASE, (struct vector2i){ .x = 10, .y = 100 }, 0, 0);
 
     close_terminal_window(w, &a);
 }
@@ -850,18 +850,18 @@ static void bar_press_keeps_tab_focus_test(void)
     ui_surface_focus(window_ui_surface(w), bar);
     terminal_show_scrollbar(w);
     ui_surface_prepare(window_ui_surface(w));
-    assert(send_pointer(w, UI_POINTER_PRESS, bar_point(w), 0, 0));
+    assert(send_pointer(w, PTR_PRESS, bar_point(w), 0, 0));
     assert(ui_surface_focused(window_ui_surface(w)) == bar);
-    send_pointer(w, UI_POINTER_RELEASE, bar_point(w), 0, 0);
+    send_pointer(w, PTR_RELEASE, bar_point(w), 0, 0);
 
     ui_scrollview_hide(sv);
-    assert(send_pointer(w, UI_POINTER_PRESS, bar_point(w), 0, 0));
+    assert(send_pointer(w, PTR_PRESS, bar_point(w), 0, 0));
     assert(ui_surface_focused(window_ui_surface(w)) == bar);
-    send_pointer(w, UI_POINTER_RELEASE, bar_point(w), 0, 0);
+    send_pointer(w, PTR_RELEASE, bar_point(w), 0, 0);
 
-    assert(send_pointer(w, UI_POINTER_PRESS, (struct vector2i){ .x = 10, .y = 100 }, 0, 0));
+    assert(send_pointer(w, PTR_PRESS, (struct vector2i){ .x = 10, .y = 100 }, 0, 0));
     assert(ui_surface_focused(window_ui_surface(w)) == NULL);
-    send_pointer(w, UI_POINTER_RELEASE, (struct vector2i){ .x = 10, .y = 100 }, 0, 0);
+    send_pointer(w, PTR_RELEASE, (struct vector2i){ .x = 10, .y = 100 }, 0, 0);
 
     close_terminal_window(w, &a);
 }
@@ -875,8 +875,8 @@ static void wheel_over_bar_scrolls_view_test(void)
     struct wsap_vtcore *t = terminal_term(w);
     assert(!ui_scrollview_is_shown(sv));
 
-    struct ui_event wheel = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_SCROLL, .pos = bar_point(w), .scroll_lines = 3,
+    struct ui_event wheel = ui_event_pointer((struct pointer_event){
+        .kind = PTR_SCROLL, .pos = bar_point(w), .scroll_lines = 3,
     }, 0);
     assert(ui_surface_dispatch(window_ui_surface(w), &wheel));
     assert(wsap_vtcore_scrollback(t).offset == 3);

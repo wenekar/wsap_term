@@ -54,15 +54,15 @@ static bool probe_event(struct ui_widget *widget, const struct ui_event *event)
     }
     if (event->kind != UI_EVENT_POINTER)
         return false;
-    if (event->data.pointer.kind == UI_POINTER_MOTION) {
+    if (event->data.pointer.kind == PTR_MOTION) {
         p->motions++;
         return p->consume_motion;
     }
-    if (event->data.pointer.kind == UI_POINTER_LEAVE) {
+    if (event->data.pointer.kind == PTR_LEAVE) {
         p->leaves++;
         return false;
     }
-    if (event->data.pointer.kind != UI_POINTER_PRESS ||
+    if (event->data.pointer.kind != PTR_PRESS ||
         !rect2i_contains(widget->bounds, event->data.pointer.pos))
         return false;
     p->presses++;
@@ -97,15 +97,15 @@ static void probe_init(struct probe_child *p, struct vector2i preferred)
 
 static struct ui_event scroll_event(struct vector2i pos, int lines)
 {
-    return ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_SCROLL, .pos = pos, .scroll_lines = lines,
+    return ui_event_pointer((struct pointer_event){
+        .kind = PTR_SCROLL, .pos = pos, .scroll_lines = lines,
     }, 0);
 }
 
 static struct ui_event press_event(struct vector2i pos, uint64_t time_ms)
 {
-    return ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS, .pos = pos,
+    return ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS, .pos = pos,
     }, time_ms);
 }
 
@@ -209,7 +209,7 @@ static void test_scroll_and_forward(void)
     assert(ui_scrollview_offset(&sv) == 0);
 
     ev = scroll_event((struct vector2i){ .x = 5, .y = 5 }, -1);
-    ev.data.pointer.button = UI_POINTER_WHEEL_BUTTON + 3;
+    ev.data.pointer.button = POINTER_WHEEL_RIGHT;
     assert(!ui_widget_event(&sv.widget, &ev));
     assert(ui_scrollview_offset(&sv) == 0);
 
@@ -225,8 +225,8 @@ static void test_scroll_and_forward(void)
 
 static struct ui_event smooth_scroll_event(float delta)
 {
-    return ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_SCROLL, .pos = { .x = 5, .y = 5 },
+    return ui_event_pointer((struct pointer_event){
+        .kind = PTR_SCROLL, .pos = { .x = 5, .y = 5 },
         .scroll_delta = delta,
     }, 0);
 }
@@ -430,14 +430,14 @@ static void test_motion_and_leave_respect_viewport_clip(void)
     replace_child(&sv, &child.widget);
     set_root_100x50(&ctx, &sv.widget);
 
-    struct ui_event motion = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_MOTION, .pos = { .x = 500, .y = 500 },
+    struct ui_event motion = ui_event_pointer((struct pointer_event){
+        .kind = PTR_MOTION, .pos = { .x = 500, .y = 500 },
     }, 1);
     assert(!ui_surface_dispatch(&ctx, &motion));
     assert(child.motions == 0);
 
-    struct ui_event leave = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_LEAVE, .pos = { .x = 500, .y = 500 },
+    struct ui_event leave = ui_event_pointer((struct pointer_event){
+        .kind = PTR_LEAVE, .pos = { .x = 500, .y = 500 },
     }, 2);
     assert(!ui_surface_dispatch(&ctx, &leave));
     assert(child.leaves == 0);
@@ -503,8 +503,8 @@ static void test_capture_released_before_fallback(void)
     ui_surface_set_root(&ctx, &outer.widget);
     ui_surface_resize(&ctx, (struct vector2i){ .x = 100, .y = 100 });
     ui_widget_capture_pointer(&child);
-    struct ui_event event = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_MOTION, .pos = { .x = 1, .y = 1 },
+    struct ui_event event = ui_event_pointer((struct pointer_event){
+        .kind = PTR_MOTION, .pos = { .x = 1, .y = 1 },
     }, 0);
     assert(!ui_surface_dispatch(&ctx, &event));
     assert(deliveries == 1);
@@ -535,7 +535,7 @@ static struct fixture *frame_fixture(const struct ui_widget *frame)
 static bool frame_event(struct ui_widget *widget, const struct ui_event *event)
 {
     if (event->kind != UI_EVENT_POINTER ||
-        event->data.pointer.kind != UI_POINTER_PRESS)
+        event->data.pointer.kind != PTR_PRESS)
         return false;
     frame_fixture(widget)->frame_presses++;
     return true;
@@ -593,10 +593,10 @@ static void teardown(struct fixture *f)
     css_sheet_clear(&f->sheet);
 }
 
-static bool pointer(struct fixture *f, enum ui_pointer_kind kind,
+static bool pointer(struct fixture *f, enum pointer_kind kind,
                     struct vector2i pos, int button, unsigned mods)
 {
-    struct ui_event e = ui_event_pointer((struct ui_pointer_event){
+    struct ui_event e = ui_event_pointer((struct pointer_event){
         .kind = kind, .pos = pos, .button = button, .mods = mods,
     }, 0);
     bool handled = ui_surface_dispatch(&f->surface, &e);
@@ -719,7 +719,7 @@ static void css_drives_track_and_thumb_test(void)
     int content = fill_index(s, PROBE_COLOR);
     assert(content >= 0 && idle > content);
 
-    assert(!pointer(&f, UI_POINTER_MOTION, center(track), 0, 0));
+    assert(!pointer(&f, PTR_MOTION, center(track), 0, 0));
     s = paint(&f);
     track = part(&f, "scroll-track");
     assert(track.width == 16 && track.x == W - 2 - 16);
@@ -728,7 +728,7 @@ static void css_drives_track_and_thumb_test(void)
     assert(hover >= 0 && rect2i_eq(s->ops[hover].rect, thumb));
     assert(s->ops[hover].rect.width == 10 && s->ops[hover].rect.x == W - 2 - 16 + 3);
 
-    assert(pointer(&f, UI_POINTER_PRESS, center(part(&f, "scroll-thumb")), 0, 0));
+    assert(pointer(&f, PTR_PRESS, center(part(&f, "scroll-thumb")), 0, 0));
     s = paint(&f);
     int active = fill_index(s, 0xFF778899);
     assert(active >= 0 && s->ops[active].rect.x == W - 16 + 3);
@@ -780,17 +780,17 @@ static void drag_reports_offsets_test(void)
     ui_scrollview_flash(&f.sv);
 
     struct rect2i thumb = part(&f, "scroll-thumb");
-    assert(pointer(&f, UI_POINTER_PRESS, center(thumb), 0, 0));
+    assert(pointer(&f, PTR_PRESS, center(thumb), 0, 0));
     assert(f.changes == 0 || (f.offset >= 19 && f.offset <= 21));
 
-    assert(pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = 10, .y = -50 }, 0, 0));
+    assert(pointer(&f, PTR_MOTION, (struct vector2i){ .x = 10, .y = -50 }, 0, 0));
     assert(f.offset == 40);
-    assert(pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = 500, .y = 250 }, 0, 0));
+    assert(pointer(&f, PTR_MOTION, (struct vector2i){ .x = 500, .y = 250 }, 0, 0));
     assert(f.offset == 0);
-    assert(pointer(&f, UI_POINTER_RELEASE, (struct vector2i){ .x = 500, .y = 250 }, 0, 0));
+    assert(pointer(&f, PTR_RELEASE, (struct vector2i){ .x = 500, .y = 250 }, 0, 0));
 
     int changes = f.changes;
-    pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = 95, .y = 10 }, 0, 0);
+    pointer(&f, PTR_MOTION, (struct vector2i){ .x = 95, .y = 10 }, 0, 0);
     assert(f.changes == changes);
     teardown(&f);
 }
@@ -805,11 +805,11 @@ static void line_mode_press_reports_offset_test(void)
     struct rect2i track = part(&f, "scroll-track");
     struct vector2i bottom = { .x = track.x + track.width / 2,
                                .y = rect2i_end(track).y - 1 };
-    assert(pointer(&f, UI_POINTER_PRESS, bottom, 0, 0));
+    assert(pointer(&f, PTR_PRESS, bottom, 0, 0));
     assert(f.changes == 1 && f.offset == 0);
     assert(ui_scrollview_offset(&f.sv) == 0);
     assert(f.content.widget.bounds.pos.y == 0);
-    pointer(&f, UI_POINTER_RELEASE, bottom, 0, 0);
+    pointer(&f, PTR_RELEASE, bottom, 0, 0);
     teardown(&f);
 }
 
@@ -846,7 +846,7 @@ static void paints_where_it_hits_test(void)
     const struct ui_scene *s = paint(&f);
     struct rect2i thumb = part(&f, "scroll-thumb");
     assert(has_fill_op(s, thumb, 0xFF445566));
-    assert(pointer(&f, UI_POINTER_PRESS, center(thumb), 0, 0));
+    assert(pointer(&f, PTR_PRESS, center(thumb), 0, 0));
     assert(f.changes == 0 || (f.offset >= 99 && f.offset <= 101));
     teardown(&f);
 }
@@ -858,26 +858,26 @@ static void declined_press_reaches_parent_test(void)
     show_overlay_bar(&f);
     struct vector2i on_track = center(part(&f, "scroll-track"));
 
-    assert(pointer(&f, UI_POINTER_PRESS, on_track, 0, UI_MOD_SHIFT));
+    assert(pointer(&f, PTR_PRESS, on_track, 0, UI_MOD_SHIFT));
     assert(f.content.presses == 1 && f.frame_presses == 0 && f.changes == 0);
-    pointer(&f, UI_POINTER_RELEASE, on_track, 0, UI_MOD_SHIFT);
+    pointer(&f, PTR_RELEASE, on_track, 0, UI_MOD_SHIFT);
 
-    assert(pointer(&f, UI_POINTER_PRESS, on_track, 1, 0));
+    assert(pointer(&f, PTR_PRESS, on_track, 1, 0));
     assert(f.content.presses == 2 && f.frame_presses == 0 && f.changes == 0);
-    pointer(&f, UI_POINTER_RELEASE, on_track, 1, 0);
+    pointer(&f, PTR_RELEASE, on_track, 1, 0);
 
-    assert(pointer(&f, UI_POINTER_PRESS, (struct vector2i){ .x = 10, .y = 10 }, 0, 0));
+    assert(pointer(&f, PTR_PRESS, (struct vector2i){ .x = 10, .y = 10 }, 0, 0));
     assert(f.content.presses == 3 && f.frame_presses == 0);
-    pointer(&f, UI_POINTER_RELEASE, (struct vector2i){ .x = 10, .y = 10 }, 0, 0);
+    pointer(&f, PTR_RELEASE, (struct vector2i){ .x = 10, .y = 10 }, 0, 0);
 
-    assert(pointer(&f, UI_POINTER_PRESS, on_track, 0, 0));
+    assert(pointer(&f, PTR_PRESS, on_track, 0, 0));
     assert(f.content.presses == 3 && f.changes == 1);
-    pointer(&f, UI_POINTER_RELEASE, on_track, 0, 0);
+    pointer(&f, PTR_RELEASE, on_track, 0, 0);
 
     f.content.handle_press = false;
-    assert(pointer(&f, UI_POINTER_PRESS, on_track, 0, UI_MOD_SHIFT));
+    assert(pointer(&f, PTR_PRESS, on_track, 0, UI_MOD_SHIFT));
     assert(f.content.presses == 4 && f.frame_presses == 1);
-    pointer(&f, UI_POINTER_RELEASE, on_track, 0, UI_MOD_SHIFT);
+    pointer(&f, PTR_RELEASE, on_track, 0, UI_MOD_SHIFT);
     teardown(&f);
 }
 
@@ -890,11 +890,11 @@ static void hidden_bar_takes_no_press_test(void)
     ui_scrollview_hide(&f.sv);
 
     assert(!ui_scrollview_is_shown(&f.sv));
-    assert(pointer(&f, UI_POINTER_PRESS, on_track, 0, 0));
+    assert(pointer(&f, PTR_PRESS, on_track, 0, 0));
     assert(f.content.presses == 1 && f.frame_presses == 0 && f.changes == 0);
-    pointer(&f, UI_POINTER_RELEASE, on_track, 0, 0);
+    pointer(&f, PTR_RELEASE, on_track, 0, 0);
 
-    pointer(&f, UI_POINTER_MOTION, on_track, 0, 0);
+    pointer(&f, PTR_MOTION, on_track, 0, 0);
     assert(ui_scrollview_is_shown(&f.sv));
     teardown(&f);
 }
@@ -910,11 +910,11 @@ static void idle_bar_leaves_child_columns_test(void)
     assert(f.content.widget.bounds.width == 92);
 
     struct vector2i edge = { .x = 90, .y = 10 };
-    pointer(&f, UI_POINTER_MOTION, edge, 0, 0);
+    pointer(&f, PTR_MOTION, edge, 0, 0);
     assert(part(&f, "scroll-track").width == 8);
-    assert(pointer(&f, UI_POINTER_PRESS, edge, 0, 0));
+    assert(pointer(&f, PTR_PRESS, edge, 0, 0));
     assert(f.content.presses == 1 && f.changes == 0);
-    pointer(&f, UI_POINTER_RELEASE, edge, 0, 0);
+    pointer(&f, PTR_RELEASE, edge, 0, 0);
     teardown(&f);
 }
 
@@ -936,14 +936,14 @@ static void bar_press_keeps_focus_test(void)
     assert(ui_surface_focused(&f.surface) == &other.widget);
 
     struct vector2i on_track = center(part(&f, "scroll-track"));
-    assert(pointer(&f, UI_POINTER_PRESS, on_track, 0, 0));
+    assert(pointer(&f, PTR_PRESS, on_track, 0, 0));
     assert(ui_surface_focused(&f.surface) == &other.widget);
-    pointer(&f, UI_POINTER_RELEASE, on_track, 0, 0);
+    pointer(&f, PTR_RELEASE, on_track, 0, 0);
 
-    assert(pointer(&f, UI_POINTER_PRESS, (struct vector2i){ .x = 10, .y = 10 }, 0, 0));
+    assert(pointer(&f, PTR_PRESS, (struct vector2i){ .x = 10, .y = 10 }, 0, 0));
     assert(f.content.presses == 1);
     assert(ui_surface_focused(&f.surface) == NULL);
-    pointer(&f, UI_POINTER_RELEASE, (struct vector2i){ .x = 10, .y = 10 }, 0, 0);
+    pointer(&f, PTR_RELEASE, (struct vector2i){ .x = 10, .y = 10 }, 0, 0);
     teardown(&f);
 }
 
@@ -965,9 +965,9 @@ static void blank_press_clears_focus_test(void)
     struct vector2i blank = { .x = 10, .y = 150 };
     assert(!rect2i_contains(f.content.widget.bounds, blank));
     assert(rect2i_contains(f.sv.widget.bounds, blank));
-    pointer(&f, UI_POINTER_PRESS, blank, 0, 0);
+    pointer(&f, PTR_PRESS, blank, 0, 0);
     assert(ui_surface_focused(&f.surface) == NULL);
-    pointer(&f, UI_POINTER_RELEASE, blank, 0, 0);
+    pointer(&f, PTR_RELEASE, blank, 0, 0);
     teardown(&f);
 }
 
@@ -981,12 +981,12 @@ static void hover_shows_bar_when_child_consumes_motion_test(void)
     assert(!ui_scrollview_is_shown(&f.sv));
 
     struct vector2i on_track = { .x = 100 - 4, .y = 100 };
-    pointer(&f, UI_POINTER_MOTION, on_track, 0, 0);
+    pointer(&f, PTR_MOTION, on_track, 0, 0);
     assert(ui_scrollview_is_shown(&f.sv));
     assert(f.content.motions == 1);
     assert(part(&f, "scroll-track").width == 12);
 
-    pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = 10, .y = 10 }, 0, 0);
+    pointer(&f, PTR_MOTION, (struct vector2i){ .x = 10, .y = 10 }, 0, 0);
     assert(f.content.motions == 2);
     assert(part(&f, "scroll-track").width == 8);
     teardown(&f);
@@ -1004,7 +1004,7 @@ static void debug_track_reports_drawn_bar_test(void)
     assert(part(&f, "scroll-track").width == 8);
     assert(!rect2i_is_empty(part(&f, "scroll-thumb")));
 
-    pointer(&f, UI_POINTER_MOTION, center(part(&f, "scroll-track")), 0, 0);
+    pointer(&f, PTR_MOTION, center(part(&f, "scroll-track")), 0, 0);
     assert(part(&f, "scroll-track").width == 12);
 
     ui_scrollview_hide(&f.sv);
@@ -1037,8 +1037,8 @@ static const struct ui_widget_ops TEXT_OPS = {
 static enum ui_cursor cursor_after_motion(struct ui_surface *surface,
                                           struct vector2i pos)
 {
-    struct ui_event e = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_MOTION, .pos = pos,
+    struct ui_event e = ui_event_pointer((struct pointer_event){
+        .kind = PTR_MOTION, .pos = pos,
     }, 0);
     ui_surface_dispatch(surface, &e);
     ui_surface_prepare(surface);
@@ -1098,11 +1098,11 @@ static void clear_metrics_returns_to_pixel_mode_test(void)
 
     struct rect2i thumb = part(&f, "scroll-thumb");
     struct rect2i track = part(&f, "scroll-track");
-    assert(pointer(&f, UI_POINTER_PRESS, center(thumb), 0, 0));
-    assert(pointer(&f, UI_POINTER_MOTION, rect2i_end(track), 0, 0));
+    assert(pointer(&f, PTR_PRESS, center(thumb), 0, 0));
+    assert(pointer(&f, PTR_MOTION, rect2i_end(track), 0, 0));
     assert(ui_scrollview_offset(&f.sv) == max_offset(&f.sv));
     assert(f.changes == 0);
-    pointer(&f, UI_POINTER_RELEASE, rect2i_end(track), 0, 0);
+    pointer(&f, PTR_RELEASE, rect2i_end(track), 0, 0);
     teardown(&f);
 }
 
@@ -1115,12 +1115,12 @@ static void hides_after_idle_test(void)
     ui_scrollview_hide(&f.sv);
 
     assert(!ui_scrollview_is_shown(&f.sv));
-    pointer(&f, UI_POINTER_MOTION, on_track, 0, 0);
+    pointer(&f, PTR_MOTION, on_track, 0, 0);
     assert(ui_scrollview_is_shown(&f.sv));
     ui_surface_tick(&f.surface, 1000);
     assert(ui_surface_next_deadline(&f.surface) == 0);
 
-    pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = 10, .y = 10 }, 0, 0);
+    pointer(&f, PTR_MOTION, (struct vector2i){ .x = 10, .y = 10 }, 0, 0);
     ui_surface_tick(&f.surface, 1000);
     uint64_t deadline = ui_surface_next_deadline(&f.surface);
     assert(deadline > 1000);
@@ -1178,10 +1178,10 @@ static void hide_ends_drag_test(void)
     struct fixture f;
     setup(&f, NULL, (struct vector2i){0}, (struct vector2i){ .x = 100, .y = 200 }, 200);
     show_overlay_bar(&f);
-    assert(pointer(&f, UI_POINTER_PRESS, center(part(&f, "scroll-thumb")), 0, 0));
+    assert(pointer(&f, PTR_PRESS, center(part(&f, "scroll-thumb")), 0, 0));
     ui_scrollview_hide(&f.sv);
     int changes = f.changes;
-    pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = 10, .y = 0 }, 0, 0);
+    pointer(&f, PTR_MOTION, (struct vector2i){ .x = 10, .y = 0 }, 0, 0);
     assert(f.changes == changes);
     assert(!ui_scrollview_is_shown(&f.sv));
     teardown(&f);
@@ -1199,9 +1199,9 @@ static void set_scrollbar_off_test(void)
     ui_scrollview_set_scrollbar(&f.sv, false);
     assert(!ui_scrollview_is_shown(&f.sv));
     assert(rect2i_is_empty(part(&f, "scroll-track")));
-    assert(pointer(&f, UI_POINTER_PRESS, on_track, 0, 0));
+    assert(pointer(&f, PTR_PRESS, on_track, 0, 0));
     assert(f.frame_presses == 1 && f.changes == 0);
-    pointer(&f, UI_POINTER_RELEASE, on_track, 0, 0);
+    pointer(&f, PTR_RELEASE, on_track, 0, 0);
 
     ui_scrollview_set_scrollbar(&f.sv, true);
     assert(ui_scrollview_is_shown(&f.sv));
@@ -1221,11 +1221,11 @@ static void pixel_drag_scrolls_child_test(void)
 
     struct ui_event event = press_event(thumb.pos, 0);
     assert(ui_surface_dispatch(&f.surface, &event));
-    event.data.pointer.kind = UI_POINTER_MOTION;
+    event.data.pointer.kind = PTR_MOTION;
     event.data.pointer.pos = rect2i_end(track);
     assert(ui_surface_dispatch(&f.surface, &event));
     assert(ui_scrollview_offset(&f.sv) == max_offset(&f.sv));
-    event.data.pointer.kind = UI_POINTER_RELEASE;
+    event.data.pointer.kind = PTR_RELEASE;
     assert(ui_surface_dispatch(&f.surface, &event));
     assert(!ui_surface_captured(&f.surface));
     teardown(&f);
@@ -1296,15 +1296,15 @@ static void overlay_default_test(void)
     assert(bar_fills(paint(&f)) == 0);
 
     struct vector2i on_track = { .x = 96, .y = 50 };
-    assert(pointer(&f, UI_POINTER_PRESS, on_track, 0, 0));
+    assert(pointer(&f, PTR_PRESS, on_track, 0, 0));
     assert(f.content.presses == 1 && f.changes == 0);
-    pointer(&f, UI_POINTER_RELEASE, on_track, 0, 0);
+    pointer(&f, PTR_RELEASE, on_track, 0, 0);
 
-    pointer(&f, UI_POINTER_MOTION, on_track, 0, 0);
+    pointer(&f, PTR_MOTION, on_track, 0, 0);
     assert(ui_scrollview_is_shown(&f.sv));
     assert(!rect2i_is_empty(part(&f, "scroll-track")));
 
-    pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = 10, .y = 10 }, 0, 0);
+    pointer(&f, PTR_MOTION, (struct vector2i){ .x = 10, .y = 10 }, 0, 0);
     run_to_hide(&f, 1000);
     assert(!ui_scrollview_is_shown(&f.sv));
     teardown(&f);
@@ -1320,7 +1320,7 @@ static void hover_widens_without_moving_child_test(void)
     struct rect2i track = part(&f, "scroll-track");
     assert(track.width == 8 && rect2i_end(track).x == 100);
 
-    pointer(&f, UI_POINTER_MOTION, center(track), 0, 0);
+    pointer(&f, PTR_MOTION, center(track), 0, 0);
     track = part(&f, "scroll-track");
     assert(track.width == 12 && rect2i_end(track).x == 100);
     assert(rect2i_eq(f.content.widget.bounds, child));
@@ -1336,7 +1336,7 @@ static void track_hover_color_test(void)
     assert(fill_color_at(s, part(&f, "scroll-track")) == 0);
     assert(has_fill_op(s, part(&f, "scroll-thumb"), 0xFFA6ADC8));
 
-    pointer(&f, UI_POINTER_MOTION, center(part(&f, "scroll-track")), 0, 0);
+    pointer(&f, PTR_MOTION, center(part(&f, "scroll-track")), 0, 0);
     s = paint(&f);
     assert(fill_color_at(s, part(&f, "scroll-track")) == 0x26BAC2DE);
     assert(has_fill_op(s, part(&f, "scroll-thumb"), 0xFFBAC2DE));
@@ -1378,9 +1378,9 @@ static void wheel_flash_keeps_drag_test(void)
     assert(ui_scrollview_is_shown(&f.sv));
 
     struct rect2i track = part(&f, "scroll-track");
-    assert(pointer(&f, UI_POINTER_PRESS, center(part(&f, "scroll-thumb")), 0, 0));
+    assert(pointer(&f, PTR_PRESS, center(part(&f, "scroll-thumb")), 0, 0));
     assert(f.content.presses == 0);
-    assert(pointer(&f, UI_POINTER_MOTION, rect2i_end(track), 0, 0));
+    assert(pointer(&f, PTR_MOTION, rect2i_end(track), 0, 0));
     int bottom = max_offset(&f.sv);
     assert(ui_scrollview_offset(&f.sv) == bottom);
 
@@ -1390,9 +1390,9 @@ static void wheel_flash_keeps_drag_test(void)
     assert(ui_surface_captured(&f.surface) == &f.sv.widget);
     assert(ui_scrollview_is_shown(&f.sv));
 
-    assert(pointer(&f, UI_POINTER_MOTION, rect2i_end(track), 0, 0));
+    assert(pointer(&f, PTR_MOTION, rect2i_end(track), 0, 0));
     assert(ui_scrollview_offset(&f.sv) == bottom);
-    pointer(&f, UI_POINTER_RELEASE, rect2i_end(track), 0, 0);
+    pointer(&f, PTR_RELEASE, rect2i_end(track), 0, 0);
     assert(!ui_surface_captured(&f.surface));
 
     run_to_hide(&f, 1000);

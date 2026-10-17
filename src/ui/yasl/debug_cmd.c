@@ -483,8 +483,8 @@ static bool inject_pointer(struct dbg_cmd *cmd, enum pointer_kind kind,
             .mods = cmd->mods,
             .scroll_lines = scroll,
             .kind = kind,
-            .popup = cmd->surface,
         },
+        .popup = cmd->surface,
     });
 }
 

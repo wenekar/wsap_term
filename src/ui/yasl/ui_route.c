@@ -44,8 +44,8 @@ static enum window_input_result ui_input(struct window *w, const struct input_ev
         ui_surface_dispatch(keys, &event);
         return WINDOW_INPUT_HANDLED;
     case INPUT_MOUSE:
-        event = ui_event_pointer(ui_pointer_from_input(&ev->mouse), now_ms);
-        ui_surface_dispatch(window_ui_surface_at(w, ev->mouse.popup), &event);
+        event = ui_event_pointer(ev->mouse, now_ms);
+        ui_surface_dispatch(window_ui_surface_at(w, ev->popup), &event);
         break;
     default:
         return WINDOW_INPUT_UNHANDLED;
@@ -88,7 +88,7 @@ static enum window_input_result menu_input(struct window *w, const struct input_
     if (!ui_menu_is_open(&ui_of(w)->menu))
         return WINDOW_INPUT_UNHANDLED;
     if (ev->kind == INPUT_MOUSE && ev->mouse.kind == PTR_PRESS &&
-        ui_of(w)->menu_popups > 0 && ev->mouse.popup == 0) {
+        ui_of(w)->menu_popups > 0 && ev->popup == 0) {
         window_menu_close(w);
         return WINDOW_INPUT_HANDLED;
     }

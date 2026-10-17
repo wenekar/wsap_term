@@ -54,10 +54,10 @@ static void settle(struct fixture *f)
     ui_surface_prepare(ui);
 }
 
-static void pointer(struct fixture *f, enum ui_pointer_kind kind,
+static void pointer(struct fixture *f, enum pointer_kind kind,
                     struct vector2i pos, int button)
 {
-    struct ui_event e = ui_event_pointer((struct ui_pointer_event){
+    struct ui_event e = ui_event_pointer((struct pointer_event){
         .kind = kind, .pos = pos, .button = button,
     }, window_frame_time_ms(f->w));
     ui_surface_dispatch(window_ui_surface(f->w), &e);
@@ -65,9 +65,9 @@ static void pointer(struct fixture *f, enum ui_pointer_kind kind,
 
 static void click(struct fixture *f, struct vector2i pos, int button)
 {
-    pointer(f, UI_POINTER_MOTION, pos, button);
-    pointer(f, UI_POINTER_PRESS, pos, button);
-    pointer(f, UI_POINTER_RELEASE, pos, button);
+    pointer(f, PTR_MOTION, pos, button);
+    pointer(f, PTR_PRESS, pos, button);
+    pointer(f, PTR_RELEASE, pos, button);
 }
 
 static struct vector2i center(struct rect2i r)
@@ -122,11 +122,11 @@ static void dragging_a_tab_reorders_tabs_test(void)
 
     struct vector2i from = tab_center(&f, 0);
     struct vector2i to = tab_center(&f, 2);
-    pointer(&f, UI_POINTER_MOTION, from, 0);
-    pointer(&f, UI_POINTER_PRESS, from, 0);
-    pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = from.x + 20, .y = from.y }, 0);
-    pointer(&f, UI_POINTER_MOTION, to, 0);
-    pointer(&f, UI_POINTER_RELEASE, to, 0);
+    pointer(&f, PTR_MOTION, from, 0);
+    pointer(&f, PTR_PRESS, from, 0);
+    pointer(&f, PTR_MOTION, (struct vector2i){ .x = from.x + 20, .y = from.y }, 0);
+    pointer(&f, PTR_MOTION, to, 0);
+    pointer(&f, PTR_RELEASE, to, 0);
     assert(f.tw->tabs[0] == s1);
     assert(f.tw->tabs[1] == s2);
     assert(f.tw->tabs[2] == s0);
@@ -148,13 +148,13 @@ static void scrollbar_scrolls_the_active_tab_test(void)
 
     struct rect2i view = terminal_view_rect(f.w);
     struct vector2i track = { .x = rect2i_end(view).x - 2, .y = view.y + view.height / 2 };
-    pointer(&f, UI_POINTER_MOTION, track, 0);
-    pointer(&f, UI_POINTER_PRESS, track, 0);
-    pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = track.x, .y = -100 }, 0);
+    pointer(&f, PTR_MOTION, track, 0);
+    pointer(&f, PTR_PRESS, track, 0);
+    pointer(&f, PTR_MOTION, (struct vector2i){ .x = track.x, .y = -100 }, 0);
     assert(wsap_vtcore_scrollback(t).offset == history);
-    pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = track.x, .y = 2000 }, 0);
+    pointer(&f, PTR_MOTION, (struct vector2i){ .x = track.x, .y = 2000 }, 0);
     assert(wsap_vtcore_scrollback(t).offset == 0);
-    pointer(&f, UI_POINTER_RELEASE, (struct vector2i){ .x = track.x, .y = 2000 }, 0);
+    pointer(&f, PTR_RELEASE, (struct vector2i){ .x = track.x, .y = 2000 }, 0);
     close_window(&f);
 }
 

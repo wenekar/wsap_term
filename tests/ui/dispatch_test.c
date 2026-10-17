@@ -268,8 +268,8 @@ static void frame_requests_test(void)
     ui_surface_take_frame_request(&s);
     root.invalidate_key = false;
 
-    struct ui_event press = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS, .pos = { .x = 10, .y = 10 },
+    struct ui_event press = ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS, .pos = { .x = 10, .y = 10 },
     }, 0);
     assert(ui_surface_dispatch(&s, &press));
     assert(ui_surface_frame_pending(&s));

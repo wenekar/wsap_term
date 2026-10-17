@@ -130,19 +130,6 @@ struct input_key_event {
     bool text_deferred;
 };
 
-struct input_mouse_event {
-    struct vector2i pos;
-
-    int button;
-    unsigned mods;
-    int scroll_lines;
-    float scroll_delta;
-    enum pointer_kind kind;
-    enum pointer_device device;
-    struct pointer_pen pen;
-    int popup;
-};
-
 enum input_shortcut {
     INPUT_SHORTCUT_NONE = 0,
     INPUT_SHORTCUT_FONT_LARGER,
@@ -199,7 +186,7 @@ struct input_data {
 struct input_event {
     union {
         struct input_key_event key;
-        struct input_mouse_event mouse;
+        struct pointer_event mouse;
         struct { bool focused; } focus;
 
         struct {
@@ -213,6 +200,7 @@ struct input_event {
         struct { enum input_shortcut action; } shortcut;
     };
     enum input_kind kind;
+    int popup;
 };
 
 _Static_assert(sizeof(struct input_event) == 64,

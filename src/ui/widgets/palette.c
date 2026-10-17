@@ -191,8 +191,8 @@ static bool palette_event(struct ui_widget *widget, const struct ui_event *event
     }
     if (event->kind != UI_EVENT_POINTER)
         return false;
-    const struct ui_pointer_event *ptr = &event->data.pointer;
-    if (ui_pointer_is_button_press(ptr) &&
+    const struct pointer_event *ptr = &event->data.pointer;
+    if (pointer_is_button_press(ptr) &&
         !rect2i_contains(widget->bounds, ptr->pos))
         ui_palette_close(p);
     return true;

@@ -18,9 +18,9 @@
 
 #define YASL_SCALE_UNIT 120
 
-#define WINDOW_NATIVE_MAX 16
-
 struct window_native {
+    struct window *window;
+    int id;
     struct yasl_surface *surface;
     struct framebuffer_history history;
     struct damage_list damage;
@@ -42,7 +42,7 @@ struct window_accessibility;
 struct window_debug;
 
 struct window_ui_menu_popup {
-    struct yasl_surface *surface;
+    struct window_native native;
     struct ui_surface ui;
     struct ui_widget root;
     struct rect2i anchor;
@@ -81,9 +81,7 @@ struct window {
     char *title;
     const struct window_drag_target *drag_target;
     void *drag_ud;
-    struct yasl_surface *surface;
-    struct window_native natives[WINDOW_NATIVE_MAX];
-    int native_count;
+    struct window_native native;
     window_frame_composer compose;
     void *compose_ud;
     struct window_pointer pointer;
@@ -122,6 +120,7 @@ bool window_host_add(struct window_host *host, struct window *w);
 void window_wake_at(struct window *w, uint64_t at_ms);
 void window_host_remove(struct window_host *host, struct window *w);
 void window_destroy(struct window *w);
+void window_native_destroy(struct window_native *native);
 void window_host_dispatch_event(struct window_host *host, const struct yasl_event *ev);
 bool window_inject_pop(struct window *w, struct input_event *ev);
 void window_host_report_empty(struct window_host *host, struct window *last);
@@ -151,8 +150,6 @@ void window_ui_destroy(struct window *w);
 void window_ui_restyle(struct window *w);
 struct ui_scene *window_ui_scene_scratch(struct window *w);
 void window_menu_relayout(struct window *w);
-struct ui_surface *window_ui_surface_of(struct window *w,
-                                        const struct yasl_surface *s);
 struct ui_surface *window_ui_surface_at(struct window *w, int popup);
 void window_ui_root_init(struct window *w);
 void window_ui_arm(struct window *w, uint64_t now_ms);

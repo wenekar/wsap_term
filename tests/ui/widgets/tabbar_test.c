@@ -133,10 +133,10 @@ static bool tick(struct fixture *f, uint64_t now_ms)
     return more;
 }
 
-static bool pointer(struct fixture *f, enum ui_pointer_kind kind,
+static bool pointer(struct fixture *f, enum pointer_kind kind,
                     struct vector2i pos, int button, uint64_t time_ms)
 {
-    struct ui_event e = ui_event_pointer((struct ui_pointer_event){
+    struct ui_event e = ui_event_pointer((struct pointer_event){
         .kind = kind, .pos = pos, .button = button,
     }, time_ms);
     bool handled = ui_surface_dispatch(&f->surface, &e);
@@ -147,17 +147,17 @@ static bool pointer(struct fixture *f, enum ui_pointer_kind kind,
 static void press(struct fixture *f, struct vector2i pos, int button,
                   uint64_t time_ms)
 {
-    pointer(f, UI_POINTER_PRESS, pos, button, time_ms);
+    pointer(f, PTR_PRESS, pos, button, time_ms);
 }
 
 static void release(struct fixture *f, struct vector2i pos, uint64_t time_ms)
 {
-    pointer(f, UI_POINTER_RELEASE, pos, 0, time_ms);
+    pointer(f, PTR_RELEASE, pos, 0, time_ms);
 }
 
 static void motion(struct fixture *f, struct vector2i pos, uint64_t time_ms)
 {
-    pointer(f, UI_POINTER_MOTION, pos, 0, time_ms);
+    pointer(f, PTR_MOTION, pos, 0, time_ms);
 }
 
 static void click(struct fixture *f, struct vector2i pos, uint64_t time_ms)
@@ -689,7 +689,7 @@ static void host_restyle_during_motion_test(void)
     struct restyle_on_highlight r = { .f = &f, .next = &low };
     ui_widget_set_action_handler(bar(&f), restyle_on_highlight, &r);
 
-    bool handled = pointer(&f, UI_POINTER_MOTION, center(tab_rect(&f, 1)),
+    bool handled = pointer(&f, PTR_MOTION, center(tab_rect(&f, 1)),
                            0, 1000);
     assert(r.next == NULL);
     assert(ui_tabbar_height(&f.tb) == 10);

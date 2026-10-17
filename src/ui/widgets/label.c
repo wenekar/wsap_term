@@ -600,13 +600,13 @@ link_key:
     }
     if (event->kind != UI_EVENT_POINTER)
         return false;
-    const struct ui_pointer_event *p = &event->data.pointer;
-    if (p->kind == UI_POINTER_LEAVE || p->kind == UI_POINTER_MOTION) {
+    const struct pointer_event *p = &event->data.pointer;
+    if (p->kind == PTR_LEAVE || p->kind == PTR_MOTION) {
         unsigned pseudo = widget->impl.style_pseudo & ~CSS_PSEUDO_HOVER;
-        if (p->kind == UI_POINTER_MOTION && text_hit(label, p->pos)) pseudo |= CSS_PSEUDO_HOVER;
+        if (p->kind == PTR_MOTION && text_hit(label, p->pos)) pseudo |= CSS_PSEUDO_HOVER;
         ui_widget_set_style_pseudo(widget, pseudo);
     }
-    if (p->kind == UI_POINTER_PRESS) {
+    if (p->kind == PTR_PRESS) {
         if (p->button != 0 || (!label->impl.selectable && !label->impl.link) ||
             !rect2i_contains(widget->bounds, p->pos) ||
             (!label->impl.selectable && !text_hit(label, p->pos)))
@@ -639,7 +639,7 @@ link_key:
         ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
         return true;
     }
-    if (p->kind == UI_POINTER_MOTION && label->impl.pressed) {
+    if (p->kind == PTR_MOTION && label->impl.pressed) {
         struct vector2i delta = vector2i_sub(p->pos, label->impl.press_pos);
         int distance = ui_px(widget->style_scale.dpi_scale, 4);
         if (llabs((long long)delta.x) > distance || llabs((long long)delta.y) > distance)
@@ -660,7 +660,7 @@ link_key:
         }
         return true;
     }
-    if (p->kind == UI_POINTER_RELEASE && p->button == 0 && label->impl.pressed) {
+    if (p->kind == PTR_RELEASE && p->button == 0 && label->impl.pressed) {
         bool open = label->impl.link && !label->impl.dragged && label->impl.clicks == 1 &&
                     !ui_label_selection(label, NULL, NULL) && text_hit(label, p->pos);
         label->impl.pressed = false;
