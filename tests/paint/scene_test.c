@@ -232,9 +232,35 @@ static void damage_bounds_test(void)
     assert(b.x == 5 && b.y == 10 && b.width == 105 && b.height == 100);
 }
 
+static void scene_copy_cleanup_test(void)
+{
+    struct ui_scene src = {0}, dst = {0};
+    ui_scene_init(&src);
+    ui_scene_init(&dst);
+
+    assert(ui_scene_rect(&src, r_at(0, 0, 10, 10), 0xFF112233));
+    assert(ui_scene_text_run(&src, r_at(0, 0, 10, 10),
+                             (struct ui_text_style){ .advance = 8, .cell_h = 16 },
+                             0xFFFFFFFF, "test", 4));
+
+    static int owner;
+    assert(ui_scene_begin_node(&dst, &owner, (struct vector2i){0}));
+    assert(ui_scene_rect(&dst, r_at(5, 5, 20, 20), 0xFF445566));
+
+    assert(ui_scene_copy(&dst, &src));
+    assert(dst.n_ops == src.n_ops);
+    assert(dst.text_len == src.text_len);
+
+    assert(ui_scene_copy(&dst, &dst));
+
+    ui_scene_destroy(&src);
+    ui_scene_destroy(&dst);
+}
+
 int main(void)
 {
     scene_builder_bounds_test();
+    scene_copy_cleanup_test();
     scene_node_origin_test();
     scene_damage_test();
     damage_bounds_test();

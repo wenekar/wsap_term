@@ -51,6 +51,7 @@ bool ui_scene_copy(struct ui_scene *dst, const struct ui_scene *src)
         return false;
     if (dst == src)
         return true;
+    ui_scene_destroy(dst);
     ui_scene_init(dst);
     if (!copy_into(&dst->ops, &dst->ops_cap, src->ops, src->n_ops,
                    sizeof(*src->ops)) ||
@@ -60,7 +61,7 @@ bool ui_scene_copy(struct ui_scene *dst, const struct ui_scene *src)
                    src->clip_depth, sizeof(*src->clips)) ||
         !copy_into(&dst->text, &dst->text_cap, src->text,
                    (int)src->text_len, 1)) {
-        ui_scene_init(dst);
+        ui_scene_destroy(dst);
         dst->overflow = true;
         return false;
     }

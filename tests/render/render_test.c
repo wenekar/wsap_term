@@ -695,23 +695,8 @@ static void theme_redraw_test(void)
 
     feed(t, "\033[?25l\033]10;#00ff00\007\033]11;#0000ff\007\033[0m\033[2J\033[HA");
     test_renderer_paint(r, pixels, w, h, 0, t, true);
-    struct glyph glyph = {0};
-    assert(font_instance_render_glyph(test_font(), 'A', 0, &glyph));
-    assert(!glyph.has_color && glyph.x_offset == 0 && glyph.width == CELL_W);
-    for (int y = 0; y < h; y++) {
-        for (int x = 0; x < CELL_W; x++) {
-            double a = corrected_cov(0xff00ff00, 0xff0000ff,
-                                     glyph.alpha[y][x] / 255.0);
-            a = lround(a * 255) / 255.0;
-            int green = (int)lround(lin_to_srgb(a) * 255);
-            int blue = (int)lround(lin_to_srgb(1 - a) * 255);
-            uint32_t got = pixels[(size_t)y * w + x];
-            assert(((got >> 16) & 255) == 0);
-            assert(abs((int)((got >> 8) & 255) - green) <= 3);
-            assert(abs((int)(got & 255) - blue) <= 3);
-        }
-    }
-    glyph_release(&glyph);
+    test_render_paint_full(expected, w, h, true, t);
+    assert(!memcmp(pixels, expected, bytes));
     renderer_destroy(r);
     free(pixels);
     free(expected);
@@ -1414,9 +1399,30 @@ static void pill_rounded_rect_symmetry_test(void)
     ui_scene_destroy(&scene);
 }
 
+static void single_threaded_render_shutdown_cleanup_test(void)
+{
+    render_init();
+    struct wsap_vtcore *t = tt_new(8, 2);
+    feed(t, "\033[?25lABCDEFGH");
+    int w = 8 * CELL_W, h = 2 * CELL_H;
+    uint32_t *px = calloc((size_t)w * h, sizeof(uint32_t));
+    assert(t && px);
+
+    setenv("WSAP_NO_PARALLEL", "1", 1);
+    struct terminal_frame frame;
+    test_frame_init(&frame, t, false);
+    render_paint_full_terminal_frame(test_font(), px, w, h, &frame);
+    unsetenv("WSAP_NO_PARALLEL");
+
+    render_shutdown();
+    free(px);
+    wsap_vtcore_free(t);
+}
+
 int main(int argc, char **argv)
 {
     uninitialized_srgb_luts_test();
+    single_threaded_render_shutdown_cleanup_test();
     render_init();
     if (argc > 1 && !strcmp(argv[1], "--bench")) benchmark();
     else {

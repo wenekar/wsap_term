@@ -982,6 +982,7 @@ void render_pool_destroy(void)
 {
     if (pool_count <= 0) {
         pool_count = -1;
+        run_buffers_free();
         return;
     }
     atomic_store_explicit(&pool_stop, true, memory_order_release);
