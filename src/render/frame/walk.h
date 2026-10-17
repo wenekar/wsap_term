@@ -171,14 +171,23 @@ static inline const struct glyph *render_glyph_get(const struct render_glyph_ref
 }
 
 /*
- * Called once for each column of the walk, in increasing column order.
- * `col` is the grid column. The callback must not call
+ * Called for each column of the walk that no render_run_fn call covers,
+ * in increasing column order. `col` is the grid column. The callback must not call
  * glyph_cache_shape_segment() or any rebuilding font function (see
  * docs/font-api.md, "Re-entrancy"). It can call render_glyph_get() and
  * glyph_cache_fetch().
  */
 typedef void (*render_cell_fn)(void *ctx, int col, const struct render_cell *cell,
                                const struct render_glyph_ref *glyph);
+
+/*
+ * Called for a run of blank cells in place of one render_cell_fn call for
+ * each of its columns. Each column of [c0, c1) has a render_cell with flags
+ * RENDER_CELL_BLANK and no other bit, text ' ', style 0, and this `bg`.
+ * Such a cell draws only its bg. Its fg has no effect on pixels, so the run
+ * does not give it. The walk can also send such a cell to render_cell_fn.
+ */
+typedef void (*render_run_fn)(void *ctx, int c0, int c1, uint32_t bg);
 
 /* Walk flags. */
 enum render_walk_flags {
@@ -190,6 +199,9 @@ enum render_walk_flags {
 
 /*
  * Walks row `y` of `f`, columns [c0, c1), and calls `fn` for each column.
+ * With `run` non-NULL, it calls `run` for runs of blank cells instead (see
+ * render_run_fn). The calls together cover each column once, in increasing
+ * column order.
  *
  * - The walk clamps [c0, c1) to [0, f->cols). A row outside the snapshot
  *   gives blank cells in the default colors, after reverse video.
@@ -221,7 +233,8 @@ enum render_walk_flags {
  * same font path.
  */
 void render_row_walk(struct font_instance *fi, const struct terminal_frame *f, int y,
-                     int c0, int c1, unsigned flags, render_cell_fn fn, void *ctx);
+                     int c0, int c1, unsigned flags, render_cell_fn fn, render_run_fn run,
+                     void *ctx);
 
 /*
  * Frees the scratch of the calling thread. Pool workers call it before they

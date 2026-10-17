@@ -1,6 +1,7 @@
 #include "render/frame/walk.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 #include "font/cell_draw.h"
 #include "font/glyph/intern.h"
@@ -50,6 +51,7 @@ struct walk {
     const struct wsap_vtcore_view *view;
     const struct wsap_vtcore_cell *cells;
     render_cell_fn fn;
+    render_run_fn run;
     void *ctx;
     int cols, c0, c1;
     bool peek;
@@ -369,15 +371,112 @@ static void walk_span_policy(void *ctx, const struct glyph_span *span)
     walk_span(ctx, span, false);
 }
 
+/*
+ * The bg of a cell that draws only its bg: a BLANK cell with no other flag.
+ * Returns false for any other cell. The bg is the one before the selection
+ * and the cursor. Reverse video draws the fg as the bg.
+ */
+static inline __attribute__((always_inline)) bool
+blank_bg(const struct walk *w, const struct wsap_vtcore_cell *c, uint32_t *bg)
+{
+    if (c->width != 1 || c->text > ' ')
+        return false;
+    bool rev = w->f->reverse_video;
+    if (c->text == 0) {
+        *bg = rev ? w->f->default_fg : w->f->default_bg;
+        return true;
+    }
+    if (c->attrs & ATTR_DECOR_BITS)
+        return false;
+    *bg = wsap_vtcore_view_color(w->view, rev ? c->fg : c->bg);
+    return true;
+}
+
+/*
+ * The end of the blank run that starts at `c` with bg `bg`, at most `end`.
+ * A cell equal to the cell before it continues the run with no other test.
+ */
+static inline __attribute__((always_inline)) int
+blank_run_end(const struct walk *w, int c, int end, uint32_t bg)
+{
+    const struct wsap_vtcore_cell *cells = w->cells;
+    int e = c + 1;
+    for (; e < end; e++) {
+        if (!memcmp(&cells[e], &cells[e - 1], sizeof(*cells)))
+            continue;
+        uint32_t b;
+        if (!blank_bg(w, &cells[e], &b) || b != bg)
+            break;
+    }
+    return e;
+}
+
+/*
+ * Sends the blank run [a, b) of bg `bg` to the run function. In a policy
+ * row, the selection gives its bg to the part that it covers. The cells
+ * of the cursor take the per-cell path.
+ */
+static inline __attribute__((always_inline)) void
+walk_run(struct walk *w, int a, int b, uint32_t bg, bool plain)
+{
+    if (a < w->c0)
+        a = w->c0;
+    if (b > w->c1)
+        b = w->c1;
+    if (plain) {
+        if (a < b)
+            w->run(w->ctx, a, b, bg);
+        return;
+    }
+    while (a < b) {
+        int e = b;
+        if (in_span(w->cur, a)) {
+            if (w->cur.end < e)
+                e = w->cur.end;
+            for (; a < e; a++) {
+                if (w->cells)
+                    walk_cell(w, a, false);
+                else
+                    walk_blank(w, a, false);
+            }
+            continue;
+        }
+        if (w->cur.begin < w->cur.end && w->cur.begin > a && w->cur.begin < e)
+            e = w->cur.begin;
+        uint32_t color = bg;
+        if (in_span(w->sel, a)) {
+            color = w->sel_bg;
+            if (w->sel.end < e)
+                e = w->sel.end;
+        } else if (w->sel.begin < w->sel.end && w->sel.begin > a && w->sel.begin < e) {
+            e = w->sel.begin;
+        }
+        w->run(w->ctx, a, e, color);
+        a = e;
+    }
+}
+
 static inline __attribute__((always_inline)) void walk_row(struct walk *w, bool plain)
 {
     if (!w->cells) {
+        if (w->run) {
+            walk_run(w, w->c0, w->c1,
+                     w->f->reverse_video ? w->f->default_fg : w->f->default_bg, plain);
+            return;
+        }
         for (int col = w->c0; col < w->c1; col++)
             walk_blank(w, col, plain);
         return;
     }
     const struct wsap_vtcore_cell *cells = w->cells;
     for (int c = segment_start(cells, w->c0); c < w->c1;) {
+        uint32_t bg;
+        if (w->run && blank_bg(w, &cells[c], &bg)) {
+            int end = blank_run_end(w, c, w->c1, bg);
+            walk_run(w, c, end, bg, plain);
+            c = end;
+            continue;
+        }
         int end = segment_end(cells, c, w->cols);
         uint32_t *cps = end - c > 1 ? walk_scratch(end - c) : NULL;
         if (cps) {
@@ -424,7 +523,8 @@ static struct wsap_vtcore_span cursor_span(const struct walk *w, int x)
 }
 
 void render_row_walk(struct font_instance *fi, const struct terminal_frame *f, int y,
-                     int c0, int c1, unsigned flags, render_cell_fn fn, void *ctx)
+                     int c0, int c1, unsigned flags, render_cell_fn fn, render_run_fn run,
+                     void *ctx)
 {
     if (!fi || !f || !fn || !f->source)
         return;
@@ -436,7 +536,7 @@ void render_row_walk(struct font_instance *fi, const struct terminal_frame *f, i
         return;
     struct walk w = {
         .fi = fi, .f = f, .view = wsap_vtcore_snapshot_view(f->source),
-        .cells = terminal_frame_row(f, y), .fn = fn, .ctx = ctx,
+        .cells = terminal_frame_row(f, y), .fn = fn, .run = run, .ctx = ctx,
         .cols = f->cols, .c0 = c0, .c1 = c1, .peek = (flags & RENDER_WALK_PEEK) != 0,
     };
     if (f->has_selection) {

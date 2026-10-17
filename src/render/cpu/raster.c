@@ -551,6 +551,13 @@ static inline RENDER_ALWAYS_INLINE void cell_slow(int isa, struct row_ctx *c, in
 typedef void (*cell_slow_fn)(struct row_ctx *c, int sx0, const struct render_cell *cell,
                              const struct render_glyph_ref *ref);
 
+/* The run callback of the walk: blank cells that draw only their bg. */
+static inline RENDER_ALWAYS_INLINE void run_body(int isa, void *ctx, int c0, int c1, uint32_t bg)
+{
+    struct row_ctx *c = ctx;
+    run_add(isa, c, c0 * c->cw, c1 * c->cw, bg);
+}
+
 /*
  * The walk callback. Plain fills and L0 hits stay here. An L0 hit is a
  * cell inside the window, so it needs no clip check beyond put_tile.
@@ -598,7 +605,8 @@ static bool scratch_room(struct raster_worker *w, size_t px)
 
 static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_frame *f,
                                                 struct raster_worker *w,
-                                                const struct raster_job *job, render_cell_fn fn)
+                                                const struct raster_job *job, render_cell_fn fn,
+                                                render_run_fn run)
 {
     const struct terminal_frame *tf = f->frame;
     const int cw = f->cw;
@@ -644,7 +652,7 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
         (void)scratch_room(w, (size_t)cw * (size_t)f->ch);
     }
     if (c0 < c1)
-        render_row_walk(f->font, tf, job->row, c0, c1, RENDER_WALK_PEEK, fn, &c);
+        render_row_walk(f->font, tf, job->row, c0, c1, RENDER_WALK_PEEK, fn, run, &c);
 
     if (c.width > c.area)
         run_add(isa, &c, c.area, c.width, c.margin);
@@ -668,11 +676,15 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
     {                                                                                      \
         cell_body(level, ctx, col, cell, ref, slow_##sfx);                                 \
     }                                                                                      \
+    target static RENDER_NOINLINE void run_##sfx(void *ctx, int c0, int c1, uint32_t bg)   \
+    {                                                                                      \
+        run_body(level, ctx, c0, c1, bg);                                                  \
+    }                                                                                      \
     target static RENDER_NOINLINE int row_##sfx(const struct raster_frame *f,              \
                                                 struct raster_worker *w,                   \
                                                 const struct raster_job *job)              \
     {                                                                                      \
-        return row_body(level, f, w, job, cell_##sfx);                                     \
+        return row_body(level, f, w, job, cell_##sfx, run_##sfx);                          \
     }
 
 #define RASTER_NO_TARGET
