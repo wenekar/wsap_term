@@ -189,9 +189,20 @@ struct yasl_private_damage_list {
     int n;
     /** Reserved hint; callers may leave zero. Core presentation uses rects. */
     struct yasl_private_rect2i bounds;
+    /** Set when pending rects were merged into one; later rects keep merging into it. */
+    bool merged;
     /** First n rectangles, in device pixels; ignored for n == -1. */
     struct yasl_private_rect2i rects[YASL_PRIVATE_DAMAGE_MAX];
 };
+
+/**
+ * Adds rects to a pending damage list. Full damage (n == -1) stays full. Empty rects are
+ * skipped. Count <= 0 or NULL rects make the list full. When the list would exceed
+ * YASL_PRIVATE_DAMAGE_MAX rects, it becomes one rect that covers all pending damage.
+ * The bounds field always covers every rect in the list.
+ */
+void yasl_private_damage_union(struct yasl_private_damage_list *list,
+                               const struct yasl_private_rect2i *rects, int count);
 
 /** Borrowed draw target, valid only for the current draw callback. Never free pixels. */
 struct yasl_private_framebuffer {
