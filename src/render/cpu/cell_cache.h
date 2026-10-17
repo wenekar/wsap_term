@@ -1,0 +1,208 @@
+#ifndef RENDER_CPU_CELL_CACHE_H
+#define RENDER_CPU_CELL_CACHE_H
+
+/*
+ * The composited cell cache. A tile is one cell, fully composed: its bg,
+ * its part of the glyph, its decorations, and its cursor marks. It has
+ * cw * ch opaque pixels with a row stride of cw. The cache generalizes the
+ * old default-color tiles of the font to any color pair.
+ *
+ * Pixels never depend on the cache. A hit blits the tile that a miss would
+ * compose. The parity tests check this with a small budget, a cold cache,
+ * and a warm cache.
+ *
+ * Storage
+ * - One class for each cell size (cw, ch). A class has slabs of tiles, a
+ *   key array, a stamp array, and an index.
+ * - One byte budget covers all classes. When a class needs room and the
+ *   budget is full, the least recently used other class is freed first.
+ *   After that, the class evicts its own tiles.
+ * - A class grows by whole slabs. A slab never moves, so a tile pointer
+ *   stays valid until its slot is evicted.
+ * - A class needs room for at least CELL_CACHE_MIN_TILES tiles. Else
+ *   cell_cache_begin() returns NULL and the frame composes every cell.
+ * - The index is open-addressed with linear probes. Each slot has a clock
+ *   stamp: the frame number of its last use.
+ *
+ * Frame protocol
+ * 1. Main thread, before the phase: cell_cache_begin().
+ *    - It picks the class of the cell size.
+ *    - It fills the free list up to max(the claims that the last frame
+ *      asked for, CELL_CACHE_REFILL_MIN). It takes never-used slots first,
+ *      and it grows the class within the budget. Then it evicts by clock,
+ *      but only up to the claims that the last frame asked for. A slot used
+ *      in the last frame is never evicted. So an idle frame evicts nothing.
+ *      A claim that found the free list empty still counts as asked.
+ *    - It resets each worker: pending table, hit log, claim count. It clears
+ *      a worker's L0 table when the L0 domain changed (see below).
+ * 2. Workers, during the phase: cell_cache_find(), cell_cache_claim().
+ *    - The index, the keys, the stamps, and the published tiles do not
+ *      change during the phase. Readers need no lock.
+ *    - A worker claims a free slot with one atomic_fetch_add on the free
+ *      list cursor. It writes the tile, and it records the key and the slot
+ *      in its own pending table. The pending table also serves the repeats
+ *      of that key in the same frame, for that worker.
+ *    - A worker writes its hits into its own hit log. It never writes a
+ *      shared stamp.
+ *    - When the free list is empty, claim returns NULL. The worker then
+ *      composes the cell straight into the canvas.
+ * 3. Main thread, after the join: cell_cache_publish().
+ *    - It inserts the pending entries into the index. When two workers
+ *      claimed the same key, it keeps one slot and frees the other.
+ *    - It stamps the hit logs and every slot that an L0 table holds.
+ *    - It records the claim count for the next refill, and it advances the
+ *      clock.
+ *
+ * Admission: each worker has a seen filter of CELL_CACHE_SEEN entries. It
+ * admits a key on its second sighting. So a flood of one-off color pairs
+ * (lolcat) does not evict useful tiles. The filter only steers admission.
+ * It never changes pixels.
+ *
+ * L0: each worker has a direct-mapped table [variant][cp < 128] for the
+ * default color pair of the frame. ASCII in the default colors is then one
+ * load per cell.
+ * - Its domain is (class, font version, default fg, default bg, cache
+ *   epoch). cell_cache_begin() clears the table when the domain changed.
+ * - The cache epoch changes on every eviction, every freed duplicate, and
+ *   every class drop. An idle frame keeps the epoch, so L0 survives it.
+ * - find and claim fill L0 for keys of its domain: an unshaped id with
+ *   text < 128, no pixel flags, half 0, and the default pair.
+ *
+ * Budget 0 or a disabled cache: cell_cache_create() returns NULL. Every
+ * call accepts a NULL cache or a NULL class and then does nothing, finds
+ * nothing, and claims nothing.
+ */
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+#include "font/font.h"
+#include "util/geom.h"
+
+#define CELL_CACHE_SEEN 4096
+#define CELL_CACHE_HIT_LOG 4096
+#define CELL_CACHE_PENDING 2048
+#define CELL_CACHE_MIN_TILES 16
+#define CELL_CACHE_REFILL_MIN 256
+#define CELL_CACHE_L0_CPS 128
+
+/*
+ * The key of a tile. 32 bytes, with no padding. Compare it in full.
+ * Build it from a zero struct.
+ *
+ * - `glyph`: render_glyph_ref.id. Never 0: an id of 0 is not cached.
+ * - `font_version`: font_instance_version() of the grid font.
+ * - `fg`, `bg`: render_cell.fg and render_cell.bg.
+ * - `cursor`: terminal_frame.cursor_color when `flags` has a CURSOR bit,
+ *   else 0. The design key had no cursor color. Without it, two terminals
+ *   with different cursor colors would share a cursor tile.
+ * - `flags`: render_cell.flags & RENDER_CELL_PIXEL_MASK.
+ * - `half`: 0 for a one-column cell and for the left half of a wide glyph,
+ *   1 for the right half.
+ * - `zero`: always 0.
+ */
+struct cell_key {
+    uint64_t glyph;
+    uint64_t font_version;
+    uint32_t fg, bg;
+    uint32_t cursor;
+    uint16_t flags;
+    uint8_t half;
+    uint8_t zero;
+};
+
+_Static_assert(sizeof(struct cell_key) == 32, "a cell key is 32 bytes");
+
+static inline bool cell_key_eq(const struct cell_key *a, const struct cell_key *b)
+{
+    return memcmp(a, b, sizeof(*a)) == 0;
+}
+
+/*
+ * A tile. `px` NULL means a miss. `spill` means: the glyph of this tile
+ * has ink outside the cell. On a hit with `spill`, the raster fetches the
+ * glyph anyway and adds its spill coverage, as compose would.
+ */
+struct cell_tile {
+    const uint32_t *px;
+    bool spill;
+};
+
+/*
+ * The L0 table of one worker. Read it with cell_l0_find(). Only the cache
+ * writes it.
+ * - px[v][cp] NULL is a miss.
+ * - Bit cp of spill[v][cp / 64] is the spill flag of that tile.
+ */
+struct cell_l0 {
+    const uint32_t *px[FONT_VARIANT_COUNT][CELL_CACHE_L0_CPS];
+    uint64_t spill[FONT_VARIANT_COUNT][CELL_CACHE_L0_CPS / 64];
+};
+
+/*
+ * Looks up an ASCII cell of the default pair. The caller checks the domain
+ * first: unshaped id, text < 128, no pixel flags, half 0, the default fg
+ * and bg, and a style with only variant bits.
+ */
+static inline struct cell_tile cell_l0_find(const struct cell_l0 *l0, uint32_t cp, uint16_t style)
+{
+    unsigned v = style & FONT_STYLE_VARIANT_MASK;
+    return (struct cell_tile){
+        .px = l0->px[v][cp],
+        .spill = (l0->spill[v][cp >> 6] >> (cp & 63)) & 1,
+    };
+}
+
+struct cell_cache;
+struct cell_class;
+struct cell_cache_worker;
+
+/* `budget` in bytes. 0 returns NULL: no cache. Main thread only. */
+struct cell_cache *cell_cache_create(size_t budget);
+void cell_cache_destroy(struct cell_cache *c);
+
+/* Per-worker state: seen filter, pending table, hit log, and L0. */
+struct cell_cache_worker *cell_cache_worker_create(void);
+void cell_cache_worker_destroy(struct cell_cache_worker *w);
+const struct cell_l0 *cell_cache_worker_l0(const struct cell_cache_worker *w);
+
+/*
+ * Starts the parallel phase for one cell size. Main thread only. Returns
+ * the class, or NULL: no cache this frame. `workers` lists the worker states
+ * that take part, the main thread first. Allocation happens only here and
+ * only while a class grows.
+ */
+struct cell_class *cell_cache_begin(struct cell_cache *c, struct vector2i cell,
+                                    uint64_t font_version,
+                                    uint32_t default_fg, uint32_t default_bg,
+                                    struct cell_cache_worker *const *workers, int n_workers);
+
+/*
+ * Finds a tile. It looks in the published index, then in the pending table
+ * of `w`. A hit goes into the hit log of `w` and, in the L0 domain, into L0.
+ * Any thread during the phase.
+ */
+struct cell_tile cell_cache_find(const struct cell_class *k, struct cell_cache_worker *w,
+                                 const struct cell_key *key);
+
+/*
+ * Asks for a slot for a key that missed. The seen filter admits the key on
+ * its second sighting. Returns a tile buffer of cw * ch pixels to compose
+ * into, or NULL: compose straight into the canvas. The caller must fill
+ * the whole tile before its next call into the cache. `spill` is the spill
+ * flag that cell_cache_find() returns for this key later.
+ * Any thread during the phase.
+ */
+uint32_t *cell_cache_claim(struct cell_class *k, struct cell_cache_worker *w,
+                           const struct cell_key *key, bool spill);
+
+/*
+ * Ends the phase. Main thread, after the join. Pass the same workers as to
+ * cell_cache_begin().
+ */
+void cell_cache_publish(struct cell_cache *c, struct cell_class *k,
+                        struct cell_cache_worker *const *workers, int n_workers);
+
+#endif
