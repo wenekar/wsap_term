@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include "bench.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -14,12 +15,6 @@
 #include <limits.h>
 #include "loop/latency_probe.h"
 
-static uint64_t now_ns(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000000ull + ts.tv_nsec;
-}
 static void sleep_ns(uint64_t ns)
 {
     struct timespec ts = { .tv_sec = ns / 1000000000ull, .tv_nsec = ns % 1000000000ull };
@@ -162,7 +157,7 @@ static bool wayland_open(void)
 
 static bool wayland_key(void)
 {
-    uint32_t t = (uint32_t)(now_ns() / 1000000);
+    uint32_t t = (uint32_t)(bench_now_ns() / 1000000);
     zwp_virtual_keyboard_v1_key(vk, t, KEY_A, WL_KEYBOARD_KEY_STATE_PRESSED);
     zwp_virtual_keyboard_v1_key(vk, t, KEY_A, WL_KEYBOARD_KEY_STATE_RELEASED);
     return wl_display_flush(wl_dpy) >= 0;
@@ -382,20 +377,20 @@ int main(int argc, char **argv)
     }
     bool injector_ready = use_wayland() && injector_open();
     if (use_wayland() && !injector_ready) goto cleanup;
-    uint64_t deadline = now_ns() + 15000000000ull;
+    uint64_t deadline = bench_now_ns() + 15000000000ull;
     while (!atomic_load_explicit(&probe->focused, memory_order_relaxed)) {
         if (waitpid(pid, NULL, WNOHANG) == pid) { pid = -1; goto cleanup; }
-        if (stopped || now_ns() > deadline) { fprintf(stderr, "terminal did not take focus\n"); goto cleanup; }
+        if (stopped || bench_now_ns() > deadline) { fprintf(stderr, "terminal did not take focus\n"); goto cleanup; }
         sleep_ns(10000000);
     }
-    deadline = now_ns() + 5000000000ull;
+    deadline = bench_now_ns() + 5000000000ull;
     while (!atomic_load_explicit(&probe->ready, memory_order_acquire)) {
-        if (stopped || now_ns() > deadline) { fprintf(stderr, "echo helper did not become ready\n"); goto cleanup; }
+        if (stopped || bench_now_ns() > deadline) { fprintf(stderr, "echo helper did not become ready\n"); goto cleanup; }
         sleep_ns(1000000);
     }
-    deadline = now_ns() + 5000000000ull;
+    deadline = bench_now_ns() + 5000000000ull;
     while (!atomic_load_explicit(&probe->fullscreen, memory_order_acquire)) {
-        if (stopped || now_ns() > deadline) {
+        if (stopped || bench_now_ns() > deadline) {
             fprintf(stderr, "compositor did not confirm fullscreen\n");
             goto cleanup;
         }
@@ -422,11 +417,11 @@ int main(int argc, char **argv)
         }
         uint64_t id = (uint64_t)i + 1;
         atomic_store_explicit(&probe->request, id, memory_order_release);
-        uint64_t start = now_ns();
+        uint64_t start = bench_now_ns();
         if (!injector_key()) { perror("injection"); result = 1; break; }
         deadline = start + 1000000000ull;
         bool committed = false, shown = false;
-        while (!stopped && now_ns() < deadline) {
+        while (!stopped && bench_now_ns() < deadline) {
             committed = atomic_load_explicit(&probe->completed, memory_order_acquire) == id;
             shown = presentation && atomic_load_explicit(&probe->presented, memory_order_acquire) == id;
             if (committed && (!presentation || shown)) break;

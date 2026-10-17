@@ -172,6 +172,25 @@ Use `--isas` for native only.
 
 Run benchmarks from an optimized build without sanitizers.
 
+The app benchmarks share clocks and sample statistics in `benchmarks/bench.h`.
+`BENCH_RUN` runs one warmup batch and seven timed batches.
+The workload stays inline. It needs no callback or context object.
+The UI microbenchmarks report nanoseconds per operation.
+Their layout case runs 1,000 passes per batch.
+The frame benchmark keeps its four scenarios and per-scenario limits.
+Reports use the upper middle sample for even sample counts.
+
+The term benchmarks use `subprojects/term/benchmarks/bench.h`.
+This keeps the term project independent of the app.
+The term benchmarks keep their existing percentile rules.
+
+`termbench` is a C program. Build it with `meson compile -C build termbench`.
+It prepares text and 256 changing color frames before it times the writes.
+Each case writes 1 MiB for `small`, 1 GiB for `normal`, or 16 GiB for `large`.
+Each write request is at most 64 KiB.
+The report version is `termbench-v3`.
+The workloads and byte counts differ from TermMarkV2. Record new baselines.
+
 ```sh
 meson test -C build --benchmark term-write-bench --verbose
 meson test -C build --benchmark render-bench --verbose

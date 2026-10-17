@@ -1,28 +1,15 @@
+#include "bench.h"
 #include "wsap_vtcore/wsap_vtcore.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #define BUDGET_MS_DEFAULT 0.5
 #define FILL_EXTRA_ROWS 512
 #define MAX_SAMPLES 4096
 
 static const int history_sizes[] = { 100, 4096, 10000 };
-
-static double now(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
-}
-
-static int cmp_double(const void *a, const void *b)
-{
-    double x = *(const double *)a, y = *(const double *)b;
-    return x < y ? -1 : x > y;
-}
 
 enum content { SHORT, WRAPPED, MIXED, PROMPT, WIDE, CONTENT_COUNT };
 static const char *content_names[] = {"short", "wrapped", "mixed", "prompt", "wide"};
@@ -90,7 +77,7 @@ static void resize(struct wsap_vtcore *t, int cols, int rows)
 
 static void report(const char *content, const char *scenario, double *s, int n, double budget_ms)
 {
-    qsort(s, (size_t)n, sizeof(*s), cmp_double);
+    bench_sort(s, n);
     double p50 = s[n / 2];
     double p99 = s[(int)((double)(n - 1) * 0.99)];
     double max = s[n - 1];
@@ -105,9 +92,9 @@ static double bench_pair(enum content kind, int from_cols, int to_cols, int rows
     for (int i = 0; i < samples; i++) {
         struct wsap_vtcore *t = make_filled(kind, from_cols, rows, history);
         if (!t) exit(EXIT_FAILURE);
-        double start = now();
+        double start = bench_now();
         resize(t, to_cols, rows);
-        double ms = (now() - start) * 1e3;
+        double ms = (bench_now() - start) * 1e3;
         wsap_vtcore_free(t);
         out[i] = ms;
         if (ms > worst) worst = ms;
@@ -124,9 +111,9 @@ static int bench_drag(enum content kind, int from_cols, int to_cols, int rows,
         struct wsap_vtcore *t = make_filled(kind, from_cols, rows, history);
         if (!t) exit(EXIT_FAILURE);
         for (int c = from_cols + step; c != to_cols + step; c += step) {
-            double start = now();
+            double start = bench_now();
             resize(t, c, rows);
-            out[n++] = (now() - start) * 1e3;
+            out[n++] = (bench_now() - start) * 1e3;
         }
         wsap_vtcore_free(t);
     }

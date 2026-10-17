@@ -9,7 +9,7 @@ WARMUP="${WARMUP:-1}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build"
 TERM_BIN="$BUILD_DIR/bin/wsap_term"
-BENCH_SRC="$ROOT_DIR/benchmarks/termbench.cpp"
+BENCH_SRC="$ROOT_DIR/benchmarks/termbench.c"
 BENCH_BIN="$BUILD_DIR/benchmarks/termbench"
 
 if [ ! -x "$TERM_BIN" ]; then
@@ -17,10 +17,10 @@ if [ ! -x "$TERM_BIN" ]; then
     exit 1
 fi
 
-if [ ! -x "$BENCH_BIN" ] || [ "$BENCH_SRC" -nt "$BENCH_BIN" ]; then
+if [ ! -x "$BENCH_BIN" ] || [ "$BENCH_SRC" -nt "$BENCH_BIN" ] || [ "$ROOT_DIR/benchmarks/bench.h" -nt "$BENCH_BIN" ]; then
     echo "=== Building termbench ==="
     mkdir -p "$(dirname "$BENCH_BIN")"
-    g++ -O3 -march=native "$BENCH_SRC" -I"$ROOT_DIR/benchmarks" -o "$BENCH_BIN"
+    ${CC:-cc} -std=c23 -O3 -march=native "$BENCH_SRC" -I"$ROOT_DIR/benchmarks" -o "$BENCH_BIN"
 fi
 
 TMP_CONF=$(mktemp -d)
@@ -58,7 +58,7 @@ fi
 
 REPORT_FILE="$BUILD_DIR/benchmarks/termbench-report.txt"
 echo "=== TermMark Results (${#REPORTS[@]} runs, median [min-max] gb/s) ==="
-grep -h "^CPU:" "${REPORTS[0]}" | tee "$REPORT_FILE"
+grep -h "^Host:" "${REPORTS[0]}" | tee "$REPORT_FILE"
 grep -h "gb/s)" "${REPORTS[@]}" | awk '
     {
         name = $0; sub(/: [0-9.]+s \(.*$/, "", name)
