@@ -11,6 +11,8 @@ if font_backend != 'coretext'
     ]
 endif
 
+executable('termbench', 'termbench.c', build_by_default: false)
+
 if system == 'linux'
     bench_cases += [
         ['transport-bench', files('transport_bench.c'), pty_lib, [thread_dep, dl_dep]],

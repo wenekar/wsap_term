@@ -1,18 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
+#include "bench.h"
 #include "input/input.h"
 
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-
-static uint64_t now_ns(void)
-{
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return (uint64_t)t.tv_sec * 1000000000u + (uint64_t)t.tv_nsec;
-}
 
 static struct input_queue queue;
 
@@ -35,13 +28,13 @@ static uint64_t round_trip(const struct input_event *ev, long iterations)
 static double drain_paste(const char *text, size_t len, long iterations)
 {
     struct input_event out;
-    uint64_t start = now_ns();
+    uint64_t start = bench_now_ns();
     for (long i = 0; i < iterations; i++) {
         assert(input_queue_push_paste(&queue, text, len) == len);
         while (input_queue_take(&queue, &out))
             input_event_release(&out);
     }
-    return (double)(now_ns() - start) / (double)iterations;
+    return (double)(bench_now_ns() - start) / (double)iterations;
 }
 
 int main(int argc, char **argv)
@@ -64,13 +57,13 @@ int main(int argc, char **argv)
     };
 
     uint64_t sink = 0;
-    uint64_t start = now_ns();
+    uint64_t start = bench_now_ns();
     sink += round_trip(&key, iterations);
-    double key_ns = (double)(now_ns() - start) / (double)iterations;
+    double key_ns = (double)(bench_now_ns() - start) / (double)iterations;
 
-    start = now_ns();
+    start = bench_now_ns();
     sink += round_trip(&motion, iterations);
-    double motion_ns = (double)(now_ns() - start) / (double)iterations;
+    double motion_ns = (double)(bench_now_ns() - start) / (double)iterations;
 
     char *text = malloc(paste_len);
     assert(text);

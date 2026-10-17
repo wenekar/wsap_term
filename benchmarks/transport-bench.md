@@ -7,16 +7,26 @@ meson test -C build --benchmark transport-bench --verbose
 taskset -c 4 ./build/benchmarks/transport-bench
 ```
 
-The benchmark streams 256 MiB through the transport and measures wall time from
-the first byte read to a sentinel line across two payloads: structured text
-lines and high-entropy random bytes.
+The benchmark streams 256 MiB per case by default.
+Pass a byte budget in MiB for a short run: `build/benchmarks/transport-bench 1`.
+The text payload has one newline per 80 bytes.
+The random payload uses a fixed seed.
 
-- **A** — standard PTY: child writes to the slave with default cooked termios
-  (kernel-side `OPOST|ONLCR`), parent drains master with nonblocking reads.
-- **B** — fast pipe, text payload.
-- **C** — fast pipe, high-entropy payload.
+The cases cover cooked PTY text, pipe text, pipe random data, raw PTY text,
+and raw PTY random data.
+Cooked PTY output uses `OPOST|ONLCR`. Its expected byte count includes the added CR bytes.
+The parent keeps the writer open until all expected bytes arrive.
+This prevents a PTY close from dropping the last bytes.
+A read timeout or failed writer makes the benchmark fail.
 
-## Numbers
+Timing starts before the drain and ends after the last expected byte.
+The reader only counts bytes. It does not search for markers or take a timestamp per read.
+The benchmark reports bytes read per second.
+
+The numbers below used the old payload and sentinel method.
+Record new baselines for the current benchmark.
+
+## Historical numbers
 
 Ryzen 7 9700X, Linux, GCC, `-O3 -march=native -flto`. Medians of 3 interleaved runs,
 `taskset -c 4`:

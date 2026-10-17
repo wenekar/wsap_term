@@ -1,31 +1,18 @@
+#include "bench.h"
 #include "wsap_vtcore/wsap_vtcore.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-
-static double now(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
-}
-
-static int cmp_double(const void *a, const void *b)
-{
-    double d = *(const double *)a - *(const double *)b;
-    return (d > 0) - (d < 0);
-}
 
 static double run_sample(struct wsap_vtcore *t, const char *buf, size_t len,
                          size_t chunk, int iterations, unsigned flags)
 {
-    double start = now();
+    double start = bench_now();
     for (int i = 0; i < iterations; i++) {
         for (size_t pos = 0; pos < len; pos += chunk)
             wsap_vtcore_feed(t, buf + pos, len - pos < chunk ? len - pos : chunk, flags);
     }
-    return now() - start;
+    return bench_now() - start;
 }
 
 enum { BENCH_SCROLLBACK = 4096 };
@@ -155,7 +142,7 @@ int main(int argc, char **argv)
             run_sample(t, buf, len, ck, 16, flags);
             for (int r = 0; r < reps; r++)
                 samples[r] = run_sample(t, buf, len, ck, iterations, flags);
-            qsort(samples, reps, sizeof(samples[0]), cmp_double);
+            bench_sort(samples, reps);
             double bytes = (double)len * iterations;
             double med = bytes / (1024 * 1024) / samples[reps / 2];
             double min = bytes / (1024 * 1024) / samples[reps - 1];

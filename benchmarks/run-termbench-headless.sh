@@ -33,4 +33,4 @@ done
 
 export XDG_RUNTIME_DIR="$RUNTIME_DIR"
 export WAYLAND_DISPLAY="$(basename "$socket")"
-exec "$ROOT_DIR/benchmarks/run-termbench.sh" "$@"
+"$ROOT_DIR/benchmarks/run-termbench.sh" "$@"
