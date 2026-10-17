@@ -41,10 +41,17 @@ static __thread int run_capacity;
 
 static inline uint32_t blend_glyph_px(uint32_t fg, uint32_t bg, uint8_t a);
 static const uint32_t *blend_pair_lut(uint32_t fg, uint32_t bg);
+static const struct render_subpx_lut *subpx_pair_lut(uint32_t fg, uint32_t bg);
 
 #define BLEND_PAIR_SLOTS 16
 static __thread struct blend_pair { uint64_t tag, pending; uint32_t lut[256]; }
     blend_pairs[BLEND_PAIR_SLOTS];
+
+#define SUBPX_PAIR_SLOTS 16
+static __thread struct subpx_pair {
+    uint64_t tag, pending;
+    struct render_subpx_lut lut;
+} subpx_pairs[SUBPX_PAIR_SLOTS];
 
 static void run_buffers_free(void)
 {
@@ -344,6 +351,24 @@ static const uint32_t *blend_pair_lut(uint32_t fg, uint32_t bg)
     return bp->lut;
 }
 
+static const struct render_subpx_lut *subpx_pair_lut(uint32_t fg, uint32_t bg)
+{
+    uint64_t tag = (uint64_t)fg << 32 | bg;
+    unsigned i = (unsigned)((tag * UINT64_C(0x9E3779B97F4A7C15)) >> 60) &
+                 (SUBPX_PAIR_SLOTS - 1);
+    struct subpx_pair *sp = &subpx_pairs[i];
+    if (sp->tag == tag)
+        return &sp->lut;
+    if (sp->pending != tag) {
+        sp->pending = tag;
+        return NULL;
+    }
+    render_build_subpx_lut(&sp->lut, fg, bg);
+    sp->tag = tag;
+    sp->pending = 0;
+    return &sp->lut;
+}
+
 static inline uint32_t blend_glyph_px(uint32_t fg, uint32_t bg, uint8_t a)
 {
     const uint32_t *lut = blend_pair_lut(fg, bg);
@@ -461,27 +486,58 @@ static void paint_glyph(uint32_t *row_px, int width, int x0, int ch,
         }
     } else if (glyph->has_subpx_ink && glyph->subpx) {
         int x0_glyph = x0 + glyph->x_offset;
-        for (int y = 0; y < ch; y++) {
-            if (!glyph_row_inked(glyph, y)) continue;
-            uint32_t *dst = row_px + (size_t)y * width;
-            const uint64_t *mask = glyph_mask(glyph, y);
-            for (int w = 0; w < glyph->mask_words; w++) {
-                uint64_t ink = mask[w];
-                while (ink) {
-                    int x = w * 64 + __builtin_ctzll(ink);
-                    ink &= ink - 1;
-                    if (x >= glyph->width) break;
-                    int dx = x0_glyph + x;
-                    if (dx < 0 || dx >= width) continue;
-                    uint8_t sr = glyph->subpx[y][x * 3 + 0];
-                    uint8_t sg = glyph->subpx[y][x * 3 + 1];
-                    uint8_t sb = glyph->subpx[y][x * 3 + 2];
-                    if (faint) {
-                        sr = (uint8_t)((sr + 1) / 2);
-                        sg = (uint8_t)((sg + 1) / 2);
-                        sb = (uint8_t)((sb + 1) / 2);
+        bool in_bounds = x0_glyph >= 0 && x0_glyph + glyph->width <= width;
+        if (in_bounds && !faint) {
+            uint32_t bg0 = row_px[x0_glyph];
+            const struct render_subpx_lut *lut = subpx_pair_lut(fg, bg0);
+            for (int y = 0; y < ch; y++) {
+                if (!glyph_row_inked(glyph, y)) continue;
+                uint32_t *dst = row_px + (size_t)y * width + x0_glyph;
+                const uint8_t *subpx = glyph->subpx[y];
+                const uint64_t *mask = glyph_mask(glyph, y);
+                for (int w = 0; w < glyph->mask_words; w++) {
+                    uint64_t ink = mask[w];
+                    while (ink) {
+                        int x = w * 64 + __builtin_ctzll(ink);
+                        ink &= ink - 1;
+                        if (x >= glyph->width) break;
+                        uint8_t sr = subpx[x * 3 + 0];
+                        uint8_t sg = subpx[x * 3 + 1];
+                        uint8_t sb = subpx[x * 3 + 2];
+                        if (lut && dst[x] == bg0)
+                            dst[x] = render_blend_subpx_lut(lut, bg0, sr, sg, sb);
+                        else
+                            dst[x] = render_blend_subpx(fg, dst[x], sr, sg, sb);
                     }
-                    dst[dx] = render_blend_subpx(fg, dst[dx], sr, sg, sb);
+                }
+            }
+        } else {
+            for (int y = 0; y < ch; y++) {
+                if (!glyph_row_inked(glyph, y)) continue;
+                uint32_t *dst = row_px + (size_t)y * width;
+                const uint64_t *mask = glyph_mask(glyph, y);
+                for (int w = 0; w < glyph->mask_words; w++) {
+                    uint64_t ink = mask[w];
+                    while (ink) {
+                        int x = w * 64 + __builtin_ctzll(ink);
+                        ink &= ink - 1;
+                        if (x >= glyph->width) break;
+                        int dx = x0_glyph + x;
+                        if (dx < 0 || dx >= width) continue;
+                        uint8_t sr = glyph->subpx[y][x * 3 + 0];
+                        uint8_t sg = glyph->subpx[y][x * 3 + 1];
+                        uint8_t sb = glyph->subpx[y][x * 3 + 2];
+                        if (faint) {
+                            sr = (uint8_t)((sr + 1) / 2);
+                            sg = (uint8_t)((sg + 1) / 2);
+                            sb = (uint8_t)((sb + 1) / 2);
+                            dst[dx] = render_blend_subpx(fg, dst[dx], sr, sg, sb);
+                        } else {
+                            const struct render_subpx_lut *lut = subpx_pair_lut(fg, dst[dx]);
+                            dst[dx] = lut ? render_blend_subpx_lut(lut, dst[dx], sr, sg, sb)
+                                          : render_blend_subpx(fg, dst[dx], sr, sg, sb);
+                        }
+                    }
                 }
             }
         }
