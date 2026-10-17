@@ -5,5 +5,7 @@
 
 uint32_t glyph_intern(const uint32_t *cps, int len);
 int glyph_intern_expand(uint32_t c, uint32_t *out, size_t out_cap);
+/* Changes each time interned handles are reused. Starts at 0. */
+uint32_t glyph_intern_epoch(void);
 
 #endif
