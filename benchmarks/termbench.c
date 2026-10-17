@@ -59,7 +59,7 @@ int main(int argc, char **argv)
 {
     const char *size = argc > 1 ? argv[1] : "small";
     const char *filter = argc > 2 ? argv[2] : NULL;
-    uint64_t bytes = !strcmp(size, "small") ? 1ull << 20
+    uint64_t bytes = !strcmp(size, "small") ? 64ull << 20
                    : !strcmp(size, "normal") ? 1ull << 30
                    : !strcmp(size, "large") ? 16ull << 30 : 0;
     if (argc > 3 || !bytes) {

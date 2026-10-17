@@ -46,7 +46,8 @@ static bool setup(struct fixture *f, int scenario)
     ui_widget_init(&f->root, NULL, NULL);
     int n = scenario == MENU ? 20 : scenario == TAB_OPEN ? 51 : 12;
     for (int i = 0; i < n; i++) {
-        snprintf(f->names[i], sizeof(f->names[i]), "item%02d", i);
+        snprintf(f->names[i], sizeof(f->names[i]),
+                 scenario == MENU ? "Menu item %02d" : "tab%02d", i);
         f->tabs[i] = (struct ui_tab_label){ .text = f->names[i], .active = i == 0 };
     }
     struct ui_widget *child;
