@@ -244,6 +244,52 @@ static void run_moves(uint32_t *px, int stride, struct rect2i grid, int ch,
     }
 }
 
+/*
+ * The rough costs that pick between a move and a paint, in picoseconds. A
+ * move is one memmove on the main thread: about 80 GB/s for rows that the
+ * cache holds. A paint runs on the pool. A painted cell costs about 5 to 20
+ * ns on one thread; the model takes the high end, so it moves when it is
+ * not sure.
+ */
+#define MOVE_PS_PER_BYTE 12
+#define PAINT_PS_PER_CELL 20000
+
+/*
+ * Turns the moves of the plan into paints when the pool paints those rows
+ * faster than the main thread copies them. Both give the same pixels. The
+ * damage and the UI regions of the plan stay right: they already hold the
+ * bands of the moved rows. The windows of those rows go, because a full
+ * row paint covers them.
+ */
+static void paint_moves(const struct renderer *r, struct plan_output *out, int rows, int cols,
+                        int ch, int width)
+{
+    if (!out->n_moves || !r->pool)
+        return;
+    int64_t moved = 0, painted = 0;
+    for (int i = 0; i < out->n_moves; i++)
+        moved += out->moves[i].count;
+    for (int i = 0; i < rows; i++)
+        painted += out->rows[i].op == PLAN_PAINT;
+    int64_t cells = (moved + painted) * cols;
+    int64_t threads = cells < POOL_SERIAL_CELLS ? 1 : r->n_workers;
+    int64_t move_ps = moved * ch * width * (int64_t)sizeof(uint32_t) * MOVE_PS_PER_BYTE;
+    int64_t paint_ps = moved * cols * PAINT_PS_PER_CELL / threads;
+    if (paint_ps >= move_ps)
+        return;
+    for (int i = 0; i < rows; i++)
+        if (out->rows[i].op == PLAN_MOVE)
+            out->rows[i] = (struct plan_row){ .op = PLAN_PAINT };
+    out->n_moves = 0;
+    int n = 0;
+    for (int i = 0; i < out->n_windows; i++) {
+        const struct plan_window *w = &out->windows[i];
+        if (w->row >= rows || out->rows[w->row].op != PLAN_PAINT)
+            out->windows[n++] = *w;
+    }
+    out->n_windows = n;
+}
+
 /* ---- The parallel phase ---------------------------------------------- */
 
 struct phase {
@@ -390,7 +436,8 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         }
     }
 
-    /* 5. Moves. */
+    /* 5. Moves, or paints where the pool is faster. */
+    paint_moves(r, &out, rows, cols, ch, grid.width);
     run_moves(px, stride, grid, ch, out.moves, out.n_moves);
 
     /* 6. Raster: the painted rows, then the windows of kept and moved rows. */
