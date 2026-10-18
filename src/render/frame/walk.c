@@ -53,6 +53,7 @@ struct walk {
     render_cell_fn fn;
     render_run_fn run;
     render_text_fn text;
+    render_span_fn span;
     void *ctx;
     int cols, c0, c1;
     bool peek;
@@ -331,6 +332,32 @@ static inline bool same_text_run(const struct wsap_vtcore_cell *a,
 }
 
 /*
+ * The policy of a run that starts at `col` in a policy row. It cuts
+ * [col, *end) at the edges of the selection and of the cursor, and it
+ * applies reverse video and the selection to the colors. The run must not
+ * start in the cursor: those cells take the per-cell path.
+ */
+static inline __attribute__((always_inline)) void
+run_policy(const struct walk *w, int col, int *end, uint32_t *fg, uint32_t *bg)
+{
+    if (w->f->reverse_video) {
+        uint32_t t = *fg;
+        *fg = *bg;
+        *bg = t;
+    }
+    if (w->cur.begin < w->cur.end && w->cur.begin > col && w->cur.begin < *end)
+        *end = w->cur.begin;
+    if (in_span(w->sel, col)) {
+        *fg = w->sel_fg;
+        *bg = w->sel_bg;
+        if (w->sel.end < *end)
+            *end = w->sel.end;
+    } else if (w->sel.begin < w->sel.end && w->sel.begin > col && w->sel.begin < *end) {
+        *end = w->sel.begin;
+    }
+}
+
+/*
  * Sends the unshaped cells [from, to) of one segment. Runs of text cells go
  * to the text function. A column that it does not draw goes to the cell
  * function, and the run goes on after it. In a policy row, a run stops at
@@ -354,23 +381,8 @@ walk_text(struct walk *w, int from, int to, bool plain)
             end++;
         uint32_t fg = wsap_vtcore_view_color(w->view, c->fg);
         uint32_t bg = wsap_vtcore_view_color(w->view, c->bg);
-        if (!plain) {
-            if (w->f->reverse_video) {
-                uint32_t t = fg;
-                fg = bg;
-                bg = t;
-            }
-            if (w->cur.begin < w->cur.end && w->cur.begin > col && w->cur.begin < end)
-                end = w->cur.begin;
-            if (in_span(w->sel, col)) {
-                fg = w->sel_fg;
-                bg = w->sel_bg;
-                if (w->sel.end < end)
-                    end = w->sel.end;
-            } else if (w->sel.begin < w->sel.end && w->sel.begin > col && w->sel.begin < end) {
-                end = w->sel.begin;
-            }
-        }
+        if (!plain)
+            run_policy(w, col, &end, &fg, &bg);
         uint16_t style = cell_style(c);
         while (col < end) {
             int done = w->text(w->ctx, col, end, fg, bg, style, &cells[col].text, stride);
@@ -400,6 +412,73 @@ walk_cells(struct walk *w, int from, int to, bool plain)
         walk_cell(w, col, plain);
 }
 
+/* One cell of a shaped span, at column col. The span starts at `first`. */
+static inline __attribute__((always_inline)) void
+walk_span_cell(const struct walk *w, const struct glyph_span *span, int first, int col, bool plain)
+{
+    const struct wsap_vtcore_cell *c = &w->cells[col];
+    int i = col - first;
+    struct render_cell rc = {
+        .fg = wsap_vtcore_view_color(w->view, c->fg),
+        .bg = wsap_vtcore_view_color(w->view, c->bg),
+        .text = c->text,
+        .style = cell_style(c),
+        .flags = decor_flags(c->attrs),
+    };
+    rc.flags |= faint_flag(c->attrs, rc.flags);
+    if (!plain)
+        apply_policy(w, col, &rc);
+    const struct look l = { .id = render_glyph_id_shaped(span->id, i) };
+    emit(w, col, &rc, &l, &span->cells[i]);
+}
+
+/* A run of shaped cells holds at most this many columns. */
+#define SPAN_RUN_MAX 64
+
+/*
+ * Sends the shaped cells [from, end) of one span. Runs of cells with no
+ * flag go to the span function, at most SPAN_RUN_MAX at a time. The cells
+ * of a segment share their raw colors, so a run resolves them once. A
+ * column that the span function does not draw goes to the cell function.
+ */
+static inline __attribute__((always_inline)) void
+walk_span_runs(struct walk *w, const struct glyph_span *span, int first, int from, int end,
+               bool plain)
+{
+    const struct wsap_vtcore_cell *cells = w->cells;
+    const uint16_t flag_attrs = ATTR_DECOR_BITS | WSAP_VTCORE_ATTR_FAINT;
+    uint64_t ids[SPAN_RUN_MAX];
+    for (int col = from; col < end;) {
+        const struct wsap_vtcore_cell *c = &cells[col];
+        if ((c->attrs & flag_attrs) || (!plain && in_span(w->cur, col))) {
+            walk_span_cell(w, span, first, col, plain);
+            col++;
+            continue;
+        }
+        int stop = end - col > SPAN_RUN_MAX ? col + SPAN_RUN_MAX : end;
+        int e = col + 1;
+        while (e < stop && !(cells[e].attrs & flag_attrs))
+            e++;
+        uint32_t fg = wsap_vtcore_view_color(w->view, c->fg);
+        uint32_t bg = wsap_vtcore_view_color(w->view, c->bg);
+        if (!plain)
+            run_policy(w, col, &e, &fg, &bg);
+        for (int k = col; k < e; k++)
+            ids[k - col] = render_glyph_id_shaped(span->id, k - first);
+        const int base = col;
+        while (col < e) {
+            int done = w->span(w->ctx, col, e, fg, bg, ids + (col - base));
+            if (done < col)
+                done = col;
+            if (done >= e)
+                break;
+            walk_span_cell(w, span, first, done, plain);
+            col = done + 1;
+        }
+        col = e;
+    }
+}
+
 /*
  * The emit callback of glyph_cache_shape_segment(). It walks the unshaped
  * cells before the span, then the span cells, inside the callback. So each
@@ -421,22 +500,12 @@ walk_span(struct walk *w, const struct glyph_span *span, bool plain)
         from = w->c0;
     if (end > w->c1)
         end = w->c1;
-    for (int col = from; col < end; col++) {
-        const struct wsap_vtcore_cell *c = &w->cells[col];
-        int i = col - first;
-        struct render_cell rc = {
-            .fg = wsap_vtcore_view_color(w->view, c->fg),
-            .bg = wsap_vtcore_view_color(w->view, c->bg),
-            .text = c->text,
-            .style = cell_style(c),
-            .flags = decor_flags(c->attrs),
-        };
-        rc.flags |= faint_flag(c->attrs, rc.flags);
-        if (!plain)
-            apply_policy(w, col, &rc);
-        const struct look l = { .id = render_glyph_id_shaped(span->id, i) };
-        emit(w, col, &rc, &l, &span->cells[i]);
+    if (w->span) {
+        walk_span_runs(w, span, first, from, end, plain);
+        return;
     }
+    for (int col = from; col < end; col++)
+        walk_span_cell(w, span, first, col, plain);
 }
 
 static void walk_span_plain(void *ctx, const struct glyph_span *span)
@@ -614,7 +683,7 @@ void render_row_walk(struct font_instance *fi, const struct terminal_frame *f, i
     struct walk w = {
         .fi = fi, .f = f, .view = wsap_vtcore_snapshot_view(f->source),
         .cells = terminal_frame_row(f, y), .fn = sink->cell, .run = sink->run,
-        .text = sink->text, .ctx = sink->ctx,
+        .text = sink->text, .span = sink->span, .ctx = sink->ctx,
         .cols = f->cols, .c0 = c0, .c1 = c1, .peek = (flags & RENDER_WALK_PEEK) != 0,
     };
     if (f->has_selection) {

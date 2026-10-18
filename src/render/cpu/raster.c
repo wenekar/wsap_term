@@ -637,6 +637,31 @@ static inline RENDER_ALWAYS_INLINE int text_body(int isa, void *ctx, int c0, int
 }
 
 /*
+ * The span run callback of the walk: shaped cells with no flag. In the
+ * default pair each one is an L0 id lookup and a blit. It stops as
+ * text_body does.
+ */
+static inline RENDER_ALWAYS_INLINE int span_body(int isa, void *ctx, int c0, int c1,
+                                                 uint32_t fg, uint32_t bg, const uint64_t *ids,
+                                                 run_fill_fn fill)
+{
+    struct row_ctx *c = ctx;
+    if (!c->klass || fg != c->l0_fg || bg != c->l0_bg)
+        return c0;
+    run_flush(c, fill);
+    const int cw = c->cw, ch = c->ch;
+    int col = c0;
+    for (; col < c1; col++) {
+        int sx0 = col * cw;
+        struct cell_tile t = cell_l0_find_id(c->l0, ids[col - c0]);
+        if (!t.px || t.spill || sx0 < c->x0 || sx0 + cw > c->x1)
+            break;
+        tile_blit(isa, c->row + sx0, c->stride, t.px, cw, ch);
+    }
+    return col;
+}
+
+/*
  * The walk callback. Plain fills and L0 hits stay here. An L0 hit is a
  * cell inside the window, so it needs no clip check beyond put_tile.
  */
@@ -773,12 +798,17 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
     {                                                                                      \
         return text_body(level, ctx, c0, c1, fg, bg, style, text, stride, fill_##sfx);     \
     }                                                                                      \
+    target static RENDER_NOINLINE int span_##sfx(void *ctx, int c0, int c1, uint32_t fg,    \
+                                                 uint32_t bg, const uint64_t *ids)         \
+    {                                                                                      \
+        return span_body(level, ctx, c0, c1, fg, bg, ids, fill_##sfx);                     \
+    }                                                                                      \
     target static RENDER_NOINLINE int row_##sfx(const struct raster_frame *f,              \
                                                 struct raster_worker *w,                   \
                                                 const struct raster_job *job)              \
     {                                                                                      \
         static const struct render_walk_sink sink = {                                      \
-            .cell = cell_##sfx, .run = run_##sfx, .text = text_##sfx,                      \
+            .cell = cell_##sfx, .run = run_##sfx, .text = text_##sfx, .span = span_##sfx,  \
         };                                                                                 \
         return row_body(level, f, w, job, &sink, fill_##sfx);                              \
     }
