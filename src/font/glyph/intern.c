@@ -1,6 +1,7 @@
 #include "font/glyph/intern.h"
 #include "util/hash.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
@@ -25,6 +26,7 @@ static struct entry *entries;
 static size_t num_entries, entries_cap;
 static uint32_t *index_table;
 static size_t index_size;
+static _Atomic uint32_t intern_epoch;
 
 static pthread_mutex_t grapheme_mu = PTHREAD_MUTEX_INITIALIZER;
 
@@ -34,6 +36,7 @@ static void grapheme_reset(void)
     num_entries = 0;
     if (index_table)
         memset(index_table, 0, index_size * sizeof(*index_table));
+    atomic_fetch_add_explicit(&intern_epoch, 1, memory_order_release);
 }
 
 static uint64_t hash_cps(const uint32_t *cps, int len)
@@ -189,4 +192,9 @@ int glyph_intern_expand(uint32_t c, uint32_t *out, size_t out_cap)
     int r = glyph_intern_expand_locked(c, out, out_cap);
     pthread_mutex_unlock(&grapheme_mu);
     return r;
+}
+
+uint32_t glyph_intern_epoch(void)
+{
+    return atomic_load_explicit(&intern_epoch, memory_order_acquire);
 }

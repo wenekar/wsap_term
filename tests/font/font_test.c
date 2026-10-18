@@ -8,7 +8,6 @@
 #include <wsap_vtcore/unicode/unicode.h>
 #include <ft2build.h>
 #include FT_FREETYPE_H
-#include FT_COLOR_H
 #include <fontconfig/fontconfig.h>
 #include <assert.h>
 #include <pthread.h>
@@ -25,6 +24,15 @@ static struct font_instance *scaled;
 static struct font_instance *cur(void)
 {
     return scaled ? scaled : font_instance_default();
+}
+
+/* The golden hashes, tiles, and cell widths expect slight hinting and
+ * grayscale antialiasing. Set them here, so the host fontconfig settings
+ * do not change the results. */
+static void use_reference_rendering(void)
+{
+    font_set_hint_style(FONT_HINT_SLIGHT);
+    font_set_aa_mode(FONT_AA_GRAYSCALE);
 }
 
 static bool init_fonts(void)
@@ -242,6 +250,14 @@ static void ink_boxes(uint32_t cp, int *nw, int *nh, int *ww, int *wh)
     glyph_release(&wide);
 }
 
+static bool column_inked(const struct glyph *g, int x)
+{
+    for (int y = 0; y < GLYPH_CELL_H; y++)
+        if (glyph_inked(g, y, x))
+            return true;
+    return false;
+}
+
 static void test_raster_invariants(void)
 {
     static const struct { uint32_t cp; uint16_t flags; const char *name; } samples[] = {
@@ -287,6 +303,11 @@ static void test_raster_invariants(void)
         snprintf(label, sizeof(label), "%s ink fits its stored raster around %d columns",
                  samples[i].name, allocated / GLYPH_CELL_W);
         check(label, contained);
+        bool tight = (g.x_offset >= 0 || column_inked(&g, 0)) &&
+                     (g.x_offset + g.width <= allocated || column_inked(&g, g.width - 1));
+        snprintf(label, sizeof(label), "%s reaches past its cell only with ink",
+                 samples[i].name);
+        check(label, tight);
         glyph_release(&g);
     }
 }
@@ -561,101 +582,6 @@ static void test_emoji_text_height(void)
     glyph_release(&left);
     glyph_release(&emoji);
     glyph_release(&right);
-}
-
-static const char *find_colrv1_font(uint32_t cp)
-{
-#if FREETYPE_MAJOR > 2 || (FREETYPE_MAJOR == 2 && FREETYPE_MINOR >= 13)
-    static char path[4096];
-    path[0] = 0;
-    FT_Library lib;
-    if (FT_Init_FreeType(&lib))
-        return NULL;
-    FcPattern *pat = FcPatternCreate();
-    FcCharSet *cs = FcCharSetCreate();
-    if (pat && cs) {
-        FcCharSetAddChar(cs, cp);
-        FcPatternAddCharSet(pat, FC_CHARSET, cs);
-        FcObjectSet *os = FcObjectSetBuild(FC_FILE, FC_INDEX, NULL);
-        FcFontSet *fs = os ? FcFontList(NULL, pat, os) : NULL;
-        if (os)
-            FcObjectSetDestroy(os);
-        for (int i = 0; fs && i < fs->nfont && !path[0]; i++) {
-            FcChar8 *file;
-            int index = 0;
-            if (FcPatternGetString(fs->fonts[i], FC_FILE, 0, &file) !=
-                FcResultMatch)
-                continue;
-            FcPatternGetInteger(fs->fonts[i], FC_INDEX, 0, &index);
-            FT_Face probe;
-            if (FT_New_Face(lib, (const char *)file, index, &probe))
-                continue;
-            FT_OpaquePaint root = { NULL, 0 };
-            FT_UInt gid = FT_Get_Char_Index(probe, cp);
-            if (gid && FT_Get_Color_Glyph_Paint(probe, gid,
-                               FT_COLOR_NO_ROOT_TRANSFORM, &root))
-                snprintf(path, sizeof(path), "%s", (const char *)file);
-            FT_Done_Face(probe);
-        }
-        if (fs)
-            FcFontSetDestroy(fs);
-    }
-    if (cs)
-        FcCharSetDestroy(cs);
-    if (pat)
-        FcPatternDestroy(pat);
-    FT_Done_FreeType(lib);
-    return path[0] ? path : NULL;
-#else
-    (void)cp;
-    return NULL;
-#endif
-}
-
-static void test_colrv1(void)
-{
-    const char *path = find_colrv1_font(0x1F600);
-    if (!path) {
-        printf("SKIP  no COLRv1 font installed\n");
-        return;
-    }
-
-    const char *saved_env = getenv("WSAP_ALL_UNICODE");
-    char *saved = saved_env ? strdup(saved_env) : NULL;
-    setenv("WSAP_ALL_UNICODE", path, 1);
-    font_backend_shutdown();
-    bool ready = init_fonts();
-
-    struct glyph g = {0};
-    unsigned lit = 0, other = 0;
-    if (ready &&
-        font_instance_render_glyph(cur(), 0x1F600, FONT_STYLE_WIDE | FONT_STYLE_EMOJI, &g) &&
-        g.has_color) {
-        uint32_t first = 0;
-        for (int y = 0; y < GLYPH_CELL_H; y++)
-            for (int x = 0; x < g.width; x++) {
-                uint32_t px = *glyph_color_at(&g, y, x);
-                if (!(px >> 24))
-                    continue;
-                lit++;
-                if (!first)
-                    first = px;
-                else if (px != first)
-                    other++;
-            }
-    }
-    glyph_release(&g);
-    check("a COLRv1 emoji paints color ink", lit > 0);
-    check("a COLRv1 emoji paints more than one color", other > 0);
-
-    font_backend_shutdown();
-    if (saved) {
-        setenv("WSAP_ALL_UNICODE", saved, 1);
-        free(saved);
-    } else {
-        unsetenv("WSAP_ALL_UNICODE");
-    }
-    init_fonts();
 }
 
 static void ink_margins(const struct glyph *g, int allocated,
@@ -1362,8 +1288,7 @@ static void test_hinting(void)
     check("subpixel RGB mode produces distinct per-channel coverages", has_distinct_rgb);
     glyph_release(&subpx_g);
 
-    font_set_hint_style(FONT_HINT_AUTO);
-    font_set_aa_mode(FONT_AA_AUTO);
+    use_reference_rendering();
 }
 
 static uint64_t glyph_ink_hash(const struct glyph *g)
@@ -2213,6 +2138,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "FAIL: font initialization\n");
         return 1;
     }
+    use_reference_rendering();
     font_instance_render_glyph(cur(), 0x10FFFF, 0, &unknown);
 
     test_variant_golden();
@@ -2238,7 +2164,6 @@ int main(int argc, char **argv)
     test_combining_marks();
     test_single_column_color();
     test_emoji_text_height();
-    test_colrv1();
     test_outline_aspect_ratio();
     test_fallback_order_independence();
     test_fallback_reuse();
@@ -2253,6 +2178,10 @@ int main(int argc, char **argv)
     test_font_sizes();
     test_render_binds_own_instance();
     test_hinting();
+
+    font_set_aa_mode(FONT_AA_RGB);
+    test_raster_invariants();
+    use_reference_rendering();
 
     set_scale(180);
     test_cell_tiling();

@@ -1,15 +1,8 @@
+#include "bench.h"
 #include "hist.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-
-static double now(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
-}
 
 static int make_row(const char *name, struct cell *row)
 {
@@ -63,10 +56,10 @@ int main(int argc, char **argv)
     int len = (int)strlen(line);
     for (int i = 0; i < 10000; i++)
         wsap_vtcore_hist_push_ascii(&h, line, len, NULL, false);
-    double t0 = now();
+    double t0 = bench_now();
     for (int i = 0; i < iterations; i++)
         wsap_vtcore_hist_push_ascii(&h, line, len, NULL, false);
-    double elapsed = now() - t0;
+    double elapsed = bench_now() - t0;
     printf("%-12s %6.2f ns/line  %.2f GiB/s (%d B/line)\n", "ascii",
            elapsed * 1e9 / iterations,
            (double)iterations * len / (1024.0 * 1024.0 * 1024.0) / elapsed, len);
@@ -81,10 +74,10 @@ int main(int argc, char **argv)
             return EXIT_FAILURE;
         for (int i = 0; i < 10000; i++)
             wsap_vtcore_hist_push_row(&h, row, n, false, NULL);
-        t0 = now();
+        t0 = bench_now();
         for (int i = 0; i < iters; i++)
             wsap_vtcore_hist_push_row(&h, row, n, false, NULL);
-        elapsed = now() - t0;
+        elapsed = bench_now() - t0;
         printf("%-12s %6.2f ns/row   (%d cells)\n", rows[k], elapsed * 1e9 / iters, n);
         wsap_vtcore_hist_free(&h);
     }

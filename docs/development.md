@@ -161,8 +161,12 @@ Add tests with arguments or symbol overrides to `standalone_tests` in
 Linux tests need Wayland server libraries, protocol files, and `wayland-scanner`.
 `make test` also enables Sway and Kitty tests on Linux.
 The Sway suite needs `swaymsg` and `grim`.
-Font tests need CJK, color emoji, and musical symbol fonts.
-COLRv1 tests need a COLRv1 font.
+Font tests need JetBrains Mono, CJK, color emoji, and musical symbol fonts.
+JetBrains Mono is the reference family. Without it, some font checks fail or skip.
+The font tests set slight hinting and grayscale antialiasing.
+They also check the raster invariants with RGB subpixel antialiasing.
+The render tests set grayscale antialiasing.
+The fontconfig settings of the host do not change the results.
 
 `python3 tools/test-matrix.py` runs sanitizer checks across CPU targets.
 On x86-64, the default targets are native, x86-64-v2, x86-64-v3, and znver5.
@@ -172,6 +176,28 @@ Use `--isas` for native only.
 ## Benchmarks
 
 Run benchmarks from an optimized build without sanitizers.
+
+The app benchmarks share clocks and sample statistics in `benchmarks/bench.h`.
+`BENCH_RUN` runs one warmup batch and seven timed batches.
+The workload stays inline. It needs no callback or context object.
+The UI microbenchmarks report nanoseconds per operation.
+Their layout case runs 1,000 passes per batch.
+The frame benchmark keeps its four scenarios and per-scenario limits.
+Reports use the upper middle sample for even sample counts.
+
+The term benchmarks use `subprojects/term/benchmarks/bench.h`.
+This keeps the term project independent of the app.
+The term benchmarks keep their existing percentile rules.
+
+`termbench` is a C program. Build it with `meson compile -C build termbench`.
+It prepares text and 256 changing color frames before it times the writes.
+Each case writes 64 MiB for `small`, 1 GiB for `normal`, or 16 GiB for `large`.
+Each write request is at most 64 KiB.
+The timer stops when the last write returns.
+The terminal's 1 MiB pipe can still hold data at that time.
+Keep each size much larger than that pipe.
+The report version is `termbench-v3`.
+The workloads and byte counts differ from TermMarkV2. Record new baselines.
 
 ```sh
 meson test -C build --benchmark term-write-bench --verbose

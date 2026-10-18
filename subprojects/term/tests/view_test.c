@@ -407,8 +407,62 @@ static void view_scrolls_a_line_that_needs_several_parts(void)
     wsap_vtcore_free(t);
 }
 
+static struct wsap_vtcore *keyed_term(void)
+{
+    struct wsap_vtcore *t = tt_new(20, 5);
+    for (int i = 0; i < 12; i++) {
+        char line[32];
+        snprintf(line, sizeof(line), "line %d\r\n", i);
+        tt_puts(t, line);
+    }
+    return t;
+}
+
+static void row_keys_differ_between_terminals(void)
+{
+    struct wsap_vtcore *a = keyed_term();
+    struct wsap_vtcore *b = keyed_term();
+    struct wsap_vtcore_snapshot *sa = wsap_vtcore_snapshot_new();
+    struct wsap_vtcore_snapshot *sb = wsap_vtcore_snapshot_new();
+    assert(sa && sb);
+    for (int off = 0; off <= 2; off += 2) {
+        wsap_vtcore_scroll_to(a, off);
+        wsap_vtcore_scroll_to(b, off);
+        assert(wsap_vtcore_snapshot_update(sa, a));
+        assert(wsap_vtcore_snapshot_update(sb, b));
+        for (int y = 0; y < 5; y++) {
+            uint64_t ka = wsap_vtcore_snapshot_row_key(sa, y);
+            uint64_t kb = wsap_vtcore_snapshot_row_key(sb, y);
+            assert(ka && kb && ka != kb);
+        }
+    }
+    wsap_vtcore_snapshot_free(sa);
+    wsap_vtcore_snapshot_free(sb);
+    wsap_vtcore_free(a);
+    wsap_vtcore_free(b);
+}
+
+static void row_keys_follow_scrolled_content(void)
+{
+    struct wsap_vtcore *t = keyed_term();
+    struct wsap_vtcore_snapshot *snap = wsap_vtcore_snapshot_new();
+    assert(snap && wsap_vtcore_snapshot_update(snap, t));
+    uint64_t before[5];
+    for (int y = 0; y < 5; y++)
+        before[y] = wsap_vtcore_snapshot_row_key(snap, y);
+    tt_puts(t, "\n");
+    assert(wsap_vtcore_snapshot_update(snap, t));
+    /* The old cursor row is excluded: the line feed edits it. */
+    for (int y = 0; y < 3; y++)
+        assert(wsap_vtcore_snapshot_row_key(snap, y) == before[y + 1]);
+    wsap_vtcore_snapshot_free(snap);
+    wsap_vtcore_free(t);
+}
+
 int main(void)
 {
+    row_keys_differ_between_terminals();
+    row_keys_follow_scrolled_content();
     snapshots_agree_after_prefix_eviction();
     wrapped_anchor_survives_resize();
     wide_anchor_survives_resize();

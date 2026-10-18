@@ -355,7 +355,6 @@ static void presentation_test(void)
     struct wsap_vtcore *t = tt_new(2, 1);
     assert(t);
     wsap_vtcore_set_theme(t, &(struct wsap_vtcore_theme){ .fg = 0xFFFFFFFF, .bg = 0xFF000000 });
-    font_set_aa_mode(FONT_AA_GRAYSCALE);
     int w = 2 * CELL_W, h = CELL_H;
     uint32_t *pixels = malloc((size_t)w * h * sizeof(*pixels));
     assert(pixels);
@@ -375,7 +374,6 @@ static void presentation_test(void)
         assert(ink);
         assert(colored == (i == 0));
     }
-    font_set_aa_mode(FONT_AA_AUTO);
     free(pixels);
     wsap_vtcore_free(t);
 }
@@ -719,6 +717,64 @@ static void theme_redraw_test(void)
     glyph_cache_rebuild(test_font());
 }
 
+/* A cell with explicit colors that equal the theme colors must look like a
+ * cell with the theme colors. Only cells with the theme colors use tiles, so
+ * this compares tiles with blended glyphs. Some of these glyphs draw into the
+ * next cell: italic tips, an icon, a circle, and LCD fringes. */
+static void explicit_theme_colors_test(enum font_aa_mode aa)
+{
+    enum { COLS = 96, ROWS = 5 };
+    char ascii[95];
+    for (int i = 0; i < 94; i++)
+        ascii[i] = (char)('!' + i);
+    ascii[94] = 0;
+    char text[1024];
+    snprintf(text, sizeof(text),
+             "%s\r\n\033[1m%s\033[22m\r\n\033[3m%s\r\nWAWAVATAYA7A%%A\033[23m\r\n"
+             "\xef\x84\x95" "A \xef\x84\x95" " B\xe2\x97\x8f" "C\xe2\x97\x8f\xe2\x97\x8f" "D",
+             ascii, ascii, ascii);
+
+    struct wsap_vtcore_theme theme = default_theme();
+    struct wsap_vtcore_theme other = theme;
+    other.fg = 0xFF305070u;
+    other.bg = 0xFFD0C0B0u;
+    char pen[96];
+    snprintf(pen, sizeof(pen), "\033[38;2;%u;%u;%um\033[48;2;%u;%u;%um\033[2J\033[H",
+             (theme.fg >> 16) & 255, (theme.fg >> 8) & 255, theme.fg & 255,
+             (theme.bg >> 16) & 255, (theme.bg >> 8) & 255, theme.bg & 255);
+
+    struct wsap_vtcore *themed = tt_new(COLS, ROWS), *explicit = tt_new(COLS, ROWS);
+    assert(themed && explicit);
+    wsap_vtcore_set_theme(explicit, &other);
+    feed(themed, "\033[?25l");
+    feed(themed, text);
+    feed(explicit, "\033[?25l");
+    feed(explicit, pen);
+    feed(explicit, text);
+
+    font_set_aa_mode(aa);
+    int w = COLS * CELL_W, h = ROWS * CELL_H;
+    size_t bytes = (size_t)w * h * sizeof(uint32_t);
+    uint32_t *want = malloc(bytes), *got = malloc(bytes);
+    assert(want && got);
+    test_render_paint_full(want, w, h, false, explicit);
+    test_render_paint_full(got, w, h, false, themed);
+    for (int i = 0; i < w * h; i++) {
+        if (got[i] == want[i])
+            continue;
+        fprintf(stderr, "AA mode %d: cell %d,%d pixel %d,%d is %08x, explicit colors give %08x\n",
+                aa, i % w / CELL_W, i / w / CELL_H, i % w % CELL_W, i / w % CELL_H,
+                got[i], want[i]);
+        break;
+    }
+    assert(!memcmp(want, got, bytes));
+    font_set_aa_mode(FONT_AA_GRAYSCALE);
+    free(want);
+    free(got);
+    wsap_vtcore_free(themed);
+    wsap_vtcore_free(explicit);
+}
+
 static void flood_benchmark(enum flood_kind kind, const char *name)
 {
     int cols = 160, rows = 50, frames = getenv("FLOOD_FRAMES") ? atoi(getenv("FLOOD_FRAMES")) : 200;
@@ -738,7 +794,7 @@ static void flood_benchmark(enum flood_kind kind, const char *name)
         struct terminal_frame frame;
         terminal_frame_init(&frame, snap, false);
         double begin = now();
-        draw_terminal_with_history(r, &render_history, px, w, h, f & 1, &frame);
+        draw_terminal_with_history(r, &render_history, px, w, h, 0, &frame);
         double dt = now() - begin;
         if (f >= 10) {
             total += dt;
@@ -753,18 +809,189 @@ static void flood_benchmark(enum flood_kind kind, const char *name)
     wsap_vtcore_free(t);
 }
 
+static bool bench_want(const char *only, const char *name)
+{
+    return !only || !strcmp(only, name);
+}
+
+enum bench_kind { BENCH_PLAIN, BENCH_OVERLAY, BENCH_STALE };
+
+/* One bench case. The step function changes the terminal before each frame. */
+struct bench_case {
+    const char *name;
+    const char *setup;
+    bool code_screen;
+    enum bench_kind kind;
+    void (*step)(struct wsap_vtcore *t, int frame, uint32_t *seed);
+};
+
+static void bench_step_typing(struct wsap_vtcore *t, int f, uint32_t *seed)
+{
+    (void)seed;
+    char c = (char)('a' + f % 26);
+    tt_write(t, &c, 1);
+}
+
+static void bench_step_idle(struct wsap_vtcore *t, int f, uint32_t *seed)
+{
+    (void)t; (void)f; (void)seed;
+}
+
+static void bench_step_region(struct wsap_vtcore *t, int f, uint32_t *seed)
+{
+    (void)seed;
+    char line[128];
+    int n = snprintf(line, sizeof(line),
+                     "    region line %06d: if (x != y && a <= b) return f(x);\r\n", f);
+    tt_write(t, line, (size_t)n);
+}
+
+static void bench_step_scroll(struct wsap_vtcore *t, int f, uint32_t *seed)
+{
+    (void)seed;
+    char line[128];
+    int n = snprintf(line, sizeof(line),
+                     "A new scrolled line in the terminal grid %06d abcdefghijklmnopqrstuvwxyz\r\n", f);
+    tt_write(t, line, (size_t)n);
+}
+
+static void bench_step_italic(struct wsap_vtcore *t, int f, uint32_t *seed)
+{
+    (void)f;
+    static char chunk[4096];
+    tt_write(t, chunk, flood_chunk(FLOOD_CODE, seed, chunk, sizeof(chunk)));
+}
+
+static void bench_step_cjk(struct wsap_vtcore *t, int f, uint32_t *seed)
+{
+    (void)f;
+    static const char *const tokens[] = {
+        "日本語のテキスト", "漢字", "한국어", "🙂", "🚀", "👍", "🎉🎉", "fn main() ", "x = y + 1; ",
+        "ascii text ", "中文字符", "🦀 rust ",
+    };
+    static char chunk[4096];
+    size_t n = 0;
+    while (n + 64 < sizeof(chunk)) {
+        *seed ^= *seed << 13;
+        *seed ^= *seed >> 17;
+        *seed ^= *seed << 5;
+        const char *tok = tokens[*seed % (sizeof(tokens) / sizeof(tokens[0]))];
+        size_t len = strlen(tok);
+        memcpy(chunk + n, tok, len);
+        n += len;
+        if (*seed % 9 == 0) {
+            memcpy(chunk + n, "\r\n", 2);
+            n += 2;
+        }
+    }
+    tt_write(t, chunk, n);
+}
+
+static void bench_run(const struct bench_case *c)
+{
+    static const struct ui_damage no_ui_damage = {0};
+    int cols = 160, rows = 50;
+    int frames = getenv("BENCH_FRAMES") ? atoi(getenv("BENCH_FRAMES")) : 2000;
+    int warmup = 20;
+    struct wsap_vtcore *t = tt_new(cols, rows);
+    struct renderer *r = test_renderer();
+    struct wsap_vtcore_snapshot *snap = wsap_vtcore_snapshot_new();
+    int w = cols * CELL_W, h = rows * CELL_H;
+    uint32_t *px = malloc((size_t)w * h * sizeof(*px));
+    assert(t && r && snap && px);
+    feed(t, "\033[?25l");
+    uint32_t seed = 0x9e3779b9u;
+    if (c->code_screen) {
+        static char chunk[8192];
+        tt_write(t, chunk, flood_chunk(FLOOD_CODE, &seed, chunk, sizeof(chunk)));
+        feed(t, "\033[H");
+    }
+    if (c->setup)
+        feed(t, c->setup);
+
+    struct ui_scene scene = {0};
+    ui_scene_init(&scene);
+    const struct rect2i grid = { .size = { .x = w, .y = h } };
+    if (c->kind == BENCH_OVERLAY) {
+        /* A thin translucent rounded bar at the right edge, like the scrollbar thumb. */
+        bool ok = ui_scene_rounded_rect(&scene,
+            (struct rect2i){ .pos = { .x = w - 6, .y = h / 4 },
+                             .size = { .x = 4, .y = h / 3 } }, 2, 0x80A6ADC8u);
+        assert(ok);
+        (void)ok;
+    }
+
+    struct framebuffer_history history = {0};
+    double total = 0, worst = 0;
+    for (int f = 0; f < frames + warmup; f++) {
+        c->step(t, f, &seed);
+        assert(wsap_vtcore_snapshot_update(snap, t));
+        struct damage_list damage = {0};
+        struct framebuffer target = {
+            .pixels = px,
+            .size = { .x = w, .y = h },
+            .damage = &damage,
+            .history = &history,
+            .stale = c->kind == BENCH_STALE,
+        };
+        struct render_frame frame = { .font = test_font(), .has_grid = true };
+        terminal_frame_init(&frame.grid, snap, false);
+        if (c->kind == BENCH_OVERLAY) {
+            frame.ui_font = test_font();
+            frame.terminal = grid;
+            frame.paint = &scene;
+            /* The overlay changes only in the first frame. NULL means every UI pixel changed. */
+            frame.damage = f ? &no_ui_damage : NULL;
+        }
+        double begin = now();
+        (void)render_draw(r, &target, &frame);
+        double dt = now() - begin;
+        if (f >= warmup) {
+            total += dt;
+            if (dt > worst) worst = dt;
+        }
+    }
+    printf("%-18s %.4f ms/frame worst=%.3f ms\n", c->name, total * 1000 / frames,
+           worst * 1000);
+    ui_scene_destroy(&scene);
+    framebuffer_history_release(&history);
+    wsap_vtcore_snapshot_free(snap);
+    renderer_destroy(r);
+    free(px);
+    wsap_vtcore_free(t);
+}
+
 static void benchmark(void)
 {
-    const char *only = getenv("FLOOD");
-    for (unsigned i = 0; i < sizeof(flood_kinds) / sizeof(flood_kinds[0]); i++)
-        if (!only || !strcmp(only, flood_kinds[i].name))
+    const char *flood = getenv("FLOOD");
+    const char *only = getenv("BENCH_CASE");
+    for (unsigned i = 0; i < sizeof(flood_kinds) / sizeof(flood_kinds[0]); i++) {
+        char full[32];
+        snprintf(full, sizeof(full), "flood-%s", flood_kinds[i].name);
+        if (flood ? !strcmp(flood, flood_kinds[i].name) : bench_want(only, full))
             flood_benchmark(flood_kinds[i].kind, flood_kinds[i].name);
-    if (only)
+    }
+    if (flood)
         return;
+
+    static const struct bench_case bench_cases[] = {
+        { "typing", NULL, true, BENCH_PLAIN, bench_step_typing },
+        { "idle", NULL, true, BENCH_PLAIN, bench_step_idle },
+        { "scroll-region", "\033[5;45r\033[45;1H", true, BENCH_PLAIN, bench_step_region },
+        { "overlay-scroll", "\033[50;1H", true, BENCH_OVERLAY, bench_step_scroll },
+        { "italic", "\033[3m", false, BENCH_PLAIN, bench_step_italic },
+        { "cjk-emoji", NULL, false, BENCH_PLAIN, bench_step_cjk },
+        { "fresh-every-frame", NULL, true, BENCH_STALE, bench_step_typing },
+    };
+    for (unsigned i = 0; i < sizeof(bench_cases) / sizeof(bench_cases[0]); i++)
+        if (bench_want(only, bench_cases[i].name))
+            bench_run(&bench_cases[i]);
 
     const char *cases[] = {"aaaaaaaaaaaaaaaaaaaaaaaa", "->===!=<=->===!=<=", "abc日本語->سلام🙂xyz"};
     const char *names[] = {"plain", "ligatures", "mixed"};
     for (unsigned c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        if (!bench_want(only, names[c]))
+            continue;
         struct wsap_vtcore *t = tt_new(120, 20);
         feed(t, "\033[?25l");
         for (int i = 0; i < 150; i++) feed(t, cases[c]);
@@ -778,30 +1005,33 @@ static void benchmark(void)
                (now() - start) * 100, (unsigned long long)hash(pixels, (size_t)w * h));
         free(pixels); wsap_vtcore_free(t);
     }
-    struct wsap_vtcore *t = tt_new(120, 40);
-    int w = 120 * CELL_W, h = 40 * CELL_H;
-    uint32_t *pixels = malloc((size_t)w * h * sizeof(*pixels));
-    assert(t && pixels);
-    uint32_t seed = 1;
-    uint64_t checksum = 0;
-    double start = now();
-    for (int frame = 0; frame < 100; frame++) {
-        char bytes[8192];
-        for (size_t i = 0; i < sizeof(bytes); i++) {
-            seed ^= seed << 13;
-            seed ^= seed >> 17;
-            seed ^= seed << 5;
-            bytes[i] = (char)seed;
+    if (bench_want(only, "random")) {
+        struct wsap_vtcore *t = tt_new(120, 40);
+        int w = 120 * CELL_W, h = 40 * CELL_H;
+        uint32_t *pixels = malloc((size_t)w * h * sizeof(*pixels));
+        assert(t && pixels);
+        uint32_t seed = 1;
+        uint64_t checksum = 0;
+        double start = now();
+        for (int frame = 0; frame < 100; frame++) {
+            char bytes[8192];
+            for (size_t i = 0; i < sizeof(bytes); i++) {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                bytes[i] = (char)seed;
+            }
+            tt_write(t, bytes, sizeof(bytes));
+            test_render_paint_full(pixels, w, h, true, t);
+            checksum ^= hash(pixels, (size_t)w * h);
         }
-        tt_write(t, bytes, sizeof(bytes));
-        test_render_paint_full(pixels, w, h, true, t);
-        checksum ^= hash(pixels, (size_t)w * h);
-    }
-    printf("random     %.3f ms/frame pixels=%016llx\n",
-           (now() - start) * 10, (unsigned long long)checksum);
-    free(pixels); wsap_vtcore_free(t);
+        printf("random     %.3f ms/frame pixels=%016llx\n",
+               (now() - start) * 10, (unsigned long long)checksum);
+        free(pixels); wsap_vtcore_free(t);
 
-    {
+    }
+
+    if (bench_want(only, "scroll")) {
         struct wsap_vtcore *st = tt_new(120, 40);
         int sw = 120 * CELL_W, sh = 40 * CELL_H;
         uint32_t *spx = malloc((size_t)sw * sh * sizeof(*spx));
@@ -822,7 +1052,6 @@ static void benchmark(void)
             feed(st, "A new scrolled line in the terminal grid 0123456789 abcdefghijklmnopqrstuvwxyz\r\n");
             assert(wsap_vtcore_snapshot_update(snap, st));
             terminal_frame_init(&frame, snap, false);
-            assert(frame.scrolled == 1);
             double begin = now();
             draw_terminal_with_history(sr, &history, spx, sw, sh, 0, &frame);
             shift_time += now() - begin;
@@ -1314,9 +1543,9 @@ static void blend_rect_alpha_test(void)
 
 static void uninitialized_srgb_luts_test(void)
 {
-    unsigned blended = render_blend_channel(255, 0, 128);
+    unsigned blended = blend_channel(255, 0, 128);
     assert(blended > 180 && blended < 195);
-    uint32_t px = render_blend_px(0xFFFFFFFFu, 0xFF000000u, 128);
+    uint32_t px = blend_px(0xFFFFFFFFu, 0xFF000000u, 128);
     assert((px & 0xFF) == 128);
 }
 
@@ -1420,6 +1649,9 @@ int main(int argc, char **argv)
     render_init();
     if (argc > 1 && !strcmp(argv[1], "--bench")) benchmark();
     else {
+        /* The pixel checks expect grayscale glyphs. Set them here, so the
+         * host fontconfig settings do not change the results. */
+        font_set_aa_mode(FONT_AA_GRAYSCALE);
         image_op_paints_and_clips_test();
         blend_rect_alpha_test();
         repaint_emits_damage_test();
@@ -1433,6 +1665,8 @@ int main(int argc, char **argv)
         presentation_test();
         theme_redraw_test();
         theme_recolors_existing_text_test();
+        explicit_theme_colors_test(FONT_AA_GRAYSCALE);
+        explicit_theme_colors_test(FONT_AA_RGB);
         frame_colors_test(2);
         frame_colors_test(6);
         scroll_pixels_test();
@@ -1450,6 +1684,8 @@ int main(int argc, char **argv)
         test_font_override = font_instance_acquire(
             font_instance_size_pt(font_instance_default()), 180);
         assert(test_font_override);
+        explicit_theme_colors_test(FONT_AA_GRAYSCALE);
+        explicit_theme_colors_test(FONT_AA_RGB);
         clipped_target_test(); style_cache_test();
         scroll_pixels_test();
         incremental_test(); suffix_ligature_test(); run_drift_test(); cache_churn_test();

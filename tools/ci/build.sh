@@ -25,10 +25,11 @@ fi
 unset LD_PRELOAD DYLD_INSERT_LIBRARIES
 export WSAP_NO_PRELOAD=1
 
+# With LTO, each test binary gets a whole-program link. Test without LTO.
 meson setup --wipe build/ci \
     --buildtype=release \
     -Disa= \
-    -Db_lto=true \
+    -Db_lto=false \
     -Dtests=true \
     -Dbenchmarks=false \
     -Dintegration_tests=false

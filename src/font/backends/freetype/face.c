@@ -232,8 +232,6 @@ static void release_face(int i)
     unsigned gen = faces[i].slot_reuse + 1;
     release_face_hb(i);
     for (int s = 0; s < FONT_VARIANT_COUNT; s++) {
-        if (faces[i].layout_gids[s])
-            hb_set_destroy(faces[i].layout_gids[s]);
         if (faces[i].styles[s])
             FT_Done_Face(faces[i].styles[s]);
     }

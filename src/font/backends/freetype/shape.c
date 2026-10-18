@@ -1,11 +1,8 @@
 #define _GNU_SOURCE
 #include "font/backends/freetype/internal.h"
-#include "font/glyph/layout.h"
 #include "font/shaping.h"
 
 #include FT_SYNTHESIS_H
-#include <hb-ot.h>
-#include <hb-aat.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -34,8 +31,6 @@ static __thread struct raster_entry *raster_cache;
 
 static __thread unsigned fit_pass;
 
-static __thread uint8_t *neutral_cp;
-
 void raster_cache_clear(void)
 {
     if (raster_cache) {
@@ -62,8 +57,6 @@ void shape_thread_reset(void)
     raster_cache_clear();
     free(raster_cache);
     raster_cache = NULL;
-    free(neutral_cp);
-    neutral_cp = NULL;
 }
 
 static unsigned raster_hash(int slot, uint32_t gid, unsigned style)
@@ -164,99 +157,12 @@ static const struct raster_entry *raster_fetch(int slot, enum font_variant varia
     e->hinting = raster_hint_key();
     e->fit_pass = fit_pass;
     e->valid = true;
-    if (FT_HAS_COLOR(face) && !oblique && !embolden &&
-        e->glyph->bitmap.pixel_mode != FT_PIXEL_MODE_BGRA)
-        colr_rasterize(face, gid, e->glyph);
     return e;
-}
-
-static bool script_is_default_shaper(hb_script_t s)
-{
-    return s != HB_SCRIPT_UNKNOWN && font_layout_script_simple(s);
-}
-
-static bool cp_layout_neutral(uint32_t cp)
-{
-    if (cp >= UNICODE_LIMIT)
-        return false;
-    uint8_t v = neutral_cp ? (neutral_cp[cp >> 2] >> ((cp & 3) * 2)) & 3 : 0;
-    if (v)
-        return v == 1;
-    bool ok = true;
-    hb_unicode_funcs_t *uf = hb_ufuncs();
-    if ((cp >= 0x1100 && cp <= 0x11FF) || (cp >= 0xA960 && cp <= 0xA97C) ||
-        (cp >= 0xD7B0 && cp <= 0xD7FB) || (cp >= 0xAC00 && cp <= 0xD7A3) ||
-        (cp >= 0x3130 && cp <= 0x318F))
-        ok = false;
-    else if (fallback_coverage_exempt(cp))
-        ok = false;
-    else {
-        hb_codepoint_t a = 0, b = 0;
-        if (hb_unicode_decompose(uf, cp, &a, &b) ||
-            hb_unicode_combining_class(uf, cp) != 0 ||
-            hb_unicode_mirroring(uf, cp) != cp ||
-            hb_unicode_general_category(uf, cp) ==
-            HB_UNICODE_GENERAL_CATEGORY_SPACE_SEPARATOR ||
-            !script_is_default_shaper(hb_unicode_script(uf, cp)))
-            ok = false;
-    }
-    if (!neutral_cp)
-        neutral_cp = calloc(UNICODE_LIMIT / 4, sizeof(*neutral_cp));
-    if (neutral_cp) {
-        unsigned shift = (cp & 3) * 2;
-        neutral_cp[cp >> 2] = (uint8_t)((neutral_cp[cp >> 2] & ~(3u << shift)) |
-                                        ((ok ? 1u : 2u) << shift));
-    }
-    return ok;
-}
-
-static hb_set_t *layout_input_gids(int slot, enum font_variant variant)
-{
-    uint8_t *st = &faces[slot].layout_gids_state[variant];
-    hb_set_t **ps = &faces[slot].layout_gids[variant];
-    if (*st)
-        return *st == 1 ? *ps : NULL;
-    *st = 2;
-    hb_set_t *s = NULL;
-    hb_font_t *hb = face_hb_font(slot, variant);
-    hb_face_t *hf = hb ? hb_font_get_face(hb) : NULL;
-    if (hf && !hb_aat_layout_has_substitution(hf) &&
-        !hb_aat_layout_has_positioning(hf) &&
-        !hb_aat_layout_has_tracking(hf)) {
-        hb_blob_t *kern = hb_face_reference_table(hf, HB_TAG('k','e','r','n'));
-        size_t kern_len = kern ? hb_blob_get_length(kern) : 0;
-        hb_blob_destroy(kern);
-        if (!kern_len) {
-            s = hb_set_create();
-            unsigned n =
-                hb_ot_layout_table_get_lookup_count(hf, HB_OT_TAG_GSUB);
-            for (unsigned i = 0; i < n; i++)
-                hb_ot_layout_lookup_collect_glyphs(hf, HB_OT_TAG_GSUB, i,
-                    NULL, s, NULL, NULL);
-        }
-    }
-    if (s) {
-        *ps = s;
-        *st = 1;
-    }
-    return s;
-}
-
-static void fill_run_meta(struct shaped_run *out, int slot, uint16_t flags,
-                          bool oblique, bool embolden, bool emoji,
-                          uint8_t variant)
-{
-    out->slot = slot;
-    out->flags = flags;
-    out->oblique = oblique;
-    out->embolden = embolden;
-    out->emoji = emoji;
-    out->variant = variant;
 }
 
 enum font_shape_result font_shape(int slot, const uint32_t *cps, int len,
                                   uint16_t flags, uint32_t script,
-                                  bool require_substitution, struct shaped_run *out)
+                                  struct shaped_run *out)
 {
     if (!out || !cps || len < 1 || len > FONT_RUN_MAX)
         return FONT_SHAPE_UNAVAILABLE;
@@ -282,32 +188,6 @@ enum font_shape_result font_shape(int slot, const uint32_t *cps, int len,
     hb_font_t *hb = face_hb_font(slot, variant);
     if (!hb)
         return FONT_SHAPE_UNAVAILABLE;
-
-    hb_set_t *in = layout_input_gids(slot, variant);
-    if (in) {
-        bool identity = true;
-        for (int k = 0; k < len && identity; k++) {
-            uint32_t gid = FT_Get_Char_Index(ft, cps[k]);
-            out->glyphs[k].gid = gid;
-            out->glyphs[k].cluster = (uint16_t)k;
-            out->glyphs[k].x_off = 0;
-            out->glyphs[k].y_off = 0;
-            out->glyphs[k].x_adv = hb_font_get_glyph_h_advance(hb, gid);
-            out->glyphs[k].y_adv = 0;
-            if (!gid || hb_set_has(in, gid) ||
-                !cp_layout_neutral(cps[k]) ||
-                hb_ot_layout_get_glyph_class(hb_font_get_face(hb), gid) ==
-                HB_OT_LAYOUT_GLYPH_CLASS_MARK)
-                identity = false;
-        }
-        if (identity) {
-            fill_run_meta(out, slot, flags, oblique, embolden, emoji,
-                          (uint8_t)variant);
-            out->count = len;
-            return require_substitution ? FONT_SHAPE_UNAVAILABLE
-                                        : FONT_SHAPE_NO_SUBST;
-        }
-    }
 
     if (!shape_buffer)
         shape_buffer = hb_buffer_create();
@@ -338,7 +218,10 @@ enum font_shape_result font_shape(int slot, const uint32_t *cps, int len,
         if (info[k].codepoint != FT_Get_Char_Index(ft, cps[k]))
             substituted = true;
 
-    fill_run_meta(out, slot, flags, oblique, embolden, emoji, (uint8_t)variant);
+    out->slot = slot;
+    out->variant = (uint8_t)variant;
+    out->oblique = oblique;
+    out->embolden = embolden;
     out->count = (int)count;
     for (unsigned k = 0; k < count; k++) {
         out->glyphs[k].gid = info[k].codepoint;
@@ -349,14 +232,7 @@ enum font_shape_result font_shape(int slot, const uint32_t *cps, int len,
         out->glyphs[k].y_adv = pos[k].y_advance;
     }
 
-    if (!substituted)
-        return require_substitution ? FONT_SHAPE_UNAVAILABLE : FONT_SHAPE_NO_SUBST;
-    return FONT_SHAPE_SHAPED;
-}
-
-static bool ensure_color_plane(struct glyph *g)
-{
-    return g->color || glyph_color_plane(g);
+    return substituted ? FONT_SHAPE_SHAPED : FONT_SHAPE_NO_SUBST;
 }
 
 static void ink_add_box(struct box *ink, const struct raster_entry **ras,
@@ -452,6 +328,23 @@ static bool collect_run_ink(const struct shaped_run *run, bool by_cluster,
     return true;
 }
 
+static bool draw_run_ink(struct glyph *g, const struct run_ink *ri, struct box box,
+                         int run_w, int run_h, const struct box *inked)
+{
+    if (!ft_prepare_canvas(g, &box, inked))
+        return false;
+    g->has_color = ri->color;
+    if (ri->color && !g->color && !glyph_color_plane(g))
+        return false;
+
+    for (int i = 0; i < ri->drawn; i++) {
+        struct box dst = scale_box(&ri->boxes[i], box, ri->left, ri->top,
+                                   run_w, run_h);
+        ft_blit_bitmap(g, &ri->ras[i]->glyph->bitmap, &dst);
+    }
+    return true;
+}
+
 bool font_fit_single(const struct shaped_run *run, struct glyph *g)
 {
     if (!run || !g || run->count < 1 || run->count > FONT_RUN_MAX)
@@ -470,22 +363,21 @@ bool font_fit_single(const struct shaped_run *run, struct glyph *g)
     int run_w = ri.right - ri.left, run_h = ri.bottom - ri.top;
     if (run_w <= 0 || run_h <= 0)
         return false;
+    int cols = g->width;
     struct box box = ft_place_ink(ri.left, -ri.top, run_w, run_h, ri.advance,
-                                  g->width,
+                                  cols,
                                ri.color ? font_thread_metrics.ink_rows : GLYPH_CELL_H,
                                ri.color);
-    if (!ft_prepare_canvas(g, &box))
-        return false;
-    g->has_color = ri.color;
-    if (ri.color && !ensure_color_plane(g))
+    if (!draw_run_ink(g, &ri, box, run_w, run_h, NULL))
         return false;
 
-    for (int i = 0; i < ri.drawn; i++) {
-        struct box dst = scale_box(&ri.boxes[i], box, ri.left, ri.top,
-                                   run_w, run_h);
-        ft_blit_bitmap(g, &ri.ras[i]->glyph->bitmap, &dst);
-    }
-    return true;
+    /* A glyph that stays in its cell can use a cached tile. Draw it again on
+     * a canvas without the blank columns past the cell. */
+    struct box inked;
+    if (!ft_blank_overhang(g, cols, &inked))
+        return true;
+    return glyph_reset(g, (unsigned)cols) &&
+           draw_run_ink(g, &ri, box, run_w, run_h, &inked);
 }
 
 bool font_fit_cells(const struct shaped_run *run, int n_cells, struct glyph *cells)

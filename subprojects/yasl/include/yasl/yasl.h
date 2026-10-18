@@ -362,6 +362,7 @@ struct yasl_damage {
 };
 YASL_API uint32_t *yasl_cpu_pixels(yasl_surface *surface, int *pixel_width, int *pixel_height);
 YASL_API int yasl_cpu_present(yasl_surface *surface);
+/* Damage adds up across presents until the surface draws. A NULL list or count 0 means full damage, which stays full until the draw. */
 YASL_API int yasl_cpu_present_damage(yasl_surface *surface, const struct yasl_damage *damage, int count);
 
 typedef void (*yasl_gl_proc)(void);

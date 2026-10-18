@@ -90,26 +90,60 @@ struct box ft_place_ink(int left, int above_baseline, int w, int h,
     return box;
 }
 
-bool ft_prepare_canvas(struct glyph *g, struct box *ink)
+static void canvas_span(const struct box *b, int cols, int *left, int *right)
+{
+    *left = b->x < 0 ? b->x : 0;
+    *right = b->x + b->w > cols ? b->x + b->w : cols;
+}
+
+bool ft_prepare_canvas(struct glyph *g, struct box *ink, const struct box *inked)
 {
     int allocated = g->width;
     int max_span = 4 * allocated > 60 ? 4 * allocated : 60;
-    int left = ink->x < 0 ? ink->x : 0;
-    int right = ink->x + ink->w > allocated ? ink->x + ink->w : allocated;
+    int left, right;
+    canvas_span(ink, allocated, &left, &right);
 
     if (right - left > max_span) {
         int span = right - left;
         ink->w = (ink->w * max_span / span) < 1 ? 1 : ink->w * max_span / span;
         ink->h = (ink->h * max_span / span) < 1 ? 1 : ink->h * max_span / span;
         ink->x = (allocated - ink->w) / 2;
-        left = ink->x < 0 ? ink->x : 0;
-        right = ink->x + ink->w > allocated ? ink->x + ink->w : allocated;
+        canvas_span(ink, allocated, &left, &right);
     }
+    if (inked)
+        canvas_span(inked, allocated, &left, &right);
 
     int total = right - left > max_span ? max_span : right - left;
     g->x_offset = (int16_t)left;
     ink->x -= left;
     return glyph_prepare(g, (unsigned)total);
+}
+
+/* An LCD bitmap has a margin for its filter. A scaled bitmap can have a clear
+ * border. Either one can make the canvas wider than the cell, with columns
+ * that have no ink. Find the columns that have ink, in cell coordinates.
+ * Return true if a canvas cut to them is narrower. */
+bool ft_blank_overhang(const struct glyph *g, int cols, struct box *inked)
+{
+    if (g->x_offset >= 0 && g->x_offset + g->width <= cols)
+        return false;
+    int first = g->width, last = -1;
+    for (int y = 0; y < glyph_rows(g); y++) {
+        const uint64_t *m = glyph_mask(g, y);
+        for (int i = 0; i < g->mask_words; i++) {
+            if (!m[i])
+                continue;
+            int lo = i * 64 + __builtin_ctzll(m[i]);
+            int hi = i * 64 + 63 - __builtin_clzll(m[i]);
+            if (lo < first) first = lo;
+            if (hi > last) last = hi;
+        }
+    }
+    *inked = last < 0 ? (struct box){0}
+        : (struct box){ .x = g->x_offset + first, .w = last - first + 1 };
+    int left, right;
+    canvas_span(inked, cols, &left, &right);
+    return left > g->x_offset || right < g->x_offset + g->width;
 }
 
 static void blit_direct(struct glyph *g, const FT_Bitmap *bm, const struct box *dst)

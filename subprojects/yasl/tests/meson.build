@@ -37,7 +37,7 @@ endif
 test('public-exports', python, args: [files('helpers/check_exports.py')] + export_args +
     [nm, yasl_lib.get_shared_lib(), headers])
 
-foreach unit : ['contracts', 'utf8', 'timers', 'loop', 'selection', 'events', 'gl_options']
+foreach unit : ['contracts', 'utf8', 'timers', 'loop', 'selection', 'events', 'gl_options', 'cpu_damage']
     exe = executable('yasl-' + unit + '-test', 'common/test_' + unit + '.c',
         include_directories: inc, dependencies: yasl_dep)
     test(unit, exe, is_parallel: not has_cocoa or unit != 'timers')

@@ -189,12 +189,13 @@ uint64_t wsap_vtcore_screen_view_row_key(const struct wsap_vtcore *t, int y)
             ? (wsap_vtcore_hist_line_cells(&t->hist, pos.id) << 32) : 0;
         if (pos.id == t->hist.base_cell_id)
             line_ver ^= mix64(t->hist.base_cell);
-        return mix64(((uint64_t)pos.id << 16) ^ (uint64_t)pos.seg ^ line_ver ^ 0x517cc1b727220a95ull);
+        return mix64(((uint64_t)pos.id << 16) ^ (uint64_t)pos.seg ^ line_ver ^ 0x517cc1b727220a95ull
+                     ^ mix64(t->serial));
     }
     const struct srow *row = screen_row_at(&t->scr, pos.screen_y);
     if (!row)
         return 0;
-    return mix64(row->uid ^ ((uint64_t)row->version << 32));
+    return mix64(row->uid ^ ((uint64_t)row->version << 32) ^ mix64(t->serial));
 }
 
 int wsap_vtcore_view_offset(const struct wsap_vtcore *t)

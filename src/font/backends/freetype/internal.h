@@ -21,17 +21,15 @@ struct ft_face_slot {
     hb_font_t *hb[FONT_VARIANT_COUNT];
     char *path;
     uint64_t last_used;
-    hb_set_t *layout_gids[FONT_VARIANT_COUNT];
     int index;
     unsigned slot_reuse;
-    uint8_t layout_gids_state[FONT_VARIANT_COUNT];
     uint8_t styles_checked;
     bool is_emoji;
     bool deferred;
 };
 
-_Static_assert(sizeof(struct ft_face_slot) == 128,
-               "ft_face_slot should occupy exactly two 64-byte cache lines");
+_Static_assert(sizeof(struct ft_face_slot) <= 128,
+               "ft_face_slot should fit in two 64-byte cache lines");
 
 extern __thread FT_Library ft_lib;
 
@@ -69,7 +67,8 @@ bool font_hinting_has_auto_axis(void);
 bool supported_pixel_mode(const FT_Bitmap *bitmap);
 struct box ft_place_ink(int left, int above_baseline, int w, int h,
                         int advance, int cols, int max_rows, bool color);
-bool ft_prepare_canvas(struct glyph *g, struct box *ink);
+bool ft_prepare_canvas(struct glyph *g, struct box *ink, const struct box *inked);
+bool ft_blank_overhang(const struct glyph *g, int cols, struct box *inked);
 void ft_blit_bitmap(struct glyph *g, const FT_Bitmap *bm, const struct box *dst);
 
 static inline int bitmap_width(const FT_Bitmap *bm)
@@ -124,7 +123,7 @@ void fallback_destroy(void);
 void fallback_thread_reset(void);
 void fallback_coverage_reset(void);
 void build_cfg_usable(void);
-bool fallback_run_covered(const uint32_t *cps, int len, unsigned *gen);
+bool fallback_run_covered(const uint32_t *cps, int len);
 bool run_coverable(const uint32_t *cps, int len);
 uint64_t ft_scan_run(const uint32_t *cps, int len, uint16_t style,
                      uint64_t *hash, int *dead_at);
@@ -149,18 +148,15 @@ _Static_assert(FONT_RUN_MAX <= UINT16_MAX, "cluster index truncation");
 struct shaped_run {
     int slot;
     int count;
-    uint16_t flags;
     uint8_t variant;
     bool oblique : 1;
     bool embolden : 1;
-    bool emoji : 1;
-    uint32_t _pad;
     alignas(16) struct shaped_glyph glyphs[FONT_RUN_MAX];
 };
 
 enum font_shape_result font_shape(int slot, const uint32_t *cps, int len,
                                   uint16_t flags, uint32_t script,
-                                  bool require_substitution, struct shaped_run *out);
+                                  struct shaped_run *out);
 
 bool font_fit_single(const struct shaped_run *run, struct glyph *g);
 bool font_fit_cells(const struct shaped_run *run, int n_cells, struct glyph *cells);
@@ -168,7 +164,5 @@ bool font_fit_cells(const struct shaped_run *run, int n_cells, struct glyph *cel
 void raster_cache_clear(void);
 bool shape_buffer_live(void);
 void shape_thread_reset(void);
-
-bool colr_rasterize(FT_Face face, uint32_t gid, FT_BitmapGlyph bg);
 
 #endif

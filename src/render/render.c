@@ -41,10 +41,17 @@ static __thread int run_capacity;
 
 static inline uint32_t blend_glyph_px(uint32_t fg, uint32_t bg, uint8_t a);
 static const uint32_t *blend_pair_lut(uint32_t fg, uint32_t bg);
+static const struct subpx_lut *subpx_pair_lut(uint32_t fg, uint32_t bg);
 
 #define BLEND_PAIR_SLOTS 16
 static __thread struct blend_pair { uint64_t tag, pending; uint32_t lut[256]; }
     blend_pairs[BLEND_PAIR_SLOTS];
+
+#define SUBPX_PAIR_SLOTS 16
+static __thread struct subpx_pair {
+    uint64_t tag, pending;
+    struct subpx_lut lut;
+} subpx_pairs[SUBPX_PAIR_SLOTS];
 
 static void run_buffers_free(void)
 {
@@ -102,7 +109,7 @@ static inline void blend_pixels8(uint32_t *dst, const uint8_t *alpha, uint32_t f
 {
     for (int i = 0; i < 8; i++)
         dst[i] = (lut && dst[i] == bg) ? lut[alpha[i]]
-                                     : render_blend_px(fg, dst[i], alpha[i]);
+                                     : blend_px(fg, dst[i], alpha[i]);
 }
 #elif defined(__AVX2__)
 #include <immintrin.h>
@@ -136,10 +143,10 @@ static inline void fill_pixels32(uint32_t *dst, uint32_t color, int count)
 static inline __m256i blend8_chan(__m256i idx, __m256i a, __m256i ia, unsigned fgc)
 {
     __m256i lb = _mm256_and_si256(_mm256_i32gather_epi32(
-        (const int *)render_srgb_to_linear, idx, 2),
+        (const int *)srgb_to_linear, idx, 2),
         _mm256_set1_epi32(0xFFFF));
     __m256i s = _mm256_add_epi32(
-        _mm256_mullo_epi32(a, _mm256_set1_epi32(render_srgb_to_linear[fgc])),
+        _mm256_mullo_epi32(a, _mm256_set1_epi32(srgb_to_linear[fgc])),
         _mm256_mullo_epi32(ia, lb));
     __m256i t = _mm256_add_epi32(s, _mm256_set1_epi32(127));
     __m256i h = _mm256_srli_epi32(t, 8);
@@ -151,7 +158,7 @@ static inline __m256i blend8_chan(__m256i idx, __m256i a, __m256i ia, unsigned f
 
 static inline __m256i blend8_px(__m256i p, __m256i a, uint32_t fg)
 {
-    render_ensure_srgb_luts();
+    srgb_ensure_luts();
     const __m256i m8 = _mm256_set1_epi32(0xFF);
     __m256i ia = _mm256_sub_epi32(_mm256_set1_epi32(255), a);
     __m256i lin_b = blend8_chan(_mm256_and_si256(p, m8), a, ia, fg & 0xFF);
@@ -159,7 +166,7 @@ static inline __m256i blend8_px(__m256i p, __m256i a, uint32_t fg)
                                 a, ia, (fg >> 8) & 0xFF);
     __m256i lin_r = blend8_chan(_mm256_and_si256(_mm256_srli_epi32(p, 16), m8),
                                 a, ia, (fg >> 16) & 0xFF);
-    const int *enc = (const int *)render_linear_to_srgb;
+    const int *enc = (const int *)srgb_from_linear;
     __m256i b = _mm256_and_si256(_mm256_i32gather_epi32(enc, lin_b, 1), m8);
     __m256i g = _mm256_and_si256(_mm256_i32gather_epi32(enc, lin_g, 1), m8);
     __m256i r = _mm256_and_si256(_mm256_i32gather_epi32(enc, lin_r, 1), m8);
@@ -190,7 +197,7 @@ static const uint8_t *correct_pair_lut(int fg_l, int bg_l)
         return NULL;
     }
     for (int a = 0; a < 256; a++)
-        cp->lut[a] = render_correct_coverage(fg_l, bg_l, (uint8_t)a);
+        cp->lut[a] = blend_correct_coverage(fg_l, bg_l, (uint8_t)a);
     cp->tag = tag;
     cp->pending = 0;
     return cp->lut;
@@ -202,7 +209,7 @@ static inline __m256i correct8_coverage(__m256i p, const uint8_t *alpha,
     alignas(32) uint32_t px[8];
     alignas(16) uint8_t ca[8] = {0};
     _mm256_storeu_si256((__m256i *)px, p);
-    int fg_l = (int)render_lum16(fg);
+    int fg_l = (int)blend_lum16(fg);
     bool uniform = count == 8
         ? (_mm256_movemask_epi8(_mm256_cmpeq_epi32(p, _mm256_set1_epi32((int)px[0]))) == -1)
         : true;
@@ -215,21 +222,21 @@ static inline __m256i correct8_coverage(__m256i p, const uint8_t *alpha,
         }
     }
     if (uniform) {
-        int bg_l = (int)render_lum16(px[0]);
+        int bg_l = (int)blend_lum16(px[0]);
         const uint8_t *clut = correct_pair_lut(fg_l, bg_l);
         if (clut) {
             for (int i = 0; i < count; i++)
                 ca[i] = clut[alpha[i]];
         } else {
             for (int i = 0; i < count; i++)
-                ca[i] = render_correct_coverage(fg_l, bg_l, alpha[i]);
+                ca[i] = blend_correct_coverage(fg_l, bg_l, alpha[i]);
         }
     } else {
         for (int i = 0; i < count; i++) {
-            int bg_l = (int)render_lum16(px[i]);
+            int bg_l = (int)blend_lum16(px[i]);
             const uint8_t *clut = correct_pair_lut(fg_l, bg_l);
             ca[i] = clut ? clut[alpha[i]]
-                         : render_correct_coverage(fg_l, bg_l, alpha[i]);
+                         : blend_correct_coverage(fg_l, bg_l, alpha[i]);
         }
     }
     return _mm256_cvtepu8_epi32(_mm_loadl_epi64((const __m128i *)ca));
@@ -336,18 +343,36 @@ static const uint32_t *blend_pair_lut(uint32_t fg, uint32_t bg)
         bp->pending = tag;
         return NULL;
     }
-    int fg_l = (int)render_lum16(fg), bg_l = (int)render_lum16(bg);
+    int fg_l = (int)blend_lum16(fg), bg_l = (int)blend_lum16(bg);
     for (int a = 0; a < 256; a++)
-        bp->lut[a] = render_blend_px_lum(fg, bg, fg_l, bg_l, (uint8_t)a);
+        bp->lut[a] = blend_px_lum(fg, bg, fg_l, bg_l, (uint8_t)a);
     bp->tag = tag;
     bp->pending = 0;
     return bp->lut;
 }
 
+static const struct subpx_lut *subpx_pair_lut(uint32_t fg, uint32_t bg)
+{
+    uint64_t tag = (uint64_t)fg << 32 | bg;
+    unsigned i = (unsigned)((tag * UINT64_C(0x9E3779B97F4A7C15)) >> 60) &
+                 (SUBPX_PAIR_SLOTS - 1);
+    struct subpx_pair *sp = &subpx_pairs[i];
+    if (sp->tag == tag)
+        return &sp->lut;
+    if (sp->pending != tag) {
+        sp->pending = tag;
+        return NULL;
+    }
+    blend_build_subpx_lut(&sp->lut, fg, bg);
+    sp->tag = tag;
+    sp->pending = 0;
+    return &sp->lut;
+}
+
 static inline uint32_t blend_glyph_px(uint32_t fg, uint32_t bg, uint8_t a)
 {
     const uint32_t *lut = blend_pair_lut(fg, bg);
-    return lut ? lut[a] : render_blend_px(fg, bg, a);
+    return lut ? lut[a] : blend_px(fg, bg, a);
 }
 
 static inline uint32_t blend_premul_glyph_px(uint32_t premul, uint32_t bg, bool faint)
@@ -360,7 +385,7 @@ static inline uint32_t blend_premul_glyph_px(uint32_t premul, uint32_t bg, bool 
     for (int shift = 0; shift <= 16; shift += 8) {
         unsigned channel = (((premul >> shift) & 255) * 255 + a / 2) / a;
         if (channel > 255) channel = 255;
-        result |= render_blend_channel(channel, (bg >> shift) & 255, coverage) << shift;
+        result |= blend_channel(channel, (bg >> shift) & 255, coverage) << shift;
     }
     return result;
 }
@@ -394,15 +419,33 @@ static inline uint32_t resolve_cell_bg(const struct terminal_frame *frame,
     return terminal_frame_color(frame, rev ? cell->fg : cell->bg);
 }
 
-static void paint_row_backgrounds(const struct terminal_frame *frame,
+static inline void fill_cell_span(uint32_t *row_px, int width, int c0, int c1,
+                                  int cw, int ch, uint32_t bg)
+{
+    if (c0 >= c1)
+        return;
+    int x0 = c0 * cw, span_w = (c1 - c0) * cw;
+    if (x0 == 0 && span_w == width) {
+        fill_pixels32(row_px, bg, ch * width);
+        return;
+    }
+    for (int y = 0; y < ch; y++)
+        fill_pixels32(row_px + (size_t)y * width + x0, bg, span_w);
+}
+
+static bool paint_row_backgrounds(const struct terminal_frame *frame,
                                   uint32_t *row_px, int width, int cols,
                                   const struct wsap_vtcore_cell *cells, int cursor,
-                                  int cw, int ch, int sel_c0, int sel_c1)
+                                  int cw, int ch, int sel_c0, int sel_c1,
+                                  int first_col)
 {
+    bool restarted = false;
     if (!frame->reverse_video && sel_c0 > sel_c1 && (cursor < 0 || cursor >= cols)) {
         bool uniform = true;
         if (cells) {
-            for (int i = 0; i < cols; i++) {
+            for (int i = first_col; i < cols; i++) {
+                if (cells[i].text == 0 && cells[i].width != 0)
+                    continue;
                 if (cells[i].bg != WSAP_VTCORE_COLOR_BG &&
                     terminal_frame_color(frame, cells[i].bg) != frame->default_bg) {
                     uniform = false;
@@ -411,11 +454,20 @@ static void paint_row_backgrounds(const struct terminal_frame *frame,
             }
         }
         if (uniform) {
-            fill_pixels32(row_px, frame->default_bg, ch * width);
-            return;
+            fill_cell_span(row_px, width, first_col, cols, cw, ch, frame->default_bg);
+            if (cols * cw < width) {
+                for (int y = 0; y < ch; y++)
+                    fill_pixels32(row_px + (size_t)y * width + cols * cw,
+                                  frame->default_bg, width - cols * cw);
+            }
+            return false;
+        }
+        if (first_col > 0) {
+            first_col = 0;
+            restarted = true;
         }
     }
-    int c = 0;
+    int c = first_col;
     while (c < cols) {
         uint32_t bg = resolve_cell_bg(frame, cells, c, sel_c0, sel_c1, cursor);
         int end = c + 1;
@@ -433,6 +485,12 @@ static void paint_row_backgrounds(const struct terminal_frame *frame,
         }
         c = end;
     }
+    if (first_col > 0 && cols * cw < width) {
+        for (int y = 0; y < ch; y++)
+            fill_pixels32(row_px + (size_t)y * width + cols * cw,
+                          frame->default_bg, width - cols * cw);
+    }
+    return restarted;
 }
 
 static void paint_glyph(uint32_t *row_px, int width, int x0, int ch,
@@ -461,27 +519,58 @@ static void paint_glyph(uint32_t *row_px, int width, int x0, int ch,
         }
     } else if (glyph->has_subpx_ink && glyph->subpx) {
         int x0_glyph = x0 + glyph->x_offset;
-        for (int y = 0; y < ch; y++) {
-            if (!glyph_row_inked(glyph, y)) continue;
-            uint32_t *dst = row_px + (size_t)y * width;
-            const uint64_t *mask = glyph_mask(glyph, y);
-            for (int w = 0; w < glyph->mask_words; w++) {
-                uint64_t ink = mask[w];
-                while (ink) {
-                    int x = w * 64 + __builtin_ctzll(ink);
-                    ink &= ink - 1;
-                    if (x >= glyph->width) break;
-                    int dx = x0_glyph + x;
-                    if (dx < 0 || dx >= width) continue;
-                    uint8_t sr = glyph->subpx[y][x * 3 + 0];
-                    uint8_t sg = glyph->subpx[y][x * 3 + 1];
-                    uint8_t sb = glyph->subpx[y][x * 3 + 2];
-                    if (faint) {
-                        sr = (uint8_t)((sr + 1) / 2);
-                        sg = (uint8_t)((sg + 1) / 2);
-                        sb = (uint8_t)((sb + 1) / 2);
+        bool in_bounds = x0_glyph >= 0 && x0_glyph + glyph->width <= width;
+        if (in_bounds && !faint) {
+            uint32_t bg0 = row_px[x0_glyph];
+            const struct subpx_lut *lut = subpx_pair_lut(fg, bg0);
+            for (int y = 0; y < ch; y++) {
+                if (!glyph_row_inked(glyph, y)) continue;
+                uint32_t *dst = row_px + (size_t)y * width + x0_glyph;
+                const uint8_t *subpx = glyph->subpx[y];
+                const uint64_t *mask = glyph_mask(glyph, y);
+                for (int w = 0; w < glyph->mask_words; w++) {
+                    uint64_t ink = mask[w];
+                    while (ink) {
+                        int x = w * 64 + __builtin_ctzll(ink);
+                        ink &= ink - 1;
+                        if (x >= glyph->width) break;
+                        uint8_t sr = subpx[x * 3 + 0];
+                        uint8_t sg = subpx[x * 3 + 1];
+                        uint8_t sb = subpx[x * 3 + 2];
+                        if (lut && dst[x] == bg0)
+                            dst[x] = blend_subpx_lut(lut, bg0, sr, sg, sb);
+                        else
+                            dst[x] = blend_subpx(fg, dst[x], sr, sg, sb);
                     }
-                    dst[dx] = render_blend_subpx(fg, dst[dx], sr, sg, sb);
+                }
+            }
+        } else {
+            for (int y = 0; y < ch; y++) {
+                if (!glyph_row_inked(glyph, y)) continue;
+                uint32_t *dst = row_px + (size_t)y * width;
+                const uint64_t *mask = glyph_mask(glyph, y);
+                for (int w = 0; w < glyph->mask_words; w++) {
+                    uint64_t ink = mask[w];
+                    while (ink) {
+                        int x = w * 64 + __builtin_ctzll(ink);
+                        ink &= ink - 1;
+                        if (x >= glyph->width) break;
+                        int dx = x0_glyph + x;
+                        if (dx < 0 || dx >= width) continue;
+                        uint8_t sr = glyph->subpx[y][x * 3 + 0];
+                        uint8_t sg = glyph->subpx[y][x * 3 + 1];
+                        uint8_t sb = glyph->subpx[y][x * 3 + 2];
+                        if (faint) {
+                            sr = (uint8_t)((sr + 1) / 2);
+                            sg = (uint8_t)((sg + 1) / 2);
+                            sb = (uint8_t)((sb + 1) / 2);
+                            dst[dx] = blend_subpx(fg, dst[dx], sr, sg, sb);
+                        } else {
+                            const struct subpx_lut *lut = subpx_pair_lut(fg, dst[dx]);
+                            dst[dx] = lut ? blend_subpx_lut(lut, dst[dx], sr, sg, sb)
+                                          : blend_subpx(fg, dst[dx], sr, sg, sb);
+                        }
+                    }
                 }
             }
         }
@@ -520,7 +609,7 @@ static void paint_glyph(uint32_t *row_px, int width, int x0, int ch,
                             dst[x] = fg;
                         } else if (a) {
                             dst[x] = (lut && dst[x] == bg0) ? lut[a]
-                                : render_blend_px(fg, dst[x], a);
+                                : blend_px(fg, dst[x], a);
                         }
                     }
                 }
@@ -586,19 +675,92 @@ struct row_paint {
     uint32_t *row_px;
     const struct wsap_vtcore_cell *cells;
     int width, cols, cursor, cw, ch, sel_c0, sel_c1;
-    bool plain_cells;
+    bool plain_cells, bg_ready;
     int base, next;
+    /* A glyph can draw into the cells to its right. The ink drawn so far in
+     * this row ends at this x. A tile overwrites its cell, so the columns
+     * before this x blend the glyph instead. */
+    int ink_end;
 };
 
-static void paint_cell(const struct row_paint *p, int c)
+/* The first `inked` columns of the cell already hold ink from the cells to
+ * the left. Blend the tile's glyph into them, and copy the rest of the tile.
+ * The tile pixels are this glyph blended over the default background. */
+static void paint_inked_tile(uint32_t *cell_px, int stride, const uint32_t *tile,
+                             int cw, int ch, const struct glyph *glyph, int inked,
+                             uint32_t fg)
+{
+    if (inked > cw)
+        inked = cw;
+    bool subpx = glyph->has_subpx_ink && glyph->subpx;
+    for (int y = 0; y < ch; y++) {
+        uint32_t *dst = cell_px + (size_t)y * stride;
+        memcpy(dst + inked, tile + (size_t)y * cw + inked,
+               (size_t)(cw - inked) * sizeof(*dst));
+        for (int x = 0; x < inked; x++) {
+            if (!glyph_inked(glyph, y, x))
+                continue;
+            if (subpx) {
+                const uint8_t *s = glyph_subpx_at(glyph, y, x);
+                dst[x] = blend_subpx(fg, dst[x], s[0], s[1], s[2]);
+            } else {
+                uint8_t a = glyph->alpha[y][x];
+                dst[x] = a == 255 ? fg : blend_glyph_px(fg, dst[x], a);
+            }
+        }
+    }
+}
+
+static inline void paint_tile(uint32_t *cell_px, int stride, const uint32_t *tile,
+                              int cw, int ch, const struct glyph *glyph, int inked,
+                              uint32_t fg)
+{
+    if (__builtin_expect(inked <= 0 || !glyph, 1))
+        blit_tile(cell_px, (size_t)stride, tile, cw, ch);
+    else
+        paint_inked_tile(cell_px, stride, tile, cw, ch, glyph, inked, fg);
+}
+
+static void row_add_ink(struct row_paint *p, int c, const struct glyph *glyph)
+{
+    int end = c * p->cw + glyph->x_offset + glyph->width;
+    if (end > p->ink_end)
+        p->ink_end = end;
+}
+
+static void ensure_row_bg(struct row_paint *p, int first_col, int cur_col)
+{
+    if (p->bg_ready)
+        return;
+    p->bg_ready = true;
+    bool restarted = paint_row_backgrounds(
+        p->frame, p->row_px, p->width, p->cols, p->cells,
+        p->cursor, p->cw, p->ch, p->sel_c0, p->sel_c1, first_col);
+    if ((first_col == 0 && cur_col > 0) || restarted)
+        p->ink_end = -1;
+}
+
+static void paint_cell(struct row_paint *p, int c)
 {
     const struct terminal_frame *frame = p->frame;
     if (p->cells && p->cells[c].text <= ' ' && p->cells[c].width != 0 &&
-        !render_cell_decorated(p->cells[c].attrs))
+        !render_cell_decorated(p->cells[c].attrs)) {
+        ensure_row_bg(p, c, c);
         return;
+    }
+    if (!p->bg_ready && p->cells && p->cells[c].width == 0 &&
+        p->cells[c].text <= ' ' && !render_cell_decorated(p->cells[c].attrs)) {
+        ensure_row_bg(p, 0, c);
+        return;
+    }
     struct wsap_vtcore_cell cell = p->plain_cells
         ? (p->cells ? render_cell_colors(frame, p->cells[c]) : render_blank_cell(frame))
         : render_resolve_cell(frame, p->cells, c, p->sel_c0, p->sel_c1, p->cursor);
+    if (cell.bg != frame->default_bg) {
+        ensure_row_bg(p, c, c);
+        if (p->ink_end == -1)
+            return;
+    }
     uint16_t style = render_cell_style(&cell);
     uint32_t *row_px = p->row_px;
     int cw = p->cw, ch = p->ch;
@@ -609,12 +771,28 @@ static void paint_cell(const struct row_paint *p, int c)
         if (cell.fg == frame->default_fg && cell.bg == frame->default_bg && !faint)
             tile = glyph_cache_fetch_tile(p->fi, glyph_cp, style);
         if (tile) {
-            blit_tile(row_px + (size_t)c * cw, p->width, tile, cw, ch);
+            int inked = p->ink_end - c * cw;
+            paint_tile(row_px + (size_t)c * cw, p->width, tile, cw, ch,
+                       inked > 0 ? glyph_cache_fetch(p->fi, glyph_cp, style) : NULL,
+                       inked, cell.fg);
         } else {
             const struct glyph *glyph = glyph_cache_fetch(p->fi, glyph_cp, style);
-            if (glyph && glyph->width > 0 && glyph->row_masks)
+            if (!p->bg_ready) {
+                int x0 = (glyph && glyph->width > 0 && glyph->row_masks)
+                    ? c * cw + glyph->x_offset : c * cw;
+                ensure_row_bg(p, x0 < c * cw ? 0 : c, c);
+                if (p->ink_end == -1)
+                    return;
+            }
+            if (glyph && glyph->width > 0 && glyph->row_masks) {
                 paint_glyph(row_px, p->width, c * cw, ch, glyph, cell.fg, faint);
+                row_add_ink(p, c, glyph);
+            }
         }
+    } else {
+        ensure_row_bg(p, c, c);
+        if (p->ink_end == -1)
+            return;
     }
     draw_decorations(row_px, p->width, c * cw, cw, ch, cell.attrs, cell.fg);
 }
@@ -622,24 +800,71 @@ static void paint_cell(const struct row_paint *p, int c)
 static void paint_span(void *ctx, const struct glyph_span *span)
 {
     struct row_paint *p = ctx;
+    if (p->ink_end == -1)
+        return;
     int start = p->base + span->start;
-    for (; p->next < start; p->next++)
+    for (; p->next < start; p->next++) {
         paint_cell(p, p->next);
+        if (p->ink_end == -1)
+            return;
+    }
     int cw = p->cw, ch = p->ch;
     for (int i = 0; i < span->count; i++) {
         int c = start + i;
         struct wsap_vtcore_cell ci = render_resolve_cell(p->frame, p->cells, c, p->sel_c0,
                                                           p->sel_c1, p->cursor);
+        if (ci.bg != p->frame->default_bg) {
+            ensure_row_bg(p, c, c);
+            if (p->ink_end == -1)
+                return;
+        }
         bool faint = (ci.attrs & WSAP_VTCORE_ATTR_FAINT) != 0;
         if (span->tiles && ci.fg == p->frame->default_fg &&
-            ci.bg == p->frame->default_bg && !faint)
-            blit_tile(p->row_px + (size_t)c * cw, p->width,
-                      span->tiles + (size_t)i * cw * ch, cw, ch);
-        else
-            paint_glyph(p->row_px, p->width, c * cw, ch, &span->cells[i], ci.fg, faint);
+            ci.bg == p->frame->default_bg && !faint) {
+            int inked = p->ink_end - c * cw;
+            paint_tile(p->row_px + (size_t)c * cw, p->width,
+                       span->tiles + (size_t)i * cw * ch, cw, ch,
+                       &span->cells[i], inked, ci.fg);
+        } else {
+            const struct glyph *g = &span->cells[i];
+            if (!p->bg_ready) {
+                int x0 = (g->width > 0 && g->row_masks)
+                    ? c * cw + g->x_offset : c * cw;
+                ensure_row_bg(p, x0 < c * cw ? 0 : c, c);
+                if (p->ink_end == -1)
+                    return;
+            }
+            if (g->width > 0 && g->row_masks) {
+                paint_glyph(p->row_px, p->width, c * cw, ch, g, ci.fg, faint);
+                row_add_ink(p, c, g);
+            }
+        }
         draw_decorations(p->row_px, p->width, c * cw, cw, ch, ci.attrs, ci.fg);
     }
     p->next = start + span->count;
+}
+
+static inline bool row_starts_with_tile_prefix(struct font_instance *fi,
+                                               const struct terminal_frame *frame,
+                                               const struct wsap_vtcore_cell *cells,
+                                               int cols)
+{
+    int limit = cols < 4 ? cols : 4;
+    if (limit <= 0)
+        return false;
+    for (int i = 0; i < limit; i++) {
+        struct wsap_vtcore_cell cell = cells[i];
+        if (cell.text <= ' ' || cell.width == 0 ||
+            (cell.attrs & WSAP_VTCORE_ATTR_FAINT))
+            return false;
+        cell = render_cell_colors(frame, cell);
+        if (cell.fg != frame->default_fg || cell.bg != frame->default_bg)
+            return false;
+        if (!glyph_cache_fetch_tile(fi, terminal_frame_glyph(frame, cell.text),
+                                    render_cell_style(&cell)))
+            return false;
+    }
+    return true;
 }
 
 static void paint_row_foreground(struct font_instance *fi,
@@ -648,12 +873,21 @@ static void paint_row_foreground(struct font_instance *fi,
                              const struct wsap_vtcore_cell *cells, int cursor,
                              int cw, int ch, int sel_c0, int sel_c1)
 {
+    bool bg_ready = !cells || cols <= 0 ||
+                    frame->reverse_video || sel_c0 <= sel_c1 ||
+                    (cursor >= 0 && cursor < cols) ||
+                    !row_starts_with_tile_prefix(fi, frame, cells, cols);
+    if (bg_ready)
+        (void)paint_row_backgrounds(frame, row_px, width, cols, cells, cursor, cw, ch,
+                                    sel_c0, sel_c1, 0);
+restart:
     struct row_paint p = {
         .fi = fi, .frame = frame, .row_px = row_px, .cells = cells,
         .width = width, .cols = cols, .cursor = cursor, .cw = cw, .ch = ch,
         .sel_c0 = sel_c0, .sel_c1 = sel_c1,
         .plain_cells = !frame->reverse_video && sel_c0 > sel_c1 &&
                        (cursor < 0 || cursor >= cols),
+        .bg_ready = bg_ready,
     };
     for (int c = 0; c < cols;) {
         int end = cells ? render_segment_end(cells, c, cols, is_cell_aligned_symbol) : c + 1;
@@ -663,13 +897,32 @@ static void paint_row_foreground(struct font_instance *fi,
             p.base = p.next = c;
             glyph_cache_shape_segment(fi, run_codepoints, end - c, render_cell_style(&cells[c]),
                                       paint_span, &p);
-            for (; p.next < end; p.next++)
+            if (p.ink_end == -1) {
+                bg_ready = true;
+                goto restart;
+            }
+            for (; p.next < end; p.next++) {
                 paint_cell(&p, p.next);
+                if (p.ink_end == -1) {
+                    bg_ready = true;
+                    goto restart;
+                }
+            }
         } else {
-            for (int i = c; i < end; i++)
+            for (int i = c; i < end; i++) {
                 paint_cell(&p, i);
+                if (p.ink_end == -1) {
+                    bg_ready = true;
+                    goto restart;
+                }
+            }
         }
         c = end;
+    }
+    if (!p.bg_ready && cols * cw < width) {
+        for (int y = 0; y < ch; y++)
+            fill_pixels32(row_px + (size_t)y * width + cols * cw,
+                          frame->default_bg, width - cols * cw);
     }
 }
 
@@ -702,7 +955,6 @@ static void paint_row(struct font_instance *fi, const struct terminal_frame *fra
     terminal_frame_row_selection(frame, row, cols, &sel_c0, &sel_c1);
     int cursor = row == frame->cursor_y ? frame->cursor_x : -1;
 
-    paint_row_backgrounds(frame, row_px, width, cols, cells, cursor, cw, ch, sel_c0, sel_c1);
     paint_row_foreground(fi, frame, row_px, width, cols, cells, cursor, cw, ch, sel_c0, sel_c1);
     draw_nonblock_cursor(frame, row_px, width, cursor, cols, cw, ch);
 }
@@ -819,7 +1071,7 @@ static struct renderer_history *renderer_history_get(
 void renderer_init(struct renderer *r)
 {
     memset(r, 0, sizeof(*r));
-    render_ensure_srgb_luts();
+    srgb_ensure_luts();
     r->gpu = render_gpu_create();
 }
 
@@ -1038,7 +1290,7 @@ bool render_init(void)
         render_users++;
         return true;
     }
-    render_build_srgb_luts();
+    srgb_build_luts();
     if (!font_system_init())
         return false;
     render_users = 1;
