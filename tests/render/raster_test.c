@@ -5,7 +5,10 @@
  * - spills: the ink of a glyph that leaves its cell lands on the neighbour
  *   cell, over the neighbour's own pixels, and never outside the grid;
  * - clipped repaints: frames whose damage is a UI rect that cuts through
- *   spilling cells give the pixels of a fresh paint.
+ *   spilling cells give the pixels of a fresh paint;
+ * - window scan: a narrow overlay that appears and vanishes at every x over
+ *   rows with italic, icon, and right-to-left overhang gives the pixels of
+ *   a fresh paint, in gray and RGB anti-aliasing.
  */
 #include "helpers/render_draw.h"
 
@@ -414,6 +417,91 @@ static void test_window_repaint(void)
     renderer_destroy(oracle);
 }
 
+/* ---- Window scan -------------------------------------------------------- */
+
+/*
+ * An overlay of 1 to 3 px appears and then vanishes at every x. Each step
+ * repaints only the damaged window of rows that the planner keeps. The
+ * window must grow by the overhang of the cells next to it. If it does not,
+ * the ink that spills into the window stays wrong at some x.
+ */
+static void scan_windows(struct font_instance *f, struct renderer *oracle)
+{
+    const struct font_metrics *m = font_instance_metrics(f);
+    int cols = 24, rows = 4;
+    struct vector2i size = { .x = cols * m->cell_w + 5, .y = rows * m->cell_h };
+    struct renderer *r = renderer_create(&(struct render_options){ .threads = RENDER_NONE });
+    TCHECK(r, "renderer");
+    struct tcanvas c;
+    tcanvas_init(&c, size.x, size.y);
+    struct tterm t;
+    tterm_open(&t, cols, rows);
+    tterm_feed(&t,
+        "\033[?25l\033[3mfjfWAVfjyg\033[0m\xef\x84\x95\xef\x84\x95\xee\x82\xb0x\xee\x82\xb2\033[3m//ff\r\n"
+        "\033[1;3mWWfjf\033[0m\033[48;5;52m\033[3mfjf\033[0m\xef\x84\x95 \xef\x84\x95\033[3;2mjjj\r\n"
+        "\033[3m\033[38;5;196mf\033[38;5;46mf\033[38;5;21mf\033[48;5;100mj\033[0m"
+        "\xe2\x97\x8f\xe2\x97\x8f\xe2\x80\x94\xe2\x80\x94\r\n"
+        "\033[3m\xd8\xb3\xd9\x84\xd8\xa7\xd9\x85 fjfjfj\033[0m\xef\x84\x95\xef\x84\x95");
+    size_t n = tcanvas_px(&c);
+    uint32_t *want = malloc(n * sizeof(*want)), *before = malloc(n * sizeof(*before));
+    TCHECK(want && before, "buffers");
+    struct ui_scene sc = {0};
+    ui_scene_init(&sc);
+    const struct terminal_frame *tf = tterm_frame(&t, false);
+    struct render_frame fr = {
+        .base = 0xFF000000u,
+        .grid = { .frame = tf, .font = f, .rect = { .size = size } },
+        .ui = &sc,
+        .ui_font = font_instance_default(),
+    };
+    struct ui_damage ud = { .all = true };
+    fr.ui_damage = &ud;
+    (void)tdraw(r, &c, &fr);
+    for (int w = 1; w <= 3; w++) {
+        for (int x = -2; x < size.x; x++) {
+            for (int on = 1; on >= 0; on--) {
+                ui_scene_destroy(&sc);
+                ui_scene_init(&sc);
+                struct rect2i ov = trect(x, 0, w, size.y);
+                if (on)
+                    TCHECK(ui_scene_blend_rect(&sc, ov, 0xFFFF00FFu, 128), "overlay");
+                ud = (struct ui_damage){0};
+                ui_damage_add(&ud, ov);
+                memcpy(before, c.px, n * sizeof(*before));
+                struct render_result res = tdraw(r, &c, &fr);
+                tdraw_fresh(oracle, want, size, &fr);
+                char what[96];
+                snprintf(what, sizeof(what), "window w %d x %d %s", w, x, on ? "on" : "off");
+                tcheck_same(what, c.px, want, size);
+                tcheck_damage(what, before, c.px, size, &res.damage);
+            }
+        }
+    }
+    ui_scene_destroy(&sc);
+    free(want);
+    free(before);
+    tcanvas_free(&c);
+    tterm_close(&t);
+    renderer_destroy(r);
+}
+
+static void test_window_scan(void)
+{
+    struct renderer *oracle = renderer_create(&(struct render_options){
+        .threads = RENDER_NONE, .cache_bytes = RENDER_NONE });
+    TCHECK(oracle, "oracle");
+    struct font_instance *big = font_instance_acquire(font_instance_size_pt(font), 180);
+    TCHECK(big, "1.5x font");
+    for (int aa = 0; aa < 2; aa++) {
+        font_set_aa_mode(aa ? FONT_AA_RGB : FONT_AA_GRAYSCALE);
+        scan_windows(font, oracle);
+        scan_windows(big, oracle);
+    }
+    font_set_aa_mode(FONT_AA_GRAYSCALE);
+    font_instance_unref(big);
+    renderer_destroy(oracle);
+}
+
 int main(void)
 {
     TCHECK(render_init(), "render_init");
@@ -425,6 +513,7 @@ int main(void)
     test_spills();
     test_spill_clip();
     test_window_repaint();
+    test_window_scan();
     render_shutdown();
     puts("PASS: row raster");
     return 0;
