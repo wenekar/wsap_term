@@ -110,11 +110,11 @@ static void dispatch_key(struct ui_surface *surface, enum ui_key key,
 
 static void click_at(struct ui_surface *surface, struct vector2i pos)
 {
-    struct ui_event press = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS, .pos = pos, .button = 0,
+    struct ui_event press = ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS, .pos = pos, .button = 0,
     }, 0);
-    struct ui_event release = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_RELEASE, .pos = pos, .button = 0,
+    struct ui_event release = ui_event_pointer((struct pointer_event){
+        .kind = PTR_RELEASE, .pos = pos, .button = 0,
     }, 1);
     ui_surface_dispatch(surface, &press);
     ui_surface_dispatch(surface, &release);
@@ -188,8 +188,8 @@ static void test_click_after_scroll(void)
         .x = UI_WIDGET(&s.scroll)->bounds.x + 2,
         .y = UI_WIDGET(&s.scroll)->bounds.y + 2,
     };
-    struct ui_event wheel = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_SCROLL, .pos = inside, .scroll_lines = -1,
+    struct ui_event wheel = ui_event_pointer((struct pointer_event){
+        .kind = PTR_SCROLL, .pos = inside, .scroll_lines = -1,
     }, 0);
     assert(ui_surface_dispatch(&surface, &wheel));
     assert(ui_scrollview_offset(&s.scroll) > 0);

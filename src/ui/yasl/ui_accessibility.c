@@ -47,6 +47,18 @@ static void queued_action_free(struct queued_action *action)
     free(action);
 }
 
+static void wake_sink(void *userdata)
+{
+    struct window_accessibility *accessibility = userdata;
+    pthread_mutex_lock(&accessibility->mutex);
+    if (accessibility->active && accessibility->event_wr >= 0) {
+        uint64_t wake = 1;
+        ssize_t ignored = write(accessibility->event_wr, &wake, sizeof(wake));
+        (void)ignored;
+    }
+    pthread_mutex_unlock(&accessibility->mutex);
+}
+
 static void action_sink(void *userdata,
                         const struct ui_accessibility_action_request *request)
 {
@@ -125,6 +137,9 @@ static void actions_ready(void *userdata, int fd, short revents)
             break;
         }
     }
+    if (!window_closed(window) && ui_of(window)->accessibility == accessibility &&
+        !accessibility->stopped)
+        window_accessibility_publish(window);
 }
 
 static void accessibility_stop_instance(
@@ -220,10 +235,12 @@ void window_accessibility_create(struct window *window)
     accessibility->active = true;
     if (!ui_accessibility_provider_attach(
             &accessibility->provider, ops,
-            ui_accessibility_native_handle(surface),
+            surface,
             action_sink, accessibility))
         goto fail;
     ui_of(window)->accessibility = accessibility;
+    ui_accessibility_set_wake_callback(&accessibility->provider, wake_sink,
+                                        accessibility);
     return;
 
 fail:
@@ -244,17 +261,15 @@ void window_accessibility_publish(struct window *window)
     if (!window || !ui_of(window)->accessibility || window_closed(window))
         return;
     struct window_accessibility *accessibility = ui_of(window)->accessibility;
-    if (!ui_accessibility_provider_is_active(&accessibility->provider))
-        return;
-    if (!ui_accessibility_tree_build(&ui_of(window)->root, &accessibility->tree))
-        return;
-    ui_accessibility_provider_publish_snapshot(&accessibility->provider,
-                                               &accessibility->tree);
+    if (ui_accessibility_provider_is_active(&accessibility->provider) &&
+        ui_accessibility_tree_build(&ui_of(window)->root, &accessibility->tree))
+        ui_accessibility_provider_publish_snapshot(&accessibility->provider,
+                                                   &accessibility->tree);
     for (int i = 0; i < ui_of(window)->menu_popups; i++) {
         struct window_ui_menu_popup *popup = &ui_of(window)->menu_popup[i];
         struct popup_accessibility *popup_accessibility =
             &accessibility->popups[i];
-        if (!popup->surface || !popup_accessibility->provider.instance)
+        if (!popup->native.surface || !popup_accessibility->provider.instance)
             continue;
         if (!ui_accessibility_provider_is_active(&popup_accessibility->provider))
             continue;
@@ -278,14 +293,14 @@ void window_accessibility_menu_popup_open(struct window *window, int depth)
         &accessibility->popups[depth];
     const struct ui_accessibility_provider_ops *ops =
         ui_accessibility_provider_ops();
-    if (!popup->surface || !ops ||
+    if (!popup->native.surface || !ops ||
         !ui_accessibility_provider_attach(
             &popup_accessibility->provider, ops,
-            ui_accessibility_native_handle(popup->surface), action_sink,
+            popup->native.surface, action_sink,
             accessibility))
         return;
-    ui_accessibility_set_menu_popup_depth(&popup_accessibility->provider,
-                                          depth);
+    ui_accessibility_set_wake_callback(&popup_accessibility->provider, wake_sink,
+                                        accessibility);
     ui_surface_prepare(&popup->ui);
     if (ui_accessibility_tree_build(&popup->root,
                                     &popup_accessibility->tree))

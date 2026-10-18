@@ -7,7 +7,7 @@ static bool popup_root_event(struct ui_widget *widget,
 {
     struct window *w = widget->userdata;
     if (event->kind == UI_EVENT_POINTER &&
-        event->data.pointer.kind == UI_POINTER_PRESS)
+        event->data.pointer.kind == PTR_PRESS)
         ui_menu_close(&ui_of(w)->menu);
     return event->kind == UI_EVENT_POINTER;
 }
@@ -30,7 +30,7 @@ static const struct ui_widget_ops POPUP_ROOT_OPS = {
 
 static bool popup_open(const struct window_ui_menu_popup *p)
 {
-    return p->surface != NULL;
+    return p->native.surface != NULL;
 }
 
 static void close_popup(struct window *w, int depth)
@@ -43,8 +43,7 @@ static void close_popup(struct window *w, int depth)
     while (p->root.first_child)
         ui_widget_remove_child(&p->root, p->root.first_child);
     ui_widget_destroy(&p->root);
-    window_native_remove(w, p->surface);
-    yasl_surface_destroy(p->surface);
+    window_native_destroy(&p->native);
     *p = (struct window_ui_menu_popup){0};
 }
 
@@ -83,7 +82,7 @@ static struct yasl_popup_options popup_options(struct window *w, int depth,
         .anchor = depth > 0 ? YASL_EDGE_TOP | YASL_EDGE_RIGHT : YASL_EDGE_BOTTOM | YASL_EDGE_LEFT,
         .gravity = YASL_EDGE_BOTTOM | YASL_EDGE_RIGHT,
         .adjust = YASL_ADJUST_SLIDE_X | YASL_ADJUST_SLIDE_Y | YASL_ADJUST_FLIP_X | YASL_ADJUST_FLIP_Y,
-        .userdata = w,
+        .userdata = &ui_of(w)->menu_popup[depth].native,
     };
 }
 
@@ -105,14 +104,11 @@ static bool open_popup(struct window *w, int depth, struct rect2i anchor)
 
     struct vector2i size = measure_popup(w, depth);
     struct yasl_surface *parent = depth == 0 ? window_surface(w)
-                                        : ui_of(w)->menu_popup[depth - 1].surface;
+                                        : ui_of(w)->menu_popup[depth - 1].native.surface;
     struct yasl_popup_options options = popup_options(w, depth, size, anchor);
-    p->surface = yasl_popup_create(parent, &options);
-    if (p->surface && !window_native_add(w, p->surface)) {
-        yasl_surface_destroy(p->surface);
-        p->surface = NULL;
-    }
-    if (!p->surface) {
+    p->native = (struct window_native){ .window = w, .id = depth + 1 };
+    p->native.surface = yasl_popup_create(parent, &options);
+    if (!p->native.surface) {
         ui_surface_destroy(&p->ui);
         ui_widget_remove_child(&p->root, level);
         ui_widget_destroy(&p->root);
@@ -165,7 +161,7 @@ void window_menu_relayout(struct window *w)
         struct rect2i anchor = level_anchor(w, d);
         struct vector2i size = measure_popup(w, d);
         struct yasl_popup_options options = popup_options(w, d, size, anchor);
-        if (yasl_popup_reposition(p->surface, &options) != 0) {
+        if (yasl_popup_reposition(p->native.surface, &options) != 0) {
             close_popups_from(w, d);
             ui_of(w)->menu_inline_from = d;
             ui_menu_layer_set_first_level(&ui_of(w)->menu_layer, d);
@@ -181,21 +177,6 @@ void window_menu_close(struct window *w)
         return;
     ui_menu_close(&ui_of(w)->menu);
     window_menu_sync(w);
-}
-
-static int popup_level_of(const struct window *w, const struct yasl_surface *s)
-{
-    for (int i = 0; s && i < ui_of(w)->menu_popups; i++)
-        if (ui_of(w)->menu_popup[i].surface == s)
-            return i;
-    return -1;
-}
-
-struct ui_surface *window_ui_surface_of(struct window *w,
-                                        const struct yasl_surface *s)
-{
-    int depth = popup_level_of(w, s);
-    return depth >= 0 ? &ui_of(w)->menu_popup[depth].ui : &ui_of(w)->screen;
 }
 
 struct ui_surface *window_ui_surface_at(struct window *w, int popup)

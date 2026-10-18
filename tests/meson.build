@@ -25,6 +25,7 @@ test_cases = [
     ['window-ui-tree-test', files('ui/yasl/ui_tree_test.c'), app_lib, deps],
     ['window-debug-server-test', files('ui/yasl/debug_server_test.c'), app_lib, deps],
     ['render-test', files('render/render_test.c', 'stubs/render_backend.c'), app_lib, deps],
+    ['render-kernels-test', files('render/cpu/kernels_test.c'), render_lib, [m_dep, thread_dep]],
     ['resize-alloc-test', files('ui/yasl/resize_alloc_test.c'), app_lib, deps],
     ['window-ui-input-test', files('ui/yasl/ui_input_test.c'), app_lib, deps],
     font_backend == 'coretext'
@@ -114,7 +115,7 @@ msan_safe_tests = [
 
 standalone_tests = [
     'pty-fast-test', 'font-test',
-    'font-coretext-test', 'render-test', 'resize-alloc-test',
+    'font-coretext-test', 'render-test', 'render-kernels-test', 'resize-alloc-test',
     'anim-test', 'ui-scene-text-test', 'css-clipping-test',
     'metal-render-test',
 ]
@@ -193,7 +194,7 @@ endforeach
 foreach entry : test_cases
     exe = test_executables[entry[0]]
     suites = ['unit']
-    if entry[0] in ['font-test', 'font-coretext-test', 'render-test', 'pty-fast-test']
+    if entry[0] in ['font-test', 'font-coretext-test', 'render-test', 'render-kernels-test', 'pty-fast-test']
         suites += ['isa']
     endif
     if entry[0] in extlib_tests
@@ -212,6 +213,8 @@ foreach entry : test_cases
     )
     if entry[0] == 'render-test'
         benchmark('render-bench', exe, args: ['--bench'], timeout: 300)
+    elif entry[0] == 'render-kernels-test'
+        benchmark('render-kernels-bench', exe, args: ['--bench'], timeout: 300)
     elif entry[0] == 'metal-render-test'
         benchmark('metal-render-bench', exe, args: ['--bench'], timeout: 300)
     endif
@@ -261,6 +264,44 @@ test(
     args: [files('ui/api_boundary_test.sh'), meson.project_source_root()],
     suite: 'unit',
 )
+
+if accessibility_enabled and system == 'linux'
+    dbus_run_session = find_program('dbus-run-session', required: false)
+    if dbus_run_session.found()
+        accessibility_provider_test = executable(
+            'ui-accessibility-provider-test',
+            files('ui/yasl/accessibility/provider_test.c'),
+            c_args: test_c_args,
+            include_directories: inc,
+            link_with: ui_yasl_lib,
+            dependencies: deps,
+        )
+        test(
+            'ui-accessibility-provider-test',
+            dbus_run_session,
+            args: ['--', accessibility_provider_test],
+            env: {
+                'GSETTINGS_BACKEND': 'memory',
+                'AT_SPI_BUS_ADDRESS': '',
+                'WSAP_NO_PRELOAD': '1',
+                'LD_PRELOAD': '',
+            },
+            suite: 'unit',
+            timeout: 60,
+        )
+    endif
+elif accessibility_enabled and system == 'darwin'
+    accessibility_provider_test = executable(
+        'ui-accessibility-provider-test',
+        files('ui/yasl/accessibility/provider_test.m'),
+        objc_args: test_c_args,
+        include_directories: inc,
+        link_with: ui_yasl_lib,
+        dependencies: deps,
+    )
+    test('ui-accessibility-provider-test', accessibility_provider_test,
+         env: test_env, suite: 'unit')
+endif
 
 if get_option('integration_tests')
     integration_env = environment()

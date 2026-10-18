@@ -9,39 +9,6 @@
 #include "ui/keys.h"
 #include "util/geom.h"
 
-enum ui_pointer_kind : uint8_t {
-    UI_POINTER_NONE = 0,
-    UI_POINTER_PRESS,
-    UI_POINTER_RELEASE,
-    UI_POINTER_MOTION,
-    UI_POINTER_SCROLL,
-    UI_POINTER_LEAVE,
-};
-
-#define UI_POINTER_WHEEL_BUTTON POINTER_WHEEL_UP
-
-struct ui_pointer_event {
-    enum ui_pointer_kind kind;
-    struct vector2i pos;
-    int button;
-    int scroll_lines;
-    float scroll_delta;
-    unsigned mods;
-    enum pointer_device device;
-    struct pointer_pen pen;
-};
-
-static inline bool ui_pointer_is_button_press(const struct ui_pointer_event *p)
-{
-    return p->kind == UI_POINTER_PRESS && p->button < UI_POINTER_WHEEL_BUTTON;
-}
-
-static inline bool ui_pointer_is_horizontal_wheel(const struct ui_pointer_event *p)
-{
-    return p->button == UI_POINTER_WHEEL_BUTTON + 2 ||
-           p->button == UI_POINTER_WHEEL_BUTTON + 3;
-}
-
 enum ui_event_kind : uint8_t {
     UI_EVENT_NONE = 0,
     UI_EVENT_POINTER,
@@ -60,7 +27,7 @@ struct ui_event {
     enum ui_event_kind kind;
     uint64_t time_ms;
     union {
-        struct ui_pointer_event pointer;
+        struct pointer_event pointer;
         struct ui_key_event key;
         struct { const char *data; size_t len; } text;
         struct { int action; enum ui_edit_command edit; } shortcut;
@@ -68,7 +35,7 @@ struct ui_event {
     } data;
 };
 
-static inline struct ui_event ui_event_pointer(struct ui_pointer_event event,
+static inline struct ui_event ui_event_pointer(struct pointer_event event,
                                                 uint64_t time_ms)
 {
     return (struct ui_event){

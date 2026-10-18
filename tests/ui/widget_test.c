@@ -273,11 +273,11 @@ static void zero_init_test(void)
 {
     struct ui_widget widget = {0};
     struct ui_surface context = {0};
-    struct ui_pointer_event pointer = {0};
+    struct pointer_event pointer = {0};
     struct ui_event event = {0};
     struct ui_constraints constraints = {0};
 
-    assert(pointer.kind == UI_POINTER_NONE);
+    assert(pointer.kind == PTR_NONE);
     assert(event.kind == UI_EVENT_NONE);
     assert(ui_constraints_clamp(constraints, (struct vector2i){0}).x == 0);
     assert(widget_invalidation(&widget) == UI_WIDGET_INVALIDATE_NONE);

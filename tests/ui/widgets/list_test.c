@@ -77,10 +77,10 @@ static struct vector2i row_center(const struct ui_list *l, int index)
     return (struct vector2i){ .x = r.x + r.width / 2, .y = r.y + r.height / 2 };
 }
 
-static bool pointer(struct ui_surface *s, enum ui_pointer_kind kind,
+static bool pointer(struct ui_surface *s, enum pointer_kind kind,
                     struct vector2i pos)
 {
-    struct ui_event e = ui_event_pointer((struct ui_pointer_event){
+    struct ui_event e = ui_event_pointer((struct pointer_event){
         .kind = kind, .pos = pos,
     }, 0);
     return ui_surface_dispatch(s, &e);
@@ -124,9 +124,9 @@ static void click_activates_item_test(void)
     ui_widget_set_action_handler(ui_list_widget(&f.list), record_action, NULL);
     action_count = 0;
     struct vector2i p = row_center(&f.list, 1);
-    assert(pointer(&f.surface, UI_POINTER_PRESS, p));
+    assert(pointer(&f.surface, PTR_PRESS, p));
     assert(ui_list_hovered(&f.list) == 1);
-    assert(pointer(&f.surface, UI_POINTER_RELEASE, p));
+    assert(pointer(&f.surface, PTR_RELEASE, p));
     assert(last_action.kind == UI_ACTION_ACTIVATE);
     assert(last_action.id == 2 && last_action.index == 1);
     assert(ui_list_selected(&f.list) == 1);
@@ -138,12 +138,12 @@ static void hover_follows_pointer_test(void)
     struct fixture f;
     show_default(&f);
     ui_widget_set_action_handler(ui_list_widget(&f.list), record_action, NULL);
-    pointer(&f.surface, UI_POINTER_MOTION, row_center(&f.list, 0));
+    pointer(&f.surface, PTR_MOTION, row_center(&f.list, 0));
     assert(ui_list_hovered(&f.list) == 0);
     assert(last_action.kind == UI_ACTION_HIGHLIGHT && last_action.id == 1);
-    pointer(&f.surface, UI_POINTER_MOTION, row_center(&f.list, 1));
+    pointer(&f.surface, PTR_MOTION, row_center(&f.list, 1));
     assert(ui_list_hovered(&f.list) == 1);
-    pointer(&f.surface, UI_POINTER_MOTION, (struct vector2i){ .x = 700, .y = 500 });
+    pointer(&f.surface, PTR_MOTION, (struct vector2i){ .x = 700, .y = 500 });
     assert(ui_list_hovered(&f.list) == -1);
     assert(last_action.kind == UI_ACTION_HIGHLIGHT && last_action.index == -1);
     teardown(&f);
@@ -153,10 +153,10 @@ static void cursor_names_the_hovered_row_test(void)
 {
     struct fixture f;
     show_default(&f);
-    pointer(&f.surface, UI_POINTER_MOTION, row_center(&f.list, 0));
+    pointer(&f.surface, PTR_MOTION, row_center(&f.list, 0));
     assert(ui_surface_cursor(&f.surface) == UI_CURSOR_POINTER);
 
-    pointer(&f.surface, UI_POINTER_MOTION, (struct vector2i){ .x = 700, .y = 500 });
+    pointer(&f.surface, PTR_MOTION, (struct vector2i){ .x = 700, .y = 500 });
     assert(ui_surface_cursor(&f.surface) == UI_CURSOR_DEFAULT);
     teardown(&f);
 }
@@ -169,7 +169,7 @@ static void cursor_follows_the_sheet_test(void)
     show(&f, ITEMS, N_ITEMS, &sheet, (struct css_scale_context){
         .dpi_scale = 1, .cell_w = 8, .cell_h = 16,
     });
-    pointer(&f.surface, UI_POINTER_MOTION, row_center(&f.list, 1));
+    pointer(&f.surface, PTR_MOTION, row_center(&f.list, 1));
     assert(ui_surface_cursor(&f.surface) == UI_CURSOR_TEXT);
     teardown(&f);
     css_sheet_clear(&sheet);
@@ -244,8 +244,8 @@ static void handler_can_destroy_list_during_release_test(void)
     ui_widget_set_action_handler(ui_list_widget(&f.list), destroy_on_change,
                                  &activations);
     struct vector2i p = row_center(&f.list, 0);
-    pointer(&f.surface, UI_POINTER_PRESS, p);
-    pointer(&f.surface, UI_POINTER_RELEASE, p);
+    pointer(&f.surface, PTR_PRESS, p);
+    pointer(&f.surface, PTR_RELEASE, p);
     assert(activations == 0);
     assert(ui_widget_child_count(&f.root) == 0);
     teardown(&f);
@@ -261,7 +261,7 @@ static void hover_fill_stays_inside_rounded_corner_test(void)
     show(&f, ITEMS, N_ITEMS, &sheet, (struct css_scale_context){
         .dpi_scale = 2, .cell_w = 16, .cell_h = 32,
     });
-    pointer(&f.surface, UI_POINTER_MOTION, row_center(&f.list, 0));
+    pointer(&f.surface, PTR_MOTION, row_center(&f.list, 0));
     build(&f);
     const struct ui_scene_op *panel = NULL, *row_fill = NULL;
     for (int i = 0; i < f.scene.n_ops; i++) {
@@ -377,7 +377,7 @@ static void pinned_geometry_survives_theme_change_test(void)
     build(&f);
     struct rect2i before = ui_list_item_rect(&f.list, 1);
     ui_surface_set_sheet(&f.surface, &roomy);
-    pointer(&f.surface, UI_POINTER_MOTION, row_center(&f.list, 1));
+    pointer(&f.surface, PTR_MOTION, row_center(&f.list, 1));
     build(&f);
     assert(rect2i_eq(ui_list_item_rect(&f.list, 1), before));
     bool repainted = false;
@@ -445,7 +445,7 @@ static void non_focusable_list_does_not_take_focus_test(void)
     assert(ui_list_set_items(&f.list, items, 2));
     assert(ui_surface_focused(&f.surface) == NULL);
 
-    pointer(&f.surface, UI_POINTER_PRESS, row_center(&f.list, 0));
+    pointer(&f.surface, PTR_PRESS, row_center(&f.list, 0));
     assert(ui_surface_focused(&f.surface) == NULL);
 
     assert(!ui_surface_focus_next(&f.surface));

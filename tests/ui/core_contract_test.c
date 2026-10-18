@@ -6,11 +6,11 @@
 
 static void click(struct ui_surface *surface, struct vector2i pos)
 {
-    struct ui_event press = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS, .pos = pos, .button = 0,
+    struct ui_event press = ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS, .pos = pos, .button = 0,
     }, 0);
-    struct ui_event release = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_RELEASE, .pos = pos, .button = 0,
+    struct ui_event release = ui_event_pointer((struct pointer_event){
+        .kind = PTR_RELEASE, .pos = pos, .button = 0,
     }, 1);
     ui_surface_dispatch(surface, &press);
     ui_surface_dispatch(surface, &release);
@@ -54,8 +54,8 @@ static void topmost_child_receives_pointer_test(void)
     setup_surface(&surface, &root.widget, (struct vector2i){ .x = 80, .y = 30 });
     assert(ui_surface_build_scene(&surface, &scene));
 
-    struct ui_event motion = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_MOTION, .pos = { .x = 4, .y = 4 },
+    struct ui_event motion = ui_event_pointer((struct pointer_event){
+        .kind = PTR_MOTION, .pos = { .x = 4, .y = 4 },
     }, 0);
     ui_surface_dispatch(&surface, &motion);
     assert(upper.widget.impl.style_pseudo & CSS_PSEUDO_HOVER);
@@ -407,8 +407,8 @@ static void modal_cancels_pressed_capture_test(void)
     setup_surface(&surface, &root.widget, (struct vector2i){ .x = 80, .y = 30 });
     assert(ui_surface_build_scene(&surface, &scene));
 
-    struct ui_event press = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS, .pos = { .x = 4, .y = 4 }, .button = 0,
+    struct ui_event press = ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS, .pos = { .x = 4, .y = 4 }, .button = 0,
     }, 0);
     assert(ui_surface_dispatch(&surface, &press));
     assert(ui_button_is_pressed(&covered));
@@ -422,8 +422,8 @@ static void modal_cancels_pressed_capture_test(void)
     assert(ui_widget_add_child(&modal.widget, &popup_button.widget));
     assert(ui_widget_add_child(&root.widget, &modal.widget));
 
-    struct ui_event release = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_RELEASE, .pos = { .x = 4, .y = 4 }, .button = 0,
+    struct ui_event release = ui_event_pointer((struct pointer_event){
+        .kind = PTR_RELEASE, .pos = { .x = 4, .y = 4 }, .button = 0,
     }, 1);
     ui_surface_dispatch(&surface, &release);
     assert(activations == 0);
@@ -450,7 +450,7 @@ static bool capture_and_decline(struct ui_widget *widget,
     struct capture_probe *probe = widget->userdata;
     if (event->kind == UI_EVENT_POINTER) {
         probe->events++;
-        if (event->data.pointer.kind == UI_POINTER_PRESS)
+        if (event->data.pointer.kind == PTR_PRESS)
             ui_widget_capture_pointer(widget);
     }
     return false;
@@ -493,8 +493,8 @@ static void capture_bubbles_without_sibling_fallback_test(void)
     assert(ui_widget_add_child(&root, &sibling));
     setup_surface(&surface, &root, (struct vector2i){ .x = 40, .y = 20 });
 
-    struct ui_event press = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS, .pos = { .x = 4, .y = 4 },
+    struct ui_event press = ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS, .pos = { .x = 4, .y = 4 },
     }, 0);
     assert(!ui_surface_dispatch(&surface, &press));
     assert(target_probe.events == 1);

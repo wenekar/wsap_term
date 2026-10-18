@@ -37,7 +37,7 @@ static void paint_rect(uint32_t *px, int width, int height,
         return;
     }
 
-    int fg_l = (int)render_lum16(color);
+    int fg_l = (int)blend_lum16(color);
     for (int y = r.y; y < y1; y++) {
         uint32_t *row = px + (size_t)y * width;
         int x = r.x;
@@ -50,7 +50,7 @@ static void paint_rect(uint32_t *px, int width, int height,
                 row[x] = cached_blend;
             } else {
                 last_bg = bg;
-                cached_blend = render_blend_px_lum(color, bg, fg_l, (int)render_lum16(bg), a);
+                cached_blend = blend_px_lum(color, bg, fg_l, (int)blend_lum16(bg), a);
                 have_blend = true;
                 row[x] = cached_blend;
             }
@@ -115,13 +115,13 @@ static void paint_rounded_rect(uint32_t *px, int width, int height,
         if (y >= ctl_y && y <= cbl_y) {
             for (int x = x0; x < x1; x++)
                 row[x] = alpha == 255 ? color :
-                    render_blend_px(color, row[x], alpha);
+                    blend_px(color, row[x], alpha);
         } else {
             int64_t cy = (y < ctl_y) ? top_cy : bottom_cy;
             for (int x = x0; x < x1; x++) {
                 if (x >= ctl_x && x <= ctr_x) {
                     row[x] = alpha == 255 ? color :
-                        render_blend_px(color, row[x], alpha);
+                        blend_px(color, row[x], alpha);
                 } else {
                     int64_t cx = (x < ctl_x) ? left_cx : right_cx;
                     uint8_t cov = corner_coverage(x, y, cx, cy, radius);
@@ -129,7 +129,7 @@ static void paint_rounded_rect(uint32_t *px, int width, int height,
                         uint8_t a = cov == 255 ? alpha
                             : (uint8_t)(((uint32_t)alpha * cov + 127) / 255);
                         row[x] = a == 255 ? color :
-                            render_blend_px(color, row[x], a);
+                            blend_px(color, row[x], a);
                     }
                 }
             }
@@ -153,7 +153,7 @@ static void paint_shadow(uint32_t *px, int width, int height,
         return;
 
     struct vector2i end = rect2i_end(visible);
-    int fg_l = (int)render_lum16(color);
+    int fg_l = (int)blend_lum16(color);
     for (int y = visible.y; y < end.y; y++) {
         uint32_t *row = px + (size_t)y * width;
         for (int x = visible.x; x < end.x; x++) {
@@ -165,8 +165,8 @@ static void paint_shadow(uint32_t *px, int width, int height,
                 : (uint8_t)(((unsigned)base * cov + 127) / 255);
             if (!a)
                 continue;
-            row[x] = render_blend_px_lum(color, row[x], fg_l,
-                                         (int)render_lum16(row[x]), a);
+            row[x] = blend_px_lum(color, row[x], fg_l,
+                                  (int)blend_lum16(row[x]), a);
         }
     }
 }
@@ -204,7 +204,7 @@ static void paint_circle(uint32_t *px, int width, int height,
                 if (cov <= 0.0f) continue;
                 a = (uint8_t)((float)alpha * (cov >= 1.0f ? 1.0f : cov) + 0.5f);
             }
-            row[x] = render_blend_px(color, row[x], a);
+            row[x] = blend_px(color, row[x], a);
         }
     }
 }
@@ -212,17 +212,17 @@ static void paint_circle(uint32_t *px, int width, int height,
 #define SCENE_SUBPX_PAIR_SLOTS 8
 static __thread struct {
     uint64_t tag;
-    struct render_subpx_lut lut;
+    struct subpx_lut lut;
 } scene_subpx_pairs[SCENE_SUBPX_PAIR_SLOTS];
 
-static const struct render_subpx_lut *scene_subpx_lut(uint32_t fg, uint32_t bg)
+static const struct subpx_lut *scene_subpx_lut(uint32_t fg, uint32_t bg)
 {
     uint64_t tag = (uint64_t)fg << 32 | bg;
     unsigned i = (unsigned)((tag * UINT64_C(0x9E3779B97F4A7C15)) >> 61) &
                  (SCENE_SUBPX_PAIR_SLOTS - 1);
     if (scene_subpx_pairs[i].tag == tag)
         return &scene_subpx_pairs[i].lut;
-    render_build_subpx_lut(&scene_subpx_pairs[i].lut, fg, bg);
+    blend_build_subpx_lut(&scene_subpx_pairs[i].lut, fg, bg);
     scene_subpx_pairs[i].tag = tag;
     return &scene_subpx_pairs[i].lut;
 }
@@ -253,8 +253,8 @@ static void paint_glyph(uint32_t *px, int width, int height,
                 if (!sr && !sg && !sb) continue;
                 int64_t dx = (int64_t)x0 + g->x_offset + x;
                 if (dx < clip.x || dx >= cx1 || dx >= width) continue;
-                const struct render_subpx_lut *lut = scene_subpx_lut(fg, row[dx]);
-                row[dx] = render_blend_subpx_lut(lut, row[dx], sr, sg, sb);
+                const struct subpx_lut *lut = scene_subpx_lut(fg, row[dx]);
+                row[dx] = blend_subpx_lut(lut, row[dx], sr, sg, sb);
             }
         }
     } else if (g->alpha) {
@@ -270,7 +270,7 @@ static void paint_glyph(uint32_t *px, int width, int height,
                 if (!a) continue;
                 int64_t dx = (int64_t)x0 + g->x_offset + x;
                 if (dx < clip.x || dx >= cx1 || dx >= width) continue;
-                row[dx] = render_blend_px(fg, row[dx], a);
+                row[dx] = blend_px(fg, row[dx], a);
             }
         }
     }

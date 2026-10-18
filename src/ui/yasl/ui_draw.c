@@ -45,23 +45,13 @@ bool window_ui_build_frame(struct window *w, struct yasl_surface *surface,
     if (!w || !surface || !out)
         return false;
     *out = (struct window_ui_frame){0};
-    bool main = surface == window_surface(w);
-    int surface_id = WINDOW_DEBUG_MAIN;
-    struct ui_surface *ui = window_ui_surface_of(w, surface);
-    if (!ui)
+    struct window_native *native = yasl_surface_get_userdata(surface);
+    if (!native || native->window != w || !window_ui_of(w))
         return false;
+    int surface_id = native->id;
+    bool main = surface_id == WINDOW_DEBUG_MAIN;
+    struct ui_surface *ui = window_ui_surface_at(w, surface_id);
     if (!main) {
-        bool found = false;
-        struct window_ui *state = window_ui_of(w);
-        for (int i = 0; i < state->menu_popups; i++) {
-            if (state->menu_popup[i].surface == surface) {
-                surface_id = i + 1;
-                found = true;
-                break;
-            }
-        }
-        if (!found)
-            return false;
         (void)ui_surface_take_frame_request(ui);
         (void)ui_surface_tick(ui, now_ms);
     }
@@ -89,13 +79,9 @@ void window_ui_frame_done(struct window *w, struct window_frame *frame,
 {
     if (!w || !frame)
         return;
-    int surface_id = WINDOW_DEBUG_MAIN;
-    if (frame->surface != window_surface(w)) {
-        struct window_ui *ui = window_ui_of(w);
-        for (int i = 0; i < ui->menu_popups; i++)
-            if (ui->menu_popup[i].surface == frame->surface)
-                surface_id = i + 1;
-    }
-    window_debug_presented(w, surface_id, frame);
+    struct window_native *native = frame->surface
+        ? yasl_surface_get_userdata(frame->surface) : NULL;
+    if (native && native->window == w)
+        window_debug_presented(w, native->id, frame);
     window_ui_arm(w, now_ms);
 }

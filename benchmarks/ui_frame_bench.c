@@ -79,8 +79,8 @@ static bool input(struct fixture *f, int scenario, int frame)
     if (scenario == HOVER) {
         struct rect2i tab;
         if (!ui_tabbar_tab_rect(&f->tabbar, frame % 12, &tab)) return false;
-        struct ui_event event = ui_event_pointer((struct ui_pointer_event){
-            .kind = UI_POINTER_MOTION,
+        struct ui_event event = ui_event_pointer((struct pointer_event){
+            .kind = PTR_MOTION,
             .pos = { .x = tab.x + tab.width / 2, .y = tab.y + tab.height / 2 },
         }, f->now_ms);
         return ui_surface_dispatch(&f->surface, &event);

@@ -74,10 +74,10 @@ static bool ch(struct fixture *f, uint32_t cp, unsigned mods)
     return ui_surface_dispatch(&f->surface, &e);
 }
 
-static bool pointer(struct fixture *f, enum ui_pointer_kind kind, int x,
+static bool pointer(struct fixture *f, enum pointer_kind kind, int x,
                     int button)
 {
-    struct ui_event e = ui_event_pointer((struct ui_pointer_event){
+    struct ui_event e = ui_event_pointer((struct pointer_event){
         .kind = kind, .pos = { .x = x, .y = 12 }, .button = button,
     }, 0);
     return ui_surface_dispatch(&f->surface, &e);
@@ -364,16 +364,16 @@ static void pointer_test(void)
         .dpi_scale = 1, .cell_w = 10, .cell_h = 20,
     });
     int inset = ui_input_text_inset(&f.in);
-    assert(pointer(&f, UI_POINTER_PRESS, inset + 20, 0));
+    assert(pointer(&f, PTR_PRESS, inset + 20, 0));
     assert(ui_input_caret(&f.in) == 2);
-    assert(pointer(&f, UI_POINTER_MOTION, inset - 5, 0));
+    assert(pointer(&f, PTR_MOTION, inset - 5, 0));
     int s, e;
     assert(ui_input_selection(&f.in, &s, &e) && s == 0 && e == 2);
-    assert(pointer(&f, UI_POINTER_RELEASE, inset - 5, 0));
+    assert(pointer(&f, PTR_RELEASE, inset - 5, 0));
     int caret = ui_input_caret(&f.in);
-    assert(!pointer(&f, UI_POINTER_MOTION, inset + 30, 0));
+    assert(!pointer(&f, PTR_MOTION, inset + 30, 0));
     assert(ui_input_caret(&f.in) == caret);
-    pointer(&f, UI_POINTER_PRESS, inset + 10, 2);
+    pointer(&f, PTR_PRESS, inset + 10, 2);
     assert(ui_input_caret(&f.in) == caret);
     assert(f.menus == 1 && f.menu_at.x == inset + 10);
     teardown(&f);
@@ -421,8 +421,8 @@ static void attached_layout_is_stable_test(void)
     assert(inside);
 
     int x = 40 + ui_input_text_inset(&in) + 30;
-    struct ui_event press = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS, .pos = { .x = x, .y = 40 } }, 1);
+    struct ui_event press = ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS, .pos = { .x = x, .y = 40 } }, 1);
     assert(ui_surface_dispatch(&surface, &press));
     assert(ui_input_caret(&in) == 3);
     press.data.pointer.pos = (struct vector2i){ .x = 36, .y = 10 };
@@ -472,9 +472,9 @@ static void text_cursor_test(void)
 {
     struct fixture f;
     setup(&f, "Text");
-    pointer(&f, UI_POINTER_MOTION, 40, 0);
+    pointer(&f, PTR_MOTION, 40, 0);
     assert(ui_surface_cursor(&f.surface) == UI_CURSOR_TEXT);
-    pointer(&f, UI_POINTER_MOTION, 220, 0);
+    pointer(&f, PTR_MOTION, 220, 0);
     assert(ui_surface_cursor(&f.surface) == UI_CURSOR_DEFAULT);
     teardown(&f);
 }

@@ -71,11 +71,11 @@ static void click(struct window *window, const char *selector)
     struct ui_widget *widget = find(window, selector);
     struct vector2i center = vector2i_add(widget->bounds.pos,
         (struct vector2i){ .x = widget->bounds.width / 2, .y = widget->bounds.height / 2 });
-    struct ui_event event = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS, .pos = center,
+    struct ui_event event = ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS, .pos = center,
     }, 0);
     assert(ui_surface_dispatch(window_ui_surface(window), &event));
-    event.data.pointer.kind = UI_POINTER_RELEASE;
+    event.data.pointer.kind = PTR_RELEASE;
     assert(ui_surface_dispatch(window_ui_surface(window), &event));
 }
 

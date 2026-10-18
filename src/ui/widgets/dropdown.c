@@ -158,7 +158,7 @@ static bool layer_event(struct ui_widget *widget, const struct ui_event *event)
 {
     struct ui_dropdown *d = widget->userdata;
     if (event->kind == UI_EVENT_POINTER &&
-        ui_pointer_is_button_press(&event->data.pointer) &&
+        pointer_is_button_press(&event->data.pointer) &&
         !rect2i_contains(d->panel.widget.bounds, event->data.pointer.pos)) {
         ui_dropdown_close(d);
         return true;

@@ -10,6 +10,8 @@ The jobs run on GitHub-hosted runners.
 The checkout step does not keep GitHub credentials.
 
 Each job runs `bash tools/ci/build.sh`.
+Each job installs stable Rust to build the pinned AccessKit C dependency.
+The script sets `-Daccessibility=true` to test native accessibility.
 The script configures a release build in `build/ci`.
 It uses the compiler's default CPU target and disables LTO.
 With LTO, each test binary gets a whole-program link.
@@ -37,6 +39,7 @@ It installs GCC 14, Wayland libraries, HarfBuzz, ICU, FreeType, and fonts.
 The fonts are JetBrains Mono, DejaVu, Noto, Noto CJK, and Noto Color Emoji.
 It uses the CMake and Ninja of the runner image.
 It installs Meson with pip and compiles yyjson from source.
+It installs AT-SPI and D-Bus to test the native accessibility provider.
 It keeps the fontconfig settings of the image. They select RGB subpixel antialiasing.
 The font and render tests set their own rendering mode.
 The regular tests do not need a display server.

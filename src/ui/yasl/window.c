@@ -25,20 +25,20 @@ struct vector2i window_default_size(const struct window_config *config)
 
 uint32_t window_scale_120(const struct window *w)
 {
-    if (!w || !w->surface)
+    if (!w || !w->native.surface)
         return 120;
     if (w->scale_120)
         return w->scale_120;
-    double scale = yasl_surface_get_info(w->surface).scale;
+    double scale = yasl_surface_get_info(w->native.surface).scale;
     return (uint32_t)(scale * 120.0 + 0.5);
 }
 
 void window_redraw(struct window *w)
 {
-    if (!w || !w->surface || w->closed)
+    if (!w || !w->native.surface || w->closed)
         return;
     if (w->drawing) {
-        yasl_surface_request_frame(w->surface);
+        yasl_surface_request_frame(w->native.surface);
         return;
     }
     w->needs_draw = true;
@@ -58,8 +58,8 @@ void window_set_title(struct window *w, const char *title)
         return;
     free(w->title);
     w->title = copy;
-    if (w->surface)
-        yasl_surface_set_title(w->surface, w->title ? w->title : app_name());
+    if (w->native.surface)
+        yasl_surface_set_title(w->native.surface, w->title ? w->title : app_name());
 }
 
 const char *window_title(const struct window *w)
@@ -75,8 +75,8 @@ void window_set_background(struct window *w, uint32_t bg)
         return;
     w->bg = bg;
     w->has_bg = true;
-    if (w->surface)
-        yasl_surface_set_background_color(w->surface, bg);
+    if (w->native.surface)
+        yasl_surface_set_background_color(w->native.surface, bg);
 }
 
 uint32_t window_background(const struct window *w)
@@ -128,31 +128,12 @@ bool window_inject_pop(struct window *w, struct input_event *ev)
     return fifo_pop(&w->inject, ev);
 }
 
-static struct window_native *native_find(struct window *w, const struct yasl_surface *s)
+void window_native_destroy(struct window_native *native)
 {
-    for (int i = 0; i < w->native_count; i++)
-        if (w->natives[i].surface == s)
-            return &w->natives[i];
-    return NULL;
-}
-
-bool window_native_add(struct window *w, struct yasl_surface *s)
-{
-    if (w->native_count == WINDOW_NATIVE_MAX)
-        return false;
-    w->natives[w->native_count++] = (struct window_native){ .surface = s };
-    return true;
-}
-
-void window_native_remove(struct window *w, struct yasl_surface *s)
-{
-    struct window_native *n = native_find(w, s);
-    if (!n)
-        return;
-    framebuffer_history_release(&n->history);
-    free(n->pixels);
-    *n = w->natives[--w->native_count];
-    w->natives[w->native_count] = (struct window_native){0};
+    framebuffer_history_release(&native->history);
+    free(native->pixels);
+    yasl_surface_destroy(native->surface);
+    *native = (struct window_native){0};
 }
 
 static bool native_report(struct window_native *n, bool ok, const char *what, int err)
@@ -213,10 +194,10 @@ static void metal_compose(const struct window_metal_frame *f, void *ud)
 
 void window_native_draw(struct window *w, struct yasl_surface *s)
 {
-    struct window_native *n = native_find(w, s);
-    if (!n || w->closed)
+    struct window_native *n = s ? yasl_surface_get_userdata(s) : NULL;
+    if (!n || n->window != w || w->closed)
         return;
-    bool main = s == w->surface;
+    bool main = s == w->native.surface;
     if (main) {
         frame_stats_tick(&w->stats);
         render_begin(&w->stats);
@@ -251,10 +232,11 @@ static void host_on_event(void *userdata, const yasl_event *ev)
 
 static void on_refresh(yasl_surface *s)
 {
-    struct window *w = yasl_surface_get_userdata(s);
+    struct window_native *native = yasl_surface_get_userdata(s);
+    struct window *w = native ? native->window : NULL;
     if (!w || w->closed || w->suspended)
         return;
-    if (s == w->surface && window_mounted(w)) {
+    if (s == w->native.surface && window_mounted(w)) {
         struct yasl_surface_info info = yasl_surface_get_info(s);
         struct window_geometry g = {
             .size = { .x = info.pixel_width, .y = info.pixel_height },
@@ -286,6 +268,7 @@ struct window *window_create(struct window_host *host, const struct window_spec 
         return NULL;
     }
     w->host = host;
+    w->native.window = w;
     w->stats = (struct frame_stats){
         .started_ns = yasl_time_ns(),
         .frame_min_ms = 1e18,
@@ -299,10 +282,7 @@ void window_destroy(struct window *w)
     if (window_mounted(w))
         window_ui_destroy(w);
     window_host_remove(host, w);
-    while (w->native_count)
-        window_native_remove(w, w->natives[w->native_count - 1].surface);
-    if (w->surface)
-        yasl_surface_destroy(w->surface);
+    window_native_destroy(&w->native);
     struct input_event ev;
     while (fifo_pop(&w->inject, &ev))
         input_event_release(&ev);
@@ -326,9 +306,7 @@ void window_close(struct window *w)
     window_host_report_empty(host, w);
     if (window_mounted(w))
         window_ui_closing(w);
-    window_native_remove(w, w->surface);
-    yasl_surface_destroy(w->surface);
-    w->surface = NULL;
+    window_native_destroy(&w->native);
 }
 
 struct window *window_open(struct window_host *host, const struct window_spec *spec)
@@ -357,30 +335,30 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
         .width = size.x,
         .height = size.y,
         .type = spec->graphics_device ? YASL_SURFACE_NATIVE : YASL_SURFACE_CPU,
-        .userdata = w,
+        .userdata = &w->native,
         .refresh = on_refresh,
         .tearing = true,
     };
-    w->surface = yasl_surface_create(&options);
+    w->native.surface = yasl_surface_create(&options);
     void *layer = NULL;
-    if (w->surface && options.type == YASL_SURFACE_NATIVE &&
-        !(layer = window_metal_attach(w->surface, spec->graphics_device))) {
+    if (w->native.surface && options.type == YASL_SURFACE_NATIVE &&
+        !(layer = window_metal_attach(w->native.surface, spec->graphics_device))) {
         fprintf(stderr, "window: no metal layer, drawing on the CPU: %s\n",
                 strerror(errno));
-        yasl_surface_destroy(w->surface);
+        yasl_surface_destroy(w->native.surface);
         options.type = YASL_SURFACE_CPU;
-        w->surface = yasl_surface_create(&options);
+        w->native.surface = yasl_surface_create(&options);
     }
-    if (!w->surface || !window_native_add(w, w->surface))
+    if (!w->native.surface)
         goto fail;
-    w->natives[w->native_count - 1].metal_layer = layer;
+    w->native.metal_layer = layer;
     if (w->has_bg)
-        yasl_surface_set_background_color(w->surface, w->bg);
+        yasl_surface_set_background_color(w->native.surface, w->bg);
 
     if (config->fullscreen && !spec->windowed)
-        yasl_surface_request(w->surface, YASL_REQUEST_FULLSCREEN);
+        yasl_surface_request(w->native.surface, YASL_REQUEST_FULLSCREEN);
 
-    struct yasl_surface_info info = yasl_surface_get_info(w->surface);
+    struct yasl_surface_info info = yasl_surface_get_info(w->native.surface);
     w->scale_120 = (uint32_t)(info.scale * 120.0 + 0.5);
 
     w->suspended = (info.state & YASL_STATE_SUSPENDED) != 0;
@@ -413,7 +391,9 @@ bool window_present(struct window *w, struct window_frame *frame,
 {
     if (!w || w->closed || !frame || !frame->surface)
         return false;
-    struct window_native *n = native_find(w, frame->surface);
+    struct window_native *n = yasl_surface_get_userdata(frame->surface);
+    if (!n || n->window != w)
+        return false;
     if (frame->target.drawable)
         return native_report(n, frame->target.presented, "metal present", 0);
     int status;
@@ -446,7 +426,7 @@ uint32_t window_double_click_ms(const struct window *w)
 
 struct yasl_surface *window_surface(const struct window *w)
 {
-    return w ? w->surface : NULL;
+    return w ? w->native.surface : NULL;
 }
 
 struct frame_stats *window_stats(struct window *w)
@@ -461,9 +441,9 @@ bool window_closed(const struct window *w)
 
 struct vector2i window_size(const struct window *w)
 {
-    if (!w || !w->surface)
+    if (!w || !w->native.surface)
         return (struct vector2i){0};
-    struct yasl_surface_info info = yasl_surface_get_info(w->surface);
+    struct yasl_surface_info info = yasl_surface_get_info(w->native.surface);
     return (struct vector2i){ .x = info.pixel_width, .y = info.pixel_height };
 }
 
@@ -509,8 +489,8 @@ void window_copy(struct window *w, enum yasl_selection sel, const char *text)
 
 void window_paste(struct window *w, enum yasl_selection sel)
 {
-    if (w && w->surface)
-        yasl_clipboard_request(w->surface, sel);
+    if (w && w->native.surface)
+        yasl_clipboard_request(w->native.surface, sel);
 }
 
 int window_modifiers(const struct window *w)
@@ -527,13 +507,13 @@ struct window_logical_point window_logical(const struct window *w,
 
 bool window_place_under_pointer(struct window *w, struct window_logical_point at)
 {
-    return w && w->surface &&
-           yasl_surface_place_under_pointer(w->surface, at.x, at.y) == 0;
+    return w && w->native.surface &&
+           yasl_surface_place_under_pointer(w->native.surface, at.x, at.y) == 0;
 }
 
 bool window_drag_carry(struct window *w, struct window_logical_point at)
 {
-    return w && w->surface && yasl_drag_carry(w->surface, at.x, at.y) == 0;
+    return w && w->native.surface && yasl_drag_carry(w->native.surface, at.x, at.y) == 0;
 }
 
 void window_set_drag_target(struct window *w, const struct window_drag_target *t,

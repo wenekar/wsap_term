@@ -190,8 +190,8 @@ static void capture_routes_to_target_test(void)
 
     ui_widget_capture_pointer(&child);
 
-    struct ui_event pointer = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS,
+    struct ui_event pointer = ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS,
         .pos = { .x = 500, .y = 500 },
     }, 0);
     assert(ui_surface_dispatch(&context, &pointer));
@@ -252,8 +252,8 @@ static void destroy_captured_clears_capture_test(void)
     ui_widget_destroy(&child);
     assert(ui_surface_captured(&context) == NULL);
 
-    struct ui_event pointer = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS,
+    struct ui_event pointer = ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS,
         .pos = { .x = 1, .y = 1 },
     }, 0);
     assert(ui_surface_dispatch(&context, &pointer));
@@ -280,8 +280,8 @@ static void captured_decline_bubbles_without_sibling_fallback_test(void)
     ui_surface_set_root(&context, &root);
     ui_widget_capture_pointer(&child);
 
-    struct ui_event pointer = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS,
+    struct ui_event pointer = ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS,
         .pos = { .x = 1, .y = 1 },
     }, 0);
     assert(!ui_surface_dispatch(&context, &pointer));

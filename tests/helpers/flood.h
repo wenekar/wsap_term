@@ -5,7 +5,16 @@
 #include <stdio.h>
 #include <string.h>
 
-enum flood_kind { FLOOD_BYTES, FLOOD_PRINTABLE, FLOOD_CODE, FLOOD_LOG };
+enum flood_kind {
+    FLOOD_BYTES, FLOOD_PRINTABLE, FLOOD_CODE, FLOOD_LOG, FLOOD_COLOR, FLOOD_TRUECOLOR
+};
+
+/* Triangle wave over 0..255. It gives smooth colour ramps without libm. */
+static inline unsigned flood_wave(unsigned x)
+{
+    unsigned v = x % 510;
+    return v < 255 ? v : 510 - v;
+}
 
 static inline size_t flood_chunk(enum flood_kind kind, uint32_t *seed, char *buf, size_t cap)
 {
@@ -18,6 +27,7 @@ static inline size_t flood_chunk(enum flood_kind kind, uint32_t *seed, char *buf
         "    const auto &p = *it; assert(p->next != nullptr); ++it;\r\n",
     };
     size_t n = 0;
+    unsigned phase = *seed >> 8, column = 0;
     while (n + 128 < cap) {
         *seed ^= *seed << 13;
         *seed ^= *seed >> 17;
@@ -43,6 +53,30 @@ static inline size_t flood_chunk(enum flood_kind kind, uint32_t *seed, char *buf
                 "status=%u -> %uus\r\n", r % 60, (r >> 6) % 60, (r >> 12) % 1000,
                 r, r % 3 + 1, 200 + r % 4 * 100, r % 9000);
             break;
+        case FLOOD_COLOR:
+            if (r % 4 == 0)
+                n += (size_t)snprintf(buf + n, cap - n, "\033[38;5;%um", (r >> 8) & 255);
+            if (r % 12 == 0)
+                n += (size_t)snprintf(buf + n, cap - n, "\033[48;5;%um", (r >> 16) & 255);
+            buf[n++] = ' ' + 1 + (char)((r >> 4) % 94);
+            if (++column >= 100) {
+                memcpy(buf + n, "\r\n", 2);
+                n += 2;
+                column = 0;
+            }
+            break;
+        case FLOOD_TRUECOLOR:
+            phase += 3;
+            n += (size_t)snprintf(buf + n, cap - n, "\033[38;2;%u;%u;%um",
+                                  flood_wave(phase), flood_wave(phase + 170),
+                                  flood_wave(phase + 340));
+            buf[n++] = ' ' + 1 + (char)((r >> 4) % 94);
+            if (++column >= 100) {
+                memcpy(buf + n, "\r\n", 2);
+                n += 2;
+                column = 0;
+            }
+            break;
         }
     }
     return n;
@@ -51,6 +85,7 @@ static inline size_t flood_chunk(enum flood_kind kind, uint32_t *seed, char *buf
 static const struct { enum flood_kind kind; const char *name; } flood_kinds[] = {
     { FLOOD_BYTES, "bytes" }, { FLOOD_PRINTABLE, "printable" },
     { FLOOD_CODE, "code" }, { FLOOD_LOG, "log" },
+    { FLOOD_COLOR, "color" }, { FLOOD_TRUECOLOR, "truecolor" },
 };
 
 #endif

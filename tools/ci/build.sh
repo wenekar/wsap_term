@@ -31,6 +31,7 @@ meson setup --wipe build/ci \
     -Disa= \
     -Db_lto=false \
     -Dtests=true \
+    -Daccessibility=true \
     -Dbenchmarks=false \
     -Dintegration_tests=false
 python3 tools/dev/dirgraph.py build

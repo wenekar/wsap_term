@@ -46,10 +46,10 @@ static void independent_surfaces_test(void)
     ui_surface_init(&second, &host, &second_host);
     ui_surface_set_root(&first, &first_root);
     ui_surface_set_root(&second, &second_root);
-    ui_surface_set_scale(&first, (struct css_scale_context){ .dpi_scale = 1.0f,
+    ui_surface_configure(&first, (struct vector2i){ .x = 80, .y = 40 },
+                                (struct css_scale_context){ .dpi_scale = 1.0f,
                                                    .cell_w = 8.0f,
                                                    .cell_h = 16.0f });
-    ui_surface_resize(&first, (struct vector2i){ .x = 80, .y = 40 });
     ui_surface_set_scale(&second, (struct css_scale_context){ .dpi_scale = 2.0f,
                                                    .cell_w = 9.0f,
                                                    .cell_h = 18.0f });
@@ -60,6 +60,8 @@ static void independent_surfaces_test(void)
     assert(ui_surface_viewport(&second).x == 120);
     assert(ui_surface_scale(&first).dpi_scale == 1.0f);
     assert(ui_surface_scale(&second).dpi_scale == 2.0f);
+    assert(vector2i_eq(first_root.bounds.size, ui_surface_viewport(&first)));
+    assert(vector2i_eq(second_root.bounds.size, ui_surface_viewport(&second)));
 
     struct ui_scene first_scene = {0};
     struct ui_scene second_scene = {0};

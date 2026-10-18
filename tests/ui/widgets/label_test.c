@@ -123,10 +123,10 @@ static void expect_text(const struct fixture *f, int index, const char *text)
     assert(!memcmp(ui_scene_op_text(&f->scene, op), text, op->text_len));
 }
 
-static bool pointer(struct fixture *f, enum ui_pointer_kind kind, struct vector2i pos,
+static bool pointer(struct fixture *f, enum pointer_kind kind, struct vector2i pos,
                       unsigned mods, uint64_t time)
 {
-    struct ui_event event = ui_event_pointer((struct ui_pointer_event){
+    struct ui_event event = ui_event_pointer((struct pointer_event){
         .kind = kind, .pos = pos, .mods = mods,
     }, time);
     return ui_surface_dispatch(&f->surface, &event);
@@ -134,8 +134,8 @@ static bool pointer(struct fixture *f, enum ui_pointer_kind kind, struct vector2
 
 static void click(struct fixture *f, struct vector2i pos, uint64_t time)
 {
-    assert(pointer(f, UI_POINTER_PRESS, pos, 0, time));
-    assert(pointer(f, UI_POINTER_RELEASE, pos, 0, time + 1));
+    assert(pointer(f, PTR_PRESS, pos, 0, time));
+    assert(pointer(f, PTR_RELEASE, pos, 0, time + 1));
 }
 
 static bool key(struct fixture *f, enum ui_key k, uint32_t text, unsigned mods)
@@ -243,7 +243,7 @@ static void alignment_ellipsis_and_theme_test(void)
         highlight |= f.scene.ops[i].kind == UI_SCENE_OP_RECT && f.scene.ops[i].color == 0xFF112233;
     assert(highlight);
     assert(text_op(&f, 0)->color == 0xFFABCDEF);
-    pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = 48, .y = 16 }, 0, 1);
+    pointer(&f, PTR_MOTION, (struct vector2i){ .x = 48, .y = 16 }, 0, 1);
     assert(ui_surface_cursor(&f.surface) == UI_CURSOR_NONE);
     destroy(&f);
 }
@@ -290,19 +290,19 @@ static void drag_across_wrapped_unicode_test(void)
     struct fixture f;
     init(&f, "é中\nsecond", (struct vector2i){ .x = 48, .y = 48 });
     ui_label_set_selectable(&f.label, true);
-    assert(pointer(&f, UI_POINTER_PRESS, (struct vector2i){ .x = 0, .y = 8 }, 0, 1));
-    assert(pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = 200, .y = 200 }, 0, 2));
+    assert(pointer(&f, PTR_PRESS, (struct vector2i){ .x = 0, .y = 8 }, 0, 1));
+    assert(pointer(&f, PTR_MOTION, (struct vector2i){ .x = 200, .y = 200 }, 0, 2));
     expect_selection(&f, "é中\nsecond");
-    assert(pointer(&f, UI_POINTER_RELEASE, (struct vector2i){ .x = 200, .y = 200 }, 0, 3));
+    assert(pointer(&f, PTR_RELEASE, (struct vector2i){ .x = 200, .y = 200 }, 0, 3));
     assert(!ui_surface_captured(&f.surface));
-    assert(pointer(&f, UI_POINTER_PRESS, (struct vector2i){ .x = 0, .y = 8 }, 0, 1000));
+    assert(pointer(&f, PTR_PRESS, (struct vector2i){ .x = 0, .y = 8 }, 0, 1000));
     ui_surface_cancel_capture(&f.surface);
     assert(!ui_surface_captured(&f.surface));
-    assert(!pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = 40, .y = 8 }, 0, 1001));
+    assert(!pointer(&f, PTR_MOTION, (struct vector2i){ .x = 40, .y = 8 }, 0, 1001));
     assert(ui_label_set_text(&f.label, "New"));
     assert(!ui_label_selection(&f.label, NULL, NULL));
     ui_label_set_selectable(&f.label, false);
-    assert(!pointer(&f, UI_POINTER_PRESS, (struct vector2i){ .x = 0, .y = 8 }, 0, 2000));
+    assert(!pointer(&f, PTR_PRESS, (struct vector2i){ .x = 0, .y = 8 }, 0, 2000));
     destroy(&f);
 }
 
@@ -315,9 +315,9 @@ static void links_and_lifetime_test(void)
     ui_widget_set_action_handler(ui_label_widget(&f.label), action, &f);
     build(&f);
     struct vector2i pos = { .x = 12, .y = 8 };
-    pointer(&f, UI_POINTER_MOTION, pos, 0, 1);
+    pointer(&f, PTR_MOTION, pos, 0, 1);
     assert(ui_surface_cursor(&f.surface) == UI_CURSOR_POINTER);
-    assert(!pointer(&f, UI_POINTER_PRESS, (struct vector2i){ .x = 150, .y = 8 }, 0, 10));
+    assert(!pointer(&f, PTR_PRESS, (struct vector2i){ .x = 150, .y = 8 }, 0, 10));
     click(&f, pos, 100);
     assert(f.actions == 1 && f.opens == 1);
     assert(!strcmp(f.opened, "https://example.org/docs"));
@@ -327,14 +327,14 @@ static void links_and_lifetime_test(void)
     assert(key(&f, UI_KEY_CHAR, ' ', 0));
     assert(f.actions == 3 && f.opens == 2);
     ui_label_set_disabled(&f.label, true);
-    assert(!pointer(&f, UI_POINTER_PRESS, pos, 0, 1000));
-    pointer(&f, UI_POINTER_MOTION, pos, 0, 1001);
+    assert(!pointer(&f, PTR_PRESS, pos, 0, 1000));
+    pointer(&f, PTR_MOTION, pos, 0, 1001);
     assert(ui_surface_cursor(&f.surface) == UI_CURSOR_DEFAULT);
     ui_label_set_disabled(&f.label, false);
     ui_label_set_selectable(&f.label, true);
-    assert(pointer(&f, UI_POINTER_PRESS, pos, 0, 2000));
-    assert(pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = 64, .y = 8 }, 0, 2001));
-    assert(pointer(&f, UI_POINTER_RELEASE, (struct vector2i){ .x = 64, .y = 8 }, 0, 2002));
+    assert(pointer(&f, PTR_PRESS, pos, 0, 2000));
+    assert(pointer(&f, PTR_MOTION, (struct vector2i){ .x = 64, .y = 8 }, 0, 2001));
+    assert(pointer(&f, PTR_RELEASE, (struct vector2i){ .x = 64, .y = 8 }, 0, 2002));
     assert(f.actions == 3);
     f.take_action = false;
     f.destroy_on_action = true;
@@ -396,12 +396,12 @@ static void link_hover_and_focus_styles_test(void)
     assert(rect_count(&f, 0xFF00FF00, 2) == 1);
     assert(rect_count(&f, 0xFFFF0000, 0) == 0);
 
-    pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = 12, .y = 8 }, 0, 1);
+    pointer(&f, PTR_MOTION, (struct vector2i){ .x = 12, .y = 8 }, 0, 1);
     build(&f);
     assert(text_op(&f, 0)->color == 0xFF0000FF);
     assert(rect_count(&f, 0xFF0000FF, 2) == 1);
 
-    pointer(&f, UI_POINTER_LEAVE, (struct vector2i){ .x = 12, .y = 8 }, 0, 2);
+    pointer(&f, PTR_LEAVE, (struct vector2i){ .x = 12, .y = 8 }, 0, 2);
     build(&f);
     assert(text_op(&f, 0)->color == 0xFF00FF00);
 
@@ -453,8 +453,8 @@ static void blank_press_clears_selection_test(void)
     select_word(&f, 100);
     expect_selection(&f, "world");
     assert(ui_surface_focused(&f.surface) == ui_label_widget(&f.label));
-    pointer(&f, UI_POINTER_PRESS, blank, 0, 300);
-    pointer(&f, UI_POINTER_RELEASE, blank, 0, 301);
+    pointer(&f, PTR_PRESS, blank, 0, 300);
+    pointer(&f, PTR_RELEASE, blank, 0, 301);
     assert(!ui_surface_focused(&f.surface));
     assert(!ui_label_selection(&f.label, NULL, NULL));
     destroy(&f);
@@ -480,8 +480,8 @@ static void press_on_own_text_keeps_selection_test(void)
     init_tree(&f);
     select_word(&f, 100);
     struct vector2i start = { .x = 0, .y = 8 };
-    assert(pointer(&f, UI_POINTER_PRESS, start, UI_MOD_SHIFT, 5000));
-    assert(pointer(&f, UI_POINTER_RELEASE, start, UI_MOD_SHIFT, 5001));
+    assert(pointer(&f, PTR_PRESS, start, UI_MOD_SHIFT, 5000));
+    assert(pointer(&f, PTR_RELEASE, start, UI_MOD_SHIFT, 5001));
     assert(ui_surface_focused(&f.surface) == ui_label_widget(&f.label));
     expect_selection(&f, "Hello ");
     destroy(&f);

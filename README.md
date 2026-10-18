@@ -9,6 +9,10 @@ macOS uses Cocoa and Metal.
 Requires Meson 1.12+, Python 3.10+, Ninja, pkg-config, a C23 compiler,
 yyjson 0.12+, HarfBuzz 7+, and ICU.
 Linux also needs Wayland, FreeType, Fontconfig, GIO, and xkbcommon development files.
+Native accessibility is off by default. Set `-Daccessibility=true` to opt in.
+It uses AccessKit C 0.23.1+ (API 0.23).
+Meson skips it if Rust or Cargo 1.87+ is absent.
+See [build options](docs/build.md#accessibility-dependency).
 
 On Linux:
 

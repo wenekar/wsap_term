@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+struct input_key_event;
+
 enum ui_modifiers {
     UI_MOD_SHIFT = 1,
     UI_MOD_ALT = 2,
@@ -103,7 +105,7 @@ struct ui_key_event {
     enum ui_key_action action;
     unsigned mods;
     uint32_t text;
-    const void *native;
+    const struct input_key_event *native;
     enum ui_edit_unit edit_unit;
     enum ui_edit_command edit_command;
     bool text_deferred;

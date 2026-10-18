@@ -73,11 +73,10 @@ void window_ui_restyle(struct window *w)
         return;
     update_ui_font(w);
     struct css_scale_context scale = window_ui_scale(w);
-    ui_surface_set_scale(&ui->screen, scale);
-    struct yasl_surface *surface = window_surface(w);
-    if (surface)
-        ui_surface_resize(&ui->screen, window_size(w));
     ui_surface_set_sheet(&ui->screen, ui->sheet);
+    struct vector2i size = window_surface(w) ? window_size(w)
+                                            : ui_surface_viewport(&ui->screen);
+    ui_surface_configure(&ui->screen, size, scale);
     for (int i = 0; i < ui->menu_popups; i++) {
         ui_surface_set_sheet(&ui->menu_popup[i].ui, ui->sheet);
         ui_surface_set_scale(&ui->menu_popup[i].ui, scale);
@@ -101,12 +100,10 @@ void window_ui_set_style(struct window *w, const struct css_sheet *sheet,
     window_redraw(w);
 }
 
-static void ui_resize(struct window *w, struct vector2i size)
+static void content_resize(struct window *w, struct vector2i size)
 {
     struct window_ui *ui = ui_of(w);
     window_repaint_all(w);
-    ui_surface_set_scale(&ui->screen, window_ui_scale(w));
-    ui_surface_resize(&ui->screen, size);
     if (ui->spec.resize)
         ui->spec.resize(w, size);
     window_redraw(w);
@@ -119,7 +116,7 @@ void window_ui_relayout(struct window *w)
     window_ui_restyle(w);
     struct yasl_surface *surface = window_surface(w);
     if (surface)
-        ui_resize(w, window_size(w));
+        content_resize(w, window_size(w));
 }
 
 void window_ui_configure(struct window *w, struct window_geometry g)
@@ -136,8 +133,10 @@ void window_ui_configure(struct window *w, struct window_geometry g)
                 .y = (int)((float)ui->menu_at.y * scale / old + 0.5f),
             };
         window_ui_restyle(w);
+    } else {
+        ui_surface_resize(&ui->screen, g.size);
     }
-    ui_resize(w, g.size);
+    content_resize(w, g.size);
 }
 
 void window_ui_state_changed(struct window *w)

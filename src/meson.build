@@ -98,7 +98,7 @@ ui_yasl_lib = static_library(
     ui_yasl_src,
     link_with: [base_lib, input_lib, font_lib, ui_lib, paint_lib],
     include_directories: inc,
-    dependencies: core_deps + [yasl_dep] + [term_dep],
+    dependencies: core_deps + [yasl_dep, term_dep] + ui_yasl_accessibility_deps,
     install: false,
 )
 

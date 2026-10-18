@@ -507,15 +507,15 @@ static bool list_event(struct ui_widget *widget, const struct ui_event *event)
         return list_key(l, &event->data.key);
     if (event->kind != UI_EVENT_POINTER)
         return false;
-    const struct ui_pointer_event *p = &event->data.pointer;
+    const struct pointer_event *p = &event->data.pointer;
     switch (p->kind) {
-    case UI_POINTER_MOTION:
+    case PTR_MOTION:
         set_hovered(l, row_at(l, p->pos));
         return false;
-    case UI_POINTER_LEAVE:
+    case PTR_LEAVE:
         set_hovered(l, -1);
         return true;
-    case UI_POINTER_PRESS:
+    case PTR_PRESS:
         if (p->button != 0)
             return false;
         set_hovered(l, row_at(l, p->pos));
@@ -529,7 +529,7 @@ static bool list_event(struct ui_widget *widget, const struct ui_event *event)
                 ui_surface_focus(surface, NULL);
         }
         return l->impl.hovered >= 0;
-    case UI_POINTER_RELEASE:
+    case PTR_RELEASE:
         return p->button == 0 && activate(l, l->impl.hovered);
     default:
         return false;

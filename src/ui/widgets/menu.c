@@ -283,7 +283,7 @@ static bool level_event(struct ui_widget *widget, const struct ui_event *event)
         }
         return true;
     case UI_EVENT_POINTER:
-        if (event->data.pointer.kind == UI_POINTER_MOTION && m->impl.open)
+        if (event->data.pointer.kind == PTR_MOTION && m->impl.open)
             pointer_moved(m, level, event->data.pointer.pos);
         return true;
     case UI_EVENT_FOCUS_IN:
@@ -500,7 +500,7 @@ static bool layer_event(struct ui_widget *widget, const struct ui_event *event)
 {
     if (event->kind != UI_EVENT_POINTER)
         return false;
-    if (ui_pointer_is_button_press(&event->data.pointer))
+    if (pointer_is_button_press(&event->data.pointer))
         ui_menu_close(layer_of(widget)->impl.menu);
     return true;
 }

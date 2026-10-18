@@ -4,4 +4,5 @@ render_src = files(
     'term_frame.c',
 )
 
+subdir('cpu')
 subdir('backends')

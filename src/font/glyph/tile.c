@@ -6,7 +6,7 @@
 #include <stdlib.h>
 
 static uint32_t default_lut[256];
-static struct render_subpx_lut default_subpx_lut;
+static struct subpx_lut default_subpx_lut;
 static _Atomic bool default_lut_ready;
 static _Atomic uint32_t default_lut_fg, default_lut_bg;
 static _Atomic uint32_t tile_fg = 0xFFFFFFFFu, tile_bg = 0xFF1E1E2Eu;
@@ -38,8 +38,8 @@ void build_default_lut(void)
         atomic_load_explicit(&default_lut_bg, memory_order_relaxed) == bg)
         return;
     for (int a = 0; a < 256; a++)
-        default_lut[a] = render_blend_px(fg, bg, (uint8_t)a);
-    render_build_subpx_lut(&default_subpx_lut, fg, bg);
+        default_lut[a] = blend_px(fg, bg, (uint8_t)a);
+    blend_build_subpx_lut(&default_subpx_lut, fg, bg);
     atomic_store_explicit(&default_lut_fg, fg, memory_order_relaxed);
     atomic_store_explicit(&default_lut_bg, bg, memory_order_relaxed);
     atomic_store_explicit(&default_lut_ready, true, memory_order_relaxed);
@@ -68,7 +68,7 @@ void fill_tile(const struct font_instance *fi, uint32_t *px, const struct glyph 
                 uint8_t sr = subpx[x * 3 + 0];
                 uint8_t sg = subpx[x * 3 + 1];
                 uint8_t sb = subpx[x * 3 + 2];
-                row[x] = render_blend_subpx_lut(&default_subpx_lut, bg, sr, sg, sb);
+                row[x] = blend_subpx_lut(&default_subpx_lut, bg, sr, sg, sb);
             }
         }
     } else {

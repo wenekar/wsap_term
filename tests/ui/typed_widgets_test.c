@@ -135,11 +135,11 @@ static void button_activation_and_disabled_test(void)
         .pos = { .x = 10, .y = 5 }, .size = { .x = 70, .y = 24 },
     });
 
-    struct ui_event press = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS, .pos = { .x = 20, .y = 10 }, .button = 0,
+    struct ui_event press = ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS, .pos = { .x = 20, .y = 10 }, .button = 0,
     }, 1);
-    struct ui_event release = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_RELEASE, .pos = { .x = 20, .y = 10 }, .button = 0,
+    struct ui_event release = ui_event_pointer((struct pointer_event){
+        .kind = PTR_RELEASE, .pos = { .x = 20, .y = 10 }, .button = 0,
     }, 2);
     assert(ui_widget_event(&button.widget, &press));
     assert(ui_button_is_pressed(&button));
@@ -166,8 +166,8 @@ static void context_requests_state_redraw_test(void)
     ui_surface_resize(&context, (struct vector2i){ .x = 80, .y = 24 });
     assert(ui_surface_take_frame_request(&context));
 
-    struct ui_event motion = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_MOTION, .pos = { .x = 10, .y = 10 },
+    struct ui_event motion = ui_event_pointer((struct pointer_event){
+        .kind = PTR_MOTION, .pos = { .x = 10, .y = 10 },
     }, 1);
     assert(!ui_surface_dispatch(&context, &motion));
     assert(button.widget.impl.style_pseudo & CSS_PSEUDO_HOVER);
@@ -212,14 +212,14 @@ static void mismatched_release_preserves_press_test(void)
     ui_widget_layout(&button.widget, (struct rect2i){
         .pos = { .x = 0, .y = 0 }, .size = { .x = 80, .y = 24 },
     });
-    struct ui_event press = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_PRESS, .button = 0, .pos = { .x = 5, .y = 5 },
+    struct ui_event press = ui_event_pointer((struct pointer_event){
+        .kind = PTR_PRESS, .button = 0, .pos = { .x = 5, .y = 5 },
     }, 1);
-    struct ui_event wrong_release = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_RELEASE, .button = 1, .pos = { .x = 5, .y = 5 },
+    struct ui_event wrong_release = ui_event_pointer((struct pointer_event){
+        .kind = PTR_RELEASE, .button = 1, .pos = { .x = 5, .y = 5 },
     }, 2);
-    struct ui_event release = ui_event_pointer((struct ui_pointer_event){
-        .kind = UI_POINTER_RELEASE, .button = 0, .pos = { .x = 5, .y = 5 },
+    struct ui_event release = ui_event_pointer((struct pointer_event){
+        .kind = PTR_RELEASE, .button = 0, .pos = { .x = 5, .y = 5 },
     }, 3);
     assert(ui_widget_event(&button.widget, &press));
     assert(!ui_widget_event(&button.widget, &wrong_release));
