@@ -13,7 +13,9 @@
  *   every worker to wake up. A late worker finds no item and sleeps again.
  *   A late worker never runs an item of a finished job.
  * - Workers wait and wake with a futex on Linux and a condition variable on
- *   other systems. Workers block every signal.
+ *   other systems. After a job, a worker polls for the next job for a short
+ *   time before it sleeps. On Linux, a wake makes a system call only when a
+ *   worker sleeps. Workers block every signal.
  * - Steady state allocates nothing.
  *
  * Font protocol (docs/font-api.md, "Thread affinity"). Each worker:

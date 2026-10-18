@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 /*
@@ -29,6 +30,14 @@
 
 /* Polls of the done counter before the main thread sleeps in the join. */
 #define POOL_JOIN_SPINS 256
+
+/*
+ * A worker polls for the next job for this long before it sleeps. Frames
+ * that come one after another (a flood, a held key, a smooth scroll) then
+ * start with no wake system call, and the workers join at once. The cost
+ * is this much CPU time for each worker after each parallel job.
+ */
+#define POOL_IDLE_NS 20000
 
 /*
  * Claims. `left` counts the items that no thread has claimed. It counts
@@ -56,6 +65,9 @@ struct pool {
     _Alignas(64) _Atomic int64_t left;
     _Alignas(64) _Atomic int done;
     _Alignas(64) _Atomic uint32_t wake;
+    /* The workers that sleep in the kernel, and the main thread in the join. */
+    _Atomic int sleepers;
+    _Atomic bool main_sleeps;
     _Atomic bool stop;
     _Atomic int grain;
     /* The workers that attached their font state. */
@@ -99,11 +111,19 @@ static void futex_wake(void *addr, int count)
 }
 #endif
 
+/*
+ * The futex path skips the system call when no worker sleeps. A worker
+ * adds itself to `sleepers` and then reads `wake` again in the kernel. The
+ * main thread adds to `wake` and then reads `sleepers`. Both pairs are
+ * sequentially consistent, so one side sees the other: the worker does not
+ * sleep, or the main thread wakes it.
+ */
 static void wake_workers(struct pool *p, int count)
 {
 #ifdef POOL_FUTEX
-    atomic_fetch_add_explicit(&p->wake, 1, memory_order_release);
-    futex_wake(&p->wake, count);
+    atomic_fetch_add_explicit(&p->wake, 1, memory_order_seq_cst);
+    if (atomic_load_explicit(&p->sleepers, memory_order_seq_cst) > 0)
+        futex_wake(&p->wake, count);
 #else
     (void)count;
     pthread_mutex_lock(&p->mu);
@@ -113,13 +133,43 @@ static void wake_workers(struct pool *p, int count)
 #endif
 }
 
-/* Sleeps until `wake` differs from `seen`. Returns the new value. */
+static int64_t clock_ns(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (int64_t)t.tv_sec * 1000000000 + t.tv_nsec;
+}
+
+/* Polls until `wake` differs from `seen`, for at most POOL_IDLE_NS. */
+static bool poll_wake(struct pool *p, uint32_t seen, uint32_t *now)
+{
+    int64_t end = 0;
+    for (int i = 0;; i++) {
+        *now = atomic_load_explicit(&p->wake, memory_order_acquire);
+        if (*now != seen)
+            return true;
+        cpu_relax();
+        if ((i & 63) != 63)
+            continue;
+        int64_t t = clock_ns();
+        if (!end)
+            end = t + POOL_IDLE_NS;
+        else if (t >= end)
+            return false;
+    }
+}
+
+/* Waits until `wake` differs from `seen`. Returns the new value. */
 static uint32_t wait_wake(struct pool *p, uint32_t seen)
 {
     uint32_t now;
+    if (poll_wake(p, seen, &now))
+        return now;
 #ifdef POOL_FUTEX
-    while ((now = atomic_load_explicit(&p->wake, memory_order_acquire)) == seen)
+    atomic_fetch_add_explicit(&p->sleepers, 1, memory_order_seq_cst);
+    while ((now = atomic_load_explicit(&p->wake, memory_order_seq_cst)) == seen)
         futex_wait(&p->wake, seen);
+    atomic_fetch_sub_explicit(&p->sleepers, 1, memory_order_relaxed);
 #else
     pthread_mutex_lock(&p->mu);
     while ((now = atomic_load_explicit(&p->wake, memory_order_acquire)) == seen)
@@ -132,7 +182,8 @@ static uint32_t wait_wake(struct pool *p, uint32_t seen)
 static void wake_main(struct pool *p)
 {
 #ifdef POOL_FUTEX
-    futex_wake(&p->done, 1);
+    if (atomic_load_explicit(&p->main_sleeps, memory_order_seq_cst))
+        futex_wake(&p->done, 1);
 #else
     pthread_mutex_lock(&p->mu);
     pthread_cond_signal(&p->done_cv);
@@ -148,9 +199,13 @@ static void wait_done(struct pool *p, int n)
         cpu_relax();
     }
 #ifdef POOL_FUTEX
+    /* The same pairing as for `sleepers`: the worker adds to `done` and
+     * then reads `main_sleeps`. */
+    atomic_store_explicit(&p->main_sleeps, true, memory_order_seq_cst);
     int d;
-    while ((d = atomic_load_explicit(&p->done, memory_order_acquire)) != n)
+    while ((d = atomic_load_explicit(&p->done, memory_order_seq_cst)) != n)
         futex_wait(&p->done, (uint32_t)d);
+    atomic_store_explicit(&p->main_sleeps, false, memory_order_relaxed);
 #else
     pthread_mutex_lock(&p->mu);
     while (atomic_load_explicit(&p->done, memory_order_acquire) != n)
@@ -237,7 +292,7 @@ static void *worker_main(void *arg)
             break;
         int n = 0;
         int ran = drain(p, t->id, &job, &n);
-        if (ran && atomic_fetch_add_explicit(&p->done, ran, memory_order_acq_rel) + ran == n)
+        if (ran && atomic_fetch_add_explicit(&p->done, ran, memory_order_seq_cst) + ran == n)
             wake_main(p);
     }
     render_walk_thread_release();
