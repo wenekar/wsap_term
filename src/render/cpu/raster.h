@@ -101,7 +101,9 @@ struct raster_spill {
 /*
  * The spills of the row that a worker paints now. raster.c empties it at
  * the start of each row. It grows when it needs room, and it keeps its
- * memory. So steady state allocates nothing.
+ * memory. raster_workers_balance() gives the room of the largest list to
+ * every worker. So steady state allocates nothing, whichever worker paints
+ * which row.
  */
 struct raster_spill_list {
     struct raster_spill *items;
@@ -134,6 +136,15 @@ struct raster_worker {
  */
 bool raster_worker_init(struct raster_worker *w, struct cell_cache *cache);
 void raster_worker_release(struct raster_worker *w);
+
+/*
+ * Grows the spill list and the scratch of each of the n workers to the
+ * largest room that one of them has. Timing decides which worker paints
+ * which row. After this call, each row of the frame fits in every worker.
+ * So a later frame with the same rows allocates nothing. A failed
+ * allocation leaves that room as it is. Main thread, after the join.
+ */
+void raster_workers_balance(struct raster_worker *w, int n);
 
 /*
  * What every row of one frame shares. The main thread fills it before the

@@ -36,6 +36,12 @@ static uint32_t *walk_scratch(int n)
     return p;
 }
 
+/* A segment has at least two cells. A shorter row has no scratch to reserve. */
+bool render_walk_thread_reserve(int cols)
+{
+    return cols < 2 || (walk_scratch(cols) && glyph_cache_reserve_segment(cols));
+}
+
 /* The glyph half of a resolved cell: everything except the colors. */
 struct look {
     uint64_t id;

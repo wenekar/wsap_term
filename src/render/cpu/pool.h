@@ -17,6 +17,10 @@
  *   time before it sleeps. On Linux, a wake makes a system call only when a
  *   worker sleeps. Workers block every signal.
  * - Steady state allocates nothing.
+ * - pool_each() runs a function once on every thread of the pool. The
+ *   renderer uses it to size the thread-local scratch of every thread
+ *   before a pool_run(), because timing decides which thread runs which
+ *   item.
  *
  * Font protocol (docs/font-api.md, "Thread affinity"). Each worker:
  * - calls font_thread_attach() when it starts;
@@ -58,6 +62,16 @@ struct pool;
  */
 typedef void (*pool_fn)(void *ctx, int worker, int begin, int end);
 void pool_run(struct pool *p, int n, int grain, pool_fn fn, void *ctx);
+
+/*
+ * Runs fn(ctx, worker) once on each worker and once on the main thread.
+ * Returns when every call returned. `worker` is as in pool_run(). With p
+ * NULL or with no workers, only the main thread calls fn. Main thread
+ * only, not inside pool_run(). `fn` must not call pool_run() or
+ * pool_each().
+ */
+typedef void (*pool_each_fn)(void *ctx, int worker);
+void pool_each(struct pool *p, pool_each_fn fn, void *ctx);
 
 /*
  * Starts a pool with `workers` threads, clamped to [0, POOL_WORKERS_MAX].

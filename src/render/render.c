@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include "render/render.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -17,6 +18,7 @@
 #include "render/cpu/kernels.h"
 #include "render/cpu/pool.h"
 #include "render/cpu/raster.h"
+#include "render/frame/walk.h"
 #include "render/gpu/gpu.h"
 #include "render/plan.h"
 #include "render/scene_paint.h"
@@ -46,6 +48,9 @@ struct renderer {
     enum { SCROLL_AUTO, SCROLL_MOVE, SCROLL_PAINT } scroll_mode;
     /* The paint cost of one cell on one thread, in ps. 0: not known yet. */
     int64_t paint_ps;
+    /* Each thread of the renderer has walk scratch for rows of this many
+     * columns (render_walk_thread_reserve). */
+    int walk_cols;
     /* The frame arrays. They hold `cap` rows and grow only. */
     int cap;
     uint64_t *keys;
@@ -319,6 +324,35 @@ static void paint_moves(const struct renderer *r, struct plan_output *out, int r
 
 /* ---- The parallel phase ---------------------------------------------- */
 
+struct walk_reserve {
+    int cols;
+    _Atomic bool failed;
+};
+
+static void walk_reserve_run(void *ctx, int worker)
+{
+    struct walk_reserve *w = ctx;
+    (void)worker;
+    if (!render_walk_thread_reserve(w->cols))
+        atomic_store_explicit(&w->failed, true, memory_order_relaxed);
+}
+
+/*
+ * Gives each thread walk scratch for rows of `cols` columns before the
+ * phase. Timing decides which thread walks which row. A scratch that grew
+ * in the phase would make the allocations of a frame depend on timing.
+ * After a failure the next frame tries again.
+ */
+static void reserve_walk(struct renderer *r, int cols)
+{
+    if (cols <= r->walk_cols)
+        return;
+    struct walk_reserve w = { .cols = cols };
+    pool_each(r->pool, walk_reserve_run, &w);
+    if (!atomic_load_explicit(&w.failed, memory_order_relaxed))
+        r->walk_cols = cols;
+}
+
 struct phase {
     const struct renderer *r;
     const struct raster_frame *rf;
@@ -532,6 +566,7 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         struct phase ph = {
             .r = r, .rf = &rf, .jobs = r->jobs, .n_full = n_full, .reach = r->reach,
         };
+        reserve_walk(r, tf->cols);
         int64_t t0 = clock_ps();
         glyph_cache_set_parallel(true);
         pool_run(r->pool, n_jobs, serial ? n_jobs : 1, phase_run, &ph);
@@ -540,6 +575,7 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
             int64_t sample = (clock_ps() - t0) * (serial ? 1 : r->n_workers) / cells;
             r->paint_ps = r->paint_ps ? (3 * r->paint_ps + sample) / 4 : sample;
         }
+        raster_workers_balance(r->workers, r->n_workers);
         /* 7. Publish. */
         cell_cache_publish(r->cache, klass, r->cache_workers, n_cache);
     }

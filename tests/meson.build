@@ -26,6 +26,7 @@ test_cases = [
     ['window-debug-server-test', files('ui/yasl/debug_server_test.c'), app_lib, deps],
     ['render-test', files('render/render_test.c'), [render_lib, ui_lib], deps],
     ['render-kernels-test', files('render/cpu/kernels_test.c'), render_lib, [m_dep, thread_dep]],
+    ['render-pool-test', files('render/cpu/pool_test.c'), render_lib, deps],
     ['render-plan-test', files('render/plan_test.c'), render_lib, deps],
     ['render-decor-test', files('render/decor_test.c'), render_lib, deps],
     ['render-cache-test', files('render/cache_test.c'), render_lib, deps],
@@ -96,6 +97,7 @@ extlib_tests = [
     'render-raster-test',
     'render-damage-test',
     'render-incremental-test',
+    'render-pool-test',
     'resize-alloc-test',
 ]
 

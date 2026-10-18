@@ -72,6 +72,13 @@ struct pool {
     _Atomic int grain;
     /* The workers that attached their font state. */
     _Atomic int ready;
+    /*
+     * The number of the last pool_each() call. The main thread writes
+     * each_fn and each_ctx before the release store of `each`.
+     */
+    _Atomic uint64_t each;
+    pool_each_fn each_fn;
+    void *each_ctx;
     /* The job. The main thread writes it before the release store of `left`. */
     pool_fn fn;
     void *ctx;
@@ -285,11 +292,20 @@ static void *worker_main(void *arg)
     (void)font_thread_attach();
     worker_ready(p);
     uint32_t seen = 0;
-    uint64_t job = 0;
+    uint64_t job = 0, each = 0;
     for (;;) {
         seen = wait_wake(p, seen);
         if (atomic_load_explicit(&p->stop, memory_order_acquire))
             break;
+        /* A pool_each() call waits for every worker, so no wake is lost:
+         * the next one comes only after this worker reported. */
+        uint64_t e = atomic_load_explicit(&p->each, memory_order_acquire);
+        if (e != each) {
+            each = e;
+            p->each_fn(p->each_ctx, t->id);
+            if (atomic_fetch_add_explicit(&p->done, 1, memory_order_seq_cst) + 1 == p->workers)
+                wake_main(p);
+        }
         int n = 0;
         int ran = drain(p, t->id, &job, &n);
         if (ran && atomic_fetch_add_explicit(&p->done, ran, memory_order_seq_cst) + ran == n)
@@ -343,6 +359,26 @@ void pool_run(struct pool *p, int n, int grain, pool_fn fn, void *ctx)
     int mine = drain(p, 0, NULL, &unused);
     if (atomic_fetch_add_explicit(&p->done, mine, memory_order_acq_rel) + mine != n)
         wait_done(p, n);
+}
+
+void pool_each(struct pool *p, pool_each_fn fn, void *ctx)
+{
+    if (!fn)
+        return;
+    if (!p || !p->workers) {
+        fn(ctx, 0);
+        return;
+    }
+    /* A pool_run() returns only after each claimer reported, and a late
+     * worker that claimed nothing does not touch `done`. So the count can
+     * start again here. */
+    p->each_fn = fn;
+    p->each_ctx = ctx;
+    atomic_store_explicit(&p->done, 0, memory_order_relaxed);
+    atomic_fetch_add_explicit(&p->each, 1, memory_order_release);
+    wake_workers(p, p->workers);
+    fn(ctx, 0);
+    wait_done(p, p->workers);
 }
 
 struct pool *pool_create(int workers)

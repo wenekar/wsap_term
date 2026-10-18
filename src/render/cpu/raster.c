@@ -376,20 +376,17 @@ static inline RENDER_ALWAYS_INLINE void compose(int isa, struct row_ctx *c, uint
 
 /* ---- Spills ----------------------------------------------------------- */
 
-static bool spill_room(struct raster_spill_list *l, size_t bytes)
+/* Grows the list to at least `cap` items and `size` coverage bytes. */
+static bool spill_grow(struct raster_spill_list *l, int cap, size_t size)
 {
-    if (l->n == l->cap) {
-        int cap = l->cap ? 2 * l->cap : 64;
+    if (cap > l->cap) {
         struct raster_spill *items = realloc(l->items, (size_t)cap * sizeof(*items));
         if (!items)
             return false;
         l->items = items;
         l->cap = cap;
     }
-    if (bytes > l->size) {
-        size_t size = l->size ? l->size : 4096;
-        while (size < bytes)
-            size *= 2;
+    if (size > l->size) {
         uint8_t *cov = realloc(l->cov, size);
         if (!cov)
             return false;
@@ -397,6 +394,18 @@ static bool spill_room(struct raster_spill_list *l, size_t bytes)
         l->size = size;
     }
     return true;
+}
+
+/* Makes room for one more item and for `bytes` coverage bytes in all. */
+static bool spill_room(struct raster_spill_list *l, size_t bytes)
+{
+    if (l->n < l->cap && bytes <= l->size)
+        return true;
+    int cap = l->n < l->cap ? l->cap : l->cap ? 2 * l->cap : 64;
+    size_t size = l->size ? l->size : 4096;
+    while (size < bytes)
+        size *= 2;
+    return spill_grow(l, cap, size);
 }
 
 /*
@@ -852,6 +861,21 @@ bool raster_worker_init(struct raster_worker *w, struct cell_cache *cache)
             return false;
     }
     return true;
+}
+
+void raster_workers_balance(struct raster_worker *w, int n)
+{
+    int cap = 0;
+    size_t size = 0, scratch = 0;
+    for (int i = 0; i < n; i++) {
+        cap = max_i(cap, w[i].spill.cap);
+        size = w[i].spill.size > size ? w[i].spill.size : size;
+        scratch = w[i].scratch_px > scratch ? w[i].scratch_px : scratch;
+    }
+    for (int i = 0; i < n; i++) {
+        (void)spill_grow(&w[i].spill, cap, size);
+        (void)scratch_room(&w[i], scratch);
+    }
 }
 
 void raster_worker_release(struct raster_worker *w)
