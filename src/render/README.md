@@ -28,7 +28,7 @@ milestone. Milestone 6 adds the Metal backend.
 | `cpu/pool.c/.h` | The worker pool of one renderer. |
 | `cpu/scene.c` | The UI scene painter behind `scene_paint.h`. |
 | `gpu/gpu.h`, `gpu/none.c` | The GPU interface, and the build without a GPU. |
-| `gpu/metal/` | The Metal backend (milestone 6). |
+| `gpu/metal/` | The Metal backend. It does not exist yet. It arrives in milestone 6. |
 
 ## Ownership
 
@@ -91,6 +91,9 @@ milestone. Milestone 6 adds the Metal backend.
 
 - Pixels never depend on the cache state, the thread count, admission, or
   the ISA level. All pixel math is integer.
+- The scene painter picks its ISA level once for the process. It does not
+  use the level of a renderer. The same holds for `WSAP_RENDER_ISA`. This
+  never changes pixels, because all levels give the same pixels.
 - An incremental frame gives the same pixels as a fresh paint of that frame.
 - The grid is opaque. The base and the UI can be translucent.
 - Spills never reach the grid margin.
