@@ -30,6 +30,13 @@ struct ui_shadow_mask {
 
 const struct ui_shadow_mask *ui_shadow_mask(int radius, int blur);
 
+/*
+ * The same mask, built from paint/shape_math.h. The new renderer uses it,
+ * so the CPU and the GPU agree. The cache is per thread. A mask stays
+ * valid until the same thread builds four other masks.
+ */
+const struct ui_shadow_mask *ui_shadow_mask_shape(int radius, int blur);
+
 void ui_shadow_cache_destroy(void);
 
 static inline uint8_t ui_shadow_edge_at(const struct ui_shadow_mask *m, int p)

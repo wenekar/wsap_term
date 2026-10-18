@@ -42,41 +42,32 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
     if (!window_ui_build_frame(w, frame->surface, now_ms, &ui))
         ui.repaint = true;
 
-    struct framebuffer *target = &frame->target;
-    if (ui.gpu_off)
-        target->gpu = NULL;
-    struct damage_list damage = {0};
+    struct render_frame render = {
+        .base = ui.background,
+        .ui_font = ui.font,
+        .cpu_only = ui.gpu_off,
+    };
+    struct terminal_frame grid;
     if (ui.suspended) {
-        struct render_frame render = {
-            .ui_font = ui.font,
-            .base = ui.background,
-            .gpu_off = true,
-        };
-        (void)render_draw(a->renderer, target, &render);
-        damage_add_all(&damage);
+        render.cpu_only = true;
     } else {
-        struct render_frame render = {
-            .ui_font = ui.font,
-            .base = ui.background,
-            .paint = ui.scene,
-            .damage = main ? &ui.damage : NULL,
-            .repaint = ui.repaint || (!main && target->stale),
-            .gpu_off = ui.gpu_off,
-        };
+        render.ui = ui.scene;
+        render.ui_damage = main ? &ui.damage : NULL;
+        render.repaint = ui.repaint;
         struct terminal_frame_source source = {0};
         if (main && terminal_frame_source(w, now_ms, &source)) {
-            terminal_frame_init(&render.grid, source.snapshot,
-                                source.cursor_visible);
-            render.grid.origin_y = source.origin_y;
-            render.font = source.font;
-            render.terminal = source.rect;
-            render.has_grid = true;
+            /* The theme has no selection colors. The zero selection colors
+             * of the frame give the built-in ones. */
+            terminal_frame_init(&grid, source.snapshot, source.cursor_visible);
+            render.grid = (struct render_grid){
+                .frame = &grid,
+                .font = source.font,
+                .rect = source.rect,
+            };
         }
-        damage = render_draw(a->renderer, target, &render);
-        if (!ui.scene)
-            damage_add_all(&damage);
     }
-    if (window_present(w, frame, &damage) && main)
+    struct render_result result = render_draw(a->renderer, &frame->target, &render);
+    if (window_present(w, frame, &result.damage, result.presented) && main)
         latency_probe_complete();
     if (!window_closed(w))
         window_ui_frame_done(w, frame, now_ms);
@@ -90,15 +81,13 @@ static bool app_paint_scene(void *ud, struct font_instance *font,
     struct framebuffer target = {
         .pixels = pixels,
         .size = size,
-        .stale = true,
+        .fresh = true,
     };
-    struct ui_damage ui_damage = { .all = true };
     struct render_frame frame = {
+        .ui = scene,
         .ui_font = font,
-        .paint = scene,
-        .damage = &ui_damage,
         .repaint = true,
-        .gpu_off = true,
+        .cpu_only = true,
     };
     (void)render_draw(a->renderer, &target, &frame);
     return true;
@@ -410,7 +399,7 @@ struct app *app_create(int argc, char **argv, int *status)
         app_free(a);
         return NULL;
     }
-    a->renderer = renderer_create();
+    a->renderer = renderer_create(NULL);
     if (!a->renderer) {
         fprintf(stderr, "wsap_term: cannot create the renderer\n");
         *status = 1;
@@ -456,7 +445,6 @@ void app_destroy(struct app *a)
 int app_run(struct app *a)
 {
     latency_probe_init();
-    render_warm_caches();
     if (!app_watch_signals(a) ||
         !app_open_terminal(a, NULL, NULL, (struct vector2i){0}))
         return 1;

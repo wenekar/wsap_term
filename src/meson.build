@@ -53,6 +53,7 @@ paint_lib = static_library(
     paint_src,
     link_with: [base_lib],
     include_directories: inc,
+    c_args: ['-ffp-contract=off'],
     dependencies: [thread_dep, m_dep] + [term_dep],
     install: false,
 )
@@ -86,9 +87,10 @@ theme_lib = static_library(
 
 render_lib = static_library(
     'wsap-render',
-    render_src + render_backend_src,
+    render_src,
     link_with: [base_lib, font_lib, paint_lib],
     include_directories: inc,
+    c_args: ['-ffp-contract=off'],
     dependencies: lib_deps + [term_dep],
     install: false,
 )

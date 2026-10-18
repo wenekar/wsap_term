@@ -94,7 +94,6 @@ bool terminal_frame_source(struct window *w, uint64_t now_ms,
         .snapshot = snap,
         .font = tab->font,
         .rect = rect,
-        .origin_y = rect.y,
         .cursor_visible = cursor_visible(w, tab, now_ms),
     };
     return true;

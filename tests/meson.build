@@ -24,14 +24,21 @@ test_cases = [
     ['window-ui-hosts-test', files('ui/yasl/ui_hosts_test.c'), app_lib, deps],
     ['window-ui-tree-test', files('ui/yasl/ui_tree_test.c'), app_lib, deps],
     ['window-debug-server-test', files('ui/yasl/debug_server_test.c'), app_lib, deps],
-    ['render-test', files('render/render_test.c', 'stubs/render_backend.c'), app_lib, deps],
+    ['render-test', files('render/render_test.c'), [render_lib, ui_lib], deps],
     ['render-kernels-test', files('render/cpu/kernels_test.c'), render_lib, [m_dep, thread_dep]],
+    ['render-plan-test', files('render/plan_test.c'), render_lib, deps],
+    ['render-decor-test', files('render/decor_test.c'), render_lib, deps],
+    ['render-cache-test', files('render/cache_test.c'), render_lib, deps],
+    ['render-scene-test', files('render/scene_test.c'), render_lib, deps],
+    ['render-raster-test', files('render/raster_test.c'), render_lib, deps],
+    ['render-damage-test', files('render/damage_test.c'), render_lib, deps],
+    ['render-incremental-test', files('render/incremental_test.c'), render_lib, deps],
     ['resize-alloc-test', files('ui/yasl/resize_alloc_test.c'), app_lib, deps],
     ['window-ui-input-test', files('ui/yasl/ui_input_test.c'), app_lib, deps],
     font_backend == 'coretext'
         ? ['font-coretext-test', files('font/coretext_test.m'), font_lib, font_deps + [m_dep] + platform_deps]
         : ['font-test', files('font/font_test.c'), font_lib, font_deps + [m_dep]],
-    ['anim-test', files('ui/anim_test.c', 'ui/stubs/scene_paint_deps.c'), app_lib, deps],
+    ['anim-test', files('ui/anim_test.c', 'ui/stubs/scene_paint_deps.c'), [ui_lib, render_lib], deps],
     ['ui-scene-test', files('paint/scene_test.c'), ui_lib, ui_test_deps],
     ['ui-widget-test', files('ui/widget_test.c'), ui_lib, ui_test_deps],
     ['ui-accessibility-test', files('ui/accessibility_test.c'), ui_lib, ui_test_deps],
@@ -46,7 +53,7 @@ test_cases = [
     ['ui-core-contract-test', files('ui/core_contract_test.c'), ui_lib, ui_test_deps],
     ['ui-model-contract-test', files('ui/model_contract_test.c'), ui_lib, ui_test_deps],
     ['ui-scrollview-test', files('ui/widgets/scrollview_test.c'), ui_lib, ui_test_deps],
-    ['ui-scene-text-test', files('paint/scene_text_test.c', 'ui/stubs/scene_paint_deps.c'), app_lib, deps],
+    ['ui-scene-text-test', files('paint/scene_text_test.c', 'ui/stubs/scene_paint_deps.c'), [ui_lib, render_lib], deps],
     ['ui-tabbar-test', files('ui/widgets/tabbar_test.c'), ui_lib, ui_test_deps],
     ['ui-menu-test', files('ui/widgets/menu_test.c'), ui_lib, ui_test_deps],
     ['anchor-test', files('ui/anchor_test.c'), ui_lib, ui_test_deps],
@@ -60,16 +67,12 @@ test_cases = [
     ['ui-debug-test', files('ui/debug_test.c'), ui_lib, ui_test_deps],
     ['look-test', files('theme/look_test.c'), theme_lib, deps],
     ['css-parser-test', files('ui/css/parser_test.c'), ui_lib, ui_test_deps],
-    ['css-clipping-test', files('ui/css/clipping_test.c', 'ui/stubs/scene_paint_deps.c'), app_lib, deps],
+    ['css-clipping-test', files('ui/css/clipping_test.c', 'ui/stubs/scene_paint_deps.c'), [ui_lib, render_lib], deps],
     ['css-selector-test', files('ui/css/selector_test.c'), ui_lib, ui_test_deps],
     ['css-index-test', files('ui/css/index_test.c'), ui_lib, ui_test_deps],
 ]
 
-if backend == 'metal'
-    test_cases += [
-        ['metal-render-test', files('render/metal_render_test.m'), app_lib, deps],
-    ]
-endif
+# metal-render-test and metal-render-bench are off until milestone 6 brings back the Metal backend.
 
 if backend == 'wayland'
     wayland_scanner = find_program('wayland-scanner', native: true)
@@ -86,7 +89,29 @@ extlib_tests = [
     'font-test',
     'font-coretext-test',
     'render-test',
+    'render-plan-test',
+    'render-decor-test',
+    'render-cache-test',
+    'render-scene-test',
+    'render-raster-test',
+    'render-damage-test',
+    'render-incremental-test',
     'resize-alloc-test',
+]
+
+isa_tests = [
+    'font-test',
+    'font-coretext-test',
+    'render-test',
+    'render-kernels-test',
+    'render-plan-test',
+    'render-decor-test',
+    'render-cache-test',
+    'render-scene-test',
+    'render-raster-test',
+    'render-damage-test',
+    'render-incremental-test',
+    'pty-fast-test',
 ]
 
 msan_safe_tests = [
@@ -116,6 +141,8 @@ msan_safe_tests = [
 standalone_tests = [
     'pty-fast-test', 'font-test',
     'font-coretext-test', 'render-test', 'render-kernels-test', 'resize-alloc-test',
+    'render-plan-test', 'render-decor-test', 'render-cache-test', 'render-scene-test',
+    'render-raster-test', 'render-damage-test', 'render-incremental-test',
     'anim-test', 'ui-scene-text-test', 'css-clipping-test',
     'metal-render-test',
 ]
@@ -194,7 +221,7 @@ endforeach
 foreach entry : test_cases
     exe = test_executables[entry[0]]
     suites = ['unit']
-    if entry[0] in ['font-test', 'font-coretext-test', 'render-test', 'render-kernels-test', 'pty-fast-test']
+    if entry[0] in isa_tests
         suites += ['isa']
     endif
     if entry[0] in extlib_tests
@@ -215,8 +242,6 @@ foreach entry : test_cases
         benchmark('render-bench', exe, args: ['--bench'], timeout: 300)
     elif entry[0] == 'render-kernels-test'
         benchmark('render-kernels-bench', exe, args: ['--bench'], timeout: 300)
-    elif entry[0] == 'metal-render-test'
-        benchmark('metal-render-bench', exe, args: ['--bench'], timeout: 300)
     endif
 endforeach
 

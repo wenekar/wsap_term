@@ -1,8 +1,8 @@
-#include "term_frame.h"
+#include "render/term_frame.h"
+
 #include "font/glyph/intern.h"
 
-const struct wsap_vtcore_cell *
-terminal_frame_row(const struct terminal_frame *frame, int row)
+const struct wsap_vtcore_cell *terminal_frame_row(const struct terminal_frame *frame, int row)
 {
     return frame && frame->source ? wsap_vtcore_snapshot_row(frame->source, row) : NULL;
 }
@@ -12,18 +12,18 @@ uint64_t terminal_frame_row_key(const struct terminal_frame *frame, int row)
     return frame && frame->source ? wsap_vtcore_snapshot_row_key(frame->source, row) : 0;
 }
 
-void terminal_frame_row_selection(const struct terminal_frame *frame, int row,
-                                  int cols, int *c0, int *c1)
+struct wsap_vtcore_span terminal_frame_row_selection(const struct terminal_frame *frame, int row)
 {
-    *c0 = cols;
-    *c1 = -1;
     if (!frame || !frame->has_selection || !frame->source)
-        return;
+        return (struct wsap_vtcore_span){ 0 };
     struct wsap_vtcore_span span = wsap_vtcore_snapshot_row_selection(frame->source, row);
-    if (span.end > span.begin) {
-        *c0 = span.begin;
-        *c1 = span.end - 1 < cols ? span.end - 1 : cols - 1;
-    }
+    if (span.begin < 0)
+        span.begin = 0;
+    if (span.end > frame->cols)
+        span.end = frame->cols;
+    if (span.end <= span.begin)
+        return (struct wsap_vtcore_span){ 0 };
+    return span;
 }
 
 uint32_t terminal_frame_color(const struct terminal_frame *frame, wsap_vtcore_color c)
@@ -54,9 +54,7 @@ void terminal_frame_init(struct terminal_frame *frame, const struct wsap_vtcore_
     frame->source = snap;
     frame->cols = v->size.x;
     frame->rows = v->size.y;
-    frame->view_offset = v->scroll_offset;
-    frame->scrolled = v->scrolled;
-    frame->full_gen = v->palette_version;
+    frame->palette_gen = v->palette_version;
     frame->default_fg = v->palette[WSAP_VTCORE_PALETTE_FG];
     frame->default_bg = v->palette[WSAP_VTCORE_PALETTE_BG];
     frame->cursor_color = v->palette[WSAP_VTCORE_PALETTE_CURSOR];

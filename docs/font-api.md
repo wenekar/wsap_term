@@ -100,7 +100,7 @@ The next frame shows the new face.
 In parallel mode, refresh, begin_frame, acquire on a hit, and default do not
 rebuild. Do not call `glyph_cache_rebuild()` in parallel mode. Paint workers
 read the cache, so a rebuild there would free memory under them. The
-renderer calls `glyph_cache_begin_frame()` before it turns on parallel mode.
+renderer calls `glyph_cache_refresh()` before it turns on parallel mode.
 
 The tile colors are process-global. One frame has one color pair. Only
 `glyph_cache_begin_frame()` keeps the tiles current with the colors. A
@@ -109,12 +109,10 @@ The tile colors are process-global. One frame has one color pair. Only
 Each frame starts with one of these calls, on the frame thread, before any
 glyph fetch:
 
-- The CPU terminal path calls `glyph_cache_begin_frame()` in
-  `renderer_paint_frame()` and `render_paint_full_terminal_frame()`.
-- `draw_terminal_frame()` calls `glyph_cache_refresh()` before the
-  GPU path. The GPU path does not use the default-color tiles.
-- `render_ui_scene()` calls `glyph_cache_refresh()` on the UI font
-  before the GPU and the CPU UI paint.
+- `render_draw()` calls `glyph_cache_refresh()` on the grid font and on the
+  UI font, in serial mode, before any fetch. The renderer does not call
+  `glyph_cache_begin_frame()` and does not use the default-color tiles. So
+  the tile colors do not change.
 - `ui_scene_paint()` calls `glyph_cache_refresh()`. `ui_scene_paint_clipped()`
   does not. Its caller refreshes once per frame.
 

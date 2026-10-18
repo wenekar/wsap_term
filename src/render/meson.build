@@ -1,8 +1,9 @@
 render_src = files(
+    'plan.c',
     'render.c',
-    'scene_paint.c',
-    'term_frame.c',
+    'surface.c',
 )
 
+subdir('frame')
 subdir('cpu')
-subdir('backends')
+subdir('gpu')
