@@ -11,13 +11,18 @@
  * - a step that changed nothing must report no damage.
  *
  * The walk covers text (ASCII, CJK, emoji, combining marks, clusters,
- * ligatures, icons), SGR with every underline style, faint, colors, scroll,
- * scroll regions, line and character edits, selection, cursor styles and
+ * ligatures, icons, right-to-left text), SGR with every underline style, faint, colors, scroll,
+ * scroll regions, line and character edits, clear screen (ED 2), selection, cursor styles and
  * visibility, DECSCNM, palette changes, the scrollback view, the alternate
  * screen, terminal and canvas resizes, a font change, a tab switch between
  * two terminals that draw into one canvas, UI overlays that appear, move,
  * and vanish, a scrollbar overlay during scroll, a moved grid rect, and
  * fresh and repaint frames.
+ *
+ * The whole walk runs three times: with the scroll method that the
+ * renderer picks from cost (WSAP_RENDER_SCROLL=auto), with every scroll
+ * moved, and with every scroll painted. Pixels and damage must match in
+ * all three.
  *
  * INCREMENTAL_STEPS=<n> sets the steps of each seed.
  */
@@ -203,6 +208,7 @@ static void op_unicode(struct world *w)
         "e\xcc\x81", "a\xcc\x88o\xcc\x88", "fn main() -> Result<(), E> { x != y && a <= b }",
         "=> >= == === !== ::", "─│┌┐└┘├┤", "\xef\x84\x95", "\xee\x82\xb0\xee\x82\xb2",
         "WAVATAYA7A%A", "ﬁ ﬂ", "Ω≈ç√∫", "\xe2\x97\x8f\xe2\x97\x8f", " ", "\t", "x\r\n",
+        "سلام", "مرحبا بالعالم", "שלום", "abc سلام 123 def", "\xd9\x84\xd8\xa7",
     };
     int n = 1 + rnd_n(6);
     for (int i = 0; i < n; i++)
@@ -440,6 +446,7 @@ static bool step_change(struct world *w)
     else if (r < 817) w->canvas.fresh = true;
     else if (r < 824) w->repaint = true;
     else if (r < 834) feedf(w, rnd_p(50) ? "\033[?1049h" : "\033[?1049l");
+    else if (r < 836) feedf(w, "\033[2J");
     else if (r < 842) {
         op_grid_rect(w);
         all_ui_damage(w);
@@ -568,12 +575,19 @@ int main(void)
         { 5, 150, 44, 500, { .threads = 2, .cache_bytes = 64 << 10 }, FONT_AA_RGB },
         { 6, 70, 16, 600, { .threads = RENDER_NONE, .cache_bytes = 96 << 10 }, FONT_AA_GRAYSCALE },
     };
-    for (unsigned i = 0; i < sizeof(cfgs) / sizeof(cfgs[0]); i++) {
-        struct config c = cfgs[i];
-        if (steps > 0)
-            c.steps = steps;
-        run(&c, big);
+    static const char *const scroll_modes[] = { "auto", "move", "paint" };
+    for (unsigned m = 0; m < sizeof(scroll_modes) / sizeof(scroll_modes[0]); m++) {
+        /* The renderer reads the value once, in renderer_create(). */
+        setenv("WSAP_RENDER_SCROLL", scroll_modes[m], 1);
+        printf("scroll method: %s\n", scroll_modes[m]);
+        for (unsigned i = 0; i < sizeof(cfgs) / sizeof(cfgs[0]); i++) {
+            struct config c = cfgs[i];
+            if (steps > 0)
+                c.steps = steps;
+            run(&c, big);
+        }
     }
+    unsetenv("WSAP_RENDER_SCROLL");
     font_set_aa_mode(FONT_AA_GRAYSCALE);
     font_instance_unref(big);
     render_shutdown();

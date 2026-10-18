@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "render/render.h"
 
 #include <stdlib.h>
@@ -41,6 +42,8 @@ struct renderer {
     struct render_gpu *gpu;
     struct render_surface scratch;
     bool force_full;
+    /* WSAP_RENDER_SCROLL, read once. SCROLL_AUTO (0) follows the cost. */
+    enum { SCROLL_AUTO, SCROLL_MOVE, SCROLL_PAINT } scroll_mode;
     /* The paint cost of one cell on one thread, in ps. 0: not known yet. */
     int64_t paint_ps;
     /* The frame arrays. They hold `cap` rows and grow only. */
@@ -88,6 +91,11 @@ struct renderer *renderer_create(const struct render_options *opt)
     r->k = render_kernels_for(r->isa);
     const char *full = getenv("WSAP_RENDER_FULL");
     r->force_full = full && !strcmp(full, "1");
+    const char *scroll = getenv("WSAP_RENDER_SCROLL");
+    if (scroll && !strcmp(scroll, "move"))
+        r->scroll_mode = SCROLL_MOVE;
+    else if (scroll && !strcmp(scroll, "paint"))
+        r->scroll_mode = SCROLL_PAINT;
 
     int threads = o.threads == 0 ? pool_default_workers() : o.threads < 0 ? 0 : o.threads;
     if (threads > POOL_WORKERS_MAX)
@@ -281,7 +289,9 @@ static int64_t clock_ps(void)
 static void paint_moves(const struct renderer *r, struct plan_output *out, int rows, int cols,
                         int ch, int width)
 {
-    if (!out->n_moves || !r->pool || !r->paint_ps)
+    if (!out->n_moves || r->scroll_mode == SCROLL_MOVE)
+        return;
+    if (r->scroll_mode == SCROLL_AUTO && (!r->pool || !r->paint_ps))
         return;
     int64_t moved = 0, painted = 0;
     for (int i = 0; i < out->n_moves; i++)
@@ -292,7 +302,7 @@ static void paint_moves(const struct renderer *r, struct plan_output *out, int r
     int64_t threads = cells < POOL_SERIAL_CELLS ? 1 : r->n_workers;
     int64_t move_ps = moved * ch * width * (int64_t)sizeof(uint32_t) * MOVE_PS_PER_BYTE;
     int64_t paint_ps = moved * cols * r->paint_ps / threads;
-    if (4 * paint_ps >= 3 * move_ps)
+    if (r->scroll_mode == SCROLL_AUTO && 4 * paint_ps >= 3 * move_ps)
         return;
     for (int i = 0; i < rows; i++)
         if (out->rows[i].op == PLAN_MOVE)

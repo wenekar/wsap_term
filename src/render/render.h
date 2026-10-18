@@ -145,6 +145,11 @@ int renderer_isa(const struct renderer *r);
  *   not allocate for that case.
  * - The environment value WSAP_RENDER_FULL=1 makes every frame a fresh
  *   paint. It is a debug knob.
+ * - The environment value WSAP_RENDER_SCROLL=move|paint|auto picks how a
+ *   scroll is drawn: move the old rows, or paint them again. The default
+ *   is auto: the renderer picks the faster one from measured cost. The
+ *   renderer reads it once, at creation. Pixels and damage are the same
+ *   for all three. It is a test and debug knob.
  * - NULL r, fb, or frame returns a zero result and draws nothing.
  */
 struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
