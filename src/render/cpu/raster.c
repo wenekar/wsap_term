@@ -606,6 +606,37 @@ static inline RENDER_ALWAYS_INLINE void run_body(void *ctx, int c0, int c1, uint
 }
 
 /*
+ * The text run callback of the walk: plain ASCII cells. In the default
+ * pair each one is an L0 lookup and a blit. It stops at the first cell
+ * that has no L0 tile, has a spill, or leaves the window. That cell goes
+ * to the cell callback, which takes the full path.
+ */
+static inline RENDER_ALWAYS_INLINE int text_body(int isa, void *ctx, int c0, int c1,
+                                                 uint32_t fg, uint32_t bg, uint16_t style,
+                                                 const uint32_t *text, int stride,
+                                                 run_fill_fn fill)
+{
+    struct row_ctx *c = ctx;
+    if (!c->klass || fg != c->l0_fg || bg != c->l0_bg)
+        return c0;
+    run_flush(c, fill);
+    const int cw = c->cw, ch = c->ch;
+    const unsigned v = style & FONT_STYLE_VARIANT_MASK;
+    const uint32_t *const *tiles = c->l0->px[v];
+    const uint64_t *spill = c->l0->spill[v];
+    int col = c0;
+    for (; col < c1; col++, text += stride) {
+        int sx0 = col * cw;
+        uint32_t cp = *text;
+        const uint32_t *t = tiles[cp];
+        if (!t || (spill[cp >> 6] >> (cp & 63)) & 1 || sx0 < c->x0 || sx0 + cw > c->x1)
+            break;
+        tile_blit(isa, c->row + sx0, c->stride, t, cw, ch);
+    }
+    return col;
+}
+
+/*
  * The walk callback. Plain fills and L0 hits stay here. An L0 hit is a
  * cell inside the window, so it needs no clip check beyond put_tile.
  */
@@ -652,8 +683,9 @@ static bool scratch_room(struct raster_worker *w, size_t px)
 
 static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_frame *f,
                                                 struct raster_worker *w,
-                                                const struct raster_job *job, render_cell_fn fn,
-                                                render_run_fn run, run_fill_fn fill)
+                                                const struct raster_job *job,
+                                                const struct render_walk_sink *sink,
+                                                run_fill_fn fill)
 {
     const struct terminal_frame *tf = f->frame;
     const int cw = f->cw;
@@ -698,8 +730,11 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
         /* A cut cell composes in the scratch. Without it the cell stays unpainted. */
         (void)scratch_room(w, (size_t)cw * (size_t)f->ch);
     }
-    if (c0 < c1)
-        render_row_walk(f->font, tf, job->row, c0, c1, RENDER_WALK_PEEK, fn, run, &c);
+    if (c0 < c1) {
+        struct render_walk_sink k = *sink;
+        k.ctx = &c;
+        render_row_walk(f->font, tf, job->row, c0, c1, RENDER_WALK_PEEK, &k);
+    }
 
     if (c.width > c.area)
         run_add(&c, c.area, c.width, c.margin, fill);
@@ -732,11 +767,20 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
     {                                                                                      \
         run_body(ctx, c0, c1, bg, fill_##sfx);                                             \
     }                                                                                      \
+    target static RENDER_NOINLINE int text_##sfx(void *ctx, int c0, int c1, uint32_t fg,    \
+                                                 uint32_t bg, uint16_t style,              \
+                                                 const uint32_t *text, int stride)         \
+    {                                                                                      \
+        return text_body(level, ctx, c0, c1, fg, bg, style, text, stride, fill_##sfx);     \
+    }                                                                                      \
     target static RENDER_NOINLINE int row_##sfx(const struct raster_frame *f,              \
                                                 struct raster_worker *w,                   \
                                                 const struct raster_job *job)              \
     {                                                                                      \
-        return row_body(level, f, w, job, cell_##sfx, run_##sfx, fill_##sfx);             \
+        static const struct render_walk_sink sink = {                                      \
+            .cell = cell_##sfx, .run = run_##sfx, .text = text_##sfx,                      \
+        };                                                                                 \
+        return row_body(level, f, w, job, &sink, fill_##sfx);                              \
     }
 
 #define RASTER_NO_TARGET

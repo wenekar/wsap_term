@@ -52,6 +52,7 @@ struct walk {
     const struct wsap_vtcore_cell *cells;
     render_cell_fn fn;
     render_run_fn run;
+    render_text_fn text;
     void *ctx;
     int cols, c0, c1;
     bool peek;
@@ -311,6 +312,79 @@ walk_blank(const struct walk *w, int col, bool plain)
     emit(w, col, &rc, &l, NULL);
 }
 
+/*
+ * A cell that a text run can hold: printable ASCII, one column, and no
+ * attribute that adds a flag or a style bit beyond the variant.
+ */
+static inline bool text_cell(const struct wsap_vtcore_cell *c)
+{
+    return c->text - 0x21u < 0x5Eu && c->width == 1 &&
+           !(c->attrs & (ATTR_DECOR_BITS | WSAP_VTCORE_ATTR_FAINT | WSAP_VTCORE_ATTR_EMOJI |
+                         WSAP_VTCORE_ATTR_TEXT));
+}
+
+static inline bool same_text_run(const struct wsap_vtcore_cell *a,
+                                 const struct wsap_vtcore_cell *b)
+{
+    return text_cell(a) && a->fg == b->fg && a->bg == b->bg &&
+           !((a->attrs ^ b->attrs) & ATTR_VARIANT_BITS);
+}
+
+/*
+ * Sends the unshaped cells [from, to) of one segment. Runs of text cells go
+ * to the text function. A column that it does not draw goes to the cell
+ * function, and the run goes on after it. In a policy row, a run stops at
+ * the edges of the selection and of the cursor, and the cursor cells take
+ * the per-cell path.
+ */
+static inline __attribute__((always_inline)) void
+walk_text(struct walk *w, int from, int to, bool plain)
+{
+    const struct wsap_vtcore_cell *cells = w->cells;
+    const int stride = (int)(sizeof(*cells) / sizeof(cells->text));
+    for (int col = from; col < to;) {
+        const struct wsap_vtcore_cell *c = &cells[col];
+        if (!text_cell(c) || (!plain && in_span(w->cur, col))) {
+            walk_cell(w, col, plain);
+            col++;
+            continue;
+        }
+        int end = col + 1;
+        while (end < to && same_text_run(&cells[end], c))
+            end++;
+        uint32_t fg = wsap_vtcore_view_color(w->view, c->fg);
+        uint32_t bg = wsap_vtcore_view_color(w->view, c->bg);
+        if (!plain) {
+            if (w->f->reverse_video) {
+                uint32_t t = fg;
+                fg = bg;
+                bg = t;
+            }
+            if (w->cur.begin < w->cur.end && w->cur.begin > col && w->cur.begin < end)
+                end = w->cur.begin;
+            if (in_span(w->sel, col)) {
+                fg = w->sel_fg;
+                bg = w->sel_bg;
+                if (w->sel.end < end)
+                    end = w->sel.end;
+            } else if (w->sel.begin < w->sel.end && w->sel.begin > col && w->sel.begin < end) {
+                end = w->sel.begin;
+            }
+        }
+        uint16_t style = cell_style(c);
+        while (col < end) {
+            int done = w->text(w->ctx, col, end, fg, bg, style, &cells[col].text, stride);
+            if (done < col)
+                done = col;
+            if (done >= end)
+                break;
+            walk_cell(w, done, plain);
+            col = done + 1;
+        }
+        col = end;
+    }
+}
+
 static inline __attribute__((always_inline)) void
 walk_cells(struct walk *w, int from, int to, bool plain)
 {
@@ -318,6 +392,10 @@ walk_cells(struct walk *w, int from, int to, bool plain)
         from = w->c0;
     if (to > w->c1)
         to = w->c1;
+    if (w->text) {
+        walk_text(w, from, to, plain);
+        return;
+    }
     for (int col = from; col < to; col++)
         walk_cell(w, col, plain);
 }
@@ -523,10 +601,9 @@ static struct wsap_vtcore_span cursor_span(const struct walk *w, int x)
 }
 
 void render_row_walk(struct font_instance *fi, const struct terminal_frame *f, int y,
-                     int c0, int c1, unsigned flags, render_cell_fn fn, render_run_fn run,
-                     void *ctx)
+                     int c0, int c1, unsigned flags, const struct render_walk_sink *sink)
 {
-    if (!fi || !f || !fn || !f->source)
+    if (!fi || !f || !sink || !sink->cell || !f->source)
         return;
     if (c0 < 0)
         c0 = 0;
@@ -536,7 +613,8 @@ void render_row_walk(struct font_instance *fi, const struct terminal_frame *f, i
         return;
     struct walk w = {
         .fi = fi, .f = f, .view = wsap_vtcore_snapshot_view(f->source),
-        .cells = terminal_frame_row(f, y), .fn = fn, .run = run, .ctx = ctx,
+        .cells = terminal_frame_row(f, y), .fn = sink->cell, .run = sink->run,
+        .text = sink->text, .ctx = sink->ctx,
         .cols = f->cols, .c0 = c0, .c1 = c1, .peek = (flags & RENDER_WALK_PEEK) != 0,
     };
     if (f->has_selection) {
