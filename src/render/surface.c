@@ -105,7 +105,11 @@ void render_surface_invalidate(struct render_surface *s)
 
 uint64_t render_surface_row_key(const struct terminal_frame *f, int row)
 {
-    uint64_t h = hash64_finish(terminal_frame_row_key(f, row) ^ HASH64_BASIS);
+    uint64_t tk = terminal_frame_row_key(f, row);
+    /* An unknown row keeps key 0. The planner never matches or keeps it. */
+    if (!tk)
+        return 0;
+    uint64_t h = hash64_finish(tk ^ HASH64_BASIS);
     if (f && f->has_selection) {
         struct wsap_vtcore_span sel = terminal_frame_row_selection(f, row);
         if (sel.end > sel.begin)

@@ -571,6 +571,32 @@ static void typing_paints_one_row_test(void)
     fixture_free(f);
 }
 
+/* Rows with key 0 are unknown: every frame paints them, even when both frames
+ * hold 0, and a scroll never moves one onto another. */
+static void unknown_key_paints_test(void)
+{
+    struct fixture *f = standard(10);
+    keys_idle(f);
+    f->old_keys[2] = f->new_keys[2] = 0;
+    f->old_keys[3] = f->new_keys[3] = 0;
+    plan_run(f);
+    for (int r = 0; r < 10; r++)
+        assert(f->out.rows[r].op == (r == 2 || r == 3 ? PLAN_PAINT : PLAN_KEEP));
+    model_check(f, &no_scene, &no_scene);
+    fixture_free(f);
+
+    f = standard(10);
+    keys_idle(f);
+    for (int r = 0; r < 10; r++)
+        f->new_keys[r] = r + 1 < 10 ? f->old_keys[r + 1] : 0;
+    f->old_keys[4] = 0;
+    f->new_keys[3] = 0; /* shows old row 4, which was unknown */
+    plan_run(f);
+    assert(f->out.rows[3].op == PLAN_PAINT && f->out.rows[9].op == PLAN_PAINT);
+    model_check(f, &no_scene, &no_scene);
+    fixture_free(f);
+}
+
 static void scroll_test(int k)
 {
     int rows = 10;
@@ -1329,10 +1355,11 @@ static void row_key_test(void)
     uint64_t plain[STUB_ROWS];
     for (int r = 0; r < STUB_ROWS; r++) {
         plain[r] = render_surface_row_key(&f, r);
-        assert(plain[r] != 0);
+        /* A row with an unknown content key keeps key 0: it never matches. */
+        assert((plain[r] == 0) == (r == 5));
         assert(render_surface_row_key(&f, r) == plain[r]);
         for (int q = 0; q < r; q++)
-            assert(plain[q] != plain[r]);
+            assert(plain[q] != plain[r] || plain[r] == 0);
     }
 
     /* The selection span of a row is part of its key. */
@@ -1352,6 +1379,9 @@ static void row_key_test(void)
     f.cursor_x = 7;
     uint64_t cur = render_surface_row_key(&f, 4);
     assert(cur != plain[4] && cur != 0);
+    f.cursor_y = 5;
+    assert(render_surface_row_key(&f, 5) == 0); /* the cursor does not make it known */
+    f.cursor_y = 4;
     assert(render_surface_row_key(&f, 3) == plain[3]);
     f.cursor_x = 8;
     assert(render_surface_row_key(&f, 4) != cur);
@@ -1371,6 +1401,7 @@ int main(void)
 {
     idle_keeps_every_row_test();
     typing_paints_one_row_test();
+    unknown_key_paints_test();
     scroll_by_one_and_by_k_test();
     scroll_region_test();
     move_order_test();
