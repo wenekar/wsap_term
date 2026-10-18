@@ -148,32 +148,78 @@ static inline RENDER_ALWAYS_INLINE struct ink glyph_ink(const struct glyph *g, i
 
 /* ---- Pass 1: fills and tiles ------------------------------------------ */
 
-static inline RENDER_ALWAYS_INLINE void run_flush(int isa, struct row_ctx *c)
+/*
+ * Fills the columns [a, b) of the row band with bg. Each level has one
+ * out-of-line wrapper, so the cell callback carries no fill loop.
+ */
+typedef void (*run_fill_fn)(const struct row_ctx *c, int a, int b, uint32_t bg);
+
+static inline RENDER_ALWAYS_INLINE void run_fill_body(int isa, const struct row_ctx *c, int a,
+                                                      int b, uint32_t bg)
 {
-    int a = max_i(c->run_x0, c->x0), b = min_i(c->run_x1, c->x1);
-    c->run_x0 = c->run_x1 = -1;
-    if (a >= b)
-        return;
     uint32_t *p = c->row + a;
     if (a == 0 && b == c->width && c->stride == (size_t)c->width) {
-        render_kernel_fill(isa, p, c->ch * c->width, c->run_bg);
+        render_kernel_fill(isa, p, c->ch * c->width, bg);
         return;
     }
     for (int y = 0; y < c->ch; y++)
-        render_kernel_fill(isa, p + (size_t)y * c->stride, b - a, c->run_bg);
+        render_kernel_fill(isa, p + (size_t)y * c->stride, b - a, bg);
 }
 
-static inline RENDER_ALWAYS_INLINE void run_add(int isa, struct row_ctx *c, int x0, int x1,
-                                                uint32_t bg)
+static inline RENDER_ALWAYS_INLINE void run_flush(struct row_ctx *c, run_fill_fn fill)
+{
+    if (c->run_x1 < 0)
+        return;
+    int a = max_i(c->run_x0, c->x0), b = min_i(c->run_x1, c->x1);
+    c->run_x0 = c->run_x1 = -1;
+    if (a < b)
+        fill(c, a, b, c->run_bg);
+}
+
+static inline RENDER_ALWAYS_INLINE void run_add(struct row_ctx *c, int x0, int x1, uint32_t bg,
+                                                run_fill_fn fill)
 {
     if (c->run_x1 == x0 && c->run_bg == bg) {
         c->run_x1 = x1;
         return;
     }
-    run_flush(isa, c);
+    run_flush(c, fill);
     c->run_x0 = x0;
     c->run_x1 = x1;
     c->run_bg = bg;
+}
+
+/*
+ * Copies a whole tile of cw x ch pixels, row stride cw, to dst. A cell 8 to
+ * 16 pixels wide copies each row with two fixed 32-byte copies, which every
+ * level lowers to vector moves in its own wrapper: one ymm on AVX2 and
+ * AVX-512, two 16-byte moves elsewhere. At cw == 8 the two copies are the
+ * rows y and y + 1. The generic kernel is a call with a loop for each width
+ * class, and a typing frame spends most of its blit time there.
+ */
+static inline RENDER_ALWAYS_INLINE void tile_blit(int isa, uint32_t *dst, size_t ds,
+                                                  const uint32_t *tile, int cw, int ch)
+{
+    if (cw == 8) {
+        int y = 0;
+        for (; y + 2 <= ch; y += 2) {
+            memcpy(dst + (size_t)y * ds, tile + (size_t)y * 8, 32);
+            memcpy(dst + (size_t)y * ds + ds, tile + (size_t)y * 8 + 8, 32);
+        }
+        if (y < ch)
+            memcpy(dst + (size_t)y * ds, tile + (size_t)y * 8, 32);
+        return;
+    }
+    if (cw > 8 && cw <= 16) {
+        for (int y = 0; y < ch; y++) {
+            const uint32_t *s = tile + (size_t)y * (size_t)cw;
+            uint32_t *d = dst + (size_t)y * ds;
+            memcpy(d, s, 32);
+            memcpy(d + cw - 8, s + cw - 8, 32);
+        }
+        return;
+    }
+    render_kernel_blit_tile(isa, dst, ds, tile, cw, ch);
 }
 
 /* Copies a cell of cw x ch pixels, row stride cw, into the window. */
@@ -182,7 +228,7 @@ static inline RENDER_ALWAYS_INLINE void put_tile(int isa, const struct row_ctx *
 {
     int cw = c->cw;
     if (sx0 >= c->x0 && sx0 + cw <= c->x1) {
-        render_kernel_blit_tile(isa, c->row + sx0, c->stride, tile, cw, c->ch);
+        tile_blit(isa, c->row + sx0, c->stride, tile, cw, c->ch);
         return;
     }
     int a = max_i(sx0, c->x0), b = min_i(sx0 + cw, c->x1);
@@ -551,6 +597,70 @@ static inline RENDER_ALWAYS_INLINE void cell_slow(int isa, struct row_ctx *c, in
 typedef void (*cell_slow_fn)(struct row_ctx *c, int sx0, const struct render_cell *cell,
                              const struct render_glyph_ref *ref);
 
+/* The run callback of the walk: blank cells that draw only their bg. */
+static inline RENDER_ALWAYS_INLINE void run_body(void *ctx, int c0, int c1, uint32_t bg,
+                                                 run_fill_fn fill)
+{
+    struct row_ctx *c = ctx;
+    run_add(c, c0 * c->cw, c1 * c->cw, bg, fill);
+}
+
+/*
+ * The text run callback of the walk: plain ASCII cells. In the default
+ * pair each one is an L0 lookup and a blit. It stops at the first cell
+ * that has no L0 tile, has a spill, or leaves the window. That cell goes
+ * to the cell callback, which takes the full path.
+ */
+static inline RENDER_ALWAYS_INLINE int text_body(int isa, void *ctx, int c0, int c1,
+                                                 uint32_t fg, uint32_t bg, uint16_t style,
+                                                 const uint32_t *text, int stride,
+                                                 run_fill_fn fill)
+{
+    struct row_ctx *c = ctx;
+    if (!c->klass || fg != c->l0_fg || bg != c->l0_bg)
+        return c0;
+    run_flush(c, fill);
+    const int cw = c->cw, ch = c->ch;
+    const unsigned v = style & FONT_STYLE_VARIANT_MASK;
+    const uint32_t *const *tiles = c->l0->px[v];
+    const uint64_t *spill = c->l0->spill[v];
+    int col = c0;
+    for (; col < c1; col++, text += stride) {
+        int sx0 = col * cw;
+        uint32_t cp = *text;
+        const uint32_t *t = tiles[cp];
+        if (!t || (spill[cp >> 6] >> (cp & 63)) & 1 || sx0 < c->x0 || sx0 + cw > c->x1)
+            break;
+        tile_blit(isa, c->row + sx0, c->stride, t, cw, ch);
+    }
+    return col;
+}
+
+/*
+ * The span run callback of the walk: shaped cells with no flag. In the
+ * default pair each one is an L0 id lookup and a blit. It stops as
+ * text_body does.
+ */
+static inline RENDER_ALWAYS_INLINE int span_body(int isa, void *ctx, int c0, int c1,
+                                                 uint32_t fg, uint32_t bg, const uint64_t *ids,
+                                                 run_fill_fn fill)
+{
+    struct row_ctx *c = ctx;
+    if (!c->klass || fg != c->l0_fg || bg != c->l0_bg)
+        return c0;
+    run_flush(c, fill);
+    const int cw = c->cw, ch = c->ch;
+    int col = c0;
+    for (; col < c1; col++) {
+        int sx0 = col * cw;
+        struct cell_tile t = cell_l0_find_id(c->l0, ids[col - c0]);
+        if (!t.px || t.spill || sx0 < c->x0 || sx0 + cw > c->x1)
+            break;
+        tile_blit(isa, c->row + sx0, c->stride, t.px, cw, ch);
+    }
+    return col;
+}
+
 /*
  * The walk callback. Plain fills and L0 hits stay here. An L0 hit is a
  * cell inside the window, so it needs no clip check beyond put_tile.
@@ -558,24 +668,24 @@ typedef void (*cell_slow_fn)(struct row_ctx *c, int sx0, const struct render_cel
 static inline RENDER_ALWAYS_INLINE void cell_body(int isa, void *ctx, int col,
                                                   const struct render_cell *cell,
                                                   const struct render_glyph_ref *ref,
-                                                  cell_slow_fn slow)
+                                                  cell_slow_fn slow, run_fill_fn fill)
 {
     struct row_ctx *c = ctx;
     const int sx0 = col * c->cw;
     const uint16_t fl = cell->flags;
     if ((fl & (RENDER_CELL_BLANK | RENDER_CELL_DECOR_MASK | RENDER_CELL_CURSOR_MASK)) ==
         RENDER_CELL_BLANK) {
-        run_add(isa, c, sx0, sx0 + c->cw, cell->bg);
+        run_add(c, sx0, sx0 + c->cw, cell->bg, fill);
         return;
     }
-    run_flush(isa, c);
-    /* L0: ASCII in the default pair. The common case is one load. */
+    run_flush(c, fill);
+    /* L0: a cell in the default pair. ASCII is one load. */
     if (c->klass && !(fl & (RENDER_CELL_PIXEL_MASK | RENDER_CELL_WIDE_TAIL)) && ref->id &&
-        !(ref->id & ~L0_ID_BITS) && cell->fg == c->l0_fg && cell->bg == c->l0_bg &&
-        sx0 >= c->x0 && sx0 + c->cw <= c->x1) {
-        struct cell_tile t = cell_l0_find(c->l0, cell->text, cell->style);
+        cell->fg == c->l0_fg && cell->bg == c->l0_bg && sx0 >= c->x0 && sx0 + c->cw <= c->x1) {
+        struct cell_tile t = !(ref->id & ~L0_ID_BITS) ? cell_l0_find(c->l0, cell->text, cell->style)
+                                                      : cell_l0_find_id(c->l0, ref->id);
         if (t.px && !t.spill) {
-            render_kernel_blit_tile(isa, c->row + sx0, c->stride, t.px, c->cw, c->ch);
+            tile_blit(isa, c->row + sx0, c->stride, t.px, c->cw, c->ch);
             return;
         }
     }
@@ -598,7 +708,9 @@ static bool scratch_room(struct raster_worker *w, size_t px)
 
 static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_frame *f,
                                                 struct raster_worker *w,
-                                                const struct raster_job *job, render_cell_fn fn)
+                                                const struct raster_job *job,
+                                                const struct render_walk_sink *sink,
+                                                run_fill_fn fill)
 {
     const struct terminal_frame *tf = f->frame;
     const int cw = f->cw;
@@ -623,7 +735,7 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
         .font_version = f->font_version,
         .klass = f->cache,
         .cache = f->cache ? w->cache : NULL,
-        .l0 = cell_cache_worker_l0(f->cache ? w->cache : NULL),
+        .l0 = cell_class_l0(f->cache),
         .decor = f->decor,
     };
     if (c.area > c.width)
@@ -643,12 +755,15 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
         /* A cut cell composes in the scratch. Without it the cell stays unpainted. */
         (void)scratch_room(w, (size_t)cw * (size_t)f->ch);
     }
-    if (c0 < c1)
-        render_row_walk(f->font, tf, job->row, c0, c1, RENDER_WALK_PEEK, fn, &c);
+    if (c0 < c1) {
+        struct render_walk_sink k = *sink;
+        k.ctx = &c;
+        render_row_walk(f->font, tf, job->row, c0, c1, RENDER_WALK_PEEK, &k);
+    }
 
     if (c.width > c.area)
-        run_add(isa, &c, c.area, c.width, c.margin);
-    run_flush(isa, &c);
+        run_add(&c, c.area, c.width, c.margin, fill);
+    run_flush(&c, fill);
     spill_blend(isa, &c);
     return c.reach;
 }
@@ -656,6 +771,11 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
 /* ---- Levels ----------------------------------------------------------- */
 
 #define RASTER_LEVEL(sfx, level, target)                                                   \
+    target static RENDER_NOINLINE void fill_##sfx(const struct row_ctx *c, int a, int b,    \
+                                                  uint32_t bg)                             \
+    {                                                                                      \
+        run_fill_body(level, c, a, b, bg);                                                 \
+    }                                                                                      \
     target static RENDER_NOINLINE void slow_##sfx(struct row_ctx *c, int sx0,              \
                                                   const struct render_cell *cell,          \
                                                   const struct render_glyph_ref *ref)      \
@@ -666,13 +786,31 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
                                                   const struct render_cell *cell,          \
                                                   const struct render_glyph_ref *ref)      \
     {                                                                                      \
-        cell_body(level, ctx, col, cell, ref, slow_##sfx);                                 \
+        cell_body(level, ctx, col, cell, ref, slow_##sfx, fill_##sfx);                     \
+    }                                                                                      \
+    target static RENDER_NOINLINE void run_##sfx(void *ctx, int c0, int c1, uint32_t bg)   \
+    {                                                                                      \
+        run_body(ctx, c0, c1, bg, fill_##sfx);                                             \
+    }                                                                                      \
+    target static RENDER_NOINLINE int text_##sfx(void *ctx, int c0, int c1, uint32_t fg,    \
+                                                 uint32_t bg, uint16_t style,              \
+                                                 const uint32_t *text, int stride)         \
+    {                                                                                      \
+        return text_body(level, ctx, c0, c1, fg, bg, style, text, stride, fill_##sfx);     \
+    }                                                                                      \
+    target static RENDER_NOINLINE int span_##sfx(void *ctx, int c0, int c1, uint32_t fg,    \
+                                                 uint32_t bg, const uint64_t *ids)         \
+    {                                                                                      \
+        return span_body(level, ctx, c0, c1, fg, bg, ids, fill_##sfx);                     \
     }                                                                                      \
     target static RENDER_NOINLINE int row_##sfx(const struct raster_frame *f,              \
                                                 struct raster_worker *w,                   \
                                                 const struct raster_job *job)              \
     {                                                                                      \
-        return row_body(level, f, w, job, cell_##sfx);                                     \
+        static const struct render_walk_sink sink = {                                      \
+            .cell = cell_##sfx, .run = run_##sfx, .text = text_##sfx, .span = span_##sfx,  \
+        };                                                                                 \
+        return row_body(level, f, w, job, &sink, fill_##sfx);                              \
     }
 
 #define RASTER_NO_TARGET

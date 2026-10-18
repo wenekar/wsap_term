@@ -171,14 +171,66 @@ static inline const struct glyph *render_glyph_get(const struct render_glyph_ref
 }
 
 /*
- * Called once for each column of the walk, in increasing column order.
- * `col` is the grid column. The callback must not call
- * glyph_cache_shape_segment() or any rebuilding font function (see
+ * Called for each column of the walk that no run call covers, in
+ * increasing column order. `col` is the grid column. The callback must not
+ * call glyph_cache_shape_segment() or any rebuilding font function (see
  * docs/font-api.md, "Re-entrancy"). It can call render_glyph_get() and
  * glyph_cache_fetch().
  */
 typedef void (*render_cell_fn)(void *ctx, int col, const struct render_cell *cell,
                                const struct render_glyph_ref *glyph);
+
+/*
+ * Called for a run of blank cells in place of one render_cell_fn call for
+ * each of its columns. Each column of [c0, c1) has a render_cell with flags
+ * RENDER_CELL_BLANK and no other bit, text ' ', style 0, and this `bg`.
+ * Such a cell draws only its bg. Its fg has no effect on pixels, so the run
+ * does not give it. The walk can also send such a cell to render_cell_fn.
+ */
+typedef void (*render_run_fn)(void *ctx, int c0, int c1, uint32_t bg);
+
+/*
+ * Called for a run of plain ASCII cells in place of one render_cell_fn call
+ * for each of its columns. Column c of [c0, c1) has a render_cell with fg
+ * `fg`, bg `bg`, text text[(c - c0) * stride], style `style`, and flags 0.
+ * Its text is in ('!', '~'), its style has only FONT_STYLE_VARIANT_MASK
+ * bits, and no shaped span covers it. So its glyph id is the unshaped id of
+ * its text and style. The text points into the snapshot. It is valid only
+ * inside the call.
+ *
+ * Returns the first column that the call did not draw, in [c0, c1]. The
+ * walk sends that column to render_cell_fn, and it can call again for the
+ * columns after it.
+ */
+typedef int (*render_text_fn)(void *ctx, int c0, int c1, uint32_t fg, uint32_t bg,
+                              uint16_t style, const uint32_t *text, int stride);
+
+/*
+ * Called for a run of cells of one shaped span in place of one
+ * render_cell_fn call for each of its columns. Column c of [c0, c1) has a
+ * render_cell with fg `fg`, bg `bg`, and flags 0, and the glyph id
+ * ids[c - c0]. Its text and style are the ones that the per-cell call
+ * would give. The ids are valid only inside the call. The glyphs come
+ * from the span: a consumer that needs one returns at its column.
+ *
+ * Returns the first column that the call did not draw, in [c0, c1]. The
+ * walk sends that column to render_cell_fn with its glyph, and it can call
+ * again for the columns after it.
+ */
+typedef int (*render_span_fn)(void *ctx, int c0, int c1, uint32_t fg, uint32_t bg,
+                              const uint64_t *ids);
+
+/*
+ * The consumer of a walk. `cell` is required. `run`, `text`, and `span`
+ * are optional. Without them the walk sends each column to `cell`.
+ */
+struct render_walk_sink {
+    render_cell_fn cell;
+    render_run_fn run;
+    render_text_fn text;
+    render_span_fn span;
+    void *ctx;
+};
 
 /* Walk flags. */
 enum render_walk_flags {
@@ -189,19 +241,22 @@ enum render_walk_flags {
 };
 
 /*
- * Walks row `y` of `f`, columns [c0, c1), and calls `fn` for each column.
+ * Walks row `y` of `f`, columns [c0, c1), and calls the sink for each
+ * column: `cell` for one column, or `run`, `text`, and `span` for runs
+ * (see render_run_fn, render_text_fn, and render_span_fn). The calls
+ * together cover each column once, in increasing column order.
  *
  * - The walk clamps [c0, c1) to [0, f->cols). A row outside the snapshot
  *   gives blank cells in the default colors, after reverse video.
  * - The output for a column does not depend on c0 and c1. The walk shapes
  *   each whole segment that touches [c0, c1), also the part outside the
- *   range. It calls `fn` only for the columns inside the range.
+ *   range. It calls the sink only for the columns inside the range.
  * - A segment is a run of shapeable cells (text above ' ', no cluster,
  *   width 1, no cell-aligned symbol) with the same raw fg, raw bg, and
  *   font variant. This is the rule of the old renderer.
- * - Inside a shaped span, `fn` runs inside the glyph_span emit callback.
- *   For other cells, `fn` runs right after the glyph fetch, or with no fetch
- *   in a peek walk.
+ * - Inside a shaped span, `cell` runs inside the glyph_span emit callback.
+ *   For other cells, `cell` runs right after the glyph fetch, or with no
+ *   fetch in a peek walk.
  * - A WIDE_TAIL cell takes text, style, and decoration bits from the cell
  *   to its left. Its colors resolve at its own column. A width-0 cell with
  *   no wide cell to its left is a BLANK cell.
@@ -221,7 +276,7 @@ enum render_walk_flags {
  * same font path.
  */
 void render_row_walk(struct font_instance *fi, const struct terminal_frame *f, int y,
-                     int c0, int c1, unsigned flags, render_cell_fn fn, void *ctx);
+                     int c0, int c1, unsigned flags, const struct render_walk_sink *sink);
 
 /*
  * Frees the scratch of the calling thread. Pool workers call it before they

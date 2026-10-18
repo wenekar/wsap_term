@@ -13,7 +13,9 @@
  *   every worker to wake up. A late worker finds no item and sleeps again.
  *   A late worker never runs an item of a finished job.
  * - Workers wait and wake with a futex on Linux and a condition variable on
- *   other systems. Workers block every signal.
+ *   other systems. After a job, a worker polls for the next job for a short
+ *   time before it sleeps. On Linux, a wake makes a system call only when a
+ *   worker sleeps. Workers block every signal.
  * - Steady state allocates nothing.
  *
  * Font protocol (docs/font-api.md, "Thread affinity"). Each worker:
@@ -59,8 +61,9 @@ void pool_run(struct pool *p, int n, int grain, pool_fn fn, void *ctx);
 
 /*
  * Starts a pool with `workers` threads, clamped to [0, POOL_WORKERS_MAX].
- * A thread that fails to start is left out. Returns NULL only when the
- * memory is missing. Main thread only.
+ * A thread that fails to start is left out. It returns when each worker
+ * has called font_thread_attach(). Returns NULL only when the memory is
+ * missing. Main thread only.
  */
 struct pool *pool_create(int workers);
 /* Stops and joins the workers. NULL does nothing. Main thread only. */

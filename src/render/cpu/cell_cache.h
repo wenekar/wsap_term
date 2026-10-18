@@ -25,22 +25,26 @@
  *   cell_cache_begin() returns NULL and the frame composes every cell.
  * - The index is open-addressed with linear probes. Each slot has a clock
  *   stamp: the frame number of its last use.
+ * - Each class has its L0 tables (see below). The budget does not count
+ *   them.
  *
  * Frame protocol
  * 1. Main thread, before the phase: cell_cache_begin().
- *    - It picks the class of the cell size.
+ *    - It picks the class of the cell size. It clears the L0 tables of the
+ *      class when the L0 domain changed (see below).
  *    - It fills the free list up to max(the claims that the last frame
- *      asked for, CELL_CACHE_REFILL_MIN). It takes never-used slots first,
- *      and it grows the class within the budget. Then it evicts by clock,
- *      but only up to the claims that the last frame asked for. A slot used
- *      in the last frame is never evicted. So an idle frame evicts nothing.
- *      A claim that found the free list empty still counts as asked.
- *      "The last frame" is the last frame of this class.
- *    - It resets each worker: pending table, hit log, claim count. It clears
- *      a worker's L0 table when the L0 domain changed (see below).
+ *      asked for, CELL_CACHE_REFILL_MIN). The first refill of a class
+ *      fills it up to the cell count of the frame, when that is more. It
+ *      takes never-used slots first, and it grows the class within the
+ *      budget. Then it evicts by clock, but only up to the claims that the
+ *      last frame asked for. A slot used in the last frame is never
+ *      evicted. So an idle frame evicts nothing. A claim that found the
+ *      free list empty still counts as asked. "The last frame" is the last
+ *      frame of this class.
+ *    - It resets each worker: pending table, hit log, claim count.
  * 2. Workers, during the phase: cell_cache_find(), cell_cache_claim().
- *    - The index, the keys, the stamps, and the published tiles do not
- *      change during the phase. Readers need no lock.
+ *    - The index, the keys, the stamps, the L0 tables, and the published
+ *      tiles do not change during the phase. Readers need no lock.
  *    - A worker claims a free slot with one atomic_fetch_add on the free
  *      list cursor. It writes the tile, and it records the key and the slot
  *      in its own pending table. The pending table also serves the repeats
@@ -52,24 +56,37 @@
  * 3. Main thread, after the join: cell_cache_publish().
  *    - It inserts the pending entries into the index. When two workers
  *      claimed the same key, it keeps one slot and frees the other.
- *    - It stamps the hit logs and every slot that an L0 table holds.
+ *    - It stamps the hit logs.
+ *    - It puts each new slot and each logged hit of the L0 domain into L0.
  *    - It records the claim count for the next refill, and it advances the
  *      clock.
  *
  * Admission: each worker has a seen filter of CELL_CACHE_SEEN entries. It
  * admits a key on its second sighting. So a flood of one-off color pairs
- * (lolcat) does not evict useful tiles. The filter only steers admission.
- * It never changes pixels.
+ * (lolcat) does not evict useful tiles, and a flood of one-off shaped
+ * cells does not pay a claim for each cell. The filter only steers
+ * admission. It never changes pixels.
  *
- * L0: each worker has a direct-mapped table [variant][cp < 128] for the
- * default color pair of the frame. ASCII in the default colors is then one
- * load per cell.
- * - Its domain is (class, font version, default fg, default bg, cache
- *   epoch). cell_cache_begin() clears the table when the domain changed.
- * - The cache epoch changes on every eviction, every freed duplicate, and
- *   every class drop. An idle frame keeps the epoch, so L0 survives it.
- * - find and claim fill L0 for keys of its domain: an unshaped id with
- *   text < 128, no pixel flags, half 0, and the default pair.
+ * L0: each class has two tables for the default color pair of the frame.
+ * All workers read them. A cell in the default colors is then one or a few
+ * loads.
+ * - The ASCII table is direct-mapped [variant][cp < 128]. It holds the
+ *   unshaped ids with text < 128.
+ * - The id table holds the other ids: shaped cells and other text. It has
+ *   sets of CELL_CACHE_L0_WAYS entries, picked by a hash of the id. Each
+ *   entry keeps its id. A new id goes into the first entry of its set. The
+ *   other entries move back by one, and the last one drops.
+ * - The domain is (font version, default fg, default bg). A key is in the
+ *   domain when it has that font version and that pair, no pixel flags,
+ *   and half 0. cell_cache_begin() clears the tables when the domain
+ *   changed.
+ * - Only publish fills L0. So a key that a frame claims hits L0 from the
+ *   next frame on.
+ * - A slot that leaves the index (eviction, a slab that a class gives up)
+ *   leaves L0 too. So L0 never points to a free slot, and it survives
+ *   evictions.
+ * - Before it evicts, cell_cache_begin() stamps each slot that L0 holds as
+ *   used in the last frame. So L0 hits count as uses.
  *
  * Budget 0 or a disabled cache: cell_cache_create() returns NULL. Every
  * call accepts a NULL cache or a NULL class and then does nothing, finds
@@ -90,6 +107,9 @@
 #define CELL_CACHE_MIN_TILES 16
 #define CELL_CACHE_REFILL_MIN 256
 #define CELL_CACHE_L0_CPS 128
+#define CELL_CACHE_L0_ID_BITS 11
+#define CELL_CACHE_L0_IDS (1 << CELL_CACHE_L0_ID_BITS)
+#define CELL_CACHE_L0_WAYS 4
 
 /*
  * The key of a tile. 32 bytes, with no padding. Compare it in full.
@@ -133,15 +153,26 @@ struct cell_tile {
     bool spill;
 };
 
+/* One entry of the L0 id table. id 0 is an empty entry. */
+struct cell_l0_id {
+    uint64_t id;
+    const uint32_t *px;
+};
+
 /*
- * The L0 table of one worker. Read it with cell_l0_find(). Only the cache
- * writes it.
+ * The L0 tables of one class. Read them with cell_l0_find() and
+ * cell_l0_find_id(). Only the cache writes them.
  * - px[v][cp] NULL is a miss.
  * - Bit cp of spill[v][cp / 64] is the spill flag of that tile.
+ * - The set of id starts at ids[cell_l0_index(id)]. An id that no entry
+ *   of the set holds is a miss.
+ * - Bit i of id_spill[i / 64] is the spill flag of ids[i].
  */
 struct cell_l0 {
     const uint32_t *px[FONT_VARIANT_COUNT][CELL_CACHE_L0_CPS];
     uint64_t spill[FONT_VARIANT_COUNT][CELL_CACHE_L0_CPS / 64];
+    struct cell_l0_id ids[CELL_CACHE_L0_IDS];
+    uint64_t id_spill[CELL_CACHE_L0_IDS / 64];
 };
 
 /*
@@ -158,6 +189,36 @@ static inline struct cell_tile cell_l0_find(const struct cell_l0 *l0, uint32_t c
     };
 }
 
+/*
+ * The first entry of the id table set of a glyph id. A shaped id is a hash
+ * already, but ids of one span are related. One multiply leaves them in
+ * few sets, so the index mixes the id in full (the MurmurHash3 finalizer).
+ */
+static inline unsigned cell_l0_index(uint64_t id)
+{
+    id ^= id >> 33;
+    id *= UINT64_C(0xFF51AFD7ED558CCD);
+    id ^= id >> 33;
+    id *= UINT64_C(0xC4CEB9FE1A85EC53);
+    return (unsigned)(id >> (64 - CELL_CACHE_L0_ID_BITS)) & ~(unsigned)(CELL_CACHE_L0_WAYS - 1);
+}
+
+/*
+ * Looks up a cell of the default pair by its glyph id. The caller checks
+ * the domain first: id not 0, no pixel flags, half 0, and the default fg
+ * and bg.
+ */
+static inline struct cell_tile cell_l0_find_id(const struct cell_l0 *l0, uint64_t id)
+{
+    unsigned i = cell_l0_index(id);
+    for (unsigned j = i; j < i + CELL_CACHE_L0_WAYS; j++)
+        if (l0->ids[j].id == id)
+            return (struct cell_tile){
+                .px = l0->ids[j].px, .spill = (l0->id_spill[j >> 6] >> (j & 63)) & 1,
+            };
+    return (struct cell_tile){0};
+}
+
 struct cell_cache;
 struct cell_class;
 struct cell_cache_worker;
@@ -166,26 +227,29 @@ struct cell_cache_worker;
 struct cell_cache *cell_cache_create(size_t budget);
 void cell_cache_destroy(struct cell_cache *c);
 
-/* Per-worker state: seen filter, pending table, hit log, and L0. */
+/* Per-worker state: seen filter, pending table, and hit log. */
 struct cell_cache_worker *cell_cache_worker_create(void);
 void cell_cache_worker_destroy(struct cell_cache_worker *w);
-const struct cell_l0 *cell_cache_worker_l0(const struct cell_cache_worker *w);
+
+/* The L0 tables of a class. NULL gives empty tables. */
+const struct cell_l0 *cell_class_l0(const struct cell_class *k);
 
 /*
  * Starts the parallel phase for one cell size. Main thread only. Returns
- * the class, or NULL: no cache this frame. `workers` lists the worker states
- * that take part, the main thread first. Allocation happens only here and
- * only while a class grows.
+ * the class, or NULL: no cache this frame. `cells` is the number of cells
+ * that the frame paints. `workers` lists the worker states that take part,
+ * the main thread first. Allocation happens only here and only while a
+ * class grows.
  */
 struct cell_class *cell_cache_begin(struct cell_cache *c, struct vector2i cell,
                                     uint64_t font_version,
-                                    uint32_t default_fg, uint32_t default_bg,
+                                    uint32_t default_fg, uint32_t default_bg, int cells,
                                     struct cell_cache_worker *const *workers, int n_workers);
 
 /*
  * Finds a tile. It looks in the published index, then in the pending table
- * of `w`. A hit goes into the hit log of `w` and, in the L0 domain, into L0.
- * Any thread during the phase.
+ * of `w`. An index hit goes into the hit log of `w`. Any thread during the
+ * phase.
  */
 struct cell_tile cell_cache_find(const struct cell_class *k, struct cell_cache_worker *w,
                                  const struct cell_key *key);

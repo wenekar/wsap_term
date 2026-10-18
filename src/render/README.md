@@ -54,7 +54,9 @@ milestone. Milestone 6 adds the Metal backend.
 3. Plan (`plan_frame`).
 4. With a drawable and without `cpu_only`, try the GPU (`render_gpu_draw`).
    PRESENTED or DROPPED ends the frame here.
-5. Moves: memmove each move block, in plan order.
+5. Moves: memmove each move block, in plan order. When the measured paint
+   cost says that the pool paints the moved rows faster, they paint
+   instead. The pixels and the damage are the same.
 6. Raster rows: `decor_get`, `cell_cache_begin`, then
    `glyph_cache_set_parallel(true)`, then `pool_run` over the paint rows
    and the overlay windows, then the join, then

@@ -1,9 +1,8 @@
 #include "render/render.h"
 
-#include <sched.h>
-#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "font/font.h"
 #include "font/glyph_cache.h"
@@ -42,6 +41,8 @@ struct renderer {
     struct render_gpu *gpu;
     struct render_surface scratch;
     bool force_full;
+    /* The paint cost of one cell on one thread, in ps. 0: not known yet. */
+    int64_t paint_ps;
     /* The frame arrays. They hold `cap` rows and grow only. */
     int cap;
     uint64_t *keys;
@@ -76,29 +77,6 @@ void render_shutdown(void)
     ui_shadow_cache_destroy();
 }
 
-/*
- * A barrier job. Each item waits inside itself until every thread holds
- * one item, so each worker takes exactly one. When it returns, every
- * worker has started and attached its font state. A font setting that
- * the main thread changes after renderer_create() then races with no
- * worker start.
- */
-struct barrier {
-    _Atomic int arrived;
-    int n;
-};
-
-static void barrier_item(void *ctx, int worker, int begin, int end)
-{
-    struct barrier *b = ctx;
-    (void)worker;
-    for (int i = begin; i < end; i++) {
-        atomic_fetch_add_explicit(&b->arrived, 1, memory_order_acq_rel);
-        while (atomic_load_explicit(&b->arrived, memory_order_acquire) < b->n)
-            sched_yield();
-    }
-}
-
 struct renderer *renderer_create(const struct render_options *opt)
 {
     struct render_options o = opt ? *opt : (struct render_options){0};
@@ -118,9 +96,6 @@ struct renderer *renderer_create(const struct render_options *opt)
         r->pool = pool_create(threads);
         if (!r->pool)
             goto fail;
-        struct barrier b = { .n = 1 + pool_workers(r->pool) };
-        if (b.n > 1)
-            pool_run(r->pool, b.n, 1, barrier_item, &b);
     }
     ptrdiff_t budget = o.cache_bytes == 0 ? RENDER_CACHE_DEFAULT_BYTES : o.cache_bytes;
     if (budget > 0)
@@ -272,6 +247,66 @@ static void run_moves(uint32_t *px, int stride, struct rect2i grid, int ch,
     }
 }
 
+/*
+ * The cost of a move, in picoseconds per byte. A move is one memmove on
+ * the main thread: about 80 GB/s for rows that the cache holds.
+ */
+#define MOVE_PS_PER_BYTE 12
+
+/*
+ * The cost of a paint comes from the paints of the last frames: the time
+ * of the raster phase times its threads, over its cells. The cost of a
+ * cell changes a lot with its content (a code cell hits L0, a cell of
+ * one-off colors composes), so a constant does not work. A frame with
+ * fewer cells than this gives no sample.
+ */
+#define PAINT_SAMPLE_CELLS 64
+
+static int64_t clock_ps(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return ((int64_t)t.tv_sec * 1000000000 + t.tv_nsec) * 1000;
+}
+
+/*
+ * Turns the moves of the plan into paints when the pool paints those rows
+ * faster than the main thread copies them. Both give the same pixels, so
+ * the choice can follow timing: it changes only the speed. The damage and
+ * the UI regions of the plan stay right: they already hold the bands of
+ * the moved rows. The windows of those rows go, because a full row paint
+ * covers them. It paints only when the estimate wins by a margin of one
+ * quarter, so that the noise of the samples does not cost time.
+ */
+static void paint_moves(const struct renderer *r, struct plan_output *out, int rows, int cols,
+                        int ch, int width)
+{
+    if (!out->n_moves || !r->pool || !r->paint_ps)
+        return;
+    int64_t moved = 0, painted = 0;
+    for (int i = 0; i < out->n_moves; i++)
+        moved += out->moves[i].count;
+    for (int i = 0; i < rows; i++)
+        painted += out->rows[i].op == PLAN_PAINT;
+    int64_t cells = (moved + painted) * cols;
+    int64_t threads = cells < POOL_SERIAL_CELLS ? 1 : r->n_workers;
+    int64_t move_ps = moved * ch * width * (int64_t)sizeof(uint32_t) * MOVE_PS_PER_BYTE;
+    int64_t paint_ps = moved * cols * r->paint_ps / threads;
+    if (4 * paint_ps >= 3 * move_ps)
+        return;
+    for (int i = 0; i < rows; i++)
+        if (out->rows[i].op == PLAN_MOVE)
+            out->rows[i] = (struct plan_row){ .op = PLAN_PAINT };
+    out->n_moves = 0;
+    int n = 0;
+    for (int i = 0; i < out->n_windows; i++) {
+        const struct plan_window *w = &out->windows[i];
+        if (w->row >= rows || out->rows[w->row].op != PLAN_PAINT)
+            out->windows[n++] = *w;
+    }
+    out->n_windows = n;
+}
+
 /* ---- The parallel phase ---------------------------------------------- */
 
 struct phase {
@@ -418,7 +453,8 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         }
     }
 
-    /* 5. Moves. */
+    /* 5. Moves, or paints where the pool is faster. */
+    paint_moves(r, &out, rows, cols, ch, grid.width);
     run_moves(px, stride, grid, ch, out.moves, out.n_moves);
 
     /* 6. Raster: the painted rows, then the windows of kept and moved rows. */
@@ -468,7 +504,8 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         int n_cache = serial ? 1 : r->n_workers;
         struct cell_class *klass =
             cell_cache_begin(r->cache, key.cell, key.font_version, l0_fg, l0_bg,
-                             r->cache_workers, n_cache);
+                             cells > INT32_MAX ? INT32_MAX : (int)cells, r->cache_workers,
+                             n_cache);
         struct raster_frame rf = {
             .font = gfont,
             .frame = tf,
@@ -485,9 +522,14 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         struct phase ph = {
             .r = r, .rf = &rf, .jobs = r->jobs, .n_full = n_full, .reach = r->reach,
         };
+        int64_t t0 = clock_ps();
         glyph_cache_set_parallel(true);
         pool_run(r->pool, n_jobs, serial ? n_jobs : 1, phase_run, &ph);
         glyph_cache_set_parallel(false);
+        if (cells >= PAINT_SAMPLE_CELLS) {
+            int64_t sample = (clock_ps() - t0) * (serial ? 1 : r->n_workers) / cells;
+            r->paint_ps = r->paint_ps ? (3 * r->paint_ps + sample) / 4 : sample;
+        }
         /* 7. Publish. */
         cell_cache_publish(r->cache, klass, r->cache_workers, n_cache);
     }
