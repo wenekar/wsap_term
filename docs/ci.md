@@ -11,6 +11,7 @@ The checkout step does not keep GitHub credentials.
 
 Each job runs `bash tools/ci/build.sh`.
 Each job installs stable Rust to build the pinned AccessKit C dependency.
+The script sets `-Daccessibility=true` to test native accessibility.
 The script configures a release build in `build/ci`.
 It uses the compiler's default CPU target and disables LTO.
 With LTO, each test binary gets a whole-program link.

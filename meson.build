@@ -172,17 +172,27 @@ dl_dep = cc.find_library('dl', required: system == 'linux')
 m_dep = cc.find_library('m')
 thread_dep = dependency('threads')
 yyjson_dep = dependency('yyjson', version: '>=0.12.0')
-accesskit_dep = dependency(
-    'accesskit-c-0.23',
-    version: '>=0.23.1',
-    required: false,
-    allow_fallback: false,
-)
-if not accesskit_dep.found()
-    accesskit_dep = subproject(
-        'accesskit-c',
-        default_options: ['default_library=static', 'buildtype=release'],
-    ).get_variable('accesskit_c_dep')
+accessibility_enabled = false
+if get_option('accessibility')
+    rustc = find_program('rustc', version: '>=1.87', required: false)
+    cargo = find_program('cargo', version: '>=1.87', required: false)
+    if rustc.found() and cargo.found()
+        accesskit_dep = dependency(
+            'accesskit-c-0.23',
+            version: '>=0.23.1',
+            required: false,
+            allow_fallback: false,
+        )
+        if not accesskit_dep.found()
+            accesskit_dep = subproject(
+                'accesskit-c',
+                default_options: ['default_library=static', 'buildtype=release'],
+            ).get_variable('accesskit_c_dep')
+        endif
+        accessibility_enabled = true
+    else
+        warning('Native accessibility is skipped. Install Rust and Cargo 1.87 or later to enable it.')
+    endif
 endif
 icu_uc_dep = dependency('icu-uc', required: false)
 icu_i18n_dep = dependency('icu-i18n', required: false)
@@ -447,6 +457,7 @@ summary(
         'Backend': backend,
         'ISA': isa,
         'Hardening': get_option('hardening'),
+        'Native accessibility': accessibility_enabled,
         'Tests': get_option('tests'),
         'Benchmarks': get_option('benchmarks'),
         'Integration tests': get_option('integration_tests'),

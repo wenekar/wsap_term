@@ -2,17 +2,26 @@
 
 ## Accessibility dependency
 
+Native accessibility is off by default.
+Enable it with `meson configure BUILD_DIR -Daccessibility=true`.
+For a new build, use `meson setup BUILD_DIR -Daccessibility=true`.
 The yasl binding uses [AccessKit C](https://github.com/AccessKit/accesskit-c)
 for AT-SPI on Linux and AppKit accessibility on macOS.
 The UI core has no AccessKit dependency.
 
-Meson first checks for `accesskit-c-0.23` version 0.23.1 or later.
+Install Rust and Cargo 1.87 or later with [rustup](https://rustup.rs/).
+Meson skips native accessibility if either tool is absent or too old.
+This rule also applies when AccessKit C is installed.
+When the option is off, Meson does not check for Rust or AccessKit C.
+It does not download or build AccessKit C.
+
+When enabled, Meson checks for `accesskit-c-0.23` version 0.23.1 or later.
 If it is absent, Meson builds the release pinned in
 `subprojects/accesskit-c.wrap`. Cargo uses that release's lockfile.
-Install Rust and Cargo 1.87 or later with [rustup](https://rustup.rs/).
 The first build downloads the Rust dependencies.
-An installed AccessKit C library removes the need for Rust during the app build.
 For a cross build, set `-Daccesskit-c:triplet=TARGET` to the Rust target triple.
+The build summary reports whether native accessibility is enabled.
+Native provider tests run only when it is enabled.
 
 ## Build targets
 
@@ -54,6 +63,7 @@ Use `meson configure BUILD_DIR` to change an existing build.
 | `-Disa=` | Use the compiler's default CPU target. |
 | `-Disa=x86-64-v3` | Set an explicit CPU target. |
 | `-Db_lto=false` | Disable LTO. |
+| `-Daccessibility=true` | Enable native accessibility if Rust and Cargo are available. |
 | `-Dtests=false` | Exclude tests. |
 | `-Dbenchmarks=false` | Exclude benchmarks. |
 | `-Dmacos_app_dir=DIR` | Set the macOS app directory. |

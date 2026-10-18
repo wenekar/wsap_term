@@ -13,6 +13,12 @@ option(
     description: 'Font rasterization and discovery backend (CoreText is macOS-only)',
 )
 option(
+    'accessibility',
+    type: 'boolean',
+    value: false,
+    description: 'Enable native accessibility with AccessKit when Rust and Cargo 1.87+ are available',
+)
+option(
     'isa',
     type: 'string',
     value: 'native',

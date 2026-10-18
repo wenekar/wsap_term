@@ -290,7 +290,9 @@ The dispatcher checks the current control before it runs an action.
 It rejects hidden, disabled, ignored, and unsupported targets.
 The tree indexes IDs for lookup and duplicate checks.
 
-The yasl binding maps the tree through AccessKit C.
+With `-Daccessibility=true`, the yasl binding maps the tree through AccessKit C.
+Native accessibility is off by default.
+Meson skips it when Rust or Cargo 1.87+ is absent.
 AccessKit provides AT-SPI on Linux and AppKit accessibility on macOS.
 The binding keeps stable native IDs and maps text positions to UTF-8 offsets.
 It splits multiline values into text runs at hard line breaks.
@@ -319,6 +321,7 @@ It does not change the selection.
 Run `ui-accessibility-test` to check trees and action routing.
 Run `history-text-test` to check Unicode history and viewport limits.
 Run `ui-accessibility-provider-test` to check native text, actions, and lifetime.
+This test is registered only when native accessibility is enabled.
 These tests do not replace checks with VoiceOver and Orca.
 Visual bell flashes the terminal view when the bell rings.
 High contrast mode applies a high-contrast palette.

@@ -265,7 +265,7 @@ test(
     suite: 'unit',
 )
 
-if system == 'linux'
+if accessibility_enabled and system == 'linux'
     dbus_run_session = find_program('dbus-run-session', required: false)
     if dbus_run_session.found()
         accessibility_provider_test = executable(
@@ -290,7 +290,7 @@ if system == 'linux'
             timeout: 60,
         )
     endif
-elif system == 'darwin'
+elif accessibility_enabled and system == 'darwin'
     accessibility_provider_test = executable(
         'ui-accessibility-provider-test',
         files('ui/yasl/accessibility/provider_test.m'),
