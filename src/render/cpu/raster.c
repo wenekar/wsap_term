@@ -176,13 +176,46 @@ static inline RENDER_ALWAYS_INLINE void run_add(int isa, struct row_ctx *c, int 
     c->run_bg = bg;
 }
 
+/*
+ * Copies a whole tile of cw x ch pixels, row stride cw, to dst. A cell 8 to
+ * 16 pixels wide copies each row with two fixed 32-byte copies, which every
+ * level lowers to vector moves in its own wrapper: one ymm on AVX2 and
+ * AVX-512, two 16-byte moves elsewhere. At cw == 8 the two copies are the
+ * rows y and y + 1. The generic kernel is a call with a loop for each width
+ * class, and a typing frame spends most of its blit time there.
+ */
+static inline RENDER_ALWAYS_INLINE void tile_blit(int isa, uint32_t *dst, size_t ds,
+                                                  const uint32_t *tile, int cw, int ch)
+{
+    if (cw == 8) {
+        int y = 0;
+        for (; y + 2 <= ch; y += 2) {
+            memcpy(dst + (size_t)y * ds, tile + (size_t)y * 8, 32);
+            memcpy(dst + (size_t)y * ds + ds, tile + (size_t)y * 8 + 8, 32);
+        }
+        if (y < ch)
+            memcpy(dst + (size_t)y * ds, tile + (size_t)y * 8, 32);
+        return;
+    }
+    if (cw > 8 && cw <= 16) {
+        for (int y = 0; y < ch; y++) {
+            const uint32_t *s = tile + (size_t)y * (size_t)cw;
+            uint32_t *d = dst + (size_t)y * ds;
+            memcpy(d, s, 32);
+            memcpy(d + cw - 8, s + cw - 8, 32);
+        }
+        return;
+    }
+    render_kernel_blit_tile(isa, dst, ds, tile, cw, ch);
+}
+
 /* Copies a cell of cw x ch pixels, row stride cw, into the window. */
 static inline RENDER_ALWAYS_INLINE void put_tile(int isa, const struct row_ctx *c, int sx0,
                                                  const uint32_t *tile)
 {
     int cw = c->cw;
     if (sx0 >= c->x0 && sx0 + cw <= c->x1) {
-        render_kernel_blit_tile(isa, c->row + sx0, c->stride, tile, cw, c->ch);
+        tile_blit(isa, c->row + sx0, c->stride, tile, cw, c->ch);
         return;
     }
     int a = max_i(sx0, c->x0), b = min_i(sx0 + cw, c->x1);
@@ -582,7 +615,7 @@ static inline RENDER_ALWAYS_INLINE void cell_body(int isa, void *ctx, int col,
         struct cell_tile t = !(ref->id & ~L0_ID_BITS) ? cell_l0_find(c->l0, cell->text, cell->style)
                                                       : cell_l0_find_id(c->l0, ref->id);
         if (t.px && !t.spill) {
-            render_kernel_blit_tile(isa, c->row + sx0, c->stride, t.px, c->cw, c->ch);
+            tile_blit(isa, c->row + sx0, c->stride, t.px, c->cw, c->ch);
             return;
         }
     }
