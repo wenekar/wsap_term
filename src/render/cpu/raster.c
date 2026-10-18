@@ -576,11 +576,11 @@ static inline RENDER_ALWAYS_INLINE void cell_body(int isa, void *ctx, int col,
         return;
     }
     run_flush(isa, c);
-    /* L0: ASCII in the default pair. The common case is one load. */
+    /* L0: a cell in the default pair. ASCII is one load. */
     if (c->klass && !(fl & (RENDER_CELL_PIXEL_MASK | RENDER_CELL_WIDE_TAIL)) && ref->id &&
-        !(ref->id & ~L0_ID_BITS) && cell->fg == c->l0_fg && cell->bg == c->l0_bg &&
-        sx0 >= c->x0 && sx0 + c->cw <= c->x1) {
-        struct cell_tile t = cell_l0_find(c->l0, cell->text, cell->style);
+        cell->fg == c->l0_fg && cell->bg == c->l0_bg && sx0 >= c->x0 && sx0 + c->cw <= c->x1) {
+        struct cell_tile t = !(ref->id & ~L0_ID_BITS) ? cell_l0_find(c->l0, cell->text, cell->style)
+                                                      : cell_l0_find_id(c->l0, ref->id);
         if (t.px && !t.spill) {
             render_kernel_blit_tile(isa, c->row + sx0, c->stride, t.px, c->cw, c->ch);
             return;
@@ -631,7 +631,7 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
         .font_version = f->font_version,
         .klass = f->cache,
         .cache = f->cache ? w->cache : NULL,
-        .l0 = cell_cache_worker_l0(f->cache ? w->cache : NULL),
+        .l0 = cell_class_l0(f->cache),
         .decor = f->decor,
     };
     if (c.area > c.width)

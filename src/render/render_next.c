@@ -468,7 +468,8 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         int n_cache = serial ? 1 : r->n_workers;
         struct cell_class *klass =
             cell_cache_begin(r->cache, key.cell, key.font_version, l0_fg, l0_bg,
-                             r->cache_workers, n_cache);
+                             cells > INT32_MAX ? INT32_MAX : (int)cells, r->cache_workers,
+                             n_cache);
         struct raster_frame rf = {
             .font = gfont,
             .frame = tf,

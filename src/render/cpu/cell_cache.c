@@ -40,6 +40,13 @@ _Static_assert((CELL_CACHE_SEEN & (CELL_CACHE_SEEN - 1)) == 0 && CELL_CACHE_SEEN
 _Static_assert(PENDING_INDEX <= UINT16_MAX, "a pending index entry fits in 16 bits");
 _Static_assert(CELL_CACHE_L0_CPS == 128, "L0 covers ASCII");
 
+/* L0 entry numbers: v * 128 + cp in the ASCII table, then L0_ID0 + i in the id table. */
+#define L0_ID0 (FONT_VARIANT_COUNT * CELL_CACHE_L0_CPS)
+#define L0_ENTRIES (L0_ID0 + CELL_CACHE_L0_IDS)
+_Static_assert(L0_ENTRIES <= UINT16_MAX, "an L0 entry number fits in 16 bits");
+/* The glyph id bits of an ASCII L0 key: a code point below 128 and the variant. */
+#define L0_ASCII_BITS ((uint64_t)(CELL_CACHE_L0_CPS - 1) | (uint64_t)FONT_STYLE_VARIANT_MASK << 32)
+
 /* Slot flags. */
 enum {
     SLOT_LIVE = 1u << 0,  /* the index holds the slot */
@@ -80,12 +87,16 @@ struct cell_class {
     int asked;
     /* A hit log overflowed in the last frame: evict nothing in this one. */
     bool protect;
+    /* The last refill needed no eviction. L0 keys are admitted at once. */
+    bool room;
     /* The clock at the last begin, and at the last publish. */
     uint32_t used;
     uint32_t last;
     /* The phase number while a phase is open, else 0. */
     uint32_t phase;
     size_t bytes;
+    /* The L0 tables of the class. The budget does not count them. */
+    struct class_l0 *l0;
     /* Every claim writes the cursor. It has its own cache line. */
     char pad0[64];
     _Atomic int cursor;
@@ -97,7 +108,25 @@ struct cell_cache {
     size_t bytes;
     struct cell_class *classes;
     uint32_t clock;
-    uint32_t epoch;
+};
+
+/*
+ * The L0 tables of a class and their domain. Only the main thread writes
+ * them, in cell_cache_begin() and cell_cache_publish(). The workers read
+ * `t` during the phase.
+ * - `used` lists the entries that were set since the last clear. Bit e of
+ *   `listed` tells that entry e is in the list.
+ * - `slot[e]` is the slot of the tile in entry e.
+ */
+struct class_l0 {
+    struct cell_l0 t;
+    bool valid;
+    uint64_t font;
+    uint32_t fg, bg;
+    int n_used;
+    uint16_t used[L0_ENTRIES];
+    uint64_t listed[(L0_ENTRIES + 63) / 64];
+    uint32_t slot[L0_ENTRIES];
 };
 
 struct pending {
@@ -107,14 +136,6 @@ struct pending {
 };
 
 struct cell_cache_worker {
-    struct cell_l0 l0;
-    /* The L0 domain. */
-    const struct cell_class *dom_class;
-    uint64_t dom_font;
-    uint32_t dom_fg, dom_bg;
-    uint32_t dom_epoch;
-    int n_l0;
-    uint32_t l0_slots[FONT_VARIANT_COUNT * CELL_CACHE_L0_CPS];
     /* The phase that this worker takes part in. 0: none. */
     uint32_t phase;
     int asked;
@@ -190,6 +211,143 @@ static void index_remove(struct cell_class *k, uint32_t slot)
     k->index[i] = (struct index_entry){0};
 }
 
+/* ---- L0 ---------------------------------------------------------------- */
+
+/* A key of the L0 domain: the default pair of the frame, no pixel flags, half 0. */
+static inline bool l0_domain(const struct cell_class *k, const struct cell_key *key)
+{
+    const struct class_l0 *z = k->l0;
+    return z->valid && key->glyph && key->font_version == z->font && key->fg == z->fg &&
+           key->bg == z->bg && !key->cursor && !key->flags && !key->half;
+}
+
+static inline bool l0_ascii(const struct cell_key *key)
+{
+    return !(key->glyph & ~L0_ASCII_BITS);
+}
+
+/* The ASCII entry of a key of the L0 domain. */
+static inline unsigned l0_ascii_entry(const struct cell_key *key)
+{
+    unsigned cp = (unsigned)(key->glyph & (CELL_CACHE_L0_CPS - 1));
+    unsigned v = (unsigned)(key->glyph >> 32) & FONT_STYLE_VARIANT_MASK;
+    return v * CELL_CACHE_L0_CPS + cp;
+}
+
+static inline void spill_set(uint64_t *words, unsigned i, bool spill)
+{
+    uint64_t bit = UINT64_C(1) << (i & 63);
+    words[i >> 6] = spill ? words[i >> 6] | bit : words[i >> 6] & ~bit;
+}
+
+static inline bool spill_get(const uint64_t *words, unsigned i)
+{
+    return (words[i >> 6] >> (i & 63)) & 1;
+}
+
+static void l0_list(struct class_l0 *z, unsigned e, uint32_t slot)
+{
+    uint64_t bit = UINT64_C(1) << (e & 63);
+    if (!(z->listed[e >> 6] & bit)) {
+        z->listed[e >> 6] |= bit;
+        z->used[z->n_used++] = (uint16_t)e;
+    }
+    z->slot[e] = slot;
+}
+
+/*
+ * Puts the tile of a published slot into L0. The key must be in the L0
+ * domain. An ASCII entry is set once. In the id table, the new id goes
+ * first in its set, and the last id of the set drops.
+ */
+static void l0_fill(struct cell_class *k, uint32_t slot)
+{
+    struct class_l0 *z = k->l0;
+    const struct cell_key *key = &k->keys[slot];
+    const uint32_t *px = tile_at(k, slot);
+    bool spill = (k->flags[slot] & SLOT_SPILL) != 0;
+    if (l0_ascii(key)) {
+        unsigned e = l0_ascii_entry(key);
+        const uint32_t **p = &z->t.px[e / CELL_CACHE_L0_CPS][e % CELL_CACHE_L0_CPS];
+        if (*p)
+            return;
+        *p = px;
+        spill_set(z->t.spill[e / CELL_CACHE_L0_CPS], e % CELL_CACHE_L0_CPS, spill);
+        l0_list(z, e, slot);
+        return;
+    }
+    unsigned i = cell_l0_index(key->glyph);
+    struct cell_l0_id *set = &z->t.ids[i];
+    for (int j = 0; j < CELL_CACHE_L0_WAYS; j++)
+        if (set[j].id == key->glyph)
+            return;
+    for (unsigned j = i + CELL_CACHE_L0_WAYS - 1; j > i; j--) {
+        if (!z->t.ids[j - 1].id)
+            continue;
+        z->t.ids[j] = z->t.ids[j - 1];
+        spill_set(z->t.id_spill, j, spill_get(z->t.id_spill, j - 1));
+        l0_list(z, L0_ID0 + j, z->slot[L0_ID0 + j - 1]);
+    }
+    set[0] = (struct cell_l0_id){ .id = key->glyph, .px = px };
+    spill_set(z->t.id_spill, i, spill);
+    l0_list(z, L0_ID0 + i, slot);
+}
+
+/* Takes a slot that leaves the index out of L0. */
+static void l0_forget(struct cell_class *k, uint32_t slot)
+{
+    struct class_l0 *z = k->l0;
+    const struct cell_key *key = &k->keys[slot];
+    if (!l0_domain(k, key))
+        return;
+    if (l0_ascii(key)) {
+        unsigned e = l0_ascii_entry(key);
+        const uint32_t **p = &z->t.px[e / CELL_CACHE_L0_CPS][e % CELL_CACHE_L0_CPS];
+        if (*p && z->slot[e] == slot)
+            *p = NULL;
+        return;
+    }
+    unsigned i = cell_l0_index(key->glyph);
+    for (unsigned j = i; j < i + CELL_CACHE_L0_WAYS; j++)
+        if (z->t.ids[j].id == key->glyph && z->slot[L0_ID0 + j] == slot)
+            z->t.ids[j] = (struct cell_l0_id){0};
+}
+
+/* Empties L0. Only the listed entries are cleared. */
+static void l0_clear(struct class_l0 *z)
+{
+    for (int i = 0; i < z->n_used; i++) {
+        unsigned e = z->used[i];
+        if (e < L0_ID0)
+            z->t.px[e / CELL_CACHE_L0_CPS][e % CELL_CACHE_L0_CPS] = NULL;
+        else
+            z->t.ids[e - L0_ID0] = (struct cell_l0_id){0};
+    }
+    z->n_used = 0;
+    memset(z->listed, 0, sizeof(z->listed));
+    memset(z->t.spill, 0, sizeof(z->t.spill));
+    memset(z->t.id_spill, 0, sizeof(z->t.id_spill));
+}
+
+/* Sets the L0 domain of the frame. A new domain empties L0. */
+static void l0_domain_set(struct class_l0 *z, uint64_t font, uint32_t fg, uint32_t bg)
+{
+    if (z->valid && z->font == font && z->fg == fg && z->bg == bg)
+        return;
+    l0_clear(z);
+    z->valid = true;
+    z->font = font;
+    z->fg = fg;
+    z->bg = bg;
+}
+
+/* Removes a slot from the index and from L0. */
+static void slot_unlink(struct cell_class *k, uint32_t slot)
+{
+    l0_forget(k, slot);
+    index_remove(k, slot);
+}
+
 /* Drops the part of the free list that the last phase claimed. */
 static void free_compact(struct cell_class *k)
 {
@@ -214,6 +372,7 @@ static void class_free(struct cell_class *k)
     free(k->flags);
     free(k->index);
     free(k->free);
+    free(k->l0);
     free(k);
 }
 
@@ -226,7 +385,6 @@ static void class_drop(struct cell_cache *c, struct cell_class *k)
         }
     }
     c->bytes -= k->bytes;
-    c->epoch++;
     class_free(k);
 }
 
@@ -305,7 +463,7 @@ static void class_shrink(struct cell_cache *c, struct cell_class *k)
     uint32_t first = (uint32_t)k->slots - tiles;
     for (uint32_t s = first; s < (uint32_t)k->slots; s++)
         if (k->flags[s] & SLOT_LIVE)
-            index_remove(k, s);
+            slot_unlink(k, s);
     int n = 0;
     for (int i = 0; i < k->n_free; i++)
         if (k->free[i] < first)
@@ -320,7 +478,6 @@ static void class_shrink(struct cell_cache *c, struct cell_class *k)
     size_t cost = slab_cost(k);
     k->bytes -= cost;
     c->bytes -= cost;
-    c->epoch++;
     if (!k->n_slabs) {
         class_drop(c, k);
         return;
@@ -411,7 +568,7 @@ static void take_fresh(struct cell_class *k, int target)
  * class stays. A slot used since the hand last passed it gets one more
  * turn.
  */
-static void clock_evict(struct cell_cache *c, struct cell_class *k, int want)
+static void clock_evict(struct cell_class *k, int want)
 {
     int got = 0;
     for (int scan = 0, limit = 2 * k->fresh; got < want && scan < limit; scan++) {
@@ -425,29 +582,58 @@ static void clock_evict(struct cell_cache *c, struct cell_class *k, int want)
             k->flags[s] = f & ~SLOT_REF;
             continue;
         }
-        index_remove(k, s);
+        slot_unlink(k, s);
         k->flags[s] = 0;
         k->free[k->n_free++] = s;
         got++;
     }
-    if (got)
-        c->epoch++;
 }
 
-static void refill(struct cell_cache *c, struct cell_class *k)
+static void stamp(struct cell_class *k, uint32_t slot, uint32_t now)
+{
+    if (k->flags[slot] & SLOT_LIVE) {
+        k->stamps[slot] = now;
+        k->flags[slot] |= SLOT_REF;
+    }
+}
+
+/*
+ * Stamps each slot that L0 holds as used in the last frame. An L0 hit
+ * leaves no trace in the hit log, so this counts it before an eviction.
+ * A listed entry that was cleared later stamps a slot that it no longer
+ * holds. That only keeps the slot a little longer.
+ */
+static void l0_stamp(struct cell_class *k)
+{
+    const struct class_l0 *z = k->l0;
+    for (int i = 0; i < z->n_used; i++)
+        stamp(k, z->slot[z->used[i]], k->last);
+}
+
+/*
+ * Fills the free list. `cells` is the cell count of the frame. The first
+ * refill of a class takes room for all of them, so that a cold frame can
+ * claim each new key.
+ */
+static void refill(struct cell_cache *c, struct cell_class *k, int cells)
 {
     int asked = k->asked;
     int target = asked > CELL_CACHE_REFILL_MIN ? asked : CELL_CACHE_REFILL_MIN;
+    if (!k->fresh && cells > target)
+        target = cells;
     take_fresh(k, target);
     while (k->n_free < target && class_grow(c, k))
         take_fresh(k, target);
+    k->room = k->n_free >= target;
     bool protect = k->protect;
     k->protect = false;
     int want = target - k->n_free;
     if (want > asked)
         want = asked;
-    if (!protect && want > 0)
-        clock_evict(c, k, want);
+    if (!protect && want > 0) {
+        l0_stamp(k);
+        clock_evict(k, want);
+    }
 }
 
 static struct cell_class *class_get(struct cell_cache *c, struct vector2i cell)
@@ -480,6 +666,11 @@ static struct cell_class *class_get(struct cell_cache *c, struct vector2i cell)
     struct cell_class *k = calloc(1, sizeof(*k));
     if (!k)
         return NULL;
+    k->l0 = calloc(1, sizeof(*k->l0));
+    if (!k->l0) {
+        free(k);
+        return NULL;
+    }
     k->cell = cell;
     k->tile_px = tile_px;
     k->slab_shift = shift;
@@ -490,32 +681,7 @@ static struct cell_class *class_get(struct cell_cache *c, struct vector2i cell)
     return k;
 }
 
-static bool l0_domain(const struct cell_cache_worker *w, const struct cell_class *k,
-                      const struct cell_key *key)
-{
-    const uint64_t glyph_bits =
-        (uint64_t)(CELL_CACHE_L0_CPS - 1) | (uint64_t)FONT_STYLE_VARIANT_MASK << 32;
-    return w->dom_class == k && !(key->glyph & ~glyph_bits) && key->font_version == w->dom_font &&
-           key->fg == w->dom_fg && key->bg == w->dom_bg && !key->cursor && !key->flags &&
-           !key->half;
-}
-
-static void l0_fill(struct cell_cache_worker *w, const struct cell_key *key, uint32_t slot,
-                    const uint32_t *px, bool spill)
-{
-    unsigned cp = (unsigned)(key->glyph & (CELL_CACHE_L0_CPS - 1));
-    unsigned v = (unsigned)(key->glyph >> 32) & FONT_STYLE_VARIANT_MASK;
-    if (w->l0.px[v][cp])
-        return;
-    w->l0.px[v][cp] = px;
-    if (spill)
-        w->l0.spill[v][cp >> 6] |= UINT64_C(1) << (cp & 63);
-    w->l0_slots[w->n_l0++] = slot;
-}
-
-static void worker_reset(struct cell_cache_worker *w, uint32_t epoch,
-                         const struct cell_class *k, uint64_t font_version,
-                         uint32_t default_fg, uint32_t default_bg)
+static void worker_reset(struct cell_cache_worker *w, const struct cell_class *k)
 {
     for (int i = 0; i < w->n_pending; i++)
         w->pending_index[w->pending[i].pos] = 0;
@@ -525,19 +691,6 @@ static void worker_reset(struct cell_cache_worker *w, uint32_t epoch,
     w->asked = 0;
     memset(w->hit_filter, 0, sizeof(w->hit_filter));
     w->phase = k ? k->phase : 0;
-
-    bool same = k && w->dom_class == k && w->dom_font == font_version &&
-                w->dom_fg == default_fg && w->dom_bg == default_bg && w->dom_epoch == epoch;
-    if (same)
-        return;
-    if (w->dom_class || w->n_l0)
-        memset(&w->l0, 0, sizeof(w->l0));
-    w->n_l0 = 0;
-    w->dom_class = k;
-    w->dom_font = font_version;
-    w->dom_fg = default_fg;
-    w->dom_bg = default_bg;
-    w->dom_epoch = epoch;
 }
 
 /* Advances the frame clock. 0 and 1 stay unused, so a stamp of 0 is never
@@ -582,21 +735,22 @@ void cell_cache_worker_destroy(struct cell_cache_worker *w)
     free(w);
 }
 
-const struct cell_l0 *cell_cache_worker_l0(const struct cell_cache_worker *w)
+const struct cell_l0 *cell_class_l0(const struct cell_class *k)
 {
-    return w ? &w->l0 : &empty_l0;
+    return k ? &k->l0->t : &empty_l0;
 }
 
 struct cell_class *cell_cache_begin(struct cell_cache *c, struct vector2i cell,
                                     uint64_t font_version,
-                                    uint32_t default_fg, uint32_t default_bg,
+                                    uint32_t default_fg, uint32_t default_bg, int cells,
                                     struct cell_cache_worker *const *workers, int n_workers)
 {
     struct cell_class *k = c ? class_get(c, cell) : NULL;
     if (k) {
         k->used = c->clock;
+        l0_domain_set(k->l0, font_version, default_fg, default_bg);
         free_compact(k);
-        refill(c, k);
+        refill(c, k, cells);
         /* A class with no room stays in the list, so the next frame does
          * not allocate it again. It is freed when it idles. */
         if (k->slots < CELL_CACHE_MIN_TILES)
@@ -610,7 +764,7 @@ struct cell_class *cell_cache_begin(struct cell_cache *c, struct vector2i cell,
         clock_tick(c);
     for (int i = 0; i < n_workers; i++)
         if (workers[i])
-            worker_reset(workers[i], c ? c->epoch : 0, k, font_version, default_fg, default_bg);
+            worker_reset(workers[i], k);
     return k;
 }
 
@@ -644,11 +798,9 @@ struct cell_tile cell_cache_find(const struct cell_class *k, struct cell_cache_w
     }
     if (slot < 0)
         return (struct cell_tile){0};
-    const uint32_t *px = tile_at(k, (uint32_t)slot);
-    bool spill = k->flags[slot] & SLOT_SPILL;
-    if (l0_domain(w, k, key))
-        l0_fill(w, key, (uint32_t)slot, px, spill);
-    return (struct cell_tile){ .px = px, .spill = spill };
+    return (struct cell_tile){
+        .px = tile_at(k, (uint32_t)slot), .spill = (k->flags[slot] & SLOT_SPILL) != 0,
+    };
 }
 
 uint32_t *cell_cache_claim(struct cell_class *k, struct cell_cache_worker *w,
@@ -662,7 +814,7 @@ uint32_t *cell_cache_claim(struct cell_class *k, struct cell_cache_worker *w,
     bool seen = false;
     for (int i = 0; i < SEEN_WAYS; i++)
         seen |= set[i] == mark;
-    if (!seen) {
+    if (!seen && !(k->room && l0_domain(k, key))) {
         memmove(set + 1, set, (SEEN_WAYS - 1) * sizeof(*set));
         set[0] = mark;
         return NULL;
@@ -684,18 +836,7 @@ uint32_t *cell_cache_claim(struct cell_class *k, struct cell_cache_worker *w,
     w->pending[w->n_pending] = (struct pending){ .slot = slot, .tag = tag, .pos = (uint16_t)pos };
     w->pending_index[pos] = (uint16_t)++w->n_pending;
 
-    uint32_t *px = tile_at(k, slot);
-    if (l0_domain(w, k, key))
-        l0_fill(w, key, slot, px, spill);
-    return px;
-}
-
-static void stamp(struct cell_class *k, uint32_t slot, uint32_t now)
-{
-    if (k->flags[slot] & SLOT_LIVE) {
-        k->stamps[slot] = now;
-        k->flags[slot] |= SLOT_REF;
-    }
+    return tile_at(k, slot);
 }
 
 void cell_cache_publish(struct cell_cache *c, struct cell_class *k,
@@ -719,19 +860,21 @@ void cell_cache_publish(struct cell_cache *c, struct cell_class *k,
                 /* Another worker published this key first. */
                 k->flags[s] = 0;
                 k->free[k->n_free++] = s;
-                c->epoch++;
                 continue;
             }
             index_insert(k, s, tag);
             k->tags[s] = tag;
             k->flags[s] |= SLOT_LIVE;
             stamp(k, s, now);
+            if (l0_domain(k, &k->keys[s]))
+                l0_fill(k, s);
         }
-        for (int j = 0; j < w->n_hits; j++)
-            stamp(k, w->hits[j], now);
-        if (w->dom_class == k)
-            for (int j = 0; j < w->n_l0; j++)
-                stamp(k, w->l0_slots[j], now);
+        for (int j = 0; j < w->n_hits; j++) {
+            uint32_t s = w->hits[j];
+            stamp(k, s, now);
+            if (l0_domain(k, &k->keys[s]))
+                l0_fill(k, s);
+        }
         w->phase = 0;
     }
     k->asked = asked;

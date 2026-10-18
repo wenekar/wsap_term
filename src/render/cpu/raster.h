@@ -115,7 +115,7 @@ struct raster_spill_list {
  * worker. Only its owner thread touches it during the phase.
  * - `lut`: the pair LUT cache of this worker.
  * - `cache`: this worker's cell cache state (seen filter, pending table,
- *   hit log, L0). NULL when the renderer has no cell cache.
+ *   hit log). NULL when the renderer has no cell cache.
  * - `spill`: the spill list.
  * - `scratch`: room for one cell of `scratch_px` pixels. A cell that the
  *   window cuts composes here first. It grows when it needs room.
