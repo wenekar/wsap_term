@@ -77,7 +77,8 @@ struct cell_class {
     struct index_entry *index;
     uint32_t index_mask;
     /*
-     * The free list. Claims take [0, n_free) in order through `cursor`.
+     * The free list. Claims take [0, n_free) from the end through `cursor`,
+     * so dropping the claimed part moves nothing.
      * The capacity is `slots`.
      */
     uint32_t *free;
@@ -354,10 +355,8 @@ static void free_compact(struct cell_class *k)
     int taken = atomic_load_explicit(&k->cursor, memory_order_relaxed);
     if (taken > k->n_free)
         taken = k->n_free;
-    if (taken > 0) {
-        memmove(k->free, k->free + taken, (size_t)(k->n_free - taken) * sizeof(*k->free));
+    if (taken > 0)
         k->n_free -= taken;
-    }
     atomic_store_explicit(&k->cursor, 0, memory_order_relaxed);
 }
 
@@ -686,10 +685,12 @@ static void worker_reset(struct cell_cache_worker *w, const struct cell_class *k
     for (int i = 0; i < w->n_pending; i++)
         w->pending_index[w->pending[i].pos] = 0;
     w->n_pending = 0;
+    /* A filter entry is set only with a log entry or an overflow. */
+    if (w->n_hits || w->hit_overflow)
+        memset(w->hit_filter, 0, sizeof(w->hit_filter));
     w->n_hits = 0;
     w->hit_overflow = false;
     w->asked = 0;
-    memset(w->hit_filter, 0, sizeof(w->hit_filter));
     w->phase = k ? k->phase : 0;
 }
 
@@ -826,7 +827,7 @@ uint32_t *cell_cache_claim(struct cell_class *k, struct cell_cache_worker *w,
     if (i >= k->n_free)
         return NULL;
 
-    uint32_t slot = k->free[i];
+    uint32_t slot = k->free[k->n_free - 1 - i];
     uint32_t tag = (uint32_t)h;
     k->keys[slot] = *key;
     k->flags[slot] = spill ? SLOT_SPILL : 0;
