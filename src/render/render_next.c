@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "font/font.h"
 #include "font/glyph_cache.h"
@@ -40,6 +41,8 @@ struct renderer {
     struct render_gpu *gpu;
     struct render_surface scratch;
     bool force_full;
+    /* The paint cost of one cell on one thread, in ps. 0: not known yet. */
+    int64_t paint_ps;
     /* The frame arrays. They hold `cap` rows and grow only. */
     int cap;
     uint64_t *keys;
@@ -245,26 +248,40 @@ static void run_moves(uint32_t *px, int stride, struct rect2i grid, int ch,
 }
 
 /*
- * The rough costs that pick between a move and a paint, in picoseconds. A
- * move is one memmove on the main thread: about 80 GB/s for rows that the
- * cache holds. A paint runs on the pool. A painted cell costs about 5 to 20
- * ns on one thread; the model takes the high end, so it moves when it is
- * not sure.
+ * The cost of a move, in picoseconds per byte. A move is one memmove on
+ * the main thread: about 80 GB/s for rows that the cache holds.
  */
 #define MOVE_PS_PER_BYTE 12
-#define PAINT_PS_PER_CELL 20000
+
+/*
+ * The cost of a paint comes from the paints of the last frames: the time
+ * of the raster phase times its threads, over its cells. The cost of a
+ * cell changes a lot with its content (a code cell hits L0, a cell of
+ * one-off colors composes), so a constant does not work. A frame with
+ * fewer cells than this gives no sample.
+ */
+#define PAINT_SAMPLE_CELLS 64
+
+static int64_t clock_ps(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return ((int64_t)t.tv_sec * 1000000000 + t.tv_nsec) * 1000;
+}
 
 /*
  * Turns the moves of the plan into paints when the pool paints those rows
- * faster than the main thread copies them. Both give the same pixels. The
- * damage and the UI regions of the plan stay right: they already hold the
- * bands of the moved rows. The windows of those rows go, because a full
- * row paint covers them.
+ * faster than the main thread copies them. Both give the same pixels, so
+ * the choice can follow timing: it changes only the speed. The damage and
+ * the UI regions of the plan stay right: they already hold the bands of
+ * the moved rows. The windows of those rows go, because a full row paint
+ * covers them. It paints only when the estimate wins by a margin of one
+ * quarter, so that the noise of the samples does not cost time.
  */
 static void paint_moves(const struct renderer *r, struct plan_output *out, int rows, int cols,
                         int ch, int width)
 {
-    if (!out->n_moves || !r->pool)
+    if (!out->n_moves || !r->pool || !r->paint_ps)
         return;
     int64_t moved = 0, painted = 0;
     for (int i = 0; i < out->n_moves; i++)
@@ -274,8 +291,8 @@ static void paint_moves(const struct renderer *r, struct plan_output *out, int r
     int64_t cells = (moved + painted) * cols;
     int64_t threads = cells < POOL_SERIAL_CELLS ? 1 : r->n_workers;
     int64_t move_ps = moved * ch * width * (int64_t)sizeof(uint32_t) * MOVE_PS_PER_BYTE;
-    int64_t paint_ps = moved * cols * PAINT_PS_PER_CELL / threads;
-    if (paint_ps >= move_ps)
+    int64_t paint_ps = moved * cols * r->paint_ps / threads;
+    if (4 * paint_ps >= 3 * move_ps)
         return;
     for (int i = 0; i < rows; i++)
         if (out->rows[i].op == PLAN_MOVE)
@@ -505,9 +522,14 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         struct phase ph = {
             .r = r, .rf = &rf, .jobs = r->jobs, .n_full = n_full, .reach = r->reach,
         };
+        int64_t t0 = clock_ps();
         glyph_cache_set_parallel(true);
         pool_run(r->pool, n_jobs, serial ? n_jobs : 1, phase_run, &ph);
         glyph_cache_set_parallel(false);
+        if (cells >= PAINT_SAMPLE_CELLS) {
+            int64_t sample = (clock_ps() - t0) * (serial ? 1 : r->n_workers) / cells;
+            r->paint_ps = r->paint_ps ? (3 * r->paint_ps + sample) / 4 : sample;
+        }
         /* 7. Publish. */
         cell_cache_publish(r->cache, klass, r->cache_workers, n_cache);
     }
