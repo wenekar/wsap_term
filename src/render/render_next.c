@@ -1,7 +1,5 @@
 #include "render/render_next.h"
 
-#include <sched.h>
-#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -76,29 +74,6 @@ void render_shutdown(void)
     ui_shadow_cache_destroy();
 }
 
-/*
- * A barrier job. Each item waits inside itself until every thread holds
- * one item, so each worker takes exactly one. When it returns, every
- * worker has started and attached its font state. A font setting that
- * the main thread changes after renderer_create() then races with no
- * worker start.
- */
-struct barrier {
-    _Atomic int arrived;
-    int n;
-};
-
-static void barrier_item(void *ctx, int worker, int begin, int end)
-{
-    struct barrier *b = ctx;
-    (void)worker;
-    for (int i = begin; i < end; i++) {
-        atomic_fetch_add_explicit(&b->arrived, 1, memory_order_acq_rel);
-        while (atomic_load_explicit(&b->arrived, memory_order_acquire) < b->n)
-            sched_yield();
-    }
-}
-
 struct renderer *renderer_create(const struct render_options *opt)
 {
     struct render_options o = opt ? *opt : (struct render_options){0};
@@ -118,9 +93,6 @@ struct renderer *renderer_create(const struct render_options *opt)
         r->pool = pool_create(threads);
         if (!r->pool)
             goto fail;
-        struct barrier b = { .n = 1 + pool_workers(r->pool) };
-        if (b.n > 1)
-            pool_run(r->pool, b.n, 1, barrier_item, &b);
     }
     ptrdiff_t budget = o.cache_bytes == 0 ? RENDER_CACHE_DEFAULT_BYTES : o.cache_bytes;
     if (budget > 0)

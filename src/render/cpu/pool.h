@@ -59,8 +59,9 @@ void pool_run(struct pool *p, int n, int grain, pool_fn fn, void *ctx);
 
 /*
  * Starts a pool with `workers` threads, clamped to [0, POOL_WORKERS_MAX].
- * A thread that fails to start is left out. Returns NULL only when the
- * memory is missing. Main thread only.
+ * A thread that fails to start is left out. It returns when each worker
+ * has called font_thread_attach(). Returns NULL only when the memory is
+ * missing. Main thread only.
  */
 struct pool *pool_create(int workers);
 /* Stops and joins the workers. NULL does nothing. Main thread only. */

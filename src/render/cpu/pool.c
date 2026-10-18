@@ -58,6 +58,8 @@ struct pool {
     _Alignas(64) _Atomic uint32_t wake;
     _Atomic bool stop;
     _Atomic int grain;
+    /* The workers that attached their font state. */
+    _Atomic int ready;
     /* The job. The main thread writes it before the release store of `left`. */
     pool_fn fn;
     void *ctx;
@@ -192,11 +194,41 @@ static int drain(struct pool *p, int id, uint64_t *job, int *n)
     return ran;
 }
 
+/* Tells pool_create() that one more worker attached. */
+static void worker_ready(struct pool *p)
+{
+#ifdef POOL_FUTEX
+    atomic_fetch_add_explicit(&p->ready, 1, memory_order_release);
+    futex_wake(&p->ready, 1);
+#else
+    pthread_mutex_lock(&p->mu);
+    atomic_fetch_add_explicit(&p->ready, 1, memory_order_release);
+    pthread_cond_signal(&p->done_cv);
+    pthread_mutex_unlock(&p->mu);
+#endif
+}
+
+/* Waits until `n` workers attached. */
+static void wait_ready(struct pool *p, int n)
+{
+#ifdef POOL_FUTEX
+    int r;
+    while ((r = atomic_load_explicit(&p->ready, memory_order_acquire)) < n)
+        futex_wait(&p->ready, (uint32_t)r);
+#else
+    pthread_mutex_lock(&p->mu);
+    while (atomic_load_explicit(&p->ready, memory_order_acquire) < n)
+        pthread_cond_wait(&p->done_cv, &p->mu);
+    pthread_mutex_unlock(&p->mu);
+#endif
+}
+
 static void *worker_main(void *arg)
 {
     struct pool_thread *t = arg;
     struct pool *p = t->pool;
     (void)font_thread_attach();
+    worker_ready(p);
     uint32_t seen = 0;
     uint64_t job = 0;
     for (;;) {
@@ -298,6 +330,9 @@ struct pool *pool_create(int workers)
             p->workers++;
     }
     pthread_sigmask(SIG_SETMASK, &old, NULL);
+    /* A font setting that the main thread changes after this call then
+     * races with no worker start. */
+    wait_ready(p, p->workers);
     return p;
 }
 
