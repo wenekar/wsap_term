@@ -63,10 +63,9 @@
  *
  * Admission: each worker has a seen filter of CELL_CACHE_SEEN entries. It
  * admits a key on its second sighting. So a flood of one-off color pairs
- * (lolcat) does not evict useful tiles. A key of the L0 domain (see below)
- * is admitted on its first sighting while the class has room: the last
- * refill needed no eviction. The filter only steers admission. It never
- * changes pixels.
+ * (lolcat) does not evict useful tiles, and a flood of one-off shaped
+ * cells does not pay a claim for each cell. The filter only steers
+ * admission. It never changes pixels.
  *
  * L0: each class has two tables for the default color pair of the frame.
  * All workers read them. A cell in the default colors is then one or a few
@@ -257,7 +256,7 @@ struct cell_tile cell_cache_find(const struct cell_class *k, struct cell_cache_w
 
 /*
  * Asks for a slot for a key that missed. The seen filter admits the key on
- * its second sighting, or on its first one (see Admission). Returns a tile buffer of cw * ch pixels to compose
+ * its second sighting. Returns a tile buffer of cw * ch pixels to compose
  * into, or NULL: compose straight into the canvas. The caller must fill
  * the whole tile before its next call into the cache. `spill` is the spill
  * flag that cell_cache_find() returns for this key later.

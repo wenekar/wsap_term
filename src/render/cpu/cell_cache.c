@@ -88,8 +88,6 @@ struct cell_class {
     int asked;
     /* A hit log overflowed in the last frame: evict nothing in this one. */
     bool protect;
-    /* The last refill needed no eviction. L0 keys are admitted at once. */
-    bool room;
     /* The clock at the last begin, and at the last publish. */
     uint32_t used;
     uint32_t last;
@@ -623,7 +621,6 @@ static void refill(struct cell_cache *c, struct cell_class *k, int cells)
     take_fresh(k, target);
     while (k->n_free < target && class_grow(c, k))
         take_fresh(k, target);
-    k->room = k->n_free >= target;
     bool protect = k->protect;
     k->protect = false;
     int want = target - k->n_free;
@@ -815,7 +812,7 @@ uint32_t *cell_cache_claim(struct cell_class *k, struct cell_cache_worker *w,
     bool seen = false;
     for (int i = 0; i < SEEN_WAYS; i++)
         seen |= set[i] == mark;
-    if (!seen && !(k->room && l0_domain(k, key))) {
+    if (!seen) {
         memmove(set + 1, set, (SEEN_WAYS - 1) * sizeof(*set));
         set[0] = mark;
         return NULL;
