@@ -360,6 +360,11 @@ static bool ensure_segment(int count)
     return true;
 }
 
+bool glyph_cache_reserve_segment(int count)
+{
+    return count < 2 || ensure_segment(count);
+}
+
 void glyph_cache_shape_segment(struct font_instance *fi, const uint32_t *cps, int count,
                                uint16_t style, glyph_span_fn emit, void *ctx)
 {

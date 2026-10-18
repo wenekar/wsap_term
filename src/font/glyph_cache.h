@@ -36,4 +36,12 @@ typedef void (*glyph_span_fn)(void *ctx, const struct glyph_span *span);
 void glyph_cache_shape_segment(struct font_instance *fi, const uint32_t *cps, int count,
                                uint16_t style, glyph_span_fn emit, void *ctx);
 
+/*
+ * Makes room in the segment scratch of the calling thread for `count` code
+ * points. A later glyph_cache_shape_segment() of at most `count` code points
+ * on this thread then allocates no scratch. Returns false when the memory is
+ * missing.
+ */
+bool glyph_cache_reserve_segment(int count);
+
 #endif

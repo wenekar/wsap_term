@@ -57,11 +57,12 @@ milestone. Milestone 6 adds the Metal backend.
 5. Moves: memmove each move block, in plan order. When the measured paint
    cost says that the pool paints the moved rows faster, they paint
    instead. The pixels and the damage are the same.
-6. Raster rows: `decor_get`, `cell_cache_begin`, then
-   `glyph_cache_set_parallel(true)`, then `pool_run` over the paint rows
-   and the overlay windows, then the join, then
-   `glyph_cache_set_parallel(false)`. Fill the bottom margin for an invalid
-   frame and for its windows.
+6. Raster rows: `decor_get`, `cell_cache_begin`, then the walk scratch
+   of every thread (`pool_each`, only for a terminal wider than before),
+   then `glyph_cache_set_parallel(true)`, then `pool_run` over the paint
+   rows and the overlay windows, then the join, then
+   `glyph_cache_set_parallel(false)`, then `raster_workers_balance`. Fill
+   the bottom margin for an invalid frame and for its windows.
 7. Publish the cache (`cell_cache_publish`).
 8. UI regions: fill `base` in the part of each region outside the grid,
    then `ui_scene_paint_clipped` on the region.
@@ -86,6 +87,12 @@ milestone. Milestone 6 adds the Metal backend.
   claimed, and the canvas pixels of its row windows. The free list cursor is
   the only shared atomic.
 - Pool workers follow the font protocol in `cpu/pool.h`.
+- Timing decides which thread paints which row. So no per-thread buffer
+  grows in the phase of a frame that the renderer painted before. Before
+  the phase, every thread gets walk and font segment scratch for the
+  terminal width (`render_walk_thread_reserve`). After the join, every
+  raster worker gets the spill and scratch room of the largest one
+  (`raster_workers_balance`).
 
 ## Pixel rules
 

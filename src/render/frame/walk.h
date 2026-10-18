@@ -274,9 +274,20 @@ enum render_walk_flags {
  * keeps its own scratch for the segment code points. The renderer calls the
  * walk in parallel mode also with 0 workers, so 0 and N workers take the
  * same font path.
+ *
+ * A segment has at most f->cols cells. After render_walk_thread_reserve()
+ * with f->cols or more, a walk of `f` allocates no scratch on that thread.
  */
 void render_row_walk(struct font_instance *fi, const struct terminal_frame *f, int y,
                      int c0, int c1, unsigned flags, const struct render_walk_sink *sink);
+
+/*
+ * Makes room in the scratch of the calling thread for a segment of `cols`
+ * cells: the segment code points of the walk and the segment scratch of the
+ * font (glyph_cache_reserve_segment()). The room only grows. Returns false
+ * when the memory is missing. Then a later walk grows the room itself.
+ */
+bool render_walk_thread_reserve(int cols);
 
 /*
  * Frees the scratch of the calling thread. Pool workers call it before they
