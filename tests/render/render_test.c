@@ -166,6 +166,22 @@ static bool thread_count_settles(int want)
     }
     return false;
 }
+
+/*
+ * Returns the thread count once it stops falling. A thread that an earlier
+ * test joined can still be listed, and a baseline that counts it is too high.
+ */
+static int settled_thread_count(void)
+{
+    int n = live_thread_count();
+    for (int i = 0, stable = 0; i < 200 && stable < 3; i++) {
+        nanosleep(&(struct timespec){ .tv_nsec = 10 * 1000 * 1000 }, NULL);
+        int now = live_thread_count();
+        stable = now == n ? stable + 1 : 0;
+        n = now;
+    }
+    return n;
+}
 #endif
 
 /* Each renderer owns its workers: create starts them, destroy joins them. */
@@ -180,7 +196,7 @@ static void worker_pool_lifecycle_test(void)
     assert(want && got);
     test_render_paint_full(want, w, h, true, t);
 #ifdef __linux__
-    int before = live_thread_count();
+    int before = settled_thread_count();
 #endif
     for (int round = 0; round < 3; round++) {
         struct renderer *r = renderer_create(&(struct render_options){ .threads = 3 });
@@ -231,7 +247,7 @@ static void scale_respawn_test(void)
     (void)draw_grid(r, px, size, &history, true, &frame, test_font());
     assert(!memcmp(px, want, bytes));
 
-    int before = live_thread_count();
+    int before = settled_thread_count();
     struct font_instance *big = font_instance_acquire(
         font_instance_size_pt(font_instance_default()), 180);
     assert(big && big != font_instance_default());
