@@ -161,6 +161,13 @@ void window_menu_sync(struct window *w)
 
 void window_menu_relayout(struct window *w)
 {
+    /* The menu can close a level before the next sync. Close the popups of
+     * that level first, so that every open popup has a level to measure. */
+    int levels = ui_menu_level_count(&ui_of(w)->menu);
+    if (ui_of(w)->menu_popups > levels) {
+        close_popups_from(w, levels);
+        ui_menu_layer_set_first_level(&ui_of(w)->menu_layer, levels);
+    }
     for (int d = 0; d < ui_of(w)->menu_popups; d++) {
         struct window_ui_menu_popup *p = &ui_of(w)->menu_popup[d];
         struct rect2i anchor = level_anchor(w, d);
