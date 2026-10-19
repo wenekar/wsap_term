@@ -1,0 +1,288 @@
+#!/usr/bin/env python3
+"""Usage: wayland-compositors [-t SECONDS] [--env [NAME]] [DIR...]
+
+List the Wayland compositors on this machine and test each one.
+
+A candidate is a listening socket with a NAME.lock file next to it, or a
+wayland-* socket in DIR (default: $XDG_RUNTIME_DIR). The script connects to
+each candidate and does a registry round trip. A socket that answers is
+connectable. A socket without the wayland- prefix is listed only when it
+answers, because other protocols (libei) also use lock files.
+
+    wayland-compositors
+    wayland-compositors --env kwin
+    env $(wayland-compositors --env kwin) build/bin/wsap_term
+
+--env prints WAYLAND_DISPLAY and XDG_RUNTIME_DIR for the first connectable
+compositor whose name or socket path contains NAME. Use it over SSH to reach
+the compositor of the desktop session. The exit status is 0 when a
+compositor is connectable (or matches NAME), else 1.
+"""
+
+import argparse
+import os
+import re
+import socket
+import stat
+import struct
+import sys
+
+# Process names of compositors, as argv[0] gives them.
+KNOWN = {
+    'kwin_wayland': 'KWin',
+    'kwin_wayland_wrapper': 'KWin',
+    'gnome-shell': 'Mutter',
+    'mutter': 'Mutter',
+    'gnome-kiosk': 'Mutter',
+    'sway': 'Sway',
+    'Hyprland': 'Hyprland',
+    'weston': 'Weston',
+    'river': 'river',
+    'wayfire': 'Wayfire',
+    'labwc': 'labwc',
+    'niri': 'niri',
+    'cage': 'Cage',
+    'gamescope': 'gamescope',
+    'cosmic-comp': 'COSMIC',
+    'hikari': 'hikari',
+    'dwl': 'dwl',
+}
+
+# Global prefixes that name a compositor when its process is unknown.
+# Order matters: KWin and Hyprland also advertise zwlr_ globals.
+GLOBAL_HINTS = [
+    ('org_kde_', 'KWin'),
+    ('gtk_shell1', 'Mutter'),
+    ('hyprland_', 'Hyprland'),
+    ('weston_', 'Weston'),
+    ('zcosmic_', 'COSMIC'),
+    ('gamescope_', 'gamescope'),
+    ('zwlr_', 'wlroots-based'),
+]
+
+SO_ACCEPTCON = 0x10000
+
+
+class Candidate:
+    def __init__(self, path):
+        self.path = path
+        self.pid = None
+        self.globals = []
+        self.error = None
+
+    @property
+    def connectable(self):
+        return self.error is None
+
+
+def natural(path):
+    return [int(p) if p.isdigit() else p for p in re.split(r'(\d+)', path)]
+
+
+def is_socket(path):
+    try:
+        return stat.S_ISSOCK(os.stat(path).st_mode)
+    except OSError:
+        return False
+
+
+def listening_sockets():
+    """Returns the paths of the listening Unix sockets."""
+    paths = set()
+    try:
+        with open('/proc/net/unix') as f:
+            next(f)
+            for line in f:
+                fields = line.split(None, 7)
+                if len(fields) == 8 and int(fields[3], 16) & SO_ACCEPTCON:
+                    paths.add(fields[7].rstrip('\n'))
+    except (OSError, ValueError):
+        pass
+    return {p for p in paths if p.startswith('/')}
+
+
+def candidates(dirs):
+    found = {os.path.realpath(p) for p in listening_sockets()
+             if is_socket(p) and os.path.exists(p + '.lock')}
+    for d in dirs:
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for name in names:
+            path = os.path.join(d, name)
+            if name.startswith('wayland-') and not name.endswith('.lock') and is_socket(path):
+                found.add(os.path.realpath(path))
+    return sorted(found, key=natural)
+
+
+def lock_holder(path):
+    """Returns the PID that holds the flock on PATH.lock, or None."""
+    try:
+        st = os.stat(path + '.lock')
+        with open('/proc/locks') as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    dev = f'{os.major(st.st_dev):02x}:{os.minor(st.st_dev):02x}:{st.st_ino}'
+    for line in lines:
+        fields = line.split()
+        if '->' not in fields and len(fields) >= 6 and fields[5] == dev:
+            return int(fields[4])
+    return None
+
+
+def process_name(pid):
+    try:
+        with open(f'/proc/{pid}/cmdline', 'rb') as f:
+            argv0 = f.read().split(b'\0')[0].decode(errors='replace')
+        if argv0:
+            return os.path.basename(argv0)
+        with open(f'/proc/{pid}/comm') as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def message(obj, opcode, arg):
+    return struct.pack('=III', obj, 12 << 16 | opcode, arg)
+
+
+def roundtrip(sock):
+    """Gets the registry and syncs. Returns the interface of each global."""
+    # wl_display.get_registry(new_id 2), then wl_display.sync(new_id 3).
+    sock.sendall(message(1, 1, 2) + message(1, 0, 3))
+    buf, interfaces = b'', []
+    while True:
+        chunk = sock.recv(65536)
+        if not chunk:
+            raise ConnectionError('closed the connection')
+        buf += chunk
+        while len(buf) >= 8:
+            obj, word = struct.unpack_from('=II', buf)
+            size, opcode = word >> 16, word & 0xffff
+            if size < 8:
+                raise ConnectionError('sent a message that is not Wayland')
+            if len(buf) < size:
+                break
+            body, buf = buf[8:size], buf[size:]
+            if obj == 2 and opcode == 0:
+                # wl_registry.global(name, interface, version)
+                n = struct.unpack_from('=I', body, 4)[0]
+                interfaces.append(body[8:8 + n - 1].decode(errors='replace'))
+            elif obj == 3 and opcode == 0:
+                # wl_callback.done
+                return interfaces
+            elif obj == 1 and opcode == 0:
+                # wl_display.error(object, code, message)
+                n = struct.unpack_from('=I', body, 8)[0]
+                text = body[12:12 + n - 1].decode(errors='replace')
+                raise ConnectionError(f'protocol error: {text}')
+
+
+def probe(c, timeout):
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect(c.path)
+        creds = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i'))
+        c.pid = struct.unpack('3i', creds)[0] or None
+        c.globals = roundtrip(sock)
+    except socket.timeout:
+        c.error = f'no reply within {timeout:g} s'
+    except ConnectionRefusedError:
+        c.error = 'connection refused'
+    except PermissionError:
+        c.error = 'permission denied'
+    except ConnectionError as e:
+        c.error = str(e) or 'connection failed'
+    except OSError as e:
+        c.error = os.strerror(e.errno) if e.errno else str(e)
+    finally:
+        sock.close()
+    if c.pid is None:
+        c.pid = lock_holder(c.path)
+        if c.pid is None and c.error == 'connection refused':
+            c.error = 'connection refused, stale socket: no process holds its lock'
+
+
+def compositor_name(c):
+    proc = process_name(c.pid) if c.pid else None
+    if proc in KNOWN:
+        return KNOWN[proc]
+    for prefix, name in GLOBAL_HINTS:
+        if any(g.startswith(prefix) for g in c.globals):
+            return name
+    return proc or 'unknown'
+
+
+def display_name(path, runtime_dir):
+    if runtime_dir and os.path.dirname(path) == os.path.realpath(runtime_dir):
+        return os.path.basename(path)
+    return path
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='List the Wayland compositors and test which ones accept a client.')
+    parser.add_argument('dirs', nargs='*', metavar='DIR',
+                        help='directories to scan for wayland-* sockets '
+                             '(default: $XDG_RUNTIME_DIR)')
+    parser.add_argument('-t', '--timeout', type=float, default=2.0,
+                        help='seconds to wait for each compositor (default: 2)')
+    parser.add_argument('--env', nargs='?', const='', metavar='NAME',
+                        help='print WAYLAND_DISPLAY and XDG_RUNTIME_DIR of the first '
+                             'connectable compositor that matches NAME')
+    args = parser.parse_args()
+
+    runtime_dir = os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'
+    found = [Candidate(p) for p in candidates(args.dirs or [runtime_dir])]
+    for c in found:
+        probe(c, args.timeout)
+    # Lock files alone do not prove Wayland. Keep other names only if they answer.
+    found = [c for c in found
+             if c.connectable or os.path.basename(c.path).startswith('wayland-')]
+    good = [c for c in found if c.connectable]
+    bad = [c for c in found if not c.connectable]
+
+    if args.env is not None:
+        want = args.env.lower()
+        for c in good:
+            if want in compositor_name(c).lower() or want in c.path.lower():
+                print(f'WAYLAND_DISPLAY={os.path.basename(c.path)}')
+                print(f'XDG_RUNTIME_DIR={os.path.dirname(c.path)}')
+                return 0
+        print(f'wayland-compositors: no connectable compositor matches {args.env!r}',
+              file=sys.stderr)
+        return 1
+
+    if not found:
+        print('No Wayland sockets found.')
+        return 1
+    current = os.environ.get('WAYLAND_DISPLAY')
+    if current:
+        current = os.path.realpath(os.path.join(runtime_dir, current))
+
+    def line(c, note=None):
+        notes = [f'pid {c.pid}'] if c.pid else []
+        if c.path == current:
+            notes.append('current')
+        if note:
+            notes.append(note)
+        text = f'{compositor_name(c)} - {display_name(c.path, runtime_dir)}'
+        return text + (f' ({", ".join(notes)})' if notes else '')
+
+    print('Detected connectable Wayland compositors:')
+    for c in good:
+        print(line(c))
+    if not good:
+        print('(none)')
+    if bad:
+        print('\nDetected but not connectable:')
+        for c in bad:
+            print(line(c, c.error))
+    return 0 if good else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

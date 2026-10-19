@@ -134,6 +134,13 @@ the input or render hot paths:
   commits:
   `gdb -ex "source scripts/gdb_buffer_inspector.py" -ex "run" build/bin/wsap_term`
 
+- `scripts/wayland-compositors` lists the Wayland compositors on the machine.
+  It tells which ones accept a client. Use it to find the live session for a
+  live test, for example over SSH, where `WAYLAND_DISPLAY` is not set.
+  `--env NAME` prints `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` of the first
+  match: `env $(scripts/wayland-compositors --env kwin) build/bin/wsap_term`.
+  Headless weston and sway tests do not need it.
+
 - The UI inspector (`src/ui/debug.h`, `src/ui/yasl/inspector.h`) is the tool for
   layout and alignment work. `docs/ui-debugging.md` has the full reference.
   - Start the app with `--debug-socket PATH` or `WSAP_DEBUG_SOCKET=PATH`.
