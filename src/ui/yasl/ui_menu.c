@@ -1,4 +1,6 @@
 #define _GNU_SOURCE
+#include <math.h>
+
 #include "ui/yasl/internal.h"
 #include "ui/yasl/inspector.h"
 
@@ -71,16 +73,21 @@ static struct vector2i measure_popup(struct window *w, int depth)
     return size;
 }
 
+/* The UI works in device pixels. The yasl popup API takes logical units. The
+ * size rounds up, so that the popup canvas always holds the content. */
 static struct yasl_popup_options popup_options(struct window *w, int depth,
                                                struct vector2i size, struct rect2i anchor)
 {
+    struct window_logical_point at = window_logical(w, anchor.pos);
+    struct window_logical_point extent = window_logical(w, anchor.size);
+    struct window_logical_point logical_size = window_logical(w, size);
     return (struct yasl_popup_options){
-        .width = size.x,
-        .height = size.y,
-        .x = anchor.x,
-        .y = anchor.y,
-        .anchor_width = anchor.width,
-        .anchor_height = anchor.height,
+        .width = (int)ceil(logical_size.x - 1e-6),
+        .height = (int)ceil(logical_size.y - 1e-6),
+        .x = at.x,
+        .y = at.y,
+        .anchor_width = extent.x,
+        .anchor_height = extent.y,
         .anchor = depth > 0 ? YASL_EDGE_TOP | YASL_EDGE_RIGHT : YASL_EDGE_BOTTOM | YASL_EDGE_LEFT,
         .gravity = YASL_EDGE_BOTTOM | YASL_EDGE_RIGHT,
         .adjust = YASL_ADJUST_SLIDE_X | YASL_ADJUST_SLIDE_Y | YASL_ADJUST_FLIP_X | YASL_ADJUST_FLIP_Y,
