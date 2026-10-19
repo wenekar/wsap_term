@@ -392,6 +392,16 @@ if get_option('integration_tests')
             timeout: 60,
         )
         test(
+            'popup-scale-test',
+            python,
+            args: files('ui/yasl/popup_scale_test.py'),
+            depends: [program, vptr],
+            env: {'BIN': program.full_path(), 'VPOINTER': vptr.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 60,
+        )
+        test(
             'popup-dismiss-test',
             python,
             args: files('ui/yasl/popup_dismiss_test.py'),
