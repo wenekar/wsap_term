@@ -86,6 +86,8 @@ bool ui_tabbar_is_closing(const struct ui_tabbar *tb, int index);
 bool ui_tabbar_closing_done(const struct ui_tabbar *tb);
 
 int ui_tabbar_height(const struct ui_tabbar *tb);
+/* Height of the bar for the lasting tab count. A drop target hover from
+ * another window does not change it, so the content grid stays the same. */
 int ui_tabbar_steady_height(const struct ui_tabbar *tb);
 bool ui_tabbar_is_dragging(const struct ui_tabbar *tb);
 

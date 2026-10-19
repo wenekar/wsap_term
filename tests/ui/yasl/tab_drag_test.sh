@@ -130,6 +130,12 @@ assert result["count"] == 0, result["findings"]
 		dbg -w "$CHECK_PREVIEW_WIN" screenshot "${TAB_DRAG_SCREENSHOT:-$TMP/drop-preview.png}" >/dev/null \
 			|| fail "the drop preview screenshot failed"
 		unset CHECK_PREVIEW_WIN
+		if [[ -n "${CHECK_NO_WINCH:-}" ]]; then
+			sleep 0.3
+			[[ ! -s "$CHECK_NO_WINCH" ]] \
+				|| fail "the drop target shell got $(wc -l <"$CHECK_NO_WINCH") SIGWINCH during the hover"
+			unset CHECK_NO_WINCH
+		fi
 	fi
 	ptr release
 	sleep 0.6
@@ -171,8 +177,15 @@ swaymsg -q "[con_id=${CONS[0]}] move position 0 0"
 swaymsg -q "[con_id=${CONS[1]}] move position 850 0"
 sleep 0.3
 
+# The hover of a foreign tab must not resize the shell of the target window.
+WINCH_LOG="$TMP/winch"
+: >"$WINCH_LOG"
+dbg -w 1 text "trap 'echo w >> $WINCH_LOG' WINCH" >/dev/null
+dbg -w 1 key enter >/dev/null
+sleep 0.3
 read -r x y < <(tab_at 0 1)
 CHECK_PREVIEW_WIN=1
+CHECK_NO_WINCH="$WINCH_LOG"
 drag "$x" "$y" 1200 "$y"
 expect_tabs "1 2" "a tab dragged sideways joins the next window"
 dbg -w 1 lint | python3 -c '
