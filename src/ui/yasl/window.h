@@ -90,9 +90,20 @@ struct window *window_create(struct window_host *host, const struct window_spec 
 void window_compose_frame(struct window *w, struct window_frame *frame);
 /*
  * Shows the canvas of `frame`. `damage` lists the canvas pixels that
- * changed. NULL, full damage, or an empty list presents the whole canvas.
- * An overflowed list presents its bounds. `presented` is the GPU result
- * for a drawable frame. Returns true when the frame is on screen.
+ * changed.
+ * - damage->any false means: no pixel changed. The window then presents
+ *   nothing and returns true. A fresh frame always presents.
+ * - NULL, full damage, or a list with no rect presents the whole canvas.
+ * - An overflowed list presents its bounds.
+ * - `presented` is the GPU result for a drawable frame.
+ * Returns true when the frame is on screen. After a false return, the next
+ * frame of the surface is fresh.
+ *
+ * The window keeps each canvas between frames. It sets
+ * frame->target.fresh when it cannot vouch for the canvas: on the first
+ * frame, after a size or scale change, after a frame that was not
+ * presented, after a resume from suspend, and after the display was lost
+ * or restored. A frame with a drawable is always fresh.
  */
 bool window_present(struct window *w, struct window_frame *frame,
                     const struct damage_list *damage, bool presented);

@@ -400,6 +400,57 @@ static void test_text_contract(void)
     scene_text_contract_check(&b);
 }
 
+/*
+ * Large glyphs. The ink of each glyph reaches 200 px left of its pen and
+ * 600 px right of it. A clipped paint must still give the pixels of a full
+ * paint inside the clip, as the incremental UI repaint needs.
+ */
+#define BIG_W 800
+#define BIG_H 16
+static uint8_t big_alpha[BIG_H][BIG_W];
+static uint8_t *big_rows[BIG_H];
+static struct glyph big_glyph;
+
+static const struct glyph *big_hook(uint32_t cp, uint16_t flags)
+{
+    (void)cp;
+    (void)flags;
+    return &big_glyph;
+}
+
+static void test_large_glyph_clip(void)
+{
+    enum { W = 2000, H = BIG_H, ADV = 400, STEP = 37, CLIP_W = 23 };
+    for (int y = 0; y < BIG_H; y++) {
+        for (int x = 0; x < BIG_W; x++)
+            big_alpha[y][x] = (uint8_t)(1 + (x * 7 + y * 13) % 254);
+        big_rows[y] = big_alpha[y];
+    }
+    big_glyph = (struct glyph){ .width = BIG_W, .x_offset = -200, .alpha = big_rows };
+    scene_paint_glyph_hook = big_hook;
+    struct ui_scene s = {0};
+    ui_scene_init(&s);
+    struct ui_text_style st = { .advance = ADV, .cell_h = H };
+    CHECK(ui_scene_text_run(&s, R(600, 0, 2 * ADV, H), st, 0xFFF0E0D0u, "AB", 2));
+
+    const uint32_t base = 0xFF102030u;
+    static uint32_t full[W * H], part[W * H];
+    fill(full, W * H, base);
+    CHECK(ui_scene_paint(TEST_FONT, full, W, H, &s));
+    /* The far ink of both glyphs is on the canvas. */
+    CHECK(full[1190] != base && full[810] != base);
+    for (int x0 = 0; x0 < W; x0 += STEP) {
+        struct rect2i clip = R(x0, 0, CLIP_W, H);
+        memcpy(part, full, sizeof(part));
+        for (int y = 0; y < H; y++)
+            for (int x = x0; x < x0 + CLIP_W && x < W; x++)
+                part[y * W + x] = base;
+        CHECK(ui_scene_paint_clipped(TEST_FONT, part, W, H, &s, clip));
+        CHECK(!memcmp(part, full, sizeof(part)));
+    }
+    ui_scene_destroy(&s);
+}
+
 /* ---- Clips ----------------------------------------------------------- */
 
 static void test_failed_scene_is_not_painted(void)
@@ -573,6 +624,7 @@ int main(int argc, char **argv)
     test_text_contract();
     test_failed_scene_is_not_painted();
     test_paint_clip();
+    test_large_glyph_clip();
     test_rounded_rect_clipping_keeps_shape();
     test_node_draws_under_clip();
     (void)parity_hash();

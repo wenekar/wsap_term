@@ -38,6 +38,10 @@ milestone. Milestone 6 adds the Metal backend.
   and its GPU.
 - The window owns each `framebuffer_history`. The renderer owns what
   `history.data` points to: one `struct render_surface`.
+- The window keeps each canvas between frames. It sets `fresh` only when it
+  cannot vouch for the canvas (`src/ui/yasl/internal.h`, `window_native`).
+  It presents nothing for a frame without damage. A frame with a drawable
+  is always fresh until milestone 6.
 - A draw without history uses the scratch surface. It allocates nothing.
 - The font owns every glyph. A glyph pointer is valid only inside one walk
   callback. No module keeps one.

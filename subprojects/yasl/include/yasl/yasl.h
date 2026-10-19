@@ -353,10 +353,11 @@ YASL_API void yasl_loop_unwatch_signals(yasl_loop *loop);
 
 /* Rendering */
 /** CPU surfaces: the window's pixel_width * pixel_height premultiplied
- * 0xAARRGGBB pixels, rows tightly packed. They persist, and a resize keeps the
- * overlap and zeroes the rest. Valid until the next wait, the return of the
- * callback that got them, or the next yasl_cpu_ call. Present to show them;
- * the system may also show them when it redraws the window. */
+ * 0xAARRGGBB pixels, rows tightly packed. They persist. Only the yasl_cpu_
+ * calls resize them, and a resize keeps the overlap and zeroes the rest.
+ * Valid until the next wait, the return of the callback that got them, or the
+ * next yasl_cpu_ call. Present to show them; the system may also show them
+ * when it redraws the window. */
 struct yasl_damage {
     int x, y, width, height;
 };

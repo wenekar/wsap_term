@@ -245,17 +245,33 @@ static bool canvas_fit(yasl_surface *s, int w, int h)
     s->canvas_height = h;
     return true;
 }
-/* CPU presenter: every drawn frame shows the canvas; before the first present there is none. */
+/* CPU presenter: every drawn frame shows the canvas; before the first present there is none.
+ * Only the application's calls resize the canvas. A frame of another size shows the
+ * overlap and zeroes the rest, so the canvas keeps what the application drew. */
 static void draw_canvas(yasl_surface *s, struct yasl_private_frame *frame, void *ud)
 {
     (void)ud;
     if (s->presenter != YASL_PRIVATE_PRESENTER_CPU || !frame->target.pixels || !s->canvas)
         return;
     int w = frame->target.size.x, h = frame->target.size.y;
-    if (!canvas_fit(s, w, h))
+    if (w <= 0 || h <= 0)
         return;
-    memcpy(frame->target.pixels, s->canvas, (size_t)w * (size_t)h * sizeof(uint32_t));
-    struct yasl_private_damage_list damage = s->cpu_damage.n != 0 ? s->cpu_damage : (struct yasl_private_damage_list){.n = -1};
+    uint32_t *dst = frame->target.pixels;
+    bool same = w == s->canvas_width && h == s->canvas_height;
+    if (same) {
+        memcpy(dst, s->canvas, (size_t)w * (size_t)h * sizeof(*dst));
+    } else {
+        int keep_w = w < s->canvas_width ? w : s->canvas_width;
+        int keep_h = h < s->canvas_height ? h : s->canvas_height;
+        for (int y = 0; y < h; y++) {
+            uint32_t *row = dst + (size_t)y * w;
+            int kept = y < keep_h ? keep_w : 0;
+            if (kept)
+                memcpy(row, s->canvas + (size_t)y * s->canvas_width, (size_t)kept * sizeof(*row));
+            memset(row + kept, 0, (size_t)(w - kept) * sizeof(*row));
+        }
+    }
+    struct yasl_private_damage_list damage = same && s->cpu_damage.n != 0 ? s->cpu_damage : (struct yasl_private_damage_list){.n = -1};
     yasl_private_surface_present(s, &frame->target, &damage);
     s->cpu_damage = (struct yasl_private_damage_list){0};
 }

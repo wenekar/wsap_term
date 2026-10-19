@@ -1,6 +1,22 @@
 #!/bin/bash
+# Usage: wsap-damage-probe [-B BUILDDIR] [OUTDIR]
+# The build directory is -B, else $WSAP_BUILD_DIR, else build/ in the
+# repository. $BIN overrides the binary itself.
 set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd)
+BUILD=${WSAP_BUILD_DIR:-$REPO/build}
+while [ $# -gt 0 ]; do
+    case "$1" in
+    -B|--build) BUILD=$2; shift 2 ;;
+    -h|--help) sed -n 2,4p "$0"; exit 0 ;;
+    *) break ;;
+    esac
+done
+BIN=${BIN:-$BUILD/bin/wsap_term}
+if [ ! -x "$BIN" ]; then
+    echo "wsap-damage-probe: no binary at $BIN" >&2
+    exit 1
+fi
 OUT=${1:-$(mktemp -d)}
 mkdir -p "$OUT"
 rm -f "$OUT"/wl.log "$OUT"/marks "$OUT"/shot.png
@@ -12,11 +28,12 @@ setsid weston --backend=headless --renderer=pixman --width=1000 --height=600 \
 WESTON=$!
 for _ in $(seq 50); do [ -S "$XDG_RUNTIME_DIR/$SOCK_NAME" ] && break; sleep 0.1; done
 
-DBG="$OUT/dbg.sock"
+# A socket path under OUTDIR can pass the AF_UNIX length limit.
+DBG="$XDG_RUNTIME_DIR/$SOCK_NAME.sock"
 rm -f "$DBG"
 env -u LD_PRELOAD WAYLAND_DISPLAY="$SOCK_NAME" WAYLAND_DEBUG=client \
     SHELL=/bin/sh PS1='$ ' ENV=/dev/null \
-    setsid "$REPO/build/bin/wsap_term" --debug-socket "$DBG" \
+    setsid "$BIN" --debug-socket "$DBG" \
     >"$OUT/term.log" 2>"$OUT/wl.log" < /dev/null &
 TERM_PID=$!
 for _ in $(seq 50); do [ -S "$DBG" ] && break; sleep 0.1; done
@@ -41,6 +58,7 @@ kill "$TERM_PID" 2>/dev/null
 sleep 0.3
 kill "$WESTON" 2>/dev/null
 wait 2>/dev/null
+rm -f "$DBG"
 
 python3 - "$OUT" <<'EOF'
 import re, sys

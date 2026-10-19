@@ -222,6 +222,9 @@ static void window_geometry_event(struct window *w, const struct yasl_event *ev)
     bool suspended = (ev->window.state & YASL_STATE_SUSPENDED) != 0;
     if (suspended != w->suspended) {
         w->suspended = suspended;
+        /* The window cannot vouch for a canvas across a suspend. The first
+         * frame after the resume paints and presents every pixel. */
+        window_canvas_forget(w);
         if (!w->suspended)
             window_redraw(w);
         if (window_mounted(w))
@@ -247,11 +250,16 @@ static void dispatch_event(struct window_host *host, const struct yasl_event *ev
             host->hooks.reopen(host->hooks.ud);
         return;
     case YASL_EVENT_DISPLAY_LOST:
+        /* Presents fail while the display is away, and the display server
+         * that comes back has none of the old frames. */
+        for (int i = 0; i < host->count; i++)
+            window_canvas_forget(host->windows[i]);
         if (ev->action == YASL_LOST_FINAL && host->hooks.quit)
             host->hooks.quit(host->hooks.ud);
         return;
     case YASL_EVENT_DISPLAY_RESTORED:
         for (int i = 0; i < host->count; i++) {
+            window_canvas_forget(host->windows[i]);
             window_repaint_all(host->windows[i]);
             window_redraw(host->windows[i]);
         }

@@ -19,6 +19,11 @@ struct window;
 struct window_ui;
 struct window_frame;
 
+/*
+ * The UI part of one frame of one surface. `damage` lists where `scene`
+ * differs from the last scene built for the same surface. The main surface
+ * and each popup surface track their scenes apart.
+ */
 struct window_ui_frame {
     struct ui_scene *scene;
     struct ui_damage damage;

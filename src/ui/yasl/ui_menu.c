@@ -45,6 +45,7 @@ static void close_popup(struct window *w, int depth)
     ui_widget_destroy(&p->root);
     window_native_remove(w, p->surface);
     yasl_surface_destroy(p->surface);
+    ui_damage_tracker_destroy(&p->damage);
     *p = (struct window_ui_menu_popup){0};
 }
 

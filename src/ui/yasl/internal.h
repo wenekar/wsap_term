@@ -20,6 +20,25 @@
 
 #define WINDOW_NATIVE_MAX 16
 
+/*
+ * One native surface of a window.
+ *
+ * The canvas of a surface persists between frames, so the renderer paints
+ * only what changed. The window marks a frame fresh when it cannot vouch
+ * for the canvas:
+ * - `vouched` is true when the canvas holds the last frame that the
+ *   renderer drew with `history`, and the window presented that frame.
+ *   Each frame clears it before it composes. window_present() sets it again
+ *   when the present succeeds. Zero: the first frame is fresh.
+ * - `canvas_size` and `canvas_scale_120` are the size and the scale of the
+ *   last frame. A change makes the next frame fresh. A size change also
+ *   covers a reallocation of the canvas, because only a size change
+ *   reallocates it.
+ * - window_canvas_forget() clears `vouched` on events that can change the
+ *   canvas behind the window.
+ * - A frame with a drawable is always fresh, until the Metal backend
+ *   (milestone 6) keeps the previous frame for a drawable.
+ */
 struct window_native {
     struct yasl_surface *surface;
     struct framebuffer_history history;
@@ -27,6 +46,9 @@ struct window_native {
     void *metal_layer;
     uint32_t *pixels;
     struct vector2i pixels_size;
+    struct vector2i canvas_size;
+    uint32_t canvas_scale_120;
+    bool vouched;
     bool failing;
 };
 
@@ -40,11 +62,17 @@ struct window_fifo {
 struct window_accessibility;
 struct window_debug;
 
+/*
+ * One native menu popup. `damage` tracks the scenes of the popup surface,
+ * as `window_ui.ui_damage` does for the main surface. So a popup frame
+ * where no scope changed presents nothing.
+ */
 struct window_ui_menu_popup {
     struct yasl_surface *surface;
     struct ui_surface ui;
     struct ui_widget root;
     struct rect2i anchor;
+    struct ui_damage_tracker damage;
 };
 
 struct window_ui {
@@ -117,6 +145,8 @@ struct window {
     bool has_bg;
 };
 
+/* Makes the next frame of each native surface of `w` fresh. */
+void window_canvas_forget(struct window *w);
 bool window_host_add(struct window_host *host, struct window *w);
 void window_wake_at(struct window *w, uint64_t at_ms);
 void window_host_remove(struct window_host *host, struct window *w);

@@ -328,18 +328,21 @@ static void paint_text(const struct render_kernels *k, struct font_instance *fi,
         return;
     uint16_t flags = text_style(op->style.flags);
     int64_t tx = op->rect.x;
+    /*
+     * Fetch each glyph of the run. paint_glyph() clips the real ink of the
+     * glyph, [x_offset, x_offset + width) from the pen, to the clip. Do not
+     * cull glyphs with a fixed reach: a large glyph can reach farther, and
+     * a clipped paint then differs from a full paint.
+     */
     for (uint32_t i = 0; i < op->text_len;) {
         uint32_t cp;
         int cells;
         i += (uint32_t)ui_text_run_next(text + i, op->text_len - i, &cp, &cells);
-        const struct glyph *g =
-            tx + 382 <= clip.x ? NULL : glyph_cache_fetch(fi, cp, flags);
+        const struct glyph *g = glyph_cache_fetch(fi, cp, flags);
         int gx = tx > INT_MAX ? INT_MAX : tx < INT_MIN ? INT_MIN : (int)tx;
         paint_glyph(k, px, width, height, gx, op->rect.y, g, op->color,
                     op->style.cell_h, glyph_rows, clip);
         tx += (int64_t)cells * op->style.advance;
-        if (tx >= (int64_t)clip.x + clip.width + 128)
-            break;
     }
 }
 

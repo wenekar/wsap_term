@@ -139,10 +139,22 @@ to convert. Never add `bounds.pos` by hand.
 
 ### Damage
 
-`scripts/wsap-damage-probe [OUTDIR]` runs a private instance on headless
-weston and prints the Wayland damage of every commit, for an idle period
-and for tab title changes. An idle frame should commit no damage or only
-the cursor row. A title change should damage only its tab.
+`scripts/wsap-damage-probe [-B BUILDDIR] [OUTDIR]` runs a private instance
+on headless weston and prints the Wayland damage of every commit, for an
+idle period and for tab title changes. The build directory is `-B`, else
+`$WSAP_BUILD_DIR`, else `build/`. `$BIN` overrides the binary. An idle
+frame should commit no damage or only the cursor row. A title change
+should damage only its tab.
+
+The window keeps the canvas of each surface between frames, and the
+renderer repaints only what changed. A frame with no damage presents
+nothing. Each popup menu surface tracks its own scenes, so an idle popup
+also commits nothing. The window paints a fresh frame when it cannot vouch
+for the canvas: on the first frame, after a size or scale change, after a
+frame that was not presented, after a resume from suspend, and after the
+display was lost or restored. `WSAP_RENDER_FULL=1` paints every frame
+fresh, so compare screenshots with and without it to find a stale pixel.
+`canvas-damage-test` does this with the compositor output.
 
 ### Text boxes
 

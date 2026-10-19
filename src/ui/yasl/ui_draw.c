@@ -50,12 +50,16 @@ bool window_ui_build_frame(struct window *w, struct yasl_surface *surface,
     struct ui_surface *ui = window_ui_surface_of(w, surface);
     if (!ui)
         return false;
+    /* Each surface tracks its own scenes, because each surface keeps its
+     * own canvas. */
+    struct ui_damage_tracker *tracker = &window_ui_of(w)->ui_damage;
     if (!main) {
         bool found = false;
         struct window_ui *state = window_ui_of(w);
         for (int i = 0; i < state->menu_popups; i++) {
             if (state->menu_popup[i].surface == surface) {
                 surface_id = i + 1;
+                tracker = &state->menu_popup[i].damage;
                 found = true;
                 break;
             }
@@ -74,9 +78,9 @@ bool window_ui_build_frame(struct window *w, struct yasl_surface *surface,
         return true;
     }
     struct ui_scene *scene = build_ui(w, ui, surface_id);
+    ui_damage_track(tracker, scene, &out->damage);
     if (main) {
         window_ui_update_cursor(w);
-        ui_damage_track(&window_ui_of(w)->ui_damage, scene, &out->damage);
         window_accessibility_publish(w);
     }
     out->scene = scene;

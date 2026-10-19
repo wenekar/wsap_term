@@ -52,7 +52,7 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
         render.cpu_only = true;
     } else {
         render.ui = ui.scene;
-        render.ui_damage = main ? &ui.damage : NULL;
+        render.ui_damage = &ui.damage;
         render.repaint = ui.repaint;
         struct terminal_frame_source source = {0};
         if (main && terminal_frame_source(w, now_ms, &source)) {

@@ -164,12 +164,26 @@ static bool native_report(struct window_native *n, bool ok, const char *what, in
     return ok;
 }
 
+void window_canvas_forget(struct window *w)
+{
+    for (int i = 0; w && i < w->native_count; i++)
+        w->natives[i].vouched = false;
+}
+
 static void native_compose(struct window *w, struct window_native *n,
                            struct framebuffer target)
 {
     n->generation++;
-    /* Each frame is fresh for now, so the renderer paints every pixel. */
-    target.fresh = true;
+    uint32_t scale_120 = window_scale_120(w);
+    /* A frame with a drawable is always fresh. The GPU path does not yet
+     * keep the previous frame for a drawable. Milestone 6 decides this. */
+    target.fresh = target.drawable || !n->vouched ||
+                   !vector2i_eq(n->canvas_size, target.size) ||
+                   n->canvas_scale_120 != scale_120;
+    /* Until window_present() succeeds, the canvas is not what is on screen. */
+    n->vouched = false;
+    n->canvas_size = target.size;
+    n->canvas_scale_120 = scale_120;
     target.history = &n->history;
     struct window_frame frame = {
         .surface = n->surface,
@@ -412,14 +426,14 @@ static struct yasl_damage yasl_damage_of(struct rect2i r)
     return (struct yasl_damage){ .x = r.x, .y = r.y, .width = r.width, .height = r.height };
 }
 
-bool window_present(struct window *w, struct window_frame *frame,
-                    const struct damage_list *damage, bool presented)
+static bool present_canvas(struct window_native *n, struct window_frame *frame,
+                           const struct damage_list *damage, bool presented)
 {
-    if (!w || w->closed || !frame || !frame->surface)
-        return false;
-    struct window_native *n = native_find(w, frame->surface);
     if (frame->target.drawable)
         return native_report(n, presented, "metal present", 0);
+    /* No pixel changed, so the screen already shows this frame. */
+    if (damage && !damage->any && !frame->target.fresh)
+        return true;
     int status;
     if (damage && !damage->all && damage->n < 0) {
         /* An overflowed list presents its bounds. */
@@ -434,6 +448,19 @@ bool window_present(struct window *w, struct window_frame *frame,
         status = yasl_cpu_present(frame->surface);
     }
     return native_report(n, status == 0, "yasl_cpu_present", -status);
+}
+
+bool window_present(struct window *w, struct window_frame *frame,
+                    const struct damage_list *damage, bool presented)
+{
+    if (!w || w->closed || !frame || !frame->surface)
+        return false;
+    struct window_native *n = native_find(w, frame->surface);
+    bool ok = present_canvas(n, frame, damage, presented);
+    /* A failed present leaves the screen behind the canvas. */
+    if (n)
+        n->vouched = ok;
+    return ok;
 }
 
 struct window_host *window_host(const struct window *w)

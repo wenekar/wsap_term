@@ -17,6 +17,20 @@ static void drain(void)
     while (yasl_wait_event(&e, 0) > 0)
         assert(++n < 1000);
 }
+/* Waits up to 3 s for the logical size, then lets the frames at that size draw. */
+static void wait_size(yasl_surface *s, int width, int height)
+{
+    yasl_event e;
+    struct yasl_surface_info info;
+    uint64_t deadline = yasl_time_ns() + 3000000000ull;
+    do {
+        assert(yasl_wait_event(&e, 20) >= 0);
+        info = yasl_surface_get_info(s);
+    } while ((info.width != width || info.height != height) && yasl_time_ns() < deadline);
+    assert(info.width == width && info.height == height);
+    for (int i = 0; i < 5; i++)
+        assert(yasl_wait_event(&e, 20) >= 0);
+}
 /* Waits up to 2 s for the window to enter or leave fullscreen; a system that
  * ignores the request leaves it as it is. */
 static void wait_fullscreen(yasl_surface *s, bool want)
@@ -411,6 +425,21 @@ int main(int argc, char **argv)
     assert(pixels && w == info.pixel_width && h == info.pixel_height);
     assert(pixels[0] == 0xff102030u && pixels[(size_t)3 * w + 2] == 0xffaabbccu);
     assert(pixels[(size_t)w * h - 1] == 0);
+    assert(yasl_cpu_present(s) == 0);
+
+    /* A frame at a size that the application did not draw shows the canvas,
+     * but does not change it. */
+    size_t corner = (size_t)w * h - 1;
+    pixels[corner] = 0xff405060u;
+    assert(yasl_cpu_present(s) == 0);
+    drain();
+    assert(yasl_surface_request_size(s, 80, 64) == 0);
+    wait_size(s, 80, 64);
+    assert(yasl_surface_request_size(s, 112, 96) == 0);
+    wait_size(s, 112, 96);
+    pixels = yasl_cpu_pixels(s, &w, &h);
+    assert(pixels && (size_t)w * h - 1 == corner);
+    assert(pixels[0] == 0xff102030u && pixels[corner] == 0xff405060u);
     assert(yasl_cpu_present(s) == 0);
 
     /* The refresh callback is reserved for modal loops; ordinary waits deliver REFRESH. */
