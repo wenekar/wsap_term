@@ -159,7 +159,7 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
         return true;
     }
     if (event->kind == UI_EVENT_TEXT) {
-        terminal_send_input(w, event->data.text.data, event->data.text.len);
+        terminal_text(w, event->data.text.data, event->data.text.len);
         return true;
     }
     if (event->kind != UI_EVENT_POINTER || !t || !t->session.term)

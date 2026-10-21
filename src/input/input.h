@@ -127,7 +127,13 @@ struct input_key_event {
     uint32_t shifted;
     uint32_t base;
     uint32_t text;
+    /* Queued events own these UTF-8 bytes. */
+    char *text_utf8;
+    size_t text_len;
+    /* Keep the raw modifiers for shortcuts. */
+    unsigned consumed_mods;
     bool text_deferred;
+    bool ime_handled;
 };
 
 struct input_mouse_event {

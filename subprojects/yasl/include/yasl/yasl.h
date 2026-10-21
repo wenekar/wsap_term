@@ -213,7 +213,7 @@ enum yasl_event_type {
                              * one fold into it. */
     YASL_EVENT_REFRESH,     /**< Draw now: once sized, after every resize, and on expose. */
     YASL_EVENT_KEY,         /**< key; action is a yasl_key_action. */
-    YASL_EVENT_TEXT,        /**< text: typed text to insert. */
+    YASL_EVENT_TEXT,        /**< text: typed text to insert. ime.key_id links its key. */
     YASL_EVENT_COMPOSITION, /**< text: input method preedit to show at the caret,
                              * ime.begin..end its cursor; empty ends it. */
     YASL_EVENT_TEXT_EDIT,   /**< text: replaces bytes ime.begin..end of the
@@ -254,11 +254,21 @@ enum yasl_transfer { YASL_TRANSFER_OK, YASL_TRANSFER_UNAVAILABLE, YASL_TRANSFER_
 enum yasl_drop_action { YASL_DROP_OVER, YASL_DROP_LEAVE, YASL_DROP_RELEASE, YASL_DROP_CANCEL };
 enum yasl_lost { YASL_LOST_RECONNECTING, YASL_LOST_FINAL };
 
+enum yasl_key_text {
+    YASL_KEY_TEXT_UNSPECIFIED, /**< The backend does not report text ownership. */
+    YASL_KEY_TEXT_NONE,        /**< Native text input did not insert text. */
+    YASL_KEY_TEXT_COMMIT,      /**< Native text input inserted text for this key. */
+    YASL_KEY_TEXT_COMPOSITION, /**< The input method owns this key. */
+};
+
 /** Physical key, layout labels (codepoint unshifted, shifted; 0 if none) and the
  * native code (evdev, X11 keycode or macOS virtual key). Type with TEXT, not this. */
 struct yasl_key_event {
     enum yasl_key key;
     uint32_t codepoint, shifted, native_code;
+    enum yasl_key_text text_input;
+    unsigned consumed_mods; /**< Modifiers used by native text input. */
+    uint64_t text_id; /**< Nonzero matches ime.key_id on the text edit for this key. */
 };
 /** button changed on DOWN/UP; buttons are held YASL_BUTTON_BIT()s. */
 struct yasl_pointer_event {
@@ -284,6 +294,7 @@ struct yasl_pen_event {
 struct yasl_ime_event {
     size_t begin, end;
     uint64_t revision;
+    uint64_t key_id; /**< Zero for input method commits without a physical key. */
 };
 struct yasl_event {
     enum yasl_event_type type;

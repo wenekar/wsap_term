@@ -98,6 +98,8 @@ static enum window_input_result menu_input(struct window *w, const struct input_
 
 void window_ui_route(struct window *w, struct input_event *ev)
 {
+    if (ev->kind == INPUT_KEY && ev->key.ime_handled)
+        return;
     switch (ev->kind) {
     case INPUT_MOUSE:
         if (ev->mouse.kind == PTR_MOTION)

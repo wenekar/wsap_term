@@ -65,6 +65,10 @@ enum input_push_result input_queue_add(struct input_queue *q,
         ((!ev->paste.data && ev->paste.len) ||
          ev->paste.len > INPUT_TEXT_MAX - q->text_bytes))
         return INPUT_PUSH_DROPPED;
+    if (ev->kind == INPUT_KEY &&
+        ((!ev->key.text_utf8 && ev->key.text_len) ||
+         ev->key.text_len > INPUT_TEXT_MAX - q->text_bytes))
+        return INPUT_PUSH_DROPPED;
 
     if (q->head != q->tail) {
         unsigned last = (q->tail - 1) & (INPUT_QUEUE_SIZE - 1);
@@ -97,6 +101,7 @@ enum input_push_result input_queue_add(struct input_queue *q,
         }
     }
     if (ev->kind == INPUT_PASTE || ev->kind == INPUT_DROP_FILES) q->text_bytes += ev->paste.len;
+    if (ev->kind == INPUT_KEY) q->text_bytes += ev->key.text_len;
     q->ev[q->tail] = *ev;
     q->tail = queue_next(q->tail);
     return evicted ? INPUT_PUSH_EVICTED_MOTION : INPUT_PUSH_OK;
@@ -134,6 +139,7 @@ bool input_queue_take(struct input_queue *q, struct input_event *out)
     if (!q || !out || q->head == q->tail) return false;
     *out = q->ev[q->head];
     if (out->kind == INPUT_PASTE || out->kind == INPUT_DROP_FILES) q->text_bytes -= out->paste.len;
+    if (out->kind == INPUT_KEY) q->text_bytes -= out->key.text_len;
     q->head = queue_next(q->head);
 
     while (q->head != q->tail) {
@@ -161,6 +167,12 @@ void input_queue_reset(struct input_queue *q)
 
 void input_event_release(struct input_event *ev)
 {
+    if (ev && ev->kind == INPUT_KEY) {
+        free(ev->key.text_utf8);
+        ev->key.text_utf8 = NULL;
+        ev->key.text_len = 0;
+        return;
+    }
     if (!ev || (ev->kind != INPUT_PASTE && ev->kind != INPUT_DROP_FILES)) return;
     free(ev->paste.data);
     ev->paste.data = NULL;

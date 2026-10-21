@@ -208,6 +208,23 @@ int main(void)
     expect("\001");
 
     mode(0);
+    K(.codepoint = '8', .text_utf8 = "[", .text_len = 1, .text_deferred = true);
+    expect("");
+    mode(WSAP_VTCORE_KEYBOARD_DISAMBIGUATE);
+    K(.codepoint = '8', .text_utf8 = "[", .text_len = 1, .text_deferred = true);
+    expect("");
+    mode(WSAP_VTCORE_KEYBOARD_ALL_KEYS | WSAP_VTCORE_KEYBOARD_ASSOCIATED_TEXT);
+    K(.codepoint = '8', .text_utf8 = "[", .text_len = 1, .text_deferred = true);
+    expect("\033[56;1;91u");
+    K(.codepoint = 'a', .text_utf8 = "ä😀", .text_len = strlen("ä😀"), .text_deferred = true);
+    expect("\033[97;1;97:776:128512u");
+    K(.text_utf8 = "漢字", .text_len = strlen("漢字"));
+    expect("\033[0;1;28450:23383u");
+    mode(0);
+    K(.text_utf8 = "漢字", .text_len = strlen("漢字"));
+    expect("漢字");
+
+    mode(0);
     MOUSE(2, 1, .kind = WSAP_VTCORE_MOUSE_PRESS);
     assert(out_len == 0 && !consumed);
 

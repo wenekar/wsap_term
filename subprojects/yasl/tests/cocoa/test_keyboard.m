@@ -3,6 +3,7 @@
 #include <common/backend.h>
 #include <assert.h>
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 /* Reject character queries on modifier-only events, as AppKit does. */
@@ -32,13 +33,17 @@
 }
 @end
 
-static struct yasl_private_event next(struct yasl_surface *surface, enum yasl_private_event_type type)
+static struct yasl_private_event next_at(struct yasl_surface *surface, enum yasl_private_event_type type, int line)
 {
     struct yasl_private_event event;
     assert(yasl_private_display_poll_event(yasl_private_surface_display(surface), &event));
+    if (event.type != type || event.surface != surface)
+        fprintf(stderr, "Line %d: expected event %d, received %d\n", line, type, event.type);
     assert(event.type == type && event.surface == surface);
     return event;
 }
+
+#define next(surface, type) next_at(surface, type, __LINE__)
 
 static void empty(struct yasl_surface *surface)
 {
@@ -118,11 +123,71 @@ int main(void)
             modifierFlags:0 timestamp:0 windowNumber:window.windowNumber context:nil
             characters:@"a" charactersIgnoringModifiers:@"a" isARepeat:NO keyCode:0];
         [view keyDown:press];
-        assert(next(surface, YASL_PRIVATE_EVENT_KEY).key.key == YASL_KEY_A);
+        event = next(surface, YASL_PRIVATE_EVENT_KEY);
+        assert(event.key.key == YASL_KEY_A && event.key.text_input == YASL_KEY_TEXT_COMMIT);
+        uint64_t key_id = event.key.text_id;
+        assert(key_id && !event.key.consumed_mods);
         event = next(surface, YASL_PRIVATE_EVENT_TEXT_EDIT);
         assert(event.text_edit.len == 1 && event.text_edit.data[0] == 'a');
         assert(event.text_edit.begin == 1 && event.text_edit.end == 5);
+        assert(event.text_key_id == key_id);
         empty(surface);
+
+        NSString *symbols[] = {@"|", @"[", @"]", @"ä😀"};
+        NSString *labels[] = {@"<", @"8", @"9", @"a"};
+        unsigned short codes[] = {10, 28, 25, 0};
+        for (int i = 0; i < 4; i++) {
+            NSEventModifierFlags mods = i < 3 ? NSEventModifierFlagOption : 0;
+            press = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                modifierFlags:mods timestamp:0 windowNumber:window.windowNumber context:nil
+                characters:symbols[i] charactersIgnoringModifiers:labels[i]
+                isARepeat:NO keyCode:codes[i]];
+            [view keyDown:press];
+            event = next(surface, YASL_PRIVATE_EVENT_KEY);
+            assert(event.key.text_input == YASL_KEY_TEXT_COMMIT && event.key.text_id);
+            assert(event.key.consumed_mods == (i < 3 ? YASL_PRIVATE_MOD_ALT : 0));
+            key_id = event.key.text_id;
+            event = next(surface, YASL_PRIVATE_EVENT_TEXT_EDIT);
+            assert(event.text_key_id == key_id);
+            assert(!strcmp(event.text_edit.data, symbols[i].UTF8String));
+            empty(surface);
+            [view keyUp:press];
+            event = next(surface, YASL_PRIVATE_EVENT_KEY);
+            assert(event.key.action == YASL_KEY_RELEASE && !event.key.text_id);
+            assert(event.key.text_input == YASL_KEY_TEXT_COMMIT);
+            empty(surface);
+        }
+
+        [view setMarkedText:@"e" selectedRange:NSMakeRange(1, 0)
+            replacementRange:NSMakeRange(1, 2)];
+        assert(next(surface, YASL_PRIVATE_EVENT_COMPOSITION).composition.active);
+        [view keyDown:press];
+        event = next(surface, YASL_PRIVATE_EVENT_KEY);
+        assert(event.key.text_input == YASL_KEY_TEXT_COMPOSITION && !event.key.text_id);
+        bool committed = false, ended = false;
+        while (yasl_private_display_poll_event(display, &event)) {
+            if (event.type == YASL_PRIVATE_EVENT_TEXT_EDIT) {
+                assert(!event.text_key_id);
+                committed = true;
+            } else {
+                assert(event.type == YASL_PRIVATE_EVENT_COMPOSITION && !event.composition.active);
+                ended = true;
+            }
+        }
+        assert(committed && ended);
+        empty(surface);
+
+        surface->text_input_active = false;
+        assert(display->ops->surface_update_text_input(surface));
+        [view keyDown:press];
+        event = next(surface, YASL_PRIVATE_EVENT_KEY);
+        assert(event.key.text_input == YASL_KEY_TEXT_COMMIT && event.key.text_id);
+        key_id = event.key.text_id;
+        event = next(surface, YASL_PRIVATE_EVENT_TEXT);
+        assert(event.text_key_id == key_id && !strcmp(event.text.data, "ä😀"));
+        empty(surface);
+        surface->text_input_active = true;
+        assert(display->ops->surface_update_text_input(surface));
 
         surface->text_end = 1;
         [view doCommandBySelector:@selector(deleteBackward)];

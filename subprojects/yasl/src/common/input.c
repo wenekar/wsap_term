@@ -7,7 +7,8 @@
 static bool has_text(const struct yasl_private_event *ev)
 {
     return ev->type == YASL_PRIVATE_EVENT_TEXT || ev->type == YASL_PRIVATE_EVENT_PASTE ||
-           ev->type == YASL_PRIVATE_EVENT_DROP || ev->type == YASL_PRIVATE_EVENT_TEXT_EDIT;
+           ev->type == YASL_PRIVATE_EVENT_DROP || ev->type == YASL_PRIVATE_EVENT_TEXT_EDIT ||
+           ev->type == YASL_PRIVATE_EVENT_COMPOSITION;
 }
 
 static void discard_pending(struct input_queue *q)
@@ -33,6 +34,7 @@ bool input_queue_push(struct input_queue *q, const struct yasl_private_event *ev
         owned[len] = '\0';
         if (ev->type == YASL_PRIVATE_EVENT_PASTE) copy.paste.data = owned;
         else if (ev->type == YASL_PRIVATE_EVENT_TEXT_EDIT) copy.text_edit.data = owned;
+        else if (ev->type == YASL_PRIVATE_EVENT_COMPOSITION) copy.composition.data = owned;
         else copy.text.data = owned;
     }
     uint32_t buttons = q->buttons;

@@ -91,6 +91,7 @@ struct window {
     struct input_queue input;
     struct input_shortcut_state sc_state;
     bool key_text_pending;
+    struct yasl_event native_key;
     bool button_held;
     enum pointer_button held_button;
     uint32_t double_click_ms;

@@ -159,22 +159,48 @@ bool terminal_key(struct window *w, const struct input_key_event *key)
     if (key->action != INPUT_RELEASE)
         window_ui_hide_pointer(w);
     struct wsap_vtcore_modes m = terminal_input_modes(w);
-    char buf[64];
+    char local[128];
+    size_t capacity = sizeof(local);
+    char *buf = local;
+    if (key->text_len > (SIZE_MAX - 64) / 8)
+        return false;
+    size_t needed = 64 + 8 * key->text_len;
+    if (needed > capacity) {
+        capacity = needed;
+        buf = malloc(capacity);
+        if (!buf) return false;
+    }
     struct wsap_vtcore_key_event tkey = {
         .action = (enum wsap_vtcore_key_action)key->action,
         .key = (uint16_t)key->key,
         .keypad = (uint16_t)key->keypad,
-        .mods = key->mods,
+        .mods = key->mods & ~key->consumed_mods,
         .codepoint = key->codepoint,
         .shifted = key->shifted,
         .base = key->base,
         .text = key->text,
         .text_deferred = key->text_deferred,
+        .text_utf8 = key->text_utf8,
+        .text_len = key->text_len,
     };
     struct wsap_vtcore_input_result r =
-        wsap_vtcore_input_encode_key((const struct wsap_vtcore_keyboard_state *)window_keyboard(w), &tkey, &m, buf, sizeof(buf));
-    if (r.status != WSAP_VTCORE_INPUT_BYTES)
-        return false;
-    terminal_send_input(w, buf, r.len);
-    return true;
+        wsap_vtcore_input_encode_key((const struct wsap_vtcore_keyboard_state *)window_keyboard(w), &tkey, &m, buf, capacity);
+    bool sent = r.status == WSAP_VTCORE_INPUT_BYTES;
+    if (sent)
+        terminal_send_input(w, buf, r.len);
+    if (buf != local) free(buf);
+    return sent;
+}
+
+void terminal_text(struct window *w, const char *text, size_t len)
+{
+    struct wsap_vtcore_modes modes = terminal_input_modes(w);
+    unsigned text_flags = WSAP_VTCORE_KEYBOARD_ALL_KEYS | WSAP_VTCORE_KEYBOARD_ASSOCIATED_TEXT;
+    if ((modes.keyboard & text_flags) == text_flags) {
+        struct input_key_event key = {
+            .action = INPUT_PRESS, .text_utf8 = (char *)text, .text_len = len,
+        };
+        if (terminal_key(w, &key)) return;
+    }
+    terminal_send_input(w, text, len);
 }

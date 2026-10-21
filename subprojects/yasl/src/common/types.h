@@ -379,6 +379,9 @@ struct yasl_private_key_event {
     uint32_t shifted;
     /** Native code: Wayland evdev, X11 server keycode, Cocoa virtual keycode. */
     uint32_t native_code;
+    enum yasl_key_text text_input;
+    uint32_t consumed_mods;
+    uint64_t text_id;
 };
 
 /** Bits of yasl_private_pointer_event.scroll_valid. */
@@ -510,6 +513,8 @@ struct yasl_private_event {
     uint64_t sequence;
     /** Stable recipient identity; zero for display-wide events. */
     uint64_t surface_id;
+    /** Physical key that produced TEXT or TEXT_EDIT. Zero means no key. */
+    uint64_t text_key_id;
     union {
         struct yasl_private_pen_sample pen;
         struct { const char *data; size_t len; uint64_t revision, generation; size_t begin, end; } text_edit;

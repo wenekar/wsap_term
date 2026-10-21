@@ -4,6 +4,7 @@ test_cases = [
     ['input-test', files('input/input_test.c'), input_lib, [m_dep]],
     ['glyph-intern-test', files('font/glyph/intern_test.c'), font_lib, [m_dep]],
     ['selection-test', files('terminal/selection_test.c'), terminal_lib, deps],
+    ['terminal-input-test', files('terminal/input_test.c'), app_lib, deps],
     ['color-test', files('util/color_test.c'), base_lib, [m_dep]],
     ['json-test', files('util/json_test.c'), base_lib, [yyjson_dep]],
     ['geom-test', files('util/geom_test.c'), base_lib, [m_dep]],

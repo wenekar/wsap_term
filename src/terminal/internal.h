@@ -171,6 +171,7 @@ bool terminal_pointer_selects_text(const struct wsap_vtcore *t);
 struct wsap_vtcore_modes terminal_input_modes(const struct window *w);
 bool terminal_key(struct window *w, const struct input_key_event *key);
 void terminal_send_input(struct window *w, const char *data, size_t len);
+void terminal_text(struct window *w, const char *text, size_t len);
 void terminal_paste(struct window *w, const char *text, size_t len);
 void terminal_focus(struct window *w, bool focused);
 void terminal_handle_shortcut(struct window *w, enum input_shortcut sc);

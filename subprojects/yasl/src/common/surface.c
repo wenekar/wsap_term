@@ -832,11 +832,16 @@ static bool convert_event(const struct yasl_private_event *p, yasl_event *e)
         e->type = YASL_EVENT_KEY;
         e->action = (unsigned)p->key.action;
         e->mods = p->key.mods;
-        e->key = (struct yasl_key_event){p->key.key, p->key.codepoint, p->key.shifted,
-                                         p->key.native_code};
+        e->key = (struct yasl_key_event){
+            .key = p->key.key, .codepoint = p->key.codepoint,
+            .shifted = p->key.shifted, .native_code = p->key.native_code,
+            .text_input = p->key.text_input, .consumed_mods = p->key.consumed_mods,
+            .text_id = p->key.text_id,
+        };
         return true;
     case YASL_PRIVATE_EVENT_TEXT:
         e->type = YASL_EVENT_TEXT;
+        e->ime.key_id = p->text_key_id;
         return with_text(e, p->text.data, p->text.len);
     case YASL_PRIVATE_EVENT_DROP:
         e->type = YASL_EVENT_DROP;
@@ -848,13 +853,18 @@ static bool convert_event(const struct yasl_private_event *p, yasl_event *e)
         return with_text(e, p->paste.data, p->paste.len);
     case YASL_PRIVATE_EVENT_COMPOSITION:
         e->type = YASL_EVENT_COMPOSITION;
-        e->ime = (struct yasl_ime_event){ime_offset(p->composition.begin, p->composition.len),
-                                         ime_offset(p->composition.end, p->composition.len),
-                                         p->composition.revision};
+        e->ime = (struct yasl_ime_event){
+            .begin = ime_offset(p->composition.begin, p->composition.len),
+            .end = ime_offset(p->composition.end, p->composition.len),
+            .revision = p->composition.revision,
+        };
         return with_text(e, p->composition.data, p->composition.len);
     case YASL_PRIVATE_EVENT_TEXT_EDIT:
         e->type = YASL_EVENT_TEXT_EDIT;
-        e->ime = (struct yasl_ime_event){p->text_edit.begin, p->text_edit.end, p->text_edit.revision};
+        e->ime = (struct yasl_ime_event){
+            .begin = p->text_edit.begin, .end = p->text_edit.end,
+            .revision = p->text_edit.revision, .key_id = p->text_key_id,
+        };
         return with_text(e, p->text_edit.data, p->text_edit.len);
     case YASL_PRIVATE_EVENT_PEN:
         e->type = YASL_EVENT_PEN;

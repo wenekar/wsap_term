@@ -108,6 +108,13 @@ struct cocoa_surface {
     struct cocoa_surface *dead_next;
 
     struct input_queue input;
+    struct input_queue text_events;
+    uint64_t text_key_id;
+    unsigned key_insertions;
+    bool interpreting_key;
+    bool key_composing;
+    enum yasl_key_text key_text_input[256];
+    uint32_t key_consumed_mods[256];
     struct yasl_private_vector2i pointer;
     double scroll_x;
     uint32_t mods;
@@ -230,8 +237,11 @@ static void push_focus(struct cocoa_surface *w, bool focused)
 {
     if (!w || w->closed)
         return;
-    if (!focused)
+    if (!focused) {
         check_pointer_reset(w);
+        memset(w->key_text_input, 0, sizeof(w->key_text_input));
+        memset(w->key_consumed_mods, 0, sizeof(w->key_consumed_mods));
+    }
     struct yasl_private_event ev = {
         .type = YASL_PRIVATE_EVENT_FOCUS,
         .surface = &w->base,
@@ -318,6 +328,7 @@ static struct yasl_private_key_event cocoa_key_event(NSEvent *ev, enum yasl_key_
         .action = action,
         .mods = cocoa_mods(ev.modifierFlags),
         .native_code = ev.keyCode,
+        .text_input = YASL_KEY_TEXT_NONE,
     };
     /* characters properties are invalid on flagsChanged events. */
     if (ev.type == NSEventTypeKeyDown || ev.type == NSEventTypeKeyUp) {
@@ -331,6 +342,13 @@ static void on_key_event(struct cocoa_surface *w, NSEvent *ev, enum yasl_key_act
 {
     w->mods = cocoa_mods(ev.modifierFlags);
     struct yasl_private_key_event k = cocoa_key_event(ev, action);
+    if (action == YASL_KEY_RELEASE && ev.keyCode < 256) {
+        if (w->key_text_input[ev.keyCode] != YASL_KEY_TEXT_UNSPECIFIED)
+            k.text_input = w->key_text_input[ev.keyCode];
+        k.consumed_mods = w->key_consumed_mods[ev.keyCode];
+        w->key_text_input[ev.keyCode] = YASL_KEY_TEXT_NONE;
+        w->key_consumed_mods[ev.keyCode] = 0;
+    }
     struct yasl_private_event input_ev = {
         .type = YASL_PRIVATE_EVENT_KEY,
         .surface = &w->base,
@@ -915,8 +933,40 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
 {
     struct cocoa_surface *w = self.surface;
     if (!w) return;
-    on_key_event(w, event, event.isARepeat ? YASL_KEY_REPEAT : YASL_KEY_PRESS);
+    darwin_ctx.depth++;
+    w->mods = cocoa_mods(event.modifierFlags);
+    struct yasl_private_key_event key = cocoa_key_event(event,
+        event.isARepeat ? YASL_KEY_REPEAT : YASL_KEY_PRESS);
+    w->interpreting_key = true;
+    w->key_composing = w->preedit != NULL;
+    w->key_insertions = 0;
+    if (++w->text_key_id == 0) ++w->text_key_id;
     [self interpretKeyEvents:@[event]];
+    w->interpreting_key = false;
+    if (!w->destroyed && !w->closed) {
+        if (w->key_composing || w->key_insertions > 1) {
+            key.text_input = YASL_KEY_TEXT_COMPOSITION;
+        } else if (w->key_insertions == 1) {
+            key.text_input = YASL_KEY_TEXT_COMMIT;
+            key.text_id = w->text_key_id;
+            key.consumed_mods = key.mods &
+                (YASL_PRIVATE_MOD_ALT | YASL_PRIVATE_MOD_CTRL | YASL_PRIVATE_MOD_SUPER);
+        }
+        if (event.keyCode < 256) {
+            w->key_text_input[event.keyCode] = key.text_input;
+            w->key_consumed_mods[event.keyCode] = key.consumed_mods;
+        }
+        input_queue_push(&w->input, &(struct yasl_private_event){
+            .type = YASL_PRIVATE_EVENT_KEY, .surface = &w->base, .key = key,
+        });
+        struct yasl_private_event edit;
+        while (input_queue_pop(&w->text_events, &edit)) {
+            if (!key.text_id)
+                edit.text_key_id = 0;
+            input_queue_push(&w->input, &edit);
+        }
+    }
+    darwin_ctx.depth--;
 }
 
 - (void)keyUp:(NSEvent *)event
@@ -1079,12 +1129,13 @@ static bool text_edit_range(struct cocoa_surface *w, NSRange range, bool use_mar
 }
 
 static void push_text_edit(struct cocoa_surface *w, const char *text, size_t len,
-                           size_t begin, size_t end)
+                           size_t begin, size_t end, bool insertion)
 {
     if (!w->base.text_input_active || begin > end || end > w->base.text_length) return;
     struct yasl_private_event ev = {
         .type = YASL_PRIVATE_EVENT_TEXT_EDIT,
         .surface = &w->base,
+        .text_key_id = w->interpreting_key && insertion ? w->text_key_id : 0,
         .text_edit = {
             .data = text ?: "", .len = len,
             .revision = w->base.text_revision,
@@ -1092,25 +1143,55 @@ static void push_text_edit(struct cocoa_surface *w, const char *text, size_t len
             .begin = begin, .end = end,
         },
     };
-    input_queue_push(&w->input, &ev);
+    input_queue_push(w->interpreting_key ? &w->text_events : &w->input, &ev);
+}
+
+static void push_composition(struct cocoa_surface *w, const char *text, int begin, int end)
+{
+    struct yasl_private_event event = {
+        .type = YASL_PRIVATE_EVENT_COMPOSITION, .surface = &w->base,
+        .composition = {
+            .data = text ?: "", .len = text ? strlen(text) : 0,
+            .begin = begin, .end = end, .active = text && text[0],
+            .revision = w->base.text_revision, .generation = w->base.text_generation,
+        },
+    };
+    input_queue_push(w->interpreting_key ? &w->text_events : &w->input, &event);
 }
 
 - (void)insertText:(id)string replacementRange:(NSRange)replacementRange
 {
     struct cocoa_surface *w = self.surface;
-    if (!w || w->destroyed || w->closed || !w->base.text_input_active) return;
+    if (!w || w->destroyed || w->closed) return;
     const char *utf8 = plain_string(string).UTF8String;
     size_t len = utf8 ? strlen(utf8) : 0;
+    if (!w->base.text_input_active) {
+        if (!w->interpreting_key) return;
+        if (!len) {
+            w->key_composing = true;
+            return;
+        }
+        w->key_insertions++;
+        input_queue_push(&w->text_events, &(struct yasl_private_event){
+            .type = YASL_PRIVATE_EVENT_TEXT, .surface = &w->base,
+            .text_key_id = w->text_key_id, .text = { .data = utf8, .len = len },
+        });
+        return;
+    }
     size_t begin, end;
     if (!text_edit_range(w, replacementRange, true, &begin, &end)) return;
     bool had_preedit = w->preedit != NULL;
+    if (w->interpreting_key) {
+        if (len) w->key_insertions++;
+        else w->key_composing = true;
+    }
     darwin_ctx.depth++;
-    push_text_edit(w, utf8, len, begin, end);
+    push_text_edit(w, utf8, len, begin, end, true);
     free(w->preedit);
     w->preedit = NULL;
     w->preedit_begin = w->preedit_end = 0;
     if (had_preedit)
-        yasl_private_surface_notify_composition(&w->base, NULL, -1, -1);
+        push_composition(w, NULL, -1, -1);
     if (!w->destroyed && !w->closed)
         cocoa_surface_schedule_redraw(w);
     darwin_ctx.depth--;
@@ -1136,7 +1217,7 @@ static void push_text_edit(struct cocoa_surface *w, const char *text, size_t len
     size_t byte_begin, byte_end;
     if (text_utf16_to_utf8(surrounding, begin, &byte_begin) &&
         text_utf16_to_utf8(surrounding, end, &byte_end) && byte_begin != byte_end)
-        push_text_edit(w, "", 0, byte_begin, byte_end);
+        push_text_edit(w, "", 0, byte_begin, byte_end, false);
 }
 
 - (void)setMarkedText:(id)string selectedRange:(NSRange)selectedRange
@@ -1145,6 +1226,7 @@ static void push_text_edit(struct cocoa_surface *w, const char *text, size_t len
     struct cocoa_surface *w = self.surface;
     if (!w || w->destroyed || w->closed || !w->base.text_input_active) return;
     NSString *str = plain_string(string);
+    if (w->interpreting_key) w->key_composing = true;
     size_t range_begin, range_end;
     if (!text_edit_range(w, replacementRange, true, &range_begin, &range_end)) return;
     w->preedit_begin = range_begin;
@@ -1170,7 +1252,7 @@ static void push_text_edit(struct cocoa_surface *w, const char *text, size_t len
         }
     }
     darwin_ctx.depth++;
-    yasl_private_surface_notify_composition(&w->base, w->preedit, begin, end);
+    push_composition(w, w->preedit, begin, end);
     if (!w->destroyed && !w->closed)
         cocoa_surface_schedule_redraw(w);
     darwin_ctx.depth--;
@@ -1183,7 +1265,7 @@ static void push_text_edit(struct cocoa_surface *w, const char *text, size_t len
     free(w->preedit);
     w->preedit = NULL;
     darwin_ctx.depth++;
-    yasl_private_surface_notify_composition(&w->base, NULL, -1, -1);
+    push_composition(w, NULL, -1, -1);
     if (!w->destroyed && !w->closed)
         cocoa_surface_schedule_redraw(w);
     darwin_ctx.depth--;
@@ -1925,6 +2007,7 @@ void cocoa_surface_destroy(struct cocoa_surface *w)
     if (!native_closed)
         [w->window close];
     input_queue_clear(&w->input);
+    input_queue_clear(&w->text_events);
     w->dead_next = darwin_ctx.dead;
     darwin_ctx.dead = w;
 

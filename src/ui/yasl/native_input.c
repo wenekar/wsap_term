@@ -93,7 +93,7 @@ static uint32_t us_base(enum yasl_key key)
     }
 }
 
-static uint32_t typed_label(const struct yasl_event *in)
+static uint32_t fallback_key_text(const struct yasl_event *in)
 {
     bool letter = in->key.key >= YASL_KEY_A && in->key.key <= YASL_KEY_Z;
     bool caps = letter && (in->mods & YASL_MOD_CAPS);
@@ -158,9 +158,11 @@ static enum pointer_button event_button(struct window *w, const struct yasl_even
     return w->button_held ? w->held_button : POINTER_BUTTON_NONE;
 }
 
-static void queue_key(struct window *w, const struct yasl_event *in)
+static enum input_key_route queue_key(struct window *w, const struct yasl_event *in,
+                                      const char *text, size_t len)
 {
-    uint32_t label = typed_label(in);
+    bool native_text = in->key.text_input != YASL_KEY_TEXT_UNSPECIFIED;
+    uint32_t label = native_text ? 0 : fallback_key_text(in);
     struct input_key_event ev = {
         .key = native_key(in->key.key),
         .keypad = is_keypad(in->key.key) ? native_key(in->key.key) : INPUT_KEY_NONE,
@@ -170,23 +172,38 @@ static void queue_key(struct window *w, const struct yasl_event *in)
         .shifted = in->key.shifted,
         .base = us_base(in->key.key),
         .text = label,
-        .text_deferred = label != 0 && !(in->mods & YASL_MOD_ALT),
+        .consumed_mods = (unsigned)input_modifiers_from_yasl(in->key.consumed_mods),
+        .text_deferred = native_text || (label != 0 && !(in->mods & YASL_MOD_ALT)),
+        .ime_handled = in->key.text_input == YASL_KEY_TEXT_COMPOSITION,
     };
 
     unsigned key_id = ev.key != INPUT_KEY_NONE ? (unsigned)ev.key
                                                : 512u + (ev.base < 256 ? ev.base : 0);
     enum input_shortcut sc;
-    switch (input_shortcut_route_key(input_keymap_active(), &w->input, &w->sc_state,
-                                     &ev, key_id, &sc)) {
+    enum input_key_route route = ev.ime_handled ? INPUT_KEY_PASSTHROUGH :
+        input_shortcut_route_key(input_keymap_active(), &w->input, &w->sc_state,
+                                 &ev, key_id, &sc);
+    switch (route) {
     case INPUT_KEY_PASSTHROUGH:
         break;
     case INPUT_KEY_DROPPED:
         fprintf(stderr, "shortcut queue is full\n");
-        return;
+        return route;
     default:
-        return;
+        return route;
     }
-    input_queue_add(&w->input, &(struct input_event){ .kind = INPUT_KEY, .key = ev });
+    if (len) {
+        if (len > INPUT_TEXT_MAX || !(ev.text_utf8 = malloc(len)))
+            return INPUT_KEY_DROPPED;
+        memcpy(ev.text_utf8, text, len);
+        ev.text_len = len;
+    }
+    if (input_queue_add(&w->input, &(struct input_event){ .kind = INPUT_KEY, .key = ev })
+        == INPUT_PUSH_DROPPED) {
+        free(ev.text_utf8);
+        return INPUT_KEY_DROPPED;
+    }
+    return INPUT_KEY_PASSTHROUGH;
 }
 
 static struct vector2i device_pos(const struct window *w, const struct yasl_event *in)
@@ -307,8 +324,13 @@ void window_native_input(struct window *w, const struct yasl_event *in)
         if (in->action == YASL_KEY_PRESS)
             latency_probe_stage(LATENCY_STAGE_KEY_IN);
         w->modifiers = input_modifiers_from_yasl(in->mods);
-        w->key_text_pending = in->action != YASL_KEY_RELEASE && typed_label(in) != 0;
-        queue_key(w, in);
+        w->key_text_pending = in->key.text_input == YASL_KEY_TEXT_UNSPECIFIED &&
+            in->action != YASL_KEY_RELEASE && fallback_key_text(in) != 0;
+        if (in->key.text_id) {
+            w->native_key = *in;
+        } else {
+            queue_key(w, in, NULL, 0);
+        }
         break;
     case YASL_EVENT_POINTER:
         w->modifiers = input_modifiers_from_yasl(in->mods);
@@ -322,12 +344,18 @@ void window_native_input(struct window *w, const struct yasl_event *in)
         queue_scroll(w, in);
         break;
     case YASL_EVENT_TEXT:
-        input_queue_push_text(&w->input, in->text, in->length,
-                              key_text ? INPUT_TEXT_KEY : INPUT_TEXT_COMMIT);
+    case YASL_EVENT_TEXT_EDIT: {
+        enum input_text_source source = in->type == YASL_EVENT_TEXT && key_text
+            ? INPUT_TEXT_KEY : INPUT_TEXT_COMMIT;
+        if (in->ime.key_id && in->ime.key_id == w->native_key.key.text_id &&
+            in->surface == w->native_key.surface) {
+            enum input_key_route route = queue_key(w, &w->native_key, in->text, in->length);
+            source = route == INPUT_KEY_PASSTHROUGH ? INPUT_TEXT_KEY : INPUT_TEXT_SHORTCUT;
+            w->native_key = (struct yasl_event){0};
+        }
+        input_queue_push_text(&w->input, in->text, in->length, source);
         break;
-    case YASL_EVENT_TEXT_EDIT:
-        input_queue_push_text(&w->input, in->text, in->length, INPUT_TEXT_COMMIT);
-        break;
+    }
     case YASL_EVENT_CLIPBOARD:
         if (in->action == YASL_TRANSFER_OK && in->text) {
             input_queue_push_paste(&w->input, in->text, in->length);
@@ -363,6 +391,8 @@ void window_native_input(struct window *w, const struct yasl_event *in)
     case YASL_EVENT_INPUT_RESET:
         input_keyboard_reset(&w->keyboard);
         w->button_held = false;
+        w->key_text_pending = false;
+        w->native_key = (struct yasl_event){0};
         break;
     default:
         break;

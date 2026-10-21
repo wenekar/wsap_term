@@ -146,6 +146,9 @@ struct wsap_vtcore_key_event {
     uint32_t base;
     uint32_t text;
     bool text_deferred;
+    /* Borrowed native UTF-8 text. This takes precedence over text. */
+    const char *text_utf8;
+    size_t text_len;
 };
 
 struct wsap_vtcore_mouse_event {

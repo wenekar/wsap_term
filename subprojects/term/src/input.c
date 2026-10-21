@@ -321,7 +321,7 @@ static unsigned effective_mods(const struct wsap_vtcore_keyboard_state *s,
 static void format_kitty(struct seqbuf *sb, uint32_t code, char final,
                          unsigned flags, bool functional, uint32_t shifted,
                          uint32_t base, unsigned mods, unsigned event,
-                         bool report_text, uint32_t text)
+                         bool report_text, const struct wsap_vtcore_key_event *ev)
 {
     sb_bytes(sb, "\033[", 2);
     if (final != 'u' && final != '~' && code <= 1 && !shifted && !base &&
@@ -352,9 +352,37 @@ static void format_kitty(struct seqbuf *sb, uint32_t code, char final,
     }
     if (report_text) {
         sb_ch(sb, ';');
-        sb_u32(sb, text);
+        if (ev->text_len) {
+            size_t offset = 0;
+            while (offset < ev->text_len) {
+                uint32_t cp;
+                int size = wsap_vtcore_utf8_decode_one(ev->text_utf8 + offset,
+                                                       ev->text_len - offset, &cp);
+                if (!size) break;
+                if (offset) sb_ch(sb, ':');
+                sb_u32(sb, cp);
+                offset += (size_t)size;
+            }
+        } else {
+            sb_u32(sb, ev->text);
+        }
     }
     sb_ch(sb, final);
+}
+
+static bool printable_key_text(const struct wsap_vtcore_key_event *ev)
+{
+    if (!ev->text_len)
+        return ev->text >= 32 && !(ev->text >= 127 && ev->text < 160);
+    size_t offset = 0;
+    while (offset < ev->text_len) {
+        uint32_t cp;
+        int size = wsap_vtcore_utf8_decode_one(ev->text_utf8 + offset,
+                                               ev->text_len - offset, &cp);
+        if (!size || cp < 32 || (cp >= 127 && cp < 160)) return false;
+        offset += (size_t)size;
+    }
+    return true;
 }
 
 static bool encode_kitty(const struct wsap_vtcore_keyboard_state *s,
@@ -392,9 +420,7 @@ static bool encode_kitty(const struct wsap_vtcore_keyboard_state *s,
     const unsigned command_mods = WSAP_VTCORE_MOD_ALT | WSAP_VTCORE_MOD_CTRL |
                                   WSAP_VTCORE_MOD_SUPER | WSAP_VTCORE_MOD_HYPER |
                                   WSAP_VTCORE_MOD_META;
-    uint32_t text = ev->text;
-    bool has_text = text >= 32 && !(text >= 127 && text < 160) &&
-                    !(mods & command_mods);
+    bool has_text = printable_key_text(ev) && !(mods & command_mods);
     if (!all && has_text) return ev->action == WSAP_VTCORE_KEY_RELEASE;
     if (!all && plain_control && !(mods & 63))
         return ev->action == WSAP_VTCORE_KEY_RELEASE;
@@ -411,12 +437,11 @@ static bool encode_kitty(const struct wsap_vtcore_keyboard_state *s,
             if (base == code) base = 0;
         }
     }
-    if (!code) return true;
-
     bool report_text = all && (flags & WSAP_VTCORE_KEYBOARD_ASSOCIATED_TEXT) && has_text &&
                        ev->action != WSAP_VTCORE_KEY_RELEASE;
+    if (!code && !report_text) return true;
     format_kitty(sb, code, final, flags, functional, shifted, base, mods & 0xff,
-                 event, report_text, text);
+                 event, report_text, ev);
     return true;
 }
 
@@ -495,8 +520,9 @@ static bool encode_legacy(const struct wsap_vtcore_key_event *ev,
     default:                 break;
     }
 
-    if (ev->text && !ev->text_deferred) {
-        sb_utf8(sb, ev->text);
+    if ((ev->text || ev->text_len) && !ev->text_deferred) {
+        if (ev->text_len) sb_bytes(sb, ev->text_utf8, ev->text_len);
+        else sb_utf8(sb, ev->text);
         return true;
     }
     return false;
@@ -549,7 +575,8 @@ struct wsap_vtcore_input_result wsap_vtcore_input_encode_key(const struct wsap_v
     if (!ev || !m || !buf ||
         (ev->action != WSAP_VTCORE_KEY_PRESS && ev->action != WSAP_VTCORE_KEY_REPEAT &&
          ev->action != WSAP_VTCORE_KEY_RELEASE) ||
-        (unsigned)ev->key >= WSAP_VTCORE_KEY_COUNT)
+        (unsigned)ev->key >= WSAP_VTCORE_KEY_COUNT ||
+        (ev->text_len && !ev->text_utf8))
         return out;
 
     struct seqbuf sb = { .p = buf, .left = buf_sz };
