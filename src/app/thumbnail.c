@@ -143,19 +143,13 @@ bool app_thumbnail_capture(void *ud, void **state, struct font_instance *font,
         !reserve(&thumb->pixels, &thumb->pixels_cap, (size_t)size.x * size.y))
         return false;
 
-    struct damage_list damage = {0};
     struct framebuffer target = {
         .pixels = thumb->full,
         .size = full_size,
-        .stale = true,
-        .damage = &damage,
     };
     struct render_frame frame = {
-        .font = font,
-        .grid = grid,
-        .has_grid = true,
-        .repaint = true,
-        .gpu_off = true,
+        .grid = { .frame = &grid, .font = font, .rect = { .size = full_size } },
+        .cpu_only = true,
     };
     (void)render_draw(app->renderer, &target, &frame);
     resample(thumb->pixels, size, thumb->full, full_size);

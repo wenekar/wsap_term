@@ -23,7 +23,6 @@
 struct window_native {
     struct yasl_surface *surface;
     struct framebuffer_history history;
-    struct damage_list damage;
     uint64_t generation;
     void *metal_layer;
     uint32_t *pixels;

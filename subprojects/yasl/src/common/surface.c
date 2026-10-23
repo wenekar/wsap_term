@@ -1057,15 +1057,15 @@ int yasl_cpu_present_damage(yasl_surface *s, const struct yasl_damage *damage, i
     if (!canvas_fit(s, s->size.x, s->size.y))
         return -errno;
     if (damage && count > 0) {
-        s->cpu_damage.n = count <= 16 ? count : 16;
-        for (int i = 0; i < s->cpu_damage.n; i++) {
-            s->cpu_damage.rects[i] = (struct yasl_private_rect2i){
+        for (int i = 0; i < count; i++) {
+            struct yasl_private_rect2i r = {
                 .x = damage[i].x, .y = damage[i].y,
                 .width = damage[i].width, .height = damage[i].height,
             };
+            yasl_private_damage_union(&s->cpu_damage, &r, 1);
         }
     } else {
-        s->cpu_damage.n = -1;
+        yasl_private_damage_union(&s->cpu_damage, NULL, 0);
     }
     yasl_private_surface_request_frame(s);
     yasl_private_display_flush(s->display);

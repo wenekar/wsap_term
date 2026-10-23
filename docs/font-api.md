@@ -100,7 +100,7 @@ The next frame shows the new face.
 In parallel mode, refresh, begin_frame, acquire on a hit, and default do not
 rebuild. Do not call `glyph_cache_rebuild()` in parallel mode. Paint workers
 read the cache, so a rebuild there would free memory under them. The
-renderer calls `glyph_cache_begin_frame()` before it turns on parallel mode.
+renderer calls `glyph_cache_refresh()` before it turns on parallel mode.
 
 The tile colors are process-global. One frame has one color pair. Only
 `glyph_cache_begin_frame()` keeps the tiles current with the colors. A
@@ -109,12 +109,10 @@ The tile colors are process-global. One frame has one color pair. Only
 Each frame starts with one of these calls, on the frame thread, before any
 glyph fetch:
 
-- The CPU terminal path calls `glyph_cache_begin_frame()` in
-  `renderer_paint_frame()` and `render_paint_full_terminal_frame()`.
-- `draw_terminal_frame()` calls `glyph_cache_refresh()` before the
-  GPU path. The GPU path does not use the default-color tiles.
-- `render_ui_scene()` calls `glyph_cache_refresh()` on the UI font
-  before the GPU and the CPU UI paint.
+- `render_draw()` calls `glyph_cache_refresh()` on the grid font and on the
+  UI font, in serial mode, before any fetch. The renderer does not call
+  `glyph_cache_begin_frame()` and does not use the default-color tiles. So
+  the tile colors do not change.
 - `ui_scene_paint()` calls `glyph_cache_refresh()`. `ui_scene_paint_clipped()`
   does not. Its caller refreshes once per frame.
 
@@ -155,6 +153,12 @@ an open face also makes it return NULL.
 `glyph_cache_shape_segment()` from its own `emit` callback. A nested call
 overwrites that scratch. A longer nested segment frees it.
 
+The segment scratch grows to the longest segment that the thread shaped.
+`glyph_cache_reserve_segment(n)` grows it to `n` code points ahead of time.
+Then a segment of at most `n` code points allocates no scratch on that
+thread. A renderer that gives rows to workers by timing uses it, so that
+the allocations do not depend on which worker shapes which row.
+
 `emit` can call `glyph_cache_fetch()` and `glyph_cache_fetch_tile()`. The CPU
 renderer does this in `paint_span()`. These calls do not touch the run cache,
 `priv_run_cells`, or the segment scratch. The span cells stay valid. A
@@ -182,7 +186,7 @@ Do not call a rebuilding function from `emit`. These are
 | `glyph_cache_fetch()`, `glyph_cache_fetch_tile()`, `glyph_cache_shape_segment()` | Any thread in parallel mode. One thread at a time in serial mode. |
 | `font_instance_render_glyph()`, `font_bind_thread()` | Any thread. They read the instance and write only per-thread state. A rebuild changes the face and the metrics of the instance, so do not call them while a rebuild of that instance can run. |
 | `font_thread_attach()`, `font_thread_detach()` | The calling thread only. Each thread attaches and detaches its own state. |
-| `glyph_cache_flush_deferred()`, `glyph_cache_thread_detach()` | The calling thread only |
+| `glyph_cache_flush_deferred()`, `glyph_cache_thread_detach()`, `glyph_cache_reserve_segment()` | The calling thread only |
 | `font_generation()`, `font_bump_generation()` | Any thread. The counter is atomic. |
 
 A paint worker calls `font_thread_attach()` when it starts and at the start
@@ -254,3 +258,4 @@ Before it exits, it calls `glyph_cache_thread_detach()` and then
 - `glyph_cache_fetch()`: returns the glyph of a code point and a style.
 - `glyph_cache_fetch_tile()`: returns the glyph pre-blended over the tile colors, or NULL.
 - `glyph_cache_shape_segment()`: shapes a segment and calls `emit` for each span of shaped cells.
+- `glyph_cache_reserve_segment()`: makes room in the segment scratch of the calling thread.
