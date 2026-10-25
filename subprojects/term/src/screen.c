@@ -1288,7 +1288,8 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
         t->scroll_bottom = rows - 1;
         t->left_margin = 0;
         t->right_margin = cols - 1;
-        wsap_vtcore_hist_view_rewrap(&t->view, &t->hist, cols);
+        if (!t->alternate)
+            wsap_vtcore_hist_view_rewrap(&t->view, &t->hist, cols);
         t->full_gen++;
         wsap_vtcore_gstore_unpin(t->gstore);
         return true;

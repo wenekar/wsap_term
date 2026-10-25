@@ -281,10 +281,12 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
     if (s->arena_dead > 4096 && s->arena_dead * 2 > s->arena_len)
         all = true;
 
-    wsap_vtcore_hist_prepare_rows(&t->hist, cols);
-    if (!wsap_vtcore_hist_view_sync(&t->view, &t->hist, cols))
-        goto done;
-    wsap_vtcore_hist_view_refine(&t->view, &t->hist, cols, rows);
+    if (!t->alternate) {
+        wsap_vtcore_hist_prepare_rows(&t->hist, cols);
+        if (!wsap_vtcore_hist_view_sync(&t->view, &t->hist, cols))
+            goto done;
+        wsap_vtcore_hist_view_refine(&t->view, &t->hist, cols, rows);
+    }
     for (int y = 0; y < rows; y++)
         new_keys[y] = wsap_vtcore_screen_view_row_key(t, y);
 
