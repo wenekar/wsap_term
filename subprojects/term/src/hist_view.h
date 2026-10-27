@@ -27,6 +27,7 @@ struct hist_view {
     int cols;
     uint32_t cap;
     int index_cols;
+    bool indexed;
 };
 
 void wsap_vtcore_hist_view_free(struct hist_view *v);

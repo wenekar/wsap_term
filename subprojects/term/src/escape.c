@@ -997,13 +997,13 @@ void wsap_vtcore_escape_byte(struct wsap_vtcore *t, unsigned char ch)
             wsap_vtcore_sc_decaln(t);
         break;
     case ST_IGNORE:
-        if (ch == 0x07 || ch == 0x18 || ch == 0x1a)
+        if (ch == 0x07 || ch == 0x18 || ch == 0x1a || ch == 0x9c)
             t->state = ST_GROUND;
         else if (ch == 0x1b)
             t->state = ST_IGNORE_ESC;
         break;
     case ST_IGNORE_ESC:
-        if (ch == '\\' || ch == 0x07 || ch == 0x18 || ch == 0x1a)
+        if (ch == '\\' || ch == 0x07 || ch == 0x18 || ch == 0x1a || ch == 0x9c)
             t->state = ST_GROUND;
         else {
             t->state = ST_ESC;

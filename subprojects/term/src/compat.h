@@ -15,6 +15,9 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
 #else
 #include <pthread.h>
 #include <unistd.h>

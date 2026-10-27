@@ -91,7 +91,7 @@ void wsap_vtcore_sc_print_glyph(struct wsap_vtcore *t, uint32_t cp, int width, u
     if (WSAP_VTCORE_EXPECT(t->pending_wrap, 0)) {
         row_set_wrapped(wsap_vtcore_row(t, t->cursor_y), true);
         t->cursor_x = t->lr_margin_mode ? t->left_margin : 0;
-        sc_linefeed(t, 1);
+        sc_linefeed_wrap(t);
         t->pending_wrap = false;
     }
 
@@ -110,7 +110,7 @@ void wsap_vtcore_sc_print_glyph(struct wsap_vtcore *t, uint32_t cp, int width, u
         srow->version++;
         row_set_wrapped(srow, true);
         t->cursor_x = t->lr_margin_mode ? t->left_margin : 0;
-        sc_linefeed(t, 1);
+        sc_linefeed_wrap(t);
         t->pending_wrap = false;
         p = phys_row(t, t->cursor_y);
         row = row_cells(t, p);
@@ -619,7 +619,7 @@ static inline void emit_stream_bulk_wrapped(struct stream_emit_ctx *ctx,
         row_set_wrapped(screen_get_row(s, s->rows - 1), true);
         t->pending_wrap = false;
         t->cursor_x = 0;
-        wsap_vtcore_screen_scroll_up(t);
+        wsap_vtcore_screen_scroll_up_wrap(t);
     }
     if (bulk_lines < ctx->q_cap) {
         const char *p = src;
@@ -669,7 +669,7 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void emit_stream_row(struct stream_emit_
         row_set_wrapped(screen_get_row(ctx->screen, ctx->screen->rows - 1), true);
         ctx->term->pending_wrap = false;
         ctx->term->cursor_x = 0;
-        wsap_vtcore_screen_scroll_up(ctx->term);
+        wsap_vtcore_screen_scroll_up_wrap(ctx->term);
     }
     emit_stream_row_fast(ctx, row_ptr, row_len, row_wrapped);
 }
@@ -724,7 +724,7 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_wrapped(struct wsap_vtcore *t, c
     }
     if (copy_len) memcpy(copy_dst, copy_src, copy_len);
     t->next_row_uid = uid;
-    screen_new_row(t, screen_get_row(s, rows - 1));
+    screen_new_row_plain(t, screen_get_row(s, rows - 1));
     if (t->prompt_y > 0)
         t->prompt_y = t->prompt_y > scrolls ? t->prompt_y - scrolls : 0;
     clamp_selection_after_scroll(t);

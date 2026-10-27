@@ -71,6 +71,10 @@ void wsap_vtcore_select_clear(struct wsap_vtcore *t)
     }
 }
 
+// Classify codepoint into word selection classes.
+// Class 0: whitespace.
+// Class 1: letters, digits, and word characters.
+// Class 2: punctuation and symbols.
 static inline int word_class(uint32_t c)
 {
     if (c <= ' ') return 0;
@@ -81,6 +85,27 @@ static inline int word_class(uint32_t c)
         };
         return (mask[c >> 6] & (1ULL << (c & 63))) ? 1 : 2;
     }
+
+    // Unicode whitespace (Class 0).
+    if (c == 0x00A0 || c == 0x1680 || c == 0x202F || c == 0x205F ||
+        c == 0x3000 || c == 0xFEFF || (c >= 0x2000 && c <= 0x200A) ||
+        c == 0x2028 || c == 0x2029) {
+        return 0;
+    }
+
+    // Unicode punctuation and symbols (Class 2).
+    if ((c >= 0x00A1 && c <= 0x00BF) || c == 0x00D7 || c == 0x00F7 ||
+        (c >= 0x2010 && c <= 0x2027) || (c >= 0x2030 && c <= 0x205E) ||
+        (c >= 0x20A0 && c <= 0x20CF) || (c >= 0x2190 && c <= 0x2BFF) ||
+        (c >= 0x3001 && c <= 0x3004) || (c >= 0x3008 && c <= 0x3020) ||
+        c == 0x3030 ||
+        (c >= 0xFE30 && c <= 0xFE4F) || (c >= 0xFE50 && c <= 0xFE6F) ||
+        (c >= 0xFF01 && c <= 0xFF0F) || (c >= 0xFF1A && c <= 0xFF20) ||
+        (c >= 0xFF3B && c <= 0xFF3E) || c == 0xFF40 ||
+        (c >= 0xFF5B && c <= 0xFF65) || (c >= 0xFFE0 && c <= 0xFFEE)) {
+        return 2;
+    }
+
     return 1;
 }
 

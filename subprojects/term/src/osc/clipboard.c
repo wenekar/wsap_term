@@ -65,6 +65,9 @@ static bool b64_decode(const char *s, size_t n, char *out, size_t *out_len)
     return true;
 }
 
+#define WSAP_VTCORE_OSC52_MAX_PAYLOAD 102400
+#define WSAP_VTCORE_OSC52_MAX_ENCODED (((WSAP_VTCORE_OSC52_MAX_PAYLOAD + 2) / 3) * 4)
+
 void wsap_vtcore_osc52(struct wsap_vtcore *t, const char *params)
 {
     const char *sep = strchr(params, ';');
@@ -84,8 +87,12 @@ void wsap_vtcore_osc52(struct wsap_vtcore *t, const char *params)
         return;
     }
     size_t enc_len = strlen(pd);
+    // Limit clipboard payload to 100 KiB (102400 bytes).
+    // This prevents memory exhaustion and UI thread locking.
+    if (enc_len > WSAP_VTCORE_OSC52_MAX_ENCODED)
+        return;
     char *dec = (char *)pd;
     size_t dec_len;
-    if (b64_decode(pd, enc_len, dec, &dec_len))
+    if (b64_decode(pd, enc_len, dec, &dec_len) && dec_len <= WSAP_VTCORE_OSC52_MAX_PAYLOAD)
         t->cb.clipboard(t->cb.ud, sel, dec, dec_len);
 }

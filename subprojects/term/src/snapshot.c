@@ -282,10 +282,29 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
         all = true;
 
     if (!t->alternate) {
-        wsap_vtcore_hist_prepare_rows(&t->hist, cols);
-        if (!wsap_vtcore_hist_view_sync(&t->view, &t->hist, cols))
-            goto done;
-        wsap_vtcore_hist_view_refine(&t->view, &t->hist, cols, rows);
+        if (cols != t->hist.wrap_cols)
+            wsap_vtcore_hist_set_width(&t->hist, cols);
+        if (t->view.anchor.active) {
+            wsap_vtcore_hist_prepare_rows(&t->hist, cols);
+            if (!wsap_vtcore_hist_view_sync(&t->view, &t->hist, cols))
+                goto done;
+            wsap_vtcore_hist_view_refine(&t->view, &t->hist, cols, rows);
+        } else {
+            uint64_t total_cells = wsap_vtcore_hist_total_cells(&t->hist);
+            uint64_t est = total_cells > 0 ? (total_cells + (uint64_t)cols - 1) / (uint64_t)cols : 0;
+            if (est < t->hist.lines)
+                est = t->hist.lines;
+            // This estimate does not build or update the row lookup arrays.
+            t->view.indexed = false;
+            t->view.total_rows = est;
+            t->view.index_cols = cols;
+            t->view.epoch = t->hist.index_epoch;
+            t->view.first_id = hist_first_id(&t->hist);
+            t->view.end_id = hist_end_id(&t->hist);
+            t->view.head = t->hist.head;
+            t->view.tail = t->hist.tail;
+            t->view.last_cells = t->hist.lines ? wsap_vtcore_hist_line_cells(&t->hist, hist_end_id(&t->hist) - 1) : 0;
+        }
     }
     for (int y = 0; y < rows; y++)
         new_keys[y] = wsap_vtcore_screen_view_row_key(t, y);
@@ -344,7 +363,9 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
                              : (struct arena_out){ &s->arena, &s->arena_cap, s->arena_len };
     uint64_t worst = (uint64_t)p.staged * (uint64_t)cols * (1 + WSAP_VTCORE_GRAPHEME_MAX_LEN);
     if (!all && worst <= DIRECT_MAX_WORDS) {
-        if (!arena_reserve(&a, a.len + worst))
+        // No cluster handle or history row can add arena data in the empty state.
+        if ((t->gstore->entries_count != 0 || t->hist.lines != 0) &&
+            !arena_reserve(&a, a.len + worst))
             goto done;
         p.direct = true;
     } else {

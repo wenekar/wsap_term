@@ -32,7 +32,7 @@ static void set_count(struct hist_view *v, uint64_t id, uint32_t count)
         v->fenwick[i] = (uint64_t)((int64_t)v->fenwick[i] + delta);
 }
 
-static bool current(const struct hist_view *v, const struct hist *h, int cols)
+static bool view_matches(const struct hist_view *v, const struct hist *h, int cols)
 {
     return v->index_cols == cols && v->epoch == h->index_epoch &&
            v->first_id == hist_first_id(h) && v->end_id == hist_end_id(h) &&
@@ -40,12 +40,17 @@ static bool current(const struct hist_view *v, const struct hist *h, int cols)
            v->last_cells == (h->lines ? wsap_vtcore_hist_line_cells(h, hist_end_id(h) - 1) : 0);
 }
 
+static bool current(const struct hist_view *v, const struct hist *h, int cols)
+{
+    return v->indexed && v->cap && v->fenwick && v->counts && view_matches(v, h, cols);
+}
+
 bool wsap_vtcore_hist_view_sync(struct hist_view *v, const struct hist *h, int cols)
 {
     if (current(v, h, cols))
         return true;
     uint64_t first = hist_first_id(h), end = hist_end_id(h);
-    bool rebuild = v->index_cols != cols || v->epoch != h->index_epoch ||
+    bool rebuild = !v->indexed || v->index_cols != cols || v->epoch != h->index_epoch ||
                    first < v->first_id || first >= v->end_id || end < v->end_id;
     if (!rebuild) {
         uint64_t changed = first - v->first_id + end - v->end_id;
@@ -98,6 +103,7 @@ bool wsap_vtcore_hist_view_sync(struct hist_view *v, const struct hist *h, int c
     v->head = h->head;
     v->tail = h->tail;
     v->last_cells = h->lines ? wsap_vtcore_hist_line_cells(h, end - 1) : 0;
+    v->indexed = true;
     return true;
 }
 
@@ -114,7 +120,7 @@ static uint64_t anchor_extra(const struct hist_view *v, const struct hist *h, in
 
 uint64_t wsap_vtcore_hist_view_rows(const struct hist_view *v, const struct hist *h, int cols)
 {
-    uint64_t rows = current(v, h, cols) ? v->total_rows : wsap_vtcore_hist_estimated_rows(h, cols);
+    uint64_t rows = view_matches(v, h, cols) ? v->total_rows : wsap_vtcore_hist_estimated_rows(h, cols);
     return rows + anchor_extra(v, h, cols);
 }
 

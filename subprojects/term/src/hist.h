@@ -246,6 +246,7 @@ void wsap_vtcore_hist_mark_links(const struct hist *h, void (*mark)(void *ud, ui
 void wsap_vtcore_hist_set_width(struct hist *h, int cols);
 
 uint64_t wsap_vtcore_hist_rows(const struct hist *h, int cols);
+uint64_t wsap_vtcore_hist_total_cells(const struct hist *h);
 uint64_t wsap_vtcore_hist_line_estimate(const struct hist *h, uint64_t id, int cols);
 uint64_t wsap_vtcore_hist_estimated_rows(const struct hist *h, int cols);
 void wsap_vtcore_hist_prepare_rows(struct hist *h, int cols);

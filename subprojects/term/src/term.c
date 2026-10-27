@@ -99,6 +99,55 @@ void wsap_vtcore_set_theme(struct wsap_vtcore *t, const struct wsap_vtcore_theme
     wsap_vtcore_write_end(t);
 }
 
+bool wsap_vtcore_set_scrollback_limit(struct wsap_vtcore *t, int lines)
+{
+    if (!t || lines < 0 || lines > WSAP_VTCORE_SCROLLBACK_MAX)
+        return false;
+    wsap_vtcore_write_begin(t);
+    if (t->sb_capacity == lines) {
+        wsap_vtcore_write_end(t);
+        return true;
+    }
+    struct hist *h = &t->hist;
+    size_t bytes = (size_t)lines * 800;
+    if (bytes < 8u * 1024 * 1024) bytes = 8u * 1024 * 1024;
+    uint32_t pages = (uint32_t)(bytes / HIST_PAGE_SIZE);
+    if (pages > 65535) pages = 65535;
+    if (lines > 0 && pages > h->max_pages) {
+        uint8_t **data = calloc(pages, sizeof(*data));
+        uint32_t *used = calloc(pages, sizeof(*used));
+        uint32_t *parts = calloc(pages, sizeof(*parts));
+        uint16_t *free_list = malloc(pages * sizeof(*free_list));
+        if (!data || !used || !parts || !free_list) {
+            free(data); free(used); free(parts); free(free_list);
+            wsap_vtcore_write_end(t);
+            return false;
+        }
+        if (h->npages) {
+            memcpy(data, h->pages, h->npages * sizeof(*data));
+            memcpy(used, h->page_used, h->npages * sizeof(*used));
+            memcpy(parts, h->page_parts, h->npages * sizeof(*parts));
+        }
+        if (h->nfree) memcpy(free_list, h->free_pages, h->nfree * sizeof(*free_list));
+        free(h->pages); free(h->page_used); free(h->page_parts); free(h->free_pages);
+        h->pages = data;
+        h->page_used = used;
+        h->page_parts = parts;
+        h->free_pages = free_list;
+        h->max_pages = pages;
+    }
+    h->line_limit = (uint32_t)lines;
+    evict_for(h, 0);
+    t->sb_capacity = lines;
+    if (!lines || (t->view.anchor.active && t->view.anchor.line_id < hist_first_id(h)))
+        t->view.anchor = (struct view_anchor){0};
+    t->view.index_cols = 0;
+    wsap_vtcore_select_clear(t);
+    t->full_gen++;
+    wsap_vtcore_write_end(t);
+    return true;
+}
+
 void wsap_vtcore_focus(struct wsap_vtcore *t, bool focused)
 {
     if (!t)

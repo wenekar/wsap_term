@@ -127,6 +127,8 @@ enum wsap_vtcore_feed_flags {
 WSAP_VTCORE_API bool wsap_vtcore_feed(struct wsap_vtcore *t, const char *bytes, size_t len, unsigned flags);
 
 WSAP_VTCORE_API void wsap_vtcore_focus(struct wsap_vtcore *t, bool focused);
+/* Zero disables history. Reject invalid limits. Keep state on allocation failure. */
+WSAP_VTCORE_API bool wsap_vtcore_set_scrollback_limit(struct wsap_vtcore *t, int lines);
 
 struct wsap_vtcore_modes {
     unsigned keyboard;

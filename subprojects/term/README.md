@@ -27,9 +27,13 @@ Pick one of these:
   any C11 compiler and link libm and threads: `dependency('threads')` in
   Meson, `-pthread` elsewhere on POSIX. A Rust `build.rs` needs one
   `cc::Build::new().file("wsap_vtcore.c").compile("wsap_vtcore")`.
-- **Sources**: compile `src/*.c` and `src/osc/*.c` once, with `src` and
-  `include/wsap_vtcore` on the include path. Link libm and threads, as for
-  the amalgamation.
+- **Sources**: compile `src/*.c` and `src/osc/*.c` once.
+  Exclude `src/gstore.c`, `src/hist.c`, `src/snapshot.c`, and `src/term.c`.
+  `src/term_state.c` compiles these files together.
+  The snapshot path reads private grapheme data.
+  The scrollback limit API uses a file-local history helper.
+  Add `src` and `include/wsap_vtcore` to the include path.
+  Link libm and threads, as for the amalgamation.
 
 The library needs nothing else. On Windows the writer lock is an SRWLOCK
 from the system library, so it needs no extra link. The `*-amalgamation`
@@ -87,7 +91,8 @@ The files are in `src/`.
 
 | File | Responsibility |
 | --- | --- |
-| `term.c` | Mode queries, cursor options, mouse reports, focus events |
+| `term.c` | Mode queries, cursor options, mouse reports, focus events, scrollback limit |
+| `term_state.c` | Compiles grapheme storage, history, snapshots, and mode APIs in one unit |
 | `core.c`, `core.h` | Unified write core primitives (`sc_print_ascii`, `sc_linefeed`, etc.) |
 | `screen.c`, `screen.h` | Screen ring buffer, line feed, editing, resize, and reflow |
 | `hist.c`, `hist.h` | Logical-line history store, SIMD cell encoder, and page arena |

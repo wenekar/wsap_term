@@ -413,13 +413,23 @@ static inline void screen_drop_top(struct screen *s, const struct srow *row)
     s->top_seg = p.seg;
 }
 
+static inline void screen_new_row_plain(struct wsap_vtcore *t, struct srow *row)
+{
+    row->uid = ++t->next_row_uid;
+    row->version++;
+    row->flags = ((row->kind == ROW_CELLS && row->len == 0) || row->kind == ROW_TEXT)
+                 ? (row->flags & RF_TAIL_PADDED) : 0;
+    row->kind = ROW_CELLS;
+    row->len = 0;
+}
+
 static inline void screen_new_row(struct wsap_vtcore *t, struct srow *row)
 {
     row->uid = ++t->next_row_uid;
     row->version++;
     row->flags = ((row->kind == ROW_CELLS && row->len == 0) || row->kind == ROW_TEXT)
                  ? (row->flags & RF_TAIL_PADDED) : 0;
-    if (WSAP_VTCORE_EXPECT(using_default_colors(t), 1)) {
+    if (WSAP_VTCORE_EXPECT(using_default_colors(t) || t->cur_bg == WSAP_VTCORE_COLOR_BG, 1)) {
         row->kind = ROW_CELLS;
         row->len = 0;
     } else {
@@ -429,6 +439,22 @@ static inline void screen_new_row(struct wsap_vtcore *t, struct srow *row)
         row->text.fill = (struct pen_attr){ .fg = t->cur_fg, .bg = t->cur_bg };
         row->len = (uint16_t)t->scr.cols;
     }
+}
+
+static inline void wsap_vtcore_screen_scroll_up_wrap(struct wsap_vtcore *t)
+{
+    struct screen *s = &t->scr;
+    struct srow *row = &s->slot[s->top];
+    if (WSAP_VTCORE_EXPECT(screen_has_history(t), 1))
+        wsap_vtcore_screen_push_row(t, row);
+    else
+        screen_drop_top(s, row);
+    if (WSAP_VTCORE_EXPECT(t->prompt_y > 0, 0) && !t->alternate)
+        t->prompt_y--;
+    s->top = s->top + 1 == s->rows ? 0 : s->top + 1;
+    clamp_selection_after_scroll(t);
+    screen_new_row_plain(t, row);
+    t->full_gen++;
 }
 
 static inline void wsap_vtcore_screen_scroll_up(struct wsap_vtcore *t)

@@ -2902,6 +2902,18 @@ int wsap_vtcore_hist_pop_tail_cells(struct hist *h, int n, struct cell *out, str
     return take;
 }
 
+uint64_t wsap_vtcore_hist_total_cells(const struct hist *h)
+{
+    if (!h || h->tail == h->head || !h->ring)
+        return 0;
+    uint64_t total = 0;
+    uint32_t mask = h->ring_mask;
+    const struct hline *ring = h->ring;
+    for (uint64_t s = h->tail; s < h->head; s++)
+        total += ring[s & mask].cells;
+    return total;
+}
+
 void wsap_vtcore_hist_set_width(struct hist *h, int cols)
 {
     if (h->wrap_cols == cols)

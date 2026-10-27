@@ -1238,7 +1238,7 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
         if (rows < old_rows && t->cursor_y >= rows) {
             int shift = t->cursor_y - rows + 1;
             for (int i = 0; i < shift; i++)
-                wsap_vtcore_screen_scroll_up(t);
+                wsap_vtcore_screen_scroll_up_wrap(t);
             t->cursor_y -= shift;
             t->saved.y = t->saved.y >= shift ? t->saved.y - shift : 0;
         }
