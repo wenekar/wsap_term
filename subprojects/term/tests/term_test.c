@@ -1151,6 +1151,33 @@ static void test_full_width_line_endings(void)
     wsap_vtcore_free(t);
 }
 
+static void test_new_row_keeps_active_colors(void)
+{
+    static const struct {
+        const char *setup, *text;
+        int row;
+        wsap_vtcore_color bg;
+    } cases[] = {
+        {"\033[3;1H\033[31;44m", "abcdX", 2, WSAP_VTCORE_COLOR_SLOT | 4},
+        {"\033[1;2r\033[2;1H\033[31;44m", "abc界", 1, WSAP_VTCORE_COLOR_SLOT | 4},
+        {"\033[3;1H\033[31m", "abcdX", 2, WSAP_VTCORE_COLOR_BG},
+        {"\033[3;1H\033[31m", "abcd\r\nX", 2, WSAP_VTCORE_COLOR_BG},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        struct wsap_vtcore *t = tt_new(4, 3);
+        tt_puts(t, cases[i].setup);
+        tt_puts(t, cases[i].text);
+        struct wsap_vtcore_snapshot *s = wsap_vtcore_snapshot_new();
+        assert(s && wsap_vtcore_snapshot_update(s, t));
+        const struct wsap_vtcore_cell *row = wsap_vtcore_snapshot_row(s, cases[i].row);
+        assert(row[3].text == ' ');
+        assert(row[3].fg == wsap_vtcore_color_index(1));
+        assert(row[3].bg == cases[i].bg);
+        wsap_vtcore_snapshot_free(s);
+        wsap_vtcore_free(t);
+    }
+}
+
 static void test_batched_line_masks(void)
 {
     static const char *const tails[] = {
@@ -1938,6 +1965,7 @@ int main(void)
     test_invalid_utf8_runs();
     test_c0_ends_utf8_sequence();
     test_full_width_line_endings();
+    test_new_row_keeps_active_colors();
     test_batched_line_masks();
     test_bulk_line_flood();
     test_ascii_flood_edits();

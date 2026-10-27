@@ -28,9 +28,9 @@ Pick one of these:
   Meson, `-pthread` elsewhere on POSIX. A Rust `build.rs` needs one
   `cc::Build::new().file("wsap_vtcore.c").compile("wsap_vtcore")`.
 - **Sources**: compile `src/*.c` and `src/osc/*.c` once.
-  Exclude `src/gstore.c`, `src/hist.c`, `src/snapshot.c`, and `src/term.c`.
+  Exclude `src/gstore.c`, `src/hist.c`, and `src/term.c`.
   `src/term_state.c` compiles these files together.
-  The snapshot path reads private grapheme data.
+  Compile `src/snapshot.c` as a separate unit.
   The scrollback limit API uses a file-local history helper.
   Add `src` and `include/wsap_vtcore` to the include path.
   Link libm and threads, as for the amalgamation.
@@ -92,7 +92,7 @@ The files are in `src/`.
 | File | Responsibility |
 | --- | --- |
 | `term.c` | Mode queries, cursor options, mouse reports, focus events, scrollback limit |
-| `term_state.c` | Compiles grapheme storage, history, snapshots, and mode APIs in one unit |
+| `term_state.c` | Compiles grapheme storage, history, and mode APIs in one unit |
 | `core.c`, `core.h` | Unified write core primitives (`sc_print_ascii`, `sc_linefeed`, etc.) |
 | `screen.c`, `screen.h` | Screen ring buffer, line feed, editing, resize, and reflow |
 | `hist.c`, `hist.h` | Logical-line history store, SIMD cell encoder, and page arena |
@@ -137,7 +137,8 @@ The alternate screen has no history.
 
 Relative scroll walks from the anchor.
 Absolute scroll uses a circular Fenwick index of line row counts.
-Snapshot capture updates this index.
+Snapshot capture builds this index when a history view first needs it.
+Later captures keep the index and its refined row counts up to date.
 The write path does not update the index.
 History descriptors keep row totals for the current width.
 A width change starts wide lines with estimated row counts.

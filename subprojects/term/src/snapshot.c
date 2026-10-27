@@ -282,18 +282,13 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
         all = true;
 
     if (!t->alternate) {
-        if (cols != t->hist.wrap_cols)
-            wsap_vtcore_hist_set_width(&t->hist, cols);
-        if (t->view.anchor.active) {
-            wsap_vtcore_hist_prepare_rows(&t->hist, cols);
+        wsap_vtcore_hist_prepare_rows(&t->hist, cols);
+        if (t->view.anchor.active || t->view.indexed) {
             if (!wsap_vtcore_hist_view_sync(&t->view, &t->hist, cols))
                 goto done;
             wsap_vtcore_hist_view_refine(&t->view, &t->hist, cols, rows);
         } else {
-            uint64_t total_cells = wsap_vtcore_hist_total_cells(&t->hist);
-            uint64_t est = total_cells > 0 ? (total_cells + (uint64_t)cols - 1) / (uint64_t)cols : 0;
-            if (est < t->hist.lines)
-                est = t->hist.lines;
+            uint64_t est = wsap_vtcore_hist_estimated_rows(&t->hist, cols);
             // This estimate does not build or update the row lookup arrays.
             t->view.indexed = false;
             t->view.total_rows = est;
@@ -364,7 +359,7 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
     uint64_t worst = (uint64_t)p.staged * (uint64_t)cols * (1 + WSAP_VTCORE_GRAPHEME_MAX_LEN);
     if (!all && worst <= DIRECT_MAX_WORDS) {
         // No cluster handle or history row can add arena data in the empty state.
-        if ((t->gstore->entries_count != 0 || t->hist.lines != 0) &&
+        if ((wsap_vtcore_gstore_count(t->gstore) != 0 || t->hist.lines != 0) &&
             !arena_reserve(&a, a.len + worst))
             goto done;
         p.direct = true;

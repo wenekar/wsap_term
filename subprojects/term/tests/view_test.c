@@ -67,6 +67,35 @@ static void feed_lines(struct wsap_vtcore *t, const char *tag, int count)
     }
 }
 
+static void snapshots_keep_history_totals(void)
+{
+    static const struct {
+        struct wsap_vtcore_vector2i size, resized;
+        const char *text;
+        int history;
+    } cases[] = {
+        {{4, 2}, {4, 2}, "abcdef\r\nx\r\ny\r\n", 3},
+        {{12, 3}, {1, 2}, "中mR", 1},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        struct wsap_vtcore *t = small_history_term(cases[i].size.x, cases[i].size.y, 50);
+        tt_puts(t, cases[i].text);
+        assert(wsap_vtcore_resize(t, cases[i].resized));
+        assert(wsap_vtcore_history_rows(t) == cases[i].history);
+        struct wsap_vtcore_snapshot *s = wsap_vtcore_snapshot_new();
+        assert(s && wsap_vtcore_snapshot_update(s, t));
+        assert(wsap_vtcore_history_rows(t) == cases[i].history);
+        wsap_vtcore_scroll(t, INT_MAX);
+        assert(wsap_vtcore_snapshot_update(s, t));
+        assert(wsap_vtcore_history_rows(t) == cases[i].history);
+        wsap_vtcore_scroll_to(t, 0);
+        assert(wsap_vtcore_snapshot_update(s, t));
+        assert(wsap_vtcore_history_rows(t) == cases[i].history);
+        wsap_vtcore_snapshot_free(s);
+        wsap_vtcore_free(t);
+    }
+}
+
 static void view_holds_text_while_output_arrives(void)
 {
     struct wsap_vtcore *t = tt_new(12, 5);
@@ -461,6 +490,7 @@ static void row_keys_follow_scrolled_content(void)
 
 int main(void)
 {
+    snapshots_keep_history_totals();
     row_keys_differ_between_terminals();
     row_keys_follow_scrolled_content();
     snapshots_agree_after_prefix_eviction();

@@ -78,26 +78,6 @@ static inline void sc_linefeed(struct wsap_vtcore *t, size_t n)
     wsap_vtcore_sc_linefeed_slow(t, n);
 }
 
-static inline void sc_linefeed_wrap(struct wsap_vtcore *t)
-{
-    if (WSAP_VTCORE_EXPECT(t->scroll_top == 0 &&
-                         t->scroll_bottom == t->rows - 1, 1)) {
-        t->pending_wrap = false;
-        wsap_vtcore_row(t, t->cursor_y)->version++;
-        if (WSAP_VTCORE_EXPECT(t->cursor_y == t->rows - 1, 1))
-            wsap_vtcore_screen_scroll_up_wrap(t);
-        else
-            t->cursor_y++;
-        return;
-    }
-    uint32_t saved_fg = t->cur_fg, saved_bg = t->cur_bg;
-    t->cur_fg = WSAP_VTCORE_COLOR_FG;
-    t->cur_bg = WSAP_VTCORE_COLOR_BG;
-    wsap_vtcore_sc_linefeed_slow(t, 1);
-    t->cur_fg = saved_fg;
-    t->cur_bg = saved_bg;
-}
-
 static inline void sc_cr(struct wsap_vtcore *t)
 {
     t->pending_wrap = false;
@@ -161,7 +141,7 @@ static inline struct span sc_span_begin(struct wsap_vtcore *t, int want)
     if (WSAP_VTCORE_EXPECT(t->pending_wrap, 0)) {
         row_set_wrapped(wsap_vtcore_row(t, t->cursor_y), true);
         t->cursor_x = t->lr_margin_mode ? t->left_margin : 0;
-        sc_linefeed_wrap(t);
+        sc_linefeed(t, 1);
         t->pending_wrap = false;
     }
     struct srow *row = wsap_vtcore_row(t, t->cursor_y);
@@ -225,7 +205,7 @@ static inline int sc_text_ascii(struct wsap_vtcore *t, const char *s, int n, str
     if (t->pending_wrap) {
         row_set_wrapped(wsap_vtcore_row(t, t->cursor_y), true);
         t->cursor_x = 0;
-        sc_linefeed_wrap(t);
+        sc_linefeed(t, 1);
         t->pending_wrap = false;
     }
     struct srow *row = text_append_row(t);
