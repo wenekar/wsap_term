@@ -33,8 +33,8 @@ jobs:
             cxx: g++
           - name: Linux Clang
             os: ubuntu-24.04
-            cc: clang
-            cxx: clang++
+            cc: clang-18
+            cxx: clang++-18
           - name: macOS Clang
             os: macos-14
             cc: clang
@@ -52,9 +52,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config \
             clang-18 libclang-rt-18-dev
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 180 \
-            --slave /usr/bin/clang++ clang++ /usr/bin/clang++-18
-          sudo update-alternatives --set clang /usr/bin/clang-18
+          sudo ln -sf /usr/bin/clang-18 /usr/bin/clang
+          sudo ln -sf /usr/bin/clang++-18 /usr/bin/clang++
       - name: Install tools
         if: runner.os == 'macOS'
         run: brew install meson ninja pkgconf zig
@@ -75,7 +74,7 @@ jobs:
           meson compile -C /tmp/term-dist-build
 
   sanitize:
-    name: Linux ASan and UBSan (${{ matrix.cc }})
+    name: Linux ASan and UBSan (${{ matrix.name || matrix.cc }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -84,8 +83,9 @@ jobs:
         include:
           - cc: gcc
             cxx: g++
-          - cc: clang
-            cxx: clang++
+          - cc: clang-18
+            cxx: clang++-18
+            name: clang
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
@@ -98,9 +98,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config \
             clang-18 libclang-rt-18-dev
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 180 \
-            --slave /usr/bin/clang++ clang++ /usr/bin/clang++-18
-          sudo update-alternatives --set clang /usr/bin/clang-18
+          sudo ln -sf /usr/bin/clang-18 /usr/bin/clang
+          sudo ln -sf /usr/bin/clang++-18 /usr/bin/clang++
       - name: Build and test with sanitizers
         run: |
           meson setup /tmp/term-sanitize subprojects/term -Dkitty=disabled -Db_sanitize=address,undefined
