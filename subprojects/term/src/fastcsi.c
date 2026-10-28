@@ -237,6 +237,12 @@ int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
                             j += 2;
                         } else if (j + 1 < nparams && pv[j + 1] == 2 &&
                                    j + 4 < nparams) {
+                            /* Parameters stop at six digits here, but the base parser keeps
+                             * all digits and the color keeps the low byte. Let it decide. */
+                            if ((pv[j + 2] | pv[j + 3] | pv[j + 4]) >= 100000) {
+                                p = esc;
+                                goto done;
+                            }
                             *slot = wsap_vtcore_rgb(pv[j + 2], pv[j + 3], pv[j + 4]);
                             j += 4;
                         }

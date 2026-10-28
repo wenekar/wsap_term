@@ -80,6 +80,12 @@ enum wsap_vtcore_mouse_encoding {
     WSAP_VTCORE_MOUSE_ENC_SGR_PIXELS = 1016,
 };
 
+/* Callbacks run on the calling thread while the terminal is locked.
+ * Payload pointers are valid only until the callback returns.
+ * Do not feed, resize, free, or otherwise change the terminal in a callback.
+ * Queue that work until the enclosing call returns. Do not wait for another
+ * thread that needs this terminal. The lock alone does not make parser re-entry safe.
+ */
 struct wsap_vtcore_callbacks {
     void *ud;
     void (*reply)(void *ud, const char *bytes, size_t len);
@@ -90,6 +96,10 @@ struct wsap_vtcore_callbacks {
     void (*trace)(void *ud, const char *line);
 };
 
+/* Zero-initialize options. A zero size selects 80 by 24; zero scrollback
+ * selects WSAP_VTCORE_SCROLLBACK_DEFAULT; zero theme selects built-in colors.
+ * A null name selects "wsap_vtcore". Other zero fields select defaults.
+ */
 struct wsap_vtcore_options {
     struct wsap_vtcore_vector2i size;
     int scrollback;
@@ -104,16 +114,31 @@ struct wsap_vtcore_options {
 WSAP_VTCORE_API const char *wsap_vtcore_unicode_version(void);
 WSAP_VTCORE_API unsigned wsap_vtcore_version(void);
 
+/* Return the length of the leading run of bytes from 0x20 up to, but not
+ * including, hi. Use 0x7f for printable ASCII. The result is the same at
+ * every SIMD level.
+ */
 WSAP_VTCORE_API size_t wsap_vtcore_scan_printable_span(const char *buf, size_t len, unsigned char hi);
 
 WSAP_VTCORE_API const char *wsap_vtcore_isa(void);
 
+/* Returns NULL for invalid options or allocation failure. The core copies the
+ * options' theme, callbacks and name; callback userdata remains caller-owned.
+ */
 WSAP_VTCORE_API struct wsap_vtcore *wsap_vtcore_new(const struct wsap_vtcore_options *opt);
+/* NULL is allowed. Stop all users before freeing the terminal. */
 WSAP_VTCORE_API void wsap_vtcore_free(struct wsap_vtcore *t);
 
+/* Terminal calls serialize on one terminal. Group calls with these locks.
+ * Nesting is allowed on one thread. Balance locks on that same thread.
+ * Do not call unlock without a matching lock. NULL is allowed for both calls.
+ */
 WSAP_VTCORE_API void wsap_vtcore_lock(struct wsap_vtcore *t);
 WSAP_VTCORE_API void wsap_vtcore_unlock(struct wsap_vtcore *t);
 
+/* Dimensions must be positive. Width must not exceed WSAP_VTCORE_MAX_COLS.
+ * Return false for invalid input or allocation failure. Keep the old state.
+ */
 WSAP_VTCORE_API bool wsap_vtcore_resize(struct wsap_vtcore *t, struct wsap_vtcore_vector2i size);
 
 WSAP_VTCORE_API void wsap_vtcore_set_theme(struct wsap_vtcore *t, const struct wsap_vtcore_theme *theme);
@@ -124,6 +149,10 @@ enum wsap_vtcore_feed_flags {
     WSAP_VTCORE_FEED_ONLCR = 1u << 0,
 };
 
+/* False means invalid arguments or unsupported flags, before consuming bytes.
+ * True means the full supplied byte span was accepted; parser and internal
+ * allocation failures are not reported by this return value.
+ */
 WSAP_VTCORE_API bool wsap_vtcore_feed(struct wsap_vtcore *t, const char *bytes, size_t len, unsigned flags);
 
 WSAP_VTCORE_API void wsap_vtcore_focus(struct wsap_vtcore *t, bool focused);
@@ -176,6 +205,9 @@ WSAP_VTCORE_API struct wsap_vtcore_input_result wsap_vtcore_input_encode_paste(
     char *buf, size_t capacity
 );
 WSAP_VTCORE_API struct wsap_vtcore_cursor wsap_vtcore_cursor(const struct wsap_vtcore *t);
+/* Returned strings belong to the caller. Release them with text_free.
+ * NULL means no value, invalid input, or allocation failure.
+ */
 WSAP_VTCORE_API char *wsap_vtcore_cwd(const struct wsap_vtcore *t);
 WSAP_VTCORE_API char *wsap_vtcore_pointer_shape(const struct wsap_vtcore *t);
 WSAP_VTCORE_API void wsap_vtcore_text_free(char *text);
@@ -257,9 +289,18 @@ static_assert(sizeof(struct wsap_vtcore_cell) == 16, "four cells fill one 64-byt
 _Static_assert(sizeof(struct wsap_vtcore_cell) == 16, "four cells fill one 64-byte line");
 #endif
 
+/* A snapshot owns its copied rows, palette, and grapheme data.
+ * The data stays valid even after the source terminal is freed.
+ * Getter pointers are valid until the next update attempt or snapshot_free.
+ * Readers can share a snapshot if no thread updates or frees it.
+ */
 WSAP_VTCORE_API struct wsap_vtcore_snapshot *wsap_vtcore_snapshot_new(void);
 WSAP_VTCORE_API void wsap_vtcore_snapshot_free(struct wsap_vtcore_snapshot *s);
 
+/* Copy the terminal view. A snapshot can capture different terminals.
+ * On failure, keep the prior values. Re-fetch getter pointers after any attempt.
+ * Do not update a snapshot while another thread reads or updates it.
+ */
 WSAP_VTCORE_API bool wsap_vtcore_snapshot_update(struct wsap_vtcore_snapshot *s, struct wsap_vtcore *t);
 
 enum {
@@ -288,13 +329,23 @@ WSAP_VTCORE_API int wsap_vtcore_history_rows(const struct wsap_vtcore *t);
 WSAP_VTCORE_API char *wsap_vtcore_history_text(struct wsap_vtcore *t, int max_rows);
 WSAP_VTCORE_API struct wsap_vtcore_span wsap_vtcore_snapshot_row_selection(const struct wsap_vtcore_snapshot *s, int y);
 
+/* Return the full code point count. Copy at most cap code points to cps.
+ * Use NULL and zero capacity to query the count. Invalid handles return zero.
+ * Cluster handles belong to one snapshot capture. Do not retain them across updates.
+ */
 WSAP_VTCORE_API int wsap_vtcore_snapshot_cluster(const struct wsap_vtcore_snapshot *s, uint32_t text, uint32_t *cps, int cap);
 
+/* Literal colors pass through unchanged. Invalid slots or a missing palette
+ * resolve to zero.
+ */
 static inline uint32_t wsap_vtcore_view_color(const struct wsap_vtcore_view *v, wsap_vtcore_color c)
 {
     if (!wsap_vtcore_color_is_slot(c))
         return c;
-    return v->palette[c & WSAP_VTCORE_COLOR_SLOT_INDEX];
+    uint32_t index = c & WSAP_VTCORE_COLOR_SLOT_INDEX;
+    if (!v || !v->palette || index >= WSAP_VTCORE_PALETTE_SIZE)
+        return 0;
+    return v->palette[index];
 }
 
 #ifdef __cplusplus

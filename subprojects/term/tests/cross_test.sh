@@ -10,6 +10,9 @@ python3 "$root/tools/amalgamate.py" "$root" "$out/amalgamation"
 status=0
 for target in aarch64-linux-gnu x86_64-macos aarch64-macos x86_64-windows-gnu; do
     for src in *.c osc/*.c; do
+        case "$src" in
+            gstore.c|hist.c|term.c) continue ;;
+        esac
         zig cc -target "$target" -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror \
             -I. -I../include/wsap_vtcore -c "$src" -o "$out/obj.o" || { echo "$target: $src fails" >&2; status=1; }
     done

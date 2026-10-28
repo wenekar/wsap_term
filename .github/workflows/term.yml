@@ -1,0 +1,137 @@
+name: Terminal core
+
+on:
+  push:
+    paths:
+      - 'subprojects/term/**'
+      - '.github/workflows/term.yml'
+  pull_request:
+    paths:
+      - 'subprojects/term/**'
+      - '.github/workflows/term.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: term-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux GCC
+            os: ubuntu-24.04
+            cc: gcc
+            cxx: g++
+          - name: Linux Clang
+            os: ubuntu-24.04
+            cc: clang
+            cxx: clang++
+          - name: macOS Clang
+            os: macos-14
+            cc: clang
+            cxx: clang++
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Install tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config
+      - name: Install tools
+        if: runner.os == 'macOS'
+        run: brew install meson ninja pkgconf zig
+      - name: Build and test standalone core
+        run: |
+          meson setup /tmp/term-build subprojects/term -Dkitty=disabled
+          meson compile -C /tmp/term-build
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            meson test -C /tmp/term-build --print-errorlogs
+          else
+            meson test -C /tmp/term-build --print-errorlogs --suite unit
+            meson test -C /tmp/term-build --print-errorlogs term-package-test
+          fi
+          meson dist -C /tmp/term-build --no-tests
+          mkdir -p /tmp/term-dist
+          tar -xf /tmp/term-build/meson-dist/wsap_vtcore-*.tar.xz -C /tmp/term-dist
+          meson setup /tmp/term-dist-build /tmp/term-dist/wsap_vtcore-* -Dtests=false
+          meson compile -C /tmp/term-dist-build
+
+  sanitize:
+    name: Linux ASan and UBSan (${{ matrix.cc }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cc: gcc
+            cxx: g++
+          - cc: clang
+            cxx: clang++
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config
+      - name: Build and test with sanitizers
+        run: |
+          meson setup /tmp/term-sanitize subprojects/term -Dkitty=disabled -Db_sanitize=address,undefined
+          meson compile -C /tmp/term-sanitize
+          meson test -C /tmp/term-sanitize --print-errorlogs --suite unit
+
+  fuzz:
+    name: Linux libFuzzer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config \
+            clang-18 libclang-rt-18-dev
+      - name: Build the fuzz target
+        run: |
+          meson setup /tmp/term-fuzz subprojects/term -Dkitty=disabled -Dfuzzing=true
+          meson compile -C /tmp/term-fuzz tests/fuzz/terminal-fuzz
+      - name: Run the fixed smoke test
+        run: meson test -C /tmp/term-fuzz --print-errorlogs --suite fuzz
+      - name: Fuzz for ten minutes
+        run: |
+          python3 subprojects/term/tools/fuzz_smoke.py /tmp/term-fuzz/tests/fuzz/terminal-fuzz \
+            subprojects/term/assets/fuzz --artifacts /tmp/term-fuzz-artifacts --seconds 600
+      - name: Upload crash inputs
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: term-fuzz-artifacts
+          path: |
+            /tmp/term-fuzz-artifacts/
+            /tmp/term-fuzz/tests/fuzz/artifacts/
+          if-no-files-found: ignore
+          retention-days: 14

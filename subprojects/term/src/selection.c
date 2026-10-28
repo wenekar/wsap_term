@@ -516,7 +516,8 @@ static void select_range(struct wsap_vtcore *t, const struct lines *L,
 bool wsap_vtcore_select_start(struct wsap_vtcore *t, struct wsap_vtcore_vector2i cell, bool right_half,
                        enum wsap_vtcore_select_unit unit)
 {
-    if (!t) return false;
+    if (!t || unit < WSAP_VTCORE_SELECT_CELL || unit > WSAP_VTCORE_SELECT_LINE)
+        return false;
     wsap_vtcore_write_begin(t);
     struct lines L;
     if (!lines_init(&L, t)) {

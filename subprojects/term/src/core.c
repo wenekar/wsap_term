@@ -132,8 +132,12 @@ void wsap_vtcore_sc_print_glyph(struct wsap_vtcore *t, uint32_t cp, int width, u
         int move = right + 1 - cx - span;
         if (move > 0)
             memmove(&row[cx + span], &row[cx], (size_t)move * sizeof(struct cell));
-        int new_len = srow->len + span;
-        srow->len = (uint16_t)(new_len > cols ? cols : new_len);
+        /* Cells move only up to the right margin. Past it, the row keeps its
+         * length, so stale cells after the length stay hidden. */
+        if (srow->len <= right) {
+            int new_len = srow->len + span;
+            srow->len = (uint16_t)(new_len > right + 1 ? right + 1 : new_len);
+        }
         repair_wide_row(row, right, right + 1, cols, srow->len);
     }
     clear_wide_edges(row, cx, cx + span, srow->len);
@@ -801,7 +805,9 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_lf(struct wsap_vtcore *t, const 
         t->ascii_tail.data = tail_data;
         t->ascii_tail.cap = tail_bytes;
     }
-    memcpy(tail_data, buf + source_start, tail_bytes);
+    /* A one-row screen keeps no rows, and the buffer can still be NULL. */
+    if (tail_bytes)
+        memcpy(tail_data, buf + source_start, tail_bytes);
     wsap_vtcore_hist_push_ascii_lf(&t->hist, buf, ends, first);
     if (skip)
         wsap_vtcore_hist_push_ascii(&t->hist, buf + ends[first], skip, NULL, true);

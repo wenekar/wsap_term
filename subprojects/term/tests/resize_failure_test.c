@@ -1,57 +1,35 @@
-#define _GNU_SOURCE
 #include "term_api.h"
 
 #include <assert.h>
-#include <dlfcn.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
-#ifndef __has_feature
-#define __has_feature(x) 0
-#endif
-
-#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
-#define SANITIZED 1
-#elif __has_feature(address_sanitizer) || __has_feature(memory_sanitizer) || \
-      __has_feature(thread_sanitizer)
-#define SANITIZED 1
-#endif
-
-#ifndef SANITIZED
 static bool fail_next_calloc;
 static bool fail_reallocs;
 
-void *calloc(size_t n, size_t size)
+void *__real_calloc(size_t n, size_t size);
+void *__wrap_calloc(size_t n, size_t size)
 {
-    static void *(*real_calloc)(size_t, size_t);
-    if (!real_calloc)
-        real_calloc = (void *(*)(size_t, size_t))dlsym(RTLD_NEXT, "calloc");
     if (fail_next_calloc) {
         fail_next_calloc = false;
         return NULL;
     }
-    return real_calloc(n, size);
+    return __real_calloc(n, size);
 }
 
-void *realloc(void *p, size_t size)
+void *__real_realloc(void *p, size_t size);
+void *__wrap_realloc(void *p, size_t size)
 {
-    static void *(*real_realloc)(void *, size_t);
-    if (!real_realloc)
-        real_realloc = (void *(*)(void *, size_t))dlsym(RTLD_NEXT, "realloc");
     if (fail_reallocs)
         return NULL;
-    return real_realloc(p, size);
+    return __real_realloc(p, size);
 }
-#endif
 
 int main(void)
 {
-#ifdef SANITIZED
-    puts("resize failure test skipped under sanitizer");
-    return 0;
-#else
     struct wsap_vtcore *term = tt_new(10, 2);
     assert(term);
     tt_write(term, "abc", 3);
@@ -188,5 +166,4 @@ int main(void)
 
     puts("lazy screen allocation failures preserve observable terminal state");
     return 0;
-#endif
 }

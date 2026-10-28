@@ -114,6 +114,28 @@ static void test_new_accepts_defaults(void)
     wsap_vtcore_free(t);
 }
 
+static void test_selection_rejects_invalid_unit(void)
+{
+    struct wsap_vtcore *t = tt_new(10, 2);
+    assert(t);
+    assert(wsap_vtcore_feed(t, "word", 4, 0));
+    assert(wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ .x = 0, .y = 0 }, false,
+                                    WSAP_VTCORE_SELECT_CELL));
+    assert(wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = 3, .y = 0 }, true));
+    char *before = wsap_vtcore_selection_text(t);
+    assert(before && !strcmp(before, "word"));
+
+    assert(!wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ .x = 1, .y = 0 }, false,
+                                     (enum wsap_vtcore_select_unit)-1));
+    assert(wsap_vtcore_has_selection(t));
+    char *after = wsap_vtcore_selection_text(t);
+    assert(after && !strcmp(after, before));
+
+    wsap_vtcore_text_free(before);
+    wsap_vtcore_text_free(after);
+    wsap_vtcore_free(t);
+}
+
 static void test_resize_rejects_too_wide(void)
 {
     struct wsap_vtcore *t = tt_new(10, 3);
@@ -143,5 +165,6 @@ int main(void)
     test_new_rejects_bad_options();
     test_new_accepts_defaults();
     test_resize_rejects_too_wide();
+    test_selection_rejects_invalid_unit();
     return 0;
 }

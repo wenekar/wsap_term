@@ -477,6 +477,9 @@ static inline bool srow_has_text(const struct srow *r, int cols)
         return false;
     if (r->kind == ROW_TEXT)
         return text_has_text(r->text.text, r->text.text_len < len ? r->text.text_len : len);
+    /* An ASCII row keeps one byte per cell in its text. Its cells are stale. */
+    if (r->kind == ROW_ASCII)
+        return text_has_text(r->text.text, len);
     return cells_has_text(r->cells, len);
 }
 

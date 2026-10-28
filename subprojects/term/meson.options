@@ -11,6 +11,12 @@ option(
   description: 'Build and register the wsap_vtcore tests and benchmarks',
 )
 option(
+  'fuzzing',
+  type: 'boolean',
+  value: false,
+  description: 'Build a separate Clang libFuzzer target with address and undefined-behavior checks',
+)
+option(
   'write_fuzz_seeds',
   type: 'integer',
   min: 1,

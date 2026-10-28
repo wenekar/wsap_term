@@ -70,6 +70,7 @@ static void assert_same(struct wsap_vtcore *bulk, struct wsap_vtcore *bytes, int
 int main(int argc, char **argv)
 {
     int seeds = argc > 1 ? atoi(argv[1]) : 50000;
+    gen_unmodeled = true;
     for (int seed = 1; seed <= seeds; seed++) {
         rng = 0x9e3779b97f4a7c15ull * (uint64_t)seed;
         int cols = 4 + rn(30), rows = 2 + rn(10);

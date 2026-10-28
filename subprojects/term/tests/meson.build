@@ -1,5 +1,4 @@
 fs = import('fs')
-dl_dep = cc.find_library('dl', required: false)
 python = find_program('python3', native: true, version: '>=3.10')
 bash = find_program('bash', native: true)
 
@@ -17,6 +16,7 @@ if cc.get_id() == 'clang'
   endif
 endif
 test_env.set('NM', nm.full_path())
+test_env.set('CC', ' '.join(cc.cmd_array()))
 
 wsap_vtcore_tests = [
   ['unicode-test', files('unicode/unicode_test.c'), [], []],
@@ -32,10 +32,11 @@ wsap_vtcore_tests = [
   ['snapshot-scroll-arena-test', files('snapshot_scroll_arena_test.c'), [], []],
   ['view-test', files('view_test.c'), [], []],
   ['resize-property-test', files('resize_property_test.c'), [], []],
-  ['term-resize-failure-test', files('resize_failure_test.c'), [dl_dep], ['extlib']],
   ['dcs-test', files('dcs_test.c'), [], []],
   ['osc-test', files('osc_test.c'), [], []],
   ['api-args-test', files('api_args_test.c'), [], []],
+  ['public-helpers-test', files('public_helpers_test.c'), [], []],
+  ['snapshot-lifetime-test', files('snapshot_lifetime_test.c'), [], []],
 ]
 test_helpers_inc = include_directories('helpers')
 
@@ -61,8 +62,10 @@ if host_machine.cpu_family() == 'x86_64' and cc.get_argument_syntax() == 'gcc' a
     level_env = test_env
     level_env.set('WSAP_VTCORE_ISA', level)
     foreach name : ['term-test', 'spec-test', 'model-test', 'view-test', 'term-input-test',
-                    'hist-test', 'history-text-test']
+                    'hist-test', 'history-text-test', 'snapshot-lifetime-test',
+                    'public-helpers-test', 'write-fuzz-test']
       test(name + '-' + level, wsap_vtcore_test_exes[name], env: level_env,
+        args: name == 'write-fuzz-test' ? [get_option('write_fuzz_seeds').to_string()] : [],
         suite: ['unit', 'isa'], timeout: 180)
     endforeach
   endforeach
@@ -85,7 +88,8 @@ wsap_vtcore_amalgamation_lib = static_library(
 foreach entry : wsap_vtcore_tests
   if entry[0] in ['term-test', 'spec-test', 'view-test', 'dcs-test', 'osc-test',
                   'history-text-test', 'term-input-test', 'model-test', 'model-row-test',
-                  'resize-property-test', 'api-args-test']
+                  'resize-property-test', 'api-args-test', 'public-helpers-test',
+                  'snapshot-lifetime-test']
     test(entry[0] + '-amalgamation',
       executable(entry[0] + '-amalgamation', entry[1],
         c_args: test_c_args,
@@ -105,7 +109,8 @@ test('term-symbols-test', bash,
   suite: 'unit',
 )
 test('term-header-test', bash,
-  args: [files('header_test.sh'), meson.project_source_root()],
+  args: [files('header_test.sh'), meson.project_source_root()] + cc.cmd_array(),
+  env: test_env,
   suite: 'unit',
 )
 if cc.has_link_argument('-Wl,--wrap=realloc') and cc.has_link_argument('-Wl,--wrap=malloc')
@@ -115,6 +120,31 @@ if cc.has_link_argument('-Wl,--wrap=realloc') and cc.has_link_argument('-Wl,--wr
     dependencies: [wsap_vtcore_internal_dep],
   )
   test('snapshot-failure-test', snapshot_failure_test,
+    env: test_env,
+    suite: 'unit',
+  )
+endif
+if cc.has_link_argument('-Wl,--wrap=malloc') and cc.has_link_argument('-Wl,--wrap=free')
+  alloc_failure_test = executable('alloc-failure-test', 'alloc_failure_test.c',
+    c_args: test_c_args,
+    link_args: ['-Wl,--wrap=malloc', '-Wl,--wrap=calloc', '-Wl,--wrap=realloc',
+                '-Wl,--wrap=free'],
+    dependencies: [wsap_vtcore_internal_dep],
+  )
+  test('alloc-failure-test', alloc_failure_test,
+    env: test_env,
+    suite: 'unit',
+    timeout: 300,
+  )
+endif
+if cc.has_link_argument('-Wl,--wrap=realloc') and cc.has_link_argument('-Wl,--wrap=calloc')
+  resize_failure_test = executable('term-resize-failure-test', 'resize_failure_test.c',
+    c_args: test_c_args,
+    include_directories: test_helpers_inc,
+    link_args: ['-Wl,--wrap=realloc', '-Wl,--wrap=calloc'],
+    dependencies: [wsap_vtcore_internal_dep],
+  )
+  test('term-resize-failure-test', resize_failure_test,
     env: test_env,
     suite: 'unit',
   )
@@ -133,6 +163,16 @@ test('term-cross-test', bash,
   suite: 'portability',
   timeout: 600,
 )
+test('term-package-test', bash,
+  args: [files('package_test.sh'), meson.project_source_root()],
+  env: test_env,
+  suite: 'packaging',
+  timeout: 300,
+)
+
+if get_option('fuzzing')
+  subdir('fuzz')
+endif
 
 kitty_tests = get_option('kitty').require(
   host_machine.system() == 'linux' and get_option('b_sanitize') == 'none',

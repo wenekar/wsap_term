@@ -2,6 +2,7 @@
 #define WSAP_TERM_FUZZ_GEN_H
 
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -51,6 +52,21 @@ static void __attribute__((format(printf, 1, 2))) putf(const char *fmt, ...)
 
 #define PICK(list) (list)[rn((int)(sizeof(list) / sizeof((list)[0])))]
 
+/* Emit sequences that the model does not implement: OSC 8 links and
+ * XTGETTCAP at buffer-edge lengths. The model test leaves this off.
+ */
+static bool gen_unmodeled;
+
+/* Parameters at the edges of the parsers' digit limits. */
+static const char *big_number(void)
+{
+    static const char *values[] = {
+        "255", "256", "65535", "999999", "1000000", "1234567",
+        "2147483647", "2147483648", "99999999999999999999",
+    };
+    return PICK(values);
+}
+
 static void gen_sgr(void)
 {
     static const int plain[] = {
@@ -60,7 +76,7 @@ static void gen_sgr(void)
     int n = 1 + rn(3);
     for (int i = 0; i < n; i++) {
         if (i) put(";");
-        switch (rn(9)) {
+        switch (rn(10)) {
         case 0: putf("38;5;%d", rn(300)); break;
         case 1: putf("48;5;%d", rn(300)); break;
         case 2: putf("38;2;%d;%d;%d", rn(256), rn(256), rn(256)); break;
@@ -69,6 +85,7 @@ static void gen_sgr(void)
         case 5: putf("%d", 30 + rn(8) + (rn(2) ? 60 : 0)); break;
         case 6: putf("%d", 40 + rn(8) + (rn(2) ? 60 : 0)); break;
         case 7: putf("58;5;%d", rn(256)); break;
+        case 8: putf("%d8;2;%d;%s;%d", 3 + rn(2), rn(256), big_number(), rn(256)); break;
         default: putf("%d", PICK(plain)); break;
         }
     }
@@ -118,7 +135,7 @@ static inline void gen(int ops, int cols, int rows)
     static const char csi_final[] = "ABCDEFGHIJKLMPSTXZ@`abdefghlmnrsu";
 
     for (int i = 0; i < ops; i++) {
-        switch (rn(36)) {
+        switch (rn(41)) {
         case 0: case 1: case 2: put(PICK(words)); break;
         case 3: {
             int n = rn(cols * 2 + 2);
@@ -170,6 +187,35 @@ static inline void gen(int ops, int cols, int rows)
                  rn(rows) + 1, rn(cols) + 1, PICK(((const int[]){ 0, 1, 4, 7, 22, 24, 27, 31, 42 })));
             break;
         case 35: putf("\033[%d*x", rn(3)); break;
+        case 36:
+            putf("\033[%s;%s%c", big_number(), big_number(),
+                 csi_final[rn((int)sizeof(csi_final) - 1)]);
+            break;
+        case 37: case 38: {
+            if (!gen_unmodeled)
+                break;
+            static const int edges[] = { 254, 255, 256, 257, 4094, 4095, 4096, 4097 };
+            int osc = rn(2), n = PICK(edges) - 3;
+            put(osc ? "\033]8;;" : "\033P+q");
+            for (int k = 0; k < n; k++)
+                putb("0123456789abcdef"[rn(16)]);
+            put(rn(2) ? "\007" : "\033\\");
+            put(PICK(words));
+            put(osc ? "\033]8;;\007" : "");
+            break;
+        }
+        case 39: case 40: {
+            /* Runs of plain lines take the line streams when 1 KiB follows. */
+            const char *eol = rn(3) ? "\r\n" : "\n";
+            int lines = 20 + rn(120);
+            for (int k = 0; k < lines; k++) {
+                int n = rn(cols * 2 + 1);
+                for (int c = 0; c < n; c++)
+                    putb((char)(0x21 + rn(94)));
+                put(eol);
+            }
+            break;
+        }
         }
     }
 }

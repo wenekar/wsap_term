@@ -23,6 +23,25 @@ endif
 wsap_vtcore_inc = include_directories('include')
 wsap_vtcore_private_inc = include_directories('src', 'include/wsap_vtcore')
 
+if get_option('fuzzing')
+  if not get_option('tests')
+    error('fuzzing requires tests=true')
+  endif
+  wsap_vtcore_fuzz_c_args = ['-fsanitize=fuzzer-no-link,address,undefined',
+                            '-fno-omit-frame-pointer', '-UNDEBUG']
+  wsap_vtcore_fuzz_link_args = ['-fsanitize=fuzzer,address,undefined']
+  if cc.get_id() != 'clang' or not cc.has_multi_arguments(wsap_vtcore_fuzz_c_args)
+    error('fuzzing requires Clang with libFuzzer, ASan, and UBSan')
+  endif
+  if not cc.links('''
+    #include <stddef.h>
+    int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size)
+    { (void)data; (void)size; return 0; }
+    ''', args: wsap_vtcore_fuzz_link_args, name: 'libFuzzer with ASan and UBSan')
+    error('fuzzing requires a working libFuzzer, ASan, and UBSan runtime')
+  endif
+endif
+
 subdir('src')
 
 wsap_vtcore_dep = declare_dependency(

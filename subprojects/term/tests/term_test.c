@@ -1945,8 +1945,24 @@ static void test_lock_reentrant_across_threads(void)
     wsap_vtcore_free(t);
 }
 
+/* Insert mode moves cells only inside the left and right margins. A cell
+ * that an erase left past the row length must not reappear.
+ */
+static void test_margin_insert_hides_erased_cells(void)
+{
+    struct wsap_vtcore *whole = tt_new(12, 6), *bytes = tt_new(12, 6);
+    assert(whole && bytes);
+    write_both(whole, bytes, "ABCDEF\033[1;4H\033[K");
+    write_both(whole, bytes, "\033[?69h\033[1;2s\033[1;1H\033[4hX\033[4l\033[?69l");
+    assert(row_is(whole, 0, "XAC"));
+    assert(row_is(bytes, 0, "XAC"));
+    wsap_vtcore_free(whole);
+    wsap_vtcore_free(bytes);
+}
+
 int main(void)
 {
+    test_margin_insert_hides_erased_cells();
     test_reserved_options_must_be_zero();
     test_concurrent_feed_and_snapshot();
     test_lock_reentrant_across_threads();

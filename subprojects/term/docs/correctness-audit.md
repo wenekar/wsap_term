@@ -2,9 +2,10 @@
 
 The 2026-10-15 audit reproduced three issues that the existing tests missed.
 The unit suite reported 41 passing test entries under AddressSanitizer and
-UndefinedBehaviorSanitizer. The existing resize allocation-failure test skips
-its checks under sanitizers; the dedicated probe below uses linker wrappers
-to inject failures even in a sanitized build.
+UndefinedBehaviorSanitizer. At that time, the resize allocation-failure test
+skipped its checks under sanitizers. The probe below used linker wrappers to
+inject failures in a sanitized build. The resize test now uses the same
+wrappers, so it runs under sanitizers too.
 
 ## Run the reproducer
 
@@ -111,3 +112,21 @@ Validation after the fixes: all 43 unit test entries passed in an
 unsanitized debug build and all 43 passed with address and undefined-behavior
 sanitizers. The standalone probe also passed in both builds. Leak detection
 remained disabled in the sandbox.
+
+## Follow-up: 2026-10-28
+
+The libFuzzer target, a sweep that fails each allocation in turn, and new
+generator cases found these faults. Each fix has a regression check.
+
+| Fault | Fix | Check |
+| --- | --- | --- |
+| The fast CSI path kept six digits of a parameter. A truecolor component of a million or more gave a different color than the base parser. | The fast path sends such a color to the base parser. | `write-fuzz-test` big-number cases |
+| An OSC string of 255 bytes, or a DCS payload of 256 bytes, was dropped when its terminator came in a later write. | A full buffer marks the string truncated only when bytes are dropped. | `write-fuzz-test` buffer-edge strings |
+| `wsap_vtcore_scan_printable_span` gave different results at different SIMD levels for `hi` up to 0x20. | The function returns 0 for that range. | `public-helpers-test` at each level |
+| Erase display (ED 2) read the stale cells of an ASCII row. It could drop rows from history. | ED 2 reads the text of an ASCII row. | `write-fuzz-test` plain-line runs |
+| A line stream on a one-row screen called `memcpy` with a null buffer. | The stream copies only a non-empty tail. | Sanitizer runs of `model-test` |
+| Insert mode with left and right margins grew the row past the margin and showed erased cells. | The row length grows only up to the right margin. | `term-test` margin insert case |
+
+One fault is still open. With left and right margins, insert mode, and
+grapheme clusters together, different write splits can give different
+screens. Add margin sequences to `tests/fuzz_gen.h` to reproduce it.

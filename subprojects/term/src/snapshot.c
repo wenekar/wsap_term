@@ -436,9 +436,11 @@ int wsap_vtcore_snapshot_cluster(const struct wsap_vtcore_snapshot *s, uint32_t 
     uint32_t off = text & ~WSAP_VTCORE_TEXT_CLUSTER;
     if (off >= s->arena_len)
         return 0;
-    int n = (int)s->arena[off];
-    int copy = n < cap ? n : cap;
+    uint32_t n = s->arena[off];
+    if (n > WSAP_VTCORE_GRAPHEME_MAX_LEN || n > s->arena_len - off - 1)
+        return 0;
+    int copy = (int)n < cap ? (int)n : cap;
     if (cps && copy > 0)
         memcpy(cps, &s->arena[off + 1], (size_t)copy * sizeof(*cps));
-    return n;
+    return (int)n;
 }

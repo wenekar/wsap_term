@@ -1090,7 +1090,8 @@ size_t wsap_vtcore_escape_str(struct wsap_vtcore *t, const char *buf, size_t len
                 take = room;
             memcpy(wsap_vtcore_osc_tail(t), buf, take);
             t->osc_len += (int)take;
-        } else {
+        } else if (take) {
+            /* A full buffer drops only bytes that arrive, not the terminator. */
             t->str_truncated = true;
         }
     } else {
@@ -1101,7 +1102,7 @@ size_t wsap_vtcore_escape_str(struct wsap_vtcore *t, const char *buf, size_t len
                 take = room;
             memcpy(t->dcs_buf + t->dcs_len, buf, take);
             t->dcs_len += (int)take;
-        } else {
+        } else if (take) {
             t->str_truncated = true;
         }
     }

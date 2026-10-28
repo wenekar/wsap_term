@@ -3,6 +3,11 @@ set -euo pipefail
 lib=$1
 src=${2:-$(dirname "$0")/../include/wsap_vtcore}
 nm=${NM:-nm}
+read -r -a compiler <<<"${CC:-cc}"
+# Ignore symbols that instrumentation adds. ASan adds ODR indicators for each
+# global and section bounds for its table: GCC names them __odr_asan.NAME and
+# Clang __odr_asan_gen_NAME. Clang coverage adds __covrec_* and __llvm_* names.
+instrumented='^_*(odr_asan(_gen)?[._]wsap_vtcore_|asan_globals_registered$|(start|stop)_+(asan_globals$|llvm_prf_)|covrec_|llvm_)'
 
 defined_args=(-g --defined-only -P)
 exported_args=(-D --defined-only -P)
@@ -12,7 +17,7 @@ if [[ $(uname -s) == Darwin ]]; then
 fi
 syms=$("$nm" "${defined_args[@]}" "$lib")
 defined=$(awk 'NF >= 2 && $2 ~ /^[A-Z]$/ && $2 != "U" { print $1 }' <<<"$syms" |
-          grep -v '^_*odr_asan\.' | sed 's/^_//' | sort -u)
+          { grep -Ev "$instrumented" || true; } | sed 's/^_//' | sort -u)
 
 status=0
 bad=$(grep -v '^wsap_vtcore_' <<<"$defined" || true)
@@ -22,7 +27,7 @@ if [[ -n $bad ]]; then
     status=1
 fi
 
-declared=$("${CC:-cc}" -std=c11 -E -P -I"$src" "$src/wsap_vtcore.h" | python3 -c '
+declared=$("${compiler[@]}" -std=c11 -E -P -I"$src" "$src/wsap_vtcore.h" | python3 -c '
 import re, sys
 text = re.sub(r"\s+", " ", sys.stdin.read())
 depth, flat = 0, []
@@ -50,7 +55,7 @@ fi
 shared=${3:-}
 if [[ -n $shared ]]; then
     exported=$("$nm" "${exported_args[@]}" "$shared" | awk '$2 ~ /^[TDBRVW]$/ { print $1 }' |
-               sed 's/^_//' | sort -u)
+               { grep -Ev "$instrumented" || true; } | sed 's/^_//' | sort -u)
     extra=$(comm -13 <(echo "$declared") <(echo "$exported"))
     absent=$(comm -23 <(echo "$declared") <(echo "$exported"))
     if [[ -n $extra || -n $absent ]]; then

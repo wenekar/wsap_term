@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "${1:-$(dirname "$0")/..}"
-cc=${CC:-cc}
-cxx=${CXX:-c++}
+if (( $# > 1 )); then
+    cc=("${@:2}")
+else
+    read -r -a cc <<<"${CC:-cc}"
+fi
+read -r -a cxx <<<"${CXX:-c++}"
+have_cxx=true
+command -v "${cxx[0]}" >/dev/null || have_cxx=false
 
 status=0
 
 check() {
     local label=$1 src
     src=$(cat)
-    printf '%s\n' "$src" | "$cc" -std=c11 -Wall -Wextra -Wpedantic -Werror \
+    printf '%s\n' "$src" | "${cc[@]}" -std=c11 -Wall -Wextra -Wpedantic -Werror \
         -Iinclude -x c -fsyntax-only - || { echo "$label: not valid C11" >&2; status=1; }
-    if command -v "$cxx" >/dev/null; then
-        printf '%s\n' "$src" | "$cxx" -std=c++17 -Wall -Wextra -Wpedantic -Werror \
-            -Iinclude -x c++ -fsyntax-only - || { echo "$label: not valid C++" >&2; status=1; }
-    fi
+    $have_cxx || return 0
+    printf '%s\n' "$src" | "${cxx[@]}" -std=c++17 -Wall -Wextra -Wpedantic -Werror \
+        -Iinclude -x c++ -fsyntax-only - || { echo "$label: not valid C++" >&2; status=1; }
 }
 
 check wsap_vtcore.h <<'EOF'
@@ -59,4 +64,6 @@ int host_use(void)
     return in_ranges + unicode_width(1) + UTF8_ACCEPT + GRAPHEME_MAX_LEN;
 }
 EOF
-exit $status
+(( status == 0 )) || exit 1
+# Meson reports exit 77 as a skip. Do not pass without the C++ check.
+$have_cxx || { echo "no C++ compiler; set CXX to check the headers as C++" >&2; exit 77; }

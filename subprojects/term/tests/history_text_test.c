@@ -87,6 +87,46 @@ static void wrapped_rows(void)
     wsap_vtcore_free(term);
 }
 
+static void scrollback_limit(void)
+{
+    struct wsap_vtcore *term = new_term(8);
+    feed(term, "1\r\n2\r\n3\r\n4\r\n5\r\n6");
+    expect_history(term, 100, "1\n2\n3\n4\n");
+
+    assert(!wsap_vtcore_set_scrollback_limit(NULL, 10));
+    assert(!wsap_vtcore_set_scrollback_limit(term, -1));
+    assert(!wsap_vtcore_set_scrollback_limit(term, WSAP_VTCORE_SCROLLBACK_MAX + 1));
+    expect_history(term, 100, "1\n2\n3\n4\n");
+
+    /* A lower limit keeps the newest lines and clamps a scrolled view. */
+    wsap_vtcore_scroll(term, 4);
+    assert(wsap_vtcore_scrollback(term).offset == 4);
+    assert(wsap_vtcore_select_start(term, (struct wsap_vtcore_vector2i){0}, false,
+                                    WSAP_VTCORE_SELECT_LINE));
+    assert(wsap_vtcore_set_scrollback_limit(term, 2));
+    assert(!wsap_vtcore_has_selection(term));
+    struct wsap_vtcore_scrollback sb = wsap_vtcore_scrollback(term);
+    assert(sb.total == 2 && sb.offset <= 2);
+    wsap_vtcore_scroll_to(term, 0);
+    expect_history(term, 100, "3\n4\n");
+    feed(term, "\r\n7");
+    expect_history(term, 100, "4\n5\n");
+
+    /* Zero keeps no history. Lines that scroll off are gone. */
+    assert(wsap_vtcore_set_scrollback_limit(term, 0));
+    assert(wsap_vtcore_scrollback(term).total == 0);
+    feed(term, "\r\n8\r\n9");
+    assert(wsap_vtcore_scrollback(term).total == 0);
+    expect_history(term, 100, "");
+
+    /* A higher limit keeps new lines again. The same limit is a success. */
+    assert(wsap_vtcore_set_scrollback_limit(term, WSAP_VTCORE_SCROLLBACK_MAX));
+    assert(wsap_vtcore_set_scrollback_limit(term, WSAP_VTCORE_SCROLLBACK_MAX));
+    feed(term, "\r\na\r\nb");
+    expect_history(term, 100, "8\n9\n");
+    wsap_vtcore_free(term);
+}
+
 struct writer {
     struct wsap_vtcore *term;
     _Atomic bool done;
@@ -129,6 +169,7 @@ int main(void)
     unicode_and_selection();
     limits_and_scrolled_view();
     wrapped_rows();
+    scrollback_limit();
     concurrent_history();
     puts("PASS: history text");
     return 0;
