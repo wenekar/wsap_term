@@ -85,13 +85,6 @@ The NEON paths have a compile check only (`term-cross-test`). Add an
 `ubuntu-24.04-arm` entry to the `core` matrix in `term.yml` so that the unit
 suite runs on AArch64.
 
-## 4. Performance follow-ups
-
-Measure each change as `benchmarks/term-line-streams.md` describes.
-
-- `benchmarks/history-descriptors.md` names a packed 8-byte queue entry for
-  `bulk_ascii_lines_body`, worth about 3%.
-
 ## 5. Coverage gaps
 
 The unit suite covers 91% of lines and 82% of branches (Clang source-based
