@@ -35,8 +35,8 @@ void wsap_vtcore_snapshot_free(struct wsap_vtcore_snapshot *s)
 {
     if (!s)
         return;
-    free(s->cells);
-    free(s->stage);
+    wsap_vtcore_aligned_free(s->cells);
+    wsap_vtcore_aligned_free(s->stage);
     free(s->keys);
     free(s->row_clusters);
     free(s->selection);
@@ -49,13 +49,21 @@ static bool reserve(struct wsap_vtcore_snapshot *s, int cols, int rows)
 {
     size_t cells = (size_t)cols * (size_t)rows;
     if (cells > s->cell_cap) {
-        struct wsap_vtcore_cell *c = realloc(s->cells, cells * sizeof(*c));
+        struct wsap_vtcore_cell *c = wsap_vtcore_aligned_alloc(64, cells * sizeof(*c));
         if (!c)
             return false;
-        s->cells = c;
-        struct wsap_vtcore_cell *st = realloc(s->stage, cells * sizeof(*st));
-        if (!st)
+        struct wsap_vtcore_cell *st = wsap_vtcore_aligned_alloc(64, cells * sizeof(*st));
+        if (!st) {
+            wsap_vtcore_aligned_free(c);
             return false;
+        }
+        if (s->cells)
+            memcpy(c, s->cells, s->cell_cap * sizeof(*c));
+        if (s->stage)
+            memcpy(st, s->stage, s->cell_cap * sizeof(*st));
+        wsap_vtcore_aligned_free(s->cells);
+        wsap_vtcore_aligned_free(s->stage);
+        s->cells = c;
         s->stage = st;
         s->cell_cap = cells;
     }

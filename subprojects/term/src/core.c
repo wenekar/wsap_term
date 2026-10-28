@@ -706,10 +706,21 @@ static void flush_orig_rows(struct wsap_vtcore *t, struct screen *s,
     }
 }
 
+struct stream_line {
+    uint32_t off;
+    uint16_t len;
+    uint8_t wrapped;
+    uint8_t pad;
+};
+
+_Static_assert(sizeof(struct stream_line) == 8,
+               "struct stream_line must stay 8 bytes");
+
 struct stream_emit_ctx {
     struct wsap_vtcore *term;
     struct screen *screen;
-    struct hist_ascii_line *q;
+    const char *buf;
+    struct stream_line *q;
     const struct pen_attr *attr;
     size_t flushed_scrolled;
     int q_cap;
@@ -719,17 +730,35 @@ struct stream_emit_ctx {
     int cols;
 };
 
-static void flush_stream_queue(struct stream_emit_ctx *ctx)
+static WSAP_VTCORE_NOINLINE void flush_stream_lines(struct hist *h, const char *base,
+                                                    const struct stream_line *q, int count,
+                                                    const struct pen_attr *attr)
+{
+    struct hist_ascii_line batch[256];
+    for (int j = 0; j < count; j++) {
+        struct stream_line l = q[j];
+        batch[j] = (struct hist_ascii_line){
+            .ptr = base + l.off,
+            .len = l.len,
+            .wrapped = l.wrapped,
+        };
+    }
+    wsap_vtcore_hist_push_ascii_lines(h, batch, count, attr);
+}
+
+static WSAP_VTCORE_NOINLINE void flush_stream_queue(struct stream_emit_ctx *ctx)
 {
     if (ctx->orig_rem > 0)
         flush_orig_rows(ctx->term, ctx->screen, &ctx->orig_y, &ctx->orig_rem, ctx->orig_rem);
     int flush_n = ctx->q_count - ctx->q_cap;
-    wsap_vtcore_hist_push_ascii_lines(&ctx->term->hist, ctx->q, flush_n, ctx->attr);
-    if (ctx->q_cap > 0) {
-        if (flush_n >= ctx->q_cap)
-            memcpy(ctx->q, ctx->q + flush_n, (size_t)ctx->q_cap * sizeof(ctx->q[0]));
-        else
-            memmove(ctx->q, ctx->q + flush_n, (size_t)ctx->q_cap * sizeof(ctx->q[0]));
+    if (flush_n > 0) {
+        flush_stream_lines(&ctx->term->hist, ctx->buf, ctx->q, flush_n, ctx->attr);
+        if (ctx->q_cap > 0) {
+            if (flush_n >= ctx->q_cap)
+                memcpy(ctx->q, ctx->q + flush_n, (size_t)ctx->q_cap * sizeof(ctx->q[0]));
+            else
+                memmove(ctx->q, ctx->q + flush_n, (size_t)ctx->q_cap * sizeof(ctx->q[0]));
+        }
     }
     ctx->q_count = ctx->q_cap;
     ctx->flushed_scrolled += (size_t)flush_n;
@@ -753,7 +782,12 @@ static inline void emit_stream_bulk_wrapped(struct stream_emit_ctx *ctx,
             if (ctx->q_count == 256) {
                 flush_stream_queue(ctx);
             }
-            ctx->q[ctx->q_count++] = (struct hist_ascii_line){ p, (uint16_t)cols, 1 };
+            ctx->q[ctx->q_count++] = (struct stream_line){
+                .off = (uint32_t)(p - ctx->buf),
+                .len = (uint16_t)cols,
+                .wrapped = 1,
+                .pad = 0,
+            };
         }
         return;
     }
@@ -761,7 +795,7 @@ static inline void emit_stream_bulk_wrapped(struct stream_emit_ctx *ctx,
     if (ctx->orig_rem > 0)
         flush_orig_rows(t, s, &ctx->orig_y, &ctx->orig_rem, ctx->orig_rem);
     if (ctx->q_count > 0) {
-        wsap_vtcore_hist_push_ascii_lines(&t->hist, ctx->q, ctx->q_count, ctx->attr);
+        flush_stream_lines(&t->hist, ctx->buf, ctx->q, ctx->q_count, ctx->attr);
         ctx->flushed_scrolled += (size_t)ctx->q_count;
         ctx->q_count = 0;
     }
@@ -772,7 +806,12 @@ static inline void emit_stream_bulk_wrapped(struct stream_emit_ctx *ctx,
     }
     const char *sp = src + (size_t)hist_rows * (size_t)cols;
     for (int r = 0; r < ctx->q_cap; r++, sp += cols)
-        ctx->q[r] = (struct hist_ascii_line){ sp, (uint16_t)cols, 1 };
+        ctx->q[r] = (struct stream_line){
+            .off = (uint32_t)(sp - ctx->buf),
+            .len = (uint16_t)cols,
+            .wrapped = 1,
+            .pad = 0,
+        };
     ctx->q_count = ctx->q_cap;
 }
 
@@ -782,8 +821,11 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void emit_stream_row_fast(struct stream_
 {
     if (WSAP_VTCORE_EXPECT(ctx->q_count == 256, 0))
         flush_stream_queue(ctx);
-    ctx->q[ctx->q_count++] = (struct hist_ascii_line){
-        row_ptr, (uint16_t)row_len, (uint8_t)row_wrapped
+    ctx->q[ctx->q_count++] = (struct stream_line){
+        .off = (uint32_t)(row_ptr - ctx->buf),
+        .len = (uint16_t)row_len,
+        .wrapped = (uint8_t)row_wrapped,
+        .pad = 0,
     };
 }
 
@@ -1030,7 +1072,7 @@ static inline uint64_t line_masks(const char *buf, uint64_t *nl)
     return controls;
 }
 
-static void stream_queue_finish(struct stream_emit_ctx *ctx)
+static WSAP_VTCORE_NOINLINE void stream_queue_finish(struct stream_emit_ctx *ctx)
 {
     int cols = ctx->cols;
     size_t queued_rows = 0;
@@ -1053,22 +1095,22 @@ static void stream_queue_finish(struct stream_emit_ctx *ctx)
     int k = ctx->q_count;
     while (k > 0 && tail_rows < needed) {
         k--;
-        struct hist_ascii_line pr = ctx->q[k];
+        struct stream_line pr = ctx->q[k];
         int r = (pr.wrapped || pr.len == 0) ? 1 : (int)rows_narrow(pr.len, cols);
         tail_rows += r;
     }
 
     int flush_n = k;
     if (flush_n > 0) {
-        wsap_vtcore_hist_push_ascii_lines(&t->hist, ctx->q, flush_n, ctx->attr);
+        flush_stream_lines(&t->hist, ctx->buf, ctx->q, flush_n, ctx->attr);
     }
 
     int skip_rows = tail_rows - needed;
     if (skip_rows > 0) {
-        struct hist_ascii_line pr = ctx->q[k];
+        struct stream_line pr = ctx->q[k];
         int skip_bytes = skip_rows * cols;
         if (skip_bytes > (int)pr.len) skip_bytes = (int)pr.len;
-        wsap_vtcore_hist_push_ascii(&t->hist, pr.ptr, skip_bytes, ctx->attr, true);
+        wsap_vtcore_hist_push_ascii(&t->hist, ctx->buf + pr.off, skip_bytes, ctx->attr, true);
     }
 
     if (ctx->orig_rem == 0) {
@@ -1081,9 +1123,9 @@ static void stream_queue_finish(struct stream_emit_ctx *ctx)
     int cur_y = ctx->orig_rem;
     bool prev_wrapped = false;
     for (int j = k; j < ctx->q_count && cur_y < rows - 1; j++) {
-        struct hist_ascii_line pr = ctx->q[j];
+        struct stream_line pr = ctx->q[j];
         int p_len = pr.len;
-        const char *p_ptr = pr.ptr;
+        const char *p_ptr = ctx->buf + pr.off;
 
         if (p_len == 0) {
             int p = phys_row(t, cur_y);
@@ -1128,8 +1170,8 @@ static void stream_queue_finish(struct stream_emit_ctx *ctx)
             text_row_start(&dst->text, &start);
             dst->text.text = dst->ascii;
             text_append(dst, (const uint8_t *)(p_ptr + off_in_line),
-                        chunk, chunk, chunk, HLINE_NARROW,
-                        text_pen_from_attr(ctx->attr));
+                chunk, chunk, chunk, HLINE_NARROW,
+                text_pen_from_attr(ctx->attr));
 
             prev_wrapped = row_wraps;
             off_in_line += chunk;
@@ -1188,10 +1230,11 @@ static inline WSAP_VTCORE_ALWAYS_INLINE size_t bulk_ascii_lines_body(struct wsap
         (len == 0 || (unsigned char)buf[0] < 0x20 || (unsigned char)buf[0] >= 0x7f))
         return 0;
 
-    struct hist_ascii_line q[256];
+    struct stream_line q[256];
     struct stream_emit_ctx ctx = {
         .term = t,
         .screen = s,
+        .buf = buf,
         .q = q,
         .attr = &attr,
         .flushed_scrolled = 0,

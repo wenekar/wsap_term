@@ -27,11 +27,11 @@ static bool screen_setup(struct screen *s, int cols, int rows, uint64_t *next_ui
     size_t ascii = (size_t)rows * (size_t)cols;
     size_t cells = (size_t)rows * (size_t)stride, bytes = ascii + (size_t)rows * (text + runs);
     struct srow *slot = rows > s->slot_cap ? calloc((size_t)rows, sizeof(*slot)) : s->slot;
-    struct cell *cells_slab = cells > s->cells_cap ? calloc(cells, sizeof(*cells_slab)) : s->cells_slab;
+    struct cell *cells_slab = cells > s->cells_cap ? wsap_vtcore_aligned_alloc(64, cells * sizeof(*cells_slab)) : s->cells_slab;
     uint8_t *text_slab = bytes > s->text_cap ? calloc(bytes, 1) : s->text_slab;
     if (!slot || !cells_slab || !text_slab) {
         if (slot != s->slot) free(slot);
-        if (cells_slab != s->cells_slab) free(cells_slab);
+        if (cells_slab != s->cells_slab) wsap_vtcore_aligned_free(cells_slab);
         if (text_slab != s->text_slab) free(text_slab);
         return false;
     }
@@ -41,7 +41,7 @@ static bool screen_setup(struct screen *s, int cols, int rows, uint64_t *next_ui
         s->slot_cap = rows;
     }
     if (cells_slab != s->cells_slab) {
-        free(s->cells_slab);
+        wsap_vtcore_aligned_free(s->cells_slab);
         s->cells_slab = cells_slab;
         s->cells_cap = cells;
     }
@@ -115,7 +115,7 @@ static void screen_free(struct screen *s)
     if (!s)
         return;
     free(s->slot);
-    free(s->cells_slab);
+    wsap_vtcore_aligned_free(s->cells_slab);
     free(s->text_slab);
     *s = (struct screen){ 0 };
 }

@@ -61,12 +61,17 @@ enum { RF_WRAPPED = 1, RF_WIDE = 4, RF_CLUSTER = 8, RF_TAIL_PADDED = 16 };
 struct srow {
     struct cell *cells;
     uint8_t *ascii;
-    struct text_row text;
     uint64_t uid;
     uint32_t version;
     uint16_t len;
     uint8_t kind, flags;
+    struct text_row text;
 };
+
+_Static_assert(offsetof(struct srow, text) == 32,
+               "hot srow metadata must occupy exactly 32 bytes");
+_Static_assert(sizeof(struct srow) == 136,
+               "struct srow must stay 136 bytes");
 
 struct screen {
     struct srow *slot;
