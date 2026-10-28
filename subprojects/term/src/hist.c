@@ -334,6 +334,36 @@ static inline bool same_page_rows_64(const struct hline *p, uint32_t page,
 }
 #endif
 
+static inline bool evict_single_line(struct hist *h, const struct hline *ring, uint32_t rmask,
+                                     uint64_t *tail, uint64_t head, uint64_t *n, uint64_t counted,
+                                     uint64_t *rows_take, uint32_t *page, uint32_t *run, bool *have_page)
+{
+    const struct hline *f = &ring[*tail & rmask];
+    if (WSAP_VTCORE_EXPECT(f->flags & HLINE_OPEN, 0))
+        return false;
+    if (WSAP_VTCORE_EXPECT(*tail + 1 < head && (ring[(*tail + 1) & rmask].flags & HLINE_CONT), 0))
+        return false;
+    if (WSAP_VTCORE_EXPECT(f->wrap_rows == ROWS_UNKNOWN, 0))
+        return false;
+    if (*n < counted)
+        *rows_take += f->wrap_rows;
+    if (f->off != NO_TEXT) {
+        uint32_t pg = f->off >> 16;
+        if (*have_page && pg == *page) {
+            (*run)++;
+        } else {
+            if (*have_page)
+                page_drop_n(h, *page, *run);
+            *page = pg;
+            *run = 1;
+            *have_page = true;
+        }
+    }
+    (*tail)++;
+    (*n)++;
+    return true;
+}
+
 static uint64_t evict_simple_run(struct hist *h, uint64_t k)
 {
     if (k == 0 || h->tail == h->head || !h->ring)
@@ -347,9 +377,20 @@ static uint64_t evict_simple_run(struct hist *h, uint64_t k)
     uint32_t page = 0, run = 0;
     bool have_page = false;
 
-    while (n < k && tail < head) {
-        if ((tail & 15) == 0 && n + 16 <= k && tail + 16 <= head &&
-            (n >= counted || n + 16 <= counted)) {
+    if ((tail & 15) != 0) {
+        uint64_t to_align = 16 - (tail & 15);
+        if (to_align > k - n) to_align = k - n;
+        if (to_align > head - tail) to_align = head - tail;
+        while (to_align > 0) {
+            if (!evict_single_line(h, ring, rmask, &tail, head, &n, counted,
+                                   &rows_take, &page, &run, &have_page))
+                goto finish;
+            to_align--;
+        }
+    }
+
+    while (n + 16 <= k && tail + 16 <= head) {
+        if ((tail & 15) == 0 && (n >= counted || n + 16 <= counted)) {
             const struct hist_block *b = &h->blocks[(tail & rmask) / 16];
             if (b->seq == tail + 1 && b->epoch == h->index_epoch && b->cols == h->wrap_cols) {
                 if (b->refs) {
@@ -391,7 +432,7 @@ static uint64_t evict_simple_run(struct hist *h, uint64_t k)
             }
         }
 #endif
-        if ((tail & 15) == 0 && n + 16 <= k && tail + 16 <= head && ((tail & rmask) + 16 <= rmask + 1)) {
+        if ((tail & 15) == 0 && ((tail & rmask) + 16 <= rmask + 1)) {
             const struct hline *f = &ring[tail & rmask];
 
             uint32_t pg = f->off >> 16;
@@ -472,30 +513,18 @@ static uint64_t evict_simple_run(struct hist *h, uint64_t k)
             }
         }
 
-        const struct hline *f = &ring[tail & rmask];
-        if (f->flags & HLINE_OPEN)
-            break;
-        if (tail + 1 < head && (ring[(tail + 1) & rmask].flags & HLINE_CONT))
-            break;
-        if (f->wrap_rows == ROWS_UNKNOWN)
-            break;
-        if (n < counted)
-            rows_take += f->wrap_rows;
-        if (f->off != NO_TEXT) {
-            uint32_t pg = f->off >> 16;
-            if (have_page && pg == page) {
-                run++;
-            } else {
-                if (have_page)
-                    page_drop_n(h, page, run);
-                page = pg;
-                run = 1;
-                have_page = true;
-            }
-        }
-        tail++;
-        n++;
+        if (!evict_single_line(h, ring, rmask, &tail, head, &n, counted,
+                               &rows_take, &page, &run, &have_page))
+            goto finish;
     }
+
+    while (n < k && tail < head) {
+        if (!evict_single_line(h, ring, rmask, &tail, head, &n, counted,
+                               &rows_take, &page, &run, &have_page))
+            break;
+    }
+
+finish:
     if (n == 0)
         return 0;
     if (have_page)

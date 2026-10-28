@@ -89,13 +89,8 @@ suite runs on AArch64.
 
 Measure each change as `benchmarks/term-line-streams.md` describes.
 
-- With 4 KiB writes, history eviction (`evict_simple_run`) and the stream
-  setup each cost about 60 ns per write. Eviction handles lines one at a time
-  until a 16-line boundary and after the last full block.
 - `benchmarks/history-descriptors.md` names a packed 8-byte queue entry for
   `bulk_ascii_lines_body`, worth about 3%.
-- In normal mode, a short CRLF line before a long wrapped run uses the
-  general path for the rest of the write.
 
 ## 5. Coverage gaps
 

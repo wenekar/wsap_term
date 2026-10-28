@@ -264,6 +264,14 @@ static void wsap_vtcore_feed_inner(struct wsap_vtcore *t, const char *buf, size_
                 sc_linefeed(t, 1);
                 i++;
             }
+            if (WSAP_VTCORE_EXPECT(can_stream_bottom(t), 1) && i < len) {
+                struct srow *row = wsap_vtcore_row(t, t->cursor_y);
+                if (t->pending_wrap || (t->cursor_x == 0 && row && row->len == 0)) {
+                    size_t done = wsap_vtcore_sc_bulk_ascii_lines(t, buf + i, len - i);
+                    if (done > 0)
+                        i += done;
+                }
+            }
             i--;
             continue;
         }
