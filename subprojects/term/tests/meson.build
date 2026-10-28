@@ -13,6 +13,8 @@ if cc.get_id() == 'clang'
                         check: false).stdout().strip()
   if fs.is_absolute(llvm_nm) and fs.is_file(llvm_nm)
     nm = find_program(llvm_nm)
+  else
+    nm = find_program('llvm-nm-18', 'llvm-nm', 'nm', native: true)
   endif
 endif
 test_env.set('NM', nm.full_path())

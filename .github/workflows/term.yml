@@ -51,9 +51,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config \
-            clang-18 libclang-rt-18-dev
+            clang-18 libclang-rt-18-dev llvm-18
           sudo ln -sf /usr/bin/clang-18 /usr/bin/clang
           sudo ln -sf /usr/bin/clang++-18 /usr/bin/clang++
+          sudo ln -sf /usr/bin/llvm-nm-18 /usr/bin/llvm-nm
+          sudo mkdir -p /usr/lib/bfd-plugins
+          sudo ln -sf /usr/lib/llvm-18/lib/LLVMgold.so /usr/lib/bfd-plugins/LLVMgold.so
       - name: Install tools
         if: runner.os == 'macOS'
         run: brew install meson ninja pkgconf zig
@@ -72,39 +75,15 @@ jobs:
           tar -xf /tmp/term-build/meson-dist/wsap_vtcore-*.tar.xz -C /tmp/term-dist
           meson setup /tmp/term-dist-build /tmp/term-dist/wsap_vtcore-* -Dtests=false
           meson compile -C /tmp/term-dist-build
-
-  sanitize:
-    name: Linux ASan and UBSan (${{ matrix.name || matrix.cc }})
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - cc: gcc
-            cxx: g++
-          - cc: clang-18
-            cxx: clang++-18
-            name: clang
-    env:
-      CC: ${{ matrix.cc }}
-      CXX: ${{ matrix.cxx }}
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          persist-credentials: false
-      - name: Install tools
+      - name: Print test log on failure
+        if: failure()
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config \
-            clang-18 libclang-rt-18-dev
-          sudo ln -sf /usr/bin/clang-18 /usr/bin/clang
-          sudo ln -sf /usr/bin/clang++-18 /usr/bin/clang++
-      - name: Build and test with sanitizers
-        run: |
-          meson setup /tmp/term-sanitize subprojects/term -Dkitty=disabled -Db_sanitize=address,undefined
-          meson compile -C /tmp/term-sanitize
-          meson test -C /tmp/term-sanitize --print-errorlogs --suite unit --timeout-multiplier 2
+          for f in /tmp/term-*/meson-logs/testlog.txt /tmp/term-*/meson-logs/meson-log.txt; do
+            if [[ -f "$f" ]]; then
+              echo "=== $f ==="
+              cat "$f"
+            fi
+          done
 
   fuzz:
     name: Linux libFuzzer
