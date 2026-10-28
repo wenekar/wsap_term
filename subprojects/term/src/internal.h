@@ -151,6 +151,8 @@ struct wsap_vtcore {
     bool transport_newline : 1;
     bool str_truncated : 1;
     bool has_prompt : 1;
+    /* Lines in ascii_tail end with CRLF, not LF. */
+    bool ascii_tail_crlf : 1;
 
     struct screen scr;
     struct screen alt_scr;

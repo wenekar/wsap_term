@@ -540,22 +540,24 @@ static void flush_orig_rows(struct wsap_vtcore *t, struct screen *s,
         if (first->kind == ROW_ASCII && base >= begin && base < limit) {
             uint16_t ends[64 + 65];
             ends[0] = 0;
+            int term = t->ascii_tail_crlf ? 2 : 1;
             int span = 0, lines = 0, closed = y;
             for (int j = y; j < end && j - y < 64; j++) {
                 int p = s->top + j;
                 struct srow *row = &s->slot[p >= s->rows ? p - s->rows : p];
                 bool wrapped = (row->flags & RF_WRAPPED) != 0;
-                size_t size = (size_t)row->len + !wrapped;
+                size_t size = (size_t)row->len + (wrapped ? 0 : (size_t)term);
                 if (row->kind != ROW_ASCII || (uintptr_t)row->text.text != base + span ||
                     size > limit - base - span || size + span > UINT16_MAX) break;
                 span += row->len;
                 if (!wrapped) {
-                    ends[++lines] = (uint16_t)++span;
+                    span += term;
+                    ends[++lines] = (uint16_t)span;
                     closed = j + 1;
                 }
             }
             if (lines) {
-                wsap_vtcore_hist_push_ascii_lf(&t->hist, (const char *)base, ends, lines);
+                wsap_vtcore_hist_push_ascii_lf(&t->hist, (const char *)base, ends, lines, term);
                 if (t->view.anchor.active) wsap_vtcore_hist_view_note_push(&t->view, &t->hist, t->cols);
                 y = closed;
                 continue;
@@ -758,7 +760,11 @@ static int long_lines_avx512(const uint16_t *ends, int *count)
 }
 #endif
 
-static WSAP_VTCORE_NOINLINE size_t stream_ascii_lf(struct wsap_vtcore *t, const char *buf, size_t len)
+/* Stream complete lines of printable ASCII. term is the line terminator:
+ * 1 for LF in newline mode, 2 for CRLF. Both give the same screen and history.
+ */
+static WSAP_VTCORE_NOINLINE size_t stream_ascii_lines(struct wsap_vtcore *t, const char *buf, size_t len,
+                                                      int term)
 {
     int limit = len < UINT16_MAX ? (int)len : UINT16_MAX;
     size_t need = ((size_t)limit + 65) * sizeof(uint16_t);
@@ -769,7 +775,7 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_lf(struct wsap_vtcore *t, const 
         t->ascii_ends.cap = need;
     }
     uint16_t *ends = t->ascii_ends.data;
-    int count = scan_ascii_lf(buf, limit, ends);
+    int count = term == 2 ? scan_ascii_crlf(buf, limit, ends) : scan_ascii_lf(buf, limit, ends);
     int j = 0;
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
     if (wsap_vtcore_use_avx512())
@@ -787,7 +793,7 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_lf(struct wsap_vtcore *t, const 
     int tail_rows = 0;
     while (first > 0 && tail_rows < keep) {
         first--;
-        tail_rows += (int)rows_narrow(ends[first + 1] - ends[first] - 1, cols);
+        tail_rows += (int)rows_narrow(ends[first + 1] - ends[first] - term, cols);
     }
     if (!first) return 0;
     int skip = (tail_rows - keep) * cols;
@@ -808,13 +814,14 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_lf(struct wsap_vtcore *t, const 
     /* A one-row screen keeps no rows, and the buffer can still be NULL. */
     if (tail_bytes)
         memcpy(tail_data, buf + source_start, tail_bytes);
-    wsap_vtcore_hist_push_ascii_lf(&t->hist, buf, ends, first);
+    t->ascii_tail_crlf = term == 2;
+    wsap_vtcore_hist_push_ascii_lf(&t->hist, buf, ends, first, term);
     if (skip)
         wsap_vtcore_hist_push_ascii(&t->hist, buf + ends[first], skip, NULL, true);
     uint32_t last = t->last_char;
     for (int j = count; j > 0; j--) {
-        if (ends[j] - ends[j - 1] > 1) {
-            last = (unsigned char)buf[ends[j] - 2];
+        if (ends[j] - ends[j - 1] > term) {
+            last = (unsigned char)buf[ends[j] - 1 - term];
             break;
         }
     }
@@ -823,7 +830,7 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_lf(struct wsap_vtcore *t, const 
     uint64_t uid = t->next_row_uid;
     for (int j = first; j < count; j++) {
         int start = ends[j] + (j == first ? skip : 0);
-        int n = ends[j + 1] - 1 - start;
+        int n = ends[j + 1] - term - start;
         do {
             int k = n > cols ? cols : n;
             struct srow *dst = &s->slot[y++];
@@ -1253,9 +1260,19 @@ size_t wsap_vtcore_sc_bulk_ascii_lines(struct wsap_vtcore *t, const char *buf, s
     if (WSAP_VTCORE_EXPECT(t->scr.rows > 256, 0)) return 0;
     if (len >= 1024 && t->autowrap && using_default_colors(t) && !wsap_vtcore_flags_pad(t)) {
         size_t done = 0;
-        if (!wsap_vtcore_lnm(t)) done = stream_ascii_wrapped(t, buf, len);
-        else if (!t->pending_wrap) done = stream_ascii_lf(t, buf, len);
+        bool lnm = wsap_vtcore_lnm(t);
+        if (!lnm)
+            done = stream_ascii_wrapped(t, buf, len);
+        if (!done && !t->pending_wrap)
+            done = stream_ascii_lines(t, buf, len, lnm ? 1 : 2);
         if (done) return done;
+        if (t->pending_wrap) {
+            /* A wrapped line can continue from the previous write. Finish only that
+             * line here, so that the stream takes the lines after it. */
+            const char *lf = memchr(buf, '\n', len);
+            if (lf && len - (size_t)(lf - buf) > 1024)
+                len = (size_t)(lf - buf) + 1;
+        }
     }
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
     if (wsap_vtcore_use_avx512())

@@ -1638,7 +1638,7 @@ struct hist_stream_state {
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
 WSAP_VTCORE_TARGET_AVX512
 static int lf_rows_avx512(struct hist *restrict h, const uint16_t *restrict ends, int i, int stop,
-                          uint32_t cols, struct hist_stream_state *state)
+                          uint32_t cols, uint32_t term, struct hist_stream_state *state)
 {
     struct hline *restrict ring = h->ring;
     struct hist_block *restrict blocks = h->blocks;
@@ -1650,7 +1650,7 @@ static int lf_rows_avx512(struct hist *restrict h, const uint16_t *restrict ends
     for (; i + 16 <= stop && (head & mask) + 16 <= mask + 1; i += 16, head += 16) {
         __m512i start = _mm512_cvtepu16_epi32(_mm256_loadu_si256((const __m256i *)(ends + i)));
         __m512i end = _mm512_cvtepu16_epi32(_mm256_loadu_si256((const __m256i *)(ends + i + 1)));
-        __m512i lens = _mm512_sub_epi32(_mm512_sub_epi32(end, start), _mm512_set1_epi32(1));
+        __m512i lens = _mm512_sub_epi32(_mm512_sub_epi32(end, start), _mm512_set1_epi32((int)term));
         __mmask16 empty = _mm512_cmpeq_epi32_mask(lens, _mm512_setzero_si512());
         uint32_t refs = 16 - wsap_vtcore_popcount32(empty);
         text_count += refs;
@@ -1704,7 +1704,7 @@ static int lf_rows_avx512(struct hist *restrict h, const uint16_t *restrict ends
 #if defined(WSAP_VTCORE_KERNEL_AVX2)
 WSAP_VTCORE_TARGET_AVX2
 static int lf_rows_avx2(struct hist *restrict h, const uint16_t *restrict ends, int i, int stop,
-                        uint32_t cols, struct hist_stream_state *state)
+                        uint32_t cols, uint32_t term, struct hist_stream_state *state)
 {
     struct hline *restrict ring = h->ring;
     struct hist_block *restrict blocks = h->blocks;
@@ -1719,7 +1719,7 @@ static int lf_rows_avx2(struct hist *restrict h, const uint16_t *restrict ends, 
         struct hline *dst = ring + (head & mask);
         __m128i start = _mm_cvtepu16_epi32(_mm_loadl_epi64((const __m128i *)(ends + i)));
         __m128i end = _mm_cvtepu16_epi32(_mm_loadl_epi64((const __m128i *)(ends + i + 1)));
-        __m128i lens = _mm_sub_epi32(_mm_sub_epi32(end, start), _mm_set1_epi32(1));
+        __m128i lens = _mm_sub_epi32(_mm_sub_epi32(end, start), _mm_set1_epi32((int)term));
         __m128i empty = _mm_cmpeq_epi32(lens, _mm_setzero_si128());
         refs = 4 - wsap_vtcore_popcount32((unsigned)_mm_movemask_ps(_mm_castsi128_ps(empty)));
         __m128i offsets = _mm_or_si128(_mm_add_epi32(start, _mm_set1_epi32((int)base)), empty);
@@ -1761,15 +1761,15 @@ static int lf_rows_avx2(struct hist *restrict h, const uint16_t *restrict ends, 
 #endif
 
 static inline int lf_rows(struct hist *restrict h, const uint16_t *restrict ends, int i, int stop,
-                          uint32_t cols, struct hist_stream_state *state)
+                          uint32_t cols, uint32_t term, struct hist_stream_state *state)
 {
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
     if (wsap_vtcore_use_avx512())
-        return lf_rows_avx512(h, ends, i, stop, cols, state);
+        return lf_rows_avx512(h, ends, i, stop, cols, term, state);
 #endif
 #if defined(WSAP_VTCORE_KERNEL_AVX2)
     if (wsap_vtcore_use_avx2())
-        return lf_rows_avx2(h, ends, i, stop, cols, state);
+        return lf_rows_avx2(h, ends, i, stop, cols, term, state);
 #endif
 #if defined(__aarch64__)
     struct hline *restrict ring = h->ring;
@@ -1785,7 +1785,7 @@ static inline int lf_rows(struct hist *restrict h, const uint16_t *restrict ends
         struct hline *dst = ring + (head & mask);
         uint32x4_t start = vmovl_u16(vld1_u16(ends + i));
         uint32x4_t end = vmovl_u16(vld1_u16(ends + i + 1));
-        uint32x4_t lens = vsubq_u32(vsubq_u32(end, start), vdupq_n_u32(1));
+        uint32x4_t lens = vsubq_u32(vsubq_u32(end, start), vdupq_n_u32(term));
         uint32x4_t empty = vceqq_u32(lens, vdupq_n_u32(0));
         refs = 4 - vaddvq_u32(vshrq_n_u32(empty, 31));
         uint32x4_t offsets = vorrq_u32(vaddq_u32(start, vdupq_n_u32(base)), empty);
@@ -1826,6 +1826,7 @@ static inline int lf_rows(struct hist *restrict h, const uint16_t *restrict ends
 #else
     (void)h;
     (void)ends;
+    (void)term;
     (void)stop;
     (void)cols;
     (void)state;
@@ -1835,12 +1836,12 @@ static inline int lf_rows(struct hist *restrict h, const uint16_t *restrict ends
 
 WSAP_VTCORE_NOINLINE
 void wsap_vtcore_hist_push_ascii_lf(struct hist *restrict h, const char *restrict bytes,
-                        const uint16_t *restrict ends, int count)
+                        const uint16_t *restrict ends, int count, int term)
 {
     if (!h->line_limit) return;
     int i = 0;
     if (count && hist_is_open(h)) {
-        wsap_vtcore_hist_push_ascii(h, bytes + ends[0], ends[1] - ends[0] - 1, NULL, false);
+        wsap_vtcore_hist_push_ascii(h, bytes + ends[0], ends[1] - ends[0] - term, NULL, false);
         i++;
     }
     uint32_t cols = h->wrap_cols ? h->wrap_cols : 1;
@@ -1876,7 +1877,7 @@ void wsap_vtcore_hist_push_ascii_lf(struct hist *restrict h, const char *restric
         struct hline *restrict ring = h->ring;
         uint32_t mask = h->ring_mask;
         while (i < stop && (state.head & 15)) {
-            uint32_t len = ends[i + 1] - ends[i] - 1;
+            uint32_t len = ends[i + 1] - ends[i] - (uint32_t)term;
             struct hline *dst = ring + (state.head & mask);
             if (!len) *dst = HLINE_BLANK;
             else {
@@ -1888,9 +1889,9 @@ void wsap_vtcore_hist_push_ascii_lf(struct hist *restrict h, const char *restric
             i++;
             state.head++;
         }
-        i = lf_rows(h, ends, i, stop, cols, &state);
+        i = lf_rows(h, ends, i, stop, cols, (uint32_t)term, &state);
         for (; i < stop; i++, state.head++) {
-            uint32_t len = ends[i + 1] - ends[i] - 1;
+            uint32_t len = ends[i + 1] - ends[i] - (uint32_t)term;
             struct hline *dst = ring + (state.head & mask);
             if (!len) *dst = HLINE_BLANK;
             else {

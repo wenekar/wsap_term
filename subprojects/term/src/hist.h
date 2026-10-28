@@ -205,7 +205,11 @@ void wsap_vtcore_hist_push_ascii(struct hist *h, const char *bytes, int n,
                      const struct pen_attr *pen, bool wrapped);
 void wsap_vtcore_hist_push_ascii_lines(struct hist *h, const struct hist_ascii_line *lines,
                            int count, const struct pen_attr *pen);
-void wsap_vtcore_hist_push_ascii_lf(struct hist *h, const char *bytes, const uint16_t *ends, int count);
+/* Push complete lines. Line j is bytes[ends[j]] up to the terminator of term
+ * bytes that ends before ends[j + 1]: 1 for LF, 2 for CRLF.
+ */
+void wsap_vtcore_hist_push_ascii_lf(struct hist *h, const char *bytes, const uint16_t *ends, int count,
+                                    int term);
 void wsap_vtcore_hist_push_text(struct hist *h, const struct text_row *row, bool wrapped);
 void wsap_vtcore_hist_push_blank(struct hist *h, size_t n);
 void wsap_vtcore_hist_close_open_line(struct hist *h);

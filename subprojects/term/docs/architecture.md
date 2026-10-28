@@ -38,9 +38,10 @@ These primitives handle printing, line feeds, margins, and cursor movement.
 Fast paths must preserve the same visible behavior as the base path.
 See `src/simd.h` for runtime target rules.
 
-A write of 1 KiB or more of complete printable ASCII lines in newline mode
-takes a line stream. The stream sends the lines that leave the screen to
-history in one batch. The remaining rows point into one
+A write of 1 KiB or more of complete printable ASCII lines takes a line
+stream. The stream accepts LF lines in newline mode and CRLF lines in other
+modes. Both give the same screen and history. The stream sends the lines that
+leave the screen to history in one batch. The remaining rows point into one
 copy of the input. Code that reads a row must convert an ASCII row first
 (`screen_get_row`) or read its text, because its cells are stale.
 

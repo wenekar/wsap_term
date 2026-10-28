@@ -462,6 +462,135 @@ static WSAP_VTCORE_NOINLINE WSAP_VTCORE_MAYBE_UNUSED int scan_ascii_lf(const cha
     return scan_ascii_lf_tail(buf, i, len, ends, count);
 }
 
+/* CRLF lines hold printable ASCII and end with "\r\n". ends[] holds the offset
+ * after each LF, as for scan_ascii_lf. A lone CR or LF stops the scan. The
+ * vector loops check that the CR mask, moved up one byte, equals the LF mask.
+ * The carry moves a CR in the last byte of a block to the next block.
+ */
+static inline int scan_ascii_crlf_tail(const char *buf, int i, int len, uint16_t *ends, int count)
+{
+    if (i > 0 && buf[i - 1] == '\r' && (i >= len || buf[i] != '\n'))
+        return count;
+    for (; i < len; i++) {
+        unsigned char ch = (unsigned char)buf[i];
+        if (ch == '\n') {
+            if (i == 0 || buf[i - 1] != '\r') break;
+            ends[++count] = (uint16_t)(i + 1);
+        } else if (ch == '\r') {
+            if (i + 1 >= len || buf[i + 1] != '\n') break;
+        } else if (ch - 0x20u >= 0x5fu) {
+            break;
+        }
+    }
+    return count;
+}
+
+#if defined(WSAP_VTCORE_KERNEL_AVX512)
+WSAP_VTCORE_TARGET_AVX512
+static inline uint64_t crlf_errors_avx512(__m512i v, uint64_t *nl, uint64_t *carry)
+{
+    *nl = _mm512_cmpeq_epi8_mask(v, _mm512_set1_epi8('\n'));
+    uint64_t cr = _mm512_cmpeq_epi8_mask(v, _mm512_set1_epi8('\r'));
+    uint64_t bad = _mm512_cmpge_epu8_mask(_mm512_sub_epi8(v, _mm512_set1_epi8(0x20)),
+                                          _mm512_set1_epi8(0x5f)) & ~*nl & ~cr;
+    uint64_t pairs = ((cr << 1) | *carry) ^ *nl;
+    *carry = cr >> 63;
+    return bad | pairs;
+}
+
+WSAP_VTCORE_TARGET_AVX512 WSAP_VTCORE_MAYBE_UNUSED
+static int scan_ascii_crlf_avx512(const char *buf, int len, uint16_t *ends)
+{
+    int i = 0, count = 0;
+    ends[0] = 0;
+    const __m512i lanes = _mm512_setr_epi32(
+        0x03020100,0x07060504,0x0b0a0908,0x0f0e0d0c,
+        0x13121110,0x17161514,0x1b1a1918,0x1f1e1d1c,
+        0x23222120,0x27262524,0x2b2a2928,0x2f2e2d2c,
+        0x33323130,0x37363534,0x3b3a3938,0x3f3e3d3c);
+    __m128i block = _mm_set1_epi16(1);
+    uint64_t carry = 0;
+    for (; i + 256 <= len; i += 256) {
+        uint64_t nl[4], err = 0, c = carry;
+        for (int q = 0; q < 4; q++)
+            err |= crlf_errors_avx512(_mm512_loadu_si512(buf + i + q * 64), &nl[q], &c);
+        if (err) break;
+        carry = c;
+        for (int q = 0; q < 4; q++) {
+            count += store_lf_offsets_avx512(ends + count + 1, nl[q], lanes, block);
+            block = _mm_add_epi16(block, _mm_set1_epi16(64));
+        }
+    }
+    for (; i + 64 <= len; i += 64) {
+        uint64_t nl;
+        if (crlf_errors_avx512(_mm512_loadu_si512(buf + i), &nl, &carry)) break;
+        count += store_lf_offsets_avx512(ends + count + 1, nl, lanes, block);
+        block = _mm_add_epi16(block, _mm_set1_epi16(64));
+    }
+    return scan_ascii_crlf_tail(buf, i, len, ends, count);
+}
+#endif
+
+#if defined(WSAP_VTCORE_KERNEL_AVX2)
+WSAP_VTCORE_TARGET_AVX2 WSAP_VTCORE_MAYBE_UNUSED
+static int scan_ascii_crlf_avx2(const char *buf, int len, uint16_t *ends)
+{
+    int i = 0, count = 0;
+    ends[0] = 0;
+    uint32_t carry = 0;
+    for (; i + 32 <= len; i += 32) {
+        __m256i v = _mm256_loadu_si256((const __m256i *)(buf + i));
+        uint32_t nl = (uint32_t)_mm256_movemask_epi8(_mm256_cmpeq_epi8(v, _mm256_set1_epi8('\n')));
+        uint32_t cr = (uint32_t)_mm256_movemask_epi8(_mm256_cmpeq_epi8(v, _mm256_set1_epi8('\r')));
+        __m256i d = _mm256_sub_epi8(v, _mm256_set1_epi8((char)0xa0));
+        uint32_t bad = (uint32_t)_mm256_movemask_epi8(
+            _mm256_cmpgt_epi8(d, _mm256_set1_epi8((char)0xde))) & ~nl & ~cr;
+        if (bad | (((cr << 1) | carry) ^ nl)) break;
+        carry = cr >> 31;
+        while (nl) {
+            ends[++count] = (uint16_t)(i + wsap_vtcore_ctz32(nl) + 1);
+            nl &= nl - 1;
+        }
+    }
+    return scan_ascii_crlf_tail(buf, i, len, ends, count);
+}
+#endif
+
+static WSAP_VTCORE_NOINLINE WSAP_VTCORE_MAYBE_UNUSED int scan_ascii_crlf(const char *buf, int len, uint16_t *ends)
+{
+#if defined(WSAP_VTCORE_KERNEL_AVX512)
+    if (wsap_vtcore_use_avx512())
+        return scan_ascii_crlf_avx512(buf, len, ends);
+#endif
+#if defined(WSAP_VTCORE_KERNEL_AVX2)
+    if (wsap_vtcore_use_avx2())
+        return scan_ascii_crlf_avx2(buf, len, ends);
+#endif
+    int i = 0, count = 0;
+    ends[0] = 0;
+#if defined(__aarch64__)
+    uint32_t carry = 0;
+    for (; i + 32 <= len; i += 32) {
+        uint32_t nl = 0, cr = 0, bad = 0;
+        for (int q = 0; q < 2; q++) {
+            uint8x16_t v = vld1q_u8((const uint8_t *)buf + i + q * 16);
+            nl |= (uint32_t)wsap_vtcore_lane_bits(vceqq_u8(v, vdupq_n_u8('\n'))) << (q * 16);
+            cr |= (uint32_t)wsap_vtcore_lane_bits(vceqq_u8(v, vdupq_n_u8('\r'))) << (q * 16);
+            bad |= (uint32_t)wsap_vtcore_lane_bits(vcgeq_u8(vsubq_u8(v, vdupq_n_u8(0x20)),
+                                                    vdupq_n_u8(0x5f))) << (q * 16);
+        }
+        bad &= ~nl & ~cr;
+        if (bad | (((cr << 1) | carry) ^ nl)) break;
+        carry = cr >> 31;
+        while (nl) {
+            ends[++count] = (uint16_t)(i + wsap_vtcore_ctz32(nl) + 1);
+            nl &= nl - 1;
+        }
+    }
+#endif
+    return scan_ascii_crlf_tail(buf, i, len, ends, count);
+}
+
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
 WSAP_VTCORE_TARGET_AVX512
 static inline void fill_cells_avx512(struct cell * restrict row, int cols, uint32_t fg, uint32_t bg)
