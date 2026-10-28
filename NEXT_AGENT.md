@@ -16,24 +16,7 @@ Read these first: `subprojects/term/docs/testing.md` (test layers),
 `subprojects/term/docs/correctness-audit.md` (faults found and fixed), and
 `benchmarks/term-line-streams.md` (the performance pass and its method).
 
-## 1. Check the first CI run
-
-The push of these commits ran `.github/workflows/term.yml` for the first
-time. Find the run with `gh run list --workflow term.yml`. Fix each failing
-job. These parts were not run before the push:
-
-- The macOS job. It runs all suites. `term-package-test` sets
-  `DYLD_LIBRARY_PATH`, and `term-cross-test` uses Homebrew Zig.
-- `meson dist` from the subdirectory with the Ubuntu 24.04 Meson (1.3.2).
-  It worked with Meson 1.12.1.
-- The `fuzz` job. It needs `clang-18` and `libclang-rt-18-dev`. It fuzzes for
-  ten minutes with a random seed, so it can find a new fault. Crash inputs
-  are in the `term-fuzz-artifacts` artifact. Fix a fault the same way as in
-  task 2. If the job costs too much, shorten `--seconds` in `term.yml`.
-
-Done when every job in the run passes.
-
-## 2. Fix the margin-mode chunking fault
+## 1. Fix the margin-mode chunking fault
 
 With left and right margins (DECLRMM, `CSI ? 69 h`), insert mode, and wide
 or joined characters together, two splits of the same output can give two
@@ -86,7 +69,7 @@ Separate question: `wsap_vtcore_screen_insert_chars` (ICH) ignores the left
 and right margins. xterm limits ICH to the margins. Check the other edit
 operations (DCH, ECH, IL, DL) too.
 
-## 3. Review the old subagent worktrees
+## 2. Review the old subagent worktrees
 
 The earlier session left four worktrees in
 `../worktrees/wsap_term/pi-worktree-*` (branches `pi-subagents/*`) with
@@ -96,13 +79,13 @@ One is not: `parser-safety` changes the digit saturation in `src/csi.h` and
 optional. If you take it, keep the fast CSI path and the base parser equal,
 and run `write-fuzz-test`. Then ask the user before you remove the worktrees.
 
-## 4. Run NEON code in CI
+## 3. Run NEON code in CI
 
 The NEON paths have a compile check only (`term-cross-test`). Add an
 `ubuntu-24.04-arm` entry to the `core` matrix in `term.yml` so that the unit
 suite runs on AArch64.
 
-## 5. Performance follow-ups
+## 4. Performance follow-ups
 
 Measure each change as `benchmarks/term-line-streams.md` describes.
 
@@ -114,7 +97,7 @@ Measure each change as `benchmarks/term-line-streams.md` describes.
 - In normal mode, a short CRLF line before a long wrapped run uses the
   general path for the rest of the write.
 
-## 6. Coverage gaps
+## 5. Coverage gaps
 
 The unit suite covers 91% of lines and 82% of branches (Clang source-based
 coverage; `docs/testing.md` has the commands). The weakest files are
