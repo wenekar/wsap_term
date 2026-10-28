@@ -444,3 +444,27 @@ int wsap_vtcore_snapshot_cluster(const struct wsap_vtcore_snapshot *s, uint32_t 
         memcpy(cps, &s->arena[off + 1], (size_t)copy * sizeof(*cps));
     return (int)n;
 }
+
+const uint32_t *wsap_vtcore_snapshot_cluster_direct(const struct wsap_vtcore_snapshot *s, uint32_t text, int *out_len)
+{
+    if (!s || !(text & WSAP_VTCORE_TEXT_CLUSTER)) {
+        if (out_len)
+            *out_len = 0;
+        return NULL;
+    }
+    uint32_t off = text & ~WSAP_VTCORE_TEXT_CLUSTER;
+    if (off >= s->arena_len) {
+        if (out_len)
+            *out_len = 0;
+        return NULL;
+    }
+    uint32_t n = s->arena[off];
+    if (n > WSAP_VTCORE_GRAPHEME_MAX_LEN || n > s->arena_len - off - 1) {
+        if (out_len)
+            *out_len = 0;
+        return NULL;
+    }
+    if (out_len)
+        *out_len = (int)n;
+    return &s->arena[off + 1];
+}

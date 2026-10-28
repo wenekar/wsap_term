@@ -55,8 +55,14 @@
 
 #if defined(WSAP_VTCORE_HAVE_BUILTINS)
 #define WSAP_VTCORE_EXPECT(x, v) __builtin_expect((x), (v))
+#define WSAP_VTCORE_LIKELY(x) __builtin_expect(!!(x), 1)
+#define WSAP_VTCORE_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#define WSAP_VTCORE_CONSTANT_P(x) __builtin_constant_p(x)
 #else
 #define WSAP_VTCORE_EXPECT(x, v) (x)
+#define WSAP_VTCORE_LIKELY(x) (x)
+#define WSAP_VTCORE_UNLIKELY(x) (x)
+#define WSAP_VTCORE_CONSTANT_P(x) 0
 #endif
 
 #if defined(WSAP_VTCORE_HAVE_BUILTINS)
@@ -249,6 +255,18 @@ static inline char *wsap_vtcore_strdup(const char *s)
 
 static inline bool wsap_vtcore_has_prefix_ci(const char *s, const char *prefix)
 {
+    // Fast path: safe word comparison for 7-byte file:// prefix.
+    if (WSAP_VTCORE_CONSTANT_P(prefix) && strcmp(prefix, "file://") == 0) {
+        if (WSAP_VTCORE_EXPECT(((uintptr_t)s & 4095) <= 4096 - 8, 1)) {
+            uint32_t head;
+            memcpy(&head, s, 4);
+            if ((head | 0x20202020u) != 0x656c6966u)
+                return false;
+            uint32_t tail;
+            memcpy(&tail, s + 3, 4);
+            return (tail | 0x00000020u) == 0x2f2f3a65u;
+        }
+    }
     for (; *prefix; prefix++, s++) {
         unsigned char a = (unsigned char)*s;
         unsigned char b = (unsigned char)*prefix;

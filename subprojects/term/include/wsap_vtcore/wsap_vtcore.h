@@ -266,10 +266,20 @@ enum wsap_vtcore_underline {
 
 static inline enum wsap_vtcore_underline wsap_vtcore_attr_underline(uint16_t attrs)
 {
-    if (attrs & WSAP_VTCORE_ATTR_DOUBLE_UNDERLINE) return WSAP_VTCORE_UNDERLINE_DOUBLE;
-    if (attrs & WSAP_VTCORE_ATTR_CURLY_UNDERLINE) return WSAP_VTCORE_UNDERLINE_CURLY;
-    if (attrs & WSAP_VTCORE_ATTR_DOTTED_UNDERLINE) return WSAP_VTCORE_UNDERLINE_DOTTED;
-    if (attrs & WSAP_VTCORE_ATTR_DASHED_UNDERLINE) return WSAP_VTCORE_UNDERLINE_DASHED;
+    /* Use count trailing zeros for branchless style decoding. */
+    uint32_t adv = attrs & (WSAP_VTCORE_ATTR_DOUBLE_UNDERLINE | WSAP_VTCORE_ATTR_CURLY_UNDERLINE |
+                            WSAP_VTCORE_ATTR_DOTTED_UNDERLINE | WSAP_VTCORE_ATTR_DASHED_UNDERLINE);
+#if defined(__GNUC__) || defined(__clang__)
+    if (adv)
+        return (enum wsap_vtcore_underline)(__builtin_ctz(adv) - 9);
+#else
+    if (adv) {
+        if (attrs & WSAP_VTCORE_ATTR_DOUBLE_UNDERLINE) return WSAP_VTCORE_UNDERLINE_DOUBLE;
+        if (attrs & WSAP_VTCORE_ATTR_CURLY_UNDERLINE) return WSAP_VTCORE_UNDERLINE_CURLY;
+        if (attrs & WSAP_VTCORE_ATTR_DOTTED_UNDERLINE) return WSAP_VTCORE_UNDERLINE_DOTTED;
+        return WSAP_VTCORE_UNDERLINE_DASHED;
+    }
+#endif
     return attrs & WSAP_VTCORE_ATTR_UNDERLINE ? WSAP_VTCORE_UNDERLINE_SINGLE : WSAP_VTCORE_UNDERLINE_NONE;
 }
 
@@ -334,6 +344,7 @@ WSAP_VTCORE_API struct wsap_vtcore_span wsap_vtcore_snapshot_row_selection(const
  * Cluster handles belong to one snapshot capture. Do not retain them across updates.
  */
 WSAP_VTCORE_API int wsap_vtcore_snapshot_cluster(const struct wsap_vtcore_snapshot *s, uint32_t text, uint32_t *cps, int cap);
+WSAP_VTCORE_API const uint32_t *wsap_vtcore_snapshot_cluster_direct(const struct wsap_vtcore_snapshot *s, uint32_t text, int *out_len);
 
 /* Literal colors pass through unchanged. Invalid slots or a missing palette
  * resolve to zero.

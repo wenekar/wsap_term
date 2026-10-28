@@ -56,7 +56,8 @@ static inline enum csi_result csi_read(struct csi_parser *restrict p, const char
         }
         if (p->phase == CSI_IGNORE) continue;
 
-        if (ch >= '0' && ch <= ';') {
+        unsigned digit = (unsigned)(ch - '0');
+        if (digit <= (unsigned)(';' - '0')) {
             if (p->phase == CSI_INTERMEDIATES) {
                 p->phase = CSI_IGNORE;
                 continue;
@@ -65,13 +66,13 @@ static inline enum csi_result csi_read(struct csi_parser *restrict p, const char
             int n = p->csi.nparams ? p->csi.nparams : 1;
             int value = p->csi.params[n - 1];
             for (;;) {
-                if (ch <= '9') {
+                if (digit <= 9) {
                     for (;;) {
-                        int digit = ch - '0';
-                        value = value < 214748364 ? value * 10 + digit : INT_MAX;
+                        value = value < 214748364 ? value * 10 + (int)digit : INT_MAX;
                         if (i == len) break;
                         ch = (unsigned char)s[i];
-                        if (ch < '0' || ch > '9') break;
+                        digit = (unsigned)(ch - '0');
+                        if (digit > 9) break;
                         i++;
                     }
                 } else {
@@ -86,7 +87,8 @@ static inline enum csi_result csi_read(struct csi_parser *restrict p, const char
                 }
                 if (i == len) break;
                 ch = (unsigned char)s[i];
-                if (ch < '0' || ch > ';') break;
+                digit = (unsigned)(ch - '0');
+                if (digit > (unsigned)(';' - '0')) break;
                 i++;
             }
             p->csi.params[n - 1] = value;

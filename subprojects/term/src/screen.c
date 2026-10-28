@@ -889,7 +889,7 @@ struct wsap_vtcore *wsap_vtcore_new(const struct wsap_vtcore_options *opt)
     t->view_scratch_cap = cols > 256 ? cols : 256;
     t->view_row_scratch = calloc((size_t)t->view_scratch_cap, sizeof(struct cell));
     t->tabs_cap = cols > 256 ? cols : 256;
-    t->tabs = calloc((size_t)t->tabs_cap, 1);
+    t->tabs = calloc((size_t)((t->tabs_cap + 63) / 64), sizeof(uint64_t));
 
     if (!t->gstore || !t->view_row_scratch || !t->tabs) {
         wsap_vtcore_free(t);
@@ -1522,22 +1522,16 @@ bool wsap_vtcore_resize(struct wsap_vtcore *t, struct wsap_vtcore_vector2i size)
     }
 
     if (cols > t->tabs_cap) {
+        int old_words = (t->tabs_cap + 63) / 64;
         int new_cap = cols + 64;
-        uint8_t *new_tabs = realloc(t->tabs, (size_t)new_cap);
+        int new_words = (new_cap + 63) / 64;
+        uint64_t *new_tabs = (uint64_t *)realloc(t->tabs, (size_t)new_words * sizeof(uint64_t));
         if (!new_tabs) {
             wsap_vtcore_write_end(t);
             return false;
         }
-        memset(new_tabs + t->tabs_cap, 0, (size_t)(new_cap - t->tabs_cap));
-        int first_tab = (t->tabs_cap + 7) & ~7;
-        if (first_tab == 0)
-            first_tab = 8;
-        uint64_t tab8 = 1;
-        int c = first_tab;
-        for (; c + 8 <= new_cap; c += 8)
-            memcpy(new_tabs + c, &tab8, sizeof(tab8));
-        if (c < new_cap)
-            new_tabs[c] = 1;
+        for (int i = old_words; i < new_words; i++)
+            new_tabs[i] = 0x0101010101010101ULL;
         t->tabs = new_tabs;
         t->tabs_cap = new_cap;
     }

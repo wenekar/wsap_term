@@ -53,25 +53,6 @@ static int sgr_serialize(const struct wsap_vtcore *t, char *buf, size_t sz)
     return n;
 }
 
-static const signed char hex_val[256] = {
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-     0,  1,  2,  3,  4,  5,  6,  7,  8,  9, -1, -1, -1, -1, -1, -1,
-    -1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-};
-
 static int dcs_decode_hex(const char *s, int len, char *out, int cap)
 {
     if (len & 1) return -1;
@@ -309,13 +290,13 @@ static void restore_dectabsr(struct wsap_vtcore *t, const char *p, const char *e
             stop = stop < 214748364 ? stop * 10 + (*p - '0') : INT_MAX;
             any = 1;
         } else if (*p == '/') {
-            if (any && --stop >= 0 && stop < t->tabs_cap) t->tabs[stop] = 1;
+            if (any && --stop >= 0) wsap_vtcore_tab_set(t, stop);
             stop = any = 0;
         } else {
             return;
         }
     }
-    if (any && --stop >= 0 && stop < t->tabs_cap) t->tabs[stop] = 1;
+    if (any && --stop >= 0) wsap_vtcore_tab_set(t, stop);
 }
 
 static bool dcs_reserve(struct wsap_vtcore *t, size_t extra)
@@ -730,8 +711,7 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
         break;
     case 'g':
         if (csi->params[0] == 0) {
-            t->tabs[t->cursor_x] = 0;
-            t->custom_tabs = true;
+            wsap_vtcore_tab_clear(t, t->cursor_x);
         } else if (csi->params[0] == 3) {
             wsap_vtcore_tabs_clear(t);
         }
@@ -877,8 +857,7 @@ static void dispatch_esc(struct wsap_vtcore *t, unsigned char ch)
         t->application_keypad = false;
         break;
     case 'H':
-        t->tabs[t->cursor_x] = 1;
-        t->custom_tabs = true;
+        wsap_vtcore_tab_set(t, t->cursor_x);
         break;
     case 'c':
         if (t->alternate) wsap_vtcore_screen_set_alternate(t, false);

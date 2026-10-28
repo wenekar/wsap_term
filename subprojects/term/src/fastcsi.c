@@ -202,11 +202,19 @@ int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
                     case 53: t->overline = true; break;
                     case 55: t->overline = false; break;
                     case 59: t->cur_ul = 0; break;
+                    case 30: case 31: case 32: case 33: case 34: case 35: case 36: case 37:
+                        fg = wsap_vtcore_color_index((uint8_t)(v - 30));
+                        break;
+                    case 40: case 41: case 42: case 43: case 44: case 45: case 46: case 47:
+                        bg = wsap_vtcore_color_index((uint8_t)(v - 40));
+                        break;
+                    case 90: case 91: case 92: case 93: case 94: case 95: case 96: case 97:
+                        fg = wsap_vtcore_color_index((uint8_t)(v - 90 + 8));
+                        break;
+                    case 100: case 101: case 102: case 103: case 104: case 105: case 106: case 107:
+                        bg = wsap_vtcore_color_index((uint8_t)(v - 100 + 8));
+                        break;
                     default:
-                        if ((unsigned)(v - 30) < 8) fg = wsap_vtcore_color_index(v - 30);
-                        else if ((unsigned)(v - 40) < 8) bg = wsap_vtcore_color_index(v - 40);
-                        else if ((unsigned)(v - 90) < 8) fg = wsap_vtcore_color_index(v - 90 + 8);
-                        else if ((unsigned)(v - 100) < 8) bg = wsap_vtcore_color_index(v - 100 + 8);
                         break;
                     }
                     flags_ok = false;
@@ -253,11 +261,19 @@ int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
                     case 53: t->overline = true; break;
                     case 55: t->overline = false; break;
                     case 59: t->cur_ul = 0; break;
+                    case 30: case 31: case 32: case 33: case 34: case 35: case 36: case 37:
+                        fg = wsap_vtcore_color_index((uint8_t)(v - 30));
+                        break;
+                    case 40: case 41: case 42: case 43: case 44: case 45: case 46: case 47:
+                        bg = wsap_vtcore_color_index((uint8_t)(v - 40));
+                        break;
+                    case 90: case 91: case 92: case 93: case 94: case 95: case 96: case 97:
+                        fg = wsap_vtcore_color_index((uint8_t)(v - 90 + 8));
+                        break;
+                    case 100: case 101: case 102: case 103: case 104: case 105: case 106: case 107:
+                        bg = wsap_vtcore_color_index((uint8_t)(v - 100 + 8));
+                        break;
                     default:
-                        if ((unsigned)(v - 30) < 8) fg = wsap_vtcore_color_index(v - 30);
-                        else if ((unsigned)(v - 40) < 8) bg = wsap_vtcore_color_index(v - 40);
-                        else if ((unsigned)(v - 90) < 8) fg = wsap_vtcore_color_index(v - 90 + 8);
-                        else if ((unsigned)(v - 100) < 8) bg = wsap_vtcore_color_index(v - 100 + 8);
                         break;
                     }
                 }

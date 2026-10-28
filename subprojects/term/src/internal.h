@@ -189,7 +189,7 @@ struct wsap_vtcore {
     struct keyboard_mode keyboard[2];
     struct wsap_vtcore_saved_cursor saved;
 
-    uint8_t *tabs;
+    uint64_t *tabs;
     struct cell *view_row_scratch;
     int tabs_cap;
     int view_scratch_cap;
@@ -272,12 +272,28 @@ static inline void send_response(struct wsap_vtcore *t, const char *str)
     if (t && t->cb.reply)
         t->cb.reply(t->cb.ud, str, strlen(str));
 }
+static const signed char hex_val[256] WSAP_VTCORE_MAYBE_UNUSED = {
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+     0,  1,  2,  3,  4,  5,  6,  7,  8,  9, -1, -1, -1, -1, -1, -1,
+    -1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+};
+
 static inline int wsap_vtcore_hex_nib(char c)
 {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
+    return hex_val[(unsigned char)c];
 }
 
 static inline bool wsap_vtcore_lnm(const struct wsap_vtcore *t)
@@ -331,14 +347,35 @@ static inline struct text_pen wsap_vtcore_text_pen(const struct wsap_vtcore *t)
 
 static inline void wsap_vtcore_tabs_clear(struct wsap_vtcore *t)
 {
-    memset(t->tabs, 0, (size_t)t->tabs_cap);
+    int num_words = (t->tabs_cap + 63) / 64;
+    memset(t->tabs, 0, (size_t)num_words * sizeof(uint64_t));
     t->custom_tabs = true;
 }
 
 static inline void wsap_vtcore_tabs_default(struct wsap_vtcore *t)
 {
-    for (int c = 8; c < t->tabs_cap; c += 8) t->tabs[c] = 1;
+    int num_words = (t->tabs_cap + 63) / 64;
+    if (num_words > 0)
+        t->tabs[0] = 0x0101010101010100ULL;
+    for (int i = 1; i < num_words; i++)
+        t->tabs[i] = 0x0101010101010101ULL;
     t->custom_tabs = false;
+}
+
+static inline void wsap_vtcore_tab_set(struct wsap_vtcore *t, int col)
+{
+    if (col >= 0 && col < t->tabs_cap) {
+        t->tabs[col >> 6] |= (1ULL << (col & 63));
+        t->custom_tabs = true;
+    }
+}
+
+static inline void wsap_vtcore_tab_clear(struct wsap_vtcore *t, int col)
+{
+    if (col >= 0 && col < t->tabs_cap) {
+        t->tabs[col >> 6] &= ~(1ULL << (col & 63));
+        t->custom_tabs = true;
+    }
 }
 
 static inline bool wsap_vtcore_str_was_truncated(struct wsap_vtcore *t)

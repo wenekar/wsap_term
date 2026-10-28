@@ -86,16 +86,7 @@ Separate question: `wsap_vtcore_screen_insert_chars` (ICH) ignores the left
 and right margins. xterm limits ICH to the margins. Check the other edit
 operations (DCH, ECH, IL, DL) too.
 
-## 3. Port the core changes to wsap_term-ng
-
-`../wsap_term-ng` keeps the core as an amalgamation in `c_src/wsap_vtcore.c`
-and `c_src/wsap_vtcore.h`. Commit `c3e5628` kept them byte-identical with
-this tree. Generate the files with `tools/amalgamate.py` and copy them to
-`c_src/`. The banner now holds the license text. Build and test
-`wsap_term-ng`. Another agent works in that repository. Check
-`git -C ../wsap_term-ng status` and ask the user before you commit there.
-
-## 4. Review the old subagent worktrees
+## 3. Review the old subagent worktrees
 
 The earlier session left four worktrees in
 `../worktrees/wsap_term/pi-worktree-*` (branches `pi-subagents/*`) with
@@ -105,13 +96,13 @@ One is not: `parser-safety` changes the digit saturation in `src/csi.h` and
 optional. If you take it, keep the fast CSI path and the base parser equal,
 and run `write-fuzz-test`. Then ask the user before you remove the worktrees.
 
-## 5. Run NEON code in CI
+## 4. Run NEON code in CI
 
 The NEON paths have a compile check only (`term-cross-test`). Add an
 `ubuntu-24.04-arm` entry to the `core` matrix in `term.yml` so that the unit
 suite runs on AArch64.
 
-## 6. Performance follow-ups
+## 5. Performance follow-ups
 
 Measure each change as `benchmarks/term-line-streams.md` describes.
 
@@ -123,7 +114,7 @@ Measure each change as `benchmarks/term-line-streams.md` describes.
 - In normal mode, a short CRLF line before a long wrapped run uses the
   general path for the rest of the write.
 
-## 7. Coverage gaps
+## 6. Coverage gaps
 
 The unit suite covers 91% of lines and 82% of branches (Clang source-based
 coverage; `docs/testing.md` has the commands). The weakest files are

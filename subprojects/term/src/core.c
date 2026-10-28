@@ -335,10 +335,10 @@ void wsap_vtcore_sc_tab(struct wsap_vtcore *t, int n)
     if (count > t->cols) count = t->cols;
     if (!t->custom_tabs) {
         if (dir > 0) {
-            int next = ((t->cursor_x / 8) + count) * 8;
+            int next = (t->cursor_x & ~7) + (count << 3);
             t->cursor_x = next < t->cols ? next : t->cols - 1;
         } else {
-            int prev = t->cursor_x > 0 ? (((t->cursor_x - 1) / 8 - (count - 1)) * 8) : 0;
+            int prev = t->cursor_x > 0 ? (((t->cursor_x - 1) & ~7) - ((count - 1) << 3)) : 0;
             t->cursor_x = prev > 0 ? prev : 0;
         }
         t->pending_wrap = false;
@@ -346,12 +346,68 @@ void wsap_vtcore_sc_tab(struct wsap_vtcore *t, int n)
         if (cur) cur->version++;
         return;
     }
-    while (count-- > 0) {
-        int x = t->cursor_x + dir;
-        while (x > 0 && x < t->cols - 1 && !t->tabs[x])
-            x += dir;
-        t->cursor_x = x < 0 ? 0 : x >= t->cols ? t->cols - 1 : x;
+    int max_col = t->cols - 1;
+    int cur_col = t->cursor_x;
+    if (dir > 0) {
+        int max_w = max_col >> 6;
+        while (count-- > 0 && cur_col < max_col) {
+            int x = cur_col + 1;
+            int w = x >> 6;
+            uint64_t mask = ~0ULL << (x & 63);
+            uint64_t word = t->tabs[w] & mask;
+            if (word) {
+                cur_col = (w << 6) + wsap_vtcore_ctz64(word);
+            } else {
+                bool found = false;
+                while (++w <= max_w) {
+                    word = t->tabs[w];
+                    if (word) {
+                        cur_col = (w << 6) + wsap_vtcore_ctz64(word);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    cur_col = max_col;
+                    break;
+                }
+            }
+            if (cur_col >= max_col) {
+                cur_col = max_col;
+                break;
+            }
+        }
+    } else {
+        while (count-- > 0 && cur_col > 0) {
+            int x = cur_col - 1;
+            int w = x >> 6;
+            int b = x & 63;
+            uint64_t mask = (b == 63) ? ~0ULL : ((1ULL << (b + 1)) - 1);
+            uint64_t word = t->tabs[w] & mask;
+            if (word) {
+                cur_col = (w << 6) + 63 - wsap_vtcore_clz64(word);
+            } else {
+                bool found = false;
+                while (--w >= 0) {
+                    word = t->tabs[w];
+                    if (word) {
+                        cur_col = (w << 6) + 63 - wsap_vtcore_clz64(word);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    cur_col = 0;
+                    break;
+                }
+            }
+            if (cur_col <= 0) {
+                cur_col = 0;
+                break;
+            }
+        }
     }
+    t->cursor_x = cur_col;
     t->pending_wrap = false;
     struct srow *cur = wsap_vtcore_row(t, t->cursor_y);
     if (cur) cur->version++;
@@ -360,75 +416,135 @@ void wsap_vtcore_sc_tab(struct wsap_vtcore *t, int n)
 #define CELL_SGR_FLAGS (CELL_BOLD | CELL_FAINT | CELL_ITALIC | \
     CELL_STRIKE | CELL_OVERLINE | CELL_ANY_UNDERLINE)
 
-static inline void sgr_cell_reset(struct cell *cell)
-{
-    cell->fg = WSAP_VTCORE_COLOR_FG;
-    cell->bg = WSAP_VTCORE_COLOR_BG;
-    cell->flags &= (uint16_t)~CELL_SGR_FLAGS;
-}
+enum deccara_color_src { DECCARA_SRC_CUR_FG = 0, DECCARA_SRC_CUR_BG = 1, DECCARA_SRC_CONST = 2 };
 
-static inline void sgr_cell_underline(struct cell *cell, int style)
-{
-    if (style < 0 || style > 5) style = 1;
-    cell->flags = (uint16_t)((cell->flags & ~CELL_ANY_UNDERLINE) |
-                             wsap_vtcore_ul_flags[style]);
-}
+struct deccara_plan {
+    uint16_t clear_flags;
+    uint16_t set_flags;
+    uint32_t const_fg;
+    uint32_t const_bg;
+    uint8_t fg_src;
+    uint8_t bg_src;
+};
 
-static void apply_sgr_to_cell(struct cell *cell, const struct csi *csi, int first)
+/* Precomputes SGR modifications once for the whole rectangular area. */
+static void deccara_plan_init(struct deccara_plan *p, const struct csi *csi, int first)
 {
+    p->clear_flags = 0;
+    p->set_flags = 0;
+    p->const_fg = WSAP_VTCORE_COLOR_FG;
+    p->const_bg = WSAP_VTCORE_COLOR_BG;
+    p->fg_src = DECCARA_SRC_CUR_FG;
+    p->bg_src = DECCARA_SRC_CUR_BG;
+
     if (first >= csi->nparams) {
-        sgr_cell_reset(cell);
+        p->clear_flags = CELL_SGR_FLAGS;
+        p->fg_src = DECCARA_SRC_CONST;
+        p->bg_src = DECCARA_SRC_CONST;
         return;
     }
+
     for (int i = first; i < csi->nparams; i++) {
         int v = csi->params[i];
         uint32_t color;
         bool ok;
         switch (v) {
-        case 0: sgr_cell_reset(cell); break;
-        case 1: cell->flags |= CELL_BOLD; break;
-        case 2: cell->flags |= CELL_FAINT; break;
-        case 3: cell->flags |= CELL_ITALIC; break;
+        case 0:
+            p->clear_flags = CELL_SGR_FLAGS;
+            p->set_flags = 0;
+            p->fg_src = DECCARA_SRC_CONST;
+            p->bg_src = DECCARA_SRC_CONST;
+            p->const_fg = WSAP_VTCORE_COLOR_FG;
+            p->const_bg = WSAP_VTCORE_COLOR_BG;
+            break;
+        case 1: p->set_flags |= CELL_BOLD; p->clear_flags &= (uint16_t)~CELL_BOLD; break;
+        case 2: p->set_flags |= CELL_FAINT; p->clear_flags &= (uint16_t)~CELL_FAINT; break;
+        case 3: p->set_flags |= CELL_ITALIC; p->clear_flags &= (uint16_t)~CELL_ITALIC; break;
         case 4: {
             int style = 1;
             if (i + 1 < csi->nparams && (csi->subparams & (1u << (i + 1))))
                 style = csi->params[++i];
-            sgr_cell_underline(cell, style);
+            if (style < 0 || style > 5) style = 1;
+            p->clear_flags |= CELL_ANY_UNDERLINE;
+            p->set_flags = (uint16_t)((p->set_flags & ~CELL_ANY_UNDERLINE) | wsap_vtcore_ul_flags[style]);
             break;
         }
-        case 7: { uint32_t tmp = cell->fg; cell->fg = cell->bg; cell->bg = tmp; break; }
-        case 9: cell->flags |= CELL_STRIKE; break;
-        case 21: sgr_cell_underline(cell, 2); break;
-        case 22: cell->flags &= (uint16_t)~(CELL_BOLD | CELL_FAINT); break;
-        case 23: cell->flags &= (uint16_t)~CELL_ITALIC; break;
-        case 24: sgr_cell_underline(cell, 0); break;
-        case 29: cell->flags &= (uint16_t)~CELL_STRIKE; break;
+        case 7: {
+            uint8_t s_tmp = p->fg_src; p->fg_src = p->bg_src; p->bg_src = s_tmp;
+            uint32_t c_tmp = p->const_fg; p->const_fg = p->const_bg; p->const_bg = c_tmp;
+            break;
+        }
+        case 9: p->set_flags |= CELL_STRIKE; p->clear_flags &= (uint16_t)~CELL_STRIKE; break;
+        case 21:
+            p->clear_flags |= CELL_ANY_UNDERLINE;
+            p->set_flags = (uint16_t)((p->set_flags & ~CELL_ANY_UNDERLINE) | wsap_vtcore_ul_flags[2]);
+            break;
+        case 22:
+            p->clear_flags |= (CELL_BOLD | CELL_FAINT);
+            p->set_flags &= (uint16_t)~(CELL_BOLD | CELL_FAINT);
+            break;
+        case 23:
+            p->clear_flags |= CELL_ITALIC;
+            p->set_flags &= (uint16_t)~CELL_ITALIC;
+            break;
+        case 24:
+            p->clear_flags |= CELL_ANY_UNDERLINE;
+            p->set_flags &= (uint16_t)~CELL_ANY_UNDERLINE;
+            break;
+        case 29:
+            p->clear_flags |= CELL_STRIKE;
+            p->set_flags &= (uint16_t)~CELL_STRIKE;
+            break;
         case 38:
             i += sgr_extended_color(csi->params, csi->nparams, csi->subparams, i, &color, &ok);
-            if (ok) cell->fg = color;
+            if (ok) { p->fg_src = DECCARA_SRC_CONST; p->const_fg = color; }
             break;
-        case 39: cell->fg = WSAP_VTCORE_COLOR_FG; break;
+        case 39:
+            p->fg_src = DECCARA_SRC_CONST;
+            p->const_fg = WSAP_VTCORE_COLOR_FG;
+            break;
         case 48:
             i += sgr_extended_color(csi->params, csi->nparams, csi->subparams, i, &color, &ok);
-            if (ok) cell->bg = color;
+            if (ok) { p->bg_src = DECCARA_SRC_CONST; p->const_bg = color; }
             break;
-        case 49: cell->bg = WSAP_VTCORE_COLOR_BG; break;
-        case 53: cell->flags |= CELL_OVERLINE; break;
-        case 55: cell->flags &= (uint16_t)~CELL_OVERLINE; break;
+        case 49:
+            p->bg_src = DECCARA_SRC_CONST;
+            p->const_bg = WSAP_VTCORE_COLOR_BG;
+            break;
+        case 53: p->set_flags |= CELL_OVERLINE; p->clear_flags &= (uint16_t)~CELL_OVERLINE; break;
+        case 55: p->clear_flags |= CELL_OVERLINE; p->set_flags &= (uint16_t)~CELL_OVERLINE; break;
         case 58:
             i += sgr_extended_color(csi->params, csi->nparams, csi->subparams, i, &color, &ok);
             break;
         default:
-            if ((unsigned)(v - 30) < 8) cell->fg = wsap_vtcore_color_index(v - 30);
-            else if ((unsigned)(v - 40) < 8) cell->bg = wsap_vtcore_color_index(v - 40);
-            else if ((unsigned)(v - 90) < 8) cell->fg = wsap_vtcore_color_index(v - 90 + 8);
-            else if ((unsigned)(v - 100) < 8) cell->bg = wsap_vtcore_color_index(v - 100 + 8);
+            if ((unsigned)(v - 30) < 8) {
+                p->fg_src = DECCARA_SRC_CONST;
+                p->const_fg = wsap_vtcore_color_index((uint8_t)(v - 30));
+            } else if ((unsigned)(v - 40) < 8) {
+                p->bg_src = DECCARA_SRC_CONST;
+                p->const_bg = wsap_vtcore_color_index((uint8_t)(v - 40));
+            } else if ((unsigned)(v - 90) < 8) {
+                p->fg_src = DECCARA_SRC_CONST;
+                p->const_fg = wsap_vtcore_color_index((uint8_t)(v - 90 + 8));
+            } else if ((unsigned)(v - 100) < 8) {
+                p->bg_src = DECCARA_SRC_CONST;
+                p->const_bg = wsap_vtcore_color_index((uint8_t)(v - 100 + 8));
+            }
             break;
         }
     }
 }
 
-static void deccara_row(struct wsap_vtcore *t, int y, int x0, int x1, const struct csi *csi)
+static inline void apply_deccara_plan(struct cell *cell, const struct deccara_plan *p)
+{
+    uint32_t orig_fg = cell->fg;
+    uint32_t orig_bg = cell->bg;
+    cell->fg = (p->fg_src == DECCARA_SRC_CONST) ? p->const_fg : (p->fg_src == DECCARA_SRC_CUR_FG ? orig_fg : orig_bg);
+    cell->bg = (p->bg_src == DECCARA_SRC_CONST) ? p->const_bg : (p->bg_src == DECCARA_SRC_CUR_BG ? orig_bg : orig_fg);
+    cell->flags = (uint16_t)((cell->flags & ~p->clear_flags) | p->set_flags);
+}
+
+static void deccara_row(struct wsap_vtcore *t, int y, int x0, int x1, const struct deccara_plan *plan)
 {
     int p = phys_row(t, y);
     struct cell *row = row_cells(t, p);
@@ -438,7 +554,7 @@ static void deccara_row(struct wsap_vtcore *t, int y, int x0, int x1, const stru
     if (x1 + 1 < t->cols && x1 < len && (row[x1].flags & CELL_WIDE)) x1++;
     wsap_vtcore_row_fill_gap(srow, x1 + 1);
     for (int x = x0; x <= x1; x++)
-        apply_sgr_to_cell(&row[x], csi, 4);
+        apply_deccara_plan(&row[x], plan);
     srow->version++;
 }
 
@@ -451,15 +567,19 @@ void wsap_vtcore_sc_deccara(struct wsap_vtcore *t, const struct csi *csi)
     if (top > bottom || left > right || top >= t->rows || left >= t->cols) return;
     if (bottom >= t->rows) bottom = t->rows - 1;
     if (right >= t->cols) right = t->cols - 1;
+
+    struct deccara_plan plan;
+    deccara_plan_init(&plan, csi, 4);
+
     if (t->decsace == 2) {
         for (int y = top; y <= bottom; y++)
-            deccara_row(t, y, left, right, csi);
+            deccara_row(t, y, left, right, &plan);
     } else {
-        deccara_row(t, top, left, top == bottom ? right : t->cols - 1, csi);
+        deccara_row(t, top, left, top == bottom ? right : t->cols - 1, &plan);
         for (int y = top + 1; y < bottom; y++)
-            deccara_row(t, y, 0, t->cols - 1, csi);
+            deccara_row(t, y, 0, t->cols - 1, &plan);
         if (bottom > top)
-            deccara_row(t, bottom, 0, right, csi);
+            deccara_row(t, bottom, 0, right, &plan);
     }
 }
 
