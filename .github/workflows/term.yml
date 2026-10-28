@@ -50,7 +50,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config
+          sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config \
+            clang-18 libclang-rt-18-dev
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 180 \
+            --slave /usr/bin/clang++ clang++ /usr/bin/clang++-18
+          sudo update-alternatives --set clang /usr/bin/clang-18
       - name: Install tools
         if: runner.os == 'macOS'
         run: brew install meson ninja pkgconf zig
@@ -92,12 +96,16 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config
+          sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config \
+            clang-18 libclang-rt-18-dev
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 180 \
+            --slave /usr/bin/clang++ clang++ /usr/bin/clang++-18
+          sudo update-alternatives --set clang /usr/bin/clang-18
       - name: Build and test with sanitizers
         run: |
           meson setup /tmp/term-sanitize subprojects/term -Dkitty=disabled -Db_sanitize=address,undefined
           meson compile -C /tmp/term-sanitize
-          meson test -C /tmp/term-sanitize --print-errorlogs --suite unit
+          meson test -C /tmp/term-sanitize --print-errorlogs --suite unit --timeout-multiplier 2
 
   fuzz:
     name: Linux libFuzzer

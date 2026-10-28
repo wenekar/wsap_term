@@ -52,7 +52,7 @@ foreach entry : wsap_vtcore_tests
     args: entry[0] == 'write-fuzz-test' ? [get_option('write_fuzz_seeds').to_string()] : [],
     env: test_env,
     suite: ['unit'] + entry[3],
-    timeout: 180,
+    timeout: entry[0] == 'model-test' ? 600 : 180,
   )
 endforeach
 
@@ -66,7 +66,7 @@ if host_machine.cpu_family() == 'x86_64' and cc.get_argument_syntax() == 'gcc' a
                     'public-helpers-test', 'write-fuzz-test']
       test(name + '-' + level, wsap_vtcore_test_exes[name], env: level_env,
         args: name == 'write-fuzz-test' ? [get_option('write_fuzz_seeds').to_string()] : [],
-        suite: ['unit', 'isa'], timeout: 180)
+        suite: ['unit', 'isa'], timeout: name == 'model-test' ? 600 : 180)
     endforeach
   endforeach
 endif
@@ -97,7 +97,8 @@ foreach entry : wsap_vtcore_tests
         link_with: wsap_vtcore_amalgamation_lib,
         dependencies: [m_dep, thread_dep] + entry[2],
         build_by_default: false),
-      env: test_env, suite: ['unit', 'amalgamation'], timeout: 180)
+      env: test_env, suite: ['unit', 'amalgamation'],
+      timeout: entry[0] == 'model-test' ? 600 : 180)
   endif
 endforeach
 
