@@ -3,6 +3,9 @@
 Write docs, comments, and summaries in ASD-STE100 style: short sentences,
 simple words, active voice, one instruction or fact per sentence.
 
+If `NEXT_AGENT.md` exists, read it before you start. It lists the open work
+from the last session.
+
 ## Layout and conventions
 
 The rules that constrain new code:
