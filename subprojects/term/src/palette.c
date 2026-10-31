@@ -83,7 +83,6 @@ static const struct wsap_vtcore_theme builtin_theme = {
     .fg = 0xFFFFFFFFu,
     .bg = 0xFF1E1E2Eu,
     .cursor = 0xFF89B4FAu,
-    .interpolate_lab = true,
     .ansi = {
         0xFF585B70, 0xFFCC6666, 0xFFB5BD68, 0xFFF0C674,
         0xFF81A2BE, 0xFFB294BB, 0xFF8ABEB7, 0xFFC5C8C6,
@@ -101,7 +100,6 @@ static const struct wsap_vtcore_theme high_contrast_theme = {
     .fg = 0xFFFFFFFFu,
     .bg = 0xFF000000u,
     .cursor = 0xFF00FFFFu,
-    .interpolate_lab = true,
     .ansi = {
         0xFF000000, 0xFFFF0000, 0xFF00FF00, 0xFFFFFF00,
         0xFF0000FF, 0xFFFF00FF, 0xFF00FFFF, 0xFFFFFFFF,
@@ -369,33 +367,17 @@ static struct lab lab_lerp(float t, struct lab a, struct lab b)
 
 static void derive_palette(uint32_t *p, const struct wsap_vtcore_theme *theme)
 {
-    for (int i = 0; i < 16; i++)
-        p[i] = theme->ansi[i];
-    p[WSAP_VTCORE_PALETTE_FG] = theme->fg;
-    p[WSAP_VTCORE_PALETTE_BG] = theme->bg;
-    p[WSAP_VTCORE_PALETTE_CURSOR] = theme->cursor;
-
-    if (!theme->interpolate_lab) {
-        static const uint8_t cube_steps[6] = { 0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff };
-        int idx = 16;
-        for (int r = 0; r < 6; r++) {
-            for (int g = 0; g < 6; g++) {
-                for (int b = 0; b < 6; b++)
-                    p[idx++] = wsap_vtcore_rgb(cube_steps[r], cube_steps[g], cube_steps[b]);
-            }
-        }
-        for (int i = 0; i < 24; i++) {
-            uint8_t v = (uint8_t)(8 + i * 10);
-            p[idx++] = wsap_vtcore_rgb(v, v, v);
-        }
-        return;
-    }
-
     struct lab base8[8];
     base8[0] = lab_from_rgb(theme->bg);
     for (int i = 1; i < 7; i++)
         base8[i] = lab_from_rgb(theme->ansi[i]);
     base8[7] = lab_from_rgb(theme->fg);
+
+    for (int i = 0; i < 16; i++)
+        p[i] = theme->ansi[i];
+    p[WSAP_VTCORE_PALETTE_FG] = theme->fg;
+    p[WSAP_VTCORE_PALETTE_BG] = theme->bg;
+    p[WSAP_VTCORE_PALETTE_CURSOR] = theme->cursor;
 
     bool is_light_theme = base8[7].l < base8[0].l;
     if (is_light_theme) {

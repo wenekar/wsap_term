@@ -2057,43 +2057,8 @@ static void test_margin_dch_ich(void)
     wsap_vtcore_free(t);
 }
 
-static void test_palette_standard_xterm_cube(void)
-{
-    struct wsap_vtcore_options opt = {
-        .size = { .x = 80, .y = 24 },
-        .theme = {
-            .fg = 0xFFFFFFFF,
-            .bg = 0xFF000000,
-            .cursor = 0xFFFFFFFF,
-            .interpolate_lab = false,
-        },
-    };
-    struct wsap_vtcore *t = wsap_vtcore_new(&opt);
-    assert(t);
-
-    struct wsap_vtcore_snapshot *s = wsap_vtcore_snapshot_new();
-    assert(s);
-    assert(wsap_vtcore_snapshot_update(s, t));
-    const struct wsap_vtcore_view *v = wsap_vtcore_snapshot_view(s);
-    assert(v && v->palette);
-
-    /* Standard xterm 6x6x6 cube steps: 0, 95, 135, 175, 215, 255 */
-    assert(v->palette[16] == 0xFF000000u);
-    assert(v->palette[17] == 0xFF00005Fu);
-    assert(v->palette[196] == 0xFFFF0000u);
-    assert(v->palette[231] == 0xFFFFFFFFu);
-
-    /* Standard 24 greyscale steps: 8 + 10*i */
-    assert(v->palette[232] == 0xFF080808u);
-    assert(v->palette[255] == 0xFFEEEEEEu);
-
-    wsap_vtcore_snapshot_free(s);
-    wsap_vtcore_free(t);
-}
-
 int main(void)
 {
-    test_palette_standard_xterm_cube();
     test_margin_dch_ich();
     test_resize_tabs_and_custom_tabs();
     test_digit_saturation();
