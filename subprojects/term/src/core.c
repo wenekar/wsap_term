@@ -908,14 +908,14 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_wrapped(struct wsap_vtcore *t, c
 
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
 WSAP_VTCORE_TARGET_AVX512
-static int long_lines_avx512(const uint16_t *ends, int *count)
+static int long_lines_avx512(const uint16_t *ends, int *count, int max)
 {
     int j = 0;
     for (; j + 32 <= *count; j += 32) {
         __m512i start = _mm512_loadu_si512(ends + j);
         __m512i end = _mm512_loadu_si512(ends + j + 1);
         uint32_t bad = _mm512_cmpgt_epu16_mask(_mm512_sub_epi16(end, start),
-                                              _mm512_set1_epi16(HIST_PAGE_USABLE / 2));
+                                              _mm512_set1_epi16((short)max));
         if (bad) {
             *count = j + wsap_vtcore_ctz32(bad);
             break;
@@ -941,13 +941,18 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_lines(struct wsap_vtcore *t, con
     }
     uint16_t *ends = t->ascii_ends.data;
     int count = term == 2 ? scan_ascii_crlf(buf, limit, ends) : scan_ascii_lf(buf, limit, ends);
+    /* Without autowrap, a longer line keeps only its last byte in the last column.
+     * Stop the batch before that line. Shorter lines give the same rows as with autowrap. */
+    int max = HIST_PAGE_USABLE / 2;
+    if (!t->autowrap && t->cols + term < max)
+        max = t->cols + term;
     int j = 0;
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
     if (wsap_vtcore_use_avx512())
-        j = long_lines_avx512(ends, &count);
+        j = long_lines_avx512(ends, &count, max);
 #endif
     for (; j < count; j++) {
-        if (ends[j + 1] - ends[j] > HIST_PAGE_USABLE / 2) {
+        if (ends[j + 1] - ends[j] > max) {
             count = j;
             break;
         }
@@ -1424,10 +1429,10 @@ static WSAP_VTCORE_NOINLINE size_t bulk_ascii_lines_base(struct wsap_vtcore *t, 
 size_t wsap_vtcore_sc_bulk_ascii_lines(struct wsap_vtcore *t, const char *buf, size_t len)
 {
     if (WSAP_VTCORE_EXPECT(t->scr.rows > 256, 0)) return 0;
-    if (len >= 1024 && t->autowrap && using_default_colors(t) && !wsap_vtcore_flags_pad(t)) {
+    if (len >= 1024 && using_default_colors(t) && !wsap_vtcore_flags_pad(t)) {
         size_t done = 0;
         bool lnm = wsap_vtcore_lnm(t);
-        if (!lnm)
+        if (!lnm && t->autowrap)
             done = stream_ascii_wrapped(t, buf, len);
         if (!done && !t->pending_wrap)
             done = stream_ascii_lines(t, buf, len, lnm ? 1 : 2);

@@ -113,6 +113,8 @@ struct wsap_vtcore_options {
 };
 
 WSAP_VTCORE_API const char *wsap_vtcore_unicode_version(void);
+/* Return whether cp has the Unicode Emoji_Presentation property. */
+WSAP_VTCORE_API bool wsap_vtcore_unicode_is_emoji_presentation(uint32_t cp);
 WSAP_VTCORE_API unsigned wsap_vtcore_version(void);
 
 /* Return the length of the leading run of bytes from 0x20 up to, but not

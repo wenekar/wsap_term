@@ -101,9 +101,11 @@ void wsap_vtcore_text_ground(struct wsap_vtcore *t, unsigned char ch)
     }
 }
 
+/* The bulk line paths also cover autowrap off. They take only lines that fit the width.
+ * The wrapped-run stream in wsap_vtcore_sc_bulk_ascii_lines still requires autowrap. */
 static inline bool can_stream_bottom(const struct wsap_vtcore *t)
 {
-    return t->state == ST_GROUND && !t->graphics && !t->insert_mode && t->autowrap &&
+    return t->state == ST_GROUND && !t->graphics && !t->insert_mode &&
            !t->lr_margin_mode &&
            t->utf8_state == WSAP_VTCORE_UTF8_ACCEPT && !t->inverse &&
            t->scroll_top == 0 && t->scroll_bottom == t->rows - 1 &&
@@ -210,6 +212,12 @@ static void wsap_vtcore_feed_inner(struct wsap_vtcore *t, const char *buf, size_
                              t->state == ST_GROUND && !t->graphics &&
                              t->utf8_state == WSAP_VTCORE_UTF8_ACCEPT, 1)) {
             int avail = t->pending_wrap ? t->cols : t->cols - t->cursor_x;
+            if (WSAP_VTCORE_EXPECT(avail == 1 && !t->autowrap && !t->pending_wrap, 0)) {
+                /* Without autowrap, each printable byte replaces the last cell.
+                 * Only the last byte of the run stays. Print only that byte. */
+                i += scan_printable_span(buf + i + 1, len - i - 1, 0x7f);
+                ch = (unsigned char)buf[i];
+            }
             int rem = (int)(len - i);
             if (rem > avail) rem = avail;
             int run = 1;

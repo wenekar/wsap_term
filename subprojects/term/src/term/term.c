@@ -1,11 +1,17 @@
 #include "internal.h"
 #include "screen.h"
+#include "unicode/unicode.h"
 
 _Thread_local char wsap_vtcore_thread_anchor;
 
 const char *wsap_vtcore_unicode_version(void)
 {
     return WSAP_VTCORE_UNICODE_DATA_VERSION;
+}
+
+bool wsap_vtcore_unicode_is_emoji_presentation(uint32_t cp)
+{
+    return wsap_vtcore_unicode_emoji_presentation(cp);
 }
 
 unsigned wsap_vtcore_version(void)
