@@ -52,7 +52,14 @@ WSAP_VTCORE_API bool wsap_vtcore_color_parse(const char *spec, uint32_t *argb);
 struct wsap_vtcore_theme {
     uint32_t fg, bg, cursor;
     uint32_t ansi[16];
+    bool interpolate_lab;
 };
+
+#ifdef __cplusplus
+static_assert(sizeof(struct wsap_vtcore_theme) == 80, "theme struct must stay 80 bytes");
+#else
+_Static_assert(sizeof(struct wsap_vtcore_theme) == 80, "theme struct must stay 80 bytes");
+#endif
 
 WSAP_VTCORE_API void wsap_vtcore_theme_default(struct wsap_vtcore_theme *theme);
 WSAP_VTCORE_API void wsap_vtcore_theme_high_contrast(struct wsap_vtcore_theme *theme);
@@ -110,6 +117,12 @@ struct wsap_vtcore_options {
     struct wsap_vtcore_callbacks callbacks;
     uint32_t reserved[8];
 };
+
+#ifdef __cplusplus
+static_assert(sizeof(struct wsap_vtcore_options) == 200, "options struct must stay 200 bytes");
+#else
+_Static_assert(sizeof(struct wsap_vtcore_options) == 200, "options struct must stay 200 bytes");
+#endif
 
 WSAP_VTCORE_API const char *wsap_vtcore_unicode_version(void);
 /* Return whether cp has the Unicode Emoji_Presentation property. */
