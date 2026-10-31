@@ -3,7 +3,7 @@
 #include "kernels.h"
 #include "pen.h"
 #include "screen.h"
-#include "text_run.h"
+#include "text/run.h"
 #include "unicode/grapheme.h"
 #include "unicode/unicode.h"
 #include "unicode/utf8.h"

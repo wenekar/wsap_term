@@ -1,7 +1,7 @@
 #include "compat.h"
 #include "core.h"
 #include "kernels.h"
-#include "text_run.h"
+#include "run.h"
 #include "screen.h"
 #include "escape.h"
 #include "palette.h"

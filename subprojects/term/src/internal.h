@@ -3,13 +3,13 @@
 
 #include "wsap_vtcore.h"
 #include "cell.h"
-#include "csi.h"
+#include "csi/csi.h"
 #include "gstore.h"
-#include "hist.h"
-#include "hist_view.h"
+#include "hist/hist.h"
+#include "hist/view.h"
 #include "palette.h"
 #include "pen.h"
-#include "text_run.h"
+#include "text/run.h"
 #include "compat.h"
 #include <stdatomic.h>
 #include <stdlib.h>

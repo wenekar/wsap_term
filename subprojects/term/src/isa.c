@@ -11,32 +11,34 @@ static atomic_int isa_state;
 static const char *const level_names[] = { "base", "avx2", "avx512" };
 
 #if defined(WSAP_VTCORE_ISA_RUNTIME) && defined(_MSC_VER)
+#include "platform/windows/cpuid.h"
+
 static int cpu_level(void)
 {
     /* Clang's CPU builtins need libgcc symbols on the MSVC target. */
     /* Read CPU features and OS vector state through native intrinsics. */
     int regs[4];
-    __cpuid(regs, 0);
+    wsap_vtcore_cpuid(regs, 0);
     if (regs[0] < 7)
         return WSAP_VTCORE_ISA_BASE;
-    __cpuidex(regs, 1, 0);
+    wsap_vtcore_cpuidex(regs, 1, 0);
     /* SSE3, SSSE3, FMA, CX16, SSE4, MOVBE, POPCNT, XSAVE, OSXSAVE, AVX, F16C. */
     const uint32_t leaf1 = (1u << 0) | (1u << 9) | (1u << 12) | (1u << 13) |
         (1u << 19) | (1u << 20) | (1u << 22) | (1u << 23) | (1u << 26) |
         (1u << 27) | (1u << 28) | (1u << 29);
     if (((uint32_t)regs[2] & leaf1) != leaf1)
         return WSAP_VTCORE_ISA_BASE;
-    const uint64_t xcr0 = _xgetbv(0);
+    const uint64_t xcr0 = wsap_vtcore_xgetbv(0);
     if ((xcr0 & 0x6u) != 0x6u)
         return WSAP_VTCORE_ISA_BASE;
-    __cpuid(regs, (int)0x80000000u);
+    wsap_vtcore_cpuid(regs, (int)0x80000000u);
     if ((uint32_t)regs[0] < 0x80000001u)
         return WSAP_VTCORE_ISA_BASE;
-    __cpuid(regs, (int)0x80000001u);
+    wsap_vtcore_cpuid(regs, (int)0x80000001u);
     /* LAHF and LZCNT complete the x86-64-v3 feature set. */
     if (((uint32_t)regs[2] & 0x21u) != 0x21u)
         return WSAP_VTCORE_ISA_BASE;
-    __cpuidex(regs, 7, 0);
+    wsap_vtcore_cpuidex(regs, 7, 0);
     const uint32_t leaf7 = (1u << 3) | (1u << 5) | (1u << 8); /* BMI1, AVX2, BMI2. */
     if (((uint32_t)regs[1] & leaf7) != leaf7)
         return WSAP_VTCORE_ISA_BASE;

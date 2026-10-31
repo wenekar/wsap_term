@@ -4,7 +4,7 @@
 #include "kernels.h"
 #include "pen.h"
 #include "screen.h"
-#include "text.h"
+#include "text/text.h"
 #include "osc/osc.h"
 #include <stdarg.h>
 #include <stdlib.h>

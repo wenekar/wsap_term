@@ -1,5 +1,5 @@
-#include "hist.h"
-#include "hist_view.h"
+#include "hist/hist.h"
+#include "hist/view.h"
 #include "wsap_vtcore/unicode/grapheme.h"
 
 #include <assert.h>

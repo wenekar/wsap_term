@@ -7,21 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(_WIN32)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#if defined(_MSC_VER)
-#include <intrin.h>
-#endif
-#else
-#include <pthread.h>
-#include <unistd.h>
-#endif
+#include "platform/mutex.h"
 
 #if defined(__GNUC__) || defined(__clang__)
 #define WSAP_VTCORE_COMPILER_GNU 1
@@ -77,17 +63,7 @@ static inline int wsap_vtcore_popcount64(uint64_t x) { return __builtin_popcount
 #else
 
 #if defined(WSAP_VTCORE_HAVE_MSVC_BITOPS)
-static inline int wsap_vtcore_ctz32(uint32_t x)
-{
-    unsigned long i;
-    return _BitScanForward(&i, x) ? (int)i : 32;
-}
-static inline int wsap_vtcore_clz32(uint32_t x)
-{
-    unsigned long i;
-    return _BitScanReverse(&i, x) ? 31 - (int)i : 32;
-}
-static inline int wsap_vtcore_popcount32(uint32_t x) { return (int)__popcnt(x); }
+#include "platform/windows/bitops.h"
 #else
 static inline int wsap_vtcore_ctz32(uint32_t x)
 {
@@ -190,59 +166,7 @@ static inline void wsap_vtcore_cpu_relax(void)
 #endif
 }
 
-#if defined(_WIN32)
-typedef SRWLOCK wsap_vtcore_mutex;
-#else
-typedef pthread_mutex_t wsap_vtcore_mutex;
-#if !defined(PTHREAD_PRIO_INHERIT)
-#define PTHREAD_PRIO_INHERIT 1
-#endif
-#endif
-
-static inline bool wsap_vtcore_mutex_init(wsap_vtcore_mutex *m)
-{
-#if defined(_WIN32)
-    InitializeSRWLock(m);
-    return true;
-#elif defined(_POSIX_THREAD_PRIO_INHERIT) && _POSIX_THREAD_PRIO_INHERIT > 0
-    pthread_mutexattr_t attr;
-    if (pthread_mutexattr_init(&attr) != 0)
-        return false;
-    bool ok = pthread_mutexattr_setprotocol(&attr, PTHREAD_PRIO_INHERIT) == 0 &&
-              pthread_mutex_init(m, &attr) == 0;
-    pthread_mutexattr_destroy(&attr);
-    return ok;
-#else
-    return pthread_mutex_init(m, NULL) == 0;
-#endif
-}
-
-static inline void wsap_vtcore_mutex_lock(wsap_vtcore_mutex *m)
-{
-#if defined(_WIN32)
-    AcquireSRWLockExclusive(m);
-#else
-    (void)pthread_mutex_lock(m);
-#endif
-}
-
-static inline void wsap_vtcore_mutex_unlock(wsap_vtcore_mutex *m)
-{
-#if defined(_WIN32)
-    ReleaseSRWLockExclusive(m);
-#else
-    (void)pthread_mutex_unlock(m);
-#endif
-}
-
-static inline void wsap_vtcore_mutex_destroy(wsap_vtcore_mutex *m)
-{
-#if defined(_WIN32)
-    (void)m;
-#else
-    (void)pthread_mutex_destroy(m);
-#endif
-}
+// Mutex types and functions are defined in platform/mutex.h.
 
 static inline char *wsap_vtcore_strdup(const char *s)
 {

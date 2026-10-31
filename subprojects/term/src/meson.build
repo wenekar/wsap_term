@@ -4,9 +4,9 @@ wsap_vtcore_soversion = meson.project_version().split('.')[0]
 
 wsap_vtcore_sources = files(
   'core.c',
+  'csi/fast.c',
   'escape.c',
-  'fastcsi.c',
-  'hist_view.c',
+  'hist/view.c',
   'input.c',
   'isa.c',
   'palette.c',
@@ -14,9 +14,9 @@ wsap_vtcore_sources = files(
   'screen.c',
   'selection.c',
   'snapshot.c',
-  'term_state.c',
-  'text.c',
-  'text_run.c',
+  'term/state.c',
+  'text/run.c',
+  'text/text.c',
 ) + wsap_vtcore_osc_src
 
 wsap_vtcore_lib = both_libraries('wsap_vtcore', wsap_vtcore_sources,

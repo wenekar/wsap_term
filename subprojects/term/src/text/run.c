@@ -1,6 +1,6 @@
 #include <assert.h>
 #include <stdalign.h>
-#include "text_run.h"
+#include "run.h"
 #include "compat.h"
 #include "kernels.h"
 #include "simd.h"

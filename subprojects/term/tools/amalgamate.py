@@ -11,7 +11,8 @@ PUBLIC = ("wsap_vtcore_types.h", "wsap_vtcore_input.h", "wsap_vtcore.h")
 class Joiner:
     def __init__(self, root: Path):
         self.root = root
-        self.search = (root / "src", root / "include" / "wsap_vtcore")
+        src_dirs = tuple(p for p in (root / "src").rglob("*") if p.is_dir())
+        self.search = (root / "src",) + src_dirs + (root / "include" / "wsap_vtcore",)
         self.seen: set[Path] = set()
 
     def resolve(self, name: str, base: Path) -> Path:
@@ -22,6 +23,8 @@ class Joiner:
         raise SystemExit(f"{base}: cannot find {name}")
 
     def emit(self, path: Path, out: list[str]) -> None:
+        if path in self.seen:
+            return
         self.seen.add(path)
         for line in path.read_text().splitlines(keepends=True):
             m = INCLUDE.match(line)
@@ -33,7 +36,7 @@ class Joiner:
                 self.emit(dep, out)
 
 def sources(src: Path) -> list[Path]:
-    files = sorted(src.glob("*.c")) + sorted((src / "osc").glob("*.c"))
+    files = sorted(p for p in src.rglob("*.c") if p.is_file())
     return [f.resolve() for f in files]
 
 def main() -> int:
