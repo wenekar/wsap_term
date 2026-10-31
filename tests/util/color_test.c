@@ -96,6 +96,7 @@ static struct wsap_vtcore_theme light_theme(void)
         .fg = argb(0x20, 0x20, 0x20),
         .bg = argb(0xF0, 0xF0, 0xE8),
         .cursor = argb(0x10, 0x60, 0xC0),
+        .interpolate_lab = true,
     };
     for (int i = 0; i < 16; i++)
         theme.ansi[i] = argb((uint8_t)(i * 13), (uint8_t)(200 - i * 9), (uint8_t)(i * 7 + 30));

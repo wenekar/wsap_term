@@ -1960,8 +1960,143 @@ static void test_margin_insert_hides_erased_cells(void)
     wsap_vtcore_free(bytes);
 }
 
+static void test_digit_saturation(void)
+{
+    struct wsap_vtcore *t = tt_new_opts(80, 24, &reply_cb);
+
+    /* DECRQM reports requested mode number back.
+     * Verify numbers 2147483640..2147483647 do not prematurely saturate to INT_MAX (2147483647). */
+    response_len = 0;
+    write_seq(t, "\033[2147483640$p");
+    assert(!strcmp(response, "\033[2147483640;0$y"));
+
+    response_len = 0;
+    write_seq(t, "\033[2147483647$p");
+    assert(!strcmp(response, "\033[2147483647;0$y"));
+
+    /* Number >= 2147483648 saturates to INT_MAX */
+    response_len = 0;
+    write_seq(t, "\033[2147483648$p");
+    assert(!strcmp(response, "\033[2147483647;0$y"));
+
+    wsap_vtcore_free(t);
+}
+
+static void test_resize_tabs_and_custom_tabs(void)
+{
+    struct wsap_vtcore *t = tt_new(80, 24);
+    assert(t);
+
+    /* Set custom tab stop at col 20 only. */
+    write_seq(t, "\033[3g\033[21G\033H\r");
+    write_seq(t, "\t");
+    assert(tt_cursor_x(t) == 20);
+
+    /* Failed resize leaves tabs intact. */
+    assert(!tt_resize(t, 0, 24));
+    assert(!tt_resize(t, WSAP_VTCORE_MAX_COLS + 1, 24));
+    write_seq(t, "\r\t");
+    assert(tt_cursor_x(t) == 20);
+
+    /* Widen past tabs_cap (256). With custom_tabs, new tab words are 0. */
+    assert(tt_resize(t, 350, 24));
+    write_seq(t, "\033[251G");
+    assert(tt_cursor_x(t) == 250);
+    write_seq(t, "\t");
+    /* No tab stop in widened area; cursor advances to max column. */
+    assert(tt_cursor_x(t) == 349);
+    wsap_vtcore_free(t);
+
+    /* Fresh terminal with default tabs. Widen past tabs_cap. */
+    t = tt_new(80, 24);
+    assert(t);
+    assert(tt_resize(t, 350, 24));
+    write_seq(t, "\033[251G");
+    assert(tt_cursor_x(t) == 250);
+    write_seq(t, "\t");
+    /* Default tabs every 8 cols: from 250 advances to 256. */
+    assert(tt_cursor_x(t) == 256);
+    wsap_vtcore_free(t);
+}
+
+static void test_margin_dch_ich(void)
+{
+    struct wsap_vtcore *t = tt_new(20, 4);
+    assert(t);
+    write_seq(t, "abcdefghijklmnopqrst");
+    assert(row_is(t, 0, "abcdefghijklmnopqrst"));
+
+    /* Left margin col 4, right margin col 14 (1-based: 5 to 15). */
+    write_seq(t, "\033[?69h\033[5;15s");
+
+    /* Cursor at col 6 ('g'). Delete 2 chars inside margin. */
+    write_seq(t, "\033[1;7H\033[2P");
+    /* Chars 8..14 ('ijklmno') shift to 6..12; 13..14 become blank;
+     * 15..19 ('pqrst') past right margin are intact. */
+    assert(row_is(t, 0, "abcdefijklmno  pqrst"));
+
+    /* Cursor at col 6 ('i'). Insert 2 chars inside margin. */
+    write_seq(t, "\033[1;7H\033[2@");
+    /* Chars 6..12 ('ijklmno') shift to 8..14; 6..7 become blank;
+     * 15..19 ('pqrst') past right margin are intact. */
+    assert(row_is(t, 0, "abcdef  ijklmnopqrst"));
+
+    /* Insert 2 more chars at col 6. Now chars 13..14 ('no') are pushed off
+     * right margin and dropped, NOT spilled past right margin. */
+    write_seq(t, "\033[1;7H\033[2@");
+    assert(row_is(t, 0, "abcdef    ijklmpqrst"));
+
+    /* Cursor past right margin at col 16 ('q'). */
+    write_seq(t, "\033[1;17H\033[2P");
+    /* Clamped to margin: cursor >= right bound does nothing. */
+    assert(row_is(t, 0, "abcdef    ijklmpqrst"));
+
+    write_seq(t, "\033[1;17H\033[2@");
+    assert(row_is(t, 0, "abcdef    ijklmpqrst"));
+
+    wsap_vtcore_free(t);
+}
+
+static void test_palette_standard_xterm_cube(void)
+{
+    struct wsap_vtcore_options opt = {
+        .size = { .x = 80, .y = 24 },
+        .theme = {
+            .fg = 0xFFFFFFFF,
+            .bg = 0xFF000000,
+            .cursor = 0xFFFFFFFF,
+            .interpolate_lab = false,
+        },
+    };
+    struct wsap_vtcore *t = wsap_vtcore_new(&opt);
+    assert(t);
+
+    struct wsap_vtcore_snapshot *s = wsap_vtcore_snapshot_new();
+    assert(s);
+    assert(wsap_vtcore_snapshot_update(s, t));
+    const struct wsap_vtcore_view *v = wsap_vtcore_snapshot_view(s);
+    assert(v && v->palette);
+
+    /* Standard xterm 6x6x6 cube steps: 0, 95, 135, 175, 215, 255 */
+    assert(v->palette[16] == 0xFF000000u);
+    assert(v->palette[17] == 0xFF00005Fu);
+    assert(v->palette[196] == 0xFFFF0000u);
+    assert(v->palette[231] == 0xFFFFFFFFu);
+
+    /* Standard 24 greyscale steps: 8 + 10*i */
+    assert(v->palette[232] == 0xFF080808u);
+    assert(v->palette[255] == 0xFFEEEEEEu);
+
+    wsap_vtcore_snapshot_free(s);
+    wsap_vtcore_free(t);
+}
+
 int main(void)
 {
+    test_palette_standard_xterm_cube();
+    test_margin_dch_ich();
+    test_resize_tabs_and_custom_tabs();
+    test_digit_saturation();
     test_margin_insert_hides_erased_cells();
     test_reserved_options_must_be_zero();
     test_concurrent_feed_and_snapshot();
@@ -2076,6 +2211,14 @@ int main(void)
 
     write_seq(t, "\033[2J\033[Habcd\033[2G\033[4hX\033[4l");
     assert(row_is(t, 0, "aXbcd"));
+
+    write_seq(t, "\033[2J\033[Habcd\033[2G\033[4he\xcc\x81\033[4l");
+    uint32_t cluster_cps[4] = {0};
+    assert(wsap_vtcore_snapshot_cluster(tt_snapshot_for(t), tt_cell(t, 1, 0)->text, cluster_cps, 4) == 2);
+    assert(cluster_cps[0] == 'e' && cluster_cps[1] == 0x301);
+    assert(tt_cell(t, 2, 0)->text == 'b');
+    assert(tt_cell(t, 3, 0)->text == 'c');
+    assert(tt_cell(t, 4, 0)->text == 'd');
 
     write_seq(t, "\033[2;4r\033[?6h\033[2;3H@");
     assert(tt_cell(t, 2, 2)->text == '@');

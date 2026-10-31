@@ -676,6 +676,8 @@ static char *range_text_inner(const struct wsap_vtcore *t,
 
     size_t cap = 4096, n = 0;
     char *text = malloc(cap);
+    enum { BATCH_SEGS = 64 };
+    struct cell *batch_cells = text ? malloc((size_t)BATCH_SEGS * (size_t)t->cols * sizeof(struct cell)) : NULL;
     for (uint64_t id = start.line_id; text && id <= end.line_id; id++) {
         int nsegs = line_total_segs(&L, id);
         int start_seg = 0;
@@ -690,8 +692,6 @@ static char *range_text_inner(const struct wsap_vtcore *t,
         }
         uint32_t next_start = line_seg_start_off(&L, id, start_seg);
         int hrows = hist_segs(&L, id);
-        enum { BATCH_SEGS = 64 };
-        struct cell *batch_cells = NULL;
         int batch_lens[BATCH_SEGS];
         int batch_start = -1, batch_len = 0;
 
@@ -707,8 +707,6 @@ static char *range_text_inner(const struct wsap_vtcore *t,
                         take = BATCH_SEGS;
                     if (seg + take - 1 > end_seg)
                         take = end_seg - seg + 1;
-                    if (!batch_cells)
-                        batch_cells = malloc((size_t)BATCH_SEGS * (size_t)t->cols * sizeof(struct cell));
                     batch_len = batch_cells ? wsap_vtcore_hist_decode_segments(&t->hist, id, batch_start, take,
                                                                    t->cols, batch_cells, batch_lens,
                                                                    t->gstore) : 0;
@@ -801,8 +799,8 @@ static char *range_text_inner(const struct wsap_vtcore *t,
             if (text && !is_last && !wrapped && text_reserve(&text, &cap, n + 2))
                 text[n++] = '\n';
         }
-        free(batch_cells);
     }
+    free(batch_cells);
     if (text)
         text[n] = 0;
     lines_free(&L);

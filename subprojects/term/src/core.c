@@ -208,8 +208,11 @@ bool wsap_vtcore_sc_extend_cluster(struct wsap_vtcore *t, uint32_t cp, int klass
     t->cursor_x = x;
     t->pending_wrap = false;
     t->last_char = wsap_vtcore_gstore_intern(t->gstore, cps, len);
+    bool insert_mode = t->insert_mode;
+    t->insert_mode = false;
     wsap_vtcore_sc_print_glyph(t, t->last_char, -1,
                    cell.flags & ~(CELL_WIDE | CELL_EMOJI | CELL_TEXT));
+    t->insert_mode = insert_mode;
 
     prev = last_written_cell(t);
     if (prev) {

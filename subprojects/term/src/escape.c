@@ -74,6 +74,17 @@ static int dcs_decode_hex(const char *s, int len, char *out, int cap)
     return n;
 }
 
+static bool dcs_is_hex(const char *s, int len)
+{
+    if (len <= 0 || (len & 1))
+        return false;
+    for (int i = 0; i < len; i++) {
+        if (hex_val[(unsigned char)s[i]] < 0)
+            return false;
+    }
+    return true;
+}
+
 struct tcap_entry {
     const char *name, *value;
 };
@@ -230,7 +241,8 @@ static int dcs_param_int(const char **p, const char *end)
 {
     int v = 0, any = 0;
     while (*p < end && **p >= '0' && **p <= '9') {
-        v = v < 214748364 ? v * 10 + (**p - '0') : INT_MAX;
+        int digit = **p - '0';
+        v = v < 214748364 || (v == 214748364 && digit <= 7) ? v * 10 + (int)digit : INT_MAX;
         (*p)++;
         any = 1;
     }
@@ -287,7 +299,8 @@ static void restore_dectabsr(struct wsap_vtcore *t, const char *p, const char *e
     int stop = 0, any = 0;
     for (; p < end; p++) {
         if (*p >= '0' && *p <= '9') {
-            stop = stop < 214748364 ? stop * 10 + (*p - '0') : INT_MAX;
+            int digit = *p - '0';
+            stop = stop < 214748364 || (stop == 214748364 && digit <= 7) ? stop * 10 + (int)digit : INT_MAX;
             any = 1;
         } else if (*p == '/') {
             if (any && --stop >= 0) wsap_vtcore_tab_set(t, stop);
@@ -333,8 +346,7 @@ static void dcs_dispatch(struct wsap_vtcore *t)
     } else if (buf[0] == '+' && buf[1] == 'Q') {
         int span = 0;
         while (span < len - 2 && buf[2 + span] != ';') span++;
-        char *name = malloc((size_t)span / 2 + 1);
-        if (name && span && dcs_decode_hex(buf + 2, span, name, span / 2) >= 0) {
+        if (dcs_is_hex(buf + 2, span)) {
             struct resp_buf r = {0};
             resp_put(&r, "\033P0+R", 5);
             resp_put(&r, buf + 2, (size_t)span);
@@ -343,7 +355,6 @@ static void dcs_dispatch(struct wsap_vtcore *t)
                 send_response(t, r.s);
             free(r.s);
         }
-        free(name);
     } else if (buf[0] == '$' && buf[1] == 'q') {
         const char *spec = buf + 2;
         int slen = len - 2, p;
@@ -478,23 +489,28 @@ static inline void handle_sgr(struct wsap_vtcore *t, const struct csi *csi)
         }
     }
 
+    uint8_t attrs = (t->bold ? PEN_ATTR_BOLD : 0) |
+                    (t->faint ? PEN_ATTR_FAINT : 0) |
+                    (t->italic ? PEN_ATTR_ITALIC : 0) |
+                    (t->strike ? PEN_ATTR_STRIKE : 0) |
+                    (t->overline ? PEN_ATTR_OVERLINE : 0) |
+                    (t->inverse ? PEN_ATTR_INVERSE : 0);
     struct wsap_vtcore_pen pen = {
         .fg = t->cur_fg, .bg = t->cur_bg, .ul = t->cur_ul,
         .underline = t->underline,
-        .bold = t->bold, .faint = t->faint, .italic = t->italic,
-        .strike = t->strike, .overline = t->overline, .inverse = t->inverse,
+        .attrs = attrs,
     };
     sgr_apply(&pen, csi->params, csi->nparams, csi->subparams);
     t->cur_fg = pen.fg;
     t->cur_bg = pen.bg;
     t->cur_ul = pen.ul;
     t->underline = pen.underline;
-    t->bold = pen.bold;
-    t->faint = pen.faint;
-    t->italic = pen.italic;
-    t->strike = pen.strike;
-    t->overline = pen.overline;
-    t->inverse = pen.inverse;
+    t->bold = (pen.attrs & PEN_ATTR_BOLD) != 0;
+    t->faint = (pen.attrs & PEN_ATTR_FAINT) != 0;
+    t->italic = (pen.attrs & PEN_ATTR_ITALIC) != 0;
+    t->strike = (pen.attrs & PEN_ATTR_STRIKE) != 0;
+    t->overline = (pen.attrs & PEN_ATTR_OVERLINE) != 0;
+    t->inverse = (pen.attrs & PEN_ATTR_INVERSE) != 0;
 }
 
 #define WSAP_VTCORE_PRIV_MODE_FIELDS(X) \

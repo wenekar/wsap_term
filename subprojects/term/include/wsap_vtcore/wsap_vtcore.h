@@ -52,6 +52,7 @@ WSAP_VTCORE_API bool wsap_vtcore_color_parse(const char *spec, uint32_t *argb);
 struct wsap_vtcore_theme {
     uint32_t fg, bg, cursor;
     uint32_t ansi[16];
+    bool interpolate_lab;
 };
 
 WSAP_VTCORE_API void wsap_vtcore_theme_default(struct wsap_vtcore_theme *theme);

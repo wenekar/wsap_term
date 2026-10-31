@@ -164,12 +164,37 @@ static void concurrent_history(void)
     wsap_vtcore_free(term);
 }
 
+static void multi_line_batch_history(void)
+{
+    struct wsap_vtcore *term = wsap_vtcore_new(&(struct wsap_vtcore_options){
+        .size = { .x = 10, .y = 2 },
+        .scrollback = 200,
+    });
+    assert(term);
+    for (int i = 0; i < 150; i++) {
+        char buf[16];
+        snprintf(buf, sizeof(buf), "line%03d\r\n", i);
+        feed(term, buf);
+    }
+    char *text = wsap_vtcore_history_text(term, 150);
+    assert(text);
+    for (int i = 0; i < 149; i++) {
+        char expected[16];
+        snprintf(expected, sizeof(expected), "line%03d\n", i);
+        char *found = strstr(text, expected);
+        assert(found);
+    }
+    free(text);
+    wsap_vtcore_free(term);
+}
+
 int main(void)
 {
     unicode_and_selection();
     limits_and_scrolled_view();
     wrapped_rows();
     scrollback_limit();
+    multi_line_batch_history();
     concurrent_history();
     puts("PASS: history text");
     return 0;

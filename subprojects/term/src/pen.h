@@ -19,17 +19,7 @@ struct wsap_vtcore_pen {
     uint32_t bg;
     uint32_t ul;
     uint8_t underline;
-    union {
-        struct {
-            bool bold : 1;
-            bool faint : 1;
-            bool italic : 1;
-            bool strike : 1;
-            bool overline : 1;
-            bool inverse : 1;
-        };
-        uint8_t attrs;
-    };
+    uint8_t attrs;
 };
 
 struct pen_attr {

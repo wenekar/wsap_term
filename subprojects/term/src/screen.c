@@ -267,12 +267,15 @@ void wsap_vtcore_screen_erase_line(struct wsap_vtcore *t, int mode)
 void wsap_vtcore_screen_delete_chars(struct wsap_vtcore *t, int n)
 {
     t->pending_wrap = false;
-    if (t->cursor_x >= t->cols)
+    int right = (t->lr_margin_mode && t->right_margin < t->cols) ? t->right_margin + 1 : t->cols;
+    if (t->cursor_x >= right)
         return;
     int x = t->cursor_x;
     int cols = t->cols;
-    if (n > cols - x)
-        n = cols - x;
+    if (n > right - x)
+        n = right - x;
+    if (n <= 0)
+        return;
     int p = phys_row(t, t->cursor_y);
     struct cell *row = row_cells(t, p);
     struct srow *srow = wsap_vtcore_row(t, t->cursor_y);
@@ -282,38 +285,48 @@ void wsap_vtcore_screen_delete_chars(struct wsap_vtcore *t, int n)
         clear_cells_default(row + cols, len - cols);
         len = cols;
     }
-    if (len > x + n) {
-        memmove(&row[x], &row[x + n], (size_t)(len - (x + n)) * sizeof(struct cell));
-        clear_cells_default(&row[len - n], n);
-        srow->len = (uint16_t)(len - n);
-    } else if (len > x) {
-        clear_cells_default(&row[x], len - x);
-        srow->len = (uint16_t)x;
+    int bound = len < right ? len : right;
+    if (bound > x + n) {
+        memmove(&row[x], &row[x + n], (size_t)(bound - (x + n)) * sizeof(struct cell));
+        clear_cells_default(&row[bound - n], n);
+        if (len <= right)
+            srow->len = (uint16_t)(len - n);
+    } else if (bound > x) {
+        clear_cells_default(&row[x], bound - x);
+        if (len <= right)
+            srow->len = (uint16_t)x;
     }
     srow->flags &= (uint8_t)~RF_TAIL_PADDED;
     bool pristine = using_default_colors(t);
     if (!pristine) {
-        int from = cols - n;
+        int from = right - n;
         if (from < x)
             from = x;
         wsap_vtcore_row_fill_gap(srow, from);
-        fill_cells(&row[from], cols - from, t->cur_fg, t->cur_bg);
-        srow->len = (uint16_t)cols;
+        fill_cells(&row[from], right - from, t->cur_fg, t->cur_bg);
+        if (srow->len < right)
+            srow->len = (uint16_t)right;
     }
     row_set_wrapped(srow, false);
-    repair_wide_row(row, x - 1, len, cols, srow->len);
+    int repair_end = len;
+    if (t->lr_margin_mode && repair_end < right + 1)
+        repair_end = right + 1;
+    repair_wide_row(row, x - 1, repair_end, cols, srow->len);
     srow->version++;
 }
 
 void wsap_vtcore_screen_insert_chars(struct wsap_vtcore *t, int n)
 {
     t->pending_wrap = false;
-    if (t->cursor_x >= t->cols)
+    int right = (t->lr_margin_mode && t->right_margin < t->cols) ? t->right_margin + 1 : t->cols;
+    if (t->cursor_x >= right)
         return;
     int x = t->cursor_x;
     int cols = t->cols;
-    if (n > cols - x)
-        n = cols - x;
+    if (n > right - x)
+        n = right - x;
+    if (n <= 0)
+        return;
     int p = phys_row(t, t->cursor_y);
     struct cell *row = row_cells(t, p);
     struct srow *srow = wsap_vtcore_row(t, t->cursor_y);
@@ -324,7 +337,7 @@ void wsap_vtcore_screen_insert_chars(struct wsap_vtcore *t, int n)
         srow->version++;
     }
     if (len > x) {
-        int shift = cols - (x + n);
+        int shift = right - (x + n);
         if (shift > len - x)
             shift = len - x;
         if (shift > 0)
@@ -332,17 +345,22 @@ void wsap_vtcore_screen_insert_chars(struct wsap_vtcore *t, int n)
     }
     fill_cells(&row[x], n, t->cur_fg, t->cur_bg);
     bool pristine = using_default_colors(t);
-    int new_len = len + n > cols ? cols : len + n;
-    if (pristine && len <= x)
-        new_len = len;
-    else if (new_len < x + n)
-        new_len = x + n;
-    if (new_len < cols)
-        clear_cells_default(row + new_len, cols - new_len);
-    srow->len = (uint16_t)new_len;
+    int new_len = len;
+    if (len <= right) {
+        new_len = len + n > right ? right : len + n;
+        if (pristine && len <= x)
+            new_len = len;
+        else if (new_len < x + n)
+            new_len = x + n;
+        if (!t->lr_margin_mode && new_len < cols)
+            clear_cells_default(row + new_len, cols - new_len);
+        srow->len = (uint16_t)new_len;
+    }
     srow->flags &= (uint8_t)~RF_TAIL_PADDED;
     row_set_wrapped(srow, false);
     int repair_end = x + n + 1 > len + 1 ? x + n + 1 : len + 1;
+    if (t->lr_margin_mode && repair_end < right + 1)
+        repair_end = right + 1;
     repair_wide_row(row, x - 1, repair_end, cols, srow->len);
     srow->version++;
 }
@@ -1521,20 +1539,6 @@ bool wsap_vtcore_resize(struct wsap_vtcore *t, struct wsap_vtcore_vector2i size)
         return true;
     }
 
-    if (cols > t->tabs_cap) {
-        int old_words = (t->tabs_cap + 63) / 64;
-        int new_cap = cols + 64;
-        int new_words = (new_cap + 63) / 64;
-        uint64_t *new_tabs = (uint64_t *)realloc(t->tabs, (size_t)new_words * sizeof(uint64_t));
-        if (!new_tabs) {
-            wsap_vtcore_write_end(t);
-            return false;
-        }
-        for (int i = old_words; i < new_words; i++)
-            new_tabs[i] = 0x0101010101010101ULL;
-        t->tabs = new_tabs;
-        t->tabs_cap = new_cap;
-    }
     if (cols > t->view_scratch_cap) {
         int new_cap = cols + 64;
         struct cell *new_scratch = realloc(t->view_row_scratch, (size_t)new_cap * sizeof(struct cell));
@@ -1545,6 +1549,22 @@ bool wsap_vtcore_resize(struct wsap_vtcore *t, struct wsap_vtcore_vector2i size)
         memset(new_scratch + t->view_scratch_cap, 0, (size_t)(new_cap - t->view_scratch_cap) * sizeof(struct cell));
         t->view_row_scratch = new_scratch;
         t->view_scratch_cap = new_cap;
+    }
+
+    if (cols > t->tabs_cap) {
+        int old_words = (t->tabs_cap + 63) / 64;
+        int new_cap = cols + 64;
+        int new_words = (new_cap + 63) / 64;
+        uint64_t *new_tabs = (uint64_t *)realloc(t->tabs, (size_t)new_words * sizeof(uint64_t));
+        if (!new_tabs) {
+            wsap_vtcore_write_end(t);
+            return false;
+        }
+        uint64_t fill = t->custom_tabs ? 0ULL : 0x0101010101010101ULL;
+        for (int i = old_words; i < new_words; i++)
+            new_tabs[i] = fill;
+        t->tabs = new_tabs;
+        t->tabs_cap = new_cap;
     }
 
     bool ok = wsap_vtcore_resize_internal(t, cols, rows);

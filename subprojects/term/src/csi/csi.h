@@ -68,7 +68,7 @@ static inline enum csi_result csi_read(struct csi_parser *restrict p, const char
             for (;;) {
                 if (digit <= 9) {
                     for (;;) {
-                        value = value < 214748364 ? value * 10 + (int)digit : INT_MAX;
+                        value = value < 214748364 || (value == 214748364 && digit <= 7) ? value * 10 + (int)digit : INT_MAX;
                         if (i == len) break;
                         ch = (unsigned char)s[i];
                         digit = (unsigned)(ch - '0');

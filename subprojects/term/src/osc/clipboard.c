@@ -91,8 +91,16 @@ void wsap_vtcore_osc52(struct wsap_vtcore *t, const char *params)
     // This prevents memory exhaustion and UI thread locking.
     if (enc_len > WSAP_VTCORE_OSC52_MAX_ENCODED)
         return;
-    char *dec = (char *)pd;
+    char stack_buf[4096];
+    size_t dec_cap = (enc_len / 4 + 1) * 3 + 1;
+    char *dec = dec_cap <= sizeof(stack_buf) ? stack_buf : malloc(dec_cap);
+    if (!dec)
+        return;
     size_t dec_len;
-    if (b64_decode(pd, enc_len, dec, &dec_len) && dec_len <= WSAP_VTCORE_OSC52_MAX_PAYLOAD)
+    if (b64_decode(pd, enc_len, dec, &dec_len) && dec_len <= WSAP_VTCORE_OSC52_MAX_PAYLOAD) {
+        dec[dec_len] = '\0';
         t->cb.clipboard(t->cb.ud, sel, dec, dec_len);
+    }
+    if (dec != stack_buf)
+        free(dec);
 }

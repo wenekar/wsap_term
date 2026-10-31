@@ -291,6 +291,15 @@ static void test_xtgetxres(void)
     response_len = 0;
     write_seq(t, req);
     expect_response(want);
+
+    response_len = 0;
+    write_seq(t, "\033P+Q6\033\\");
+    expect_no_response();
+    write_seq(t, "\033P+Q6g\033\\");
+    expect_no_response();
+    write_seq(t, "\033P+Q\033\\");
+    expect_no_response();
+
     wsap_vtcore_free(t);
 }
 

@@ -481,7 +481,10 @@ static bool extend_cluster(struct model *m, uint32_t cp, int width)
     m->pending = false;
     memcpy(m->last, cps, (size_t)n * sizeof(*cps));
     m->last_n = n;
+    bool insert = m->insert;
+    m->insert = false;
     put_glyph(m, cps, n, (uint16_t)(old.attrs & ~(WSAP_VTCORE_ATTR_EMOJI | WSAP_VTCORE_ATTR_TEXT)));
+    m->insert = insert;
     r = m->scr[m->y];
     x = m->pending ? m->cols - 1 : m->x - 1;
     if (x > 0 && r->c[x].width == 0) x--;
@@ -1746,7 +1749,8 @@ static void csi_byte(struct model *m, unsigned char c)
         if (!m->nparam) m->nparam = 1;
         int *p = &m->param[m->nparam - 1];
         if (c <= '9') {
-            *p = *p < 214748364 ? *p * 10 + (c - '0') : 0x7fffffff;
+            int digit = c - '0';
+            *p = *p < 214748364 || (*p == 214748364 && digit <= 7) ? *p * 10 + digit : 0x7fffffff;
         } else {
             if (m->nparam == 16) {
                 m->csi_phase = 3;

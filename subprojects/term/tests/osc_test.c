@@ -26,7 +26,7 @@ static void capture_title(void *ud, const char *s)
 }
 
 static char clip_sel[16];
-static char clip_data[4096];
+static char clip_data[8192];
 static size_t clip_len;
 static int clip_count;
 static void capture_clip(void *ud, const char *sel, const char *data, size_t len)
@@ -171,6 +171,25 @@ static void test_osc52(void)
     write_seq(t, "\033]52;s;AAH9\007");
     assert(clip_count == 1 && !strcmp(clip_sel, "s") && clip_len == 3);
     assert(clip_data[0] == 0 && clip_data[1] == 1 && clip_data[2] == (char)0xfd);
+
+    reset_captures();
+    void wsap_vtcore_osc52(struct wsap_vtcore *t, const char *params);
+    static const char ro_params[] = "c;aGVsbG8=";
+    wsap_vtcore_osc52(t, ro_params);
+    assert(clip_count == 1 && clip_len == 5 && !memcmp(clip_data, "hello", 5));
+    assert(!strcmp(ro_params, "c;aGVsbG8="));
+
+    reset_captures();
+    char huge[7 + 6000 + 1];
+    memcpy(huge, "\033]52;c;", 7);
+    for (int i = 0; i < 6000; i += 4)
+        memcpy(huge + 7 + i, "QUJD", 4);
+    huge[7 + 6000] = '\007';
+    tt_write(t, huge, sizeof(huge));
+    assert(clip_count == 1 && clip_len == 4500);
+    for (int i = 0; i < 4500; i += 3)
+        assert(!memcmp(clip_data + i, "ABC", 3));
+
     wsap_vtcore_free(t);
 }
 
