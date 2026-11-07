@@ -654,6 +654,22 @@ static void insert_chars(struct model *m, int n)
     repair_row(m, r, x - 1, end);
 }
 
+/* DECIC, DECDC, SL, SR, DECBI, DECFI: ICH or DCH at column x in each row
+ * of the scroll region. The cursor does not move. */
+static void shift_cols(struct model *m, int x, int n, bool insert)
+{
+    int sx = m->x, sy = m->y;
+    for (int y = m->top; y <= m->bottom; y++) {
+        m->x = x;
+        m->y = y;
+        if (insert) insert_chars(m, n);
+        else delete_chars(m, n);
+    }
+    m->x = sx;
+    m->y = sy;
+    m->pending = false;
+}
+
 static void pen_reset(struct pen *p)
 {
     *p = (struct pen){ .fg = WSAP_VTCORE_COLOR_FG, .bg = WSAP_VTCORE_COLOR_BG };
@@ -783,6 +799,7 @@ static void sgr_report(const struct model *m, char *out, size_t cap)
 
 static void cara_cell(struct model *m, struct cell *c)
 {
+    bool reverse = false;
     if (m->nparam <= 4) {
         c->fg = WSAP_VTCORE_COLOR_FG;
         c->bg = WSAP_VTCORE_COLOR_BG;
@@ -798,6 +815,7 @@ static void cara_cell(struct model *m, struct cell *c)
             c->fg = WSAP_VTCORE_COLOR_FG;
             c->bg = WSAP_VTCORE_COLOR_BG;
             c->attrs &= WSAP_VTCORE_ATTR_EMOJI | WSAP_VTCORE_ATTR_TEXT | WSAP_VTCORE_ATTR_LINK;
+            reverse = false;
             break;
         case 1: c->attrs |= WSAP_VTCORE_ATTR_BOLD; break;
         case 2: c->attrs |= WSAP_VTCORE_ATTR_FAINT; break;
@@ -809,7 +827,7 @@ static void cara_cell(struct model *m, struct cell *c)
             set_underline(&c->attrs, style);
             break;
         }
-        case 7: { wsap_vtcore_color t = c->fg; c->fg = c->bg; c->bg = t; break; }
+        case 7: reverse = true; break;
         case 9: c->attrs |= WSAP_VTCORE_ATTR_STRIKE; break;
         case 21: set_underline(&c->attrs, 2); break;
         case 22: c->attrs &= (uint16_t)~(WSAP_VTCORE_ATTR_BOLD | WSAP_VTCORE_ATTR_FAINT); break;
@@ -831,6 +849,11 @@ static void cara_cell(struct model *m, struct cell *c)
             break;
         }
     }
+    if (reverse) {
+        wsap_vtcore_color t = c->fg;
+        c->fg = c->bg;
+        c->bg = t;
+    }
 }
 
 static void cara_row(struct model *m, int y, int x0, int x1)
@@ -842,22 +865,147 @@ static void cara_row(struct model *m, int y, int x0, int x1)
     for (int x = x0; x <= x1; x++) cara_cell(m, &r->c[x]);
 }
 
+static int arg(const struct model *m, int i)
+{
+    return i < m->nparam ? m->param[i] : 0;
+}
+
+/* The rectangle in parameters first to first + 3, in screen rows and
+ * columns. Origin mode moves row 1 to the top margin and clips at the
+ * margins. */
+static bool area(const struct model *m, int first, int *top, int *left, int *bottom, int *right)
+{
+    long long row0 = top_limit(m), row1 = bottom_limit(m);
+    long long t = row0, l = 0, b = row1, r = m->cols - 1;
+    int v;
+    if ((v = arg(m, first)) > 0) t = row0 + v - 1;
+    if ((v = arg(m, first + 1)) > 0) l = v - 1;
+    if ((v = arg(m, first + 2)) > 0 && row0 + v - 1 < b) b = row0 + v - 1;
+    if ((v = arg(m, first + 3)) > 0 && v - 1 < r) r = v - 1;
+    if (t > b || l > r) return false;
+    *top = (int)t;
+    *left = (int)l;
+    *bottom = (int)b;
+    *right = (int)r;
+    return true;
+}
+
+/* The columns of row y in an attribute change: the rectangle (DECSACE 2) or
+ * the stream from the first cell to the last cell. */
+static void area_span(const struct model *m, int y, int top, int left, int bottom, int right,
+                      int *x0, int *x1)
+{
+    bool exact = m->decsace == 2;
+    *x0 = exact || y == top ? left : 0;
+    *x1 = exact || y == bottom ? right : m->cols - 1;
+}
+
 static void deccara(struct model *m)
 {
-    int top = m->param[0] > 0 ? m->param[0] - 1 : 0;
-    int left = m->nparam > 1 && m->param[1] > 0 ? m->param[1] - 1 : 0;
-    int bottom = m->nparam > 2 && m->param[2] > 0 ? m->param[2] - 1 : m->rows - 1;
-    int right = m->nparam > 3 && m->param[3] > 0 ? m->param[3] - 1 : m->cols - 1;
-    if (top > bottom || left > right || top >= m->rows || left >= m->cols) return;
-    if (bottom >= m->rows) bottom = m->rows - 1;
-    if (right >= m->cols) right = m->cols - 1;
-    if (m->decsace == 2) {
-        for (int y = top; y <= bottom; y++) cara_row(m, y, left, right);
-        return;
+    int top, left, bottom, right;
+    if (!area(m, 0, &top, &left, &bottom, &right)) return;
+    for (int y = top; y <= bottom; y++) {
+        int x0, x1;
+        area_span(m, y, top, left, bottom, right, &x0, &x1);
+        cara_row(m, y, x0, x1);
     }
-    cara_row(m, top, left, top == bottom ? right : m->cols - 1);
-    for (int y = top + 1; y < bottom; y++) cara_row(m, y, 0, m->cols - 1);
-    if (bottom > top) cara_row(m, bottom, 0, right);
+}
+
+static void decrara(struct model *m)
+{
+    bool bold = false, ul = false, reverse = false;
+    int end = m->nparam > 4 ? m->nparam : 5;
+    for (int i = 4; i < end; i++) {
+        int v = arg(m, i);
+        if (v == 0 || v == 1) bold = !bold;
+        if (v == 0 || v == 4) ul = !ul;
+        if (v == 0 || v == 7) reverse = !reverse;
+    }
+    int top, left, bottom, right;
+    if (!(bold || ul || reverse) || !area(m, 0, &top, &left, &bottom, &right)) return;
+    for (int y = top; y <= bottom; y++) {
+        int x0, x1;
+        area_span(m, y, top, left, bottom, right, &x0, &x1);
+        struct row *r = m->scr[y];
+        if (x0 > 0 && r->c[x0].width == 0) x0--;
+        if (x1 + 1 < m->cols && r->c[x1].width == 2) x1++;
+        fill_gap(r, x1 + 1);
+        for (int x = x0; x <= x1; x++) {
+            struct cell *c = &r->c[x];
+            if (bold) c->attrs ^= WSAP_VTCORE_ATTR_BOLD;
+            if (ul) set_underline(&c->attrs, (c->attrs & WSAP_VTCORE_ATTR_UNDERLINE_MASK) ? 0 : 1);
+            if (reverse) {
+                wsap_vtcore_color t = c->fg;
+                c->fg = c->bg;
+                c->bg = t;
+            }
+        }
+    }
+}
+
+static void decfra(struct model *m)
+{
+    int ch = arg(m, 0);
+    if (!((ch >= 32 && ch <= 126) || (ch >= 160 && ch <= 255))) return;
+    int top, left, bottom, right;
+    if (!area(m, 1, &top, &left, &bottom, &right)) return;
+    struct cell c = {
+        .cp = { (uint32_t)ch }, .n = 1, .width = 1, .attrs = m->pen.attrs,
+        .fg = m->pen.inverse ? m->pen.bg : m->pen.fg,
+        .bg = m->pen.inverse ? m->pen.fg : m->pen.bg,
+    };
+    for (int y = top; y <= bottom; y++) {
+        struct row *r = m->scr[y];
+        split_edges(m, r, left, right + 1);
+        for (int x = left; x <= right; x++) r->c[x] = c;
+        if (r->len < right + 1) r->len = right + 1;
+    }
+}
+
+static void decera(struct model *m)
+{
+    int top, left, bottom, right;
+    if (!area(m, 0, &top, &left, &bottom, &right)) return;
+    for (int y = top; y <= bottom; y++) erase_cells(m, y, left, right + 1);
+}
+
+/* Copy the whole source first, then write the destination. A source cell
+ * after the end of its row is blank, and it does not make the destination
+ * row longer. */
+static void deccra(struct model *m)
+{
+    int top, left, bottom, right;
+    if (!area(m, 0, &top, &left, &bottom, &right)) return;
+    long long dt = top_limit(m), dl = 0;
+    int v, row1 = bottom_limit(m), col1 = m->cols - 1;
+    if ((v = arg(m, 5)) > 0) dt += v - 1;
+    if ((v = arg(m, 6)) > 0) dl += v - 1;
+    if (dt > row1 || dl > col1) return;
+    int h = bottom - top + 1, w = right - left + 1;
+    if (h > row1 - dt + 1) h = row1 - (int)dt + 1;
+    if (w > col1 - dl + 1) w = col1 - (int)dl + 1;
+    struct cell *copy = malloc((size_t)h * (size_t)w * sizeof(*copy));
+    int *ext = malloc((size_t)h * sizeof(*ext));
+    if (!copy || !ext) abort();
+    for (int i = 0; i < h; i++) {
+        const struct row *r = m->scr[top + i];
+        int e = r->len - left;
+        ext[i] = e < 0 ? 0 : e > w ? w : e;
+        memcpy(copy + (size_t)i * (size_t)w, r->c + left, (size_t)ext[i] * sizeof(*copy));
+    }
+    int x0 = (int)dl;
+    for (int i = 0; i < h; i++) {
+        struct row *r = m->scr[dt + i];
+        int old_len = r->len, e = ext[i];
+        split_edges(m, r, x0, x0 + w);
+        memcpy(r->c + x0, copy + (size_t)i * (size_t)w, (size_t)e * sizeof(*copy));
+        for (int x = x0 + e; x < x0 + w; x++) r->c[x] = default_blank();
+        if (old_len <= x0 + w) r->len = e > 0 ? x0 + e : old_len < x0 ? old_len : x0;
+        if (r->len < old_len) r->wrapped = false;
+        repair_row(m, r, x0 - 1, x0 + w + 1);
+    }
+    free(copy);
+    free(ext);
 }
 
 static void free_rows(struct row **rows, int n)
@@ -1361,7 +1509,10 @@ static bool csi_allowed(const struct model *m, unsigned char final)
     if (final == 'H' || final == 'f') return !prefix && !inter && !m->sub;
     if (inter) {
         bool plain = (final == 'q' && inter == ' ') || (final == 'p' && inter == '!') ||
-                     (final == 'x' && inter == '*');
+                     (final == 'x' && inter == '*') ||
+                     ((final == '@' || final == 'A') && inter == ' ') ||
+                     ((final == '}' || final == '~') && inter == '\'') ||
+                     ((final == 'x' || final == 'z' || final == 'v' || final == 't') && inter == '$');
         if (plain) {
             if (prefix || m->sub) return false;
         } else if (final == 'p' && inter == '$') {
@@ -1464,7 +1615,10 @@ static void csi_dispatch(struct model *m, unsigned char final)
             put_glyph(m, m->last, m->last_n, m->pen.attrs);
         break;
     }
-    case 'A': move_v(m, -n, false); break;
+    case 'A':
+        if (m->inter == ' ') shift_cols(m, 0, n, true);
+        else move_v(m, -n, false);
+        break;
     case 'B': case 'e': move_v(m, n, false); break;
     case 'E': move_v(m, n, true); break;
     case 'F': move_v(m, -n, true); break;
@@ -1516,15 +1670,37 @@ static void csi_dispatch(struct model *m, unsigned char final)
     }
     case 'x':
         if (m->inter == '*') m->decsace = m->param[0];
+        else if (m->inter == '$') decfra(m);
+        break;
+    case 'z':
+        if (m->inter == '$') decera(m);
+        break;
+    case 'v':
+        if (m->inter == '$') deccra(m);
+        break;
+    case '}': case '~':
+        if (m->inter == '\'' && m->y >= m->top && m->y <= m->bottom)
+            shift_cols(m, m->x, n, final == '}');
         break;
     case 'P': m->pending = false; delete_chars(m, n); break;
-    case '@': m->pending = false; insert_chars(m, n); break;
+    case '@':
+        if (m->inter == ' ') {
+            shift_cols(m, 0, n, false);
+            break;
+        }
+        m->pending = false;
+        insert_chars(m, n);
+        break;
     case 'c':
         if (m->prefix == '>') reply(m, "\033[>0;10;0c");
-        else if (!m->prefix && m->param[0] == 0) reply(m, "\033[?62;22c");
+        else if (!m->prefix && m->param[0] == 0) reply(m, "\033[?62;21;22;28c");
         else if (m->prefix == '=' && m->param[0] == 0) reply(m, "\033P!|00000000\033\\");
         break;
     case 't':
+        if (m->inter == '$') {
+            decrara(m);
+            break;
+        }
         /* The model has no cell size, so pixel reports give zero. */
         if (m->prefix) break;
         if (m->param[0] == 14 || m->param[0] == 16) reply(m, "\033[%d;0;0t", m->param[0] - 10);
@@ -1663,6 +1839,14 @@ static void esc_dispatch(struct model *m, unsigned char ch)
     case 'M':
         m->pending = false;
         reverse_index(m);
+        break;
+    case '6':
+        if (m->x == 0) shift_cols(m, 0, 1, true);
+        else move_h(m, -1);
+        break;
+    case '9':
+        if (m->x == m->cols - 1) shift_cols(m, 0, 1, false);
+        else move_h(m, 1);
         break;
     case '7': m->saved = save_cursor(m); break;
     case '8': restore_cursor(m, &m->saved); break;

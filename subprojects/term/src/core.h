@@ -132,6 +132,10 @@ static inline void sc_restore_cursor(struct wsap_vtcore *t, const struct wsap_vt
 
 void wsap_vtcore_sc_deccara(struct wsap_vtcore *t, const struct csi *csi);
 
+/* DECRARA: reverse attributes in a rectangle. It respects DECSACE like
+ * DECCARA. Reverse image swaps the colors of each cell. */
+void wsap_vtcore_sc_decrara(struct wsap_vtcore *t, const struct csi *csi);
+
 void wsap_vtcore_sc_decaln(struct wsap_vtcore *t);
 
 void wsap_vtcore_sc_reset(struct wsap_vtcore *t);

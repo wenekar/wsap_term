@@ -15,6 +15,7 @@ Each source directory lists its own build inputs.
 | `term_state.c` | Combined grapheme, history, and mode compilation unit |
 | `core.c`, `core.h` | Shared write primitives |
 | `screen.c`, `screen.h` | Screen ring, editing, resize, and reflow |
+| `rect.c`, `rect.h` | Rectangle edits (DECFRA, DECERA, DECCRA) and column shifts |
 | `hist.c`, `hist.h` | Logical-line storage and page arena |
 | `hist_view.c`, `hist_view.h` | Viewport anchors and history lookup |
 | `snapshot.c` | Copied views, row keys, and scroll movement |

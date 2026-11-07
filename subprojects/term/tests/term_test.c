@@ -747,42 +747,6 @@ static bool pending_decsca_decsed_decsel(void)
     return ok;
 }
 
-static bool pending_decfra_decera(void)
-{
-    struct wsap_vtcore *f = tt_new(20, 3);
-    write_seq(f, "\033[88;1;2;2;4$x");
-    bool ok = row_eq(f, 0, " XXX") && row_eq(f, 1, " XXX");
-    wsap_vtcore_free(f);
-
-    struct wsap_vtcore *e = tt_new(20, 3);
-    write_seq(e, "\033[Habcde\r\nfghij");
-    write_seq(e, "\033[1;2;2;3$z");
-    ok = ok && row_eq(e, 0, "a  de") && row_eq(e, 1, "f  ij");
-    wsap_vtcore_free(e);
-    return ok;
-}
-
-static bool pending_deccra(void)
-{
-    struct wsap_vtcore *t = tt_new(20, 3);
-    write_seq(t, "\033[HAB\r\nCD");
-    write_seq(t, "\033[1;1;2;2;1;1;5;1$v");
-    bool ok = row_eq(t, 0, "AB  AB") && row_eq(t, 1, "CD  CD");
-    wsap_vtcore_free(t);
-    return ok;
-}
-
-static bool pending_decrara(void)
-{
-    struct wsap_vtcore *t = tt_new(20, 3);
-    write_seq(t, "\033[H\033[1mAB\033[mCD");
-    write_seq(t, "\033[1;1;1;4;1$t");
-    bool ok = !(tt_cell(t, 0, 0)->attrs & WSAP_VTCORE_ATTR_BOLD) &&
-              (tt_cell(t, 2, 0)->attrs & WSAP_VTCORE_ATTR_BOLD);
-    wsap_vtcore_free(t);
-    return ok;
-}
-
 static bool pending_decsera(void)
 {
     struct wsap_vtcore *t = tt_new(20, 3);
@@ -805,34 +769,6 @@ static bool pending_deccolm(void)
     return ok;
 }
 
-static bool pending_decic_decdc(void)
-{
-    struct wsap_vtcore *i = tt_new(10, 2);
-    write_seq(i, "\033[Habcdef\033[H\033[2'}");
-    bool ok = row_eq(i, 0, "  abcdef");
-    wsap_vtcore_free(i);
-
-    struct wsap_vtcore *d = tt_new(10, 2);
-    write_seq(d, "\033[Habcdef\033[H\033[2'~");
-    ok = ok && row_eq(d, 0, "cdef");
-    wsap_vtcore_free(d);
-    return ok;
-}
-
-static bool pending_sl_sr(void)
-{
-    struct wsap_vtcore *l = tt_new(10, 2);
-    write_seq(l, "\033[Habcdef\033[2 @");
-    bool ok = row_eq(l, 0, "cdef");
-    wsap_vtcore_free(l);
-
-    struct wsap_vtcore *r = tt_new(10, 2);
-    write_seq(r, "\033[Habcdef\033[2 A");
-    ok = ok && row_eq(r, 0, "  abcdef");
-    wsap_vtcore_free(r);
-    return ok;
-}
-
 static bool pending_sixel(void)
 {
     struct wsap_vtcore *t = tt_new(20, 6);
@@ -849,13 +785,8 @@ static void test_unimplemented_da_features(void)
         bool (*run)(void);
     } cases[] = {
         { "DECSCA/DECSED/DECSEL selective erase (DA1 6)", pending_decsca_decsed_decsel },
-        { "DECFRA/DECERA rectangle fill, erase (DA1 28)", pending_decfra_decera },
-        { "DECCRA rectangle copy (DA1 28)",               pending_deccra },
-        { "DECRARA rectangle attributes (DA1 28)",        pending_decrara },
         { "DECSERA rectangle selective erase (DA1 28)",   pending_decsera },
         { "DECCOLM 132 columns (DA1 1)",                  pending_deccolm },
-        { "DECIC/DECDC column insert, delete (DA1 21)",   pending_decic_decdc },
-        { "SL/SR scroll left, right (DA1 21)",            pending_sl_sr },
         { "sixel graphics, cursor advance (DA1 4)",       pending_sixel },
     };
     size_t total = sizeof(cases) / sizeof(cases[0]), ready = 0;
@@ -868,15 +799,166 @@ static void test_unimplemented_da_features(void)
            total - ready, ready);
 }
 
+static bool same_colors(struct wsap_vtcore *t, int x, int y, wsap_vtcore_color fg, wsap_vtcore_color bg)
+{
+    const struct wsap_vtcore_cell *c = tt_cell(t, x, y);
+    return c->fg == fg && c->bg == bg;
+}
+
+static void test_rectangle_edits(void)
+{
+    const wsap_vtcore_color red = WSAP_VTCORE_COLOR_SLOT | 1, blue = WSAP_VTCORE_COLOR_SLOT | 4;
+    const wsap_vtcore_color bg = WSAP_VTCORE_COLOR_BG;
+
+    struct wsap_vtcore *t = tt_new(20, 3);
+    write_seq(t, "\033[88;1;2;2;4$x");
+    assert(row_is(t, 0, " XXX") && row_is(t, 1, " XXX") && row_is(t, 2, ""));
+    assert(tt_cursor_x(t) == 0 && tt_cursor_y(t) == 0);
+    wsap_vtcore_free(t);
+
+    /* DECFRA takes the SGR attributes but not the hyperlink. */
+    t = tt_new(20, 3);
+    write_seq(t, "\033]8;;https://example.com\033\\\033[1;4;31;44m\033[64;1;1;1;2$x");
+    assert(row_is(t, 0, "@@"));
+    assert(tt_cell(t, 1, 0)->attrs == (WSAP_VTCORE_ATTR_BOLD | WSAP_VTCORE_ATTR_UNDERLINE));
+    assert(same_colors(t, 1, 0, red, blue));
+    char *link = tt_link_at(t, 0, 0);
+    assert(!link);
+    wsap_vtcore_free(t);
+
+    t = tt_new(20, 3);
+    write_seq(t, "\033[Habcde\r\nfghij");
+    write_seq(t, "\033[1;2;2;3$z");
+    assert(row_is(t, 0, "a  de") && row_is(t, 1, "f  ij"));
+    wsap_vtcore_free(t);
+
+    /* DECCRA copies the text and the attributes. */
+    t = tt_new(20, 3);
+    write_seq(t, "\033[HAB\r\n\033[1;31mCD\033[m");
+    write_seq(t, "\033[1;1;2;2;1;1;5;1$v");
+    assert(row_is(t, 0, "AB  AB") && row_is(t, 1, "CD  CD"));
+    assert(tt_cell(t, 5, 1)->attrs == WSAP_VTCORE_ATTR_BOLD && same_colors(t, 5, 1, red, bg));
+    assert(tt_cursor_x(t) == 2 && tt_cursor_y(t) == 1);
+    wsap_vtcore_free(t);
+
+    /* A copy over its own source reads the source first. */
+    t = tt_new(10, 4);
+    write_seq(t, "a1\r\nb2\r\nc3\r\nd4");
+    write_seq(t, "\033[1;1;3;2;1;2;2;1$v");
+    assert(row_is(t, 0, "a1") && row_is(t, 1, "ba1") && row_is(t, 2, "cb2") && row_is(t, 3, "dc3"));
+    write_seq(t, "\033[2;2;4;3;1;1;1;1$v");
+    assert(row_is(t, 0, "a1") && row_is(t, 1, "b21") && row_is(t, 2, "c32") && row_is(t, 3, "dc3"));
+    wsap_vtcore_free(t);
+}
+
+static void test_reverse_attributes_in_rectangle(void)
+{
+    const wsap_vtcore_color red = WSAP_VTCORE_COLOR_SLOT | 1;
+    const wsap_vtcore_color fg = WSAP_VTCORE_COLOR_FG, bg = WSAP_VTCORE_COLOR_BG;
+
+    struct wsap_vtcore *t = tt_new(20, 3);
+    write_seq(t, "\033[H\033[1mAB\033[mCD");
+    write_seq(t, "\033[1;1;1;4;1$t");
+    assert(!(tt_cell(t, 0, 0)->attrs & WSAP_VTCORE_ATTR_BOLD));
+    assert(tt_cell(t, 2, 0)->attrs & WSAP_VTCORE_ATTR_BOLD);
+    /* An even count of one attribute changes nothing. */
+    write_seq(t, "\033[1;1;1;4;1;1$t");
+    assert(tt_cell(t, 2, 0)->attrs == WSAP_VTCORE_ATTR_BOLD);
+    wsap_vtcore_free(t);
+
+    /* Reverse image swaps the colors. Ps 0, or no Ps, reverses bold,
+     * underline, and reverse image. */
+    t = tt_new(20, 3);
+    write_seq(t, "\033[31mab\033[4:2mc\033[m");
+    write_seq(t, "\033[1;1;1;1;7$t");
+    assert(same_colors(t, 0, 0, bg, red) && same_colors(t, 1, 0, red, bg));
+    write_seq(t, "\033[1;2;1;3$t");
+    assert(tt_cell(t, 1, 0)->attrs == (WSAP_VTCORE_ATTR_BOLD | WSAP_VTCORE_ATTR_UNDERLINE));
+    assert(same_colors(t, 1, 0, bg, red));
+    assert(tt_cell(t, 2, 0)->attrs == WSAP_VTCORE_ATTR_BOLD && same_colors(t, 2, 0, bg, red));
+    write_seq(t, "\033[1;2;1;3;0$t");
+    assert(tt_cell(t, 1, 0)->attrs == 0 && same_colors(t, 1, 0, red, bg));
+    assert(tt_cell(t, 2, 0)->attrs == WSAP_VTCORE_ATTR_UNDERLINE);
+    /* Blank cells after the text take the change too. */
+    write_seq(t, "\033[1;5;1;5;7$t");
+    assert(same_colors(t, 4, 0, bg, fg));
+    wsap_vtcore_free(t);
+
+    /* DECSACE selects a stream (default) or a rectangle. */
+    t = tt_new(6, 3);
+    write_seq(t, "\033[1;3;2;4;1$t");
+    for (int x = 0; x < 6; x++) {
+        assert(!!(tt_cell(t, x, 0)->attrs & WSAP_VTCORE_ATTR_BOLD) == (x >= 2));
+        assert(!!(tt_cell(t, x, 1)->attrs & WSAP_VTCORE_ATTR_BOLD) == (x <= 3));
+    }
+    write_seq(t, "\033[2*x\033[1;3;2;4;1$t");
+    for (int x = 0; x < 6; x++) {
+        assert(!!(tt_cell(t, x, 0)->attrs & WSAP_VTCORE_ATTR_BOLD) == (x >= 4));
+        assert(!!(tt_cell(t, x, 1)->attrs & WSAP_VTCORE_ATTR_BOLD) == (x <= 1));
+    }
+    wsap_vtcore_free(t);
+}
+
+static void test_change_attributes_reverse_image(void)
+{
+    const wsap_vtcore_color red = WSAP_VTCORE_COLOR_SLOT | 1, green = WSAP_VTCORE_COLOR_SLOT | 2;
+    const wsap_vtcore_color bg = WSAP_VTCORE_COLOR_BG;
+
+    /* SGR 7 in DECCARA applies after the colors, in any order. Twice in one
+     * sequence is the same as once. */
+    struct wsap_vtcore *t = tt_new(10, 2);
+    write_seq(t, "\033[32mabc\033[m");
+    write_seq(t, "\033[1;1;1;1;7;31$r\033[1;2;1;2;31;7$r\033[1;3;1;3;7;7$r");
+    assert(same_colors(t, 0, 0, bg, red) && same_colors(t, 1, 0, bg, red));
+    assert(same_colors(t, 2, 0, bg, green));
+    write_seq(t, "\033[2;1;2;1;7;0$r");
+    assert(same_colors(t, 0, 1, WSAP_VTCORE_COLOR_FG, bg));
+    wsap_vtcore_free(t);
+}
+
+static void test_column_edits(void)
+{
+    struct wsap_vtcore *t = tt_new(10, 2);
+    write_seq(t, "\033[Habcdef\033[H\033[2'}");
+    assert(row_is(t, 0, "  abcdef") && tt_cursor_x(t) == 0);
+    write_seq(t, "\033[2'~");
+    assert(row_is(t, 0, "abcdef") && tt_cursor_x(t) == 0);
+    wsap_vtcore_free(t);
+
+    t = tt_new(10, 2);
+    write_seq(t, "\033[Habcdef\033[2 @");
+    assert(row_is(t, 0, "cdef") && tt_cursor_x(t) == 6);
+    write_seq(t, "\033[2 A");
+    assert(row_is(t, 0, "  cdef"));
+    wsap_vtcore_free(t);
+
+    /* Wide glyphs cut by the left margin lose both halves. */
+    t = tt_new(10, 2);
+    write_seq(t, "a\xe4\xb8\xad" "bcd\033[?69h\033[3;8s\033[ @");
+    assert(row_is(t, 0, "a bcd") && tt_cell(t, 1, 0)->width == 1);
+    wsap_vtcore_free(t);
+
+    /* A count past the margins clears the area and keeps the rest. */
+    t = tt_new(10, 3);
+    write_seq(t, "0123456789\r\n0123456789\r\n0123456789");
+    write_seq(t, "\033[?69h\033[3;6s\033[1;2r\033[99 A");
+    assert(row_is(t, 0, "01    6789") && row_is(t, 1, "01    6789"));
+    assert(row_is(t, 2, "0123456789"));
+    write_seq(t, "\033[r\033[2;4H\033[99'~");
+    assert(row_is(t, 0, "01    6789") && row_is(t, 2, "012   6789"));
+    assert(tt_cursor_x(t) == 3 && tt_cursor_y(t) == 1);
+    wsap_vtcore_free(t);
+}
+
 static void test_device_attributes(void)
 {
     struct wsap_vtcore *t = tt_new_opts(80, 24, &reply_cb);
 
     write_seq(t, "\033[c");
-    assert(!strcmp(response, "\033[?62;22c"));
+    assert(!strcmp(response, "\033[?62;21;22;28c"));
     response_len = 0;
     write_seq(t, "\033[0c");
-    assert(!strcmp(response, "\033[?62;22c"));
+    assert(!strcmp(response, "\033[?62;21;22;28c"));
 
     write_seq(t, "\033[>c");
     assert(!strcmp(response, "\033[>0;10;0c"));
@@ -2611,6 +2693,10 @@ int main(void)
     test_title_stack();
     test_color_scheme_reports();
     test_resize_reports();
+    test_rectangle_edits();
+    test_reverse_attributes_in_rectangle();
+    test_change_attributes_reverse_image();
+    test_column_edits();
     test_unimplemented_da_features();
     test_keyboard_negotiation();
     test_resize_reflow();

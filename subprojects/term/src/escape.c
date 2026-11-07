@@ -3,6 +3,7 @@
 #include "core.h"
 #include "kernels.h"
 #include "pen.h"
+#include "rect.h"
 #include "screen.h"
 #include "text/text.h"
 #include "osc/osc.h"
@@ -675,6 +676,53 @@ static inline void move_h(struct wsap_vtcore *t, int n)
     sc_move(t, x, t->cursor_y);
 }
 
+/* Rectangle and column edits. Each has an intermediate byte, so they are
+ * rare. Keep them out of the inline dispatcher. Return true when csi is one
+ * of them.
+ */
+static WSAP_VTCORE_NOINLINE bool dispatch_csi_edit(struct wsap_vtcore *t, const struct csi *csi)
+{
+    char inter = csi->intermediate, final = csi->final;
+    bool edit = (inter == ' ' && (final == '@' || final == 'A')) ||
+                (inter == '\'' && (final == '}' || final == '~')) ||
+                (inter == '$' && (final == 'x' || final == 'z' || final == 'v' || final == 't'));
+    if (!edit)
+        return false;
+    if (csi->prefix || csi->subparams)
+        return true;
+    int left = t->lr_margin_mode ? t->left_margin : 0;
+    switch (final) {
+    case '@': /* SL */
+        wsap_vtcore_screen_shift_cols(t, left, csi_count(csi), false);
+        break;
+    case 'A': /* SR */
+        wsap_vtcore_screen_shift_cols(t, left, csi_count(csi), true);
+        break;
+    case '}': /* DECIC */
+    case '~': /* DECDC */
+        /* They act only when the cursor is inside the margins. */
+        if (t->cursor_y >= t->scroll_top && t->cursor_y <= t->scroll_bottom &&
+            lr_col_in_margins(t, t->cursor_x))
+            wsap_vtcore_screen_shift_cols(t, t->cursor_x, csi_count(csi), final == '}');
+        break;
+    case 'x':
+        wsap_vtcore_sc_decfra(t, csi);
+        break;
+    case 'z':
+        wsap_vtcore_sc_decera(t, csi);
+        break;
+    case 'v':
+        wsap_vtcore_sc_deccra(t, csi);
+        break;
+    case 't':
+        wsap_vtcore_sc_decrara(t, csi);
+        break;
+    default:
+        break;
+    }
+    return true;
+}
+
 static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t, const struct csi *csi)
 {
     if (WSAP_VTCORE_EXPECT(csi->final == 'm', 1)) {
@@ -694,6 +742,8 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
     }
 
     if (csi->intermediate) {
+        if (dispatch_csi_edit(t, csi))
+            return;
         bool plain = (csi->final == 'q' && csi->intermediate == ' ') ||
                      (csi->final == 'p' && csi->intermediate == '!') ||
                      (csi->final == 'x' && csi->intermediate == '*');
@@ -845,7 +895,7 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
         if (csi->prefix == '>')
             send_response(t, "\x1b[>0;10;0c");
         else if (!csi->prefix && csi->params[0] == 0)
-            send_response(t, "\x1b[?62;22c");
+            send_response(t, "\x1b[?62;21;22;28c");
         else if (csi->prefix == '=' && csi->params[0] == 0)
             send_response(t, "\x1bP!|00000000\x1b\\");
         break;
@@ -1005,6 +1055,20 @@ static void dispatch_esc(struct wsap_vtcore *t, unsigned char ch)
             wsap_vtcore_screen_scroll_region(t, t->scroll_top, t->scroll_bottom, 1, true, false);
         else
             sc_move(t, t->cursor_x, t->cursor_y > 0 ? t->cursor_y - 1 : 0);
+        break;
+    case '6':
+        /* DECBI: at the left margin, scroll the margin area right. */
+        if (t->cursor_x == (t->lr_margin_mode ? t->left_margin : 0))
+            wsap_vtcore_screen_shift_cols(t, t->cursor_x, 1, true);
+        else
+            move_h(t, -1);
+        break;
+    case '9':
+        /* DECFI: at the right margin, scroll the margin area left. */
+        if (t->cursor_x == (t->lr_margin_mode ? t->right_margin : t->cols - 1))
+            wsap_vtcore_screen_shift_cols(t, t->lr_margin_mode ? t->left_margin : 0, 1, false);
+        else
+            move_h(t, 1);
         break;
     case '7':
         t->saved = wsap_vtcore_cursor_save(t);

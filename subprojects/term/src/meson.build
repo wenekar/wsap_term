@@ -10,6 +10,7 @@ wsap_vtcore_sources = files(
   'input.c',
   'isa.c',
   'palette.c',
+  'rect.c',
   'scan.c',
   'screen.c',
   'selection.c',

@@ -137,7 +137,7 @@ static inline void gen(int ops, int cols, int rows)
     static const char csi_final[] = "ABCDEFGHIJKLMPSTXZ@`abdefghlmnrsu";
 
     for (int i = 0; i < ops; i++) {
-        switch (rn(44)) {
+        switch (rn(45)) {
         case 0: case 1: case 2: put(PICK(words)); break;
         case 3: {
             int n = rn(cols * 2 + 2);
@@ -258,6 +258,32 @@ static inline void gen(int ops, int cols, int rows)
                 put(PICK(reports));
             else
                 putf("\033[%d;%s;%dt", 22 + rn(2), rn(2) ? big_number() : "1", rn(2));
+            break;
+        }
+        case 44: {
+            /* Rectangle and column edits. A rectangle parameter can be empty. */
+            static const int fills[] = { 32, 65, 120, 126, 160, 233, 255, 31, 127, 256 };
+            static const char *reverse[] = { "", ";0", ";1", ";4", ";5", ";7", ";8", ";1;7", ";7;7", ";0;4" };
+            static const char *change[] = { "7;31", "31;7", "7;7", "0;7", "1;7;42", "7;0", "4;7;39" };
+            char rect[48];
+            int n = 0;
+            for (int k = 0; k < 4; k++) {
+                if (k)
+                    rect[n++] = ';';
+                if (rn(5))
+                    n += snprintf(rect + n, sizeof(rect) - (size_t)n, "%d", rn((k & 1 ? cols : rows) + 2));
+            }
+            rect[n] = 0;
+            switch (rn(9)) {
+            case 0: putf("\033[%d;%s$x", PICK(fills), rect); break;
+            case 1: putf("\033[%s$z", rect); break;
+            case 2: putf("\033[%s;1;%d;%d;1$v", rect, rn(rows + 2), rn(cols + 2)); break;
+            case 3: putf("\033[%s%s$t", rect, PICK(reverse)); break;
+            case 4: putf("\033[%s;%s$r", rect, PICK(change)); break;
+            case 5: putf("\033[%d'%c", rn(cols + 1), "}~"[rn(2)]); break;
+            case 6: putf("\033[%d %c", rn(cols + 1), "@A"[rn(2)]); break;
+            default: put(rn(2) ? "\0336" : "\0339"); break;
+            }
             break;
         }
         }

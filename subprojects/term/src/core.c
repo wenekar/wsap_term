@@ -2,6 +2,7 @@
 #include "core.h"
 #include "kernels.h"
 #include "pen.h"
+#include "rect.h"
 #include "screen.h"
 #include "text/run.h"
 #include "unicode/grapheme.h"
@@ -464,6 +465,12 @@ struct deccara_plan {
     uint32_t const_bg;
     uint8_t fg_src;
     uint8_t bg_src;
+    /* Swap the colors after the color changes. A cell has no inverse flag:
+     * the swap is the only way to show it. */
+    bool reverse;
+    /* DECRARA: flags to toggle, and toggle the underline. */
+    bool toggle_ul;
+    uint16_t toggle_flags;
 };
 
 /* Precomputes SGR modifications once for the whole rectangular area. */
@@ -475,6 +482,9 @@ static void deccara_plan_init(struct deccara_plan *p, const struct csi *csi, int
     p->const_bg = WSAP_VTCORE_COLOR_BG;
     p->fg_src = DECCARA_SRC_CUR_FG;
     p->bg_src = DECCARA_SRC_CUR_BG;
+    p->reverse = false;
+    p->toggle_ul = false;
+    p->toggle_flags = 0;
 
     if (first >= csi->nparams) {
         p->clear_flags = CELL_SGR_FLAGS;
@@ -495,6 +505,7 @@ static void deccara_plan_init(struct deccara_plan *p, const struct csi *csi, int
             p->bg_src = DECCARA_SRC_CONST;
             p->const_fg = WSAP_VTCORE_COLOR_FG;
             p->const_bg = WSAP_VTCORE_COLOR_BG;
+            p->reverse = false;
             break;
         case 1: p->set_flags |= CELL_BOLD; p->clear_flags &= (uint16_t)~CELL_BOLD; break;
         case 2: p->set_flags |= CELL_FAINT; p->clear_flags &= (uint16_t)~CELL_FAINT; break;
@@ -508,11 +519,14 @@ static void deccara_plan_init(struct deccara_plan *p, const struct csi *csi, int
             p->set_flags = (uint16_t)((p->set_flags & ~CELL_ANY_UNDERLINE) | wsap_vtcore_ul_flags[style]);
             break;
         }
-        case 7: {
-            uint8_t s_tmp = p->fg_src; p->fg_src = p->bg_src; p->bg_src = s_tmp;
-            uint32_t c_tmp = p->const_fg; p->const_fg = p->const_bg; p->const_bg = c_tmp;
+        case 7:
+            /* SGR 7 swaps the colors once, after the color changes. The
+             * order of the parameters does not matter, and 7;7 is the same
+             * as 7. A second DECCARA swaps the colors again, because a cell
+             * has no inverse flag to set. SGR 27 cannot know which cells to
+             * swap back, so it does nothing. */
+            p->reverse = true;
             break;
-        }
         case 9: p->set_flags |= CELL_STRIKE; p->clear_flags &= (uint16_t)~CELL_STRIKE; break;
         case 21:
             p->clear_flags |= CELL_ANY_UNDERLINE;
@@ -574,13 +588,38 @@ static void deccara_plan_init(struct deccara_plan *p, const struct csi *csi, int
     }
 }
 
+/* DECRARA: reverse the attributes in Ps. 0 or no Ps reverses all of them.
+ * The cells have no blink or invisible flag, so 5 and 8 do nothing. An even
+ * count of one attribute leaves it unchanged. */
+static void decrara_plan_init(struct deccara_plan *p, const struct csi *csi)
+{
+    *p = (struct deccara_plan){
+        .const_fg = WSAP_VTCORE_COLOR_FG, .const_bg = WSAP_VTCORE_COLOR_BG,
+        .fg_src = DECCARA_SRC_CUR_FG, .bg_src = DECCARA_SRC_CUR_BG,
+    };
+    int end = csi->nparams > 4 ? csi->nparams : 5;
+    for (int i = 4; i < end; i++) {
+        int v = i < csi->nparams ? csi->params[i] : 0;
+        if (v == 0 || v == 1)
+            p->toggle_flags ^= CELL_BOLD;
+        if (v == 0 || v == 4)
+            p->toggle_ul = !p->toggle_ul;
+        if (v == 0 || v == 7)
+            p->reverse = !p->reverse;
+    }
+}
+
 static inline void apply_deccara_plan(struct cell *cell, const struct deccara_plan *p)
 {
-    uint32_t orig_fg = cell->fg;
-    uint32_t orig_bg = cell->bg;
-    cell->fg = (p->fg_src == DECCARA_SRC_CONST) ? p->const_fg : (p->fg_src == DECCARA_SRC_CUR_FG ? orig_fg : orig_bg);
-    cell->bg = (p->bg_src == DECCARA_SRC_CONST) ? p->const_bg : (p->bg_src == DECCARA_SRC_CUR_BG ? orig_bg : orig_fg);
-    cell->flags = (uint16_t)((cell->flags & ~p->clear_flags) | p->set_flags);
+    uint32_t fg = p->fg_src == DECCARA_SRC_CONST ? p->const_fg : cell->fg;
+    uint32_t bg = p->bg_src == DECCARA_SRC_CONST ? p->const_bg : cell->bg;
+    cell->fg = p->reverse ? bg : fg;
+    cell->bg = p->reverse ? fg : bg;
+    uint16_t flags = (uint16_t)(((cell->flags & ~p->clear_flags) | p->set_flags) ^ p->toggle_flags);
+    if (p->toggle_ul)
+        flags = (flags & CELL_ANY_UNDERLINE) ? (uint16_t)(flags & ~CELL_ANY_UNDERLINE)
+                                             : (uint16_t)(flags | CELL_UNDERLINE);
+    cell->flags = flags;
 }
 
 static void deccara_row(struct wsap_vtcore *t, int y, int x0, int x1, const struct deccara_plan *plan)
@@ -597,29 +636,32 @@ static void deccara_row(struct wsap_vtcore *t, int y, int x0, int x1, const stru
     srow->version++;
 }
 
+/* Apply a plan to the area, as a rectangle or as a stream (DECSACE). */
+static void deccara_area(struct wsap_vtcore *t, const struct csi *csi, const struct deccara_plan *plan)
+{
+    struct area a;
+    if (!wsap_vtcore_area_parse(t, csi, 0, &a))
+        return;
+    for (int y = a.top; y <= a.bottom; y++) {
+        int x0, x1;
+        wsap_vtcore_area_row_span(t, &a, y, &x0, &x1);
+        deccara_row(t, y, x0, x1, plan);
+    }
+}
+
 void wsap_vtcore_sc_deccara(struct wsap_vtcore *t, const struct csi *csi)
 {
-    int top = csi->params[0] > 0 ? csi->params[0] - 1 : 0;
-    int left = csi->nparams > 1 && csi->params[1] > 0 ? csi->params[1] - 1 : 0;
-    int bottom = csi->nparams > 2 && csi->params[2] > 0 ? csi->params[2] - 1 : t->rows - 1;
-    int right = csi->nparams > 3 && csi->params[3] > 0 ? csi->params[3] - 1 : t->cols - 1;
-    if (top > bottom || left > right || top >= t->rows || left >= t->cols) return;
-    if (bottom >= t->rows) bottom = t->rows - 1;
-    if (right >= t->cols) right = t->cols - 1;
-
     struct deccara_plan plan;
     deccara_plan_init(&plan, csi, 4);
+    deccara_area(t, csi, &plan);
+}
 
-    if (t->decsace == 2) {
-        for (int y = top; y <= bottom; y++)
-            deccara_row(t, y, left, right, &plan);
-    } else {
-        deccara_row(t, top, left, top == bottom ? right : t->cols - 1, &plan);
-        for (int y = top + 1; y < bottom; y++)
-            deccara_row(t, y, 0, t->cols - 1, &plan);
-        if (bottom > top)
-            deccara_row(t, bottom, 0, right, &plan);
-    }
+void wsap_vtcore_sc_decrara(struct wsap_vtcore *t, const struct csi *csi)
+{
+    struct deccara_plan plan;
+    decrara_plan_init(&plan, csi);
+    if (plan.toggle_flags || plan.toggle_ul || plan.reverse)
+        deccara_area(t, csi, &plan);
 }
 
 void wsap_vtcore_sc_decaln(struct wsap_vtcore *t)
