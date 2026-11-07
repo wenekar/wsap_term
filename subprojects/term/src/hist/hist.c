@@ -307,9 +307,11 @@ static inline bool same_page_narrow_rows(const struct hline *p, uint32_t page)
 }
 
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
+/* Check count lines from p, a multiple of 4. Each line must be one closed part with
+ * known rows, and each text line must be on page. Blank lines can be anywhere. */
 WSAP_VTCORE_TARGET_AVX512
-static inline bool same_page_rows_64(const struct hline *p, uint32_t page,
-                                    uint32_t *text_count, uint32_t *row_count)
+static inline bool same_page_rows_avx512(const struct hline *p, int count, uint32_t page,
+                                         uint32_t *text_count, uint32_t *row_count)
 {
     const __m512i pg = _mm512_set1_epi32((int)(page << 16));
     const __m512i mask = _mm512_set1_epi32((int)0xffff0000u);
@@ -319,7 +321,7 @@ static inline bool same_page_rows_64(const struct hline *p, uint32_t page,
     __m512i sums = _mm512_setzero_si512();
     __mmask16 tag_fail = 0, pg_fail = 0;
     uint32_t blanks = 0;
-    for (int i = 0; i < 64; i += 4) {
+    for (int i = 0; i < count; i += 4) {
         __m512i v = _mm512_loadu_si512((const void *)(p + i));
         __mmask16 empty = _mm512_cmpeq_epi32_mask(v, no_text) & 0x1111;
         blanks += wsap_vtcore_popcount32(empty);
@@ -328,7 +330,7 @@ static inline bool same_page_rows_64(const struct hline *p, uint32_t page,
         pg_fail |= (uint16_t)(~(_mm512_cmpeq_epi32_mask(_mm512_and_si512(v, mask), pg) | empty) & 0x1111);
         sums = _mm512_mask_add_epi32(sums, 0x8888, sums, _mm512_srli_epi32(v, 24));
     }
-    *text_count = 64 - blanks;
+    *text_count = (uint32_t)count - blanks;
     *row_count = (uint32_t)_mm512_reduce_add_epi32(sums);
     return (tag_fail | pg_fail) == 0;
 }
@@ -416,7 +418,7 @@ static uint64_t evict_simple_run(struct hist *h, uint64_t k)
             uint32_t pg = f->off >> 16;
             uint32_t text_count, row_count;
             if (f->off != NO_TEXT && (n >= counted || n + 64 <= counted) &&
-                same_page_rows_64(f, pg, &text_count, &row_count) &&
+                same_page_rows_avx512(f, 64, pg, &text_count, &row_count) &&
                 (tail + 64 == head || !(ring[(tail + 64) & rmask].flags & HLINE_CONT))) {
                 if (have_page && page != pg) {
                     page_drop_n(h, page, run);
@@ -434,8 +436,28 @@ static uint64_t evict_simple_run(struct hist *h, uint64_t k)
 #endif
         if ((tail & 15) == 0 && ((tail & rmask) + 16 <= rmask + 1)) {
             const struct hline *f = &ring[tail & rmask];
-
-            uint32_t pg = f->off >> 16;
+            uint32_t pg = f->off != NO_TEXT ? (f->off >> 16) : page;
+#if defined(WSAP_VTCORE_KERNEL_AVX512)
+            uint32_t text_count, row_count;
+            if (wsap_vtcore_use_avx512() && (f->off != NO_TEXT || have_page) &&
+                (n >= counted || n + 16 <= counted) &&
+                same_page_rows_avx512(f, 16, pg, &text_count, &row_count) &&
+                (tail + 16 == head || !(ring[(tail + 16) & rmask].flags & HLINE_CONT))) {
+                if (text_count) {
+                    if (have_page && page != pg) {
+                        page_drop_n(h, page, run);
+                        run = 0;
+                    }
+                    page = pg;
+                    have_page = true;
+                    run += text_count;
+                }
+                if (n < counted) rows_take += row_count;
+                tail += 16;
+                n += 16;
+                continue;
+            }
+#endif
             if (f->off != NO_TEXT && same_page_narrow_rows(f, pg) &&
                 (tail + 16 == head || !(ring[(tail + 16) & rmask].flags & HLINE_CONT))) {
                 if (have_page && page != pg) {
