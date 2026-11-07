@@ -283,6 +283,48 @@ int main(void)
     MOUSE(2, 1, .kind = WSAP_VTCORE_MOUSE_PRESS); expect("\033[M\040\043\042");
     MOUSE(2, 1, .kind = WSAP_VTCORE_MOUSE_RELEASE); expect("");
 
+    /* Alternate scroll (mode 1007): on the alternate screen without mouse
+     * reports, the wheel sends one cursor key for each line. */
+    mode(0);
+    m.alternate = m.alternate_scroll = true;
+    MOUSE(2, 1, .kind = WSAP_VTCORE_MOUSE_SCROLL, .button = WSAP_VTCORE_MOUSE_WHEEL_UP, .scroll_lines = 3);
+    expect("\033[A\033[A\033[A");
+    MOUSE(2, 1, .kind = WSAP_VTCORE_MOUSE_SCROLL, .button = WSAP_VTCORE_MOUSE_WHEEL_DOWN, .scroll_lines = -2);
+    expect("\033[B\033[B");
+    m.app_cursor = true;
+    MOUSE(200, 99, .button = WSAP_VTCORE_MOUSE_WHEEL_DOWN, .mods = WSAP_VTCORE_MOD_SHIFT);
+    expect("\033OB");
+    MOUSE(2, 1, .kind = WSAP_VTCORE_MOUSE_RELEASE, .button = WSAP_VTCORE_MOUSE_WHEEL_UP);
+    assert(out_len == 0 && !consumed);
+    MOUSE(2, 1, .kind = WSAP_VTCORE_MOUSE_SCROLL, .button = WSAP_VTCORE_MOUSE_WHEEL_LEFT);
+    assert(out_len == 0 && !consumed);
+    {
+        struct wsap_vtcore_mouse_event wheel = {
+            .kind = WSAP_VTCORE_MOUSE_SCROLL, .button = WSAP_VTCORE_MOUSE_WHEEL_UP, .scroll_lines = 100,
+        };
+        struct wsap_vtcore_input_result r = wsap_vtcore_input_encode_mouse(&wheel, &m, out, sizeof(out));
+        assert(r.status == WSAP_VTCORE_INPUT_BUFFER_FULL && r.len == 0);
+    }
+    /* The main screen, mode 1007 reset, and mouse reports keep the wheel. */
+    m.alternate = false;
+    MOUSE(2, 1, .button = WSAP_VTCORE_MOUSE_WHEEL_UP);
+    assert(out_len == 0 && !consumed);
+    m.alternate = true;
+    m.alternate_scroll = false;
+    MOUSE(2, 1, .button = WSAP_VTCORE_MOUSE_WHEEL_UP);
+    assert(out_len == 0 && !consumed);
+    m.alternate_scroll = true;
+    m.mouse = WSAP_VTCORE_MOUSE_NORMAL;
+    MOUSE(2, 1, .button = WSAP_VTCORE_MOUSE_WHEEL_UP); expect("\033[M\140\043\042");
+    {
+        struct wsap_vtcore *t = wsap_vtcore_new(NULL);
+        assert(t && !wsap_vtcore_modes(t).alternate_scroll);
+        wsap_vtcore_feed(t, "\033[?1049h\033[?1007h", 16, 0);
+        struct wsap_vtcore_modes modes = wsap_vtcore_modes(t);
+        assert(modes.alternate && modes.alternate_scroll);
+        wsap_vtcore_free(t);
+    }
+
     {
         struct wsap_vtcore_keyboard_state s2 = {0};
         struct wsap_vtcore_modes m2 = { .keyboard = 1 | 2 | 8, .grid = { .x = 80, .y = 24 } };

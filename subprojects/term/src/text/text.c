@@ -72,6 +72,10 @@ void wsap_vtcore_text_ground(struct wsap_vtcore *t, unsigned char ch)
     } else if (ch == '\r') {
         sc_cr(t);
     } else if (ch == '\b') {
+        if (WSAP_VTCORE_EXPECT(sc_reverse_wrap(t), 0)) {
+            wsap_vtcore_sc_cursor_back(t, 1);
+            return;
+        }
         t->pending_wrap = false;
         if (t->cursor_x > lr_left_limit(t))
             t->cursor_x--;
@@ -340,9 +344,11 @@ static void wsap_vtcore_feed_inner(struct wsap_vtcore *t, const char *buf, size_
                     }
                     continue;
                 case 0x1b:
+                    /* The fast CSI path has no reverse wraparound for CUB. */
                     if (t->utf8_state == WSAP_VTCORE_UTF8_ACCEPT && i + 1 < len &&
                         buf[i + 1] == '[' && !t->insert_mode &&
-                        !t->lr_margin_mode && !t->graphics) {
+                        !t->lr_margin_mode && !t->reverse_wrap &&
+                        !t->reverse_wrap_ext && !t->graphics) {
                         int fast = wsap_vtcore_try_fast_csi(t, buf + i + 2, len - i - 2);
                         if (fast > 0) {
                             cur_flags = wsap_vtcore_current_flags(t);

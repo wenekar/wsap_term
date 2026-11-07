@@ -368,6 +368,40 @@ static inline void tab_clamp_margins(struct wsap_vtcore *t, int before)
         t->cursor_x = t->left_margin;
 }
 
+/* Reverse wraparound, as xterm CursorBack does it. Each step moves one
+ * column left. A step from the left limit goes to the right margin of the
+ * previous row. A pending wrap uses the first step. Mode 45 enters only a row
+ * that wrapped into the current row. Mode 1045 enters any row, and it goes
+ * from the top margin to the bottom margin. The cursor never leaves the
+ * screen. If no row can be entered, the cursor stops at the left limit.
+ */
+void wsap_vtcore_sc_cursor_back(struct wsap_vtcore *t, int n)
+{
+    bool ext = t->reverse_wrap_ext;
+    int left = lr_left_limit(t);
+    int right = t->lr_margin_mode ? t->right_margin : t->cols - 1;
+    int top = t->scroll_top, bottom = t->scroll_bottom;
+    int x = t->cursor_x, y = t->cursor_y;
+    int64_t count = (int64_t)n - (t->pending_wrap ? 1 : 0);
+    /* In mode 1045, one turn through the margins comes back to the same cell. */
+    int64_t turn = (int64_t)(bottom - top + 1) * (right - left + 1);
+    while (count > x - left) {
+        int prev;
+        if (ext && y == top)
+            prev = bottom;
+        else if (y > 0 && (ext || (t->scr.slot[phys_row(t, y - 1)].flags & RF_WRAPPED)))
+            prev = y - 1;
+        else
+            break;
+        count -= x - left + 1;
+        x = right;
+        y = prev;
+        if (ext && y >= top && y <= bottom)
+            count %= turn;
+    }
+    sc_move(t, count > x - left ? left : x - (int)count, y);
+}
+
 void wsap_vtcore_sc_tab(struct wsap_vtcore *t, int n)
 {
     int before = t->cursor_x;

@@ -424,6 +424,7 @@ static void soft_reset(struct wsap_vtcore *t)
     t->application_cursor = t->application_keypad = t->backarrow_sends_bs = false;
     t->insert_mode = t->origin_mode = t->reverse_video = t->lnm = false;
     t->focus_events = t->synchronized_output = t->lr_margin_mode = false;
+    t->reverse_wrap = t->reverse_wrap_ext = false;
     t->mouse_mode = t->mouse_encoding = 0;
     t->bracketed_paste = false;
     t->color_scheme_reports = t->resize_reports = false;
@@ -538,10 +539,19 @@ static inline void handle_sgr(struct wsap_vtcore *t, const struct csi *csi)
     X(1,    application_cursor) \
     X(12,   cursor_blink) \
     X(25,   cursor_visible) \
+    X(45,   reverse_wrap) \
+    X(66,   application_keypad) \
     X(67,   backarrow_sends_bs) \
     X(1004, focus_events) \
+    X(1007, alternate_scroll) \
+    X(1045, reverse_wrap_ext) \
     X(2004, bracketed_paste) \
     X(2026, synchronized_output)
+
+/* The DECRQM value of a mode that the core always applies: DECANM (no VT52
+ * mode), alternate screen switches (1046), and grapheme clusters (2027).
+ * The ANSI mode SRM is set because the core never echoes input. */
+#define MODE_PERMANENT 3
 
 #define WSAP_VTCORE_ANSI_MODE_FIELDS(X) \
     X(4,  insert_mode) \
@@ -560,6 +570,7 @@ static int mode_get(const struct wsap_vtcore *t, int mode, bool priv)
         case 47: case 1047: case 1049: return t->alternate;
         case 69: return t->lr_margin_mode;
         case 1048: return 0;
+        case 2: case 1046: case 2027: return MODE_PERMANENT;
         case 2031: return t->color_scheme_reports;
         case 2048: return t->resize_reports;
         default: break;
@@ -572,6 +583,7 @@ static int mode_get(const struct wsap_vtcore *t, int mode, bool priv)
 #define MODE_FIELD_GET(n, f) case n: return t->f;
     WSAP_VTCORE_ANSI_MODE_FIELDS(MODE_FIELD_GET)
 #undef MODE_FIELD_GET
+    case 12: return MODE_PERMANENT;
     }
     return -1;
 }
@@ -627,6 +639,40 @@ static void mode_set(struct wsap_vtcore *t, int mode, bool enabled, bool priv)
         t->resize_reports = enabled;
         if (enabled)
             wsap_vtcore_report_size(t);
+    }
+}
+
+static struct saved_mode *saved_mode_find(struct wsap_vtcore *t, int mode)
+{
+    for (int i = 0; i < t->saved_modes_len; i++)
+        if (t->saved_modes[i].mode == mode)
+            return &t->saved_modes[i];
+    return NULL;
+}
+
+/* XTSAVE (CSI ? Pm s) and XTRESTORE (CSI ? Pm r) keep one value for each
+ * DEC private mode. They skip unknown and permanent modes, so the table
+ * cannot fill. XTRESTORE changes a mode only when its value differs. Mode
+ * 1048 saves and restores the cursor, as xterm does. */
+static WSAP_VTCORE_NOINLINE void save_restore_modes(struct wsap_vtcore *t, const struct csi *csi,
+                                                    bool save)
+{
+    for (int p = 0; p < csi->nparams; p++) {
+        int mode = csi->params[p], value = mode_get(t, mode, true);
+        struct saved_mode *s = saved_mode_find(t, mode);
+        if (!save) {
+            if (s && (mode == 1048 || value != s->set))
+                mode_set(t, mode, s->set, true);
+            continue;
+        }
+        if (value != 0 && value != 1)
+            continue;
+        if (mode == 1048)
+            mode_set(t, mode, true, true);
+        if (!s && t->saved_modes_len < SAVED_MODES_MAX)
+            s = &t->saved_modes[t->saved_modes_len++];
+        if (s)
+            *s = (struct saved_mode){ .mode = (uint16_t)mode, .set = value };
     }
 }
 
@@ -786,6 +832,7 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
             !(csi->final == 'W' && csi->prefix == '?') &&
             !((csi->final == 'J' || csi->final == 'K') && csi->prefix == '?') &&
             !(csi->final == 'n' && csi->prefix == '?') &&
+            !((csi->final == 's' || csi->final == 'r') && csi->prefix == '?') &&
             !((csi->final == 'h' || csi->final == 'l') && csi->prefix == '?')) return;
     }
     if (csi->subparams && !(csi->intermediate == '$' && csi->final == 'r')) return;
@@ -793,6 +840,10 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
     case 'r': {
         if (csi->intermediate == '$') {
             wsap_vtcore_sc_deccara(t, csi);
+            break;
+        }
+        if (csi->prefix == '?') {
+            save_restore_modes(t, csi, false);
             break;
         }
         if (csi->prefix || csi->intermediate) break;
@@ -845,7 +896,12 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
     case 'e': move_v(t,  csi_count(csi), false); break;
     case 'a': move_h(t,  csi_count(csi)); break;
     case 'C': move_h(t,  csi_count(csi)); break;
-    case 'D': move_h(t, -csi_count(csi)); break;
+    case 'D':
+        if (WSAP_VTCORE_EXPECT(sc_reverse_wrap(t), 0))
+            wsap_vtcore_sc_cursor_back(t, csi_count(csi));
+        else
+            move_h(t, -csi_count(csi));
+        break;
     case 'G':
     case '`': {
         int64_t x = (int64_t)csi_count(csi) - 1 + cursor_left(t);
@@ -863,6 +919,8 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
             }
         } else if (!csi->prefix) {
             t->saved = wsap_vtcore_cursor_save(t);
+        } else if (csi->prefix == '?') {
+            save_restore_modes(t, csi, true);
         }
         break;
     case 'I':
@@ -995,7 +1053,7 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
             int set = mode_get(t, csi->params[0], csi->prefix == '?');
             snprintf(reply, sizeof(reply), "\033[%s%d;%d$y",
                      csi->prefix == '?' ? "?" : "", csi->params[0],
-                     set < 0 ? 0 : set ? 1 : 2);
+                     set < 0 ? 0 : set ? set : 2);
             send_response(t, reply);
         }
         break;
@@ -1033,6 +1091,7 @@ static void dispatch_esc(struct wsap_vtcore *t, unsigned char ch)
     case 'c':
         if (t->alternate) wsap_vtcore_screen_set_alternate(t, false);
         soft_reset(t);
+        t->saved_modes_len = 0;
         wsap_vtcore_sc_reset(t);
         wsap_vtcore_title_stack_clear(t);
         break;

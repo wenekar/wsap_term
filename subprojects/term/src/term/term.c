@@ -58,6 +58,7 @@ struct wsap_vtcore_modes wsap_vtcore_modes(const struct wsap_vtcore *t)
         .alternate = t->alternate,
         .reverse_video = t->reverse_video,
         .synchronized = t->synchronized_output,
+        .alternate_scroll = t->alternate_scroll,
     };
     wsap_vtcore_write_end((struct wsap_vtcore *)t);
     return m;

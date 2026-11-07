@@ -138,7 +138,7 @@ static inline void gen(int ops, int cols, int rows)
     static const char csi_final[] = "ABCDEFGHIJKLMPSTXZ@`abdefghlmnrsu";
 
     for (int i = 0; i < ops; i++) {
-        switch (rn(46)) {
+        switch (rn(47)) {
         case 0: case 1: case 2: put(PICK(words)); break;
         case 3: {
             int n = rn(cols * 2 + 2);
@@ -304,6 +304,42 @@ static inline void gen(int ops, int cols, int rows)
                 break;
             }
             break;
+        case 46: {
+            /* Reverse wraparound, XTSAVE and XTRESTORE, and mode reports. */
+            static const int toggles[] = { 45, 1045, 7, 66, 1007 };
+            static const int saved[] = {
+                1, 5, 6, 7, 12, 25, 45, 47, 66, 67, 1000, 1002, 1004, 1006,
+                1007, 1045, 1048, 1049, 2004, 2026, 2027, 9999,
+            };
+            static const int unmodeled[] = { 69, 2031, 2048 };
+            static const int reported[] = { 2, 45, 66, 1007, 1045, 1046, 1048, 2027 };
+            switch (rn(7)) {
+            case 0: putf("\033[?%d%c", PICK(toggles), "hl"[rn(2)]); break;
+            case 1:
+                for (int k = 1 + rn(cols * 2); k > 0; k--)
+                    putb('\b');
+                break;
+            case 2: putf("\033[%dD", rn(cols * rows * 2)); break;
+            case 3:
+                if (rn(2))
+                    putf("\033[%sD", big_number());
+                else
+                    put("x\033[D");
+                break;
+            case 4: putf("\033[?%d;%d%c", PICK(saved), PICK(saved), "sr"[rn(2)]); break;
+            case 5:
+                if (gen_unmodeled)
+                    putf("\033[?%d%c", PICK(unmodeled), "sr"[rn(2)]);
+                break;
+            default:
+                if (rn(4))
+                    putf("\033[?%d$p", PICK(reported));
+                else
+                    put("\033[12$p");
+                break;
+            }
+            break;
+        }
         }
     }
 }

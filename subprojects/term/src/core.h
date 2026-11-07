@@ -112,6 +112,16 @@ static inline void sc_move(struct wsap_vtcore *t, int x, int y)
         wsap_vtcore_row(t, y)->version++;
 }
 
+/* True when BS and CUB wrap to the previous row: mode 45 or 1045 with
+ * autowrap (mode 7). */
+static inline bool sc_reverse_wrap(const struct wsap_vtcore *t)
+{
+    return t->autowrap && (t->reverse_wrap || t->reverse_wrap_ext);
+}
+
+/* Move the cursor n columns back with reverse wraparound (BS and CUB). */
+void wsap_vtcore_sc_cursor_back(struct wsap_vtcore *t, int n);
+
 void wsap_vtcore_sc_tab(struct wsap_vtcore *t, int n);
 
 static inline void sc_erase_span(struct wsap_vtcore *t, int y, int from, int to)

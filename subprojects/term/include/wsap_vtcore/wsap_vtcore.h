@@ -209,6 +209,9 @@ struct wsap_vtcore_modes {
     bool alternate;
     bool reverse_video;
     bool synchronized;
+    /* Mode 1007. On the alternate screen without mouse reports, the mouse
+     * encoder sends wheel events as cursor up and down keys. */
+    bool alternate_scroll;
 };
 
 struct wsap_vtcore_cursor {

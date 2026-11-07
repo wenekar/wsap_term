@@ -158,7 +158,7 @@ static const char *compare(struct model *m, struct wsap_vtcore *t, struct wsap_v
         md.app_keypad != mm.app_keypad || md.backarrow_bs != mm.backarrow_bs ||
         md.bracketed_paste != mm.bracketed_paste || md.focus_events != mm.focus_events ||
         md.alternate != mm.alternate || md.reverse_video != mm.reverse_video ||
-        md.synchronized != mm.synchronized) {
+        md.synchronized != mm.synchronized || md.alternate_scroll != mm.alternate_scroll) {
         snprintf(why, cap, "modes differ (alternate %d/%d reverse %d/%d keypad %d/%d)",
                  md.alternate, mm.alternate, md.reverse_video, mm.reverse_video,
                  md.app_keypad, mm.app_keypad);

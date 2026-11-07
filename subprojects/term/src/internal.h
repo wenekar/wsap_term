@@ -36,9 +36,16 @@ static inline uint64_t hash64_finish(uint64_t hash)
 
 #define KEYBOARD_STACK_SIZE 32
 #define TITLE_STACK_SIZE 10
+/* XTSAVE keeps one value for each mode. The core knows fewer modes. */
+#define SAVED_MODES_MAX 64
 
 struct keyboard_mode {
     unsigned flags, saved[KEYBOARD_STACK_SIZE], depth;
+};
+
+struct saved_mode {
+    uint16_t mode;
+    bool set;
 };
 
 struct wsap_vtcore_saved_cursor {
@@ -168,6 +175,9 @@ struct wsap_vtcore {
     bool has_prompt : 1;
     /* Lines in ascii_tail end with CRLF, not LF. */
     bool ascii_tail_crlf : 1;
+    bool reverse_wrap : 1;     /* mode 45 */
+    bool reverse_wrap_ext : 1; /* mode 1045 */
+    bool alternate_scroll : 1; /* mode 1007 */
 
     struct screen scr;
     struct screen alt_scr;
@@ -242,6 +252,10 @@ struct wsap_vtcore {
     struct palette palette;
     struct gstore *gstore;
     uint64_t serial;
+
+    /* Mode values that XTSAVE (CSI ? Pm s) saved. */
+    struct saved_mode saved_modes[SAVED_MODES_MAX];
+    uint8_t saved_modes_len;
 };
 
 static inline void reset_sgr(struct wsap_vtcore *t)

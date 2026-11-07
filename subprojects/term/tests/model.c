@@ -12,6 +12,8 @@
 
 #define MAX_TABS 4096
 #define STR_KEEP 1024
+/* XTSAVE keeps a value for each mode below this number. */
+#define XTSAVE_MODES 2100
 
 struct cell {
     uint32_t cp[WSAP_VTCORE_GRAPHEME_MAX_LEN];
@@ -73,6 +75,8 @@ struct model {
     struct saved saved;
     bool autowrap, origin, insert, lnm, reverse, app_cursor, app_keypad;
     bool backarrow, bracketed, focus, sync, visible, blink;
+    bool revwrap, revwrap2, alt_scroll;
+    bool xtsaved[XTSAVE_MODES], xtsave[XTSAVE_MODES];
     int style, mouse, mouse_enc, decsace;
     int top, bottom;
     bool tabs[MAX_TABS];
@@ -619,6 +623,37 @@ static void move_h(struct model *m, int n)
 {
     long x = (long)m->x + n;
     move_to(m, (int)(x < 0 ? 0 : x > m->cols - 1 ? m->cols - 1 : x), m->y);
+}
+
+/* BS and CUB. With reverse wraparound (mode 45 or 1045, and DECAWM), a step
+ * left from column 0 goes to the last column of the row above. A pending
+ * wrap takes the first step. Mode 45 enters only a row that wrapped. Mode
+ * 1045 enters any row and goes from the top margin to the bottom margin.
+ */
+static void cursor_back(struct model *m, int n)
+{
+    if (!m->autowrap || !(m->revwrap || m->revwrap2)) {
+        move_h(m, -n);
+        return;
+    }
+    long steps = (long)n - m->pending;
+    int x = m->x, y = m->y;
+    for (; steps > 0; steps--) {
+        if (x > 0) {
+            x--;
+        } else if (m->revwrap2 && y == m->top) {
+            /* A full turn of the margins comes back to the same cell. */
+            steps = (steps - 1) % ((long)(m->bottom - m->top + 1) * m->cols) + 1;
+            x = m->cols - 1;
+            y = m->bottom;
+        } else if (y > 0 && (m->revwrap2 || m->scr[y - 1]->wrapped)) {
+            x = m->cols - 1;
+            y--;
+        } else {
+            break;
+        }
+    }
+    move_to(m, x, y);
 }
 
 static struct saved save_cursor(const struct model *m)
@@ -1499,6 +1534,7 @@ static void soft_reset(struct model *m)
     m->app_cursor = m->app_keypad = m->backarrow = false;
     m->insert = m->origin = m->reverse = m->lnm = false;
     m->focus = m->sync = false;
+    m->revwrap = m->revwrap2 = false;
     m->mouse = m->mouse_enc = 0;
     m->bracketed = false;
     m->autowrap = m->visible = true;
@@ -1523,6 +1559,7 @@ static void full_reset(struct model *m)
     m->g[0] = m->g[1] = 'B';
     m->gl = 0;
     m->prompt = -1;
+    memset(m->xtsaved, 0, sizeof(m->xtsaved));
     tabs_default(m);
     for (int y = 0; y < m->rows; y++) erase_row(m, y);
 }
@@ -1532,9 +1569,16 @@ static int mode_get(const struct model *m, int mode, bool priv)
     if (!priv) {
         if (mode == 4) return m->insert;
         if (mode == 20) return m->lnm;
+        if (mode == 12) return 3;
         return -1;
     }
     switch (mode) {
+    case 2: case 1046: case 2027: return 3;
+    case 45: return m->revwrap;
+    case 66: return m->app_keypad;
+    case 1007: return m->alt_scroll;
+    case 1045: return m->revwrap2;
+    case 1048: return 0;
     case 1: return m->app_cursor;
     case 12: return m->blink;
     case 25: return m->visible;
@@ -1561,6 +1605,10 @@ static void mode_set(struct model *m, int mode, bool on, bool priv)
         return;
     }
     switch (mode) {
+    case 45: m->revwrap = on; break;
+    case 66: m->app_keypad = on; break;
+    case 1007: m->alt_scroll = on; break;
+    case 1045: m->revwrap2 = on; break;
     case 1: m->app_cursor = on; break;
     case 12: m->blink = on; break;
     case 25: m->visible = on; break;
@@ -1592,6 +1640,23 @@ static void mode_set(struct model *m, int mode, bool on, bool priv)
         break;
     default:
         break;
+    }
+}
+
+/* XTSAVE and XTRESTORE. Mode 1048 saves and restores the cursor. */
+static void save_modes(struct model *m, bool save)
+{
+    for (int i = 0; i < m->nparam; i++) {
+        int mode = m->param[i], value = mode_get(m, mode, true);
+        if (mode < 0 || mode >= XTSAVE_MODES)
+            continue;
+        if (save && (value == 0 || value == 1)) {
+            if (mode == 1048) m->saved = save_cursor(m);
+            m->xtsaved[mode] = true;
+            m->xtsave[mode] = value;
+        } else if (!save && m->xtsaved[mode] && (mode == 1048 || value != m->xtsave[mode])) {
+            mode_set(m, mode, m->xtsave[mode], true);
+        }
     }
 }
 
@@ -1629,6 +1694,7 @@ static bool csi_allowed(const struct model *m, unsigned char final)
         !(final == 'p' && inter == '$' && prefix == '?') &&
         !(final == 'W' && prefix == '?') &&
         !(final == 'n' && prefix == '?') &&
+        !((final == 's' || final == 'r') && prefix == '?') &&
         !((final == 'J' || final == 'K') && prefix == '?') &&
         !((final == 'h' || final == 'l') && prefix == '?'))
         return false;
@@ -1685,6 +1751,10 @@ static void csi_dispatch(struct model *m, unsigned char final)
             deccara(m);
             break;
         }
+        if (m->prefix == '?') {
+            save_modes(m, false);
+            break;
+        }
         int top = n - 1;
         int bottom = m->nparam > 1 && m->param[1] ? m->param[1] - 1 : m->rows - 1;
         if (top < bottom && bottom < m->rows) {
@@ -1723,7 +1793,7 @@ static void csi_dispatch(struct model *m, unsigned char final)
     case 'E': move_v(m, n, true); break;
     case 'F': move_v(m, -n, true); break;
     case 'a': case 'C': move_h(m, n); break;
-    case 'D': move_h(m, -n); break;
+    case 'D': cursor_back(m, n); break;
     case 'G': case '`': {
         long x = (long)n - 1;
         move_to(m, (int)(x > m->cols - 1 ? m->cols - 1 : x), m->y);
@@ -1731,6 +1801,7 @@ static void csi_dispatch(struct model *m, unsigned char final)
     }
     case 's':
         if (!m->prefix) m->saved = save_cursor(m);
+        else if (m->prefix == '?') save_modes(m, true);
         break;
     case 'u':
         if (!m->prefix) restore_cursor(m, &m->saved);
@@ -1847,7 +1918,7 @@ static void csi_dispatch(struct model *m, unsigned char final)
         } else if (m->inter == '$' && m->nparam >= 1) {
             int set = mode_get(m, m->param[0], m->prefix == '?');
             reply(m, "\033[%s%d;%d$y", m->prefix == '?' ? "?" : "", m->param[0],
-                  set < 0 ? 0 : set ? 1 : 2);
+                  set < 0 ? 0 : set ? set : 2);
         }
         break;
     default:
@@ -1987,8 +2058,7 @@ static void control(struct model *m, unsigned char c)
         break;
     case '\r': m->pending = false; m->x = 0; break;
     case '\b':
-        m->pending = false;
-        if (m->x > 0) m->x--;
+        cursor_back(m, 1);
         break;
     case '\t': {
         m->pending = false;
@@ -2293,6 +2363,7 @@ struct wsap_vtcore_modes model_modes(const struct model *m)
         .alternate = m->alternate,
         .reverse_video = m->reverse,
         .synchronized = m->sync,
+        .alternate_scroll = m->alt_scroll,
     };
 }
 

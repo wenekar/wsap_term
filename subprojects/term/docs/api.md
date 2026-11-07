@@ -169,6 +169,61 @@ history, and reflow keep the pair. The table holds 8191 pairs that cells use
 at the same time. When the table is full, new text loses its link and
 underline color until cells that use old pairs leave the history.
 
+## Private modes
+
+Reverse wraparound changes BS and CUB. Mode 45 and mode 1045 work only
+while autowrap (mode 7) is set. One step left from the left limit goes to the
+right margin of the row above. The left limit is the left margin, or column 0
+when the cursor is left of the left margin.
+
+- Mode 45 enters a row only when that row wrapped into the current row. It
+  stops at the start of a wrapped line. It can cross the top margin.
+- Mode 1045 enters any row. From the top margin, it goes to the bottom
+  margin. Above the top margin, the cursor stops at the top of the screen.
+- After a full line, the cursor has a pending wrap. The first step clears the
+  pending wrap and does not move the cursor. A BS then stays on the last
+  column. xterm 412 drops one more step when CUB has a count of 2 or more.
+  The core does not drop it.
+
+Mode 1007 (alternate scroll) is reset at start, as the xterm resource
+`alternateScroll` is. `wsap_vtcore_modes` reports it in `alternate_scroll`.
+These conditions make `wsap_vtcore_input_encode_mouse` send wheel up and
+wheel down as cursor up and cursor down keys:
+
+- `alternate_scroll` is set.
+- The alternate screen is active.
+- No mouse report mode is set.
+- The event is a press or a scroll.
+
+The encoder sends one key for each line of `scroll_lines`, and at least one
+key. Each key has 3 bytes. Application cursor mode (mode 1) sends `ESC O A`,
+not `ESC [ A`. Other events keep their usual result.
+
+`CSI ? Pm s` (XTSAVE) saves the values of the listed DEC private modes.
+`CSI ? Pm r` (XTRESTORE) restores them. Each mode has one saved value. A new
+save replaces it. The core does not save unknown modes or permanent modes.
+XTRESTORE changes a mode only when its value differs from the saved value. A
+mode without a saved value does not change. Mode 1048 saves and restores the
+cursor, as in xterm. The core saves each mouse mode number alone. Thus
+XTRESTORE cannot bring back a different mouse mode, as xterm can. `CSI s` and
+`CSI r` without `?` keep their meaning (SCOSC or DECSLRM, and DECSTBM).
+
+Mode 66 (DECNKM) is the keypad mode that `ESC =` and `ESC >` also set.
+
+DECRQM (`CSI ? Pm $ p`) reports 3 (permanently set) for behavior that the core
+always applies:
+
+- Mode 2 (DECANM): the core has no VT52 mode.
+- Mode 1046: the alternate screen is always available.
+- Mode 2027: the core always joins grapheme clusters (UAX #29).
+- ANSI mode 12 (SRM, `CSI 12 $ p`): the core never echoes input.
+
+Mode 1048 has no value and reports reset.
+
+A soft reset (DECSTR) and a full reset (RIS) reset modes 45, 1045, and 66.
+As in xterm, they keep mode 1007. A soft reset keeps the XTSAVE values. A
+full reset clears them.
+
 ## Input encoding and allocated strings
 
 Input encoders write into caller-provided buffers and return a result with a

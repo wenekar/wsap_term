@@ -1515,6 +1515,193 @@ static void test_resize_reports(void)
     wsap_vtcore_free(t);
 }
 
+static bool cursor_at(struct wsap_vtcore *t, int x, int y)
+{
+    bool same = tt_cursor_x(t) == x && tt_cursor_y(t) == y;
+    if (!same)
+        fprintf(stderr, "cursor %d,%d, want %d,%d\n", tt_cursor_x(t), tt_cursor_y(t), x, y);
+    return same;
+}
+
+/* Reverse wraparound: modes 45 and 1045, after xterm and esctest. */
+static void test_reverse_wraparound(void)
+{
+    struct report_log rl;
+    struct wsap_vtcore *t = report_term(8, 4, &rl);
+
+    /* Without the modes, BS stops at the left edge. */
+    write_seq(t, "abcdefghij\b\b\b");
+    assert(cursor_at(t, 0, 1));
+
+    /* Mode 45 moves BS to the end of a row that wrapped. */
+    write_seq(t, "\033[?45h\b");
+    assert(cursor_at(t, 7, 0));
+    write_seq(t, "\b\b\b\b\b\b\b\b");
+    assert(cursor_at(t, 0, 0));
+
+    /* Mode 45 does not enter a row that did not wrap. */
+    write_seq(t, "\033[3;1H\b");
+    assert(cursor_at(t, 0, 2));
+
+    /* Reverse wraparound needs autowrap. */
+    write_seq(t, "\033[?7l\033[2;1H\b\033[?7h");
+    assert(cursor_at(t, 0, 1));
+
+    /* A BS right after a full line cancels the pending wrap. */
+    write_seq(t, "\033[4;1HABCDEFGH\bX");
+    assert(row_is(t, 3, "ABCDEFGX") && cursor_at(t, 7, 3));
+
+    /* CUB counts the pending wrap as one step. */
+    write_seq(t, "\033[4;1HABCDEFGH\033[3DZ");
+    assert(row_is(t, 3, "ABCDEZGH"));
+    write_seq(t, "\033[?45l\033[4;1HABCDEFGH\033[3DZ");
+    assert(row_is(t, 3, "ABCDZFGH"));
+
+    /* CUB crosses wrapped rows and stops at the start of the line. */
+    write_seq(t, "\033[2J\033[?45h\033[1;1Hxxxxxxxxyyyyyyyyzz\033[99D");
+    assert(cursor_at(t, 0, 0));
+    write_seq(t, "\033[3;3H\033[9D");
+    assert(cursor_at(t, 1, 1));
+
+    /* Mode 45 can cross the top margin into a row that wrapped. */
+    write_seq(t, "\033[2;4r\033[2;1H\b");
+    assert(cursor_at(t, 7, 0));
+
+    /* A CUB in one whole write also wraps (no byte-by-byte feed). */
+    write_seq(t, "\033[2;1H");
+    tt_puts(t, "\033[D");
+    assert(cursor_at(t, 7, 0));
+
+    /* A soft reset clears both modes. */
+    write_seq(t, "\033[?1045h\033[!p\033[?45$p\033[?1045$p");
+    assert(logged(&rl, "\033[?45;2$y\033[?1045;2$y"));
+    wsap_vtcore_free(t);
+
+    /* Mode 1045 enters any row, and it goes from the top margin to the bottom
+     * margin. */
+    t = report_term(8, 6, &rl);
+    write_seq(t, "\033[?1045h\033[2;5r\033[2;1H\b");
+    assert(cursor_at(t, 7, 4));
+    write_seq(t, "\b\b\b\b\b\b\b\b");
+    assert(cursor_at(t, 7, 3));
+
+    /* One turn through the margins comes back to the same cell. */
+    write_seq(t, "\033[3;4H\033[32D");
+    assert(cursor_at(t, 3, 2));
+    write_seq(t, "\033[2147483647D");
+    assert(cursor_at(t, 4, 2));
+
+    /* Above the margins, the cursor stops at the top of the screen. */
+    write_seq(t, "\033[1;1H\b");
+    assert(cursor_at(t, 0, 0));
+    write_seq(t, "\033[r\033[1;1H\b");
+    assert(cursor_at(t, 7, 5));
+    wsap_vtcore_free(t);
+
+    /* With left and right margins, the cursor wraps to the right margin. */
+    t = report_term(12, 4, &rl);
+    write_seq(t, "\033[?1045h\033[?69h\033[5;10s\033[3;5H\b");
+    assert(cursor_at(t, 9, 1));
+    /* A cursor left of the left margin also wraps to the right margin. */
+    write_seq(t, "\033[3;1H\b");
+    assert(cursor_at(t, 9, 1));
+    wsap_vtcore_free(t);
+}
+
+/* XTSAVE (CSI ? Pm s) and XTRESTORE (CSI ? Pm r). */
+static void test_saved_modes(void)
+{
+    struct report_log rl;
+    struct wsap_vtcore *t = report_term(20, 4, &rl);
+
+    /* XTRESTORE sets each listed mode to its saved value. */
+    write_seq(t, "\033[?7;25;2004s\033[?7l\033[?25l\033[?2004h\033[?1h");
+    write_seq(t, "\033[?7;25;2004r\033[?7$p\033[?25$p\033[?2004$p\033[?1$p");
+    assert(logged(&rl, "\033[?7;1$y\033[?25;1$y\033[?2004;2$y\033[?1;1$y"));
+
+    /* A mode without a saved value does not change. */
+    write_seq(t, "\033[?1004h\033[?1004;2027;9999r\033[?1004$p");
+    assert(logged(&rl, "\033[?1004;1$y"));
+
+    /* The reports 2031 and 2048 work too. */
+    write_seq(t, "\033[?2048;2031s\033[?2031h\033[?2048h");
+    assert(logged(&rl, "\033[48;4;20;0;0t"));
+    write_seq(t, "\033[?2048;2031r\033[?2048$p\033[?2031$p");
+    assert(logged(&rl, "\033[?2048;2$y\033[?2031;2$y"));
+
+    /* The alternate screen. */
+    write_seq(t, "\033[?1049s\033[?1049hX\033[?1049r");
+    assert(!wsap_vtcore_modes(t).alternate && tt_cell(t, 0, 0)->text != 'X');
+
+    /* Mode 1048 saves and restores the cursor. */
+    write_seq(t, "\033[2;3H\033[?1048s\033[4;5H\033[?1048r");
+    assert(cursor_at(t, 2, 1));
+
+    /* CSI s and CSI r without a prefix keep their meaning. */
+    write_seq(t, "\033[3;4H\033[s\033[1;1H\033[u");
+    assert(cursor_at(t, 3, 2));
+    write_seq(t, "\033[2;3r\033P$qr\033\\");
+    assert(logged(&rl, "\033P1$r2;3r\033\\"));
+
+    /* A soft reset keeps the saved values. A full reset clears them. */
+    write_seq(t, "\033[?7s\033[!p\033[?7l\033[?7r\033[?7$p");
+    assert(logged(&rl, "\033[?7;1$y"));
+    write_seq(t, "\033c\033[?7l\033[?7r\033[?7$p");
+    assert(logged(&rl, "\033[?7;2$y"));
+    wsap_vtcore_free(t);
+}
+
+/* DECRQM (CSI ? Pm $ p) and the private modes that it reports. */
+static void test_mode_reports(void)
+{
+    static const int priv[] = {
+        1, 5, 6, 7, 9, 12, 25, 45, 47, 66, 67, 69, 1000, 1001, 1002, 1003, 1004,
+        1005, 1006, 1007, 1015, 1016, 1045, 1047, 1049, 2004, 2026, 2031,
+    };
+    struct report_log rl;
+    struct wsap_vtcore *t = report_term(20, 4, &rl);
+    char seq[64], want[32];
+
+    /* Each mode that DECSET sets reports set, then reset after DECRST. */
+    for (size_t i = 0; i < sizeof(priv) / sizeof(priv[0]); i++) {
+        for (int on = 1; on >= 0; on--) {
+            snprintf(seq, sizeof(seq), "\033[?%d%c\033[?%d$p", priv[i], on ? 'h' : 'l', priv[i]);
+            snprintf(want, sizeof(want), "\033[?%d;%d$y", priv[i], on ? 1 : 2);
+            write_seq(t, seq);
+            assert(logged(&rl, want));
+        }
+    }
+    write_seq(t, "\033[4h\033[4$p\033[20h\033[20$p\033[4l\033[4$p\033[20l\033[20$p");
+    assert(logged(&rl, "\033[4;1$y\033[20;1$y\033[4;2$y\033[20;2$y"));
+
+    /* Modes that the core always applies report permanently set. */
+    write_seq(t, "\033[?2$p\033[?1046$p\033[?2027$p\033[12$p");
+    assert(logged(&rl, "\033[?2;3$y\033[?1046;3$y\033[?2027;3$y\033[12;3$y"));
+    write_seq(t, "\033[?2027l\033[?2027$p");
+    assert(logged(&rl, "\033[?2027;3$y"));
+
+    /* Mode 1048 has no value. Unknown modes report zero. */
+    write_seq(t, "\033[?1048h\033[?1048$p\033[?9999$p\033[9999$p");
+    assert(logged(&rl, "\033[?1048;2$y\033[?9999;0$y\033[9999;0$y"));
+
+    /* DECNKM (mode 66) is the keypad mode of DECKPAM and DECKPNM. */
+    write_seq(t, "\033=\033[?66$p\033>\033[?66$p");
+    assert(logged(&rl, "\033[?66;1$y\033[?66;2$y"));
+    write_seq(t, "\033[?66h");
+    assert(wsap_vtcore_modes(t).app_keypad);
+    write_seq(t, "\033[!p\033[?66$p");
+    assert(logged(&rl, "\033[?66;2$y"));
+
+    /* Alternate scroll (mode 1007) is reset by default. Like xterm, the
+     * resets keep it. */
+    assert(!wsap_vtcore_modes(t).alternate_scroll);
+    write_seq(t, "\033[?1007h\033[!p\033c");
+    assert(wsap_vtcore_modes(t).alternate_scroll);
+    write_seq(t, "\033[?1007$p");
+    assert(logged(&rl, "\033[?1007;1$y"));
+    wsap_vtcore_free(t);
+}
+
 static void expect_flags(struct wsap_vtcore *t, const char *commands, const char *reply)
 {
     write_seq(t, commands);
@@ -2987,6 +3174,9 @@ int main(void)
     test_title_stack();
     test_color_scheme_reports();
     test_resize_reports();
+    test_reverse_wraparound();
+    test_saved_modes();
+    test_mode_reports();
     test_rectangle_edits();
     test_reverse_attributes_in_rectangle();
     test_change_attributes_reverse_image();

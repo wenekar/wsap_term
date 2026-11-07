@@ -601,12 +601,35 @@ struct wsap_vtcore_input_result wsap_vtcore_input_encode_key(const struct wsap_v
     return sb_result(&sb, buf);
 }
 
+/* Alternate scroll (mode 1007), as in xterm: one cursor key for each scroll
+ * line. Application cursor mode selects SS3 instead of CSI. */
+static struct wsap_vtcore_input_result encode_alternate_scroll(const struct wsap_vtcore_mouse_event *ev,
+                                                               const struct wsap_vtcore_modes *m,
+                                                               char *buf, size_t buf_sz)
+{
+    const char key[3] = {
+        '\033', m->app_cursor ? 'O' : '[',
+        ev->button == WSAP_VTCORE_MOUSE_WHEEL_UP ? 'A' : 'B',
+    };
+    unsigned lines = ev->scroll_lines < 0 ? 0u - (unsigned)ev->scroll_lines
+                                          : (unsigned)ev->scroll_lines;
+    struct seqbuf sb = { .p = buf, .left = buf_sz };
+    for (unsigned i = 0; i < (lines ? lines : 1) && !sb.overflow; i++)
+        sb_bytes(&sb, key, sizeof(key));
+    return sb_result(&sb, buf);
+}
+
 struct wsap_vtcore_input_result wsap_vtcore_input_encode_mouse(const struct wsap_vtcore_mouse_event *ev,
                                            const struct wsap_vtcore_modes *m,
                                            char *buf, size_t buf_sz)
 {
     struct wsap_vtcore_input_result out = {0};
     if (!ev || !m || !buf) return out;
+
+    if (!m->mouse && m->alternate && m->alternate_scroll &&
+        (ev->kind == WSAP_VTCORE_MOUSE_SCROLL || ev->kind == WSAP_VTCORE_MOUSE_PRESS) &&
+        (ev->button == WSAP_VTCORE_MOUSE_WHEEL_UP || ev->button == WSAP_VTCORE_MOUSE_WHEEL_DOWN))
+        return encode_alternate_scroll(ev, m, buf, buf_sz);
 
     if (!m->mouse || (ev->mods & WSAP_VTCORE_MOD_SHIFT)) return out;
 
