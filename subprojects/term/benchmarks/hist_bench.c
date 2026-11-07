@@ -1,5 +1,5 @@
 #include "bench.h"
-#include "hist.h"
+#include "hist/hist.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
