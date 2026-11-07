@@ -1530,6 +1530,8 @@ static bool csi_allowed(const struct model *m, unsigned char final)
         !(final == 'p' && inter == '$' && prefix == '?') &&
         !(final == 'W' && prefix == '?') &&
         !(final == 'n' && prefix == '?') &&
+        /* DECSED and DECSEL: nothing is protected, so they act as ED and EL. */
+        !((final == 'J' || final == 'K') && prefix == '?') &&
         !((final == 'h' || final == 'l') && prefix == '?'))
         return false;
     if (m->sub && !(inter == '$' && final == 'r')) return false;
