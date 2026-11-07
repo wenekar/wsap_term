@@ -24,6 +24,22 @@ enum cell_flags {
 
 #define CELL_ANY_UNDERLINE WSAP_VTCORE_ATTR_UNDERLINE_MASK
 
+/* The pad field of a cell holds its extended style. Bits 0 to 12 hold a
+ * style id. The style table (style.h) maps the id to a link and an underline
+ * color. Id zero has no link and no underline color. Bits 13 to 15 hold
+ * flags. A plain cell has pad zero. */
+#define CELL_EXT_ID        0x1FFFu
+#define CELL_EXT_BLINK     0x2000u
+#define CELL_EXT_CONCEAL   0x4000u
+#define CELL_EXT_PROTECTED 0x8000u
+#define CELL_EXT_FLAGS     (CELL_EXT_BLINK | CELL_EXT_CONCEAL | CELL_EXT_PROTECTED)
+
+/* A shift moves the blink and conceal flags to their public attribute bits. */
+#define CELL_EXT_ATTR_SHIFT 6
+_Static_assert((CELL_EXT_BLINK >> CELL_EXT_ATTR_SHIFT) == WSAP_VTCORE_ATTR_BLINK &&
+               (CELL_EXT_CONCEAL >> CELL_EXT_ATTR_SHIFT) == WSAP_VTCORE_ATTR_CONCEAL,
+               "blink and conceal must shift to their public attribute bits");
+
 struct cell {
     uint32_t c;
     uint32_t fg;

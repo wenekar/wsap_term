@@ -145,6 +145,30 @@ before any title was set restores as an empty title. A full reset clears the
 stack and keeps the current title. Without a title callback, the stack does
 nothing.
 
+## Cell styles
+
+`attrs` holds the SGR attributes of a cell. `WSAP_VTCORE_ATTR_BLINK` comes
+from SGR 5 and SGR 6; the core does not tell slow blink from rapid blink.
+`WSAP_VTCORE_ATTR_CONCEAL` comes from SGR 8. The core keeps the text of a
+concealed cell. The host decides how to draw blinking and concealed text.
+
+`wsap_vtcore_snapshot_row_underline_colors` returns the underline colors
+(SGR 58) of one view row, one color for each column. Resolve each color with
+`wsap_vtcore_view_color`. `WSAP_VTCORE_COLOR_NONE` means that the cell has no
+underline color: draw its underline in the foreground color of the cell. A
+NULL return means that no cell of the row has an underline color. The pointer
+follows the getter pointer rules above.
+
+DECSCA protection is not a public attribute. It controls which cells the
+selective erases (DECSED, DECSEL, DECSERA) keep. ED, EL, and ECH erase
+protected cells too. DECSERA writes spaces and keeps the colors and attributes
+of the cells.
+
+The core interns each pair of link and underline color in a table. Cells,
+history, and reflow keep the pair. The table holds 8191 pairs that cells use
+at the same time. When the table is full, new text loses its link and
+underline color until cells that use old pairs leave the history.
+
 ## Input encoding and allocated strings
 
 Input encoders write into caller-provided buffers and return a result with a

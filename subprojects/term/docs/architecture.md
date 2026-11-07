@@ -27,6 +27,7 @@ Each source directory lists its own build inputs.
 | `input.c` | Key, mouse, and paste encoding |
 | `escape.c` | ESC, CSI, DCS, and OSC state machine |
 | `pen.h` | Graphic attributes |
+| `style.c`, `style.h` | Style table: links and underline colors of cells |
 | `osc/dispatch.c` | OSC dispatch and palette queries |
 | `osc/link.c` | OSC 8 hyperlinks |
 | `osc/clipboard.c` | OSC 52 clipboard requests |
@@ -52,6 +53,14 @@ The screen is a circular ring of rows.
 Rows that leave the screen enter the logical-line history store.
 History stores UTF-8 text and delta-encoded attribute runs.
 The alternate screen has no history.
+
+A cell has 16 bits of flags and a 16-bit pad field (`cell.h`).
+The pad field holds blink, conceal, and DECSCA protection, and a style id.
+The style table maps the id to a link and an underline color.
+Id zero means neither, so plain text needs no table lookup.
+History runs, text rows, and reflow copy the pad field without a change.
+When the table is full, a sweep frees the ids that no cell uses.
+The link table frees its links after the same sweep.
 
 A viewport anchor identifies a logical line and a cell offset before wrapping.
 Output keeps the anchor on the same retained text.

@@ -293,7 +293,7 @@ static const struct spec cases[] = {
     { .name = "DSR 6 in origin mode", .input = "\033[2;3r\033[?6h\033[6n", .cols = 8, .rows = 3,
       ROWS3("", "", ""), AT(0, 1), NO_EXTRA, .reply = "\033[1;1R" },
     { .name = "DA1", .input = "\033[c\033[0c", .cols = 8, .rows = 3, ROWS3("", "", ""),
-      AT(0, 0), NO_EXTRA, .reply = "\033[?62;21;22;28c\033[?62;21;22;28c" },
+      AT(0, 0), NO_EXTRA, .reply = "\033[?62;6;21;22;28c\033[?62;6;21;22;28c" },
     { .name = "DA1 with a nonzero parameter", .input = "\033[1c", .cols = 8, .rows = 3,
       ROWS3("", "", ""), AT(0, 0), NO_EXTRA, .reply = "" },
     { .name = "DA2", .input = "\033[>c", .cols = 8, .rows = 3, ROWS3("", "", ""),

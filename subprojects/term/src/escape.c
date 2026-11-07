@@ -29,8 +29,10 @@ static int sgr_color_param(const struct wsap_vtcore *t, char *buf, size_t sz, in
 static int sgr_serialize(const struct wsap_vtcore *t, char *buf, size_t sz)
 {
     int n = 0;
+    bool blink = (t->cur_pad & CELL_EXT_BLINK) != 0;
+    bool conceal = (t->cur_pad & CELL_EXT_CONCEAL) != 0;
     if (!(t->bold || t->faint || t->italic || t->underline || t->strike ||
-          t->overline || t->inverse || t->cur_fg != WSAP_VTCORE_COLOR_FG ||
+          t->overline || t->inverse || blink || conceal || t->cur_fg != WSAP_VTCORE_COLOR_FG ||
           t->cur_bg != WSAP_VTCORE_COLOR_BG || t->cur_ul))
         return 0;
 #define SGR_ADD(expr) \
@@ -44,7 +46,9 @@ static int sgr_serialize(const struct wsap_vtcore *t, char *buf, size_t sz)
     if (t->italic) SGR_ADD(snprintf(buf + n, sz - (size_t)n, ";3"));
     if (t->underline == 1) SGR_ADD(snprintf(buf + n, sz - (size_t)n, ";4"));
     else if (t->underline) SGR_ADD(snprintf(buf + n, sz - (size_t)n, ";4:%d", t->underline));
+    if (blink) SGR_ADD(snprintf(buf + n, sz - (size_t)n, ";5"));
     if (t->inverse) SGR_ADD(snprintf(buf + n, sz - (size_t)n, ";7"));
+    if (conceal) SGR_ADD(snprintf(buf + n, sz - (size_t)n, ";8"));
     if (t->strike) SGR_ADD(snprintf(buf + n, sz - (size_t)n, ";9"));
     if (t->overline) SGR_ADD(snprintf(buf + n, sz - (size_t)n, ";53"));
     if (t->cur_fg != WSAP_VTCORE_COLOR_FG) SGR_ADD(sgr_color_param(t, buf + n, sz - (size_t)n, 30, t->cur_fg));
@@ -271,9 +275,12 @@ static void restore_deccir(struct wsap_vtcore *t, const char *p, const char *end
     if ((rend & 0xf0) != 0x40) return;
     t->bold = rend & 1;
     t->underline = (rend & 2) ? 1 : 0;
+    t->cur_pad = (uint16_t)((rend & 4) ? t->cur_pad | CELL_EXT_BLINK : t->cur_pad & ~CELL_EXT_BLINK);
+    pen_sync_ext(t);
     t->inverse = (rend & 8) != 0;
     int attr = dcs_param_chr(&p, end);
     if ((attr & 0xf0) != 0x40) return;
+    pen_set_protected(t, attr & 1);
     int flag = dcs_param_chr(&p, end);
     if ((flag & 0xf0) != 0x40) return;
     t->autowrap = (flag & 8) != 0;
@@ -379,7 +386,8 @@ static void dcs_dispatch(struct wsap_vtcore *t)
         } else if (slen == 2 && spec[0] == '"' && spec[1] == 'p') {
             p = snprintf(resp, sizeof(resp), "\033P1$r64;1\"p\033\\");
         } else if (slen == 2 && spec[0] == '"' && spec[1] == 'q') {
-            p = snprintf(resp, sizeof(resp), "\033P1$r0\"q\033\\");
+            p = snprintf(resp, sizeof(resp), "\033P1$r%d\"q\033\\",
+                         (t->cur_pad & CELL_EXT_PROTECTED) ? 1 : 0);
         } else if (slen == 2 && spec[0] == '$' && spec[1] == '|') {
             p = snprintf(resp, sizeof(resp), "\033P1$r%d$|\033\\", t->cols);
         } else if (slen == 2 && spec[0] == '$' && spec[1] == '}') {
@@ -425,9 +433,11 @@ static void soft_reset(struct wsap_vtcore *t)
     t->scroll_top = 0; t->scroll_bottom = t->rows - 1;
     t->left_margin = 0; t->right_margin = t->cols - 1;
     t->decsace = 0;
-    t->cur_link = 0;
     memset(t->keyboard, 0, sizeof(t->keyboard));
     reset_sgr(t);
+    t->cur_link = 0;
+    pen_set_protected(t, false);
+    wsap_vtcore_style_update(t);
 }
 
 static inline void sgr_set_slot(struct wsap_vtcore *t, int code, uint32_t c)
@@ -496,12 +506,15 @@ static inline void handle_sgr(struct wsap_vtcore *t, const struct csi *csi)
                     (t->italic ? PEN_ATTR_ITALIC : 0) |
                     (t->strike ? PEN_ATTR_STRIKE : 0) |
                     (t->overline ? PEN_ATTR_OVERLINE : 0) |
-                    (t->inverse ? PEN_ATTR_INVERSE : 0);
+                    (t->inverse ? PEN_ATTR_INVERSE : 0) |
+                    ((t->cur_pad & CELL_EXT_BLINK) ? PEN_ATTR_BLINK : 0) |
+                    ((t->cur_pad & CELL_EXT_CONCEAL) ? PEN_ATTR_CONCEAL : 0);
     struct wsap_vtcore_pen pen = {
         .fg = t->cur_fg, .bg = t->cur_bg, .ul = t->cur_ul,
         .underline = t->underline,
         .attrs = attrs,
     };
+    uint32_t old_ul = t->cur_ul;
     sgr_apply(&pen, csi->params, csi->nparams, csi->subparams);
     t->cur_fg = pen.fg;
     t->cur_bg = pen.bg;
@@ -513,6 +526,12 @@ static inline void handle_sgr(struct wsap_vtcore *t, const struct csi *csi)
     t->strike = (pen.attrs & PEN_ATTR_STRIKE) != 0;
     t->overline = (pen.attrs & PEN_ATTR_OVERLINE) != 0;
     t->inverse = (pen.attrs & PEN_ATTR_INVERSE) != 0;
+    t->cur_pad = (uint16_t)((t->cur_pad & ~(CELL_EXT_BLINK | CELL_EXT_CONCEAL)) |
+                            ((pen.attrs & PEN_ATTR_BLINK) ? CELL_EXT_BLINK : 0) |
+                            ((pen.attrs & PEN_ATTR_CONCEAL) ? CELL_EXT_CONCEAL : 0));
+    if (t->cur_ul != old_ul)
+        wsap_vtcore_style_update(t);
+    pen_sync_ext(t);
 }
 
 #define WSAP_VTCORE_PRIV_MODE_FIELDS(X) \
@@ -745,8 +764,10 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
         if (dispatch_csi_edit(t, csi))
             return;
         bool plain = (csi->final == 'q' && csi->intermediate == ' ') ||
+                     (csi->final == 'q' && csi->intermediate == '"') ||
                      (csi->final == 'p' && csi->intermediate == '!') ||
-                     (csi->final == 'x' && csi->intermediate == '*');
+                     (csi->final == 'x' && csi->intermediate == '*') ||
+                     (csi->final == '{' && csi->intermediate == '$');
         if (plain) {
             if (csi->prefix || csi->subparams) return;
         } else if (csi->final == 'p' && csi->intermediate == '$') {
@@ -867,9 +888,11 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
         else if (csi->prefix == '?' && csi->params[0] == 996) wsap_vtcore_report_color_scheme(t);
         break;
     case 'J':
-        /* DECSED erases the cells that DECSCA did not protect. Nothing is
-         * protected, so it is the same as ED. */
-        wsap_vtcore_screen_erase(t, csi->params[0]);
+        /* DECSED erases only the cells that DECSCA did not protect. */
+        if (csi->prefix)
+            wsap_vtcore_screen_selective_erase(t, csi->params[0]);
+        else
+            wsap_vtcore_screen_erase(t, csi->params[0]);
         break;
     case 'X': {
         int n = csi_count(csi);
@@ -882,8 +905,15 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
             t->decsace = (uint8_t)csi->params[0];
         break;
     case 'K':
-        /* DECSEL is the same as EL. See DECSED. */
-        wsap_vtcore_screen_erase_line(t, csi->params[0]);
+        /* DECSEL erases only the cells that DECSCA did not protect. */
+        if (csi->prefix)
+            wsap_vtcore_screen_selective_erase_line(t, csi->params[0]);
+        else
+            wsap_vtcore_screen_erase_line(t, csi->params[0]);
+        break;
+    case '{':
+        if (csi->intermediate == '$')
+            wsap_vtcore_screen_selective_erase_rect(t, csi);
         break;
     case 'P':
         wsap_vtcore_screen_delete_chars(t, csi_count(csi));
@@ -895,7 +925,7 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
         if (csi->prefix == '>')
             send_response(t, "\x1b[>0;10;0c");
         else if (!csi->prefix && csi->params[0] == 0)
-            send_response(t, "\x1b[?62;21;22;28c");
+            send_response(t, "\x1b[?62;6;21;22;28c");
         else if (csi->prefix == '=' && csi->params[0] == 0)
             send_response(t, "\x1bP!|00000000\x1b\\");
         break;
@@ -948,6 +978,11 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
             send_response(t, resp);
         } else if (!csi->prefix && csi->intermediate == ' ') {
             wsap_vtcore_sc_set_cursor_style(t, csi->nparams > 0 ? csi->params[0] : 0);
+        } else if (!csi->prefix && csi->intermediate == '"') {
+            /* DECSCA: 1 protects new cells from selective erase. 0 and 2 do not. */
+            int ps = csi->params[0];
+            if (ps == 1 || ps == 0 || ps == 2)
+                pen_set_protected(t, ps == 1);
         }
         break;
     }

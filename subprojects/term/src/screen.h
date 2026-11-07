@@ -17,6 +17,11 @@ void wsap_vtcore_screen_set_alternate(struct wsap_vtcore *t, bool enabled);
 void wsap_vtcore_screen_erase(struct wsap_vtcore *t, int mode);
 void wsap_vtcore_screen_erase_all(struct wsap_vtcore *t);
 void wsap_vtcore_screen_erase_line(struct wsap_vtcore *t, int mode);
+/* DECSED, DECSEL, and DECSERA: erase only the cells that DECSCA did not
+ * protect. */
+void wsap_vtcore_screen_selective_erase(struct wsap_vtcore *t, int mode);
+void wsap_vtcore_screen_selective_erase_line(struct wsap_vtcore *t, int mode);
+void wsap_vtcore_screen_selective_erase_rect(struct wsap_vtcore *t, const struct csi *csi);
 void wsap_vtcore_screen_delete_chars(struct wsap_vtcore *t, int count);
 void wsap_vtcore_screen_insert_chars(struct wsap_vtcore *t, int count);
 

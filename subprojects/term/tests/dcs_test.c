@@ -101,6 +101,13 @@ static void test_decrqss_sgr(void)
     write_seq(t, "\033[38;2;10;20;30m");
     assert_rqss(t, "m", "0;38:2:10:20:30m");
     wsap_vtcore_free(t);
+
+    t = new_term(80, 24);
+    write_seq(t, "\033[6;7;8;58;5;3m");
+    assert_rqss(t, "m", "0;5;7;8;58:5:3m");
+    write_seq(t, "\033[25;27;28;59m");
+    assert_rqss(t, "m", "m");
+    wsap_vtcore_free(t);
 }
 
 static void test_decrqss_margins_and_page(void)
@@ -136,6 +143,12 @@ static void test_decrqss_misc(void)
 {
     struct wsap_vtcore *t = new_term(80, 24);
     assert_rqss(t, "\"p", "64;1\"p");
+    assert_rqss(t, "\"q", "0\"q");
+    write_seq(t, "\033[1\"q\033[m");
+    assert_rqss(t, "\"q", "1\"q");
+    write_seq(t, "\033[2\"q");
+    assert_rqss(t, "\"q", "0\"q");
+    write_seq(t, "\033[1\"q\033[!p");
     assert_rqss(t, "\"q", "0\"q");
     assert_rqss(t, "$}", "0$}");
     assert_rqss(t, "$~", "0$~");
@@ -321,6 +334,17 @@ static void test_decrsps_cir(void)
     write_seq(t, "\033[1;80Hab");
     assert(tt_cell(t, 79, 0)->text == 'a');
     assert(tt_cell(t, 0, 1)->text == 'b');
+    wsap_vtcore_free(t);
+
+    /* Rendition D sets blink. Attribute A sets DECSCA protection. */
+    t = new_term(80, 24);
+    write_seq(t, "\033P1$t1;1;1;D;A;@;00;@;BBBB\033\\");
+    assert_rqss(t, "\"q", "1\"q");
+    write_seq(t, "Z");
+    assert(tt_cell(t, 0, 0)->attrs & WSAP_VTCORE_ATTR_BLINK);
+    write_seq(t, "\033P1$t1;1;1;@;@;@;00;@;BBBB\033\\");
+    assert_rqss(t, "\"q", "0\"q");
+    assert_rqss(t, "m", "m");
     wsap_vtcore_free(t);
 
     t = new_term(80, 24);

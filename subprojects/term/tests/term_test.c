@@ -308,7 +308,7 @@ static void test_csi_recovery(void)
         {"\033[31\032X", "X", ""},
         {"\033[1$ A X", " X", ""},
         {"AB\033[>2JX", "ABX", ""},
-        /* DECSED: with no protected cells, the same as ED. */
+        /* DECSED erases in place. */
         {"AB\033[?2JX", "  X", ""},
         {"AB\r\033[>4hX", "XB", ""},
     };
@@ -731,30 +731,300 @@ static void test_editor_scrolling(void)
     wsap_vtcore_free(t);
 }
 
-static bool pending_decsca_decsed_decsel(void)
+/* Feed s whole to one terminal and byte by byte to another. */
+static void both_new(struct wsap_vtcore **whole, struct wsap_vtcore **bytes, int cols, int rows,
+                     const char *s)
 {
-    struct wsap_vtcore *d = tt_new(20, 3);
-    write_seq(d, "\033[H" "AB" "\033[1\"q" "CD" "\033[0\"q" "EF");
-    write_seq(d, "\033[?2J");
-    bool ok = row_eq(d, 0, "  CD");
-    wsap_vtcore_free(d);
-
-    struct wsap_vtcore *l = tt_new(20, 3);
-    write_seq(l, "\033[H" "GH" "\033[1\"q" "IJ" "\033[0\"q" "KL");
-    write_seq(l, "\033[H\033[?0K");
-    ok = ok && row_eq(l, 0, "  IJ");
-    wsap_vtcore_free(l);
-    return ok;
+    *whole = tt_new(cols, rows);
+    *bytes = tt_new(cols, rows);
+    write_both(*whole, *bytes, s);
 }
 
-static bool pending_decsera(void)
+static wsap_vtcore_color ul_at(struct wsap_vtcore *t, int x, int y)
 {
-    struct wsap_vtcore *t = tt_new(20, 3);
-    write_seq(t, "\033[H\033[0\"qAB\033[1\"qCD");
-    write_seq(t, "\033[1;1;1;4${");
-    bool ok = row_eq(t, 0, "  CD");
+    const wsap_vtcore_color *ul = wsap_vtcore_snapshot_row_underline_colors(tt_snapshot_for(t), y);
+    return ul ? ul[x] : WSAP_VTCORE_COLOR_NONE;
+}
+
+static uint16_t ext_attrs(struct wsap_vtcore *t, int x, int y)
+{
+    return tt_view_cell(t, x, y)->attrs & (WSAP_VTCORE_ATTR_BLINK | WSAP_VTCORE_ATTR_CONCEAL);
+}
+
+static void test_blink_conceal(void)
+{
+    static const char *const inputs[] = {
+        "\033[5mA\033[6mB\033[25mC\033[8mD\033[28mE\033[5;8mF\033[0mG",
+        "\033[1;5mA\033[6;1mB\033[1;25mC\033[1;8mD\033[1;28mE\033[5;8;1mF\033[mG",
+        "\033[5:1mA\033[6:1mB\033[25:1mC\033[8:1mD\033[28:1mE\033[5;8:1mF\033[0:1mG",
+    };
+    const uint16_t bl = WSAP_VTCORE_ATTR_BLINK, co = WSAP_VTCORE_ATTR_CONCEAL;
+    const uint16_t want[] = { bl, bl, 0, co, 0, bl | co, 0 };
+    for (size_t k = 0; k < sizeof(inputs) / sizeof(inputs[0]); k++) {
+        struct wsap_vtcore *whole, *bytes;
+        both_new(&whole, &bytes, 20, 3, inputs[k]);
+        for (struct wsap_vtcore *t = whole; t; t = t == whole ? bytes : NULL) {
+            assert(row_is(t, 0, "ABCDEFG"));
+            for (int x = 0; x < 7; x++)
+                assert(ext_attrs(t, x, 0) == want[x]);
+        }
+        wsap_vtcore_free(whole);
+        wsap_vtcore_free(bytes);
+    }
+
+    /* Both halves of a wide character carry the flags. DECSC saves them. */
+    struct wsap_vtcore *whole, *bytes;
+    both_new(&whole, &bytes, 20, 3, "\033[5m\xe4\xb8\xad\033[25;8m\0337\033[mX\0338Y");
+    for (struct wsap_vtcore *t = whole; t; t = t == whole ? bytes : NULL) {
+        assert(tt_cell(t, 0, 0)->width == 2 && ext_attrs(t, 0, 0) == bl);
+        assert(tt_cell(t, 1, 0)->width == 0 && ext_attrs(t, 1, 0) == bl);
+        assert(tt_cell_cp(t, tt_cell(t, 2, 0)) == 'Y' && ext_attrs(t, 2, 0) == co);
+    }
+    wsap_vtcore_free(whole);
+    wsap_vtcore_free(bytes);
+}
+
+static void test_underline_color(void)
+{
+    const wsap_vtcore_color idx = wsap_vtcore_color_index(196);
+    const wsap_vtcore_color rgb = wsap_vtcore_color_rgb(1, 2, 3);
+    const wsap_vtcore_color rgb2 = wsap_vtcore_color_rgb(4, 5, 6);
+    const wsap_vtcore_color none = WSAP_VTCORE_COLOR_NONE;
+    static const char input[] =
+        "\033[4;58;5;196mA\033[59mB\033[58:2::1:2:3mC\033[mD\033[58;2;4;5;6mE"
+        "\033[0;58:5:196mF\033[58;5;1mG\033[0;38;2;1;2;3mH\033[58;5;196m\033[0mI";
+    const wsap_vtcore_color want[] = { idx, none, rgb, none, rgb2, idx, wsap_vtcore_color_index(1),
+                                       none, none };
+    struct wsap_vtcore *whole, *bytes;
+    both_new(&whole, &bytes, 20, 3, input);
+    for (struct wsap_vtcore *t = whole; t; t = t == whole ? bytes : NULL) {
+        assert(row_is(t, 0, "ABCDEFGHI"));
+        for (int x = 0; x < 9; x++)
+            assert(ul_at(t, x, 0) == want[x]);
+        assert(tt_cell(t, 0, 0)->attrs & WSAP_VTCORE_ATTR_UNDERLINE);
+        assert(!wsap_vtcore_snapshot_row_underline_colors(tt_snapshot_for(t), 1));
+    }
+    wsap_vtcore_free(whole);
+    wsap_vtcore_free(bytes);
+
+    /* A link and an underline color share a cell. A row with links and no
+     * underline color has no underline colors. */
+    both_new(&whole, &bytes, 20, 3,
+             "\033]8;;http://a\033\\\033[58;5;2mL\033[59mM\033]8;;\033\\N\r\n"
+             "\033]8;;http://b\033\\O\033]8;;\033\\");
+    for (struct wsap_vtcore *t = whole; t; t = t == whole ? bytes : NULL) {
+        for (int x = 0; x < 2; x++) {
+            char *uri = tt_link_at(t, x, 0);
+            assert(uri && !strcmp(uri, "http://a"));
+            wsap_vtcore_text_free(uri);
+            assert(tt_cell(t, x, 0)->attrs & WSAP_VTCORE_ATTR_LINK);
+        }
+        assert(!tt_link_at(t, 2, 0));
+        assert(ul_at(t, 0, 0) == wsap_vtcore_color_index(2) && ul_at(t, 1, 0) == none);
+        char *uri = tt_link_at(t, 0, 1);
+        assert(uri && !strcmp(uri, "http://b"));
+        wsap_vtcore_text_free(uri);
+        assert(!wsap_vtcore_snapshot_row_underline_colors(tt_snapshot_for(t), 1));
+    }
+    wsap_vtcore_free(whole);
+    wsap_vtcore_free(bytes);
+
+    /* A combining mark joins the cell with the style of its base. DECSC
+     * saves the underline color. */
+    both_new(&whole, &bytes, 20, 3,
+             "\033[5;58;5;1me\033[25;58;5;2m\xcc\x81\033[58;5;9m\0337\033[59m\0338X");
+    for (struct wsap_vtcore *t = whole; t; t = t == whole ? bytes : NULL) {
+        uint32_t cps[4];
+        assert(tt_cell_cps(t, tt_cell(t, 0, 0), cps, 4) == 2);
+        assert(ul_at(t, 0, 0) == wsap_vtcore_color_index(1));
+        assert(ext_attrs(t, 0, 0) == WSAP_VTCORE_ATTR_BLINK);
+        assert(tt_cell_cp(t, tt_cell(t, 1, 0)) == 'X');
+        assert(ul_at(t, 1, 0) == wsap_vtcore_color_index(9));
+    }
+    wsap_vtcore_free(whole);
+    wsap_vtcore_free(bytes);
+}
+
+/* History, reflow, and resize keep blink, conceal, underline colors, and
+ * protection. */
+static void test_extended_style_history(void)
+{
+    const wsap_vtcore_color ul = wsap_vtcore_color_index(3);
+    const uint16_t bl = WSAP_VTCORE_ATTR_BLINK, co = WSAP_VTCORE_ATTR_CONCEAL;
+    struct wsap_vtcore *whole, *bytes;
+    both_new(&whole, &bytes, 8, 2,
+             "\033[5;58;5;3mab\033[1\"q\033[8mcd\033[0\"q\033[mxy\r\n1\r\n2");
+    for (struct wsap_vtcore *t = whole; t; t = t == whole ? bytes : NULL) {
+        assert(tt_history(t) == 1);
+        wsap_vtcore_scroll(t, 1);
+        assert(tt_cell_cp(t, tt_view_cell(t, 0, 0)) == 'a');
+        assert(ext_attrs(t, 0, 0) == bl && ext_attrs(t, 2, 0) == (bl | co));
+        assert(ext_attrs(t, 4, 0) == 0);
+        assert(ul_at(t, 0, 0) == ul && ul_at(t, 3, 0) == ul);
+        assert(ul_at(t, 4, 0) == WSAP_VTCORE_COLOR_NONE);
+        wsap_vtcore_scroll_to(t, 0);
+
+        /* The line comes back from the history. Its cells stay protected. */
+        assert(tt_resize(t, 8, 4));
+        assert(row_is(t, 0, "abcdxy"));
+        write_seq(t, "\033[1;1H\033[?0K");
+        assert(row_is(t, 0, "  cd"));
+        assert(ul_at(t, 2, 0) == ul && ext_attrs(t, 2, 0) == (bl | co));
+
+        /* Reflow moves the cells with their style. */
+        assert(tt_resize(t, 3, 4));
+        assert(row_is(t, 0, "  c") && row_is(t, 1, "d"));
+        assert(ul_at(t, 0, 1) == ul && ext_attrs(t, 0, 1) == (bl | co));
+        write_seq(t, "\033[2;1H\033[?2K");
+        assert(row_is(t, 1, "d"));
+    }
+    wsap_vtcore_free(whole);
+    wsap_vtcore_free(bytes);
+}
+
+/* The core reuses the table entries of the styles that no cell shows. */
+static void test_style_table_reuse(void)
+{
+    struct wsap_vtcore *t = tt_new(8, 2);
+    assert(wsap_vtcore_set_scrollback_limit(t, 0));
+    char line[96];
+    int last = 20000;
+    for (int i = 0; i <= last; i++) {
+        snprintf(line, sizeof(line), "\033[58;2;%d;%d;%dmX%s", (i >> 16) & 255, (i >> 8) & 255,
+                 i & 255, i < last ? "\r\n" : "");
+        tt_puts(t, line);
+    }
+    assert(ul_at(t, 0, 0) == wsap_vtcore_color_rgb(0, ((last - 1) >> 8) & 255, (last - 1) & 255));
+    assert(ul_at(t, 0, 1) == wsap_vtcore_color_rgb(0, (last >> 8) & 255, last & 255));
     wsap_vtcore_free(t);
-    return ok;
+
+    /* More links than the link table holds. Each link has its own style. */
+    t = tt_new(8, 2);
+    assert(wsap_vtcore_set_scrollback_limit(t, 0));
+    last = 9000;
+    for (int i = 0; i <= last; i++) {
+        snprintf(line, sizeof(line), "\033]8;;u%d\033\\\033[58;5;%dmL%s", i, i & 255,
+                 i < last ? "\r\n" : "");
+        tt_puts(t, line);
+    }
+    char *uri = tt_link_at(t, 0, 1);
+    assert(uri && !strcmp(uri, "u9000"));
+    wsap_vtcore_text_free(uri);
+    uri = tt_link_at(t, 0, 0);
+    assert(uri && !strcmp(uri, "u8999"));
+    wsap_vtcore_text_free(uri);
+    assert(ul_at(t, 0, 0) == wsap_vtcore_color_index(8999 & 255));
+    wsap_vtcore_free(t);
+}
+
+static void test_selective_erase(void)
+{
+    struct wsap_vtcore *whole, *bytes;
+    /* DECSED and DECSEL erase only the cells that DECSCA did not protect. */
+    both_new(&whole, &bytes, 20, 3, "\033[H" "AB" "\033[1\"q" "CD" "\033[0\"q" "EF" "\033[?2J");
+    assert(row_is(whole, 0, "  CD") && row_is(bytes, 0, "  CD"));
+    assert(tt_history(whole) == 0);
+    wsap_vtcore_free(whole);
+    wsap_vtcore_free(bytes);
+
+    both_new(&whole, &bytes, 20, 3, "\033[H" "GH" "\033[1\"q" "IJ" "\033[0\"q" "KL" "\033[H\033[?0K");
+    assert(row_is(whole, 0, "  IJ") && row_is(bytes, 0, "  IJ"));
+    wsap_vtcore_free(whole);
+    wsap_vtcore_free(bytes);
+
+    /* DECSEL 1 and 2. P and T are protected. */
+    struct wsap_vtcore *t = tt_new(20, 3);
+    write_seq(t, "\033[1\"qP\033[0\"qQRS\033[1\"qT\033[0\"qU\033[1;4H\033[?1K");
+    assert(row_is(t, 0, "P   TU"));
+    write_seq(t, "\033[?2K");
+    assert(row_is(t, 0, "P   T"));
+    wsap_vtcore_free(t);
+
+    /* DECSED 0 and 1 work across rows. */
+    t = tt_new(6, 3);
+    write_seq(t, "ab\033[1\"qc\033[0\"qdef\r\ngh\033[1\"qi\033[0\"qjk\r\nlm\033[1\"qn\033[0\"qo");
+    write_seq(t, "\033[2;2H\033[?1J");
+    assert(row_is(t, 0, "  c") && row_is(t, 1, "  ijk") && row_is(t, 2, "lmno"));
+    write_seq(t, "\033[2;5H\033[?0J");
+    assert(row_is(t, 0, "  c") && row_is(t, 1, "  ij") && row_is(t, 2, "  n"));
+    wsap_vtcore_free(t);
+
+    /* The cursor can be after the end of the row text. */
+    t = tt_new(20, 3);
+    write_seq(t, "\033[1\"qab\033[1;10H\033[?K\033[44m\033[?0K");
+    assert(row_is(t, 0, "ab"));
+    assert(tt_cell(t, 8, 0)->bg == WSAP_VTCORE_COLOR_BG);
+    assert(tt_cell(t, 9, 0)->bg == wsap_vtcore_color_index(4));
+    wsap_vtcore_free(t);
+
+    /* ED, EL, and ECH erase protected cells too. */
+    t = tt_new(20, 3);
+    write_seq(t, "\033[1\"qXYZ\033[1;2H\033[X");
+    assert(row_is(t, 0, "X Z"));
+    write_seq(t, "\033[K");
+    assert(row_is(t, 0, "X"));
+    write_seq(t, "\033[2J");
+    assert(row_is(t, 0, ""));
+    wsap_vtcore_free(t);
+
+    /* SGR 0 keeps the protection. DECSTR clears it. DECSC saves it. */
+    t = tt_new(20, 3);
+    write_seq(t, "\033[1\"q\033[mA\033[!p\033[1;2HB\033[?2K");
+    assert(row_is(t, 0, "A"));
+    write_seq(t, "\033[1;3H\033[1\"q\0337\033[2\"q\0338C\033[0\"qD\033[?2K");
+    assert(row_is(t, 0, "A C"));
+    wsap_vtcore_free(t);
+
+    /* A protected wide character stays whole. An erased one goes whole.
+     * The erased cells get the current background, as with EL. */
+    t = tt_new(20, 3);
+    write_seq(t, "a\033[1\"q\xe4\xb8\xad\033[0\"q\xe6\x96\x87" "b\033[1;5H\033[44m\033[?1K");
+    assert(row_is(t, 0, " ?   b"));
+    assert(tt_cell(t, 1, 0)->width == 2 && tt_cell(t, 2, 0)->width == 0);
+    assert(tt_cell(t, 3, 0)->width == 1 && tt_cell(t, 4, 0)->width == 1);
+    assert(tt_cell(t, 0, 0)->bg == wsap_vtcore_color_index(4));
+    assert(tt_cell(t, 4, 0)->bg == wsap_vtcore_color_index(4));
+    wsap_vtcore_free(t);
+}
+
+static void test_decsera(void)
+{
+    struct wsap_vtcore *whole, *bytes;
+    both_new(&whole, &bytes, 20, 3, "\033[H\033[0\"qAB\033[1\"qCD\033[1;1;1;4${");
+    assert(row_is(whole, 0, "  CD") && row_is(bytes, 0, "  CD"));
+    wsap_vtcore_free(whole);
+    wsap_vtcore_free(bytes);
+
+    /* The erased cells keep their colors and attributes. The cursor stays. */
+    struct wsap_vtcore *t = tt_new(20, 3);
+    write_seq(t, "\033[1;4;44;58;5;2mxy\033[m\033[${");
+    assert(row_is(t, 0, ""));
+    const struct wsap_vtcore_cell *c = tt_cell(t, 1, 0);
+    assert(c->text == ' ' && c->bg == wsap_vtcore_color_index(4));
+    assert((c->attrs & WSAP_VTCORE_ATTR_BOLD) && (c->attrs & WSAP_VTCORE_ATTR_UNDERLINE));
+    assert(ul_at(t, 1, 0) == wsap_vtcore_color_index(2));
+    assert(tt_cursor_x(t) == 2 && tt_cursor_y(t) == 0);
+    wsap_vtcore_free(t);
+
+    /* The rectangle limits the erase. */
+    t = tt_new(20, 3);
+    write_seq(t, "abcd\r\nefgh\r\nijkl\033[2;2;3;3${");
+    assert(row_is(t, 0, "abcd") && row_is(t, 1, "e  h") && row_is(t, 2, "i  l"));
+    wsap_vtcore_free(t);
+
+    /* A wide character that crosses an edge becomes two spaces. */
+    t = tt_new(20, 3);
+    write_seq(t, "\xe4\xb8\xad\xe6\x96\x87\033[1;2;1;2${");
+    assert(row_is(t, 0, "  ?"));
+    assert(tt_cell(t, 0, 0)->width == 1 && tt_cell(t, 1, 0)->width == 1);
+    assert(tt_cell(t, 2, 0)->width == 2);
+    wsap_vtcore_free(t);
+
+    /* In origin mode, rows count from the top margin. */
+    t = tt_new(20, 4);
+    write_seq(t, "a\r\nb\r\nc\r\nd\033[2;3r\033[?6h\033[1;1;9;9${");
+    assert(row_is(t, 0, "a") && row_is(t, 1, "") && row_is(t, 2, "") && row_is(t, 3, "d"));
+    wsap_vtcore_free(t);
 }
 
 static bool pending_deccolm(void)
@@ -784,8 +1054,6 @@ static void test_unimplemented_da_features(void)
         const char *name;
         bool (*run)(void);
     } cases[] = {
-        { "DECSCA/DECSED/DECSEL selective erase (DA1 6)", pending_decsca_decsed_decsel },
-        { "DECSERA rectangle selective erase (DA1 28)",   pending_decsera },
         { "DECCOLM 132 columns (DA1 1)",                  pending_deccolm },
         { "sixel graphics, cursor advance (DA1 4)",       pending_sixel },
     };
@@ -955,10 +1223,10 @@ static void test_device_attributes(void)
     struct wsap_vtcore *t = tt_new_opts(80, 24, &reply_cb);
 
     write_seq(t, "\033[c");
-    assert(!strcmp(response, "\033[?62;21;22;28c"));
+    assert(!strcmp(response, "\033[?62;6;21;22;28c"));
     response_len = 0;
     write_seq(t, "\033[0c");
-    assert(!strcmp(response, "\033[?62;21;22;28c"));
+    assert(!strcmp(response, "\033[?62;6;21;22;28c"));
 
     write_seq(t, "\033[>c");
     assert(!strcmp(response, "\033[>0;10;0c"));
@@ -2697,6 +2965,12 @@ int main(void)
     test_reverse_attributes_in_rectangle();
     test_change_attributes_reverse_image();
     test_column_edits();
+    test_blink_conceal();
+    test_underline_color();
+    test_extended_style_history();
+    test_style_table_reuse();
+    test_selective_erase();
+    test_decsera();
     test_unimplemented_da_features();
     test_keyboard_negotiation();
     test_resize_reflow();

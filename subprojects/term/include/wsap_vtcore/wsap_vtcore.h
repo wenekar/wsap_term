@@ -31,6 +31,8 @@ typedef uint32_t wsap_vtcore_color;
 #define WSAP_VTCORE_COLOR_SLOT_INDEX 0x1FFu
 #define WSAP_VTCORE_COLOR_FG (WSAP_VTCORE_COLOR_SLOT | 0x100u)
 #define WSAP_VTCORE_COLOR_BG (WSAP_VTCORE_COLOR_SLOT | 0x101u)
+/* No color is set. The core never gives this value for a set color. */
+#define WSAP_VTCORE_COLOR_NONE 0u
 
 static inline wsap_vtcore_color wsap_vtcore_color_index(int n)
 {
@@ -278,6 +280,8 @@ enum wsap_vtcore_attr {
     WSAP_VTCORE_ATTR_OVERLINE = 1u << 4,
     WSAP_VTCORE_ATTR_EMOJI = 1u << 5,
     WSAP_VTCORE_ATTR_TEXT = 1u << 6,
+    WSAP_VTCORE_ATTR_BLINK = 1u << 7,
+    WSAP_VTCORE_ATTR_CONCEAL = 1u << 8,
     WSAP_VTCORE_ATTR_FAINT = 1u << 10,
     WSAP_VTCORE_ATTR_DOUBLE_UNDERLINE = 1u << 11,
     WSAP_VTCORE_ATTR_CURLY_UNDERLINE = 1u << 12,
@@ -369,6 +373,13 @@ struct wsap_vtcore_view {
 WSAP_VTCORE_API const struct wsap_vtcore_view *wsap_vtcore_snapshot_view(const struct wsap_vtcore_snapshot *s);
 WSAP_VTCORE_API const struct wsap_vtcore_cell *wsap_vtcore_snapshot_row(const struct wsap_vtcore_snapshot *s, int y);
 WSAP_VTCORE_API uint64_t wsap_vtcore_snapshot_row_key(const struct wsap_vtcore_snapshot *s, int y);
+/* Return the underline colors (SGR 58) of logical row y: one color for each
+ * column. WSAP_VTCORE_COLOR_NONE means that the cell has no underline color.
+ * Draw its underline in the foreground color of the cell. NULL means that no
+ * cell of the row has an underline color. The pointer stays valid until the
+ * next update or free. */
+WSAP_VTCORE_API const wsap_vtcore_color *wsap_vtcore_snapshot_row_underline_colors(
+    const struct wsap_vtcore_snapshot *s, int y);
 
 WSAP_VTCORE_API int wsap_vtcore_history_rows(const struct wsap_vtcore *t);
 WSAP_VTCORE_API char *wsap_vtcore_history_text(struct wsap_vtcore *t, int max_rows);

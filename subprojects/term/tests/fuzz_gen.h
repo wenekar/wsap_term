@@ -71,13 +71,13 @@ static const char *big_number(void)
 static void gen_sgr(void)
 {
     static const int plain[] = {
-        0, 1, 2, 3, 4, 5, 7, 8, 9, 21, 22, 23, 24, 27, 29, 39, 49, 53, 55, 59,
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 21, 22, 23, 24, 25, 27, 28, 29, 39, 49, 53, 55, 59,
     };
     put("\033[");
     int n = 1 + rn(3);
     for (int i = 0; i < n; i++) {
         if (i) put(";");
-        switch (rn(10)) {
+        switch (rn(11)) {
         case 0: putf("38;5;%d", rn(300)); break;
         case 1: putf("48;5;%d", rn(300)); break;
         case 2: putf("38;2;%d;%d;%d", rn(256), rn(256), rn(256)); break;
@@ -86,7 +86,8 @@ static void gen_sgr(void)
         case 5: putf("%d", 30 + rn(8) + (rn(2) ? 60 : 0)); break;
         case 6: putf("%d", 40 + rn(8) + (rn(2) ? 60 : 0)); break;
         case 7: putf("58;5;%d", rn(256)); break;
-        case 8: putf("%d8;2;%d;%s;%d", 3 + rn(2), rn(256), big_number(), rn(256)); break;
+        case 8: putf("%d8;2;%d;%s;%d", 3 + rn(3), rn(256), big_number(), rn(256)); break;
+        case 9: putf("58:2::%d:%d:%d", rn(256), rn(256), rn(256)); break;
         default: putf("%d", PICK(plain)); break;
         }
     }
@@ -137,7 +138,7 @@ static inline void gen(int ops, int cols, int rows)
     static const char csi_final[] = "ABCDEFGHIJKLMPSTXZ@`abdefghlmnrsu";
 
     for (int i = 0; i < ops; i++) {
-        switch (rn(45)) {
+        switch (rn(46)) {
         case 0: case 1: case 2: put(PICK(words)); break;
         case 3: {
             int n = rn(cols * 2 + 2);
@@ -286,6 +287,22 @@ static inline void gen(int ops, int cols, int rows)
             }
             break;
         }
+        case 45:
+            /* DECSCA and the selective erases. */
+            switch (rn(5)) {
+            case 0: putf("\033[%d\"q", rn(4)); break;
+            case 1:
+                put("\033[1\"q");
+                put(PICK(words));
+                put(rn(2) ? "\033[0\"q" : "\033[2\"q");
+                break;
+            case 2: putf("\033[?%dJ", rn(4)); break;
+            case 3: putf("\033[?%dK", rn(3)); break;
+            default:
+                putf("\033[%d;%d;%d;%d${", rn(rows + 1), rn(cols + 1), rn(rows + 2), rn(cols + 2));
+                break;
+            }
+            break;
         }
     }
 }

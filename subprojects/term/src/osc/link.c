@@ -87,55 +87,19 @@ static bool links_grow(struct wsap_vtcore_links *l)
     return true;
 }
 
-static void links_mark_row(const struct cell *row, int len, uint64_t *mark, uint16_t cap)
-{
-    if (len > WSAP_VTCORE_MAX_COLS) len = WSAP_VTCORE_MAX_COLS;
-    for (int i = 0; i < len; i++) {
-        uint16_t id = row[i].pad;
-        if (id && id <= cap)
-            mark[(id - 1) >> 6] |= 1ull << ((id - 1) & 63);
-    }
-}
-
 static void links_mark_id(uint16_t id, uint64_t *mark, uint16_t cap)
 {
     if (id && id <= cap)
         mark[(id - 1) >> 6] |= 1ull << ((id - 1) & 63);
 }
 
-struct links_mark {
-    uint64_t *mark;
-    uint16_t cap;
-};
-
-static void links_mark_hist(void *ud, uint16_t id)
-{
-    struct links_mark *m = ud;
-    links_mark_id(id, m->mark, m->cap);
-}
-
-static void links_mark_screen(const struct screen *s, struct links_mark *m)
-{
-    for (int y = 0; y < s->rows; y++) {
-        const struct srow *row = screen_get_row(s, y);
-        if (row->len == 0)
-            continue;
-        if (row->kind == ROW_CELLS)
-            links_mark_row(row->cells, row->len, m->mark, m->cap);
-        else
-            wsap_vtcore_hist_text_mark_links(&row->text, links_mark_hist, m);
-    }
-}
-
+/* Cells refer to links through the style table. Collect the unused styles
+ * first. Then keep the links of the styles that stay and of the pen. */
 static void links_gc(struct wsap_vtcore *t, struct wsap_vtcore_links *l)
 {
     uint64_t mark[WSAP_VTCORE_LINK_MAX / 64] = { 0 };
-    struct links_mark m = { mark, l->capacity };
     links_mark_id(t->cur_link, mark, l->capacity);
-    links_mark_screen(&t->scr, &m);
-    if (t->alternate && t->alt_allocated)
-        links_mark_screen(&t->alt_scr, &m);
-    wsap_vtcore_hist_mark_links(&t->hist, links_mark_hist, &m);
+    wsap_vtcore_style_gc(t, mark, l->capacity);
     l->free_count = 0;
     for (int i = 0; i + 1 < l->next; i++) {
         if (l->uri[i] && !(mark[i >> 6] & (1ull << (i & 63)))) {
@@ -186,27 +150,15 @@ static uint16_t links_alloc(struct wsap_vtcore *t, struct wsap_vtcore_links *l)
     return 0;
 }
 
-void wsap_vtcore_osc8(struct wsap_vtcore *t, const char *params)
+static uint16_t links_intern(struct wsap_vtcore *t, const char *uri)
 {
-    const char *sep = strchr(params, ';');
-    if (!sep)
-        return;
-    const char *uri = sep + 1;
-    if (!*uri) {
-        t->cur_link = 0;
-        return;
-    }
-    if (strlen(uri) > WSAP_VTCORE_LINK_URI_MAX) {
-        t->cur_link = 0;
-        return;
-    }
+    if (!*uri || strlen(uri) > WSAP_VTCORE_LINK_URI_MAX)
+        return 0;
     struct wsap_vtcore_links *l = t->links;
     if (!l) {
         l = calloc(1, sizeof(*l));
-        if (!l) {
-            t->cur_link = 0;
-            return;
-        }
+        if (!l)
+            return 0;
         l->next = 1;
         t->links = l;
     }
@@ -214,19 +166,25 @@ void wsap_vtcore_osc8(struct wsap_vtcore *t, const char *params)
     uint16_t id = links_find(l, uri, h);
     if (!id) {
         id = links_alloc(t, l);
-        if (!id) {
-            t->cur_link = 0;
-            return;
-        }
+        if (!id)
+            return 0;
         l->uri[id - 1] = wsap_vtcore_strdup(uri);
         if (!l->uri[id - 1]) {
             l->free_ids[l->free_count++] = id;
-            t->cur_link = 0;
-            return;
+            return 0;
         }
         links_insert_hash(l, h, id);
     }
-    t->cur_link = id;
+    return id;
+}
+
+void wsap_vtcore_osc8(struct wsap_vtcore *t, const char *params)
+{
+    const char *sep = strchr(params, ';');
+    if (!sep)
+        return;
+    t->cur_link = links_intern(t, sep + 1);
+    wsap_vtcore_style_update(t);
 }
 
 const char *wsap_vtcore_osc8_url_at(const struct wsap_vtcore *t, int col, int row)
@@ -237,9 +195,11 @@ const char *wsap_vtcore_osc8_url_at(const struct wsap_vtcore *t, int col, int ro
     const struct cell *cells = wsap_vtcore_screen_view_row(t, row);
     if (!cells)
         return NULL;
-    uint16_t id = cells[col].pad;
-    if (!id || id > l->capacity ||
-        !(cells[col].flags & CELL_LINK))
+    if (!(cells[col].flags & CELL_LINK))
+        return NULL;
+    const struct style_entry *e = wsap_vtcore_style_entry(t->styles, cells[col].pad);
+    uint16_t id = e ? e->link : 0;
+    if (!id || id > l->capacity)
         return NULL;
     return l->uri[id - 1];
 }

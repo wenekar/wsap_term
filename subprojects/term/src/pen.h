@@ -13,6 +13,8 @@
 #define PEN_ATTR_STRIKE   (1u << 3)
 #define PEN_ATTR_OVERLINE (1u << 4)
 #define PEN_ATTR_INVERSE  (1u << 5)
+#define PEN_ATTR_BLINK    (1u << 6)
+#define PEN_ATTR_CONCEAL  (1u << 7)
 
 struct wsap_vtcore_pen {
     uint32_t fg;
@@ -154,13 +156,18 @@ static const struct wsap_vtcore_sgr_entry wsap_vtcore_sgr_actions[110] = {
     [2] = { SGR_ACT_ATTR, 0, PEN_ATTR_FAINT, 0 },
     [3] = { SGR_ACT_ATTR, 0, PEN_ATTR_ITALIC, 0 },
     [4] = { SGR_ACT_UL_STYLE, 0, 0, 1 },
+    [5] = { SGR_ACT_ATTR, 0, PEN_ATTR_BLINK, 0 },
+    [6] = { SGR_ACT_ATTR, 0, PEN_ATTR_BLINK, 0 },
     [7] = { SGR_ACT_ATTR, 0, PEN_ATTR_INVERSE, 0 },
+    [8] = { SGR_ACT_ATTR, 0, PEN_ATTR_CONCEAL, 0 },
     [9] = { SGR_ACT_ATTR, 0, PEN_ATTR_STRIKE, 0 },
     [21] = { SGR_ACT_UL_VAL, 0, 0, 2 },
     [22] = { SGR_ACT_ATTR, PEN_ATTR_BOLD | PEN_ATTR_FAINT, 0, 0 },
     [23] = { SGR_ACT_ATTR, PEN_ATTR_ITALIC, 0, 0 },
     [24] = { SGR_ACT_UL_VAL, 0, 0, 0 },
+    [25] = { SGR_ACT_ATTR, PEN_ATTR_BLINK, 0, 0 },
     [27] = { SGR_ACT_ATTR, PEN_ATTR_INVERSE, 0, 0 },
+    [28] = { SGR_ACT_ATTR, PEN_ATTR_CONCEAL, 0, 0 },
     [29] = { SGR_ACT_ATTR, PEN_ATTR_STRIKE, 0, 0 },
 
     [30] = { SGR_ACT_FG_IDX, 0, 0, 0 },

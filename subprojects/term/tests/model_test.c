@@ -176,6 +176,7 @@ static const char *compare(struct model *m, struct wsap_vtcore *t, struct wsap_v
         }
         for (int y = 0; y < size.y; y++) {
             const struct wsap_vtcore_cell *row = wsap_vtcore_snapshot_row(snap, y);
+            const wsap_vtcore_color *uls = wsap_vtcore_snapshot_row_underline_colors(snap, y);
             int retained = total - offset + y;
             const struct model_cell *want_row = model_row(m, retained);
             for (int x = 0; x < size.x; x++) {
@@ -183,8 +184,9 @@ static const char *compare(struct model *m, struct wsap_vtcore *t, struct wsap_v
                 uint32_t cps[WSAP_VTCORE_GRAPHEME_MAX_LEN] = {0};
                 int n = row[x].text ? wsap_vtcore_snapshot_cluster(snap, row[x].text, cps,
                                                             WSAP_VTCORE_GRAPHEME_MAX_LEN) : 0;
+                wsap_vtcore_color ul = uls ? uls[x] : WSAP_VTCORE_COLOR_NONE;
                 if (n == e->n && row[x].width == e->width && row[x].attrs == e->attrs &&
-                    row[x].fg == e->fg && row[x].bg == e->bg &&
+                    row[x].fg == e->fg && row[x].bg == e->bg && ul == e->ul &&
                     !memcmp(cps, e->cp, (size_t)n * sizeof(*cps)))
                     continue;
                 if (log) {
@@ -203,10 +205,10 @@ static const char *compare(struct model *m, struct wsap_vtcore *t, struct wsap_v
                     e = &want_row[x];
                 }
                 snprintf(why, cap,
-                         "cell %d,%d: term U+%04X (%d cps) w%u attrs %#x fg %#x bg %#x; "
-                         "model U+%04X (%u cps) w%u attrs %#x fg %#x bg %#x",
-                         x, y, cps[0], n, row[x].width, row[x].attrs, row[x].fg, row[x].bg,
-                         e->cp[0], e->n, e->width, e->attrs, e->fg, e->bg);
+                         "cell %d,%d: term U+%04X (%d cps) w%u attrs %#x fg %#x bg %#x ul %#x; "
+                         "model U+%04X (%u cps) w%u attrs %#x fg %#x bg %#x ul %#x",
+                         x, y, cps[0], n, row[x].width, row[x].attrs, row[x].fg, row[x].bg, ul,
+                         e->cp[0], e->n, e->width, e->attrs, e->fg, e->bg, e->ul);
                 wsap_vtcore_scroll_to(t, 0);
                 return why;
             }

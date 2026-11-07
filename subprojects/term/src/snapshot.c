@@ -14,6 +14,8 @@ struct wsap_vtcore_snapshot {
     struct wsap_vtcore_cell *cells;
     uint64_t *keys;
     uint32_t *row_clusters;
+    // For each physical row: the arena offset of its underline colors, or ROW_NO_UL.
+    uint32_t *row_ul;
     int top;
     // Scratch rows for the staged path. NULL, or cell_cap cells.
     struct wsap_vtcore_cell *stage;
@@ -44,6 +46,7 @@ void wsap_vtcore_snapshot_free(struct wsap_vtcore_snapshot *s)
     wsap_vtcore_aligned_free(s->stage);
     free(s->keys);
     free(s->row_clusters);
+    free(s->row_ul);
     free(s->selection);
     free(s->arena);
     free(s->spare);
@@ -76,7 +79,10 @@ static bool reserve(struct wsap_vtcore_snapshot *s, int cols, int rows)
         struct wsap_vtcore_span *sel = realloc(s->selection, (size_t)rows * sizeof(*sel));
         if (sel)
             s->selection = sel;
-        if (!k || !rc || !sel)
+        uint32_t *ul = realloc(s->row_ul, (size_t)rows * sizeof(*ul));
+        if (ul)
+            s->row_ul = ul;
+        if (!k || !rc || !sel || !ul)
             return false;
         s->row_cap = rows;
     }
@@ -130,26 +136,118 @@ static bool arena_add(struct arena_out *a, const struct gstore *g, uint32_t hand
     return true;
 }
 
-static bool convert_row(struct arena_out *a, const struct gstore *g,
-                        struct wsap_vtcore_cell *dst, const struct cell *src, int cols)
+#define ROW_NO_UL UINT32_MAX
+
+/* Add the underline colors of a row to the arena: one word for each column.
+ * Set *ul_off to ROW_NO_UL when no cell has an underline color. */
+static WSAP_VTCORE_NOINLINE bool convert_underline(struct arena_out *a, const struct wsap_vtcore_styles *st,
+                                                   const struct cell *src, int cols, uint32_t *ul_off)
 {
+    uint64_t need = (uint64_t)a->len + (uint32_t)cols;
+    if (!arena_reserve(a, need))
+        return false;
+    uint32_t *out = *a->buf + a->len;
+    uint32_t any = 0;
     for (int x = 0; x < cols; x++) {
+        const struct style_entry *e = wsap_vtcore_style_entry(st, src[x].pad);
+        out[x] = e ? e->ul : WSAP_VTCORE_COLOR_NONE;
+        any |= out[x];
+    }
+    if (any) {
+        *ul_off = a->len;
+        a->len = (uint32_t)need;
+    }
+    return true;
+}
+
+#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_MSC_VER)
+#define CONVERT_WORDS 1
+/* The private and the public cell share the text, fg, and bg words. Two
+ * 64-bit moves then convert a cell. The second word holds bg, flags, and pad
+ * in, and bg, attrs, width, and reserved out. */
+_Static_assert(offsetof(struct cell, fg) == offsetof(struct wsap_vtcore_cell, fg) &&
+               offsetof(struct cell, bg) == offsetof(struct wsap_vtcore_cell, bg) &&
+               offsetof(struct cell, flags) == 12 && offsetof(struct cell, pad) == 14 &&
+               offsetof(struct wsap_vtcore_cell, attrs) == 12 &&
+               offsetof(struct wsap_vtcore_cell, width) == 14 &&
+               offsetof(struct wsap_vtcore_cell, reserved) == 15,
+               "the cell words must line up");
+_Static_assert(CELL_WIDE == 1u << 7 && CELL_TRAIL == 1u << 8, "width bits moved");
+
+static inline WSAP_VTCORE_ALWAYS_INLINE uint64_t convert_word(uint64_t in)
+{
+    const uint64_t keep = 0xFFFFFFFFu | ((uint64_t)(uint16_t)~(CELL_WIDE | CELL_TRAIL | CELL_WRAP_PAD) << 32);
+    const uint64_t ext = (uint64_t)(WSAP_VTCORE_ATTR_BLINK | WSAP_VTCORE_ATTR_CONCEAL) << 32;
+    uint64_t wide = (in >> 39) & 1, trail = (in >> 40) & 1;
+    uint64_t width = (1 + wide) >> (trail << 1);
+    return (in & keep) | ((in >> (16 + CELL_EXT_ATTR_SHIFT)) & ext) | (width << 48);
+}
+#else
+#define CONVERT_WORDS 0
+#endif
+
+/* Map a control code to a space or a blank, and a cluster handle of the
+ * terminal to a handle of the snapshot. */
+static inline WSAP_VTCORE_ALWAYS_INLINE bool convert_text(struct arena_out *a, const struct gstore *g,
+                                                          uint32_t *text)
+{
+    if (*text < 0x20) {
+        *text = *text ? ' ' : 0;
+        return true;
+    }
+    uint32_t handle;
+    if (!arena_add(a, g, *text, &handle))
+        return false;
+    *text = handle;
+    return true;
+}
+
+/* Keep this inline. Out of line, the loop kept text in memory, and full
+ * updates measured 20% slower. */
+static inline WSAP_VTCORE_ALWAYS_INLINE bool convert_row(struct arena_out *a, const struct wsap_vtcore *t,
+                                                         struct wsap_vtcore_cell *dst, const struct cell *src,
+                                                         int cols, uint32_t *ul_off)
+{
+    // One unsigned compare finds both rare cases: a control code and a cluster handle.
+    const uint32_t plain_span = WSAP_VTCORE_GRAPHEME_HANDLE_BASE - 0x20;
+    // The pad fields of the row, in bits 48 to 63.
+    uint64_t ext = 0;
+    for (int x = 0; x < cols; x++) {
+#if CONVERT_WORDS
+        /* Read the cell in one load. The row is often fresh from 16-byte
+         * stores, and smaller loads of it measured slower. */
+        uint64_t w[2];
+        memcpy(w, &src[x], sizeof(w));
+        uint32_t text = (uint32_t)w[0];
+        if (WSAP_VTCORE_EXPECT(text - 0x20 >= plain_span, 0)) {
+            if (!convert_text(a, t->gstore, &text))
+                return false;
+            w[0] = (w[0] & ~(uint64_t)0xFFFFFFFFu) | text;
+        }
+        ext |= w[1];
+        w[1] = convert_word(w[1]);
+        memcpy(&dst[x], w, sizeof(w));
+#else
         const struct cell *c = &src[x];
         uint16_t f = c->flags;
         uint32_t text = c->c;
-        if (WSAP_VTCORE_EXPECT(text < 0x20, 0))
-            text = text ? ' ' : 0;
-        else if (WSAP_VTCORE_EXPECT(wsap_vtcore_grapheme_is_handle(text), 0) &&
-                 !arena_add(a, g, text, &text))
+        if (WSAP_VTCORE_EXPECT(text - 0x20 >= plain_span, 0) && !convert_text(a, t->gstore, &text))
             return false;
+        ext |= (uint64_t)c->pad << 48;
         dst[x] = (struct wsap_vtcore_cell){
             .text = text,
             .fg = c->fg,
             .bg = c->bg,
-            .attrs = (uint16_t)(f & ~(CELL_WIDE | CELL_TRAIL | CELL_WRAP_PAD)),
+            .attrs = (uint16_t)((f & ~(CELL_WIDE | CELL_TRAIL | CELL_WRAP_PAD)) |
+                                ((c->pad >> CELL_EXT_ATTR_SHIFT) &
+                                 (WSAP_VTCORE_ATTR_BLINK | WSAP_VTCORE_ATTR_CONCEAL))),
             .width = (f & CELL_TRAIL) ? 0 : (f & CELL_WIDE) ? 2 : 1,
         };
+#endif
     }
+    *ul_off = ROW_NO_UL;
+    if (WSAP_VTCORE_EXPECT((ext >> 48) & CELL_EXT_ID, 0))
+        return convert_underline(a, t->styles, src, cols, ul_off);
     return true;
 }
 
@@ -163,6 +261,8 @@ struct plan {
     const uint64_t *keys;
     // For each logical row: ROW_KEPT, or the arena words of a new row.
     uint32_t *words;
+    // For each new staged row: the arena offset of its underline colors.
+    uint32_t *ul;
     int staged;
     bool direct;
     const int *c0, *c1;
@@ -198,6 +298,7 @@ static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, c
             if (p->words[y] == ROW_KEPT) {
                 memcpy(s->stage + (size_t)y * cols, s->cells + (size_t)phys * cols, row_bytes);
                 p->words[y] = s->row_clusters[phys];
+                p->ul[y] = s->row_ul[phys];
             } else if (!p->all) {
                 s->arena_dead += s->row_clusters[phys];
             }
@@ -208,6 +309,7 @@ static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, c
         // A kept row has its old key, and the old key is equal to the new key.
         memcpy(s->keys, p->keys, (size_t)rows * sizeof(*s->keys));
         memcpy(s->row_clusters, p->words, (size_t)rows * sizeof(*s->row_clusters));
+        memcpy(s->row_ul, p->ul, (size_t)rows * sizeof(*s->row_ul));
         s->top = 0;
         changed = true;
     } else {
@@ -219,15 +321,17 @@ static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, c
             if (!p->all)
                 s->arena_dead += s->row_clusters[phys];
             if (p->direct) {
-                // The plan reserved 1 + WSAP_VTCORE_GRAPHEME_MAX_LEN words for each
+                // The plan reserved the cluster and underline words for each
                 // cell of each new row, so convert_row cannot grow the arena or fail.
                 struct arena_out a = { &s->arena, &s->arena_cap, s->arena_len };
-                (void)convert_row(&a, t->gstore, dst, wsap_vtcore_screen_view_row(t, y), cols);
+                (void)convert_row(&a, t, dst, wsap_vtcore_screen_view_row(t, y), cols,
+                                  &s->row_ul[phys]);
                 s->row_clusters[phys] = a.len - s->arena_len;
                 s->arena_len = a.len;
             } else {
                 memcpy(dst, s->stage + (size_t)y * cols, row_bytes);
                 s->row_clusters[phys] = p->words[y];
+                s->row_ul[phys] = p->ul[y];
             }
             s->keys[phys] = p->keys[y];
             changed = true;
@@ -283,22 +387,23 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
     if (!reserve(s, cols, rows))
         return false;
     uint64_t stack_keys[256];
-    uint32_t stack_words[256];
+    uint32_t stack_words[2][256];
     int stack[2][256];
     uint64_t *new_keys = stack_keys;
-    uint32_t *words = stack_words;
+    uint32_t *words = stack_words[0], *ul = stack_words[1];
     int *c0 = stack[0], *c1 = stack[1];
     void *heap = NULL;
     if (rows > 256) {
-        heap = malloc((size_t)rows * (sizeof(*new_keys) + sizeof(*words) + 2 * sizeof(*c0)));
+        heap = malloc((size_t)rows * (sizeof(*new_keys) + 2 * sizeof(*words) + 2 * sizeof(*c0)));
         if (!heap)
             return false;
         new_keys = heap;
         words = (uint32_t *)(new_keys + rows);
-        c0 = (int *)(words + rows);
+        ul = words + rows;
+        c0 = (int *)(ul + rows);
         c1 = c0 + rows;
     }
-    struct plan p = { .keys = new_keys, .words = words, .c0 = c0, .c1 = c1 };
+    struct plan p = { .keys = new_keys, .words = words, .ul = ul, .c0 = c0, .c1 = c1 };
 
     if (s->arena_dead > 4096 && s->arena_dead * 2 > s->arena_len)
         all = true;
@@ -381,10 +486,14 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
                              : (struct arena_out){ &s->arena, &s->arena_cap, s->arena_len };
     // A cluster can come only from the cluster store or from a history row.
     // Each cell of a new row then needs at most 1 + WSAP_VTCORE_GRAPHEME_MAX_LEN words.
+    // An underline color needs one more word for each cell. It needs a style table.
     // The direct path converts in place, so it must reserve all of them first.
-    uint64_t worst = 0;
+    uint64_t cell_words = 0;
     if (wsap_vtcore_gstore_count(t->gstore) > 0 || t->hist.lines > 0)
-        worst = (uint64_t)p.staged * (uint64_t)cols * (1 + WSAP_VTCORE_GRAPHEME_MAX_LEN);
+        cell_words += 1 + WSAP_VTCORE_GRAPHEME_MAX_LEN;
+    if (t->styles)
+        cell_words += 1;
+    uint64_t worst = (uint64_t)p.staged * (uint64_t)cols * cell_words;
     // A full update takes the staged path. The direct path was not faster for it.
     if (!all && worst <= DIRECT_MAX_WORDS && arena_reserve(&a, a.len + worst)) {
         p.direct = true;
@@ -398,8 +507,8 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
             if (words[y] == ROW_KEPT)
                 continue;
             uint32_t before = a.len;
-            if (!convert_row(&a, t->gstore, s->stage + (size_t)y * cols,
-                             wsap_vtcore_screen_view_row(t, y), cols))
+            if (!convert_row(&a, t, s->stage + (size_t)y * cols,
+                             wsap_vtcore_screen_view_row(t, y), cols, &ul[y]))
                 goto done;
             words[y] = a.len - before;
         }
@@ -445,6 +554,16 @@ uint64_t wsap_vtcore_snapshot_row_key(const struct wsap_vtcore_snapshot *s, int 
     if (!s || y < 0 || y >= s->view.size.y)
         return 0;
     return s->keys[ring_row(s->top, y, s->view.size.y)];
+}
+
+const wsap_vtcore_color *wsap_vtcore_snapshot_row_underline_colors(const struct wsap_vtcore_snapshot *s, int y)
+{
+    if (!s || y < 0 || y >= s->view.size.y)
+        return NULL;
+    uint32_t off = s->row_ul[ring_row(s->top, y, s->view.size.y)];
+    if (off == ROW_NO_UL || off > s->arena_len || s->arena_len - off < (uint32_t)s->view.size.x)
+        return NULL;
+    return s->arena + off;
 }
 
 struct wsap_vtcore_span wsap_vtcore_snapshot_row_selection(const struct wsap_vtcore_snapshot *s, int y)

@@ -49,9 +49,13 @@ static bool same(const struct pair *p, int seed, int step)
         for (int y = 0; same && y < rows; y++) {
             const struct wsap_vtcore_cell *ra = wsap_vtcore_snapshot_row(p->snap_bulk, y);
             const struct wsap_vtcore_cell *rb = wsap_vtcore_snapshot_row(p->snap_bytes, y);
+            const wsap_vtcore_color *ua = wsap_vtcore_snapshot_row_underline_colors(p->snap_bulk, y);
+            const wsap_vtcore_color *ub = wsap_vtcore_snapshot_row_underline_colors(p->snap_bytes, y);
             for (int x = 0; x < cols; x++) {
                 const struct wsap_vtcore_cell *a = &ra[x], *b = &rb[x];
-                if (!same_cell(p, a, b)) {
+                wsap_vtcore_color ula = ua ? ua[x] : WSAP_VTCORE_COLOR_NONE;
+                wsap_vtcore_color ulb = ub ? ub[x] : WSAP_VTCORE_COLOR_NONE;
+                if (!same_cell(p, a, b) || ula != ulb) {
                     if (p->verbose)
                         fprintf(stderr, "seed %d step %d: page %d row %d col %d: "
                                 "bulk %x/%x/%x/%x/%u, bytes %x/%x/%x/%x/%u\n",

@@ -9,6 +9,7 @@
 #include "hist/view.h"
 #include "palette.h"
 #include "pen.h"
+#include "style.h"
 #include "text/run.h"
 #include "compat.h"
 #include <stdatomic.h>
@@ -46,6 +47,8 @@ struct wsap_vtcore_saved_cursor {
     char charsets[2];
     uint8_t underline;
     uint8_t charset_active;
+    /* Blink, conceal, and protection (CELL_EXT_FLAGS). */
+    uint16_t ext;
     bool bold : 1;
     bool faint : 1;
     bool italic : 1;
@@ -123,11 +126,14 @@ struct wsap_vtcore {
            ST_DCS_ESC, ST_IGNORE, ST_IGNORE_ESC, ST_DOCS, ST_DECALN } state;
     struct csi_parser csi_parser;
 
-    uint16_t cur_link;
+    /* The pad field of new cells: the style id of cur_link and cur_ul, and
+     * the CELL_EXT_FLAGS of the pen. */
+    uint16_t cur_pad;
+    /* cur_pad after SGR 0: the style id of cur_link alone and the
+     * protection. A reset then needs no table lookup. */
+    uint16_t base_pad;
     char charsets[2];
     uint8_t underline;
-    uint8_t decsace;
-    char charset_designation;
     bool graphics;
 
     bool bold : 1;
@@ -136,6 +142,9 @@ struct wsap_vtcore {
     bool strike : 1;
     bool overline : 1;
     bool inverse : 1;
+    /* cur_pad differs from base_pad: the pen has blink, conceal, or an
+     * underline color. SGR 0 tests this bit and clears it with the others. */
+    bool pen_ext : 1;
     bool pending_wrap : 1;
     bool autowrap : 1;
     bool insert_mode : 1;
@@ -201,6 +210,11 @@ struct wsap_vtcore {
     int view_scratch_cap;
     bool custom_tabs;
 
+    /* The link id of the pen. */
+    uint16_t cur_link;
+    uint8_t decsace;
+    char charset_designation;
+
     char osc_buf[256];
     char name[64];
     char tcap_name[64];
@@ -210,6 +224,7 @@ struct wsap_vtcore {
     char *dcs_buf;
     size_t dcs_cap;
     void *links;
+    struct wsap_vtcore_styles *styles;
     char *cwd;
     char *pointer_shape;
 
@@ -231,6 +246,7 @@ struct wsap_vtcore {
 
 static inline void reset_sgr(struct wsap_vtcore *t)
 {
+    bool ext = t->pen_ext;
     t->cur_fg = WSAP_VTCORE_COLOR_FG;
     t->cur_bg = WSAP_VTCORE_COLOR_BG;
     t->bold = false;
@@ -240,7 +256,28 @@ static inline void reset_sgr(struct wsap_vtcore *t)
     t->strike = false;
     t->overline = false;
     t->inverse = false;
+    t->pen_ext = false;
     t->cur_ul = 0;
+    /* Plain SGR 0 must stay one masked store. Touch cur_pad only when it
+     * holds more than the base. */
+    if (WSAP_VTCORE_EXPECT(ext, 0))
+        t->cur_pad = t->base_pad;
+}
+
+static inline void pen_sync_ext(struct wsap_vtcore *t)
+{
+    t->pen_ext = t->cur_pad != t->base_pad;
+}
+
+static inline void pen_set_protected(struct wsap_vtcore *t, bool on)
+{
+    if (on) {
+        t->cur_pad |= CELL_EXT_PROTECTED;
+        t->base_pad |= CELL_EXT_PROTECTED;
+    } else {
+        t->cur_pad &= (uint16_t)~CELL_EXT_PROTECTED;
+        t->base_pad &= (uint16_t)~CELL_EXT_PROTECTED;
+    }
 }
 
 static inline struct wsap_vtcore_saved_cursor wsap_vtcore_saved_cursor_initial(void)
@@ -258,6 +295,7 @@ static inline struct wsap_vtcore_saved_cursor wsap_vtcore_cursor_save(const stru
         .charsets = { t->charsets[0], t->charsets[1] },
         .underline = t->underline,
         .charset_active = (uint8_t)t->charset_active,
+        .ext = (uint16_t)(t->cur_pad & CELL_EXT_FLAGS),
         .bold = t->bold, .faint = t->faint, .italic = t->italic,
         .strike = t->strike, .overline = t->overline, .inverse = t->inverse,
         .origin = t->origin_mode, .pending_wrap = t->pending_wrap,
@@ -268,7 +306,9 @@ static inline void wsap_vtcore_cursor_apply(struct wsap_vtcore *t, const struct 
 {
     t->cur_fg = s->fg;
     t->cur_bg = s->bg;
+    t->cur_pad = (uint16_t)((t->cur_pad & CELL_EXT_ID) | (s->ext & CELL_EXT_FLAGS));
     t->cur_ul = s->ul;
+    wsap_vtcore_style_update(t);
     t->underline = s->underline;
     t->bold = s->bold;
     t->faint = s->faint;
@@ -349,13 +389,14 @@ static inline uint16_t wsap_vtcore_current_flags(const struct wsap_vtcore *t)
         f |= wsap_vtcore_ul_flags[t->underline];
     if (t->strike) f |= CELL_STRIKE;
     if (t->overline) f |= CELL_OVERLINE;
-    if (t->cur_link) f |= CELL_LINK;
+    /* The style of the link alone has an id exactly when the pen has a link. */
+    if (t->base_pad & CELL_EXT_ID) f |= CELL_LINK;
     return f;
 }
 
 static inline uint32_t wsap_vtcore_flags_pad(const struct wsap_vtcore *t)
 {
-    return wsap_vtcore_current_flags(t) | ((uint32_t)t->cur_link << 16);
+    return wsap_vtcore_current_flags(t) | ((uint32_t)t->cur_pad << 16);
 }
 
 static inline struct text_pen wsap_vtcore_text_pen(const struct wsap_vtcore *t)

@@ -72,7 +72,7 @@ void wsap_vtcore_sc_print_glyph(struct wsap_vtcore *t, uint32_t cp, int width, u
                 row[cx] = (struct cell){cp,
                     t->inverse ? t->cur_bg : t->cur_fg,
                     t->inverse ? t->cur_fg : t->cur_bg,
-                    flags, t->cur_link};
+                    flags, t->cur_pad};
                 t->last_char = cp;
                 cx++;
                 if (cx > len) srow->len = (uint16_t)cx;
@@ -148,7 +148,7 @@ void wsap_vtcore_sc_print_glyph(struct wsap_vtcore *t, uint32_t cp, int width, u
 
     uint32_t fg = t->inverse ? t->cur_bg : t->cur_fg;
     uint32_t bg = t->inverse ? t->cur_fg : t->cur_bg;
-    write_cell_span(row, cx, (struct cell){ cp, fg, bg, flags, t->cur_link }, span);
+    write_cell_span(row, cx, (struct cell){ cp, fg, bg, flags, t->cur_pad }, span);
     if (cx + span > srow->len)
         srow->len = (uint16_t)(cx + span);
     srow->version++;
@@ -218,14 +218,17 @@ bool wsap_vtcore_sc_extend_cluster(struct wsap_vtcore *t, uint32_t cp, int klass
                    cell.flags & ~(CELL_WIDE | CELL_EMOJI | CELL_TEXT));
     t->insert_mode = insert_mode;
 
+    // The cluster keeps the colors and the extended style of its base cell.
     prev = last_written_cell(t);
     if (prev) {
         row = row_cells(t, phys_row(t, t->cursor_y));
         prev->fg = cell.fg;
         prev->bg = cell.bg;
+        prev->pad = cell.pad;
         if ((prev->flags & CELL_WIDE) && prev < row + t->cols - 1) {
             prev[1].fg = cell.fg;
             prev[1].bg = cell.bg;
+            prev[1].pad = cell.pad;
         }
     }
     return true;

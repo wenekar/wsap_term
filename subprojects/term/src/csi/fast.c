@@ -400,7 +400,9 @@ int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
                     case 49: bg = WSAP_VTCORE_COLOR_BG; break;
                     case 53: t->overline = true; break;
                     case 55: t->overline = false; break;
-                    case 59: t->cur_ul = 0; break;
+                    case 5: case 6: case 8: case 25: case 28: case 58: case 59:
+                        p = esc;
+                        goto done;
                     case 30: case 31: case 32: case 33: case 34: case 35: case 36: case 37:
                         fg = wsap_vtcore_color_index((uint8_t)(v - 30));
                         break;
@@ -436,8 +438,8 @@ int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
                     case 24: t->underline = 0; break;
                     case 27: t->inverse = false; break;
                     case 29: t->strike = false; break;
-                    case 38: case 48: case 58: {
-                        uint32_t *slot = v == 38 ? &fg : v == 48 ? &bg : &t->cur_ul;
+                    case 38: case 48: {
+                        uint32_t *slot = v == 38 ? &fg : &bg;
                         if (j + 2 < nparams && pv[j + 1] == 5) {
                             if (pv[j + 2] >= 0 && pv[j + 2] <= 255)
                                 *slot = wsap_vtcore_color_index(pv[j + 2]);
@@ -459,7 +461,11 @@ int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
                     case 49: bg = WSAP_VTCORE_COLOR_BG; break;
                     case 53: t->overline = true; break;
                     case 55: t->overline = false; break;
-                    case 59: t->cur_ul = 0; break;
+                    /* SGR parameters set absolute values, so the general
+                     * parser can apply the whole sequence again. */
+                    case 5: case 6: case 8: case 25: case 28: case 58: case 59:
+                        p = esc;
+                        goto done;
                     case 30: case 31: case 32: case 33: case 34: case 35: case 36: case 37:
                         fg = wsap_vtcore_color_index((uint8_t)(v - 30));
                         break;

@@ -40,7 +40,7 @@ static inline void sc_print_cell(struct wsap_vtcore *t, uint32_t cp, int width, 
                 row[cx] = (struct cell){cp,
                     t->inverse ? t->cur_bg : t->cur_fg,
                     t->inverse ? t->cur_fg : t->cur_bg,
-                    flags, t->cur_link};
+                    flags, t->cur_pad};
                 t->last_char = cp;
                 cx++;
                 if (cx > len) srow->len = (uint16_t)cx;

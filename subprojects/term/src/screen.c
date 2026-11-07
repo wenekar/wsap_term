@@ -586,6 +586,129 @@ void wsap_vtcore_screen_erase(struct wsap_vtcore *t, int mode)
     }
 }
 
+/* Erase the cells from to `to` of physical row p that DECSCA did not
+ * protect. Each run of erasable cells takes the path of EL, so the run gets
+ * the same blanks. The cells after the row length are not protected. */
+static void erase_span_selective(struct wsap_vtcore *t, int p, int from, int to)
+{
+    struct srow *row = &t->scr.slot[p];
+    if (to > WSAP_VTCORE_MAX_COLS)
+        to = WSAP_VTCORE_MAX_COLS;
+    if (from >= to)
+        return;
+    if (row->len == 0) {
+        erase_span(t, p, from, to);
+        return;
+    }
+    const struct cell *cells = row_cells(t, p);
+    int end = row->len < to ? row->len : to;
+    int x = from;
+    while (x < to) {
+        while (x < end && (cells[x].pad & CELL_EXT_PROTECTED))
+            x++;
+        if (x >= to)
+            break;
+        int run = x;
+        while (x < end && !(cells[x].pad & CELL_EXT_PROTECTED))
+            x++;
+        /* Only the last run can reach the row length. Only it can make the
+         * row shorter. A run that starts after the length also ends here. */
+        if (x >= end)
+            x = to;
+        erase_span(t, p, run, x);
+    }
+}
+
+void wsap_vtcore_screen_selective_erase(struct wsap_vtcore *t, int mode)
+{
+    t->pending_wrap = false;
+    if (mode == 3) {
+        wsap_vtcore_screen_erase(t, 3);
+        return;
+    }
+    if (mode < 0 || mode > 2)
+        return;
+    /* Unlike ED 2, DECSED 2 keeps the protected cells in place. No row
+     * goes into the history. */
+    int cur_p = phys_row(t, t->cursor_y);
+    if (mode == 0)
+        erase_span_selective(t, cur_p, t->cursor_x, erase_width(t, cur_p));
+    int first = mode == 0 ? t->cursor_y + 1 : 0;
+    int last = mode == 1 ? t->cursor_y - 1 : t->rows - 1;
+    bool pristine = using_default_colors(t);
+    for (int y = first; y <= last; y++) {
+        int p = phys_row(t, y);
+        if (pristine && t->scr.slot[p].len == 0 && !(t->scr.slot[p].flags & RF_WRAPPED))
+            continue;
+        erase_span_selective(t, p, 0, erase_width(t, p));
+    }
+    if (mode == 1)
+        erase_span_selective(t, cur_p, 0, t->cursor_x + 1);
+    t->scr.slot[cur_p].version++;
+}
+
+void wsap_vtcore_screen_selective_erase_line(struct wsap_vtcore *t, int mode)
+{
+    t->pending_wrap = false;
+    int p = phys_row(t, t->cursor_y);
+    if (mode == 0)
+        erase_span_selective(t, p, t->cursor_x, erase_width(t, p));
+    else if (mode == 1)
+        erase_span_selective(t, p, 0, t->cursor_x + 1);
+    else if (mode == 2)
+        erase_span_selective(t, p, 0, erase_width(t, p));
+}
+
+/* Replace the text of the erasable cells x0 to x1 of row y with spaces. The
+ * cells keep their colors and attributes. A wide character that crosses an
+ * edge becomes two spaces. */
+static void wipe_cells(struct wsap_vtcore *t, int y, int x0, int x1)
+{
+    int p = phys_row(t, y);
+    struct srow *srow = &t->scr.slot[p];
+    int len = srow->len;
+    if (x0 >= len)
+        return;
+    struct cell *row = row_cells(t, p);
+    if (x1 >= len)
+        x1 = len - 1;
+    if (x0 > 0 && (row[x0].flags & CELL_TRAIL))
+        x0--;
+    if (x1 + 1 < t->cols && x1 + 1 < len && (row[x1].flags & CELL_WIDE))
+        x1++;
+    for (int x = x0; x <= x1; x++) {
+        if (row[x].pad & CELL_EXT_PROTECTED)
+            continue;
+        row[x].c = ' ';
+        row[x].flags &= (uint16_t)~(CELL_WIDE | CELL_TRAIL | CELL_EMOJI | CELL_TEXT);
+    }
+    srow->version++;
+}
+
+void wsap_vtcore_screen_selective_erase_rect(struct wsap_vtcore *t, const struct csi *csi)
+{
+    /* In origin mode, the coordinates count from the margins and stop at them. */
+    bool lr = t->origin_mode && t->lr_margin_mode;
+    int top_limit = t->origin_mode ? t->scroll_top : 0;
+    int bottom_limit = t->origin_mode ? t->scroll_bottom : t->rows - 1;
+    int left_limit = lr ? t->left_margin : 0;
+    int right_limit = lr ? t->right_margin : t->cols - 1;
+    int64_t top = (int64_t)(csi->params[0] > 0 ? csi->params[0] : 1) - 1 + top_limit;
+    int64_t left = (int64_t)(csi->nparams > 1 && csi->params[1] > 0 ? csi->params[1] : 1) - 1 + left_limit;
+    int64_t bottom = csi->nparams > 2 && csi->params[2] > 0 ? (int64_t)csi->params[2] - 1 + top_limit
+                                                            : bottom_limit;
+    int64_t right = csi->nparams > 3 && csi->params[3] > 0 ? (int64_t)csi->params[3] - 1 + left_limit
+                                                           : right_limit;
+    if (bottom > bottom_limit)
+        bottom = bottom_limit;
+    if (right > right_limit)
+        right = right_limit;
+    if (top > bottom || left > right)
+        return;
+    for (int y = (int)top; y <= (int)bottom; y++)
+        wipe_cells(t, y, (int)left, (int)right);
+}
+
 static inline void reset_scrolled_row(struct wsap_vtcore *t, struct srow *row, bool def)
 {
     row->kind = ROW_CELLS;
@@ -1051,6 +1174,7 @@ void wsap_vtcore_free(struct wsap_vtcore *t)
     free(t->view_row_scratch);
     free(t->tabs);
     wsap_vtcore_osc_cleanup(t);
+    wsap_vtcore_style_free(t);
     wsap_vtcore_gstore_free(t->gstore);
     wsap_vtcore_mutex_destroy(&t->write_lock);
     free(t);

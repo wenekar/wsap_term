@@ -15,6 +15,7 @@ wsap_vtcore_sources = files(
   'screen.c',
   'selection.c',
   'snapshot.c',
+  'style.c',
   'term/state.c',
   'text/run.c',
   'text/text.c',

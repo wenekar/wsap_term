@@ -17,8 +17,10 @@ struct cell {
     uint32_t cp[WSAP_VTCORE_GRAPHEME_MAX_LEN];
     uint8_t n, width;
     uint16_t attrs;
-    wsap_vtcore_color fg, bg;
+    wsap_vtcore_color fg, bg, ul;
     bool pad;
+    /* DECSCA protects the cell from selective erase. */
+    bool prot;
 };
 
 struct row {
@@ -31,6 +33,7 @@ struct pen {
     wsap_vtcore_color fg, bg, ul;
     uint16_t attrs;
     bool inverse;
+    bool prot;
 };
 
 struct saved {
@@ -335,6 +338,49 @@ static void erase_line(struct model *m, int mode)
     else if (mode == 2) erase_cells(m, m->y, 0, m->cols);
 }
 
+/* Erase the cells that DECSCA did not protect. Each run of erasable cells
+ * takes the path of EL. The cells after the row length are not protected. */
+static void erase_cells_selective(struct model *m, int y, int from, int to)
+{
+    struct row *r = m->scr[y];
+    if (to > m->cols) to = m->cols;
+    if (from >= to) return;
+    if (r->len == 0) {
+        erase_cells(m, y, from, to);
+        return;
+    }
+    int end = r->len < to ? r->len : to;
+    int x = from;
+    while (x < to) {
+        while (x < end && r->c[x].prot) x++;
+        if (x >= to) break;
+        int run = x;
+        while (x < end && !r->c[x].prot) x++;
+        if (x >= end) x = to;
+        erase_cells(m, y, run, x);
+    }
+}
+
+static void erase_display_selective(struct model *m, int mode)
+{
+    if (mode == 3) {
+        erase_display(m, 3);
+        return;
+    }
+    if (mode < 0 || mode > 2) return;
+    if (mode == 0) erase_cells_selective(m, m->y, m->x, m->cols);
+    int first = mode == 0 ? m->y + 1 : 0, last = mode == 1 ? m->y - 1 : m->rows - 1;
+    for (int y = first; y <= last; y++) erase_cells_selective(m, y, 0, m->cols);
+    if (mode == 1) erase_cells_selective(m, m->y, 0, m->x + 1);
+}
+
+static void erase_line_selective(struct model *m, int mode)
+{
+    if (mode == 0) erase_cells_selective(m, m->y, m->x, m->cols);
+    else if (mode == 1) erase_cells_selective(m, m->y, 0, m->x + 1);
+    else if (mode == 2) erase_cells_selective(m, m->y, 0, m->cols);
+}
+
 static void split_edges(struct model *m, struct row *r, int from, int to)
 {
     if (from >= to) return;
@@ -419,6 +465,7 @@ static void put_glyph(struct model *m, const uint32_t *cps, int n, uint16_t attr
         .n = (uint8_t)n, .width = (uint8_t)span, .attrs = attrs,
         .fg = m->pen.inverse ? m->pen.bg : m->pen.fg,
         .bg = m->pen.inverse ? m->pen.fg : m->pen.bg,
+        .ul = m->pen.ul, .prot = m->pen.prot,
     };
     memcpy(c.cp, cps, (size_t)n * sizeof(*cps));
     r->c[x] = c;
@@ -490,9 +537,13 @@ static bool extend_cluster(struct model *m, uint32_t cp, int width)
     if (x > 0 && r->c[x].width == 0) x--;
     r->c[x].fg = old.fg;
     r->c[x].bg = old.bg;
+    r->c[x].ul = old.ul;
+    r->c[x].prot = old.prot;
     if (r->c[x].width == 2 && x + 1 < m->cols) {
         r->c[x + 1].fg = old.fg;
         r->c[x + 1].bg = old.bg;
+        r->c[x + 1].ul = old.ul;
+        r->c[x + 1].prot = old.prot;
     }
     return true;
 }
@@ -672,7 +723,7 @@ static void shift_cols(struct model *m, int x, int n, bool insert)
 
 static void pen_reset(struct pen *p)
 {
-    *p = (struct pen){ .fg = WSAP_VTCORE_COLOR_FG, .bg = WSAP_VTCORE_COLOR_BG };
+    *p = (struct pen){ .fg = WSAP_VTCORE_COLOR_FG, .bg = WSAP_VTCORE_COLOR_BG, .prot = p->prot };
 }
 
 static void set_underline(uint16_t *attrs, int style)
@@ -733,13 +784,17 @@ static void sgr(struct model *m)
             set_underline(&p->attrs, style);
             break;
         }
+        case 5: case 6: p->attrs |= WSAP_VTCORE_ATTR_BLINK; break;
         case 7: p->inverse = true; break;
+        case 8: p->attrs |= WSAP_VTCORE_ATTR_CONCEAL; break;
         case 9: p->attrs |= WSAP_VTCORE_ATTR_STRIKE; break;
         case 21: set_underline(&p->attrs, 2); break;
         case 22: p->attrs &= (uint16_t)~(WSAP_VTCORE_ATTR_BOLD | WSAP_VTCORE_ATTR_FAINT); break;
         case 23: p->attrs &= (uint16_t)~WSAP_VTCORE_ATTR_ITALIC; break;
         case 24: set_underline(&p->attrs, 0); break;
+        case 25: p->attrs &= (uint16_t)~WSAP_VTCORE_ATTR_BLINK; break;
         case 27: p->inverse = false; break;
+        case 28: p->attrs &= (uint16_t)~WSAP_VTCORE_ATTR_CONCEAL; break;
         case 29: p->attrs &= (uint16_t)~WSAP_VTCORE_ATTR_STRIKE; break;
         case 38: i += extended_color(m, i, &color, &ok); if (ok) p->fg = color; break;
         case 39: p->fg = WSAP_VTCORE_COLOR_FG; break;
@@ -767,7 +822,8 @@ static void sgr_report(const struct model *m, char *out, size_t cap)
 #define ADD(...) do { int k = snprintf(out + n, cap - n, __VA_ARGS__); if (k > 0) n += (size_t)k; } while (0)
     int ul = wsap_vtcore_attr_underline(p->attrs);
     if (!(p->attrs & (WSAP_VTCORE_ATTR_BOLD | WSAP_VTCORE_ATTR_FAINT | WSAP_VTCORE_ATTR_ITALIC | WSAP_VTCORE_ATTR_STRIKE |
-                      WSAP_VTCORE_ATTR_OVERLINE | WSAP_VTCORE_ATTR_UNDERLINE_MASK)) &&
+                      WSAP_VTCORE_ATTR_OVERLINE | WSAP_VTCORE_ATTR_UNDERLINE_MASK |
+                      WSAP_VTCORE_ATTR_BLINK | WSAP_VTCORE_ATTR_CONCEAL)) &&
         !p->inverse && p->fg == WSAP_VTCORE_COLOR_FG && p->bg == WSAP_VTCORE_COLOR_BG && !p->ul)
         return;
     ADD("0");
@@ -776,7 +832,9 @@ static void sgr_report(const struct model *m, char *out, size_t cap)
     if (p->attrs & WSAP_VTCORE_ATTR_ITALIC) ADD(";3");
     if (ul == 1) ADD(";4");
     else if (ul) ADD(";4:%d", ul);
+    if (p->attrs & WSAP_VTCORE_ATTR_BLINK) ADD(";5");
     if (p->inverse) ADD(";7");
+    if (p->attrs & WSAP_VTCORE_ATTR_CONCEAL) ADD(";8");
     if (p->attrs & WSAP_VTCORE_ATTR_STRIKE) ADD(";9");
     if (p->attrs & WSAP_VTCORE_ATTR_OVERLINE) ADD(";53");
     const wsap_vtcore_color colors[3] = { p->fg, p->bg, p->ul };
@@ -803,7 +861,8 @@ static void cara_cell(struct model *m, struct cell *c)
     if (m->nparam <= 4) {
         c->fg = WSAP_VTCORE_COLOR_FG;
         c->bg = WSAP_VTCORE_COLOR_BG;
-        c->attrs &= WSAP_VTCORE_ATTR_EMOJI | WSAP_VTCORE_ATTR_TEXT | WSAP_VTCORE_ATTR_LINK;
+        c->attrs &= WSAP_VTCORE_ATTR_EMOJI | WSAP_VTCORE_ATTR_TEXT | WSAP_VTCORE_ATTR_LINK |
+                    WSAP_VTCORE_ATTR_BLINK | WSAP_VTCORE_ATTR_CONCEAL;
         return;
     }
     for (int i = 4; i < m->nparam; i++) {
@@ -814,7 +873,8 @@ static void cara_cell(struct model *m, struct cell *c)
         case 0:
             c->fg = WSAP_VTCORE_COLOR_FG;
             c->bg = WSAP_VTCORE_COLOR_BG;
-            c->attrs &= WSAP_VTCORE_ATTR_EMOJI | WSAP_VTCORE_ATTR_TEXT | WSAP_VTCORE_ATTR_LINK;
+            c->attrs &= WSAP_VTCORE_ATTR_EMOJI | WSAP_VTCORE_ATTR_TEXT | WSAP_VTCORE_ATTR_LINK |
+                    WSAP_VTCORE_ATTR_BLINK | WSAP_VTCORE_ATTR_CONCEAL;
             reverse = false;
             break;
         case 1: c->attrs |= WSAP_VTCORE_ATTR_BOLD; break;
@@ -898,6 +958,37 @@ static void area_span(const struct model *m, int y, int top, int left, int botto
     bool exact = m->decsace == 2;
     *x0 = exact || y == top ? left : 0;
     *x1 = exact || y == bottom ? right : m->cols - 1;
+}
+
+/* DECSERA: the erasable cells become spaces and keep their attributes. In
+ * origin mode, rows count from the top margin. */
+static void decsera(struct model *m)
+{
+    int top_lim = top_limit(m), bottom_lim = bottom_limit(m);
+    long top = (long)(m->param[0] > 0 ? m->param[0] : 1) - 1 + top_lim;
+    long left = (long)(m->nparam > 1 && m->param[1] > 0 ? m->param[1] : 1) - 1;
+    long bottom = m->nparam > 2 && m->param[2] > 0 ? (long)m->param[2] - 1 + top_lim : bottom_lim;
+    long right = m->nparam > 3 && m->param[3] > 0 ? (long)m->param[3] - 1 : m->cols - 1;
+    if (bottom > bottom_lim) bottom = bottom_lim;
+    if (right > m->cols - 1) right = m->cols - 1;
+    if (top > bottom || left > right) return;
+    for (int y = (int)top; y <= (int)bottom; y++) {
+        struct row *r = m->scr[y];
+        int x0 = (int)left, x1 = (int)right;
+        if (x0 >= r->len) continue;
+        if (x1 >= r->len) x1 = r->len - 1;
+        if (x0 > 0 && r->c[x0].width == 0) x0--;
+        if (x1 + 1 < m->cols && x1 + 1 < r->len && r->c[x1].width == 2) x1++;
+        for (int x = x0; x <= x1; x++) {
+            struct cell *c = &r->c[x];
+            if (c->prot) continue;
+            memset(c->cp, 0, sizeof(c->cp));
+            c->cp[0] = ' ';
+            c->n = 1;
+            c->width = 1;
+            c->attrs &= (uint16_t)~(WSAP_VTCORE_ATTR_EMOJI | WSAP_VTCORE_ATTR_TEXT);
+        }
+    }
 }
 
 static void deccara(struct model *m)
@@ -1412,6 +1503,7 @@ static void soft_reset(struct model *m)
     m->decsace = 0;
     memset(m->keyboard, 0, sizeof(m->keyboard));
     pen_reset(&m->pen);
+    m->pen.prot = false;
 }
 
 static void full_reset(struct model *m)
@@ -1508,11 +1600,12 @@ static bool csi_allowed(const struct model *m, unsigned char final)
     if (final == 'm') return !prefix && !inter;
     if (final == 'H' || final == 'f') return !prefix && !inter && !m->sub;
     if (inter) {
-        bool plain = (final == 'q' && inter == ' ') || (final == 'p' && inter == '!') ||
-                     (final == 'x' && inter == '*') ||
+        bool plain = (final == 'q' && inter == ' ') || (final == 'q' && inter == '"') ||
+                     (final == 'p' && inter == '!') || (final == 'x' && inter == '*') ||
                      ((final == '@' || final == 'A') && inter == ' ') ||
                      ((final == '}' || final == '~') && inter == '\'') ||
-                     ((final == 'x' || final == 'z' || final == 'v' || final == 't') && inter == '$');
+                     ((final == 'x' || final == 'z' || final == 'v' || final == 't' || final == '{') &&
+                      inter == '$');
         if (plain) {
             if (prefix || m->sub) return false;
         } else if (final == 'p' && inter == '$') {
@@ -1530,7 +1623,6 @@ static bool csi_allowed(const struct model *m, unsigned char final)
         !(final == 'p' && inter == '$' && prefix == '?') &&
         !(final == 'W' && prefix == '?') &&
         !(final == 'n' && prefix == '?') &&
-        /* DECSED and DECSEL: nothing is protected, so they act as ED and EL. */
         !((final == 'J' || final == 'K') && prefix == '?') &&
         !((final == 'h' || final == 'l') && prefix == '?'))
         return false;
@@ -1662,8 +1754,19 @@ static void csi_dispatch(struct model *m, unsigned char final)
         if (m->param[0] == 5) reply(m, "\033[0n");
         else if (m->param[0] == 6) reply(m, "\033[%d;%dR", m->y - top_limit(m) + 1, m->x + 1);
         break;
-    case 'J': m->pending = false; erase_display(m, m->param[0]); break;
-    case 'K': m->pending = false; erase_line(m, m->param[0]); break;
+    case 'J':
+        m->pending = false;
+        if (m->prefix) erase_display_selective(m, m->param[0]);
+        else erase_display(m, m->param[0]);
+        break;
+    case 'K':
+        m->pending = false;
+        if (m->prefix) erase_line_selective(m, m->param[0]);
+        else erase_line(m, m->param[0]);
+        break;
+    case '{':
+        if (m->inter == '$') decsera(m);
+        break;
     case 'X': {
         m->pending = false;
         int k = n > m->cols - m->x ? m->cols - m->x : n;
@@ -1695,7 +1798,7 @@ static void csi_dispatch(struct model *m, unsigned char final)
         break;
     case 'c':
         if (m->prefix == '>') reply(m, "\033[>0;10;0c");
-        else if (!m->prefix && m->param[0] == 0) reply(m, "\033[?62;21;22;28c");
+        else if (!m->prefix && m->param[0] == 0) reply(m, "\033[?62;6;21;22;28c");
         else if (m->prefix == '=' && m->param[0] == 0) reply(m, "\033P!|00000000\033\\");
         break;
     case 't':
@@ -1726,6 +1829,9 @@ static void csi_dispatch(struct model *m, unsigned char final)
                                                                : WSAP_VTCORE_CURSOR_BAR;
                 m->blink = ps & 1;
             }
+        } else if (!m->prefix && m->inter == '"') {
+            if (m->param[0] == 1) m->pen.prot = true;
+            else if (m->param[0] == 0 || m->param[0] == 2) m->pen.prot = false;
         }
         break;
     case 'p':
@@ -1779,7 +1885,7 @@ static void dcs_finish(struct model *m)
     } else if (n == 2 && !memcmp(spec, "\"p", 2)) {
         reply(m, "\033P1$r64;1\"p\033\\");
     } else if (n == 2 && !memcmp(spec, "\"q", 2)) {
-        reply(m, "\033P1$r0\"q\033\\");
+        reply(m, "\033P1$r%d\"q\033\\", m->pen.prot ? 1 : 0);
     } else if (n == 2 && !memcmp(spec, "$|", 2)) {
         reply(m, "\033P1$r%d$|\033\\", m->cols);
     } else if (n == 2 && !memcmp(spec, "$}", 2)) {
@@ -2152,6 +2258,7 @@ const struct model_cell *model_row(const struct model *m, int row)
         o->attrs = c->attrs;
         o->fg = c->fg;
         o->bg = c->bg;
+        o->ul = c->ul;
     }
     return mm->out[row];
 }
