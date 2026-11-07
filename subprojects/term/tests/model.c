@@ -1378,6 +1378,7 @@ static bool csi_allowed(const struct model *m, unsigned char final)
         !(final == 'q' && prefix == '>' && !inter) &&
         !(final == 'p' && inter == '$' && prefix == '?') &&
         !(final == 'W' && prefix == '?') &&
+        !(final == 'n' && prefix == '?') &&
         !((final == 'h' || final == 'l') && prefix == '?'))
         return false;
     if (m->sub && !(inter == '$' && final == 'r')) return false;
@@ -1499,6 +1500,8 @@ static void csi_dispatch(struct model *m, unsigned char final)
         if (m->prefix == '?' && m->param[0] == 5) tabs_default(m);
         break;
     case 'n':
+        if (m->prefix == '?' && m->param[0] == 6)
+            reply(m, "\033[?%d;%d;1R", m->y - top_limit(m) + 1, m->x + 1);
         if (m->prefix) break;
         if (m->param[0] == 5) reply(m, "\033[0n");
         else if (m->param[0] == 6) reply(m, "\033[%d;%dR", m->y - top_limit(m) + 1, m->x + 1);
@@ -1519,10 +1522,14 @@ static void csi_dispatch(struct model *m, unsigned char final)
     case 'c':
         if (m->prefix == '>') reply(m, "\033[>0;10;0c");
         else if (!m->prefix && m->param[0] == 0) reply(m, "\033[?62;22c");
+        else if (m->prefix == '=' && m->param[0] == 0) reply(m, "\033P!|00000000\033\\");
         break;
     case 't':
-        if (!m->prefix && m->param[0] == 14)
-            reply(m, "\033[4;%d;%dt", m->rows * 20, m->cols * 10);
+        /* The model has no cell size, so pixel reports give zero. */
+        if (m->prefix) break;
+        if (m->param[0] == 14 || m->param[0] == 16) reply(m, "\033[%d;0;0t", m->param[0] - 10);
+        else if (m->param[0] == 18 || m->param[0] == 19)
+            reply(m, "\033[%d;%d;%dt", m->param[0] - 10, m->rows, m->cols);
         break;
     case 'h': case 'l':
         for (int i = 0; i < m->nparam; i++)

@@ -881,10 +881,261 @@ static void test_device_attributes(void)
     write_seq(t, "\033[>c");
     assert(!strcmp(response, "\033[>0;10;0c"));
 
-    response_len = 0;
     write_seq(t, "\033[=c");
+    assert(!strcmp(response, "\033P!|00000000\033\\"));
+    response[0] = 0;
+    write_seq(t, "\033[=0c");
+    assert(!strcmp(response, "\033P!|00000000\033\\"));
+    response_len = 0;
+    write_seq(t, "\033[=1c");
     assert(response_len == 0);
 
+    wsap_vtcore_free(t);
+}
+
+/* Collect every reply and title in order. */
+struct report_log {
+    char text[8192];
+    size_t len;
+    size_t title_len;
+};
+
+static void log_bytes(struct report_log *rl, const char *bytes, size_t len)
+{
+    assert(rl->len + len < sizeof(rl->text));
+    memcpy(rl->text + rl->len, bytes, len);
+    rl->len += len;
+    rl->text[rl->len] = 0;
+}
+
+static void log_reply(void *ud, const char *bytes, size_t len)
+{
+    log_bytes(ud, bytes, len);
+}
+
+static void log_title(void *ud, const char *title)
+{
+    struct report_log *rl = ud;
+    rl->title_len = strlen(title);
+    log_bytes(rl, "<", 1);
+    log_bytes(rl, title, rl->title_len < 64 ? rl->title_len : 64);
+    log_bytes(rl, ">", 1);
+}
+
+static struct wsap_vtcore *report_term(int cols, int rows, struct report_log *rl)
+{
+    *rl = (struct report_log){0};
+    struct wsap_vtcore_callbacks cb = { .ud = rl, .reply = log_reply, .title = log_title };
+    struct wsap_vtcore *t = tt_new_opts(cols, rows, &cb);
+    assert(t);
+    return t;
+}
+
+/* Compare the collected output, then clear it. */
+static bool logged(struct report_log *rl, const char *want)
+{
+    bool same = !strcmp(rl->text, want);
+    if (!same)
+        fprintf(stderr, "logged \"%s\", want \"%s\"\n", rl->text, want);
+    rl->len = 0;
+    rl->text[0] = 0;
+    return same;
+}
+
+static void test_window_size_reports(void)
+{
+    struct report_log rl;
+    struct wsap_vtcore *t = report_term(80, 24, &rl);
+
+    /* Without a cell size, pixel reports give zero. */
+    write_seq(t, "\033[14t\033[16t\033[14;2t");
+    assert(logged(&rl, "\033[4;0;0t\033[6;0;0t\033[4;0;0t"));
+    wsap_vtcore_set_cell_pixels(t, (struct wsap_vtcore_vector2i){ .x = 10, .y = 20 });
+    assert(logged(&rl, ""));
+    write_seq(t, "\033[14t\033[16t\033[18t\033[19t");
+    assert(logged(&rl, "\033[4;480;800t\033[6;20;10t\033[8;24;80t\033[9;24;80t"));
+
+    assert(tt_resize(t, 100, 30));
+    write_seq(t, "\033[14t\033[18t");
+    assert(logged(&rl, "\033[4;600;1000t\033[8;30;100t"));
+
+    wsap_vtcore_set_cell_pixels(t, (struct wsap_vtcore_vector2i){ .x = -1, .y = 20 });
+    write_seq(t, "\033[16t");
+    assert(logged(&rl, "\033[6;0;0t"));
+
+    /* Other window operations and prefixed forms do not reply. */
+    write_seq(t, "\033[?14t\033[>18t\033[15t\033[20t\033[21t\033[t");
+    assert(logged(&rl, ""));
+    wsap_vtcore_set_cell_pixels(NULL, (struct wsap_vtcore_vector2i){ .x = 1, .y = 1 });
+    wsap_vtcore_free(t);
+}
+
+static void test_extended_cursor_report(void)
+{
+    struct report_log rl;
+    struct wsap_vtcore *t = report_term(20, 10, &rl);
+
+    write_seq(t, "\033[3;5H\033[?6n\033[6n");
+    assert(logged(&rl, "\033[?3;5;1R\033[3;5R"));
+
+    /* Origin mode makes the position relative to the margins. */
+    write_seq(t, "\033[2;8r\033[?69h\033[4;15s\033[?6h\033[2;3H\033[?6n\033[6n");
+    assert(logged(&rl, "\033[?2;3;1R\033[2;3R"));
+    write_seq(t, "\033[?6l\033[3;6H\033[?6n");
+    assert(logged(&rl, "\033[?3;6;1R"));
+
+    write_seq(t, "\033[?5n\033[?6;1n\033[>6n");
+    assert(logged(&rl, "\033[?3;6;1R"));
+    wsap_vtcore_free(t);
+}
+
+static void test_title_stack(void)
+{
+    struct report_log rl;
+    struct wsap_vtcore *t = report_term(20, 4, &rl);
+
+    /* A save before any title restores an empty title. */
+    write_seq(t, "\033[22t\033]2;one\007\033[23t");
+    assert(logged(&rl, "<one><>"));
+
+    /* Ps 0, 1, and 2 use the same title. Ps 3 and a stack index do nothing. */
+    write_seq(t, "\033]0;one\007\033[22;0t\033]2;two\007\033[22;1t\033]1;three\007\033[22;2t");
+    assert(logged(&rl, "<one><two><three>"));
+    write_seq(t, "\033[22;3t\033[23;3t\033[22;0;1t\033[23;0;1t");
+    assert(logged(&rl, ""));
+    write_seq(t, "\033]2;four\007\033[23;2t\033[23;1t\033[23;0t\033[23t");
+    assert(logged(&rl, "<four><three><two><one>"));
+
+    /* The stack keeps the newest 10 titles. */
+    for (int i = 0; i < 12; i++) {
+        char seq[32];
+        snprintf(seq, sizeof(seq), "\033]2;t%d\007\033[22t", i);
+        write_seq(t, seq);
+    }
+    rl.len = 0;
+    for (int i = 0; i < 12; i++)
+        write_seq(t, "\033[23t");
+    assert(logged(&rl, "<t11><t10><t9><t8><t7><t6><t5><t4><t3><t2>"));
+
+    /* A soft reset keeps the stack. A full reset clears it. */
+    write_seq(t, "\033]2;kept\007\033[22t\033]2;other\007\033[!p\033[23t");
+    assert(logged(&rl, "<kept><other><kept>"));
+    write_seq(t, "\033[22t\033c\033[23t");
+    assert(logged(&rl, ""));
+
+    /* The core keeps the first 4096 bytes of a title, and cuts at a whole character. */
+    char *long_title = malloc(5000 + 16);
+    assert(long_title);
+    memcpy(long_title, "\033]2;", 4);
+    memset(long_title + 4, 'x', 4095);
+    strcpy(long_title + 4 + 4095, "\xc3\xa9tail\007\033[22t\033]2;b\007\033[23t");
+    tt_puts(t, long_title);
+    assert(rl.title_len == 4095);
+    free(long_title);
+    wsap_vtcore_free(t);
+
+    /* Without a title callback, the stack does nothing. */
+    t = tt_new_opts(20, 4, &reply_cb);
+    write_seq(t, "\033]2;a\007\033[22t\033[23t");
+    wsap_vtcore_free(t);
+}
+
+static void test_color_scheme_reports(void)
+{
+    struct report_log rl;
+    struct wsap_vtcore *t = report_term(20, 4, &rl);
+
+    /* The built-in theme is dark. */
+    write_seq(t, "\033[?996n");
+    assert(logged(&rl, "\033[?997;1n"));
+    write_seq(t, "\033[?2031$p");
+    assert(logged(&rl, "\033[?2031;2$y"));
+
+    /* Without mode 2031, a change sends no report. */
+    wsap_vtcore_set_color_scheme(t, WSAP_VTCORE_COLOR_SCHEME_LIGHT);
+    assert(logged(&rl, ""));
+    write_seq(t, "\033[?996n");
+    assert(logged(&rl, "\033[?997;2n"));
+
+    write_seq(t, "\033[?2031h\033[?2031$p");
+    assert(logged(&rl, "\033[?2031;1$y"));
+    wsap_vtcore_set_color_scheme(t, WSAP_VTCORE_COLOR_SCHEME_DARK);
+    assert(logged(&rl, "\033[?997;1n"));
+    wsap_vtcore_set_color_scheme(t, WSAP_VTCORE_COLOR_SCHEME_DARK);
+    wsap_vtcore_set_color_scheme(t, (enum wsap_vtcore_color_scheme)7);
+    wsap_vtcore_set_color_scheme(NULL, WSAP_VTCORE_COLOR_SCHEME_LIGHT);
+    assert(logged(&rl, ""));
+
+    /* With an unknown scheme, the theme decides. */
+    wsap_vtcore_set_color_scheme(t, WSAP_VTCORE_COLOR_SCHEME_UNKNOWN);
+    assert(logged(&rl, ""));
+    struct wsap_vtcore_theme light;
+    wsap_vtcore_theme_default(&light);
+    light.fg = 0xFF202020u;
+    light.bg = 0xFFF8F8F8u;
+    wsap_vtcore_set_theme(t, &light);
+    assert(logged(&rl, "\033[?997;2n"));
+    wsap_vtcore_set_color_scheme(t, WSAP_VTCORE_COLOR_SCHEME_LIGHT);
+    assert(logged(&rl, ""));
+    wsap_vtcore_set_theme(t, NULL);
+    assert(logged(&rl, ""));
+    wsap_vtcore_set_color_scheme(t, WSAP_VTCORE_COLOR_SCHEME_UNKNOWN);
+    assert(logged(&rl, "\033[?997;1n"));
+
+    /* Soft and full resets clear mode 2031. */
+    write_seq(t, "\033[!p\033[?2031$p");
+    assert(logged(&rl, "\033[?2031;2$y"));
+    wsap_vtcore_set_color_scheme(t, WSAP_VTCORE_COLOR_SCHEME_LIGHT);
+    assert(logged(&rl, ""));
+    write_seq(t, "\033[?2031h\033c");
+    wsap_vtcore_set_color_scheme(t, WSAP_VTCORE_COLOR_SCHEME_DARK);
+    assert(logged(&rl, ""));
+    wsap_vtcore_free(t);
+}
+
+static void test_resize_reports(void)
+{
+    struct report_log rl;
+    struct wsap_vtcore *t = report_term(80, 24, &rl);
+    wsap_vtcore_set_cell_pixels(t, (struct wsap_vtcore_vector2i){ .x = 8, .y = 16 });
+
+    write_seq(t, "\033[?2048$p");
+    assert(logged(&rl, "\033[?2048;2$y"));
+    assert(tt_resize(t, 90, 24));
+    assert(logged(&rl, ""));
+
+    /* Setting the mode sends a report at once. */
+    write_seq(t, "\033[?2048h");
+    assert(logged(&rl, "\033[48;24;90;384;720t"));
+    write_seq(t, "\033[?2048$p");
+    assert(logged(&rl, "\033[?2048;1$y"));
+
+    assert(tt_resize(t, 100, 30));
+    assert(logged(&rl, "\033[48;30;100;480;800t"));
+    assert(tt_resize(t, 100, 30));
+    assert(!tt_resize(t, 0, 30));
+    assert(logged(&rl, ""));
+
+    /* A cell size change also sends a report. */
+    wsap_vtcore_set_cell_pixels(t, (struct wsap_vtcore_vector2i){ .x = 8, .y = 16 });
+    assert(logged(&rl, ""));
+    wsap_vtcore_set_cell_pixels(t, (struct wsap_vtcore_vector2i){ .x = 10, .y = 20 });
+    assert(logged(&rl, "\033[48;30;100;600;1000t"));
+    wsap_vtcore_set_cell_pixels(t, (struct wsap_vtcore_vector2i){ 0 });
+    assert(logged(&rl, "\033[48;30;100;0;0t"));
+
+    write_seq(t, "\033[?2048l");
+    assert(tt_resize(t, 40, 10));
+    assert(logged(&rl, ""));
+
+    /* Soft and full resets clear mode 2048. */
+    write_seq(t, "\033[?2048h\033[!p");
+    assert(logged(&rl, "\033[48;10;40;0;0t"));
+    assert(tt_resize(t, 41, 10));
+    write_seq(t, "\033[?2048h\033c");
+    assert(logged(&rl, "\033[48;10;41;0;0t"));
+    assert(tt_resize(t, 42, 10));
+    assert(logged(&rl, ""));
     wsap_vtcore_free(t);
 }
 
@@ -2355,6 +2606,11 @@ int main(void)
     test_editor_scrolling();
     test_top_region_scrollback();
     test_device_attributes();
+    test_window_size_reports();
+    test_extended_cursor_report();
+    test_title_stack();
+    test_color_scheme_reports();
+    test_resize_reports();
     test_unimplemented_da_features();
     test_keyboard_negotiation();
     test_resize_reflow();

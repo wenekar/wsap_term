@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "screen.h"
 #include "unicode/unicode.h"
+#include <stdio.h>
 
 _Thread_local char wsap_vtcore_thread_anchor;
 
@@ -93,15 +94,73 @@ void wsap_vtcore_set_cursor_default(struct wsap_vtcore *t, enum wsap_vtcore_curs
     wsap_vtcore_write_end(t);
 }
 
+static unsigned term_luma(uint32_t argb)
+{
+    return 299u * ((argb >> 16) & 0xff) + 587u * ((argb >> 8) & 0xff) + 114u * (argb & 0xff);
+}
+
+/* The host scheme, or else light when the theme background is brighter
+ * than the theme foreground. */
+static enum wsap_vtcore_color_scheme term_color_scheme(const struct wsap_vtcore *t)
+{
+    if (t->color_scheme)
+        return (enum wsap_vtcore_color_scheme)t->color_scheme;
+    return term_luma(t->palette.theme.bg) > term_luma(t->palette.theme.fg)
+        ? WSAP_VTCORE_COLOR_SCHEME_LIGHT : WSAP_VTCORE_COLOR_SCHEME_DARK;
+}
+
+void wsap_vtcore_report_color_scheme(struct wsap_vtcore *t)
+{
+    send_response(t, term_color_scheme(t) == WSAP_VTCORE_COLOR_SCHEME_LIGHT
+                     ? "\033[?997;2n" : "\033[?997;1n");
+}
+
+void wsap_vtcore_report_size(struct wsap_vtcore *t)
+{
+    char reply[96];
+    snprintf(reply, sizeof(reply), "\033[48;%d;%d;%lld;%lldt", t->rows, t->cols,
+             (long long)t->rows * t->cell_pixels.y, (long long)t->cols * t->cell_pixels.x);
+    send_response(t, reply);
+}
+
+void wsap_vtcore_set_cell_pixels(struct wsap_vtcore *t, struct wsap_vtcore_vector2i size)
+{
+    if (!t)
+        return;
+    if (size.x <= 0 || size.y <= 0)
+        size = (struct wsap_vtcore_vector2i){ 0 };
+    wsap_vtcore_write_begin(t);
+    bool changed = size.x != t->cell_pixels.x || size.y != t->cell_pixels.y;
+    t->cell_pixels = size;
+    if (changed && t->resize_reports)
+        wsap_vtcore_report_size(t);
+    wsap_vtcore_write_end(t);
+}
+
+void wsap_vtcore_set_color_scheme(struct wsap_vtcore *t, enum wsap_vtcore_color_scheme scheme)
+{
+    if (!t || (unsigned)scheme > WSAP_VTCORE_COLOR_SCHEME_LIGHT)
+        return;
+    wsap_vtcore_write_begin(t);
+    enum wsap_vtcore_color_scheme old = term_color_scheme(t);
+    t->color_scheme = (uint8_t)scheme;
+    if (t->color_scheme_reports && term_color_scheme(t) != old)
+        wsap_vtcore_report_color_scheme(t);
+    wsap_vtcore_write_end(t);
+}
+
 void wsap_vtcore_set_theme(struct wsap_vtcore *t, const struct wsap_vtcore_theme *theme)
 {
     if (!t)
         return;
     wsap_vtcore_write_begin(t);
+    enum wsap_vtcore_color_scheme old = term_color_scheme(t);
     struct palette next = { .version = t->palette.version };
     wsap_vtcore_palette_init(&next, theme);
     if (memcmp(&next.theme, &t->palette.theme, sizeof(next.theme)))
         t->palette = next;
+    if (t->color_scheme_reports && term_color_scheme(t) != old)
+        wsap_vtcore_report_color_scheme(t);
     wsap_vtcore_write_end(t);
 }
 

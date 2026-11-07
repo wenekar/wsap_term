@@ -1666,6 +1666,8 @@ bool wsap_vtcore_resize(struct wsap_vtcore *t, struct wsap_vtcore_vector2i size)
     }
 
     bool ok = wsap_vtcore_resize_internal(t, cols, rows);
+    if (ok && t->resize_reports)
+        wsap_vtcore_report_size(t);
     wsap_vtcore_write_end(t);
     return ok;
 }

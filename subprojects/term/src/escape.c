@@ -417,6 +417,7 @@ static void soft_reset(struct wsap_vtcore *t)
     t->focus_events = t->synchronized_output = t->lr_margin_mode = false;
     t->mouse_mode = t->mouse_encoding = 0;
     t->bracketed_paste = false;
+    t->color_scheme_reports = t->resize_reports = false;
     t->autowrap = t->cursor_visible = true;
     t->cursor_blink = t->default_cursor_blink;
     t->cursor_style = t->default_cursor_style;
@@ -539,6 +540,8 @@ static int mode_get(const struct wsap_vtcore *t, int mode, bool priv)
         case 47: case 1047: case 1049: return t->alternate;
         case 69: return t->lr_margin_mode;
         case 1048: return 0;
+        case 2031: return t->color_scheme_reports;
+        case 2048: return t->resize_reports;
         default: break;
         }
         if (mode_is_mouse(mode)) return t->mouse_mode == mode;
@@ -598,6 +601,60 @@ static void mode_set(struct wsap_vtcore *t, int mode, bool enabled, bool priv)
         sc_move(t, 0, cursor_top(t));
     } else if (mode_is_mouse_enc(mode)) {
         t->mouse_encoding = enabled ? mode : 0;
+    } else if (mode == 2031) {
+        t->color_scheme_reports = enabled;
+    } else if (mode == 2048) {
+        t->resize_reports = enabled;
+        if (enabled)
+            wsap_vtcore_report_size(t);
+    }
+}
+
+/* CPR (CSI 6 n) and DECXCPR (CSI ? 6 n). DECXCPR adds page 1. */
+static WSAP_VTCORE_NOINLINE void report_cursor(struct wsap_vtcore *t, bool dec)
+{
+    char reply[48];
+    snprintf(reply, sizeof(reply), "\033[%s%d;%d%sR", dec ? "?" : "",
+             t->cursor_y - cursor_top(t) + 1, t->cursor_x - cursor_left(t) + 1,
+             dec ? ";1" : "");
+    send_response(t, reply);
+}
+
+/* Window operations (CSI Ps ; Ps t). Unknown cell pixels report zero. */
+static WSAP_VTCORE_NOINLINE void window_op(struct wsap_vtcore *t, const struct csi *csi)
+{
+    char reply[64];
+    int op = csi->params[0];
+    switch (op) {
+    case 14: /* text area in pixels */
+    case 16: /* cell in pixels */ {
+        long long h = t->cell_pixels.y, w = t->cell_pixels.x;
+        if (op == 14) {
+            h *= t->rows;
+            w *= t->cols;
+        }
+        snprintf(reply, sizeof(reply), "\033[%d;%lld;%lldt", op - 10, h, w);
+        send_response(t, reply);
+        break;
+    }
+    case 18: /* text area in characters */
+    case 19: /* screen in characters */
+        snprintf(reply, sizeof(reply), "\033[%d;%d;%dt", op - 10, t->rows, t->cols);
+        send_response(t, reply);
+        break;
+    case 22: /* push title */
+    case 23: /* pop title */
+        /* Ps 0, 1, and 2 select the same title. An xterm stack index is not supported. */
+        if ((csi->nparams > 1 && (unsigned)csi->params[1] > 2) ||
+            (csi->nparams > 2 && csi->params[2]))
+            break;
+        if (op == 22)
+            wsap_vtcore_title_push(t);
+        else
+            wsap_vtcore_title_pop(t);
+        break;
+    default:
+        break;
     }
 }
 
@@ -657,6 +714,7 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
             !(csi->final == 'p' && csi->intermediate == '$' && csi->prefix == '?') &&
             !(csi->final == 'W' && csi->prefix == '?') &&
             !((csi->final == 'J' || csi->final == 'K') && csi->prefix == '?') &&
+            !(csi->final == 'n' && csi->prefix == '?') &&
             !((csi->final == 'h' || csi->final == 'l') && csi->prefix == '?')) return;
     }
     if (csi->subparams && !(csi->intermediate == '$' && csi->final == 'r')) return;
@@ -754,13 +812,9 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
         }
         break;
     case 'n':
-        if (!csi->prefix && csi->params[0] == 5) send_response(t, "\033[0n");
-        else if (!csi->prefix && csi->params[0] == 6) {
-            char reply[48];
-            snprintf(reply, sizeof(reply), "\033[%d;%dR", t->cursor_y - cursor_top(t) + 1,
-                     t->cursor_x - cursor_left(t) + 1);
-            send_response(t, reply);
-        }
+        if (csi->params[0] == 6) report_cursor(t, csi->prefix == '?');
+        else if (!csi->prefix && csi->params[0] == 5) send_response(t, "\033[0n");
+        else if (csi->prefix == '?' && csi->params[0] == 996) wsap_vtcore_report_color_scheme(t);
         break;
     case 'J':
         /* DECSED erases the cells that DECSCA did not protect. Nothing is
@@ -792,15 +846,13 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
             send_response(t, "\x1b[>0;10;0c");
         else if (!csi->prefix && csi->params[0] == 0)
             send_response(t, "\x1b[?62;22c");
+        else if (csi->prefix == '=' && csi->params[0] == 0)
+            send_response(t, "\x1bP!|00000000\x1b\\");
         break;
     }
     case 't':
-        if (!csi->prefix && csi->params[0] == 14) {
-            char reply[32];
-            snprintf(reply, sizeof(reply), "\033[4;%d;%dt",
-                     t->rows * 20, t->cols * 10);
-            send_response(t, reply);
-        }
+        if (!csi->prefix)
+            window_op(t, csi);
         break;
     case 'u': {
         if (!csi->prefix) { sc_restore_cursor(t, &t->saved); break; }
@@ -897,6 +949,7 @@ static void dispatch_esc(struct wsap_vtcore *t, unsigned char ch)
         if (t->alternate) wsap_vtcore_screen_set_alternate(t, false);
         soft_reset(t);
         wsap_vtcore_sc_reset(t);
+        wsap_vtcore_title_stack_clear(t);
         break;
     case '[':
         ESC_TRACE(t, "ESC[ → ST_CSI");

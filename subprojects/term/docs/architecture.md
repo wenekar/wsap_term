@@ -11,7 +11,7 @@ Each source directory lists its own build inputs.
 
 | File | Responsibility |
 | --- | --- |
-| `term.c` | Modes, cursor options, focus events, scrollback limits |
+| `term.c` | Modes, cursor options, focus events, host reports, scrollback limits |
 | `term_state.c` | Combined grapheme, history, and mode compilation unit |
 | `core.c`, `core.h` | Shared write primitives |
 | `screen.c`, `screen.h` | Screen ring, editing, resize, and reflow |
@@ -29,7 +29,7 @@ Each source directory lists its own build inputs.
 | `osc/dispatch.c` | OSC dispatch and palette queries |
 | `osc/link.c` | OSC 8 hyperlinks |
 | `osc/clipboard.c` | OSC 52 clipboard requests |
-| `osc/misc.c` | Titles, paths, and notifications |
+| `osc/misc.c` | Titles, the title stack, paths, and notifications |
 
 ## Write core
 

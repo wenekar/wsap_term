@@ -87,6 +87,64 @@ is terminal cell width, not a pixel size.
 The view and its palette pointer are snapshot-owned. Resolve palette slot
 colors through `wsap_vtcore_view_color` while that view remains valid.
 
+## Reports and host data
+
+The core answers report requests through the reply callback. Some reports
+need data that only the host has. Give the core that data:
+
+- `wsap_vtcore_set_cell_pixels` sets the size of one cell in pixels: `x` is
+  the width and `y` is the height. `CSI 14 t` reports the text area and
+  `CSI 16 t` reports one cell. Set the size again when the font changes. A
+  zero or negative component means unknown. Then these reports give zero
+  pixels, as `TIOCGWINSZ` does for an unknown pixel size. The core still
+  replies, so a program that waits for the reply does not stop. Mouse mode
+  1016 (SGR pixels) does not use the cell size. It reports the `pixel`
+  field of the mouse event.
+- `wsap_vtcore_set_color_scheme` sets the dark or light preference.
+  `CSI ? 996 n` reports it as `CSI ? 997 ; 1 n` (dark) or `CSI ? 997 ; 2 n`
+  (light). With `WSAP_VTCORE_COLOR_SCHEME_UNKNOWN`, the core compares the
+  theme colors. It reports light when the theme background is brighter than
+  the theme foreground. Otherwise it reports dark. The core ignores values
+  that are not in the enum.
+
+Other reports need no host data. `CSI 18 t` and `CSI 19 t` report the rows
+and columns. `CSI ? 6 n` (DECXCPR) reports the cursor and page 1. It obeys
+origin mode, as `CSI 6 n` does. `CSI = c` (DA3) reports the unit ID
+`00000000`.
+
+The core sends two reports without a request:
+
+- While mode 2031 is set, the core sends the `CSI ? 997` report when the
+  reported scheme changes. Only `wsap_vtcore_set_color_scheme` and
+  `wsap_vtcore_set_theme` can change it. Output that changes the palette
+  (OSC 11) does not change it.
+- While mode 2048 is set, the core sends
+  `CSI 48 ; rows ; cols ; height ; width t`. It sends the report when the
+  mode is set, after each resize that changes the size, and when the cell
+  size changes. The pixel values are zero when the cell size is unknown. A
+  host that changes the font and the size in one step can get two reports.
+  The last report is correct.
+
+A report that a host call causes comes from inside that call, while the
+core holds the lock. The callback rules apply to it. A soft reset (DECSTR) and a full reset
+(RIS) clear modes 2031 and 2048. They do not clear the host data.
+
+## Titles
+
+With a title callback, the core keeps the last title from OSC 0, 1, or 2.
+The core has one title. Icon names and window titles share it. `CSI 22 t`
+saves the title on a stack. `CSI 23 t` removes the top title from the stack
+and sends it again through the title callback. The parameters 0, 1, and 2
+select the same title. A request with another parameter or with an xterm
+stack index does nothing.
+
+The stack holds 10 titles. A save on a full stack drops the oldest title.
+A restore from an empty stack does nothing. The core keeps the first 4096
+bytes of each title and does not cut a UTF-8 character. A title saved
+before any title was set restores as an empty title. A full reset clears the
+stack and keeps the current title. Without a title callback, the stack does
+nothing.
+
 ## Input encoding and allocated strings
 
 Input encoders write into caller-provided buffers and return a result with a

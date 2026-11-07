@@ -34,6 +34,7 @@ static inline uint64_t hash64_finish(uint64_t hash)
 }
 
 #define KEYBOARD_STACK_SIZE 32
+#define TITLE_STACK_SIZE 10
 
 struct keyboard_mode {
     unsigned flags, saved[KEYBOARD_STACK_SIZE], depth;
@@ -212,6 +213,16 @@ struct wsap_vtcore {
     char *cwd;
     char *pointer_shape;
 
+    /* The current title and the saved titles (CSI 22 t, CSI 23 t). */
+    char *title;
+    char *title_stack[TITLE_STACK_SIZE];
+    uint8_t title_depth;
+    /* Host data for reports. Zero means unknown. */
+    uint8_t color_scheme;
+    bool color_scheme_reports; /* mode 2031 */
+    bool resize_reports;       /* mode 2048 */
+    struct wsap_vtcore_vector2i cell_pixels;
+
     struct wsap_vtcore_callbacks cb;
     struct palette palette;
     struct gstore *gstore;
@@ -277,6 +288,12 @@ static inline void send_response(struct wsap_vtcore *t, const char *str)
     if (t && t->cb.reply)
         t->cb.reply(t->cb.ud, str, strlen(str));
 }
+
+/* Send CSI 48 ; rows ; cols ; height ; width t (mode 2048). */
+void wsap_vtcore_report_size(struct wsap_vtcore *t);
+/* Send CSI ? 997 ; scheme n (CSI ? 996 n and mode 2031). */
+void wsap_vtcore_report_color_scheme(struct wsap_vtcore *t);
+
 static const signed char hex_val[256] WSAP_VTCORE_MAYBE_UNUSED = {
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,

@@ -160,6 +160,26 @@ WSAP_VTCORE_API void wsap_vtcore_set_theme(struct wsap_vtcore *t, const struct w
 
 WSAP_VTCORE_API void wsap_vtcore_set_cursor_default(struct wsap_vtcore *t, enum wsap_vtcore_cursor_style style, bool steady);
 
+/* Set the size of one cell in pixels: x is the width, y is the height.
+ * Size reports use it. A zero or negative component means unknown; reports
+ * then give zero pixels. With mode 2048 set, a change sends a size report.
+ * NULL is allowed.
+ */
+WSAP_VTCORE_API void wsap_vtcore_set_cell_pixels(struct wsap_vtcore *t, struct wsap_vtcore_vector2i size);
+
+enum wsap_vtcore_color_scheme {
+    WSAP_VTCORE_COLOR_SCHEME_UNKNOWN = 0,
+    WSAP_VTCORE_COLOR_SCHEME_DARK = 1,
+    WSAP_VTCORE_COLOR_SCHEME_LIGHT = 2,
+};
+
+/* Set the color scheme that the host prefers. With an unknown scheme, the
+ * core compares the theme background and foreground. With mode 2031 set, a
+ * change sends a color scheme report. The core ignores invalid values.
+ * NULL is allowed.
+ */
+WSAP_VTCORE_API void wsap_vtcore_set_color_scheme(struct wsap_vtcore *t, enum wsap_vtcore_color_scheme scheme);
+
 enum wsap_vtcore_feed_flags {
     WSAP_VTCORE_FEED_ONLCR = 1u << 0,
 };

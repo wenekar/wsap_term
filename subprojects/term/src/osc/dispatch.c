@@ -53,6 +53,9 @@ void wsap_vtcore_osc_cleanup(struct wsap_vtcore *t)
     t->cwd = NULL;
     free(t->pointer_shape);
     t->pointer_shape = NULL;
+    wsap_vtcore_title_stack_clear(t);
+    free(t->title);
+    t->title = NULL;
 }
 
 static void send_color_query_reply(struct wsap_vtcore *t, int code, int index, uint32_t argb)
@@ -166,8 +169,7 @@ void wsap_vtcore_osc_finish(struct wsap_vtcore *t)
             const char *params = *rest == ';' ? rest + 1 : rest;
             switch (code) {
             case 0: case 1: case 2:
-                if (t->cb.title)
-                    t->cb.title(t->cb.ud, params);
+                wsap_vtcore_title_set(t, params);
                 break;
             case 4:
                 osc4_handle(t, params);

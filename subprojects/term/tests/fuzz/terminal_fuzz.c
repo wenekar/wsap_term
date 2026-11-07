@@ -205,10 +205,15 @@ static void fuzz_operations(const uint8_t *data, size_t size)
                                              take(data, size, &at) % sizeof(output));
             break;
         }
-        default:
+        default: {
             wsap_vtcore_select_clear(term);
             wsap_vtcore_scroll_to(term, 0);
+            unsigned host = take(data, size, &at);
+            wsap_vtcore_set_cell_pixels(term, (struct wsap_vtcore_vector2i){
+                .x = (int)(host & 15) - 1, .y = (int)(host >> 4) - 1 });
+            wsap_vtcore_set_color_scheme(term, (enum wsap_vtcore_color_scheme)(host % 3));
             break;
+        }
         }
     }
 

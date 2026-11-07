@@ -124,7 +124,8 @@ static inline void gen(int ops, int cols, int rows)
     static const char *queries[] = {
         "\033[5n", "\033[6n", "\033[c", "\033[0c", "\033[>c", "\033[1c",
         "\033[14t", "\033P$qm\033\\", "\033P$qr\033\\", "\033[?6$p",
-        "\033[4$p", "\033[20$p",
+        "\033[4$p", "\033[20$p", "\033[16t", "\033[18t", "\033[19;0t", "\033[?6n",
+        "\033[=c", "\033[=0c", "\033[22;0t", "\033[23;2t", "\033[22t", "\033[23t",
     };
     static const char *odd[] = {
         "\033[2\n;3H", "\033[1\bC", "\033[3\x18m", "\033[1\x1a;2H",
@@ -136,7 +137,7 @@ static inline void gen(int ops, int cols, int rows)
     static const char csi_final[] = "ABCDEFGHIJKLMPSTXZ@`abdefghlmnrsu";
 
     for (int i = 0; i < ops; i++) {
-        switch (rn(43)) {
+        switch (rn(44)) {
         case 0: case 1: case 2: put(PICK(words)); break;
         case 3: {
             int n = rn(cols * 2 + 2);
@@ -245,6 +246,20 @@ static inline void gen(int ops, int cols, int rows)
                 put("\033[?69l");
             }
             break;
+        case 43: {
+            /* Report modes and queries that the model does not know. */
+            if (!gen_unmodeled)
+                break;
+            static const char *reports[] = {
+                "\033[?2048h", "\033[?2048l", "\033[?2031h", "\033[?2031l", "\033[?996n",
+                "\033[?2048$p", "\033[?2031$p", "\033[?2031;2048h", "\033]2;t\007\033[22t",
+            };
+            if (rn(3))
+                put(PICK(reports));
+            else
+                putf("\033[%d;%s;%dt", 22 + rn(2), rn(2) ? big_number() : "1", rn(2));
+            break;
+        }
         }
     }
 }

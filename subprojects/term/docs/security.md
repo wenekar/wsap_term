@@ -24,6 +24,7 @@ The host must enforce those boundaries.
 The current implementation limits a control-string buffer to 16 MiB.
 It limits one decoded OSC 52 clipboard request to 100 KiB.
 It limits a hyperlink URI to 4096 bytes and the link table to 8192 entries.
+It keeps at most 4096 bytes of a title and saves at most 10 titles.
 It retains at most 20 code points in one grapheme cluster.
 These are implementation limits, not a promise to accept every sequence up to
 that size. Oversized or unsupported input can be discarded.
