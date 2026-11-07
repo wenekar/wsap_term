@@ -69,12 +69,14 @@ void wsap_vtcore_sc_decfra(struct wsap_vtcore *t, const struct csi *csi)
     struct area a;
     if (!wsap_vtcore_area_parse(t, csi, 1, &a))
         return;
-    /* The fill takes the SGR attributes, but not the hyperlink. */
+    /* The fill takes the SGR attributes with blink and conceal, but not the
+     * hyperlink, the underline color, or the protection. */
     struct cell fill = {
         .c = (uint32_t)ch,
         .fg = t->inverse ? t->cur_bg : t->cur_fg,
         .bg = t->inverse ? t->cur_fg : t->cur_bg,
         .flags = (uint16_t)(wsap_vtcore_current_flags(t) & ~CELL_LINK),
+        .pad = (uint16_t)(t->cur_pad & (CELL_EXT_BLINK | CELL_EXT_CONCEAL)),
     };
     for (int y = a.top; y <= a.bottom; y++) {
         int p = phys_row(t, y);
