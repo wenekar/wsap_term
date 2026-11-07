@@ -198,6 +198,24 @@ uint64_t wsap_vtcore_screen_view_row_key(const struct wsap_vtcore *t, int y)
     return mix64(row->uid ^ ((uint64_t)row->version << 32) ^ mix64(t->serial));
 }
 
+/* Keep this out of line. Inlined into the snapshot update, it moved the row
+ * conversion loop there, and full repaints measured 15% slower. */
+WSAP_VTCORE_NOINLINE
+void wsap_vtcore_screen_view_row_keys(const struct wsap_vtcore *t, uint64_t *keys)
+{
+    if (t->view.anchor.active) {
+        for (int y = 0; y < t->rows; y++)
+            keys[y] = wsap_vtcore_screen_view_row_key(t, y);
+        return;
+    }
+    // The live view shows only screen rows. Read the row ring directly.
+    uint64_t serial_mix = mix64(t->serial);
+    for (int y = 0; y < t->rows; y++) {
+        const struct srow *row = &t->scr.slot[phys_row(t, y)];
+        keys[y] = mix64(row->uid ^ ((uint64_t)row->version << 32) ^ serial_mix);
+    }
+}
+
 int wsap_vtcore_view_offset(const struct wsap_vtcore *t)
 {
     if (!t)

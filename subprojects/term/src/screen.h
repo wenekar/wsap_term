@@ -17,6 +17,8 @@ void wsap_vtcore_screen_insert_chars(struct wsap_vtcore *t, int count);
 
 const struct cell *wsap_vtcore_screen_view_row(const struct wsap_vtcore *t, int y);
 uint64_t wsap_vtcore_screen_view_row_key(const struct wsap_vtcore *t, int y);
+/* Write the keys of all view rows. keys holds t->rows entries. */
+void wsap_vtcore_screen_view_row_keys(const struct wsap_vtcore *t, uint64_t *keys);
 bool wsap_vtcore_selection_view_spans(const struct wsap_vtcore *t, int *c0, int *c1);
 
 int wsap_vtcore_screen_history_rows(const struct wsap_vtcore *t);

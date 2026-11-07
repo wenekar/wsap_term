@@ -309,8 +309,7 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
             t->view.last_cells = t->hist.lines ? wsap_vtcore_hist_line_cells(&t->hist, hist_end_id(&t->hist) - 1) : 0;
         }
     }
-    for (int y = 0; y < rows; y++)
-        new_keys[y] = wsap_vtcore_screen_view_row_key(t, y);
+    wsap_vtcore_screen_view_row_keys(t, new_keys);
 
     if (!all && rows > 1) {
         int cand_k = 0;
