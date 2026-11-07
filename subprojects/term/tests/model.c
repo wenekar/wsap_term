@@ -861,8 +861,7 @@ static void cara_cell(struct model *m, struct cell *c)
     if (m->nparam <= 4) {
         c->fg = WSAP_VTCORE_COLOR_FG;
         c->bg = WSAP_VTCORE_COLOR_BG;
-        c->attrs &= WSAP_VTCORE_ATTR_EMOJI | WSAP_VTCORE_ATTR_TEXT | WSAP_VTCORE_ATTR_LINK |
-                    WSAP_VTCORE_ATTR_BLINK | WSAP_VTCORE_ATTR_CONCEAL;
+        c->attrs &= WSAP_VTCORE_ATTR_EMOJI | WSAP_VTCORE_ATTR_TEXT | WSAP_VTCORE_ATTR_LINK;
         return;
     }
     for (int i = 4; i < m->nparam; i++) {
@@ -873,8 +872,7 @@ static void cara_cell(struct model *m, struct cell *c)
         case 0:
             c->fg = WSAP_VTCORE_COLOR_FG;
             c->bg = WSAP_VTCORE_COLOR_BG;
-            c->attrs &= WSAP_VTCORE_ATTR_EMOJI | WSAP_VTCORE_ATTR_TEXT | WSAP_VTCORE_ATTR_LINK |
-                    WSAP_VTCORE_ATTR_BLINK | WSAP_VTCORE_ATTR_CONCEAL;
+            c->attrs &= WSAP_VTCORE_ATTR_EMOJI | WSAP_VTCORE_ATTR_TEXT | WSAP_VTCORE_ATTR_LINK;
             reverse = false;
             break;
         case 1: c->attrs |= WSAP_VTCORE_ATTR_BOLD; break;
@@ -887,8 +885,12 @@ static void cara_cell(struct model *m, struct cell *c)
             set_underline(&c->attrs, style);
             break;
         }
+        case 5: case 6: c->attrs |= WSAP_VTCORE_ATTR_BLINK; break;
         case 7: reverse = true; break;
+        case 8: c->attrs |= WSAP_VTCORE_ATTR_CONCEAL; break;
         case 9: c->attrs |= WSAP_VTCORE_ATTR_STRIKE; break;
+        case 25: c->attrs &= (uint16_t)~WSAP_VTCORE_ATTR_BLINK; break;
+        case 28: c->attrs &= (uint16_t)~WSAP_VTCORE_ATTR_CONCEAL; break;
         case 21: set_underline(&c->attrs, 2); break;
         case 22: c->attrs &= (uint16_t)~(WSAP_VTCORE_ATTR_BOLD | WSAP_VTCORE_ATTR_FAINT); break;
         case 23: c->attrs &= (uint16_t)~WSAP_VTCORE_ATTR_ITALIC; break;
@@ -1005,15 +1007,18 @@ static void deccara(struct model *m)
 static void decrara(struct model *m)
 {
     bool bold = false, ul = false, reverse = false;
+    uint16_t toggle = 0;
     int end = m->nparam > 4 ? m->nparam : 5;
     for (int i = 4; i < end; i++) {
         int v = arg(m, i);
         if (v == 0 || v == 1) bold = !bold;
         if (v == 0 || v == 4) ul = !ul;
         if (v == 0 || v == 7) reverse = !reverse;
+        if (v == 0 || v == 5) toggle ^= WSAP_VTCORE_ATTR_BLINK;
+        if (v == 8) toggle ^= WSAP_VTCORE_ATTR_CONCEAL;
     }
     int top, left, bottom, right;
-    if (!(bold || ul || reverse) || !area(m, 0, &top, &left, &bottom, &right)) return;
+    if (!(bold || ul || reverse || toggle) || !area(m, 0, &top, &left, &bottom, &right)) return;
     for (int y = top; y <= bottom; y++) {
         int x0, x1;
         area_span(m, y, top, left, bottom, right, &x0, &x1);
@@ -1024,6 +1029,7 @@ static void decrara(struct model *m)
         for (int x = x0; x <= x1; x++) {
             struct cell *c = &r->c[x];
             if (bold) c->attrs ^= WSAP_VTCORE_ATTR_BOLD;
+            c->attrs ^= toggle;
             if (ul) set_underline(&c->attrs, (c->attrs & WSAP_VTCORE_ATTR_UNDERLINE_MASK) ? 0 : 1);
             if (reverse) {
                 wsap_vtcore_color t = c->fg;

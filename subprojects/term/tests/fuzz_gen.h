@@ -265,7 +265,8 @@ static inline void gen(int ops, int cols, int rows)
             /* Rectangle and column edits. A rectangle parameter can be empty. */
             static const int fills[] = { 32, 65, 120, 126, 160, 233, 255, 31, 127, 256 };
             static const char *reverse[] = { "", ";0", ";1", ";4", ";5", ";7", ";8", ";1;7", ";7;7", ";0;4" };
-            static const char *change[] = { "7;31", "31;7", "7;7", "0;7", "1;7;42", "7;0", "4;7;39" };
+            static const char *change[] = { "7;31", "31;7", "7;7", "0;7", "1;7;42", "7;0", "4;7;39",
+                                            "5", "8", "5;8", "25", "28", "0;5" };
             char rect[48];
             int n = 0;
             for (int k = 0; k < 4; k++) {

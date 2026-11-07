@@ -987,6 +987,30 @@ static void test_selective_erase(void)
     wsap_vtcore_free(t);
 }
 
+/* DECCARA sets and clears blink and conceal. DECRARA reverses them. */
+static void test_rectangle_blink_conceal(void)
+{
+    const uint16_t blink = WSAP_VTCORE_ATTR_BLINK, conceal = WSAP_VTCORE_ATTR_CONCEAL;
+    struct wsap_vtcore *t = tt_new(20, 3);
+    write_seq(t, "abcd\033[1;1;1;2;5;8$r");
+    assert((tt_cell(t, 0, 0)->attrs & (blink | conceal)) == (blink | conceal));
+    assert(!(tt_cell(t, 2, 0)->attrs & (blink | conceal)));
+    write_seq(t, "\033[1;1;1;1;25$r");
+    assert((tt_cell(t, 0, 0)->attrs & (blink | conceal)) == conceal);
+    write_seq(t, "\033[1;2;1;2;0$r");
+    assert(!(tt_cell(t, 1, 0)->attrs & (blink | conceal)));
+    wsap_vtcore_free(t);
+
+    t = tt_new(20, 3);
+    write_seq(t, "\033[5mab\033[mcd\033[1;1;1;4;5$t");
+    assert(!(tt_cell(t, 0, 0)->attrs & blink) && (tt_cell(t, 2, 0)->attrs & blink));
+    write_seq(t, "\033[1;1;1;1;8$t");
+    assert(tt_cell(t, 0, 0)->attrs & conceal);
+    write_seq(t, "\033[1;1;1;1;8;8$t");
+    assert(tt_cell(t, 0, 0)->attrs & conceal);
+    wsap_vtcore_free(t);
+}
+
 static void test_decsera(void)
 {
     struct wsap_vtcore *whole, *bytes;
@@ -1135,15 +1159,17 @@ static void test_reverse_attributes_in_rectangle(void)
     wsap_vtcore_free(t);
 
     /* Reverse image swaps the colors. Ps 0, or no Ps, reverses bold,
-     * underline, and reverse image. */
+     * underline, blink, and reverse image. */
     t = tt_new(20, 3);
     write_seq(t, "\033[31mab\033[4:2mc\033[m");
     write_seq(t, "\033[1;1;1;1;7$t");
     assert(same_colors(t, 0, 0, bg, red) && same_colors(t, 1, 0, red, bg));
     write_seq(t, "\033[1;2;1;3$t");
-    assert(tt_cell(t, 1, 0)->attrs == (WSAP_VTCORE_ATTR_BOLD | WSAP_VTCORE_ATTR_UNDERLINE));
+    assert(tt_cell(t, 1, 0)->attrs ==
+           (WSAP_VTCORE_ATTR_BOLD | WSAP_VTCORE_ATTR_UNDERLINE | WSAP_VTCORE_ATTR_BLINK));
     assert(same_colors(t, 1, 0, bg, red));
-    assert(tt_cell(t, 2, 0)->attrs == WSAP_VTCORE_ATTR_BOLD && same_colors(t, 2, 0, bg, red));
+    assert(tt_cell(t, 2, 0)->attrs == (WSAP_VTCORE_ATTR_BOLD | WSAP_VTCORE_ATTR_BLINK) &&
+           same_colors(t, 2, 0, bg, red));
     write_seq(t, "\033[1;2;1;3;0$t");
     assert(tt_cell(t, 1, 0)->attrs == 0 && same_colors(t, 1, 0, red, bg));
     assert(tt_cell(t, 2, 0)->attrs == WSAP_VTCORE_ATTR_UNDERLINE);
@@ -2971,6 +2997,7 @@ int main(void)
     test_style_table_reuse();
     test_selective_erase();
     test_decsera();
+    test_rectangle_blink_conceal();
     test_unimplemented_da_features();
     test_keyboard_negotiation();
     test_resize_reflow();

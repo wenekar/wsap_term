@@ -474,7 +474,11 @@ struct deccara_plan {
     /* DECRARA: flags to toggle, and toggle the underline. */
     bool toggle_ul;
     uint16_t toggle_flags;
+    /* Blink and conceal live in the pad field (CELL_EXT_*). */
+    uint16_t clear_pad, set_pad, toggle_pad;
 };
+
+#define CARA_PAD (CELL_EXT_BLINK | CELL_EXT_CONCEAL)
 
 /* Precomputes SGR modifications once for the whole rectangular area. */
 static void deccara_plan_init(struct deccara_plan *p, const struct csi *csi, int first)
@@ -488,9 +492,11 @@ static void deccara_plan_init(struct deccara_plan *p, const struct csi *csi, int
     p->reverse = false;
     p->toggle_ul = false;
     p->toggle_flags = 0;
+    p->clear_pad = p->set_pad = p->toggle_pad = 0;
 
     if (first >= csi->nparams) {
         p->clear_flags = CELL_SGR_FLAGS;
+        p->clear_pad = CARA_PAD;
         p->fg_src = DECCARA_SRC_CONST;
         p->bg_src = DECCARA_SRC_CONST;
         return;
@@ -509,7 +515,13 @@ static void deccara_plan_init(struct deccara_plan *p, const struct csi *csi, int
             p->const_fg = WSAP_VTCORE_COLOR_FG;
             p->const_bg = WSAP_VTCORE_COLOR_BG;
             p->reverse = false;
+            p->clear_pad = CARA_PAD;
+            p->set_pad = 0;
             break;
+        case 5: case 6: p->set_pad |= CELL_EXT_BLINK; p->clear_pad &= (uint16_t)~CELL_EXT_BLINK; break;
+        case 8: p->set_pad |= CELL_EXT_CONCEAL; p->clear_pad &= (uint16_t)~CELL_EXT_CONCEAL; break;
+        case 25: p->clear_pad |= CELL_EXT_BLINK; p->set_pad &= (uint16_t)~CELL_EXT_BLINK; break;
+        case 28: p->clear_pad |= CELL_EXT_CONCEAL; p->set_pad &= (uint16_t)~CELL_EXT_CONCEAL; break;
         case 1: p->set_flags |= CELL_BOLD; p->clear_flags &= (uint16_t)~CELL_BOLD; break;
         case 2: p->set_flags |= CELL_FAINT; p->clear_flags &= (uint16_t)~CELL_FAINT; break;
         case 3: p->set_flags |= CELL_ITALIC; p->clear_flags &= (uint16_t)~CELL_ITALIC; break;
@@ -591,9 +603,10 @@ static void deccara_plan_init(struct deccara_plan *p, const struct csi *csi, int
     }
 }
 
-/* DECRARA: reverse the attributes in Ps. 0 or no Ps reverses all of them.
- * The cells have no blink or invisible flag, so 5 and 8 do nothing. An even
- * count of one attribute leaves it unchanged. */
+/* DECRARA: reverse the attributes in Ps: 1 bold, 4 underline, 5 blink,
+ * 7 reverse, 8 conceal. 0 or no Ps reverses bold, underline, blink, and
+ * reverse, as on the VT420. An even count of one attribute leaves it
+ * unchanged. */
 static void decrara_plan_init(struct deccara_plan *p, const struct csi *csi)
 {
     *p = (struct deccara_plan){
@@ -609,6 +622,10 @@ static void decrara_plan_init(struct deccara_plan *p, const struct csi *csi)
             p->toggle_ul = !p->toggle_ul;
         if (v == 0 || v == 7)
             p->reverse = !p->reverse;
+        if (v == 0 || v == 5)
+            p->toggle_pad ^= CELL_EXT_BLINK;
+        if (v == 8)
+            p->toggle_pad ^= CELL_EXT_CONCEAL;
     }
 }
 
@@ -623,6 +640,7 @@ static inline void apply_deccara_plan(struct cell *cell, const struct deccara_pl
         flags = (flags & CELL_ANY_UNDERLINE) ? (uint16_t)(flags & ~CELL_ANY_UNDERLINE)
                                              : (uint16_t)(flags | CELL_UNDERLINE);
     cell->flags = flags;
+    cell->pad = (uint16_t)(((cell->pad & ~p->clear_pad) | p->set_pad) ^ p->toggle_pad);
 }
 
 static void deccara_row(struct wsap_vtcore *t, int y, int x0, int x1, const struct deccara_plan *plan)
@@ -663,7 +681,7 @@ void wsap_vtcore_sc_decrara(struct wsap_vtcore *t, const struct csi *csi)
 {
     struct deccara_plan plan;
     decrara_plan_init(&plan, csi);
-    if (plan.toggle_flags || plan.toggle_ul || plan.reverse)
+    if (plan.toggle_flags || plan.toggle_ul || plan.reverse || plan.toggle_pad)
         deccara_area(t, csi, &plan);
 }
 
