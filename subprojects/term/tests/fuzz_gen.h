@@ -7,7 +7,8 @@
 #include <stdio.h>
 #include <string.h>
 
-static uint64_t rng;
+/* Each thread has its own generator state. */
+static _Thread_local uint64_t rng;
 
 static uint32_t rnd(void)
 {
@@ -22,8 +23,8 @@ static int rn(int n)
     return (int)(rnd() % (uint32_t)n);
 }
 
-static char buf[1 << 16];
-static size_t blen;
+static _Thread_local char buf[1 << 16];
+static _Thread_local size_t blen;
 
 static void putb(char c)
 {

@@ -1,5 +1,6 @@
 #include "model.h"
 #include "fuzz_gen.h"
+#include "seeds.h"
 #include "wsap_vtcore/wsap_vtcore.h"
 
 #include <stdio.h>
@@ -382,52 +383,69 @@ static int fixed_cases(void)
     return 0;
 }
 
+static const int history_limits[] = { 0, 5, 50, 4096 };
+
+/* Build the script of one seed. Leave rng at the seed of its write chunks. */
+static void build_script(int seed, struct script *s)
+{
+    rng = 0x9e3779b97f4a7c15ull * (uint64_t)seed;
+    *s = (struct script){
+        .size = { .x = 4 + rn(37), .y = 2 + rn(11) },
+        .history = history_limits[rn(4)],
+    };
+    struct wsap_vtcore_vector2i size = s->size;
+    for (int step = 0; step < 4; step++) {
+        blen = 0;
+        gen(10 + rn(30), size.x, size.y);
+        put(probe);
+        unsigned flags = rn(5) == 0 ? WSAP_VTCORE_FEED_ONLCR : 0;
+        script_add(s, (struct event){ .bytes = dup_bytes(buf, blen), .len = blen,
+                                      .flags = flags });
+        if (rn(4) == 0) {
+            size = (struct wsap_vtcore_vector2i){ .x = 1 + rn(44), .y = 1 + rn(14) };
+            script_add(s, (struct event){ .size = size });
+        }
+    }
+    if (getenv("MODEL_TEST_PRINT")) {
+        fprintf(stderr, "seed %d: %dx%d history %d\n", seed, s->size.x, s->size.y, s->history);
+        for (int i = 0; i < s->n; i++) {
+            if (!s->ev[i].bytes) {
+                fprintf(stderr, "  resize %dx%d\n", s->ev[i].size.x, s->ev[i].size.y);
+                continue;
+            }
+            fprintf(stderr, "  feed ");
+            dump(stderr, s->ev[i].bytes, s->ev[i].len);
+            fputc('\n', stderr);
+        }
+    }
+}
+
+static bool seed_passes(int seed)
+{
+    struct script s;
+    build_script(seed, &s);
+    char why[512];
+    bool ok = run(&s, CHUNK_RANDOM, rng, why, sizeof(why), false) < 0;
+    script_free(&s);
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     int seeds = argc > 1 ? atoi(argv[1]) : 20000;
     int first = argc > 2 ? atoi(argv[2]) : 1;
     if (fixed_cases()) return 1;
-    static const int limits[] = { 0, 5, 50, 4096 };
-    for (int seed = first; seed < first + seeds; seed++) {
-        rng = 0x9e3779b97f4a7c15ull * (uint64_t)seed;
-        struct script s = {
-            .size = { .x = 4 + rn(37), .y = 2 + rn(11) },
-            .history = limits[rn(4)],
-        };
-        struct wsap_vtcore_vector2i size = s.size;
-        for (int step = 0; step < 4; step++) {
-            blen = 0;
-            gen(10 + rn(30), size.x, size.y);
-            put(probe);
-            unsigned flags = rn(5) == 0 ? WSAP_VTCORE_FEED_ONLCR : 0;
-            script_add(&s, (struct event){ .bytes = dup_bytes(buf, blen), .len = blen,
-                                           .flags = flags });
-            if (rn(4) == 0) {
-                size = (struct wsap_vtcore_vector2i){ .x = 1 + rn(44), .y = 1 + rn(14) };
-                script_add(&s, (struct event){ .size = size });
-            }
-        }
-        if (getenv("MODEL_TEST_PRINT")) {
-            fprintf(stderr, "seed %d: %dx%d history %d\n", seed, s.size.x, s.size.y, s.history);
-            for (int i = 0; i < s.n; i++) {
-                if (!s.ev[i].bytes) {
-                    fprintf(stderr, "  resize %dx%d\n", s.ev[i].size.x, s.ev[i].size.y);
-                    continue;
-                }
-                fprintf(stderr, "  feed ");
-                dump(stderr, s.ev[i].bytes, s.ev[i].len);
-                fputc('\n', stderr);
-            }
-        }
-        char why[512];
-        uint64_t chunk_seed = rng;
-        if (run(&s, CHUNK_RANDOM, chunk_seed, why, sizeof(why), false) >= 0) {
-            run(&s, CHUNK_RANDOM, chunk_seed, why, sizeof(why), true);
-            report(&s, seed, why);
-            script_free(&s);
-            return 1;
-        }
-        script_free(&s);
-    }
-    return 0;
+    // The seed scripts print in order only on one thread.
+    int failed = run_seeds(seed_passes, first, seeds, getenv("MODEL_TEST_PRINT") ? 1 : 0);
+    if (failed < 0)
+        return 0;
+    // Report and shrink the first failed seed on this thread.
+    struct script s;
+    build_script(failed, &s);
+    char why[512];
+    uint64_t chunk_seed = rng;
+    run(&s, CHUNK_RANDOM, chunk_seed, why, sizeof(why), true);
+    report(&s, failed, why);
+    script_free(&s);
+    return 1;
 }
