@@ -1735,6 +1735,87 @@ static void test_csi_text_chunks(void)
     }
 }
 
+static void assert_same_modes(struct wsap_vtcore *a, struct wsap_vtcore *b)
+{
+    struct wsap_vtcore_modes ma = wsap_vtcore_modes(a), mb = wsap_vtcore_modes(b);
+    assert(ma.app_cursor == mb.app_cursor);
+    assert(ma.bracketed_paste == mb.bracketed_paste);
+    assert(ma.focus_events == mb.focus_events);
+    assert(ma.synchronized == mb.synchronized);
+    struct wsap_vtcore_cursor ca = wsap_vtcore_cursor(a), cb = wsap_vtcore_cursor(b);
+    assert(ca.visible == cb.visible && ca.blink == cb.blink);
+}
+
+/* One write lets the fast CSI path take these inputs. A byte feed always
+ * takes the general parser. Both must give the same screen and modes. */
+static void test_fast_csi_matches_byte_feed(void)
+{
+    static const char *cases[] = {
+        // Cursor position in origin mode.
+        "\033[2;3r\033[?6h\033[HZ",
+        "\033[2;3r\033[?6h\033[1;1HZ",
+        "\033[2;3r\033[?6h\033[HmZ",
+        "\033[2;3r\033[?6h\033[1HmZ",
+        "\033[2;3r\033[?6h\033[3;1H\033[dmZ",
+        "\033[2;3r\033[?6h\033[1;1H\033[1;1HZ",
+        // Cursor position split after its parameters.
+        "ab\033[1;1Hcd",
+        // A color that a parameter follows ends the fast form.
+        "\033[38;5;1m\033[48;5;2;4mX",
+        "\033[48;2;1;2;3m\033[38;2;4;5;6;1mX",
+        "\033[38;5;1;48;5;2;4mX",
+        "\033[38;2;1;2;3;48;2;4;5;6;7mX",
+        "\033[38;5;1;7mX",
+        // A cancelled sequence changes nothing.
+        "\033[1;31m\033[0;38;2;1\030X",
+        "\033[1;31m\033[0;38;5;9\032X",
+        "\033[31m\033[1;38;5;2\033DX",
+        "\033[31m\033[38;5;2;48;5;3\030X",
+        "\033[31m\033[38;2;1;2;3;48;2;4\030X",
+        "\033[31m\033[38;2;1;2;3m\033[48;2;4\030X",
+        // Prefixed colors.
+        "\033[1m\033[0;38;2;10;20;30mX\033[1;48;5;200mY",
+        // Short SGR forms, then other finals after them.
+        "\033[1m\033[2m\033[3m\033[4m\033[7mA\033[22m\033[31m\033[49m\033[97m\033[104mB\033[5mC",
+        "\033[Km\033[Jm\033[Am\033[Cm",
+        // Private modes.
+        "\033[?25l\033[?7lab\033[?7h\033[?25hcd",
+        "\033[?2026h\033[?1004h\033[?2004h\033[?1h\033[?12hX\033[?12l\033[?1lY",
+        "\033[?25;7lX\033[?0025hY",
+    };
+    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        const char *seq = cases[c];
+        size_t len = strlen(seq);
+        struct wsap_vtcore *expected = tt_new(12, 4);
+        write_seq(expected, seq);
+        for (size_t split = 0; split <= len; split++) {
+            struct wsap_vtcore *actual = tt_new(12, 4);
+            tt_write(actual, seq, split);
+            tt_write(actual, seq + split, len - split);
+            assert_same_screen(actual, expected);
+            assert_same_modes(actual, expected);
+            wsap_vtcore_free(actual);
+        }
+        wsap_vtcore_free(expected);
+    }
+
+    // Spot checks for cases above, so that a fault in both paths shows too.
+    struct wsap_vtcore *t = tt_new(12, 4);
+    tt_puts(t, "\033[2;3r\033[?6h\033[HmZ");
+    assert(row_is(t, 0, "") && row_is(t, 1, "mZ"));
+    wsap_vtcore_free(t);
+    t = tt_new(12, 4);
+    tt_puts(t, "\033[38;5;1m\033[48;5;2;4mX");
+    assert(row_is(t, 0, "X"));
+    assert(tt_cell(t, 0, 0)->bg == wsap_vtcore_color_index(2));
+    wsap_vtcore_free(t);
+    t = tt_new(12, 4);
+    tt_puts(t, "\033[1;31m\033[0;38;2;1\030X");
+    assert(row_is(t, 0, "X"));
+    assert(tt_cell(t, 0, 0)->fg == wsap_vtcore_color_index(1));
+    wsap_vtcore_free(t);
+}
+
 static void test_grow_past_reservation(void)
 {
     struct wsap_vtcore *t = tt_new(40, 10);
@@ -2104,6 +2185,7 @@ int main(void)
     test_grow_past_reservation();
     test_skipped_cells_read_blank();
     test_csi_text_chunks();
+    test_fast_csi_matches_byte_feed();
     test_erase_keeps_used_rows();
     test_blank_rows();
     test_lnm_mode_alone_is_not_sticky();

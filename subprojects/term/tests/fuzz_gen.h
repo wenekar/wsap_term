@@ -135,7 +135,7 @@ static inline void gen(int ops, int cols, int rows)
     static const char csi_final[] = "ABCDEFGHIJKLMPSTXZ@`abdefghlmnrsu";
 
     for (int i = 0; i < ops; i++) {
-        switch (rn(41)) {
+        switch (rn(42)) {
         case 0: case 1: case 2: put(PICK(words)); break;
         case 3: {
             int n = rn(cols * 2 + 2);
@@ -214,6 +214,23 @@ static inline void gen(int ops, int cols, int rows)
                     putb((char)(0x21 + rn(94)));
                 put(eol);
             }
+            break;
+        }
+        case 41: {
+            /* Forms that the fast CSI path takes. Cut one short, then cancel it,
+             * end it, or let the next operation continue it. */
+            static const char *forms[] = {
+                "\033[0;38;2;12;34;56m", "\033[1;48;5;200m", "\033[38;5;9;48;2;1;2;3m",
+                "\033[48;2;7;8;9m\033[38;5;100m", "\033[38;2;1;2;3;4m", "\033[1;1H",
+                "\033[H", "\033[?25l", "\033[?2026h", "\033[?7l", "\033[?7h", "\033[22m",
+                "\033[97m", "\033[104m", "\033[7m", "\033[2J", "\033[1K",
+            };
+            static const char *after[] = { "\x18", "\x1a", "\033D", "", "\033[m", "x", "m" };
+            const char *form = PICK(forms);
+            int cut = 2 + rn((int)strlen(form) - 1);
+            for (int k = 0; k < cut; k++)
+                putb(form[k]);
+            put(PICK(after));
             break;
         }
         }
