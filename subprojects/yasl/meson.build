@@ -107,6 +107,14 @@ endif
 
 subdir('src')
 
+yasl_link_args = []
+yasl_link_depends = []
+if system == 'linux'
+    # Compiler visibility does not hide linker-generated symbols.
+    yasl_link_depends = files('assets/yasl.map')
+    yasl_link_args = ['-Wl,--version-script=' + yasl_link_depends[0].full_path()]
+endif
+
 yasl_lib = both_libraries(
     'yasl',
     sources,
@@ -116,6 +124,8 @@ yasl_lib = both_libraries(
     include_directories: inc,
     dependencies: deps,
     gnu_symbol_visibility: 'hidden',
+    link_args: yasl_link_args,
+    link_depends: yasl_link_depends,
     install: true,
 )
 
