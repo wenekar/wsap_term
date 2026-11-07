@@ -207,6 +207,22 @@ int main(void)
     K(.codepoint = 'a', .base = 'a', .mods = WSAP_VTCORE_MOD_CTRL | WSAP_VTCORE_MOD_CAPS);
     expect("\001");
 
+    // Ctrl on a non-Latin layout uses the US-layout key of the same physical key.
+    K(.codepoint = 0x0441, .base = 'c', .text = 0x0441, .mods = WSAP_VTCORE_MOD_CTRL);
+    expect("\003");
+    K(.codepoint = 0x0441, .shifted = 0x0421, .base = 'c',
+      .mods = WSAP_VTCORE_MOD_CTRL | WSAP_VTCORE_MOD_SHIFT);
+    expect("\003");
+    K(.codepoint = 0x03C8, .base = 'c', .mods = WSAP_VTCORE_MOD_CTRL); expect("\003");
+    K(.codepoint = 0x05D1, .base = 'c', .mods = WSAP_VTCORE_MOD_CTRL); expect("\003");
+    K(.codepoint = 0x0445, .base = '[', .mods = WSAP_VTCORE_MOD_CTRL); expect("\033");
+    K(.codepoint = 0x0445, .base = '[', .mods = WSAP_VTCORE_MOD_CTRL | WSAP_VTCORE_MOD_ALT);
+    expect("\033");
+    K(.codepoint = 0x0441, .base = 'c', .mods = WSAP_VTCORE_MOD_CTRL | WSAP_VTCORE_MOD_ALT);
+    expect("\033\003");
+    typed(0x0441, 0); expect("\xd1\x81");
+    K(.codepoint = 0x0441, .text = 0x0441, .mods = WSAP_VTCORE_MOD_CTRL); expect("\xd1\x81");
+
     mode(0);
     K(.codepoint = '8', .text_utf8 = "[", .text_len = 1, .text_deferred = true);
     expect("");

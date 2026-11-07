@@ -449,7 +449,10 @@ static uint32_t control_base_char(const struct wsap_vtcore_key_event *ev)
 {
     uint32_t ch = ((ev->mods & WSAP_VTCORE_MOD_SHIFT) && ev->shifted)
         ? ev->shifted : ev->codepoint;
-    return ch < 0x80 ? ch : 0;
+    if (ch < 0x80)
+        return ch;
+    // A non-Latin layout gives no ASCII key. Use the US-layout key of the same physical key.
+    return ev->base < 0x80 ? ev->base : 0;
 }
 
 static bool encode_legacy(const struct wsap_vtcore_key_event *ev,
