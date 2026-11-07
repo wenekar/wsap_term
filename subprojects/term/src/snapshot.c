@@ -9,10 +9,15 @@ struct wsap_vtcore_snapshot {
     uint32_t palette[WSAP_VTCORE_PALETTE_SIZE];
     uint64_t source;
 
+    // The row store is a ring. Logical row y is physical row (top + y) % view.size.y.
+    // A scroll moves top. The kept rows do not move.
     struct wsap_vtcore_cell *cells;
-    struct wsap_vtcore_cell *stage;
     uint64_t *keys;
     uint32_t *row_clusters;
+    int top;
+    // Scratch rows for the staged path. NULL, or cell_cap cells.
+    struct wsap_vtcore_cell *stage;
+    // One span for each logical row.
     struct wsap_vtcore_span *selection;
     size_t cell_cap;
     int row_cap;
@@ -52,19 +57,13 @@ static bool reserve(struct wsap_vtcore_snapshot *s, int cols, int rows)
         struct wsap_vtcore_cell *c = wsap_vtcore_aligned_alloc(64, cells * sizeof(*c));
         if (!c)
             return false;
-        struct wsap_vtcore_cell *st = wsap_vtcore_aligned_alloc(64, cells * sizeof(*st));
-        if (!st) {
-            wsap_vtcore_aligned_free(c);
-            return false;
-        }
+        // Keep the old rows. The old view must stay valid if this update fails.
         if (s->cells)
             memcpy(c, s->cells, s->cell_cap * sizeof(*c));
-        if (s->stage)
-            memcpy(st, s->stage, s->cell_cap * sizeof(*st));
         wsap_vtcore_aligned_free(s->cells);
         wsap_vtcore_aligned_free(s->stage);
         s->cells = c;
-        s->stage = st;
+        s->stage = NULL;
         s->cell_cap = cells;
     }
     if (rows > s->row_cap) {
@@ -82,6 +81,12 @@ static bool reserve(struct wsap_vtcore_snapshot *s, int cols, int rows)
         s->row_cap = rows;
     }
     return true;
+}
+
+static inline int ring_row(int top, int y, int rows)
+{
+    int p = top + y;
+    return p >= rows ? p - rows : p;
 }
 
 struct arena_out {
@@ -156,12 +161,15 @@ struct plan {
     int scrolled;
     uint32_t arena_len;
     const uint64_t *keys;
-    const uint32_t *words;
+    // For each logical row: ROW_KEPT, or the arena words of a new row.
+    uint32_t *words;
     int staged;
     bool direct;
     const int *c0, *c1;
 };
 
+/* Write the plan to the snapshot. This step cannot fail. The direct path
+ * converts rows here into arena room that the plan reserved. */
 static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, const struct plan *p)
 {
     int cols = t->cols, rows = t->rows;
@@ -173,51 +181,57 @@ static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, c
         s->spare = arena;
         s->spare_cap = cap;
         s->arena_dead = 0;
+        s->top = 0;
+    } else if (k > 0) {
+        // The rows that scroll off become the new bottom rows. No row moves.
+        s->top = ring_row(s->top, k, rows);
     }
     s->arena_len = p->arena_len;
 
     bool changed = p->all;
     size_t row_bytes = (size_t)cols * sizeof(struct wsap_vtcore_cell);
-    bool swap = !p->direct && (k > 0 || p->staged * 2 > rows);
-    if (p->direct && k > 0)
-        memmove(s->cells, s->cells + (size_t)k * cols, (size_t)(rows - k) * row_bytes);
-    if (swap) {
-        for (int y = 0; y < rows; y++)
-            if (p->words[y] == ROW_KEPT)
-                memcpy(s->stage + (size_t)y * cols, s->cells + (size_t)(y + k) * cols, row_bytes);
+    if (!p->direct && p->staged * 2 > rows) {
+        // Most rows are new and are in the stage already. Copy the kept rows
+        // to the stage and swap the buffers. The rows are then in logical order.
+        for (int y = 0; y < rows; y++) {
+            int phys = ring_row(s->top, y, rows);
+            if (p->words[y] == ROW_KEPT) {
+                memcpy(s->stage + (size_t)y * cols, s->cells + (size_t)phys * cols, row_bytes);
+                p->words[y] = s->row_clusters[phys];
+            } else if (!p->all) {
+                s->arena_dead += s->row_clusters[phys];
+            }
+        }
         struct wsap_vtcore_cell *cells = s->cells;
         s->cells = s->stage;
         s->stage = cells;
-    }
-    if (k > 0) {
-        for (int y = 0; y < k; y++)
-            s->arena_dead += s->row_clusters[y];
-        memmove(s->row_clusters, s->row_clusters + k,
-                (size_t)(rows - k) * sizeof(uint32_t));
-        memmove(s->keys, s->keys + k,
-                (size_t)(rows - k) * sizeof(uint64_t));
-        memset(s->keys + (rows - k), 0, (size_t)k * sizeof(uint64_t));
-        memset(s->row_clusters + (rows - k), 0, (size_t)k * sizeof(uint32_t));
-    }
-
-    for (int y = 0; y < rows; y++) {
-        if (p->words[y] == ROW_KEPT)
-            continue;
-        if (!p->all)
-            s->arena_dead += s->row_clusters[y];
-        if (p->direct) {
-            struct arena_out a = { &s->arena, &s->arena_cap, s->arena_len };
-            (void)convert_row(&a, t->gstore, s->cells + (size_t)y * cols,
-                              wsap_vtcore_screen_view_row(t, y), cols);
-            s->row_clusters[y] = a.len - s->arena_len;
-            s->arena_len = a.len;
-        } else {
-            if (!swap)
-                memcpy(s->cells + (size_t)y * cols, s->stage + (size_t)y * cols, row_bytes);
-            s->row_clusters[y] = p->words[y];
-        }
-        s->keys[y] = p->keys[y];
+        // A kept row has its old key, and the old key is equal to the new key.
+        memcpy(s->keys, p->keys, (size_t)rows * sizeof(*s->keys));
+        memcpy(s->row_clusters, p->words, (size_t)rows * sizeof(*s->row_clusters));
+        s->top = 0;
         changed = true;
+    } else {
+        for (int y = 0; y < rows; y++) {
+            if (p->words[y] == ROW_KEPT)
+                continue;
+            int phys = ring_row(s->top, y, rows);
+            struct wsap_vtcore_cell *dst = s->cells + (size_t)phys * cols;
+            if (!p->all)
+                s->arena_dead += s->row_clusters[phys];
+            if (p->direct) {
+                // The plan reserved 1 + WSAP_VTCORE_GRAPHEME_MAX_LEN words for each
+                // cell of each new row, so convert_row cannot grow the arena or fail.
+                struct arena_out a = { &s->arena, &s->arena_cap, s->arena_len };
+                (void)convert_row(&a, t->gstore, dst, wsap_vtcore_screen_view_row(t, y), cols);
+                s->row_clusters[phys] = a.len - s->arena_len;
+                s->arena_len = a.len;
+            } else {
+                memcpy(dst, s->stage + (size_t)y * cols, row_bytes);
+                s->row_clusters[phys] = p->words[y];
+            }
+            s->keys[phys] = p->keys[y];
+            changed = true;
+        }
     }
 
     for (int y = 0; y < rows; y++) {
@@ -311,12 +325,14 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
     }
     wsap_vtcore_screen_view_row_keys(t, new_keys);
 
+    // Find a scroll. Compare each new key with the old key k rows lower.
+    int top = s->top;
     if (!all && rows > 1) {
         int cand_k = 0;
         uint64_t key0 = new_keys[0];
         if (key0) {
             for (int k = 1; k < rows; k++) {
-                if (s->keys[k] == key0) {
+                if (s->keys[ring_row(top, k, rows)] == key0) {
                     cand_k = k;
                     break;
                 }
@@ -326,7 +342,7 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
             uint64_t key1 = new_keys[1];
             if (key1) {
                 for (int k = 1; 1 + k < rows; k++) {
-                    if (s->keys[1 + k] == key1) {
+                    if (s->keys[ring_row(top, 1 + k, rows)] == key1) {
                         cand_k = k;
                         break;
                     }
@@ -339,7 +355,7 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
             int threshold = total / 2;
             int matches = 0, mismatches = 0;
             for (int y = 0; y < total; y++) {
-                if (new_keys[y] == s->keys[y + cand_k]) {
+                if (new_keys[y] == s->keys[ring_row(top, y + cand_k, rows)]) {
                     if (++matches > threshold) {
                         scrolled = cand_k;
                         break;
@@ -353,7 +369,7 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
     }
 
     for (int y = 0; y < rows; y++) {
-        if (!all && y + scrolled < rows && s->keys[y + scrolled] == new_keys[y]) {
+        if (!all && y + scrolled < rows && s->keys[ring_row(top, y + scrolled, rows)] == new_keys[y]) {
             words[y] = ROW_KEPT;
         } else {
             words[y] = 0;
@@ -363,14 +379,21 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
 
     struct arena_out a = all ? (struct arena_out){ &s->spare, &s->spare_cap, 0 }
                              : (struct arena_out){ &s->arena, &s->arena_cap, s->arena_len };
-    uint64_t worst = (uint64_t)p.staged * (uint64_t)cols * (1 + WSAP_VTCORE_GRAPHEME_MAX_LEN);
-    if (!all && worst <= DIRECT_MAX_WORDS) {
-        // No cluster handle or history row can add arena data in the empty state.
-        if ((wsap_vtcore_gstore_count(t->gstore) != 0 || t->hist.lines != 0) &&
-            !arena_reserve(&a, a.len + worst))
-            goto done;
+    // A cluster can come only from the cluster store or from a history row.
+    // Each cell of a new row then needs at most 1 + WSAP_VTCORE_GRAPHEME_MAX_LEN words.
+    // The direct path converts in place, so it must reserve all of them first.
+    uint64_t worst = 0;
+    if (wsap_vtcore_gstore_count(t->gstore) > 0 || t->hist.lines > 0)
+        worst = (uint64_t)p.staged * (uint64_t)cols * (1 + WSAP_VTCORE_GRAPHEME_MAX_LEN);
+    // A full update takes the staged path. The direct path was not faster for it.
+    if (!all && worst <= DIRECT_MAX_WORDS && arena_reserve(&a, a.len + worst)) {
         p.direct = true;
     } else {
+        if (!s->stage) {
+            s->stage = wsap_vtcore_aligned_alloc(64, s->cell_cap * sizeof(*s->stage));
+            if (!s->stage)
+                goto done;
+        }
         for (int y = 0; y < rows; y++) {
             if (words[y] == ROW_KEPT)
                 continue;
@@ -414,14 +437,14 @@ const struct wsap_vtcore_cell *wsap_vtcore_snapshot_row(const struct wsap_vtcore
 {
     if (!s || y < 0 || y >= s->view.size.y)
         return NULL;
-    return s->cells + (size_t)y * s->view.size.x;
+    return s->cells + (size_t)ring_row(s->top, y, s->view.size.y) * s->view.size.x;
 }
 
 uint64_t wsap_vtcore_snapshot_row_key(const struct wsap_vtcore_snapshot *s, int y)
 {
     if (!s || y < 0 || y >= s->view.size.y)
         return 0;
-    return s->keys[y];
+    return s->keys[ring_row(s->top, y, s->view.size.y)];
 }
 
 struct wsap_vtcore_span wsap_vtcore_snapshot_row_selection(const struct wsap_vtcore_snapshot *s, int y)
@@ -429,6 +452,18 @@ struct wsap_vtcore_span wsap_vtcore_snapshot_row_selection(const struct wsap_vtc
     if (!s || y < 0 || y >= s->view.size.y)
         return (struct wsap_vtcore_span){ 0 };
     return s->selection[y];
+}
+
+struct wsap_vtcore_snapshot_rows wsap_vtcore_snapshot_rows(const struct wsap_vtcore_snapshot *s)
+{
+    if (!s)
+        return (struct wsap_vtcore_snapshot_rows){ 0 };
+    return (struct wsap_vtcore_snapshot_rows){ .cells = s->cells, .keys = s->keys, .top = s->top };
+}
+
+const struct wsap_vtcore_span *wsap_vtcore_snapshot_selections(const struct wsap_vtcore_snapshot *s)
+{
+    return s ? s->selection : NULL;
 }
 
 int wsap_vtcore_snapshot_cluster(const struct wsap_vtcore_snapshot *s, uint32_t text, uint32_t *cps, int cap)

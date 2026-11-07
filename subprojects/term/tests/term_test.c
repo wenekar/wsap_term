@@ -1426,6 +1426,9 @@ static void test_snapshot_null_and_range(void)
     assert(wsap_vtcore_snapshot_row_key(NULL, 0) == 0);
     struct wsap_vtcore_span none = wsap_vtcore_snapshot_row_selection(NULL, 0);
     assert(none.begin == 0 && none.end == 0);
+    struct wsap_vtcore_snapshot_rows no_rows = wsap_vtcore_snapshot_rows(NULL);
+    assert(!no_rows.cells && !no_rows.keys && no_rows.top == 0);
+    assert(wsap_vtcore_snapshot_selections(NULL) == NULL);
     assert(wsap_vtcore_snapshot_cluster(NULL, 'a', cps, 4) == 0);
     assert(wsap_vtcore_snapshot_cluster(NULL, WSAP_VTCORE_TEXT_CLUSTER, cps, 4) == 0);
     assert(cps[0] == 0xAAAA);

@@ -388,9 +388,11 @@ static void tall_selection_fails_cleanly(void)
     wsap_vtcore_free(t);
 }
 
-static void scrolling_fails_cleanly(void)
+/* With 3 rows, each update replaces most rows. With 10 rows, a scroll keeps
+ * most rows, so a failed arena reserve takes the staged path without a swap. */
+static void scrolling_fails_cleanly(int rows)
 {
-    struct wsap_vtcore_options options = { .size = { 8, 3 }, .scrollback = 5 };
+    struct wsap_vtcore_options options = { .size = { 8, rows }, .scrollback = 5 };
     struct wsap_vtcore *t = wsap_vtcore_new(&options);
     struct wsap_vtcore_snapshot *s = wsap_vtcore_snapshot_new();
     assert(t && s);
@@ -429,6 +431,7 @@ int main(void)
     assert(failures >= 7);
     tall_selection_is_kept();
     tall_selection_fails_cleanly();
-    scrolling_fails_cleanly();
+    scrolling_fails_cleanly(3);
+    scrolling_fails_cleanly(10);
     return 0;
 }

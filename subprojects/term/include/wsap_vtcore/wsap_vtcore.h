@@ -354,6 +354,19 @@ WSAP_VTCORE_API int wsap_vtcore_history_rows(const struct wsap_vtcore *t);
 WSAP_VTCORE_API char *wsap_vtcore_history_text(struct wsap_vtcore *t, int max_rows);
 WSAP_VTCORE_API struct wsap_vtcore_span wsap_vtcore_snapshot_row_selection(const struct wsap_vtcore_snapshot *s, int y);
 
+/* Direct access to the snapshot row store. The store is a ring.
+ * Logical row y is physical row (top + y) % size.y. cells holds size.y rows of size.x cells.
+ * keys holds size.y row keys. The pointers stay valid until the next update or free.
+ * A NULL snapshot gives an all-zero value. */
+struct wsap_vtcore_snapshot_rows {
+    const struct wsap_vtcore_cell *cells;
+    const uint64_t *keys;
+    int top;
+};
+WSAP_VTCORE_API struct wsap_vtcore_snapshot_rows wsap_vtcore_snapshot_rows(const struct wsap_vtcore_snapshot *s);
+/* Return size.y selection spans in logical row order. A NULL snapshot gives NULL. */
+WSAP_VTCORE_API const struct wsap_vtcore_span *wsap_vtcore_snapshot_selections(const struct wsap_vtcore_snapshot *s);
+
 /* Return the full code point count. Copy at most cap code points to cps.
  * Use NULL and zero capacity to query the count. Invalid handles return zero.
  * Cluster handles belong to one snapshot capture. Do not retain them across updates.
