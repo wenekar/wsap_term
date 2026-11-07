@@ -67,13 +67,19 @@ static inline void sc_linefeed(struct wsap_vtcore *t, size_t n)
 {
     if (WSAP_VTCORE_EXPECT(n == 1 && t->scroll_top == 0 &&
                          t->scroll_bottom == t->rows - 1, 1)) {
-        t->pending_wrap = false;
-        wsap_vtcore_row(t, t->cursor_y)->version++;
-        if (WSAP_VTCORE_EXPECT(t->cursor_y == t->rows - 1, 1))
-            wsap_vtcore_screen_scroll_up(t);
-        else
+        if (WSAP_VTCORE_EXPECT(t->cursor_y != t->rows - 1, 1)) {
+            t->pending_wrap = false;
+            wsap_vtcore_row(t, t->cursor_y)->version++;
             t->cursor_y++;
-        return;
+            return;
+        }
+        /* With left and right margins, a scroll moves only the cells inside them. */
+        if (WSAP_VTCORE_EXPECT(!t->lr_margin_mode, 1)) {
+            t->pending_wrap = false;
+            wsap_vtcore_row(t, t->cursor_y)->version++;
+            wsap_vtcore_screen_scroll_up(t);
+            return;
+        }
     }
     wsap_vtcore_sc_linefeed_slow(t, n);
 }
@@ -81,8 +87,9 @@ static inline void sc_linefeed(struct wsap_vtcore *t, size_t n)
 static inline void sc_cr(struct wsap_vtcore *t)
 {
     t->pending_wrap = false;
-    if (t->cursor_x != 0) {
-        t->cursor_x = 0;
+    int x = lr_cr_column(t);
+    if (t->cursor_x != x) {
+        t->cursor_x = x;
         wsap_vtcore_row(t, t->cursor_y)->version++;
     }
 }
@@ -153,7 +160,7 @@ static inline struct span sc_span_begin(struct wsap_vtcore *t, int want)
     if (WSAP_VTCORE_EXPECT(cx < len && (row->cells[cx].flags & CELL_TRAIL), 0))
         fill_cells(row->cells + cx - 1, 1, row->cells[cx - 1].fg, row->cells[cx - 1].bg);
 
-    int right = WSAP_VTCORE_EXPECT(t->lr_margin_mode, 0) ? t->right_margin : t->cols - 1;
+    int right = WSAP_VTCORE_EXPECT(t->lr_margin_mode, 0) ? lr_right_limit(t) : t->cols - 1;
     int avail = right + 1 > cx ? right + 1 - cx : 0;
     return (struct span){
         .row = row,

@@ -127,9 +127,9 @@ generator cases found these faults. Each fix has a regression check.
 | A line stream on a one-row screen called `memcpy` with a null buffer. | The stream copies only a non-empty tail. | Sanitizer runs of `model-test` |
 | Insert mode with left and right margins grew the row past the margin and showed erased cells. | The row length grows only up to the right margin. | `term-test` margin insert case |
 
-One fault is still open. With left and right margins, insert mode, and
-grapheme clusters together, different write splits can give different
-screens. Add margin sequences to `tests/fuzz_gen.h` to reproduce it.
+One fault stayed open. With left and right margins, insert mode, and
+grapheme clusters together, different write splits could give different
+screens. The margin follow-up below fixes it.
 
 ## Follow-up: 2026-11-07
 
@@ -151,3 +151,23 @@ pending wrap, as the base parser does. The `escape.c` SGR shortcuts gave the
 same result as the general loop, including the low byte of a large RGB value.
 They and the other paths with no measured gain were removed. See
 `benchmarks/term-ng-sync.md` in the main tree.
+
+## Follow-up: 2026-11-07, left and right margins
+
+`tests/fuzz_gen.h` now sets and resets left and right margins (DECLRMM and
+DECSLRM). The generator and an xterm comparison found these faults. Each fix
+has a regression check.
+
+| Fault | Fix | Check |
+| --- | --- | --- |
+| A wide character at the right margin wrapped and set the row length to the full width. Erased cells past the margin appeared again. | The row grows only up to the pad cell at the margin. | `term-test` margin wide wrap case, `write-fuzz-test` |
+| IL, DL, SU, SD, a line feed at the bottom margin, and RI at the top margin moved full rows. | These scroll only the cells between the margins. Outside the margins, IL and DL do nothing, and LF and RI stop at the margin. | `term-test` margin scroll cases |
+| A burst of line feeds in one write scrolled the margin area once by n rows. Single line feeds gave other row lengths, and a resize then gave other history. | The margin area scrolls one row at a time. | `term-test` burst case, `write-fuzz-test` |
+| A margin scroll kept the wrap flag of each row. A blank row could then join the next row in a reflow. | A margin scroll clears the wrap flag of each row it changes. | `write-fuzz-test` |
+| CR, BS, CUF, CUB, HPR, HT, NEL, and CNL ignored the margins. | Each stops at the margin when the cursor starts inside it, as in xterm. | `term-test` margin motion cases |
+| Text right of the right margin went back to the margin in one path and wrapped in another. | Text right of the margin continues to the last column. | `term-test` margin motion cases |
+| With DECLRMM set, `CSI s` saved the cursor. ICH and DCH left of the left margin changed cells. DECSTBM homed to column 0 in origin mode. | `CSI s` sets the margins. ICH and DCH outside the margins do nothing. DECSTBM homes to the margin. | `term-test` margin cases |
+
+Two other faults: DECSED and DECSEL (`CSI ? J`, `CSI ? K`) did nothing, and
+DECRQM reported mode 1048 as unknown. With no protected cells, DECSED and
+DECSEL now erase as ED and EL. DECRQM reports 1048 as reset.

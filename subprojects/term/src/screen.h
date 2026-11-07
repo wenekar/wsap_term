@@ -8,6 +8,11 @@
 #include "simd.h"
 
 void wsap_vtcore_screen_scroll_region(struct wsap_vtcore *t, int top, int bottom, int count, bool down, bool history);
+/* Scroll the cells of columns left to right in rows top to bottom. The cells
+ * outside these columns do not move. No row goes into the history.
+ */
+void wsap_vtcore_screen_scroll_rect(struct wsap_vtcore *t, int top, int bottom, int left, int right,
+                                    int count, bool down);
 void wsap_vtcore_screen_set_alternate(struct wsap_vtcore *t, bool enabled);
 void wsap_vtcore_screen_erase(struct wsap_vtcore *t, int mode);
 void wsap_vtcore_screen_erase_all(struct wsap_vtcore *t);
@@ -28,6 +33,46 @@ int wsap_vtcore_view_offset(const struct wsap_vtcore *t);
 static inline bool screen_has_history(const struct wsap_vtcore *t)
 {
     return !t->alternate && t->hist.line_limit > 0;
+}
+
+/* True when DECLRMM is set and the margins do not span the full width. Only
+ * then must a scroll keep the cells outside the margins in place.
+ */
+static inline bool lr_margins_partial(const struct wsap_vtcore *t)
+{
+    return t->lr_margin_mode && (t->left_margin > 0 || t->right_margin < t->cols - 1);
+}
+
+/* True when column x is inside the left and right margins. Without DECLRMM,
+ * all columns are inside.
+ */
+static inline bool lr_col_in_margins(const struct wsap_vtcore *t, int x)
+{
+    return !t->lr_margin_mode || (x >= t->left_margin && x <= t->right_margin);
+}
+
+/* The last column that text and forward motion can reach. A cursor right of
+ * the right margin can move up to the last column of the screen.
+ */
+static inline int lr_right_limit(const struct wsap_vtcore *t)
+{
+    return t->lr_margin_mode && t->cursor_x <= t->right_margin ? t->right_margin : t->cols - 1;
+}
+
+/* The first column that backward motion can reach. A cursor left of the left
+ * margin can move up to column 0.
+ */
+static inline int lr_left_limit(const struct wsap_vtcore *t)
+{
+    return t->lr_margin_mode && t->cursor_x >= t->left_margin ? t->left_margin : 0;
+}
+
+/* The column of a carriage return. In origin mode it is the left margin. */
+static inline int lr_cr_column(const struct wsap_vtcore *t)
+{
+    if (WSAP_VTCORE_EXPECT(!t->lr_margin_mode, 1))
+        return 0;
+    return t->origin_mode || t->cursor_x >= t->left_margin ? t->left_margin : 0;
 }
 
 static inline int phys_row(const struct wsap_vtcore *t, int y)

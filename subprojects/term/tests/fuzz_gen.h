@@ -136,7 +136,7 @@ static inline void gen(int ops, int cols, int rows)
     static const char csi_final[] = "ABCDEFGHIJKLMPSTXZ@`abdefghlmnrsu";
 
     for (int i = 0; i < ops; i++) {
-        switch (rn(42)) {
+        switch (rn(43)) {
         case 0: case 1: case 2: put(PICK(words)); break;
         case 3: {
             int n = rn(cols * 2 + 2);
@@ -234,6 +234,17 @@ static inline void gen(int ops, int cols, int rows)
             put(PICK(after));
             break;
         }
+        case 42:
+            /* Left and right margins with the other operations. */
+            if (!gen_unmodeled)
+                break;
+            if (rn(3)) {
+                int left = 1 + rn(cols), right = left + rn(cols + 1 - left);
+                putf("\033[?69h\033[%d;%ds", left, right);
+            } else {
+                put("\033[?69l");
+            }
+            break;
         }
     }
 }

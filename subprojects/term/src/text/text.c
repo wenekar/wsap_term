@@ -73,7 +73,7 @@ void wsap_vtcore_text_ground(struct wsap_vtcore *t, unsigned char ch)
         sc_cr(t);
     } else if (ch == '\b') {
         t->pending_wrap = false;
-        if (t->cursor_x > 0)
+        if (t->cursor_x > lr_left_limit(t))
             t->cursor_x--;
         wsap_vtcore_row(t, t->cursor_y)->version++;
     } else if (ch == '\t') {

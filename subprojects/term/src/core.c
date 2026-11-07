@@ -100,13 +100,16 @@ void wsap_vtcore_sc_print_glyph(struct wsap_vtcore *t, uint32_t cp, int width, u
     struct srow *srow = &t->scr.slot[p];
     int cx = t->cursor_x;
     int cols = t->cols;
-    int right = t->lr_margin_mode ? t->right_margin : cols - 1;
+    int right = t->lr_margin_mode ? lr_right_limit(t) : cols - 1;
 
     if (WSAP_VTCORE_EXPECT(width == 2 && cols > 1 && cx == right && t->autowrap, 0)) {
         wsap_vtcore_row_fill_gap(srow, cx);
         clear_wide_edges(row, cx, right + 1, srow->len);
         row[cx] = (struct cell){ ' ', WSAP_VTCORE_COLOR_FG, WSAP_VTCORE_COLOR_BG, CELL_WRAP_PAD, 0 };
-        srow->len = (uint16_t)cols;
+        /* The pad is at the right margin. Cells after it keep their state:
+         * a longer length would show stale cells past the margin. */
+        if (srow->len < cx + 1)
+            srow->len = (uint16_t)(cx + 1);
         srow->version++;
         row_set_wrapped(srow, true);
         t->cursor_x = t->lr_margin_mode ? t->left_margin : 0;
@@ -296,6 +299,24 @@ void wsap_vtcore_sc_linefeed_slow(struct wsap_vtcore *t, size_t n)
     size_t scroll = (size_t)(t->cursor_y + (int)n - t->scroll_bottom);
     t->cursor_y = t->scroll_bottom;
 
+    if (WSAP_VTCORE_EXPECT(t->lr_margin_mode, 0)) {
+        /* Outside the left and right margins, a line feed stops at the
+         * bottom margin. Inside them, it scrolls only the cells between the
+         * margins, and no row goes into the history. */
+        if (!lr_col_in_margins(t, t->cursor_x))
+            return;
+        if (lr_margins_partial(t)) {
+            /* Scroll one row at a time. A burst of line feeds in one write
+             * must leave the same rows as the same line feeds one by one. */
+            int height = t->scroll_bottom - t->scroll_top + 1;
+            int count = scroll > (size_t)height ? height : (int)scroll;
+            for (int i = 0; i < count; i++)
+                wsap_vtcore_screen_scroll_rect(t, t->scroll_top, t->scroll_bottom,
+                                               t->left_margin, t->right_margin, 1, false);
+            return;
+        }
+    }
+
     if (WSAP_VTCORE_EXPECT(t->scroll_top == 0 && t->scroll_bottom == t->rows - 1, 1)) {
         if (WSAP_VTCORE_EXPECT(scroll == 1, 1))
             wsap_vtcore_screen_scroll_up(t);
@@ -331,8 +352,21 @@ void wsap_vtcore_sc_linefeed_slow(struct wsap_vtcore *t, size_t n)
     }
 }
 
+/* A tab stops at the margin on the side it moves to, when the cursor starts
+ * inside that margin. */
+static inline void tab_clamp_margins(struct wsap_vtcore *t, int before)
+{
+    if (WSAP_VTCORE_EXPECT(!t->lr_margin_mode, 1))
+        return;
+    if (t->cursor_x > before && before <= t->right_margin && t->cursor_x > t->right_margin)
+        t->cursor_x = t->right_margin;
+    else if (t->cursor_x < before && before >= t->left_margin && t->cursor_x < t->left_margin)
+        t->cursor_x = t->left_margin;
+}
+
 void wsap_vtcore_sc_tab(struct wsap_vtcore *t, int n)
 {
+    int before = t->cursor_x;
     int dir = n >= 0 ? 1 : -1;
     int count = n >= 0 ? n : -n;
     if (count > t->cols) count = t->cols;
@@ -344,6 +378,7 @@ void wsap_vtcore_sc_tab(struct wsap_vtcore *t, int n)
             int prev = t->cursor_x > 0 ? (((t->cursor_x - 1) & ~7) - ((count - 1) << 3)) : 0;
             t->cursor_x = prev > 0 ? prev : 0;
         }
+        tab_clamp_margins(t, before);
         t->pending_wrap = false;
         struct srow *cur = wsap_vtcore_row(t, t->cursor_y);
         if (cur) cur->version++;
@@ -411,6 +446,7 @@ void wsap_vtcore_sc_tab(struct wsap_vtcore *t, int n)
         }
     }
     t->cursor_x = cur_col;
+    tab_clamp_margins(t, before);
     t->pending_wrap = false;
     struct srow *cur = wsap_vtcore_row(t, t->cursor_y);
     if (cur) cur->version++;

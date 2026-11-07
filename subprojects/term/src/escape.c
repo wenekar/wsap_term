@@ -538,6 +538,7 @@ static int mode_get(const struct wsap_vtcore *t, int mode, bool priv)
         case 7: return t->autowrap;
         case 47: case 1047: case 1049: return t->alternate;
         case 69: return t->lr_margin_mode;
+        case 1048: return 0;
         default: break;
         }
         if (mode_is_mouse(mode)) return t->mouse_mode == mode;
@@ -606,12 +607,13 @@ static inline void move_v(struct wsap_vtcore *t, int n, bool col0)
     int bottom = t->cursor_y <= t->scroll_bottom ? t->scroll_bottom : t->rows - 1;
     int y = n < 0 ? (t->cursor_y - top >= -n ? t->cursor_y + n : top)
                  : (n < bottom - t->cursor_y ? t->cursor_y + n : bottom);
-    sc_move(t, col0 ? cursor_left(t) : t->cursor_x, y);
+    sc_move(t, col0 ? lr_cr_column(t) : t->cursor_x, y);
 }
-static inline void move_h(struct wsap_vtcore *t, int n, bool margin_aware)
+/* Relative motion stops at a margin when the cursor starts inside it. */
+static inline void move_h(struct wsap_vtcore *t, int n)
 {
-    int right = margin_aware ? cursor_right(t) : t->cols - 1;
-    int x = n < 0 ? (t->cursor_x >= -n ? t->cursor_x + n : 0)
+    int left = lr_left_limit(t), right = lr_right_limit(t);
+    int x = n < 0 ? (t->cursor_x - left >= -n ? t->cursor_x + n : left)
                  : (n < right - t->cursor_x ? t->cursor_x + n : right);
     sc_move(t, x, t->cursor_y);
 }
@@ -654,6 +656,7 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
             !(csi->final == 'q' && csi->prefix == '>' && !csi->intermediate) &&
             !(csi->final == 'p' && csi->intermediate == '$' && csi->prefix == '?') &&
             !(csi->final == 'W' && csi->prefix == '?') &&
+            !((csi->final == 'J' || csi->final == 'K') && csi->prefix == '?') &&
             !((csi->final == 'h' || csi->final == 'l') && csi->prefix == '?')) return;
     }
     if (csi->subparams && !(csi->intermediate == '$' && csi->final == 'r')) return;
@@ -669,22 +672,33 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
         if (top < bottom && bottom < t->rows) {
             t->scroll_top = top;
             t->scroll_bottom = bottom;
-            sc_move(t, 0, t->origin_mode ? top : 0);
+            sc_move(t, cursor_left(t), cursor_top(t));
         }
         break;
     }
     case 'L':
     case 'M':
-        if (csi->prefix || t->cursor_y < t->scroll_top || t->cursor_y > t->scroll_bottom) break;
-        wsap_vtcore_screen_scroll_region(t, t->cursor_y, t->scroll_bottom,
-                                  csi_count(csi), csi->final == 'L', false);
+        /* Outside the margins, IL and DL do nothing. */
+        if (csi->prefix || t->cursor_y < t->scroll_top || t->cursor_y > t->scroll_bottom ||
+            !lr_col_in_margins(t, t->cursor_x))
+            break;
+        if (lr_margins_partial(t))
+            wsap_vtcore_screen_scroll_rect(t, t->cursor_y, t->scroll_bottom, t->left_margin,
+                                           t->right_margin, csi_count(csi), csi->final == 'L');
+        else
+            wsap_vtcore_screen_scroll_region(t, t->cursor_y, t->scroll_bottom,
+                                      csi_count(csi), csi->final == 'L', false);
         sc_move(t, t->lr_margin_mode ? t->left_margin : 0, t->cursor_y);
         break;
     case 'S':
     case 'T':
         if (csi->prefix || csi->nparams > 1) break;
-        wsap_vtcore_screen_scroll_region(t, t->scroll_top, t->scroll_bottom,
-                                  csi_count(csi), csi->final == 'T', true);
+        if (lr_margins_partial(t))
+            wsap_vtcore_screen_scroll_rect(t, t->scroll_top, t->scroll_bottom, t->left_margin,
+                                           t->right_margin, csi_count(csi), csi->final == 'T');
+        else
+            wsap_vtcore_screen_scroll_region(t, t->scroll_top, t->scroll_bottom,
+                                      csi_count(csi), csi->final == 'T', true);
         break;
     case 'd': {
         int64_t r = (int64_t)csi_count(csi) - 1 + cursor_top(t);
@@ -700,9 +714,9 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
     case 'E': move_v(t,  csi_count(csi), true);  break;
     case 'F': move_v(t, -csi_count(csi), true);  break;
     case 'e': move_v(t,  csi_count(csi), false); break;
-    case 'a': move_h(t,  csi_count(csi), true);  break;
-    case 'C': move_h(t,  csi_count(csi), false); break;
-    case 'D': move_h(t, -csi_count(csi), false); break;
+    case 'a': move_h(t,  csi_count(csi)); break;
+    case 'C': move_h(t,  csi_count(csi)); break;
+    case 'D': move_h(t, -csi_count(csi)); break;
     case 'G':
     case '`': {
         int64_t x = (int64_t)csi_count(csi) - 1 + cursor_left(t);
@@ -710,9 +724,10 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
         break;
     }
     case 's':
-        if (!csi->prefix && t->lr_margin_mode && csi->nparams > 1) {
+        /* With DECLRMM set, CSI s is DECSLRM, also with no parameters. */
+        if (!csi->prefix && t->lr_margin_mode) {
             int left = csi_count(csi) - 1;
-            int right = csi->params[1] > 0 ? csi->params[1] - 1 : t->cols - 1;
+            int right = csi->nparams > 1 && csi->params[1] > 0 ? csi->params[1] - 1 : t->cols - 1;
             if (left < right && right < t->cols) {
                 t->left_margin = left; t->right_margin = right;
                 sc_move(t, t->origin_mode ? left : 0, cursor_top(t));
@@ -748,6 +763,8 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
         }
         break;
     case 'J':
+        /* DECSED erases the cells that DECSCA did not protect. Nothing is
+         * protected, so it is the same as ED. */
         wsap_vtcore_screen_erase(t, csi->params[0]);
         break;
     case 'X': {
@@ -761,6 +778,7 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
             t->decsace = (uint8_t)csi->params[0];
         break;
     case 'K':
+        /* DECSEL is the same as EL. See DECSED. */
         wsap_vtcore_screen_erase_line(t, csi->params[0]);
         break;
     case 'P':
@@ -924,7 +942,13 @@ static void dispatch_esc(struct wsap_vtcore *t, unsigned char ch)
         sc_linefeed(t, 1);
         break;
     case 'M':
-        if (t->cursor_y == t->scroll_top)
+        /* Outside the left and right margins, RI stops at the top margin. */
+        if (t->cursor_y == t->scroll_top && !lr_col_in_margins(t, t->cursor_x))
+            t->pending_wrap = false;
+        else if (t->cursor_y == t->scroll_top && lr_margins_partial(t))
+            wsap_vtcore_screen_scroll_rect(t, t->scroll_top, t->scroll_bottom,
+                                           t->left_margin, t->right_margin, 1, true);
+        else if (t->cursor_y == t->scroll_top)
             wsap_vtcore_screen_scroll_region(t, t->scroll_top, t->scroll_bottom, 1, true, false);
         else
             sc_move(t, t->cursor_x, t->cursor_y > 0 ? t->cursor_y - 1 : 0);

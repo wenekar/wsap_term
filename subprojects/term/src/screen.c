@@ -286,7 +286,7 @@ void wsap_vtcore_screen_delete_chars(struct wsap_vtcore *t, int n)
 {
     t->pending_wrap = false;
     int right = (t->lr_margin_mode && t->right_margin < t->cols) ? t->right_margin + 1 : t->cols;
-    if (t->cursor_x >= right)
+    if (t->cursor_x >= right || !lr_col_in_margins(t, t->cursor_x))
         return;
     int x = t->cursor_x;
     int cols = t->cols;
@@ -337,7 +337,7 @@ void wsap_vtcore_screen_insert_chars(struct wsap_vtcore *t, int n)
 {
     t->pending_wrap = false;
     int right = (t->lr_margin_mode && t->right_margin < t->cols) ? t->right_margin + 1 : t->cols;
-    if (t->cursor_x >= right)
+    if (t->cursor_x >= right || !lr_col_in_margins(t, t->cursor_x))
         return;
     int x = t->cursor_x;
     int cols = t->cols;
@@ -755,6 +755,86 @@ void wsap_vtcore_screen_scroll_region(struct wsap_vtcore *t, int top, int bottom
         }
     }
     t->full_gen++;
+}
+
+/* Copy columns left to right of src into dst. Cells after the source length
+ * read as blank. The row keeps its cells outside the columns.
+ */
+static void rect_copy_row(struct srow *dst, const struct srow *src, int left, int right)
+{
+    int old_len = dst->len;
+    int src_end = src->len < right + 1 ? src->len : right + 1;
+    int ext = src_end > left ? src_end - left : 0;
+    if (ext > 0) {
+        wsap_vtcore_row_fill_gap(dst, left);
+        memcpy(dst->cells + left, src->cells + left, (size_t)ext * sizeof(struct cell));
+        dst->flags |= src->flags & (RF_WIDE | RF_CLUSTER);
+    }
+    int clear_end = old_len < right + 1 ? old_len : right + 1;
+    if (left + ext < clear_end)
+        clear_cells_default(dst->cells + left + ext, clear_end - (left + ext));
+    if (old_len <= right + 1) {
+        int keep = old_len < left ? old_len : left;
+        dst->len = (uint16_t)(ext > 0 ? left + ext : keep);
+    }
+}
+
+/* Blank columns left to right of a row with the current background. */
+static void rect_blank_row(struct wsap_vtcore *t, struct srow *row, int left, int right)
+{
+    int old_len = row->len;
+    if (using_default_colors(t)) {
+        int clear_end = old_len < right + 1 ? old_len : right + 1;
+        if (left < clear_end)
+            clear_cells_default(row->cells + left, clear_end - left);
+        if (old_len <= right + 1 && old_len > left)
+            row->len = (uint16_t)left;
+        return;
+    }
+    wsap_vtcore_row_fill_gap(row, left);
+    fill_cells(row->cells + left, right + 1 - left, t->cur_fg, t->cur_bg);
+    if (row->len < right + 1)
+        row->len = (uint16_t)(right + 1);
+}
+
+void wsap_vtcore_screen_scroll_rect(struct wsap_vtcore *t, int top, int bottom, int left, int right,
+                                    int count, bool down)
+{
+    t->pending_wrap = false;
+    if (count <= 0 || top > bottom || top < 0 || bottom >= t->rows ||
+        left > right || left < 0 || right >= t->cols)
+        return;
+    int height = bottom - top + 1;
+    if (count > height)
+        count = height;
+
+    /* Split the wide characters that cross the edges first. A row is then
+     * free to take cells from any other row. The rows no longer continue
+     * each other, so no row stays wrapped. */
+    for (int y = top; y <= bottom; y++) {
+        int p = phys_row(t, y);
+        struct cell *cells = row_cells(t, p);
+        struct srow *row = &t->scr.slot[p];
+        clear_wide_edges(cells, left, right + 1, row->len);
+        row_set_wrapped(row, false);
+    }
+
+    /* Each row reads its source before that source is written. */
+    for (int i = 0; i < height; i++) {
+        int y = down ? bottom - i : top + i;
+        int from = down ? y - count : y + count;
+        struct srow *dst = &t->scr.slot[phys_row(t, y)];
+        if (from >= top && from <= bottom)
+            rect_copy_row(dst, &t->scr.slot[phys_row(t, from)], left, right);
+        else
+            rect_blank_row(t, dst, left, right);
+    }
+
+    for (int y = top; y <= bottom; y++) {
+        struct srow *row = &t->scr.slot[phys_row(t, y)];
+        repair_wide_row(row->cells, left - 1, right + 2, t->cols, row->len);
+        row->version++;
+    }
 }
 
 static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int rows);

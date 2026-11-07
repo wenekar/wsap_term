@@ -307,7 +307,9 @@ static void test_csi_recovery(void)
         {"\033[31\030X", "X", ""},
         {"\033[31\032X", "X", ""},
         {"\033[1$ A X", " X", ""},
-        {"AB\033[?2JX", "ABX", ""},
+        {"AB\033[>2JX", "ABX", ""},
+        /* DECSED: with no protected cells, the same as ED. */
+        {"AB\033[?2JX", "  X", ""},
         {"AB\r\033[>4hX", "XB", ""},
     };
     for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
@@ -2044,6 +2046,120 @@ static void test_margin_insert_hides_erased_cells(void)
     wsap_vtcore_free(bytes);
 }
 
+/* A wide character at the right margin wraps and leaves one pad cell. The
+ * row must not grow past the margin and show cells that an erase hid.
+ */
+static void test_margin_wide_wrap_hides_erased_cells(void)
+{
+    struct wsap_vtcore *whole = tt_new(10, 3), *bytes = tt_new(10, 3);
+    assert(whole && bytes);
+    write_both(whole, bytes, "ABCDEFGHIJ\033[1;1H\033[K");
+    write_both(whole, bytes, "\033[?69h\033[1;4s\033[1;4H\xe4\xb8\xad");
+    assert(row_is(whole, 0, ""));
+    assert(row_is(bytes, 0, ""));
+    assert(row_is(whole, 1, "?"));
+    assert_same_screen(whole, bytes);
+    wsap_vtcore_free(whole);
+    wsap_vtcore_free(bytes);
+}
+
+/* Fill a 6 by 4 screen with abcdef, ghijkl, mnopqr, stuvwx and set the left
+ * and right margins to columns 2 to 4 (1-based). */
+static struct wsap_vtcore *margin_grid(void)
+{
+    struct wsap_vtcore *t = tt_new(6, 4);
+    assert(t);
+    write_seq(t, "abcdef\r\nghijkl\r\nmnopqr\r\nstuvwx\033[?69h\033[2;4s");
+    return t;
+}
+
+static bool grid_is(struct wsap_vtcore *t, const char *r0, const char *r1,
+                    const char *r2, const char *r3)
+{
+    return row_is(t, 0, r0) && row_is(t, 1, r1) && row_is(t, 2, r2) && row_is(t, 3, r3);
+}
+
+/* With left and right margins, scrolls move only the cells between them. */
+static void test_margin_scrolls(void)
+{
+    static const struct { const char *seq, *rows[4]; } cases[] = {
+        { "\033[2;3H\033[L", { "abcdef", "g   kl", "mhijqr", "snopwx" } },  /* IL */
+        { "\033[2;3H\033[M", { "abcdef", "gnopkl", "mtuvqr", "s   wx" } },  /* DL */
+        { "\033[S",          { "ahijef", "gnopkl", "mtuvqr", "s   wx" } },  /* SU */
+        { "\033[T",          { "a   ef", "gbcdkl", "mhijqr", "snopwx" } },  /* SD */
+        { "\033[4;3H\n",     { "ahijef", "gnopkl", "mtuvqr", "s   wx" } },  /* LF */
+        { "\033[1;3H\033M",  { "a   ef", "gbcdkl", "mhijqr", "snopwx" } },  /* RI */
+        /* Outside the margins: IL and DL do nothing, LF and RI stop. */
+        { "\033[2;6H\033[L", { "abcdef", "ghijkl", "mnopqr", "stuvwx" } },
+        { "\033[4;6H\n",     { "abcdef", "ghijkl", "mnopqr", "stuvwx" } },
+        { "\033[1;1H\033M",  { "abcdef", "ghijkl", "mnopqr", "stuvwx" } },
+        /* ICH outside the margins does nothing. */
+        { "\033[2;1H\033[@", { "abcdef", "ghijkl", "mnopqr", "stuvwx" } },
+    };
+    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        struct wsap_vtcore *t = margin_grid();
+        write_seq(t, cases[c].seq);
+        assert(grid_is(t, cases[c].rows[0], cases[c].rows[1], cases[c].rows[2], cases[c].rows[3]));
+        wsap_vtcore_free(t);
+    }
+
+    /* A burst of line feeds in one write leaves the same rows as the same
+     * line feeds one by one. */
+    struct wsap_vtcore *whole = tt_new(9, 4), *bytes = tt_new(9, 4);
+    assert(whole && bytes);
+    const char *burst = "\033[?69h\033[1;7s\033[?7labcdefghi\r\nxy\r\n\r\n\r\n\033[?69lAB\r\n";
+    write_both(whole, bytes, burst);
+    assert_same_screen(whole, bytes);
+    assert(tt_resize(whole, 4, 7) && tt_resize(bytes, 4, 7));
+    assert_same_screen(whole, bytes);
+    wsap_vtcore_free(whole);
+    wsap_vtcore_free(bytes);
+}
+
+/* With left and right margins, a carriage return and relative motion stop at
+ * the margin when the cursor starts inside it. */
+static void test_margin_cursor_motion(void)
+{
+    static const struct { const char *seq; int x; } cases[] = {
+        { "\033[1;3H\r", 1 },        /* CR inside: left margin */
+        { "\033[1;1H\033[1;1H\r", 0 },
+        { "\033[1;2H\b", 1 },        /* BS stops at the left margin */
+        { "\033[1;3H\033[9D", 1 },   /* CUB */
+        { "\033[1;3H\033[9C", 3 },   /* CUF */
+        { "\033[1;6H\033[9C", 5 },   /* CUF right of the margin */
+        { "\033[1;3H\033[9a", 3 },   /* HPR */
+        { "\033[1;2H\t", 3 },        /* HT */
+        { "\033[1;4H\033E", 1 },     /* NEL */
+        { "\033[1;4H\033[E", 1 },    /* CNL */
+    };
+    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        struct wsap_vtcore *t = margin_grid();
+        write_seq(t, cases[c].seq);
+        if (tt_cursor_x(t) != cases[c].x)
+            fprintf(stderr, "case %zu: x %d want %d\n", c, tt_cursor_x(t), cases[c].x);
+        assert(tt_cursor_x(t) == cases[c].x);
+        wsap_vtcore_free(t);
+    }
+
+    /* Text right of the right margin continues to the last column. */
+    struct wsap_vtcore *t = margin_grid();
+    write_seq(t, "\033[1;5HXY");
+    assert(row_is(t, 0, "abcdXY") && row_is(t, 1, "ghijkl"));
+    wsap_vtcore_free(t);
+
+    /* With DECLRMM set, CSI s with no parameters resets the margins. */
+    t = margin_grid();
+    write_seq(t, "\033[s\033[1;2HXXXXX");
+    assert(row_is(t, 0, "aXXXXX") && row_is(t, 1, "ghijkl"));
+    wsap_vtcore_free(t);
+
+    /* DECSTBM homes the cursor to the margins in origin mode. */
+    t = margin_grid();
+    write_seq(t, "\033[?6h\033[2;3r");
+    assert(tt_cursor_x(t) == 1 && tt_cursor_y(t) == 1);
+    wsap_vtcore_free(t);
+}
+
 static void test_digit_saturation(void)
 {
     struct wsap_vtcore *t = tt_new_opts(80, 24, &reply_cb);
@@ -2182,6 +2298,9 @@ int main(void)
     test_resize_tabs_and_custom_tabs();
     test_digit_saturation();
     test_margin_insert_hides_erased_cells();
+    test_margin_wide_wrap_hides_erased_cells();
+    test_margin_scrolls();
+    test_margin_cursor_motion();
     test_reserved_options_must_be_zero();
     test_concurrent_feed_and_snapshot();
     test_lock_reentrant_across_threads();
