@@ -47,6 +47,18 @@ int main(int argc, char **argv)
                       "\033[48;2;34;2;145m\033[38;2;145;2;34mc"},
         {"fg-rand", NULL},
         {"fgbg-rand", NULL},
+        {"sgr-short", "\033[1mbold\033[22m \033[31mred\033[39m \033[42mgreen\033[49m "
+                      "\033[93mhi\033[0m \033[104mbg\033[0m \033[7minv\033[m\r\n"},
+        {"sgr-prefix", "\033[0;38;2;12;34;56mrgb \033[1;38;5;200midx "
+                       "\033[38;2;1;2;3;48;2;4;5;6mtwo \033[38;5;9;48;5;17mpair\033[0m\r\n"},
+        {"sgr-pair", "\033[0;31mred\033[1;32mgreen\033[33;1myellow\033[0;49mx\033[m\r\n"},
+        {"csi-cursor", "\033[HA\033[CB\033[DC\033[BD\033[AE\033[1;1HF\033[CG\033[BH\r\n"},
+        {"csi-modes", "\033[?25lA\033[?2026hB\033[?2026lC\033[?25hD\033[?7lE\033[?7h\r\n"},
+        {"clusters", "e\xcc\x81\xcc\x82 \xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x91\xa9 "
+                     "\xf0\x9f\x8f\xb3\xef\xb8\x8f\xe2\x80\x8d\xf0\x9f\x8c\x88 "
+                     "a\xcc\x81\xcc\x82 o\xcc\x88\xcc\x81\r\n"},
+        {"ls-color", "\033[0m\033[01;34mdirectory\033[0m  \033[01;32mexecutable\033[0m  "
+                     "file.txt  \033[01;36mlinkname\033[0m\r\n"},
         {"cursor", "\033[12;20Hhello\033[2DXY\033[K\033[1A\033[3C!\r\n"},
         {"erase", "\033[Hscreen\033[2J\033[Hnext\033[2K\r\n"},
         {"dch", "some text on a row\033[10D\033[4Ptail\r\n"},

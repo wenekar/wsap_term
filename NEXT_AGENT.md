@@ -24,10 +24,10 @@ different screens. That breaks the rule that a cell must not depend on how
 the output arrives.
 
 Reproduce it. Add this case to `gen()` in `subprojects/term/tests/fuzz_gen.h`,
-and change `rn(41)` to `rn(42)`:
+and change `rn(42)` to `rn(43)`:
 
 ```c
-        case 41:
+        case 42:
             if (!gen_unmodeled)
                 break;
             if (rn(3)) {
@@ -39,7 +39,8 @@ and change `rn(41)` to `rn(42)`:
             break;
 ```
 
-Then `write-fuzz-test 50000` fails at seed 11 (18 by 3 screen, step 0). In
+Then `write-fuzz-test 50000` fails. Before case 41 existed, it failed at
+seed 11 (18 by 3 screen, step 0); the seed numbers are now different. In
 that input, bytes 751 and 752 (`1I`) fed in one call, with all other bytes
 fed one at a time, give a different screen from all bytes fed one at a time.
 The screens first differ after byte 1507. Byte 1507 ends a CJK character in

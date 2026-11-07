@@ -2,6 +2,7 @@ foreach entry : [
   ['term-write-bench', files('term_write_bench.c')],
   ['term-resize-bench', files('term_resize_bench.c')],
   ['hist-bench', files('hist_bench.c')],
+  ['term-snapshot-bench', files('snapshot_bench.c')],
 ]
   benchmark(entry[0],
     executable(entry[0], entry[1],

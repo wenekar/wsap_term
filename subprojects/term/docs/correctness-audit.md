@@ -130,3 +130,24 @@ generator cases found these faults. Each fix has a regression check.
 One fault is still open. With left and right margins, insert mode, and
 grapheme clusters together, different write splits can give different
 screens. Add margin sequences to `tests/fuzz_gen.h` to reproduce it.
+
+## Follow-up: 2026-11-07
+
+The fast paths from wsap_term-ng came back to this tree. Tests, fuzzing, and
+review found these faults in them. Each fix has a regression check.
+
+| Fault | Fix | Check |
+| --- | --- | --- |
+| The fast `CSI H` and `CSI 1;1H` forms, and short SGR forms with another final byte (`CSI H m`, `CSI 1 H m`, `CSI d m`), moved the cursor with no origin offset. | These forms go to the base parser in origin mode. Only the general fast branch can parse other final bytes, and it keeps its mode guard. | `spec-test` origin cases, `term-test` fast CSI cases |
+| `CSI 1;1H` read one byte past the end of the write. A write that ended in `1;1` printed the `H` of the next write. | The test reads four bytes only if they are in the write. | `term-test` color runs with each split |
+| A color that ended in `;` in a second sequence (`CSI 48;5;2;4m`) left `4m` on the screen as text. | The second sequence must end with `m`. | `term-test` fast CSI cases, `model-test` |
+| The `0;` and `1;` prefixes and the two-color form changed the pen and then gave the sequence to the base parser. A cancel byte after a cut sequence then kept the change. | The fast path parses the whole sequence before it changes the pen. | `term-test` cancel cases, `write-fuzz-test` cut forms |
+| A full snapshot update on the staged path set the arena length to zero. Cluster text then read as empty. | Each path sets the arena length from the plan. | `snapshot-failure-test` |
+| The direct snapshot path reserved arena room for each stored cluster, not for each cell. A row that repeats a cluster needs more. A failed allocation then left half-written rows. | The direct path reserves room for each cell of each new row, so it cannot fail after it starts. | `snapshot-failure-test` |
+
+The fast `CSI ? N h` and `CSI ? N l` forms set the same fields as the base
+parser for modes 1, 7, 12, 25, 1004, 2004, and 2026. Mode 7 also clears the
+pending wrap, as the base parser does. The `escape.c` SGR shortcuts gave the
+same result as the general loop, including the low byte of a large RGB value.
+They and the other paths with no measured gain were removed. See
+`benchmarks/term-ng-sync.md` in the main tree.
