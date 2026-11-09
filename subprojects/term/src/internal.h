@@ -190,7 +190,6 @@ struct wsap_vtcore {
     bool lnm : 1;
     bool transport_newline : 1;
     bool str_truncated : 1;
-    bool has_prompt : 1;
     /* Lines in ascii_tail end with CRLF, not LF. */
     bool ascii_tail_crlf : 1;
     bool reverse_wrap : 1;     /* mode 45 */

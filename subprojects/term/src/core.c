@@ -802,7 +802,6 @@ void wsap_vtcore_sc_reset(struct wsap_vtcore *t)
     t->cursor_x = t->cursor_y = 0;
     t->saved = wsap_vtcore_saved_cursor_initial();
     t->prompt_y = -1;
-    t->has_prompt = false;
     wsap_vtcore_marks_rows_clear(t);
     t->pending_wrap = false;
     t->last_char = 0;

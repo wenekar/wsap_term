@@ -98,6 +98,8 @@ static const char *const inputs[] = {
     "\033[2;5r\033[5;1H\n\n\n\033[r\033[4hins\033[4l\033[3@\033[2P\033[2L\033[2M",
     "\033[3g\033H\tA\tB\033#8\033[H\033[2J",
     "\033[?1049h\033[?1000;1006hX\033[?1049l\033[?1000;1006l",
+    "\033]133;A\007prompt\033]133;B\007cmd\033]133;C\007out\r\n\033]133;D;0\007",
+    "\033#6DW\r\n\033#3DHT\r\n\033#4DHB\r\n",
 };
 
 /* Generated inputs. main() builds them before any failure. */
@@ -198,8 +200,14 @@ static void small_workload(struct wsap_vtcore *t, struct wsap_vtcore_snapshot *s
     (void)wsap_vtcore_snapshot_update(s, t);
     use_text(wsap_vtcore_selection_text(t));
     wsap_vtcore_scroll_to(t, 0);
-    for (int y = 0; y < 6; y++)
+    for (int y = 0; y < 6; y++) {
         use_text(wsap_vtcore_link_at(t, (struct wsap_vtcore_vector2i){ .x = 1, .y = y }));
+        (void)wsap_vtcore_snapshot_row_size(s, y);
+        int prompt_row;
+        (void)wsap_vtcore_find_prompt(t, y, 1, &prompt_row);
+        struct wsap_vtcore_command cmd;
+        (void)wsap_vtcore_command_at(t, y, &cmd);
+    }
     use_text(wsap_vtcore_cwd(t));
     use_text(wsap_vtcore_pointer_shape(t));
     use_text(wsap_vtcore_history_text(t, 20));
@@ -238,6 +246,8 @@ static void large_workload(struct wsap_vtcore *t, struct wsap_vtcore_snapshot *s
     (void)wsap_vtcore_resize(t, (struct wsap_vtcore_vector2i){ .x = 700, .y = 300 });
     (void)wsap_vtcore_resize(t, (struct wsap_vtcore_vector2i){ .x = 600, .y = 290 });
     (void)wsap_vtcore_snapshot_update(s, t);
+    for (int y = 0; y < 290; y++)
+        (void)wsap_vtcore_snapshot_row_size(s, y);
 
     (void)wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ 0 }, false, WSAP_VTCORE_SELECT_WORD);
     (void)wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = 599, .y = 289 }, true);

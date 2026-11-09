@@ -80,17 +80,14 @@ void wsap_vtcore_osc133(struct wsap_vtcore *t, const char *params)
         if (shell_secondary(opts))
             break;
         t->prompt_y = t->cursor_y;
-        t->has_prompt = true;
         wsap_vtcore_marks_set(t, RF_PROMPT);
         break;
     case 'C':
         t->prompt_y = -1;
-        t->has_prompt = false;
         wsap_vtcore_marks_set(t, RF_OUTPUT);
         break;
     case 'D': {
         t->prompt_y = -1;
-        t->has_prompt = false;
         int32_t status = 0;
         bool has_status = shell_status(opts, &status);
         wsap_vtcore_marks_finish(t, has_status, status);

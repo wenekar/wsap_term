@@ -839,10 +839,8 @@ static void scroll_region(struct wsap_vtcore *t, int top, int bottom, int count,
                         t->prompt_y = t->prompt_y > count ? t->prompt_y - count : 0;
                 } else {
                     t->prompt_y -= count;
-                    if (t->prompt_y < 0) {
+                    if (t->prompt_y < 0)
                         t->prompt_y = -1;
-                        t->has_prompt = false;
-                    }
                 }
             }
             for (int i = 0; i < count; i++) {
@@ -869,10 +867,8 @@ static void scroll_region(struct wsap_vtcore *t, int top, int bottom, int count,
         } else {
             if (!t->alternate && t->prompt_y >= 0) {
                 t->prompt_y += count;
-                if (t->prompt_y >= rows) {
+                if (t->prompt_y >= rows)
                     t->prompt_y = -1;
-                    t->has_prompt = false;
-                }
             }
             for (int i = 0; i < rows - count; i++) {
                 int p = orig_top + i;
@@ -939,10 +935,8 @@ static void scroll_region(struct wsap_vtcore *t, int top, int bottom, int count,
 
     if (!t->alternate && t->prompt_y >= top && t->prompt_y <= bottom) {
         t->prompt_y += down ? count : -count;
-        if (t->prompt_y < top || t->prompt_y > bottom) {
+        if (t->prompt_y < top || t->prompt_y > bottom)
             t->prompt_y = -1;
-            t->has_prompt = false;
-        }
     }
     t->full_gen++;
 }
@@ -1655,10 +1649,8 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
         if (t->cursor_y >= rows) t->cursor_y = rows - 1;
         if (t->saved.x >= cols) t->saved.x = cols - 1;
         if (t->saved.y >= rows) t->saved.y = rows - 1;
-        if (!t->alternate && t->prompt_y >= rows) {
+        if (!t->alternate && t->prompt_y >= rows)
             t->prompt_y = -1;
-            t->has_prompt = false;
-        }
 
         t->scroll_top = 0;
         t->scroll_bottom = rows - 1;
@@ -1866,13 +1858,10 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
 
     if (t->prompt_y >= 0) {
         int new_prompt = (r.prompt_y - screen_start) + pull;
-        if (!r.prompt_set || new_prompt >= rows) {
+        if (!r.prompt_set || new_prompt >= rows)
             t->prompt_y = -1;
-            t->has_prompt = false;
-        } else {
+        else
             t->prompt_y = new_prompt > 0 ? new_prompt : 0;
-            t->has_prompt = true;
-        }
     }
 
     if (r.saved_set && (r.saved_y - screen_start) + pull < rows) {
