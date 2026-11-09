@@ -183,12 +183,73 @@ static void test_more_than_65536_clusters(void)
     wsap_vtcore_free(t);
 }
 
+/* A sweep marks the alternate screen while it is active. Its clusters must
+ * survive even after more than 1024 other clusters arrive. */
+static void test_alternate_screen_clusters_survive_sweep(void)
+{
+    struct wsap_vtcore_options opt = { .size = { .x = 8, .y = 4 }, .scrollback = 10 };
+    struct wsap_vtcore *t = wsap_vtcore_new(&opt);
+    assert(t);
+    /* A cluster on the primary screen must survive a sweep on the alternate
+     * screen. */
+    assert(wsap_vtcore_feed(t, "p\xcc\x81", 3, 0));
+    static const char alternate[] = "\033[?1049h";
+    assert(wsap_vtcore_feed(t, alternate, sizeof(alternate) - 1, 0));
+
+    /* 1026 different clusters cross the sweep threshold once. The sweep runs
+     * before the last cluster is stored. */
+    for (unsigned i = 0; i < 1026; i++) {
+        char cell[8];
+        int n = 0;
+        cell[n++] = (char)('a' + i % 26);
+        n += wsap_vtcore_utf8_encode(0x0300 + i / 26, cell + n);
+        assert(wsap_vtcore_feed(t, cell, (size_t)n, 0));
+    }
+
+    struct wsap_vtcore_snapshot *snap = wsap_vtcore_snapshot_new();
+    assert(snap);
+    assert(wsap_vtcore_snapshot_update(snap, t));
+
+    int clusters = 0;
+    bool newest = false;
+    for (int y = 0; y < 4; y++) {
+        const struct wsap_vtcore_cell *row = wsap_vtcore_snapshot_row(snap, y);
+        for (int x = 0; x < 8; x++) {
+            if (row[x].text == ' ')
+                continue;
+            uint32_t cps[WSAP_VTCORE_GRAPHEME_MAX_LEN];
+            int n = wsap_vtcore_snapshot_cluster(snap, row[x].text, cps,
+                                                 WSAP_VTCORE_GRAPHEME_MAX_LEN);
+            assert(n == 2 && cps[0] != 0xFFFD);
+            clusters++;
+            if (cps[0] == 'a' + 1025 % 26 && cps[1] == 0x0300 + 1025 / 26)
+                newest = true;
+        }
+    }
+    /* All but the newest cluster were on the screen when the sweep ran. */
+    assert(clusters >= 24);
+    assert(newest);
+
+    static const char normal[] = "\033[?1049l";
+    assert(wsap_vtcore_feed(t, normal, sizeof(normal) - 1, 0));
+    assert(wsap_vtcore_snapshot_update(snap, t));
+    const struct wsap_vtcore_cell *primary = wsap_vtcore_snapshot_row(snap, 0);
+    uint32_t cps[WSAP_VTCORE_GRAPHEME_MAX_LEN];
+    assert(wsap_vtcore_snapshot_cluster(snap, primary[0].text, cps,
+                                        WSAP_VTCORE_GRAPHEME_MAX_LEN) == 2);
+    assert(cps[0] == 'p' && cps[1] == 0x0301);
+
+    wsap_vtcore_snapshot_free(snap);
+    wsap_vtcore_free(t);
+}
+
 int main(void)
 {
     test_direct_unit();
     test_two_terminals_isolation();
     test_screen_clusters_survive_sweep();
     test_more_than_65536_clusters();
+    test_alternate_screen_clusters_survive_sweep();
     puts("PASS: gstore tests");
     return 0;
 }

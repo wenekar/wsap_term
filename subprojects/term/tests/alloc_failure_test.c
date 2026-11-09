@@ -107,6 +107,15 @@ static size_t lines_len, long_osc_len, clusters_len, long_line_len;
 static char huge_line[100 * 1024];
 static char crlf_lines[8 * 1024];
 static size_t crlf_lines_len;
+/* A base64 clipboard payload that needs the heap decode buffer. */
+static char clipboard[7 + 6000 + 1];
+static size_t clipboard_len;
+/* A history longer than the part ring, for exact-row cache regrowth. */
+static char history_head[3200];
+static char history_lines[900 * 1024];
+static size_t history_lines_len;
+static char history_growth[12 * 1024];
+static size_t history_growth_len;
 
 static void build_large_inputs(void)
 {
@@ -132,8 +141,22 @@ static void build_large_inputs(void)
         crlf_lines_len += (size_t)snprintf(crlf_lines + crlf_lines_len,
                                            sizeof(crlf_lines) - crlf_lines_len,
                                            "crlf line %d of a tty stream\r\n", i);
+    clipboard_len = (size_t)snprintf(clipboard, sizeof(clipboard), "\033]52;c;");
+    for (; clipboard_len < sizeof(clipboard) - 1; clipboard_len++)
+        clipboard[clipboard_len] = 'A';
+    clipboard[clipboard_len++] = '\a';
     memset(huge_line, 'h', sizeof(huge_line) - 2);
     memcpy(huge_line + sizeof(huge_line) - 2, "\r\n", 2);
+    memset(history_head, 'h', 3000);
+    memcpy(history_head + 3000, "\r\n", 2);
+    for (int i = 0; i < 65000; i++)
+        history_lines_len += (size_t)snprintf(history_lines + history_lines_len,
+                                              sizeof(history_lines) - history_lines_len,
+                                              "h%d\r\n", i);
+    for (int i = 0; i < 1200; i++)
+        history_growth_len += (size_t)snprintf(history_growth + history_growth_len,
+                                               sizeof(history_growth) - history_growth_len,
+                                               "g%d\r\n", i);
 }
 
 static void feed(struct wsap_vtcore *t, const char *s)
@@ -202,6 +225,7 @@ static void large_workload(struct wsap_vtcore *t, struct wsap_vtcore_snapshot *s
     (void)wsap_vtcore_feed(t, lines, lines_len / 2, WSAP_VTCORE_FEED_ONLCR);
     (void)wsap_vtcore_feed(t, long_line, long_line_len, 0);
     (void)wsap_vtcore_feed(t, huge_line, sizeof(huge_line), 0);
+    (void)wsap_vtcore_feed(t, clipboard, clipboard_len, 0);
     (void)wsap_vtcore_feed(t, clusters, clusters_len, 0);
     (void)wsap_vtcore_snapshot_update(s, t);
     feed(t, "\r\nscroll\r\nrows\r\n");
@@ -224,8 +248,13 @@ static void large_workload(struct wsap_vtcore *t, struct wsap_vtcore_snapshot *s
     feed(t, "\033[2;280r\033[280;1H\n\n\n\033[r\033[5M\033[5L");
     (void)wsap_vtcore_snapshot_update(s, t);
 
-    /* Rotate the screen ring, then scroll a region that wraps around it. */
-    feed(t, "\033[290;1H\n\n\n\n\n\n\n\n\n\n\033[2;280r\033[100S\033[100T\033[r");
+    /* Move the ring start by 20 rows. Then scroll rows 2 to 280. The region
+     * has 279 rows. It is larger than the 256-row stack buffer. Its end
+     * crosses the ring end. */
+    feed(t, "\033[290;1H");
+    for (int i = 0; i < 20; i++)
+        feed(t, "\n");
+    feed(t, "\033[2;280r\033[100S\033[100T\033[r");
     /* A wide line with two rows in history and two on the screen. */
     feed(t, "\033[289;1H\xe4\xb8\xad");
     (void)wsap_vtcore_feed(t, long_line, 2000, 0);
@@ -233,6 +262,19 @@ static void large_workload(struct wsap_vtcore *t, struct wsap_vtcore_snapshot *s
                                    WSAP_VTCORE_SELECT_CELL);
     (void)wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = 9, .y = 289 }, true);
     use_text(wsap_vtcore_selection_text(t));
+    (void)wsap_vtcore_snapshot_update(s, t);
+}
+
+/* The exact-row cache is allocated for a line of 375 rows. More lines then
+ * grow the part ring above 65536 parts. */
+static void history_workload(struct wsap_vtcore *t, struct wsap_vtcore_snapshot *s)
+{
+    (void)wsap_vtcore_feed(t, history_head, 3002, 0);
+    (void)wsap_vtcore_feed(t, history_lines, history_lines_len, 0);
+    wsap_vtcore_scroll(t, WSAP_VTCORE_SCROLLBACK_MAX);
+    (void)wsap_vtcore_snapshot_update(s, t);
+    (void)wsap_vtcore_feed(t, history_growth, history_growth_len, 0);
+    wsap_vtcore_scroll_to(t, 0);
     (void)wsap_vtcore_snapshot_update(s, t);
 }
 
@@ -247,6 +289,8 @@ static const struct workload workloads[] = {
       small_workload },
     { "large", { .size = { .x = 600, .y = 290 }, .scrollback = 60, .callbacks = callbacks },
       large_workload },
+    { "history", { .size = { .x = 8, .y = 4 }, .scrollback = 70000, .callbacks = callbacks },
+      history_workload },
 };
 
 static void check_snapshot(const struct wsap_vtcore_snapshot *s)

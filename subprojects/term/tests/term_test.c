@@ -3603,6 +3603,130 @@ static void test_line_size_selection_wrap(void)
     wsap_vtcore_free(t);
 }
 
+/* A word selection takes the run of one class: a word, punctuation, or
+ * spaces. Non-ASCII letters use the same rule. */
+static void test_word_selection_classes(void)
+{
+    struct wsap_vtcore *t = tt_new(40, 3);
+    assert(t);
+    tt_puts(t, "foo(bar) -- \xc3\xa9 \xe2\x86\x92 \xc2\xa0 x");
+
+    static const struct {
+        int x;
+        const char *want;
+    } cases[] = {
+        { 1, "foo" },
+        { 3, "(" },
+        { 4, "bar" },
+        { 7, ")" },
+        { 10, "--" },
+        { 12, "\xc3\xa9" },
+        { 14, "\xe2\x86\x92" },
+        { 16, " \xc2\xa0" },
+        { 18, "x" },
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        assert(wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ .x = cases[i].x },
+                                        false, WSAP_VTCORE_SELECT_WORD));
+        char *text = wsap_vtcore_selection_text(t);
+        assert(text && !strcmp(text, cases[i].want));
+        wsap_vtcore_text_free(text);
+    }
+    wsap_vtcore_free(t);
+}
+
+/* Selection text reads a wrapped line on a terminal wider than the stack
+ * buffer. The first row holds a wrap pad before a wide character. */
+static void test_selection_wide_wrapped_large(void)
+{
+    struct wsap_vtcore *t = tt_new(600, 4);
+    assert(t);
+
+    char input[1024];
+    size_t n = 0;
+    memset(input, 'a', 599);
+    n += 599;
+    n += (size_t)wsap_vtcore_utf8_encode(0x4E2D, input + n);
+    memset(input + n, 'b', 300);
+    n += 300;
+    input[n++] = '\r';
+    input[n++] = '\n';
+    assert(wsap_vtcore_feed(t, input, n, 0));
+
+    char want[1024];
+    size_t w = 0;
+    memset(want, 'a', 599);
+    w += 599;
+    w += (size_t)wsap_vtcore_utf8_encode(0x4E2D, want + w);
+    memset(want + w, 'b', 300);
+    w += 300;
+    want[w] = '\0';
+
+    assert(wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ 0 }, false,
+                                    WSAP_VTCORE_SELECT_CELL));
+    assert(wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = 599, .y = 1 }, true));
+    char *text = wsap_vtcore_selection_text(t);
+    assert(text && !strcmp(text, want));
+    wsap_vtcore_text_free(text);
+    wsap_vtcore_free(t);
+}
+
+/* A selection that ends on a wide character takes the whole character. */
+static void test_selection_wide_edges(void)
+{
+    struct wsap_vtcore *t = tt_new(10, 2);
+    assert(t);
+    tt_puts(t, "A\xe4\xb8\xad" "B");
+
+    assert(wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ 0 }, false,
+                                    WSAP_VTCORE_SELECT_CELL));
+    assert(wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = 1 }, true));
+    char *text = wsap_vtcore_selection_text(t);
+    assert(text && !strcmp(text, "A\xe4\xb8\xad"));
+    wsap_vtcore_text_free(text);
+
+    assert(wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ 0 }, false,
+                                    WSAP_VTCORE_SELECT_CELL));
+    assert(wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = 2 }, false));
+    text = wsap_vtcore_selection_text(t);
+    assert(text && !strcmp(text, "A\xe4\xb8\xad"));
+    wsap_vtcore_text_free(text);
+    wsap_vtcore_free(t);
+}
+
+/* A selection keeps the lines that remain after its first line leaves the
+ * history. It is empty after its last line leaves. */
+static void test_selection_after_eviction(void)
+{
+    struct wsap_vtcore *t = wsap_vtcore_new(&(struct wsap_vtcore_options){
+        .size = { .x = 10, .y = 4 },
+        .scrollback = 4,
+    });
+    assert(t);
+    tt_puts(t, "one\r\ntwo\r\nthree\r\nfour");
+    assert(wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ 0 }, false,
+                                    WSAP_VTCORE_SELECT_CELL));
+    assert(wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = 2, .y = 1 }, true));
+    char *text = wsap_vtcore_selection_text(t);
+    assert(text && !strcmp(text, "one\ntwo"));
+    wsap_vtcore_text_free(text);
+
+    for (int i = 5; i <= 9; i++) {
+        char line[16];
+        int n = snprintf(line, sizeof(line), "\r\n%d", i);
+        assert(wsap_vtcore_feed(t, line, (size_t)n, 0));
+    }
+    assert(wsap_vtcore_has_selection(t));
+    text = wsap_vtcore_selection_text(t);
+    assert(text && !strcmp(text, "two"));
+    wsap_vtcore_text_free(text);
+
+    assert(wsap_vtcore_feed(t, "\r\n10", 4, 0));
+    assert(!wsap_vtcore_has_selection(t));
+    assert(!wsap_vtcore_selection_text(t));
+    wsap_vtcore_free(t);
+}
+
 /* ED does not move the cursor. It makes all rows single width, also when its
  * internal scroll brings a double-size row under the cursor. */
 static void test_line_size_ed2_cursor(void)
@@ -3691,6 +3815,10 @@ int main(void)
     test_line_size_cursor();
     test_line_size_hidden_cells();
     test_line_size_selection_wrap();
+    test_word_selection_classes();
+    test_selection_wide_wrapped_large();
+    test_selection_wide_edges();
+    test_selection_after_eviction();
     test_line_size_follows_rows();
     test_line_size_ed2_cursor();
     test_line_size_history();

@@ -191,6 +191,11 @@ static void test_osc52(void)
     write_seq(t, "\033]52;c;!!!invalid!!!\007");
     write_seq(t, "\033]52;aGVsbG8=\007");
     write_seq(t, "\033]52;;aGVsbG8=\007");
+    /* Bad padding and bad symbols are not decoded. */
+    write_seq(t, "\033]52;c;Y===\007");
+    write_seq(t, "\033]52;c;YQ=\007");
+    write_seq(t, "\033]52;c;!Q\007");
+    write_seq(t, "\033]52;c;YQ!\007");
     assert(clip_count == 0);
 
     write_seq(t, "\033]52;pc;aGVsbG8=\007");
@@ -219,6 +224,29 @@ static void test_osc52(void)
     assert(clip_count == 1 && clip_len == 4500);
     for (int i = 0; i < 4500; i += 3)
         assert(!memcmp(clip_data + i, "ABC", 3));
+
+    /* An overlong selection name is ignored. */
+    reset_captures();
+    char named[96];
+    memcpy(named, "\033]52;", 5);
+    memset(named + 5, 's', 70);
+    memcpy(named + 75, ";aGVsbG8=\007", 10);
+    tt_write(t, named, 85);
+    assert(clip_count == 0);
+
+    /* A payload above 100 KiB is ignored. */
+    reset_captures();
+    static const char intro[] = "\033]52;c;";
+    size_t intro_len = sizeof(intro) - 1;
+    size_t seq_len = intro_len + 140000 + 1;
+    char *seq = malloc(seq_len);
+    assert(seq);
+    memcpy(seq, intro, intro_len);
+    memset(seq + intro_len, 'A', 140000);
+    seq[seq_len - 1] = '\007';
+    assert(wsap_vtcore_feed(t, seq, seq_len, 0));
+    free(seq);
+    assert(clip_count == 0);
 
     wsap_vtcore_free(t);
 }
@@ -409,6 +437,14 @@ static void test_osc_colors(void)
     write_seq(t, "\033]4;5;#ff0000\007");
     assert(tt_color(t, wsap_vtcore_color_index(5)) == 0xFFFF0000u);
     assert(tt_color(t, wsap_vtcore_color_index(4)) == theme.ansi[4]);
+
+    /* An indexed query names the slot. Bad and out-of-range indexes give no
+     * reply and change nothing. */
+    assert_query(t, "\033]4;5;?\007", "\033]4;5;rgb:ffff/0000/0000\033\\");
+    assert_query(t, "\033]4;300;?\007", "");
+    assert_query(t, "\033]4;x;?\007", "");
+    assert_query(t, "\033]104;x\007", "");
+    assert(tt_color(t, wsap_vtcore_color_index(5)) == 0xFFFF0000u);
 
     write_seq(t, "\033]10;#123456\007");
     assert(tt_color(other, wsap_vtcore_color_index(5)) == theme.ansi[5]);

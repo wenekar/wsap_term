@@ -93,11 +93,25 @@ static void test_printable_span(void)
     }
 }
 
+/* U+1F600 and U+1F1E6 have Emoji_Presentation. U+00A9 and U+2764 need
+ * U+FE0F to show as emoji. */
+static void test_emoji_presentation(void)
+{
+    assert(wsap_vtcore_unicode_is_emoji_presentation(0x1F600));
+    assert(wsap_vtcore_unicode_is_emoji_presentation(0x1F1E6));
+    assert(wsap_vtcore_unicode_is_emoji_presentation(0x1F3FD));
+    assert(!wsap_vtcore_unicode_is_emoji_presentation(0x00A9));
+    assert(!wsap_vtcore_unicode_is_emoji_presentation(0x2764));
+    assert(!wsap_vtcore_unicode_is_emoji_presentation(0xFE0F));
+    assert(!wsap_vtcore_unicode_is_emoji_presentation('A'));
+}
+
 int main(void)
 {
     test_printable_span();
     test_palette_bounds();
     test_missing_palette();
     test_malformed_cluster_handles();
+    test_emoji_presentation();
     return 0;
 }
