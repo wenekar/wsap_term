@@ -89,6 +89,16 @@ enum wsap_vtcore_mouse_encoding {
     WSAP_VTCORE_MOUSE_ENC_SGR_PIXELS = 1016,
 };
 
+/* The states of a progress report (OSC 9;4). The values are the states of
+ * the sequence. */
+enum wsap_vtcore_progress {
+    WSAP_VTCORE_PROGRESS_REMOVE = 0,
+    WSAP_VTCORE_PROGRESS_NORMAL = 1,
+    WSAP_VTCORE_PROGRESS_ERROR = 2,
+    WSAP_VTCORE_PROGRESS_INDETERMINATE = 3,
+    WSAP_VTCORE_PROGRESS_PAUSED = 4,
+};
+
 /* Callbacks run on the calling thread while the terminal is locked.
  * Payload pointers are valid only until the callback returns.
  * Do not feed, resize, free, or otherwise change the terminal in a callback.
@@ -103,6 +113,10 @@ struct wsap_vtcore_callbacks {
     void (*notify)(void *ud, const char *title, const char *body);
     void (*bell)(void *ud);
     void (*trace)(void *ud, const char *line);
+    /* OSC 9;4. percent is 0 to 100, or -1 when the state has no value. */
+    void (*progress)(void *ud, enum wsap_vtcore_progress state, int percent);
+    /* OSC 1337;SetUserVar. value holds len decoded bytes and a NUL after them. */
+    void (*user_var)(void *ud, const char *name, const char *value, size_t len);
 };
 
 /* Zero-initialize options. A zero size selects 80 by 24; zero scrollback
@@ -117,7 +131,9 @@ struct wsap_vtcore_options {
     bool cursor_steady;
     const char *name;
     struct wsap_vtcore_callbacks callbacks;
-    uint32_t reserved[8];
+    /* The progress and user_var callbacks use the first reserved words. The
+     * size and the other offsets stay the same for each pointer size. */
+    uint32_t reserved[8 - 2 * sizeof(void (*)(void)) / sizeof(uint32_t)];
 };
 
 #ifdef __cplusplus
@@ -274,6 +290,33 @@ WSAP_VTCORE_API void wsap_vtcore_select_clear(struct wsap_vtcore *t);
 WSAP_VTCORE_API bool wsap_vtcore_has_selection(const struct wsap_vtcore *t);
 WSAP_VTCORE_API char *wsap_vtcore_selection_text(const struct wsap_vtcore *t);
 WSAP_VTCORE_API char *wsap_vtcore_link_at(const struct wsap_vtcore *t, struct wsap_vtcore_vector2i cell);
+
+/* Shell integration (OSC 133). Rows are view rows, as in the selection
+ * calls: row 0 is the top row of the view. A negative row is above the view.
+ * A row at or after the view height is below the view.
+ * wsap_vtcore_scroll(t, -row) moves a row to the top of the view. The values
+ * are valid until the next change to the terminal or its view.
+ * On the alternate screen, these calls find nothing.
+ */
+
+/* Find the first row of the nearest prompt above row (dir < 0) or below row
+ * (dir > 0). Return false when there is none or when dir is zero. */
+WSAP_VTCORE_API bool wsap_vtcore_find_prompt(const struct wsap_vtcore *t, int row, int dir, int *found);
+
+/* A command starts at a prompt row and ends before the next prompt row. */
+struct wsap_vtcore_command {
+    int prompt;          /* The first row of the prompt. */
+    int output_first;    /* The first row of the output, when has_output. */
+    int output_last;     /* The last row of the output, when has_output. */
+    int exit_status;     /* The exit status, when has_exit_status. */
+    bool has_output;     /* OSC 133;C marked a row before the next prompt. */
+    bool finished;       /* OSC 133;D came, or a later prompt exists. */
+    bool has_exit_status;
+};
+
+/* Describe the command that contains row. Return false when no prompt
+ * starts at or above row, or for invalid arguments. */
+WSAP_VTCORE_API bool wsap_vtcore_command_at(const struct wsap_vtcore *t, int row, struct wsap_vtcore_command *cmd);
 
 enum wsap_vtcore_attr {
     WSAP_VTCORE_ATTR_BOLD = 1u << 0,

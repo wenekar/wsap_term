@@ -1,6 +1,7 @@
 #include "compat.h"
 #include "core.h"
 #include "kernels.h"
+#include "marks.h"
 #include "pen.h"
 #include "rect.h"
 #include "screen.h"
@@ -277,7 +278,7 @@ static void scroll_up_bce(struct wsap_vtcore *t, size_t count)
     if (!skip && !hist_is_open(&t->hist)) {
         skip = true;
         for (size_t y = 0; y < rows && skip; y++)
-            skip = t->scr.slot[y].len == 0 && !(t->scr.slot[y].flags & RF_WRAPPED);
+            skip = t->scr.slot[y].len == 0 && !(t->scr.slot[y].flags & (RF_WRAPPED | RF_MARKS));
     }
     if (skip) {
         for (size_t y = 0; y < rows; y++)
@@ -802,6 +803,7 @@ void wsap_vtcore_sc_reset(struct wsap_vtcore *t)
     t->saved = wsap_vtcore_saved_cursor_initial();
     t->prompt_y = -1;
     t->has_prompt = false;
+    wsap_vtcore_marks_rows_clear(t);
     t->graphics = t->pending_wrap = false;
     t->last_char = 0;
     t->charsets[0] = t->charsets[1] = 'B';
@@ -858,7 +860,9 @@ static void flush_orig_rows(struct wsap_vtcore *t, struct screen *s,
                 struct srow *row = &s->slot[p >= s->rows ? p - s->rows : p];
                 bool wrapped = (row->flags & RF_WRAPPED) != 0;
                 size_t size = (size_t)row->len + (wrapped ? 0 : (size_t)term);
-                if (row->kind != ROW_ASCII || (uintptr_t)row->text.text != base + span ||
+                /* A row with marks takes the row push, which keeps them. */
+                if (row->kind != ROW_ASCII || (row->flags & RF_MARKS) ||
+                    (uintptr_t)row->text.text != base + span ||
                     size > limit - base - span || size + span > UINT16_MAX) break;
                 span += row->len;
                 if (!wrapped) {
@@ -880,7 +884,7 @@ static void flush_orig_rows(struct wsap_vtcore *t, struct screen *s,
             struct srow *row = &s->slot[p >= s->rows ? p - s->rows : p];
             struct text_row *tr = &row->text;
             bool wrapped = (row->flags & RF_WRAPPED) != 0;
-            if (wrapped && row->len < s->cols) break;
+            if ((wrapped && row->len < s->cols) || (row->flags & RF_MARKS)) break;
             if (row->kind == ROW_TEXT) {
                 if (!(tr->flags & HLINE_NARROW) || tr->runs.len || tr->fill_to > tr->cells ||
                     !pen_attr_is_default(&tr->start) || !pen_attr_is_default(&tr->runs.pen)) break;
@@ -1617,6 +1621,11 @@ static WSAP_VTCORE_NOINLINE size_t bulk_ascii_lines_base(struct wsap_vtcore *t, 
 size_t wsap_vtcore_sc_bulk_ascii_lines(struct wsap_vtcore *t, const char *buf, size_t len)
 {
     if (WSAP_VTCORE_EXPECT(t->scr.rows > 256, 0)) return 0;
+    /* The bulk paths write new rows over the empty cursor row. A shell mark
+     * on that row must stay. The base path keeps it, and a later line takes
+     * the bulk path. */
+    if (WSAP_VTCORE_EXPECT(!t->pending_wrap && (wsap_vtcore_row(t, t->cursor_y)->flags & RF_MARKS), 0))
+        return 0;
     if (len >= 1024 && using_default_colors(t) && !wsap_vtcore_flags_pad(t)) {
         size_t done = 0;
         bool lnm = wsap_vtcore_lnm(t);

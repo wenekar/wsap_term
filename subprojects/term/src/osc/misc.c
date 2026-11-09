@@ -115,7 +115,7 @@ void wsap_vtcore_osc_misc_dispatch(struct wsap_vtcore *t, long code, const char 
         osc7_cwd(t, params);
         break;
     case 9:
-        if (t->cb.notify && strncmp(params, "4;", 2))
+        if (!wsap_vtcore_osc9_conemu(t, params) && t->cb.notify)
             t->cb.notify(t->cb.ud, t->name, params);
         break;
     case 22:
@@ -125,6 +125,9 @@ void wsap_vtcore_osc_misc_dispatch(struct wsap_vtcore *t, long code, const char 
     case 777:
         if (t->cb.notify)
             osc777_notify(t, params);
+        break;
+    case 1337:
+        wsap_vtcore_osc1337(t, params);
         break;
     default:
         break;

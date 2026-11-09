@@ -27,7 +27,7 @@ static inline int b64_val(char c)
     return b64_lut[(unsigned char)c];
 }
 
-static bool b64_decode(const char *s, size_t n, char *out, size_t *out_len)
+bool wsap_vtcore_b64_decode(const char *s, size_t n, char *out, size_t *out_len)
 {
     size_t pad = 0;
     if (n > 0 && s[n - 1] == '=') {
@@ -97,7 +97,7 @@ void wsap_vtcore_osc52(struct wsap_vtcore *t, const char *params)
     if (!dec)
         return;
     size_t dec_len;
-    if (b64_decode(pd, enc_len, dec, &dec_len) && dec_len <= WSAP_VTCORE_OSC52_MAX_PAYLOAD) {
+    if (wsap_vtcore_b64_decode(pd, enc_len, dec, &dec_len) && dec_len <= WSAP_VTCORE_OSC52_MAX_PAYLOAD) {
         dec[dec_len] = '\0';
         t->cb.clipboard(t->cb.ud, sel, dec, dec_len);
     }

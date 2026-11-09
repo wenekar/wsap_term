@@ -247,6 +247,8 @@ struct wsap_vtcore {
     struct wsap_vtcore_styles *styles;
     char *cwd;
     char *pointer_shape;
+    /* Shell integration marks (marks.c). NULL until the first mark. */
+    struct wsap_vtcore_marks *marks;
 
     /* The current title and the saved titles (CSI 22 t, CSI 23 t). */
     char *title;

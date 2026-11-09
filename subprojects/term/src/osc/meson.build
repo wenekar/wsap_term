@@ -3,4 +3,5 @@ wsap_vtcore_osc_src = files(
   'dispatch.c',
   'link.c',
   'misc.c',
+  'shell.c',
 )

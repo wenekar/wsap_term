@@ -2026,13 +2026,31 @@ static void csi_dispatch(struct model *m, unsigned char final)
     }
 }
 
+/* OSC 133;A with a k option other than k=i is a secondary prompt. The
+ * options start after "133;A;". */
+static bool osc_secondary_prompt(const char *s, size_t len)
+{
+    if (len > STR_KEEP)
+        len = STR_KEEP;
+    for (size_t i = 6; i < len;) {
+        size_t end = i;
+        while (end < len && s[end] != ';')
+            end++;
+        size_t n = end - i;
+        if (n >= 2 && s[i] == 'k' && s[i + 1] == '=' && !(n == 3 && s[i + 2] == 'i'))
+            return true;
+        i = end + 1;
+    }
+    return false;
+}
+
 static void osc_finish(struct model *m)
 {
     const char *s = m->str;
     size_t len = m->str_len;
     if (!m->alternate && len >= 5 && !strncmp(s, "133;", 4) &&
         (len == 5 || s[5] == ';')) {
-        if (s[4] == 'A') m->prompt = m->y;
+        if (s[4] == 'A' && !osc_secondary_prompt(s, len)) m->prompt = m->y;
         if (s[4] == 'C' || s[4] == 'D') m->prompt = -1;
     }
 }

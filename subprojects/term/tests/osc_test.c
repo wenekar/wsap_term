@@ -1,6 +1,7 @@
 #include "term_api.h"
 #include "wsap_vtcore/unicode/unicode.h"
 #include <assert.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,6 +51,31 @@ static void capture_notify(void *ud, const char *t_, const char *b)
     notify_count++;
 }
 
+static enum wsap_vtcore_progress progress_state;
+static int progress_percent;
+static int progress_count;
+static void capture_progress(void *ud, enum wsap_vtcore_progress state, int percent)
+{
+    (void)ud;
+    progress_state = state;
+    progress_percent = percent;
+    progress_count++;
+}
+
+static char var_name[512];
+static char var_value[8192];
+static size_t var_len;
+static int var_count;
+static void capture_user_var(void *ud, const char *name, const char *value, size_t len)
+{
+    (void)ud;
+    snprintf(var_name, sizeof(var_name), "%s", name);
+    assert(len < sizeof(var_value) && value[len] == '\0');
+    memcpy(var_value, value, len + 1);
+    var_len = len;
+    var_count++;
+}
+
 static struct wsap_vtcore *osc_test_term(void)
 {
     struct wsap_vtcore *t = tt_new_opts(80, 24, &(struct wsap_vtcore_callbacks){
@@ -57,6 +83,8 @@ static struct wsap_vtcore *osc_test_term(void)
         .title = capture_title,
         .clipboard = capture_clip,
         .notify = capture_notify,
+        .progress = capture_progress,
+        .user_var = capture_user_var,
     });
     assert(t);
     return t;
@@ -94,6 +122,8 @@ static void reset_captures(void)
     clip_len = 0;
     clip_count = 0;
     notify_count = 0;
+    progress_count = 0;
+    var_count = 0;
 }
 
 static void test_host_name_notify(void)
@@ -465,6 +495,459 @@ static void test_palette_and_theme(void)
     assert(hc.bg == 0xFF000000u && hc.fg == 0xFFFFFFFFu);
 }
 
+static void assert_progress(struct wsap_vtcore *t, const char *seq, int count,
+                            enum wsap_vtcore_progress state, int percent)
+{
+    write_seq(t, seq);
+    if (progress_count != count || (count && (progress_state != state || progress_percent != percent))) {
+        fprintf(stderr, "%s: got %d events, state %d, percent %d\n", seq + 1, progress_count,
+                (int)progress_state, progress_percent);
+        assert(!"progress mismatch");
+    }
+}
+
+static void test_osc_progress(void)
+{
+    struct wsap_vtcore *t = osc_test_term();
+    reset_captures();
+    assert_progress(t, "\033]9;4;1;50\007", 1, WSAP_VTCORE_PROGRESS_NORMAL, 50);
+    assert_progress(t, "\033]9;4;1\033\\", 2, WSAP_VTCORE_PROGRESS_NORMAL, 0);
+    assert_progress(t, "\033]9;4;1;250\007", 3, WSAP_VTCORE_PROGRESS_NORMAL, 100);
+    assert_progress(t, "\033]9;4;2\007", 4, WSAP_VTCORE_PROGRESS_ERROR, -1);
+    assert_progress(t, "\033]9;4;2;30\007", 5, WSAP_VTCORE_PROGRESS_ERROR, 30);
+    assert_progress(t, "\033]9;4;3;50\007", 6, WSAP_VTCORE_PROGRESS_INDETERMINATE, -1);
+    assert_progress(t, "\033]9;4;4;70\007", 7, WSAP_VTCORE_PROGRESS_PAUSED, 70);
+    assert_progress(t, "\033]9;4;0;70\007", 8, WSAP_VTCORE_PROGRESS_REMOVE, -1);
+    assert_progress(t, "\033]9;4\007", 9, WSAP_VTCORE_PROGRESS_REMOVE, -1);
+    assert_progress(t, "\033]9;4;;40\007", 10, WSAP_VTCORE_PROGRESS_REMOVE, -1);
+    assert_progress(t, "\033]9;4;1;99999999999999999999\007", 11, WSAP_VTCORE_PROGRESS_NORMAL, 100);
+    /* Invalid states and values change nothing. */
+    assert_progress(t, "\033]9;4;5;10\007", 11, WSAP_VTCORE_PROGRESS_NORMAL, 100);
+    assert_progress(t, "\033]9;4;x\007", 11, WSAP_VTCORE_PROGRESS_NORMAL, 100);
+    assert_progress(t, "\033]9;4;1;5x\007", 11, WSAP_VTCORE_PROGRESS_NORMAL, 100);
+    assert_progress(t, "\033]9;4;-1;5\007", 11, WSAP_VTCORE_PROGRESS_NORMAL, 100);
+    assert_progress(t, "\033]9;45\007", 11, WSAP_VTCORE_PROGRESS_NORMAL, 100);
+    /* OSC 9;45 is a notification. Progress reports are not. */
+    assert(notify_count == 1 && !strcmp(notify_body, "45"));
+    wsap_vtcore_free(t);
+
+    /* Without a progress callback, the report does nothing. */
+    struct wsap_vtcore *quiet = tt_new_opts(20, 4, &(struct wsap_vtcore_callbacks){ .notify = capture_notify });
+    reset_captures();
+    write_seq(quiet, "\033]9;4;1;20\007");
+    assert(notify_count == 0);
+    wsap_vtcore_free(quiet);
+}
+
+static void test_osc_shell_cwd(void)
+{
+    struct wsap_vtcore *t = osc_test_term();
+    reset_captures();
+    write_seq(t, "\033]9;9;/srv/a b\007");
+    assert(text_is(wsap_vtcore_cwd, t, "/srv/a b"));
+    write_seq(t, "\033]9;9;\"C:\\Users\\me\"\033\\");
+    assert(text_is(wsap_vtcore_cwd, t, "C:\\Users\\me"));
+    write_seq(t, "\033]9;9;\007\033]9;9\007\033]9;9;\"\"\007");
+    assert(text_is(wsap_vtcore_cwd, t, "C:\\Users\\me"));
+    write_seq(t, "\033]1337;CurrentDir=/home/u/proj\007");
+    assert(text_is(wsap_vtcore_cwd, t, "/home/u/proj"));
+    write_seq(t, "\033]1337;CurrentDir=\007");
+    assert(text_is(wsap_vtcore_cwd, t, "/home/u/proj"));
+    /* A path longer than 4096 bytes changes nothing. */
+    char seq[4200];
+    int n = snprintf(seq, sizeof(seq), "\033]1337;CurrentDir=/");
+    memset(seq + n, 'x', 4096);
+    memcpy(seq + n + 4096, "\007", 2);
+    write_seq(t, seq);
+    assert(text_is(wsap_vtcore_cwd, t, "/home/u/proj"));
+    seq[n + 4095] = '\007';
+    seq[n + 4096] = '\0';
+    write_seq(t, seq);
+    char *cwd = wsap_vtcore_cwd(t);
+    assert(cwd && strlen(cwd) == 4096);
+    wsap_vtcore_text_free(cwd);
+    assert(notify_count == 0);
+    wsap_vtcore_free(t);
+}
+
+static void test_osc_user_vars(void)
+{
+    struct wsap_vtcore *t = osc_test_term();
+    reset_captures();
+    write_seq(t, "\033]1337;SetUserVar=foo=YmFy\007");
+    assert(var_count == 1 && !strcmp(var_name, "foo") && var_len == 3 && !strcmp(var_value, "bar"));
+    write_seq(t, "\033]1337;SetUserVar=k=v=YQBi\033\\");
+    assert(var_count == 1);
+    write_seq(t, "\033]1337;SetUserVar=bin=YQBi\033\\");
+    assert(var_count == 2 && var_len == 3 && !memcmp(var_value, "a\0b", 3));
+    write_seq(t, "\033]1337;SetUserVar=empty=\007");
+    assert(var_count == 3 && !strcmp(var_name, "empty") && var_len == 0);
+    /* Invalid forms and other keys do nothing. */
+    write_seq(t, "\033]1337;SetUserVar=noval\007");
+    write_seq(t, "\033]1337;SetUserVar==YmFy\007");
+    write_seq(t, "\033]1337;SetUserVar=foo=Y\007");
+    write_seq(t, "\033]1337;SetUserVar=foo=Ym!y\007");
+    write_seq(t, "\033]1337;File=name=eA==;inline=1:eA==\007");
+    write_seq(t, "\033]1337;SetMark\007\033]1337;ClearScrollback\007\033]1337\007");
+    assert(var_count == 3 && notify_count == 0);
+    char *cwd = wsap_vtcore_cwd(t);
+    assert(!cwd);
+
+    /* A name has at most 255 bytes. A value has at most 4096 bytes. */
+    static char seq[8192], name[300];
+    memset(name, 'n', 255);
+    name[255] = '\0';
+    snprintf(seq, sizeof(seq), "\033]1337;SetUserVar=%s=YQ==\007", name);
+    write_seq(t, seq);
+    assert(var_count == 4 && strlen(var_name) == 255);
+    snprintf(seq, sizeof(seq), "\033]1337;SetUserVar=%sn=YQ==\007", name);
+    write_seq(t, seq);
+    assert(var_count == 4);
+    int n = snprintf(seq, sizeof(seq), "\033]1337;SetUserVar=big=");
+    for (int i = 0; i < 4096 / 3 * 4; i += 4)
+        memcpy(seq + n + i, "YWJj", 4);
+    n += 4096 / 3 * 4;
+    memcpy(seq + n, "YQ==\007", 6);
+    write_seq(t, seq);
+    assert(var_count == 5 && var_len == 4096 && var_value[4095] == 'a');
+    memcpy(seq + n, "YWI=\007", 6);
+    write_seq(t, seq);
+    assert(var_count == 5);
+    wsap_vtcore_free(t);
+}
+
+#define MARK_A "\033]133;A\007"
+#define MARK_B "\033]133;B\007"
+#define MARK_C "\033]133;C\007"
+
+/* The view row of the nearest prompt, or INT_MIN when there is none. */
+static int prompt_from(struct wsap_vtcore *t, int row, int dir)
+{
+    int found = INT_MIN;
+    if (!wsap_vtcore_find_prompt(t, row, dir, &found))
+        return INT_MIN;
+    assert(found != INT_MIN);
+    return found;
+}
+
+static struct wsap_vtcore_command command(struct wsap_vtcore *t, int row)
+{
+    struct wsap_vtcore_command cmd;
+    bool ok = wsap_vtcore_command_at(t, row, &cmd);
+    assert(ok);
+    return cmd;
+}
+
+static void assert_output(struct wsap_vtcore *t, int row, int prompt, int first, int last)
+{
+    struct wsap_vtcore_command cmd = command(t, row);
+    if (cmd.prompt != prompt || !cmd.has_output || cmd.output_first != first || cmd.output_last != last) {
+        fprintf(stderr, "row %d: prompt %d, output %d (%d..%d), want %d, %d..%d\n", row, cmd.prompt,
+                cmd.has_output, cmd.output_first, cmd.output_last, prompt, first, last);
+        assert(!"command mismatch");
+    }
+}
+
+static void assert_status(struct wsap_vtcore *t, int row, bool finished, bool has_status, int status)
+{
+    struct wsap_vtcore_command cmd = command(t, row);
+    assert(cmd.finished == finished);
+    assert(cmd.has_exit_status == has_status);
+    assert(cmd.exit_status == (has_status ? status : 0));
+}
+
+/* The text of view row y without trailing blanks. */
+static const char *view_text(struct wsap_vtcore *t, int y)
+{
+    static char text[256];
+    int n = 0;
+    for (int x = 0; x < tt_cols(t) && n < 255; x++) {
+        uint32_t cp = tt_cell_cp(t, tt_view_cell(t, x, y));
+        text[n++] = cp >= 0x20 && cp < 0x7f ? (char)cp : '?';
+    }
+    while (n && text[n - 1] == ' ')
+        n--;
+    text[n] = '\0';
+    return text;
+}
+
+/* The text of a row outside the view: scroll to it and back. */
+static const char *row_text(struct wsap_vtcore *t, int row)
+{
+    int shift = row < 0 ? row : row >= tt_rows(t) ? row - tt_rows(t) + 1 : 0;
+    wsap_vtcore_scroll(t, -shift);
+    const char *text = view_text(t, row - shift);
+    wsap_vtcore_scroll(t, shift);
+    return text;
+}
+
+static void test_osc_marks(void)
+{
+    struct wsap_vtcore *t = tt_new(20, 8);
+    assert(t);
+    write_seq(t, MARK_A "$ " MARK_B "ls\r\n" MARK_C "a\r\nb\r\n\033]133;D;0\007"
+                 MARK_A "$ " MARK_B "false\r\n" MARK_C "\033]133;D;1\007"
+                 "\033]133;A;aid=7;cl=m\007$ ");
+    assert(prompt_from(t, 8, -1) == 4);
+    assert(prompt_from(t, 4, -1) == 3);
+    assert(prompt_from(t, 3, -1) == 0);
+    assert(prompt_from(t, 0, -1) == INT_MIN);
+    assert(prompt_from(t, -5, 1) == 0);
+    assert(prompt_from(t, 0, 1) == 3);
+    assert(prompt_from(t, 3, 1) == 4);
+    assert(prompt_from(t, 4, 1) == INT_MIN);
+    int found = 99;
+    assert(!wsap_vtcore_find_prompt(t, 4, 0, &found) && found == 99);
+    assert(!wsap_vtcore_find_prompt(t, 4, -1, NULL));
+    assert(!wsap_vtcore_find_prompt(NULL, 4, -1, &found));
+
+    assert_output(t, 0, 0, 1, 2);
+    assert_output(t, 2, 0, 1, 2);
+    assert_status(t, 1, true, true, 0);
+    struct wsap_vtcore_command cmd = command(t, 3);
+    assert(cmd.prompt == 3 && !cmd.has_output);
+    assert_status(t, 3, true, true, 1);
+    cmd = command(t, 7);
+    assert(cmd.prompt == 4 && !cmd.has_output && !cmd.finished && !cmd.has_exit_status);
+    assert(!wsap_vtcore_command_at(t, -1, &cmd) && cmd.prompt == 0 && !cmd.finished);
+    assert(!wsap_vtcore_command_at(t, 8, &cmd));
+    assert(!wsap_vtcore_command_at(t, 0, NULL));
+    assert(!wsap_vtcore_command_at(NULL, 0, &cmd));
+
+    /* A secondary prompt does not start a command. Other options do not
+     * matter. The output of a running command ends at the cursor. */
+    write_seq(t, "for x\r\n\033]133;A;k=s\007> done\r\n" MARK_C "1\r\n2");
+    assert(prompt_from(t, 8, -1) == 4);
+    assert_output(t, 7, 4, 6, 7);
+    assert_status(t, 7, false, false, 0);
+    /* The screen scrolls. A cursor in the first column ends the output on
+     * the row above it. */
+    write_seq(t, "\r\n");
+    assert_output(t, 7, 3, 5, 6);
+
+    /* The forms of D. */
+    static const struct { const char *d; bool has; int status; } forms[] = {
+        { "D", false, 0 }, { "D;", false, 0 }, { "D;abc", false, 0 }, { "D;-2", true, -2 },
+        { "D;7;aid=1", true, 7 }, { "D;2147483647", true, 2147483647 },
+        { "D;2147483648", false, 0 }, { "D;-2147483648", true, -2147483647 - 1 }, { "D;1x", false, 0 },
+    };
+    for (size_t i = 0; i < sizeof(forms) / sizeof(forms[0]); i++) {
+        char seq[64];
+        snprintf(seq, sizeof(seq), "\033[H\033[2J" MARK_A "$ x\r\n\033]133;%s\007", forms[i].d);
+        write_seq(t, seq);
+        assert_status(t, 0, true, forms[i].has, forms[i].status);
+    }
+
+    /* The alternate screen has no marks. The normal screen keeps its marks. */
+    write_seq(t, "\033[?1049h" MARK_A "$ ");
+    assert(prompt_from(t, 8, -1) == INT_MIN);
+    assert(!wsap_vtcore_command_at(t, 0, &cmd));
+    write_seq(t, "\033[?1049l");
+    assert(prompt_from(t, 8, -1) == 0);
+    assert_status(t, 0, true, false, 0);
+
+    /* A prompt row that becomes empty loses its mark. ED 2 moved the older
+     * prompts to history. */
+    write_seq(t, "\033[H\033[2K");
+    assert(prompt_from(t, 8, -1) < 0);
+    wsap_vtcore_free(t);
+}
+
+/* Each command prints its prompt, then lines output lines. */
+static void run_commands(struct wsap_vtcore *t, int count, int lines)
+{
+    char seq[128];
+    for (int i = 0; i < count; i++) {
+        snprintf(seq, sizeof(seq), MARK_A "$ " MARK_B "cmd%d\r\n" MARK_C, i);
+        write_seq(t, seq);
+        for (int j = 0; j < lines; j++) {
+            snprintf(seq, sizeof(seq), "o%d_%d\r\n", i, j);
+            write_seq(t, seq);
+        }
+        snprintf(seq, sizeof(seq), "\033]133;D;%d\007", i);
+        write_seq(t, seq);
+    }
+    write_seq(t, MARK_A "$ ");
+}
+
+static void test_osc_marks_history(void)
+{
+    struct wsap_vtcore *t = tt_new(20, 4);
+    assert(t);
+    run_commands(t, 3, 5);
+    /* Command i starts at row 6i. Rows 15 to 18 are on the screen. */
+    assert(tt_history(t) == 15);
+    assert(prompt_from(t, 4, -1) == 3);
+    assert(prompt_from(t, 3, -1) == -3);
+    assert(prompt_from(t, -3, -1) == -9);
+    assert(prompt_from(t, -9, -1) == -15);
+    assert(prompt_from(t, -15, -1) == INT_MIN);
+    assert(prompt_from(t, -100, 1) == -15);
+    assert(prompt_from(t, -15, 1) == -9);
+    assert(!strcmp(row_text(t, -15), "$ cmd0"));
+    assert(!strcmp(row_text(t, -10), "o0_4"));
+    assert_output(t, -3, -3, -2, 2);
+    assert_output(t, -12, -15, -14, -10);
+    assert_status(t, -11, true, true, 0);
+    assert_status(t, -1, true, true, 2);
+    assert_status(t, 3, false, false, 0);
+
+    /* Rows follow the view. */
+    wsap_vtcore_scroll(t, 7);
+    assert(prompt_from(t, 0, -1) == -2);
+    assert(prompt_from(t, 0, 1) == 4);
+    assert_output(t, 0, -2, -1, 3);
+    assert_status(t, 0, true, true, 1);
+    wsap_vtcore_scroll(t, 2);
+    assert(!strcmp(view_text(t, 0), "$ cmd1"));
+
+    /* Select the output of the last command, as a host does. */
+    wsap_vtcore_scroll_to(t, 0);
+    struct wsap_vtcore_command cmd = command(t, prompt_from(t, 3, -1));
+    assert(cmd.output_first < 0 && cmd.output_last >= 0 && cmd.output_last < 4);
+    wsap_vtcore_scroll(t, -cmd.output_first);
+    wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ .x = 0, .y = 0 }, false, WSAP_VTCORE_SELECT_CELL);
+    wsap_vtcore_scroll(t, cmd.output_first);
+    wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = 19, .y = cmd.output_last }, true);
+    char *text = wsap_vtcore_selection_text(t);
+    assert(text && !strcmp(text, "o2_0\no2_1\no2_2\no2_3\no2_4"));
+    wsap_vtcore_text_free(text);
+    wsap_vtcore_select_clear(t);
+    wsap_vtcore_scroll_to(t, 0);
+
+    /* ED 3 removes the marks of history. */
+    write_seq(t, "\033[3J");
+    assert(prompt_from(t, 3, -1) == INT_MIN);
+    assert(!wsap_vtcore_command_at(t, 2, &cmd));
+    assert(prompt_from(t, -1, 1) == 3);
+    wsap_vtcore_free(t);
+}
+
+static void test_osc_marks_resize(void)
+{
+    struct wsap_vtcore *t = tt_new(20, 6);
+    assert(t);
+    write_seq(t, MARK_A "$ " MARK_B "echo aaaaaaaaaaaaaaaaaaaaaaaaa\r\n" MARK_C "out1\r\nout2\r\n"
+                 "\033]133;D;3\007" MARK_A "$ ");
+    assert_output(t, 1, 0, 2, 3);
+    assert(prompt_from(t, 6, -1) == 4);
+
+    /* The command line wraps to four rows. One row goes to history. */
+    assert(tt_resize(t, 10, 6));
+    assert(tt_history(t) == 1);
+    assert_output(t, 0, -1, 3, 4);
+    assert_status(t, 2, true, true, 3);
+    assert(!strcmp(row_text(t, -1), "$ echo aaa"));
+    assert(!strcmp(row_text(t, 3), "out1"));
+    assert(prompt_from(t, 6, -1) == 5);
+
+    /* The open history line comes back with its mark. */
+    assert(tt_resize(t, 20, 6));
+    assert(tt_history(t) == 0);
+    assert_output(t, 0, 0, 2, 3);
+    assert_status(t, 3, true, true, 3);
+    assert(prompt_from(t, 6, -1) == 4);
+
+    /* Fewer rows push the prompt row to history. More rows pull it back. */
+    assert(tt_resize(t, 20, 3));
+    assert(tt_history(t) == 2);
+    assert_output(t, 0, -2, 0, 1);
+    assert_status(t, -2, true, true, 3);
+    assert(tt_resize(t, 20, 8));
+    assert(tt_history(t) == 0);
+    assert_output(t, 3, 0, 2, 3);
+    assert_status(t, 0, true, true, 3);
+    assert(prompt_from(t, 0, 1) == 4);
+
+    /* A narrow width wraps the history line of the prompt. */
+    assert(tt_resize(t, 20, 3));
+    assert(tt_resize(t, 7, 3));
+    struct wsap_vtcore_command cmd = command(t, prompt_from(t, 3, -1) - 1);
+    assert(!strcmp(row_text(t, cmd.prompt), "$ echo"));
+    assert(cmd.has_output && !strcmp(row_text(t, cmd.output_first), "out1"));
+    assert(!strcmp(row_text(t, cmd.output_last), "out2"));
+    assert(cmd.has_exit_status && cmd.exit_status == 3);
+    assert(tt_resize(t, 20, 8));
+    assert_output(t, 3, 0, 2, 3);
+    wsap_vtcore_free(t);
+}
+
+/* Compare the prompts and commands of two terminals from the bottom up. */
+static int same_marks(struct wsap_vtcore *a, struct wsap_vtcore *b)
+{
+    int row = tt_rows(a), count = 0;
+    for (;;) {
+        int ra = prompt_from(a, row, -1), rb = prompt_from(b, row, -1);
+        assert(ra == rb);
+        if (ra == INT_MIN)
+            return count;
+        struct wsap_vtcore_command ca = command(a, ra), cb = command(b, ra);
+        if (ca.prompt != cb.prompt || ca.has_output != cb.has_output ||
+            ca.output_first != cb.output_first || ca.output_last != cb.output_last ||
+            ca.finished != cb.finished || ca.has_exit_status != cb.has_exit_status ||
+            ca.exit_status != cb.exit_status) {
+            fprintf(stderr, "prompt %d: output %d %d..%d vs %d %d..%d, status %d/%d/%d vs %d/%d/%d\n",
+                    ra, ca.has_output, ca.output_first, ca.output_last, cb.has_output, cb.output_first,
+                    cb.output_last, ca.finished, ca.has_exit_status, ca.exit_status, cb.finished,
+                    cb.has_exit_status, cb.exit_status);
+            assert(!"marks differ");
+        }
+        count++;
+        row = ra;
+    }
+}
+
+static void test_osc_marks_streams(void)
+{
+    /* Line streams take writes of 1 KiB or more. Feed the same output in
+     * one write and byte by byte. */
+    static char out[65536];
+    size_t n = 0;
+    for (int k = 0; k < 4; k++) {
+        n += (size_t)snprintf(out + n, sizeof(out) - n, MARK_A "$ " MARK_B "run %d\r\n" MARK_C, k);
+        for (int j = 0; j < 150; j++)
+            n += (size_t)snprintf(out + n, sizeof(out) - n, k & 1 ? "line %03d\n" : "line %03d\r\n", j);
+        n += (size_t)snprintf(out + n, sizeof(out) - n, "\033]133;D;%d\007", k);
+    }
+    n += (size_t)snprintf(out + n, sizeof(out) - n, MARK_A "$ ");
+    struct wsap_vtcore *bulk = tt_new(30, 5), *bytes = tt_new(30, 5);
+    assert(bulk && bytes);
+    write_seq(bulk, "\033[20h");
+    write_seq(bytes, "\033[20h");
+    tt_write(bulk, out, n);
+    write_seq(bytes, out);
+    assert(same_marks(bulk, bytes) == 5);
+    struct wsap_vtcore_command cmd = command(bulk, prompt_from(bulk, 5, -1) - 1);
+    assert(cmd.has_exit_status && cmd.exit_status == 3);
+    assert(cmd.output_last - cmd.output_first == 149);
+    assert(!strcmp(row_text(bulk, cmd.output_first), "line 000"));
+    assert(!strcmp(row_text(bulk, cmd.prompt), "$ run 3"));
+    wsap_vtcore_free(bulk);
+    wsap_vtcore_free(bytes);
+}
+
+static void test_osc_marks_limit(void)
+{
+    /* History keeps the marks of the newest 65536 rows. */
+    struct wsap_vtcore_options opt = { .size = { .x = 10, .y = 3 }, .scrollback = 100000 };
+    struct wsap_vtcore *t = wsap_vtcore_new(&opt);
+    assert(t);
+    char seq[64];
+    for (int i = 0; i < 70000; i++) {
+        int len = snprintf(seq, sizeof(seq), MARK_A "%d\r\n", i);
+        tt_write(t, seq, (size_t)len);
+    }
+    wsap_vtcore_scroll_to(t, INT_MAX);
+    assert(!strcmp(view_text(t, 0), "0"));
+    int first = prompt_from(t, -1, 1);
+    assert(first > 0);
+    wsap_vtcore_scroll(t, -first);
+    int oldest = atoi(view_text(t, 0));
+    assert(oldest > 70000 - 65536 - 3 && oldest < 70000 - 65536 + 3);
+    assert(prompt_from(t, 0, 1) == 1 && prompt_from(t, 0, -1) == INT_MIN);
+    wsap_vtcore_free(t);
+}
+
 int main(void)
 {
     test_osc52();
@@ -472,6 +955,14 @@ int main(void)
     test_sgr_reset_keeps_link();
     test_osc_misc();
     test_host_name_notify();
+    test_osc_progress();
+    test_osc_shell_cwd();
+    test_osc_user_vars();
+    test_osc_marks();
+    test_osc_marks_history();
+    test_osc_marks_resize();
+    test_osc_marks_streams();
+    test_osc_marks_limit();
     test_osc_colors();
     test_osc_legacy_titles();
     test_palette_and_theme();

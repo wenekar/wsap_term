@@ -145,17 +145,8 @@ void wsap_vtcore_osc_finish(struct wsap_vtcore *t)
         char *buf = t->osc_heap ? t->osc_heap : t->osc_buf;
         buf[t->osc_len] = '\0';
 
-        if (!t->alternate && t->osc_len >= 5 && !strncmp(buf, "133;", 4) &&
-            (buf[5] == ';' || buf[5] == '\0')) {
-            if (buf[4] == 'A') {
-                t->prompt_y = t->cursor_y;
-                t->has_prompt = true;
-            }
-            if (buf[4] == 'C' || buf[4] == 'D') {
-                t->prompt_y = -1;
-                t->has_prompt = false;
-            }
-        }
+        if (t->osc_len >= 5 && !strncmp(buf, "133;", 4))
+            wsap_vtcore_osc133(t, buf + 4);
 
         char *rest;
         long code = strtol(buf, &rest, 10);

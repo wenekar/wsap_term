@@ -9,6 +9,7 @@ wsap_vtcore_sources = files(
   'hist/view.c',
   'input.c',
   'isa.c',
+  'marks.c',
   'palette.c',
   'rect.c',
   'scan.c',
