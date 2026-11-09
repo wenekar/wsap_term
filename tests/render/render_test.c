@@ -1020,6 +1020,138 @@ static void theme_recolors_existing_text_test(void)
     wsap_vtcore_free(t);
 }
 
+static void draw_term(struct renderer *r, uint32_t *px, struct vector2i size,
+                      struct wsap_vtcore *t, bool blink_on,
+                      struct framebuffer_history *history, bool fresh)
+{
+    struct wsap_vtcore_snapshot *snap = test_snapshot_of(t);
+    struct terminal_frame frame;
+    terminal_frame_init(&frame, snap, false);
+    frame.blink_on = blink_on;
+    (void)draw_grid(r, px, size, history, fresh, &frame, test_font());
+    wsap_vtcore_snapshot_free(snap);
+}
+
+static uint32_t term_color(struct wsap_vtcore *t, wsap_vtcore_color c)
+{
+    struct wsap_vtcore_snapshot *snap = test_snapshot_of(t);
+    uint32_t out = wsap_vtcore_view_color(wsap_vtcore_snapshot_view(snap), c);
+    wsap_vtcore_snapshot_free(snap);
+    return out;
+}
+
+static long count_color(const uint32_t *px, size_t n, uint32_t c)
+{
+    long count = 0;
+    for (size_t i = 0; i < n; i++)
+        count += px[i] == c;
+    return count;
+}
+
+/* Conceal and the blink off phase draw only the cell background. Blink on
+ * draws the same cell as no blink. An SGR 58 color paints the underline. */
+static void styled_cells_test(void)
+{
+    int w = 2 * CELL_W, h = CELL_H;
+    struct vector2i size = { .x = w, .y = h };
+    size_t n = (size_t)w * h;
+    size_t bytes = n * sizeof(uint32_t);
+    uint32_t *blank = malloc(bytes), *normal = malloc(bytes);
+    uint32_t *conceal = malloc(bytes), *blink = malloc(bytes);
+    uint32_t *underline = malloc(bytes), *underline_none = malloc(bytes);
+    assert(blank && normal && conceal && blink && underline && underline_none);
+    struct renderer *r = test_oracle();
+
+    struct wsap_vtcore *t_blank = tt_new(2, 1);
+    struct wsap_vtcore *t_normal = tt_new(2, 1);
+    struct wsap_vtcore *t_conceal = tt_new(2, 1);
+    struct wsap_vtcore *t_blink = tt_new(2, 1);
+    struct wsap_vtcore *t_underline = tt_new(2, 1);
+    struct wsap_vtcore *t_none = tt_new(2, 1);
+    assert(t_blank && t_normal && t_conceal && t_blink && t_underline && t_none);
+    feed(t_blank, "\033[?25l");
+    feed(t_normal, "\033[?25lX");
+    feed(t_conceal, "\033[?25l\033[8;4;58;5;2mX");
+    feed(t_blink, "\033[?25l\033[5mX");
+    feed(t_underline, "\033[?25l\033[4;58;5;2mX");
+    feed(t_none, "\033[?25l\033[4mX");
+
+    draw_term(r, blank, size, t_blank, true, NULL, true);
+    draw_term(r, normal, size, t_normal, true, NULL, true);
+    draw_term(r, conceal, size, t_conceal, true, NULL, true);
+    draw_term(r, blink, size, t_blink, true, NULL, true);
+    draw_term(r, underline, size, t_underline, true, NULL, true);
+    draw_term(r, underline_none, size, t_none, true, NULL, true);
+    assert(memcmp(blank, normal, bytes));
+    tcheck_same("conceal", conceal, blank, size);
+    tcheck_same("blink on", blink, normal, size);
+    draw_term(r, blink, size, t_blink, false, NULL, true);
+    tcheck_same("blink off", blink, blank, size);
+
+    uint32_t green = term_color(t_underline, wsap_vtcore_color_index(2));
+    assert(green != 0);
+    assert(count_color(underline, n, green) > 0);
+    assert(count_color(underline_none, n, green) == 0);
+    assert(memcmp(underline, underline_none, bytes));
+
+    wsap_vtcore_free(t_blank);
+    wsap_vtcore_free(t_normal);
+    wsap_vtcore_free(t_conceal);
+    wsap_vtcore_free(t_blink);
+    wsap_vtcore_free(t_underline);
+    wsap_vtcore_free(t_none);
+    free(blank); free(normal); free(conceal); free(blink);
+    free(underline); free(underline_none);
+}
+
+/* A blink phase change repaints the text, and it does not change the
+ * snapshot. The cell cache keeps the underline color cells apart. */
+static void blink_repaint_test(void)
+{
+    struct wsap_vtcore *t = tt_new(2, 1);
+    assert(t);
+    feed(t, "\033[?25l\033[4;58;5;2m\033[5mX");
+    int w = 2 * CELL_W, h = CELL_H;
+    struct vector2i size = { .x = w, .y = h };
+    size_t bytes = (size_t)w * h * sizeof(uint32_t);
+    uint32_t *px = malloc(bytes), *want = malloc(bytes), *before = malloc(bytes);
+    assert(px && want && before);
+    struct wsap_vtcore_snapshot *snap = test_snapshot_of(t);
+    struct terminal_frame frame;
+    terminal_frame_init(&frame, snap, false);
+    struct renderer *r = test_renderer();
+    assert(r);
+    struct framebuffer_history history = {0};
+
+    frame.blink_on = true;
+    (void)draw_grid(r, px, size, &history, true, &frame, test_font());
+    (void)draw_grid(r, px, size, &history, false, &frame, test_font());
+    draw_term(test_oracle(), want, size, t, true, NULL, true);
+    tcheck_same("styled cell cache", px, want, size);
+
+    memcpy(before, px, bytes);
+    frame.blink_on = false;
+    struct render_result result =
+        draw_grid(r, px, size, &history, false, &frame, test_font());
+    tcheck_damage("blink off", before, px, size, &result.damage);
+    draw_term(test_oracle(), want, size, t, false, NULL, true);
+    tcheck_same("blink off pixels", px, want, size);
+
+    frame.blink_on = true;
+    (void)draw_grid(r, px, size, &history, false, &frame, test_font());
+    draw_term(test_oracle(), want, size, t, true, NULL, true);
+    tcheck_same("blink on pixels", px, want, size);
+
+    const struct wsap_vtcore_cell *cells = wsap_vtcore_snapshot_row(snap, 0);
+    assert(cells && cells[0].text == 'X');
+
+    framebuffer_history_release(&history);
+    test_renderer_destroy(r);
+    wsap_vtcore_snapshot_free(snap);
+    free(px); free(want); free(before);
+    wsap_vtcore_free(t);
+}
+
 static void theme_redraw_test(void)
 {
     struct wsap_vtcore *t = tt_new(2, 1);
@@ -1628,6 +1760,8 @@ int main(int argc, char **argv)
         presentation_test();
         theme_redraw_test();
         theme_recolors_existing_text_test();
+        styled_cells_test();
+        blink_repaint_test();
         explicit_theme_colors_test(FONT_AA_GRAYSCALE);
         explicit_theme_colors_test(FONT_AA_RGB);
         frame_colors_test(2);
