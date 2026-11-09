@@ -84,6 +84,13 @@ cell is a continuation cell; do not print its text again. For width-one and
 width-two cells, render the scalar or all cluster code points once. Cell width
 is terminal cell width, not a pixel size.
 
+`wsap_vtcore_snapshot_row_size` returns the line size of a view row. A
+double-size row shows only the first half of the columns, and at least one
+column. Draw each cell two columns wide. The other cells are blank. A
+double-height row shows the top or the bottom half of each glyph at twice the
+height. A history row and an invalid row are single width. A change of the
+line size changes the row key.
+
 The view and its palette pointer are snapshot-owned. Resolve palette slot
 colors through `wsap_vtcore_view_color` while that view remains valid.
 

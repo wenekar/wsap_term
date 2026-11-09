@@ -81,8 +81,9 @@ static void screen_push_row_inner(struct wsap_vtcore *t, struct srow *row)
 {
     srow_materialize_text(row);
     bool wrapped = (row->flags & RF_WRAPPED) != 0;
+    bool line_size = (row->flags & RF_LINE_SIZE) != 0;
     int cols = t->scr.cols;
-    if (WSAP_VTCORE_EXPECT(row->flags & RF_LINE_SIZE, 0)) {
+    if (WSAP_VTCORE_EXPECT(line_size, 0)) {
         /* The history has no line size. A double-size row goes in as a
          * single-width row with only the cells that it showed. The row
          * leaves the screen, so it can lose its hidden cells here. */
@@ -103,7 +104,7 @@ static void screen_push_row_inner(struct wsap_vtcore *t, struct srow *row)
         wsap_vtcore_hist_push_text(&t->hist, tr, wrapped);
         return;
     }
-    if (WSAP_VTCORE_EXPECT(wrapped && row->len < cols, 0)) {
+    if (WSAP_VTCORE_EXPECT(wrapped && row->len < cols, 0) && !line_size) {
         srow_settle(row, cols);
         if (!(row->flags & RF_TAIL_PADDED))
             fill_cells(row->cells + row->len, cols - row->len, WSAP_VTCORE_COLOR_FG, WSAP_VTCORE_COLOR_BG);
@@ -605,7 +606,12 @@ void wsap_vtcore_screen_erase(struct wsap_vtcore *t, int mode)
             tail_clean = false;
         }
         if (last_active >= 0 && !t->alternate) {
+            /* ED does not move the cursor. The scroll can bring a double-size
+             * row under it. The erase below makes all rows single width, so
+             * keep the column and do not clamp it here. */
+            int cursor_x = t->cursor_x;
             wsap_vtcore_screen_scroll_region(t, 0, rows - 1, last_active + 1, false, true);
+            t->cursor_x = cursor_x;
             if (tail_clean) {
                 t->view.anchor = (struct view_anchor){0};
                 return;
@@ -1757,9 +1763,10 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
             if (WSAP_VTCORE_EXPECT(r.out[i].size, 0)) {
                 /* As on a scroll, the history gets only the visible cells. */
                 len = line_visible_len(out, len, cols);
-                fill_cells(out + len, cols - len, WSAP_VTCORE_COLOR_FG, WSAP_VTCORE_COLOR_BG);
             }
-            int push_len = (r.out[i].wrapped && len < cols) ? cols : len;
+            /* A double-size row keeps its visible length. Other wrapped rows
+             * get blank padding, as before. */
+            int push_len = (r.out[i].wrapped && len < cols && !r.out[i].size) ? cols : len;
             wsap_vtcore_hist_push_row(&t->hist, out, push_len, r.out[i].wrapped, t->gstore);
         }
     } else if (r.count < visible && t->hist.lines > 0) {

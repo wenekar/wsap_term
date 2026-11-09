@@ -3339,6 +3339,65 @@ static void test_line_size_follows_rows(void)
     wsap_vtcore_free(t);
 }
 
+/* A selection skips the hidden cells of a double-size row. A wrapped line
+ * continues in the next row without filler spaces. */
+static void test_line_size_selection_wrap(void)
+{
+    struct wsap_vtcore *t = tt_new(10, 3);
+    assert(t);
+    write_seq(t, "\033#6abcdeX");
+    assert(row_is(t, 0, "abcde") && row_is(t, 1, "X"));
+
+    assert(wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ .x = 0, .y = 0 }, false,
+                                    WSAP_VTCORE_SELECT_CELL));
+    assert(wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = 9, .y = 0 }, false));
+    char *text = wsap_vtcore_selection_text(t);
+    assert(text && !strcmp(text, "abcde"));
+    wsap_vtcore_text_free(text);
+
+    assert(wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ .x = 0, .y = 0 }, false,
+                                    WSAP_VTCORE_SELECT_CELL));
+    assert(wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = 1, .y = 1 }, false));
+    text = wsap_vtcore_selection_text(t);
+    assert(text && !strcmp(text, "abcdeX"));
+    wsap_vtcore_text_free(text);
+    wsap_vtcore_free(t);
+}
+
+/* ED does not move the cursor. It makes all rows single width, also when its
+ * internal scroll brings a double-size row under the cursor. */
+static void test_line_size_ed2_cursor(void)
+{
+    struct wsap_vtcore *t = tt_new(10, 3);
+    assert(t);
+    write_seq(t, "\033[2;1Hx\033[3;1H\033#6\033[1;9H");
+    write_seq(t, "\033[2J");
+    assert(tt_cursor_x(t) == 8 && tt_cursor_y(t) == 0);
+    assert(tt_history(t) == 2);
+    assert(row_size(t, 0) == WSAP_VTCORE_LINE_SINGLE);
+    wsap_vtcore_free(t);
+}
+
+/* A wrapped double-size row keeps only its visible cells in the history. A
+ * resize does not add filler spaces between it and the next row. */
+static void test_line_size_history(void)
+{
+    struct wsap_vtcore *t = tt_new(10, 3);
+    assert(t);
+    write_seq(t, "\033#6abcdeX\r\nA\r\nB\r\nC");
+    assert(tt_history(t) == 1);
+    char *text = wsap_vtcore_history_text(t, 10);
+    assert(text && !strcmp(text, "abcdeX\n"));
+    wsap_vtcore_text_free(text);
+
+    assert(tt_resize(t, 20, 3));
+    assert(tt_history(t) == 1);
+    text = wsap_vtcore_history_text(t, 10);
+    assert(text && !strcmp(text, "abcdeX\n"));
+    wsap_vtcore_text_free(text);
+    wsap_vtcore_free(t);
+}
+
 /* A width change keeps the line size. Reflow does not join a double-size row
  * with the rows around it. */
 static void test_line_size_resize(void)
@@ -3385,7 +3444,10 @@ int main(void)
     test_line_size_text();
     test_line_size_cursor();
     test_line_size_hidden_cells();
+    test_line_size_selection_wrap();
     test_line_size_follows_rows();
+    test_line_size_ed2_cursor();
+    test_line_size_history();
     test_line_size_resize();
     test_palette_standard_xterm_cube();
     test_margin_dch_ich();

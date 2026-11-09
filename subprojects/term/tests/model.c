@@ -30,6 +30,9 @@ struct row {
     bool wrapped;
     /* The line size: enum wsap_vtcore_line_size. */
     uint8_t size;
+    /* A short wrapped row that must not get blank padding in the history.
+     * A row that a double-size line shortened sets it. */
+    bool no_pad;
     struct cell c[];
 };
 
@@ -123,6 +126,7 @@ static struct row *row_new(int cols)
     r->len = 0;
     r->wrapped = false;
     r->size = WSAP_VTCORE_LINE_SINGLE;
+    r->no_pad = false;
     for (int x = 0; x < cols; x++) r->c[x] = default_blank();
     return r;
 }
@@ -158,6 +162,7 @@ static void drop_hidden(struct row *r, int cols)
     for (int x = n; x < r->len && x < cols; x++) r->c[x] = default_blank();
     r->len = n;
     r->size = WSAP_VTCORE_LINE_SINGLE;
+    r->no_pad = true;
 }
 
 static void row_cut(struct row *r, int n, int cols)
@@ -1229,6 +1234,7 @@ static struct row *row_resized(const struct row *r, int old_cols, int cols)
     n->len = r->len < cols ? r->len : cols;
     n->wrapped = r->wrapped;
     n->size = r->size;
+    n->no_pad = r->no_pad;
     return n;
 }
 
@@ -1243,6 +1249,8 @@ struct reflow {
     bool pending;
     /* The line size of the row that the next end finishes. */
     uint8_t size;
+    /* The next row must not get blank padding in the history. */
+    bool no_pad;
 };
 
 static void reflow_end_row(struct reflow *r, bool wrapped)
@@ -1251,7 +1259,9 @@ static void reflow_end_row(struct reflow *r, bool wrapped)
     r->cur->len = r->x > r->cols ? r->cols : r->x;
     r->cur->wrapped = wrapped;
     r->cur->size = r->size;
+    r->cur->no_pad = r->no_pad;
     r->size = 0;
+    r->no_pad = false;
     if (r->count == r->cap) {
         r->cap = r->cap ? r->cap * 2 : 64;
         r->out = realloc(r->out, (size_t)r->cap * sizeof(*r->out));
@@ -1343,9 +1353,13 @@ static void hist_reflow_tail(struct model *m)
 
     bool line_open = m->hist[m->hist_len - 1]->wrapped;
     struct reflow rf = { .cols = m->cols, .rows = m->rows };
+    bool no_pad = false;
     for (int i = start; i < m->hist_len; i++) {
         const struct row *src = m->hist[i];
-        int len = src->wrapped && src->len < m->cols ? m->cols : src->len;
+        /* A normal short wrapped row gets blank padding. A row that borders a
+         * double-size row keeps its length: the cells after it are not text. */
+        int len = src->wrapped && src->len < m->cols && !src->no_pad ? m->cols : src->len;
+        no_pad |= src->no_pad;
         reflow_append(&rf, src->c, len, -1, -1);
     }
     if (rf.x || rf.count == 0)
@@ -1355,7 +1369,9 @@ static void hist_reflow_tail(struct model *m)
     if (line_open) {
         struct row *last = rf.out[rf.count - 1];
         last->wrapped = true;
-        if (last->len < m->cols) {
+        if (no_pad) {
+            last->no_pad = true;
+        } else if (last->len < m->cols) {
             for (int x = last->len; x < m->cols; x++) {
                 last->c[x] = default_blank();
                 last->c[x].pad = true;
@@ -1415,17 +1431,24 @@ static void reflow(struct model *m, int cols, int rows)
             memcpy(reflow_dst(&r), src->c, (size_t)keep * sizeof(struct cell));
             r.x = keep;
             r.size = src->size;
+            r.no_pad = src->size != 0;
             reflow_end_row(&r, wrapped);
             continue;
         }
-        if (wrapped && len < old_cols) len = old_cols;
+        /* A normal row that was full at the old width gets blank padding. A
+         * row that a double-size line shortened keeps its length: the cells
+         * after it are not text. */
+        if (wrapped && len < old_cols && !src->no_pad) len = old_cols;
         if (y == m->y && len < m->x + m->pending) len = m->x + m->pending;
         if (y == m->saved.y && len <= m->saved.x) len = m->saved.x + 1;
         for (int x = 0; x < len; x++)
             line[x] = x < old_cols ? src->c[x] : default_blank();
         reflow_append(&r, line, len, y == m->y ? m->x + m->pending : -1,
                       y == m->saved.y ? m->saved.x : -1);
-        if (!wrapped || i + 1 == total_in) reflow_end_row(&r, false);
+        if (!wrapped || i + 1 == total_in) {
+            r.no_pad = src->no_pad;
+            reflow_end_row(&r, false);
+        }
     }
     free(line);
     if (r.x) reflow_end_row(&r, false);

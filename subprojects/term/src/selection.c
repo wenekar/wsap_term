@@ -741,7 +741,16 @@ static char *range_text_inner(const struct wsap_vtcore *t,
             uint32_t seg_end = seg_start + (uint32_t)seg_display_cols(t->cols, cells, row_wrapped);
             next_start = seg_end;
 
-            uint32_t s = 0, e = (uint32_t)(t->cols - 1);
+            /* A double-size row shows only its first cells. The hidden cells
+             * take part in the offsets, but they are not text. */
+            int text_cols = t->cols;
+            if (seg >= hrows) {
+                int y = screen_row_of(&L, id, seg);
+                if (y >= 0 && (screen_get_row(&t->scr, y)->flags & RF_LINE_SIZE))
+                    text_cols = line_visible_len(cells, t->cols, t->cols);
+            }
+
+            uint32_t s = 0, e = (uint32_t)(text_cols - 1);
             if (id == start.line_id) {
                 if (start.cell_off >= seg_end)
                     continue;
@@ -750,7 +759,7 @@ static char *range_text_inner(const struct wsap_vtcore *t,
             if (id == end.line_id) {
                 if (end.cell_off < seg_start)
                     continue;
-                if (end.cell_off < seg_end && end.cell_off - seg_start < (uint32_t)t->cols)
+                if (end.cell_off < seg_end && end.cell_off - seg_start < (uint32_t)text_cols)
                     e = end.cell_off - seg_start;
             }
             int c0 = (int)s, c1 = (int)e;
