@@ -152,6 +152,61 @@ before any title was set restores as an empty title. A full reset clears the
 stack and keeps the current title. Without a title callback, the stack does
 nothing.
 
+## Shell integration
+
+The core reads these OSC sequences from the shell.
+
+- `OSC 133 ; A` starts a prompt at the cursor row. A `k` option other than
+  `k=i` marks a secondary prompt. The core ignores a secondary prompt.
+- `OSC 133 ; B` starts the command input. It needs no state.
+- `OSC 133 ; C` starts the command output.
+- `OSC 133 ; D` ends the command. An optional decimal value is the exit
+  status. The core ignores a value outside the 32-bit range.
+
+A row can have a prompt mark and an output mark. The marks follow the row
+into history, through a scroll, and through a resize. The alternate screen
+has no marks. A full reset clears the marks of the screen. ED 3 removes the
+marks of history. A whole-line erase clears the marks of that line.
+
+Rows in `wsap_vtcore_find_prompt` and `wsap_vtcore_command_at` are view rows:
+row 0 is the top row of the view. A negative row is above the view. A row at
+or after the view height is below the view. `wsap_vtcore_scroll(t, -row)`
+moves a row to the top of the view. On the alternate screen, these calls
+return false. They return false for invalid arguments. The command values
+stay valid until the next change to the terminal or its view.
+
+`wsap_vtcore_find_prompt` returns the nearest prompt above or below a row.
+It does not count the row itself. The `dir` argument selects the direction.
+`wsap_vtcore_command_at` returns the command that contains a row. A command
+starts at a prompt row and ends before the next prompt row. `finished` is
+true after `OSC 133 ; D` or after a later prompt. `has_output` is true when
+`OSC 133 ; C` marked a row before the next prompt. The output of the last
+command ends at the cursor row. A cursor in the first column has not written
+to its row yet.
+
+`OSC 9 ; 4 ; state ; percent` reports progress. The progress callback gets
+the state and the percent. State 0 removes the report. State 1 is normal,
+state 2 is an error, state 3 is indeterminate, and state 4 is paused. The
+percent is -1 when the state has no value. A missing percent for state 1
+gives 0. A percent above 100 gives 100. The core ignores a state above 4 and
+a value that is not a decimal. A progress report does not go to the notify
+callback.
+
+`OSC 9 ; 9 ; path` and `OSC 1337 ; CurrentDir=path` set the current
+directory. `wsap_vtcore_cwd` returns it. A path with quotes at both ends
+loses the quotes. The core keeps at most 4096 bytes of a path.
+
+`OSC 1337 ; SetUserVar=name=base64` sends one user variable to the
+`user_var` callback. The value is base64. The decoded value can hold zero
+bytes. The callback gets the decoded length and a NUL after the value. The
+name can have 255 bytes. The value can have 4096 bytes. The core ignores a
+longer name or value and invalid base64 text. The name and value pointers
+are valid only during the callback.
+
+Set `callbacks.progress` and `callbacks.user_var` in
+`wsap_vtcore_options`. Their pointers replace the first reserved words, so
+the options struct keeps its size.
+
 ## Cell styles
 
 `attrs` holds the SGR attributes of a cell. `WSAP_VTCORE_ATTR_BLINK` comes

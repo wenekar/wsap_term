@@ -448,7 +448,12 @@ static inline void erase_span(struct wsap_vtcore *t, int p, int from, int to)
     bool pristine = using_default_colors(t);
     struct srow *row = &t->scr.slot[p];
     int len = row->len;
+    int width = to;
     if (to > WSAP_VTCORE_MAX_COLS) to = WSAP_VTCORE_MAX_COLS;
+    /* A whole-row erase removes the marks of the row. This includes an
+     * empty row: its marks are all that it has. */
+    if (from == 0 && width >= len)
+        row->flags &= (uint8_t)~RF_MARKS;
     if (pristine && to > len) to = len;
     if (from >= to) return;
 
@@ -503,11 +508,12 @@ static inline void erase_row(struct wsap_vtcore *t, int p)
     }
 }
 
-/* True when ED can skip row p: it is blank, single width, and not wrapped. */
+/* True when ED can skip row p: it is blank, single width, is not wrapped,
+ * and has no shell mark. */
 static inline bool row_erased(const struct wsap_vtcore *t, int p)
 {
     const struct srow *row = &t->scr.slot[p];
-    return row->len == 0 && !(row->flags & (RF_WRAPPED | RF_LINE_SIZE));
+    return row->len == 0 && !(row->flags & (RF_WRAPPED | RF_LINE_SIZE | RF_MARKS));
 }
 
 static inline void clamp_selection_after_scroll(struct wsap_vtcore *t)

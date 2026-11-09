@@ -770,6 +770,65 @@ static void run_commands(struct wsap_vtcore *t, int count, int lines)
     write_seq(t, MARK_A "$ ");
 }
 
+/* A row keeps a mark through a partial erase. A whole-line erase removes it. */
+static void test_osc_marks_reset(void)
+{
+    struct wsap_vtcore *t = tt_new(20, 6);
+    assert(t);
+
+    /* A full reset clears the marks of the screen. */
+    write_seq(t, MARK_A);
+    assert(prompt_from(t, 6, -1) == 0);
+    write_seq(t, "\033c");
+    assert(prompt_from(t, 6, -1) == INT_MIN);
+    struct wsap_vtcore_command cmd;
+    assert(!wsap_vtcore_command_at(t, 0, &cmd));
+
+    /* A full-line erase removes the mark of an empty row. */
+    write_seq(t, "\033[H" MARK_A);
+    write_seq(t, "\033[2K");
+    assert(prompt_from(t, 6, -1) == INT_MIN);
+
+    /* A partial erase keeps the mark. */
+    write_seq(t, "\033[H" MARK_A "$ ");
+    write_seq(t, "\033[2G\033[0K");
+    assert(prompt_from(t, 6, -1) == 0);
+    write_seq(t, "\033[2K");
+    assert(prompt_from(t, 6, -1) == INT_MIN);
+
+    /* ED 0 and ED 1 remove the mark of an empty row at the cursor. */
+    write_seq(t, "\033[H" MARK_A "\033[J");
+    assert(prompt_from(t, 6, -1) == INT_MIN);
+    write_seq(t, "\033[H" MARK_A "\033[1J");
+    assert(prompt_from(t, 6, -1) == INT_MIN);
+
+    /* ED 2 clears an empty marked row below the content. The content
+     * rows go to history. */
+    write_seq(t, "\033[H" MARK_A "$ \r\nout\r\n" MARK_A);
+    write_seq(t, "\033[2J");
+    int found;
+    assert(wsap_vtcore_find_prompt(t, 1, -1, &found) && found < 0);
+    wsap_vtcore_free(t);
+}
+
+/* The alternate screen has no marks. A reset on it clears the normal marks. */
+static void test_osc_marks_alternate_reset(void)
+{
+    struct wsap_vtcore *t = tt_new(20, 6);
+    assert(t);
+    write_seq(t, MARK_A "$ ");
+    assert(prompt_from(t, 6, -1) == 0);
+    write_seq(t, "\033[?1049h" MARK_A "$ ");
+    assert(prompt_from(t, 6, -1) == INT_MIN);
+    write_seq(t, "\033[?1049l");
+    assert(prompt_from(t, 6, -1) == 0);
+    write_seq(t, "\033[?1049h\033c");
+    assert(prompt_from(t, 6, -1) == INT_MIN);
+    struct wsap_vtcore_command cmd;
+    assert(!wsap_vtcore_command_at(t, 0, &cmd));
+    wsap_vtcore_free(t);
+}
+
 static void test_osc_marks_history(void)
 {
     struct wsap_vtcore *t = tt_new(20, 4);
@@ -823,6 +882,19 @@ static void test_osc_marks_history(void)
     wsap_vtcore_free(t);
 }
 
+/* A D after an erased prompt must not change the command above it. */
+static void test_osc_marks_finished(void)
+{
+    struct wsap_vtcore *t = tt_new(20, 3);
+    assert(t);
+    write_seq(t, MARK_A "$ " MARK_B "one\r\n" MARK_C "o1\r\no2\r\n" "\033]133;D;0\007");
+    assert(tt_history(t) == 1);
+    assert_status(t, -1, true, true, 0);
+    write_seq(t, MARK_A "$ \033[2K\033]133;D;7\007");
+    assert_status(t, -1, true, true, 0);
+    wsap_vtcore_free(t);
+}
+
 static void test_osc_marks_resize(void)
 {
     struct wsap_vtcore *t = tt_new(20, 6);
@@ -870,6 +942,15 @@ static void test_osc_marks_resize(void)
     assert(tt_resize(t, 20, 8));
     assert_output(t, 3, 0, 2, 3);
     wsap_vtcore_free(t);
+
+    /* An empty prompt row at the bottom keeps its mark through a resize. */
+    t = tt_new(20, 4);
+    assert(t);
+    write_seq(t, MARK_A "$ cmd\r\nout\r\n" MARK_A);
+    assert(prompt_from(t, 4, -1) == 2);
+    assert(tt_resize(t, 10, 4));
+    assert(prompt_from(t, 4, -1) == 2);
+    wsap_vtcore_free(t);
 }
 
 /* Compare the prompts and commands of two terminals from the bottom up. */
@@ -895,6 +976,50 @@ static int same_marks(struct wsap_vtcore *a, struct wsap_vtcore *b)
         count++;
         row = ra;
     }
+}
+
+/* Feed the same shell integration output in one write and byte by byte.
+ * Compare the callbacks and the marks, then do it again after a resize. */
+static void test_osc_marks_splits(void)
+{
+    static char out[32768];
+    size_t n = 0;
+    n += (size_t)snprintf(out + n, sizeof(out) - n, "\r\n\r\n" MARK_A "$ " MARK_B "run\r\n" MARK_C);
+    for (int i = 0; i < 12; i++)
+        n += (size_t)snprintf(out + n, sizeof(out) - n, "out %02d\r\n", i);
+    n += (size_t)snprintf(out + n, sizeof(out) - n,
+                          "\033]9;4;1;47\007\033]9;9;/srv/split\007"
+                          "\033]1337;CurrentDir=/srv/split/dir\007"
+                          "\033]1337;SetUserVar=split=dmFsdWU=\007"
+                          "\033]133;D;4\007" MARK_A "$ ");
+
+    struct wsap_vtcore *whole = osc_test_term(), *bytes = osc_test_term();
+    assert(whole && bytes);
+    reset_captures();
+    tt_write(whole, out, n);
+    char *cwd = wsap_vtcore_cwd(whole);
+    assert(cwd && !strcmp(cwd, "/srv/split/dir"));
+    assert(progress_count == 1 && progress_state == WSAP_VTCORE_PROGRESS_NORMAL && progress_percent == 47);
+    assert(var_count == 1 && !strcmp(var_name, "split") && var_len == 5 && !strcmp(var_value, "value"));
+    int current = prompt_from(whole, tt_rows(whole), -1);
+    int finished = prompt_from(whole, current, -1);
+    struct wsap_vtcore_command last = command(whole, finished);
+    assert(last.has_output && last.has_exit_status && last.exit_status == 4);
+
+    reset_captures();
+    write_seq(bytes, out);
+    char *cwd_bytes = wsap_vtcore_cwd(bytes);
+    assert(cwd_bytes && !strcmp(cwd_bytes, cwd));
+    assert(progress_count == 1 && progress_state == WSAP_VTCORE_PROGRESS_NORMAL && progress_percent == 47);
+    assert(var_count == 1 && !strcmp(var_name, "split") && var_len == 5 && !strcmp(var_value, "value"));
+    assert(same_marks(whole, bytes) == 2);
+    wsap_vtcore_text_free(cwd);
+    wsap_vtcore_text_free(cwd_bytes);
+
+    assert(tt_resize(whole, 12, 5) && tt_resize(bytes, 12, 5));
+    assert(same_marks(whole, bytes) == 2);
+    wsap_vtcore_free(whole);
+    wsap_vtcore_free(bytes);
 }
 
 static void test_osc_marks_streams(void)
@@ -959,8 +1084,12 @@ int main(void)
     test_osc_shell_cwd();
     test_osc_user_vars();
     test_osc_marks();
+    test_osc_marks_reset();
+    test_osc_marks_alternate_reset();
     test_osc_marks_history();
+    test_osc_marks_finished();
     test_osc_marks_resize();
+    test_osc_marks_splits();
     test_osc_marks_streams();
     test_osc_marks_limit();
     test_osc_colors();

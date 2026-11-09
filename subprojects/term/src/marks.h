@@ -9,8 +9,8 @@ struct srow;
 struct hist;
 
 /* Shell integration marks (OSC 133) in struct srow.flags. A prompt row got
- * OSC 133;A. An output row got OSC 133;C. A row can have both. */
-enum { RF_PROMPT = 0x02, RF_OUTPUT = 0x80, RF_MARKS = RF_PROMPT | RF_OUTPUT };
+ * OSC 133;A. An output row got OSC 133;C. A row can have both. The flag
+ * values are in internal.h with the other row flags. */
 
 /* What OSC 133;D told about the command of a prompt row. */
 enum { MARK_DONE = 1, MARK_STATUS = 2 };
@@ -60,7 +60,7 @@ void wsap_vtcore_marks_finish(struct wsap_vtcore *t, bool has_status, int32_t st
 struct mark_info wsap_vtcore_marks_row(const struct wsap_vtcore *t, const struct srow *row);
 /* Add the marks to a screen row. */
 void wsap_vtcore_marks_row_put(struct wsap_vtcore *t, struct srow *row, struct mark_info info);
-/* Forget the prompt state of all screen rows. */
+/* Forget the prompt state of all normal screen rows, and clear their marks. */
 void wsap_vtcore_marks_rows_clear(struct wsap_vtcore *t);
 
 struct mark_at wsap_vtcore_marks_hist_at(const struct hist *h);

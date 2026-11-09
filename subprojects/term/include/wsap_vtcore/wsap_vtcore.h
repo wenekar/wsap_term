@@ -132,8 +132,9 @@ struct wsap_vtcore_options {
     const char *name;
     struct wsap_vtcore_callbacks callbacks;
     /* The progress and user_var callbacks use the first reserved words. The
-     * size and the other offsets stay the same for each pointer size. */
-    uint32_t reserved[8 - 2 * sizeof(void (*)(void)) / sizeof(uint32_t)];
+     * size and the field offsets before them stay the same for each pointer
+     * size. */
+    uint32_t reserved[8 - 2 * sizeof(void *) / sizeof(uint32_t)];
 };
 
 #ifdef __cplusplus

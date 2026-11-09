@@ -15,6 +15,7 @@ Each source directory lists its own build inputs.
 | `term_state.c` | Combined grapheme, history, and mode compilation unit |
 | `core.c`, `core.h` | Shared write primitives |
 | `screen.c`, `screen.h` | Screen ring, editing, resize, and reflow |
+| `marks.c`, `marks.h` | Prompt and output marks (OSC 133) and their history records |
 | `rect.c`, `rect.h` | Rectangle edits (DECFRA, DECERA, DECCRA) and column shifts |
 | `hist.c`, `hist.h` | Logical-line storage and page arena |
 | `hist_view.c`, `hist_view.h` | Viewport anchors and history lookup |
@@ -32,6 +33,7 @@ Each source directory lists its own build inputs.
 | `osc/link.c` | OSC 8 hyperlinks |
 | `osc/clipboard.c` | OSC 52 clipboard requests |
 | `osc/misc.c` | Titles, the title stack, paths, and notifications |
+| `osc/shell.c` | OSC 133 marks, OSC 9;4 progress, OSC 9;9, and OSC 1337 |
 
 ## Write core
 

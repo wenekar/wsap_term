@@ -133,6 +133,10 @@ static inline void gen(int ops, int cols, int rows)
         "\033[\1772C", "\x0b", "\x0c", "\x7f", "\x18", "\x1a",
         "\033]0;title\007", "\033]2;x\033\\", "\033_apc\033\\", "\033^pm\007",
         "\033X\033\\", "\033]133;A\007", "\033]133;A\033\\", "\033]133;D\007",
+        "\033]133;C\007", "\033]133;D;7\007",
+        "\033]9;4;1;50\007", "\033]9;4;0\007", "\033]9;4;9;5\007",
+        "\033]9;9;/tmp/x\007", "\033]1337;CurrentDir=/tmp/x\007",
+        "\033]1337;SetUserVar=k=YQ==\007", "\033]1337;SetUserVar=bad=!\007",
         "\033#8",
     };
     static const char csi_final[] = "ABCDEFGHIJKLMPSTXZ@`abdefghlmnrsu";
@@ -254,6 +258,7 @@ static inline void gen(int ops, int cols, int rows)
             static const char *reports[] = {
                 "\033[?2048h", "\033[?2048l", "\033[?2031h", "\033[?2031l", "\033[?996n",
                 "\033[?2048$p", "\033[?2031$p", "\033[?2031;2048h", "\033]2;t\007\033[22t",
+                "\033]133;C\007x\033]133;A\007",
             };
             if (rn(3))
                 put(PICK(reports));

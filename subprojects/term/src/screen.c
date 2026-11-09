@@ -602,8 +602,8 @@ void wsap_vtcore_screen_erase(struct wsap_vtcore *t, int mode)
             const struct srow *r = &slots[p];
             p = (p == 0) ? rows - 1 : p - 1;
             if (WSAP_VTCORE_EXPECT(r->len == 0, 1)) {
-                /* ED 2 makes each row single width. */
-                if (WSAP_VTCORE_EXPECT((r->flags & (RF_WRAPPED | RF_LINE_SIZE)) != 0, 0))
+                /* ED 2 makes each row single width and clears its marks. */
+                if (WSAP_VTCORE_EXPECT((r->flags & (RF_WRAPPED | RF_LINE_SIZE | RF_MARKS)) != 0, 0))
                     tail_clean = false;
                 continue;
             }
@@ -705,7 +705,7 @@ void wsap_vtcore_screen_selective_erase(struct wsap_vtcore *t, int mode)
     bool pristine = using_default_colors(t);
     for (int y = first; y <= last; y++) {
         int p = phys_row(t, y);
-        if (pristine && t->scr.slot[p].len == 0 && !(t->scr.slot[p].flags & RF_WRAPPED))
+        if (pristine && t->scr.slot[p].len == 0 && !(t->scr.slot[p].flags & (RF_WRAPPED | RF_MARKS)))
             continue;
         erase_span_selective(t, p, 0, erase_width(t, p));
     }
@@ -1686,7 +1686,7 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
     int p_scan = phys_row(t, old_rows - 1);
     while (active > min_active) {
         const struct srow *sr = &t->scr.slot[p_scan];
-        if (sr->len != 0 || (sr->flags & (RF_WRAPPED | RF_LINE_SIZE)) != 0)
+        if (sr->len != 0 || (sr->flags & (RF_WRAPPED | RF_LINE_SIZE | RF_MARKS)) != 0)
             break;
         active--;
         p_scan = (p_scan == 0) ? old_rows - 1 : p_scan - 1;

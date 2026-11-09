@@ -142,6 +142,9 @@ void wsap_vtcore_marks_row_put(struct wsap_vtcore *t, struct srow *row, struct m
 
 void wsap_vtcore_marks_rows_clear(struct wsap_vtcore *t)
 {
+    const struct screen *s = normal_screen(t);
+    for (int y = 0; y < s->rows; y++)
+        s->slot[y].flags &= (uint8_t)~RF_MARKS;
     if (t->marks)
         t->marks->nrows = 0;
 }
@@ -294,6 +297,10 @@ void wsap_vtcore_marks_finish(struct wsap_vtcore *t, bool has_status, int32_t st
     for (int y = t->cursor_y; y >= 0; y--) {
         const struct srow *row = &t->scr.slot[phys_row(t, y)];
         if (row->flags & RF_PROMPT) {
+            /* A later D with no prompt before it belongs to no command. Do
+             * not change a command that is already done. */
+            if (wsap_vtcore_marks_row(t, row).state & MARK_DONE)
+                return;
             rows_set(t, row->uid, state, status, true);
             return;
         }
@@ -305,6 +312,8 @@ void wsap_vtcore_marks_finish(struct wsap_vtcore *t, bool has_status, int32_t st
     for (uint32_t i = m->count; i-- > 0;) {
         struct mark_line *e = line_at(m, i);
         if (e->info.flags & RF_PROMPT) {
+            if (e->info.state & MARK_DONE)
+                return;
             e->info.state = state;
             e->info.status = status;
             return;

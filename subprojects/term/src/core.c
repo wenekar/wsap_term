@@ -1624,7 +1624,7 @@ size_t wsap_vtcore_sc_bulk_ascii_lines(struct wsap_vtcore *t, const char *buf, s
     /* The bulk paths write new rows over the empty cursor row. A shell mark
      * on that row must stay. The base path keeps it, and a later line takes
      * the bulk path. */
-    if (WSAP_VTCORE_EXPECT(!t->pending_wrap && (wsap_vtcore_row(t, t->cursor_y)->flags & RF_MARKS), 0))
+    if (WSAP_VTCORE_EXPECT(!t->pending_wrap && (t->scr.slot[phys_row(t, t->cursor_y)].flags & RF_MARKS), 0))
         return 0;
     if (len >= 1024 && using_default_colors(t) && !wsap_vtcore_flags_pad(t)) {
         size_t done = 0;

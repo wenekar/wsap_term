@@ -33,6 +33,8 @@ struct row {
     /* A short wrapped row that must not get blank padding in the history.
      * A row that a double-size line shortened sets it. */
     bool no_pad;
+    /* A prompt or output mark is on this row (OSC 133). */
+    bool mark;
     struct cell c[];
 };
 
@@ -127,6 +129,7 @@ static struct row *row_new(int cols)
     r->wrapped = false;
     r->size = WSAP_VTCORE_LINE_SINGLE;
     r->no_pad = false;
+    r->mark = false;
     for (int x = 0; x < cols; x++) r->c[x] = default_blank();
     return r;
 }
@@ -340,7 +343,10 @@ static void reverse_index(struct model *m)
 static void erase_cells(struct model *m, int y, int from, int to)
 {
     struct row *r = m->scr[y];
+    int width = to;
     if (to > m->cols) to = m->cols;
+    if (from == 0 && width >= r->len)
+        r->mark = false;
     bool plain = pristine(m);
     if (plain && to > r->len) to = r->len;
     if (from >= to) return;
@@ -1235,6 +1241,7 @@ static struct row *row_resized(const struct row *r, int old_cols, int cols)
     n->wrapped = r->wrapped;
     n->size = r->size;
     n->no_pad = r->no_pad;
+    n->mark = r->mark;
     return n;
 }
 
@@ -1251,6 +1258,9 @@ struct reflow {
     uint8_t size;
     /* The next row must not get blank padding in the history. */
     bool no_pad;
+    /* The mark of the row that the next end finishes, and the mark of the
+     * next cell that the reflow places. */
+    bool mark, mark_next;
 };
 
 static void reflow_end_row(struct reflow *r, bool wrapped)
@@ -1262,6 +1272,8 @@ static void reflow_end_row(struct reflow *r, bool wrapped)
     r->cur->no_pad = r->no_pad;
     r->size = 0;
     r->no_pad = false;
+    r->cur->mark = r->mark;
+    r->mark = false;
     if (r->count == r->cap) {
         r->cap = r->cap ? r->cap * 2 : 64;
         r->out = realloc(r->out, (size_t)r->cap * sizeof(*r->out));
@@ -1270,6 +1282,14 @@ static void reflow_end_row(struct reflow *r, bool wrapped)
     r->out[r->count++] = r->cur;
     r->cur = NULL;
     r->x = 0;
+}
+
+static void reflow_place_mark(struct reflow *r)
+{
+    if (r->mark_next) {
+        r->mark = true;
+        r->mark_next = false;
+    }
 }
 
 static struct cell *reflow_dst(struct reflow *r)
@@ -1360,6 +1380,9 @@ static void hist_reflow_tail(struct model *m)
          * double-size row keeps its length: the cells after it are not text. */
         int len = src->wrapped && src->len < m->cols && !src->no_pad ? m->cols : src->len;
         no_pad |= src->no_pad;
+        if (src->mark)
+            rf.mark_next = true;
+        reflow_place_mark(&rf);
         reflow_append(&rf, src->c, len, -1, -1);
     }
     if (rf.x || rf.count == 0)
@@ -1398,7 +1421,8 @@ static void reflow(struct model *m, int cols, int rows)
     int old_cols = m->cols, old_rows = m->rows;
     int active = old_rows;
     while (active > m->y + 1 && active > m->saved.y + 1 &&
-           !m->scr[active - 1]->len && !m->scr[active - 1]->wrapped && !m->scr[active - 1]->size)
+           !m->scr[active - 1]->len && !m->scr[active - 1]->wrapped &&
+           !m->scr[active - 1]->size && !m->scr[active - 1]->mark)
         active--;
     struct reflow r = { .cols = cols, .rows = rows };
     int total_in = m->hist_len + active;
@@ -1409,9 +1433,12 @@ static void reflow(struct model *m, int cols, int rows)
         const struct row *src = i < m->hist_len ? m->hist[i] : m->scr[y];
         int len = src->len;
         bool wrapped = src->wrapped;
+        if (src->mark)
+            r.mark_next = true;
         bool keep_row = m->prompt >= 0 && y >= m->prompt;
         if (keep_row || src->size) {
             if (r.x) reflow_end_row(&r, !keep_row);
+            reflow_place_mark(&r);
             if (y == m->prompt) {
                 r.prompt = r.count;
                 r.prompt_set = true;
@@ -2050,8 +2077,15 @@ static void osc_finish(struct model *m)
     size_t len = m->str_len;
     if (!m->alternate && len >= 5 && !strncmp(s, "133;", 4) &&
         (len == 5 || s[5] == ';')) {
-        if (s[4] == 'A' && !osc_secondary_prompt(s, len)) m->prompt = m->y;
-        if (s[4] == 'C' || s[4] == 'D') m->prompt = -1;
+        if (s[4] == 'A' && !osc_secondary_prompt(s, len)) {
+            m->prompt = m->y;
+            m->scr[m->y]->mark = true;
+        }
+        if (s[4] == 'C') {
+            m->prompt = -1;
+            m->scr[m->y]->mark = true;
+        }
+        if (s[4] == 'D') m->prompt = -1;
     }
 }
 
