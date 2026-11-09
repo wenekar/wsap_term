@@ -142,7 +142,7 @@ static inline void gen(int ops, int cols, int rows)
     static const char csi_final[] = "ABCDEFGHIJKLMPSTXZ@`abdefghlmnrsu";
 
     for (int i = 0; i < ops; i++) {
-        switch (rn(48)) {
+        switch (rn(49)) {
         case 0: case 1: case 2: put(PICK(words)); break;
         case 3: {
             int n = rn(cols * 2 + 2);
@@ -313,11 +313,11 @@ static inline void gen(int ops, int cols, int rows)
             /* Reverse wraparound, XTSAVE and XTRESTORE, and mode reports. */
             static const int toggles[] = { 45, 1045, 7, 66, 1007 };
             static const int saved[] = {
-                1, 5, 6, 7, 12, 25, 45, 47, 66, 67, 1000, 1002, 1004, 1006,
+                1, 5, 6, 7, 12, 25, 42, 45, 47, 66, 67, 1000, 1002, 1004, 1006,
                 1007, 1045, 1048, 1049, 2004, 2026, 2027, 9999,
             };
             static const int unmodeled[] = { 69, 2031, 2048 };
-            static const int reported[] = { 2, 45, 66, 1007, 1045, 1046, 1048, 2027 };
+            static const int reported[] = { 2, 42, 45, 66, 1007, 1045, 1046, 1048, 2027 };
             switch (rn(7)) {
             case 0: putf("\033[?%d%c", PICK(toggles), "hl"[rn(2)]); break;
             case 1:
@@ -352,6 +352,54 @@ static inline void gen(int ops, int cols, int rows)
             if (rn(2))
                 put(PICK(words));
             break;
+        case 48: {
+            /* Character sets: designations of G0 to G3, shifts, NRCS mode,
+             * and the ASCII positions that the sets replace. */
+            static const char *sets[] = {
+                "B", "0", "A", "<", ">", "%5", "%6", "4", "C", "5", "R", "f", "Q", "9", "K",
+                "Y", "E", "6", "`", "Z", "H", "7", "=", "1", "%0", "\"4", "%%5", " 0", "\r0",
+                "\1770",
+            };
+            static const char *shifts[] = {
+                "\x0e", "\x0f", "\033n", "\033o", "\033N", "\033O", "\033~", "\033}", "\033|",
+                "\xc2\x8e", "\xc2\x8f", "\033[?42h", "\033[?42l", "\033[?42$p", "\033[!p",
+            };
+            static const char *text[] = {
+                "#@[\\]^_`{|}~", "!0>Aaqx~", " \177a", "\033N\xcc\x81", "\033O\xc3\xa9",
+            };
+            static const char *locking[] = { "\x0f", "\x0e", "\033n", "\033o" };
+            switch (rn(5)) {
+            case 0:
+            case 1: {
+                /* Designate a set into one G set, select it, and print. */
+                int g = rn(4);
+                if (rn(2))
+                    put(rn(3) ? "\033[?42h" : "\033[?42l");
+                if (g && !rn(3))
+                    putf("\033%c%s", "-./"[g - 1], rn(3) ? "A" : PICK(sets));
+                else
+                    putf("\033%c%s", "()*+"[g], PICK(sets));
+                if (g < 2 || rn(2))
+                    put(locking[g]);
+                else
+                    put(g == 2 ? "\033N" : "\033O");
+                put(PICK(text));
+                break;
+            }
+            case 2: put(PICK(shifts)); break;
+            case 3:
+                /* DECCIR restores the shifts and the designations. */
+                if (!gen_unmodeled)
+                    break;
+                putf("\033P1$t1;1;1;@;@;@;%d%d;%c;", rn(5), rn(5), 0x40 + rn(17));
+                for (int k = 0; k < 4; k++)
+                    put(PICK(sets));
+                put("\033\\");
+                break;
+            default: put(PICK(text)); break;
+            }
+            break;
+        }
         }
     }
 }

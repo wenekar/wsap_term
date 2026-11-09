@@ -1257,6 +1257,150 @@ static void test_column_edits(void)
     wsap_vtcore_free(t);
 }
 
+/* Check the code points of the first cells of a row. */
+static void expect_cps(struct wsap_vtcore *t, int row, const uint32_t *want, int n)
+{
+    for (int x = 0; x < n; x++) {
+        uint32_t got = tt_cell_cp(t, tt_cell(t, x, row));
+        if (got != want[x])
+            fprintf(stderr, "row %d col %d: got U+%04X want U+%04X\n", row, x, got, want[x]);
+        assert(got == want[x]);
+    }
+}
+
+#define EXPECT_CPS(t, row, ...) \
+    do { \
+        static const uint32_t want_[] = { __VA_ARGS__ }; \
+        expect_cps((t), (row), want_, (int)(sizeof(want_) / sizeof(want_[0]))); \
+    } while (0)
+
+static void test_character_set_shifts(void)
+{
+    struct wsap_vtcore *t = tt_new(20, 4);
+    /* LS2 and LS3 put G2 and G3 in GL. SI puts G0 back. */
+    write_seq(t, "\033*0\033+>\033nq\033oa\x0fq");
+    EXPECT_CPS(t, 0, 0x2500, 0x03b1, 'q');
+
+    /* A single shift selects G2 or G3 for one character. A control
+     * sequence between them does not end it. */
+    write_seq(t, "\r\n\033Nqq\033Oaa\033N\033[mq");
+    EXPECT_CPS(t, 1, 0x2500, 'q', 0x03b1, 'a', 0x2500);
+
+    /* The C1 forms of SS2 and SS3 in UTF-8. */
+    write_seq(t, "\r\n\xc2\x8eq\xc2\x8f" "aq");
+    EXPECT_CPS(t, 2, 0x2500, 0x03b1, 'q');
+
+    /* LS1R, LS2R, and LS3R select GR. UTF-8 text does not use GR. */
+    write_seq(t, "\r\n\033~\033}\033|\xc3\xa9q");
+    EXPECT_CPS(t, 3, 0xe9, 'q');
+    wsap_vtcore_free(t);
+
+    /* A single shift ends at the next character, also in one large write,
+     * so the print fast paths must not take that character. */
+    t = tt_new(80, 4);
+    tt_puts(t, "\033*0\033Nqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq");
+    EXPECT_CPS(t, 0, 0x2500, 'q', 'q');
+    wsap_vtcore_free(t);
+
+    /* DEC Special Graphics in GL also applies to the line streams. */
+    t = tt_new(64, 4);
+    char *flood = malloc(40 * 62 + 16);
+    assert(flood);
+    int n = sprintf(flood, "\033(0");
+    for (int y = 0; y < 40; y++) {
+        memset(flood + n, 'q', 60);
+        n += 60;
+        flood[n++] = '\r';
+        flood[n++] = '\n';
+    }
+    tt_write(t, flood, (size_t)n);
+    for (int y = 0; y < 3; y++)
+        for (int x = 0; x < 60; x++)
+            assert(tt_cell(t, x, y)->text == 0x2500);
+    free(flood);
+    wsap_vtcore_free(t);
+}
+
+static void test_character_set_designations(void)
+{
+    struct wsap_vtcore *t = tt_new(40, 8);
+    /* The 96-character Latin-1 set maps GL to the upper half. SP stays. */
+    write_seq(t, "\033-A\x0e" "A a~\x0f" "A");
+    EXPECT_CPS(t, 0, 0xc1, ' ', 0xe1, 0xfe, 'A');
+
+    /* DEC Supplemental Graphics, with both designators. */
+    write_seq(t, "\r\n\033)%5\x0e(W]w}?$\033)<(\x0f");
+    EXPECT_CPS(t, 1, 0xa4, 0x152, 0x178, 0x153, 0xff, 0xbf, 0x2426, 0xa4);
+
+    /* DEC Technical. */
+    write_seq(t, "\r\n\033(>!=a~8\033(B");
+    EXPECT_CPS(t, 2, 0x23b7, 0x2260, 0x03b1, 0x2193, 0x2426);
+    for (int x = 0; x < 5; x++)
+        assert(tt_cell(t, x, 2)->width == 1);
+
+    /* An unknown set, a second intermediate byte, and a 96-character
+     * designator for a 94-character set change nothing. */
+    write_seq(t, "\r\n\033(0\033(D\033(%%5\033-0q\033(B");
+    EXPECT_CPS(t, 3, 0x2500);
+
+    /* A C0 control ends a designator and runs. */
+    write_seq(t, "\r\n\033(\r0q");
+    EXPECT_CPS(t, 4, '0', 'q');
+    wsap_vtcore_free(t);
+}
+
+static void test_national_character_sets(void)
+{
+    struct wsap_vtcore *t = tt_new_opts(40, 8, &reply_cb);
+    /* Without NRCS mode, a national set selects ASCII and UK keeps #. */
+    write_seq(t, "\033(0\033(K{\033(A#");
+    EXPECT_CPS(t, 0, '{', '#');
+    write_seq(t, "\033[?42$p");
+    assert(!strcmp(response, "\033[?42;2$y"));
+
+    write_seq(t, "\033[?42h");
+    write_seq(t, "\033[?42$p");
+    assert(!strcmp(response, "\033[?42;1$y"));
+    write_seq(t, "\r\n#\033(K@[\\]{|}~\033(%6[\033(=#");
+    EXPECT_CPS(t, 1, 0xa3, 0xa7, 0xc4, 0xd6, 0xdc, 0xe4, 0xf6, 0xfc, 0xdf, 0xc3, 0xf9);
+
+    /* As in xterm, a national set stays when NRCS mode ends. UK then
+     * shows # again. */
+    write_seq(t, "\033(R\033[?42l\r\n{\033(A#\033(B{");
+    EXPECT_CPS(t, 2, 0xe9, '#', '{');
+
+    /* A full reset ends NRCS mode. A soft reset keeps it. */
+    write_seq(t, "\033[?42h\033[!p\033[?42$p");
+    assert(!strcmp(response, "\033[?42;1$y"));
+    write_seq(t, "\033c\033[?42$p");
+    assert(!strcmp(response, "\033[?42;2$y"));
+    wsap_vtcore_free(t);
+}
+
+static void test_character_set_save_restore(void)
+{
+    struct wsap_vtcore *t = tt_new(20, 6);
+    /* DECSC saves G0 to G3 and the shift state. */
+    write_seq(t, "\033*0\033n\0337\033*B\x0fq\0338\033[1;2Hq");
+    EXPECT_CPS(t, 0, 'q', 0x2500);
+
+    /* As in xterm, DECRC keeps a single shift that waits. */
+    write_seq(t, "\033[2;1H\033*0\x0f\0337\033*B\033N\0338qq");
+    EXPECT_CPS(t, 1, 0x2500, 'q');
+
+    /* A soft reset and a full reset restore ASCII in GL. A soft reset
+     * moves the cursor home. */
+    write_seq(t, "\033*0\033n\033[!px");
+    EXPECT_CPS(t, 0, 'x');
+    write_seq(t, "\033(0\033N\033c\033[3;1Hqq");
+    EXPECT_CPS(t, 2, 'q', 'q');
+
+    /* The alternate screen restores the sets of the normal screen. */
+    write_seq(t, "\033(0\033[?1049h\033(B\033[?1049l\033[4;1Hq\033(B");
+    EXPECT_CPS(t, 3, 0x2500);
+    wsap_vtcore_free(t);
+}
+
 static void test_device_attributes(void)
 {
     struct wsap_vtcore *t = tt_new_opts(80, 24, &reply_cb);
@@ -3508,6 +3652,10 @@ int main(void)
 
     test_wide_characters();
     test_wide_runs();
+    test_character_set_shifts();
+    test_character_set_designations();
+    test_national_character_sets();
+    test_character_set_save_restore();
     test_editor_scrolling();
     test_top_region_scrollback();
     test_device_attributes();

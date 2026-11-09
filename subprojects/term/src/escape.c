@@ -285,19 +285,28 @@ static void restore_deccir(struct wsap_vtcore *t, const char *p, const char *end
     if ((flag & 0xf0) != 0x40) return;
     t->autowrap = (flag & 8) != 0;
     t->origin_mode = (flag & 1) != 0;
-    int curss = (flag & 4) ? 3 : (flag & 2) ? 2 : 0;
+    /* Like xterm, apply each field before the next one is read. */
+    struct charset_state *cs = &t->charsets;
+    cs->ss = (flag & 4) ? 3 : (flag & 2) ? 2 : 0;
+    wsap_vtcore_charset_sync(t);
     int gl = dcs_param_chr(&p, end) - '0';
     if (gl < 0 || gl > 3) return;
+    cs->gl = (uint8_t)gl;
+    wsap_vtcore_charset_sync(t);
     int gr = dcs_param_chr(&p, end) - '0';
     if (gr < 0 || gr > 3) return;
-    t->charset_active = gl < 2 ? gl : (curss ? 1 : 0);
-    if (dcs_param_chr(&p, end) < 0) return;
+    cs->gr = (uint8_t)gr;
+    /* Bit n of Scss is set when Gn holds a 96-character set. */
+    int sizes = dcs_param_chr(&p, end);
+    if ((sizes & 0xf0) != 0x40) return;
     for (int i = 0; i < 4 && p < end; i++) {
-        char d = *p++;
-        if ((d == '%' || d == '&' || d == '"') && p < end) d = *p++;
-        if (i < 2) t->charsets[i] = d;
+        char inter = 0, final = *p++;
+        if ((final == '%' || final == '&' || final == '"') && p < end) {
+            inter = final;
+            final = *p++;
+        }
+        wsap_vtcore_charset_designate(t, i, inter, final, (sizes >> i) & 1);
     }
-    t->graphics = t->charsets[t->charset_active] == '0';
 }
 
 static void restore_dectabsr(struct wsap_vtcore *t, const char *p, const char *end)
@@ -439,6 +448,8 @@ static void soft_reset(struct wsap_vtcore *t)
     t->cur_link = 0;
     pen_set_protected(t, false);
     wsap_vtcore_style_update(t);
+    t->charsets = charset_state_initial();
+    wsap_vtcore_charset_sync(t);
 }
 
 static inline void sgr_set_slot(struct wsap_vtcore *t, int code, uint32_t c)
@@ -539,6 +550,7 @@ static inline void handle_sgr(struct wsap_vtcore *t, const struct csi *csi)
     X(1,    application_cursor) \
     X(12,   cursor_blink) \
     X(25,   cursor_visible) \
+    X(42,   nrcs) \
     X(45,   reverse_wrap) \
     X(66,   application_keypad) \
     X(67,   backarrow_sends_bs) \
@@ -1134,7 +1146,17 @@ static void dispatch_esc(struct wsap_vtcore *t, unsigned char ch)
     case '.':
     case '/':
         t->charset_designation = (char)ch;
+        t->charset_inter = 0;
         t->state = ST_CHARSET;
+        break;
+    case 'n': /* LS2 */
+    case 'o': /* LS3 */
+    case '~': /* LS1R */
+    case '}': /* LS2R */
+    case '|': /* LS3R */
+    case 'N': /* SS2 */
+    case 'O': /* SS3 */
+        wsap_vtcore_charset_shift(t, ch);
         break;
     case 'D':
     case 'E':
@@ -1211,11 +1233,20 @@ void wsap_vtcore_escape_byte(struct wsap_vtcore *t, unsigned char ch)
         }
         break;
     case ST_CHARSET:
-        if (t->charset_designation == '(' || t->charset_designation == ')') {
-            t->charsets[t->charset_designation == ')'] = (char)ch;
-            t->graphics = t->charsets[t->charset_active] == '0';
+        /* A C0 control ends the designator, as in ST_ESC. DEL does nothing. */
+        if (ch < 0x20) {
+            t->state = ST_GROUND;
+            wsap_vtcore_text_ground(t, ch);
+        } else if (ch < 0x30) {
+            /* Only one intermediate byte is valid. DEL marks a second one. */
+            t->charset_inter = t->charset_inter ? 0x7f : (char)ch;
+        } else if (ch != 0x7f) {
+            static const char designators[] = "()*+-./";
+            int d = (int)(strchr(designators, t->charset_designation) - designators);
+            t->state = ST_GROUND;
+            wsap_vtcore_charset_designate(t, d < 4 ? d : d - 3, t->charset_inter,
+                                          (char)ch, d >= 4);
         }
-        t->state = ST_GROUND;
         break;
     case ST_DOCS:
         if (ch != 'G' && ch != '@' && ch != '/')

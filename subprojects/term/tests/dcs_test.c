@@ -347,6 +347,20 @@ static void test_decrsps_cir(void)
     assert_rqss(t, "m", "m");
     wsap_vtcore_free(t);
 
+    /* DECCIR restores GL, GR, a single shift, and the designations. Bit 1
+     * of Scss (B) makes the G1 designator a 96-character set. */
+    t = new_term(80, 24);
+    write_seq(t, "\033P1$t1;1;1;@;@;@;12;B;BABB\033\\A");
+    assert(tt_cell(t, 0, 0)->text == 0xc1);
+    write_seq(t, "\033P1$t1;3;1;@;@;B;00;@;BB0B\033\\qq");
+    assert(tt_cell(t, 2, 0)->text == 0x2500 && tt_cell(t, 3, 0)->text == 'q');
+    /* A national set needs NRCS mode. */
+    write_seq(t, "\033P1$t1;5;1;@;@;@;00;@;KBBB\033\\{");
+    assert(tt_cell(t, 4, 0)->text == '{');
+    write_seq(t, "\033[?42h\033P1$t1;6;1;@;@;@;00;@;KB%5B\033\\{\033N(");
+    assert(tt_cell(t, 5, 0)->text == 0xe4 && tt_cell(t, 6, 0)->text == 0xa4);
+    wsap_vtcore_free(t);
+
     t = new_term(80, 24);
     write_seq(t, "\033[5;15r");
     write_seq(t, "\033P1$t3;5;1;@;@;I;00;@;BBBB\033\\");

@@ -18,6 +18,7 @@ wsap_vtcore_sources = files(
   'snapshot.c',
   'style.c',
   'term/state.c',
+  'text/charset.c',
   'text/run.c',
   'text/text.c',
 ) + wsap_vtcore_osc_src

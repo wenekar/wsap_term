@@ -531,7 +531,7 @@ int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
                 bg = t->cur_bg;
                 flags_ok = false;
                 p = q + 1;
-                if (t->origin_mode || t->graphics)
+                if (t->origin_mode || t->translate)
                     goto done;
                 break;
             default:

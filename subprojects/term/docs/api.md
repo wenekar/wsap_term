@@ -58,6 +58,82 @@ succeeded. The caller can release or reuse the input buffer after return.
 Feeding arbitrary chunks is supported, including chunks that end inside a
 multibyte character or escape sequence. Preserve byte order between calls.
 
+## Character sets
+
+The core decodes output as UTF-8. It also supports the ISO 2022 character
+sets of DEC terminals, as xterm does in UTF-8 mode. A set changes only the
+printable ASCII codes 0x21 to 0x7E. A space, DEL, and all other code points
+do not change.
+
+- `ESC ( F`, `ESC ) F`, `ESC * F`, and `ESC + F` designate a 94-character
+  set into G0, G1, G2, or G3. `ESC - F`, `ESC . F`, and `ESC / F` designate a
+  96-character set into G1, G2, or G3.
+- SI puts G0 into GL. SO puts G1 into GL. `ESC n` (LS2) and `ESC o` (LS3)
+  put G2 or G3 into GL.
+- `ESC N` (SS2) and `ESC O` (SS3) select G2 or G3 for the next character
+  only. The C1 forms U+008E and U+008F do the same. A control sequence
+  before the character does not cancel the single shift. A combining mark
+  joins the previous cell, so it does not use the single shift.
+- `ESC ~`, `ESC }`, and `ESC |` (LS1R, LS2R, LS3R) select GR. Bytes from 0x80
+  are UTF-8, so GR does not change text. xterm maps U+00A0 to U+00FF through
+  GR. The core does not. It keeps GR only for DECSC and DECCIR.
+
+| Final byte | Set |
+| --- | --- |
+| `B` | ASCII |
+| `0` | DEC Special Graphics |
+| `<` or `% 5` | DEC Supplemental Graphics |
+| `>` | DEC Technical |
+| `A` (96-character designator) | ISO Latin-1 Supplemental |
+| `A` | United Kingdom |
+| `4` | Dutch |
+| `C` or `5` | Finnish |
+| `R` or `f` | French |
+| `Q` or `9` | French Canadian |
+| `K` | German |
+| `Y` | Italian |
+| `E`, `6`, or `` ` `` | Norwegian and Danish |
+| `% 6` | Portuguese |
+| `Z` | Spanish |
+| `H` or `7` | Swedish |
+| `=` | Swiss |
+
+The last 12 sets are the national replacement sets (NRCS). They follow
+xterm:
+
+- The national sets other than UK need NRCS mode (DECNRCM, `CSI ? 42 h`).
+  Without NRCS mode, their designators select ASCII. A designated national
+  set stays when NRCS mode ends.
+- UK replaces `#` with `£` only in NRCS mode.
+- NRCS mode does not change the UTF-8 decoder. xterm stops UTF-8 decoding in
+  NRCS mode. The core does not.
+- DECRQM reports mode 42. A full reset (RIS) clears it. A soft reset
+  (DECSTR) keeps it.
+
+Other rules:
+
+- DEC Supplemental Graphics maps a code to the DEC Multinational character
+  at the code plus 0x80. ISO Latin-1 Supplemental maps a code to U+0080 plus
+  the code. xterm maps these two sets only through GR. The core maps them in
+  GL, as a DEC terminal does.
+- Unicode has no glyphs for the sigma parts of DEC Technical (0x31 to 0x37).
+  The core uses the nearest symbols. An undefined position of a DEC set
+  shows U+2426, the reversed question mark.
+- The core ignores an unknown designator and a designator with two
+  intermediate bytes. A C0 control ends a designator and runs. Sets that
+  need a VT500 (for example `% 2` and `" 4`) are unknown.
+- DECSC saves G0 to G3, GL, and GR. DECRC restores them. As in xterm, DECSC
+  does not save a single shift, and DECRC keeps a single shift that waits.
+  The alternate screen (modes 47, 1047, and 1049) saves and restores the
+  sets with the cursor.
+- DECCIR restore (`DCS 1 $ t`) sets the single shift, GL, GR, and the four
+  designations. Bit n of the Scss field tells that Gn holds a 96-character
+  set.
+- A soft reset and a full reset put ASCII into G0 to G3, G0 into GL, and G2
+  into GR. They also cancel a single shift.
+- REP repeats the last character as the screen shows it. It does not map it
+  again. DECFRA does not map its fill character.
+
 ## Snapshots and text
 
 Create a snapshot with `wsap_vtcore_snapshot_new`; free it with

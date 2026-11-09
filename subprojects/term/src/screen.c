@@ -1219,7 +1219,7 @@ struct wsap_vtcore *wsap_vtcore_new(const struct wsap_vtcore_options *opt)
     t->cursor_style = t->default_cursor_style;
     t->cursor_blink = t->default_cursor_blink;
     t->autowrap = true;
-    t->charsets[0] = t->charsets[1] = 'B';
+    t->charsets = charset_state_initial();
     t->saved = wsap_vtcore_saved_cursor_initial();
     memcpy(t->tcap_name, t->name, sizeof(t->name));
     wsap_vtcore_tabs_default(t);

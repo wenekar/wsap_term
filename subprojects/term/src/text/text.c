@@ -14,15 +14,9 @@
 
 static inline void emit_codepoint(struct wsap_vtcore *t, uint32_t cp, int klass, uint16_t flags)
 {
-    static const uint32_t dec_graphics[] = {
-        0x00a0,
-        0x25c6,0x2592,0x2409,0x240c,0x240d,0x240a,0x00b0,0x00b1,
-        0x2424,0x240b,0x2518,0x2510,0x250c,0x2514,0x253c,0x23ba,
-        0x23bb,0x2500,0x23bc,0x23bd,0x251c,0x2524,0x2534,0x252c,
-        0x2502,0x2264,0x2265,0x03c0,0x2260,0x00a3,0x00b7 };
     if (cp >= 0x80 && cp <= 0x9f) {
         static const char c1_map[32] = {
-            [4] = 'D', [5] = 'E', [8] = 'H', [13] = 'M',
+            [4] = 'D', [5] = 'E', [8] = 'H', [13] = 'M', [14] = 'N', [15] = 'O',
             [16] = 'P', [27] = '[', [28] = '\\', [29] = ']',
         };
         char ch = c1_map[cp - 0x80];
@@ -32,9 +26,12 @@ static inline void emit_codepoint(struct wsap_vtcore *t, uint32_t cp, int klass,
         }
         return;
     }
-    if (t->graphics && cp >= '_' && cp <= '~') {
-        cp = dec_graphics[cp - '_'];
-        klass = -1;
+    if (WSAP_VTCORE_EXPECT(t->translate, 0)) {
+        uint32_t mapped = wsap_vtcore_charset_map(t, cp);
+        if (mapped != cp) {
+            cp = mapped;
+            klass = -1;
+        }
     }
     sc_print_cell(t, cp, klass, flags);
 }
@@ -85,12 +82,8 @@ void wsap_vtcore_text_ground(struct wsap_vtcore *t, unsigned char ch)
     } else if (ch == 0x07) {
         if (t->cb.bell)
             t->cb.bell(t->cb.ud);
-    } else if (ch == 0x0e) {
-        t->charset_active = 1;
-        t->graphics = t->charsets[1] == '0';
-    } else if (ch == 0x0f) {
-        t->charset_active = 0;
-        t->graphics = t->charsets[0] == '0';
+    } else if (ch == 0x0e || ch == 0x0f) {
+        wsap_vtcore_charset_shift(t, ch);
     } else if (ch >= 0x20 && ch != 0x7f) {
         uint32_t before = t->utf8_state;
         uint32_t st = wsap_vtcore_utf8_decode(&t->utf8_state, &t->utf8_codep, ch);
@@ -109,7 +102,7 @@ void wsap_vtcore_text_ground(struct wsap_vtcore *t, unsigned char ch)
  * The wrapped-run stream in wsap_vtcore_sc_bulk_ascii_lines still requires autowrap. */
 static inline bool can_stream_bottom(const struct wsap_vtcore *t)
 {
-    return t->state == ST_GROUND && !t->graphics && !t->insert_mode &&
+    return t->state == ST_GROUND && !t->translate && !t->insert_mode &&
            !t->lr_margin_mode &&
            t->utf8_state == WSAP_VTCORE_UTF8_ACCEPT && !t->inverse &&
            t->scroll_top == 0 && t->scroll_bottom == t->rows - 1 &&
@@ -213,7 +206,7 @@ static void wsap_vtcore_feed_inner(struct wsap_vtcore *t, const char *buf, size_
 
         unsigned char ch = (unsigned char)buf[i];
         if (WSAP_VTCORE_EXPECT(ch >= 0x20 && ch < 0x7f && !t->insert_mode && !t->lr_margin_mode &&
-                             t->state == ST_GROUND && !t->graphics &&
+                             t->state == ST_GROUND && !t->translate &&
                              t->utf8_state == WSAP_VTCORE_UTF8_ACCEPT, 1)) {
             int avail = t->pending_wrap ? t->cols : t->cols - t->cursor_x;
             if (WSAP_VTCORE_EXPECT(avail == 1 && !t->autowrap && !t->pending_wrap, 0)) {
@@ -292,7 +285,7 @@ static void wsap_vtcore_feed_inner(struct wsap_vtcore *t, const char *buf, size_
 
         if (WSAP_VTCORE_EXPECT(ch >= 0x80, 1)) {
             if (WSAP_VTCORE_EXPECT(t->state == ST_GROUND &&
-                            t->utf8_state == WSAP_VTCORE_UTF8_ACCEPT && !t->graphics, 1)) {
+                            t->utf8_state == WSAP_VTCORE_UTF8_ACCEPT && !t->translate, 1)) {
                 if (ch >= 0xc2 && ch <= 0xf4 &&
                     (i + 1 == len || ((unsigned char)buf[i + 1] & 0xc0) == 0x80)) {
                     if (!t->insert_mode && !t->lr_margin_mode &&
@@ -350,7 +343,7 @@ static void wsap_vtcore_feed_inner(struct wsap_vtcore *t, const char *buf, size_
                     if (t->utf8_state == WSAP_VTCORE_UTF8_ACCEPT && i + 1 < len &&
                         buf[i + 1] == '[' && !t->insert_mode &&
                         !t->lr_margin_mode && !t->reverse_wrap &&
-                        !t->reverse_wrap_ext && !t->graphics) {
+                        !t->reverse_wrap_ext && !t->translate) {
                         int fast = wsap_vtcore_try_fast_csi(t, buf + i + 2, len - i - 2);
                         if (fast > 0) {
                             cur_flags = wsap_vtcore_current_flags(t);

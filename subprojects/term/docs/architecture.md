@@ -24,6 +24,7 @@ Each source directory lists its own build inputs.
 | `gstore.c`, `gstore.h` | Per-terminal grapheme storage |
 | `text.c` | Byte decoding and control dispatch |
 | `text_run.c`, `text_run.h` | SIMD UTF-8 text runs |
+| `text/charset.c`, `text/charset.h` | ISO 2022 character sets: designations, shifts, and maps |
 | `fastcsi.c` | Common CSI fast paths |
 | `input.c` | Key, mouse, and paste encoding |
 | `escape.c` | ESC, CSI, DCS, and OSC state machine |
@@ -41,6 +42,12 @@ Text and control sequences use shared primitives in `core.c`.
 These primitives handle printing, line feeds, margins, and cursor movement.
 Fast paths must preserve the same visible behavior as the base path.
 See `src/simd.h` for runtime target rules.
+
+The `translate` bit is set when GL holds a character set other than ASCII
+or a single shift waits. The print fast paths test only this bit. When it
+is set, text takes the base path, which maps each character through the
+set. Change the character set state only through the functions in
+`text/charset.h` or call `wsap_vtcore_charset_sync` after the change.
 
 A write of 1 KiB or more of complete printable ASCII lines takes a line
 stream. The stream accepts LF lines in newline mode and CRLF lines in other

@@ -804,10 +804,11 @@ void wsap_vtcore_sc_reset(struct wsap_vtcore *t)
     t->prompt_y = -1;
     t->has_prompt = false;
     wsap_vtcore_marks_rows_clear(t);
-    t->graphics = t->pending_wrap = false;
+    t->pending_wrap = false;
     t->last_char = 0;
-    t->charsets[0] = t->charsets[1] = 'B';
-    t->charset_active = 0;
+    t->charsets = charset_state_initial();
+    t->nrcs = false;
+    wsap_vtcore_charset_sync(t);
     wsap_vtcore_tabs_clear(t);
     wsap_vtcore_tabs_default(t);
     wsap_vtcore_screen_erase_all(t);

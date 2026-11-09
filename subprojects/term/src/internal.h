@@ -10,6 +10,7 @@
 #include "palette.h"
 #include "pen.h"
 #include "style.h"
+#include "text/charset.h"
 #include "text/run.h"
 #include "compat.h"
 #include <stdatomic.h>
@@ -51,9 +52,9 @@ struct saved_mode {
 struct wsap_vtcore_saved_cursor {
     int x, y;
     uint32_t fg, bg, ul;
-    char charsets[2];
+    /* G0 to G3, GL, and GR (charset_pack). The struct stays 28 bytes. */
+    unsigned charsets : 24;
     uint8_t underline;
-    uint8_t charset_active;
     /* Blink, conceal, and protection (CELL_EXT_FLAGS). */
     uint16_t ext;
     bool bold : 1;
@@ -155,9 +156,7 @@ struct wsap_vtcore {
     /* cur_pad after SGR 0: the style id of cur_link alone and the
      * protection. A reset then needs no table lookup. */
     uint16_t base_pad;
-    char charsets[2];
     uint8_t underline;
-    bool graphics;
 
     bool bold : 1;
     bool faint : 1;
@@ -178,6 +177,9 @@ struct wsap_vtcore {
     bool application_cursor : 1;
     bool application_keypad : 1;
     bool lr_margin_mode : 1;
+    /* Text maps through a character set: GL holds a set other than ASCII,
+     * or a single shift waits. The print fast paths test only this bit. */
+    bool translate : 1;
     bool backarrow_sends_bs : 1;
     bool focus_events : 1;
     bool cursor_visible : 1;
@@ -194,6 +196,7 @@ struct wsap_vtcore {
     bool reverse_wrap : 1;     /* mode 45 */
     bool reverse_wrap_ext : 1; /* mode 1045 */
     bool alternate_scroll : 1; /* mode 1007 */
+    bool nrcs : 1;             /* DECNRCM, mode 42 */
 
     struct screen scr;
     struct screen alt_scr;
@@ -222,7 +225,8 @@ struct wsap_vtcore {
     int mouse_mode, mouse_encoding;
     enum wsap_vtcore_cursor_style cursor_style;
     enum wsap_vtcore_cursor_style default_cursor_style;
-    int charset_active;
+    /* The intermediate byte of the designator that ST_CHARSET reads. */
+    char charset_inter;
     int osc_len;
     int dcs_len;
     int sb_capacity;
@@ -274,7 +278,16 @@ struct wsap_vtcore {
     /* Mode values that XTSAVE (CSI ? Pm s) saved. */
     struct saved_mode saved_modes[SAVED_MODES_MAX];
     uint8_t saved_modes_len;
+    /* Only the slow print path reads the character sets. The fields
+     * above keep their offsets. */
+    struct charset_state charsets;
 };
+
+/* Update the translate bit after a change to the character set state. */
+static inline void wsap_vtcore_charset_sync(struct wsap_vtcore *t)
+{
+    t->translate = t->charsets.g[t->charsets.gl] != CHARSET_ASCII || t->charsets.ss;
+}
 
 static inline void reset_sgr(struct wsap_vtcore *t)
 {
@@ -315,7 +328,8 @@ static inline void pen_set_protected(struct wsap_vtcore *t, bool on)
 static inline struct wsap_vtcore_saved_cursor wsap_vtcore_saved_cursor_initial(void)
 {
     return (struct wsap_vtcore_saved_cursor){
-        .fg = WSAP_VTCORE_COLOR_FG, .bg = WSAP_VTCORE_COLOR_BG, .charsets = { 'B', 'B' },
+        .fg = WSAP_VTCORE_COLOR_FG, .bg = WSAP_VTCORE_COLOR_BG,
+        .charsets = CHARSET_PACKED_INITIAL,
     };
 }
 
@@ -324,9 +338,8 @@ static inline struct wsap_vtcore_saved_cursor wsap_vtcore_cursor_save(const stru
     return (struct wsap_vtcore_saved_cursor){
         .x = t->cursor_x, .y = t->cursor_y,
         .fg = t->cur_fg, .bg = t->cur_bg, .ul = t->cur_ul,
-        .charsets = { t->charsets[0], t->charsets[1] },
+        .charsets = charset_pack(&t->charsets) & 0xffffffu,
         .underline = t->underline,
-        .charset_active = (uint8_t)t->charset_active,
         .ext = (uint16_t)(t->cur_pad & CELL_EXT_FLAGS),
         .bold = t->bold, .faint = t->faint, .italic = t->italic,
         .strike = t->strike, .overline = t->overline, .inverse = t->inverse,
@@ -349,10 +362,9 @@ static inline void wsap_vtcore_cursor_apply(struct wsap_vtcore *t, const struct 
     t->overline = s->overline;
     t->inverse = s->inverse;
     t->origin_mode = s->origin;
-    t->charsets[0] = s->charsets[0];
-    t->charsets[1] = s->charsets[1];
-    t->charset_active = s->charset_active;
-    t->graphics = t->charsets[t->charset_active] == '0';
+    /* As in xterm, DECRC keeps a single shift that waits. */
+    charset_unpack(&t->charsets, s->charsets);
+    wsap_vtcore_charset_sync(t);
 }
 
 static inline void send_response(struct wsap_vtcore *t, const char *str)

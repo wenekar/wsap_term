@@ -45,12 +45,16 @@ struct pen {
     bool prot;
 };
 
+/* A designated set: the final byte, the intermediate byte shifted left by
+ * 8, and SCS_96 for a 96-character set. 'B' is ASCII. */
+#define SCS_96 0x10000
+
 struct saved {
     int x, y;
     bool pending, origin;
     struct pen pen;
-    char g[2];
-    int gl;
+    int g[4];
+    int gl, gr;
 };
 
 struct keyboard {
@@ -77,8 +81,9 @@ struct model {
     int x, y;
     bool pending;
     struct pen pen;
-    char g[2];
-    int gl;
+    int g[4];
+    int gl, gr, ss;
+    bool nrcs;
     struct saved saved;
     bool autowrap, origin, insert, lnm, reverse, app_cursor, app_keypad;
     bool backarrow, bracketed, focus, sync, visible, blink;
@@ -94,7 +99,7 @@ struct model {
     unsigned flags;
 
     int state, str_kind;
-    char slot;
+    char slot, slot_inter;
     int param[16], nparam, csi_phase;
     uint16_t sub;
     char prefix, inter;
@@ -621,7 +626,56 @@ static bool extend_cluster(struct model *m, uint32_t cp, int width)
 
 static void esc_dispatch(struct model *m, unsigned char ch);
 
-static void emit(struct model *m, uint32_t cp)
+/* Decode one UTF-8 character of a table string. */
+static uint32_t utf8_next(const char **s)
+{
+    const unsigned char *p = (const unsigned char *)*s;
+    uint32_t cp;
+    int n;
+    if (p[0] < 0x80) { cp = p[0]; n = 1; }
+    else if (p[0] < 0xe0) { cp = p[0] & 0x1fu; n = 2; }
+    else if (p[0] < 0xf0) { cp = p[0] & 0x0fu; n = 3; }
+    else { cp = p[0] & 0x07u; n = 4; }
+    for (int i = 1; i < n; i++) cp = cp << 6 | (p[i] & 0x3fu);
+    *s += n;
+    return cp;
+}
+
+/* Pairs of an ASCII character and its national replacement. */
+static const char *nrcs_pairs(int set)
+{
+    switch (set) {
+    case 'A': return "#£";
+    case '4': return "#£@¾[ĳ\\½]|{¨|ƒ}¼~´";
+    case 'C': case '5': return "[Ä\\Ö]Å^Ü`é{ä|ö}å~ü";
+    case 'R': case 'f': return "#£@à[°\\ç]§{é|ù}è~¨";
+    case 'Q': case '9': return "@à[â\\ç]ê^î`ô{é|ù}è~û";
+    case 'K': return "@§[Ä\\Ö]Ü{ä|ö}ü~ß";
+    case 'Y': return "#£@§[°\\ç]é`ù{à|ò}è~ì";
+    case 'E': case '6': case '`': return "@Ä[Æ\\Ø]Å^Ü`ä{æ|ø}å~ü";
+    case '%' << 8 | '6': return "[Ã\\Ç]Õ{ã|ç}õ";
+    case 'Z': return "#£@§[¡\\Ñ]¿{°|ñ}ç";
+    case 'H': case '7': return "@É[Ä\\Ö]Å^Ü`é{ä|ö}å~ü";
+    case '=': return "#ù@à[é\\ç]ê^î_è`ô{ä|ö}ü~û";
+    default: return NULL;
+    }
+}
+
+/* Return the set that a designator selects, or 0 for an unknown one. */
+static int scs_set(const struct model *m, bool c96, char inter, char final)
+{
+    if (c96)
+        return !inter && final == 'A' ? SCS_96 | 'A' : 0;
+    int set = inter << 8 | (unsigned char)final;
+    if (set == 'B' || set == '0' || set == '<' || set == '>' || set == ('%' << 8 | '5'))
+        return set;
+    if (!nrcs_pairs(set))
+        return 0;
+    /* A national set other than UK needs NRCS mode. */
+    return set == 'A' || m->nrcs ? set : 'B';
+}
+
+static uint32_t scs_map(const struct model *m, int set, uint32_t cp)
 {
     static const uint32_t dec_graphics[] = {
         0x00a0,
@@ -630,9 +684,50 @@ static void emit(struct model *m, uint32_t cp)
         0x23bb, 0x2500, 0x23bc, 0x23bd, 0x251c, 0x2524, 0x2534, 0x252c,
         0x2502, 0x2264, 0x2265, 0x03c0, 0x2260, 0x00a3, 0x00b7,
     };
+    static const char technical[] =
+        "⎷┌─⌠⌡│⎡⎣⎤⎦⎧⎩⎫⎭⎨"
+        "⎬⎲⎳╲╱⌝⌟⟩␦␦␦␦≤≠≥∫"
+        "∴∝∞÷Δ∇ΦΓ∼≃Θ×Λ⇔⇒≡"
+        "ΠΨ␦Σ␦␦√ΩΞΥ⊂⊃∩∪∧∨"
+        "¬αβχδεφγηιθκλ␦ν∂"
+        "πψρστ␦ƒωξυζ←↑→↓";
+    if (cp < 0x21 || cp > 0x7e)
+        return cp;
+    if (set == '0')
+        return cp >= '_' ? dec_graphics[cp - '_'] : cp;
+    if (set == (SCS_96 | 'A'))
+        return cp + 0x80;
+    if (set == '>') {
+        const char *p = technical;
+        for (uint32_t c = 0x21; c < cp; c++) utf8_next(&p);
+        return utf8_next(&p);
+    }
+    if (set == '<' || set == ('%' << 8 | '5')) {
+        static const uint32_t changed[][2] = {
+            { 0xa8, 0xa4 }, { 0xd7, 0x152 }, { 0xdd, 0x178 }, { 0xf7, 0x153 }, { 0xfd, 0xff },
+        };
+        uint32_t c = cp + 0x80;
+        for (size_t i = 0; i < sizeof(changed) / sizeof(changed[0]); i++)
+            if (changed[i][0] == c) return changed[i][1];
+        if (strchr("\xa4\xa6\xac\xad\xae\xaf\xb4\xb8\xbe\xd0\xde\xf0\xfe", (int)c)) return 0x2426;
+        return c;
+    }
+    if (set == 'A' && !m->nrcs)
+        return cp;
+    const char *p = nrcs_pairs(set);
+    while (p && *p) {
+        char key = *p++;
+        uint32_t to = utf8_next(&p);
+        if ((uint32_t)(unsigned char)key == cp) return to;
+    }
+    return cp;
+}
+
+static void emit(struct model *m, uint32_t cp)
+{
     if (cp >= 0x80 && cp <= 0x9f) {
         static const char c1[32] = {
-            [4] = 'D', [5] = 'E', [8] = 'H', [13] = 'M',
+            [4] = 'D', [5] = 'E', [8] = 'H', [13] = 'M', [14] = 'N', [15] = 'O',
             [16] = 'P', [27] = '[', [28] = '\\', [29] = ']',
         };
         if (c1[cp - 0x80]) {
@@ -641,8 +736,10 @@ static void emit(struct model *m, uint32_t cp)
         }
         return;
     }
-    if (m->g[m->gl] == '0' && cp >= '_' && cp <= '~')
-        cp = dec_graphics[cp - '_'];
+    /* A single shift selects the set of the next character that starts a cell. */
+    int set = m->g[m->ss ? m->ss : m->gl];
+    m->ss = 0;
+    cp = scs_map(m, set, cp);
     m->last[0] = cp;
     m->last_n = 1;
     put_glyph(m, &cp, 1, m->pen.attrs);
@@ -728,7 +825,8 @@ static struct saved save_cursor(const struct model *m)
 {
     return (struct saved){
         .x = m->x, .y = m->y, .pending = m->pending, .origin = m->origin,
-        .pen = m->pen, .g = { m->g[0], m->g[1] }, .gl = m->gl,
+        .pen = m->pen, .g = { m->g[0], m->g[1], m->g[2], m->g[3] },
+        .gl = m->gl, .gr = m->gr,
     };
 }
 
@@ -736,9 +834,9 @@ static void restore_cursor(struct model *m, const struct saved *s)
 {
     m->pen = s->pen;
     m->origin = s->origin;
-    m->g[0] = s->g[0];
-    m->g[1] = s->g[1];
+    memcpy(m->g, s->g, sizeof(m->g));
     m->gl = s->gl;
+    m->gr = s->gr;
     move_to(m, s->x, s->y);
     m->pending = s->pending;
 }
@@ -747,7 +845,7 @@ static struct saved initial_saved(void)
 {
     return (struct saved){
         .pen = { .fg = WSAP_VTCORE_COLOR_FG, .bg = WSAP_VTCORE_COLOR_BG },
-        .g = { 'B', 'B' },
+        .g = { 'B', 'B', 'B', 'B' }, .gr = 2,
     };
 }
 
@@ -1672,6 +1770,9 @@ static void soft_reset(struct model *m)
     memset(m->keyboard, 0, sizeof(m->keyboard));
     pen_reset(&m->pen);
     m->pen.prot = false;
+    m->g[0] = m->g[1] = m->g[2] = m->g[3] = 'B';
+    m->gl = m->ss = 0;
+    m->gr = 2;
 }
 
 static void full_reset(struct model *m)
@@ -1682,8 +1783,7 @@ static void full_reset(struct model *m)
     m->pending = false;
     m->saved = initial_saved();
     m->last_n = 0;
-    m->g[0] = m->g[1] = 'B';
-    m->gl = 0;
+    m->nrcs = false;
     m->prompt = -1;
     memset(m->xtsaved, 0, sizeof(m->xtsaved));
     tabs_default(m);
@@ -1708,6 +1808,7 @@ static int mode_get(const struct model *m, int mode, bool priv)
     case 1: return m->app_cursor;
     case 12: return m->blink;
     case 25: return m->visible;
+    case 42: return m->nrcs;
     case 67: return m->backarrow;
     case 1004: return m->focus;
     case 2004: return m->bracketed;
@@ -1738,6 +1839,7 @@ static void mode_set(struct model *m, int mode, bool on, bool priv)
     case 1: m->app_cursor = on; break;
     case 12: m->blink = on; break;
     case 25: m->visible = on; break;
+    case 42: m->nrcs = on; break;
     case 67: m->backarrow = on; break;
     case 1004: m->focus = on; break;
     case 2004: m->bracketed = on; break;
@@ -2166,8 +2268,16 @@ static void esc_dispatch(struct model *m, unsigned char ch)
     case '%': m->state = DOCS; break;
     case '(': case ')': case '*': case '+': case '-': case '.': case '/':
         m->slot = (char)ch;
+        m->slot_inter = 0;
         m->state = CHARSET;
         break;
+    case 'n': m->gl = 2; break;
+    case 'o': m->gl = 3; break;
+    case '~': m->gr = 1; break;
+    case '}': m->gr = 2; break;
+    case '|': m->gr = 3; break;
+    case 'N': m->ss = 2; break;
+    case 'O': m->ss = 3; break;
     case 'D': case 'E':
         m->pending = false;
         if (ch == 'E') m->x = 0;
@@ -2326,8 +2436,18 @@ static void feed_byte(struct model *m, unsigned char c)
         else csi_byte(m, c);
         break;
     case CHARSET:
-        if (m->slot == '(' || m->slot == ')') m->g[m->slot == ')'] = (char)c;
-        m->state = GROUND;
+        if (c < 0x20) {
+            m->state = GROUND;
+            ground(m, c);
+        } else if (c < 0x30) {
+            m->slot_inter = m->slot_inter ? 1 : (char)c;
+        } else if (c != 0x7f) {
+            m->state = GROUND;
+            const char *slots = "()*+-./";
+            int i = (int)(strchr(slots, m->slot) - slots);
+            int set = scs_set(m, i >= 4, m->slot_inter, (char)c);
+            if (set) m->g[i >= 4 ? i - 3 : i] = set;
+        }
         break;
     case HASH:
         m->state = GROUND;
@@ -2413,7 +2533,8 @@ struct model *model_new(struct wsap_vtcore_vector2i size, int history, const cha
     m->autowrap = m->visible = m->blink = true;
     m->style = WSAP_VTCORE_CURSOR_BLOCK;
     m->bottom = m->rows - 1;
-    m->g[0] = m->g[1] = 'B';
+    m->g[0] = m->g[1] = m->g[2] = m->g[3] = 'B';
+    m->gr = 2;
     m->saved = initial_saved();
     m->prompt = -1;
     pen_reset(&m->pen);
