@@ -31,7 +31,8 @@
  *   bit  9      CURSOR_UNDERLINE: an underline cursor, in cursor_color.
  *   bit 10      WIDE: the left half of a two-column glyph.
  *   bit 11      WIDE_TAIL: the right half of a two-column glyph.
- *   bits 12..15 zero.
+ *   bit 12      UL_COLOR: draw the underline in `ul`, not in `fg`.
+ *   bits 13..15 zero.
  */
 #define RENDER_CELL_BLANK            (1u << 0)
 #define RENDER_CELL_FAINT            (1u << 1)
@@ -44,6 +45,7 @@
 #define RENDER_CELL_CURSOR_UNDERLINE (1u << 9)
 #define RENDER_CELL_WIDE             (1u << 10)
 #define RENDER_CELL_WIDE_TAIL        (1u << 11)
+#define RENDER_CELL_UL_COLOR         (1u << 12)
 
 /* Decoration bits: a cell with one of them is not a plain fill. */
 #define RENDER_CELL_DECOR_MASK \
@@ -54,7 +56,8 @@
  * The bits that change the pixels of a cell for a given glyph id, half, and
  * color pair. The cell cache key keeps only these bits. BLANK is implied by
  * the glyph id. WIDE and WIDE_TAIL are implied by the style and the half.
- * LINK adds no pixels.
+ * LINK adds no pixels. UL_COLOR adds a color that the key does not hold, so
+ * the raster does not cache such a cell.
  */
 #define RENDER_CELL_PIXEL_MASK \
     (RENDER_CELL_FAINT | RENDER_CELL_DECOR_MASK | RENDER_CELL_CURSOR_MASK)
@@ -68,7 +71,7 @@ static inline enum wsap_vtcore_underline render_cell_underline(uint16_t flags)
 }
 
 /*
- * One resolved cell. 16 bytes.
+ * One resolved cell. 20 bytes.
  *
  * - `fg`, `bg`: the final colors, as the cell draws them. The walk
  *   applies, in this order:
@@ -84,6 +87,7 @@ static inline enum wsap_vtcore_underline render_cell_underline(uint16_t flags)
  *   paint_cell(), in one place.
  * - `text`: the glyph text. It is a code point, or a glyph_intern() handle
  *   (above U+10FFFF) for a cluster. A BLANK cell has ' '.
+ * - `ul`: the underline color when flags has UL_COLOR. Zero otherwise.
  * - `style`: FONT_STYLE_* bits for glyph_cache_fetch(). A BLANK cell has 0.
  *   A two-column glyph has FONT_STYLE_WIDE on both halves.
  * - `flags`: RENDER_CELL_* bits.
@@ -91,11 +95,12 @@ static inline enum wsap_vtcore_underline render_cell_underline(uint16_t flags)
 struct render_cell {
     uint32_t fg, bg;
     uint32_t text;
+    uint32_t ul;
     uint16_t style;
     uint16_t flags;
 };
 
-_Static_assert(sizeof(struct render_cell) == 16, "a render_cell is 16 bytes");
+_Static_assert(sizeof(struct render_cell) == 20, "a render_cell is 20 bytes");
 
 /*
  * Glyph ids. A glyph id names the pixels of a glyph for one font instance
@@ -262,6 +267,11 @@ enum render_walk_flags {
  *   no wide cell to its left is a BLANK cell.
  * - A tail at c0 still gets its glyph: the walk reads column c0 - 1.
  * - LINK with no underline kind sets the SINGLE kind.
+ * - A cell with the conceal attribute, or with the blink attribute and a
+ *   false f->blink_on, is BLANK. It draws only its bg and the row policy
+ *   marks (selection and cursor).
+ * - An underline uses the SGR 58 color of its column when the snapshot has
+ *   one. Then UL_COLOR is set and `ul` holds the resolved color.
  * - FAINT is set only on a cell that has a glyph or a decoration.
  * - The cursor exists when f->cursor_y == y and 0 <= f->cursor_x < cols.
  *   The cells that it covers are the cell at cursor_x, plus the other half

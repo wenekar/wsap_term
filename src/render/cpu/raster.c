@@ -299,8 +299,9 @@ static inline RENDER_ALWAYS_INLINE void mask_blend(int isa, uint32_t *dst, size_
 
 /*
  * Composes one cell into dst (row stride ds): the bg, the glyph inside the
- * cell span, the decorations, and the cursor marks. The result depends only
- * on the cell key, so a tile and a direct compose give the same pixels.
+ * cell span, the decorations, and the cursor marks. A cell with an
+ * underline color has no cache tile. Every other cell depends only on the
+ * cell key, so a tile and a direct compose give the same pixels.
  */
 static inline RENDER_ALWAYS_INLINE void compose(int isa, struct row_ctx *c, uint32_t *dst,
                                                 size_t ds, const struct render_cell *cell,
@@ -310,6 +311,7 @@ static inline RENDER_ALWAYS_INLINE void compose(int isa, struct row_ctx *c, uint
     const int cw = c->cw, ch = c->ch;
     const uint32_t fg = cell->fg, bg = cell->bg;
     const uint16_t fl = cell->flags;
+    const uint32_t ul = (fl & RENDER_CELL_UL_COLOR) ? cell->ul : fg;
     const bool faint = (fl & RENDER_CELL_FAINT) != 0;
     if (ds == (size_t)cw) {
         render_kernel_fill(isa, dst, cw * ch, bg);
@@ -361,9 +363,9 @@ static inline RENDER_ALWAYS_INLINE void compose(int isa, struct row_ctx *c, uint
     const struct decor_set *dc = c->decor;
     if (!dc || !(fl & (RENDER_CELL_DECOR_MASK | RENDER_CELL_CURSOR_MASK)))
         return;
-    unsigned ul = render_cell_underline(fl);
-    if (ul && ul < DECOR_UNDERLINE_KINDS)
-        mask_blend(isa, dst, ds, &dc->underline[ul], cw, fg, faint);
+    unsigned underline = render_cell_underline(fl);
+    if (underline && underline < DECOR_UNDERLINE_KINDS)
+        mask_blend(isa, dst, ds, &dc->underline[underline], cw, ul, faint);
     if (fl & RENDER_CELL_STRIKE)
         mask_blend(isa, dst, ds, &dc->strike, cw, fg, faint);
     if (fl & RENDER_CELL_OVERLINE)
@@ -564,7 +566,9 @@ static inline RENDER_ALWAYS_INLINE void cell_slow(int isa, struct row_ctx *c, in
     }
 
     bool marks = (fl & (RENDER_CELL_DECOR_MASK | RENDER_CELL_CURSOR_MASK)) != 0;
-    bool cacheable = ref->id && c->klass && (c->decor || !marks);
+    /* The cell key does not hold the underline color. */
+    bool cacheable = ref->id && c->klass && (c->decor || !marks) &&
+                     !(fl & RENDER_CELL_UL_COLOR);
     struct cell_key key = {0};
     if (cacheable) {
         key.glyph = ref->id;

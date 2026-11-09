@@ -130,18 +130,44 @@ static struct vector2i session_grid(const struct window *w, const struct tab *t,
     return vector2i_max(grid, vector2i_splat(1));
 }
 
+/* The core needs the cell size for CSI 14 t and CSI 16 t. The font
+ * metrics give it. An unchanged size sends no report. */
+static void tab_sync_cell_pixels(struct tab *t)
+{
+    if (!t->session.term)
+        return;
+    const struct font_metrics *m = tab_metrics(t);
+    wsap_vtcore_set_cell_pixels(t->session.term,
+        (struct wsap_vtcore_vector2i){ .x = m->cell_w, .y = m->cell_h });
+}
+
+/* The host preference. Zero means no preference, and the core then
+ * compares the theme colors. */
+static enum wsap_vtcore_color_scheme host_color_scheme(void)
+{
+    unsigned appearance = yasl_get_appearance();
+    if (appearance & YASL_APPEARANCE_DARK)
+        return WSAP_VTCORE_COLOR_SCHEME_DARK;
+    if (appearance & YASL_APPEARANCE_LIGHT)
+        return WSAP_VTCORE_COLOR_SCHEME_LIGHT;
+    return WSAP_VTCORE_COLOR_SCHEME_UNKNOWN;
+}
+
 static bool tab_fit_font(struct tab *t, const struct window *w, int size_pt)
 {
     uint32_t scale = window_scale_120(w);
     if (t->font && font_instance_size_pt(t->font) == size_pt &&
-        font_instance_scale_120(t->font) == scale)
+        font_instance_scale_120(t->font) == scale) {
+        tab_sync_cell_pixels(t);
         return true;
+    }
     struct font_instance *fi = font_instance_acquire(size_pt, scale);
     if (!fi)
         return false;
     font_instance_unref(t->font);
     t->font = fi;
     t->font_size = font_instance_size_pt(fi);
+    tab_sync_cell_pixels(t);
     return true;
 }
 
@@ -216,8 +242,12 @@ void terminal_set_theme(struct window *w, const struct wsap_vtcore_theme *theme)
     if (!tw || !theme)
         return;
     tw->theme = *theme;
-    for (int i = 0; i < tw->tab_count; i++)
+    for (int i = 0; i < tw->tab_count; i++) {
+        /* Set the host preference first. The theme change can then report
+         * the final scheme once. */
+        wsap_vtcore_set_color_scheme(tw->tabs[i]->session.term, tw->host_scheme);
         wsap_vtcore_set_theme(tw->tabs[i]->session.term, &tw->theme);
+    }
     ui_tabbar_set_bg_color(&tw->tabbar, tw->theme.bg);
     window_set_background(w, tw->theme.bg);
     window_redraw(w);
@@ -276,6 +306,7 @@ static bool new_tab_in(struct window *w, const char *cwd)
         .grid = session_grid(w, &probe, size),
         .scrollback = config->scrollback,
         .theme = tw->theme,
+        .color_scheme = tw->host_scheme,
         .cursor_style = config->cursor_style,
         .cursor_blink = config->cursor_blink,
     };
@@ -598,6 +629,9 @@ static struct terminal *terminal_new(struct window_host *host,
     }
     if (spec->theme)
         tw->theme = *spec->theme;
+    /* The app has no appearance-change event. Read the host preference
+     * once. Each tab and theme change applies this value. */
+    tw->host_scheme = host_color_scheme();
     tw->snapshot = wsap_vtcore_snapshot_new();
     if (!tw->snapshot) {
         free(family);

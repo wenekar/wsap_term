@@ -56,6 +56,7 @@ struct walk {
     const struct terminal_frame *f;
     const struct wsap_vtcore_view *view;
     const struct wsap_vtcore_cell *cells;
+    const wsap_vtcore_color *underline;
     render_cell_fn fn;
     render_run_fn run;
     render_text_fn text;
@@ -185,11 +186,21 @@ cluster_look(const struct walk *w, const struct wsap_vtcore_cell *c, uint16_t fl
     };
 }
 
+/* Conceal hides a cell. Blink hides it in the off phase. */
+static inline bool hidden_cell(const struct walk *w, const struct wsap_vtcore_cell *c)
+{
+    return (c->attrs & WSAP_VTCORE_ATTR_CONCEAL) ||
+           ((c->attrs & WSAP_VTCORE_ATTR_BLINK) && !w->f->blink_on);
+}
+
 /* The look of a cell that is not a wide tail and not a never-written cell. */
 static inline __attribute__((always_inline)) struct look
 cell_look(const struct walk *w, const struct wsap_vtcore_cell *c)
 {
-    uint16_t flags = decor_flags(c->attrs) | (c->width == 2 ? RENDER_CELL_WIDE : 0);
+    uint16_t width = c->width == 2 ? RENDER_CELL_WIDE : 0;
+    if (hidden_cell(w, c))
+        return blank_look(width);
+    uint16_t flags = decor_flags(c->attrs) | width;
     struct look l;
     if (c->text <= ' ') {
         l = blank_look(flags);
@@ -241,8 +252,9 @@ resolve_look(struct walk *w, int col, struct render_cell *rc)
         return head_look(w, col);
     if (__builtin_expect(c->width == 0, 0)) {
         if (col == 0 || w->cells[col - 1].width != 2) {
-            struct look l = blank_look(decor_flags(c->attrs));
-            l.flags |= faint_flag(c->attrs, l.flags);
+            struct look l = blank_look(hidden_cell(w, c) ? 0 : decor_flags(c->attrs));
+            if (!hidden_cell(w, c))
+                l.flags |= faint_flag(c->attrs, l.flags);
             return l;
         }
         struct look l = w->head_next == col ? w->head : head_look(w, col - 1);
@@ -292,11 +304,18 @@ static inline void emit(const struct walk *w, int col, const struct render_cell 
 static inline __attribute__((always_inline)) void
 walk_cell(struct walk *w, int col, bool plain)
 {
-    struct render_cell rc;
+    struct render_cell rc = {0};
     struct look l = resolve_look(w, col, &rc);
     rc.text = l.text;
     rc.style = l.style;
     rc.flags = l.flags;
+    if ((l.flags & RENDER_CELL_UNDERLINE_MASK) && w->underline) {
+        wsap_vtcore_color c = w->underline[col];
+        if (c != WSAP_VTCORE_COLOR_NONE) {
+            rc.ul = wsap_vtcore_view_color(w->view, c);
+            rc.flags |= RENDER_CELL_UL_COLOR;
+        }
+    }
     if (!plain)
         apply_policy(w, col, &rc);
     const struct glyph *g = NULL;
@@ -327,7 +346,8 @@ static inline bool text_cell(const struct wsap_vtcore_cell *c)
 {
     return c->text - 0x21u < 0x5Eu && c->width == 1 &&
            !(c->attrs & (ATTR_DECOR_BITS | WSAP_VTCORE_ATTR_FAINT | WSAP_VTCORE_ATTR_EMOJI |
-                         WSAP_VTCORE_ATTR_TEXT));
+                         WSAP_VTCORE_ATTR_TEXT | WSAP_VTCORE_ATTR_BLINK |
+                         WSAP_VTCORE_ATTR_CONCEAL));
 }
 
 static inline bool same_text_run(const struct wsap_vtcore_cell *a,
@@ -424,18 +444,29 @@ walk_span_cell(const struct walk *w, const struct glyph_span *span, int first, i
 {
     const struct wsap_vtcore_cell *c = &w->cells[col];
     int i = col - first;
+    bool hidden = hidden_cell(w, c);
     struct render_cell rc = {
         .fg = wsap_vtcore_view_color(w->view, c->fg),
         .bg = wsap_vtcore_view_color(w->view, c->bg),
-        .text = c->text,
-        .style = cell_style(c),
-        .flags = decor_flags(c->attrs),
+        .text = hidden ? ' ' : c->text,
+        .style = hidden ? 0 : cell_style(c),
+        .flags = hidden ? RENDER_CELL_BLANK : decor_flags(c->attrs),
     };
-    rc.flags |= faint_flag(c->attrs, rc.flags);
+    if (!hidden) {
+        rc.flags |= faint_flag(c->attrs, rc.flags);
+        if ((rc.flags & RENDER_CELL_UNDERLINE_MASK) && w->underline) {
+            wsap_vtcore_color ul = w->underline[col];
+            if (ul != WSAP_VTCORE_COLOR_NONE) {
+                rc.ul = wsap_vtcore_view_color(w->view, ul);
+                rc.flags |= RENDER_CELL_UL_COLOR;
+            }
+        }
+    }
     if (!plain)
         apply_policy(w, col, &rc);
-    const struct look l = { .id = render_glyph_id_shaped(span->id, i) };
-    emit(w, col, &rc, &l, &span->cells[i]);
+    const struct look l = hidden ? blank_look(0)
+        : (struct look){ .id = render_glyph_id_shaped(span->id, i) };
+    emit(w, col, &rc, &l, hidden ? NULL : &span->cells[i]);
 }
 
 /* A run of shaped cells holds at most this many columns. */
@@ -452,7 +483,8 @@ walk_span_runs(struct walk *w, const struct glyph_span *span, int first, int fro
                bool plain)
 {
     const struct wsap_vtcore_cell *cells = w->cells;
-    const uint16_t flag_attrs = ATTR_DECOR_BITS | WSAP_VTCORE_ATTR_FAINT;
+    const uint16_t flag_attrs = ATTR_DECOR_BITS | WSAP_VTCORE_ATTR_FAINT |
+                                WSAP_VTCORE_ATTR_BLINK | WSAP_VTCORE_ATTR_CONCEAL;
     uint64_t ids[SPAN_RUN_MAX];
     for (int col = from; col < end;) {
         const struct wsap_vtcore_cell *c = &cells[col];
@@ -688,7 +720,9 @@ void render_row_walk(struct font_instance *fi, const struct terminal_frame *f, i
         return;
     struct walk w = {
         .fi = fi, .f = f, .view = wsap_vtcore_snapshot_view(f->source),
-        .cells = terminal_frame_row(f, y), .fn = sink->cell, .run = sink->run,
+        .cells = terminal_frame_row(f, y),
+        .underline = wsap_vtcore_snapshot_row_underline_colors(f->source, y),
+        .fn = sink->cell, .run = sink->run,
         .text = sink->text, .span = sink->span, .ctx = sink->ctx,
         .cols = f->cols, .c0 = c0, .c1 = c1, .peek = (flags & RENDER_WALK_PEEK) != 0,
     };

@@ -28,6 +28,7 @@ struct session_spec {
     struct vector2i grid;
     int scrollback;
     struct wsap_vtcore_theme theme;
+    enum wsap_vtcore_color_scheme color_scheme;
     enum wsap_vtcore_cursor_style cursor_style;
     bool cursor_blink;
 };

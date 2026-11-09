@@ -68,14 +68,28 @@ static void update_ime(struct window *w, const struct wsap_vtcore *t)
                               view->palette[WSAP_VTCORE_PALETTE_BG]);
 }
 
+static bool snapshot_has_blink(const struct wsap_vtcore_snapshot *snap)
+{
+    const struct wsap_vtcore_view *view = wsap_vtcore_snapshot_view(snap);
+    for (int y = 0; y < view->size.y; y++) {
+        const struct wsap_vtcore_cell *cells = wsap_vtcore_snapshot_row(snap, y);
+        for (int x = 0; cells && x < view->size.x; x++)
+            if (cells[x].attrs & WSAP_VTCORE_ATTR_BLINK)
+                return true;
+    }
+    return false;
+}
+
 void terminal_prepare(struct window *w, uint64_t now_ms)
 {
     (void)now_ms;
-    if (!terminal_of(w))
+    struct terminal *tw = terminal_of(w);
+    if (!tw)
         return;
     terminal_finish_closing_tab(w);
     struct wsap_vtcore *t = terminal_term(w);
-    if (t && !window_closed(w) && wsap_vtcore_snapshot_update(terminal_of(w)->snapshot, t)) {
+    if (t && !window_closed(w) && wsap_vtcore_snapshot_update(tw->snapshot, t)) {
+        tw->view.blink_cells = snapshot_has_blink(tw->snapshot);
         update_ime(w, t);
     }
 }
@@ -95,6 +109,7 @@ bool terminal_frame_source(struct window *w, uint64_t now_ms,
         .font = tab->font,
         .rect = rect,
         .cursor_visible = cursor_visible(w, tab, now_ms),
+        .text_blink_on = terminal_text_blink_on(w, now_ms),
     };
     return true;
 }

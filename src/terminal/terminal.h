@@ -32,6 +32,7 @@ struct terminal_frame_source {
     struct font_instance *font;
     struct rect2i rect;
     bool cursor_visible;
+    bool text_blink_on;
 };
 
 struct terminal_config {

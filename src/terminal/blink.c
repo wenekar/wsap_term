@@ -23,3 +23,21 @@ uint64_t terminal_next_blink_ms(struct window *w, uint64_t now_ms)
         ? now_ms - last_key : now_ms;
     return now_ms + (BLINK_HALF_MS - elapsed % BLINK_HALF_MS);
 }
+
+/* Text blink uses the app clock. A late frame keeps the same phase. */
+bool terminal_text_blink_on(const struct window *w, uint64_t now_ms)
+{
+    struct terminal *tw = terminal_of(w);
+    if (!tw || !tw->view.blink_cells)
+        return true;
+    return (now_ms / BLINK_HALF_MS) % 2 == 0;
+}
+
+uint64_t terminal_next_text_blink_ms(const struct window *w, uint64_t now_ms)
+{
+    struct terminal *tw = terminal_of(w);
+    if (!tw || !tw->view.blink_cells || !window_surface(w) ||
+        window_closed(w) || window_suspended(w))
+        return 0;
+    return now_ms + (BLINK_HALF_MS - now_ms % BLINK_HALF_MS);
+}

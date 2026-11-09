@@ -63,6 +63,38 @@ _Static_assert(POINTER_BUTTON_NONE == (int)WSAP_VTCORE_MOUSE_BUTTON_NONE &&
                POINTER_WHEEL_RIGHT == (int)WSAP_VTCORE_MOUSE_WHEEL_RIGHT,
                "pointer and term mouse buttons differ");
 
+/* Mode 1007 sends one cursor key for each wheel line. Keep each encode
+ * inside the 64-byte buffer. */
+#define ALT_SCROLL_CHUNK_LINES 16
+
+static bool alternate_scroll(const struct wsap_vtcore_mouse_event *mev,
+                             const struct wsap_vtcore_modes *modes)
+{
+    return !modes->mouse && modes->alternate && modes->alternate_scroll &&
+        (mev->kind == WSAP_VTCORE_MOUSE_SCROLL || mev->kind == WSAP_VTCORE_MOUSE_PRESS) &&
+        (mev->button == WSAP_VTCORE_MOUSE_WHEEL_UP ||
+         mev->button == WSAP_VTCORE_MOUSE_WHEEL_DOWN);
+}
+
+static void send_alternate_scroll(struct tab *t, struct wsap_vtcore_mouse_event mev,
+                                  const struct wsap_vtcore_modes *modes)
+{
+    int total = mev.scroll_lines;
+    unsigned left = total < 0 ? 0u - (unsigned)total : (unsigned)total;
+    if (!left)
+        left = 1;
+    char buf[64];
+    while (left) {
+        unsigned chunk = left > ALT_SCROLL_CHUNK_LINES ? ALT_SCROLL_CHUNK_LINES : left;
+        mev.scroll_lines = total < 0 ? -(int)chunk : (int)chunk;
+        struct wsap_vtcore_input_result r =
+            wsap_vtcore_input_encode_mouse(&mev, modes, buf, sizeof(buf));
+        if (r.len)
+            session_write_bytes(&t->session, buf, r.len);
+        left -= chunk;
+    }
+}
+
 static bool report_mouse(struct window *w, struct tab *t,
                          const struct ui_pointer_event *p, struct vector2i local)
 {
@@ -76,6 +108,10 @@ static bool report_mouse(struct window *w, struct tab *t,
         .kind = (enum wsap_vtcore_mouse_event_kind)pointer_kind(p->kind),
     };
     struct wsap_vtcore_modes modes = terminal_input_modes(w);
+    if (alternate_scroll(&mev, &modes)) {
+        send_alternate_scroll(t, mev, &modes);
+        return true;
+    }
     char buf[64];
     struct wsap_vtcore_input_result r = wsap_vtcore_input_encode_mouse(&mev, &modes, buf, sizeof(buf));
     if (r.len)
@@ -85,20 +121,6 @@ static bool report_mouse(struct window *w, struct tab *t,
 
 static void scroll_lines(struct window *w, struct tab *t, int lines)
 {
-    struct wsap_vtcore_modes modes_now = wsap_vtcore_modes(t->session.term);
-    if (modes_now.alternate && modes_now.mouse == WSAP_VTCORE_MOUSE_OFF) {
-        struct wsap_vtcore_modes modes = terminal_input_modes(w);
-        struct wsap_vtcore_key_event key = {
-            .key = lines > 0 ? WSAP_VTCORE_KEY_UP : WSAP_VTCORE_KEY_DOWN,
-            .action = WSAP_VTCORE_KEY_PRESS,
-        };
-        char buf[64];
-        struct wsap_vtcore_input_result r =
-            wsap_vtcore_input_encode_key((const struct wsap_vtcore_keyboard_state *)window_keyboard(w), &key, &modes, buf, sizeof(buf));
-        for (int i = 0; i < (lines > 0 ? lines : -lines); i++)
-            session_write_bytes(&t->session, buf, r.len);
-        return;
-    }
     wsap_vtcore_scroll(t->session.term, lines);
     selection_extend_to_pointer(&t->selection, t->session.term);
     terminal_show_scrollbar(w);
@@ -579,9 +601,13 @@ static uint64_t view_tick(struct ui_widget *widget, uint64_t now_ms)
 {
     const struct terminal_view *view = view_of(widget);
     uint64_t next = view->visual_bell_until_ms > now_ms ? view->visual_bell_until_ms : 0;
-    uint64_t flip = terminal_next_blink_ms(view_terminal(widget)->window, now_ms);
+    struct window *w = view_terminal(widget)->window;
+    uint64_t flip = terminal_next_blink_ms(w, now_ms);
     if (flip && (!next || flip < next))
         next = flip;
+    uint64_t text_flip = terminal_next_text_blink_ms(w, now_ms);
+    if (text_flip && (!next || text_flip < next))
+        next = text_flip;
     return next;
 }
 

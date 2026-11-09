@@ -32,8 +32,11 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
     bool main = frame->surface == window_surface(w);
     if (main) {
         latency_probe_stage(LATENCY_STAGE_RENDER_START);
-        window_ui_prepare_frame(w, now_ms);
+        /* Update the snapshot before the UI tick. The tick schedules the
+         * next text blink from the blink cells of this snapshot. */
         terminal_prepare(w, now_ms);
+        if (!window_closed(w))
+            window_ui_prepare_frame(w, now_ms);
     }
     if (window_closed(w))
         return;
@@ -59,6 +62,7 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
             /* The theme has no selection colors. The zero selection colors
              * of the frame give the built-in ones. */
             terminal_frame_init(&grid, source.snapshot, source.cursor_visible);
+            grid.blink_on = source.text_blink_on;
             render.grid = (struct render_grid){
                 .frame = &grid,
                 .font = source.font,

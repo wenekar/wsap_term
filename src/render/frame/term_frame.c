@@ -45,7 +45,7 @@ uint32_t terminal_frame_glyph(const struct terminal_frame *frame, uint32_t text)
 void terminal_frame_init(struct terminal_frame *frame, const struct wsap_vtcore_snapshot *snap,
                          bool cursor_visible)
 {
-    *frame = (struct terminal_frame){ .cursor_y = -1 };
+    *frame = (struct terminal_frame){ .cursor_y = -1, .blink_on = true };
     if (!snap)
         return;
     const struct wsap_vtcore_view *v = wsap_vtcore_snapshot_view(snap);

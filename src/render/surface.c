@@ -25,7 +25,8 @@ bool render_surface_key_eq(const struct render_surface_key *a,
            a->selection_fg == b->selection_fg &&
            a->selection_bg == b->selection_bg &&
            a->base == b->base &&
-           a->reverse_video == b->reverse_video;
+           a->reverse_video == b->reverse_video &&
+           a->blink_on == b->blink_on;
 }
 
 struct render_surface *render_surface_of(struct framebuffer_history *history)

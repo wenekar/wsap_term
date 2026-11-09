@@ -29,6 +29,8 @@
  * - `cursor_style` is an enum wsap_vtcore_cursor_style value.
  * - `has_selection` is true when some row has a selection span. It lets
  *   rows skip the selection lookup.
+ * - `blink_on` is the text blink phase. A false value hides cells with the
+ *   blink attribute. The app sets it from its clock.
  * - The struct fills exactly one 64-byte cache line.
  */
 struct terminal_frame {
@@ -42,6 +44,7 @@ struct terminal_frame {
     uint32_t selection_fg, selection_bg;
     bool reverse_video;
     bool has_selection;
+    bool blink_on;
 };
 
 _Static_assert(sizeof(struct terminal_frame) == 64,

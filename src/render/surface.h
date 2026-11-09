@@ -33,9 +33,10 @@
  * - `cell`: the cell size.
  * - `font_version`: font_instance_version() of the grid font.
  * - `palette_gen`, `default_fg`, `default_bg`, `cursor_color`,
- *   `reverse_video`, `selection_fg`, `selection_bg`: from the frame, with
- *   the selection colors resolved. The design list had no cursor color.
- *   It is here, because a palette edit is not the only way to change it.
+ *   `reverse_video`, `blink_on`, `selection_fg`, `selection_bg`: from the
+ *   frame, with the selection colors resolved. The design list had no
+ *   cursor color. It is here, because a palette edit is not the only way
+ *   to change it. A blink phase change repaints the frame.
  * - `base`: render_frame.base.
  * Build it from a zero struct, so that unused fields compare equal.
  */
@@ -51,6 +52,7 @@ struct render_surface_key {
     uint32_t selection_fg, selection_bg;
     uint32_t base;
     bool reverse_video;
+    bool blink_on;
 };
 
 /* Field by field. It does not compare padding. */

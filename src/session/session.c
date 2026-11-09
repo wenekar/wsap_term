@@ -251,6 +251,7 @@ bool session_init(struct session *s, struct yasl_loop *loop,
     });
     if (!s->term)
         return false;
+    wsap_vtcore_set_color_scheme(s->term, spec->color_scheme);
 
     s->next_live = live_sessions;
     live_sessions = s;

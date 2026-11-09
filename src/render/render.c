@@ -443,6 +443,7 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         key.selection_fg = terminal_frame_selection_fg(tf);
         key.selection_bg = terminal_frame_selection_bg(tf);
         key.reverse_video = tf->reverse_video;
+        key.blink_on = tf->blink_on;
     }
 
     if (!frame_reserve(r, rows) || !render_surface_reserve(s, rows)) {

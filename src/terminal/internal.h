@@ -59,6 +59,7 @@ struct terminal_view {
     bool hover_link;
     bool drop_hover;
     bool opening_link;
+    bool blink_cells;
     uint64_t visual_bell_until_ms;
 };
 
@@ -78,6 +79,7 @@ struct terminal {
     struct window *window;
     const struct terminal_config *config;
     struct wsap_vtcore_theme theme;
+    enum wsap_vtcore_color_scheme host_scheme;
     struct terminal_theme_picker theme_picker;
     struct window *(*open_window)(void *ud, struct tab *tab, const char *cwd,
                                   struct vector2i size);
@@ -197,5 +199,7 @@ void terminal_tab_preview_init(struct window *w);
 bool terminal_tab_preview_capture(struct window *w, int index, bool dragging);
 
 uint64_t terminal_next_blink_ms(struct window *w, uint64_t now_ms);
+bool terminal_text_blink_on(const struct window *w, uint64_t now_ms);
+uint64_t terminal_next_text_blink_ms(const struct window *w, uint64_t now_ms);
 
 #endif
