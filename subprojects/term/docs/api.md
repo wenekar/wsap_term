@@ -116,9 +116,10 @@ Other rules:
   at the code plus 0x80. ISO Latin-1 Supplemental maps a code to U+0080 plus
   the code. xterm maps these two sets only through GR. The core maps them in
   GL, as a DEC terminal does.
-- Unicode has no glyphs for the sigma parts of DEC Technical (0x31 to 0x37).
-  The core uses the nearest symbols. An undefined position of a DEC set
-  shows U+2426, the reversed question mark.
+- Unicode has no glyphs for the four summation parts of DEC Technical
+  (0x38 to 0x3B) and for five other positions. The core uses the nearest
+  symbol where one exists. An undefined position of a DEC set shows U+2426,
+  the reversed question mark.
 - The core ignores an unknown designator and a designator with two
   intermediate bytes. A C0 control ends a designator and runs. Sets that
   need a VT500 (for example `% 2` and `" 4`) are unknown.

@@ -1304,9 +1304,11 @@ static void test_character_set_shifts(void)
 
     /* DEC Special Graphics in GL also applies to the line streams. */
     t = tt_new(64, 4);
-    char *flood = malloc(40 * 62 + 16);
+    char *flood = malloc(40 * 62 + 32);
     assert(flood);
-    int n = sprintf(flood, "\033(0");
+    int n = 0;
+    memcpy(flood + n, "\033(0", 4);
+    n += 4;
     for (int y = 0; y < 40; y++) {
         memset(flood + n, 'q', 60);
         n += 60;
@@ -1317,6 +1319,35 @@ static void test_character_set_shifts(void)
     for (int y = 0; y < 3; y++)
         for (int x = 0; x < 60; x++)
             assert(tt_cell(t, x, y)->text == 0x2500);
+    free(flood);
+    wsap_vtcore_free(t);
+
+    /* The ASCII designation ends the mapping in the same write. */
+    t = tt_new(64, 4);
+    flood = malloc(2 * 20 * 62 + 32);
+    assert(flood);
+    n = 0;
+    memcpy(flood + n, "\033(0", 4);
+    n += 4;
+    for (int y = 0; y < 20; y++) {
+        memset(flood + n, 'q', 60);
+        n += 60;
+        flood[n++] = '\r';
+        flood[n++] = '\n';
+    }
+    memcpy(flood + n, "\033(B", 4);
+    n += 4;
+    for (int y = 0; y < 20; y++) {
+        memset(flood + n, 'q', 60);
+        n += 60;
+        flood[n++] = '\r';
+        flood[n++] = '\n';
+    }
+    tt_write(t, flood, (size_t)n);
+    /* The last row is the new line of the final CRLF. */
+    for (int y = 0; y < 3; y++)
+        for (int x = 0; x < 60; x++)
+            assert(tt_cell(t, x, y)->text == 'q');
     free(flood);
     wsap_vtcore_free(t);
 }
@@ -1346,7 +1377,71 @@ static void test_character_set_designations(void)
     /* A C0 control ends a designator and runs. */
     write_seq(t, "\r\n\033(\r0q");
     EXPECT_CPS(t, 4, '0', 'q');
+
+    /* DEC Special Graphics changes 0x5F to 0x7E only. */
+    write_seq(t, "\r\n\033(0^_`abcdefghijklmnopqrstuvwxyz{|}~\033(B");
+    EXPECT_CPS(t, 5, '^', 0xa0, 0x25c6, 0x2592, 0x2409, 0x240c, 0x240d, 0x240a,
+               0xb0, 0xb1, 0x2424, 0x240b, 0x2518, 0x2510, 0x250c, 0x2514, 0x253c,
+               0x23ba, 0x23bb, 0x2500, 0x23bc, 0x23bd, 0x251c, 0x2524, 0x2534,
+               0x252c, 0x2502, 0x2264, 0x2265, 0x3c0, 0x2260, 0xa3, 0xb7);
     wsap_vtcore_free(t);
+}
+
+/* A set changes the printable ASCII codes only. It does not change the
+ * UTF-8 decoder. */
+static void test_character_set_utf8(void)
+{
+    struct wsap_vtcore *t = tt_new(20, 6);
+    /* A multibyte character in GL does not map. */
+    write_seq(t, "\033(0\xc3\xa9q\xe4\xb8\xad");
+    EXPECT_CPS(t, 0, 0xe9, 0x2500, 0x4e2d);
+
+    /* A 96-character set in GL also keeps a multibyte character. */
+    write_seq(t, "\r\n\033-A\x0e\xc3\xa9q");
+    EXPECT_CPS(t, 1, 0xe9, 0xf1);
+
+    /* A truncated sequence gives U+FFFD. The byte that ends it still
+     * maps through the set. */
+    write_seq(t, "\r\n\x0f\033(0\xe3\x80q");
+    EXPECT_CPS(t, 2, 0xfffd, 0x2500);
+
+    /* NRCS mode keeps the UTF-8 decoder. xterm stops it. */
+    write_seq(t, "\r\n\x0f\033[?42h\033(K\xc3\xa9qr");
+    EXPECT_CPS(t, 3, 0xe9, 'q', 'r');
+
+    /* A C1 control from UTF-8 still runs while a set holds GL. */
+    write_seq(t, "\r\n\x0f\033(0\xc2\x85q");
+    EXPECT_CPS(t, 5, 0x2500);
+    wsap_vtcore_free(t);
+}
+
+/* A designation, a shift, and a set must give the same screen for every
+ * write split. */
+static void test_character_set_boundaries(void)
+{
+    static const char input[] =
+        "\033*0\033+>\033nq\033oq\033Nq\033Oq\x0fq"
+        "\033(%5\x0eq\033)<\x0eq\033-A\x0eA\033(&5q\033(B"
+        "\033[?42h\033(K#@\033(%6[\033[?42l#\033(B"
+        "\033*0\0337\033(B\0338\033Nq"
+        "\033(P\033(\033(Bq\xc2\x8eq\xc2\x8fq"
+        "\033(0qqqq\033(Bqqqq";
+    size_t len = sizeof(input) - 1;
+    struct wsap_vtcore *expected = tt_new(24, 6);
+    tt_write(expected, input, len);
+    for (size_t split = 0; split <= len; split++) {
+        struct wsap_vtcore *actual = tt_new(24, 6);
+        tt_write(actual, input, split);
+        tt_write(actual, input + split, len - split);
+        assert_same_screen(actual, expected);
+        wsap_vtcore_free(actual);
+    }
+    struct wsap_vtcore *bytewise = tt_new(24, 6);
+    for (size_t i = 0; i < len; i++)
+        tt_write(bytewise, input + i, 1);
+    assert_same_screen(bytewise, expected);
+    wsap_vtcore_free(bytewise);
+    wsap_vtcore_free(expected);
 }
 
 static void test_national_character_sets(void)
@@ -3654,6 +3749,8 @@ int main(void)
     test_wide_runs();
     test_character_set_shifts();
     test_character_set_designations();
+    test_character_set_utf8();
+    test_character_set_boundaries();
     test_national_character_sets();
     test_character_set_save_restore();
     test_editor_scrolling();
