@@ -16,6 +16,7 @@
 #include "wsap_vtcore/unicode/unicode.h"
 #include "util/name.h"
 #include "util/proc.h"
+#include "util/time.h"
 
 #define PTY_READ_BUF_SZ 262144
 
@@ -276,6 +277,8 @@ static void unlink_live(struct session *s)
 void session_fini(struct session *s)
 {
     unlink_live(s);
+    if (s->pty_resize_timer)
+        yasl_loop_del_timer(s->loop, s->pty_resize_timer);
     session_write_queue_destroy(&s->input_writer);
     pty_ring_stop(&s->ring);
     for (size_t i = 0; i < 2; i++) {
@@ -295,6 +298,27 @@ void session_set_host(struct session *s, const struct session_host *host, void *
     s->host_ud = ud;
 }
 
+/* The shortest time between two winsize changes that the shell sees. */
+#define PTY_RESIZE_INTERVAL_MS 40
+
+static void send_pty_size(struct session *s, struct vector2i grid)
+{
+    pty_resize(&s->pty, grid);
+    s->pty_resize_ns = yasl_time_ns();
+    s->pty_pending = (struct vector2i){0};
+}
+
+static uint64_t on_pty_resize_timer(void *ud, uint64_t id, uint64_t delay_ns)
+{
+    struct session *s = ud;
+    (void)id;
+    (void)delay_ns;
+    s->pty_resize_timer = 0;
+    if (s->pty_pending.x > 0 && s->pty_pending.y > 0 && pty_master_fd(&s->pty) >= 0)
+        send_pty_size(s, s->pty_pending);
+    return 0;
+}
+
 void session_resize(struct session *s, struct vector2i grid)
 {
     struct wsap_vtcore_vector2i size = wsap_vtcore_size(s->term);
@@ -302,8 +326,21 @@ void session_resize(struct session *s, struct vector2i grid)
         return;
     if (!wsap_vtcore_resize(s->term, (struct wsap_vtcore_vector2i){ .x = grid.x, .y = grid.y }))
         return;
-    if (pty_master_fd(&s->pty) >= 0)
-        pty_resize(&s->pty, grid);
+    if (pty_master_fd(&s->pty) < 0)
+        return;
+    uint64_t now = yasl_time_ns();
+    uint64_t interval = MS_TO_NS(PTY_RESIZE_INTERVAL_MS);
+    uint64_t age = now - s->pty_resize_ns;
+    if (!s->pty_resize_ns || age >= interval) {
+        send_pty_size(s, grid);
+        return;
+    }
+    s->pty_pending = grid;
+    if (s->pty_resize_timer)
+        return;
+    s->pty_resize_timer = yasl_loop_add_timer(s->loop, interval - age, on_pty_resize_timer, s);
+    if (!s->pty_resize_timer)
+        send_pty_size(s, grid);
 }
 
 bool session_write_bytes(struct session *s, const char *data, size_t len)

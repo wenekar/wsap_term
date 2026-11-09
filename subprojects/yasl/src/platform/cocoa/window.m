@@ -199,6 +199,15 @@ static void drag_end(struct cocoa_display *d, enum yasl_private_drag_end how)
 }
 
 static void render_and_commit(struct cocoa_surface *w);
+
+/* The capacity to use when `need` units do not fit in `cap`. It grows by half,
+ * so a live resize that moves one pixel at a time does not reallocate each step. */
+static size_t grown_capacity(size_t cap, size_t need)
+{
+    size_t grown = cap + cap / 2;
+    return grown > need ? grown : need;
+}
+
 static void reap_dead(struct cocoa_display *d);
 static void push_pen(struct cocoa_surface *w, NSEvent *event, unsigned action, bool contact);
 
@@ -285,12 +294,10 @@ static void sync_size(struct cocoa_surface *w, bool force)
     yasl_private_surface_notify_configure(&w->base, (struct yasl_private_geometry){
             .size = size, .scale_120 = scale_120,
         });
-    /* During a live resize the app draws the new size here, before the frame is
-     * rendered and committed below. */
+    /* During a live resize the refresh callback draws the new size here. The
+     * callback draws and presents the frame. A second draw would only repeat it. */
     if (w->base.presenter != YASL_PRIVATE_PRESENTER_CPU || w->view.inLiveResize)
         yasl_private_surface_notify_refresh(&w->base);
-    if (!w->destroyed && !w->closed && w->view.inLiveResize)
-        render_and_commit(w);
     darwin_ctx.depth--;
 }
 
@@ -1467,10 +1474,13 @@ bool cocoa_surface_present(struct cocoa_surface *w, const struct yasl_private_fr
         NSUInteger row_bytes = ((NSUInteger)w->size.x * 4 + 255) & ~(NSUInteger)255;
         NSUInteger length = row_bytes * (NSUInteger)w->size.y;
         if (!w->software_buffer || w->software_buffer_capacity < length) {
+            NSUInteger capacity = (NSUInteger)grown_capacity(w->software_buffer_capacity, length);
+            id<MTLBuffer> grown = [w->layer.device newBufferWithLength:capacity
+                                                               options:MTLResourceStorageModeShared];
+            if (!grown) return false;
             [w->software_buffer release];
-            w->software_buffer = [w->layer.device newBufferWithLength:length
-                                                    options:MTLResourceStorageModeShared];
-            w->software_buffer_capacity = w->software_buffer ? length : 0;
+            w->software_buffer = grown;
+            w->software_buffer_capacity = capacity;
         }
         id<MTLBuffer> buffer = w->software_buffer;
         if (!buffer) return false;
@@ -1486,8 +1496,16 @@ bool cocoa_surface_present(struct cocoa_surface *w, const struct yasl_private_fr
                     toTexture:drawable.texture destinationSlice:0 destinationLevel:0
             destinationOrigin:MTLOriginMake(0, 0, 0)];
         [blit endEncoding];
-        [command presentDrawable:drawable];
-        [command commit];
+        if (w->transaction) {
+            /* The layer presents with the Core Animation transaction of the live
+             * resize. The drawable must go out after the command is scheduled. */
+            [command commit];
+            [command waitUntilScheduled];
+            [drawable present];
+        } else {
+            [command presentDrawable:drawable];
+            [command commit];
+        }
     }
     yasl_private_clock_presented(&w->clock, yasl_private_loop_now_ns(), false);
     w->did_present = true;
@@ -1511,10 +1529,11 @@ static void render_and_commit(struct cocoa_surface *w)
 
     size_t count = (size_t)w->size.x * (size_t)w->size.y;
     if (w->software_queue && count > w->pixel_capacity) {
-        uint32_t *pixels = realloc(w->pixels, count * sizeof(*pixels));
+        size_t capacity = grown_capacity(w->pixel_capacity, count);
+        uint32_t *pixels = realloc(w->pixels, capacity * sizeof(*pixels));
         if (!pixels) return;
         w->pixels = pixels;
-        w->pixel_capacity = count;
+        w->pixel_capacity = capacity;
     }
     darwin_ctx.depth++;
     w->rendering = true;
@@ -1541,6 +1560,8 @@ static void render_and_commit(struct cocoa_surface *w)
     }
     w->drawable = nil;
     w->rendering = false;
+    if (w->transaction)
+        [CATransaction flush];
     darwin_ctx.depth--;
 }
 

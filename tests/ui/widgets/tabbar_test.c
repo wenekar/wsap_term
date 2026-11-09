@@ -856,12 +856,13 @@ static void external_drag_reveals_single_tab_target_test(void)
         (struct vector2i){ .x = 200, .y = 10 });
     ui_surface_prepare(&f.surface);
     assert(ui_tabbar_external_slot(&f.tb) >= 0);
-    int full = ui_tabbar_steady_height(&f.tb);
-    assert(full > 0);
+    assert(ui_tabbar_steady_height(&f.tb) == 0);
     tick(&f, 1000);
     tick(&f, 1300);
-    assert(ui_tabbar_height(&f.tb) == full);
+    int full = ui_tabbar_height(&f.tb);
+    assert(full > 0);
     assert(bar(&f)->bounds.height == full);
+    assert(ui_tabbar_steady_height(&f.tb) == 0);
     struct rect2i drop;
     assert(find_part(&f, "drop-preview", -1, &drop));
     assert(drop.width > 0 && drop.height > 0);

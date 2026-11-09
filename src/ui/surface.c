@@ -697,6 +697,11 @@ bool ui_surface_build_scene(struct ui_surface *surface,
     return valid;
 }
 
+bool ui_surface_busy(const struct ui_surface *surface)
+{
+    return surface && surface->impl.busy;
+}
+
 void ui_surface_destroy(struct ui_surface *surface)
 {
     if (!surface || surface->impl.busy)

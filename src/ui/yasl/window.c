@@ -179,15 +179,25 @@ static void native_compose(struct window *w, struct window_native *n,
     window_compose_frame(w, &frame);
 }
 
+/*
+ * The CPU pixels of a native frame. The buffer grows by half and never
+ * shrinks. A live resize changes the size at every frame, and each frame
+ * would otherwise free and allocate a whole canvas.
+ */
 static uint32_t *native_pixels(struct window_native *n, struct vector2i size)
 {
     if (size.x <= 0 || size.y <= 0)
         return NULL;
-    if (n->pixels && vector2i_eq(n->pixels_size, size))
+    size_t need = (size_t)size.x * (size_t)size.y;
+    if (n->pixels && need <= n->pixels_cap)
         return n->pixels;
+    size_t cap = n->pixels_cap + n->pixels_cap / 2;
+    if (cap < need)
+        cap = need;
+    /* The old pixels are stale, so do not copy them with realloc. */
     free(n->pixels);
-    n->pixels = malloc((size_t)size.x * (size_t)size.y * sizeof(*n->pixels));
-    n->pixels_size = n->pixels ? size : (struct vector2i){0};
+    n->pixels = malloc(cap * sizeof(*n->pixels));
+    n->pixels_cap = n->pixels ? cap : 0;
     return n->pixels;
 }
 

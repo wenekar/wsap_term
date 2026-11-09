@@ -26,7 +26,8 @@ struct window_native {
     uint64_t generation;
     void *metal_layer;
     uint32_t *pixels;
-    struct vector2i pixels_size;
+    /* The allocated words of `pixels`. A resize reuses them while they fit. */
+    size_t pixels_cap;
     bool failing;
 };
 
@@ -45,6 +46,9 @@ struct window_ui_menu_popup {
     struct ui_surface ui;
     struct ui_widget root;
     struct rect2i anchor;
+    /* Set when the popup closed while its surface was busy. The popup
+     * is destroyed as soon as the surface is idle. */
+    bool closing;
 };
 
 struct window_ui {
@@ -151,6 +155,7 @@ void window_ui_destroy(struct window *w);
 void window_ui_restyle(struct window *w);
 struct ui_scene *window_ui_scene_scratch(struct window *w);
 void window_menu_relayout(struct window *w);
+void window_menu_reap(struct window *w);
 struct ui_surface *window_ui_surface_of(struct window *w,
                                         const struct yasl_surface *s);
 struct ui_surface *window_ui_surface_at(struct window *w, int popup);

@@ -71,6 +71,8 @@ struct ui_surface {
 void ui_surface_init(struct ui_surface *surface,
                      const struct ui_surface_host *host, void *host_userdata);
 void ui_surface_destroy(struct ui_surface *surface);
+/* True while the surface dispatches, ticks, or builds. Destroy waits then. */
+bool ui_surface_busy(const struct ui_surface *surface);
 
 bool ui_surface_set_root(struct ui_surface *surface, struct ui_widget *root);
 struct ui_widget *ui_surface_root(const struct ui_surface *surface);

@@ -1,4 +1,6 @@
 #define _GNU_SOURCE
+#include <math.h>
+
 #include "ui/yasl/internal.h"
 #include "ui/yasl/inspector.h"
 
@@ -38,6 +40,12 @@ static void close_popup(struct window *w, int depth)
     struct window_ui_menu_popup *p = &ui_of(w)->menu_popup[depth];
     if (!popup_open(p))
         return;
+    if (ui_surface_busy(&p->ui)) {
+        /* The popup closes from inside its own dispatch. Destroying the
+         * surface now would drop its sheet and layout. Wait for the end. */
+        p->closing = true;
+        return;
+    }
     window_accessibility_menu_popup_close(w, depth);
     ui_surface_destroy(&p->ui);
     while (p->root.first_child)
@@ -52,6 +60,22 @@ static void close_popups_from(struct window *w, int depth)
 {
     while (ui_of(w)->menu_popups > depth)
         close_popup(w, --ui_of(w)->menu_popups);
+}
+
+/* Destroys the popups that closed while they were busy. */
+void window_menu_reap(struct window *w)
+{
+    struct window_ui *ui = ui_of(w);
+    bool reaped = false;
+    for (int d = 0; d < UI_MENU_MAX_LEVELS; d++) {
+        if (ui->menu_popup[d].closing && !ui_surface_busy(&ui->menu_popup[d].ui)) {
+            ui->menu_popup[d].closing = false;
+            close_popup(w, d);
+            reaped = true;
+        }
+    }
+    if (reaped)
+        window_menu_sync(w);
 }
 
 static struct vector2i measure_popup(struct window *w, int depth)
@@ -70,16 +94,21 @@ static struct vector2i measure_popup(struct window *w, int depth)
     return size;
 }
 
+/* The UI works in device pixels. The yasl popup API takes logical units. The
+ * size rounds up, so that the popup canvas always holds the content. */
 static struct yasl_popup_options popup_options(struct window *w, int depth,
                                                struct vector2i size, struct rect2i anchor)
 {
+    struct window_logical_point at = window_logical(w, anchor.pos);
+    struct window_logical_point extent = window_logical(w, anchor.size);
+    struct window_logical_point logical_size = window_logical(w, size);
     return (struct yasl_popup_options){
-        .width = size.x,
-        .height = size.y,
-        .x = anchor.x,
-        .y = anchor.y,
-        .anchor_width = anchor.width,
-        .anchor_height = anchor.height,
+        .width = (int)ceil(logical_size.x - 1e-6),
+        .height = (int)ceil(logical_size.y - 1e-6),
+        .x = at.x,
+        .y = at.y,
+        .anchor_width = extent.x,
+        .anchor_height = extent.y,
         .anchor = depth > 0 ? YASL_EDGE_TOP | YASL_EDGE_RIGHT : YASL_EDGE_BOTTOM | YASL_EDGE_LEFT,
         .gravity = YASL_EDGE_BOTTOM | YASL_EDGE_RIGHT,
         .adjust = YASL_ADJUST_SLIDE_X | YASL_ADJUST_SLIDE_Y | YASL_ADJUST_FLIP_X | YASL_ADJUST_FLIP_Y,
@@ -148,6 +177,11 @@ void window_menu_sync(struct window *w)
         }
     }
     while (ui_of(w)->menu_popups < levels && ui_of(w)->menu_popups < ui_of(w)->menu_inline_from) {
+        if (popup_open(&ui_of(w)->menu_popup[ui_of(w)->menu_popups])) {
+            /* A closing popup still holds this slot. Retry after it is gone. */
+            ui_of(w)->menu_shown = gen - 1;
+            break;
+        }
         if (!window_surface(w) ||
             !open_popup(w, ui_of(w)->menu_popups, level_anchor(w, ui_of(w)->menu_popups))) {
             ui_of(w)->menu_inline_from = ui_of(w)->menu_popups;
@@ -160,6 +194,13 @@ void window_menu_sync(struct window *w)
 
 void window_menu_relayout(struct window *w)
 {
+    /* The menu can close a level before the next sync. Close the popups of
+     * that level first, so that every open popup has a level to measure. */
+    int levels = ui_menu_level_count(&ui_of(w)->menu);
+    if (ui_of(w)->menu_popups > levels) {
+        close_popups_from(w, levels);
+        ui_menu_layer_set_first_level(&ui_of(w)->menu_layer, levels);
+    }
     for (int d = 0; d < ui_of(w)->menu_popups; d++) {
         struct window_ui_menu_popup *p = &ui_of(w)->menu_popup[d];
         struct rect2i anchor = level_anchor(w, d);
@@ -241,6 +282,7 @@ void window_menu_destroy(struct window *w)
 {
     ui_menu_close(&ui_of(w)->menu);
     close_popups_from(w, 0);
+    window_menu_reap(w);
     struct ui_widget *layer = ui_menu_layer_widget(&ui_of(w)->menu_layer);
     while (layer->first_child)
         ui_widget_remove_child(layer, layer->first_child);

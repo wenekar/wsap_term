@@ -395,6 +395,36 @@ if get_option('integration_tests')
             timeout: 60,
         )
         test(
+            'popup-submenu-preview-test',
+            python,
+            args: files('ui/yasl/popup_submenu_preview_test.py'),
+            depends: [program, vptr],
+            env: {'BIN': program.full_path(), 'VPOINTER': vptr.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 60,
+        )
+        test(
+            'popup-scale-test',
+            python,
+            args: files('ui/yasl/popup_scale_test.py'),
+            depends: [program, vptr],
+            env: {'BIN': program.full_path(), 'VPOINTER': vptr.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 60,
+        )
+        test(
+            'tab-rows-test',
+            python,
+            args: files('ui/yasl/tab_rows_test.py'),
+            depends: [program],
+            env: {'BIN': program.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 60,
+        )
+        test(
             'exit-test',
             python,
             args: files('ui/yasl/exit_test.py'),

@@ -574,7 +574,7 @@ static int bar_height(const struct ui_tabbar *tb, int css_height, int n_tabs)
 static int steady_height(const struct ui_tabbar *tb, const struct tb_theme *t,
                          int n_tabs)
 {
-    if (!tb || (n_tabs <= 1 && !tb->impl.external_drag))
+    if (!tb || n_tabs <= 1)
         return 0;
     return t->height;
 }

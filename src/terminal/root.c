@@ -36,6 +36,11 @@ static void root_layout(struct ui_widget *widget, struct rect2i bounds)
         .pos = { .x = bounds.x, .y = bounds.y + bar_h },
         .size = { .x = bounds.width, .y = bounds.height - bar_h },
     });
+    int steady_h = ui_tabbar_steady_height(&tw->tabbar);
+    if (steady_h != tw->grid_bar_h && window_surface(tw->window)) {
+        tw->grid_bar_h = steady_h;
+        terminal_resize_sessions(tw->window, window_size(tw->window));
+    }
     ui_widget_place_child(ui_tab_preview_widget(&tw->tab_preview), bounds);
     ui_widget_place_child(ui_palette_widget(&tw->palette), bounds);
 }

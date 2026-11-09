@@ -66,6 +66,8 @@ static bool popup_apply_spec(struct wayland_surface *w, const struct yasl_privat
     w->scale_factor = (double)scale / YASL_PRIVATE_SCALE_UNIT;
     w->width = width;
     w->height = height;
+    w->base.size = (struct yasl_private_vector2i){spec->size.x, spec->size.y};
+    w->base.scale_120 = scale;
     w->logical_width = logical.x;
     w->logical_height = logical.y;
     w->content = (struct yasl_private_rect2i){

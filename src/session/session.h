@@ -47,6 +47,11 @@ struct session {
     int newline_fd;
     bool onlcr;
     uint64_t last_keystroke_ms;
+    /* The last winsize sent to the pty, the size that waits for the timer, and
+     * the timer. Zero Is Initialization: no pending size, no timer. */
+    uint64_t pty_resize_ns;
+    struct vector2i pty_pending;
+    uint64_t pty_resize_timer;
     bool reaped;
     alignas(64) struct pty pty;
 };
@@ -56,6 +61,12 @@ bool session_init(struct session *s, struct yasl_loop *loop,
 void session_fini(struct session *s);
 void session_set_host(struct session *s, const struct session_host *host, void *ud);
 
+/*
+ * Resizes the terminal at once. The pty gets the new size at once only when
+ * the last pty resize is old enough. Else it gets the latest size from a
+ * timer. A fast drag then sends few SIGWINCH signals to the shell, and the
+ * shell always ends with the final size.
+ */
 void session_resize(struct session *s, struct vector2i grid);
 bool session_write_bytes(struct session *s, const char *data, size_t len);
 bool session_paste(struct session *s, const char *text, size_t len);

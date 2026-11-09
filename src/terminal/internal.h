@@ -95,6 +95,7 @@ struct terminal {
 
     struct ui_widget root;
     struct ui_tabbar tabbar;
+    int grid_bar_h;
     struct ui_scrollview scrollview;
     struct terminal_view view;
     struct ui_palette palette;

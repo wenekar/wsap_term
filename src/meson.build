@@ -89,7 +89,7 @@ render_lib = static_library(
     'wsap-render',
     render_src,
     link_with: [base_lib, font_lib, paint_lib],
-    include_directories: inc,
+    include_directories: [inc] + render_inc,
     c_args: ['-ffp-contract=off'],
     dependencies: lib_deps + [term_dep],
     install: false,
