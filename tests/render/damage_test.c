@@ -291,6 +291,40 @@ static void test_full(void)
     fx_close(&f);
 }
 
+static void test_line_size(void)
+{
+    struct fixture f;
+    fx_open(&f);
+    fx_draw(&f, "setup");
+
+    /* Move cursor to row 3 (0-indexed row 2) in its own frame. */
+    tterm_feed(&f.tt, "\033[3;1H");
+    fx_draw(&f, "move cursor to row 2");
+
+    /* Change row 2 to double-width (DECDWL). */
+    tterm_feed(&f.tt, "\033#6");
+    struct damage_list d = fx_draw(&f, "double width change");
+    struct rect2i b2 = band(2, 3);
+    check_rects("double width change", &d, &b2, 1);
+
+    /* Move cursor to row 5 in its own frame. */
+    tterm_feed(&f.tt, "\033[5;1H");
+    fx_draw(&f, "move cursor to row 4");
+
+    /* Change row 4 to top half and row 5 to bottom half (DECDHL). */
+    tterm_feed(&f.tt, "\033#3\033[6;1H\033#4");
+    d = fx_draw(&f, "double height change");
+    struct rect2i b45 = band(4, 6);
+    check_rects("double height change", &d, &b45, 1);
+
+    /* Scroll one line up: verify moved rows and damage. */
+    tterm_feed(&f.tt, "\033[10;1H\r\n");
+    d = fx_draw(&f, "scroll double-size rows");
+    TCHECK(d.any, "scroll must emit damage");
+
+    fx_close(&f);
+}
+
 int main(void)
 {
     TCHECK(render_init(), "render_init");
@@ -308,6 +342,7 @@ int main(void)
     test_scroll();
     test_overlay();
     test_full();
+    test_line_size();
     renderer_destroy(rend);
     renderer_destroy(oracle);
     render_shutdown();

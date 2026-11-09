@@ -9,6 +9,7 @@
 
 #include "helpers/app_fixture.h"
 #include "helpers/terminal_window.h"
+#include "terminal/internal.h"
 #include "input/keybind.h"
 #include "session/session.h"
 #include "ui/debug.h"
@@ -177,6 +178,26 @@ int main(void)
     struct ui_debug_view view = {
         .root = ui_surface_root(ui), .surface = ui, .scene = scene,
     };
+    assert(ui_debug_lint_scene(&view, NULL, 0) == 0);
+
+    /* Test double-width and double-height rows in the app. */
+    assert(wsap_vtcore_feed(session->term, "\033[1;1H\033#6DoubleWidth\r\n\033#3DoubleTop\r\n\033#4DoubleBottom\r\n", 53, 0));
+    struct terminal *tw = terminal_of(w);
+    assert(wsap_vtcore_snapshot_update(tw->snapshot, session->term));
+    struct rect2i vrect = terminal_view_rect(w);
+    const struct font_metrics *met = tab_metrics(terminal_active_tab(w));
+    /* Cell on row 0 (double width): x position at 2 * cw + 2 must map to column 1 */
+    struct vector2i pt = { .x = vrect.pos.x + 2 * met->cell_w + 2, .y = vrect.pos.y + 4 };
+    struct vector2i c = terminal_cell_at(w, pt);
+    assert(c.x == 1 && c.y == 0);
+    /* Cell on row 1 (double height top half): x position at 4 * cw + 2 must map to column 2 */
+    pt.y = vrect.pos.y + met->cell_h + 4;
+    pt.x = vrect.pos.x + 4 * met->cell_w + 2;
+    c = terminal_cell_at(w, pt);
+    assert(c.x == 2 && c.y == 1);
+
+    /* UI inspector lint check on scene with double-size rows */
+    assert(ui_surface_build_scene(ui, scene));
     assert(ui_debug_lint_scene(&view, NULL, 0) == 0);
 
     window_close(w);

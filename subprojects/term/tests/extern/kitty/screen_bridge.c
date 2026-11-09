@@ -5,10 +5,13 @@ typedef void (*kitty_reply_fn)(void *ud, const char *bytes, size_t len);
 
 struct wsap_vtcore *kitty_term_new(int cols, int rows, kitty_reply_fn reply, void *ud)
 {
-    return wsap_vtcore_new(&(struct wsap_vtcore_options){
+    struct wsap_vtcore *t = wsap_vtcore_new(&(struct wsap_vtcore_options){
         .size = { .x = cols, .y = rows },
         .callbacks = { .ud = ud, .reply = reply },
     });
+    if (t)
+        wsap_vtcore_set_cell_pixels(t, (struct wsap_vtcore_vector2i){ .x = 10, .y = 20 });
+    return t;
 }
 
 static struct wsap_vtcore_snapshot *snap;

@@ -43,10 +43,32 @@ static void changed(struct terminal_view *view)
 static struct vector2i cell_at(const struct tab *t, struct vector2i local)
 {
     const struct font_metrics *metrics = tab_metrics(t);
-    return (struct vector2i){
-        .x = metrics->cell_w > 0 && local.x >= 0 ? local.x / metrics->cell_w : -1,
-        .y = metrics->cell_h > 0 && local.y >= 0 ? local.y / metrics->cell_h : -1,
-    };
+    int ch = metrics->cell_h;
+    int y = ch > 0 && local.y >= 0 ? local.y / ch : -1;
+    int cw = metrics->cell_w;
+    if (t && t->window && y >= 0) {
+        struct terminal *tw = terminal_of(t->window);
+        if (tw && tw->snapshot) {
+            enum wsap_vtcore_line_size line = wsap_vtcore_snapshot_row_size(tw->snapshot, y);
+            if (line != WSAP_VTCORE_LINE_SINGLE)
+                cw *= 2;
+        }
+    }
+    int x = cw > 0 && local.x >= 0 ? local.x / cw : -1;
+    if (t && t->window && y >= 0 && t->session.term) {
+        struct terminal *tw = terminal_of(t->window);
+        if (tw && tw->snapshot) {
+            enum wsap_vtcore_line_size line = wsap_vtcore_snapshot_row_size(tw->snapshot, y);
+            if (line != WSAP_VTCORE_LINE_SINGLE) {
+                int max_cols = wsap_vtcore_size(t->session.term).x / 2;
+                if (max_cols < 1)
+                    max_cols = 1;
+                if (x >= max_cols)
+                    x = max_cols - 1;
+            }
+        }
+    }
+    return (struct vector2i){ .x = x, .y = y };
 }
 
 bool terminal_pointer_selects_text(const struct wsap_vtcore *t)
@@ -131,9 +153,27 @@ static void select_text(struct window *w, struct tab *t,
                         uint64_t now_ms)
 {
     const struct font_metrics *m = tab_metrics(t);
-    bool right_half = local.x >= 0 && m->cell_w > 0 &&
-                      local.x % m->cell_w >= m->cell_w / 2;
     struct vector2i cell = cell_at(t, local);
+    int cw = m->cell_w;
+    struct terminal *tw = terminal_of(w);
+    bool double_w = false;
+    if (tw && tw->snapshot && cell.y >= 0) {
+        enum wsap_vtcore_line_size line = wsap_vtcore_snapshot_row_size(tw->snapshot, cell.y);
+        if (line != WSAP_VTCORE_LINE_SINGLE) {
+            cw *= 2;
+            double_w = true;
+        }
+    }
+    int max_cols = wsap_vtcore_size(t->session.term).x;
+    if (double_w)
+        max_cols = max_cols / 2 > 0 ? max_cols / 2 : 1;
+    bool right_half;
+    if (double_w && local.x >= max_cols * cw) {
+        right_half = true;
+    } else {
+        right_half = local.x >= 0 && cw > 0 &&
+                     local.x % cw >= cw / 2;
+    }
     t->selection.double_click_ms = window_double_click_ms(w);
     selection_handle_pointer(&t->selection, t->session.term, cell,
                              right_half, pointer_kind(p->kind), now_ms);

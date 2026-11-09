@@ -51,6 +51,9 @@ struct row_ctx {
     uint32_t *row;
     size_t stride;
     int cw, ch;
+    int cell_w;
+    enum wsap_vtcore_line_size line_size;
+    bool double_w;
     int x0, x1;
     int area, width;
     int reach;
@@ -223,20 +226,25 @@ static inline RENDER_ALWAYS_INLINE void tile_blit(int isa, uint32_t *dst, size_t
 }
 
 /* Copies a cell of cw x ch pixels, row stride cw, into the window. */
-static inline RENDER_ALWAYS_INLINE void put_tile(int isa, const struct row_ctx *c, int sx0,
-                                                 const uint32_t *tile)
+static inline RENDER_ALWAYS_INLINE void put_tile_w(int isa, const struct row_ctx *c, int sx0,
+                                                   const uint32_t *tile, int w)
 {
-    int cw = c->cw;
-    if (sx0 >= c->x0 && sx0 + cw <= c->x1) {
-        tile_blit(isa, c->row + sx0, c->stride, tile, cw, c->ch);
+    if (sx0 >= c->x0 && sx0 + w <= c->x1) {
+        tile_blit(isa, c->row + sx0, c->stride, tile, w, c->ch);
         return;
     }
-    int a = max_i(sx0, c->x0), b = min_i(sx0 + cw, c->x1);
+    int a = max_i(sx0, c->x0), b = min_i(sx0 + w, c->x1);
     if (a >= b)
         return;
     for (int y = 0; y < c->ch; y++)
-        memcpy(c->row + (size_t)y * c->stride + a, tile + (size_t)y * cw + (a - sx0),
+        memcpy(c->row + (size_t)y * c->stride + a, tile + (size_t)y * w + (a - sx0),
                (size_t)(b - a) * sizeof(*tile));
+}
+
+static inline RENDER_ALWAYS_INLINE void put_tile(int isa, const struct row_ctx *c, int sx0,
+                                                 const uint32_t *tile)
+{
+    put_tile_w(isa, c, sx0, tile, c->cw);
 }
 
 /* ---- Compose ---------------------------------------------------------- */
@@ -297,6 +305,32 @@ static inline RENDER_ALWAYS_INLINE void mask_blend(int isa, uint32_t *dst, size_
         render_kernel_blend_any(isa, dst + (size_t)y * ds, cov + (size_t)y * cw, cw, color);
 }
 
+/* One decoration mask over a double-size cell. */
+static inline RENDER_ALWAYS_INLINE void mask_blend_scaled(int isa, uint32_t *dst, size_t ds,
+                                                          const struct decor_mask *m, int cw,
+                                                          int cell_w, int ch, uint32_t color,
+                                                          bool faint, bool double_h, int y_off)
+{
+    for (int y = 0; y < ch; y++) {
+        int my = double_h ? (y_off + y) / 2 : y;
+        if (my < m->y0 || my >= m->y1)
+            continue;
+        if (m->solid && !faint) {
+            render_kernel_fill(isa, dst + (size_t)y * ds, cell_w, color);
+            continue;
+        }
+        const uint8_t *cov = faint ? m->faint : m->cov;
+        const uint8_t *src_row = cov + (size_t)my * cw;
+        uint8_t cov_exp[256];
+        int n = cw < 128 ? cw : 128;
+        for (int i = 0; i < n; i++) {
+            cov_exp[2 * i] = src_row[i];
+            cov_exp[2 * i + 1] = src_row[i];
+        }
+        render_kernel_blend_any(isa, dst + (size_t)y * ds, cov_exp, cell_w, color);
+    }
+}
+
 /*
  * Composes one cell into dst (row stride ds): the bg, the glyph inside the
  * cell span, the decorations, and the cursor marks. A cell with an
@@ -309,53 +343,142 @@ static inline RENDER_ALWAYS_INLINE void compose(int isa, struct row_ctx *c, uint
                                                 int half)
 {
     const int cw = c->cw, ch = c->ch;
+    const int cell_w = c->cell_w;
     const uint32_t fg = cell->fg, bg = cell->bg;
     const uint16_t fl = cell->flags;
     const uint32_t ul = (fl & RENDER_CELL_UL_COLOR) ? cell->ul : fg;
     const bool faint = (fl & RENDER_CELL_FAINT) != 0;
-    if (ds == (size_t)cw) {
-        render_kernel_fill(isa, dst, cw * ch, bg);
+    if (ds == (size_t)cell_w) {
+        render_kernel_fill(isa, dst, cell_w * ch, bg);
     } else {
         for (int y = 0; y < ch; y++)
-            render_kernel_fill(isa, dst + (size_t)y * ds, cw, bg);
+            render_kernel_fill(isa, dst + (size_t)y * ds, cell_w, bg);
     }
 
+    if (!c->double_w) {
+        if (ink->lo < ink->hi) {
+            int ox = g->x_offset - half * cw;
+            int lo = max_i(ink->lo, -ox), hi = min_i(ink->hi, cw - ox);
+            if (lo < hi) {
+                int n = hi - lo;
+                uint32_t *d = dst + (ox + lo);
+                switch (ink->kind) {
+                case KIND_ALPHA: {
+                    const uint32_t *lut = pair_lut_alpha(&c->w->lut, fg, bg, faint);
+                    for (int y = ink->y0; y < ink->y1; y++) {
+                        const uint8_t *a = g->alpha[y] + lo;
+                        if (lut)
+                            render_kernel_compose_alpha_lut(isa, d + (size_t)y * ds, a, n, lut);
+                        else
+                            blend_alpha_cov(isa, c->tmp, d + (size_t)y * ds, a, n, fg, faint);
+                    }
+                    break;
+                }
+                case KIND_SUBPX: {
+                    /* The table matches the per-pixel blend only over an opaque bg. */
+                    const struct subpx_lut *lut =
+                        bg >> 24 == 255 ? pair_lut_subpx(&c->w->lut, fg, bg, faint) : NULL;
+                    for (int y = ink->y0; y < ink->y1; y++) {
+                        const uint8_t *s = g->subpx[y] + (size_t)lo * 3;
+                        if (lut)
+                            render_kernel_compose_subpx_lut(isa, d + (size_t)y * ds, s, n, lut, bg);
+                        else
+                            blend_subpx_cov(isa, c->tmp, d + (size_t)y * ds, s, n, fg, faint);
+                    }
+                    break;
+                }
+                case KIND_COLOR:
+                    for (int y = ink->y0; y < ink->y1; y++)
+                        render_kernel_compose_color(isa, d + (size_t)y * ds,
+                                                    g->color + (size_t)y * g->width + lo, n, faint);
+                    break;
+                }
+            }
+        }
+
+        const struct decor_set *dc = c->decor;
+        if (!dc || !(fl & (RENDER_CELL_DECOR_MASK | RENDER_CELL_CURSOR_MASK)))
+            return;
+        unsigned underline = render_cell_underline(fl);
+        if (underline && underline < DECOR_UNDERLINE_KINDS)
+            mask_blend(isa, dst, ds, &dc->underline[underline], cw, ul, faint);
+        if (fl & RENDER_CELL_STRIKE)
+            mask_blend(isa, dst, ds, &dc->strike, cw, fg, faint);
+        if (fl & RENDER_CELL_OVERLINE)
+            mask_blend(isa, dst, ds, &dc->overline, cw, fg, faint);
+        if (fl & RENDER_CELL_CURSOR_BAR)
+            mask_blend(isa, dst, ds, &dc->cursor_bar, cw, c->cursor, false);
+        if (fl & RENDER_CELL_CURSOR_UNDERLINE)
+            mask_blend(isa, dst, ds, &dc->cursor_underline, cw, c->cursor, false);
+        return;
+    }
+
+    bool double_h = (c->line_size == WSAP_VTCORE_LINE_DOUBLE_TOP ||
+                     c->line_size == WSAP_VTCORE_LINE_DOUBLE_BOTTOM);
+    int y_off = (c->line_size == WSAP_VTCORE_LINE_DOUBLE_BOTTOM) ? ch : 0;
+    int g_rows = glyph_rows(g, ch);
+
     if (ink->lo < ink->hi) {
-        int ox = g->x_offset - half * cw;
-        int lo = max_i(ink->lo, -ox), hi = min_i(ink->hi, cw - ox);
+        int ox = (g->x_offset - half * cw) * 2;
+        int lo = max_i(ink->lo, ox < 0 ? (-ox + 1) / 2 : 0);
+        int hi = min_i(ink->hi, (cell_w - ox) / 2);
         if (lo < hi) {
             int n = hi - lo;
-            uint32_t *d = dst + (ox + lo);
-            switch (ink->kind) {
-            case KIND_ALPHA: {
-                const uint32_t *lut = pair_lut_alpha(&c->w->lut, fg, bg, faint);
-                for (int y = ink->y0; y < ink->y1; y++) {
-                    const uint8_t *a = g->alpha[y] + lo;
+            int sx0 = ox + 2 * lo;
+            uint32_t *d = dst + sx0;
+            const uint32_t *lut = (ink->kind == KIND_ALPHA) ? pair_lut_alpha(&c->w->lut, fg, bg, faint) : NULL;
+            const struct subpx_lut *subpx_lut = (ink->kind == KIND_SUBPX && (bg >> 24 == 255))
+                                                ? pair_lut_subpx(&c->w->lut, fg, bg, faint) : NULL;
+            uint8_t a_exp[256];
+            uint8_t s_exp[768];
+            uint32_t c_exp[256];
+            for (int y = 0; y < ch; y++) {
+                int gy = double_h ? (y_off + y) / 2 : y;
+                if (gy < ink->y0 || gy >= ink->y1 || gy >= g_rows)
+                    continue;
+                uint32_t *row_dst = d + (size_t)y * ds;
+                switch (ink->kind) {
+                case KIND_ALPHA: {
+                    const uint8_t *a = g->alpha[gy] + lo;
+                    int m = n < 128 ? n : 128;
+                    for (int i = 0; i < m; i++) {
+                        a_exp[2 * i] = a[i];
+                        a_exp[2 * i + 1] = a[i];
+                    }
                     if (lut)
-                        render_kernel_compose_alpha_lut(isa, d + (size_t)y * ds, a, n, lut);
+                        render_kernel_compose_alpha_lut(isa, row_dst, a_exp, 2 * m, lut);
                     else
-                        blend_alpha_cov(isa, c->tmp, d + (size_t)y * ds, a, n, fg, faint);
+                        blend_alpha_cov(isa, c->tmp, row_dst, a_exp, 2 * m, fg, faint);
+                    break;
                 }
-                break;
-            }
-            case KIND_SUBPX: {
-                /* The table matches the per-pixel blend only over an opaque bg. */
-                const struct subpx_lut *lut =
-                    bg >> 24 == 255 ? pair_lut_subpx(&c->w->lut, fg, bg, faint) : NULL;
-                for (int y = ink->y0; y < ink->y1; y++) {
-                    const uint8_t *s = g->subpx[y] + (size_t)lo * 3;
-                    if (lut)
-                        render_kernel_compose_subpx_lut(isa, d + (size_t)y * ds, s, n, lut, bg);
+                case KIND_SUBPX: {
+                    const uint8_t *s = g->subpx[gy] + (size_t)lo * 3;
+                    int m = n < 128 ? n : 128;
+                    for (int i = 0; i < m; i++) {
+                        s_exp[6 * i + 0] = s[3 * i + 0];
+                        s_exp[6 * i + 1] = s[3 * i + 1];
+                        s_exp[6 * i + 2] = s[3 * i + 2];
+                        s_exp[6 * i + 3] = s[3 * i + 0];
+                        s_exp[6 * i + 4] = s[3 * i + 1];
+                        s_exp[6 * i + 5] = s[3 * i + 2];
+                    }
+                    if (subpx_lut)
+                        render_kernel_compose_subpx_lut(isa, row_dst, s_exp, 2 * m, subpx_lut, bg);
                     else
-                        blend_subpx_cov(isa, c->tmp, d + (size_t)y * ds, s, n, fg, faint);
+                        blend_subpx_cov(isa, c->tmp, row_dst, s_exp, 2 * m, fg, faint);
+                    break;
                 }
-                break;
-            }
-            case KIND_COLOR:
-                for (int y = ink->y0; y < ink->y1; y++)
-                    render_kernel_compose_color(isa, d + (size_t)y * ds,
-                                                g->color + (size_t)y * g->width + lo, n, faint);
-                break;
+                case KIND_COLOR: {
+                    const uint32_t *cpx = g->color + (size_t)gy * g->width + lo;
+                    int m = n < 128 ? n : 128;
+                    for (int i = 0; i < m; i++) {
+                        c_exp[2 * i] = cpx[i];
+                        c_exp[2 * i + 1] = cpx[i];
+                    }
+                    render_kernel_compose_color(isa, row_dst, c_exp, 2 * m, faint);
+                    break;
+                }
+                }
             }
         }
     }
@@ -365,15 +488,19 @@ static inline RENDER_ALWAYS_INLINE void compose(int isa, struct row_ctx *c, uint
         return;
     unsigned underline = render_cell_underline(fl);
     if (underline && underline < DECOR_UNDERLINE_KINDS)
-        mask_blend(isa, dst, ds, &dc->underline[underline], cw, ul, faint);
+        mask_blend_scaled(isa, dst, ds, &dc->underline[underline], cw, cell_w, ch, ul, faint,
+                          double_h, y_off);
     if (fl & RENDER_CELL_STRIKE)
-        mask_blend(isa, dst, ds, &dc->strike, cw, fg, faint);
+        mask_blend_scaled(isa, dst, ds, &dc->strike, cw, cell_w, ch, fg, faint, double_h, y_off);
     if (fl & RENDER_CELL_OVERLINE)
-        mask_blend(isa, dst, ds, &dc->overline, cw, fg, faint);
+        mask_blend_scaled(isa, dst, ds, &dc->overline, cw, cell_w, ch, fg, faint, double_h,
+                          y_off);
     if (fl & RENDER_CELL_CURSOR_BAR)
-        mask_blend(isa, dst, ds, &dc->cursor_bar, cw, c->cursor, false);
+        mask_blend_scaled(isa, dst, ds, &dc->cursor_bar, cw, cell_w, ch, c->cursor, false,
+                          double_h, y_off);
     if (fl & RENDER_CELL_CURSOR_UNDERLINE)
-        mask_blend(isa, dst, ds, &dc->cursor_underline, cw, c->cursor, false);
+        mask_blend_scaled(isa, dst, ds, &dc->cursor_underline, cw, cell_w, ch, c->cursor, false,
+                          double_h, y_off);
 }
 
 /* ---- Spills ----------------------------------------------------------- */
@@ -551,13 +678,14 @@ static inline RENDER_ALWAYS_INLINE void cell_slow(int isa, struct row_ctx *c, in
                                                   const struct render_glyph_ref *ref)
 {
     const int cw = c->cw;
+    const int cell_w = c->cell_w;
     const uint16_t fl = cell->flags;
     const int half = (fl & RENDER_CELL_WIDE_TAIL) ? 1 : 0;
     const bool blank = (fl & RENDER_CELL_BLANK) != 0;
 
     /* A cell outside the window can only spill into it. */
-    if (sx0 + cw <= c->x0 || sx0 >= c->x1) {
-        if (blank)
+    if (sx0 + cell_w <= c->x0 || sx0 >= c->x1) {
+        if (blank || c->double_w)
             return;
         const struct glyph *g = render_glyph_get(ref);
         struct ink ink = glyph_ink(g, c->ch);
@@ -567,7 +695,7 @@ static inline RENDER_ALWAYS_INLINE void cell_slow(int isa, struct row_ctx *c, in
 
     bool marks = (fl & (RENDER_CELL_DECOR_MASK | RENDER_CELL_CURSOR_MASK)) != 0;
     /* The cell key does not hold the underline color. */
-    bool cacheable = ref->id && c->klass && (c->decor || !marks) &&
+    bool cacheable = !c->double_w && ref->id && c->klass && (c->decor || !marks) &&
                      !(fl & RENDER_CELL_UL_COLOR);
     struct cell_key key = {0};
     if (cacheable) {
@@ -592,19 +720,20 @@ static inline RENDER_ALWAYS_INLINE void cell_slow(int isa, struct row_ctx *c, in
 
     const struct glyph *g = blank ? NULL : render_glyph_get(ref);
     struct ink ink = glyph_ink(g, c->ch);
-    struct overhang o = cell_overhang(g, &ink, fl, half, cw);
+    struct overhang o = c->double_w ? (struct overhang){0} : cell_overhang(g, &ink, fl, half, cw);
     uint32_t *tile = cacheable ? cell_cache_claim(c->klass, c->cache, &key, o.left || o.right)
                                : NULL;
     if (tile) {
         compose(isa, c, tile, (size_t)cw, cell, g, &ink, half);
         put_tile(isa, c, sx0, tile);
-    } else if (sx0 >= c->x0 && sx0 + cw <= c->x1) {
+    } else if (sx0 >= c->x0 && sx0 + cell_w <= c->x1) {
         compose(isa, c, c->row + sx0, c->stride, cell, g, &ink, half);
     } else if (c->w->scratch) {
-        compose(isa, c, c->w->scratch, (size_t)cw, cell, g, &ink, half);
-        put_tile(isa, c, sx0, c->w->scratch);
+        compose(isa, c, c->w->scratch, (size_t)cell_w, cell, g, &ink, half);
+        put_tile_w(isa, c, sx0, c->w->scratch, cell_w);
     }
-    cell_spill(c, sx0, cell, g, &ink, half, o);
+    if (!c->double_w)
+        cell_spill(c, sx0, cell, g, &ink, half, o);
 }
 
 typedef void (*cell_slow_fn)(struct row_ctx *c, int sx0, const struct render_cell *cell,
@@ -615,7 +744,7 @@ static inline RENDER_ALWAYS_INLINE void run_body(void *ctx, int c0, int c1, uint
                                                  run_fill_fn fill)
 {
     struct row_ctx *c = ctx;
-    run_add(c, c0 * c->cw, c1 * c->cw, bg, fill);
+    run_add(c, c0 * c->cell_w, c1 * c->cell_w, bg, fill);
 }
 
 /*
@@ -630,7 +759,7 @@ static inline RENDER_ALWAYS_INLINE int text_body(int isa, void *ctx, int c0, int
                                                  run_fill_fn fill)
 {
     struct row_ctx *c = ctx;
-    if (!c->klass || fg != c->l0_fg || bg != c->l0_bg)
+    if (c->double_w || !c->klass || fg != c->l0_fg || bg != c->l0_bg)
         return c0;
     run_flush(c, fill);
     const int cw = c->cw, ch = c->ch;
@@ -659,7 +788,7 @@ static inline RENDER_ALWAYS_INLINE int span_body(int isa, void *ctx, int c0, int
                                                  run_fill_fn fill)
 {
     struct row_ctx *c = ctx;
-    if (!c->klass || fg != c->l0_fg || bg != c->l0_bg)
+    if (c->double_w || !c->klass || fg != c->l0_fg || bg != c->l0_bg)
         return c0;
     run_flush(c, fill);
     const int cw = c->cw, ch = c->ch;
@@ -684,16 +813,17 @@ static inline RENDER_ALWAYS_INLINE void cell_body(int isa, void *ctx, int col,
                                                   cell_slow_fn slow, run_fill_fn fill)
 {
     struct row_ctx *c = ctx;
-    const int sx0 = col * c->cw;
+    const int cell_w = c->cell_w;
+    const int sx0 = col * cell_w;
     const uint16_t fl = cell->flags;
     if ((fl & (RENDER_CELL_BLANK | RENDER_CELL_DECOR_MASK | RENDER_CELL_CURSOR_MASK)) ==
         RENDER_CELL_BLANK) {
-        run_add(c, sx0, sx0 + c->cw, cell->bg, fill);
+        run_add(c, sx0, sx0 + cell_w, cell->bg, fill);
         return;
     }
     run_flush(c, fill);
     /* L0: a cell in the default pair. ASCII is one load. */
-    if (c->klass && !(fl & (RENDER_CELL_PIXEL_MASK | RENDER_CELL_WIDE_TAIL)) && ref->id &&
+    if (!c->double_w && c->klass && !(fl & (RENDER_CELL_PIXEL_MASK | RENDER_CELL_WIDE_TAIL)) && ref->id &&
         cell->fg == c->l0_fg && cell->bg == c->l0_bg && sx0 >= c->x0 && sx0 + c->cw <= c->x1) {
         struct cell_tile t = !(ref->id & ~L0_ID_BITS) ? cell_l0_find(c->l0, cell->text, cell->style)
                                                       : cell_l0_find_id(c->l0, ref->id);
@@ -729,15 +859,22 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
     const int cw = f->cw;
     if (!tf || cw <= 0 || f->ch <= 0 || f->width <= 0)
         return 0;
+    enum wsap_vtcore_line_size line = terminal_frame_row_size(tf, job->row);
+    bool double_w = (line != WSAP_VTCORE_LINE_SINGLE);
+    int cell_w = double_w ? 2 * cw : cw;
+    int row_cols = double_w ? (f->cols / 2 > 0 ? f->cols / 2 : (f->cols > 0 ? 1 : 0)) : f->cols;
     struct row_ctx c = {
         .w = w,
         .row = f->origin + (size_t)job->row * (size_t)f->ch * (size_t)f->stride,
         .stride = (size_t)f->stride,
         .cw = cw,
         .ch = f->ch,
+        .cell_w = cell_w,
+        .line_size = line,
+        .double_w = double_w,
         .x0 = max_i(job->x0, 0),
         .x1 = min_i(job->x1, f->width),
-        .area = f->cols * cw,
+        .area = row_cols * cell_w,
         .width = f->width,
         .run_x0 = -1,
         .run_x1 = -1,
@@ -759,14 +896,16 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
     w->spill.used = 0;
 
     bool full = c.x0 == 0 && c.x1 == c.width;
-    int c0 = 0, c1 = f->cols;
+    int c0 = 0, c1 = row_cols;
     if (!full) {
         int reach = job->reach > 0 ? job->reach : 0;
         int64_t lo = (int64_t)c.x0 - reach, hi = (int64_t)c.x1 + reach;
-        c0 = lo <= 0 ? 0 : (int)(lo / cw);
-        c1 = (int)((hi + cw - 1) / cw < f->cols ? (hi + cw - 1) / cw : f->cols);
+        c0 = lo <= 0 ? 0 : (int)(lo / cell_w);
+        c1 = (int)((hi + cell_w - 1) / cell_w < row_cols ? (hi + cell_w - 1) / cell_w : row_cols);
         /* A cut cell composes in the scratch. Without it the cell stays unpainted. */
-        (void)scratch_room(w, (size_t)cw * (size_t)f->ch);
+        (void)scratch_room(w, (size_t)cell_w * (size_t)f->ch);
+    } else if (double_w) {
+        (void)scratch_room(w, (size_t)cell_w * (size_t)f->ch);
     }
     if (c0 < c1) {
         struct render_walk_sink k = *sink;

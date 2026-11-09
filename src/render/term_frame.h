@@ -63,6 +63,8 @@ bool terminal_frame_valid(const struct terminal_frame *frame);
 const struct wsap_vtcore_cell *terminal_frame_row(const struct terminal_frame *frame, int row);
 /* The content key of one row. It is 0 when the row is outside the snapshot. */
 uint64_t terminal_frame_row_key(const struct terminal_frame *frame, int row);
+/* The line size of one row: single, double-width, or a double-height half. */
+enum wsap_vtcore_line_size terminal_frame_row_size(const struct terminal_frame *frame, int row);
 /*
  * The selected columns of one row as a half-open span [begin, end),
  * clipped to [0, cols). An empty span means no selection on this row.

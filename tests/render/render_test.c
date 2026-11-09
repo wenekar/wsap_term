@@ -1722,6 +1722,114 @@ static void benchmark(void)
     bench_full_renderer = NULL;
 }
 
+static void double_size_rows_test(void)
+{
+    struct wsap_vtcore *t = tt_new(20, 6);
+    assert(t);
+    /* Row 0: single-width 'A'. */
+    feed(t, "\033[1;1HA\r\n");
+    /* Row 1: double-width 'A'. */
+    feed(t, "\033#6A\r\n");
+    /* Row 2: double-height top half 'A'. */
+    feed(t, "\033#3A\r\n");
+    /* Row 3: double-height bottom half 'A'. */
+    feed(t, "\033#4A");
+
+    int w = 20 * CELL_W, h = 6 * CELL_H;
+    size_t n = (size_t)w * (size_t)h;
+    uint32_t *full = malloc(n * sizeof(uint32_t));
+    uint32_t *inc = malloc(n * sizeof(uint32_t));
+    assert(full && inc);
+
+    test_render_paint_full(full, w, h, false, t);
+
+    struct renderer *r = test_renderer();
+    assert(r);
+    test_renderer_paint(r, inc, w, h, t, false);
+    tcheck_same("double size rows initial", inc, full, (struct vector2i){ .x = w, .y = h });
+
+    /* Check ink bounds of 'A' on row 0 and row 1. */
+    int min_x0 = w, max_x0 = -1;
+    for (int y = 0; y < CELL_H; y++) {
+        for (int x = 0; x < CELL_W; x++) {
+            if (full[(size_t)y * w + x] != DEFAULT_BG) {
+                if (x < min_x0) min_x0 = x;
+                if (x > max_x0) max_x0 = x;
+            }
+        }
+    }
+    assert(min_x0 <= max_x0);
+    int w0 = max_x0 - min_x0 + 1;
+
+    int min_x1 = w, max_x1 = -1;
+    for (int y = CELL_H; y < 2 * CELL_H; y++) {
+        for (int x = 0; x < 2 * CELL_W; x++) {
+            if (full[(size_t)y * w + x] != DEFAULT_BG) {
+                if (x < min_x1) min_x1 = x;
+                if (x > max_x1) max_x1 = x;
+            }
+        }
+    }
+    assert(min_x1 <= max_x1);
+    int w1 = max_x1 - min_x1 + 1;
+    /* Double-width glyph width must be 2 * w0. */
+    assert(w1 == 2 * w0);
+
+    /* Cells beyond cols / 2 (columns 2 * CELL_W to w) on row 1 must be blank. */
+    for (int y = CELL_H; y < 2 * CELL_H; y++)
+        for (int x = 2 * CELL_W; x < w; x++)
+            assert(full[(size_t)y * w + x] == DEFAULT_BG);
+
+    /* Verify horizontal scaling across row 2 (top) and row 3 (bottom). */
+    int min_x23 = w, max_x23 = -1;
+    for (int y = 2 * CELL_H; y < 4 * CELL_H; y++) {
+        for (int x = 0; x < 2 * CELL_W; x++) {
+            if (full[(size_t)y * w + x] != DEFAULT_BG) {
+                if (x < min_x23) min_x23 = x;
+                if (x > max_x23) max_x23 = x;
+            }
+        }
+    }
+    assert(min_x23 <= max_x23);
+    assert(max_x23 - min_x23 + 1 == 2 * w0);
+
+    /* Vertical 2x duplication: pairs of adjacent scanlines must be identical. */
+    for (int y = 0; y < CELL_H - 1; y += 2) {
+        size_t off0 = (size_t)(2 * CELL_H + y) * w;
+        size_t off1 = (size_t)(2 * CELL_H + y + 1) * w;
+        assert(!memcmp(&full[off0], &full[off1], 2 * CELL_W * sizeof(uint32_t)));
+    }
+
+    /* Cursor on double-width row at cell 1 (screen x: 2 * CELL_W .. 4 * CELL_W). */
+    feed(t, "\033[2;2H");
+    test_render_paint_full(full, w, h, true, t);
+    test_renderer_paint(r, inc, w, h, t, true);
+    tcheck_same("double width cursor", inc, full, (struct vector2i){ .x = w, .y = h });
+    int cur_x0 = 2 * CELL_W, cur_x1 = 4 * CELL_W;
+    for (int y = CELL_H; y < 2 * CELL_H; y++) {
+        for (int x = cur_x0; x < cur_x1; x++) {
+            assert(full[(size_t)y * w + x] != DEFAULT_BG);
+        }
+    }
+
+    /* Selection on double-width row: select cell 0 (columns [0, 2 * CELL_W)). */
+    tt_select(t, 0, 1, 1, 1);
+    test_render_paint_full(full, w, h, false, t);
+    test_renderer_paint(r, inc, w, h, t, false);
+    tcheck_same("double width selection", inc, full, (struct vector2i){ .x = w, .y = h });
+    for (int y = CELL_H; y < 2 * CELL_H; y++) {
+        for (int x = 0; x < 2 * CELL_W; x++) {
+            if (full[(size_t)y * w + x] != 0xFFFFFFFFu)
+                assert(full[(size_t)y * w + x] != DEFAULT_BG);
+        }
+    }
+
+    test_renderer_destroy(r);
+    free(full);
+    free(inc);
+    wsap_vtcore_free(t);
+}
+
 /* The tests that run again with a font at 1.5 times the scale. */
 static void scaled_font_pass(void)
 {
@@ -1775,6 +1883,7 @@ int main(int argc, char **argv)
         oversized_frame_test();
         popup_cleared_target_test();
         overlay_grid_repaint_test();
+        double_size_rows_test();
         scaled_font_pass();
         puts("PASS: renderer pixel regressions");
     }

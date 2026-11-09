@@ -712,10 +712,13 @@ void render_row_walk(struct font_instance *fi, const struct terminal_frame *f, i
 {
     if (!fi || !f || !sink || !sink->cell || !f->source)
         return;
+    int cols = f->cols;
+    if (terminal_frame_row_size(f, y) != WSAP_VTCORE_LINE_SINGLE && cols > 0)
+        cols = cols / 2 > 0 ? cols / 2 : 1;
     if (c0 < 0)
         c0 = 0;
-    if (c1 > f->cols)
-        c1 = f->cols;
+    if (c1 > cols)
+        c1 = cols;
     if (c0 >= c1)
         return;
     struct walk w = {
@@ -724,14 +727,14 @@ void render_row_walk(struct font_instance *fi, const struct terminal_frame *f, i
         .underline = wsap_vtcore_snapshot_row_underline_colors(f->source, y),
         .fn = sink->cell, .run = sink->run,
         .text = sink->text, .span = sink->span, .ctx = sink->ctx,
-        .cols = f->cols, .c0 = c0, .c1 = c1, .peek = (flags & RENDER_WALK_PEEK) != 0,
+        .cols = cols, .c0 = c0, .c1 = c1, .peek = (flags & RENDER_WALK_PEEK) != 0,
     };
     if (f->has_selection) {
         w.sel = terminal_frame_row_selection(f, y);
         w.sel_fg = terminal_frame_selection_fg(f);
         w.sel_bg = terminal_frame_selection_bg(f);
     }
-    if (f->cursor_y == y && f->cursor_x >= 0 && f->cursor_x < f->cols) {
+    if (f->cursor_y == y && f->cursor_x >= 0 && f->cursor_x < cols) {
         switch (f->cursor_style) {
         case WSAP_VTCORE_CURSOR_BLOCK:
             w.block = true;

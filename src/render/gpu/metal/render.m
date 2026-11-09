@@ -633,6 +633,7 @@ struct grid_build {
     uint32_t default_bg;
     uint32_t cursor_color;
     int row;
+    enum wsap_vtcore_line_size line_size;
     /* The open run of equal backgrounds: columns [run_x0, run_x1). */
     bool run_open;
     int run_x0, run_x1;
@@ -648,9 +649,10 @@ static void bg_flush(struct grid_build *b)
     if (!in)
         return;
     const struct grid_geometry *geo = b->geo;
-    in->rect = rect_of((float)(geo->rect.x + b->run_x0 * geo->cw),
+    int cell_w = (b->line_size != WSAP_VTCORE_LINE_SINGLE) ? 2 * geo->cw : geo->cw;
+    in->rect = rect_of((float)(geo->rect.x + b->run_x0 * cell_w),
                        (float)(geo->rect.y + b->row * geo->ch),
-                       (float)((b->run_x1 - b->run_x0) * geo->cw), (float)geo->ch);
+                       (float)((b->run_x1 - b->run_x0) * cell_w), (float)geo->ch);
     in->color = opaque_color_of(b->run_bg, 1.0f);
     in->mode = MODE_SOLID;
 }
@@ -692,10 +694,32 @@ static void emit_glyph_part(struct grid_build *b, int col, const struct atlas_en
     struct glyph_inst *in = push_glyph(b->g, subpx ? ST_SUBPX : ST_INK);
     if (!in)
         return;
+    bool double_w = (b->line_size != WSAP_VTCORE_LINE_SINGLE);
+    bool double_h = (b->line_size == WSAP_VTCORE_LINE_DOUBLE_TOP ||
+                     b->line_size == WSAP_VTCORE_LINE_DOUBLE_BOTTOM);
+    float width = (float)(c1 - c0);
+    float height = (float)rows;
+    float v0 = (float)e->y;
+    float v1 = (float)(e->y + rows);
+    if (double_w)
+        width *= 2.0f;
+    if (double_h) {
+        int half_h = geo->ch / 2;
+        if (b->line_size == WSAP_VTCORE_LINE_DOUBLE_TOP) {
+            int sub_rows = min_i(rows, half_h);
+            v1 = (float)(e->y + sub_rows);
+            height = (float)(sub_rows * 2);
+        } else {
+            int start_row = min_i(half_h, rows);
+            int sub_rows = rows > half_h ? rows - half_h : 0;
+            v0 = (float)(e->y + start_row);
+            v1 = (float)(e->y + rows);
+            height = (float)(sub_rows * 2);
+        }
+    }
     in->rect = rect_of((float)dest_x, (float)(geo->rect.y + b->row * geo->ch),
-                       (float)(c1 - c0), (float)rows);
-    in->uv = simd_make_float4((float)(e->x + c0), (float)e->y, (float)(e->x + c1),
-                              (float)(e->y + rows));
+                       width, height);
+    in->uv = simd_make_float4((float)(e->x + c0), v0, (float)(e->x + c1), v1);
     float opacity = faint ? 128.0f / 255.0f : 1.0f;
     if (e->kind == KIND_COLOR) {
         in->color = simd_make_float4(1, 1, 1, opacity);
@@ -716,13 +740,36 @@ static void emit_mask(struct grid_build *b, int col, const struct decor_mask *m,
     if (!m || m->y0 >= m->y1)
         return;
     const struct grid_geometry *geo = b->geo;
+    bool double_w = (b->line_size != WSAP_VTCORE_LINE_SINGLE);
+    bool double_h = (b->line_size == WSAP_VTCORE_LINE_DOUBLE_TOP ||
+                     b->line_size == WSAP_VTCORE_LINE_DOUBLE_BOTTOM);
+    int cell_w = double_w ? 2 * geo->cw : geo->cw;
     int rows = m->y1 - m->y0;
+    int y0 = m->y0;
+    float dest_y = (float)(geo->rect.y + b->row * geo->ch);
+    float height = (float)rows;
+    if (double_h) {
+        int half_h = geo->ch / 2;
+        if (b->line_size == WSAP_VTCORE_LINE_DOUBLE_TOP) {
+            if (y0 >= half_h) return;
+            rows = min_i(m->y1, half_h) - y0;
+            height = (float)(rows * 2);
+            dest_y += (float)(y0 * 2);
+        } else {
+            if (m->y1 <= half_h) return;
+            y0 = max_i(y0, half_h);
+            rows = m->y1 - y0;
+            height = (float)(rows * 2);
+            dest_y += (float)((y0 - half_h) * 2);
+        }
+    } else {
+        dest_y += (float)y0;
+    }
     struct glyph_inst *in = push_glyph(b->g, ST_DECO);
     if (!in)
         return;
-    in->rect = rect_of((float)(geo->rect.x + col * geo->cw),
-                       (float)(geo->rect.y + b->row * geo->ch + m->y0), (float)geo->cw,
-                       (float)rows);
+    in->rect = rect_of((float)(geo->rect.x + col * cell_w),
+                       dest_y, (float)cell_w, height);
     in->color = opaque_color_of(color, faint ? 128.0f / 255.0f : 1.0f);
     if (m->solid) {
         in->mode = MODE_SOLID;
@@ -798,17 +845,20 @@ static void grid_cell(void *ctx, int col, const struct render_cell *cell,
             return;
         }
         if (e.kind != KIND_NONE) {
-            int cell_x = geo->rect.x + col * geo->cw;
+            int cell_x = geo->rect.x + col * cell_w;
+            int x_off = double_w ? 2 * e.x_offset : e.x_offset;
             int split = geo->cw - e.x_offset;
             split = split < 0 ? 0 : split > e.w ? e.w : split;
             bool faint = (fl & RENDER_CELL_FAINT) != 0;
             if (fl & RENDER_CELL_WIDE_TAIL)
-                emit_glyph_part(b, col, &e, split, e.w, cell_x + split - (geo->cw - e.x_offset),
+                emit_glyph_part(b, col, &e, split, e.w,
+                                double_w ? cell_x + 2 * (split - (geo->cw - e.x_offset))
+                                         : cell_x + split - (geo->cw - e.x_offset),
                                 cell->fg, faint);
             else if (fl & RENDER_CELL_WIDE)
-                emit_glyph_part(b, col, &e, 0, split, cell_x + e.x_offset, cell->fg, faint);
+                emit_glyph_part(b, col, &e, 0, split, cell_x + x_off, cell->fg, faint);
             else
-                emit_glyph_part(b, col, &e, 0, e.w, cell_x + e.x_offset, cell->fg, faint);
+                emit_glyph_part(b, col, &e, 0, e.w, cell_x + x_off, cell->fg, faint);
         }
     }
     emit_decor(b, col, cell);
@@ -843,7 +893,10 @@ static bool build_grid(struct render_gpu *g, const struct grid_geometry *geo)
     glyph_cache_set_parallel(true);
     for (int row = 0; row < geo->rows && !g->failed && !g->atlas.full; row++) {
         b.row = row;
-        render_row_walk(geo->font, tf, row, 0, geo->cols, RENDER_WALK_PEEK, &sink);
+        b.line_size = terminal_frame_row_size(tf, row);
+        int cols = (b.line_size != WSAP_VTCORE_LINE_SINGLE)
+            ? (geo->cols / 2 > 0 ? geo->cols / 2 : 1) : geo->cols;
+        render_row_walk(geo->font, tf, row, 0, cols, RENDER_WALK_PEEK, &sink);
         bg_flush(&b);
     }
     glyph_cache_set_parallel(false);

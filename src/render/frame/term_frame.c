@@ -12,15 +12,23 @@ uint64_t terminal_frame_row_key(const struct terminal_frame *frame, int row)
     return frame && frame->source ? wsap_vtcore_snapshot_row_key(frame->source, row) : 0;
 }
 
+enum wsap_vtcore_line_size terminal_frame_row_size(const struct terminal_frame *frame, int row)
+{
+    return frame && frame->source ? wsap_vtcore_snapshot_row_size(frame->source, row) : WSAP_VTCORE_LINE_SINGLE;
+}
+
 struct wsap_vtcore_span terminal_frame_row_selection(const struct terminal_frame *frame, int row)
 {
     if (!frame || !frame->has_selection || !frame->source)
         return (struct wsap_vtcore_span){ 0 };
     struct wsap_vtcore_span span = wsap_vtcore_snapshot_row_selection(frame->source, row);
+    int max_cols = frame->cols;
+    if (terminal_frame_row_size(frame, row) != WSAP_VTCORE_LINE_SINGLE && max_cols > 0)
+        max_cols = max_cols / 2 > 0 ? max_cols / 2 : 1;
     if (span.begin < 0)
         span.begin = 0;
-    if (span.end > frame->cols)
-        span.end = frame->cols;
+    if (span.end > max_cols)
+        span.end = max_cols;
     if (span.end <= span.begin)
         return (struct wsap_vtcore_span){ 0 };
     return span;

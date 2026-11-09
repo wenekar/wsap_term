@@ -36,6 +36,12 @@ static void update_ime(struct window *w, const struct wsap_vtcore *t)
     int row = cursor.pos.y + wsap_vtcore_scrollback(t).offset;
     if (row < 0 || row >= wsap_vtcore_size(t).y)
         row = cursor.pos.y;
+    struct terminal *tw = terminal_of(w);
+    if (tw && tw->snapshot && row >= 0) {
+        enum wsap_vtcore_line_size line = wsap_vtcore_snapshot_row_size(tw->snapshot, row);
+        if (line != WSAP_VTCORE_LINE_SINGLE)
+            cw *= 2;
+    }
     struct rect2i caret = {
         .pos = vector2i_add(terminal_view_rect(w).pos, (struct vector2i){
             .x = cursor.pos.x * cw, .y = row * ch,

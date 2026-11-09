@@ -361,6 +361,7 @@ class Screen:
         return Line(self, n)
 
     def reset(self):
+        self._callbacks.clear()
         self.write(b'\x1bc')
 
     def cursor_move(self, n):
