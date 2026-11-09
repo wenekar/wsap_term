@@ -35,6 +35,10 @@ jobs:
             os: ubuntu-24.04
             cc: clang-18
             cxx: clang++-18
+          - name: Linux AArch64 GCC
+            os: ubuntu-24.04-arm
+            cc: gcc
+            cxx: g++
           - name: macOS Clang
             os: macos-14
             cc: clang
