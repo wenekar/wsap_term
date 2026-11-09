@@ -283,6 +283,8 @@ void wsap_vtcore_marks_pull(struct wsap_vtcore *t, uint64_t id, int first, struc
 void wsap_vtcore_marks_set(struct wsap_vtcore *t, uint8_t flag)
 {
     struct srow *row = &t->scr.slot[phys_row(t, t->cursor_y)];
+    /* A mark changes no cell. Do not bump the row version, because a snapshot
+     * update then keeps the row. */
     /* A new prompt starts a new command. Its command has no state yet. */
     if (flag & RF_PROMPT)
         rows_drop(t, row->uid);
