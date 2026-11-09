@@ -68,6 +68,16 @@ struct wsap_vtcore_saved_cursor {
 
 enum { ROW_CELLS, ROW_TEXT, ROW_ASCII };
 enum { RF_WRAPPED = 1, RF_WIDE = 4, RF_CLUSTER = 8, RF_TAIL_PADDED = 16 };
+/* The line size of a row (DECDWL, DECDHL) in bits 5 and 6. Zero is a
+ * single-width row. The bits shifted down by RF_LINE_SHIFT give the public
+ * enum wsap_vtcore_line_size. A double-size row is always ROW_CELLS. */
+enum {
+    RF_LINE_SHIFT = 5,
+    RF_LINE_DOUBLE_WIDTH = 1 << RF_LINE_SHIFT,
+    RF_LINE_DOUBLE_TOP = 2 << RF_LINE_SHIFT,
+    RF_LINE_DOUBLE_BOTTOM = 3 << RF_LINE_SHIFT,
+    RF_LINE_SIZE = 3 << RF_LINE_SHIFT,
+};
 
 struct srow {
     struct cell *cells;

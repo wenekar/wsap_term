@@ -28,6 +28,8 @@ bool model_resize(struct model *m, struct wsap_vtcore_vector2i size);
 struct wsap_vtcore_vector2i model_size(const struct model *m);
 int model_history(const struct model *m);
 const struct model_cell *model_row(const struct model *m, int row);
+/* The line size of a retained row. A history row is single width. */
+enum wsap_vtcore_line_size model_row_size(const struct model *m, int row);
 struct wsap_vtcore_cursor model_cursor(const struct model *m);
 struct wsap_vtcore_modes model_modes(const struct model *m);
 const char *model_replies(const struct model *m, size_t *len);

@@ -82,6 +82,16 @@ static void screen_push_row_inner(struct wsap_vtcore *t, struct srow *row)
     srow_materialize_text(row);
     bool wrapped = (row->flags & RF_WRAPPED) != 0;
     int cols = t->scr.cols;
+    if (WSAP_VTCORE_EXPECT(row->flags & RF_LINE_SIZE, 0)) {
+        /* The history has no line size. A double-size row goes in as a
+         * single-width row with only the cells that it showed. The row
+         * leaves the screen, so it can lose its hidden cells here. */
+        int len = line_visible_len(row->cells, row->len, cols);
+        if (len < row->len) {
+            row->len = (uint16_t)len;
+            row->flags &= (uint8_t)~RF_TAIL_PADDED;
+        }
+    }
     if (row->kind == ROW_TEXT && !(wrapped && row->len < cols)) {
         struct text_row *tr = &row->text;
         int fill = (tr->fill_to < cols ? tr->fill_to : cols) - tr->cells;
@@ -158,6 +168,14 @@ const struct cell *wsap_vtcore_screen_view_row(const struct wsap_vtcore *t, int 
     if (!srow)
         return NULL;
     struct cell *out = t->view_row_scratch;
+    if (WSAP_VTCORE_EXPECT(srow->flags & RF_LINE_SIZE, 0)) {
+        /* A double-size row is ROW_CELLS. Show its hidden cells as blanks. */
+        int len = line_visible_len(srow->cells, srow->len, t->cols);
+        if (len > 0)
+            memcpy(out, srow->cells, (size_t)len * sizeof(struct cell));
+        fill_cells(out + len, t->cols - len, WSAP_VTCORE_COLOR_FG, WSAP_VTCORE_COLOR_BG);
+        return out;
+    }
     if (srow->kind == ROW_CELLS) {
         if (srow->len >= t->cols || (srow->flags & RF_TAIL_PADDED))
             return srow->cells;
@@ -198,21 +216,46 @@ uint64_t wsap_vtcore_screen_view_row_key(const struct wsap_vtcore *t, int y)
     return mix64(row->uid ^ ((uint64_t)row->version << 32) ^ mix64(t->serial));
 }
 
+static uint8_t view_row_size(const struct wsap_vtcore *t, int y)
+{
+    struct hist_view_pos pos;
+    if (wsap_vtcore_hist_view_row_pos(&t->view, &t->hist, t->cols, t->rows, screen_top_line(t), y, &pos))
+        return 0;
+    if (pos.screen_y < 0 || pos.screen_y >= t->rows)
+        return 0;
+    return t->scr.slot[phys_row(t, pos.screen_y)].flags & RF_LINE_SIZE;
+}
+
 /* Keep this out of line. Inlined into the snapshot update, it moved the row
  * conversion loop there, and full repaints measured 15% slower. */
 WSAP_VTCORE_NOINLINE
-void wsap_vtcore_screen_view_row_keys(const struct wsap_vtcore *t, uint64_t *keys)
+void wsap_vtcore_screen_view_row_keys(const struct wsap_vtcore *t, uint64_t *keys, uint8_t *sizes)
 {
     if (t->view.anchor.active) {
-        for (int y = 0; y < t->rows; y++)
+        for (int y = 0; y < t->rows; y++) {
             keys[y] = wsap_vtcore_screen_view_row_key(t, y);
+            sizes[y] = view_row_size(t, y);
+        }
         return;
     }
     // The live view shows only screen rows. Read the row ring directly.
+    // A change of the line size changes the row version, so the key covers it.
     uint64_t serial_mix = mix64(t->serial);
     for (int y = 0; y < t->rows; y++) {
         const struct srow *row = &t->scr.slot[phys_row(t, y)];
         keys[y] = mix64(row->uid ^ ((uint64_t)row->version << 32) ^ serial_mix);
+        sizes[y] = row->flags & RF_LINE_SIZE;
+    }
+}
+
+void wsap_vtcore_screen_reset_line_sizes(struct wsap_vtcore *t)
+{
+    for (int p = 0; p < t->scr.rows; p++) {
+        struct srow *row = &t->scr.slot[p];
+        if (row->flags & RF_LINE_SIZE) {
+            row->flags &= (uint8_t)~RF_LINE_SIZE;
+            row->version++;
+        }
     }
 }
 
@@ -282,10 +325,19 @@ void wsap_vtcore_screen_erase_line(struct wsap_vtcore *t, int mode)
     }
 }
 
+/* The column after the last one that ICH and DCH move cells in. On a
+ * double-size row, the hidden cells do not move. */
+static int edit_right(const struct wsap_vtcore *t)
+{
+    if (WSAP_VTCORE_EXPECT(row_is_double(t, t->cursor_y), 0))
+        return line_cols(t->cols);
+    return (t->lr_margin_mode && t->right_margin < t->cols) ? t->right_margin + 1 : t->cols;
+}
+
 void wsap_vtcore_screen_delete_chars(struct wsap_vtcore *t, int n)
 {
     t->pending_wrap = false;
-    int right = (t->lr_margin_mode && t->right_margin < t->cols) ? t->right_margin + 1 : t->cols;
+    int right = edit_right(t);
     if (t->cursor_x >= right || !lr_col_in_margins(t, t->cursor_x))
         return;
     int x = t->cursor_x;
@@ -336,7 +388,7 @@ void wsap_vtcore_screen_delete_chars(struct wsap_vtcore *t, int n)
 void wsap_vtcore_screen_insert_chars(struct wsap_vtcore *t, int n)
 {
     t->pending_wrap = false;
-    int right = (t->lr_margin_mode && t->right_margin < t->cols) ? t->right_margin + 1 : t->cols;
+    int right = edit_right(t);
     if (t->cursor_x >= right || !lr_col_in_margins(t, t->cursor_x))
         return;
     int x = t->cursor_x;
@@ -390,7 +442,7 @@ void wsap_vtcore_screen_erase_all(struct wsap_vtcore *t)
     bool pristine = using_default_colors(t);
     for (int y = 0; y < s->rows; y++) {
         int p = phys_row(t, y);
-        if (pristine && s->slot[p].len == 0 && !(s->slot[p].flags & RF_WRAPPED))
+        if (pristine && row_erased(t, p))
             continue;
         erase_row(t, p);
     }
@@ -541,7 +593,8 @@ void wsap_vtcore_screen_erase(struct wsap_vtcore *t, int mode)
             const struct srow *r = &slots[p];
             p = (p == 0) ? rows - 1 : p - 1;
             if (WSAP_VTCORE_EXPECT(r->len == 0, 1)) {
-                if (WSAP_VTCORE_EXPECT((r->flags & RF_WRAPPED) != 0, 0))
+                /* ED 2 makes each row single width. */
+                if (WSAP_VTCORE_EXPECT((r->flags & (RF_WRAPPED | RF_LINE_SIZE)) != 0, 0))
                     tail_clean = false;
                 continue;
             }
@@ -567,7 +620,7 @@ void wsap_vtcore_screen_erase(struct wsap_vtcore *t, int mode)
         bool pristine = using_default_colors(t);
         for (int r = t->cursor_y + 1; r < t->rows; r++) {
             int p = phys_row(t, r);
-            if (pristine && t->scr.slot[p].len == 0 && !(t->scr.slot[p].flags & RF_WRAPPED))
+            if (pristine && row_erased(t, p))
                 continue;
             erase_row(t, p);
         }
@@ -576,7 +629,7 @@ void wsap_vtcore_screen_erase(struct wsap_vtcore *t, int mode)
         bool pristine = using_default_colors(t);
         for (int r = 0; r < t->cursor_y; r++) {
             int p = phys_row(t, r);
-            if (pristine && t->scr.slot[p].len == 0 && !(t->scr.slot[p].flags & RF_WRAPPED))
+            if (pristine && row_erased(t, p))
                 continue;
             erase_row(t, p);
         }
@@ -748,8 +801,8 @@ static void rotate_and_clear_srows(struct wsap_vtcore *t, struct srow *base, int
         free(saved);
 }
 
-void wsap_vtcore_screen_scroll_region(struct wsap_vtcore *t, int top, int bottom, int count,
-                               bool down, bool history)
+static void scroll_region(struct wsap_vtcore *t, int top, int bottom, int count,
+                          bool down, bool history)
 {
     t->pending_wrap = false;
     if (count <= 0 || top > bottom || top < 0 || bottom >= t->rows)
@@ -878,6 +931,14 @@ void wsap_vtcore_screen_scroll_region(struct wsap_vtcore *t, int top, int bottom
         }
     }
     t->full_gen++;
+}
+
+void wsap_vtcore_screen_scroll_region(struct wsap_vtcore *t, int top, int bottom, int count,
+                                      bool down, bool history)
+{
+    scroll_region(t, top, bottom, count, down, history);
+    /* A double-size row can move under the cursor. */
+    line_clamp_cursor(t);
 }
 
 /* Copy columns left to right of src into dst. Cells after the source length
@@ -1028,6 +1089,7 @@ void wsap_vtcore_screen_set_alternate(struct wsap_vtcore *t, bool enabled)
         t->right_margin = t->cols - 1;
         t->view.anchor = (struct view_anchor){0};
         wsap_vtcore_select_clear(t);
+        line_clamp_cursor(t);
         t->full_gen++;
     }
 }
@@ -1188,9 +1250,14 @@ struct reflow_target {
     int cursor_x, cursor_y, saved_x, saved_y, prompt_y;
     bool cursor_set, saved_set, prompt_set, pending_wrap;
 
+    /* The line size (RF_LINE_SIZE bits) of the row that the next end
+     * finishes. */
+    uint8_t size;
+
     struct reflow_out {
         int len;
         bool wrapped;
+        uint8_t size;
     } *out;
     struct cell *out_cells;
     int out_cap;
@@ -1225,6 +1292,8 @@ static bool reflow_target_end_row(struct reflow_target *r, bool wrapped)
         fill_cells(dst_cells + len, r->cols - len, WSAP_VTCORE_COLOR_FG, WSAP_VTCORE_COLOR_BG);
     dst->len = len;
     dst->wrapped = wrapped;
+    dst->size = r->size;
+    r->size = 0;
     r->x = 0;
     return true;
 }
@@ -1456,7 +1525,7 @@ static void copy_srow_resized(struct srow *dst, struct srow *src, int old_cols, 
         if (new_len > 0)
             memcpy(dst->cells, src->cells, (size_t)new_len * sizeof(struct cell));
         dst->kind = ROW_CELLS;
-        dst->flags = (src->flags & (RF_WRAPPED | RF_WIDE | RF_CLUSTER)) | RF_TAIL_PADDED;
+        dst->flags = (src->flags & (RF_WRAPPED | RF_WIDE | RF_CLUSTER | RF_LINE_SIZE)) | RF_TAIL_PADDED;
     }
     dst->len = (uint16_t)new_len;
     dst->uid = src->uid;
@@ -1533,6 +1602,7 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
         t->right_margin = cols - 1;
         if (!t->alternate)
             wsap_vtcore_hist_view_rewrap(&t->view, &t->hist, cols);
+        line_clamp_cursor(t);
         t->full_gen++;
         wsap_vtcore_gstore_unpin(t->gstore);
         return true;
@@ -1552,7 +1622,7 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
     int p_scan = phys_row(t, old_rows - 1);
     while (active > min_active) {
         const struct srow *sr = &t->scr.slot[p_scan];
-        if (sr->len != 0 || (sr->flags & RF_WRAPPED) != 0)
+        if (sr->len != 0 || (sr->flags & (RF_WRAPPED | RF_LINE_SIZE)) != 0)
             break;
         active--;
         p_scan = (p_scan == 0) ? old_rows - 1 : p_scan - 1;
@@ -1595,8 +1665,13 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
             srow_settle(src, old_cols);
         const struct cell *cells = src->cells;
 
-        if (t->prompt_y >= 0 && y >= t->prompt_y) {
-            if (r.x && !reflow_target_end_row(&r, false))
+        /* Rows from the prompt on keep their cells. A double-size row also
+         * stays one row: reflow moves no cells into it or out of it. It
+         * still continues a wrapped row before it. */
+        bool keep_row = t->prompt_y >= 0 && y >= t->prompt_y;
+        uint8_t size = src->flags & RF_LINE_SIZE;
+        if (keep_row || size) {
+            if (r.x && !reflow_target_end_row(&r, !keep_row))
                 goto reflow_failed;
             if (y == t->prompt_y) {
                 r.prompt_y = r.count;
@@ -1616,6 +1691,7 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
             int keep = len > cols ? cols : len;
             memcpy(r.cells, cells, (size_t)keep * sizeof(struct cell));
             r.x = keep;
+            r.size = size;
             if (!reflow_target_end_row(&r, wrapped))
                 goto reflow_failed;
             continue;
@@ -1676,9 +1752,15 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
         if (screen_start > r.cursor_y)
             screen_start = r.cursor_y;
         for (int i = 0; i < screen_start; i++) {
-            int push_len = (r.out[i].wrapped && r.out[i].len < cols) ? cols : r.out[i].len;
-            wsap_vtcore_hist_push_row(&t->hist, reflow_out_row_cells(&r, i), push_len,
-                          r.out[i].wrapped, t->gstore);
+            struct cell *out = reflow_out_row_cells(&r, i);
+            int len = r.out[i].len;
+            if (WSAP_VTCORE_EXPECT(r.out[i].size, 0)) {
+                /* As on a scroll, the history gets only the visible cells. */
+                len = line_visible_len(out, len, cols);
+                fill_cells(out + len, cols - len, WSAP_VTCORE_COLOR_FG, WSAP_VTCORE_COLOR_BG);
+            }
+            int push_len = (r.out[i].wrapped && len < cols) ? cols : len;
+            wsap_vtcore_hist_push_row(&t->hist, out, push_len, r.out[i].wrapped, t->gstore);
         }
     } else if (r.count < visible && t->hist.lines > 0) {
         int want = visible - r.count;
@@ -1696,7 +1778,7 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
             fill_cells(dst->cells + len, cols - len, WSAP_VTCORE_COLOR_FG, WSAP_VTCORE_COLOR_BG);
         dst->kind = ROW_CELLS;
         dst->len = (uint16_t)len;
-        dst->flags = (r.out[i].wrapped ? RF_WRAPPED : 0) | RF_TAIL_PADDED;
+        dst->flags = (uint8_t)((r.out[i].wrapped ? RF_WRAPPED : 0) | RF_TAIL_PADDED | r.out[i].size);
         dst->version = 1;
         dst->uid = ++t->next_row_uid;
     }
@@ -1737,6 +1819,7 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
     t->left_margin = 0;
     t->right_margin = cols - 1;
     wsap_vtcore_hist_view_rewrap(&t->view, &t->hist, cols);
+    line_clamp_cursor(t);
     t->full_gen++;
     wsap_vtcore_gstore_unpin(t->gstore);
     return true;

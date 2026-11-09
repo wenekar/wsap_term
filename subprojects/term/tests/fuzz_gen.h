@@ -138,7 +138,7 @@ static inline void gen(int ops, int cols, int rows)
     static const char csi_final[] = "ABCDEFGHIJKLMPSTXZ@`abdefghlmnrsu";
 
     for (int i = 0; i < ops; i++) {
-        switch (rn(47)) {
+        switch (rn(48)) {
         case 0: case 1: case 2: put(PICK(words)); break;
         case 3: {
             int n = rn(cols * 2 + 2);
@@ -340,6 +340,13 @@ static inline void gen(int ops, int cols, int rows)
             }
             break;
         }
+        case 47:
+            /* Line sizes: DECDHL top and bottom, DECSWL, DECDWL. Text after
+             * one fills the row to half the width. */
+            putf("\033#%c", "3456"[rn(4)]);
+            if (rn(2))
+                put(PICK(words));
+            break;
         }
     }
 }

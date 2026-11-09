@@ -154,8 +154,21 @@ static void assert_same_rows(struct wsap_vtcore *a, struct wsap_vtcore *b, int r
     wsap_vtcore_snapshot_free(sb);
 }
 
+static void assert_same_sizes(struct wsap_vtcore *a, struct wsap_vtcore *b)
+{
+    struct wsap_vtcore_snapshot *sa = wsap_vtcore_snapshot_new();
+    struct wsap_vtcore_snapshot *sb = wsap_vtcore_snapshot_new();
+    bool copied = sa && sb && wsap_vtcore_snapshot_update(sa, a) && wsap_vtcore_snapshot_update(sb, b);
+    assert(copied);
+    for (int y = 0; y < tt_rows(a); y++)
+        assert(wsap_vtcore_snapshot_row_size(sa, y) == wsap_vtcore_snapshot_row_size(sb, y));
+    wsap_vtcore_snapshot_free(sa);
+    wsap_vtcore_snapshot_free(sb);
+}
+
 static void assert_same_screen(struct wsap_vtcore *a, struct wsap_vtcore *b)
 {
+    assert_same_sizes(a, b);
     assert(tt_cursor_x(a) == tt_cursor_x(b));
     assert(tt_cursor_y(a) == tt_cursor_y(b));
     assert(tt_history(a) == tt_history(b));
@@ -3105,8 +3118,275 @@ static void test_palette_standard_xterm_cube(void)
     wsap_vtcore_free(t);
 }
 
+static enum wsap_vtcore_line_size row_size(struct wsap_vtcore *t, int y)
+{
+    return wsap_vtcore_snapshot_row_size(tt_snapshot_for(t), y);
+}
+
+/* ESC # 3, 4, 5, and 6 set the line size of the cursor row. A change of the
+ * line size alone changes the row key and the view version. */
+static void test_line_size_controls(void)
+{
+    struct wsap_vtcore *t = tt_new(10, 4);
+    assert(t);
+    write_seq(t, "\033#6\n\033#3\n\033#4\n\033#6\033#5");
+    assert(row_size(t, 0) == WSAP_VTCORE_LINE_DOUBLE_WIDTH);
+    assert(row_size(t, 1) == WSAP_VTCORE_LINE_DOUBLE_TOP);
+    assert(row_size(t, 2) == WSAP_VTCORE_LINE_DOUBLE_BOTTOM);
+    assert(row_size(t, 3) == WSAP_VTCORE_LINE_SINGLE);
+    assert(wsap_vtcore_snapshot_row_size(NULL, 0) == WSAP_VTCORE_LINE_SINGLE);
+    assert(row_size(t, -1) == WSAP_VTCORE_LINE_SINGLE);
+    assert(row_size(t, 4) == WSAP_VTCORE_LINE_SINGLE);
+
+    struct wsap_vtcore_snapshot *s = wsap_vtcore_snapshot_new();
+    assert(s);
+    write_seq(t, "ab");
+    uint64_t version = view_version(s, t);
+    uint64_t key = wsap_vtcore_snapshot_row_key(s, 3);
+    write_seq(t, "\033#6");
+    assert(view_version(s, t) != version);
+    assert(wsap_vtcore_snapshot_row_key(s, 3) != key);
+    assert(wsap_vtcore_snapshot_row_size(s, 3) == WSAP_VTCORE_LINE_DOUBLE_WIDTH);
+    /* The same line size again changes nothing. */
+    version = view_version(s, t);
+    key = wsap_vtcore_snapshot_row_key(s, 3);
+    write_seq(t, "\033#6");
+    assert(view_version(s, t) == version);
+    assert(wsap_vtcore_snapshot_row_key(s, 3) == key);
+    write_seq(t, "\033#4");
+    assert(view_version(s, t) != version);
+    assert(wsap_vtcore_snapshot_row_size(s, 3) == WSAP_VTCORE_LINE_DOUBLE_BOTTOM);
+    wsap_vtcore_snapshot_free(s);
+    wsap_vtcore_free(t);
+}
+
+/* Text on a double-size row stops and wraps at half the width. */
+static void test_line_size_text(void)
+{
+    struct wsap_vtcore *t = tt_new(10, 4);
+    write_seq(t, "\033#6abcdefgh");
+    assert(row_is(t, 0, "abcde") && row_is(t, 1, "fgh"));
+    assert(tt_cursor_x(t) == 3 && tt_cursor_y(t) == 1);
+    wsap_vtcore_free(t);
+
+    /* A wide character that does not fit wraps to the next row. */
+    t = tt_new(10, 4);
+    write_seq(t, "\033#3abcd\xe4\xb8\xad");
+    assert(row_is(t, 0, "abcd") && row_is(t, 1, "?"));
+    assert(tt_cell(t, 0, 1)->width == 2);
+    wsap_vtcore_free(t);
+
+    /* Without autowrap, the last visible column takes each new character. */
+    t = tt_new(10, 4);
+    write_seq(t, "\033[?7l\033#6abcdefgh");
+    assert(row_is(t, 0, "abcdh") && row_is(t, 1, ""));
+    assert(tt_cursor_x(t) == 4);
+    wsap_vtcore_free(t);
+
+    /* All write paths agree: whole writes take the fast paths, single bytes
+     * take the base path. */
+    static const char *const inputs[] = {
+        "\033#6Hello, world\r\n\033#3\033[31mred text\033[m and more\r\n",
+        "\033[4;1H\033#6line\r\nnext line that is long\r\n\033#6\tx\ty",
+        "\033#6\033[1;31mab\033[38;2;1;2;3mcdefghijklmnop\033[m\033[2K\033#5xyz",
+        ("\033[2;1H\033#6\xc3\xa9t\xc3\xa9 \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e"
+         "\xf0\x9f\x91\x8d\xcc\x81 done\033[5b"),
+        "abc\033[1;8H\033#6\033[1;1H\033[2@\033[1P\033#5",
+        /* A burst of line feeds passes a double-size row. */
+        "\033[2;1H\033#6\033[1;12H\n\n\nx\033[1;12H\033[?7l12\n\n\n\n\n\ny",
+    };
+    for (size_t i = 0; i < sizeof(inputs) / sizeof(inputs[0]); i++) {
+        struct wsap_vtcore *whole = tt_new(12, 4), *bytes = tt_new(12, 4);
+        assert(whole && bytes);
+        write_both(whole, bytes, inputs[i]);
+        assert_same_screen(whole, bytes);
+        wsap_vtcore_free(whole);
+        wsap_vtcore_free(bytes);
+    }
+
+    /* A long run of lines after a double-size bottom row: the line streams
+     * start after that row. */
+    struct wsap_vtcore *whole = tt_new(10, 4), *bytes = tt_new(10, 4);
+    assert(whole && bytes);
+    write_both(whole, bytes, "\033[4;1H\033#6");
+    char flood[4096];
+    size_t n = 0;
+    for (int line = 0; n + 16 < sizeof(flood); line++)
+        n += (size_t)snprintf(flood + n, sizeof(flood) - n, "line %04d\r\n", line);
+    tt_write(whole, flood, n);
+    for (size_t i = 0; i < n; i++)
+        tt_write(bytes, flood + i, 1);
+    assert_same_screen(whole, bytes);
+    wsap_vtcore_free(whole);
+    wsap_vtcore_free(bytes);
+}
+
+/* Cursor motion on a double-size row stops at the last visible column. */
+static void test_line_size_cursor(void)
+{
+    static const struct { const char *seq; int x; } cases[] = {
+        { "\033#6\033[1;9H", 4 },                 /* CUP */
+        { "\033#6\033[9C", 4 },                   /* CUF */
+        { "\033#6\033[9G", 4 },                   /* CHA */
+        { "\033#6\033[9`", 4 },                   /* HPA */
+        { "\033#6\t\t", 4 },                      /* HT */
+        { "\033[3g\033[1;8H\033H\033[1;1H\033#6\t", 4 },  /* custom tab stop */
+        { "\033[1;9H\033#6", 4 },                 /* DECDWL moves the cursor */
+        { "\033#6\033[2;9H\033[A", 4 },           /* CUU onto the row */
+        { "\033[2;1H\033#4\033[1;9H\n", 4 },      /* LF onto the row */
+        { "\033[2;1H\033#6\033[1;9H\033[S", 4 },  /* SU moves the row under the cursor */
+        { "\033#6\033[2;9H\033[A\033[B", 4 },     /* the column stays after the row */
+        { "\033#3\033[1;10H\033#5\033[9C", 9 },   /* DECSWL gives the full width again */
+        { "\033[1;9H\0337\033[2;1H\033#6\0338", 8 },     /* DECRC to a single row */
+        { "\033[1;9H\0337\033#6\033[1;1H\0338", 4 },     /* DECRC to a double row */
+    };
+    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        struct wsap_vtcore *t = tt_new(10, 4);
+        assert(t);
+        write_seq(t, cases[c].seq);
+        if (tt_cursor_x(t) != cases[c].x)
+            fprintf(stderr, "case %zu: x %d want %d\n", c, tt_cursor_x(t), cases[c].x);
+        assert(tt_cursor_x(t) == cases[c].x);
+        wsap_vtcore_free(t);
+    }
+}
+
+/* Cells past the visible half stay in the row, hidden. DECSWL shows them
+ * again. ICH and DCH move only the visible cells. Text and selection skip the
+ * hidden cells. */
+static void test_line_size_hidden_cells(void)
+{
+    struct wsap_vtcore *t = tt_new(10, 3);
+    assert(t);
+    write_seq(t, "0123456789\033[1;1H\033#6");
+    assert(row_is(t, 0, "01234"));
+    write_seq(t, "\033#5");
+    assert(row_is(t, 0, "0123456789"));
+
+    write_seq(t, "\033#6\033[1;1H\033[P");
+    assert(row_is(t, 0, "1234"));
+    write_seq(t, "\033#5");
+    assert(row_is(t, 0, "1234 56789"));
+    write_seq(t, "\033#6\033[1;2H\033[2@");
+    assert(row_is(t, 0, "1  23"));
+    write_seq(t, "\033#5");
+    assert(row_is(t, 0, "1  2356789"));
+
+    write_seq(t, "\033[2;1Habcdefghij\033#6");
+    assert(row_is(t, 1, "abcde"));
+    assert(wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ .x = 0, .y = 1 }, false,
+                                    WSAP_VTCORE_SELECT_LINE));
+    char *text = wsap_vtcore_selection_text(t);
+    assert(text && !strcmp(text, "abcde"));
+    wsap_vtcore_text_free(text);
+    wsap_vtcore_free(t);
+}
+
+static void double_rows(struct wsap_vtcore *t, const int *want, int rows)
+{
+    for (int y = 0; y < rows; y++) {
+        if ((row_size(t, y) != WSAP_VTCORE_LINE_SINGLE) != (want[y] != 0))
+            fprintf(stderr, "row %d: size %d\n", y, (int)row_size(t, y));
+        assert((row_size(t, y) != WSAP_VTCORE_LINE_SINGLE) == (want[y] != 0));
+    }
+}
+
+/* The line size moves with its row. ED makes the rows that it erases whole
+ * single width. EL keeps the line size. Resets make all rows single width. */
+static void test_line_size_follows_rows(void)
+{
+    static const struct { const char *seq; int rows[5]; } cases[] = {
+        { "", { 0, 0, 1, 0, 0 } },
+        { "\033[2;1H\033[L", { 0, 0, 0, 1, 0 } },     /* IL */
+        { "\033[2;1H\033[M", { 0, 1, 0, 0, 0 } },     /* DL */
+        { "\033[S", { 0, 1, 0, 0, 0 } },              /* SU */
+        { "\033[2T", { 0, 0, 0, 0, 1 } },             /* SD */
+        { "\033[1;1H\033M", { 0, 0, 0, 1, 0 } },      /* RI at the top */
+        { "\033[5;1H\n\n", { 1, 0, 0, 0, 0 } },       /* LF at the bottom */
+        { "\033[2;4r\033[4;1H\n", { 0, 1, 0, 0, 0 } }, /* LF in a region */
+        { "\033[3;1H\033[2K", { 0, 0, 1, 0, 0 } },    /* EL */
+        { "\033[3;3H\033[J", { 0, 0, 1, 0, 0 } },     /* ED 0 keeps the cursor row */
+        { "\033[2;3H\033[J", { 0, 0, 0, 0, 0 } },     /* ED 0 below the cursor */
+        { "\033[4;3H\033[1J", { 0, 0, 0, 0, 0 } },    /* ED 1 above the cursor */
+        { "\033[3;3H\033[1J", { 0, 0, 1, 0, 0 } },
+        { "\033[2J", { 0, 0, 0, 0, 0 } },             /* ED 2 */
+        { "\033[41m\033[2J", { 0, 0, 0, 0, 0 } },
+        { "\033[3;3H\033[?2J", { 0, 0, 1, 0, 0 } },   /* DECSED keeps it */
+        { "\033c", { 0, 0, 0, 0, 0 } },               /* RIS */
+        { "\033#8", { 0, 0, 0, 0, 0 } },              /* DECALN */
+        { "\033[?69h", { 0, 0, 0, 0, 0 } },           /* DECLRMM */
+        { "\033[?69h\033[1;1H\033#6\033[?69l", { 0, 0, 0, 0, 0 } },
+        { "\033[?1049h\033#6\033[?1049l", { 0, 0, 1, 0, 0 } },
+        { "\033[?1049h", { 0, 0, 0, 0, 0 } },
+    };
+    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        struct wsap_vtcore *t = tt_new(10, 5);
+        assert(t);
+        write_seq(t, "a\r\nb\r\nc\033#6\r\nd\r\ne");
+        write_seq(t, cases[c].seq);
+        double_rows(t, cases[c].rows, 5);
+        wsap_vtcore_free(t);
+    }
+
+    /* A row that scrolls into the history keeps only its visible text and
+     * becomes single width. */
+    struct wsap_vtcore *t = tt_new(10, 3);
+    write_seq(t, "0123456789\033#6\r\n\n\n");
+    assert(tt_history(t) == 1);
+    wsap_vtcore_scroll(t, 1);
+    assert(row_is(t, 0, "01234"));
+    assert(row_size(t, 0) == WSAP_VTCORE_LINE_SINGLE);
+    wsap_vtcore_free(t);
+}
+
+/* A width change keeps the line size. Reflow does not join a double-size row
+ * with the rows around it. */
+static void test_line_size_resize(void)
+{
+    struct wsap_vtcore *t = tt_new(10, 4);
+    assert(t);
+    write_seq(t, "abcdefghijkl\033#6\033[3;1Hxyz");
+    assert(row_is(t, 0, "abcdefghij") && row_is(t, 1, "kl"));
+    assert(tt_resize(t, 12, 4));
+    assert(row_is(t, 0, "abcdefghij") && row_is(t, 1, "kl") && row_is(t, 2, "xyz"));
+    assert(row_size(t, 1) == WSAP_VTCORE_LINE_DOUBLE_WIDTH);
+    assert(row_size(t, 2) == WSAP_VTCORE_LINE_SINGLE);
+    wsap_vtcore_free(t);
+
+    /* The visible part follows the width. The hidden cells come back. */
+    t = tt_new(20, 3);
+    write_seq(t, "\033#6abcdefgh");
+    assert(tt_resize(t, 10, 3));
+    assert(row_is(t, 0, "abcde") && row_size(t, 0) == WSAP_VTCORE_LINE_DOUBLE_WIDTH);
+    assert(tt_cursor_x(t) <= 4);
+    assert(tt_resize(t, 20, 3));
+    assert(row_is(t, 0, "abcdefgh") && row_size(t, 0) == WSAP_VTCORE_LINE_DOUBLE_WIDTH);
+    wsap_vtcore_free(t);
+
+    /* A height change and the alternate screen keep the line size too. */
+    t = tt_new(10, 3);
+    write_seq(t, "\033[2;1H\033#3x\033[?1049h");
+    assert(tt_resize(t, 8, 5));
+    write_seq(t, "\033[?1049l");
+    assert(row_is(t, 1, "x") && row_size(t, 1) == WSAP_VTCORE_LINE_DOUBLE_TOP);
+    wsap_vtcore_free(t);
+
+    /* A trailing blank double-size row stays when the width changes. */
+    t = tt_new(10, 4);
+    write_seq(t, "a\033[4;1H\033#6\033[1;1H");
+    assert(tt_resize(t, 8, 4));
+    assert(row_size(t, 3) == WSAP_VTCORE_LINE_DOUBLE_WIDTH);
+    wsap_vtcore_free(t);
+}
+
 int main(void)
 {
+    test_line_size_controls();
+    test_line_size_text();
+    test_line_size_cursor();
+    test_line_size_hidden_cells();
+    test_line_size_follows_rows();
+    test_line_size_resize();
     test_palette_standard_xterm_cube();
     test_margin_dch_ich();
     test_resize_tabs_and_custom_tabs();

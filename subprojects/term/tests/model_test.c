@@ -178,6 +178,13 @@ static const char *compare(struct model *m, struct wsap_vtcore *t, struct wsap_v
             const struct wsap_vtcore_cell *row = wsap_vtcore_snapshot_row(snap, y);
             const wsap_vtcore_color *uls = wsap_vtcore_snapshot_row_underline_colors(snap, y);
             int retained = total - offset + y;
+            enum wsap_vtcore_line_size line = wsap_vtcore_snapshot_row_size(snap, y);
+            if (line != model_row_size(m, retained)) {
+                snprintf(why, cap, "retained row %d: line size %d, model %d", retained, (int)line,
+                         (int)model_row_size(m, retained));
+                wsap_vtcore_scroll_to(t, 0);
+                return why;
+            }
             const struct model_cell *want_row = model_row(m, retained);
             for (int x = 0; x < size.x; x++) {
                 const struct model_cell *e = &want_row[x];

@@ -217,6 +217,14 @@ static const struct cell *line_seg_cells(const struct lines *L, uint64_t id, int
     const struct srow *srow = screen_get_row(&t->scr, y);
     if (out_wrapped)
         *out_wrapped = (srow->flags & RF_WRAPPED) != 0;
+    if (WSAP_VTCORE_EXPECT(srow->flags & RF_LINE_SIZE, 0)) {
+        /* The hidden cells of a double-size row are not text. */
+        int len = line_visible_len(srow->cells, srow->len, L->cols);
+        if (len > 0)
+            memcpy(buf, srow->cells, (size_t)len * sizeof(struct cell));
+        fill_cells(buf + len, L->cols - len, WSAP_VTCORE_COLOR_FG, WSAP_VTCORE_COLOR_BG);
+        return buf;
+    }
     if (srow->kind == ROW_CELLS) {
         if (srow->len >= L->cols || (srow->flags & RF_TAIL_PADDED))
             return srow->cells;

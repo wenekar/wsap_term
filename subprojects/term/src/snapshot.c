@@ -21,6 +21,8 @@ struct wsap_vtcore_snapshot {
     struct wsap_vtcore_cell *stage;
     // One span for each logical row.
     struct wsap_vtcore_span *selection;
+    // The line size of each logical row (enum wsap_vtcore_line_size).
+    uint8_t *row_size;
     size_t cell_cap;
     int row_cap;
 
@@ -48,6 +50,7 @@ void wsap_vtcore_snapshot_free(struct wsap_vtcore_snapshot *s)
     free(s->row_clusters);
     free(s->row_ul);
     free(s->selection);
+    free(s->row_size);
     free(s->arena);
     free(s->spare);
     free(s);
@@ -82,7 +85,10 @@ static bool reserve(struct wsap_vtcore_snapshot *s, int cols, int rows)
         uint32_t *ul = realloc(s->row_ul, (size_t)rows * sizeof(*ul));
         if (ul)
             s->row_ul = ul;
-        if (!k || !rc || !sel || !ul)
+        uint8_t *size = realloc(s->row_size, (size_t)rows * sizeof(*size));
+        if (size)
+            s->row_size = size;
+        if (!k || !rc || !sel || !ul || !size)
             return false;
         s->row_cap = rows;
     }
@@ -251,6 +257,11 @@ static inline WSAP_VTCORE_ALWAYS_INLINE bool convert_row(struct arena_out *a, co
     return true;
 }
 
+_Static_assert(RF_LINE_DOUBLE_WIDTH >> RF_LINE_SHIFT == WSAP_VTCORE_LINE_DOUBLE_WIDTH &&
+               RF_LINE_DOUBLE_TOP >> RF_LINE_SHIFT == WSAP_VTCORE_LINE_DOUBLE_TOP &&
+               RF_LINE_DOUBLE_BOTTOM >> RF_LINE_SHIFT == WSAP_VTCORE_LINE_DOUBLE_BOTTOM,
+               "the row flags must map to the public line sizes");
+
 #define ROW_KEPT UINT32_MAX
 #define DIRECT_MAX_WORDS (1u << 16)
 
@@ -266,6 +277,8 @@ struct plan {
     int staged;
     bool direct;
     const int *c0, *c1;
+    // For each logical row: the RF_LINE_SIZE bits of the row.
+    const uint8_t *sizes;
 };
 
 /* Write the plan to the snapshot. This step cannot fail. The direct path
@@ -344,6 +357,10 @@ static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, c
         if (p->all || span.begin != s->selection[y].begin || span.end != s->selection[y].end)
             changed = true;
         s->selection[y] = span;
+        uint8_t size = (uint8_t)(p->sizes[y] >> RF_LINE_SHIFT);
+        if (p->all || size != s->row_size[y])
+            changed = true;
+        s->row_size[y] = size;
     }
 
     struct wsap_vtcore_cursor cursor = wsap_vtcore_cursor(t);
@@ -389,12 +406,15 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
     uint64_t stack_keys[256];
     uint32_t stack_words[2][256];
     int stack[2][256];
+    uint8_t stack_sizes[256];
     uint64_t *new_keys = stack_keys;
     uint32_t *words = stack_words[0], *ul = stack_words[1];
     int *c0 = stack[0], *c1 = stack[1];
+    uint8_t *sizes = stack_sizes;
     void *heap = NULL;
     if (rows > 256) {
-        heap = malloc((size_t)rows * (sizeof(*new_keys) + 2 * sizeof(*words) + 2 * sizeof(*c0)));
+        heap = malloc((size_t)rows * (sizeof(*new_keys) + 2 * sizeof(*words) + 2 * sizeof(*c0) +
+                                      sizeof(*sizes)));
         if (!heap)
             return false;
         new_keys = heap;
@@ -402,8 +422,9 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
         ul = words + rows;
         c0 = (int *)(ul + rows);
         c1 = c0 + rows;
+        sizes = (uint8_t *)(c1 + rows);
     }
-    struct plan p = { .keys = new_keys, .words = words, .ul = ul, .c0 = c0, .c1 = c1 };
+    struct plan p = { .keys = new_keys, .words = words, .ul = ul, .c0 = c0, .c1 = c1, .sizes = sizes };
 
     if (s->arena_dead > 4096 && s->arena_dead * 2 > s->arena_len)
         all = true;
@@ -428,7 +449,7 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
             t->view.last_cells = t->hist.lines ? wsap_vtcore_hist_line_cells(&t->hist, hist_end_id(&t->hist) - 1) : 0;
         }
     }
-    wsap_vtcore_screen_view_row_keys(t, new_keys);
+    wsap_vtcore_screen_view_row_keys(t, new_keys, sizes);
 
     // Find a scroll. Compare each new key with the old key k rows lower.
     int top = s->top;
@@ -554,6 +575,13 @@ uint64_t wsap_vtcore_snapshot_row_key(const struct wsap_vtcore_snapshot *s, int 
     if (!s || y < 0 || y >= s->view.size.y)
         return 0;
     return s->keys[ring_row(s->top, y, s->view.size.y)];
+}
+
+enum wsap_vtcore_line_size wsap_vtcore_snapshot_row_size(const struct wsap_vtcore_snapshot *s, int y)
+{
+    if (!s || y < 0 || y >= s->view.size.y)
+        return WSAP_VTCORE_LINE_SINGLE;
+    return (enum wsap_vtcore_line_size)s->row_size[y];
 }
 
 const wsap_vtcore_color *wsap_vtcore_snapshot_row_underline_colors(const struct wsap_vtcore_snapshot *s, int y)

@@ -33,7 +33,9 @@ static inline void sc_print_cell(struct wsap_vtcore *t, uint32_t cp, int width, 
         struct srow *srow = wsap_vtcore_row(t, t->cursor_y);
         int cx = t->cursor_x;
         int len = srow->len;
-        if (WSAP_VTCORE_EXPECT(srow->kind == ROW_CELLS && cx <= len, 1)) {
+        /* A double-size row wraps at half the width. The slow path knows it. */
+        if (WSAP_VTCORE_EXPECT(srow->kind == ROW_CELLS && !(srow->flags & RF_LINE_SIZE) &&
+                               cx <= len, 1)) {
             struct cell *row = srow->cells;
             if (WSAP_VTCORE_EXPECT(!((cx < len && (row[cx].flags & CELL_TRAIL)) ||
                               (cx + 1 < len && (row[cx + 1].flags & CELL_TRAIL))), 1)) {
@@ -71,6 +73,7 @@ static inline void sc_linefeed(struct wsap_vtcore *t, size_t n)
             t->pending_wrap = false;
             wsap_vtcore_row(t, t->cursor_y)->version++;
             t->cursor_y++;
+            line_clamp_cursor(t);
             return;
         }
         /* With left and right margins, a scroll moves only the cells inside them. */
@@ -101,6 +104,8 @@ static inline void sc_move(struct wsap_vtcore *t, int x, int y)
     if (x >= t->cols) x = t->cols - 1;
     if (y < 0) y = 0;
     if (y >= t->rows) y = t->rows - 1;
+    if (WSAP_VTCORE_EXPECT(x > line_last_col(t->cols), 0) && row_is_double(t, y))
+        x = line_last_col(t->cols);
 
     int old_y = t->cursor_y;
     if (x == t->cursor_x && y == old_y)
@@ -148,6 +153,10 @@ void wsap_vtcore_sc_decrara(struct wsap_vtcore *t, const struct csi *csi);
 
 void wsap_vtcore_sc_decaln(struct wsap_vtcore *t);
 
+/* DECSWL, DECDWL, and DECDHL: set the line size of the cursor row to one of
+ * the RF_LINE_* values. */
+void wsap_vtcore_sc_line_size(struct wsap_vtcore *t, uint8_t size);
+
 void wsap_vtcore_sc_reset(struct wsap_vtcore *t);
 
 void wsap_vtcore_sc_set_cursor_style(struct wsap_vtcore *t, int ps);
@@ -175,6 +184,8 @@ static inline struct span sc_span_begin(struct wsap_vtcore *t, int want)
         fill_cells(row->cells + cx - 1, 1, row->cells[cx - 1].fg, row->cells[cx - 1].bg);
 
     int right = WSAP_VTCORE_EXPECT(t->lr_margin_mode, 0) ? lr_right_limit(t) : t->cols - 1;
+    if (WSAP_VTCORE_EXPECT(row->flags & RF_LINE_SIZE, 0))
+        right = line_last_col(t->cols);
     int avail = right + 1 > cx ? right + 1 - cx : 0;
     return (struct span){
         .row = row,
@@ -283,7 +294,7 @@ static inline bool sc_ascii_fast(struct wsap_vtcore *t, const char *s, int n,
         if (row->kind == ROW_TEXT)
             return false;
     }
-    if (WSAP_VTCORE_EXPECT(row->kind != ROW_CELLS || cx > row->len, 0))
+    if (WSAP_VTCORE_EXPECT(row->kind != ROW_CELLS || (row->flags & RF_LINE_SIZE) || cx > row->len, 0))
         return false;
     int len = row->len;
     struct cell *cells = row->cells;
@@ -336,7 +347,7 @@ static inline bool sc_put1_fast(struct wsap_vtcore *t, char ch, struct text_pen 
             return true;
     }
     int len = row->len;
-    if (WSAP_VTCORE_EXPECT(cx > len, 0))
+    if (WSAP_VTCORE_EXPECT(cx > len || (row->flags & RF_LINE_SIZE), 0))
         return false;
     struct cell *cells = row->cells;
     if (WSAP_VTCORE_EXPECT((cx < len && (cells[cx].flags & CELL_TRAIL)) ||

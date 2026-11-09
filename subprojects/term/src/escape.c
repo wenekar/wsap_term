@@ -628,6 +628,9 @@ static void mode_set(struct wsap_vtcore *t, int mode, bool enabled, bool priv)
     } else if (mode_is_mouse(mode)) {
         t->mouse_mode = enabled ? mode : 0;
     } else if (mode == 69) {
+        /* Setting DECLRMM makes all rows single width (xterm). */
+        if (enabled)
+            wsap_vtcore_screen_reset_line_sizes(t);
         t->lr_margin_mode = enabled;
         t->left_margin = 0; t->right_margin = t->cols - 1;
         sc_move(t, 0, cursor_top(t));
@@ -1223,8 +1226,14 @@ void wsap_vtcore_escape_byte(struct wsap_vtcore *t, unsigned char ch)
         break;
     case ST_DECALN:
         t->state = ST_GROUND;
-        if (ch == '8')
-            wsap_vtcore_sc_decaln(t);
+        switch (ch) {
+        case '3': wsap_vtcore_sc_line_size(t, RF_LINE_DOUBLE_TOP); break;    /* DECDHL top half */
+        case '4': wsap_vtcore_sc_line_size(t, RF_LINE_DOUBLE_BOTTOM); break; /* DECDHL bottom half */
+        case '5': wsap_vtcore_sc_line_size(t, 0); break;                     /* DECSWL */
+        case '6': wsap_vtcore_sc_line_size(t, RF_LINE_DOUBLE_WIDTH); break;  /* DECDWL */
+        case '8': wsap_vtcore_sc_decaln(t); break;
+        default: break;
+        }
         break;
     case ST_IGNORE:
         if (ch == 0x07 || ch == 0x18 || ch == 0x1a || ch == 0x9c)

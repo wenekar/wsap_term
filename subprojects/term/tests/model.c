@@ -28,6 +28,8 @@ struct cell {
 struct row {
     int len;
     bool wrapped;
+    /* The line size: enum wsap_vtcore_line_size. */
+    uint8_t size;
     struct cell c[];
 };
 
@@ -120,8 +122,42 @@ static struct row *row_new(int cols)
     if (!r) abort();
     r->len = 0;
     r->wrapped = false;
+    r->size = WSAP_VTCORE_LINE_SINGLE;
     for (int x = 0; x < cols; x++) r->c[x] = default_blank();
     return r;
+}
+
+/* A double-size row shows its first line_cols(cols) cells. The other cells
+ * stay in the row, hidden. */
+static int line_cols(int cols)
+{
+    return cols > 1 ? cols / 2 : 1;
+}
+
+/* The last column that text and the cursor can reach on row r. */
+static int row_last(const struct model *m, const struct row *r)
+{
+    return r->size ? line_cols(m->cols) - 1 : m->cols - 1;
+}
+
+/* The cells that a double-size row shows, of its len cells. A wide
+ * character that the edge cuts is not shown. */
+static int visible_len(const struct row *r, int cols)
+{
+    int n = line_cols(cols);
+    if (!r->size || r->len <= n) return r->len;
+    return r->c[n - 1].width == 2 ? n - 1 : n;
+}
+
+/* Blank the hidden cells. A row that goes into the history becomes single
+ * width with only the cells that it showed. */
+static void drop_hidden(struct row *r, int cols)
+{
+    if (!r->size) return;
+    int n = visible_len(r, cols);
+    for (int x = n; x < r->len && x < cols; x++) r->c[x] = default_blank();
+    r->len = n;
+    r->size = WSAP_VTCORE_LINE_SINGLE;
 }
 
 static void row_cut(struct row *r, int n, int cols)
@@ -167,6 +203,7 @@ static void hist_reflow_tail(struct model *m);
 
 static void hist_push(struct model *m, struct row *r)
 {
+    drop_hidden(r, m->cols);
     if (!m->limit) {
         free(r);
         return;
@@ -213,6 +250,12 @@ static void wsap_vtcore_hist_clear(struct model *m)
 
 static void erase_row(struct model *m, int y);
 
+static void clamp_cursor(struct model *m)
+{
+    int last = row_last(m, m->scr[m->y]);
+    if (m->x > last) m->x = last;
+}
+
 static void scroll_up_full(struct model *m)
 {
     struct row *top = m->scr[0];
@@ -227,7 +270,16 @@ static void scroll_up_full(struct model *m)
     hist_push(m, top);
 }
 
+static void scroll_rows(struct model *m, int top, int bottom, int n, bool down, bool history);
+
+/* A row that moves under the cursor can be a double-size row. */
 static void scroll_region(struct model *m, int top, int bottom, int n, bool down, bool history)
+{
+    scroll_rows(m, top, bottom, n, down, history);
+    clamp_cursor(m);
+}
+
+static void scroll_rows(struct model *m, int top, int bottom, int n, bool down, bool history)
 {
     int height = bottom - top + 1;
     if (n > height) n = height;
@@ -267,6 +319,7 @@ static void line_feed(struct model *m)
         scroll_region(m, m->top, m->bottom, 1, false, true);
     } else if (m->y < m->rows - 1) {
         m->y++;
+        clamp_cursor(m);
     }
 }
 
@@ -276,6 +329,7 @@ static void reverse_index(struct model *m)
         scroll_region(m, m->top, m->bottom, 1, true, false);
     else if (m->y > 0)
         m->y--;
+    clamp_cursor(m);
 }
 
 static void erase_cells(struct model *m, int y, int from, int to)
@@ -304,6 +358,7 @@ static void erase_cells(struct model *m, int y, int from, int to)
 static void erase_row(struct model *m, int y)
 {
     erase_cells(m, y, 0, m->cols);
+    m->scr[y]->size = WSAP_VTCORE_LINE_SINGLE;
 }
 
 static int last_text_row(const struct model *m)
@@ -444,16 +499,17 @@ static void put_glyph(struct model *m, const uint32_t *cps, int n, uint16_t attr
     if (attrs & WSAP_VTCORE_ATTR_EMOJI) width = 2;
     if (attrs & WSAP_VTCORE_ATTR_TEXT) width = 1;
     if (m->pending) wrap_to_next_row(m);
-    int right = m->cols - 1;
     struct row *r = m->scr[m->y];
+    int right = row_last(m, r);
     if (width == 2 && m->cols > 1 && m->x == right && m->autowrap) {
         fill_gap(r, m->x);
         split_edges(m, r, m->x, right + 1);
         r->c[m->x] = default_blank();
         r->c[m->x].pad = true;
-        r->len = m->cols;
+        if (r->len < m->x + 1) r->len = m->x + 1;
         wrap_to_next_row(m);
         r = m->scr[m->y];
+        right = row_last(m, r);
     }
     int x = m->x;
     int span = width > right + 1 - x ? 1 : width;
@@ -461,7 +517,7 @@ static void put_glyph(struct model *m, const uint32_t *cps, int n, uint16_t attr
     if (m->insert) {
         int move = right + 1 - x - span;
         if (move > 0) memmove(r->c + x + span, r->c + x, (size_t)move * sizeof(struct cell));
-        r->len = r->len + span > m->cols ? m->cols : r->len + span;
+        if (r->len <= right) r->len = r->len + span > right + 1 ? right + 1 : r->len + span;
         repair_row(m, r, right, right + 1);
     }
     split_edges(m, r, x, x + span);
@@ -508,7 +564,7 @@ static bool extend_cluster(struct model *m, uint32_t cp, int width)
     if (!(width == 0 || after_join || is_ri(cp) || joins(cp, width)))
         return false;
     struct row *r = m->scr[m->y];
-    int x = m->pending ? m->cols - 1 : m->x - 1;
+    int x = m->pending ? row_last(m, r) : m->x - 1;
     struct cell *prev = NULL;
     if (x >= 0 && x < r->len) {
         if (x > 0 && r->c[x].width == 0) x--;
@@ -537,7 +593,7 @@ static bool extend_cluster(struct model *m, uint32_t cp, int width)
     put_glyph(m, cps, n, (uint16_t)(old.attrs & ~(WSAP_VTCORE_ATTR_EMOJI | WSAP_VTCORE_ATTR_TEXT)));
     m->insert = insert;
     r = m->scr[m->y];
-    x = m->pending ? m->cols - 1 : m->x - 1;
+    x = m->pending ? row_last(m, r) : m->x - 1;
     if (x > 0 && r->c[x].width == 0) x--;
     r->c[x].fg = old.fg;
     r->c[x].bg = old.bg;
@@ -600,6 +656,7 @@ static void move_to(struct model *m, int x, int y)
     m->pending = false;
     m->x = x < 0 ? 0 : x >= m->cols ? m->cols - 1 : x;
     m->y = y < 0 ? 0 : y >= m->rows ? m->rows - 1 : y;
+    clamp_cursor(m);
 }
 
 static void move_v(struct model *m, int n, bool col0)
@@ -693,21 +750,26 @@ static void delete_chars(struct model *m, int n)
 {
     struct row *r = m->scr[m->y];
     int x = m->x, cols = m->cols;
-    if (n > cols - x) n = cols - x;
+    int right = row_last(m, r) + 1;
+    /* DECDC can put the column past the visible cells. They do not move. */
+    if (x >= right) return;
+    if (n > right - x) n = right - x;
     int len = r->len;
     split_edges(m, r, x, x + n);
-    if (len > x + n) {
-        memmove(r->c + x, r->c + x + n, (size_t)(len - x - n) * sizeof(struct cell));
-        for (int i = len - n; i < len; i++) r->c[i] = default_blank();
-        r->len = len - n;
-    } else if (len > x) {
-        row_cut(r, x, cols);
+    int bound = len < right ? len : right;
+    if (bound > x + n) {
+        memmove(r->c + x, r->c + x + n, (size_t)(bound - x - n) * sizeof(struct cell));
+        for (int i = bound - n; i < bound; i++) r->c[i] = default_blank();
+        if (len <= right) r->len = len - n;
+    } else if (bound > x) {
+        if (len <= right) row_cut(r, x, cols);
+        else for (int i = x; i < bound; i++) r->c[i] = default_blank();
     }
     if (!pristine(m)) {
-        int from = cols - n < x ? x : cols - n;
+        int from = right - n < x ? x : right - n;
         fill_gap(r, from);
-        for (int i = from; i < cols; i++) r->c[i] = blank(m->pen.fg, m->pen.bg);
-        r->len = cols;
+        for (int i = from; i < right; i++) r->c[i] = blank(m->pen.fg, m->pen.bg);
+        if (r->len < right) r->len = right;
     }
     r->wrapped = false;
     repair_row(m, r, x - 1, len);
@@ -717,7 +779,9 @@ static void insert_chars(struct model *m, int n)
 {
     struct row *r = m->scr[m->y];
     int x = m->x, cols = m->cols;
-    if (n > cols - x) n = cols - x;
+    int right = row_last(m, r) + 1;
+    if (x >= right) return;
+    if (n > right - x) n = right - x;
     fill_gap(r, x);
     int len = r->len;
     if (x > 0 && r->c[x].width == 0) {
@@ -726,15 +790,17 @@ static void insert_chars(struct model *m, int n)
     }
     if (len > x) {
         int move = len - x;
-        if (move > cols - x - n) move = cols - x - n;
+        if (move > right - x - n) move = right - x - n;
         if (move > 0) memmove(r->c + x + n, r->c + x, (size_t)move * sizeof(struct cell));
     }
     for (int i = x; i < x + n; i++) r->c[i] = blank(m->pen.fg, m->pen.bg);
-    int new_len = len + n > cols ? cols : len + n;
-    if (pristine(m) && len <= x) new_len = len;
-    else if (new_len < x + n) new_len = x + n;
-    for (int i = new_len; i < cols; i++) r->c[i] = default_blank();
-    r->len = new_len;
+    if (len <= right) {
+        int new_len = len + n > right ? right : len + n;
+        if (pristine(m) && len <= x) new_len = len;
+        else if (new_len < x + n) new_len = x + n;
+        for (int i = new_len; i < cols; i++) r->c[i] = default_blank();
+        r->len = new_len;
+    }
     r->wrapped = false;
     int end = x + n + 1 > len + 1 ? x + n + 1 : len + 1;
     repair_row(m, r, x - 1, end);
@@ -1162,6 +1228,7 @@ static struct row *row_resized(const struct row *r, int old_cols, int cols)
     memcpy(n->c, r->c, (size_t)keep * sizeof(struct cell));
     n->len = r->len < cols ? r->len : cols;
     n->wrapped = r->wrapped;
+    n->size = r->size;
     return n;
 }
 
@@ -1174,6 +1241,8 @@ struct reflow {
     bool cursor_set, saved_set, prompt_set;
     int cursor_x, cursor_y, saved_x, saved_y, prompt;
     bool pending;
+    /* The line size of the row that the next end finishes. */
+    uint8_t size;
 };
 
 static void reflow_end_row(struct reflow *r, bool wrapped)
@@ -1181,6 +1250,8 @@ static void reflow_end_row(struct reflow *r, bool wrapped)
     if (!r->cur) r->cur = row_new(r->cols);
     r->cur->len = r->x > r->cols ? r->cols : r->x;
     r->cur->wrapped = wrapped;
+    r->cur->size = r->size;
+    r->size = 0;
     if (r->count == r->cap) {
         r->cap = r->cap ? r->cap * 2 : 64;
         r->out = realloc(r->out, (size_t)r->cap * sizeof(*r->out));
@@ -1311,7 +1382,7 @@ static void reflow(struct model *m, int cols, int rows)
     int old_cols = m->cols, old_rows = m->rows;
     int active = old_rows;
     while (active > m->y + 1 && active > m->saved.y + 1 &&
-           !m->scr[active - 1]->len && !m->scr[active - 1]->wrapped)
+           !m->scr[active - 1]->len && !m->scr[active - 1]->wrapped && !m->scr[active - 1]->size)
         active--;
     struct reflow r = { .cols = cols, .rows = rows };
     int total_in = m->hist_len + active;
@@ -1322,8 +1393,9 @@ static void reflow(struct model *m, int cols, int rows)
         const struct row *src = i < m->hist_len ? m->hist[i] : m->scr[y];
         int len = src->len;
         bool wrapped = src->wrapped;
-        if (m->prompt >= 0 && y >= m->prompt) {
-            if (r.x) reflow_end_row(&r, false);
+        bool keep_row = m->prompt >= 0 && y >= m->prompt;
+        if (keep_row || src->size) {
+            if (r.x) reflow_end_row(&r, !keep_row);
             if (y == m->prompt) {
                 r.prompt = r.count;
                 r.prompt_set = true;
@@ -1342,6 +1414,7 @@ static void reflow(struct model *m, int cols, int rows)
             int keep = len > cols ? cols : len;
             memcpy(reflow_dst(&r), src->c, (size_t)keep * sizeof(struct cell));
             r.x = keep;
+            r.size = src->size;
             reflow_end_row(&r, wrapped);
             continue;
         }
@@ -1405,6 +1478,7 @@ static void reflow(struct model *m, int cols, int rows)
     m->x = r.cursor_x < cols ? r.cursor_x : cols - 1;
     m->y = r.cursor_y - start;
     m->pending = r.pending && m->autowrap;
+    clamp_cursor(m);
     if (m->prompt >= 0) {
         if (!r.prompt_set || r.prompt - start >= rows) m->prompt = -1;
         else m->prompt = r.prompt > start ? r.prompt - start : 0;
@@ -1475,6 +1549,7 @@ static void resize_plain(struct model *m, int cols, int rows)
     if (m->y >= rows) m->y = rows - 1;
     if (m->saved.x >= cols) m->saved.x = cols - 1;
     if (m->saved.y >= rows) m->saved.y = rows - 1;
+    clamp_cursor(m);
 }
 
 static bool resize(struct model *m, int cols, int rows)
@@ -1524,6 +1599,7 @@ static void set_alternate(struct model *m, bool on)
         m->y = m->normal_cursor.y;
         m->pending = m->normal_cursor.pending;
         resize(m, cols, rows);
+        clamp_cursor(m);
     }
     m->top = 0;
     m->bottom = m->rows - 1;
@@ -1814,6 +1890,7 @@ static void csi_dispatch(struct model *m, unsigned char final)
             while (x > 0 && x < m->cols - 1 && !m->tabs[x]) x += dir;
             m->x = x < 0 ? 0 : x >= m->cols ? m->cols - 1 : x;
         }
+        clamp_cursor(m);
         m->pending = false;
         break;
     }
@@ -2065,6 +2142,7 @@ static void control(struct model *m, unsigned char c)
         int x = m->x + 1;
         while (x < m->cols - 1 && !m->tabs[x]) x++;
         m->x = x < m->cols ? x : m->cols - 1;
+        clamp_cursor(m);
         break;
     }
     case 0x0e: m->gl = 1; break;
@@ -2178,6 +2256,14 @@ static void feed_byte(struct model *m, unsigned char c)
         break;
     case HASH:
         m->state = GROUND;
+        if (c >= '3' && c <= '6') {
+            static const uint8_t sizes[] = {
+                WSAP_VTCORE_LINE_DOUBLE_TOP, WSAP_VTCORE_LINE_DOUBLE_BOTTOM,
+                WSAP_VTCORE_LINE_SINGLE, WSAP_VTCORE_LINE_DOUBLE_WIDTH,
+            };
+            m->scr[m->y]->size = sizes[c - '3'];
+            clamp_cursor(m);
+        }
         if (c == '8') {
             for (int y = 0; y < m->rows; y++) {
                 struct row *r = m->scr[y];
@@ -2187,6 +2273,7 @@ static void feed_byte(struct model *m, unsigned char c)
                 }
                 r->len = m->cols;
                 r->wrapped = false;
+                r->size = WSAP_VTCORE_LINE_SINGLE;
             }
             move_to(m, 0, 0);
         }
@@ -2325,8 +2412,10 @@ const struct model_cell *model_row(const struct model *m, int row)
         mm->out[row] = calloc((size_t)m->cols, sizeof(*mm->out[row]));
         if (!mm->out[row]) abort();
     }
+    int shown = r->size ? visible_len(r, m->cols) : m->cols;
     for (int x = 0; x < m->cols; x++) {
-        const struct cell *c = &r->c[x];
+        struct cell hidden = default_blank();
+        const struct cell *c = x < shown ? &r->c[x] : &hidden;
         struct model_cell *o = &mm->out[row][x];
         memcpy(o->cp, c->cp, sizeof(o->cp));
         o->n = c->n;
@@ -2337,6 +2426,13 @@ const struct model_cell *model_row(const struct model *m, int row)
         o->ul = c->ul;
     }
     return mm->out[row];
+}
+
+enum wsap_vtcore_line_size model_row_size(const struct model *m, int row)
+{
+    int hist = model_history(m);
+    if (row < hist || row - hist >= m->rows) return WSAP_VTCORE_LINE_SINGLE;
+    return (enum wsap_vtcore_line_size)m->scr[row - hist]->size;
 }
 
 struct wsap_vtcore_cursor model_cursor(const struct model *m)

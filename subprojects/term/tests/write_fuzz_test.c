@@ -47,6 +47,15 @@ static bool same(const struct pair *p, int seed, int step)
         copied &= wsap_vtcore_snapshot_update(p->snap_bytes, bytes);
         assert(copied);
         for (int y = 0; same && y < rows; y++) {
+            if (wsap_vtcore_snapshot_row_size(p->snap_bulk, y) !=
+                wsap_vtcore_snapshot_row_size(p->snap_bytes, y)) {
+                if (p->verbose)
+                    fprintf(stderr, "seed %d step %d: page %d row %d: line size %d vs %d\n",
+                            seed, step, page, y, (int)wsap_vtcore_snapshot_row_size(p->snap_bulk, y),
+                            (int)wsap_vtcore_snapshot_row_size(p->snap_bytes, y));
+                same = false;
+                break;
+            }
             const struct wsap_vtcore_cell *ra = wsap_vtcore_snapshot_row(p->snap_bulk, y);
             const struct wsap_vtcore_cell *rb = wsap_vtcore_snapshot_row(p->snap_bytes, y);
             const wsap_vtcore_color *ua = wsap_vtcore_snapshot_row_underline_colors(p->snap_bulk, y);

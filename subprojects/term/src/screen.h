@@ -25,10 +25,15 @@ void wsap_vtcore_screen_selective_erase_rect(struct wsap_vtcore *t, const struct
 void wsap_vtcore_screen_delete_chars(struct wsap_vtcore *t, int count);
 void wsap_vtcore_screen_insert_chars(struct wsap_vtcore *t, int count);
 
+/* The cells of view row y. A double-size row shows its hidden cells as
+ * blanks. */
 const struct cell *wsap_vtcore_screen_view_row(const struct wsap_vtcore *t, int y);
 uint64_t wsap_vtcore_screen_view_row_key(const struct wsap_vtcore *t, int y);
-/* Write the keys of all view rows. keys holds t->rows entries. */
-void wsap_vtcore_screen_view_row_keys(const struct wsap_vtcore *t, uint64_t *keys);
+/* Write the keys and the line sizes (RF_LINE_SIZE bits) of all view rows.
+ * keys and sizes hold t->rows entries. A history row is single width. */
+void wsap_vtcore_screen_view_row_keys(const struct wsap_vtcore *t, uint64_t *keys, uint8_t *sizes);
+/* Make all rows of the screen single width. */
+void wsap_vtcore_screen_reset_line_sizes(struct wsap_vtcore *t);
 bool wsap_vtcore_selection_view_spans(const struct wsap_vtcore *t, int *c0, int *c1);
 
 int wsap_vtcore_screen_history_rows(const struct wsap_vtcore *t);
@@ -84,6 +89,52 @@ static inline int phys_row(const struct wsap_vtcore *t, int y)
 {
     int p = t->scr.top + y;
     return p >= t->scr.rows ? p - t->scr.rows : p;
+}
+
+/* A double-size row (DECDWL, DECDHL) shows only its first line_cols(cols)
+ * cells. Text, wrap, cursor motion, and tabs stop at line_last_col(cols).
+ * The row keeps the cells after that column, but they are hidden. */
+static inline int line_cols(int cols)
+{
+    return cols > 1 ? cols / 2 : 1;
+}
+
+static inline int line_last_col(int cols)
+{
+    return line_cols(cols) - 1;
+}
+
+static inline bool row_is_double(const struct wsap_vtcore *t, int y)
+{
+    return (t->scr.slot[phys_row(t, y)].flags & RF_LINE_SIZE) != 0;
+}
+
+/* The last column that the cursor can reach on its row. */
+static inline int cursor_last_col(const struct wsap_vtcore *t)
+{
+    return row_is_double(t, t->cursor_y) ? line_last_col(t->cols) : t->cols - 1;
+}
+
+/* Keep the cursor on the columns that its row shows. Call this after the
+ * cursor moves to another row, or after another row moves under it. Other
+ * code can then trust that the cursor is on a visible column. */
+static inline void line_clamp_cursor(struct wsap_vtcore *t)
+{
+    int last = line_last_col(t->cols);
+    if (WSAP_VTCORE_EXPECT(t->cursor_x > last, 0) && row_is_double(t, t->cursor_y))
+        t->cursor_x = last;
+}
+
+/* The number of cells that a double-size row shows, of len cells. A wide
+ * character that the edge cuts is not shown. */
+static inline int line_visible_len(const struct cell *cells, int len, int cols)
+{
+    int n = line_cols(cols);
+    if (len <= n)
+        return len;
+    if (cells[n - 1].flags & CELL_WIDE)
+        n--;
+    return n;
 }
 
 #if defined(WSAP_VTCORE_KERNEL_AVX2)
@@ -247,7 +298,9 @@ static inline struct srow *text_append_row(struct wsap_vtcore *t)
         if (row->text.cells)
             return row;
     } else if (row->len != 0 || t->cursor_x != 0 || t->cursor_y != t->rows - 1 ||
-               t->scroll_top != 0 || t->scroll_bottom != t->rows - 1 || !screen_has_history(t)) {
+               t->scroll_top != 0 || t->scroll_bottom != t->rows - 1 || !screen_has_history(t) ||
+               (row->flags & RF_LINE_SIZE)) {
+        /* A double-size row stays ROW_CELLS. The text paths assume the full width. */
         return NULL;
     }
     struct pen_attr start = pen_attr_default();
@@ -365,7 +418,8 @@ static inline void mark_row_blank(struct wsap_vtcore *t, int p)
                           ? (row->flags & RF_TAIL_PADDED) : 0;
     row->kind = ROW_CELLS;
     row->len = 0;
-    row->flags = tail_padded;
+    /* An erase in the line keeps the line size. */
+    row->flags = (uint8_t)(tail_padded | (row->flags & RF_LINE_SIZE));
     row->version++;
 }
 
@@ -438,9 +492,22 @@ static inline int erase_width(const struct wsap_vtcore *t, int p)
     return t->scr.slot[p].len > t->cols ? t->scr.slot[p].len : t->cols;
 }
 
+/* Erase a whole row, as ED does. The row becomes single width (xterm). */
 static inline void erase_row(struct wsap_vtcore *t, int p)
 {
     erase_span(t, p, 0, erase_width(t, p));
+    struct srow *row = &t->scr.slot[p];
+    if (WSAP_VTCORE_EXPECT(row->flags & RF_LINE_SIZE, 0)) {
+        row->flags &= (uint8_t)~RF_LINE_SIZE;
+        row->version++;
+    }
+}
+
+/* True when ED can skip row p: it is blank, single width, and not wrapped. */
+static inline bool row_erased(const struct wsap_vtcore *t, int p)
+{
+    const struct srow *row = &t->scr.slot[p];
+    return row->len == 0 && !(row->flags & (RF_WRAPPED | RF_LINE_SIZE));
 }
 
 static inline void clamp_selection_after_scroll(struct wsap_vtcore *t)

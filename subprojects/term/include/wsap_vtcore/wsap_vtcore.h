@@ -384,6 +384,22 @@ WSAP_VTCORE_API uint64_t wsap_vtcore_snapshot_row_key(const struct wsap_vtcore_s
 WSAP_VTCORE_API const wsap_vtcore_color *wsap_vtcore_snapshot_row_underline_colors(
     const struct wsap_vtcore_snapshot *s, int y);
 
+/* The line size of a row: DECSWL, DECDWL, and the two halves of DECDHL. */
+enum wsap_vtcore_line_size {
+    WSAP_VTCORE_LINE_SINGLE,
+    WSAP_VTCORE_LINE_DOUBLE_WIDTH,
+    WSAP_VTCORE_LINE_DOUBLE_TOP,
+    WSAP_VTCORE_LINE_DOUBLE_BOTTOM,
+};
+
+/* Return the line size of logical row y. On a row that is not single, draw
+ * only the first size.x / 2 cells (at least one), each two columns wide. The
+ * other cells are blank. A double-height row shows the top or the bottom half of each glyph
+ * at twice the height. A history row, an invalid row, and a NULL snapshot
+ * give WSAP_VTCORE_LINE_SINGLE. A change of the line size changes the row key. */
+WSAP_VTCORE_API enum wsap_vtcore_line_size wsap_vtcore_snapshot_row_size(
+    const struct wsap_vtcore_snapshot *s, int y);
+
 WSAP_VTCORE_API int wsap_vtcore_history_rows(const struct wsap_vtcore *t);
 WSAP_VTCORE_API char *wsap_vtcore_history_text(struct wsap_vtcore *t, int max_rows);
 WSAP_VTCORE_API struct wsap_vtcore_span wsap_vtcore_snapshot_row_selection(const struct wsap_vtcore_snapshot *s, int y);

@@ -65,7 +65,8 @@ void wsap_vtcore_sc_print_glyph(struct wsap_vtcore *t, uint32_t cp, int width, u
         struct srow *srow = wsap_vtcore_row(t, t->cursor_y);
         int cx = t->cursor_x;
         int len = srow->len;
-        if (WSAP_VTCORE_EXPECT(srow->kind == ROW_CELLS && cx <= len, 1)) {
+        if (WSAP_VTCORE_EXPECT(srow->kind == ROW_CELLS && !(srow->flags & RF_LINE_SIZE) &&
+                               cx <= len, 1)) {
             struct cell *row = srow->cells;
             if (WSAP_VTCORE_EXPECT(!((cx < len && (row[cx].flags & CELL_TRAIL)) ||
                                    (cx + 1 < len && (row[cx + 1].flags & CELL_TRAIL))), 1)) {
@@ -102,6 +103,14 @@ void wsap_vtcore_sc_print_glyph(struct wsap_vtcore *t, uint32_t cp, int width, u
     int cx = t->cursor_x;
     int cols = t->cols;
     int right = t->lr_margin_mode ? lr_right_limit(t) : cols - 1;
+    /* A double-size row ignores the left and right margins. Only DECLRMM
+     * resets the rows to single width, so the alternate screen can still
+     * bring one back. */
+    if (WSAP_VTCORE_EXPECT(srow->flags & RF_LINE_SIZE, 0)) {
+        right = line_last_col(cols);
+        if (cx > right)
+            cx = t->cursor_x = right;
+    }
 
     if (WSAP_VTCORE_EXPECT(width == 2 && cols > 1 && cx == right && t->autowrap, 0)) {
         wsap_vtcore_row_fill_gap(srow, cx);
@@ -120,6 +129,9 @@ void wsap_vtcore_sc_print_glyph(struct wsap_vtcore *t, uint32_t cp, int width, u
         row = row_cells(t, p);
         srow = &t->scr.slot[p];
         cx = t->cursor_x;
+        right = t->lr_margin_mode ? lr_right_limit(t) : cols - 1;
+        if (WSAP_VTCORE_EXPECT(srow->flags & RF_LINE_SIZE, 0))
+            right = line_last_col(cols);
     }
 
     int span = width > right + 1 - cx ? 1 : width;
@@ -167,6 +179,8 @@ static inline struct cell *last_written_cell(struct wsap_vtcore *t)
 {
     int right = (t->lr_margin_mode && t->cursor_x <= t->right_margin)
                     ? t->right_margin : t->cols - 1;
+    if (WSAP_VTCORE_EXPECT(row_is_double(t, t->cursor_y), 0))
+        right = line_last_col(t->cols);
     int x = t->pending_wrap ? right : t->cursor_x - 1;
     if (t->lr_margin_mode && x < t->left_margin)
         return NULL;
@@ -280,7 +294,7 @@ static void scroll_up_bce(struct wsap_vtcore *t, size_t count)
     t->full_gen++;
 }
 
-void wsap_vtcore_sc_linefeed_slow(struct wsap_vtcore *t, size_t n)
+static void linefeed_slow(struct wsap_vtcore *t, size_t n)
 {
     if (n == 0)
         return;
@@ -356,6 +370,30 @@ void wsap_vtcore_sc_linefeed_slow(struct wsap_vtcore *t, size_t n)
     }
 }
 
+/* A burst of n line feeds must leave the cursor where n single line feeds
+ * leave it. Each single line feed that lands on a double-size row moves the
+ * cursor to the last visible column. The burst passes the rows below the
+ * cursor before it scrolls, and each scroll brings a new single-width row. */
+static void linefeed_pass_double_rows(struct wsap_vtcore *t, size_t n)
+{
+    int limit = t->cursor_y > t->scroll_bottom ? t->rows - 1 : t->scroll_bottom;
+    int end = (size_t)(limit - t->cursor_y) < n ? limit : t->cursor_y + (int)n;
+    for (int y = t->cursor_y + 1; y <= end; y++) {
+        if (row_is_double(t, y)) {
+            t->cursor_x = line_last_col(t->cols);
+            return;
+        }
+    }
+}
+
+void wsap_vtcore_sc_linefeed_slow(struct wsap_vtcore *t, size_t n)
+{
+    if (WSAP_VTCORE_EXPECT(n > 1 && t->cursor_x > line_last_col(t->cols), 0))
+        linefeed_pass_double_rows(t, n);
+    linefeed_slow(t, n);
+    line_clamp_cursor(t);
+}
+
 /* A tab stops at the margin on the side it moves to, when the cursor starts
  * inside that margin. */
 static inline void tab_clamp_margins(struct wsap_vtcore *t, int before)
@@ -408,10 +446,11 @@ void wsap_vtcore_sc_tab(struct wsap_vtcore *t, int n)
     int dir = n >= 0 ? 1 : -1;
     int count = n >= 0 ? n : -n;
     if (count > t->cols) count = t->cols;
+    int max_col = cursor_last_col(t);
     if (!t->custom_tabs) {
         if (dir > 0) {
             int next = (t->cursor_x & ~7) + (count << 3);
-            t->cursor_x = next < t->cols ? next : t->cols - 1;
+            t->cursor_x = next < max_col ? next : max_col;
         } else {
             int prev = t->cursor_x > 0 ? (((t->cursor_x - 1) & ~7) - ((count - 1) << 3)) : 0;
             t->cursor_x = prev > 0 ? prev : 0;
@@ -422,7 +461,6 @@ void wsap_vtcore_sc_tab(struct wsap_vtcore *t, int n)
         if (cur) cur->version++;
         return;
     }
-    int max_col = t->cols - 1;
     int cur_col = t->cursor_x;
     if (dir > 0) {
         int max_w = max_col >> 6;
@@ -739,6 +777,23 @@ void wsap_vtcore_sc_decaln(struct wsap_vtcore *t)
         srow->version++;
     }
     sc_move(t, 0, 0);
+}
+
+void wsap_vtcore_sc_line_size(struct wsap_vtcore *t, uint8_t size)
+{
+    /* xterm ignores the line size controls while DECLRMM is set. */
+    if (t->lr_margin_mode)
+        return;
+    int p = phys_row(t, t->cursor_y);
+    struct srow *row = &t->scr.slot[p];
+    if ((row->flags & RF_LINE_SIZE) == size)
+        return;
+    if (size)
+        row_cells(t, p);
+    /* The cells after the visible columns stay. DECSWL shows them again. */
+    row->flags = (uint8_t)((row->flags & ~RF_LINE_SIZE) | size);
+    row->version++;
+    line_clamp_cursor(t);
 }
 
 void wsap_vtcore_sc_reset(struct wsap_vtcore *t)
