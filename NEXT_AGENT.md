@@ -16,6 +16,31 @@ Read these first: `subprojects/term/docs/testing.md` (test layers),
 `subprojects/term/docs/correctness-audit.md` (faults found and fixed), and
 `benchmarks/term-line-streams.md` (the performance pass and its method).
 
+## 1. Finish three unmerged feature worktrees
+
+Three agents stopped at a usage limit with work that is not committed. Each
+worktree is based on `1cb21cd`; `main` is now ahead of it. Check each one,
+finish it, run `meson test`, `write-fuzz-test`, and `model-test`, then rebase
+or cherry-pick it onto `main`:
+
+- `../wsap_term-wt/linesize`: double-width and double-height
+  lines (DECDWL, DECDHL, DECSWL). Uses `srow.flags` bits 0x20 and 0x40.
+- `../wsap_term-wt/osc`: OSC 133 prompt marks with a
+  host API, OSC 9;4 progress, OSC 9;9, and OSC 1337 CurrentDir/SetUserVar.
+  Uses `srow.flags` bits 0x02 and 0x80.
+- `../wsap_term-wt/charsets`: G0 to G3, LS2/LS3, SS2/SS3,
+  DEC Supplemental and Technical sets, and the NRCS sets.
+
+## 2. App follow-ups for the new core features
+
+- Call `wsap_vtcore_set_cell_pixels` and `wsap_vtcore_set_color_scheme`.
+  Until then, `CSI 14 t` and `CSI 16 t` report zero pixels.
+- Draw blink, conceal, and underline color
+  (`wsap_vtcore_snapshot_row_underline_colors`).
+- `src/terminal/view.c` sends arrow keys for the wheel on the alternate
+  screen without checking mode 1007, and its 64-byte buffer is too small
+  for more than 21 lines.
+
 ## 3. Run NEON code in CI
 
 The `macos-14` entry of the `core` matrix in `term.yml` runs on arm64, so
