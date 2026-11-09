@@ -41,11 +41,24 @@ $(TEST_BUILD_DIR)/build.ninja:
 release: $(BUILD_DIR)/build.ninja
 	meson compile -C $(BUILD_DIR) install-targets
 
-install: release
-	@printf "Install wsap_term locally to %s? [y/N] " "$(PREFIX)"; \
+# Setup flags apply only to a new build directory, so give an existing one the
+# prefix that the prompt shows. Configure only on a change: meson configure
+# always regenerates the build, and the prefix is compiled into the binary.
+# Install only what install-targets built. Without --no-rebuild, meson install
+# builds all targets, tests included. The app links yasl and wsap_vtcore
+# statically, so their libraries and headers are not installed.
+install: $(BUILD_DIR)/build.ninja
+	@current=$$(meson introspect --buildoptions "$(BUILD_DIR)" | \
+		python3 -c 'import json, sys; print(next(o["value"] for o in json.load(sys.stdin) if o["name"] == "prefix"))'); \
+	if [ "$$current" != "$(abspath $(PREFIX))" ]; then \
+		echo "Change the prefix of $(BUILD_DIR) from $$current to $(abspath $(PREFIX))."; \
+		meson configure "$(BUILD_DIR)" --prefix="$(abspath $(PREFIX))"; \
+	fi
+	meson compile -C $(BUILD_DIR) install-targets
+	@printf "Install wsap_term locally to %s? [y/N] " "$(abspath $(PREFIX))"; \
 	read confirm || confirm=; \
 	case "$$confirm" in \
-		[yY]|[yY][eE][sS]) meson install -C "$(BUILD_DIR)" ;; \
+		[yY]|[yY][eE][sS]) meson install -C "$(BUILD_DIR)" --no-rebuild --skip-subprojects ;; \
 		*) echo "Installation cancelled."; exit 1 ;; \
 	esac
 

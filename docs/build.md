@@ -34,6 +34,10 @@ make BUILD_DIR=build-portable MESON_SETUP_FLAGS="--prefix=$HOME/.local --buildty
 
 Setup flags apply to new build directories.
 Use `meson configure BUILD_DIR` to change an existing build.
+`make install` sets the prefix of the build to `PREFIX` before it builds.
+It builds and installs only the app. It does not build the tests.
+It does not install the yasl and wsap_vtcore libraries or headers.
+A `--prefix` in `MESON_SETUP_FLAGS` does not change where `make install` installs.
 
 | Meson option | Effect |
 | --- | --- |
