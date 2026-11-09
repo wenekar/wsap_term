@@ -582,6 +582,9 @@ static void terminal_free(struct terminal *tw)
     if (tw->preview_release && tw->preview_state)
         tw->preview_release(tw->preview_state);
     free(tw->menu_theme_items);
+    if (tw->view.accessibility_timer)
+        yasl_loop_del_timer(window_host(tw->window)->loop,
+                            tw->view.accessibility_timer);
     free(tw->view.accessibility_text);
     wsap_vtcore_snapshot_free(tw->snapshot);
     free(tw->applied_font_family);

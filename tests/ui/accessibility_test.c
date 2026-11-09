@@ -73,6 +73,67 @@ static void text_copy_and_password(void)
     ui_accessibility_tree_destroy(&tree);
 }
 
+static struct {
+    const char *value;
+    size_t caret;
+    size_t selection_start;
+    size_t selection_end;
+} text_source;
+
+static bool text_accessibility(const struct ui_widget *widget,
+                               struct ui_accessibility_node_spec *out)
+{
+    (void)widget;
+    out->role = UI_ACCESSIBILITY_ROLE_TERMINAL;
+    out->value = text_source.value;
+    out->caret_offset = text_source.caret;
+    out->selection_start = text_source.selection_start;
+    out->selection_end = text_source.selection_end;
+    return true;
+}
+
+static const struct ui_widget_ops TEXT_OPS = {
+    .name = "text",
+    .accessibility = text_accessibility,
+};
+
+/* A rebuild with an unchanged value gives the same text and offsets as a
+ * new tree, also for invalid UTF-8 and for offsets inside a character. */
+static void rebuild_keeps_text(void)
+{
+    struct ui_widget widget = {0};
+    ui_widget_init(&widget, &TEXT_OPS, NULL);
+    uint64_t id = ui_widget_accessibility_id(&widget);
+    struct ui_accessibility_tree tree = {0};
+    const char *values[] = { "a😀z\nné", "a\xff" "😀z" };
+    for (size_t v = 0; v < 2; v++) {
+        size_t length = strlen(values[v]);
+        for (size_t caret = 0; caret <= length + 1; caret++) {
+            text_source.value = values[v];
+            text_source.caret = caret;
+            text_source.selection_start = caret / 2;
+            text_source.selection_end = caret == length + 1 ? SIZE_MAX : caret;
+            struct ui_accessibility_tree fresh = {0};
+            assert(ui_accessibility_tree_build(&widget, &fresh));
+            assert(ui_accessibility_tree_build(&widget, &tree));
+            const struct ui_accessibility_node *want =
+                ui_accessibility_tree_find(&fresh, id);
+            const struct ui_accessibility_node *got =
+                ui_accessibility_tree_find(&tree, id);
+            assert(want && got && !strcmp(want->value, got->value));
+            assert(got->caret_offset == want->caret_offset);
+            assert(got->selection_start == want->selection_start);
+            assert(got->selection_end == want->selection_end);
+            ui_accessibility_tree_destroy(&fresh);
+        }
+    }
+    text_source.value = "new";
+    assert(ui_accessibility_tree_build(&widget, &tree));
+    assert(!strcmp(ui_accessibility_tree_find(&tree, id)->value, "new"));
+    ui_accessibility_tree_destroy(&tree);
+    ui_widget_destroy(&widget);
+}
+
 static bool activated(struct ui_widget *widget, const struct ui_action *action,
                       void *userdata)
 {
@@ -154,6 +215,7 @@ int main(void)
 {
     tree_ids_and_reuse();
     text_copy_and_password();
+    rebuild_keeps_text();
     live_actions_and_modal_scope();
     puts("PASS: accessibility tree and actions");
     return 0;

@@ -278,6 +278,7 @@ Bounds start at the surface's top-left corner.
 Text offsets count UTF-8 bytes.
 The tree removes invalid UTF-8 bytes before it copies strings.
 It updates text offsets to match the copied value.
+A rebuild moves an unchanged value from the previous tree and does not copy it again.
 Widgets can supply help text and an invalid state.
 Providers receive the same tree on every platform.
 The provider API uses an opaque native handle and a small set of callbacks.
@@ -298,6 +299,14 @@ Actions cannot reach controls behind the modal.
 Password nodes do not copy their value or text offsets into the tree.
 
 Each drawn frame publishes accessibility changes without a UI damage check.
+A window publishes only while its provider is active.
+On Linux, the provider is active when an assistive technology sets
+`IsEnabled` or `ScreenReaderEnabled` in `org.a11y.Status`.
+Set `WSAP_ACCESSIBILITY=1` for a client that does not set these properties.
+When a client starts to listen, the provider sends an empty action request.
+The window then draws a frame, and the frame publishes the full tree.
+The terminal view builds its text at most once each 100 ms.
+A timer sends the last change of a burst of output.
 A terminal text change does not need to change the UI scene.
 Removed or detached macOS elements return empty results.
 They cannot run actions.

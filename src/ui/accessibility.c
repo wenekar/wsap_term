@@ -105,8 +105,24 @@ static bool tree_reserve(struct ui_accessibility_tree *tree, size_t count)
     return true;
 }
 
-bool ui_accessibility_tree_add(struct ui_accessibility_tree *tree,
-                               const struct ui_accessibility_node_spec *spec)
+/* The largest character boundary at or before offset. The text is valid
+ * UTF-8, so this is the sanitized offset. */
+static size_t boundary_offset(const char *text, size_t length, size_t offset)
+{
+    if (offset >= length)
+        return length;
+    while (offset > 0 && ((unsigned char)text[offset] & 0xc0) == 0x80)
+        offset--;
+    return offset;
+}
+
+/* A value equal to the copy in the previous tree moves to the new node.
+ * The copy is valid UTF-8, so the sanitized value is the same, and each
+ * offset needs no decode. A terminal gives a long value at each frame, and
+ * the value changes much less often. */
+static bool tree_add(struct ui_accessibility_tree *tree,
+                     const struct ui_accessibility_node_spec *spec,
+                     struct ui_accessibility_tree *previous)
 {
     if (!tree || !spec || !spec->id ||
         ui_accessibility_tree_find(tree, spec->id) ||
@@ -115,6 +131,7 @@ bool ui_accessibility_tree_add(struct ui_accessibility_tree *tree,
         !index_reserve(tree, tree->count + 1))
         return false;
 
+    bool password = spec->states & UI_ACCESSIBILITY_STATE_PASSWORD;
     struct ui_accessibility_node node = {
         .id = spec->id,
         .parent_id = spec->parent_id,
@@ -123,21 +140,33 @@ bool ui_accessibility_tree_add(struct ui_accessibility_tree *tree,
         .states = spec->states,
         .actions = spec->actions,
         .bounds = spec->bounds,
-        .caret_offset = spec->states & UI_ACCESSIBILITY_STATE_PASSWORD
-            ? 0 : sanitized_offset(spec->value, spec->caret_offset),
-        .selection_start = spec->states & UI_ACCESSIBILITY_STATE_PASSWORD
-            ? 0 : sanitized_offset(spec->value, spec->selection_start),
-        .selection_end = spec->states & UI_ACCESSIBILITY_STATE_PASSWORD
-            ? 0 : sanitized_offset(spec->value, spec->selection_end),
     };
+    struct ui_accessibility_node *old = previous && spec->value && !password
+        ? (struct ui_accessibility_node *)ui_accessibility_tree_find(previous,
+                                                                     spec->id)
+        : NULL;
+    if (old && old->value && strcmp(old->value, spec->value) == 0) {
+        size_t length = strlen(old->value);
+        node.value = old->value;
+        old->value = NULL;
+        node.caret_offset = boundary_offset(node.value, length,
+                                            spec->caret_offset);
+        node.selection_start = boundary_offset(node.value, length,
+                                               spec->selection_start);
+        node.selection_end = boundary_offset(node.value, length,
+                                             spec->selection_end);
+    } else if (!password) {
+        node.caret_offset = sanitized_offset(spec->value, spec->caret_offset);
+        node.selection_start = sanitized_offset(spec->value,
+                                                spec->selection_start);
+        node.selection_end = sanitized_offset(spec->value, spec->selection_end);
+        node.value = copy_string(spec->value);
+    }
     node.name = copy_string(spec->name);
     node.description = copy_string(spec->description);
-    node.value = copy_string(
-        spec->states & UI_ACCESSIBILITY_STATE_PASSWORD ? NULL : spec->value);
     if ((spec->name && !node.name) ||
         (spec->description && !node.description) ||
-        (spec->value &&
-         !(spec->states & UI_ACCESSIBILITY_STATE_PASSWORD) && !node.value)) {
+        (spec->value && !password && !node.value)) {
         free_node(&node);
         return false;
     }
@@ -146,6 +175,12 @@ bool ui_accessibility_tree_add(struct ui_accessibility_tree *tree,
     tree->nodes[tree->count++] = node;
     tree->id_index[slot] = tree->count;
     return true;
+}
+
+bool ui_accessibility_tree_add(struct ui_accessibility_tree *tree,
+                               const struct ui_accessibility_node_spec *spec)
+{
+    return tree_add(tree, spec, NULL);
 }
 
 void ui_accessibility_tree_clear(struct ui_accessibility_tree *tree)
@@ -223,6 +258,7 @@ static bool widget_in_modal_scope(const struct ui_widget *widget,
 static bool build_widget(const struct ui_widget *widget, uint64_t parent_id,
                          uint32_t *parent_order,
                          struct ui_accessibility_tree *tree,
+                         struct ui_accessibility_tree *previous,
                          const struct ui_widget *modal)
 {
     if (!widget_visible(widget) || !widget_in_modal_scope(widget, modal))
@@ -273,13 +309,14 @@ static bool build_widget(const struct ui_widget *widget, uint64_t parent_id,
         spec.id = id;
         spec.parent_id = parent_id;
         spec.order = (*parent_order)++;
-        if (!ui_accessibility_tree_add(tree, &spec))
+        if (!tree_add(tree, &spec, previous))
             return false;
     }
 
     for (const struct ui_widget *child = widget->first_child; child;
          child = child->next_sibling)
-        if (!build_widget(child, child_parent, child_order, tree, modal))
+        if (!build_widget(child, child_parent, child_order, tree, previous,
+                          modal))
             return false;
 
     if ((!modal || widget_is_ancestor(modal, widget)) && ops &&
@@ -292,7 +329,7 @@ static bool build_widget(const struct ui_widget *widget, uint64_t parent_id,
                 return false;
             child.parent_id = child_parent;
             child.order = (*child_order)++;
-            if (!ui_accessibility_tree_add(tree, &child))
+            if (!tree_add(tree, &child, previous))
                 return false;
         }
     }
@@ -304,14 +341,17 @@ bool ui_accessibility_tree_build(const struct ui_widget *root,
 {
     if (!tree)
         return false;
-    ui_accessibility_tree_clear(tree);
+    /* Keep the previous tree until the build ends. Unchanged values move
+     * from it to the new tree. */
+    struct ui_accessibility_tree previous = *tree;
+    *tree = (struct ui_accessibility_tree){0};
     uint32_t root_order = 0;
     const struct ui_widget *modal = modal_in_tree(root);
-    if (!build_widget(root, 0, &root_order, tree, modal)) {
+    bool built = build_widget(root, 0, &root_order, tree, &previous, modal);
+    ui_accessibility_tree_destroy(&previous);
+    if (!built)
         ui_accessibility_tree_clear(tree);
-        return false;
-    }
-    return true;
+    return built;
 }
 
 static bool dispatch_widget_action(

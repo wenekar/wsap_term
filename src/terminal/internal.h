@@ -53,6 +53,10 @@ struct terminal_view {
     size_t accessibility_selection_end;
     uint64_t accessibility_version;
     const struct wsap_vtcore *accessibility_term;
+    /* The time of the last text build, and the timer that sends the text
+     * that a burst of output left behind. */
+    uint64_t accessibility_built_ms;
+    uint64_t accessibility_timer;
     bool accessibility_text_valid;
     struct terminal_preedit preedit;
     float scroll_remainder;

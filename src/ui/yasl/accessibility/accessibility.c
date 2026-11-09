@@ -11,6 +11,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define A11Y_BUS_NAME "org.a11y.Bus"
+#define A11Y_BUS_PATH "/org/a11y/bus"
+#define A11Y_STATUS_IFACE "org.a11y.Status"
 #define ATSPI_ROOT_PATH "/org/a11y/atspi/accessible/root"
 #define ATSPI_NULL_PATH "/org/a11y/atspi/null"
 #define DBUS_PROPERTIES_IFACE "org.freedesktop.DBus.Properties"
@@ -202,6 +205,15 @@ struct provider_server
     struct provider_window *windows;
     int registry_id;
     bool stopping;
+    /* The session bus watches org.a11y.Status. An assistive technology sets
+     * IsEnabled or ScreenReaderEnabled. While both are false, no client
+     * listens, and the windows do not publish. WSAP_ACCESSIBILITY=1 sets
+     * always_on for clients that do not set the status. */
+    GDBusConnection *session;
+    guint status_subscription;
+    bool status_enabled;
+    bool screen_reader_enabled;
+    bool always_on;
 };
 
 static struct provider_server server = {
@@ -2068,22 +2080,143 @@ static GVariant *call_sync(GDBusConnection *connection, const char *name,
         G_DBUS_CALL_FLAGS_NONE, 250, NULL, error);
 }
 
-static bool connect_atspi_bus(void)
+/* Ask each window for a new snapshot. A window publishes only on a frame,
+ * so an idle window would keep its old tree after a client starts. The
+ * request has no node and no action. */
+static void request_snapshots(void)
+{
+    GPtrArray *owners = g_ptr_array_new();
+    pthread_mutex_lock(&server.lock);
+    for (struct provider_window *w = server.windows; w; w = w->next)
+    {
+        if (w->detaching || !w->action_sink)
+            continue;
+        w->active_sinks++;
+        g_ptr_array_add(owners, w);
+    }
+    pthread_mutex_unlock(&server.lock);
+
+    const struct ui_accessibility_action_request refresh = {0};
+    for (guint i = 0; i < owners->len; i++)
+    {
+        struct provider_window *w = g_ptr_array_index(owners, i);
+        w->action_sink(w->action_userdata, &refresh);
+    }
+
+    pthread_mutex_lock(&server.lock);
+    for (guint i = 0; i < owners->len; i++)
+    {
+        struct provider_window *w = g_ptr_array_index(owners, i);
+        w->active_sinks--;
+        if (w->detaching && !w->active_sinks)
+            pthread_cond_broadcast(&server.idle);
+    }
+    pthread_mutex_unlock(&server.lock);
+    g_ptr_array_unref(owners);
+}
+
+/* Apply org.a11y.Status properties. A reset clears the values that the
+ * properties do not give. */
+static void apply_status(GVariant *properties, bool reset)
+{
+    gboolean value;
+    pthread_mutex_lock(&server.lock);
+    bool was = server.status_enabled || server.screen_reader_enabled;
+    if (reset)
+        server.status_enabled = server.screen_reader_enabled = false;
+    if (g_variant_lookup(properties, "IsEnabled", "b", &value))
+        server.status_enabled = value;
+    if (g_variant_lookup(properties, "ScreenReaderEnabled", "b", &value))
+        server.screen_reader_enabled = value;
+    bool now = server.status_enabled || server.screen_reader_enabled;
+    pthread_mutex_unlock(&server.lock);
+    if (!was && now)
+        request_snapshots();
+}
+
+static void read_status(GDBusConnection *session)
 {
     GError *error = NULL;
-    GDBusConnection *session = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
-    if (!session)
+    GVariant *result = call_sync(
+        session, A11Y_BUS_NAME, A11Y_BUS_PATH, DBUS_PROPERTIES_IFACE, "GetAll",
+        g_variant_new("(s)", A11Y_STATUS_IFACE), G_VARIANT_TYPE("(a{sv})"),
+        &error);
+    if (!result)
     {
         g_clear_error(&error);
-        return false;
+        return;
     }
+    GVariant *properties = g_variant_get_child_value(result, 0);
+    apply_status(properties, true);
+    g_variant_unref(properties);
+    g_variant_unref(result);
+}
+
+static void on_status_changed(GDBusConnection *connection, const gchar *sender,
+                              const gchar *path, const gchar *interface,
+                              const gchar *signal, GVariant *parameters,
+                              gpointer data)
+{
+    (void)sender;
+    (void)path;
+    (void)interface;
+    (void)signal;
+    (void)data;
+    if (!g_variant_is_of_type(parameters, G_VARIANT_TYPE("(sa{sv}as)")))
+        return;
+    const char *changed_interface = NULL;
+    GVariant *changed = NULL;
+    GVariant *invalidated = NULL;
+    g_variant_get(parameters, "(&s@a{sv}@as)", &changed_interface, &changed,
+                  &invalidated);
+    if (strcmp(changed_interface, A11Y_STATUS_IFACE) == 0)
+    {
+        if (g_variant_n_children(invalidated))
+            read_status(connection);
+        else
+            apply_status(changed, false);
+    }
+    g_variant_unref(changed);
+    g_variant_unref(invalidated);
+}
+
+/* Subscribe before the first read, so that a change between the two is not
+ * lost. The callback runs on this thread's main context. */
+static void watch_status(GDBusConnection *session)
+{
+    server.session = g_object_ref(session);
+    server.status_subscription = g_dbus_connection_signal_subscribe(
+        session, A11Y_BUS_NAME, DBUS_PROPERTIES_IFACE, "PropertiesChanged",
+        A11Y_BUS_PATH, A11Y_STATUS_IFACE, G_DBUS_SIGNAL_FLAGS_NONE,
+        on_status_changed, NULL, NULL);
+    read_status(session);
+}
+
+static void unwatch_status(void)
+{
+    if (server.session)
+    {
+        if (server.status_subscription)
+            g_dbus_connection_signal_unsubscribe(server.session,
+                                                 server.status_subscription);
+        g_object_unref(server.session);
+    }
+    server.session = NULL;
+    server.status_subscription = 0;
+    pthread_mutex_lock(&server.lock);
+    server.status_enabled = server.screen_reader_enabled = false;
+    pthread_mutex_unlock(&server.lock);
+}
+
+static bool connect_atspi(GDBusConnection *session)
+{
+    GError *error = NULL;
     GVariant *address_result =
-        call_sync(session, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus",
+        call_sync(session, A11Y_BUS_NAME, A11Y_BUS_PATH, "org.a11y.Bus",
                   "GetAddress", NULL, G_VARIANT_TYPE("(s)"), &error);
     if (!address_result)
     {
         g_clear_error(&error);
-        g_object_unref(session);
         return false;
     }
     const char *address = NULL;
@@ -2094,7 +2227,6 @@ static bool connect_atspi_bus(void)
             G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
         NULL, NULL, &error);
     g_variant_unref(address_result);
-    g_object_unref(session);
     if (!connection)
     {
         g_clear_error(&error);
@@ -2176,6 +2308,18 @@ static bool connect_atspi_bus(void)
     return true;
 }
 
+static bool connect_atspi_bus(void)
+{
+    GDBusConnection *session = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+    if (!session)
+        return false;
+    bool connected = connect_atspi(session);
+    if (connected)
+        watch_status(session);
+    g_object_unref(session);
+    return connected;
+}
+
 static gboolean stop_loop(gpointer data)
 {
     GMainLoop *loop = data;
@@ -2206,6 +2350,7 @@ static gpointer accessibility_thread(gpointer data)
     if (!stopping)
         g_main_loop_run(loop);
 
+    unwatch_status();
     if (s->registered)
     {
         for (guint i = 0; i < s->registered->len; i++)
@@ -2275,6 +2420,8 @@ static void *provider_attach(void *native_handle,
         pthread_cond_wait(&server.idle, &server.lock);
     if (!server.thread)
     {
+        const char *always_on = getenv("WSAP_ACCESSIBILITY");
+        server.always_on = always_on && strcmp(always_on, "1") == 0;
         GError *error = NULL;
         server.thread = g_thread_try_new("wsap-atspi", accessibility_thread,
                                          &server, &error);
@@ -2568,7 +2715,9 @@ static bool provider_is_active(void *instance)
 {
     (void)instance;
     pthread_mutex_lock(&server.lock);
-    bool active = server.connection != NULL && !server.stopping;
+    bool active = server.connection != NULL && !server.stopping &&
+                  (server.status_enabled || server.screen_reader_enabled ||
+                   server.always_on);
     pthread_mutex_unlock(&server.lock);
     return active;
 }

@@ -129,6 +129,9 @@ bool ui_accessibility_dispatch_action(
     struct ui_widget *root,
     const struct ui_accessibility_action_request *request);
 
+/* A provider calls the sink from any thread. A request with no node and no
+ * action asks the host to publish a new snapshot. A provider sends it when
+ * a client starts to listen. */
 typedef void (*ui_accessibility_action_sink_fn)(
     void *userdata, const struct ui_accessibility_action_request *request);
 

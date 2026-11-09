@@ -488,6 +488,23 @@ static bool accessibility_append_cell(struct accessibility_text_builder *b,
     return true;
 }
 
+/* The shortest time between two accessibility text builds. The text holds
+ * 500 history rows and the screen. During a flood, a build at each frame
+ * costs more than the parser. The first change after a quiet period goes
+ * out at once. A timer sends the last change of a burst. */
+#define ACCESSIBILITY_TEXT_INTERVAL_MS 100
+
+static uint64_t accessibility_text_due(void *userdata, uint64_t id,
+                                       uint64_t delay_ns)
+{
+    (void)id;
+    (void)delay_ns;
+    struct terminal *terminal = userdata;
+    terminal->view.accessibility_timer = 0;
+    window_redraw(terminal->window);
+    return 0;
+}
+
 static bool terminal_view_accessibility_text(struct terminal_view *view,
                                              struct terminal *terminal,
                                              struct wsap_vtcore *term)
@@ -499,6 +516,17 @@ static bool terminal_view_accessibility_text(struct terminal_view *view,
     if (view->accessibility_text_valid && view->accessibility_term == term &&
         view->accessibility_version == term_view->version)
         return true;
+    uint64_t now_ms = window_frame_time_ms(terminal->window);
+    uint64_t due_ms = view->accessibility_built_ms + ACCESSIBILITY_TEXT_INTERVAL_MS;
+    if (view->accessibility_text_valid && view->accessibility_term == term &&
+        now_ms < due_ms) {
+        if (!view->accessibility_timer)
+            view->accessibility_timer = yasl_loop_add_timer(
+                window_host(terminal->window)->loop,
+                (due_ms - now_ms) * 1000000ull, accessibility_text_due,
+                terminal);
+        return true;
+    }
 
     int rows = term_view->size.y;
     int cols = term_view->size.x;
@@ -608,6 +636,7 @@ static bool terminal_view_accessibility_text(struct terminal_view *view,
     view->accessibility_selection_end = has_selection ? selection_end : 0;
     view->accessibility_version = term_view->version;
     view->accessibility_term = term;
+    view->accessibility_built_ms = now_ms;
     view->accessibility_text_valid = true;
     return true;
 }

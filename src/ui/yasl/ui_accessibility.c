@@ -37,6 +37,7 @@ struct window_accessibility {
     int event_watch;
     bool active;
     bool stopped;
+    bool refresh;
 };
 
 static void queued_action_free(struct queued_action *action)
@@ -51,7 +52,24 @@ static void action_sink(void *userdata,
                         const struct ui_accessibility_action_request *request)
 {
     struct window_accessibility *accessibility = userdata;
-    if (!accessibility || !request || !request->node_id || !request->action)
+    if (!accessibility || !request)
+        return;
+    if (!request->node_id && !request->action) {
+        int event_wr = -1;
+        pthread_mutex_lock(&accessibility->mutex);
+        if (accessibility->active) {
+            accessibility->refresh = true;
+            event_wr = accessibility->event_wr;
+        }
+        pthread_mutex_unlock(&accessibility->mutex);
+        if (event_wr >= 0) {
+            uint64_t wake = 1;
+            ssize_t ignored = write(event_wr, &wake, sizeof(wake));
+            (void)ignored;
+        }
+        return;
+    }
+    if (!request->node_id || !request->action)
         return;
 
     struct queued_action *action = calloc(1, sizeof(*action));
@@ -101,9 +119,14 @@ static void actions_ready(void *userdata, int fd, short revents)
     struct queued_action *actions = accessibility->head;
     accessibility->head = NULL;
     accessibility->tail = NULL;
+    bool refresh = accessibility->refresh;
+    accessibility->refresh = false;
     pthread_mutex_unlock(&accessibility->mutex);
 
     struct window *window = accessibility->window;
+    /* The next frame publishes the snapshot. */
+    if (refresh && !accessibility->stopped)
+        window_redraw(window);
     while (actions) {
         struct queued_action *next = actions->next;
         if (!window_closed(window) && !accessibility->stopped) {
@@ -286,6 +309,8 @@ void window_accessibility_menu_popup_open(struct window *window, int depth)
         return;
     ui_accessibility_set_menu_popup_depth(&popup_accessibility->provider,
                                           depth);
+    if (!ui_accessibility_provider_is_active(&popup_accessibility->provider))
+        return;
     ui_surface_prepare(&popup->ui);
     if (ui_accessibility_tree_build(&popup->root,
                                     &popup_accessibility->tree))
