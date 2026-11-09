@@ -1,3 +1,5 @@
+#include "wsap_vtcore/wsap_vtcore.h"
+
 #include <assert.h>
 #include "../src/snapshot.c"
 
