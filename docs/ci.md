@@ -29,6 +29,10 @@ brew install llvm meson ninja pkgconf yyjson harfbuzz icu4c
 
 The build script selects Homebrew LLVM and its archive tools.
 Metal tests use the Apple Silicon GPU on the runner.
+The signing test uses temporary Keychains.
+It checks that changed builds keep the same certificate-bound identity.
+It also checks that a different signer cannot meet the old identity requirement.
+The test does not change certificate trust or the privacy database.
 
 ## Linux runner
 

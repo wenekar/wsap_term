@@ -9,6 +9,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from macos_signing import sign_bundle
+
 try:
     import pwd
 except ImportError:
@@ -162,17 +164,9 @@ def sign_macos_bundle(ctx: InstallContext, app_dir: Path) -> int:
     if not bundle.is_absolute():
         bundle = ctx.prefix / bundle
     bundle = ctx.install_path(bundle)
-    codesign = shutil.which("codesign")
-    if not codesign:
-        sys.stderr.write("codesign not found; cannot sign the installed app\n")
-        return 1
-    contents = bundle / "Contents"
-    libraries = sorted((contents / "Frameworks").glob("*.dylib"))
-    libraries += sorted((contents / "MacOS").glob("*.dylib"))
     try:
-        for target in [*libraries, bundle]:
-            subprocess.check_call([codesign, "--force", "--sign", "-", str(target)])
-    except (OSError, subprocess.CalledProcessError) as error:
+        sign_bundle(bundle, local=not ctx.destdir)
+    except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
         sys.stderr.write(f"Cannot sign the installed app: {error}\n")
         return 1
     sys.stdout.write(f"Signed app bundle at {bundle}\n")

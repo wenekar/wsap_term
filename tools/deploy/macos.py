@@ -4,8 +4,12 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "install"))
+
+from macos_signing import sign_bundle
 from common import PackageMetadata, compile_terminfo, find_built_binary
 
 def _built_info_plist(repo_root: Path) -> Path:
@@ -89,19 +93,6 @@ def _bundle_frameworks(binary: Path, frameworks_dir: Path) -> None:
         stderr=subprocess.DEVNULL,
     )
 
-def _sign(bundle_dir: Path) -> None:
-    codesign = shutil.which("codesign")
-    if not codesign:
-        return
-    contents = bundle_dir / "Contents"
-    nested = sorted((contents / "Frameworks").glob("*.dylib"))
-    nested += sorted((contents / "MacOS").glob("*.dylib"))
-    for target in [*nested, bundle_dir]:
-        subprocess.check_call(
-            [codesign, "--force", "--sign", "-", str(target)],
-            stdout=subprocess.DEVNULL,
-        )
-
 def build_package(
     repo_root: Path, dist_dir: Path, meta: PackageMetadata
 ) -> tuple[Path, str]:
@@ -147,7 +138,7 @@ def build_package(
     shutil.copy2(_built_info_plist(repo_root), contents / "Info.plist")
 
     _bundle_frameworks(dest_bin, contents / "Frameworks")
-    _sign(app_dir)
+    sign_bundle(app_dir)
 
     hdiutil = shutil.which("hdiutil")
     if hdiutil:

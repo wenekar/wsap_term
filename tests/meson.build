@@ -78,6 +78,16 @@ test_cases = [
 
 # metal-render-test and metal-render-bench are off until milestone 6 brings back the Metal backend.
 
+if system == 'darwin'
+    test(
+        'macos-signing-test',
+        python,
+        args: files('platform/macos_signing_test.py'),
+        suite: ['unit'],
+        timeout: 120,
+    )
+endif
+
 if backend == 'wayland'
     wayland_scanner = find_program('wayland-scanner', native: true)
 endif

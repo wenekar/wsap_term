@@ -3,6 +3,7 @@
 | Guide | Contents |
 | --- | --- |
 | [Build](build.md) | Build targets, options, installation, and archives. |
+| [macOS updates](macos-updates.md) | Local signing and release updater requirements. |
 | [Settings](settings.md) | Controls, validation, and saved values. |
 | [SSH](ssh.md) | Remote terminfo and color setup. |
 | [Development](development.md) | Architecture, tests, and benchmarks. |
