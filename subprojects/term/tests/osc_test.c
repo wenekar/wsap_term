@@ -801,6 +801,9 @@ static void test_osc_marks_reset(void)
     assert(prompt_from(t, 6, -1) == INT_MIN);
     write_seq(t, "\033[H" MARK_A "\033[1J");
     assert(prompt_from(t, 6, -1) == INT_MIN);
+    /* ED 1 also removes the mark of an empty row above the cursor. */
+    write_seq(t, "\033[H" MARK_A "\033[3;1H\033[1J");
+    assert(prompt_from(t, 6, -1) == INT_MIN);
 
     /* ED 2 clears an empty marked row below the content. The content
      * rows go to history. */
@@ -953,6 +956,54 @@ static void test_osc_marks_resize(void)
     wsap_vtcore_free(t);
 }
 
+/* A prompt mark and a double-size line on one row stay together through a
+ * height change, a width change, and the history. ED clears both. */
+static void test_osc_marks_line_size(void)
+{
+    struct wsap_vtcore *t = tt_new(10, 4);
+    assert(t);
+    /* DEC Special Graphics maps the four cells. DECDWL halves the row. */
+    write_seq(t, "\033(0" MARK_A "lqqk\033(B\033#6");
+    assert(wsap_vtcore_snapshot_row_size(tt_snapshot_for(t), 0) == WSAP_VTCORE_LINE_DOUBLE_WIDTH);
+    assert(tt_cell_cp(t, tt_cell(t, 0, 0)) == 0x250C && tt_cell_cp(t, tt_cell(t, 3, 0)) == 0x2510);
+    assert(prompt_from(t, 4, -1) == 0);
+
+    /* A height change keeps the mark and the line size. */
+    assert(tt_resize(t, 10, 5));
+    assert(prompt_from(t, 5, -1) == 0);
+    assert(wsap_vtcore_snapshot_row_size(tt_snapshot_for(t), 0) == WSAP_VTCORE_LINE_DOUBLE_WIDTH);
+    assert(tt_cell_cp(t, tt_cell(t, 0, 0)) == 0x250C);
+
+    /* A width change keeps them too. */
+    assert(tt_resize(t, 12, 5));
+    assert(prompt_from(t, 5, -1) == 0);
+    assert(wsap_vtcore_snapshot_row_size(tt_snapshot_for(t), 0) == WSAP_VTCORE_LINE_DOUBLE_WIDTH);
+    assert(tt_cell_cp(t, tt_cell(t, 3, 0)) == 0x2510);
+
+    /* The row goes to history with its mark and only its visible cells. */
+    write_seq(t, "\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6");
+    assert(tt_history(t) == 2);
+    assert(prompt_from(t, 5, -1) == -2);
+    wsap_vtcore_scroll(t, 2);
+    assert(prompt_from(t, 5, -1) == 0);
+    assert(wsap_vtcore_snapshot_row_size(tt_snapshot_for(t), 0) == WSAP_VTCORE_LINE_SINGLE);
+    assert(tt_cell_cp(t, tt_view_cell(t, 0, 0)) == 0x250C &&
+           tt_cell_cp(t, tt_view_cell(t, 3, 0)) == 0x2510);
+    wsap_vtcore_scroll(t, -2);
+    wsap_vtcore_free(t);
+
+    /* ED 2 clears a blank double-size row that has a prompt. */
+    t = tt_new(10, 4);
+    assert(t);
+    write_seq(t, MARK_A "\033#6");
+    assert(prompt_from(t, 4, -1) == 0);
+    assert(wsap_vtcore_snapshot_row_size(tt_snapshot_for(t), 0) == WSAP_VTCORE_LINE_DOUBLE_WIDTH);
+    write_seq(t, "\033[2J");
+    assert(prompt_from(t, 4, -1) == INT_MIN);
+    assert(wsap_vtcore_snapshot_row_size(tt_snapshot_for(t), 0) == WSAP_VTCORE_LINE_SINGLE);
+    wsap_vtcore_free(t);
+}
+
 /* Compare the prompts and commands of two terminals from the bottom up. */
 static int same_marks(struct wsap_vtcore *a, struct wsap_vtcore *b)
 {
@@ -1089,6 +1140,7 @@ int main(void)
     test_osc_marks_history();
     test_osc_marks_finished();
     test_osc_marks_resize();
+    test_osc_marks_line_size();
     test_osc_marks_splits();
     test_osc_marks_streams();
     test_osc_marks_limit();

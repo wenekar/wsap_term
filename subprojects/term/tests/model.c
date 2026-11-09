@@ -375,6 +375,7 @@ static void erase_row(struct model *m, int y)
 {
     erase_cells(m, y, 0, m->cols);
     m->scr[y]->size = WSAP_VTCORE_LINE_SINGLE;
+    m->scr[y]->no_pad = false;
 }
 
 static int last_text_row(const struct model *m)
@@ -2456,7 +2457,12 @@ static void feed_byte(struct model *m, unsigned char c)
                 WSAP_VTCORE_LINE_DOUBLE_TOP, WSAP_VTCORE_LINE_DOUBLE_BOTTOM,
                 WSAP_VTCORE_LINE_SINGLE, WSAP_VTCORE_LINE_DOUBLE_WIDTH,
             };
-            m->scr[m->y]->size = sizes[c - '3'];
+            struct row *row = m->scr[m->y];
+            row->size = sizes[c - '3'];
+            /* A line-size change resets the history padding hint. A
+             * single-width row pads a short wrapped row. A double-size row
+             * sets the hint again when it loses its hidden cells. */
+            row->no_pad = false;
             clamp_cursor(m);
         }
         if (c == '8') {
@@ -2469,6 +2475,7 @@ static void feed_byte(struct model *m, unsigned char c)
                 r->len = m->cols;
                 r->wrapped = false;
                 r->size = WSAP_VTCORE_LINE_SINGLE;
+                r->no_pad = false;
             }
             move_to(m, 0, 0);
         }

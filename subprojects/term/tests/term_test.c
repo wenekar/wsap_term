@@ -3614,6 +3614,13 @@ static void test_line_size_ed2_cursor(void)
     assert(tt_cursor_x(t) == 8 && tt_cursor_y(t) == 0);
     assert(tt_history(t) == 2);
     assert(row_size(t, 0) == WSAP_VTCORE_LINE_SINGLE);
+
+    /* ED 2 also makes an empty double-size row single width. */
+    t = tt_new(10, 4);
+    assert(t);
+    write_seq(t, "\033[3;1H\033#6");
+    write_seq(t, "\033[2J");
+    assert(row_size(t, 2) == WSAP_VTCORE_LINE_SINGLE);
     wsap_vtcore_free(t);
 }
 
