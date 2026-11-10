@@ -244,11 +244,12 @@ static inline struct srow *screen_get_row(const struct screen *s, int y)
     return row;
 }
 
-static inline struct srow *screen_row_at(const struct screen *s, int y)
+static inline const struct srow *screen_row_at(const struct screen *s, int y)
 {
     if (y < 0 || y >= s->rows)
         return NULL;
-    return screen_get_row(s, y);
+    int p = s->top + y;
+    return &s->slot[p >= s->rows ? p - s->rows : p];
 }
 
 static inline struct srow *wsap_vtcore_row(const struct wsap_vtcore *t, int y)
@@ -258,7 +259,12 @@ static inline struct srow *wsap_vtcore_row(const struct wsap_vtcore *t, int y)
 
 static inline int text_row_decode(const struct srow *row, struct cell *out, int cols)
 {
-    srow_materialize_text((struct srow *)row);
+    if (row->kind == ROW_ASCII) {
+        int n = row->len < cols ? row->len : cols;
+        put_ascii_chunk(out, (const char *)row->text.text, n,
+                        WSAP_VTCORE_COLOR_FG, WSAP_VTCORE_COLOR_BG, 0);
+        return n;
+    }
     const struct text_row *tr = &row->text;
     int n = wsap_vtcore_hist_text_decode(tr, out, cols, NULL);
     int fill = tr->fill_to < cols ? tr->fill_to : cols;
@@ -278,8 +284,7 @@ static inline void text_row_cells(const struct srow *row, struct cell *out, int 
 
 static inline void srow_settle(struct srow *row, int cols)
 {
-    srow_materialize_text(row);
-    if (row->kind == ROW_TEXT) {
+    if (row->kind != ROW_CELLS) {
         int n = text_row_decode(row, row->cells, cols);
         if (n < cols && !(row->flags & RF_TAIL_PADDED))
             fill_cells(row->cells + n, cols - n, WSAP_VTCORE_COLOR_FG, WSAP_VTCORE_COLOR_BG);

@@ -173,7 +173,7 @@ const struct cell *wsap_vtcore_screen_view_row(const struct wsap_vtcore *t, int 
         }
         return out;
     }
-    struct srow *srow = screen_row_at(&t->scr, pos.screen_y);
+    const struct srow *srow = screen_row_at(&t->scr, pos.screen_y);
     if (!srow)
         return NULL;
     struct cell *out = t->view_row_scratch;

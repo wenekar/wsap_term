@@ -168,6 +168,9 @@ static WSAP_VTCORE_NOINLINE bool convert_underline(struct arena_out *a, const st
 
 #if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_MSC_VER)
 #define CONVERT_WORDS 1
+#if defined(__x86_64__) || defined(_M_X64)
+#include <emmintrin.h>
+#endif
 /* The private and the public cell share the text, fg, and bg words. Two
  * 64-bit moves then convert a cell. The second word holds bg, flags, and pad
  * in, and bg, attrs, width, and reserved out. */
@@ -182,10 +185,15 @@ _Static_assert(CELL_WIDE == 1u << 7 && CELL_TRAIL == 1u << 8, "width bits moved"
 
 static inline WSAP_VTCORE_ALWAYS_INLINE uint64_t convert_word(uint64_t in)
 {
+    const uint64_t fast_mask = ((uint64_t)(CELL_WIDE | CELL_TRAIL | CELL_WRAP_PAD) << 32) |
+                               0xFFFF000000000000ull;
+    if (WSAP_VTCORE_LIKELY((in & fast_mask) == 0))
+        return in | (1ull << 48);
+
     const uint64_t keep = 0xFFFFFFFFu | ((uint64_t)(uint16_t)~(CELL_WIDE | CELL_TRAIL | CELL_WRAP_PAD) << 32);
     const uint64_t ext = (uint64_t)(WSAP_VTCORE_ATTR_BLINK | WSAP_VTCORE_ATTR_CONCEAL) << 32;
     uint64_t wide = (in >> 39) & 1, trail = (in >> 40) & 1;
-    uint64_t width = (1 + wide) >> (trail << 1);
+    uint64_t width = trail ? 0 : (1 + wide);
     return (in & keep) | ((in >> (16 + CELL_EXT_ATTR_SHIFT)) & ext) | (width << 48);
 }
 #else
@@ -208,6 +216,44 @@ static inline WSAP_VTCORE_ALWAYS_INLINE bool convert_text(struct arena_out *a, c
     return true;
 }
 
+static inline WSAP_VTCORE_ALWAYS_INLINE bool convert_cell(struct arena_out *a, const struct wsap_vtcore *t,
+                                                          struct wsap_vtcore_cell *dst, const struct cell *src,
+                                                          uint32_t plain_span, uint64_t *ext)
+{
+#if CONVERT_WORDS
+    /* Read the cell in one load. The row is often fresh from 16-byte
+     * stores, and smaller loads of it measured slower. */
+    uint64_t w[2];
+    memcpy(w, src, sizeof(w));
+    uint32_t text = (uint32_t)w[0];
+    if (WSAP_VTCORE_EXPECT(text - 0x20 >= plain_span, 0)) {
+        if (!convert_text(a, t->gstore, &text))
+            return false;
+        w[0] = (w[0] & ~(uint64_t)0xFFFFFFFFu) | text;
+    }
+    *ext |= w[1];
+    w[1] = convert_word(w[1]);
+    memcpy(dst, w, sizeof(w));
+#else
+    const struct cell *c = src;
+    uint16_t f = c->flags;
+    uint32_t text = c->c;
+    if (WSAP_VTCORE_EXPECT(text - 0x20 >= plain_span, 0) && !convert_text(a, t->gstore, &text))
+        return false;
+    *ext |= (uint64_t)c->pad << 48;
+    *dst = (struct wsap_vtcore_cell){
+        .text = text,
+        .fg = c->fg,
+        .bg = c->bg,
+        .attrs = (uint16_t)((f & ~(CELL_WIDE | CELL_TRAIL | CELL_WRAP_PAD)) |
+                            ((c->pad >> CELL_EXT_ATTR_SHIFT) &
+                             (WSAP_VTCORE_ATTR_BLINK | WSAP_VTCORE_ATTR_CONCEAL))),
+        .width = (f & CELL_TRAIL) ? 0 : (f & CELL_WIDE) ? 2 : 1,
+    };
+#endif
+    return true;
+}
+
 /* Keep this inline. Out of line, the loop kept text in memory, and full
  * updates measured 20% slower. */
 static inline WSAP_VTCORE_ALWAYS_INLINE bool convert_row(struct arena_out *a, const struct wsap_vtcore *t,
@@ -218,38 +264,34 @@ static inline WSAP_VTCORE_ALWAYS_INLINE bool convert_row(struct arena_out *a, co
     const uint32_t plain_span = WSAP_VTCORE_GRAPHEME_HANDLE_BASE - 0x20;
     // The pad fields of the row, in bits 48 to 63.
     uint64_t ext = 0;
-    for (int x = 0; x < cols; x++) {
-#if CONVERT_WORDS
-        /* Read the cell in one load. The row is often fresh from 16-byte
-         * stores, and smaller loads of it measured slower. */
-        uint64_t w[2];
-        memcpy(w, &src[x], sizeof(w));
-        uint32_t text = (uint32_t)w[0];
-        if (WSAP_VTCORE_EXPECT(text - 0x20 >= plain_span, 0)) {
-            if (!convert_text(a, t->gstore, &text))
+    int x = 0;
+
+#if (defined(__x86_64__) || defined(_M_X64)) && CONVERT_WORDS
+    const __m128i width_one = _mm_setr_epi32(0, 0, 0, 1 << 16);
+    const uint32_t bad_mask = (uint32_t)(CELL_WIDE | CELL_TRAIL | CELL_WRAP_PAD) | 0xFFFF0000u;
+
+    for (; x + 2 <= cols; x += 2) {
+        __m128i v0 = _mm_loadu_si128((const __m128i *)(const void *)&src[x]);
+        __m128i v1 = _mm_loadu_si128((const __m128i *)(const void *)&src[x + 1]);
+        uint32_t c0 = (uint32_t)_mm_cvtsi128_si32(v0);
+        uint32_t c1 = (uint32_t)_mm_cvtsi128_si32(v1);
+        __m128i vor = _mm_or_si128(v0, v1);
+        uint32_t dw3 = (uint32_t)_mm_cvtsi128_si32(_mm_srli_si128(vor, 12));
+
+        if (WSAP_VTCORE_LIKELY((c0 - 0x20u < plain_span) & (c1 - 0x20u < plain_span) & ((dw3 & bad_mask) == 0))) {
+            _mm_storeu_si128((__m128i *)(void *)&dst[x], _mm_or_si128(v0, width_one));
+            _mm_storeu_si128((__m128i *)(void *)&dst[x + 1], _mm_or_si128(v1, width_one));
+        } else {
+            if (!convert_cell(a, t, &dst[x], &src[x], plain_span, &ext) ||
+                !convert_cell(a, t, &dst[x + 1], &src[x + 1], plain_span, &ext))
                 return false;
-            w[0] = (w[0] & ~(uint64_t)0xFFFFFFFFu) | text;
         }
-        ext |= w[1];
-        w[1] = convert_word(w[1]);
-        memcpy(&dst[x], w, sizeof(w));
-#else
-        const struct cell *c = &src[x];
-        uint16_t f = c->flags;
-        uint32_t text = c->c;
-        if (WSAP_VTCORE_EXPECT(text - 0x20 >= plain_span, 0) && !convert_text(a, t->gstore, &text))
-            return false;
-        ext |= (uint64_t)c->pad << 48;
-        dst[x] = (struct wsap_vtcore_cell){
-            .text = text,
-            .fg = c->fg,
-            .bg = c->bg,
-            .attrs = (uint16_t)((f & ~(CELL_WIDE | CELL_TRAIL | CELL_WRAP_PAD)) |
-                                ((c->pad >> CELL_EXT_ATTR_SHIFT) &
-                                 (WSAP_VTCORE_ATTR_BLINK | WSAP_VTCORE_ATTR_CONCEAL))),
-            .width = (f & CELL_TRAIL) ? 0 : (f & CELL_WIDE) ? 2 : 1,
-        };
+    }
 #endif
+
+    for (; x < cols; x++) {
+        if (!convert_cell(a, t, &dst[x], &src[x], plain_span, &ext))
+            return false;
     }
     *ul_off = ROW_NO_UL;
     if (WSAP_VTCORE_EXPECT((ext >> 48) & CELL_EXT_ID, 0))

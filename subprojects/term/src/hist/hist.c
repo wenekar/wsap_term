@@ -383,28 +383,77 @@ static uint64_t evict_simple_run(struct hist *h, uint64_t k)
         uint64_t to_align = 16 - (tail & 15);
         if (to_align > k - n) to_align = k - n;
         if (to_align > head - tail) to_align = head - tail;
-        while (to_align > 0) {
-            if (!evict_single_line(h, ring, rmask, &tail, head, &n, counted,
-                                   &rows_take, &page, &run, &have_page))
-                goto finish;
-            to_align--;
+        const struct hist_block *b = &h->blocks[(tail & rmask) / 16];
+        if (b->seq == ((tail & ~UINT64_C(15)) + 1) && b->epoch == h->index_epoch &&
+            b->cols == h->wrap_cols && b->refs == 16 && b->rows == 16) {
+            if (have_page && page != b->page) {
+                page_drop_n(h, page, run);
+                run = 0;
+            }
+            page = b->page;
+            have_page = true;
+            run += (uint32_t)to_align;
+            if (n < counted)
+                rows_take += counted - n < to_align ? counted - n : to_align;
+            tail += to_align;
+            n += to_align;
+        } else {
+            while (to_align > 0) {
+                if (!evict_single_line(h, ring, rmask, &tail, head, &n, counted,
+                                       &rows_take, &page, &run, &have_page))
+                    goto finish;
+                to_align--;
+            }
+        }
+    }
+
+    if ((tail & 15) == 0) {
+        uint64_t epoch = h->index_epoch;
+        uint16_t wrap_cols = h->wrap_cols;
+        const struct hist_block *blocks = h->blocks;
+        uint32_t bmask = rmask / 16;
+        while (n + 16 <= k && tail + 16 <= head) {
+            const struct hist_block *b = &blocks[(tail >> 4) & bmask];
+            if (b->seq != tail + 1 || b->epoch != epoch || b->cols != wrap_cols)
+                break;
+            if (n < counted) {
+                if (WSAP_VTCORE_EXPECT(n + 16 <= counted, 1))
+                    rows_take += b->rows;
+                else if (b->rows == 16)
+                    rows_take += counted - n;
+                else
+                    break;
+            }
+            if (WSAP_VTCORE_EXPECT(have_page && b->page == page, 1)) {
+                run += b->refs;
+            } else if (b->refs) {
+                if (have_page)
+                    page_drop_n(h, page, run);
+                page = b->page;
+                have_page = true;
+                run = b->refs;
+            }
+            tail += 16;
+            n += 16;
         }
     }
 
     while (n + 16 <= k && tail + 16 <= head) {
-        if ((tail & 15) == 0 && (n >= counted || n + 16 <= counted)) {
+        if ((tail & 15) == 0) {
             const struct hist_block *b = &h->blocks[(tail & rmask) / 16];
-            if (b->seq == tail + 1 && b->epoch == h->index_epoch && b->cols == h->wrap_cols) {
-                if (b->refs) {
-                    if (have_page && page != b->page) {
+            if (b->seq == tail + 1 && b->epoch == h->index_epoch && b->cols == h->wrap_cols &&
+                (n >= counted || n + 16 <= counted || b->rows == 16)) {
+                if (WSAP_VTCORE_EXPECT(have_page && b->page == page, 1)) {
+                    run += b->refs;
+                } else if (b->refs) {
+                    if (have_page)
                         page_drop_n(h, page, run);
-                        run = 0;
-                    }
                     page = b->page;
                     have_page = true;
-                    run += b->refs;
+                    run = b->refs;
                 }
-                if (n < counted) rows_take += b->rows;
+                if (n < counted)
+                    rows_take += n + 16 <= counted ? b->rows : (counted - n);
                 tail += 16;
                 n += 16;
                 continue;
@@ -538,6 +587,27 @@ static uint64_t evict_simple_run(struct hist *h, uint64_t k)
         if (!evict_single_line(h, ring, rmask, &tail, head, &n, counted,
                                &rows_take, &page, &run, &have_page))
             goto finish;
+    }
+
+    if (n < k && tail < head && (tail & 15) == 0) {
+        uint64_t rem = k - n;
+        if (rem > head - tail)
+            rem = head - tail;
+        const struct hist_block *b = &h->blocks[(tail & rmask) / 16];
+        if (b->seq == tail + 1 && b->epoch == h->index_epoch &&
+            b->cols == h->wrap_cols && b->refs == 16 && b->rows == 16) {
+            if (have_page && page != b->page) {
+                page_drop_n(h, page, run);
+                run = 0;
+            }
+            page = b->page;
+            have_page = true;
+            run += (uint32_t)rem;
+            if (n < counted)
+                rows_take += counted - n < rem ? counted - n : rem;
+            tail += rem;
+            n += rem;
+        }
     }
 
     while (n < k && tail < head) {
@@ -1697,36 +1767,45 @@ static int lf_rows_avx512(struct hist *restrict h, const uint16_t *restrict ends
     uint64_t head = state->head, rows = state->rows;
     uint32_t text_count = state->text_count;
     uint32_t pg = state->pg, base = state->base;
+    uint64_t epoch = h->index_epoch;
+    uint16_t wrap_cols = h->wrap_cols;
     const __m512i recip = _mm512_set1_epi32((int)(UINT64_C(0x100000000) / cols + 1));
+    const __m512i vterm = _mm512_set1_epi32((int)term);
+    const __m512i vbase = _mm512_set1_epi32((int)base);
+    const __m512i vcols = _mm512_set1_epi32((int)cols);
+    const __m512i default_tags = _mm512_set1_epi32((1 << 24) | (HLINE_NARROW << 16));
     for (; i + 16 <= stop && (head & mask) + 16 <= mask + 1; i += 16, head += 16) {
         __m512i start = _mm512_cvtepu16_epi32(_mm256_loadu_si256((const __m256i *)(ends + i)));
         __m512i end = _mm512_cvtepu16_epi32(_mm256_loadu_si256((const __m256i *)(ends + i + 1)));
-        __m512i lens = _mm512_sub_epi32(_mm512_sub_epi32(end, start), _mm512_set1_epi32((int)term));
+        __m512i lens = _mm512_sub_epi32(_mm512_sub_epi32(end, start), vterm);
         __mmask16 empty = _mm512_cmpeq_epi32_mask(lens, _mm512_setzero_si512());
         uint32_t refs = 16 - wsap_vtcore_popcount32(empty);
         text_count += refs;
-        __m512i offsets = _mm512_mask_mov_epi32(_mm512_add_epi32(start, _mm512_set1_epi32((int)base)),
+        __m512i offsets = _mm512_mask_mov_epi32(_mm512_add_epi32(start, vbase),
                                                empty, _mm512_set1_epi32(-1));
         __m512i rs = _mm512_set1_epi32(1);
+        __m512i tags = default_tags;
         uint32_t nr = 16;
         if (cols == 1) {
             rs = _mm512_max_epu32(lens, rs);
             nr = (uint32_t)_mm512_reduce_add_epi32(rs);
-        } else if (_mm512_cmpgt_epu32_mask(lens, _mm512_set1_epi32((int)cols))) {
+            tags = _mm512_or_si512(_mm512_slli_epi32(_mm512_min_epu32(rs, _mm512_set1_epi32(255)), 24),
+                                  _mm512_set1_epi32(HLINE_NARROW << 16));
+        } else if (_mm512_cmpgt_epu32_mask(lens, vcols)) {
             __m512i num = _mm512_max_epi32(_mm512_sub_epi32(lens, _mm512_set1_epi32(1)),
                                           _mm512_setzero_si512());
             __m512i even = _mm512_srli_epi64(_mm512_mul_epu32(num, recip), 32);
             __m512i odd = _mm512_mul_epu32(_mm512_srli_epi64(num, 32), recip);
             rs = _mm512_add_epi32(_mm512_mask_blend_epi32(0xaaaa, even, odd), rs);
             nr = (uint32_t)_mm512_reduce_add_epi32(rs);
+            tags = _mm512_or_si512(_mm512_slli_epi32(_mm512_min_epu32(rs, _mm512_set1_epi32(255)), 24),
+                                  _mm512_set1_epi32(HLINE_NARROW << 16));
         }
         rows += nr - 16;
         blocks[(head & mask) / 16] = (struct hist_block){
-            .seq = head + 1, .epoch = h->index_epoch,
-            .page = pg, .refs = refs, .rows = nr, .cols = h->wrap_cols,
+            .seq = head + 1, .epoch = epoch,
+            .page = pg, .refs = refs, .rows = nr, .cols = wrap_cols,
         };
-        __m512i tags = _mm512_or_si512(_mm512_slli_epi32(_mm512_min_epu32(rs, _mm512_set1_epi32(255)), 24),
-                                      _mm512_set1_epi32(HLINE_NARROW << 16));
         __m512i a = _mm512_unpacklo_epi32(offsets, lens);
         __m512i b = _mm512_unpackhi_epi32(offsets, lens);
         __m512i c = _mm512_unpacklo_epi32(lens, tags);
@@ -1927,29 +2006,68 @@ void wsap_vtcore_hist_push_ascii_lf(struct hist *restrict h, const char *restric
         };
         struct hline *restrict ring = h->ring;
         uint32_t mask = h->ring_mask;
-        while (i < stop && (state.head & 15)) {
-            uint32_t len = ends[i + 1] - ends[i] - (uint32_t)term;
-            struct hline *dst = ring + (state.head & mask);
-            if (!len) *dst = HLINE_BLANK;
-            else {
-                uint32_t r = rows_narrow(len, (int)cols);
-                part_put_narrow_rows(dst, base + ends[i], len, r);
-                state.rows += r - 1;
-                state.text_count++;
+        if (i < stop && (state.head & 15)) {
+            uint64_t head0 = state.head;
+            do {
+                uint32_t len = ends[i + 1] - ends[i] - (uint32_t)term;
+                struct hline *dst = ring + (state.head & mask);
+                if (!len) *dst = HLINE_BLANK;
+                else {
+                    uint32_t r = rows_narrow(len, (int)cols);
+                    part_put_narrow_rows(dst, base + ends[i], len, r);
+                    state.rows += r - 1;
+                    state.text_count++;
+                }
+                i++;
+                state.head++;
+            } while (i < stop && (state.head & 15));
+            struct hist_block *b = &h->blocks[(head0 & mask) / 16];
+            if (b->seq == (head0 | (UINT64_C(1) << 63)) &&
+                b->epoch == h->index_epoch && b->page == pg && b->cols == h->wrap_cols) {
+                b->refs += state.text_count;
+                b->rows += (uint32_t)(state.head - head0) + (uint32_t)(state.rows - n);
+                b->seq = (state.head & 15) == 0 ? state.head - 15
+                                                : state.head | (UINT64_C(1) << 63);
             }
-            i++;
-            state.head++;
         }
         i = lf_rows(h, ends, i, stop, cols, (uint32_t)term, &state);
-        for (; i < stop; i++, state.head++) {
-            uint32_t len = ends[i + 1] - ends[i] - (uint32_t)term;
-            struct hline *dst = ring + (state.head & mask);
-            if (!len) *dst = HLINE_BLANK;
-            else {
-                uint32_t r = rows_narrow(len, (int)cols);
-                part_put_narrow_rows(dst, base + ends[i], len, r);
-                state.rows += r - 1;
-                state.text_count++;
+        while (i < stop) {
+            uint64_t head0 = state.head;
+            uint64_t rows0 = state.rows;
+            uint32_t text0 = state.text_count;
+            int chunk_end = i + (int)(16 - (head0 & 15));
+            if (chunk_end > stop)
+                chunk_end = stop;
+            for (; i < chunk_end; i++, state.head++) {
+                uint32_t len = ends[i + 1] - ends[i] - (uint32_t)term;
+                struct hline *dst = ring + (state.head & mask);
+                if (!len) *dst = HLINE_BLANK;
+                else {
+                    uint32_t r = rows_narrow(len, (int)cols);
+                    part_put_narrow_rows(dst, base + ends[i], len, r);
+                    state.rows += r - 1;
+                    state.text_count++;
+                }
+            }
+            uint32_t blk_refs = state.text_count - text0;
+            uint32_t blk_rows = (uint32_t)(state.head - head0) + (uint32_t)(state.rows - rows0);
+            uint64_t next_seq = (state.head & 15) == 0 ? state.head - 15
+                                                       : state.head | (UINT64_C(1) << 63);
+            struct hist_block *b = &h->blocks[(head0 & mask) / 16];
+            if ((head0 & 15) == 0) {
+                *b = (struct hist_block){
+                    .seq = next_seq,
+                    .epoch = h->index_epoch,
+                    .page = pg,
+                    .refs = blk_refs,
+                    .rows = blk_rows,
+                    .cols = h->wrap_cols,
+                };
+            } else if (b->seq == (head0 | (UINT64_C(1) << 63)) &&
+                       b->epoch == h->index_epoch && b->page == pg && b->cols == h->wrap_cols) {
+                b->refs += blk_refs;
+                b->rows += blk_rows;
+                b->seq = next_seq;
             }
         }
         h->head = state.head;

@@ -843,45 +843,50 @@ static void flush_orig_rows(struct wsap_vtcore *t, struct screen *s,
     int end = y + count;
     *orig_y = end;
     *orig_rem -= count;
-    struct hist_ascii_line q[64];
+    struct srow *slot_end = s->slot + s->rows;
+    int p = s->top + y;
+    struct srow *first = &s->slot[p >= s->rows ? p - s->rows : p];
+    uintptr_t begin = (uintptr_t)t->ascii_tail.data;
+    uintptr_t limit = begin + t->ascii_tail.cap;
     while (y < end) {
-        int p = s->top + y;
-        struct srow *first = &s->slot[p >= s->rows ? p - s->rows : p];
-        uintptr_t begin = (uintptr_t)t->ascii_tail.data;
-        uintptr_t limit = begin + t->ascii_tail.cap;
         uintptr_t base = (uintptr_t)first->text.text;
         if (first->kind == ROW_ASCII && base >= begin && base < limit) {
             uint16_t ends[64 + 65];
             ends[0] = 0;
             int term = t->ascii_tail_crlf ? 2 : 1;
-            int span = 0, lines = 0, closed = y;
-            for (int j = y; j < end && j - y < 64; j++) {
-                int p = s->top + j;
-                struct srow *row = &s->slot[p >= s->rows ? p - s->rows : p];
-                bool wrapped = (row->flags & RF_WRAPPED) != 0;
-                size_t size = (size_t)row->len + (wrapped ? 0 : (size_t)term);
+            size_t max_span = limit - base < UINT16_MAX ? limit - base : UINT16_MAX;
+            size_t span = 0;
+            int lines = 0, closed = y;
+            struct srow *row = first, *closed_row = first;
+            int j_end = end - y < 64 ? end : y + 64;
+            for (int j = y; j < j_end; j++) {
+                uint8_t flags = row->flags;
+                bool wrapped = (flags & RF_WRAPPED) != 0;
+                size_t next_span = span + (size_t)row->len + (wrapped ? 0 : (size_t)term);
                 /* A row with marks takes the row push, which keeps them. */
-                if (row->kind != ROW_ASCII || (row->flags & RF_MARKS) ||
+                if (row->kind != ROW_ASCII || (flags & RF_MARKS) ||
                     (uintptr_t)row->text.text != base + span ||
-                    size > limit - base - span || size + span > UINT16_MAX) break;
-                span += row->len;
+                    next_span > max_span) break;
+                span = next_span;
+                if (++row == slot_end) row = s->slot;
                 if (!wrapped) {
-                    span += term;
                     ends[++lines] = (uint16_t)span;
                     closed = j + 1;
+                    closed_row = row;
                 }
             }
             if (lines) {
                 wsap_vtcore_hist_push_ascii_lf(&t->hist, (const char *)base, ends, lines, term);
                 if (t->view.anchor.active) wsap_vtcore_hist_view_note_push(&t->view, &t->hist, t->cols);
                 y = closed;
+                first = closed_row;
                 continue;
             }
         }
+        struct hist_ascii_line q[64];
         int n = 0;
+        struct srow *row = first;
         while (y + n < end && n < 64) {
-            int p = s->top + y + n;
-            struct srow *row = &s->slot[p >= s->rows ? p - s->rows : p];
             struct text_row *tr = &row->text;
             bool wrapped = (row->flags & RF_WRAPPED) != 0;
             if ((wrapped && row->len < s->cols) || (row->flags & RF_MARKS)) break;
@@ -892,12 +897,17 @@ static void flush_orig_rows(struct wsap_vtcore *t, struct screen *s,
             q[n++] = (struct hist_ascii_line){
                 .ptr = (const char *)tr->text, .len = row->len, .wrapped = wrapped,
             };
+            if (++row == slot_end) row = s->slot;
         }
         if (n) {
             wsap_vtcore_hist_push_ascii_lines(&t->hist, q, n, NULL);
             if (t->view.anchor.active) wsap_vtcore_hist_view_note_push(&t->view, &t->hist, t->cols);
             y += n;
-        } else wsap_vtcore_screen_push_row(t, screen_get_row(s, y++));
+            first = row;
+        } else {
+            wsap_vtcore_screen_push_row(t, screen_get_row(s, y++));
+            if (++first == slot_end) first = s->slot;
+        }
     }
 }
 
@@ -1166,6 +1176,20 @@ static int long_lines_avx512(const uint16_t *ends, int *count, int max)
 static WSAP_VTCORE_NOINLINE size_t stream_ascii_lines(struct wsap_vtcore *t, const char *buf, size_t len,
                                                       int term)
 {
+    struct screen *s = &t->scr;
+    int cols = t->cols, rows = t->rows;
+    int bot_p = s->top + s->rows - 1;
+    if (bot_p >= s->rows)
+        bot_p -= s->rows;
+    struct srow *bot = &s->slot[bot_p];
+    int head_len = 0;
+    if (t->pending_wrap || t->cursor_x != 0) {
+        if ((t->pending_wrap && !t->autowrap) || bot->kind != ROW_ASCII || (bot->flags & RF_MARKS))
+            return 0;
+        head_len = t->pending_wrap ? t->cols : t->cursor_x;
+        if (bot->len != head_len || head_len <= 0)
+            return 0;
+    }
     int limit = len < UINT16_MAX ? (int)len : UINT16_MAX;
     size_t need = ((size_t)limit + 65) * sizeof(uint16_t);
     if (need > t->ascii_ends.cap) {
@@ -1192,35 +1216,76 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_lines(struct wsap_vtcore *t, con
             break;
         }
     }
-    struct screen *s = &t->scr;
-    int cols = t->cols, rows = t->rows;
+    if (head_len > 0 && (count == 0 || head_len + ends[1] > max))
+        return 0;
     int keep = rows - 1, first = count;
     int tail_rows = 0;
-    while (first > 0 && tail_rows < keep) {
+    int min_first = head_len > 0 ? 1 : 0;
+    int cur_end = ends[first];
+    while (first > min_first && tail_rows < keep) {
         first--;
-        tail_rows += (int)rows_narrow(ends[first + 1] - ends[first] - term, cols);
+        int prev_end = ends[first];
+        tail_rows += (int)rows_narrow(cur_end - prev_end - term, cols);
+        cur_end = prev_end;
     }
-    if (!first) return 0;
+    if (first <= min_first || tail_rows < keep)
+        return 0;
+    int rem = 0;
+    if ((size_t)ends[count] < len && len - (size_t)ends[count] <= (size_t)cols) {
+        int cand = (int)(len - (size_t)ends[count]);
+        if ((t->autowrap || cand < cols) &&
+            scan_ascii_run(buf + ends[count], cand) == cand)
+            rem = cand;
+    }
     int skip = (tail_rows - keep) * cols;
     int source_start = ends[first] + skip;
     size_t tail_bytes = (size_t)(ends[count] - source_start);
+    size_t copy_bytes = tail_bytes + (size_t)rem;
+    size_t need_cap = copy_bytes + (rem ? (size_t)max : 0);
     uint8_t *tail_data = t->ascii_tail.data;
-    if (tail_bytes > t->ascii_tail.cap) {
-        tail_data = malloc(tail_bytes);
+    if (need_cap > t->ascii_tail.cap) {
+        tail_data = malloc(need_cap);
         if (!tail_data) return 0;
     }
-    int orig_y = 0, orig_rem = rows - 1;
-    flush_orig_rows(t, s, &orig_y, &orig_rem, orig_rem);
+    bool inplace = false;
+    if (head_len == 0) {
+        int orig_y = 0, orig_rem = rows - 1;
+        flush_orig_rows(t, s, &orig_y, &orig_rem, orig_rem);
+    } else {
+        inplace = t->ascii_tail_crlf == (term == 2) &&
+            (uintptr_t)bot->text.text >= (uintptr_t)t->ascii_tail.data &&
+            (uintptr_t)bot->text.text + (size_t)head_len + (size_t)ends[1] <=
+                (uintptr_t)t->ascii_tail.data + t->ascii_tail.cap &&
+            (head_len + ends[1] - term <= cols ||
+             (s->slot[s->top].kind == ROW_ASCII &&
+              (uintptr_t)s->slot[s->top].text.text >= (uintptr_t)t->ascii_tail.data &&
+              (uintptr_t)s->slot[s->top].text.text < (uintptr_t)t->ascii_tail.data + t->ascii_tail.cap));
+        if (inplace) {
+            memcpy(bot->text.text + head_len, buf, (size_t)ends[1]);
+            bot->len = (uint16_t)(head_len + ends[1] - term);
+            bot->flags = 0;
+            int orig_y = 0, orig_rem = rows;
+            flush_orig_rows(t, s, &orig_y, &orig_rem, orig_rem);
+        } else {
+            row_set_wrapped(bot, true);
+            int orig_y = 0, orig_rem = rows;
+            flush_orig_rows(t, s, &orig_y, &orig_rem, orig_rem);
+        }
+    }
     if (tail_data != t->ascii_tail.data) {
         free(t->ascii_tail.data);
         t->ascii_tail.data = tail_data;
-        t->ascii_tail.cap = tail_bytes;
+        t->ascii_tail.cap = need_cap;
     }
-    /* A one-row screen keeps no rows, and the buffer can still be NULL. */
-    if (tail_bytes)
-        memcpy(tail_data, buf + source_start, tail_bytes);
+    if (copy_bytes)
+        memcpy(tail_data, buf + source_start, copy_bytes);
     t->ascii_tail_crlf = term == 2;
-    wsap_vtcore_hist_push_ascii_lf(&t->hist, buf, ends, first, term);
+    if (head_len > 0 && inplace) {
+        if (first > 1)
+            wsap_vtcore_hist_push_ascii_lf(&t->hist, buf, ends + 1, first - 1, term);
+    } else {
+        wsap_vtcore_hist_push_ascii_lf(&t->hist, buf, ends, first, term);
+    }
     if (skip)
         wsap_vtcore_hist_push_ascii(&t->hist, buf + ends[first], skip, NULL, true);
     uint32_t last = t->last_char;
@@ -1231,33 +1296,55 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_lines(struct wsap_vtcore *t, con
         }
     }
     s->top = 0;
-    int y = 0;
+    struct srow *dst = s->slot;
     uint64_t uid = t->next_row_uid;
+    uint8_t *tail_base = tail_data - source_start;
+    int start = source_start;
     for (int j = first; j < count; j++) {
-        int start = ends[j] + (j == first ? skip : 0);
-        int n = ends[j + 1] - term - start;
+        int next_end = ends[j + 1];
+        int n = next_end - term - start;
         do {
             int k = n > cols ? cols : n;
-            struct srow *dst = &s->slot[y++];
             dst->uid = ++uid;
             dst->version++;
             dst->flags = n > cols ? RF_WRAPPED : 0;
             dst->len = (uint16_t)k;
             dst->kind = ROW_ASCII;
-            dst->text.text = tail_data + start - source_start;
+            dst->text.text = tail_base + start;
+            dst++;
             n -= k;
             start += k;
         } while (n > 0);
+        start = next_end;
     }
-    t->next_row_uid = uid;
-    screen_new_row(t, &s->slot[rows - 1]);
+    if (rem > 0) {
+        struct srow *new_bot = &s->slot[rows - 1];
+        new_bot->uid = ++uid;
+        new_bot->version++;
+        new_bot->flags = 0;
+        new_bot->len = (uint16_t)rem;
+        new_bot->kind = ROW_ASCII;
+        new_bot->text.text = tail_data + tail_bytes;
+        t->next_row_uid = uid;
+        last = (unsigned char)buf[ends[count] + rem - 1];
+        if (rem < cols) {
+            t->cursor_x = rem;
+            t->pending_wrap = false;
+        } else {
+            t->cursor_x = cols - 1;
+            t->pending_wrap = true;
+        }
+    } else {
+        t->next_row_uid = uid;
+        screen_new_row(t, &s->slot[rows - 1]);
+        t->cursor_x = 0;
+        t->pending_wrap = false;
+    }
     if (t->prompt_y > 0) t->prompt_y = 0;
     clamp_selection_after_scroll(t);
     t->last_char = last;
-    t->cursor_x = 0;
-    t->pending_wrap = false;
     t->full_gen++;
-    return ends[count];
+    return (size_t)ends[count] + (size_t)rem;
 }
 
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
@@ -1674,7 +1761,7 @@ size_t wsap_vtcore_sc_bulk_ascii_lines(struct wsap_vtcore *t, const char *buf, s
         bool lnm = wsap_vtcore_lnm(t);
         if (t->autowrap)
             done = stream_ascii_wrapped(t, buf, len);
-        if (!done && !t->pending_wrap && t->cursor_x == 0)
+        if (!done)
             done = stream_ascii_lines(t, buf, len, lnm ? 1 : 2);
         if (done) return done;
         if (t->pending_wrap) {
