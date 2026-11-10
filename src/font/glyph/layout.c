@@ -769,24 +769,90 @@ static void make_opaque(struct font_layout *l)
         l->ascii[cp] = entry(LAYOUT_COMPLEX, cp);
 }
 
+struct group_map {
+    struct rep_slot *slots;
+    uint32_t mask;
+    unsigned used;
+};
+
+#define GROUP_MIN_SLOTS 64
+
+/* Keep the load factor at 1/2 or less. Linear probing then stays short.
+   A count of zero needs no table. */
+static uint32_t hash_slots(unsigned count)
+{
+    uint32_t slots = 1;
+    while (slots < count * 2)
+        slots <<= 1;
+    return count ? slots : 0;
+}
+
+static bool group_grow(struct group_map *g)
+{
+    uint32_t slots = (g->mask + 1) * 2;
+    struct rep_slot *next = calloc(slots, sizeof(*next));
+    if (!next)
+        return false;
+    for (uint32_t i = 0; i <= g->mask; i++) {
+        if (!g->slots[i].key)
+            continue;
+        struct rep_slot *slot = rep_find(next, slots - 1, g->slots[i].key);
+        *slot = g->slots[i];
+    }
+    free(g->slots);
+    g->slots = next;
+    g->mask = slots - 1;
+    return true;
+}
+
+static bool group_add(struct group_map *g, uint64_t key, uint32_t cp)
+{
+    if (!g->slots) {
+        g->slots = calloc(GROUP_MIN_SLOTS, sizeof(*g->slots));
+        if (!g->slots)
+            return false;
+        g->mask = GROUP_MIN_SLOTS - 1;
+    }
+    struct rep_slot *slot = rep_find(g->slots, g->mask, key);
+    if (slot->key)
+        return true;
+    if ((g->used + 1) * 2 > g->mask + 1) {
+        if (!group_grow(g))
+            return false;
+        slot = rep_find(g->slots, g->mask, key);
+    }
+    *slot = (struct rep_slot){ .key = key, .cp = cp };
+    g->used++;
+    return true;
+}
+
 static bool fill_map(struct font_layout *l, hb_face_t *face, const struct analysis *a)
 {
     hb_map_t *mapping = hb_map_create();
     hb_set_t *unicodes = hb_set_create();
     hb_face_collect_nominal_glyph_mapping(face, mapping, unicodes);
-    unsigned count = hb_set_get_population(unicodes);
-    uint32_t mask = 1;
-    while (mask < count * 2 + 16) mask <<= 1;
-    struct rep_slot *reps = calloc(mask, sizeof(*reps));
-    l->mask = mask - 1;
-    l->keys = calloc(mask, sizeof(*l->keys));
-    l->values = calloc(mask, sizeof(*l->values));
-    bool ok = reps && l->keys && l->values && hb_map_allocation_successful(mapping);
+    bool ok = hb_map_allocation_successful(mapping);
+
+    /* Size the map from the codepoints that reach it. Codepoints below 128 use
+       the ascii array. */
+    unsigned mapped = 0;
+    for (hb_codepoint_t cp = HB_SET_VALUE_INVALID; ok && hb_set_next(unicodes, &cp);)
+        if (cp >= 128 && cp <= LAYOUT_CP_MASK)
+            mapped++;
+    uint32_t map_slots = ok ? hash_slots(mapped) : 0;
+    if (map_slots) {
+        l->mask = map_slots - 1;
+        l->keys = calloc(map_slots, sizeof(*l->keys));
+        l->values = calloc(map_slots, sizeof(*l->values));
+        ok = l->keys && l->values;
+    }
+
+    struct group_map groups = { 0 };
     hb_unicode_funcs_t *uf = hb_unicode_funcs_get_default();
 
     for (int pass = 0; ok && pass < 2; pass++) {
         hb_codepoint_t cp = HB_SET_VALUE_INVALID;
-        while (hb_set_next(unicodes, &cp)) {
+        while (ok && hb_set_next(unicodes, &cp)) {
             if (cp > LAYOUT_CP_MASK || cp <= ' ')
                 continue;
             hb_codepoint_t g = hb_map_get(mapping, cp);
@@ -800,24 +866,26 @@ static bool fill_map(struct font_layout *l, hb_face_t *face, const struct analys
                 role = LAYOUT_INPUT;
             else
                 role = a->sig[g] ? LAYOUT_CONTEXT : LAYOUT_NEUTRAL;
-            uint32_t stand_in = cp;
-            if (role == LAYOUT_CONTEXT || role == LAYOUT_NEUTRAL) {
-                uint64_t key = rep_key(a->sig[g], gdef,
-                                       hb_unicode_general_category(uf, cp));
-                struct rep_slot *slot = rep_find(reps, mask - 1, key);
-                if (!slot->key)
-                    *slot = (struct rep_slot){ .key = key, .cp = cp };
-                stand_in = slot->cp;
-            }
-            if (pass == 0)
+            bool needs_group = role == LAYOUT_CONTEXT || role == LAYOUT_NEUTRAL;
+            if (pass == 0) {
+                if (needs_group &&
+                    !group_add(&groups, rep_key(a->sig[g], gdef,
+                                                hb_unicode_general_category(uf, cp)), cp))
+                    ok = false;
                 continue;
+            }
+            uint32_t stand_in = cp;
+            if (needs_group)
+                stand_in = rep_find(groups.slots, groups.mask,
+                                    rep_key(a->sig[g], gdef,
+                                            hb_unicode_general_category(uf, cp)))->cp;
             if (cp < 128)
                 l->ascii[cp] = entry(role, stand_in);
             else
                 map_put(l, cp, entry(role, stand_in));
         }
     }
-    free(reps);
+    free(groups.slots);
     hb_map_destroy(mapping);
     hb_set_destroy(unicodes);
     return ok;
@@ -849,12 +917,18 @@ struct font_layout *font_layout_build(hb_face_t *face)
     hb_font_destroy(font);
     a.sig = calloc(a.glyphs ? a.glyphs : 1, sizeof(*a.sig));
     a.input = calloc(a.glyphs / 64 + 1, sizeof(*a.input));
-    a.seen_sets = hb_set_create();
-    a.lookups = hb_set_create();
-    a.pending = hb_set_create();
-    bool ok = a.sig && a.input && analyze_table(&a, face, HB_OT_TAG_GSUB) &&
-              analyze_table(&a, face, HB_OT_TAG_GPOS) &&
-              a.back <= REACH_MAX && a.ahead <= REACH_MAX;
+    bool ok = a.sig && a.input;
+    /* A font with no GSUB or GPOS table has nothing to walk. Do not build the
+       lookup sets for it. */
+    if (ok && (face_has_table(face, HB_OT_TAG_GSUB) ||
+               face_has_table(face, HB_OT_TAG_GPOS))) {
+        a.seen_sets = hb_set_create();
+        a.lookups = hb_set_create();
+        a.pending = hb_set_create();
+        ok = analyze_table(&a, face, HB_OT_TAG_GSUB) &&
+             analyze_table(&a, face, HB_OT_TAG_GPOS);
+    }
+    ok = ok && a.back <= REACH_MAX && a.ahead <= REACH_MAX;
     if (ok) {
         l->reach_back = (uint8_t)a.back;
         l->reach_ahead = (uint8_t)a.ahead;
@@ -867,9 +941,11 @@ struct font_layout *font_layout_build(hb_face_t *face)
         l->mask = 0;
         make_opaque(l);
     }
-    hb_set_destroy(a.seen_sets);
-    hb_set_destroy(a.lookups);
-    hb_set_destroy(a.pending);
+    if (a.seen_sets) {
+        hb_set_destroy(a.seen_sets);
+        hb_set_destroy(a.lookups);
+        hb_set_destroy(a.pending);
+    }
     free(a.sig);
     free(a.input);
     return l;
