@@ -12,7 +12,7 @@
 
 #define LATIN_CACHE_SIZE 4096
 #define CJK_CACHE_SIZE   4096
-#define RUN_CACHE_SETS_BITS 11
+#define RUN_CACHE_SETS_BITS 8
 #define RUN_CACHE_WAYS   4
 #define RUN_CACHE_SIZE   ((1 << RUN_CACHE_SETS_BITS) * RUN_CACHE_WAYS)
 #define RUN_CACHE_MAX    FONT_RUN_MAX
@@ -111,6 +111,9 @@ struct font_instance {
     struct cache_slot tiles[TILE_CACHE_SIZE];
     _Atomic uint64_t run_stamp;
 };
+
+_Static_assert(sizeof(struct run_slot) * RUN_CACHE_SIZE <= 16u * 1024u,
+               "run cache stays within 16 KiB per font instance");
 
 static inline size_t tile_pixels(const struct font_instance *fi)
 {
