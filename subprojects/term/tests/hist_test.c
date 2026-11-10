@@ -25,6 +25,7 @@ static void test_init_free(void)
     assert(lines(&h) == 0);
     assert(hist_first_id(&h) == 0);
     assert(!hist_is_open(&h));
+    assert(h.ring_mask + 1 == HIST_RING_MIN_CAP);
     wsap_vtcore_hist_free(&h);
 }
 
@@ -714,8 +715,78 @@ static void test_short_lines_after_eviction(void)
     wsap_vtcore_hist_free(&h);
 }
 
+static void test_dynamic_ring_grow(void)
+{
+    struct hist h;
+    assert(wsap_vtcore_hist_init(&h, 2000, 64 * 1024 * 16));
+    assert(h.ring_mask + 1 == HIST_RING_MIN_CAP);
+
+    for (int i = 0; i < 300; i++) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "line-%04d", i);
+        wsap_vtcore_hist_push_ascii(&h, buf, (int)strlen(buf), NULL, false);
+    }
+    assert(lines(&h) == 300);
+    assert(h.ring_mask + 1 == 512);
+
+    wsap_vtcore_hist_prepare_rows(&h, 80);
+    wsap_vtcore_hist_refine_rows(&h, 10, 80, 300);
+    assert(h.exact_rows != NULL);
+    assert(h.exact_rows[10 & h.ring_mask] == 300);
+
+    struct cell out[32];
+    for (int i = 0; i < 300; i++) {
+        char want[32];
+        snprintf(want, sizeof(want), "line-%04d", i);
+        int len = wsap_vtcore_hist_decode_segment(&h, (uint64_t)i, 0, 32, out, NULL);
+        assert(len == (int)strlen(want));
+        for (int c = 0; c < len; c++)
+            assert(out[c].c == (uint32_t)want[c]);
+    }
+
+    for (int i = 300; i < 600; i++) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "line-%04d", i);
+        wsap_vtcore_hist_push_ascii(&h, buf, (int)strlen(buf), NULL, false);
+    }
+    assert(lines(&h) == 600);
+    assert(h.ring_mask + 1 == 1024);
+    assert(h.exact_rows != NULL);
+    assert(h.exact_rows[10 & h.ring_mask] == 300);
+
+    for (int i = 600; i < 1200; i++) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "line-%04d", i);
+        wsap_vtcore_hist_push_ascii(&h, buf, (int)strlen(buf), NULL, false);
+    }
+    assert(lines(&h) == 1200);
+    assert(h.ring_mask + 1 == 2048);
+    assert(h.exact_rows != NULL);
+    assert(h.exact_rows[10 & h.ring_mask] == 300);
+
+    for (int i = 1200; i < 2500; i++) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "line-%04d", i);
+        wsap_vtcore_hist_push_ascii(&h, buf, (int)strlen(buf), NULL, false);
+    }
+    assert(lines(&h) == 2000);
+    assert(hist_first_id(&h) == 500);
+    assert(hist_end_id(&h) == 2500);
+
+    for (int i = 500; i < 2500; i++) {
+        char want[32];
+        snprintf(want, sizeof(want), "line-%04d", i);
+        int len = wsap_vtcore_hist_decode_segment(&h, (uint64_t)i, 0, 32, out, NULL);
+        assert(len == (int)strlen(want));
+        for (int c = 0; c < len; c++)
+            assert(out[c].c == (uint32_t)want[c]);
+    }
+    wsap_vtcore_hist_free(&h);
+}
+
 int main(void)
 {
+    test_dynamic_ring_grow();
     test_short_lines_after_eviction();
     test_large_wide_count();
     test_view_after_prefix_eviction();

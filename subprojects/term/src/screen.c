@@ -1104,7 +1104,7 @@ void wsap_vtcore_screen_set_alternate(struct wsap_vtcore *t, bool enabled)
 
 static int scrollback_lines(int requested)
 {
-    return requested == 0 ? WSAP_VTCORE_SCROLLBACK_DEFAULT : requested;
+    return requested;
 }
 
 static atomic_int tables_state;
