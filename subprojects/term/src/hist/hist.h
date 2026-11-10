@@ -14,6 +14,7 @@
 #define HIST_PAGE_SLACK 64
 #define HIST_PAGE_USABLE (HIST_PAGE_SIZE - HIST_PAGE_SLACK)
 #define HIST_MAX_PART_CELLS 65535
+#define HIST_RING_MIN_CAP 256
 
 enum hline_flags {
     HLINE_NARROW      = 1 << 0,

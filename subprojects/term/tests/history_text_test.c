@@ -188,12 +188,40 @@ static void multi_line_batch_history(void)
     wsap_vtcore_free(term);
 }
 
+static void scrollback_zero_option(void)
+{
+    struct wsap_vtcore *term = wsap_vtcore_new(&(struct wsap_vtcore_options){
+        .size = { .x = 10, .y = 2 },
+        .scrollback = 0,
+    });
+    assert(term);
+    feed(term, "1\r\n2\r\n3\r\n4\r\n5\r\n6");
+    assert(wsap_vtcore_scrollback(term).total == 0);
+    expect_history(term, 100, "");
+    wsap_vtcore_free(term);
+}
+
+static void scrollback_small_option(void)
+{
+    struct wsap_vtcore *term = wsap_vtcore_new(&(struct wsap_vtcore_options){
+        .size = { .x = 10, .y = 2 },
+        .scrollback = 3,
+    });
+    assert(term);
+    feed(term, "1\r\n2\r\n3\r\n4\r\n5\r\n6");
+    assert(wsap_vtcore_scrollback(term).total == 3);
+    expect_history(term, 100, "2\n3\n4\n");
+    wsap_vtcore_free(term);
+}
+
 int main(void)
 {
     unicode_and_selection();
     limits_and_scrolled_view();
     wrapped_rows();
     scrollback_limit();
+    scrollback_zero_option();
+    scrollback_small_option();
     multi_line_batch_history();
     concurrent_history();
     puts("PASS: history text");

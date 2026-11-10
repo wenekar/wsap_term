@@ -45,9 +45,9 @@ static inline struct hline *open_part(const struct hist *h)
 
 static WSAP_VTCORE_NOINLINE bool ring_grow(struct hist *h, uint64_t n)
 {
-    uint64_t cap = h->ring ? (uint64_t)h->ring_mask + 1 : 65536;
-    if (cap < 65536)
-        cap = 65536;
+    uint64_t cap = h->ring ? (uint64_t)h->ring_mask + 1 : HIST_RING_MIN_CAP;
+    if (cap < HIST_RING_MIN_CAP)
+        cap = HIST_RING_MIN_CAP;
     cap = wsap_vtcore_grow_cap64(cap, h->head - h->tail + n);
     struct hline *ring = wsap_vtcore_aligned_alloc(64, (size_t)cap * sizeof(*ring));
     if (!ring)
@@ -68,6 +68,17 @@ static WSAP_VTCORE_NOINLINE bool ring_grow(struct hist *h, uint64_t n)
         if (exact)
             exact[s & (cap - 1)] = h->exact_rows[s & h->ring_mask];
     }
+    if (h->blocks) {
+        uint64_t blk_start = h->tail & ~UINT64_C(15);
+        for (uint64_t b = blk_start; b < h->head; b += 16) {
+            const struct hist_block *old_b = &h->blocks[(b & h->ring_mask) / 16];
+            if (old_b->seq == b + 1 ||
+                ((old_b->seq & (UINT64_C(1) << 63)) &&
+                 ((old_b->seq & ~(UINT64_C(1) << 63)) & ~UINT64_C(15)) == b)) {
+                blocks[(b & (cap - 1)) / 16] = *old_b;
+            }
+        }
+    }
     free(h->exact_rows);
     h->exact_rows = exact;
     wsap_vtcore_aligned_free(h->ring);
@@ -75,6 +86,7 @@ static WSAP_VTCORE_NOINLINE bool ring_grow(struct hist *h, uint64_t n)
     h->blocks = blocks;
     h->ring = ring;
     h->ring_mask = (uint32_t)(cap - 1);
+    h->dec.valid = false;
     return true;
 }
 

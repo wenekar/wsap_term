@@ -209,7 +209,7 @@ static void __attribute__((format(printf, 2, 3))) reply(struct model *m, const c
 
 static int history_limit(int requested)
 {
-    return requested == 0 ? WSAP_VTCORE_SCROLLBACK_DEFAULT : requested < 0 ? 0 : requested;
+    return requested < 0 ? 0 : requested;
 }
 
 static void hist_reflow_tail(struct model *m);
