@@ -13,26 +13,76 @@ struct event_node {
     struct event_node *next;
 };
 
+enum { event_pool_capacity = 32 };
+
 struct yasl_private_event_state {
     yasl_private_mutex mutex;
     struct event_node *head, *tail, *last;
+    /* Nodes kept for reuse, so a motion burst does not allocate one node per event. */
+    struct event_node *pool;
+    unsigned pool_count;
     uint64_t sequence, identity, request;
     int error;
 };
 
-static void dispose(struct event_node *node)
+/* Producers and the owner thread share the pool, so it takes the queue lock. */
+static struct event_node *node_alloc(struct yasl_private_event_state *state)
 {
-    if (!node) return;
-    if (node->release) node->release(node->event.user.payload);
+    struct event_node *node;
+    yasl_private_mutex_lock(&state->mutex);
+    node = state->pool;
+    if (node) {
+        state->pool = node->next;
+        state->pool_count--;
+        node->next = NULL;
+    }
+    yasl_private_mutex_unlock(&state->mutex);
+    return node ? node : calloc(1, sizeof(*node));
+}
+
+/* Frees the node text and clears the fields that the next user must not
+ * inherit. Then adds the node to the pool, or frees it when the pool is full. */
+static void node_return(struct yasl_private_event_state *state, struct event_node *node)
+{
     free(node->text);
+    node->text = NULL;
+    node->release = NULL;
+    yasl_private_mutex_lock(&state->mutex);
+    if (state->pool_count < event_pool_capacity) {
+        node->next = state->pool;
+        state->pool = node;
+        state->pool_count++;
+        node = NULL;
+    }
+    yasl_private_mutex_unlock(&state->mutex);
     free(node);
 }
 
-static void dispose_list(struct event_node *nodes)
+/* Frees the unused nodes. Call it before the state and its lock go away. */
+static void pool_clear(struct yasl_private_event_state *state)
+{
+    struct event_node *node = state->pool;
+    state->pool = NULL;
+    state->pool_count = 0;
+    while (node) {
+        struct event_node *next = node->next;
+        free(node);
+        node = next;
+    }
+}
+
+static void dispose(struct yasl_private_event_state *state, struct event_node *node)
+{
+    if (!node) return;
+    if (node->release) node->release(node->event.user.payload);
+    node_return(state, node);
+}
+
+static void dispose_list(struct yasl_private_event_state *state, struct event_node *nodes)
 {
     while (nodes) {
         struct event_node *next = nodes->next;
-        dispose(nodes);
+        dispose(state, nodes);
         nodes = next;
     }
 }
@@ -54,8 +104,10 @@ void yasl_private_events_close(struct yasl_private_display *d)
     /* Producers must already have stopped. Detach before callbacks so cleanup
      * can make harmless failed posts without touching a dying queue. */
     d->events = NULL;
-    dispose_list(state->head);
-    dispose(state->last);
+    dispose_list(state, state->head);
+    dispose(state, state->last);
+    /* The dispose calls above filled the pool. Free the nodes now. */
+    pool_clear(state);
     yasl_private_mutex_destroy(&state->mutex);
     free(state);
 }
@@ -154,7 +206,7 @@ void yasl_private_events_unregister(struct yasl_surface *s)
     }
     s->event_next = NULL;
     yasl_private_mutex_unlock(&d->events->mutex);
-    dispose_list(discarded);
+    dispose_list(d->events, discarded);
 }
 
 static bool append(struct yasl_private_display *d, struct event_node *node)
@@ -179,18 +231,19 @@ bool yasl_private_events_push(struct yasl_private_display *d, struct yasl_surfac
                       const struct yasl_private_event *event)
 {
     if (!d || !d->events || (event->surface && !event->surface->id)) return true;
-    struct event_node *node = calloc(1, sizeof(*node));
+    struct yasl_private_event_state *state = d->events;
+    struct event_node *node = node_alloc(state);
     if (!node) goto failed;
     node->event = *event;
     node->event.surface_id = event->surface ? event->surface->id : 0;
     node->queue_id = queue_owner ? queue_owner->id : node->event.surface_id;
     if (string_event(event->type)) {
         if (event->text.len == SIZE_MAX || (!event->text.data && event->text.len)) {
-            free(node);
+            dispose(state, node);
             goto failed;
         }
         node->text = malloc(event->text.len + 1);
-        if (!node->text) { free(node); goto failed; }
+        if (!node->text) { dispose(state, node); goto failed; }
         if (event->text.len) memcpy(node->text, event->text.data, event->text.len);
         node->text[event->text.len] = '\0';
         if (event->type == YASL_PRIVATE_EVENT_PASTE) node->event.paste.data = node->text;
@@ -198,24 +251,24 @@ bool yasl_private_events_push(struct yasl_private_display *d, struct yasl_surfac
         else if (event->type == YASL_PRIVATE_EVENT_COMPOSITION) node->event.composition.data = node->text;
         else node->event.text.data = node->text;
     }
-    yasl_private_mutex_lock(&d->events->mutex);
+    yasl_private_mutex_lock(&state->mutex);
     if ((node->event.surface_id && !yasl_private_events_find(d, node->event.surface_id)) ||
         (node->queue_id && !yasl_private_events_find(d, node->queue_id))) {
-        yasl_private_mutex_unlock(&d->events->mutex);
-        dispose(node);
+        yasl_private_mutex_unlock(&state->mutex);
+        dispose(state, node);
         return true; /* A native teardown notification for a canceled recipient. */
     }
     bool ok = append(d, node);
-    if (!ok) d->events->error = errno;
-    yasl_private_mutex_unlock(&d->events->mutex);
-    if (!ok) dispose(node);
+    if (!ok) state->error = errno;
+    yasl_private_mutex_unlock(&state->mutex);
+    if (!ok) dispose(state, node);
     /* The owner's next step sees the queue; another thread must wake it. */
     yasl_private_loop_wake(d->loop);
     return ok;
 failed:
-    yasl_private_mutex_lock(&d->events->mutex);
-    d->events->error = ENOMEM;
-    yasl_private_mutex_unlock(&d->events->mutex);
+    yasl_private_mutex_lock(&state->mutex);
+    state->error = ENOMEM;
+    yasl_private_mutex_unlock(&state->mutex);
     /* The loss is an event too; the owner reports it in its next step. */
     yasl_private_loop_wake(d->loop);
     errno = ENOMEM;
@@ -225,7 +278,7 @@ failed:
 bool yasl_private_display_post(struct yasl_private_display *d, const struct yasl_private_message *message)
 {
     if (!d || !d->events || !message) { errno = EINVAL; return false; }
-    struct event_node *node = calloc(1, sizeof(*node));
+    struct event_node *node = node_alloc(d->events);
     if (!node) { errno = ENOMEM; return false; }
     node->event = (struct yasl_private_event){
         .type = YASL_PRIVATE_EVENT_USER, .surface_id = message->target_id,
@@ -238,7 +291,7 @@ bool yasl_private_display_post(struct yasl_private_display *d, const struct yasl
     if (!ok) errno = ENOENT;
     else ok = append(d, node);
     yasl_private_mutex_unlock(&d->events->mutex);
-    if (!ok) { free(node); return false; }
+    if (!ok) { node_return(d->events, node); return false; }
     if (d->loop) yasl_private_loop_kick(d->loop);
     return true;
 }
@@ -262,7 +315,7 @@ bool yasl_private_display_poll_event(struct yasl_private_display *d, struct yasl
     state->last = node;
     *event = node->event;
     yasl_private_mutex_unlock(&state->mutex);
-    dispose(last);
+    dispose(state, last);
     return true;
 }
 
