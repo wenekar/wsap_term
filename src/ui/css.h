@@ -153,6 +153,7 @@ struct css_sheet {
     int rule_count;
     int rule_cap;
     struct css_index *index;
+    bool has_defaults; /* The sheet is built on the css_init_default rules. */
 };
 
 bool css_parse(struct css_sheet *sheet, const char *css_text);
