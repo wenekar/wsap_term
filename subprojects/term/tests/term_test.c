@@ -2287,10 +2287,14 @@ static void test_bulk_line_flood(void)
         assert(buf);
         size_t n = 0;
         unsigned state = 12345;
-        while (n < cap / 2) {
+        while (n < cap / 3) {
             state = state * 1103515245u + 12345u;
             unsigned pick = (state >> 16) % 27;
             buf[n++] = pick == 26 ? '\n' : (char)('a' + pick);
+        }
+        while (n < 2 * cap / 3) {
+            state = state * 1103515245u + 12345u;
+            buf[n++] = (char)('a' + ((state >> 16) % 26));
         }
         for (int k = -1; k <= 1; k++) {
             memset(buf + n, 'x', (size_t)(cols + k));
@@ -2307,24 +2311,31 @@ static void test_bulk_line_flood(void)
         }
 
         struct wsap_vtcore *bulk = tt_new(cols, rows);
+        struct wsap_vtcore *chunks = tt_new(cols, rows);
         struct wsap_vtcore *stream = tt_new(cols, rows);
         struct wsap_vtcore *bytes = tt_new(cols, rows);
         unsigned flags = g % 2 != 0 ? WSAP_VTCORE_FEED_ONLCR : 0;
         for (size_t i = 0; i < n; i += 65536)
             wsap_vtcore_feed(bulk, buf + i, n - i < 65536 ? n - i : 65536, flags);
+        for (size_t i = 0; i < n; i += 4096)
+            wsap_vtcore_feed(chunks, buf + i, n - i < 4096 ? n - i : 4096, flags);
         wsap_vtcore_feed(stream, buf, n, flags);
         for (size_t i = 0; i < n; i++) wsap_vtcore_feed(bytes, buf + i, 1, flags);
 
         assert_same_screen(bulk, bytes);
+        assert_same_screen(chunks, bytes);
         assert_same_screen(stream, bytes);
         for (int i = 0; i < tt_history(bulk); i += 7) {
             wsap_vtcore_scroll(bulk, 7);
+            wsap_vtcore_scroll(chunks, 7);
             wsap_vtcore_scroll(stream, 7);
             wsap_vtcore_scroll(bytes, 7);
             assert_same_screen(bulk, bytes);
+            assert_same_screen(chunks, bytes);
             assert_same_screen(stream, bytes);
         }
         wsap_vtcore_free(bulk);
+        wsap_vtcore_free(chunks);
         wsap_vtcore_free(stream);
         wsap_vtcore_free(bytes);
         free(buf);

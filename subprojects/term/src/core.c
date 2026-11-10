@@ -1041,16 +1041,34 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_wrapped(struct wsap_vtcore *t, c
 {
     int limit = len > INT32_MAX ? INT32_MAX : (int)len;
     int run = scan_ascii_run(buf, limit);
-    if (!run) return 0;
+    if (run < 1024) return 0;
     int cols = t->cols;
-    int count = (run - 1) / cols;
-    if (!count) return 0;
     struct screen *s = &t->scr;
     int rows = s->rows, keep = rows - 1;
-    int scrolls = count + t->pending_wrap;
-    int old_rows = keep + t->pending_wrap;
-    if (t->pending_wrap) {
-        row_set_wrapped(screen_get_row(s, rows - 1), true);
+    int bot_p = s->top + rows - 1;
+    if (bot_p >= rows) bot_p -= rows;
+    struct srow *bot = &s->slot[bot_p];
+    size_t head_consumed = 0;
+    bool wrapped_bot = t->pending_wrap;
+    if (!wrapped_bot && t->cursor_x > 0) {
+        if (bot->kind != ROW_ASCII || bot->len != t->cursor_x || bot->text.text != bot->ascii)
+            return 0;
+        int avail = cols - t->cursor_x;
+        if (run - avail <= cols) return 0;
+        memcpy(bot->ascii + t->cursor_x, buf, (size_t)avail);
+        bot->len = (uint16_t)cols;
+        bot->version++;
+        buf += avail;
+        run -= avail;
+        head_consumed = (size_t)avail;
+        wrapped_bot = true;
+    }
+    int count = (run - 1) / cols;
+    if (!count) return 0;
+    int scrolls = count + wrapped_bot;
+    int old_rows = keep + wrapped_bot;
+    if (wrapped_bot) {
+        row_set_wrapped(bot, true);
         t->pending_wrap = false;
         t->cursor_x = 0;
     }
@@ -1059,7 +1077,7 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_wrapped(struct wsap_vtcore *t, c
     flush_orig_rows(t, s, &orig_y, &orig_rem, old_count);
     int extra = count - (keep - orig_rem);
     if (extra) wsap_vtcore_hist_push_ascii(&t->hist, buf, extra * cols, NULL, true);
-    s->top = (s->top + scrolls % rows) % rows;
+    s->top = orig_rem ? (s->top + scrolls % rows) % rows : 0;
     const char *src = buf + extra * cols;
     uint8_t *copy_dst = NULL;
     const char *copy_src = src;
@@ -1086,16 +1104,41 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_wrapped(struct wsap_vtcore *t, c
         copy_len += (size_t)cols;
     }
     if (copy_len) memcpy(copy_dst, copy_src, copy_len);
-    t->next_row_uid = uid;
-    screen_new_row(t, screen_get_row(s, rows - 1));
+    size_t total_consumed = head_consumed + (size_t)count * (size_t)cols;
+    if (head_consumed + (size_t)run == len) {
+        int new_bot_p = s->top + rows - 1;
+        if (new_bot_p >= rows) new_bot_p -= rows;
+        struct srow *new_bot = &s->slot[new_bot_p];
+        int rem = run - count * cols;
+        memcpy(new_bot->ascii, src, (size_t)rem);
+        new_bot->uid = ++uid;
+        new_bot->version++;
+        new_bot->kind = ROW_ASCII;
+        new_bot->len = (uint16_t)rem;
+        new_bot->flags = 0;
+        new_bot->text.text = new_bot->ascii;
+        t->next_row_uid = uid;
+        t->last_char = (unsigned char)buf[run - 1];
+        if (rem < cols) {
+            t->cursor_x = rem;
+            t->pending_wrap = false;
+        } else {
+            t->cursor_x = cols - 1;
+            t->pending_wrap = true;
+        }
+        total_consumed = len;
+    } else {
+        t->next_row_uid = uid;
+        screen_new_row(t, screen_get_row(s, rows - 1));
+        t->last_char = (unsigned char)buf[count * cols - 1];
+        t->cursor_x = 0;
+        t->pending_wrap = false;
+    }
     if (t->prompt_y > 0)
         t->prompt_y = t->prompt_y > scrolls ? t->prompt_y - scrolls : 0;
     clamp_selection_after_scroll(t);
-    t->last_char = (unsigned char)buf[count * cols - 1];
-    t->cursor_x = 0;
-    t->pending_wrap = false;
     t->full_gen++;
-    return (size_t)count * cols;
+    return total_consumed;
 }
 
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
@@ -1469,7 +1512,7 @@ static inline WSAP_VTCORE_ALWAYS_INLINE size_t bulk_ascii_lines_body(struct wsap
                     nl &= nl - 1;
                 }
                 scan += 64;
-                if (!autowrap && scan - i > (size_t)cols)
+                if ((!autowrap || i == 0) && scan - i > (size_t)cols)
                     break;
                 if (scan - i > HIST_PAGE_USABLE / 2)
                     break;
@@ -1479,7 +1522,7 @@ narrow_done:
         if (i >= len)
             break;
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
-        if (isa == WSAP_VTCORE_ISA_AVX512 && WSAP_VTCORE_EXPECT(!lnm && !t->pending_wrap, 1)) {
+        if (isa == WSAP_VTCORE_ISA_AVX512 && WSAP_VTCORE_EXPECT(!t->pending_wrap, 1)) {
             while (i + 64 <= len) {
                 uint64_t nl;
                 uint64_t mask = line_masks_avx512(buf + i, &nl);
@@ -1629,9 +1672,9 @@ size_t wsap_vtcore_sc_bulk_ascii_lines(struct wsap_vtcore *t, const char *buf, s
     if (len >= 1024 && using_default_colors(t) && !wsap_vtcore_flags_pad(t)) {
         size_t done = 0;
         bool lnm = wsap_vtcore_lnm(t);
-        if (!lnm && t->autowrap)
+        if (t->autowrap)
             done = stream_ascii_wrapped(t, buf, len);
-        if (!done && !t->pending_wrap)
+        if (!done && !t->pending_wrap && t->cursor_x == 0)
             done = stream_ascii_lines(t, buf, len, lnm ? 1 : 2);
         if (done) return done;
         if (t->pending_wrap) {
@@ -1642,6 +1685,8 @@ size_t wsap_vtcore_sc_bulk_ascii_lines(struct wsap_vtcore *t, const char *buf, s
                 len = (size_t)(lf - buf) + 1;
         }
     }
+    if (!t->pending_wrap && t->cursor_x != 0)
+        return 0;
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
     if (wsap_vtcore_use_avx512())
         return bulk_ascii_lines_avx512(t, buf, len);
