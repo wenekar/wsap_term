@@ -488,8 +488,33 @@ static void row_keys_follow_scrolled_content(void)
     wsap_vtcore_free(t);
 }
 
+static void view_dynamic_sizing(void)
+{
+    struct wsap_vtcore *t = small_history_term(20, 5, 100);
+    assert(wsap_vtcore_history_rows(t) == 0);
+    assert(tt_history(t) == 0);
+
+    feed_lines(t, "L", 30);
+    int hist = tt_history(t);
+    assert(hist > 0);
+    wsap_vtcore_scroll_to(t, 5);
+    assert(tt_view_offset(t) == 5);
+
+    tt_puts(t, "\033[3J");
+    assert(tt_history(t) == 0);
+    assert(tt_view_offset(t) == 0);
+
+    feed_lines(t, "K", 10);
+    assert(tt_history(t) > 0);
+    wsap_vtcore_scroll_to(t, 2);
+    assert(tt_view_offset(t) == 2);
+
+    wsap_vtcore_free(t);
+}
+
 int main(void)
 {
+    view_dynamic_sizing();
     snapshots_keep_history_totals();
     row_keys_differ_between_terminals();
     row_keys_follow_scrolled_content();
