@@ -200,10 +200,40 @@ static void test_fifo_preserves_notifications(void)
     teardown(&d, &a, &b);
 }
 
+/* A reused node must not run the release callback of its previous message. */
+static void test_reuse_clears_release(void)
+{
+    struct yasl_private_display d;
+    struct yasl_surface a, b;
+    setup(&d, &a, &b);
+    owner = pthread_self();
+    released = 0;
+    struct yasl_private_event ev;
+    assert(yasl_private_display_post(&d, &(struct yasl_private_message){
+        .target_id = a.id, .payload = &released, .release = release}));
+    assert(yasl_private_display_poll_event(&d, &ev) && ev.type == YASL_PRIVATE_EVENT_USER);
+    assert(released == 0); /* The borrowed node stays until the next poll. */
+    /* The next event frees the borrowed node, so a later push reuses it. */
+    yasl_private_surface_notify_state(&a, YASL_PRIVATE_STATE_ACTIVATED);
+    assert(yasl_private_display_poll_event(&d, &ev) && ev.type == YASL_PRIVATE_EVENT_WINDOW_STATE);
+    assert(released == 1); /* The message is released once, not twice. */
+    yasl_private_surface_notify_close(&a);
+    assert(yasl_private_display_poll_event(&d, &ev) && ev.type == YASL_PRIVATE_EVENT_WINDOW_CLOSE);
+    assert(released == 1);
+    char text[] = "kept";
+    assert(input_queue_push(&a.input, &(struct yasl_private_event){
+        .type = YASL_PRIVATE_EVENT_TEXT, .surface = &a, .text = {text, 4}}));
+    assert(yasl_private_display_poll_event(&d, &ev) && ev.type == YASL_PRIVATE_EVENT_TEXT);
+    assert(!strcmp(ev.text.data, "kept") && released == 1);
+    teardown(&d, &a, &b);
+    assert(released == 1);
+}
+
 int main(void)
 {
     test_order_and_lifetimes();
     test_post_cleanup();
+    test_reuse_clears_release();
     test_damage();
     test_failures();
     test_fifo_preserves_notifications();
