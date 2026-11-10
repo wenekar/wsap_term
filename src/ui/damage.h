@@ -14,7 +14,14 @@ struct ui_damage_record {
 
 struct ui_damage_tracker {
     struct ui_damage_record *records;
+    /* Open-addressed map from a record key to the record index plus one.
+       Zero marks an empty slot, so record index 0 stays representable.
+       `util_grow` doubles the capacity, so it is a power of two. The
+       capacity holds at least two slots for each record, so a probe always
+       finds an empty slot. */
+    int *slots;
     int n, cap;
+    int slot_cap;
     bool valid;
 };
 
