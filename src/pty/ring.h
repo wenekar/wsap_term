@@ -41,6 +41,9 @@ struct pty_ring {
      * parse time of the last chunk, so a pass on data that parses slowly
      * overruns its budget by less. */
     size_t chunk;
+    /* The time that the next pass may take. It grows while a flood keeps output
+     * to read, and a stream that runs dry returns it to the base budget. */
+    uint64_t budget_ns;
     alignas(64) _Atomic size_t head;
     _Atomic size_t switch_head;
     _Atomic int need_space;

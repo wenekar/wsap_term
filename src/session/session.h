@@ -57,6 +57,9 @@ struct session {
      * chunk, so a pass on data that parses slowly overruns its budget by
      * less. */
     size_t read_chunk;
+    /* The time that the next pass over the pty may take. The ring path keeps
+     * its own budget. */
+    uint64_t drain_budget_ns;
     alignas(64) struct pty pty;
 };
 
