@@ -89,7 +89,7 @@ static struct card card_layout(const struct ui_tab_preview *p,
     int cell_h = ui_widget_text_style(&p->widget.style_scale).cell_h;
     int x = s->border + s->pad.l;
     int y = s->border + s->pad.t;
-    struct vector2i img = p->impl.image ? p->impl.image->size : (struct vector2i){0};
+    struct vector2i img = p->impl.image.size;
     int content_w = inner_width(s) > img.x ? inner_width(s) : img.x;
     struct card l = {
         .title = { .pos = { .x = x, .y = y },
@@ -105,7 +105,17 @@ static struct card card_layout(const struct ui_tab_preview *p,
     return l;
 }
 
-static bool capture(struct ui_tab_preview *p, int index)
+/* What a capture asks the card to redo. The preview polls its source while it
+ * shows, so a capture that finds the same content must not relayout or repaint
+ * the card. */
+enum capture_change {
+    CAPTURE_CHANGE_NONE = 0,
+    CAPTURE_CHANGE_PAINT,
+    CAPTURE_CHANGE_MEASURE,
+};
+
+static bool capture(struct ui_tab_preview *p, int index,
+                    enum capture_change *change)
 {
     const struct ui_tab_preview_source *src = &p->impl.source;
     const char *title = NULL;
@@ -115,16 +125,39 @@ static bool capture(struct ui_tab_preview *p, int index)
         !src->capture(src->userdata, index, inner_width(&s),
                       p->impl.dragging, &title, &image))
         return false;
-    char *copy = strdup(title ? title : "");
-    if (!copy)
-        return false;
-    free(p->impl.title);
-    p->impl.title = copy;
-    p->impl.image = image;
+    /* The source owns the pixels and it can write them again in place. Keep a
+     * copy of the thumbnail here, so the comparison below reads the values of
+     * the last capture. */
+    struct ui_image shot = {0};
+    if (image && image->pixels && image->size.x > 0 && image->size.y > 0)
+        shot = *image;
+    const char *text = title ? title : "";
+    bool title_changed = !p->impl.title || strcmp(p->impl.title, text) != 0;
+    if (title_changed) {
+        char *copy = strdup(text);
+        if (!copy)
+            return false;
+        free(p->impl.title);
+        p->impl.title = copy;
+    }
+    bool content_changed = shot.gen != p->impl.image.gen ||
+                           shot.pixels != p->impl.image.pixels;
+    bool layout_changed = !vector2i_eq(shot.size, p->impl.image.size);
+    p->impl.image = shot;
     p->impl.index = index;
     p->impl.shown = true;
-    ui_widget_invalidate(&p->widget, UI_WIDGET_INVALIDATE_MEASURE);
+    *change = layout_changed ? CAPTURE_CHANGE_MEASURE
+            : (content_changed || title_changed) ? CAPTURE_CHANGE_PAINT
+            : CAPTURE_CHANGE_NONE;
     return true;
+}
+
+static void apply_change(struct ui_tab_preview *p, enum capture_change change)
+{
+    if (change == CAPTURE_CHANGE_NONE)
+        return;
+    ui_widget_invalidate(&p->widget, change == CAPTURE_CHANGE_MEASURE
+        ? UI_WIDGET_INVALIDATE_MEASURE : UI_WIDGET_INVALIDATE_PAINT);
 }
 
 static void place_below(struct ui_tab_preview *p, struct rect2i anchor)
@@ -142,7 +175,7 @@ void ui_tab_preview_hide(struct ui_tab_preview *p)
     bool was = p->impl.shown || p->impl.pending >= 0;
     p->impl.shown = false;
     p->impl.dragging = false;
-    p->impl.image = NULL;
+    p->impl.image = (struct ui_image){0};
     p->impl.pending = -1;
     p->impl.show_at = 0;
     p->impl.refresh_at = 0;
@@ -160,8 +193,10 @@ static uint64_t preview_tick(struct ui_widget *widget, uint64_t now_ms)
             return p->impl.show_at;
         int index = p->impl.pending;
         p->impl.pending = -1;
-        if (!capture(p, index))
+        enum capture_change change;
+        if (!capture(p, index, &change))
             return 0;
+        apply_change(p, change);
         place_below(p, p->impl.anchor);
         p->impl.refresh_at = 0;
     }
@@ -170,10 +205,12 @@ static uint64_t preview_tick(struct ui_widget *widget, uint64_t now_ms)
     if (!p->impl.refresh_at) {
         p->impl.refresh_at = now_ms + REFRESH_MS;
     } else if (now_ms >= p->impl.refresh_at) {
-        if (!capture(p, p->impl.index)) {
+        enum capture_change change;
+        if (!capture(p, p->impl.index, &change)) {
             ui_tab_preview_hide(p);
             return 0;
         }
+        apply_change(p, change);
         p->impl.refresh_at = now_ms + REFRESH_MS;
     }
     return p->impl.refresh_at;
@@ -221,8 +258,8 @@ static void preview_paint(const struct ui_widget *widget,
                                      l.title.width / text.advance);
         ui_paint_text(paint, l.title, text, title_color, title, len);
     }
-    if (p->impl.image)
-        ui_paint_image(paint, l.image.pos, p->impl.image);
+    if (p->impl.image.pixels)
+        ui_paint_image(paint, l.image.pos, &p->impl.image);
 }
 
 static void preview_debug_parts(const struct ui_widget *widget,
@@ -236,7 +273,7 @@ static void preview_debug_parts(const struct ui_widget *widget,
     const char *title = p->impl.title;
     ui_debug_part_text(out, "title", -1, ui_widget_rect_to_surface(widget, l.title),
                        title, title ? strlen(title) : 0);
-    if (p->impl.image)
+    if (p->impl.image.pixels)
         ui_debug_part(out, "image", -1, ui_widget_rect_to_surface(widget, l.image));
 }
 
@@ -295,9 +332,13 @@ void ui_tab_preview_hover(struct ui_tab_preview *p, int index,
     }
     p->impl.anchor = anchor;
     if (p->impl.shown) {
-        if (index != p->impl.index && !capture(p, index)) {
-            ui_tab_preview_hide(p);
-            return;
+        if (index != p->impl.index) {
+            enum capture_change change;
+            if (!capture(p, index, &change)) {
+                ui_tab_preview_hide(p);
+                return;
+            }
+            apply_change(p, change);
         }
         place_below(p, anchor);
         return;
@@ -329,10 +370,12 @@ void ui_tab_preview_follow(struct ui_tab_preview *p, int index,
     if (!p->impl.dragging || !p->impl.shown || p->impl.index != index) {
         p->impl.dragging = true;
         p->impl.pending = -1;
-        if (!capture(p, index)) {
+        enum capture_change change;
+        if (!capture(p, index, &change)) {
             ui_tab_preview_hide(p);
             return;
         }
+        apply_change(p, change);
     }
     struct ui_tab_preview_skin s = skin_of(&p->widget, p->impl.dragging);
     struct vector2i size = card_layout(p, &s).size;

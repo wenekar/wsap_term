@@ -9,12 +9,13 @@
 #include "render/term_frame.h"
 #include <wsap_vtcore/wsap_vtcore.h>
 
+/* A window keeps one of these while it shows a tab preview. The struct holds
+ * only the small thumbnail: the full-resolution image is scratch that
+ * app_thumbnail_capture() gives back before it returns. */
 struct app_thumbnail {
     struct ui_image image;
     uint32_t *pixels;
     size_t pixels_cap;
-    uint32_t *full;
-    size_t full_cap;
     struct wsap_vtcore_snapshot *snapshot;
     const struct wsap_vtcore *source;
     uint64_t signature;
@@ -138,13 +139,21 @@ bool app_thumbnail_capture(void *ud, void **state, struct font_instance *font,
     };
     if (size.y <= 0 || (size_t)full_size.x > SIZE_MAX / (size_t)full_size.y ||
         (size_t)size.x > SIZE_MAX / (size_t)size.y ||
-        !reserve(&thumb->full, &thumb->full_cap,
-                 (size_t)full_size.x * full_size.y) ||
         !reserve(&thumb->pixels, &thumb->pixels_cap, (size_t)size.x * size.y))
+        return false;
+    size_t full_count = (size_t)full_size.x * (size_t)full_size.y;
+    if (full_count > SIZE_MAX / sizeof(uint32_t))
+        return false;
+
+    /* The full-resolution image is scratch. Render into it, resample it, and
+     * free it at once. The renderer keeps no surface state for a framebuffer
+     * with no history, so it paints every pixel of this memory. */
+    uint32_t *full = malloc(full_count * sizeof(*full));
+    if (!full)
         return false;
 
     struct framebuffer target = {
-        .pixels = thumb->full,
+        .pixels = full,
         .size = full_size,
     };
     struct render_frame frame = {
@@ -152,7 +161,8 @@ bool app_thumbnail_capture(void *ud, void **state, struct font_instance *font,
         .cpu_only = true,
     };
     (void)render_draw(app->renderer, &target, &frame);
-    resample(thumb->pixels, size, thumb->full, full_size);
+    resample(thumb->pixels, size, full, full_size);
+    free(full);
     thumb->image = (struct ui_image){
         .pixels = thumb->pixels,
         .size = size,
@@ -170,7 +180,6 @@ void app_thumbnail_release(void *state)
     if (!thumb)
         return;
     free(thumb->pixels);
-    free(thumb->full);
     wsap_vtcore_snapshot_free(thumb->snapshot);
     free(thumb);
 }

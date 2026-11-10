@@ -5,6 +5,7 @@
 #include "ui/debug.h"
 #include "paint/scene.h"
 #include "ui/ui.h"
+#include "util/json.h"
 
 static uint32_t pixels[400 * 300];
 
@@ -19,6 +20,8 @@ struct fixture {
     int tabs;
     int captures;
     int last_width;
+    int rows_extra;
+    bool unchanged;
 };
 
 static bool capture(void *userdata, int index, int width, bool dragging,
@@ -32,8 +35,9 @@ static bool capture(void *userdata, int index, int width, bool dragging,
     f->last_width = width;
     snprintf(f->title, sizeof(f->title), "tab %d", index);
     f->image = (struct ui_image){
-        .pixels = pixels, .size = { .x = width, .y = width / 2 },
-        .gen = (uint64_t)f->captures,
+        .pixels = pixels,
+        .size = { .x = width, .y = width / 2 + f->rows_extra },
+        .gen = f->unchanged ? f->image.gen : (uint64_t)f->captures,
     };
     *title = f->title;
     *image = &f->image;
@@ -123,7 +127,8 @@ static void hover_shows_card_below_tab_after_delay_test(void)
 
     assert(ui_surface_build_scene(&f.surface, &f.scene));
     const struct ui_scene_op *image = find_op(&f.scene, UI_SCENE_OP_IMAGE);
-    assert(image && image->image == &f.image);
+    assert(image && image->image->pixels == f.image.pixels);
+    assert(vector2i_eq(image->image->size, f.image.size));
     struct ui_debug_parts parts = {0};
     ui_debug_collect_parts(ui_tab_preview_widget(&f.card), &parts);
     const struct ui_debug_part *title = find_part(&parts, "title");
@@ -265,10 +270,77 @@ static void restyled_sheet_updates_card_and_title_test(void)
     teardown(&f);
 }
 
+enum card_dirty {
+    CARD_CLEAN = 0,
+    CARD_PAINT,
+    CARD_MEASURE,
+};
+
+/* The dirty flags of the card, as the inspector reports them. */
+static enum card_dirty card_dirty(struct fixture *f)
+{
+    struct json_writer j = {0};
+    struct ui_debug_view view = {
+        .root = &f->root, .surface = &f->surface, .scene = &f->scene,
+    };
+    ui_debug_write_widget(&j, &view, ui_tab_preview_widget(&f->card));
+    char *dump = json_take(&j, NULL);
+    const char *flags = dump ? strstr(dump, "\"dirty\":[") : NULL;
+    assert(flags);
+    flags += strlen("\"dirty\":[");
+    const char *end = strchr(flags, ']');
+    assert(end);
+    enum card_dirty dirty = CARD_CLEAN;
+    for (const char *p = flags; p + 5 < end; p++) {
+        if (!strncmp(p, "measure", 7))
+            dirty = CARD_MEASURE;
+        else if (dirty == CARD_CLEAN && !strncmp(p, "paint", 5))
+            dirty = CARD_PAINT;
+    }
+    free(dump);
+    return dirty;
+}
+
+static void unchanged_refresh_requests_no_redraw_test(void)
+{
+    struct fixture f;
+    setup(&f, NULL);
+    ui_tab_preview_hover(&f.card, 0, TAB0);
+    tick(&f, 1000);
+    tick(&f, ui_surface_next_deadline(&f.surface));
+    assert(ui_tab_preview_is_visible(&f.card));
+    assert(ui_surface_build_scene(&f.surface, &f.scene));
+
+    /* A poll that finds the same picture and the same title must not ask for
+     * a relayout or a repaint. */
+    f.unchanged = true;
+    int captures = f.captures;
+    ui_surface_tick(&f.surface, ui_surface_next_deadline(&f.surface));
+    assert(f.captures == captures + 1);
+    assert(card_dirty(&f) == CARD_CLEAN);
+
+    /* A new picture of the same size repaints the card, and only that. */
+    f.unchanged = false;
+    ui_surface_tick(&f.surface, ui_surface_next_deadline(&f.surface));
+    assert(f.captures == captures + 2);
+    assert(card_dirty(&f) == CARD_PAINT);
+
+    /* A taller picture relayouts the card. */
+    assert(ui_surface_build_scene(&f.surface, &f.scene));
+    struct rect2i was = bounds(&f);
+    f.rows_extra = 8;
+    ui_surface_tick(&f.surface, ui_surface_next_deadline(&f.surface));
+    assert(card_dirty(&f) == CARD_MEASURE);
+    ui_surface_prepare(&f.surface);
+    assert(bounds(&f).height == was.height + 8);
+    teardown(&f);
+}
+
 int main(void)
 {
     hover_shows_card_below_tab_after_delay_test();
     shown_card_follows_hover_and_refreshes_test();
+    unchanged_refresh_requests_no_redraw_test();
     suppress_lasts_until_pointer_leaves_tabs_test();
     dragged_card_follows_pointer_inside_surface_test();
     hover_picture_is_larger_than_drag_picture_test();
