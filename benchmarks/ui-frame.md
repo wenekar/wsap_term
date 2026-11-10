@@ -64,6 +64,27 @@ and method:
 The part-handle cache (commit 974473e) did not move these numbers. No
 production code calls it yet.
 
+### After the damage key index
+
+`ui_damage_track` now finds a record by key through an open-addressed
+table. A cheap positional hint stays first. The four scenario medians did
+not move, because the hint hits in these scenes. The table removes the
+quadratic cost when a scene shifts the order of its scopes.
+
+A harness of 1024 scopes that shifts the scope order by one each frame
+measures the lookup alone. The records have empty ink, so no pixel work
+counts. Each value is the median of three runs:
+
+| Scopes | Linear scan (us) | Key index (us) |
+| --- | --- | --- |
+| 64 | 1.8 | 1.1 |
+| 256 | 14.6 | 4.4 |
+| 512 | 48.0 | 8.9 |
+| 1024 | 168 | 18.5 |
+
+An unchanged scene stays flat in both cases, at about 14 us for 1024
+scopes.
+
 ## Running the gate
 
 ```sh

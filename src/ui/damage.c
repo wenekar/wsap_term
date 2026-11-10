@@ -1,29 +1,64 @@
 #include "ui/damage.h"
 #include "util/grow.h"
 
+static uint32_t key_hash(uint64_t key)
+{
+    key ^= key >> 33;
+    key *= 0xff51afd7ed558ccdULL;
+    key ^= key >> 33;
+    return (uint32_t)key;
+}
+
+static int slot_find(const struct ui_damage_tracker *t, uint64_t key)
+{
+    if (!t->slot_cap)
+        return -1;
+    uint32_t mask = (uint32_t)t->slot_cap - 1;
+    uint32_t i = key_hash(key) & mask;
+    for (;;) {
+        int slot = t->slots[i];
+        if (!slot)
+            return -1;
+        int j = slot - 1;
+        if (!t->records[j].used && t->records[j].key == key)
+            return j;
+        i = (i + 1) & mask;
+    }
+}
+
+static void slot_insert(struct ui_damage_tracker *t, int index)
+{
+    uint32_t mask = (uint32_t)t->slot_cap - 1;
+    uint32_t i = key_hash(t->records[index].key) & mask;
+    while (t->slots[i])
+        i = (i + 1) & mask;
+    t->slots[i] = index + 1;
+}
+
 static int find_record(const struct ui_damage_tracker *t, uint64_t key, int hint)
 {
     if (hint < t->n && !t->records[hint].used && t->records[hint].key == key)
         return hint;
-    for (int j = 0; j < t->n; j++)
-        if (!t->records[j].used && t->records[j].key == key)
-            return j;
-    return -1;
+    return slot_find(t, key);
 }
 
 static void remember(struct ui_damage_tracker *t, const struct ui_scene *s)
 {
-    if (!UTIL_GROW(t->records, t->cap, s->n_scopes)) {
+    if (!UTIL_GROW(t->records, t->cap, s->n_scopes) ||
+        !UTIL_GROW(t->slots, t->slot_cap, s->n_scopes * 2)) {
         ui_damage_tracker_reset(t);
         return;
     }
     t->n = s->n_scopes;
-    for (int i = 0; i < s->n_scopes; i++)
+    memset(t->slots, 0, (size_t)t->slot_cap * sizeof(*t->slots));
+    for (int i = 0; i < s->n_scopes; i++) {
         t->records[i] = (struct ui_damage_record){
             .key = s->scopes[i].key,
             .hash = s->scopes[i].hash,
             .ink = s->scopes[i].ink,
         };
+        slot_insert(t, i);
+    }
     t->valid = true;
 }
 
@@ -74,5 +109,6 @@ void ui_damage_tracker_destroy(struct ui_damage_tracker *t)
     if (!t)
         return;
     free(t->records);
+    free(t->slots);
     *t = (struct ui_damage_tracker){0};
 }

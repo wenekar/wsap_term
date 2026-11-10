@@ -212,6 +212,108 @@ static void scene_clip_damage_test(void)
     assert(damage_covers(&d, r_at(50, 0, 50, 100)));
 }
 
+/* A scene without scopes builds no key table. The next scene with scopes
+   must find no record and must damage every scope. */
+static void scene_damage_empty_scene_test(void)
+{
+    static int owner;
+    static struct ui_scene s;
+    static struct ui_damage_tracker t;
+    struct ui_damage d;
+
+    ui_scene_init(&s);
+    assert(ui_scene_is_valid(&s));
+    ui_damage_track(&t, &s, &d);
+    assert(d.all);
+
+    ui_scene_init(&s);
+    assert(ui_scene_begin_node(&s, &owner, (struct vector2i){0}));
+    assert(ui_scene_rect(&s, r_at(0, 0, 4, 4), 0xFF101010));
+    assert(ui_scene_end_scope(&s));
+    ui_damage_track(&t, &s, &d);
+    assert(!d.all && damage_covers(&d, r_at(0, 0, 4, 4)));
+    ui_damage_tracker_destroy(&t);
+}
+
+/* A new part before a node moves the scene position of every later node,
+   but not their pixels. The tracker must match those nodes by key. */
+static void scene_damage_shifted_scope_test(void)
+{
+    static int parent, part, later;
+    static struct ui_scene s;
+    static struct ui_damage_tracker t;
+    const struct rect2i later_rect = r_at(20, 0, 10, 10);
+    struct ui_damage d;
+
+    for (int pass = 0; pass < 2; pass++) {
+        ui_scene_init(&s);
+        assert(ui_scene_begin_node(&s, &parent, (struct vector2i){0}));
+        if (pass) {
+            assert(ui_scene_begin_node(&s, &part, (struct vector2i){0}));
+            assert(ui_scene_end_scope(&s));
+        }
+        assert(ui_scene_end_scope(&s));
+        assert(ui_scene_begin_node(&s, &later, (struct vector2i){0}));
+        assert(ui_scene_rect(&s, later_rect, 0xFF445566));
+        assert(ui_scene_end_scope(&s));
+        assert(ui_scene_is_valid(&s));
+        ui_damage_track(&t, &s, &d);
+        if (pass)
+            assert(!d.all && ui_damage_is_empty(&d));
+    }
+    ui_damage_tracker_destroy(&t);
+}
+
+enum { MANY_SCOPES = 300 };
+
+static void emit_row(struct ui_scene *s, int *owners, int n, int omit, int moved)
+{
+    ui_scene_init(s);
+    for (int i = 0; i < n; i++) {
+        if (i == omit)
+            continue;
+        int y = i == moved ? 40 : 0;
+        assert(ui_scene_begin_node(s, &owners[i], (struct vector2i){0}));
+        assert(ui_scene_rect(s, r_at(i * 4, y, 4, 4), 0xFF101010));
+        assert(ui_scene_end_scope(s));
+    }
+    assert(ui_scene_is_valid(s));
+}
+
+/* The tracker indexes its records by key. A scene that outgrows the first
+   table size must still match every record, and a node that goes away must
+   shift the lookup of every later node. */
+static void scene_damage_many_scopes_test(void)
+{
+    static int owners[MANY_SCOPES];
+    static struct ui_scene s;
+    static struct ui_damage_tracker t;
+    struct ui_damage d;
+    for (int i = 0; i < MANY_SCOPES; i++)
+        owners[i] = i;
+
+    emit_row(&s, owners, MANY_SCOPES, -1, -1);
+    ui_damage_track(&t, &s, &d);
+    assert(d.all);
+
+    ui_damage_track(&t, &s, &d);
+    assert(ui_damage_is_empty(&d));
+
+    emit_row(&s, owners, MANY_SCOPES, -1, 7);
+    ui_damage_track(&t, &s, &d);
+    assert(damage_covers(&d, r_at(7 * 4, 0, 4, 4)));
+    assert(damage_covers(&d, r_at(7 * 4, 40, 4, 4)));
+    assert(!damage_touches(&d, r_at(8 * 4, 0, 4, 4)));
+
+    emit_row(&s, owners, MANY_SCOPES, 10, -1);
+    ui_damage_track(&t, &s, &d);
+    assert(damage_covers(&d, r_at(10 * 4, 0, 4, 4)));
+    assert(damage_covers(&d, r_at((MANY_SCOPES - 1) * 4, 0, 4, 4)));
+    assert(!damage_touches(&d, r_at(0, 0, 4, 4)));
+    assert(!damage_touches(&d, r_at(9 * 4, 0, 4, 4)));
+    ui_damage_tracker_destroy(&t);
+}
+
 static void damage_bounds_test(void)
 {
     struct ui_damage d = {0};
@@ -271,6 +373,9 @@ int main(void)
     damage_bounds_test();
     scene_part_damage_test();
     scene_clip_damage_test();
+    scene_damage_empty_scene_test();
+    scene_damage_shifted_scope_test();
+    scene_damage_many_scopes_test();
     printf("PASS: UI scene tests\n");
     return 0;
 }
