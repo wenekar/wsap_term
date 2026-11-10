@@ -141,6 +141,9 @@ int renderer_isa(const struct renderer *r);
  * - With fb->history, the renderer repaints only what changed since the
  *   last frame of that history. The pixels are always the same as a fresh
  *   paint of the same frame.
+ * - fb->pixels NULL with fb->acquire_pixels means: the canvas comes on
+ *   demand. The renderer takes the canvas only when the CPU paints the
+ *   frame, so a frame that the GPU takes makes no allocation.
  * - Without a history, it paints every pixel and keeps no state. It does
  *   not allocate for that case.
  * - The environment value WSAP_RENDER_FULL=1 makes every frame a fresh

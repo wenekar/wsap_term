@@ -53,8 +53,11 @@ milestone. Milestone 6 adds the Metal backend.
    set, or the key changed.
 3. Plan (`plan_frame`).
 4. With a drawable and without `cpu_only`, try the GPU (`render_gpu_draw`).
-   PRESENTED or DROPPED ends the frame here.
-5. Moves: memmove each move block, in plan order. When the measured paint
+   PRESENTED or DROPPED ends the frame here. This step reads no CPU pixels,
+   so the frame needs no canvas yet.
+5. Take the CPU canvas of the frame (`fb->acquire_pixels`) when it is not
+   there yet. A frame that the GPU takes never calls it. Then the moves:
+   memmove each move block, in plan order. When the measured paint
    cost says that the pool paints the moved rows faster, they paint
    instead. The pixels and the damage are the same.
 6. Raster rows: `decor_get`, `cell_cache_begin`, then the walk scratch

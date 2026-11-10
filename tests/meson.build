@@ -38,6 +38,7 @@ test_cases = [
     ['render-raster-test', files('render/raster_test.c'), render_lib, deps],
     ['render-damage-test', files('render/damage_test.c'), render_lib, deps],
     ['render-incremental-test', files('render/incremental_test.c'), render_lib, deps],
+    ['render-cpu-canvas-test', files('render/cpu_canvas_test.c'), render_lib, deps],
     ['resize-alloc-test', files('ui/yasl/resize_alloc_test.c'), app_lib, deps],
     ['window-ui-input-test', files('ui/yasl/ui_input_test.c'), app_lib, deps],
     font_backend == 'coretext'

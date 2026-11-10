@@ -41,8 +41,12 @@ static inline void framebuffer_history_release(struct framebuffer_history *histo
  *
  * - `pixels` holds size.x * size.y words in 0xAARRGGBB order, row after
  *   row. The row stride is size.x.
- * - NULL pixels or an empty size paint nothing. render_draw() then reports
- *   full damage and forgets the surface state.
+ * - NULL pixels with `acquire_pixels` mean: the CPU canvas comes on demand.
+ *   render_draw() then calls `acquire_pixels` only when the CPU paints the
+ *   frame, and it writes the result to `pixels`. A frame that the GPU takes
+ *   never needs the canvas, and the GPU reads no pixels.
+ * - NULL pixels without `acquire_pixels`, or an empty size, paint nothing.
+ *   render_draw() then reports full damage and forgets the surface state.
  * - `fresh` means: the pixels are not what render_draw() last drew with
  *   this history. The renderer then paints every pixel. Set it on the first
  *   frame, after a reallocation, and after a failed present. False is the
@@ -60,6 +64,11 @@ static inline void framebuffer_history_release(struct framebuffer_history *histo
  *   again. NULL acquire means that `drawable` is the whole story.
  * - `transaction` means: present the drawable inside the Core Animation
  *   transaction of a live resize.
+ * - `acquire_pixels` gives the CPU pixels of the frame. render_draw() calls
+ *   it at most once for a frame, and only after the GPU declares that it did
+ *   not take the frame, or at once for a frame without a drawable or with
+ *   cpu_only. A NULL result means that the memory is missing. NULL
+ *   `acquire_pixels` means: `pixels` is the whole story.
  */
 struct framebuffer {
     uint32_t *pixels;
@@ -70,6 +79,8 @@ struct framebuffer {
     void *(*acquire)(void *ud);
     void *acquire_ud;
     bool transaction;
+    uint32_t *(*acquire_pixels)(void *ud, struct vector2i size);
+    void *acquire_pixels_ud;
 };
 
 #endif
