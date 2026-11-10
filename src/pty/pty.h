@@ -19,6 +19,15 @@
  * parse of one chunk can overrun it. */
 #define PTY_DRAIN_BUDGET_NS 2000000ull
 
+/* The largest time that one pass may spend on PTY output while the output keeps
+ * streaming. A pass that the base budget stopped with data still to read was
+ * limited by the budget, so the next pass doubles it up to this value
+ * (pty_drain_budget_next). A flood then gives the loop back less often, and the
+ * drain keeps the kernel PTY buffer empty. Input waits up to this time between
+ * two passes of a flood, and a stream that runs dry returns to the base
+ * budget. */
+#define PTY_DRAIN_BUDGET_MAX_NS 10000000ull
+
 /* The bounds of one chunk of PTY output. A chunk ends the pass, so the parse
  * of one chunk of hard bytes, such as random data, is the overrun of the
  * budget. The chunk follows the measured parse time of the last one
@@ -31,18 +40,32 @@
  * few reads. */
 #define PTY_CHUNK_START (32u * 1024u)
 
-/* The size of the next chunk, after the parse of the last one took `took_ns`.
- * A chunk that took longer than a quarter of the budget halves, and a chunk
- * that took less than an eighth doubles. A slow stream then reads less, so its
- * overrun stays short, and a fast stream reads the maximum, so the count of
- * reads stays low. */
-static inline size_t pty_chunk_next(size_t chunk, uint64_t took_ns)
+/* The budget of the next pass, after the last one ended with `more` output to
+ * read. A pass that the budget stopped doubles the budget, so a stream at speed
+ * gives the loop back less often. A pass that ran dry returns to the base
+ * budget, so input and a frame get the loop back in the base time. */
+static inline uint64_t pty_drain_budget_next(uint64_t budget_ns, bool more)
+{
+    if (!more || !budget_ns)
+        return PTY_DRAIN_BUDGET_NS;
+    return budget_ns < PTY_DRAIN_BUDGET_MAX_NS / 2 ? budget_ns * 2
+                                                   : PTY_DRAIN_BUDGET_MAX_NS;
+}
+
+/* The size of the next chunk, after the parse of the last one took `took_ns` of
+ * the `budget_ns` of the pass. A chunk that took longer than half the budget
+ * halves, so a slow stream reads less and its overrun stays short. A chunk that
+ * took less than a quarter of the budget doubles, so a fast stream reads the
+ * maximum. A chunk between those times keeps its size, so a stream at speed
+ * that read the maximum keeps it, and a short delay does not shrink it. */
+static inline size_t pty_chunk_next(size_t chunk, uint64_t took_ns,
+                                    uint64_t budget_ns)
 {
     if (!chunk)
         return PTY_CHUNK_START;
-    if (took_ns > PTY_DRAIN_BUDGET_NS / 4)
+    if (took_ns > budget_ns / 2)
         chunk = chunk > PTY_CHUNK_MIN ? chunk / 2 : PTY_CHUNK_MIN;
-    else if (took_ns < PTY_DRAIN_BUDGET_NS / 8)
+    else if (took_ns < budget_ns / 4)
         chunk = chunk < PTY_CHUNK_MAX ? chunk * 2 : PTY_CHUNK_MAX;
     return chunk;
 }

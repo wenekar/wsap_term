@@ -44,7 +44,10 @@ static inline void cpu_relax(void)
 #define PTY_RING_MAX_CHUNK PTY_CHUNK_MAX
 #define PTY_RING_MIN_FREE (64 * 1024)
 #define PTY_SIGNAL_INTERVAL_NS 1000000ull
-#define PTY_SIGNAL_BYTES 131072ull
+/* The bytes that wait in the ring before the worker wakes the consumer. A small
+ * value starts the consumer on the ring early, so the ring and the kernel PTY
+ * buffer stay empty and the child does not stall on a full buffer. */
+#define PTY_SIGNAL_BYTES 32768ull
 #define PTY_SPIN_ITERS 128
 #define PTY_SYNC_REQUEST_MS 100
 
@@ -355,7 +358,8 @@ static void on_ring_event(void *ud, int fd, short revents)
 
     atomic_store_explicit(&r->awake, 1, memory_order_seq_cst);
     bool any = false;
-    uint64_t deadline = yasl_time_ns() + PTY_DRAIN_BUDGET_NS;
+    if (!r->budget_ns) r->budget_ns = PTY_DRAIN_BUDGET_NS;
+    uint64_t deadline = yasl_time_ns() + r->budget_ns;
     if (!r->chunk) r->chunk = PTY_CHUNK_START;
     size_t tail = atomic_load_explicit(&r->tail, memory_order_relaxed);
 
@@ -390,7 +394,7 @@ static void on_ring_event(void *ud, int fd, short revents)
         uint64_t t0 = yasl_time_ns();
         r->cbs.data(r->ud, r->src_fd[r->tail_src], r->buf + off, chunk,
                     avail - chunk);
-        r->chunk = pty_chunk_next(r->chunk, yasl_time_ns() - t0);
+        r->chunk = pty_chunk_next(r->chunk, yasl_time_ns() - t0, r->budget_ns);
 
         tail += chunk;
         any = true;
@@ -404,6 +408,7 @@ static void on_ring_event(void *ud, int fd, short revents)
     atomic_store_explicit(&r->awake, 0, memory_order_relaxed);
     atomic_thread_fence(memory_order_seq_cst);
     head = atomic_load_explicit(&r->head, memory_order_acquire);
+    r->budget_ns = pty_drain_budget_next(r->budget_ns, head != tail);
     if (head != tail)
         event_signal(r->event_wr);
 

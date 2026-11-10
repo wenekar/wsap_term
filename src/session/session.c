@@ -121,7 +121,7 @@ static void sync_transport_newline(struct session *s, int fd)
     s->onlcr = (tio.c_oflag & ONLCR) && (tio.c_oflag & OPOST);
 }
 
-static bool drain_pty_fd(struct session *s, int fd, uint64_t deadline)
+static bool drain_pty_fd(struct session *s, int fd, uint64_t deadline, bool *more)
 {
     bool any = false;
     sync_transport_newline(s, fd);
@@ -139,9 +139,12 @@ static bool drain_pty_fd(struct session *s, int fd, uint64_t deadline)
         any = true;
         session_feed(s, session_read_buf, (size_t)n);
         latency_probe_scan_output(session_read_buf, (size_t)n);
-        s->read_chunk = pty_chunk_next(s->read_chunk, yasl_time_ns() - t0);
-        if (yasl_time_ns() >= deadline)
+        s->read_chunk = pty_chunk_next(s->read_chunk, yasl_time_ns() - t0,
+                                      s->drain_budget_ns);
+        if (yasl_time_ns() >= deadline) {
+            *more = true;
             break;
+        }
     }
     return any;
 }
@@ -188,13 +191,17 @@ static void on_pty_data(void *ud, int fd, short revents)
 {
     (void)revents;
     struct session *s = ud;
-    uint64_t deadline = yasl_time_ns() + PTY_DRAIN_BUDGET_NS;
+    if (!s->drain_budget_ns)
+        s->drain_budget_ns = PTY_DRAIN_BUDGET_NS;
+    uint64_t deadline = yasl_time_ns() + s->drain_budget_ns;
     bool any = false;
+    bool more = false;
 
     if (fd == pty_pipe_fd(&s->pty) && pty_master_fd(&s->pty) >= 0 &&
         !pty_ring_owns_fd(&s->ring, pty_master_fd(&s->pty)))
-        any |= drain_pty_fd(s, pty_master_fd(&s->pty), deadline);
-    any |= drain_pty_fd(s, fd, deadline);
+        any |= drain_pty_fd(s, pty_master_fd(&s->pty), deadline, &more);
+    any |= drain_pty_fd(s, fd, deadline, &more);
+    s->drain_budget_ns = pty_drain_budget_next(s->drain_budget_ns, more);
     if (any)
         notify_output(s);
 }
@@ -359,9 +366,12 @@ bool session_write_bytes(struct session *s, const char *data, size_t len)
     }
     latency_probe_stage(LATENCY_STAGE_PTY_WRITTEN);
     if (pty_master_fd(&s->pty) >= 0 &&
-        !pty_ring_owns_fd(&s->ring, pty_master_fd(&s->pty)) &&
-        drain_pty_fd(s, pty_master_fd(&s->pty), 0))
-        notify_output(s);
+        !pty_ring_owns_fd(&s->ring, pty_master_fd(&s->pty))) {
+        /* This read is not a pass, so it leaves the drain budget alone. */
+        bool more = false;
+        if (drain_pty_fd(s, pty_master_fd(&s->pty), 0, &more))
+            notify_output(s);
+    }
     return true;
 }
 
@@ -421,12 +431,16 @@ void session_reap_exited(void)
             pty_ring_end(&s->ring);
             continue;
         }
-        uint64_t deadline = yasl_time_ns() + PTY_DRAIN_BUDGET_NS;
+        if (!s->drain_budget_ns)
+            s->drain_budget_ns = PTY_DRAIN_BUDGET_NS;
+        uint64_t deadline = yasl_time_ns() + s->drain_budget_ns;
         bool any = false;
+        bool more = false;
         for (size_t i = 0; i < 2; i++)
             if (s->pty_watch[i] > 0)
                 any |= drain_pty_fd(s, i ? pty_master_fd(&s->pty) : pty_pipe_fd(&s->pty),
-                                    deadline);
+                                    deadline, &more);
+        s->drain_budget_ns = pty_drain_budget_next(s->drain_budget_ns, more);
         if (any)
             notify_output(s);
         report_exit(s);
