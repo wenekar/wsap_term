@@ -1,28 +1,42 @@
+#define _GNU_SOURCE
 #include <poll.h>
 #include "util/text_limit.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
+#include "platform/platform.h"
 #include "yasl/yasl.h"
 #include "session/write_queue.h"
+#include "util/proc.h"
 #include "wsap_vtcore/wsap_vtcore.h"
 
 #define QUEUE_LIMIT (INPUT_TEXT_MAX + 12u)
 #define WRITE_BUDGET (64u * 1024)
 
+static void drain_ready(void *data, int fd, short events);
+static void flush_ready(void *data, int fd, short events);
+
+/* The calls below run with the lock held. Only a call on the loop thread
+ * changes the loop. */
+
+static bool on_loop_thread(const struct session_write_queue *q)
+{
+    return pthread_equal(q->owner, pthread_self());
+}
+
 static void unwatch(struct session_write_queue *q)
 {
-    if (q->watch > 0)
+    if (q->watch > 0 && q->loop)
         yasl_loop_del_fd(q->loop, q->watch);
     q->watch = 0;
 }
 
 static void discard(struct session_write_queue *q)
 {
-    unwatch(q);
     free(q->data);
     q->data = NULL;
     q->capacity = q->head = q->length = 0;
@@ -54,7 +68,6 @@ static bool drain(struct session_write_queue *q)
         budget -= (size_t)written;
     }
     if (!q->length) {
-        unwatch(q);
         q->head = 0;
         if (q->capacity > 4096) {
             free(q->data);
@@ -65,17 +78,7 @@ static bool drain(struct session_write_queue *q)
     return true;
 }
 
-static void drain_ready(void *data, int fd, short events)
-{
-    (void)fd;
-    struct session_write_queue *q = data;
-    if (events & (POLLERR | POLLHUP | POLLNVAL))
-        discard(q);
-    else
-        drain(q);
-}
-
-static bool reserve_and_watch(struct session_write_queue *q, size_t extra)
+static bool reserve(struct session_write_queue *q, size_t extra)
 {
     if (extra > QUEUE_LIMIT - q->length) {
         errno = ENOBUFS;
@@ -99,11 +102,17 @@ static bool reserve_and_watch(struct session_write_queue *q, size_t extra)
         q->capacity = capacity;
         q->head = 0;
     }
-    if (!q->watch) {
-        int watch = yasl_loop_add_fd(q->loop, q->fd, POLLOUT, drain_ready, q);
-        if (watch < 0) return false;
-        q->watch = watch;
-    }
+    return true;
+}
+
+static bool watch(struct session_write_queue *q)
+{
+    if (q->watch)
+        return true;
+    int watch_id = yasl_loop_add_fd(q->loop, q->fd, POLLOUT, drain_ready, q);
+    if (watch_id <= 0)
+        return false;
+    q->watch = watch_id;
     return true;
 }
 
@@ -118,13 +127,48 @@ static void append(struct session_write_queue *q, const char *data, size_t len)
     q->length += len;
 }
 
-static bool valid(struct session_write_queue *q, const char *data, size_t len)
+/* Wake the loop thread after a push from another thread left bytes behind.
+ * Any thread. */
+static void wake_loop(struct session_write_queue *q)
 {
-    if (!q || !q->loop || (!data && len)) {
-        errno = EINVAL;
-        return false;
-    }
-    return true;
+    uint64_t one = 1;
+    ssize_t n = write(q->wake_wr, &one, sizeof(one));
+    (void)n;
+}
+
+static void drain_wake(int fd)
+{
+    char drain[64];
+    while (read(fd, drain, sizeof(drain)) > 0) {}
+}
+
+static void drain_ready(void *data, int fd, short events)
+{
+    (void)fd;
+    struct session_write_queue *q = data;
+    pthread_mutex_lock(&q->lock);
+    if (events & (POLLERR | POLLHUP | POLLNVAL))
+        discard(q);
+    else
+        (void)drain(q);
+    if (!q->length)
+        unwatch(q);
+    pthread_mutex_unlock(&q->lock);
+}
+
+static void flush_ready(void *data, int fd, short events)
+{
+    (void)events;
+    struct session_write_queue *q = data;
+    drain_wake(fd);
+    pthread_mutex_lock(&q->lock);
+    if (q->length && !q->watch && q->loop)
+        (void)watch(q);
+    if (q->length)
+        (void)drain(q);
+    if (!q->length)
+        unwatch(q);
+    pthread_mutex_unlock(&q->lock);
 }
 
 bool session_write_queue_bind(struct session_write_queue *q, struct yasl_loop *loop, int fd)
@@ -139,32 +183,98 @@ bool session_write_queue_bind(struct session_write_queue *q, struct yasl_loop *l
         errno = EINVAL;
         return false;
     }
+    if (!q->lock_ready) {
+        if (pthread_mutex_init(&q->lock, NULL) != 0) {
+            errno = ENOMEM;
+            return false;
+        }
+        q->lock_ready = true;
+        q->wake_fd = q->wake_wr = -1;
+    }
+    pthread_mutex_lock(&q->lock);
     discard(q);
+    unwatch(q);
     q->loop = loop;
     q->fd = fd;
-    return true;
+    q->owner = pthread_self();
+    bool ok = true;
+    if (q->wake_fd < 0) {
+        q->wake_fd = platform_eventfd(&q->wake_wr);
+        ok = q->wake_fd >= 0;
+    }
+    if (ok && q->wake_watch <= 0) {
+        q->wake_watch = yasl_loop_add_fd(loop, q->wake_fd, POLLIN, flush_ready, q);
+        ok = q->wake_watch > 0;
+    }
+    pthread_mutex_unlock(&q->lock);
+    return ok;
 }
 
 void session_write_queue_destroy(struct session_write_queue *q)
 {
     if (!q) return;
+    if (!q->lock_ready) {
+        *q = (struct session_write_queue){0};
+        return;
+    }
+    pthread_mutex_lock(&q->lock);
     discard(q);
+    unwatch(q);
+    if (q->wake_watch > 0 && q->loop)
+        yasl_loop_del_fd(q->loop, q->wake_watch);
+    q->wake_watch = 0;
+    proc_eventfd_close(q->wake_fd, q->wake_wr);
+    q->wake_fd = q->wake_wr = -1;
+    pthread_mutex_unlock(&q->lock);
+    pthread_mutex_destroy(&q->lock);
     *q = (struct session_write_queue){0};
 }
 
+/* Any thread. The bytes that the pty does not accept stay in the queue, and
+ * the loop thread writes them when the pty has room. */
 bool session_write_queue_push_bytes(struct session_write_queue *q, const char *data, size_t len)
 {
-    if (!valid(q, data, len)) return false;
-    if (!len) return true;
-    if (!reserve_and_watch(q, len)) return false;
-    append(q, data, len);
-    return drain(q);
+    if (!q || !q->lock_ready || (!data && len)) {
+        errno = EINVAL;
+        return false;
+    }
+    if (!len)
+        return true;
+    bool wake = false;
+    pthread_mutex_lock(&q->lock);
+    bool ok = false;
+    if (!q->loop) {
+        errno = EINVAL;
+    } else if (!reserve(q, len)) {
+        /* The queue is full or out of memory. */
+    } else {
+        /* Only the loop thread may add the watch. Another thread asks the
+         * loop thread to write the rest. */
+        bool owner = on_loop_thread(q);
+        if (!owner || watch(q)) {
+            append(q, data, len);
+            ok = drain(q);
+            if (ok && !q->length) {
+                if (owner)
+                    unwatch(q);
+            } else if (ok && !owner) {
+                wake = true;
+            }
+        }
+    }
+    pthread_mutex_unlock(&q->lock);
+    if (wake)
+        wake_loop(q);
+    return ok;
 }
 
 bool session_write_queue_push_paste(struct session_write_queue *q, const char *text, size_t len,
                         bool bracketed)
 {
-    if (!valid(q, text, len)) return false;
+    if (!q || !q->lock_ready || (!text && len)) {
+        errno = EINVAL;
+        return false;
+    }
     if (len > INPUT_TEXT_MAX) {
         errno = EMSGSIZE;
         return false;

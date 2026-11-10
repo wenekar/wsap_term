@@ -58,7 +58,7 @@ The table states the behaviour of the code. It is not a measurement.
 | Monitor move | The link follows the new display and measures its period. | Same. | Same. | The link measures the new rate after the move. |
 | Scale change | `drawableSize` changes in points × scale; a frame whose drawable has another size is dropped and drawn again. | Same. | Same. | Same. |
 | Live resize | The frame draws at once and presents in the Core Animation transaction. No tick wait. | Same. | Same. | Same. |
-| Flood output | The PTY pass budget is 2 ms, so a frame gets loop time at every rate. | Same. | The budget is shorter than one 4.2 ms frame. | Same. |
+| Flood output | The worker thread parses, so a frame gets loop time at every rate. | Same. | Same. | Same. |
 | Idle, then wake | The link pauses after 8 idle frames; the wake draws at once. | Same. | Same. | Same. |
 | Occluded | The window is suspended and draws nothing. It draws again when it is visible. | Same. | Same. | Same. |
 
@@ -66,8 +66,9 @@ Two bounds do not depend on the rate:
 
 - The GPU holds three frame slots. With no free slot the frame is dropped at
   once, and the window asks for the next frame.
-- The PTY budget bounds a pass, not a wall-clock interval. The parse of one
-  chunk can overrun it. The chunk follows the measured parse time.
+- The PTY parse runs on the worker thread, so the main thread holds no budget.
+  The worker parses one read in pieces of 32 KiB, so a snapshot waits for one
+  piece at most.
 
 ## Presentation feedback on macOS
 

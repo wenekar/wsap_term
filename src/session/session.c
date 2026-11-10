@@ -1,6 +1,4 @@
 #define _GNU_SOURCE
-#include <errno.h>
-#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,9 +16,9 @@
 #include "util/proc.h"
 #include "util/time.h"
 
-#define PTY_READ_BUF_SZ PTY_CHUNK_MAX
-
-static alignas(64) char session_read_buf[PTY_READ_BUF_SZ];
+/* The terminal lock is released between pieces, so the loop thread can take a
+ * snapshot of a flood without a long wait. */
+#define SESSION_FEED_PIECE (32u * 1024u)
 
 static struct session *live_sessions;
 
@@ -42,9 +40,121 @@ uint64_t session_last_keystroke_ms(const struct session *s)
     return s->last_keystroke_ms;
 }
 
+/* Runs on the worker thread. */
 static void session_feed(struct session *s, const char *buf, size_t len)
 {
-    wsap_vtcore_feed(s->term, buf, len, s->onlcr ? WSAP_VTCORE_FEED_ONLCR : 0);
+    unsigned flags = s->onlcr ? WSAP_VTCORE_FEED_ONLCR : 0;
+    while (len) {
+        size_t piece = len < SESSION_FEED_PIECE ? len : SESSION_FEED_PIECE;
+        wsap_vtcore_feed(s->term, buf, piece, flags);
+        buf += piece;
+        len -= piece;
+    }
+}
+
+enum session_host_event_kind {
+    SESSION_HOST_TITLE,
+    SESSION_HOST_CLIPBOARD,
+    SESSION_HOST_NOTIFY,
+    SESSION_HOST_BELL,
+};
+
+struct session_host_event {
+    struct session_host_event *next;
+    enum session_host_event_kind kind;
+    char *text;
+    char *body;
+};
+
+/* Runs on the worker thread: it queues the payload for the loop thread and
+ * never touches the host. The ring signals the loop thread, so a queued event
+ * reaches it without a wait here. */
+static void host_event_push(struct session *s, enum session_host_event_kind kind,
+                            char *text, char *body)
+{
+    struct session_host_event *event = malloc(sizeof(*event));
+    if (!event) {
+        free(text);
+        free(body);
+        return;
+    }
+    *event = (struct session_host_event){
+        .kind = kind,
+        .text = text,
+        .body = body,
+    };
+    pthread_mutex_lock(&s->host_lock);
+    if (s->host_tail)
+        s->host_tail->next = event;
+    else
+        s->host_head = event;
+    s->host_tail = event;
+    pthread_mutex_unlock(&s->host_lock);
+    pty_ring_wake(&s->ring);
+}
+
+/* Runs on the loop thread. */
+static void host_event_apply(struct session *s, struct session_host_event *event)
+{
+    switch (event->kind) {
+    case SESSION_HOST_TITLE:
+        free(s->title);
+        s->title = event->text;
+        event->text = NULL;
+        if (s->host && s->host->title)
+            s->host->title(s->host_ud);
+        break;
+    case SESSION_HOST_CLIPBOARD:
+        if (event->text && s->host && s->host->clipboard)
+            s->host->clipboard(s->host_ud, event->text);
+        break;
+    case SESSION_HOST_NOTIFY:
+        platform_notify(event->text, event->body);
+        break;
+    case SESSION_HOST_BELL:
+        platform_bell();
+        if (s->host && s->host->bell)
+            s->host->bell(s->host_ud);
+        break;
+    }
+    free(event->text);
+    free(event->body);
+}
+
+/* Runs on the loop thread. It applies every queued event in order, so the
+ * host sees the title and the bell of the output before the end of the
+ * session. */
+static void host_events_dispatch(struct session *s)
+{
+    pthread_mutex_lock(&s->host_lock);
+    struct session_host_event *event = s->host_head;
+    s->host_head = s->host_tail = NULL;
+    pthread_mutex_unlock(&s->host_lock);
+    while (event) {
+        struct session_host_event *next = event->next;
+        host_event_apply(s, event);
+        free(event);
+        event = next;
+    }
+}
+
+static void host_events_free(struct session *s)
+{
+    if (!s->host_lock_ready)
+        return;
+    pthread_mutex_lock(&s->host_lock);
+    struct session_host_event *event = s->host_head;
+    s->host_head = s->host_tail = NULL;
+    pthread_mutex_unlock(&s->host_lock);
+    while (event) {
+        struct session_host_event *next = event->next;
+        free(event->text);
+        free(event->body);
+        free(event);
+        event = next;
+    }
+    pthread_mutex_destroy(&s->host_lock);
+    s->host_lock_ready = false;
 }
 
 static void on_term_response(void *ud, const char *data, size_t len)
@@ -56,43 +166,38 @@ static void on_term_response(void *ud, const char *data, size_t len)
 
 static void on_term_title(void *ud, const char *title)
 {
-    struct session *s = ud;
     if (!title || !title[0])
         return;
     char *copy = strdup(title);
-    if (!copy)
-        return;
-    free(s->title);
-    s->title = copy;
-    if (s->host && s->host->title)
-        s->host->title(s->host_ud);
+    if (copy)
+        host_event_push(ud, SESSION_HOST_TITLE, copy, NULL);
 }
 
 static void on_term_clipboard(void *ud, const char *selection, const char *data,
                               size_t len)
 {
-    struct session *s = ud;
-    if (!data || !strchr(selection, 'c') || !s->host || !s->host->clipboard)
+    if (!data || !strchr(selection, 'c'))
         return;
     char *text = strndup(data, len);
-    if (!text)
-        return;
-    s->host->clipboard(s->host_ud, text);
-    free(text);
+    if (text)
+        host_event_push(ud, SESSION_HOST_CLIPBOARD, text, NULL);
 }
 
 static void on_term_notify(void *ud, const char *title, const char *body)
 {
-    (void)ud;
-    platform_notify(title, body);
+    char *title_copy = title ? strdup(title) : NULL;
+    char *body_copy = body ? strdup(body) : NULL;
+    if ((title && !title_copy) || (body && !body_copy)) {
+        free(title_copy);
+        free(body_copy);
+        return;
+    }
+    host_event_push(ud, SESSION_HOST_NOTIFY, title_copy, body_copy);
 }
 
 static void on_term_bell(void *ud)
 {
-    struct session *s = ud;
-    platform_bell();
-    if (s && s->host && s->host->bell)
-        s->host->bell(s->host_ud);
+    host_event_push(ud, SESSION_HOST_BELL, NULL, NULL);
 }
 
 static void on_term_trace(void *ud, const char *line)
@@ -121,39 +226,10 @@ static void sync_transport_newline(struct session *s, int fd)
     s->onlcr = (tio.c_oflag & ONLCR) && (tio.c_oflag & OPOST);
 }
 
-static bool drain_pty_fd(struct session *s, int fd, uint64_t deadline, bool *more)
-{
-    bool any = false;
-    sync_transport_newline(s, fd);
-    /* One chunk may not fill the whole pass: the parse of one chunk of hard
-     * bytes can take longer than the budget. */
-    if (!s->read_chunk)
-        s->read_chunk = PTY_CHUNK_START;
-    for (;;) {
-        uint64_t t0 = yasl_time_ns();
-        ssize_t n = read(fd, session_read_buf, s->read_chunk);
-        if (n < 0 && errno == EINTR)
-            continue;
-        if (n <= 0)
-            break;
-        any = true;
-        session_feed(s, session_read_buf, (size_t)n);
-        latency_probe_scan_output(session_read_buf, (size_t)n);
-        s->read_chunk = pty_chunk_next(s->read_chunk, yasl_time_ns() - t0,
-                                      s->drain_budget_ns);
-        if (yasl_time_ns() >= deadline) {
-            *more = true;
-            break;
-        }
-    }
-    return any;
-}
-
-static void on_ring_data(void *ud, int fd, const char *buf, size_t len,
-                         size_t backlog)
+/* Runs on the worker thread: it parses the chunk into the terminal. */
+static void on_ring_data(void *ud, int fd, const char *buf, size_t len)
 {
     struct session *s = ud;
-    (void)backlog;
     if (!s->newline_synced || s->newline_fd != fd) {
         sync_transport_newline(s, fd);
         s->newline_synced = true;
@@ -163,10 +239,12 @@ static void on_ring_data(void *ud, int fd, const char *buf, size_t len,
     latency_probe_scan_output(buf, len);
 }
 
-static void on_ring_drained(void *ud)
+/* Runs on the loop thread: it applies the queued host events and asks for a
+ * frame. It parses no bytes and holds no budget. */
+static void on_ring_wake(void *ud)
 {
     struct session *s = ud;
-    s->newline_synced = false;
+    host_events_dispatch(s);
     notify_output(s);
 }
 
@@ -183,28 +261,9 @@ static void on_ring_ended(void *ud)
 
 static const struct pty_ring_cbs ring_callbacks = {
     .data = on_ring_data,
-    .drained = on_ring_drained,
+    .wake = on_ring_wake,
     .ended = on_ring_ended,
 };
-
-static void on_pty_data(void *ud, int fd, short revents)
-{
-    (void)revents;
-    struct session *s = ud;
-    if (!s->drain_budget_ns)
-        s->drain_budget_ns = PTY_DRAIN_BUDGET_NS;
-    uint64_t deadline = yasl_time_ns() + s->drain_budget_ns;
-    bool any = false;
-    bool more = false;
-
-    if (fd == pty_pipe_fd(&s->pty) && pty_master_fd(&s->pty) >= 0 &&
-        !pty_ring_owns_fd(&s->ring, pty_master_fd(&s->pty)))
-        any |= drain_pty_fd(s, pty_master_fd(&s->pty), deadline, &more);
-    any |= drain_pty_fd(s, fd, deadline, &more);
-    s->drain_budget_ns = pty_drain_budget_next(s->drain_budget_ns, more);
-    if (any)
-        notify_output(s);
-}
 
 static const char *const child_env[] = {
     "UNICODE_VERSION=" WSAP_VTCORE_UNICODE_DATA_VERSION,
@@ -225,19 +284,16 @@ static bool start_pty(struct session *s, const struct session_spec *spec)
 
     s->onlcr = pty_pipe_fd(&s->pty) >= 0;
 
-    if (pty_ring_start(&s->ring, s->loop, &s->pty, &ring_callbacks, s) < 0)
-        fprintf(stderr, "[%s] pty_ring_start failed, falling back to direct read\n",
-                app_name());
-
-    const int fds[] = { pty_pipe_fd(&s->pty), pty_master_fd(&s->pty) };
-    for (size_t i = 0; i < 2; i++) {
-        if (fds[i] < 0 || pty_ring_owns_fd(&s->ring, fds[i]))
-            continue;
-        s->pty_watch[i] = yasl_loop_add_fd(s->loop, fds[i], POLLIN, on_pty_data, s);
-        if (s->pty_watch[i] < 0)
-            return false;
+    /* The queue comes first: the worker can answer the terminal during its
+     * first read. */
+    if (pty_master_fd(&s->pty) < 0 ||
+        !session_write_queue_bind(&s->input_writer, s->loop, pty_master_fd(&s->pty)))
+        return false;
+    if (pty_ring_start(&s->ring, s->loop, &s->pty, &ring_callbacks, s) < 0) {
+        fprintf(stderr, "[%s] pty_ring_start failed\n", app_name());
+        return false;
     }
-    return session_write_queue_bind(&s->input_writer, s->loop, pty_master_fd(&s->pty));
+    return true;
 }
 
 bool session_init(struct session *s, struct yasl_loop *loop,
@@ -245,6 +301,9 @@ bool session_init(struct session *s, struct yasl_loop *loop,
 {
     memset(s, 0, sizeof(*s));
     s->loop = loop;
+    if (pthread_mutex_init(&s->host_lock, NULL) != 0)
+        return false;
+    s->host_lock_ready = true;
 
     struct vector2i grid_size = vector2i_max(spec->grid, vector2i_splat(1));
     s->term = wsap_vtcore_new(&(struct wsap_vtcore_options){
@@ -263,8 +322,10 @@ bool session_init(struct session *s, struct yasl_loop *loop,
             .trace = getenv("WSAP_ESC_TRACE") ? on_term_trace : NULL,
         },
     });
-    if (!s->term)
+    if (!s->term) {
+        session_fini(s);
         return false;
+    }
     wsap_vtcore_set_color_scheme(s->term, spec->color_scheme);
 
     s->next_live = live_sessions;
@@ -292,13 +353,10 @@ void session_fini(struct session *s)
     unlink_live(s);
     if (s->pty_resize_timer)
         yasl_loop_del_timer(s->loop, s->pty_resize_timer);
-    session_write_queue_destroy(&s->input_writer);
+    /* Stop the worker before the terminal and the queue go away. */
     pty_ring_stop(&s->ring);
-    for (size_t i = 0; i < 2; i++) {
-        if (s->pty_watch[i] > 0)
-            yasl_loop_del_fd(s->loop, s->pty_watch[i]);
-        s->pty_watch[i] = 0;
-    }
+    session_write_queue_destroy(&s->input_writer);
+    host_events_free(s);
     pty_destroy(&s->pty);
     wsap_vtcore_free(s->term);
     free(s->title);
@@ -365,13 +423,6 @@ bool session_write_bytes(struct session *s, const char *data, size_t len)
         return false;
     }
     latency_probe_stage(LATENCY_STAGE_PTY_WRITTEN);
-    if (pty_master_fd(&s->pty) >= 0 &&
-        !pty_ring_owns_fd(&s->ring, pty_master_fd(&s->pty))) {
-        /* This read is not a pass, so it leaves the drain budget alone. */
-        bool more = false;
-        if (drain_pty_fd(s, pty_master_fd(&s->pty), 0, &more))
-            notify_output(s);
-    }
     return true;
 }
 
@@ -420,29 +471,12 @@ void session_reap_exited(void)
             s->reaped = true;
         }
     }
-    for (;;) {
-        struct session *s = live_sessions;
-        while (s && !s->reaped)
-            s = s->next_live;
-        if (!s)
-            return;
-        s->reaped = false;
-        if (s->ring.active) {
-            pty_ring_end(&s->ring);
+    for (struct session *s = live_sessions; s; s = s->next_live) {
+        if (!s->reaped)
             continue;
-        }
-        if (!s->drain_budget_ns)
-            s->drain_budget_ns = PTY_DRAIN_BUDGET_NS;
-        uint64_t deadline = yasl_time_ns() + s->drain_budget_ns;
-        bool any = false;
-        bool more = false;
-        for (size_t i = 0; i < 2; i++)
-            if (s->pty_watch[i] > 0)
-                any |= drain_pty_fd(s, i ? pty_master_fd(&s->pty) : pty_pipe_fd(&s->pty),
-                                    deadline, &more);
-        s->drain_budget_ns = pty_drain_budget_next(s->drain_budget_ns, more);
-        if (any)
-            notify_output(s);
-        report_exit(s);
+        s->reaped = false;
+        /* The worker drains the last output and then publishes the end. The
+         * exit callback runs on the loop thread after the last byte. */
+        pty_ring_end(&s->ring);
     }
 }
