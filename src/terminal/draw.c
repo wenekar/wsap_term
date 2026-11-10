@@ -74,16 +74,25 @@ static void update_ime(struct window *w, const struct wsap_vtcore *t)
                               view->palette[WSAP_VTCORE_PALETTE_BG]);
 }
 
-static bool snapshot_has_blink(const struct wsap_vtcore_snapshot *snap)
+/* The blink scan reads every cell of the snapshot. Run it again only when
+ * the snapshot view version changed. A new version covers new cells. */
+static void snapshot_scan_blink(struct terminal_view *view,
+                                const struct wsap_vtcore_snapshot *snap)
 {
-    const struct wsap_vtcore_view *view = wsap_vtcore_snapshot_view(snap);
-    for (int y = 0; y < view->size.y; y++) {
+    const struct wsap_vtcore_view *v = wsap_vtcore_snapshot_view(snap);
+    if (v->version == view->blink_version)
+        return;
+    view->blink_version = v->version;
+    view->blink_cells = false;
+    for (int y = 0; y < v->size.y; y++) {
         const struct wsap_vtcore_cell *cells = wsap_vtcore_snapshot_row(snap, y);
-        for (int x = 0; cells && x < view->size.x; x++)
-            if (cells[x].attrs & WSAP_VTCORE_ATTR_BLINK)
-                return true;
+        for (int x = 0; cells && x < v->size.x; x++) {
+            if (cells[x].attrs & WSAP_VTCORE_ATTR_BLINK) {
+                view->blink_cells = true;
+                return;
+            }
+        }
     }
-    return false;
 }
 
 void terminal_prepare(struct window *w, uint64_t now_ms)
@@ -94,8 +103,11 @@ void terminal_prepare(struct window *w, uint64_t now_ms)
         return;
     terminal_finish_closing_tab(w);
     struct wsap_vtcore *t = terminal_term(w);
+    tw->frame_serial++;
     if (t && !window_closed(w) && wsap_vtcore_snapshot_update(tw->snapshot, t)) {
-        tw->view.blink_cells = snapshot_has_blink(tw->snapshot);
+        tw->snapshot_frame = tw->frame_serial;
+        tw->snapshot_term = t;
+        snapshot_scan_blink(&tw->view, tw->snapshot);
         update_ime(w, t);
     }
 }
@@ -106,9 +118,17 @@ bool terminal_frame_source(struct window *w, uint64_t now_ms,
     struct tab *tab = terminal_active_tab(w);
     if (!tab || !out)
         return false;
-    struct wsap_vtcore_snapshot *snap = terminal_of(w)->snapshot;
-    if (!wsap_vtcore_snapshot_update(snap, tab->session.term))
+    struct terminal *tw = terminal_of(w);
+    struct wsap_vtcore *t = tab->session.term;
+    struct wsap_vtcore_snapshot *snap = tw->snapshot;
+    /* terminal_prepare() already updated this snapshot in the current
+     * frame. Use that update. Do not take the write lock and diff the row
+     * keys a second time. A frame without terminal_prepare() updates here. */
+    if (t && tw->snapshot_frame == tw->frame_serial && tw->snapshot_term == t) {
+        tw->snapshot_frame = 0;
+    } else if (!wsap_vtcore_snapshot_update(snap, t)) {
         return false;
+    }
     struct rect2i rect = terminal_view_rect(w);
     *out = (struct terminal_frame_source){
         .snapshot = snap,

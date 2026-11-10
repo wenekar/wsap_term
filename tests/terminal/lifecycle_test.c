@@ -136,6 +136,26 @@ static void text_blink_test(struct window *w, struct session *session)
     terminal_prepare(w, 2000);
     assert(terminal_frame_source(w, 2000, &source));
     assert(source.text_blink_on);
+
+    /* New cells without blink stop the text blink. The app clock is in the
+     * off phase, so only a new snapshot scan reports a steady text. */
+    feed(session->term, "\033[2J\033[H\033[25mX");
+    terminal_prepare(w, 2500);
+    assert(terminal_frame_source(w, 2500, &source));
+    assert(source.text_blink_on);
+    cells = wsap_vtcore_snapshot_row(source.snapshot, 0);
+    assert(cells && cells[0].text == 'X');
+}
+
+/* A frame without terminal_prepare() updates the snapshot itself. */
+static void frame_source_alone_test(struct window *w, struct session *session)
+{
+    feed(session->term, "\033[2J\033[Hplain");
+    struct terminal_frame_source source;
+    assert(terminal_frame_source(w, 3000, &source));
+    const struct wsap_vtcore_cell *cells =
+        wsap_vtcore_snapshot_row(source.snapshot, 0);
+    assert(cells && cells[0].text == 'p');
 }
 
 int main(void)
@@ -151,6 +171,7 @@ int main(void)
     cell_pixels_test(w, session);
     color_scheme_test(w, session);
     text_blink_test(w, session);
+    frame_source_alone_test(w, session);
 
     window_close(w);
     test_app_fini(&app);
