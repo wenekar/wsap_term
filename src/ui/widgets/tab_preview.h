@@ -19,7 +19,9 @@ struct ui_tab_preview {
     struct {
         struct ui_tab_preview_source source;
         char *title;
-        const struct ui_image *image;
+        /* The thumbnail of the tab, held by value: a new capture compares
+         * against it. No pixels means no image. */
+        struct ui_image image;
         struct rect2i anchor;
         uint64_t show_at;
         uint64_t refresh_at;
