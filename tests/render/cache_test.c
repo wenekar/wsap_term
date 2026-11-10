@@ -101,8 +101,8 @@ static void bench_open(struct bench *b)
     static const struct subject subjects[] = {
         { .name = "64K/0", .opt = { .threads = RENDER_NONE, .cache_bytes = 64 << 10 } },
         { .name = "64K/3", .opt = { .threads = 3, .cache_bytes = 64 << 10 } },
-        { .name = "16M/0", .opt = { .threads = RENDER_NONE } },
-        { .name = "16M/3", .opt = { .threads = 3 } },
+        { .name = "default/0", .opt = { .threads = RENDER_NONE } },
+        { .name = "default/3", .opt = { .threads = 3 } },
         { .name = "none/3", .opt = { .threads = 3, .cache_bytes = RENDER_NONE } },
     };
     *b = (struct bench){ .n = MAX_SUBJECTS };

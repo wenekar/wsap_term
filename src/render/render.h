@@ -27,7 +27,7 @@ struct ui_scene;
 #define RENDER_NONE (-1)
 
 /* The cell cache budget that a zero cache_bytes gives. */
-#define RENDER_CACHE_DEFAULT_BYTES ((ptrdiff_t)16 << 20)
+#define RENDER_CACHE_DEFAULT_BYTES ((ptrdiff_t)4 << 20)
 
 /*
  * Renderer settings. An all-zero struct, or a NULL pointer, gives the
