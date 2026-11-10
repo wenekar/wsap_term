@@ -3,10 +3,8 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
-#include <time.h>
 #include <unistd.h>
 
 #include "platform/platform.h"
@@ -18,6 +16,22 @@
 #if defined(__APPLE__)
 #include <sys/ucred.h>
 #endif
+
+/* The bytes of one read from the pty. The worker parses each read into the
+ * terminal at once, so this is also the size of its buffer. */
+#define PTY_READ_SIZE PTY_CHUNK_MAX
+#define PTY_SPIN_ITERS 128
+#define PTY_SYNC_REQUEST_MS 100
+
+enum { PFD_SRC0, PFD_SRC1, PFD_REQUEST, PFD_SYNC, PFD_COUNT };
+
+enum pump_result { PUMP_EMPTY, PUMP_EOF };
+
+struct worker {
+    struct pty_ring *r;
+    struct pollfd pfd[PFD_COUNT];
+    bool end_done;
+};
 
 static void event_signal(int fd)
 {
@@ -41,157 +55,26 @@ static inline void cpu_relax(void)
 #endif
 }
 
-#define PTY_RING_MAX_CHUNK PTY_CHUNK_MAX
-#define PTY_RING_MIN_FREE (64 * 1024)
-#define PTY_SIGNAL_INTERVAL_NS 1000000ull
-/* The bytes that wait in the ring before the worker wakes the consumer. A small
- * value starts the consumer on the ring early, so the ring and the kernel PTY
- * buffer stay empty and the child does not stall on a full buffer. */
-#define PTY_SIGNAL_BYTES 32768ull
-#define PTY_SPIN_ITERS 128
-#define PTY_SYNC_REQUEST_MS 100
-
-enum { PFD_SRC0, PFD_SRC1, PFD_SPACE, PFD_SYNC, PFD_COUNT };
-
-enum pump_result { PUMP_EMPTY, PUMP_FULL, PUMP_EOF };
-
-struct worker {
-    struct pty_ring *r;
-    struct pollfd pfd[PFD_COUNT];
-    size_t head;
-    size_t switch_head;
-    uint64_t signal_after_ns;
-    size_t pending_bytes;
-    unsigned src;
-    bool signal_deferred;
-    bool end_done;
-};
-
-static bool ring_low(size_t head, size_t tail, size_t switch_head,
-                     size_t switch_tail)
+/* Wake the loop thread once for the content that waits. A signal that is
+ * already pending covers this content too: the loop thread drains all the
+ * content before it reads wake_pending again. */
+static void wake_consumer(struct pty_ring *r)
 {
-    return PTY_RING_SIZE - (head - tail) < PTY_RING_MIN_FREE ||
-           switch_head - switch_tail >= PTY_RING_SWITCHES;
+    if (atomic_exchange_explicit(&r->wake_pending, 1, memory_order_seq_cst) == 0)
+        event_signal(r->event_wr);
 }
 
-static void signal_consumer(struct worker *w, uint64_t now)
+void pty_ring_wake(struct pty_ring *r)
 {
-    w->signal_deferred = false;
-    w->signal_after_ns = now + PTY_SIGNAL_INTERVAL_NS;
-    w->pending_bytes = 0;
-    event_signal(w->r->event_wr);
+    if (r && r->event_wr >= 0)
+        wake_consumer(r);
 }
 
-static void flush_deferred(struct worker *w)
+static void publish_end(struct pty_ring *r)
 {
-    if (!w->signal_deferred)
-        return;
-    w->signal_deferred = false;
-    w->pending_bytes = 0;
-    if (!atomic_load_explicit(&w->r->awake, memory_order_acquire))
-        event_signal(w->r->event_wr);
-}
-
-static void notify(struct worker *w, size_t bytes, bool urgent)
-{
-    struct pty_ring *r = w->r;
-    w->pending_bytes += bytes;
-    atomic_thread_fence(memory_order_seq_cst);
-    if (atomic_load_explicit(&r->awake, memory_order_acquire))
-        return;
-    uint64_t now = yasl_time_ns();
-    if (urgent || w->pending_bytes >= PTY_SIGNAL_BYTES ||
-        now >= w->signal_after_ns)
-        signal_consumer(w, now);
-    else
-        w->signal_deferred = true;
-}
-
-static bool wait_for_space(struct worker *w)
-{
-    struct pty_ring *r = w->r;
-    for (;;) {
-        if (atomic_load_explicit(&r->stop, memory_order_relaxed))
-            return false;
-        atomic_store_explicit(&r->need_space, 1, memory_order_relaxed);
-        atomic_thread_fence(memory_order_seq_cst);
-        size_t tail = atomic_load_explicit(&r->tail, memory_order_acquire);
-        size_t switch_tail =
-            atomic_load_explicit(&r->switch_tail, memory_order_acquire);
-        if (!ring_low(w->head, tail, w->switch_head, switch_tail)) {
-            atomic_store_explicit(&r->need_space, 0, memory_order_release);
-            return true;
-        }
-        flush_deferred(w);
-        if (poll(&w->pfd[PFD_SPACE], 1, -1) < 0 && errno != EINTR)
-            return false;
-        drain_fd(r->space_fd);
-    }
-}
-
-static enum pump_result pump(struct worker *w, unsigned i)
-{
-    struct pty_ring *r = w->r;
-    int fd = r->src_fd[i];
-    size_t tail = atomic_load_explicit(&r->tail, memory_order_acquire);
-    size_t start = w->head;
-    enum pump_result result = PUMP_FULL;
-    bool short_read = false;
-#if defined(__APPLE__)
-    int spin = 0;
-#endif
-    for (;;) {
-        if (i != w->src &&
-            w->switch_head - atomic_load_explicit(&r->switch_tail,
-                                                  memory_order_acquire) >=
-                PTY_RING_SWITCHES)
-            break;
-        size_t off = w->head & PTY_RING_MASK;
-        size_t contig = PTY_RING_SIZE - off;
-        size_t free_bytes = PTY_RING_SIZE - (w->head - tail);
-        size_t to_read = free_bytes < contig ? free_bytes : contig;
-        if (to_read > PTY_RING_MAX_CHUNK) to_read = PTY_RING_MAX_CHUNK;
-        if (to_read == 0)
-            break;
-
-        ssize_t n = read(fd, r->buf + off, to_read);
-        if (n <= 0) {
-            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-#if defined(__APPLE__)
-                if (w->head != start && !short_read &&
-                    ++spin <= PTY_SPIN_ITERS) {
-                    cpu_relax();
-                    tail = atomic_load_explicit(&r->tail,
-                            memory_order_acquire);
-                    continue;
-                }
-#endif
-                result = PUMP_EMPTY;
-                break;
-            }
-            if (n < 0 && errno == EINTR)
-                continue;
-            result = PUMP_EOF;
-            break;
-        }
-
-#if defined(__APPLE__)
-        spin = 0;
-#endif
-        if (i != w->src) {
-            r->switch_at[w->switch_head % PTY_RING_SWITCHES] = w->head;
-            atomic_store_explicit(&r->switch_head, ++w->switch_head,
-                                  memory_order_release);
-            w->src = i;
-        }
-        short_read = (size_t)n < to_read && n < 1024;
-        w->head += (size_t)n;
-        atomic_store_explicit(&r->head, w->head, memory_order_release);
-    }
-
-    if (w->head != start || result == PUMP_EOF)
-        notify(w, w->head - start, result == PUMP_EOF || short_read);
-    return result;
+    atomic_store_explicit(&r->end_published, 1, memory_order_release);
+    if (r->event_wr >= 0)
+        event_signal(r->event_wr);
 }
 
 static void close_source(struct worker *w, unsigned i)
@@ -199,53 +82,65 @@ static void close_source(struct worker *w, unsigned i)
     w->pfd[i].fd = -1;
 }
 
+/* Read the pty into the terminal. Each chunk goes to the data callback before
+ * the next read, so the parse keeps the pty buffer empty. */
+static enum pump_result pump(struct worker *w, unsigned i)
+{
+    struct pty_ring *r = w->r;
+    int fd = r->src_fd[i];
+    enum pump_result result = PUMP_EMPTY;
+    bool read_any = false;
+#if defined(__APPLE__)
+    int spin = 0;
+#endif
+    for (;;) {
+        ssize_t n = read(fd, r->buf, PTY_READ_SIZE);
+        if (n <= 0) {
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+#if defined(__APPLE__)
+                /* The pty gives short reads. A short spin keeps a flood off
+                 * the poll syscall. */
+                if (read_any && ++spin <= PTY_SPIN_ITERS) {
+                    cpu_relax();
+                    continue;
+                }
+#endif
+                break;
+            }
+            if (n < 0 && errno == EINTR)
+                continue;
+            result = PUMP_EOF;
+            break;
+        }
+#if defined(__APPLE__)
+        spin = 0;
+#endif
+        read_any = true;
+        r->cbs.data(r->ud, fd, r->buf, (size_t)n);
+        wake_consumer(r);
+    }
+    return result;
+}
+
 static void drain_source(struct worker *w, unsigned i)
 {
-    while (w->pfd[i].fd >= 0) {
-        enum pump_result res = pump(w, i);
-        if (res == PUMP_EMPTY)
-            return;
-        if (res == PUMP_EOF) {
-            close_source(w, i);
-            return;
-        }
-        if (!wait_for_space(w))
-            return;
-    }
+    if (w->pfd[i].fd < 0)
+        return;
+    if (pump(w, i) == PUMP_EOF)
+        close_source(w, i);
 }
 
-static void drain_now(struct worker *w, unsigned i)
-{
-    size_t start = w->head;
-    while (w->pfd[i].fd >= 0 && w->head - start < PTY_RING_SIZE) {
-        enum pump_result res = pump(w, i);
-        if (res == PUMP_EMPTY)
-            return;
-        if (res == PUMP_EOF) {
-            close_source(w, i);
-            return;
-        }
-        if (!wait_for_space(w))
-            return;
-    }
-}
-
-static void publish_end(struct pty_ring *r, size_t head)
-{
-    size_t none = 0;
-    atomic_compare_exchange_strong(&r->end_at, &none, head + 1);
-    event_signal(r->event_wr);
-}
-
+/* The child is gone. Drain what it wrote and then publish the end of the
+ * output. Every byte reaches the terminal before the end callback. */
 static void serve_end(struct worker *w)
 {
-    if (w->end_done || !atomic_load(&w->r->end_requested))
+    if (w->end_done ||
+        !atomic_load_explicit(&w->r->end_requested, memory_order_acquire))
         return;
-    drain_now(w, PFD_SRC0);
-    drain_now(w, PFD_SRC1);
+    drain_source(w, PFD_SRC0);
+    drain_source(w, PFD_SRC1);
     w->end_done = true;
-    flush_deferred(w);
-    publish_end(w->r, w->head);
+    publish_end(w->r);
 }
 
 static bool sync_peer_trusted(int fd)
@@ -263,6 +158,9 @@ static bool sync_peer_trusted(int fd)
 #endif
 }
 
+/* The child changes the stream that it writes to. Drain the stream that it
+ * leaves before it sends the answer, so the terminal sees the bytes in program
+ * order. */
 static void serve_sync(struct worker *w)
 {
     for (;;) {
@@ -281,7 +179,7 @@ static void serve_sync(struct worker *w)
             poll(&pfd, 1, PTY_SYNC_REQUEST_MS) == 1 &&
             recv(c, &req, 1, 0) == 1 &&
             (req == PTY_SYNC_LEAVE_PIPE || req == PTY_SYNC_LEAVE_TTY)) {
-            drain_source(w, req == PTY_SYNC_LEAVE_PIPE ? 0 : 1);
+            drain_source(w, req == PTY_SYNC_LEAVE_PIPE ? PFD_SRC0 : PFD_SRC1);
             (void)!send(c, &req, 1, PTY_SYNC_SEND_FLAGS);
         }
         close(c);
@@ -297,41 +195,29 @@ static void *pty_ring_worker(void *arg)
         .pfd = {
             [PFD_SRC0] = { .fd = r->src_fd[0], .events = POLLIN },
             [PFD_SRC1] = { .fd = r->src_fd[1], .events = POLLIN },
-            [PFD_SPACE] = { .fd = r->space_fd, .events = POLLIN },
+            [PFD_REQUEST] = { .fd = r->request_fd, .events = POLLIN },
             [PFD_SYNC] = { .fd = r->sync_fd, .events = POLLIN },
         },
     };
 
     while (!atomic_load_explicit(&r->stop, memory_order_relaxed) &&
            (w.pfd[PFD_SRC0].fd >= 0 || w.pfd[PFD_SRC1].fd >= 0)) {
-        if (w.signal_deferred) {
-            uint64_t now = yasl_time_ns();
-            if (now >= w.signal_after_ns) {
-                w.signal_deferred = false;
-                if (!atomic_load_explicit(&r->awake, memory_order_acquire))
-                    signal_consumer(&w, now);
-            }
+        if (atomic_load_explicit(&r->end_requested, memory_order_acquire)) {
+            serve_end(&w);
+            break;
         }
-
-        size_t tail = atomic_load_explicit(&r->tail, memory_order_acquire);
-        size_t switch_tail =
-            atomic_load_explicit(&r->switch_tail, memory_order_acquire);
-        if (ring_low(w.head, tail, w.switch_head, switch_tail)) {
-            if (!wait_for_space(&w))
-                break;
-            continue;
-        }
-
-        int pr = poll(w.pfd, PFD_COUNT, w.signal_deferred ? 1 : -1);
+        int pr = poll(w.pfd, PFD_COUNT, -1);
         if (pr < 0 && errno != EINTR)
             break;
         if (pr <= 0)
             continue;
-        if (w.pfd[PFD_SPACE].revents & POLLIN)
-            drain_fd(r->space_fd);
+        if (w.pfd[PFD_REQUEST].revents & POLLIN)
+            drain_fd(r->request_fd);
         if (atomic_load_explicit(&r->stop, memory_order_relaxed))
             break;
         serve_end(&w);
+        if (w.end_done)
+            break;
         for (unsigned i = PFD_SRC0; i <= PFD_SRC1; i++) {
             if (w.pfd[i].fd >= 0 &&
                 (w.pfd[i].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) &&
@@ -341,89 +227,27 @@ static void *pty_ring_worker(void *arg)
         if (w.pfd[PFD_SYNC].revents & POLLIN)
             serve_sync(&w);
     }
-    flush_deferred(&w);
     atomic_store(&r->worker_done, 1);
     if (!atomic_load_explicit(&r->stop, memory_order_relaxed) &&
-        atomic_load(&r->end_requested) && !w.end_done)
-        publish_end(r, w.head);
+        atomic_load_explicit(&r->end_requested, memory_order_acquire) &&
+        !w.end_done)
+        publish_end(r);
     return NULL;
 }
 
+/* Only drains the wake signal and tells the loop thread. It parses nothing and
+ * it holds no budget. */
 static void on_ring_event(void *ud, int fd, short revents)
 {
     (void)revents;
     struct pty_ring *r = ud;
-
     drain_fd(fd);
-
-    atomic_store_explicit(&r->awake, 1, memory_order_seq_cst);
-    bool any = false;
-    if (!r->budget_ns) r->budget_ns = PTY_DRAIN_BUDGET_NS;
-    uint64_t deadline = yasl_time_ns() + r->budget_ns;
-    if (!r->chunk) r->chunk = PTY_CHUNK_START;
-    size_t tail = atomic_load_explicit(&r->tail, memory_order_relaxed);
-
-    size_t head;
-    size_t switch_tail =
-        atomic_load_explicit(&r->switch_tail, memory_order_relaxed);
-    for (;;) {
-        head = atomic_load_explicit(&r->head, memory_order_acquire);
-        size_t switch_head =
-            atomic_load_explicit(&r->switch_head, memory_order_acquire);
-        while (switch_tail != switch_head &&
-               r->switch_at[switch_tail % PTY_RING_SWITCHES] == tail) {
-            r->tail_src ^= 1;
-            switch_tail++;
-        }
-        size_t avail = head - tail;
-        if (avail == 0)
-            break;
-
-        size_t off = tail & PTY_RING_MASK;
-        size_t contig = PTY_RING_SIZE - off;
-        size_t chunk = avail < contig ? avail : contig;
-        /* One chunk may not fill the whole pass: the parse of one chunk of
-         * hard bytes can take longer than the budget. */
-        if (chunk > r->chunk) chunk = r->chunk;
-        if (switch_tail != switch_head) {
-            size_t until = r->switch_at[switch_tail % PTY_RING_SWITCHES] - tail;
-            if (chunk > until)
-                chunk = until;
-        }
-
-        uint64_t t0 = yasl_time_ns();
-        r->cbs.data(r->ud, r->src_fd[r->tail_src], r->buf + off, chunk,
-                    avail - chunk);
-        r->chunk = pty_chunk_next(r->chunk, yasl_time_ns() - t0, r->budget_ns);
-
-        tail += chunk;
-        any = true;
-
-        if (yasl_time_ns() >= deadline)
-            break;
-    }
-    atomic_store_explicit(&r->switch_tail, switch_tail, memory_order_release);
-    atomic_store_explicit(&r->tail, tail, memory_order_release);
-
-    atomic_store_explicit(&r->awake, 0, memory_order_relaxed);
-    atomic_thread_fence(memory_order_seq_cst);
-    head = atomic_load_explicit(&r->head, memory_order_acquire);
-    r->budget_ns = pty_drain_budget_next(r->budget_ns, head != tail);
-    if (head != tail)
-        event_signal(r->event_wr);
-
-    if (atomic_load_explicit(&r->need_space, memory_order_acquire) &&
-        !ring_low(head, tail,
-                  atomic_load_explicit(&r->switch_head, memory_order_acquire),
-                  switch_tail))
-        event_signal(r->space_wr);
-
-    if (any && r->cbs.drained)
-        r->cbs.drained(r->ud);
-
-    size_t end = atomic_load_explicit(&r->end_at, memory_order_acquire);
-    if (end && tail - (end - 1) <= PTY_RING_SIZE && !r->ended) {
-        r->ended = true;
+    atomic_store_explicit(&r->wake_pending, 0, memory_order_seq_cst);
+    if (r->cbs.wake)
+        r->cbs.wake(r->ud);
+    if (!r->ended_delivered &&
+        atomic_load_explicit(&r->end_published, memory_order_acquire)) {
+        r->ended_delivered = true;
         if (r->cbs.ended)
             r->cbs.ended(r->ud);
     }
@@ -436,10 +260,10 @@ static void ring_release(struct pty_ring *r)
     r->event_watch = 0;
     proc_eventfd_close(r->event_fd, r->event_wr);
     r->event_fd = r->event_wr = -1;
-    proc_eventfd_close(r->space_fd, r->space_wr);
-    r->space_fd = r->space_wr = -1;
+    proc_eventfd_close(r->request_fd, r->request_wr);
+    r->request_fd = r->request_wr = -1;
     if (r->buf) {
-        munmap(r->buf, PTY_RING_SIZE);
+        munmap(r->buf, PTY_READ_SIZE);
         r->buf = NULL;
     }
     r->active = false;
@@ -457,26 +281,26 @@ int pty_ring_start(struct pty_ring *r, struct yasl_loop *loop, const struct pty 
         .sync_fd = pty_sync_fd(p),
         .event_fd = -1,
         .event_wr = -1,
-        .space_fd = -1,
-        .space_wr = -1,
+        .request_fd = -1,
+        .request_wr = -1,
         .cbs = *cbs,
         .ud = ud,
     };
     if (r->src_fd[0] < 0)
         return -1;
-    r->buf = mmap(NULL, PTY_RING_SIZE, PROT_READ | PROT_WRITE,
+    r->buf = mmap(NULL, PTY_READ_SIZE, PROT_READ | PROT_WRITE,
                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (!r->buf || r->buf == MAP_FAILED) {
         r->buf = NULL;
         return -1;
     }
-    platform_madv_dontfork(r->buf, PTY_RING_SIZE);
-    platform_madv_nohugepage(r->buf, PTY_RING_SIZE);
+    platform_madv_dontfork(r->buf, PTY_READ_SIZE);
+    platform_madv_nohugepage(r->buf, PTY_READ_SIZE);
     r->event_fd = platform_eventfd(&r->event_wr);
     if (r->event_fd < 0)
         goto fail;
-    r->space_fd = platform_eventfd(&r->space_wr);
-    if (r->space_fd < 0)
+    r->request_fd = platform_eventfd(&r->request_wr);
+    if (r->request_fd < 0)
         goto fail;
     r->event_watch = yasl_loop_add_fd(loop, r->event_fd, POLLIN, on_ring_event, r);
     if (r->event_watch <= 0 ||
@@ -497,8 +321,8 @@ void pty_ring_stop(struct pty_ring *r)
     atomic_store(&r->stop, 1);
     if (r->event_wr >= 0)
         event_signal(r->event_wr);
-    if (r->space_wr >= 0)
-        event_signal(r->space_wr);
+    if (r->request_wr >= 0)
+        event_signal(r->request_wr);
     pthread_join(r->thread, NULL);
     ring_release(r);
 }
@@ -508,12 +332,7 @@ void pty_ring_end(struct pty_ring *r)
     if (!r->active)
         return;
     atomic_store(&r->end_requested, 1);
-    event_signal(r->space_wr);
+    event_signal(r->request_wr);
     if (atomic_load(&r->worker_done))
-        publish_end(r, atomic_load_explicit(&r->head, memory_order_acquire));
-}
-
-bool pty_ring_owns_fd(const struct pty_ring *r, int fd)
-{
-    return r->active && fd >= 0 && (r->src_fd[0] == fd || r->src_fd[1] == fd);
+        publish_end(r);
 }

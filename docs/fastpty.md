@@ -100,7 +100,7 @@ stays in cooked mode and keeps it.
 Each move first passes a barrier (`src/pty/sync.h`). The shim connects to
 the session's sync socket, whose abstract name is in `WSAP_SYNC`. It names
 the transport it leaves, and waits up to 200 ms for an acknowledgement. The
-ring worker drains that transport into the ring before it replies. Output
+ring worker parses that transport into the terminal before it replies. Output
 the program wrote before the move is therefore ahead of output written
 after it. If the barrier fails or times out, the output stays where it is:
 a lost move costs speed or line endings, never order. The barrier can make
@@ -113,11 +113,11 @@ barrier yet, so it does not route.
 ## Reader ownership and stream ordering
 
 The ring worker is the only reader. It reads the fast pipe and the PTY
-master into one ring, so the ring order is the order it read them in.
-Switch points between the two are recorded beside the ring, and each
-`data` callback names the transport its bytes came from. The session uses
-that to pick the newline policy for each span. If the worker cannot start,
-the main loop reads both descriptors.
+master and parses each read into the terminal at once, so the terminal sees
+the bytes in the order that the worker read them. Each `data` callback names
+the transport its bytes came from. The session uses that to pick the newline
+policy for each span. The worker starts before the session returns, and a
+session that cannot start its worker does not open.
 
 Output from independent processes has no defined order across the two
 transports, just as it has none on a single pty. Within one process, the
@@ -136,7 +136,9 @@ present in the child environment.
 Keyboard bytes, terminal replies, and paste data share the input queue. Raw
 input retains its control bytes, and pending writes resume on `POLLOUT`.
 This prevents short writes from dropping input and prevents subsequent keys
-or replies from being inserted inside a pending paste.
+or replies from being inserted inside a pending paste. The queue has a lock,
+so a terminal reply can enter it on the worker thread while the loop thread
+adds a key.
 
 The privilege-command spawn fallback temporarily changes process-wide
 stdout/stderr descriptors, so a concurrent writer in another thread can observe
@@ -153,9 +155,9 @@ the substitution. Resolving that needs launch routing, not reader changes.
 - `meson test -C build fastpty-test`: actual preload/exec routing, duplicated descriptors,
   unrelated PTYs, stderr-only propagation, and preload deduplication.
 - `meson test -C build pty-route-test`: a raw-mode helper switches mode 200
-  times behind 32 KiB pipe bursts, with a slow consumer that keeps the ring
-  full. It checks that raw-mode output arrives on the pty, cooked output on
-  the pipe, and the stream stays in program order.
+  times behind 32 KiB pipe bursts, with a slow consumer that makes the worker
+  fall behind. It checks that raw-mode output arrives on the pty, cooked
+  output on the pipe, and the stream stays in program order.
 - `meson test -C build paste-test`: partial writes and byte-preserving input after queued paste.
 - `meson test -C build pty-order-test`: optional Linux integration test requiring Sway and `-Dintegration_tests=true`; starts
   a private headless compositor and verifies 8,000 ordered PTY cursor replies

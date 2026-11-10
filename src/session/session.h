@@ -1,6 +1,7 @@
 #ifndef SESSION_SESSION_H
 #define SESSION_SESSION_H
 
+#include <pthread.h>
 #include <stdalign.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -13,6 +14,7 @@
 
 struct yasl_loop;
 struct session;
+struct session_host_event;
 
 struct session_host {
     void (*output)(void *ud);
@@ -42,10 +44,11 @@ struct session {
     const struct session_host *host;
     void *host_ud;
     struct session *next_live;
-    int pty_watch[2];
+    /* The newline mode of the bytes that the worker reads, and the stream that
+     * they came from. */
+    bool onlcr;
     bool newline_synced;
     int newline_fd;
-    bool onlcr;
     uint64_t last_keystroke_ms;
     /* The last winsize sent to the pty, the size that waits for the timer, and
      * the timer. Zero Is Initialization: no pending size, no timer. */
@@ -53,13 +56,13 @@ struct session {
     struct vector2i pty_pending;
     uint64_t pty_resize_timer;
     bool reaped;
-    /* The bytes of the next PTY read. It follows the parse time of the last
-     * chunk, so a pass on data that parses slowly overruns its budget by
-     * less. */
-    size_t read_chunk;
-    /* The time that the next pass over the pty may take. The ring path keeps
-     * its own budget. */
-    uint64_t drain_budget_ns;
+    /* The host events that the worker thread queues for the loop thread: the
+     * title, the clipboard, a notification, and the bell. The loop thread
+     * applies them, so the host and the window see one thread only. */
+    pthread_mutex_t host_lock;
+    bool host_lock_ready;
+    struct session_host_event *host_head;
+    struct session_host_event *host_tail;
     alignas(64) struct pty pty;
 };
 

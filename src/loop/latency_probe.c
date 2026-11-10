@@ -48,8 +48,13 @@ void latency_probe_init(void)
 static uint64_t active, rendered;
 static uint64_t stamps[LATENCY_STAGE_COUNT];
 static uint64_t pending;
+/* The worker thread reads the output on its own thread while the loop thread
+ * records the other stages, so the stages and the marker state have one lock.
+ * No callback and no parse runs while it is held. */
+static pthread_mutex_t state_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static void sync_request(void)
+/* The caller holds state_lock. */
+static void sync_request_locked(void)
 {
     if (!probe) return;
     uint64_t id = atomic_load_explicit(&probe->request, memory_order_acquire);
@@ -60,10 +65,10 @@ static void sync_request(void)
     }
 }
 
-void latency_probe_stage(enum latency_stage stage)
+/* The caller holds state_lock. */
+static void stage_locked(enum latency_stage stage)
 {
     if (!probe) return;
-    sync_request();
     if (!active || atomic_load_explicit(&probe->completed, memory_order_relaxed) == active)
         return;
     if (stage == LATENCY_STAGE_RENDER_START) {
@@ -74,16 +79,26 @@ void latency_probe_stage(enum latency_stage stage)
         stamps[stage] = yasl_time_ns();
 }
 
+void latency_probe_stage(enum latency_stage stage)
+{
+    if (!probe) return;
+    pthread_mutex_lock(&state_lock);
+    sync_request_locked();
+    stage_locked(stage);
+    pthread_mutex_unlock(&state_lock);
+}
+
 void latency_probe_scan_output(const char *data, size_t len)
 {
     if (!probe) return;
     static char marker[64];
     static size_t used;
-    sync_request();
+    pthread_mutex_lock(&state_lock);
+    sync_request_locked();
     for (size_t i = 0; i < len; i++) {
         if (pending) {
             if (data[i] == 'a' && pending == active && stamps[LATENCY_STAGE_KEY_IN])
-                latency_probe_stage(LATENCY_STAGE_PTY_READ);
+                stage_locked(LATENCY_STAGE_PTY_READ);
             pending = 0;
         }
         if (data[i] == '\033') used = 0;
@@ -98,6 +113,7 @@ void latency_probe_scan_output(const char *data, size_t len)
             used = 0;
         }
     }
+    pthread_mutex_unlock(&state_lock);
 }
 
 /* The sample that waits for a presentation: the sample of the current request
@@ -107,12 +123,17 @@ void latency_probe_scan_output(const char *data, size_t len)
 static uint64_t waiting_sample(void)
 {
     if (!probe) return 0;
-    sync_request();
-    if (!rendered) return 0;
-    /* The store of `presented` publishes the record, so this load also orders
-     * the record reads of the caller. */
-    return atomic_load_explicit(&probe->presented, memory_order_acquire) == rendered
-        ? 0 : rendered;
+    pthread_mutex_lock(&state_lock);
+    sync_request_locked();
+    uint64_t sample = 0;
+    if (rendered) {
+        /* The store of `presented` publishes the record, so this load also
+         * orders the record reads of the caller. */
+        if (atomic_load_explicit(&probe->presented, memory_order_acquire) != rendered)
+            sample = rendered;
+    }
+    pthread_mutex_unlock(&state_lock);
+    return sample;
 }
 
 void latency_probe_complete(void)
@@ -122,19 +143,26 @@ void latency_probe_complete(void)
      * can present the frame before the loop reaches this point, so this record
      * reads the sample that the frame belongs to, and not the sample that waits
      * for a presentation. */
-    sync_request();
+    pthread_mutex_lock(&state_lock);
+    sync_request_locked();
     uint64_t id = rendered;
-    if (!id) return;
+    if (!id) {
+        pthread_mutex_unlock(&state_lock);
+        return;
+    }
     /* The first frame of a sample records its stages. A later frame of the same
      * sample shows the same content, so it keeps the record that a reader can
      * already take. */
-    if (atomic_load_explicit(&probe->completed, memory_order_relaxed) == id)
+    if (atomic_load_explicit(&probe->completed, memory_order_relaxed) == id) {
+        pthread_mutex_unlock(&state_lock);
         return;
+    }
     if (!stamps[LATENCY_STAGE_COMMIT])
         stamps[LATENCY_STAGE_COMMIT] = yasl_time_ns();
     memcpy(probe->stage_ns, stamps, sizeof(probe->stage_ns));
     /* The reader takes the stages above through this store. */
     atomic_store_explicit(&probe->completed, id, memory_order_release);
+    pthread_mutex_unlock(&state_lock);
 }
 
 uint64_t latency_probe_frame_target(void)

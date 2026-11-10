@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -242,6 +243,60 @@ static void check_whole_event(void)
     assert(!input_queue_take(&input, &ev));
 }
 
+/* A push from another thread writes what the pty accepts and leaves the rest
+ * for the loop thread. The loop thread must then write it without a push on
+ * its own thread. */
+struct thread_push {
+    struct session_write_queue *queue;
+    const char *data;
+    size_t len;
+    bool ok;
+};
+
+static void *thread_push_main(void *data)
+{
+    struct thread_push *push = data;
+    push->ok = session_write_queue_push_bytes(push->queue, push->data, push->len);
+    return NULL;
+}
+
+static void check_push_from_another_thread(void)
+{
+    int fds[2];
+    assert(pipe_nonblocking_cloexec(fds) == 0);
+    struct yasl_loop *loop = yasl_loop_create();
+    assert(loop);
+    struct session_write_queue queue = {0};
+    assert(session_write_queue_bind(&queue, loop, fds[1]));
+
+    char fill[4096];
+    memset(fill, 'f', sizeof(fill));
+    while (write(fds[1], fill, sizeof(fill)) > 0)
+        ;
+
+    struct thread_push push = { .queue = &queue, .data = "hello", .len = 5 };
+    pthread_t thread;
+    assert(pthread_create(&thread, NULL, thread_push_main, &push) == 0);
+    assert(pthread_join(thread, NULL) == 0);
+    assert(push.ok);
+
+    /* Make room in the pty. The queue writes the bytes that it kept. */
+    char drain[8192];
+    while (read(fds[0], drain, sizeof(drain)) > 0)
+        ;
+
+    struct receiver receiver = { .loop = loop, .expected = "hello", .length = 5 };
+    assert(yasl_loop_add_fd(loop, fds[0], POLLIN, receive_bytes, &receiver) > 0);
+    assert(yasl_loop_add_timer(loop, MS_TO_NS(2000), timeout, NULL) != 0);
+    assert(yasl_loop_run(loop) == 0);
+    assert(receiver.received == 5);
+
+    session_write_queue_destroy(&queue);
+    close(fds[0]);
+    close(fds[1]);
+    yasl_loop_destroy(loop);
+}
+
 int main(void)
 {
     const char input[] = "hi 世界\r\nnext\n\033\003";
@@ -276,6 +331,7 @@ int main(void)
     check_reuse_and_atomic_rejection();
     check_failure_recovery();
     check_queue_cap();
-    puts("PASS: paste framing, filtering, ordering, partial-write, and queue-cap tests");
+    check_push_from_another_thread();
+    puts("PASS: paste framing, filtering, ordering, partial-write, queue-cap, and cross-thread tests");
     return 0;
 }

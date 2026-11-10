@@ -97,9 +97,11 @@ Paste and file-drop helpers accept the whole payload or return zero.
 
 ## Event loop
 
-The app has one loop, a `yasl_loop`. The app owns it. The PTY rings, the
-sessions, the signal watch, the inspector socket, the host timers and the
-yasl display all run on it. `app_run()` runs it with `yasl_loop_run()`.
+The app has one loop, a `yasl_loop`. The app owns it. The sessions, the
+signal watch, the inspector socket, the host timers and the yasl display all
+run on it. Each session has one worker thread that reads its pty and parses
+the output into the terminal; the loop thread only wakes and draws.
+`app_run()` runs the loop with `yasl_loop_run()`.
 
 At the first `window_open()`, the window host gives yasl the loop and an
 event callback. Each loop step then does these things, in this order:
@@ -128,9 +130,9 @@ cursor blink and the visual bell are deadlines that the tick of the terminal
 view returns.
 
 A child's exit reaches its tab after the child's last output. On SIGCHLD,
-`session_reap_exited()` calls `pty_ring_end()`. The ring reads what the
-transports still hold, and reports the end after the terminal has read those
-bytes. Only then does the tab close.
+`session_reap_exited()` calls `pty_ring_end()`. The worker thread reads what the
+transports still hold, parses those bytes into the terminal, and then reports
+the end. Only then does the tab close.
 
 When the display is lost and cannot come back, the app quits. A Wayland
 compositor that restarts is not such a loss: the windows wait for it.

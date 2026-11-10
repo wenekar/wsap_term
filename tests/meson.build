@@ -21,7 +21,6 @@ test_cases = [
     ['terminal-bell-close-test', files('terminal/bell_close_test.c'), app_lib, deps],
     ['stats-test', files('ui/yasl/stats_test.c'), ui_yasl_lib, deps],
     ['pty-fast-test', files('pty/pty_test.c'), pty_lib, [thread_dep, dl_dep]],
-    ['pty-pace-test', files('pty/pace_test.c'), pty_lib, []],
     ['pty-destroy-test', files('pty/pty_destroy_test.c'), pty_lib, [thread_dep, dl_dep]],
     ['settings-test', files('app/config_test.c'), app_lib, deps],
     ['thumbnail-test', files('app/thumbnail_test.c'), app_lib, deps],

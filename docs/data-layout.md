@@ -37,11 +37,14 @@ A palette change causes a full repaint.
 ## PTY ring
 
 `src/pty/ring.h` defines `struct pty_ring`.
-The reader thread writes `head`.
-The loop thread writes `tail`.
-Each counter starts on a separate 64-byte cache line.
-`tail_src` also has its own cache line.
-Keep these alignment boundaries to prevent false sharing.
+The worker thread reads the pty into `buf` and parses each read.
+The ring keeps no copy of the output.
+The worker sets `wake_pending` before it writes `event_wr`.
+The loop thread drains `event_fd` and then clears `wake_pending`.
+`end_requested` and `end_published` carry the end of the output between the two
+threads.
+The atomics need no cache line alignment: a signal is rare next to the parse of
+one read.
 
 ## Terminal storage
 
