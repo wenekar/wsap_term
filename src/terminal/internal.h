@@ -64,6 +64,8 @@ struct terminal_view {
     bool drop_hover;
     bool opening_link;
     bool blink_cells;
+    /* The snapshot view version of the scan that set blink_cells. */
+    uint64_t blink_version;
     uint64_t visual_bell_until_ms;
 };
 
@@ -114,6 +116,13 @@ struct terminal {
     struct ui_tab_label *tab_labels;
     int tab_labels_cap;
     struct wsap_vtcore_snapshot *snapshot;
+    /* terminal_prepare() updates the snapshot once for each frame. It hands
+     * that update to terminal_frame_source() in the same frame. These fields
+     * hold the frame serial and the terminal of the waiting update.
+     * snapshot_frame is zero when no update waits. */
+    uint64_t frame_serial;
+    uint64_t snapshot_frame;
+    const struct wsap_vtcore *snapshot_term;
     bool focused;
     struct rect2i ime_caret;
 
