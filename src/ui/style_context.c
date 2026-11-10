@@ -31,7 +31,9 @@ static void rebuild_sheet(struct ui_style_context *context)
         }
     }
 
-    css_init_default(context->owned_sheet);
+    css_sheet_clear(context->owned_sheet);
+    if (!context->host_sheet->has_defaults)
+        css_init_default(context->owned_sheet);
     css_sheet_append(context->owned_sheet, context->host_sheet);
     context->sheet = context->owned_sheet;
 }

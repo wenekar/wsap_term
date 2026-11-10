@@ -808,6 +808,7 @@ bool css_sheet_append(struct css_sheet *dst, const struct css_sheet *src)
     if (!dst || !src || dst == src)
         return false;
     bool ok = append_rules(dst, src);
+    dst->has_defaults = dst->has_defaults || src->has_defaults;
     return css_index_build(dst) && ok;
 }
 
@@ -815,7 +816,7 @@ void css_init_default(struct css_sheet *sheet)
 {
     if (!sheet) return;
     css_sheet_clear(sheet);
-    css_parse(sheet,
+    bool ok = css_parse(sheet,
         ".label-selection { background: #45475a; color: #ffffff; }"
         ".label-link { color: #89b4fa; border-width: 1px; }"
         ".label-link:hover, .label-link:focus { color: #b4befe; }"
@@ -894,6 +895,7 @@ void css_init_default(struct css_sheet *sheet)
         ".settings-nav.active { background: #45475a; color: #89b4fa; }"
         ".settings-link { color: #89b4fa; background: transparent; cursor: pointer; }"
     );
+    sheet->has_defaults = ok;
 }
 
 const struct css_sheet *css_default_sheet(void)

@@ -160,11 +160,56 @@ static void generic_style_sizing_test(void)
     css_sheet_clear(&sheet);
 }
 
+static void host_sheet_with_defaults_is_not_duplicated_test(void)
+{
+    struct css_sheet host = {0};
+    css_init_default(&host);
+    assert(css_parse(&host, ".panel { background: #112233; }"));
+
+    struct ui_style_context context = {0};
+    ui_style_context_init(&context);
+    ui_style_context_set_sheet(&context, &host);
+
+    const struct css_sheet *sheet = ui_style_context_sheet(&context);
+    assert(sheet->rule_count == css_default_sheet()->rule_count + 1);
+
+    struct css_style tab = ui_style_context_style(&context, "tab", 0);
+    assert(tab.has_bg_color && tab.bg_color == 0xFF1E1E2E);
+    struct css_style panel = ui_style_context_style(&context, "panel", 0);
+    assert(panel.has_bg_color && panel.bg_color == 0xFF112233);
+
+    ui_style_context_destroy(&context);
+    css_sheet_clear(&host);
+}
+
+static void plain_host_sheet_gets_defaults_test(void)
+{
+    struct css_sheet host = {0};
+    assert(css_parse(&host, ".panel { background: #112233; }"));
+
+    struct ui_style_context context = {0};
+    ui_style_context_init(&context);
+    ui_style_context_set_sheet(&context, &host);
+
+    const struct css_sheet *sheet = ui_style_context_sheet(&context);
+    assert(sheet->rule_count == css_default_sheet()->rule_count + host.rule_count);
+
+    struct css_style tab = ui_style_context_style(&context, "tab", 0);
+    assert(tab.has_bg_color && tab.bg_color == 0xFF1E1E2E);
+    struct css_style panel = ui_style_context_style(&context, "panel", 0);
+    assert(panel.has_bg_color && panel.bg_color == 0xFF112233);
+
+    ui_style_context_destroy(&context);
+    css_sheet_clear(&host);
+}
+
 int main(void)
 {
     style_resolution_and_inheritance_test();
     set_sheet_rebuilds_same_pointer_test();
     scale_feeds_widget_resolution_test();
     generic_style_sizing_test();
+    host_sheet_with_defaults_is_not_duplicated_test();
+    plain_host_sheet_gets_defaults_test();
     return 0;
 }
