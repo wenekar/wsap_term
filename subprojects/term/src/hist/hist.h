@@ -167,6 +167,7 @@ struct hist {
     uint8_t *page_simple;
     uint16_t *free_pages;
     uint32_t *exact_rows;
+    void **page_chunks;
     struct hist_runs runs;
     struct hist_dec_cache dec;
 
@@ -183,6 +184,7 @@ struct hist {
     uint32_t line_limit;
     uint32_t cont_first, cont_count, cont_mask;
     uint32_t npages, max_pages, nfree, cur_page;
+    uint32_t nchunks, max_chunks;
     uint32_t walk_off, walk_col, walk_rows;
     uint16_t wrap_cols;
     bool all_blank;

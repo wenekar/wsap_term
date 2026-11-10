@@ -244,69 +244,6 @@ static inline void page_drop_n(struct hist *h, uint32_t pg, uint32_t n)
 }
 
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
-WSAP_VTCORE_TARGET_AVX512
-static inline bool same_page_narrow_rows_avx512(const struct hline *p, uint32_t page)
-{
-    const __m512i pg = _mm512_set1_epi32((int)(page << 16));
-    const __m512i mask = _mm512_set1_epi32((int)0xffff0000u);
-    const __m512i tag = _mm512_set1_epi32(0x01010000);
-    for (int i = 0; i < 16; i += 4) {
-        __m512i v = _mm512_loadu_si512((const void *)(p + i));
-        if ((_mm512_cmpeq_epi32_mask(v, tag) & 0x8888) != 0x8888 ||
-            (_mm512_cmpeq_epi32_mask(_mm512_and_si512(v, mask), pg) & 0x1111) != 0x1111)
-            return false;
-    }
-    return true;
-}
-#endif
-
-#if defined(WSAP_VTCORE_KERNEL_AVX2)
-WSAP_VTCORE_TARGET_AVX2
-static inline bool same_page_narrow_rows_avx2(const struct hline *p, uint32_t page)
-{
-    const __m256i pg = _mm256_set1_epi32((int)(page << 16));
-    const __m256i mask = _mm256_set1_epi32((int)0xffff0000u);
-    const __m256i tag = _mm256_set1_epi32(0x01010000);
-    for (int i = 0; i < 16; i += 2) {
-        __m256i v = _mm256_loadu_si256((const __m256i *)(p + i));
-        if ((_mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpeq_epi32(v, tag))) & 0x88) != 0x88 ||
-            (_mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpeq_epi32(_mm256_and_si256(v, mask), pg))) & 0x11) != 0x11)
-            return false;
-    }
-    return true;
-}
-#endif
-
-static inline bool same_page_narrow_rows(const struct hline *p, uint32_t page)
-{
-#if defined(WSAP_VTCORE_KERNEL_AVX512)
-    if (wsap_vtcore_use_avx512())
-        return same_page_narrow_rows_avx512(p, page);
-#endif
-#if defined(WSAP_VTCORE_KERNEL_AVX2)
-    if (wsap_vtcore_use_avx2())
-        return same_page_narrow_rows_avx2(p, page);
-#endif
-#if defined(__aarch64__)
-    const uint32x4_t expected = {page << 16, 0, 0, 0x01010000};
-    const uint32x4_t mask = {0xffff0000u, 0, 0, 0xffffffffu};
-    for (int i = 0; i < 16; i++) {
-        uint32x4_t v = vreinterpretq_u32_u8(vld1q_u8((const uint8_t *)(p + i)));
-        if (vminvq_u32(vceqq_u32(vandq_u32(v, mask), expected)) != UINT32_MAX)
-            return false;
-    }
-    return true;
-#else
-    for (int i = 0; i < 16; i++) {
-        if (p[i].off == NO_TEXT || (p[i].off >> 16) != page ||
-            p[i].flags != HLINE_NARROW || p[i].attr_len || p[i].wrap_rows != 1)
-            return false;
-    }
-    return true;
-#endif
-}
-
-#if defined(WSAP_VTCORE_KERNEL_AVX512)
 /* Check count lines from p, a multiple of 4. Each line must be one closed part with
  * known rows, and each text line must be on page. Blank lines can be anywhere. */
 WSAP_VTCORE_TARGET_AVX512
@@ -336,21 +273,150 @@ static inline bool same_page_rows_avx512(const struct hline *p, int count, uint3
 }
 #endif
 
+#if defined(WSAP_VTCORE_KERNEL_AVX2)
+WSAP_VTCORE_TARGET_AVX2
+static inline bool same_page_rows_avx2(const struct hline *p, int count, uint32_t page,
+                                       uint32_t *text_count, uint32_t *row_count)
+{
+    const __m256i pg = _mm256_set1_epi32((int)(page << 16));
+    const __m256i pg_mask = _mm256_set1_epi32((int)0xffff0000u);
+    const __m256i open_mask = _mm256_set1_epi32(0x00300000);
+    const __m256i unknown_mask = _mm256_set1_epi32((int)0xff000000u);
+    const __m256i no_text = _mm256_set1_epi32(-1);
+    __m256i sums = _mm256_setzero_si256();
+    uint32_t blanks = 0;
+
+    for (int i = 0; i < count; i += 2) {
+        __m256i v = _mm256_loadu_si256((const __m256i *)(p + i));
+        __m256i empty = _mm256_cmpeq_epi32(v, no_text);
+        int empty_mask = _mm256_movemask_ps(_mm256_castsi256_ps(empty)) & 0x11;
+        blanks += (uint32_t)((empty_mask & 1) + ((empty_mask >> 4) & 1));
+
+        __m256i is_open = _mm256_cmpeq_epi32(_mm256_and_si256(v, open_mask), _mm256_setzero_si256());
+        int open_ok = _mm256_movemask_ps(_mm256_castsi256_ps(is_open)) & 0x88;
+        if (open_ok != 0x88)
+            return false;
+
+        __m256i is_unknown = _mm256_cmpeq_epi32(_mm256_and_si256(v, unknown_mask), unknown_mask);
+        int unknown_fail = _mm256_movemask_ps(_mm256_castsi256_ps(is_unknown)) & 0x88;
+        if (unknown_fail != 0)
+            return false;
+
+        __m256i pg_match = _mm256_cmpeq_epi32(_mm256_and_si256(v, pg_mask), pg);
+        __m256i pg_valid = _mm256_or_si256(pg_match, empty);
+        int pg_ok = _mm256_movemask_ps(_mm256_castsi256_ps(pg_valid)) & 0x11;
+        if (pg_ok != 0x11)
+            return false;
+
+        __m256i rows = _mm256_srli_epi32(v, 24);
+        rows = _mm256_and_si256(rows, _mm256_set_epi32(0xff, 0, 0, 0, 0xff, 0, 0, 0));
+        sums = _mm256_add_epi32(sums, rows);
+    }
+
+    *text_count = (uint32_t)count - blanks;
+    __m128i r = _mm_add_epi32(_mm256_castsi256_si128(sums), _mm256_extracti128_si256(sums, 1));
+    *row_count = (uint32_t)_mm_extract_epi32(r, 3);
+    return true;
+}
+#endif
+
+#if defined(__aarch64__)
+static inline bool same_page_rows_neon(const struct hline *p, int count, uint32_t page,
+                                       uint32_t *text_count, uint32_t *row_count)
+{
+    const uint32x4_t pg = vdupq_n_u32(page << 16);
+    const uint32x4_t pg_mask = vdupq_n_u32(0xffff0000u);
+    const uint32x4_t open_mask = vdupq_n_u32(0x00300000);
+    const uint32x4_t unknown_mask = vdupq_n_u32(0xff000000u);
+    const uint32x4_t no_text = vdupq_n_u32(0xffffffffu);
+    uint32x4_t sums = vdupq_n_u32(0);
+    uint32x4_t tag_fails = vdupq_n_u32(0);
+    uint32x4_t pg_fails = vdupq_n_u32(0);
+    uint32x4_t blank_counts = vdupq_n_u32(0);
+
+    for (int i = 0; i < count; i += 4) {
+        uint32x4x4_t lines = vld4q_u32((const uint32_t *)(p + i));
+        uint32x4_t offs = lines.val[0];
+        uint32x4_t tags = lines.val[3];
+
+        uint32x4_t empty = vceqq_u32(offs, no_text);
+        blank_counts = vsubq_u32(blank_counts, empty);
+
+        uint32x4_t is_open = vtstq_u32(tags, open_mask);
+        uint32x4_t is_unknown = vceqq_u32(vandq_u32(tags, unknown_mask), unknown_mask);
+        tag_fails = vorrq_u32(tag_fails, vorrq_u32(is_open, is_unknown));
+
+        uint32x4_t pg_match = vceqq_u32(vandq_u32(offs, pg_mask), pg);
+        uint32x4_t pg_valid = vorrq_u32(pg_match, empty);
+        pg_fails = vorrq_u32(pg_fails, vmvnq_u32(pg_valid));
+
+        uint32x4_t rows = vshrq_n_u32(tags, 24);
+        sums = vaddq_u32(sums, rows);
+    }
+
+    uint32_t blanks = (uint32_t)vaddvq_u32(blank_counts);
+    *text_count = (uint32_t)count - blanks;
+    *row_count = (uint32_t)vaddvq_u32(sums);
+    return vmaxvq_u32(vorrq_u32(tag_fails, pg_fails)) == 0;
+}
+#endif
+
+static inline bool same_page_rows_scalar(const struct hline *p, int count, uint32_t page,
+                                         uint32_t *text_count, uint32_t *row_count)
+{
+    const uint32_t target = page << 16;
+    uint32_t blanks = 0;
+    uint32_t rows = 0;
+    for (int i = 0; i < count; i++) {
+        uint32_t off = p[i].off;
+        uint32_t tag = *(const uint32_t *)((const char *)&p[i] + 12);
+        if ((tag & 0x00300000) != 0 || (tag >> 24) == ROWS_UNKNOWN)
+            return false;
+        if (off == NO_TEXT) {
+            blanks++;
+        } else if ((off & 0xffff0000u) != target) {
+            return false;
+        }
+        rows += (tag >> 24);
+    }
+    *text_count = (uint32_t)count - blanks;
+    *row_count = rows;
+    return true;
+}
+
+static inline bool same_page_rows(const struct hline *p, int count, uint32_t page,
+                                  uint32_t *text_count, uint32_t *row_count)
+{
+#if defined(WSAP_VTCORE_KERNEL_AVX512)
+    if (wsap_vtcore_use_avx512())
+        return same_page_rows_avx512(p, count, page, text_count, row_count);
+#endif
+#if defined(WSAP_VTCORE_KERNEL_AVX2)
+    if (wsap_vtcore_use_avx2())
+        return same_page_rows_avx2(p, count, page, text_count, row_count);
+#endif
+#if defined(__aarch64__)
+    return same_page_rows_neon(p, count, page, text_count, row_count);
+#else
+    return same_page_rows_scalar(p, count, page, text_count, row_count);
+#endif
+}
+
 static inline bool evict_single_line(struct hist *h, const struct hline *ring, uint32_t rmask,
                                      uint64_t *tail, uint64_t head, uint64_t *n, uint64_t counted,
                                      uint64_t *rows_take, uint32_t *page, uint32_t *run, bool *have_page)
 {
     const struct hline *f = &ring[*tail & rmask];
-    if (WSAP_VTCORE_EXPECT(f->flags & HLINE_OPEN, 0))
+    uint32_t tag = *(const uint32_t *)((const char *)f + 12);
+    if (WSAP_VTCORE_EXPECT((tag & 0x00200000) != 0 || (tag >> 24) == ROWS_UNKNOWN, 0))
         return false;
     if (WSAP_VTCORE_EXPECT(*tail + 1 < head && (ring[(*tail + 1) & rmask].flags & HLINE_CONT), 0))
         return false;
-    if (WSAP_VTCORE_EXPECT(f->wrap_rows == ROWS_UNKNOWN, 0))
-        return false;
     if (*n < counted)
-        *rows_take += f->wrap_rows;
-    if (f->off != NO_TEXT) {
-        uint32_t pg = f->off >> 16;
+        *rows_take += (tag >> 24);
+    uint32_t off = f->off;
+    if (off != NO_TEXT) {
+        uint32_t pg = off >> 16;
         if (*have_page && pg == *page) {
             (*run)++;
         } else {
@@ -439,6 +505,7 @@ static uint64_t evict_simple_run(struct hist *h, uint64_t k)
     }
 
     while (n + 16 <= k && tail + 16 <= head) {
+        __builtin_prefetch(&ring[(tail + 32) & rmask], 0, 0);
         if ((tail & 15) == 0) {
             const struct hist_block *b = &h->blocks[(tail & rmask) / 16];
             if (b->seq == tail + 1 && b->epoch == h->index_epoch && b->cols == h->wrap_cols &&
@@ -459,38 +526,37 @@ static uint64_t evict_simple_run(struct hist *h, uint64_t k)
                 continue;
             }
         }
-#if defined(WSAP_VTCORE_KERNEL_AVX512)
-        if (wsap_vtcore_use_avx512() && (tail & 63) == 0 && n + 64 <= k && tail + 64 <= head &&
+        if ((tail & 63) == 0 && n + 64 <= k && tail + 64 <= head &&
             ((tail & rmask) + 64 <= rmask + 1)) {
             const struct hline *f = &ring[tail & rmask];
-
-            uint32_t pg = f->off >> 16;
+            uint32_t pg = f->off != NO_TEXT ? (f->off >> 16) : page;
             uint32_t text_count, row_count;
-            if (f->off != NO_TEXT && (n >= counted || n + 64 <= counted) &&
-                same_page_rows_avx512(f, 64, pg, &text_count, &row_count) &&
+            if ((f->off != NO_TEXT || have_page) &&
+                (n >= counted || n + 64 <= counted) &&
+                same_page_rows(f, 64, pg, &text_count, &row_count) &&
                 (tail + 64 == head || !(ring[(tail + 64) & rmask].flags & HLINE_CONT))) {
-                if (have_page && page != pg) {
-                    page_drop_n(h, page, run);
-                    run = 0;
+                if (text_count) {
+                    if (have_page && page != pg) {
+                        page_drop_n(h, page, run);
+                        run = 0;
+                    }
+                    page = pg;
+                    have_page = true;
+                    run += text_count;
                 }
-                page = pg;
-                have_page = true;
-                run += text_count;
                 if (n < counted) rows_take += row_count;
                 tail += 64;
                 n += 64;
                 continue;
             }
         }
-#endif
         if ((tail & 15) == 0 && ((tail & rmask) + 16 <= rmask + 1)) {
             const struct hline *f = &ring[tail & rmask];
             uint32_t pg = f->off != NO_TEXT ? (f->off >> 16) : page;
-#if defined(WSAP_VTCORE_KERNEL_AVX512)
             uint32_t text_count, row_count;
-            if (wsap_vtcore_use_avx512() && (f->off != NO_TEXT || have_page) &&
+            if ((f->off != NO_TEXT || have_page) &&
                 (n >= counted || n + 16 <= counted) &&
-                same_page_rows_avx512(f, 16, pg, &text_count, &row_count) &&
+                same_page_rows(f, 16, pg, &text_count, &row_count) &&
                 (tail + 16 == head || !(ring[(tail + 16) & rmask].flags & HLINE_CONT))) {
                 if (text_count) {
                     if (have_page && page != pg) {
@@ -506,81 +572,41 @@ static uint64_t evict_simple_run(struct hist *h, uint64_t k)
                 n += 16;
                 continue;
             }
-#endif
-            if (f->off != NO_TEXT && same_page_narrow_rows(f, pg) &&
-                (tail + 16 == head || !(ring[(tail + 16) & rmask].flags & HLINE_CONT))) {
-                if (have_page && page != pg) {
-                    page_drop_n(h, page, run);
-                    run = 0;
+
+            if ((tail + 16 == head || !(ring[(tail + 16) & rmask].flags & HLINE_CONT)) &&
+                (n >= counted || n + 16 <= counted)) {
+                uint32_t rows_batch = 0;
+                bool ok = true;
+                for (int j = 0; j < 16; j++) {
+                    uint32_t tag = *(const uint32_t *)((const char *)&f[j] + 12);
+                    if ((tag & 0x00300000) != 0 || (tag >> 24) == ROWS_UNKNOWN) {
+                        ok = false;
+                        break;
+                    }
+                    rows_batch += (tag >> 24);
                 }
-                page = pg;
-                have_page = true;
-                run += 16;
-                uint64_t remaining = counted > n ? counted - n : 0;
-                rows_take += remaining < 16 ? remaining : 16;
-                tail += 16;
-                n += 16;
-                continue;
-            }
-
-            uint32_t t0 = *(const uint32_t *)((const char *)&f[0] + 12);
-            uint32_t t1 = *(const uint32_t *)((const char *)&f[1] + 12);
-            uint32_t t2 = *(const uint32_t *)((const char *)&f[2] + 12);
-            uint32_t t3 = *(const uint32_t *)((const char *)&f[3] + 12);
-            uint32_t t4 = *(const uint32_t *)((const char *)&f[4] + 12);
-            uint32_t t5 = *(const uint32_t *)((const char *)&f[5] + 12);
-            uint32_t t6 = *(const uint32_t *)((const char *)&f[6] + 12);
-            uint32_t t7 = *(const uint32_t *)((const char *)&f[7] + 12);
-            uint32_t t8 = *(const uint32_t *)((const char *)&f[8] + 12);
-            uint32_t t9 = *(const uint32_t *)((const char *)&f[9] + 12);
-            uint32_t t10 = *(const uint32_t *)((const char *)&f[10] + 12);
-            uint32_t t11 = *(const uint32_t *)((const char *)&f[11] + 12);
-            uint32_t t12 = *(const uint32_t *)((const char *)&f[12] + 12);
-            uint32_t t13 = *(const uint32_t *)((const char *)&f[13] + 12);
-            uint32_t t14 = *(const uint32_t *)((const char *)&f[14] + 12);
-            uint32_t t15 = *(const uint32_t *)((const char *)&f[15] + 12);
-
-            uint32_t or_all = t0 | t1 | t2 | t3 | t4 | t5 | t6 | t7 |
-                              t8 | t9 | t10 | t11 | t12 | t13 | t14 | t15;
-            if (WSAP_VTCORE_EXPECT((or_all & 0x0030ffff) == 0 &&
-                (t0 >> 24) != 255 && (t1 >> 24) != 255 && (t2 >> 24) != 255 && (t3 >> 24) != 255 &&
-                (t4 >> 24) != 255 && (t5 >> 24) != 255 && (t6 >> 24) != 255 && (t7 >> 24) != 255 &&
-                (t8 >> 24) != 255 && (t9 >> 24) != 255 && (t10 >> 24) != 255 && (t11 >> 24) != 255 &&
-                (t12 >> 24) != 255 && (t13 >> 24) != 255 && (t14 >> 24) != 255 && (t15 >> 24) != 255, 1)) {
-
-                uint32_t target = page << 16;
-                uint32_t off_diff = (f[0].off ^ target) | (f[1].off ^ target) | (f[2].off ^ target) | (f[3].off ^ target) |
-                                    (f[4].off ^ target) | (f[5].off ^ target) | (f[6].off ^ target) | (f[7].off ^ target) |
-                                    (f[8].off ^ target) | (f[9].off ^ target) | (f[10].off ^ target) | (f[11].off ^ target) |
-                                    (f[12].off ^ target) | (f[13].off ^ target) | (f[14].off ^ target) | (f[15].off ^ target);
-                if (have_page && (off_diff & 0xffff0000u) == 0) {
-                    run += 16;
-                } else {
+                if (ok) {
                     for (int j = 0; j < 16; j++) {
                         uint32_t o = f[j].off;
                         if (o != NO_TEXT) {
-                            uint32_t pg = o >> 16;
-                            if (have_page && pg == page) {
+                            uint32_t lpg = o >> 16;
+                            if (have_page && lpg == page) {
                                 run++;
                             } else {
                                 if (have_page)
                                     page_drop_n(h, page, run);
-                                page = pg;
+                                page = lpg;
                                 run = 1;
                                 have_page = true;
                             }
                         }
                     }
+                    if (n < counted)
+                        rows_take += rows_batch;
+                    tail += 16;
+                    n += 16;
+                    continue;
                 }
-                if (n + 16 <= counted) {
-                    rows_take += (t0 >> 24) + (t1 >> 24) + (t2 >> 24) + (t3 >> 24) +
-                                 (t4 >> 24) + (t5 >> 24) + (t6 >> 24) + (t7 >> 24) +
-                                 (t8 >> 24) + (t9 >> 24) + (t10 >> 24) + (t11 >> 24) +
-                                 (t12 >> 24) + (t13 >> 24) + (t14 >> 24) + (t15 >> 24);
-                }
-                tail += 16;
-                n += 16;
-                continue;
             }
         }
 
@@ -673,6 +699,10 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void evict_line(struct hist *h)
 static WSAP_VTCORE_NOINLINE int page_next(struct hist *h)
 {
     for (;;) {
+        if (h->cur_page < h->npages && h->page_parts[h->cur_page] == 0) {
+            h->page_used[h->cur_page] = 0;
+            return (int)h->cur_page;
+        }
         if (h->nfree) {
             uint32_t pg = h->free_pages[--h->nfree];
             h->page_used[pg] = 0;
@@ -680,18 +710,56 @@ static WSAP_VTCORE_NOINLINE int page_next(struct hist *h)
             return (int)pg;
         }
         if (h->npages < h->max_pages) {
-            uint8_t *page = wsap_vtcore_aligned_alloc(64, HIST_PAGE_SIZE);
-            if (!page)
+            uint32_t batch = 1;
+            if (h->npages > 0) {
+                batch = h->npages;
+                if (batch > 16)
+                    batch = 16;
+            }
+            if (batch > h->max_pages - h->npages)
+                batch = h->max_pages - h->npages;
+            uint8_t *chunk = wsap_vtcore_aligned_alloc(64, (size_t)batch * HIST_PAGE_SIZE);
+            while (!chunk && batch > 1) {
+                batch /= 2;
+                chunk = wsap_vtcore_aligned_alloc(64, (size_t)batch * HIST_PAGE_SIZE);
+            }
+            if (!chunk)
                 return -1;
+            if (h->nchunks >= h->max_chunks) {
+                uint32_t cap = h->max_chunks ? h->max_chunks * 2 : 16;
+                if (cap < h->max_pages)
+                    cap = h->max_pages;
+                void **chunks = realloc(h->page_chunks, cap * sizeof(*chunks));
+                if (!chunks) {
+                    wsap_vtcore_aligned_free(chunk);
+                    return -1;
+                }
+                h->page_chunks = chunks;
+                h->max_chunks = cap;
+            }
+            h->page_chunks[h->nchunks++] = chunk;
             uint32_t pg = h->npages++;
-            h->pages[pg] = page;
+            h->pages[pg] = chunk;
             h->page_used[pg] = 0;
             h->page_parts[pg] = 0;
             h->cur_page = pg;
+            for (uint32_t j = 1; j < batch; j++) {
+                uint32_t extra = h->npages++;
+                h->pages[extra] = chunk + j * HIST_PAGE_SIZE;
+                h->page_used[extra] = 0;
+                h->page_parts[extra] = 0;
+            }
+            for (uint32_t j = batch - 1; j >= 1; j--)
+                h->free_pages[h->nfree++] = (uint16_t)(pg + j);
             return (int)pg;
         }
-        if (!evict_part(h))
-            return -1;
+        uint64_t done = evict_simple_run(h, 16);
+        if (h->nfree || (h->cur_page < h->npages && h->page_parts[h->cur_page] == 0))
+            continue;
+        if (!done) {
+            if (!evict_part(h))
+                return -1;
+        }
     }
 }
 
@@ -1514,6 +1582,8 @@ static struct hline *open_room(struct hist *h, struct hline *p, size_t text_need
         h->base_cell += p->cells;
         h->last_cells = h->last_wide = 0;
         h->index_epoch++;
+        if (h->cur_page != pg0 && h->cur_page < h->npages && !h->page_parts[h->cur_page])
+            h->free_pages[h->nfree++] = (uint16_t)h->cur_page;
         h->cur_page = pg0;
         *p = (struct hline){
             .off = pg0 << 16,
@@ -3255,7 +3325,9 @@ bool wsap_vtcore_hist_init(struct hist *h, int line_limit, size_t byte_cap)
     h->page_used = calloc(h->max_pages, sizeof(*h->page_used));
     h->page_parts = calloc(h->max_pages, sizeof(*h->page_parts));
     h->free_pages = malloc(h->max_pages * sizeof(*h->free_pages));
-    if (!h->pages || !h->page_used || !h->page_parts || !h->free_pages || !ring_fit(h, 1)) {
+    h->max_chunks = h->max_pages;
+    h->page_chunks = malloc(h->max_chunks * sizeof(*h->page_chunks));
+    if (!h->pages || !h->page_used || !h->page_parts || !h->free_pages || !h->page_chunks || !ring_fit(h, 1)) {
         wsap_vtcore_hist_free(h);
         return false;
     }
@@ -3264,9 +3336,14 @@ bool wsap_vtcore_hist_init(struct hist *h, int line_limit, size_t byte_cap)
 
 void wsap_vtcore_hist_free(struct hist *h)
 {
-    if (h->pages)
+    if (h->page_chunks) {
+        for (uint32_t i = 0; i < h->nchunks; i++)
+            wsap_vtcore_aligned_free(h->page_chunks[i]);
+        free(h->page_chunks);
+    } else if (h->pages) {
         for (uint32_t i = 0; i < h->npages; i++)
             wsap_vtcore_aligned_free(h->pages[i]);
+    }
     free(h->pages);
     free(h->page_used);
     free(h->page_parts);
