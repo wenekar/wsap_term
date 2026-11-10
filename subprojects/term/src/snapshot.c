@@ -4,6 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#endif
+
 struct wsap_vtcore_snapshot {
     struct wsap_vtcore_view view;
     uint32_t palette[WSAP_VTCORE_PALETTE_SIZE];
@@ -25,6 +29,17 @@ struct wsap_vtcore_snapshot {
     uint8_t *row_size;
     size_t cell_cap;
     int row_cap;
+    bool has_selection;
+    bool has_sizes;
+
+    // Scratch buffers for plan setup to avoid stack pressure and heap allocation.
+    void *plan_buf;
+    uint64_t *plan_keys;
+    uint32_t *plan_words;
+    uint32_t *plan_ul;
+    int *plan_c0;
+    int *plan_c1;
+    uint8_t *plan_sizes;
 
     uint32_t *arena;
     uint32_t arena_len, arena_cap, arena_dead;
@@ -51,6 +66,7 @@ void wsap_vtcore_snapshot_free(struct wsap_vtcore_snapshot *s)
     free(s->row_ul);
     free(s->selection);
     free(s->row_size);
+    free(s->plan_buf);
     free(s->arena);
     free(s->spare);
     free(s);
@@ -88,7 +104,19 @@ static bool reserve(struct wsap_vtcore_snapshot *s, int cols, int rows)
         uint8_t *size = realloc(s->row_size, (size_t)rows * sizeof(*size));
         if (size)
             s->row_size = size;
-        if (!k || !rc || !sel || !ul || !size)
+        size_t plan_bytes = (size_t)rows * (sizeof(uint64_t) + 2 * sizeof(uint32_t) +
+                                            2 * sizeof(int) + sizeof(uint8_t));
+        void *pb = realloc(s->plan_buf, plan_bytes);
+        if (pb) {
+            s->plan_buf = pb;
+            s->plan_keys = pb;
+            s->plan_words = (uint32_t *)(s->plan_keys + rows);
+            s->plan_ul = s->plan_words + rows;
+            s->plan_c0 = (int *)(s->plan_ul + rows);
+            s->plan_c1 = s->plan_c0 + rows;
+            s->plan_sizes = (uint8_t *)(s->plan_c1 + rows);
+        }
+        if (!k || !rc || !sel || !ul || !size || !pb)
             return false;
         s->row_cap = rows;
     }
@@ -101,11 +129,30 @@ static inline int ring_row(int top, int y, int rows)
     return p >= rows ? p - rows : p;
 }
 
+enum { CLUSTER_CACHE_BITS = 6, CLUSTER_CACHE_SIZE = 1 << CLUSTER_CACHE_BITS };
+
+struct cluster_cache_entry {
+    uint32_t handle;
+    uint32_t text;
+};
+
 struct arena_out {
     uint32_t **buf;
     uint32_t *cap;
     uint32_t len;
+    struct cluster_cache_entry cache[CLUSTER_CACHE_SIZE];
+    uint32_t last_handle;
+    uint32_t last_text;
 };
+
+static inline struct arena_out make_arena_out(uint32_t **buf, uint32_t *cap, uint32_t len)
+{
+    struct arena_out a = { 0 };
+    a.buf = buf;
+    a.cap = cap;
+    a.len = len;
+    return a;
+}
 
 static bool arena_reserve(struct arena_out *a, uint64_t need)
 {
@@ -125,6 +172,18 @@ static bool arena_reserve(struct arena_out *a, uint64_t need)
 static bool arena_add(struct arena_out *a, const struct gstore *g, uint32_t handle,
                       uint32_t *text)
 {
+    if (WSAP_VTCORE_LIKELY(handle == a->last_handle && a->last_handle != 0)) {
+        *text = a->last_text;
+        return true;
+    }
+    uint32_t slot = (handle ^ (handle >> 6)) & (CLUSTER_CACHE_SIZE - 1);
+    if (a->cache[slot].handle == handle && handle != 0) {
+        a->last_handle = handle;
+        a->last_text = a->cache[slot].text;
+        *text = a->last_text;
+        return true;
+    }
+
     uint32_t cps[WSAP_VTCORE_GRAPHEME_MAX_LEN];
     int n = wsap_vtcore_gstore_expand(g, handle, cps, WSAP_VTCORE_GRAPHEME_MAX_LEN);
     if (n <= 0) {
@@ -138,7 +197,12 @@ static bool arena_add(struct arena_out *a, const struct gstore *g, uint32_t hand
     (*a->buf)[off] = (uint32_t)n;
     memcpy(&(*a->buf)[off + 1], cps, (size_t)n * sizeof(*cps));
     a->len = (uint32_t)need;
-    *text = WSAP_VTCORE_TEXT_CLUSTER | off;
+    uint32_t res = WSAP_VTCORE_TEXT_CLUSTER | off;
+    a->cache[slot].handle = handle;
+    a->cache[slot].text = res;
+    a->last_handle = handle;
+    a->last_text = res;
+    *text = res;
     return true;
 }
 
@@ -266,10 +330,91 @@ static inline WSAP_VTCORE_ALWAYS_INLINE bool convert_row(struct arena_out *a, co
     uint64_t ext = 0;
     int x = 0;
 
-#if (defined(__x86_64__) || defined(_M_X64)) && CONVERT_WORDS
+#if defined(__aarch64__) && CONVERT_WORDS
+    const uint32x4_t width_one = {0, 0, 0, 1u << 16};
+    const uint32_t bad_mask = (uint32_t)(CELL_WIDE | CELL_TRAIL | CELL_WRAP_PAD) | 0xFFFF0000u;
+
+    for (; x + 4 <= cols; x += 4) {
+        uint32x4_t v0 = vld1q_u32((const uint32_t *)(const void *)&src[x]);
+        uint32x4_t v1 = vld1q_u32((const uint32_t *)(const void *)&src[x + 1]);
+        uint32x4_t v2 = vld1q_u32((const uint32_t *)(const void *)&src[x + 2]);
+        uint32x4_t v3 = vld1q_u32((const uint32_t *)(const void *)&src[x + 3]);
+
+        uint32_t c0 = vgetq_lane_u32(v0, 0);
+        uint32_t c1 = vgetq_lane_u32(v1, 0);
+        uint32_t c2 = vgetq_lane_u32(v2, 0);
+        uint32_t c3 = vgetq_lane_u32(v3, 0);
+
+        uint32x4_t vor = vorrq_u32(vorrq_u32(v0, v1), vorrq_u32(v2, v3));
+        uint32_t dw3 = vgetq_lane_u32(vor, 3);
+
+        if (WSAP_VTCORE_LIKELY((c0 - 0x20u < plain_span) &
+                               (c1 - 0x20u < plain_span) &
+                               (c2 - 0x20u < plain_span) &
+                               (c3 - 0x20u < plain_span) &
+                               ((dw3 & bad_mask) == 0))) {
+            vst1q_u32((uint32_t *)(void *)&dst[x],     vorrq_u32(v0, width_one));
+            vst1q_u32((uint32_t *)(void *)&dst[x + 1], vorrq_u32(v1, width_one));
+            vst1q_u32((uint32_t *)(void *)&dst[x + 2], vorrq_u32(v2, width_one));
+            vst1q_u32((uint32_t *)(void *)&dst[x + 3], vorrq_u32(v3, width_one));
+        } else {
+            if (!convert_cell(a, t, &dst[x],     &src[x],     plain_span, &ext) ||
+                !convert_cell(a, t, &dst[x + 1], &src[x + 1], plain_span, &ext) ||
+                !convert_cell(a, t, &dst[x + 2], &src[x + 2], plain_span, &ext) ||
+                !convert_cell(a, t, &dst[x + 3], &src[x + 3], plain_span, &ext))
+                return false;
+        }
+    }
+    for (; x + 2 <= cols; x += 2) {
+        uint32x4_t v0 = vld1q_u32((const uint32_t *)(const void *)&src[x]);
+        uint32x4_t v1 = vld1q_u32((const uint32_t *)(const void *)&src[x + 1]);
+        uint32_t c0 = vgetq_lane_u32(v0, 0);
+        uint32_t c1 = vgetq_lane_u32(v1, 0);
+        uint32x4_t vor = vorrq_u32(v0, v1);
+        uint32_t dw3 = vgetq_lane_u32(vor, 3);
+
+        if (WSAP_VTCORE_LIKELY((c0 - 0x20u < plain_span) & (c1 - 0x20u < plain_span) & ((dw3 & bad_mask) == 0))) {
+            vst1q_u32((uint32_t *)(void *)&dst[x],     vorrq_u32(v0, width_one));
+            vst1q_u32((uint32_t *)(void *)&dst[x + 1], vorrq_u32(v1, width_one));
+        } else {
+            if (!convert_cell(a, t, &dst[x],     &src[x],     plain_span, &ext) ||
+                !convert_cell(a, t, &dst[x + 1], &src[x + 1], plain_span, &ext))
+                return false;
+        }
+    }
+#elif (defined(__x86_64__) || defined(_M_X64)) && CONVERT_WORDS
     const __m128i width_one = _mm_setr_epi32(0, 0, 0, 1 << 16);
     const uint32_t bad_mask = (uint32_t)(CELL_WIDE | CELL_TRAIL | CELL_WRAP_PAD) | 0xFFFF0000u;
 
+    for (; x + 4 <= cols; x += 4) {
+        __m128i v0 = _mm_loadu_si128((const __m128i *)(const void *)&src[x]);
+        __m128i v1 = _mm_loadu_si128((const __m128i *)(const void *)&src[x + 1]);
+        __m128i v2 = _mm_loadu_si128((const __m128i *)(const void *)&src[x + 2]);
+        __m128i v3 = _mm_loadu_si128((const __m128i *)(const void *)&src[x + 3]);
+        uint32_t c0 = (uint32_t)_mm_cvtsi128_si32(v0);
+        uint32_t c1 = (uint32_t)_mm_cvtsi128_si32(v1);
+        uint32_t c2 = (uint32_t)_mm_cvtsi128_si32(v2);
+        uint32_t c3 = (uint32_t)_mm_cvtsi128_si32(v3);
+        __m128i vor = _mm_or_si128(_mm_or_si128(v0, v1), _mm_or_si128(v2, v3));
+        uint32_t dw3 = (uint32_t)_mm_cvtsi128_si32(_mm_srli_si128(vor, 12));
+
+        if (WSAP_VTCORE_LIKELY((c0 - 0x20u < plain_span) &
+                               (c1 - 0x20u < plain_span) &
+                               (c2 - 0x20u < plain_span) &
+                               (c3 - 0x20u < plain_span) &
+                               ((dw3 & bad_mask) == 0))) {
+            _mm_storeu_si128((__m128i *)(void *)&dst[x],     _mm_or_si128(v0, width_one));
+            _mm_storeu_si128((__m128i *)(void *)&dst[x + 1], _mm_or_si128(v1, width_one));
+            _mm_storeu_si128((__m128i *)(void *)&dst[x + 2], _mm_or_si128(v2, width_one));
+            _mm_storeu_si128((__m128i *)(void *)&dst[x + 3], _mm_or_si128(v3, width_one));
+        } else {
+            if (!convert_cell(a, t, &dst[x],     &src[x],     plain_span, &ext) ||
+                !convert_cell(a, t, &dst[x + 1], &src[x + 1], plain_span, &ext) ||
+                !convert_cell(a, t, &dst[x + 2], &src[x + 2], plain_span, &ext) ||
+                !convert_cell(a, t, &dst[x + 3], &src[x + 3], plain_span, &ext))
+                return false;
+        }
+    }
     for (; x + 2 <= cols; x += 2) {
         __m128i v0 = _mm_loadu_si128((const __m128i *)(const void *)&src[x]);
         __m128i v1 = _mm_loadu_si128((const __m128i *)(const void *)&src[x + 1]);
@@ -279,10 +424,10 @@ static inline WSAP_VTCORE_ALWAYS_INLINE bool convert_row(struct arena_out *a, co
         uint32_t dw3 = (uint32_t)_mm_cvtsi128_si32(_mm_srli_si128(vor, 12));
 
         if (WSAP_VTCORE_LIKELY((c0 - 0x20u < plain_span) & (c1 - 0x20u < plain_span) & ((dw3 & bad_mask) == 0))) {
-            _mm_storeu_si128((__m128i *)(void *)&dst[x], _mm_or_si128(v0, width_one));
+            _mm_storeu_si128((__m128i *)(void *)&dst[x],     _mm_or_si128(v0, width_one));
             _mm_storeu_si128((__m128i *)(void *)&dst[x + 1], _mm_or_si128(v1, width_one));
         } else {
-            if (!convert_cell(a, t, &dst[x], &src[x], plain_span, &ext) ||
+            if (!convert_cell(a, t, &dst[x],     &src[x],     plain_span, &ext) ||
                 !convert_cell(a, t, &dst[x + 1], &src[x + 1], plain_span, &ext))
                 return false;
         }
@@ -305,7 +450,7 @@ _Static_assert(RF_LINE_DOUBLE_WIDTH >> RF_LINE_SHIFT == WSAP_VTCORE_LINE_DOUBLE_
                "the row flags must map to the public line sizes");
 
 #define ROW_KEPT UINT32_MAX
-#define DIRECT_MAX_WORDS (1u << 16)
+#define DIRECT_MAX_WORDS (1u << 22)
 
 struct plan {
     bool all;
@@ -368,6 +513,7 @@ static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, c
         s->top = 0;
         changed = true;
     } else {
+        struct arena_out a = make_arena_out(&s->arena, &s->arena_cap, s->arena_len);
         for (int y = 0; y < rows; y++) {
             if (p->words[y] == ROW_KEPT)
                 continue;
@@ -378,11 +524,10 @@ static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, c
             if (p->direct) {
                 // The plan reserved the cluster and underline words for each
                 // cell of each new row, so convert_row cannot grow the arena or fail.
-                struct arena_out a = { &s->arena, &s->arena_cap, s->arena_len };
+                uint32_t before = a.len;
                 (void)convert_row(&a, t, dst, wsap_vtcore_screen_view_row(t, y), cols,
                                   &s->row_ul[phys]);
-                s->row_clusters[phys] = a.len - s->arena_len;
-                s->arena_len = a.len;
+                s->row_clusters[phys] = a.len - before;
             } else {
                 memcpy(dst, s->stage + (size_t)y * cols, row_bytes);
                 s->row_clusters[phys] = p->words[y];
@@ -391,18 +536,39 @@ static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, c
             s->keys[phys] = p->keys[y];
             changed = true;
         }
+        if (p->direct)
+            s->arena_len = a.len;
     }
 
+    if (t->selection || s->has_selection || p->all) {
+        bool any_sel = false;
+        for (int y = 0; y < rows; y++) {
+            struct wsap_vtcore_span span = p->c1[y] >= p->c0[y] ? (struct wsap_vtcore_span){ p->c0[y], p->c1[y] + 1 }
+                                                         : (struct wsap_vtcore_span){ 0 };
+            if (p->all || span.begin != s->selection[y].begin || span.end != s->selection[y].end)
+                changed = true;
+            s->selection[y] = span;
+            if (span.end > span.begin)
+                any_sel = true;
+        }
+        s->has_selection = any_sel;
+    }
+
+    bool has_sizes = false;
     for (int y = 0; y < rows; y++) {
-        struct wsap_vtcore_span span = p->c1[y] >= p->c0[y] ? (struct wsap_vtcore_span){ p->c0[y], p->c1[y] + 1 }
-                                                     : (struct wsap_vtcore_span){ 0 };
-        if (p->all || span.begin != s->selection[y].begin || span.end != s->selection[y].end)
-            changed = true;
-        s->selection[y] = span;
-        uint8_t size = (uint8_t)(p->sizes[y] >> RF_LINE_SHIFT);
-        if (p->all || size != s->row_size[y])
-            changed = true;
-        s->row_size[y] = size;
+        if (p->sizes[y]) {
+            has_sizes = true;
+            break;
+        }
+    }
+    if (has_sizes || s->has_sizes || p->all) {
+        for (int y = 0; y < rows; y++) {
+            uint8_t size = (uint8_t)(p->sizes[y] >> RF_LINE_SHIFT);
+            if (p->all || size != s->row_size[y])
+                changed = true;
+            s->row_size[y] = size;
+        }
+        s->has_sizes = has_sizes;
     }
 
     struct wsap_vtcore_cursor cursor = wsap_vtcore_cursor(t);
@@ -445,27 +611,10 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
 
     if (!reserve(s, cols, rows))
         return false;
-    uint64_t stack_keys[256];
-    uint32_t stack_words[2][256];
-    int stack[2][256];
-    uint8_t stack_sizes[256];
-    uint64_t *new_keys = stack_keys;
-    uint32_t *words = stack_words[0], *ul = stack_words[1];
-    int *c0 = stack[0], *c1 = stack[1];
-    uint8_t *sizes = stack_sizes;
-    void *heap = NULL;
-    if (rows > 256) {
-        heap = malloc((size_t)rows * (sizeof(*new_keys) + 2 * sizeof(*words) + 2 * sizeof(*c0) +
-                                      sizeof(*sizes)));
-        if (!heap)
-            return false;
-        new_keys = heap;
-        words = (uint32_t *)(new_keys + rows);
-        ul = words + rows;
-        c0 = (int *)(ul + rows);
-        c1 = c0 + rows;
-        sizes = (uint8_t *)(c1 + rows);
-    }
+    uint64_t *new_keys = s->plan_keys;
+    uint32_t *words = s->plan_words, *ul = s->plan_ul;
+    int *c0 = s->plan_c0, *c1 = s->plan_c1;
+    uint8_t *sizes = s->plan_sizes;
     struct plan p = { .keys = new_keys, .words = words, .ul = ul, .c0 = c0, .c1 = c1, .sizes = sizes };
 
     if (s->arena_dead > 4096 && s->arena_dead * 2 > s->arena_len)
@@ -496,23 +645,27 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
     // Find a scroll. Compare each new key with the old key k rows lower.
     int top = s->top;
     if (!all && rows > 1) {
-        int cand_k = 0;
         uint64_t key0 = new_keys[0];
-        if (key0) {
-            for (int k = 1; k < rows; k++) {
-                if (s->keys[ring_row(top, k, rows)] == key0) {
-                    cand_k = k;
-                    break;
+        uint64_t old_key0 = s->keys[ring_row(top, 0, rows)];
+        int cand_k = 0;
+        if (key0 != old_key0) {
+            uint64_t key1 = (rows > 2) ? new_keys[1] : 0;
+            uint64_t old_key1 = (rows > 2) ? s->keys[ring_row(top, 1, rows)] : 0;
+            if (key1 == 0 || key1 != old_key1) {
+                if (key0) {
+                    for (int k = 1; k < rows; k++) {
+                        if (s->keys[ring_row(top, k, rows)] == key0) {
+                            cand_k = k;
+                            break;
+                        }
+                    }
                 }
-            }
-        }
-        if (!cand_k && rows > 2) {
-            uint64_t key1 = new_keys[1];
-            if (key1) {
-                for (int k = 1; 1 + k < rows; k++) {
-                    if (s->keys[ring_row(top, 1 + k, rows)] == key1) {
-                        cand_k = k;
-                        break;
+                if (!cand_k && rows > 2 && key1) {
+                    for (int k = 1; 1 + k < rows; k++) {
+                        if (s->keys[ring_row(top, 1 + k, rows)] == key1) {
+                            cand_k = k;
+                            break;
+                        }
                     }
                 }
             }
@@ -536,29 +689,55 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
         }
     }
 
-    for (int y = 0; y < rows; y++) {
-        if (!all && y + scrolled < rows && s->keys[ring_row(top, y + scrolled, rows)] == new_keys[y]) {
-            words[y] = ROW_KEPT;
+    if (!all) {
+        int check_top = ring_row(top, scrolled, rows);
+        int kept_count = rows - scrolled;
+        bool fast_match = false;
+        if (check_top + kept_count <= rows) {
+            if (memcmp(new_keys, &s->keys[check_top], (size_t)kept_count * sizeof(uint64_t)) == 0)
+                fast_match = true;
         } else {
-            words[y] = 0;
-            p.staged++;
+            int len1 = rows - check_top;
+            int len2 = kept_count - len1;
+            if (memcmp(new_keys, &s->keys[check_top], (size_t)len1 * sizeof(uint64_t)) == 0 &&
+                memcmp(new_keys + len1, &s->keys[0], (size_t)len2 * sizeof(uint64_t)) == 0)
+                fast_match = true;
         }
+        if (fast_match) {
+            memset(words, 0xFF, (size_t)kept_count * sizeof(uint32_t));
+            if (scrolled > 0) {
+                memset(words + kept_count, 0, (size_t)scrolled * sizeof(uint32_t));
+                p.staged = scrolled;
+            }
+        } else {
+            for (int y = 0; y < rows; y++) {
+                if (y + scrolled < rows && s->keys[ring_row(top, y + scrolled, rows)] == new_keys[y]) {
+                    words[y] = ROW_KEPT;
+                } else {
+                    words[y] = 0;
+                    p.staged++;
+                }
+            }
+        }
+    } else {
+        memset(words, 0, (size_t)rows * sizeof(uint32_t));
+        p.staged = rows;
     }
 
-    struct arena_out a = all ? (struct arena_out){ &s->spare, &s->spare_cap, 0 }
-                             : (struct arena_out){ &s->arena, &s->arena_cap, s->arena_len };
+    struct arena_out a = all ? make_arena_out(&s->spare, &s->spare_cap, 0)
+                             : make_arena_out(&s->arena, &s->arena_cap, s->arena_len);
     // A cluster can come only from the cluster store or from a history row.
     // Each cell of a new row then needs at most 1 + WSAP_VTCORE_GRAPHEME_MAX_LEN words.
     // An underline color needs one more word for each cell. It needs a style table.
     // The direct path converts in place, so it must reserve all of them first.
     uint64_t cell_words = 0;
-    if (wsap_vtcore_gstore_count(t->gstore) > 0 || t->hist.lines > 0)
+    if (t->view.anchor.active || wsap_vtcore_gstore_count(t->gstore) > 0)
         cell_words += 1 + WSAP_VTCORE_GRAPHEME_MAX_LEN;
     if (t->styles)
         cell_words += 1;
     uint64_t worst = (uint64_t)p.staged * (uint64_t)cols * cell_words;
     // A full update takes the staged path. The direct path was not faster for it.
-    if (!all && worst <= DIRECT_MAX_WORDS && arena_reserve(&a, a.len + worst)) {
+    if (worst <= DIRECT_MAX_WORDS && arena_reserve(&a, a.len + worst)) {
         p.direct = true;
     } else {
         if (!s->stage) {
@@ -586,7 +765,6 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
     ok = true;
 
 done:
-    free(heap);
     return ok;
 }
 
