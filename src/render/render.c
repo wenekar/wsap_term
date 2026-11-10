@@ -381,6 +381,16 @@ static struct render_result result_all(void)
     return res;
 }
 
+/* Gives the frame its CPU canvas, on demand. A frame with a drawable needs no
+ * canvas before the GPU decides, and that frame asks for it here only when
+ * the CPU paints. The window allocates the buffer in this call. */
+static bool pixels_ensure(struct framebuffer *fb)
+{
+    if (!fb->pixels && fb->acquire_pixels)
+        fb->pixels = fb->acquire_pixels(fb->acquire_pixels_ud, fb->size);
+    return fb->pixels != NULL;
+}
+
 struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
                                  const struct render_frame *frame)
 {
@@ -391,11 +401,13 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
     bool keep = s != NULL;
     if (!s)
         s = &r->scratch;
-    if (!fb->pixels || fb->size.x <= 0 || fb->size.y <= 0) {
+    /* The GPU draws the whole frame into the drawable and reads no pixels, so
+     * a frame with a drawable and without cpu_only needs no canvas yet. */
+    const bool gpu_first = (fb->drawable || fb->acquire) && !frame->cpu_only;
+    if (fb->size.x <= 0 || fb->size.y <= 0 || (!gpu_first && !pixels_ensure(fb))) {
         render_surface_invalidate(s);
         return result_all();
     }
-    uint32_t *px = fb->pixels;
     const struct vector2i canvas = fb->size;
     const int stride = canvas.x;
 
@@ -484,7 +496,7 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
 
     /* 4. The GPU draws a whole frame or nothing. A frame with no drawable yet
      * asks for one inside the backend, after it builds the frame data. */
-    if ((fb->drawable || fb->acquire) && !frame->cpu_only) {
+    if (gpu_first) {
         switch (render_gpu_draw(r->gpu, s, fb, frame)) {
         case RENDER_GPU_PRESENTED: {
             render_surface_invalidate(s);
@@ -499,7 +511,14 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         }
     }
 
-    /* 5. Moves, or paints where the pool is faster. */
+    /* 5. The CPU paints the frame now, so it takes the canvas if it is not
+     * there yet. Then the moves, or paints where the pool is faster. */
+    if (!pixels_ensure(fb)) {
+        render_surface_invalidate(s);
+        return result_all();
+    }
+    uint32_t *px = fb->pixels;
+
     paint_moves(r, &out, rows, cols, ch, grid.width);
     run_moves(px, stride, grid, ch, out.moves, out.n_moves);
 

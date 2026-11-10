@@ -205,6 +205,10 @@ static void native_compose(struct window *w, struct window_native *n,
  * The CPU pixels of a native frame. The buffer grows by half and never
  * shrinks. A live resize changes the size at every frame, and each frame
  * would otherwise free and allocate a whole canvas.
+ *
+ * The renderer asks for these pixels only when the CPU paints the frame.
+ * A frame that the GPU takes needs no canvas, so a Metal window keeps no
+ * canvas in the heap while the GPU draws its frames.
  */
 static uint32_t *native_pixels(struct window_native *n, struct vector2i size)
 {
@@ -236,19 +240,30 @@ static void window_retry(struct window *w, struct yasl_surface *s)
         yasl_surface_request_frame(s);
 }
 
+/* The CPU canvas of one Metal frame, when the renderer paints it there. The
+ * allocation happens on this call, so a frame that the GPU takes makes no
+ * allocation. */
+static uint32_t *metal_cpu_pixels(void *ud, struct vector2i size)
+{
+    struct window_native *n = ud;
+    uint32_t *pixels = native_pixels(n, size);
+    (void)native_report(n, pixels != NULL, "metal frame pixels", ENOMEM);
+    return pixels;
+}
+
 static void metal_compose(const struct window_metal_frame *f, void *ud)
 {
     struct metal_draw *d = ud;
-    uint32_t *pixels = native_pixels(d->n, f->size);
-    if (!native_report(d->n, pixels != NULL, "metal frame pixels", ENOMEM))
-        return;
+    /* The frame carries no canvas. render_draw() asks for one only when the
+     * CPU paints the frame, so a GPU frame keeps no pixels in the heap. */
     native_compose(d->w, d->n, (struct framebuffer){
-        .pixels = pixels,
         .size = f->size,
         .drawable = f->drawable,
         .acquire = f->acquire,
         .acquire_ud = f->acquire_ud,
         .transaction = f->transaction,
+        .acquire_pixels = metal_cpu_pixels,
+        .acquire_pixels_ud = d->n,
     });
 }
 
