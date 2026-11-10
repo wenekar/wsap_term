@@ -482,8 +482,9 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
     };
     plan_frame(&in, &out);
 
-    /* 4. The GPU draws a whole frame or nothing. */
-    if (fb->drawable && !frame->cpu_only) {
+    /* 4. The GPU draws a whole frame or nothing. A frame with no drawable yet
+     * asks for one inside the backend, after it builds the frame data. */
+    if ((fb->drawable || fb->acquire) && !frame->cpu_only) {
         switch (render_gpu_draw(r->gpu, s, fb, frame)) {
         case RENDER_GPU_PRESENTED: {
             render_surface_invalidate(s);
@@ -608,7 +609,7 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         res.damage.rects[0] = res.damage.bounds;
     }
     /* 11. Present the CPU pixels into a drawable. */
-    if (fb->drawable)
+    if (fb->drawable || fb->acquire)
         res.presented = render_gpu_present(r->gpu, s, fb, &res.damage);
     return res;
 }

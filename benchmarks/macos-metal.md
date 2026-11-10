@@ -20,24 +20,59 @@ The app pumps Cocoa events once per iteration, in the prepare hook.
 ## Frame pacing
 
 Each window has a `CADisplayLink` on macOS 14 and later. The link sets
-the refresh period from the display, so ProMotion displays run at
-120 Hz. A frame starts when a vsync passed since the last frame. The
-first frame after an idle period starts at once. The link pauses after
-eight idle frames and while the window is occluded. An occluded window
-is suspended and draws no frames. Earlier macOS versions draw without
-pacing.
+the refresh period from the display. A ProMotion display reports the
+rate that the system chose, so that period varies. The link pauses
+after eight idle frames and while the window is occluded. An occluded
+window is suspended and draws no frames. A window without a link draws
+without pacing.
+
+A frame request waits for the display. The link answers the request at
+its next tick, so a sustained draw follows the display. When the window
+is off screen and no tick comes, a fallback timer answers it after two
+measured frame periods, between 16 ms and 250 ms. A paused link answers
+the next request at once, so a wake draws without a wait.
 
 In a live resize, the frame draws at once in the resize callback. It
 presents in the same Core Animation transaction as the new window size.
 The layer is opaque, uses sRGB, and keeps its content at the top left.
 
-## Renderer
+## Presentation feedback
+
+A frame passes four stages, and the code keeps them apart. The loop draws
+and encodes a frame. The GPU takes it and reports that it submitted the
+frame. A completion handler frees the frame slot when the GPU finished
+the frame. Only the display reports a presentation.
+
+`render_gpu_draw` takes the drawable after it builds the frame data. A
+drawable whose texture has another size than the frame is a resize race,
+so the frame is dropped and drawn again at the next tick. With no free
+frame slot the frame is dropped at once. The main thread never waits for
+a slot or for a drawable, but `[CAMetalLayer nextDrawable]` itself blocks
+when the pool is empty.
+
+`window_metal_draw` attaches one presented handler to the drawable of
+each frame. It captures the sample of the latency probe at that moment,
+on the thread that submits the frame. The handler runs on a thread of
+the display, and it reads `presentedTime` and the time it runs. It writes
+both to the probe and counts the presentation of the surface. It holds
+no pointer to the window, the surface, or the layer, and it holds one
+reference of the count, so a closed window leaks nothing.
+
+A `presentedTime` of zero means that the display discarded the frame.
+The probe records a discard then. The probe sets the vsync flag of a
+frame only when the layer paces its presentation. A frame of a live
+resize presents inside the Core Animation transaction, so it carries no
+vsync flag.
+
+`--stats-ms 1000` prints four counts: every draw pass, the passes that
+the GPU took, the passes that dropped, and the frames that the display
+reported. See [high-refresh](../docs/high-refresh.md) for the stages and
+the pacing rules.
 
 Each quad uses one instance record. The shader builds its six vertices.
 Three buffer sets hold frames in flight. A completion callback releases
 each set for reuse. All windows share one shader library and one set of
 pipelines.
-
 Terminal text and UI text use separate atlases. The GPU owns each atlas
 texture. New glyph pixels wait in a CPU list. The next submit copies
 them to a staging buffer and blits each cell. The atlas has no CPU copy.
@@ -160,4 +195,5 @@ env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 build/tests/metal-render-test
 meson compile -C build term-live-bench
 ```
 
-`--stats-ms 1000` prints the frame rate and the refresh estimate.
+`--stats-ms 1000` prints the draw, drop, submit, and present counts, and
+the refresh estimate of the link.

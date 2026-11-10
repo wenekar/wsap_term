@@ -14,7 +14,7 @@ static uint64_t tick(void *ud, uint64_t id, uint64_t interval_ns)
     struct window *w = s->host->primary;
     if (!w || !window_surface(w))
         return 0;
-    frame_stats_print(window_stats(w), 0);
+    frame_stats_print(window_stats(w));
     return interval_ns;
 }
 
@@ -44,5 +44,5 @@ void app_stats_report_final(const struct app_stats *s, struct window *last)
         return;
     struct vector2i size = window_size(last);
     printf("[final] %dx%d\n", size.x, size.y);
-    frame_stats_print(window_stats(last), 0);
+    frame_stats_print(window_stats(last));
 }

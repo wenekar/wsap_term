@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#define _DARWIN_C_SOURCE
 #include "bench.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -19,6 +20,17 @@ static void sleep_ns(uint64_t ns)
 {
     struct timespec ts = { .tv_sec = ns / 1000000000ull, .tv_nsec = ns % 1000000000ull };
     while (nanosleep(&ts, &ts) < 0 && errno == EINTR) {}
+}
+
+/* The Wayland injector sends keys only to the compositor of WAYLAND_DISPLAY. */
+static bool use_wayland(void)
+{
+#if defined(WSAP_LATENCY_WAYLAND)
+    const char *sel = getenv("WSAP_LATENCY_INJECTOR");
+    return sel && !strcmp(sel, "wayland");
+#else
+    return false;
+#endif
 }
 
 #if defined(__linux__)
@@ -174,16 +186,6 @@ static void wayland_close(void)
 }
 #endif
 
-static bool use_wayland(void)
-{
-#if defined(WSAP_LATENCY_WAYLAND)
-    const char *sel = getenv("WSAP_LATENCY_INJECTOR");
-    return sel && !strcmp(sel, "wayland");
-#else
-    return false;
-#endif
-}
-
 static bool injector_open(void)
 {
 #if defined(WSAP_LATENCY_WAYLAND)
@@ -248,6 +250,32 @@ static const char *injector_name(void) { return "CGEventPost (HID tap)"; }
 #else
 #error "no input injector for this platform"
 #endif
+
+/* What reports the frame that a display showed. Only this platform label
+ * changes between builds: the measurement is the same. */
+static const char *presentation_source(bool presentation)
+{
+    if (!presentation)
+        return "unavailable; submission only";
+#if defined(__APPLE__)
+    return "Metal drawable presented handler; an unpaced frame reports the callback time";
+#else
+    return "Wayland feedback; async mode uses callback receipt time";
+#endif
+}
+
+/* How the window confirms fullscreen, and the presentation mode that the
+ * benchmark asks for. */
+static const char *fullscreen_report(void)
+{
+#if defined(__APPLE__)
+    return "fullscreen: confirmed by the NSWindow fullscreen style mask\n"
+           "presentation mode: fullscreen; the layer presents without display sync";
+#else
+    return "fullscreen: confirmed by xdg_toplevel.configure\n"
+           "presentation mode: fullscreen; asynchronous presentation requested";
+#endif
+}
 
 static volatile sig_atomic_t stopped;
 static void on_signal(int sig) { stopped = sig; }
@@ -391,19 +419,21 @@ int main(int argc, char **argv)
     deadline = bench_now_ns() + 5000000000ull;
     while (!atomic_load_explicit(&probe->fullscreen, memory_order_acquire)) {
         if (stopped || bench_now_ns() > deadline) {
-            fprintf(stderr, "compositor did not confirm fullscreen\n");
+            fprintf(stderr, "the window did not confirm fullscreen\n");
             goto cleanup;
         }
         sleep_ns(1000000);
     }
     if (!injector_ready && !injector_open()) goto cleanup;
     sleep_ns(700000000);
+    /* The frames of the startup screen carry no sample. The probe records the
+     * capability from them, so this read does not depend on a finished sample.
+     */
     bool presentation = atomic_load_explicit(&probe->presentation_supported, memory_order_acquire);
     printf("terminal: %s\ninjector: %s\nclock: CLOCK_MONOTONIC\n", bin, injector_name());
     printf("presentation: %s\nworkload: raw userspace echo; 30–50 ms deterministic jitter between samples\n",
-           presentation ? "Wayland feedback; async mode uses callback receipt time" : "unavailable; submission only");
-    puts("fullscreen: confirmed by xdg_toplevel.configure\n"
-         "presentation mode: fullscreen; asynchronous presentation requested");
+           presentation_source(presentation));
+    puts(fullscreen_report());
     uint64_t focus_losses = atomic_load_explicit(&probe->focus_losses, memory_order_relaxed);
     unsigned rng = 1;
     int zero_copy_presentations = 0;
@@ -436,8 +466,13 @@ int main(int argc, char **argv)
             t[6] = presentation_flags & LATENCY_PRESENTATION_VSYNC
                 ? probe->presentation_ns : probe->presentation_received_ns;
         }
-        if (!committed || (presentation && !shown)) status = "timeout";
-        else if (shown && probe->discarded) status = "discarded";
+        if (!committed) status = "timeout";
+        /* No frame of this sample reached a display. The probe keeps the sample
+         * of the last discarded frame, so an older discard is not reported. */
+        else if (presentation && !shown &&
+                 atomic_load_explicit(&probe->discarded, memory_order_relaxed) == id)
+            status = "discarded";
+        else if (presentation && !shown) status = "timeout";
         else if (shown && !refresh_ns) status = "missing-refresh";
         else if (shown && i >= warmup && t[6] - start > (uint64_t)refresh_ns * 2) {
             double frames = (double)(t[6] - start) / refresh_ns;

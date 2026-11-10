@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "public_internal.h"
+#include "common/timing.h"
 #include "common/utf8.h"
 #include <errno.h>
 #include <limits.h>
@@ -451,8 +452,18 @@ int yasl_surface_request_frame(yasl_surface *s)
 {
     if (!yasl_public_connected(s))
         return -errno;
+    /* Record the request first, so the platform sees it when it decides how to
+     * answer the redraw. */
     yasl_private_surface_request_shown_frame(s);
+    yasl_private_surface_request_frame(s);
     return 0;
+}
+
+uint64_t yasl_surface_frame_interval_ns(const yasl_surface *s)
+{
+    if (!yasl_public_surface((yasl_surface *)s, false))
+        return 0;
+    return yasl_private_clock_refresh_ns(yasl_private_surface_timing(s).refresh_ns);
 }
 int yasl_surface_set_cursor(yasl_surface *s, enum yasl_cursor cursor)
 {

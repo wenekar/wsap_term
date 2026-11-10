@@ -37,7 +37,7 @@ endif
 test('public-exports', python, args: [files('helpers/check_exports.py')] + export_args +
     [nm, yasl_lib.get_shared_lib(), headers])
 
-foreach unit : ['contracts', 'utf8', 'timers', 'loop', 'selection', 'events', 'gl_options', 'cpu_damage']
+foreach unit : ['contracts', 'timing', 'frame_request', 'utf8', 'timers', 'loop', 'selection', 'events', 'gl_options', 'cpu_damage']
     exe = executable('yasl-' + unit + '-test', 'common/test_' + unit + '.c',
         include_directories: inc, dependencies: yasl_dep)
     test(unit, exe, is_parallel: not has_cocoa or unit != 'timers')
@@ -117,7 +117,7 @@ if get_option('integration_tests')
         endif
     elif has_cocoa
         test('surface-cocoa', integration, args: ['cocoa'], timeout: 30, is_parallel: false)
-        foreach unit : ['native', 'ownership', 'keyboard', 'tablet', 'cursor']
+        foreach unit : ['native', 'ownership', 'keyboard', 'tablet', 'cursor', 'pacing', 'software-stage']
             extension = unit == 'native' ? '.c' : '.m'
             exe = executable('yasl-' + unit + '-cocoa-test', 'cocoa/test_' + unit + extension,
                 include_directories: inc, dependencies: yasl_dep)

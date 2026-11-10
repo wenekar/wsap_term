@@ -17,6 +17,14 @@ struct yasl_private_frame_clock {
     enum yasl_private_timing_source source;
 };
 
+/* The frame interval in nanoseconds. A value outside the sane range gives the
+ * interval of a 60 Hz display. */
+uint64_t yasl_private_clock_refresh_ns(double refresh_ns);
+
+/* The period of the display frame of a display link invocation, in seconds.
+ * It is zero when the link gives no usable value. */
+double yasl_private_clock_link_period(double timestamp, double duration, double target);
+
 uint64_t yasl_private_clock_extend_ms(uint32_t ms, uint64_t now_ns);
 void yasl_private_clock_presented(struct yasl_private_frame_clock *c, uint64_t now, bool sample);
 void yasl_private_clock_note_resize(struct yasl_private_frame_clock *c, uint64_t dt_ns);

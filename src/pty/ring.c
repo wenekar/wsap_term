@@ -41,7 +41,7 @@ static inline void cpu_relax(void)
 #endif
 }
 
-#define PTY_RING_MAX_CHUNK (256 * 1024)
+#define PTY_RING_MAX_CHUNK PTY_CHUNK_MAX
 #define PTY_RING_MIN_FREE (64 * 1024)
 #define PTY_SIGNAL_INTERVAL_NS 1000000ull
 #define PTY_SIGNAL_BYTES 131072ull
@@ -356,6 +356,7 @@ static void on_ring_event(void *ud, int fd, short revents)
     atomic_store_explicit(&r->awake, 1, memory_order_seq_cst);
     bool any = false;
     uint64_t deadline = yasl_time_ns() + PTY_DRAIN_BUDGET_NS;
+    if (!r->chunk) r->chunk = PTY_CHUNK_START;
     size_t tail = atomic_load_explicit(&r->tail, memory_order_relaxed);
 
     size_t head;
@@ -377,15 +378,19 @@ static void on_ring_event(void *ud, int fd, short revents)
         size_t off = tail & PTY_RING_MASK;
         size_t contig = PTY_RING_SIZE - off;
         size_t chunk = avail < contig ? avail : contig;
-        if (chunk > PTY_RING_MAX_CHUNK) chunk = PTY_RING_MAX_CHUNK;
+        /* One chunk may not fill the whole pass: the parse of one chunk of
+         * hard bytes can take longer than the budget. */
+        if (chunk > r->chunk) chunk = r->chunk;
         if (switch_tail != switch_head) {
             size_t until = r->switch_at[switch_tail % PTY_RING_SWITCHES] - tail;
             if (chunk > until)
                 chunk = until;
         }
 
+        uint64_t t0 = yasl_time_ns();
         r->cbs.data(r->ud, r->src_fd[r->tail_src], r->buf + off, chunk,
                     avail - chunk);
+        r->chunk = pty_chunk_next(r->chunk, yasl_time_ns() - t0);
 
         tail += chunk;
         any = true;

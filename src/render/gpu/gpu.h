@@ -14,10 +14,18 @@
  * - On a failure it marks its own grid fully dirty and returns
  *   RENDER_GPU_UNUSED. The CPU then paints the frame and
  *   render_gpu_present() shows the pixels.
- * - On a semaphore timeout it returns RENDER_GPU_DROPPED: nothing drawn,
- *   nothing presented, no state changed.
+ * - With no free frame slot it returns RENDER_GPU_DROPPED: nothing drawn,
+ *   nothing presented, no state changed. It does not wait for a slot, so the
+ *   main thread keeps its time for input and PTY reads.
+ * - It asks for the drawable of the frame after it builds the frame data, so
+ *   the drawable is held for the shortest time. `framebuffer.drawable` holds
+ *   the drawable that it acquired.
  * - Its per-surface state lives in render_surface.gpu. It can free that
  *   state without the renderer, with render_gpu_surface_free().
+ * - "Presented" in this interface means that the GPU took the frame. It does
+ *   not mean that a display showed the frame. A display reports presentation
+ *   later, through the presented handler of the drawable. The window counts
+ *   that report. See docs/high-refresh.md.
  *
  * What render.c does with the result
  * - RENDER_GPU_PRESENTED: it invalidates the CPU surface state, because the
@@ -68,7 +76,8 @@ enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surfa
 /*
  * Presents the CPU pixels of fb into fb->drawable. It uploads only the
  * damage rects into a persistent texture. Full damage uploads everything.
- * Returns true when the frame was presented.
+ * Returns true when the GPU took the frame. It does not report that a display
+ * showed the frame.
  */
 bool render_gpu_present(struct render_gpu *g, struct render_surface *s, struct framebuffer *fb,
                         const struct damage_list *damage);

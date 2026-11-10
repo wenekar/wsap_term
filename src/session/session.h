@@ -53,6 +53,10 @@ struct session {
     struct vector2i pty_pending;
     uint64_t pty_resize_timer;
     bool reaped;
+    /* The bytes of the next PTY read. It follows the parse time of the last
+     * chunk, so a pass on data that parses slowly overruns its budget by
+     * less. */
+    size_t read_chunk;
     alignas(64) struct pty pty;
 };
 

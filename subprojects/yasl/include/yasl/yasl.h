@@ -119,10 +119,16 @@ YASL_API int yasl_surface_request(yasl_surface *surface, enum yasl_request reque
 YASL_API int yasl_surface_request_size(yasl_surface *surface, int width, int height);
 /** Asks for a REFRESH after the next frame is shown. A frame presented after
  * the request, in the same callback, is that frame, so an animation can ask
- * before it draws. With no frame in flight, the REFRESH comes one refresh
- * interval after the last present or REFRESH. Requests coalesce. Use it to
- * pace animation; draw at once for input. */
+ * before it draws. The platform answers at its next display callback, or one
+ * refresh interval after the last present or REFRESH when it has none. A
+ * request never draws at once, so it cannot outrun the display. Requests
+ * coalesce. A draw that follows a request waits for the display, so ask for one
+ * frame per change. */
 YASL_API int yasl_surface_request_frame(yasl_surface *surface);
+/** The display frame interval of the surface, in nanoseconds. It follows the
+ * display that the window is on. It is the interval of a 60 Hz display when the
+ * platform has no estimate. Zero for a surface that is not valid. */
+YASL_API uint64_t yasl_surface_frame_interval_ns(const yasl_surface *surface);
 
 enum yasl_cursor {
     YASL_CURSOR_ARROW, YASL_CURSOR_TEXT, YASL_CURSOR_LINK, YASL_CURSOR_CROSSHAIR, YASL_CURSOR_MOVE,

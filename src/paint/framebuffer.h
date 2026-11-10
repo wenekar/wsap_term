@@ -52,6 +52,12 @@ static inline void framebuffer_history_release(struct framebuffer_history *histo
  *   one-shot images, such as thumbnails and drag images.
  * - `drawable` is the GPU drawable of this frame, or NULL. NULL means a CPU
  *   canvas that the window presents itself.
+ * - `acquire` asks for the drawable of a frame that the GPU draws, and it
+ *   writes `drawable`. The renderer calls it after it builds the frame data
+ *   and before it encodes the frame, so the drawable stays out of the pool
+ *   for the shortest time. A NULL result means that no drawable is free, or
+ *   that its size is not `size`: the frame is dropped and the window asks
+ *   again. NULL acquire means that `drawable` is the whole story.
  * - `transaction` means: present the drawable inside the Core Animation
  *   transaction of a live resize.
  */
@@ -61,6 +67,8 @@ struct framebuffer {
     bool fresh;
     struct framebuffer_history *history;
     void *drawable;
+    void *(*acquire)(void *ud);
+    void *acquire_ud;
     bool transaction;
 };
 

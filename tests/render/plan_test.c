@@ -6,6 +6,7 @@
 #include "paint/scene.h"
 #include "render/plan.h"
 #include "render/surface.h"
+#include "term_api.h"
 
 /*
  * Tests of the frame planner (render/plan.h) and of the surface state
@@ -37,24 +38,6 @@ static struct vector2i vec(int x, int y)
 static struct plan_span span(int x0, int x1)
 {
     return (struct plan_span){ .x0 = x0, .x1 = x1 };
-}
-
-/* --- Test doubles for the two terminal_frame accessors of surface.c --- */
-
-#define STUB_ROWS 8
-static uint64_t stub_content[STUB_ROWS];
-static struct wsap_vtcore_span stub_selection[STUB_ROWS];
-
-uint64_t terminal_frame_row_key(const struct terminal_frame *frame, int row)
-{
-    (void)frame;
-    return row >= 0 && row < STUB_ROWS ? stub_content[row] : 0;
-}
-
-struct wsap_vtcore_span terminal_frame_row_selection(const struct terminal_frame *frame, int row)
-{
-    (void)frame;
-    return row >= 0 && row < STUB_ROWS ? stub_selection[row] : (struct wsap_vtcore_span){0};
 }
 
 /* --- Fixture --- */
@@ -1346,32 +1329,40 @@ static void surface_state_test(void)
 
 static void row_key_test(void)
 {
-    struct terminal_frame f = { .rows = STUB_ROWS, .cols = 20, .cursor_y = -1 };
-    memset(stub_selection, 0, sizeof(stub_selection));
-    for (int r = 0; r < STUB_ROWS; r++)
-        stub_content[r] = 0x1000 + (uint64_t)r;
-    stub_content[5] = 0;
+    enum { ROWS = 8 };
+    struct wsap_vtcore *t = tt_new(20, ROWS);
+    struct wsap_vtcore_snapshot *snap = wsap_vtcore_snapshot_new();
+    assert(t && snap);
+    tt_puts(t, "row 0\r\nrow 1\r\nrow 2\r\nrow 3\r\nrow 4\r\nrow 5\r\nrow 6\r\nrow 7");
+    assert(wsap_vtcore_snapshot_update(snap, t));
+    struct terminal_frame f;
+    terminal_frame_init(&f, snap, false);
 
-    uint64_t plain[STUB_ROWS];
-    for (int r = 0; r < STUB_ROWS; r++) {
+    uint64_t plain[ROWS];
+    for (int r = 0; r < ROWS; r++) {
         plain[r] = render_surface_row_key(&f, r);
-        /* A row with an unknown content key keeps key 0: it never matches. */
-        assert((plain[r] == 0) == (r == 5));
+        assert(plain[r] != 0);
         assert(render_surface_row_key(&f, r) == plain[r]);
         for (int q = 0; q < r; q++)
             assert(plain[q] != plain[r] || plain[r] == 0);
     }
 
+    /* A row with an unknown content key keeps key 0. */
+    assert(render_surface_row_key(&f, ROWS) == 0);
+
     /* The selection span of a row is part of its key. */
-    stub_selection[2] = (struct wsap_vtcore_span){ .begin = 3, .end = 9 };
+    tt_select(t, 1, 2, 2, 2);
+    assert(wsap_vtcore_snapshot_update(snap, t));
     assert(render_surface_row_key(&f, 2) == plain[2]); /* has_selection is false */
-    f.has_selection = true;
+    terminal_frame_init(&f, snap, false);
     uint64_t sel = render_surface_row_key(&f, 2);
     assert(sel != plain[2] && sel != 0);
     assert(render_surface_row_key(&f, 1) == plain[1]);
-    stub_selection[2].end = 10;
+    tt_select(t, 1, 2, 3, 2);
+    assert(wsap_vtcore_snapshot_update(snap, t));
     assert(render_surface_row_key(&f, 2) != sel);
-    stub_selection[2] = (struct wsap_vtcore_span){0};
+    wsap_vtcore_select_clear(t);
+    assert(wsap_vtcore_snapshot_update(snap, t));
     assert(render_surface_row_key(&f, 2) == plain[2]);
 
     /* The cursor x and style are part of the key of the cursor row only. */
@@ -1379,8 +1370,8 @@ static void row_key_test(void)
     f.cursor_x = 7;
     uint64_t cur = render_surface_row_key(&f, 4);
     assert(cur != plain[4] && cur != 0);
-    f.cursor_y = 5;
-    assert(render_surface_row_key(&f, 5) == 0); /* the cursor does not make it known */
+    f.cursor_y = ROWS;
+    assert(render_surface_row_key(&f, ROWS) == 0); /* The cursor does not make it known. */
     f.cursor_y = 4;
     assert(render_surface_row_key(&f, 3) == plain[3]);
     f.cursor_x = 8;
@@ -1392,9 +1383,12 @@ static void row_key_test(void)
     assert(render_surface_row_key(&f, 4) == plain[4]);
 
     /* The key follows the content when the content moves. */
-    uint64_t moved = stub_content[6];
-    stub_content[1] = moved;
+    tt_puts(t, "\033[5S");
+    assert(wsap_vtcore_snapshot_update(snap, t));
     assert(render_surface_row_key(&f, 1) == plain[6]);
+
+    wsap_vtcore_snapshot_free(snap);
+    wsap_vtcore_free(t);
 }
 
 int main(void)

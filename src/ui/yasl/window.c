@@ -14,6 +14,9 @@
 #include "ui/yasl/native_input.h"
 #include "util/name.h"
 
+static struct window_native *native_find(struct window *w, const struct yasl_surface *s);
+static void stats_collect_presented(struct window *w);
+
 struct vector2i window_default_size(const struct window_config *config)
 {
     const struct font_metrics *m = font_instance_metrics(font_instance_default());
@@ -33,16 +36,30 @@ uint32_t window_scale_120(const struct window *w)
     return (uint32_t)(scale * 120.0 + 0.5);
 }
 
+/* Marks one native surface as due in the next host pass. A redraw asked for
+ * during a draw stays for the next pass, so no intent is lost. */
+void window_native_request_draw(struct window *w, struct yasl_surface *s)
+{
+    struct window_native *n = native_find(w, s);
+    if (n)
+        n->needs_draw = true;
+}
+
 void window_redraw(struct window *w)
 {
     if (!w || !w->surface || w->closed)
         return;
-    if (w->drawing) {
-        yasl_surface_request_frame(w->surface);
+    if (w->unpaced) {
+        /* The configuration asked for tearing, so a frame does not wait for
+         * the display. */
+        window_native_request_draw(w, w->surface);
+        window_host_schedule(w->host);
         return;
     }
-    w->needs_draw = true;
-    window_host_schedule(w->host);
+    /* The request paces the draw: the display answers it, so the window cannot
+     * draw faster than the display. Requests coalesce, and a request made
+     * during a draw is kept. Input is read at once; only the draw waits. */
+    yasl_surface_request_frame(w->surface);
 }
 
 uint64_t window_frame_time_ms(struct window *w)
@@ -150,6 +167,7 @@ void window_native_remove(struct window *w, struct yasl_surface *s)
     if (!n)
         return;
     framebuffer_history_release(&n->history);
+    present_watch_unref(n->watch);
     free(n->pixels);
     *n = w->natives[--w->native_count];
     w->natives[w->native_count] = (struct window_native){0};
@@ -171,6 +189,10 @@ static void native_compose(struct window *w, struct window_native *n,
     /* Each frame is fresh for now, so the renderer paints every pixel. */
     target.fresh = true;
     target.history = &n->history;
+    /* The frame goes to a drawable, whether the surface holds it already or
+     * asks for it while the renderer encodes. */
+    n->frame_drawable = target.drawable != NULL || target.acquire != NULL;
+    n->frame_submitted = false;
     struct window_frame frame = {
         .surface = n->surface,
         .generation = n->generation,
@@ -206,6 +228,14 @@ struct metal_draw {
     struct window_native *n;
 };
 
+/* Asks for the next frame of one surface. The display paces the answer, even
+ * when the window draws unpaced, so a failing draw cannot spin. */
+static void window_retry(struct window *w, struct yasl_surface *s)
+{
+    if (w && !w->closed && s)
+        yasl_surface_request_frame(s);
+}
+
 static void metal_compose(const struct window_metal_frame *f, void *ud)
 {
     struct metal_draw *d = ud;
@@ -216,6 +246,8 @@ static void metal_compose(const struct window_metal_frame *f, void *ud)
         .pixels = pixels,
         .size = f->size,
         .drawable = f->drawable,
+        .acquire = f->acquire,
+        .acquire_ud = f->acquire_ud,
         .transaction = f->transaction,
     });
 }
@@ -232,12 +264,21 @@ void window_native_draw(struct window *w, struct yasl_surface *s)
         if (!w->suspended)
             w->frame++;
     }
-    w->drawing = true;
+    n->frame_drawable = false;
+    n->frame_submitted = false;
+    bool attempted = true;
     if (n->metal_layer) {
+        if (!n->watch)
+            n->watch = present_watch_new();
         struct metal_draw d = { .w = w, .n = n };
-        if (!window_metal_draw(n->metal_layer, s, metal_compose, &d)) {
+        if (!window_metal_draw(n->metal_layer, s,
+                               (struct window_metal_watch){
+                                   .presents = n->watch,
+                                   .sample = main,
+                               },
+                               metal_compose, &d)) {
             native_report(n, false, "metal drawable", 0);
-            window_redraw(w);
+            attempted = false;
         }
     } else {
         struct vector2i size = {0};
@@ -248,9 +289,26 @@ void window_native_draw(struct window *w, struct yasl_surface *s)
             .size = size,
         });
     }
-    w->drawing = false;
-    if (main)
+    /* Three outcomes need the frame again: the GPU dropped it under load, no
+     * drawable was free, or the draw reported no submit. A submitted frame is
+     * not on screen yet, so the window never waits for it here. Ask for the
+     * next frame of this surface. The request coalesces and waits for the
+     * display, even when ordinary output of the window is unpaced, so a busy
+     * GPU cannot spin. A closed or suspended window asks for nothing. */
+    if (n->frame_drawable && !n->frame_submitted && !w->suspended)
+        window_retry(w, s);
+    if (main) {
+        /* A pass that the layer could not start is neither submitted nor
+         * dropped: there was no frame. */
+        if (attempted) {
+            if (n->frame_submitted)
+                w->stats.frames_submitted++;
+            else
+                w->stats.frames_dropped++;
+        }
+        stats_collect_presented(w);
         render_end_and_count_frame(&w->stats);
+    }
 }
 
 static void host_on_event(void *userdata, const yasl_event *ev)
@@ -368,9 +426,12 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
         .type = spec->graphics_device ? YASL_SURFACE_NATIVE : YASL_SURFACE_CPU,
         .userdata = w,
         .refresh = on_refresh,
-        .tearing = true,
+        /* Vsync is on unless the configuration asks for tearing. The platform
+         * permits unpaced presentation only when this is set. */
+        .tearing = config->tearing,
     };
     w->surface = yasl_surface_create(&options);
+    w->unpaced = config->tearing;
     void *layer = NULL;
     if (w->surface && options.type == YASL_SURFACE_NATIVE &&
         !(layer = window_metal_attach(w->surface, spec->graphics_device))) {
@@ -428,8 +489,16 @@ bool window_present(struct window *w, struct window_frame *frame,
     if (!w || w->closed || !frame || !frame->surface)
         return false;
     struct window_native *n = native_find(w, frame->surface);
-    if (frame->target.drawable)
-        return native_report(n, presented, "metal present", 0);
+    if (frame->target.drawable || frame->target.acquire) {
+        /* A drop is not an error: the GPU reports that it drew and presented
+         * nothing. A true result means that the GPU submitted the frame, not
+         * that the frame reached the screen. The display reports that later,
+         * through the presentation handler. The window asks for the next frame
+         * when the result is false. */
+        if (n)
+            n->frame_submitted = presented;
+        return presented;
+    }
     int status;
     if (damage && !damage->all && damage->n < 0) {
         /* An overflowed list presents its bounds. */
@@ -443,6 +512,8 @@ bool window_present(struct window *w, struct window_frame *frame,
     } else {
         status = yasl_cpu_present(frame->surface);
     }
+    if (n)
+        n->frame_submitted = status == 0;
     return native_report(n, status == 0, "yasl_cpu_present", -status);
 }
 
@@ -461,9 +532,25 @@ struct yasl_surface *window_surface(const struct window *w)
     return w ? w->surface : NULL;
 }
 
+/*
+ * Moves the reports that the display sent since the last read into the counts
+ * of the window. A report arrives on a thread of the display, at any time, so a
+ * count that a report would otherwise wait for another draw to collect is
+ * current when it is read.
+ */
+static void stats_collect_presented(struct window *w)
+{
+    struct window_native *n = w->surface ? native_find(w, w->surface) : NULL;
+    if (n && n->watch)
+        w->stats.frames_presented += present_watch_take_presented(n->watch);
+}
+
 struct frame_stats *window_stats(struct window *w)
 {
-    return w ? &w->stats : NULL;
+    if (!w)
+        return NULL;
+    stats_collect_presented(w);
+    return &w->stats;
 }
 
 bool window_closed(const struct window *w)

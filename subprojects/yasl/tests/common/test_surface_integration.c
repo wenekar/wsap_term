@@ -134,8 +134,24 @@ static void test_callback_mode(enum yasl_backend backend)
         assert(yasl_loop_step(st.loop, 25) >= 0);
     assert(st.refreshes == before + 1);
 
+    /* A burst of requests in one display frame asks for one frame. A request
+     * must not schedule a raw redraw: a backend that answers one at once would
+     * answer every request itself and bypass the pacing of the surface. */
+    uint64_t interval = yasl_surface_frame_interval_ns(st.window);
+    assert(interval >= 1000000ull && interval <= 1000000000ull);
+    before = st.refreshes;
+    for (int i = 0; i < 4; i++)
+        assert(yasl_surface_request_frame(st.window) == 0);
+    uint64_t burst_end = yasl_time_ns() + 2 * interval + interval / 2;
+    while (yasl_time_ns() < burst_end)
+        assert(yasl_loop_step(st.loop, 50) >= 0);
+    fprintf(stderr, "%d REFRESH events for 4 requests in 2.5 frames of %llu ns\n",
+            st.refreshes - before, (unsigned long long)interval);
+    assert(st.refreshes - before >= 1 && st.refreshes - before <= 3);
+
     /* The frame an animation presents after its request is the frame the
-     * request waits for: one REFRESH per display refresh, not two. */
+     * request waits for: one REFRESH per display refresh, not two. The bound
+     * follows the display, so it holds at 60 Hz and at 240 Hz. */
     st.animating = true;
     assert(yasl_surface_request_frame(st.window) == 0);
     before = st.refreshes;
@@ -144,8 +160,12 @@ static void test_callback_mode(enum yasl_backend backend)
         assert(yasl_loop_step(st.loop, 50) >= 0);
     st.animating = false;
     int frames = st.refreshes - before;
-    fprintf(stderr, "%d REFRESH events in 1 s of animation\n", frames);
-    assert(frames >= 20 && frames <= 75);
+    int expected = (int)(1000000000ull / interval);
+    fprintf(stderr, "%d REFRESH events in 1 s of animation, %d frames of %llu ns\n",
+            frames, expected, (unsigned long long)interval);
+    /* A frame waits for the one before it, and a live window draws each
+     * frame it is asked for. */
+    assert(frames >= expected / 2 && frames <= expected + expected / 2 + 2);
 
     /* A resize owes one REFRESH, after its WINDOW event. */
     for (int i = 0; i < 6; i++)

@@ -77,14 +77,28 @@ static void draw_windows(struct window_host *host)
 {
     for (int i = 0; i < host->count; i++) {
         struct window *w = host->windows[i];
-        if (!w->surface || w->closed || w->suspended || !w->needs_draw)
+        if (!w->surface || w->closed || w->suspended)
             continue;
-        w->needs_draw = false;
-        window_native_draw(w, w->surface);
-        for (int j = 1; j < w->native_count && !w->closed; j++)
-            if (w->natives[j].surface)
-                window_native_draw(w, w->natives[j].surface);
-        if (i >= host->count || host->windows[i] != w)
+        /* The main surface first, then the popups that are due. Take the intent
+         * of each surface before it draws, so a redraw asked for during the
+         * draw stays for the next pass, and no surface draws twice in one. */
+        struct yasl_surface *due[WINDOW_NATIVE_MAX];
+        int count = 0;
+        for (int pass = 0; pass < 2; pass++) {
+            for (int j = 0; j < w->native_count && count < WINDOW_NATIVE_MAX; j++) {
+                struct window_native *n = &w->natives[j];
+                if (!n->surface || !n->needs_draw ||
+                    (n->surface == w->surface) != (pass == 0))
+                    continue;
+                n->needs_draw = false;
+                due[count++] = n->surface;
+            }
+        }
+        for (int d = 0; d < count && !w->closed; d++)
+            window_native_draw(w, due[d]);
+        if (i >= host->count)
+            break;
+        if (host->windows[i] != w)
             i = -1;
     }
 }
@@ -251,9 +265,12 @@ static void dispatch_event(struct window_host *host, const struct yasl_event *ev
             host->hooks.quit(host->hooks.ud);
         return;
     case YASL_EVENT_DISPLAY_RESTORED:
+        /* The platform lost every surface, so each one draws again at once. */
         for (int i = 0; i < host->count; i++) {
-            window_repaint_all(host->windows[i]);
-            window_redraw(host->windows[i]);
+            struct window *w = host->windows[i];
+            window_repaint_all(w);
+            for (int j = 0; j < w->native_count; j++)
+                window_native_request_draw(w, w->natives[j].surface);
         }
         return;
     default:
@@ -276,7 +293,10 @@ static void dispatch_event(struct window_host *host, const struct yasl_event *ev
             window_geometry_event(w, ev);
         break;
     case YASL_EVENT_REFRESH:
-        w->needs_draw = true;
+        /* A refresh is the paced answer to a redraw request. It names one
+         * surface, so only that surface draws. An unpaced window draws from
+         * its own intent instead. */
+        window_native_request_draw(w, ev->surface);
         break;
     default:
         window_native_input(w, ev);

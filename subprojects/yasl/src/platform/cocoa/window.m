@@ -22,9 +22,16 @@
 #include <sys/event.h>
 #include <unistd.h>
 #include <objc/message.h>
+#include "platform/cocoa/software_stage.h"
+
 #include <objc/runtime.h>
 
 #define LINK_IDLE_FRAMES 8
+/* A display tick answers a frame intent. When no tick comes, the fallback
+ * answers it after two measured frame periods, but not sooner than 16 ms and
+ * not later than 250 ms. A live link always answers first. */
+#define TICK_FALLBACK_MIN_NS 16000000ull
+#define TICK_FALLBACK_MAX_NS 250000000ull
 /* Application-defined event subtype that only wakes a waiting dispatch. */
 #define LOOP_WAKE_SUBTYPE 0x5953
 /* Wait bound while some loop descriptor cannot be watched with kqueue. */
@@ -67,8 +74,8 @@ struct cocoa_surface {
     YaslView *view;
     CAMetalLayer *layer;
     id<MTLCommandQueue> software_queue;
-    id<MTLBuffer> software_buffer;
-    NSUInteger software_buffer_capacity;
+    /* The staging buffers of the CPU pixels. See software_stage.h. */
+    struct software_stages *software_stages;
     CADisplayLink *link;
 
     struct cocoa_surface *parent;
@@ -99,7 +106,10 @@ struct cocoa_surface {
     /* Extent of the frame in pixels, valid while did_present is set. */
     struct yasl_private_vector2i shown_size;
     unsigned idle_frames;
+    /* One coalesced frame intent of an application-drawn surface waits for the
+     * next display tick. A fallback timer answers it when no tick comes. */
     bool want_draw;
+    yasl_private_timer_id tick_timer;
     bool frame_due;
     bool unpaced;
     bool rendering;
@@ -163,6 +173,44 @@ struct cocoa_display {
 };
 
 static struct cocoa_display darwin_ctx;
+
+/* The wait of the fallback that answers a frame intent when no display tick
+ * comes. Two frame periods is longer than one tick, so a live link always
+ * answers first. */
+static uint64_t tick_wait_ns(const struct cocoa_surface *w)
+{
+    uint64_t wait = yasl_private_clock_refresh_ns(w->clock.refresh_ns) * 2;
+    if (wait < TICK_FALLBACK_MIN_NS)
+        wait = TICK_FALLBACK_MIN_NS;
+    if (wait > TICK_FALLBACK_MAX_NS)
+        wait = TICK_FALLBACK_MAX_NS;
+    return wait;
+}
+
+static void cancel_tick_timer(struct cocoa_surface *w)
+{
+    if (!w->tick_timer)
+        return;
+    yasl_private_surface_del_timer(&w->base, w->tick_timer);
+    w->tick_timer = 0;
+}
+
+/* Answers the frame intent when no display tick arrived, so a request never
+ * waits for a tick that cannot come. */
+static uint64_t tick_fallback(void *ud, yasl_private_timer_id id, uint64_t interval_ns)
+{
+    (void)id;
+    (void)interval_ns;
+    struct cocoa_surface *w = ud;
+    w->tick_timer = 0;
+    if (!w->want_draw)
+        return 0;
+    w->want_draw = false;
+    yasl_private_surface_notify_frame_shown(&w->base);
+    if (darwin_ctx.loop)
+        yasl_private_loop_kick(darwin_ctx.loop);
+    return 0;
+}
 
 static void drag_end(struct cocoa_display *d, enum yasl_private_drag_end how)
 {
@@ -736,6 +784,22 @@ static NSCursor *cocoa_cursor(enum yasl_private_cursor cursor)
     (void)sender;
     return NO;
 }
+/* A display mode change alters the refresh rate of a screen. Wake the link so
+ * it measures the new cadence, and apply the size that the change made. A
+ * frame that already waits still waits for its tick. */
+- (void)applicationDidChangeScreenParameters:(NSNotification *)notification
+{
+    (void)notification;
+    for (int i = 0; i < darwin_ctx.count; i++) {
+        struct cocoa_surface *w = darwin_ctx.windows[i];
+        if (w->destroyed || w->closed)
+            continue;
+        w->idle_frames = 0;
+        if (w->link.paused)
+            w->link.paused = NO;
+        sync_size(w, false);
+    }
+}
 @end
 
 static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingInfo> sender)
@@ -899,10 +963,28 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
     struct cocoa_surface *w = self.surface;
     if (!w || w->closed)
         return;
-    CFTimeInterval period = link.targetTimestamp - link.timestamp;
-    if (period > 0.0 && period < 0.25)
+    double period = link ? yasl_private_clock_link_period(link.timestamp, link.duration,
+                                                         link.targetTimestamp)
+                         : 0.0;
+    if (period > 0.0)
         w->clock.refresh_ns = period * 1e9;
     w->frame_due = true;
+    if (w->base.presenter != YASL_PRIVATE_PRESENTER_CPU) {
+        /* The application draws this surface. One tick answers one coalesced
+         * frame intent, so a sustained draw follows the display. */
+        if (!w->want_draw || (w->base.state & YASL_PRIVATE_STATE_SUSPENDED)) {
+            if (++w->idle_frames >= LINK_IDLE_FRAMES)
+                link.paused = YES;
+            return;
+        }
+        w->idle_frames = 0;
+        w->want_draw = false;
+        cancel_tick_timer(w);
+        yasl_private_surface_notify_frame_shown(&w->base);
+        if (darwin_ctx.loop)
+            yasl_private_loop_kick(darwin_ctx.loop);
+        return;
+    }
     if (!w->want_draw || (w->base.state & YASL_PRIVATE_STATE_SUSPENDED)) {
         if (++w->idle_frames >= LINK_IDLE_FRAMES)
             link.paused = YES;
@@ -1417,7 +1499,15 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
 - (void)windowDidChangeScreen:(NSNotification *)notification
 {
     (void)notification;
-    sync_size(self.surface, false);
+    struct cocoa_surface *w = self.surface;
+    sync_size(w, false);
+    /* The link follows the window to its new screen. Wake it so it measures
+     * the new cadence. A frame that already waits still waits for its tick. */
+    if (w && !w->closed) {
+        w->idle_frames = 0;
+        if (w->link.paused)
+            w->link.paused = NO;
+    }
 }
 
 /* The close button is a request, as on Wayland and X11: the app destroys the
@@ -1473,29 +1563,36 @@ bool cocoa_surface_present(struct cocoa_surface *w, const struct yasl_private_fr
             return false;
         NSUInteger row_bytes = ((NSUInteger)w->size.x * 4 + 255) & ~(NSUInteger)255;
         NSUInteger length = row_bytes * (NSUInteger)w->size.y;
-        if (!w->software_buffer || w->software_buffer_capacity < length) {
-            NSUInteger capacity = (NSUInteger)grown_capacity(w->software_buffer_capacity, length);
-            id<MTLBuffer> grown = [w->layer.device newBufferWithLength:capacity
-                                                               options:MTLResourceStorageModeShared];
-            if (!grown) return false;
-            [w->software_buffer release];
-            w->software_buffer = grown;
-            w->software_buffer_capacity = capacity;
+        if (!w->software_stages)
+            w->software_stages = software_stages_new(w->layer.device);
+        /* The blit of the last frame can still read its buffer, so the frame
+         * takes a buffer that no started command reads. Every buffer is in use:
+         * the frame draws nothing and comes back at the next display frame. */
+        struct software_stage *stage = software_stage_acquire(w->software_stages, length);
+        if (!stage) return false;
+        id<MTLBuffer> buffer = (id<MTLBuffer>)software_stage_buffer(stage);
+        if (!buffer) {
+            software_stage_cancel(w->software_stages, stage);
+            return false;
         }
-        id<MTLBuffer> buffer = w->software_buffer;
-        if (!buffer) return false;
         for (int y = 0; y < w->size.y; y++)
             memcpy((char *)buffer.contents + (NSUInteger)y * row_bytes,
                    w->pixels + (size_t)y * w->size.x, (size_t)w->size.x * 4);
         id<MTLCommandBuffer> command = [w->software_queue commandBuffer];
         id<MTLBlitCommandEncoder> blit = [command blitCommandEncoder];
-        if (!blit) return false;
+        if (!command || !blit) {
+            software_stage_cancel(w->software_stages, stage);
+            return false;
+        }
         id<CAMetalDrawable> drawable = w->drawable;
         [blit copyFromBuffer:buffer sourceOffset:0 sourceBytesPerRow:row_bytes
            sourceBytesPerImage:length sourceSize:MTLSizeMake(w->size.x, w->size.y, 1)
                     toTexture:drawable.texture destinationSlice:0 destinationLevel:0
             destinationOrigin:MTLOriginMake(0, 0, 0)];
         [blit endEncoding];
+        /* The command reads the buffer from the commit on, and it returns the
+         * buffer when it completed. */
+        software_stage_finish(w->software_stages, stage, command);
         if (w->transaction) {
             /* The layer presents with the Core Animation transaction of the live
              * resize. The drawable must go out after the command is scheduled. */
@@ -1729,12 +1826,46 @@ void cocoa_display_flush(struct cocoa_display *d)
 void cocoa_surface_schedule_redraw(struct cocoa_surface *w)
 {
     if (!w || w->closed) return;
+    w->idle_frames = 0;
     if (w->base.presenter != YASL_PRIVATE_PRESENTER_CPU) {
-        yasl_private_surface_notify_refresh(&w->base);
+        /* The application draws this surface itself. The next display tick
+         * answers the intent, so a sustained draw follows the display. A
+         * fallback timer answers it when the window is off screen, so a
+         * request never waits for a tick that cannot come. The tick is the
+         * usual answer, so a stale interval cannot hold the draw back. */
+        /* A paused link means that the window drew nothing for a while, so
+         * there is no display cadence in flight. Answer at once, and the wake
+         * draws without a wait. From the next frame on, the link runs again
+         * and its ticks pace the draws. A link that still runs, or that cannot
+         * run here, keeps the answer on the tick or on the fallback. */
+        uint64_t now = yasl_private_loop_now_ns();
+        uint64_t interval = yasl_private_clock_refresh_ns(w->clock.refresh_ns);
+        if (w->link.paused && !w->unpaced && w->base.frame_requested && !w->want_draw &&
+            (!w->base.frame_answered_ns || now - w->base.frame_answered_ns >= interval)) {
+            w->idle_frames = 0;
+            cancel_tick_timer(w);
+            /* Answer this intent at once, then let the link run again: its ticks
+             * pace the draws that follow. A link that stayed paused would keep
+             * the answer of every later request here, with no display cadence.
+             * A link that occlusion paused stays paused. */
+            if (!(w->base.state & YASL_PRIVATE_STATE_SUSPENDED))
+                w->link.paused = NO;
+            yasl_private_surface_notify_frame_shown(&w->base);
+            yasl_private_loop_wake(darwin_ctx.loop);
+            return;
+        }
+        w->want_draw = true;
+        if (w->base.frame_requested && !w->tick_timer)
+            w->tick_timer = yasl_private_surface_add_timer(&w->base, tick_wait_ns(w),
+                                                          tick_fallback, w);
+        /* Occlusion pauses the link. The exposure handler asks for a frame
+         * again, which unpauses it here. */
+        if (!(w->base.state & YASL_PRIVATE_STATE_SUSPENDED) && w->link.paused)
+            w->link.paused = NO;
+        yasl_private_loop_wake(darwin_ctx.loop);
         return;
     }
     w->want_draw = true;
-    w->idle_frames = 0;
     if (w->link.paused) {
         w->frame_due = true;
         w->link.paused = NO;
@@ -1966,7 +2097,7 @@ static void surface_free(struct cocoa_surface *w)
 {
     [w->mouse_down release];
     [w->link release];
-    [w->software_buffer release];
+    software_stages_free(w->software_stages);
     [w->software_queue release];
     [w->view release];
     [w->controller release];
@@ -2772,6 +2903,23 @@ static void impl_surface_schedule_redraw(struct yasl_surface *s)
     cocoa_surface_schedule_redraw((struct cocoa_surface *)s);
 }
 
+/* A frame request wakes the tick gate of the window, and the next display tick
+ * answers it. For the CPU presenter the gate is the display flush. No frame
+ * here draws at once, so a request waits for the display at every rate. */
+static void impl_surface_wake_frame_request(struct yasl_surface *s)
+{
+    cocoa_surface_schedule_redraw((struct cocoa_surface *)s);
+}
+
+/* An application-drawn surface waits for the display tick that answers its
+ * frame intent. The fallback timer answers it when no tick comes. The CPU
+ * presenter presents in the display flush, so it waits for no frame. */
+static bool impl_surface_frame_in_flight(const struct yasl_surface *s)
+{
+    const struct cocoa_surface *w = (const struct cocoa_surface *)s;
+    return w && w->base.presenter != YASL_PRIVATE_PRESENTER_CPU && w->want_draw;
+}
+
 static bool impl_surface_present(struct yasl_surface *s, const struct yasl_private_framebuffer *fb, const struct yasl_private_damage_list *damage)
 {
     return cocoa_surface_present((struct cocoa_surface *)s, fb, damage);
@@ -2936,6 +3084,8 @@ const struct yasl_private_backend_ops yasl_private_cocoa_backend = {
     .surface_set_callbacks = impl_surface_set_callbacks,
     .surface_set_title = impl_surface_set_title,
     .surface_schedule_redraw = impl_surface_schedule_redraw,
+    .surface_wake_frame_request = impl_surface_wake_frame_request,
+    .surface_frame_in_flight = impl_surface_frame_in_flight,
     .surface_present = impl_surface_present,
     .surface_geometry = impl_surface_geometry,
     .surface_timing = impl_surface_timing,

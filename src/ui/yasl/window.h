@@ -92,11 +92,15 @@ void window_compose_frame(struct window *w, struct window_frame *frame);
  * Shows the canvas of `frame`. `damage` lists the canvas pixels that
  * changed. NULL, full damage, or an empty list presents the whole canvas.
  * An overflowed list presents its bounds. `presented` is the GPU result
- * for a drawable frame. Returns true when the frame is on screen.
+ * for a drawable frame. For a drawable frame it means that the GPU submitted
+ * the frame, not that a display showed it. Returns true when the surface took
+ * the frame. Only a display report counts as a presentation.
  */
 bool window_present(struct window *w, struct window_frame *frame,
                     const struct damage_list *damage, bool presented);
 bool window_native_add(struct window *w, struct yasl_surface *s);
+/* Marks one native surface as due in the next host pass. */
+void window_native_request_draw(struct window *w, struct yasl_surface *s);
 void window_native_remove(struct window *w, struct yasl_surface *s);
 void window_native_draw(struct window *w, struct yasl_surface *s);
 void window_close(struct window *w);

@@ -19,10 +19,13 @@ if system == 'linux'
     ]
 endif
 
-if system == 'linux'
+if system == 'linux' or system == 'darwin'
     latency_deps = []
     latency_src = files('input_latency_bench.c')
     latency_args = ['-D_POSIX_C_SOURCE=200809L']
+    if system == 'darwin'
+        latency_deps += [dependency('appleframeworks', modules: ['ApplicationServices'])]
+    endif
     if backend == 'wayland'
         wayland_scanner = find_program('wayland-scanner', native: true)
         vk_xml = files('protocols/virtual-keyboard-unstable-v1.xml')

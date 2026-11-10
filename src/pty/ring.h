@@ -12,8 +12,6 @@
 #define PTY_RING_SIZE (4 * 1024 * 1024)
 #define PTY_RING_MASK (PTY_RING_SIZE - 1)
 
-#define PTY_DRAIN_BUDGET_NS 16000000ull
-
 #define PTY_RING_SWITCHES 64
 
 struct pty_ring_cbs {
@@ -39,6 +37,10 @@ struct pty_ring {
     _Atomic int stop;
     bool active;
     size_t switch_at[PTY_RING_SWITCHES];
+    /* The bytes of the next chunk that the consumer hands over. It follows the
+     * parse time of the last chunk, so a pass on data that parses slowly
+     * overruns its budget by less. */
+    size_t chunk;
     alignas(64) _Atomic size_t head;
     _Atomic size_t switch_head;
     _Atomic int need_space;

@@ -18,7 +18,7 @@
 #include "util/proc.h"
 #include "util/time.h"
 
-#define PTY_READ_BUF_SZ 262144
+#define PTY_READ_BUF_SZ PTY_CHUNK_MAX
 
 static alignas(64) char session_read_buf[PTY_READ_BUF_SZ];
 
@@ -125,8 +125,13 @@ static bool drain_pty_fd(struct session *s, int fd, uint64_t deadline)
 {
     bool any = false;
     sync_transport_newline(s, fd);
+    /* One chunk may not fill the whole pass: the parse of one chunk of hard
+     * bytes can take longer than the budget. */
+    if (!s->read_chunk)
+        s->read_chunk = PTY_CHUNK_START;
     for (;;) {
-        ssize_t n = read(fd, session_read_buf, sizeof(session_read_buf));
+        uint64_t t0 = yasl_time_ns();
+        ssize_t n = read(fd, session_read_buf, s->read_chunk);
         if (n < 0 && errno == EINTR)
             continue;
         if (n <= 0)
@@ -134,6 +139,7 @@ static bool drain_pty_fd(struct session *s, int fd, uint64_t deadline)
         any = true;
         session_feed(s, session_read_buf, (size_t)n);
         latency_probe_scan_output(session_read_buf, (size_t)n);
+        s->read_chunk = pty_chunk_next(s->read_chunk, yasl_time_ns() - t0);
         if (yasl_time_ns() >= deadline)
             break;
     }

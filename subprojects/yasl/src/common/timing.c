@@ -1,5 +1,32 @@
 #include "timing.h"
 
+/* A display frame lasts between 1 ms and 0.25 s. */
+#define FRAME_MIN_S 0.001
+#define FRAME_MAX_S 0.25
+/* A stored interval outside this range paces at 60 Hz. */
+#define REFRESH_MIN_NS 1000000.0
+#define REFRESH_MAX_NS 1000000000.0
+#define REFRESH_DEFAULT_NS 16666667u
+
+uint64_t yasl_private_clock_refresh_ns(double refresh_ns)
+{
+    return refresh_ns >= REFRESH_MIN_NS && refresh_ns <= REFRESH_MAX_NS
+               ? (uint64_t)refresh_ns
+               : REFRESH_DEFAULT_NS;
+}
+
+double yasl_private_clock_link_period(double timestamp, double duration, double target)
+{
+    /* The link reports the duration of the display frame of its invocation.
+     * The gap to the target time is the fallback: it covers more than one
+     * frame when the link skips frames. */
+    double period = duration > 0.0 ? duration : target - timestamp;
+    /* Reject a missing value, and a NaN, at once. */
+    if (!(period >= FRAME_MIN_S) || !(period <= FRAME_MAX_S))
+        return 0.0;
+    return period;
+}
+
 uint64_t yasl_private_clock_extend_ms(uint32_t ms, uint64_t now_ns)
 {
     uint64_t now_ms = now_ns / 1000000;

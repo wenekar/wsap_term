@@ -55,8 +55,6 @@
  */
 
 #define FRAME_SLOTS 3
-/* The longest wait for a free slot. A busy GPU then drops the frame. */
-#define SLOT_WAIT_NS (10 * 1000 * 1000)
 #define ATLAS_START_SIZE 2048
 #define ATLAS_MAX_SIZE 4096
 #define ATLAS_MAP_SIZE (1u << 15)
@@ -845,6 +843,8 @@ static void grid_cell(void *ctx, int col, const struct render_cell *cell,
             return;
         }
         if (e.kind != KIND_NONE) {
+            bool double_w = (b->line_size != WSAP_VTCORE_LINE_SINGLE);
+            int cell_w = double_w ? 2 * geo->cw : geo->cw;
             int cell_x = geo->rect.x + col * cell_w;
             int x_off = double_w ? 2 * e.x_offset : e.x_offset;
             int split = geo->cw - e.x_offset;
@@ -1218,15 +1218,22 @@ static size_t align_up(size_t n, size_t a)
     return (n + a - 1) & ~(a - 1);
 }
 
-/* Takes a slot, or returns NULL when the GPU is too busy. */
+/* Takes a slot, or returns NULL when the GPU still reads every slot. The main
+ * thread never waits for one: three slots mean that a free slot exists unless
+ * the GPU is three frames behind, and a wait cannot catch up then. The window
+ * drops the frame and asks again at its next display tick, so a busy GPU costs
+ * no input or PTY time. */
 static struct frame_slot *slot_acquire(struct render_gpu *g)
 {
-    struct frame_slot *slot = &g->slots[g->next_slot];
-    dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, SLOT_WAIT_NS);
-    if (dispatch_semaphore_wait(slot->ready, timeout) != 0)
-        return NULL;
-    g->next_slot = (g->next_slot + 1) % FRAME_SLOTS;
-    return slot;
+    for (int i = 0; i < FRAME_SLOTS; i++) {
+        unsigned index = (g->next_slot + (unsigned)i) % FRAME_SLOTS;
+        struct frame_slot *slot = &g->slots[index];
+        if (dispatch_semaphore_wait(slot->ready, DISPATCH_TIME_NOW) != 0)
+            continue;
+        g->next_slot = (index + 1) % FRAME_SLOTS;
+        return slot;
+    }
+    return NULL;
 }
 
 /*
@@ -1234,6 +1241,10 @@ static struct frame_slot *slot_acquire(struct render_gpu *g)
  * layer presents with the transaction of Core Animation. Then the drawable
  * must present after the command is scheduled, or the frame does not
  * appear with the new size.
+ *
+ * The completed handler frees the frame slot. It reports GPU completion, not
+ * presentation: a display reports the presentation later, through the handler
+ * that the window attaches in window_metal_draw().
  */
 static void commit_and_present(id<MTLCommandBuffer> cb, id<CAMetalDrawable> drawable,
                                dispatch_semaphore_t ready, bool transaction)
@@ -1254,18 +1265,28 @@ static void commit_and_present(id<MTLCommandBuffer> cb, id<CAMetalDrawable> draw
     }
 }
 
-/* Encodes the staged glyph uploads into the atlas. */
-static bool encode_uploads(struct render_gpu *g, struct frame_slot *slot, id<MTLCommandBuffer> cb)
+/* Copies the staged glyph pixels into the upload buffer of the slot. The blit
+ * that reads them comes later, in encode_uploads(). */
+static bool stage_uploads(struct render_gpu *g, struct frame_slot *slot)
 {
     struct atlas *a = &g->atlas;
     if (!a->n_uploads)
         return true;
     if (!ensure_buffer(g, &slot->upload, a->stage_used))
         return false;
+    memcpy(slot->upload.contents, a->stage, a->stage_used);
+    return true;
+}
+
+/* Encodes the staged glyph uploads into the atlas. */
+static bool encode_uploads(struct render_gpu *g, struct frame_slot *slot, id<MTLCommandBuffer> cb)
+{
+    struct atlas *a = &g->atlas;
+    if (!a->n_uploads)
+        return true;
     id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
     if (!blit)
         return false;
-    memcpy(slot->upload.contents, a->stage, a->stage_used);
     for (uint32_t i = 0; i < a->n_uploads; i++) {
         const struct upload *u = &a->uploads[i];
         [blit copyFromBuffer:slot->upload
@@ -1294,6 +1315,24 @@ static void set_scissor(id<MTLRenderCommandEncoder> enc, struct rect2i r)
         (NSUInteger)r.x, (NSUInteger)r.y, (NSUInteger)r.width, (NSUInteger)r.height }];
 }
 
+/* The drawable holds the pixels of `size`. A resize between the build of the
+ * frame and the drawable gives a mismatch, and the frame is dropped. */
+static bool drawable_size_ok(const struct framebuffer *fb, id<CAMetalDrawable> drawable)
+{
+    id<MTLTexture> texture = drawable.texture;
+    return texture && texture.width == (NSUInteger)fb->size.x &&
+           texture.height == (NSUInteger)fb->size.y;
+}
+
+/* The drawable of the frame. It takes the drawable from the layer when the
+ * frame data is ready, so the drawable pool is held for the encode alone. */
+static id<CAMetalDrawable> frame_drawable(struct framebuffer *fb)
+{
+    if (!fb->drawable && fb->acquire)
+        fb->drawable = fb->acquire(fb->acquire_ud);
+    return (id<CAMetalDrawable>)fb->drawable;
+}
+
 static bool encode_frame(struct render_gpu *g, struct frame_slot *slot, struct framebuffer *fb,
                          uint32_t base)
 {
@@ -1304,12 +1343,6 @@ static bool encode_frame(struct render_gpu *g, struct frame_slot *slot, struct f
         offsets[i] = total;
         total += align_up((size_t)g->streams[i].n * STREAM_STRIDE[i], STREAM_ALIGN);
     }
-    if (!ensure_buffer(g, &slot->instances, total ? total : STREAM_ALIGN))
-        return false;
-    for (int i = 0; i < ST_COUNT; i++)
-        if (g->streams[i].n)
-            memcpy((uint8_t *)slot->instances.contents + offsets[i], g->streams[i].data,
-                   (size_t)g->streams[i].n * STREAM_STRIDE[i]);
 
     id<MTLCommandBuffer> cb = [g->queue commandBuffer];
     if (!cb || !encode_uploads(g, slot, cb))
@@ -1366,8 +1399,10 @@ static bool encode_frame(struct render_gpu *g, struct frame_slot *slot, struct f
     return true;
 }
 
-static bool draw_frame(struct render_gpu *g, struct frame_slot *slot, struct framebuffer *fb,
-                       const struct render_frame *frame)
+/* Builds the instance lists and the glyph uploads of one frame into a slot.
+ * No drawable is held while this runs. */
+static bool prepare_frame(struct render_gpu *g, struct frame_slot *slot, struct framebuffer *fb,
+                          const struct render_frame *frame)
 {
     bool built = false;
     for (int attempt = 0; attempt < 2 && !built; attempt++) {
@@ -1378,31 +1413,59 @@ static bool draw_frame(struct render_gpu *g, struct frame_slot *slot, struct fra
             break;
     }
     glyph_cache_flush_frame();
-    if (built && encode_frame(g, slot, fb, frame->base))
-        return true;
-    /* The map can hold glyphs that were staged and never uploaded. */
-    atlas_reset(g);
-    return false;
+    if (!built) {
+        /* The map can hold glyphs that were staged and never uploaded. */
+        atlas_reset(g);
+        return false;
+    }
+    size_t offsets[ST_COUNT];
+    size_t total = 0;
+    for (int i = 0; i < ST_COUNT; i++) {
+        offsets[i] = total;
+        total += align_up((size_t)g->streams[i].n * STREAM_STRIDE[i], STREAM_ALIGN);
+    }
+    if (!ensure_buffer(g, &slot->instances, total ? total : STREAM_ALIGN) ||
+        !stage_uploads(g, slot)) {
+        atlas_reset(g);
+        return false;
+    }
+    for (int i = 0; i < ST_COUNT; i++)
+        if (g->streams[i].n)
+            memcpy((uint8_t *)slot->instances.contents + offsets[i], g->streams[i].data,
+                   (size_t)g->streams[i].n * STREAM_STRIDE[i]);
+    return true;
 }
 
 enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surface *s,
                                        struct framebuffer *fb, const struct render_frame *frame)
 {
     (void)s;
-    if (!g || !fb || !frame || !fb->drawable || fb->size.x <= 0 || fb->size.y <= 0)
+    if (!g || !fb || !frame || (!fb->drawable && !fb->acquire) || fb->size.x <= 0 ||
+        fb->size.y <= 0)
         return RENDER_GPU_UNUSED;
     struct frame_slot *slot = slot_acquire(g);
     if (!slot)
         return RENDER_GPU_DROPPED;
-    bool presented = false;
+    enum render_gpu_status status = RENDER_GPU_UNUSED;
     @autoreleasepool {
-        presented = draw_frame(g, slot, fb, frame);
+        if (prepare_frame(g, slot, fb, frame)) {
+            id<CAMetalDrawable> drawable = frame_drawable(fb);
+            if (!drawable || !drawable_size_ok(fb, drawable)) {
+                /* The drawable is gone, or a resize changed its size after the
+                 * frame data was built. Nothing is drawn or presented. */
+                atlas_reset(g);
+                status = RENDER_GPU_DROPPED;
+            } else if (encode_frame(g, slot, fb, frame->base)) {
+                status = RENDER_GPU_PRESENTED;
+            } else {
+                /* The map can hold glyphs that were staged and never uploaded. */
+                atlas_reset(g);
+            }
+        }
     }
-    if (!presented) {
+    if (status != RENDER_GPU_PRESENTED)
         dispatch_semaphore_signal(slot->ready);
-        return RENDER_GPU_UNUSED;
-    }
-    return RENDER_GPU_PRESENTED;
+    return status;
 }
 
 /* ---- Presenting CPU pixels ---------------------------------------------- */
@@ -1507,7 +1570,9 @@ static bool present_pixels(struct render_gpu *g, struct frame_slot *slot, struct
         [blit endEncoding];
     }
 
-    id<CAMetalDrawable> drawable = (id<CAMetalDrawable>)fb->drawable;
+    id<CAMetalDrawable> drawable = frame_drawable(fb);
+    if (!drawable || !drawable_size_ok(fb, drawable))
+        return false;
     MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
     pass.colorAttachments[0].texture = drawable.texture;
     pass.colorAttachments[0].loadAction = MTLLoadActionDontCare;
@@ -1531,7 +1596,8 @@ static bool present_pixels(struct render_gpu *g, struct frame_slot *slot, struct
 bool render_gpu_present(struct render_gpu *g, struct render_surface *s, struct framebuffer *fb,
                         const struct damage_list *damage)
 {
-    if (!g || !s || !fb || !fb->drawable || !fb->pixels || fb->size.x <= 0 || fb->size.y <= 0)
+    if (!g || !s || !fb || (!fb->drawable && !fb->acquire) || !fb->pixels ||
+        fb->size.x <= 0 || fb->size.y <= 0)
         return false;
     struct frame_slot *slot = slot_acquire(g);
     if (!slot)
@@ -1650,7 +1716,10 @@ void render_gpu_free(struct render_gpu *g)
     for (int i = 0; i < FRAME_SLOTS; i++) {
         struct frame_slot *slot = &g->slots[i];
         if (slot->ready) {
-            /* A semaphore must have its first value when it is released. */
+            /* A semaphore must have its first value when it is released, so a
+             * command buffer that still reads the slot must finish first. Here
+             * the wait is bounded by the GPU, and freeing a live buffer is
+             * worse than a slow exit. */
             dispatch_semaphore_wait(slot->ready, DISPATCH_TIME_FOREVER);
             dispatch_semaphore_signal(slot->ready);
             dispatch_release(slot->ready);

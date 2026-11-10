@@ -623,14 +623,25 @@ bool yasl_private_frame_present(struct yasl_private_frame *frame, const struct y
 void yasl_private_surface_request_frame(struct yasl_surface *s)
 {
     if (!s) return;
-    yasl_private_surface_schedule_redraw(s);
+    const struct yasl_private_backend_ops *ops = s->display->ops;
+    if (ops->surface_wake_frame_request) {
+        /* The backend answers the request at its next display callback. Wake
+         * that gate only: a raw redraw would answer the request at once. */
+        ops->surface_wake_frame_request(s);
+    } else if (s->presenter == YASL_PRIVATE_PRESENTER_CPU) {
+        /* The CPU presenter draws in the display flush, which the display
+         * paces, so a redraw here cannot outrun it. */
+        yasl_private_surface_schedule_redraw(s);
+    }
+    /* A native request without a gate is answered by the interval timer in
+     * resolve_frame_request(), at the start of a loop step. End the wait so
+     * that step runs. */
     yasl_private_loop_wake(s->display->loop);
 }
 
 static uint64_t refresh_interval_ns(struct yasl_surface *s)
 {
-    double refresh = yasl_private_surface_timing(s).refresh_ns;
-    return refresh >= 1000000.0 && refresh <= 1000000000.0 ? (uint64_t)refresh : 16666667;
+    return yasl_private_clock_refresh_ns(yasl_private_surface_timing(s).refresh_ns);
 }
 
 void yasl_private_surface_notify_frame_shown(struct yasl_surface *s)
@@ -638,6 +649,11 @@ void yasl_private_surface_notify_frame_shown(struct yasl_surface *s)
     if (!s || !s->frame_requested)
         return;
     s->frame_requested = false;
+    /* A late answer retires the interval fallback, so it cannot answer twice. */
+    if (s->frame_timer) {
+        yasl_private_surface_del_timer(s, s->frame_timer);
+        s->frame_timer = 0;
+    }
     s->frame_answered_ns = yasl_private_loop_now_ns();
     s->refresh_owed = true;
 }
@@ -661,7 +677,9 @@ static void resolve_frame_request(struct yasl_surface *s)
 {
     if (!s->frame_requested || yasl_private_loop_timer_armed(s->display->loop, s->frame_timer))
         return;
-    /* The system reports when the frame in flight is shown. */
+    /* The backend answers the request itself while its frame waits, for example
+     * at the next display callback. Do not arm the interval fallback then, so
+     * one answer serves one request. */
     const struct yasl_private_backend_ops *ops = s->display->ops;
     if (ops->surface_frame_in_flight && ops->surface_frame_in_flight(s))
         return;

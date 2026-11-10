@@ -187,8 +187,14 @@ struct yasl_private_backend_ops {
     void (*surface_set_callbacks)(struct yasl_surface *s, const struct yasl_private_window_cbs *cbs, void *ud);
     void (*surface_set_title)(struct yasl_surface *s, const char *title);
     void (*surface_schedule_redraw)(struct yasl_surface *s);
-    /* Optional; true while the system has not yet shown the last presented
-     * frame. Without it, frame requests are paced by the refresh interval. */
+    /* Optional; wakes the gate that answers a frame request, for a backend that
+     * answers the request at its next display callback. It must not schedule a
+     * raw redraw: that would answer the request at once and bypass the pacing.
+     * Without it, a request is paced by the interval and the CPU presenter. */
+    void (*surface_wake_frame_request)(struct yasl_surface *s);
+    /* Optional; true while the backend answers the frame request itself, for
+     * example at its next display callback. Without it, frame requests are
+     * paced by the refresh interval. */
     bool (*surface_frame_in_flight)(const struct yasl_surface *s);
     bool (*surface_present)(struct yasl_surface *s, const struct yasl_private_framebuffer *fb, const struct yasl_private_damage_list *damage);
     /* Optional; NULL means only YASL_PRIVATE_POINTER_NORMAL is supported. Backends that

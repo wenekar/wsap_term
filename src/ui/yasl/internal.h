@@ -28,6 +28,16 @@ struct window_native {
     uint32_t *pixels;
     /* The allocated words of `pixels`. A resize reuses them while they fit. */
     size_t pixels_cap;
+    /* A draw of this surface is due in the next host pass. Each native surface
+     * has its own intent, so a popup refresh draws only that popup. */
+    bool needs_draw;
+    /* The frame of the last draw went to a drawable, and the GPU or the surface
+     * submitted it. A drawable frame that did not submit is asked for again. */
+    bool frame_drawable;
+    bool frame_submitted;
+    /* The presentations of this surface, as the display reports them. It is
+     * NULL for a surface without a Metal layer, which reports no feedback. */
+    struct present_watch *watch;
     bool failing;
 };
 
@@ -113,9 +123,9 @@ struct window {
     int ime_begin;
     int ime_end;
     bool focused;
-    bool needs_draw;
+    /* The configuration permits unpaced presentation: draw at once. */
+    bool unpaced;
     uint64_t wake_ms;
-    bool drawing;
     uint32_t scale_120;
     int modifiers;
     uint32_t bg;

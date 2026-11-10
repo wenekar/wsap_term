@@ -13,6 +13,7 @@
 | [Font API](font-api.md) | Glyph ownership, caches, and thread rules. |
 | [Data layout](data-layout.md) | Cell layout and cache line constraints. |
 | [Fast PTY](fastpty.md) | Transport, stream order, and backpressure. |
+| [High-refresh displays](high-refresh.md) | Frame stages, pacing, and presentation feedback. |
 | [Terminal core](../subprojects/term/README.md) | Standalone builds and embedding. |
 
 Performance reports are in [benchmarks](../benchmarks/).

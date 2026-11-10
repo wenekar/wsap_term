@@ -14,6 +14,7 @@ test_cases = [
     ['paste-test', files('session/write_queue_test.c'), [session_lib, input_lib], deps],
     ['session-cwd-test', files('session/cwd_test.c'), session_lib, deps],
     ['session-exit-order-test', files('session/exit_order_test.c'), session_lib, deps],
+    ['session-drain-flood-test', files('session/drain_flood_test.c'), session_lib, deps],
     ['app-reload-test', files('app/reload_test.c'), app_lib, deps],
     ['drop-test', files('terminal/drop_test.c'), app_lib, deps],
     ['terminal-kind-test', files('terminal/kind_test.c'), app_lib, deps],
@@ -161,6 +162,14 @@ standalone_tests = [
     'anim-test', 'ui-scene-text-test', 'css-clipping-test',
     'metal-render-test',
 ]
+
+# The window cadence test drives a real Cocoa window and its Metal layer. It
+# builds on its own, because the link group renames main for C sources only.
+if system == 'darwin'
+    test_cases += [['window-pacing-test', files('ui/yasl/window_pacing_test.m'), app_lib, deps]]
+    test_cases += [['render-gpu-slot-test', files('render/gpu_slot_test.m'), render_lib, deps]]
+    standalone_tests += ['window-pacing-test', 'render-gpu-slot-test']
+endif
 test_groups = {}
 test_executables = {}
 foreach entry : test_cases
@@ -491,5 +500,6 @@ latency_probe_test = executable(
     c_args: test_c_args,
     include_directories: inc,
     link_with: base_lib,
+    dependencies: [thread_dep],
 )
 test('latency-probe-test', latency_probe_test, env: test_env, suite: ['unit'])
