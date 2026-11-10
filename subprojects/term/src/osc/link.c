@@ -1,4 +1,5 @@
 #include "osc.h"
+#include "../compat.h"
 #include "../internal.h"
 #include "../screen.h"
 #include <stdlib.h>
@@ -7,13 +8,23 @@
 #define WSAP_VTCORE_LINK_MAX 8192
 #define WSAP_VTCORE_LINK_URI_MAX 4096
 
+struct link_entry {
+    uint32_t offset;
+    uint16_t len;
+    bool allocated;
+    uint64_t hash;
+};
+
 struct link_hash_slot {
     uint64_t hash;
     uint16_t id;
 };
 
 struct wsap_vtcore_links {
-    char **uri;
+    char *arena;
+    size_t arena_len;
+    size_t arena_cap;
+    struct link_entry *entries;
     uint16_t *free_ids;
     struct link_hash_slot *hash_table;
     uint32_t hash_cap;
@@ -53,18 +64,19 @@ static bool links_grow(struct wsap_vtcore_links *l)
     uint16_t new_cap = l->capacity == 0 ? 64 : l->capacity < 4096 ? l->capacity * 2 : WSAP_VTCORE_LINK_MAX;
     if (new_cap <= l->capacity)
         return false;
-    char **new_uri = realloc(l->uri, sizeof(char *) * new_cap);
-    if (!new_uri) return false;
+    struct link_entry *new_entries = realloc(l->entries, sizeof(*new_entries) * new_cap);
+    if (!new_entries)
+        return false;
     uint16_t *new_free = malloc(sizeof(uint16_t) * new_cap);
     if (!new_free) {
-        l->uri = new_uri;
+        l->entries = new_entries;
         return false;
     }
     uint32_t new_hash_cap = (uint32_t)new_cap * 2;
     struct link_hash_slot *new_hash = calloc(new_hash_cap, sizeof(*new_hash));
     if (!new_hash) {
         free(new_free);
-        l->uri = new_uri;
+        l->entries = new_entries;
         return false;
     }
     uint16_t *old_free = l->free_ids;
@@ -72,8 +84,8 @@ static bool links_grow(struct wsap_vtcore_links *l)
     if (l->capacity)
         memcpy(new_free, old_free, sizeof(uint16_t) * l->capacity);
     free(old_free);
-    memset(new_uri + l->capacity, 0, sizeof(char *) * (new_cap - l->capacity));
-    l->uri = new_uri;
+    memset(new_entries + l->capacity, 0, sizeof(*new_entries) * (new_cap - l->capacity));
+    l->entries = new_entries;
     l->capacity = new_cap;
 
     free(l->hash_table);
@@ -81,8 +93,8 @@ static bool links_grow(struct wsap_vtcore_links *l)
     l->hash_cap = new_hash_cap;
 
     for (int i = 0; i + 1 < l->next; i++) {
-        if (l->uri[i])
-            links_insert_hash(l, hash_uri(l->uri[i]), (uint16_t)(i + 1));
+        if (l->entries[i].allocated)
+            links_insert_hash(l, l->entries[i].hash, (uint16_t)(i + 1));
     }
     return true;
 }
@@ -100,25 +112,70 @@ static void links_gc(struct wsap_vtcore *t, struct wsap_vtcore_links *l)
     uint64_t mark[WSAP_VTCORE_LINK_MAX / 64] = { 0 };
     links_mark_id(t->cur_link, mark, l->capacity);
     wsap_vtcore_style_gc(t, mark, l->capacity);
-    l->free_count = 0;
+
+    uint32_t dead = 0;
     for (int i = 0; i + 1 < l->next; i++) {
-        if (l->uri[i] && !(mark[i >> 6] & (1ull << (i & 63)))) {
-            free(l->uri[i]);
-            l->uri[i] = NULL;
-        }
-        if (!l->uri[i])
-            l->free_ids[l->free_count++] = (uint16_t)(i + 1);
+        if (l->entries[i].allocated && !(mark[i >> 6] & (1ull << (i & 63))))
+            dead++;
     }
-    if (l->hash_table && l->hash_cap) {
+    if (dead == 0)
+        return;
+
+    uint32_t needed_bytes = 0;
+    for (int i = 0; i + 1 < l->next; i++) {
+        struct link_entry *e = &l->entries[i];
+        if (e->allocated && (mark[i >> 6] & (1ull << (i & 63))))
+            needed_bytes += (uint32_t)e->len + 1;
+    }
+
+    if (needed_bytes == 0) {
+        free(l->arena);
+        l->arena = NULL;
+        l->arena_len = 0;
+        l->arena_cap = 0;
+    } else if (needed_bytes < l->arena_len) {
+        size_t new_cap = wsap_vtcore_grow_cap(512, needed_bytes);
+        char *packed = malloc(new_cap);
+        if (packed) {
+            uint32_t new_len = 0;
+            for (int i = 0; i + 1 < l->next; i++) {
+                struct link_entry *e = &l->entries[i];
+                if (e->allocated && (mark[i >> 6] & (1ull << (i & 63)))) {
+                    memcpy(&packed[new_len], &l->arena[e->offset], (size_t)e->len + 1);
+                    e->offset = new_len;
+                    new_len += (uint32_t)e->len + 1;
+                }
+            }
+            free(l->arena);
+            l->arena = packed;
+            l->arena_len = new_len;
+            l->arena_cap = new_cap;
+        }
+    }
+
+    l->free_count = 0;
+    if (l->hash_table && l->hash_cap)
         memset(l->hash_table, 0, sizeof(*l->hash_table) * l->hash_cap);
-        for (int i = 0; i + 1 < l->next; i++) {
-            if (l->uri[i])
-                links_insert_hash(l, hash_uri(l->uri[i]), (uint16_t)(i + 1));
+
+    for (int i = 0; i + 1 < l->next; i++) {
+        struct link_entry *e = &l->entries[i];
+        if (e->allocated) {
+            if (!(mark[i >> 6] & (1ull << (i & 63)))) {
+                e->allocated = false;
+                e->len = 0;
+                e->offset = 0;
+                e->hash = 0;
+                l->free_ids[l->free_count++] = (uint16_t)(i + 1);
+            } else {
+                links_insert_hash(l, e->hash, (uint16_t)(i + 1));
+            }
+        } else {
+            l->free_ids[l->free_count++] = (uint16_t)(i + 1);
         }
     }
 }
 
-static uint16_t links_find(const struct wsap_vtcore_links *l, const char *uri, uint64_t h)
+static uint16_t links_find(const struct wsap_vtcore_links *l, const char *uri, size_t len, uint64_t h)
 {
     if (!l->hash_table || !l->hash_cap)
         return 0;
@@ -130,8 +187,12 @@ static uint16_t links_find(const struct wsap_vtcore_links *l, const char *uri, u
             return 0;
         if (slot->hash == h) {
             uint16_t id = slot->id;
-            if (id && id <= l->capacity && l->uri[id - 1] && !strcmp(l->uri[id - 1], uri))
-                return id;
+            if (id && id <= l->capacity) {
+                const struct link_entry *e = &l->entries[id - 1];
+                if (e->allocated && e->len == (uint16_t)len &&
+                    !memcmp(&l->arena[e->offset], uri, len))
+                    return id;
+            }
         }
         idx = (idx + 1) & mask;
     }
@@ -152,7 +213,8 @@ static uint16_t links_alloc(struct wsap_vtcore *t, struct wsap_vtcore_links *l)
 
 static uint16_t links_intern(struct wsap_vtcore *t, const char *uri)
 {
-    if (!*uri || strlen(uri) > WSAP_VTCORE_LINK_URI_MAX)
+    size_t len = strlen(uri);
+    if (len == 0 || len > WSAP_VTCORE_LINK_URI_MAX)
         return 0;
     struct wsap_vtcore_links *l = t->links;
     if (!l) {
@@ -163,16 +225,33 @@ static uint16_t links_intern(struct wsap_vtcore *t, const char *uri)
         t->links = l;
     }
     uint64_t h = hash_uri(uri);
-    uint16_t id = links_find(l, uri, h);
+    uint16_t id = links_find(l, uri, len, h);
     if (!id) {
         id = links_alloc(t, l);
         if (!id)
             return 0;
-        l->uri[id - 1] = wsap_vtcore_strdup(uri);
-        if (!l->uri[id - 1]) {
-            l->free_ids[l->free_count++] = id;
-            return 0;
+        size_t extra = len + 1;
+        if (l->arena_len + extra > l->arena_cap) {
+            size_t new_cap = wsap_vtcore_grow_cap(l->arena_cap ? l->arena_cap * 2 : 512,
+                                           l->arena_len + extra);
+            char *next = realloc(l->arena, new_cap);
+            if (!next) {
+                l->free_ids[l->free_count++] = id;
+                return 0;
+            }
+            l->arena = next;
+            l->arena_cap = new_cap;
         }
+        uint32_t off = (uint32_t)l->arena_len;
+        memcpy(&l->arena[off], uri, extra);
+        l->arena_len += extra;
+
+        struct link_entry *e = &l->entries[id - 1];
+        e->offset = off;
+        e->len = (uint16_t)len;
+        e->hash = h;
+        e->allocated = true;
+
         links_insert_hash(l, h, id);
     }
     return id;
@@ -190,7 +269,7 @@ void wsap_vtcore_osc8(struct wsap_vtcore *t, const char *params)
 const char *wsap_vtcore_osc8_url_at(const struct wsap_vtcore *t, int col, int row)
 {
     const struct wsap_vtcore_links *l = t->links;
-    if (!l || col < 0 || col >= t->cols)
+    if (!l || !l->arena || col < 0 || col >= t->cols)
         return NULL;
     const struct cell *cells = wsap_vtcore_screen_view_row(t, row);
     if (!cells)
@@ -201,7 +280,10 @@ const char *wsap_vtcore_osc8_url_at(const struct wsap_vtcore *t, int col, int ro
     uint16_t id = e ? e->link : 0;
     if (!id || id > l->capacity)
         return NULL;
-    return l->uri[id - 1];
+    const struct link_entry *entry = &l->entries[id - 1];
+    if (!entry->allocated)
+        return NULL;
+    return &l->arena[entry->offset];
 }
 
 void wsap_vtcore_osc8_cleanup(struct wsap_vtcore *t)
@@ -209,9 +291,8 @@ void wsap_vtcore_osc8_cleanup(struct wsap_vtcore *t)
     struct wsap_vtcore_links *l = t->links;
     if (!l)
         return;
-    for (uint16_t i = 0; i < l->capacity; i++)
-        free(l->uri[i]);
-    free(l->uri);
+    free(l->arena);
+    free(l->entries);
     free(l->free_ids);
     free(l->hash_table);
     free(l);

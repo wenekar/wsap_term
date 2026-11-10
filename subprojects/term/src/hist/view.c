@@ -42,7 +42,11 @@ static bool view_matches(const struct hist_view *v, const struct hist *h, int co
 
 static bool current(const struct hist_view *v, const struct hist *h, int cols)
 {
-    return v->indexed && v->cap && v->fenwick && v->counts && view_matches(v, h, cols);
+    if (!v->indexed || !view_matches(v, h, cols))
+        return false;
+    if (h->lines == 0)
+        return true;
+    return v->cap && v->fenwick && v->counts;
 }
 
 bool wsap_vtcore_hist_view_sync(struct hist_view *v, const struct hist *h, int cols)
@@ -50,20 +54,39 @@ bool wsap_vtcore_hist_view_sync(struct hist_view *v, const struct hist *h, int c
     if (current(v, h, cols))
         return true;
     uint64_t first = hist_first_id(h), end = hist_end_id(h);
+    if (h->lines == 0) {
+        free(v->fenwick);
+        free(v->counts);
+        v->fenwick = NULL;
+        v->counts = NULL;
+        v->cap = 0;
+        v->total_rows = 0;
+        v->first_id = first;
+        v->end_id = end;
+        v->index_cols = cols;
+        v->epoch = h->index_epoch;
+        v->head = h->head;
+        v->tail = h->tail;
+        v->last_cells = 0;
+        v->indexed = true;
+        return true;
+    }
+
     bool rebuild = !v->indexed || v->index_cols != cols || v->epoch != h->index_epoch ||
                    first < v->first_id || first >= v->end_id || end < v->end_id;
     if (!rebuild) {
         uint64_t changed = first - v->first_id + end - v->end_id;
         rebuild = changed > v->cap / 4;
     }
-    if (h->lines > v->cap || !v->cap) {
+    uint32_t target_cap = wsap_vtcore_next_pow2_32(h->lines < 16 ? 16 : h->lines);
+    if (target_cap == UINT32_MAX)
+        return false;
+    bool need_resize = !v->cap || h->lines > v->cap || (v->cap > 16 && target_cap * 4 <= v->cap);
+    if (need_resize) {
         if (h->lines > (UINT32_C(1) << 31))
             return false;
-        uint32_t cap = wsap_vtcore_next_pow2_32(h->lines < 16 ? 16 : h->lines);
-        if (cap == UINT32_MAX)
-            return false;
-        uint64_t *tree = calloc((size_t)cap + 1, sizeof(*tree));
-        uint32_t *counts = calloc(cap, sizeof(*counts));
+        uint64_t *tree = malloc(((size_t)target_cap + 1) * sizeof(*tree));
+        uint32_t *counts = malloc((size_t)target_cap * sizeof(*counts));
         if (!tree || !counts) {
             free(tree);
             free(counts);
@@ -73,7 +96,7 @@ bool wsap_vtcore_hist_view_sync(struct hist_view *v, const struct hist *h, int c
         free(v->counts);
         v->fenwick = tree;
         v->counts = counts;
-        v->cap = cap;
+        v->cap = target_cap;
         rebuild = true;
     }
     if (rebuild) {

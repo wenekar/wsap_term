@@ -346,6 +346,29 @@ static void test_osc8(void)
     wsap_vtcore_free(t);
 }
 
+static void test_osc8_sweep_compaction(void)
+{
+    struct wsap_vtcore *t = osc_test_term();
+    reset_captures();
+
+    write_seq(t, "\033[1;1H");
+    for (int i = 0; i < 50; i++) {
+        char seq[64];
+        int n = snprintf(seq, sizeof(seq), "\033]8;;https://test.link/%d\033\\X\010", i);
+        tt_write(t, seq, (size_t)n);
+    }
+    assert_link(t, 0, 0, "https://test.link/49");
+
+    /* Fill beyond link limit to force GC and compaction */
+    for (int i = 50; i < 8300; i++) {
+        char seq[64];
+        int n = snprintf(seq, sizeof(seq), "\033]8;;https://test.link/%d\033\\Y\010", i);
+        tt_write(t, seq, (size_t)n);
+    }
+    assert_link(t, 0, 0, "https://test.link/8299");
+    wsap_vtcore_free(t);
+}
+
 static bool text_is(char *(*get)(const struct wsap_vtcore *),
                     const struct wsap_vtcore *t, const char *want)
 {
@@ -1164,6 +1187,7 @@ int main(void)
 {
     test_osc52();
     test_osc8();
+    test_osc8_sweep_compaction();
     test_sgr_reset_keeps_link();
     test_osc_misc();
     test_host_name_notify();

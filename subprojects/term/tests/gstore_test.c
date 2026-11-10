@@ -243,6 +243,34 @@ static void test_alternate_screen_clusters_survive_sweep(void)
     wsap_vtcore_free(t);
 }
 
+static void test_gstore_arena_compaction(void)
+{
+    struct wsap_vtcore *t = wsap_vtcore_new(&(struct wsap_vtcore_options){
+        .size = { .x = 20, .y = 4 }, .scrollback = 10
+    });
+    assert(t);
+
+    uint32_t c3[3] = { 'A', 0x0308, 0x0301 };
+    uint32_t h = wsap_vtcore_gstore_intern(t->gstore, c3, 3);
+    assert(wsap_vtcore_grapheme_is_handle(h));
+
+    wsap_vtcore_feed(t, "A\xcc\x88\xcc\x81", 5, 0);
+    wsap_vtcore_gstore_sweep(t->gstore, t);
+
+    uint32_t out[WSAP_VTCORE_GRAPHEME_MAX_LEN] = {0};
+    int n = wsap_vtcore_gstore_expand(t->gstore, h, out, WSAP_VTCORE_GRAPHEME_MAX_LEN);
+    assert(n == 3);
+    assert(out[0] == 'A' && out[1] == 0x0308 && out[2] == 0x0301);
+
+    wsap_vtcore_feed(t, "\033[2J\033[Hx", 8, 0);
+    wsap_vtcore_gstore_sweep(t->gstore, t);
+
+    n = wsap_vtcore_gstore_expand(t->gstore, h, out, WSAP_VTCORE_GRAPHEME_MAX_LEN);
+    assert(n == 1 && out[0] == 0xFFFD);
+
+    wsap_vtcore_free(t);
+}
+
 int main(void)
 {
     test_direct_unit();
@@ -250,6 +278,7 @@ int main(void)
     test_screen_clusters_survive_sweep();
     test_more_than_65536_clusters();
     test_alternate_screen_clusters_survive_sweep();
+    test_gstore_arena_compaction();
     puts("PASS: gstore tests");
     return 0;
 }

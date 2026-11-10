@@ -234,22 +234,38 @@ void wsap_vtcore_gstore_sweep(struct gstore *g, struct wsap_vtcore *t)
         }
     }
 
-    uint32_t new_arena_len = 0;
-    uint32_t *packed = g->arena ? malloc(g->arena_cap * sizeof(*packed)) : NULL;
-    if (packed) {
-        for (uint32_t i = 0; i < g->entries_count; i++) {
-            struct gentry *e = &g->entries[i];
-            if (e->allocated && e->mark && e->len > 2) {
-                size_t extra = (size_t)(e->len - 2);
-                memcpy(&packed[new_arena_len], &g->arena[e->offset],
-                       extra * sizeof(*packed));
-                e->offset = new_arena_len;
-                new_arena_len += (uint32_t)extra;
-            }
-        }
+    uint32_t needed_arena_len = 0;
+    for (uint32_t i = 0; i < g->entries_count; i++) {
+        const struct gentry *e = &g->entries[i];
+        if (e->allocated && e->mark && e->len > 2)
+            needed_arena_len += (uint32_t)(e->len - 2);
+    }
+
+    if (needed_arena_len == 0) {
         free(g->arena);
-        g->arena = packed;
-        g->arena_len = new_arena_len;
+        g->arena = NULL;
+        g->arena_len = 0;
+        g->arena_cap = 0;
+    } else if (needed_arena_len < g->arena_len) {
+        size_t new_cap = wsap_vtcore_grow_cap(512, needed_arena_len);
+        uint32_t *packed = malloc(new_cap * sizeof(*packed));
+        if (packed) {
+            uint32_t new_arena_len = 0;
+            for (uint32_t i = 0; i < g->entries_count; i++) {
+                struct gentry *e = &g->entries[i];
+                if (e->allocated && e->mark && e->len > 2) {
+                    size_t extra = (size_t)(e->len - 2);
+                    memcpy(&packed[new_arena_len], &g->arena[e->offset],
+                           extra * sizeof(*packed));
+                    e->offset = new_arena_len;
+                    new_arena_len += (uint32_t)extra;
+                }
+            }
+            free(g->arena);
+            g->arena = packed;
+            g->arena_len = new_arena_len;
+            g->arena_cap = new_cap;
+        }
     }
 
     g->free_head = 0;
@@ -285,9 +301,13 @@ void wsap_vtcore_gstore_sweep(struct gstore *g, struct wsap_vtcore *t)
         }
     }
 
+    uint32_t dead = (g->live_count > live) ? (g->live_count - live) : 0;
     g->live_count = live;
     g->last_live = live;
-    g->sweep_threshold = live * 2;
+    uint32_t allowance = 1024;
+    if (dead < 256)
+        allowance = 2048;
+    g->sweep_threshold = live + allowance;
     if (g->sweep_threshold < 1024)
         g->sweep_threshold = 1024;
 }
