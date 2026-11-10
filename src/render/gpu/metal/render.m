@@ -44,10 +44,10 @@
  * upload buffer, and a semaphore that the command buffer signals.
  *
  * Failure. The build of a frame can fail on memory, and on a full atlas. A
- * full atlas gets one retry: the atlas resets, and it grows once to the
- * maximum size. Any other failure resets the atlas too, because the map can
- * hold glyphs that were staged but never uploaded. The frame is then
- * RENDER_GPU_UNUSED, and the CPU paints it.
+ * full atlas gets one retry: the atlas resets, and its texture doubles in
+ * size up to the maximum. Any other failure resets the atlas too, because
+ * the map can hold glyphs that were staged but never uploaded. The frame is
+ * then RENDER_GPU_UNUSED, and the CPU paints it.
  *
  * Blending. All pipelines write premultiplied color and blend in the
  * sRGB space of the drawable. Subpixel glyphs draw in three passes, one for
@@ -55,7 +55,7 @@
  */
 
 #define FRAME_SLOTS 3
-#define ATLAS_START_SIZE 2048
+#define ATLAS_START_SIZE 1024
 #define ATLAS_MAX_SIZE 4096
 #define ATLAS_MAP_SIZE (1u << 15)
 #define ATLAS_MAP_LIMIT (ATLAS_MAP_SIZE / 2)
@@ -394,7 +394,8 @@ static void atlas_reset(struct render_gpu *g)
     atlas_clear(&g->atlas);
 }
 
-/* Resets the atlas and makes it bigger, once. Returns false when the texture fails. */
+/* Resets the atlas and doubles its texture, up to the maximum size. Returns
+ * false when the texture fails. */
 static bool atlas_recycle(struct render_gpu *g)
 {
     struct atlas *a = &g->atlas;
