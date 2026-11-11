@@ -28,6 +28,18 @@ struct window_host_hooks {
     void (*quit)(void *ud);
     void (*reopen)(void *ud);
     bool (*command)(void *ud, struct window *w, enum input_shortcut action);
+    /*
+     * The service step of a host pass. The owner applies its deferred model
+     * changes here, such as the destruction of closed content. No frame, no
+     * input event, and no content callback is on the stack. `now_ms` is the
+     * frame time of the pass. The frames that follow in the same pass use
+     * the same time.
+     *
+     * A modal step runs while the platform blocks the loop, as during a
+     * macOS live resize. The platform then refuses to create or destroy a
+     * surface. A modal step must not open or close a window.
+     */
+    void (*service)(void *ud, uint64_t now_ms, bool modal);
     void *ud;
 };
 
@@ -38,6 +50,8 @@ struct window_host {
     uint64_t service;
     uint64_t wake;
     uint64_t wake_at_ms;
+    /* The frame time of the running host pass, or 0 outside a pass. */
+    uint64_t frame_ms;
 
     struct window **windows;
     int count;
@@ -113,6 +127,8 @@ struct window_drag_target {
 void window_set_drag_target(struct window *w, const struct window_drag_target *t,
                             void *ud);
 
+/* The frame time. Inside a host pass, this is the time of the pass. Outside
+ * a pass, it is the current time. */
 uint64_t window_frame_time_ms(struct window *w);
 uint32_t window_scale_120(const struct window *w);
 #define WINDOW_DEFAULT_COLS 132

@@ -80,10 +80,15 @@ void app_tabs_set_theme(struct window *window,
                         const struct wsap_vtcore_theme *theme);
 /* Runs the tab commands and leaves the other shortcuts to the content. */
 void app_tabs_shortcut(struct window *window, enum input_shortcut sc);
-/* Applies the pending tab changes before the UI layout. */
-void app_tabs_prepare(struct window *window, uint64_t now_ms);
-/* Applies the pending tab changes, lays the UI out, and commits the
- * geometry of the active content. */
+/* The service step of the tab model. Call it outside every frame and every
+ * content callback, as the host pass does. It retires each closing tab whose
+ * time is due: the window drops its bar entry, and the model then destroys
+ * the content. The time is the frame time of the pass. A window closed but
+ * not reaped keeps its tabs until the host reaps it. The step opens and
+ * closes no window. */
+void app_tabs_service(struct app_tab_model *model, uint64_t now_ms);
+/* Mounts the active content, lays the UI out, and commits the geometry of
+ * the active content. */
 void app_tabs_relayout(struct window *window);
 
 #endif

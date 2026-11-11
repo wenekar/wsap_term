@@ -10,9 +10,9 @@ It applies to the tab ownership refactor.
 | `src/app/tabs/` | The tab model, and one tab view for each window. The model owns each terminal-content handle and the native drag. A view holds tab order, selection, close state, the tab bar, previews, and command palette. |
 | `src/terminal/` | One session and its terminal widgets, snapshot, font, zoom, selection, scroll state, and terminal input. |
 | `src/ui/widgets/tabbar.*` | Tab-bar drawing, animation, focus, and hit testing. It sends actions to the app. |
-| `src/ui/yasl/` | Native windows, surfaces, input routing, scale, and frame scheduling. It has no tab policy. |
+| `src/ui/yasl/` | Native windows, surfaces, input routing, scale, and frame scheduling. Each host pass calls the service step of the owner. It has no tab policy. |
 | `src/session/` | The term core, PTY, input queue, and PTY size notification. |
-| `src/app/app.c` | Window creation and frame composition. It alone calls the renderer. It owns the tab model. |
+| `src/app/app.c` | Window creation and frame composition. It alone calls the renderer. It owns the tab model. Its host hook runs the tab service step. |
 
 A terminal-content handle has no tab array or active-tab index.
 It has no tab-bar, palette, preview, or window-transfer state.
@@ -86,7 +86,7 @@ The app interface supplies these operations:
 - Move a tab to another window of the app.
 - Detach a tab into a new app window.
 - Handle tab-bar actions, preview requests, and tab shortcuts.
-- Prepare app state before UI layout and terminal snapshot capture.
+- Retire closing tabs in the service step of the host pass.
 
 Use an `app_tabs_` prefix for this interface.
 Remove tab ownership operations from the terminal interface.
@@ -109,8 +109,18 @@ A window never destroys a terminal.
 Only the model calls `terminal_destroy()`.
 When a window goes, its destroy hook gives its IDs back to the model.
 The model then destroys those tabs.
-The host reaps a closed window at the start of a service pass.
+The host reaps a closed window at the start of a host pass.
 No terminal callback is on the stack at that time.
+
+The model destroys a terminal only from these places:
+
+- The service step of the host pass.
+- The window reap.
+- A drag end or a failed transfer. These run outside a terminal callback.
+- App teardown.
+
+Callbacks and hooks can mark a tab as closing, select a tab, or reorder
+tabs. They never destroy a terminal.
 
 The bind and unbind helpers move a tab into and out of a window.
 Unbind leaves the tab in the model, and no window holds it.
@@ -146,11 +156,22 @@ Closing the last live tab closes the window.
 
 The app may keep an owned label as a display entry for a close animation.
 That entry is not a live terminal tab.
-The app must retire session content at a safe loop boundary.
+The service step of the host pass retires session content.
+It runs outside every frame, every input event, and every content callback.
 Do not free content while one of its callbacks is on the stack.
 Widget animation completion must not decide when a session is destroyed.
 An app-owned presentation deadline retires the display entry.
-The app schedules a frame for this deadline even if the widget is idle.
+The step first removes each due entry from its window.
+The window then updates its bar and labels, invalidates its layout, and
+asks for a frame.
+Then the model destroys the content.
+A window that is closed but not reaped keeps its tabs until the reap.
+The root tick returns the deadline, so a frame or a wake follows it even if
+the widget is idle.
+The service step and the frames of one pass use the same time.
+Thus no frame sees a deadline that the step did not apply.
+`app_destroy` destroys the remaining content after the host reaps the
+windows, because a destroying host runs no more service steps.
 
 Publish the full label and selection state after each model change.
 Do not wait for root prepare to repair an incomplete tab mutation.
@@ -195,16 +216,35 @@ Keep the latest pending size and the final trailing notification.
 
 ## Frame order
 
+Each host pass runs these stages in order:
+
+1. Reap the closed windows. Each window gives its tabs back to the model.
+2. Run the service step of the app.
+3. Drain the input of each window.
+4. Run the service step again, with the frame time of the pass.
+5. Draw the windows that are due.
+
+The tab model changes in events, in content reports, and in the service
+step.
+It never changes in a frame.
 For the main surface, the app runs these stages in order:
 
-1. Apply pending app tab changes and safe content retirement.
-2. Tick and lay out the UI.
-3. Commit active terminal geometry.
-4. Capture the active terminal snapshot.
-5. Build the UI scene and compose the frame.
-6. Present and schedule the next frame.
+1. Tick and lay out the UI.
+2. Commit active terminal geometry.
+3. Capture the active terminal snapshot.
+4. Build the UI scene and compose the frame.
+5. Present and schedule the next frame.
 
-Read the active handle again after an operation that can close a window.
+A frame closes no window and changes no tab.
+Thus the frame reads the active handle once.
+The tab service step opens and closes no window.
+
+During a macOS live resize, the platform blocks the loop, and no host pass
+runs.
+The refresh callback then runs a modal service step before it draws.
+The platform refuses to create or destroy a surface at that time.
+A modal step must not open or close a window.
+
 Never use a snapshot from before a geometry change in the same frame.
 If scene preparation changes the content bounds, skip the frame and retry.
 Keep text-blink scheduling correct when snapshot capture moves after layout.

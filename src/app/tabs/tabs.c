@@ -598,25 +598,48 @@ void app_tabs_set_theme(struct window *window,
     window_redraw(window);
 }
 
-void app_tabs_prepare(struct window *window, uint64_t now_ms)
+/* Takes the due closing entries out of one window. Their tabs stay in the
+ * model, and no window holds them. */
+static void retire_entries(struct app_tabs *tabs, uint64_t now_ms)
 {
-    struct app_tabs *tabs = app_tabs_of(window);
-    if (!tabs)
-        return;
     bool changed = false;
-    for (int i = tabs->count - 1; i >= 0; i--) {
+    for (int i = tabs ? tabs->count - 1 : -1; i >= 0; i--) {
         struct app_tab *entry = app_tabs_entry(tabs, i);
-        if (!entry || app_tab_is_live(entry) || !entry->content ||
-            now_ms < entry->retire_at_ms)
+        if (!entry || app_tab_is_live(entry) || now_ms < entry->retire_at_ms)
             continue;
-        /* This runs at the frame boundary, never inside a content
-         * callback. */
-        app_tab_model_destroy(tabs->spec.model, detach_entry(tabs, i));
+        (void)detach_entry(tabs, i);
         changed = true;
     }
-    if (changed) {
-        app_tabs_publish(tabs);
-        ui_widget_invalidate(&tabs->root, UI_WIDGET_INVALIDATE_MEASURE);
+    if (!changed)
+        return;
+    /* The bar gives back the space of the closing entries. The content takes
+     * it at the next layout. No frame follows by itself, so ask for one. */
+    app_tabs_publish(tabs);
+    ui_widget_invalidate(&tabs->root, UI_WIDGET_INVALIDATE_MEASURE);
+    if (window_surface(tabs->window))
+        window_redraw(tabs->window);
+}
+
+void app_tabs_service(struct app_tab_model *model, uint64_t now_ms)
+{
+    if (!model)
+        return;
+    /* First each window drops its due entries. This changes no model entry
+     * count, so the table stays in place. */
+    for (int i = 0; i < model->count; i++) {
+        const struct app_tab *entry = &model->tabs[i];
+        if (!app_tab_is_live(entry) && entry->retire_at_ms <= now_ms &&
+            entry->window && !window_closed(entry->window))
+            retire_entries(app_tabs_of(entry->window), now_ms);
     }
-    app_tabs_mount_content(tabs);
+    /* Then the model destroys each closing tab that no window holds. The tab
+     * of a running drag stays, because the end of the drag settles it. */
+    for (int i = model->count - 1; i >= 0; i--) {
+        if (i >= model->count)
+            continue;
+        const struct app_tab *entry = &model->tabs[i];
+        if (!app_tab_is_live(entry) && !entry->window &&
+            entry->id != model->flight.tab)
+            app_tab_model_destroy(model, entry->id);
+    }
 }

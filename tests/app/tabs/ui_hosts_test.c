@@ -53,7 +53,8 @@ static void settle(struct fixture *f)
             break;
         now = next > now ? next : now + 16;
     }
-    app_tabs_prepare(f->w, window_frame_time_ms(f->w) + APP_TABS_CLOSE_MS);
+    app_tabs_service(&f->app.app->tabs,
+                     window_frame_time_ms(f->w) + APP_TABS_CLOSE_MS);
     ui_surface_prepare(ui);
 }
 

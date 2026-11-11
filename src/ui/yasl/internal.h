@@ -140,6 +140,9 @@ void window_destroy(struct window *w);
 void window_host_dispatch_event(struct window_host *host, const struct yasl_event *ev);
 bool window_inject_pop(struct window *w, struct input_event *ev);
 void window_host_report_empty(struct window_host *host, struct window *last);
+/* Runs the service step of the owner. See `window_host_hooks.service`. */
+void window_host_run_service(struct window_host *host, uint64_t now_ms,
+                             bool modal);
 
 extern struct window_host *window_ui_host_last;
 

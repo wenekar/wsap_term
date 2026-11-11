@@ -558,7 +558,7 @@ static void close_tab_releases_scrollbar_capture_test(void)
     app_tabs_close(w, app_tabs_active_index(w));
     assert(ui_surface_captured(window_ui_surface(w)) == NULL);
     settle_tabbar(w, viewport);
-    app_tabs_prepare(w, window_frame_time_ms(w) + APP_TABS_CLOSE_MS);
+    app_tabs_service(&a.app->tabs, window_frame_time_ms(w) + APP_TABS_CLOSE_MS);
     assert(app_tabs_count(w) == 1);
     assert(ui_surface_captured(window_ui_surface(w)) == NULL);
 

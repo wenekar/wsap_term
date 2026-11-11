@@ -22,6 +22,7 @@ test_cases = [
     ['app-tabs-rows-test', files('app/tabs/rows_test.c'), app_lib, deps],
     ['app-tabs-cwd-test', files('app/tabs/cwd_test.c'), app_lib, deps],
     ['app-tabs-transfer-test', files('app/tabs/transfer_test.c'), app_lib, deps],
+    ['app-tabs-service-test', files('app/tabs/service_test.c'), app_lib, deps],
     ['stats-test', files('ui/yasl/stats_test.c'), ui_yasl_lib, deps],
     ['pty-fast-test', files('pty/pty_test.c'), pty_lib, [thread_dep, dl_dep]],
     ['pty-destroy-test', files('pty/pty_destroy_test.c'), pty_lib, [thread_dep, dl_dep]],

@@ -115,9 +115,15 @@ event callback. Each loop step then does these things, in this order:
 
 Work schedules itself. Each event, `window_redraw()`,
 `window_inject_input()` and `window_close()` arm the host service. The host
-service is a zero-delay timer. It frees closed windows, drains input, and
-draws the windows that asked for a frame. Thus the loop never waits while
-work is pending.
+service is a zero-delay timer. It frees closed windows, runs the service step
+of the app, drains input, runs the service step again, and draws the windows
+that asked for a frame. Thus the loop never waits while work is pending.
+
+The service step is the `service` hook of the host. The app applies its
+deferred model changes there, outside every frame. For example, it destroys
+the content of a closed tab after the close animation. The second step and
+the frames of the pass use one time. `window_frame_time_ms()` returns that
+time during the pass.
 
 A window can ask for a redraw while it draws, for the next frame of an
 animation. Then `window_redraw()` calls `yasl_surface_request_frame()`. That

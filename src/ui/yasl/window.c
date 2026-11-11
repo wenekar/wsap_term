@@ -68,7 +68,9 @@ void window_redraw(struct window *w)
 
 uint64_t window_frame_time_ms(struct window *w)
 {
-    (void)w;
+    /* A host pass gives one time to its service step and to its frames. */
+    if (w && w->host && w->host->frame_ms)
+        return w->host->frame_ms;
     return yasl_time_ns() / 1000000;
 }
 
@@ -339,12 +341,23 @@ static void host_on_event(void *userdata, const yasl_event *ev)
     window_host_dispatch_event(userdata, ev);
 }
 
+/*
+ * yasl calls this only while the platform blocks the loop, as during a macOS
+ * live resize. No host pass runs then. The draw runs a modal service step
+ * first, so the owner still applies its due changes. The step and the frame
+ * use one time. yasl refuses to create or destroy a surface here, so the
+ * modal step opens and closes no window.
+ */
 static void on_refresh(yasl_surface *s)
 {
     struct window *w = yasl_surface_get_userdata(s);
     if (!w || w->closed || w->suspended)
         return;
-    if (s == w->surface && window_mounted(w)) {
+    struct window_host *host = w->host;
+    uint64_t outer_ms = host->frame_ms;
+    host->frame_ms = yasl_time_ns() / 1000000;
+    window_host_run_service(host, host->frame_ms, true);
+    if (!w->closed && s == w->surface && window_mounted(w)) {
         struct yasl_surface_info info = yasl_surface_get_info(s);
         struct window_geometry g = {
             .size = { .x = info.pixel_width, .y = info.pixel_height },
@@ -357,6 +370,7 @@ static void on_refresh(yasl_surface *s)
         }
     }
     window_native_draw(w, s);
+    host->frame_ms = outer_ms;
 }
 
 struct window *window_create(struct window_host *host, const struct window_spec *spec)

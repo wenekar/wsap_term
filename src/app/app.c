@@ -37,24 +37,19 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
     struct rect2i content_bounds = {0};
     if (main) {
         latency_probe_stage(LATENCY_STAGE_RENDER_START);
-        /* The tab model lands first, then the UI layout, then the content
-         * geometry, and only then the snapshot. */
-        app_tabs_prepare(w, now_ms);
-        if (!window_closed(w)) {
-            window_ui_prepare_frame(w, now_ms);
-            ui_surface_prepare(window_ui_surface(w));
-        }
-        /* An operation can close the window. Read the active content again. */
+        /* The service step of the host pass already applied the tab model,
+         * with the time of this frame. The UI layout comes first, then the
+         * content geometry, and only then the snapshot. Nothing in a frame
+         * closes a window or changes the tab model. */
+        window_ui_prepare_frame(w, now_ms);
+        ui_surface_prepare(window_ui_surface(w));
         content = app_tabs_active(w);
-        if (content)
-            terminal_commit_geometry(content);
         if (content) {
+            terminal_commit_geometry(content);
             terminal_prepare(content, now_ms);
             content_bounds = terminal_input_widget(content)->bounds;
         }
     }
-    if (window_closed(w))
-        return;
 
     struct window_ui_frame ui = {0};
     if (!window_ui_build_frame(w, frame->surface, now_ms, &ui))
@@ -96,8 +91,7 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
     struct render_result result = render_draw(a->renderer, &frame->target, &render);
     if (window_present(w, frame, &result.damage, result.presented) && main)
         latency_probe_complete();
-    if (!window_closed(w))
-        window_ui_frame_done(w, frame, now_ms);
+    window_ui_frame_done(w, frame, now_ms);
 }
 
 static bool app_paint_scene(void *ud, struct font_instance *font,
@@ -282,6 +276,16 @@ static void host_quit(void *ud)
     app_stop(ud);
 }
 
+/* The tab model changes here, outside every frame and every content
+ * callback. Retirement opens and closes no window, so a modal step runs it
+ * too. */
+static void host_service(void *ud, uint64_t now_ms, bool modal)
+{
+    (void)modal;
+    struct app *a = ud;
+    app_tabs_service(&a->tabs, now_ms);
+}
+
 static void host_reopen(void *ud)
 {
     struct app *a = ud;
@@ -454,6 +458,7 @@ struct app *app_create(int argc, char **argv, int *status)
                          .quit = host_quit,
                          .reopen = host_reopen,
                          .command = host_command,
+                         .service = host_service,
                          .ud = a,
                      });
     look_set_listener(a->look, look_changed, a);
@@ -467,8 +472,8 @@ void app_destroy(struct app *a)
     window_debug_set_hooks(NULL);
     app_stop(a);
     /* The host reaps the windows, and each window gives its tabs back to the
-     * model. The model then destroys what is left, such as the tab of a
-     * drag that did not end. */
+     * model. A destroying host runs no more service steps. The model then
+     * destroys what is left, such as the tab of a drag that did not end. */
     window_host_destroy(&a->host);
     app_tab_model_fini(&a->tabs);
     yasl_loop_unwatch_signals(a->loop);

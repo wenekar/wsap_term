@@ -122,7 +122,7 @@ static void close_second_tab_restores_grid_test(void)
     assert_grid_fits(first);
 
     uint64_t middle = window_frame_time_ms(w) + APP_TABS_CLOSE_MS / 2;
-    app_tabs_prepare(w, middle);
+    app_tabs_service(&a.app->tabs, middle);
     ui_surface_tick(window_ui_surface(w), middle);
     layout_window(w, viewport);
     assert(vector2i_eq(grid_of(first), closing_grid));
@@ -151,7 +151,7 @@ static void close_second_tab_restores_grid_test(void)
     assert_grid_fits(first);
 
     /* The content grows only after the close presentation ends. */
-    app_tabs_prepare(w, window_frame_time_ms(w) + APP_TABS_CLOSE_MS);
+    app_tabs_service(&a.app->tabs, window_frame_time_ms(w) + APP_TABS_CLOSE_MS);
     layout_window(w, viewport);
     assert(app_tabs_count(w) == 1);
     assert(grid_of(first).y == first_grid.y);
@@ -188,7 +188,7 @@ static void close_many_tabs_before_animation_end_test(void)
     assert(vector2i_eq(grid_of(first), closing_grid));
     assert_grid_fits(first);
 
-    app_tabs_prepare(w, window_frame_time_ms(w) + APP_TABS_CLOSE_MS);
+    app_tabs_service(&a.app->tabs, window_frame_time_ms(w) + APP_TABS_CLOSE_MS);
     layout_window(w, viewport);
     assert(app_tabs_count(w) == 1);
     assert(app_tabs_bar_height(w) == 0);
@@ -232,7 +232,7 @@ static void close_and_reopen_during_animation_test(void)
     assert(rect2i_eq(content_box(third), two_tab_box));
     assert_grid_fits(third);
 
-    app_tabs_prepare(w, window_frame_time_ms(w) + APP_TABS_CLOSE_MS);
+    app_tabs_service(&a.app->tabs, window_frame_time_ms(w) + APP_TABS_CLOSE_MS);
     layout_window(w, viewport);
     assert(app_tabs_count(w) == 2);
     assert(app_tabs_active(w) == third);
@@ -259,14 +259,15 @@ static void close_inactive_tab_keeps_grid_until_presentation_ends_test(void)
     struct rect2i closing_box = content_box(first);
 
     app_tabs_close(w, 1);
-    app_tabs_prepare(w, window_frame_time_ms(w) + APP_TABS_CLOSE_MS / 2);
+    app_tabs_service(&a.app->tabs,
+                     window_frame_time_ms(w) + APP_TABS_CLOSE_MS / 2);
     layout_window(w, viewport);
     assert(app_tabs_active(w) == first);
     assert(app_tabs_count(w) == 1);
     assert(vector2i_eq(grid_of(first), closing_grid));
     assert(rect2i_eq(content_box(first), closing_box));
 
-    app_tabs_prepare(w, window_frame_time_ms(w) + APP_TABS_CLOSE_MS);
+    app_tabs_service(&a.app->tabs, window_frame_time_ms(w) + APP_TABS_CLOSE_MS);
     layout_window(w, viewport);
     assert(vector2i_eq(grid_of(first), full_grid));
     assert(content_box(first).y == 0);
@@ -435,7 +436,7 @@ static void live_shell_rows_follow_the_content_test(void)
     assert(rows == second_grid.y);
     assert(cols == second_grid.x);
 
-    app_tabs_prepare(w, window_frame_time_ms(w) + APP_TABS_CLOSE_MS);
+    app_tabs_service(&a.app->tabs, window_frame_time_ms(w) + APP_TABS_CLOSE_MS);
     layout_window(w, viewport);
     uint64_t end = yasl_time_ns() + (uint64_t)SHELL_WAIT_MS * 1000000ull;
     do {

@@ -103,18 +103,33 @@ static void draw_windows(struct window_host *host)
     }
 }
 
+void window_host_run_service(struct window_host *host, uint64_t now_ms,
+                             bool modal)
+{
+    if (host->hooks.service)
+        host->hooks.service(host->hooks.ud, now_ms, modal);
+}
+
 static uint64_t host_service(void *ud, uint64_t id, uint64_t interval_ns)
 {
     (void)id; (void)interval_ns;
     struct window_host *host = ud;
     host->service = 0;
     window_host_reap(host);
+    /* The owner changes its model outside every frame. The first step
+     * follows the reap. */
+    window_host_run_service(host, yasl_time_ns() / 1000000, false);
     for (int i = host->count - 1; i >= 0; i--) {
         struct window *w = host->windows[i];
         if (w->surface && !w->closed)
             window_drain_input(w);
     }
+    /* The second step follows the input. It and the frames of this pass use
+     * one time, so no frame sees a deadline that the step did not apply. */
+    host->frame_ms = yasl_time_ns() / 1000000;
+    window_host_run_service(host, host->frame_ms, false);
     draw_windows(host);
+    host->frame_ms = 0;
     return 0;
 }
 
