@@ -60,6 +60,7 @@ int platform_exe_path(char *out, size_t n);
 int platform_resource_dir(char *out, size_t n);
 
 void platform_locale_default(char *out, size_t n);
+bool platform_locale_valid(const char *loc);
 char **platform_locales_list(size_t *count);
 
 void platform_close_fds_from(int first);

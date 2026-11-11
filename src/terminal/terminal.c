@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "terminal/internal.h"
+#include "platform/platform.h"
 #include "util/json.h"
 #include "util/time.h"
 
@@ -300,10 +301,16 @@ static bool new_tab_in(struct window *w, const char *cwd)
     int font_size = cur ? cur->font_size : window_host(w)->config->font_size;
     struct tab probe = { .font_size = font_size };
     tab_fit_font(&probe, w, font_size);
+    char default_loc[128];
+    const char *locale = config ? config->locale : NULL;
+    if (!locale || !locale[0] || strcmp(locale, "auto") == 0) {
+        platform_locale_default(default_loc, sizeof(default_loc));
+        locale = default_loc;
+    }
     const struct session_spec spec = {
         .command = config->command,
         .cwd = cwd,
-        .locale = config->locale,
+        .locale = locale,
         .grid = session_grid(w, &probe, size),
         .scrollback = config->scrollback,
         .theme = tw->theme,

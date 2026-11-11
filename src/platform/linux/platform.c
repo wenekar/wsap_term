@@ -11,6 +11,7 @@
 #include <sys/eventfd.h>
 #include <unistd.h>
 #include <gio/gio.h>
+#include <locale.h>
 
 int platform_eventfd(int *wr_fd)
 {
@@ -47,6 +48,17 @@ int platform_resource_dir(char *out, size_t n)
     (void)out;
     (void)n;
     return -1;
+}
+
+bool platform_locale_valid(const char *loc)
+{
+    if (!loc || !loc[0])
+        return false;
+    locale_t l = newlocale(LC_CTYPE_MASK, loc, (locale_t)0);
+    if (!l)
+        return false;
+    freelocale(l);
+    return true;
 }
 
 void platform_locale_default(char *out, size_t n)

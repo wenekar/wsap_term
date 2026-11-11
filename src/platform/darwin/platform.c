@@ -79,8 +79,10 @@ int platform_resource_dir(char *out, size_t n)
     return 0;
 }
 
-static bool locale_valid(const char *loc)
+bool platform_locale_valid(const char *loc)
 {
+    if (!loc || !loc[0])
+        return false;
     locale_t l = newlocale(LC_CTYPE_MASK, loc, NULL);
     if (!l)
         return false;
@@ -107,7 +109,7 @@ void platform_locale_default(char *out, size_t n)
                 else
                     snprintf(cand, sizeof(cand), "%s.UTF-8", raw);
 
-                if (locale_valid(cand))
+                if (platform_locale_valid(cand))
                     snprintf(out, n, "%s", cand);
             }
         }
@@ -136,7 +138,7 @@ char **platform_locales_list(size_t *count)
         if (!dot || strcmp(dot, ".UTF-8") != 0)
             dot = strstr(name, ".utf8");
         if (dot && (strcmp(dot, ".UTF-8") == 0 || strcmp(dot, ".utf8") == 0)) {
-            if (locale_valid(name)) {
+            if (platform_locale_valid(name)) {
                 if (*count == cap) {
                     size_t new_cap = cap * 2;
                     char **new_list = realloc(list, new_cap * sizeof(*list));
