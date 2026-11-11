@@ -9,6 +9,8 @@ import sys
 import tempfile
 import time
 
+from graphics import graphics_env
+
 
 def start_weston(weston, root, env, log):
     process = subprocess.Popen([weston, '--backend=headless', '--renderer=gl', '--socket=yasl-test',
@@ -35,10 +37,8 @@ def main():
         root = Path(directory)
         env = os.environ.copy()
         env.pop('WAYLAND_SOCKET', None)
-        env.update(XDG_RUNTIME_DIR=directory, WAYLAND_DISPLAY='yasl-test', LIBGL_ALWAYS_SOFTWARE='1')
-        lavapipe = next(Path('/usr/share/vulkan/icd.d').glob('*lvp*.json'), None)
-        if lavapipe:
-            env['VK_DRIVER_FILES'] = str(lavapipe)
+        env.update(XDG_RUNTIME_DIR=directory, WAYLAND_DISPLAY='yasl-test')
+        env.update(graphics_env(env))
         with (root/'weston.log').open('w+') as log:
             servers = [start_weston(weston, root, env, log)]
             client = subprocess.Popen([binary], env=env, stdout=subprocess.PIPE, text=True)

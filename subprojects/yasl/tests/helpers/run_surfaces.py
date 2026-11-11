@@ -7,6 +7,8 @@ import sys
 import tempfile
 import time
 
+from graphics import graphics_env
+
 def wait_for(process, ready):
     deadline = time.monotonic() + 12
     while time.monotonic() < deadline:
@@ -26,10 +28,8 @@ def main():
         env = os.environ.copy()
         env.pop('WAYLAND_SOCKET', None)
         env.update(XDG_RUNTIME_DIR=directory, WAYLAND_DISPLAY='yasl-test',
-                   XDG_SESSION_TYPE='wayland', LIBGL_ALWAYS_SOFTWARE='1')
-        lavapipe = next(Path('/usr/share/vulkan/icd.d').glob('*lvp*.json'), None)
-        if lavapipe:
-            env['VK_DRIVER_FILES'] = str(lavapipe)
+                   XDG_SESSION_TYPE='wayland')
+        env.update(graphics_env(env))
         with (root/'weston.log').open('w+') as wl_log, (root/'xwayland.log').open('w+') as x_log:
             try:
                 wl = subprocess.Popen([weston, '--backend=headless', '--renderer=gl',
