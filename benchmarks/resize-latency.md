@@ -30,6 +30,10 @@ time, so each step paid a page fault for each page and one `munmap`.
   that is half as large again as the canvas. It moves the rows in place when
   the size changes. The public contract is the same: a resize keeps the
   overlap and zeroes the rest.
+- `src/platform/linux/platform.c`: `platform_reserve_fds()` expands the
+  file descriptor table of the process to 1024 entries at start-up.
+  This avoids an `expand_fdtable()` RCU synchronization stall during the
+  first swapchain recreation.
 
 ## Method
 
@@ -80,13 +84,23 @@ source rectangle that is larger than the attached buffer is a fatal protocol
 error. The gain is 0.1 ms on a frame that a display shows for 4 ms or more, so
 the risk is larger than the gain.
 
-Three rare cases stay open:
+Two rare cases stay open:
 
-- The first resize after an idle time takes 6 ms to 8 ms in
-  `vkCreateSwapchainKHR`.
 - With output during the drag, one resize frame in 3000 waited 16.7 ms, which
   is one frame of the 60 Hz output. The frame waited for the pacing of an
   earlier content frame.
 - When an acquire returns `VK_SUBOPTIMAL_KHR` and the swapchain stays the
   same, `render_gpu_draw()` and `present_pixels()` acquire a second image and
   do not present the first. This is older than this pass.
+
+## Resolved issues
+
+- The first resize took 6 ms to 8 ms in `vkCreateSwapchainKHR`.
+  The cause was kernel descriptor table expansion in `expand_fdtable()`,
+  which waited for `synchronize_rcu()` in multithreaded processes.
+  The process reached 64 descriptors during the first resize when the old
+  and new swapchains coexisted.
+  Calling `platform_reserve_fds()` expands the table to 1024 descriptors
+  at start-up.
+  Maximum configure-to-resized time across nine runs fell from 5.9 ms - 8.3 ms
+  to 0.77 ms - 1.47 ms. Percentiles did not change.

@@ -166,6 +166,10 @@ void platform_close_fds_from(int first)
         close(fd);
 }
 
+void platform_reserve_fds(void)
+{
+}
+
 void platform_thread_interactive(void)
 {
     pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);

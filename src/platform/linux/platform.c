@@ -92,6 +92,28 @@ void platform_close_fds_from(int first)
     close_range((unsigned)first, ~0u, 0);
 }
 
+/*
+ * The kernel starts a process with room for 64 descriptors. It makes the
+ * table larger when a descriptor number does not fit. In a process with
+ * threads, it then waits for an RCU grace period, which takes 4 ms to 9 ms.
+ * A window reaches 64 descriptors in the first resize, when the old and the
+ * new swapchain exist together, so that frame was late.
+ *
+ * A duplicate at number 1023 makes the table 1024 entries large, which is
+ * 8 KiB of kernel memory. The table does not become smaller when the
+ * duplicate closes.
+ */
+void platform_reserve_fds(void)
+{
+    int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return;
+    int top = fcntl(fd, F_DUPFD_CLOEXEC, 1023);
+    if (top >= 0)
+        close(top);
+    close(fd);
+}
+
 void platform_thread_interactive(void)
 {
 }

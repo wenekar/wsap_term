@@ -65,6 +65,10 @@ char **platform_locales_list(size_t *count);
 
 void platform_close_fds_from(int first);
 
+/* Make room in the descriptor table of the process for the descriptors that
+ * the process opens later. Call this before the first thread starts. */
+void platform_reserve_fds(void);
+
 void platform_thread_interactive(void);
 
 void platform_open_url(const char *url);
