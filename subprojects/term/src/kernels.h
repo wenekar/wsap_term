@@ -460,14 +460,13 @@ static int scan_ascii_lf_neon(const char *buf, int len, uint16_t *ends)
         if (vmaxvq_u8(vorrq_u8(vorrq_u8(b0, b1), vorrq_u8(b2, b3))))
             break;
         uint32_t m01 = scan_masks_pair(n0, n1), m23 = scan_masks_pair(n2, n3);
-        uint32_t base = (uint32_t)i;
-        for (int q = 0; q < 4; q++) {
-            uint32_t m = (q < 2 ? (m01 >> (16 * q)) : (m23 >> (16 * (q - 2)))) & 0xFFFFu;
-            while (m) {
-                ends[++count] = (uint16_t)(base + (uint32_t)__builtin_ctz(m) + 1u);
-                m &= m - 1u;
-            }
-            base += 16u;
+        while (m01) {
+            ends[++count] = (uint16_t)(i + (uint32_t)__builtin_ctz(m01) + 1u);
+            m01 &= m01 - 1u;
+        }
+        while (m23) {
+            ends[++count] = (uint16_t)(i + 32u + (uint32_t)__builtin_ctz(m23) + 1u);
+            m23 &= m23 - 1u;
         }
     }
     return scan_ascii_lf_tail(buf, i, len, ends, count);

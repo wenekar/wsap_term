@@ -1168,6 +1168,29 @@ static int long_lines_avx512(const uint16_t *ends, int *count, int max)
     }
     return j;
 }
+#elif defined(__aarch64__)
+static inline int long_lines_neon(const uint16_t *ends, int *count, int max)
+{
+    int j = 0;
+    uint16x8_t limit = vdupq_n_u16((uint16_t)max);
+    for (; j + 16 <= *count; j += 16) {
+        uint16x8_t s0 = vld1q_u16(ends + j);
+        uint16x8_t e0 = vld1q_u16(ends + j + 1);
+        uint16x8_t s1 = vld1q_u16(ends + j + 8);
+        uint16x8_t e1 = vld1q_u16(ends + j + 9);
+        uint16x8_t b0 = vcgtq_u16(vsubq_u16(e0, s0), limit);
+        uint16x8_t b1 = vcgtq_u16(vsubq_u16(e1, s1), limit);
+        if (WSAP_VTCORE_EXPECT(vmaxvq_u16(vorrq_u16(b0, b1)) != 0, 0)) {
+            for (int k = 0; k < 16; k++) {
+                if (ends[j + k + 1] - ends[j + k] > max) {
+                    *count = j + k;
+                    return j + k;
+                }
+            }
+        }
+    }
+    return j;
+}
 #endif
 
 /* Stream complete lines of printable ASCII. term is the line terminator:
@@ -1209,6 +1232,8 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_lines(struct wsap_vtcore *t, con
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
     if (wsap_vtcore_use_avx512())
         j = long_lines_avx512(ends, &count, max);
+#elif defined(__aarch64__)
+    j = long_lines_neon(ends, &count, max);
 #endif
     for (; j < count; j++) {
         if (ends[j + 1] - ends[j] > max) {
