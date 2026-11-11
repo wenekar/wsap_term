@@ -461,6 +461,18 @@ if get_option('integration_tests')
             is_parallel: false,
             timeout: 60,
         )
+        if has_vulkan
+            test(
+                'x11-vulkan-test',
+                python,
+                args: files('ui/yasl/x11_vulkan_test.py'),
+                depends: [program],
+                env: {'BIN': program.full_path()},
+                suite: 'integration',
+                is_parallel: false,
+                timeout: 60,
+            )
+        endif
     endif
     foreach it : integration_tests
         test(
