@@ -27,6 +27,7 @@ struct session_host {
 struct session_spec {
     const char *command;
     const char *cwd;
+    const char *locale;
     struct vector2i grid;
     int scrollback;
     struct wsap_vtcore_theme theme;

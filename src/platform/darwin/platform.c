@@ -16,6 +16,8 @@
 #include <mach-o/dyld.h>
 #include <pthread/qos.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <locale.h>
+#include <xlocale.h>
 
 int platform_eventfd(int *wr_fd)
 {
@@ -76,6 +78,15 @@ int platform_resource_dir(char *out, size_t n)
     return 0;
 }
 
+static bool locale_valid(const char *loc)
+{
+    locale_t l = newlocale(LC_CTYPE_MASK, loc, NULL);
+    if (!l)
+        return false;
+    freelocale(l);
+    return true;
+}
+
 void platform_locale_default(char *out, size_t n)
 {
     snprintf(out, n, "en_US.UTF-8");
@@ -89,11 +100,14 @@ void platform_locale_default(char *out, size_t n)
                     if (*p == '-')
                         *p = '_';
                 }
-                if (strstr(raw, ".UTF-8") || strstr(raw, ".utf8")) {
-                    snprintf(out, n, "%s", raw);
-                } else {
-                    snprintf(out, n, "%s.UTF-8", raw);
-                }
+                char cand[128];
+                if (strstr(raw, ".UTF-8") || strstr(raw, ".utf8"))
+                    snprintf(cand, sizeof(cand), "%s", raw);
+                else
+                    snprintf(cand, sizeof(cand), "%s.UTF-8", raw);
+
+                if (locale_valid(cand))
+                    snprintf(out, n, "%s", cand);
             }
         }
         CFRelease(locale);

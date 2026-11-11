@@ -53,6 +53,7 @@ static const struct field_info INFO[] = {
     { "cursor-blink", "Cursor blink", "Blink the default cursor in open tabs.", CURSOR },
     { "scrollback", "History lines", "Lines kept by new tabs. 0 disables history.", TERMINAL },
     { "command", "Shell command", "Program for new tabs. Empty uses $SHELL.", TERMINAL },
+    { "locale", "Locale", "Locale for new tabs (e.g. en_US.UTF-8). Empty uses system default.", TERMINAL },
     { "vsync", "Vertical sync", "Frame pacing for new windows.", WINDOW },
     { "fullscreen", "Start fullscreen", "Applies to new terminal windows.", WINDOW },
     { "width", "Window width", "Pixels for new windows. 0 uses cell size.", WINDOW },

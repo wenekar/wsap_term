@@ -93,7 +93,7 @@ static bool terminfo_resolves(const char *name, const char *dirs)
     return false;
 }
 
-static void set_terminal_env(struct pty_env *env)
+static void set_terminal_env(struct pty_env *env, const char *preferred_locale)
 {
     char ti_dirs[16384];
     terminfo_dirs(ti_dirs, sizeof(ti_dirs));
@@ -103,6 +103,12 @@ static void set_terminal_env(struct pty_env *env)
     pty_env_set(env, "COLORTERM", "truecolor");
     pty_env_set(env, "TERM_PROGRAM", "wsap_term");
     pty_env_unset(env, "TERM_PROGRAM_VERSION");
+
+    if (preferred_locale && preferred_locale[0] &&
+        strcmp(preferred_locale, "auto") != 0) {
+        pty_env_set(env, "LANG", preferred_locale);
+        return;
+    }
 
     if (pty_env_get(env, "LANG") || pty_env_get(env, "LC_ALL") ||
         pty_env_get(env, "LC_CTYPE"))
@@ -276,7 +282,7 @@ int pty_plan_env(struct pty_plan *plan, const struct pty_spec *spec,
 {
     struct pty_env *env = &plan->env;
     pty_env_init(env, environ);
-    set_terminal_env(env);
+    set_terminal_env(env, spec ? spec->locale : NULL);
     set_transport_env(env, slave_fd, pipe_wr, sync_name);
     for (size_t i = 0; spec->env && spec->env[i]; i++)
         pty_env_put(env, spec->env[i]);

@@ -27,6 +27,7 @@ struct pty_spec {
     struct vector2i grid;
     const char *command;
     const char *cwd;
+    const char *locale;
     const char *const *env;
 };
 

@@ -277,6 +277,7 @@ static bool start_pty(struct session *s, const struct session_spec *spec)
         .grid = { .x = size.x, .y = size.y },
         .command = spec->command,
         .cwd = spec->cwd,
+        .locale = spec->locale,
         .env = child_env,
     };
     if (pty_spawn(&s->pty, &pty_spec) < 0)

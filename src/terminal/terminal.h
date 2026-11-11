@@ -37,6 +37,7 @@ struct terminal_frame_source {
 
 struct terminal_config {
     char *command;
+    char *locale;
     int scrollback;
     enum wsap_vtcore_cursor_style cursor_style;
     bool cursor_blink;

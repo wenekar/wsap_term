@@ -303,6 +303,7 @@ static bool new_tab_in(struct window *w, const char *cwd)
     const struct session_spec spec = {
         .command = config->command,
         .cwd = cwd,
+        .locale = config->locale,
         .grid = session_grid(w, &probe, size),
         .scrollback = config->scrollback,
         .theme = tw->theme,
