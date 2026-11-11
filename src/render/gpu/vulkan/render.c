@@ -35,6 +35,7 @@
  */
 
 #define FRAME_SLOTS 3
+#define RESIZE_FENCE_WAIT_NS 20000000ull
 #define ATLAS_START_SIZE 1024
 #define ATLAS_MAX_SIZE 4096
 #define ATLAS_MAP_SIZE (1u << 15)
@@ -2013,7 +2014,11 @@ static bool surface_swapchain_ensure(struct render_gpu *g, struct gpu_surface *g
 
 /* ---- Staging and submission --------------------------------------------- */
 
-static struct frame_slot *slot_acquire(struct render_gpu *g)
+/*
+ * Takes a slot. When all slots are busy and wait_ns is positive, wait for the
+ * oldest slot fence. Return NULL when no slot becomes available.
+ */
+static struct frame_slot *slot_acquire(struct render_gpu *g, uint64_t wait_ns)
 {
     for (int i = 0; i < FRAME_SLOTS; i++) {
         unsigned index = (g->next_slot + (unsigned)i) % FRAME_SLOTS;
@@ -2022,6 +2027,14 @@ static struct frame_slot *slot_acquire(struct render_gpu *g)
             vkResetFences(g->device, 1, &slot->fence);
             g->next_slot = (index + 1) % FRAME_SLOTS;
             return slot;
+        }
+    }
+    if (wait_ns) {
+        struct frame_slot *oldest = &g->slots[g->next_slot];
+        if (vkWaitForFences(g->device, 1, &oldest->fence, VK_TRUE, wait_ns) == VK_SUCCESS) {
+            vkResetFences(g->device, 1, &oldest->fence);
+            g->next_slot = (g->next_slot + 1) % FRAME_SLOTS;
+            return oldest;
         }
     }
     return NULL;
@@ -2371,11 +2384,12 @@ static bool encode_frame(struct render_gpu *g, struct frame_slot *slot, struct g
 enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surface *s,
                                        struct framebuffer *fb, const struct render_frame *frame)
 {
-    (void)s;
     if (!g || !fb || !frame || (!fb->drawable && !fb->acquire) || fb->size.x <= 0 ||
         fb->size.y <= 0)
         return RENDER_GPU_UNUSED;
-    struct frame_slot *slot = slot_acquire(g);
+    struct gpu_surface *gs = gpu_surface_of(g, s);
+    bool resizing = fb->transaction || (gs && !vector2i_eq(gs->request_size, fb->size));
+    struct frame_slot *slot = slot_acquire(g, resizing ? RESIZE_FENCE_WAIT_NS : 0);
     if (!slot)
         return RENDER_GPU_DROPPED;
 
@@ -2386,7 +2400,6 @@ enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surfa
             atlas_reset(g);
             status = RENDER_GPU_DROPPED;
         } else {
-            struct gpu_surface *gs = gpu_surface_of(g, s);
             bool unpaced = drawable->unpaced || fb->transaction;
             if (!surface_swapchain_ensure(g, gs, drawable->surface, fb->size, unpaced)) {
                 atlas_reset(g);
@@ -2752,7 +2765,9 @@ bool render_gpu_present(struct render_gpu *g, struct render_surface *s, struct f
     if (!g || !s || !fb || (!fb->drawable && !fb->acquire) || !fb->pixels ||
         fb->size.x <= 0 || fb->size.y <= 0)
         return false;
-    struct frame_slot *slot = slot_acquire(g);
+    struct gpu_surface *gs = gpu_surface_of(g, s);
+    bool resizing = fb->transaction || (gs && !vector2i_eq(gs->request_size, fb->size));
+    struct frame_slot *slot = slot_acquire(g, resizing ? RESIZE_FENCE_WAIT_NS : 0);
     if (!slot)
         return false;
     bool presented = present_pixels(g, slot, s, fb, damage);
