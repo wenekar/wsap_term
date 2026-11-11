@@ -482,12 +482,16 @@ static bool make_choices(struct settings_row *row, struct look *look,
                          size_t *count_out)
 {
     const char *key = row->option.key;
-    size_t count = 0, font_count = 0;
-    char **fonts = NULL;
+    size_t count = 0, font_count = 0, locale_count = 0;
+    char **fonts = NULL, **locales = NULL;
     if (!strcmp(key, "font")) {
         fonts = font_list_families(&font_count);
         if (fonts) qsort(fonts, font_count, sizeof(*fonts), compare_families);
         count = font_count + 2;
+    } else if (!strcmp(key, "locale")) {
+        locales = platform_locales_list(&locale_count);
+        if (locales) qsort(locales, locale_count, sizeof(*locales), compare_families);
+        count = locale_count + 1;
     } else if (!strcmp(key, "theme")) {
         count = (size_t)look_theme_count(look) + 1;
     } else {
@@ -497,6 +501,8 @@ static bool make_choices(struct settings_row *row, struct look *look,
     if (!items) {
         for (size_t i = 0; i < font_count; i++) free(fonts[i]);
         free(fonts);
+        for (size_t i = 0; i < locale_count; i++) free(locales[i]);
+        free(locales);
         return false;
     }
     if (!strcmp(key, "font")) {
@@ -513,6 +519,16 @@ static bool make_choices(struct settings_row *row, struct look *look,
                 return false;
             }
             items[i + 2] = (struct ui_dropdown_item){ family, family };
+        }
+    } else if (!strcmp(key, "locale")) {
+        char def_loc[128];
+        platform_locale_default(def_loc, sizeof(def_loc));
+        char def_label[160];
+        snprintf(def_label, sizeof(def_label), "Default (%s)", def_loc);
+        items[0] = (struct ui_dropdown_item){ strdup(def_label), "" };
+        for (size_t i = 0; i < locale_count; i++) {
+            char *loc = strdup(locales[i]);
+            items[i + 1] = (struct ui_dropdown_item){ loc, loc };
         }
     } else if (!strcmp(key, "theme")) {
         items[0] = (struct ui_dropdown_item){ "Default", "" };
@@ -535,6 +551,8 @@ static bool make_choices(struct settings_row *row, struct look *look,
     }
     for (size_t i = 0; i < font_count; i++) free(fonts[i]);
     free(fonts);
+    for (size_t i = 0; i < locale_count; i++) free(locales[i]);
+    free(locales);
     *items_out = items;
     *count_out = count;
     return true;
@@ -547,6 +565,9 @@ static void free_choices(const struct settings_row *row,
         return;
     if (row->option.key && !strcmp(row->option.key, "font"))
         for (size_t i = 2; i < count; i++)
+            free((char *)items[i].label);
+    if (row->option.key && !strcmp(row->option.key, "locale"))
+        for (size_t i = 0; i < count; i++)
             free((char *)items[i].label);
     free(items);
 }
@@ -580,7 +601,7 @@ static bool init_row(struct settings_row *row, size_t index, struct look *look)
     if (!strncmp(key, "color", 5))
         snprintf(row->label, sizeof(row->label), "ANSI color %s", key + 5);
     row->choice = row->option.kind == OPT_KIND_CHOICE;
-    row->combo = !strcmp(key, "font") || !strcmp(key, "theme");
+    row->combo = !strcmp(key, "font") || !strcmp(key, "theme") || !strcmp(key, "locale");
     snprintf(row->row_id, sizeof(row->row_id), "row-%s", key);
     snprintf(row->title_key, sizeof(row->title_key), "title-%s", key);
     snprintf(row->help_key, sizeof(row->help_key), "help-%s", key);

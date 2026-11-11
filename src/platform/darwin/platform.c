@@ -16,6 +16,7 @@
 #include <mach-o/dyld.h>
 #include <pthread/qos.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <dirent.h>
 #include <locale.h>
 #include <xlocale.h>
 
@@ -112,6 +113,46 @@ void platform_locale_default(char *out, size_t n)
         }
         CFRelease(locale);
     }
+}
+
+char **platform_locales_list(size_t *count)
+{
+    *count = 0;
+    DIR *dir = opendir("/usr/share/locale");
+    if (!dir)
+        return NULL;
+
+    size_t cap = 128;
+    char **list = malloc(cap * sizeof(*list));
+    if (!list) {
+        closedir(dir);
+        return NULL;
+    }
+
+    struct dirent *de;
+    while ((de = readdir(dir)) != NULL) {
+        const char *name = de->d_name;
+        const char *dot = strstr(name, ".UTF-8");
+        if (!dot || strcmp(dot, ".UTF-8") != 0)
+            dot = strstr(name, ".utf8");
+        if (dot && (strcmp(dot, ".UTF-8") == 0 || strcmp(dot, ".utf8") == 0)) {
+            if (locale_valid(name)) {
+                if (*count == cap) {
+                    size_t new_cap = cap * 2;
+                    char **new_list = realloc(list, new_cap * sizeof(*list));
+                    if (!new_list)
+                        break;
+                    list = new_list;
+                    cap = new_cap;
+                }
+                char *dup = strdup(name);
+                if (dup)
+                    list[(*count)++] = dup;
+            }
+        }
+    }
+    closedir(dir);
+    return list;
 }
 
 void platform_close_fds_from(int first)

@@ -54,6 +54,27 @@ void platform_locale_default(char *out, size_t n)
     snprintf(out, n, "en_US.UTF-8");
 }
 
+char **platform_locales_list(size_t *count)
+{
+    *count = 0;
+    static const char *const COMMON[] = {
+        "C.UTF-8", "en_US.UTF-8", "en_GB.UTF-8", "de_DE.UTF-8", "fr_FR.UTF-8",
+        "es_ES.UTF-8", "it_IT.UTF-8", "pt_BR.UTF-8", "pt_PT.UTF-8", "ru_RU.UTF-8",
+        "tr_TR.UTF-8", "zh_CN.UTF-8", "ja_JP.UTF-8", "ko_KR.UTF-8", "nl_NL.UTF-8",
+        "pl_PL.UTF-8", "sv_SE.UTF-8", "uk_UA.UTF-8",
+    };
+    size_t total = sizeof(COMMON) / sizeof(COMMON[0]);
+    char **out = calloc(total + 1, sizeof(*out));
+    if (!out)
+        return NULL;
+    for (size_t i = 0; i < total; i++) {
+        out[*count] = strdup(COMMON[i]);
+        if (out[*count])
+            (*count)++;
+    }
+    return out;
+}
+
 void platform_close_fds_from(int first)
 {
     close_range((unsigned)first, ~0u, 0);
