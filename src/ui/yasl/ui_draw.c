@@ -34,6 +34,12 @@ void window_ui_prepare_frame(struct window *w, uint64_t now_ms)
     struct ui_surface *ui = &ui_of(w)->screen;
     (void)ui_surface_take_frame_request(ui);
     bool animating = ui_surface_tick(&ui_of(w)->screen, now_ms);
+    for (int i = 0; i < ui_of(w)->menu_popups; i++) {
+        struct ui_surface *p_ui = &ui_of(w)->menu_popup[i].ui;
+        (void)ui_surface_take_frame_request(p_ui);
+        if (ui_surface_tick(p_ui, now_ms))
+            animating = true;
+    }
     window_menu_reap(w);
     window_menu_sync(w);
     if (animating)

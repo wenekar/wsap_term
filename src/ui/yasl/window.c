@@ -52,14 +52,18 @@ void window_redraw(struct window *w)
     if (w->unpaced) {
         /* The configuration asked for tearing, so a frame does not wait for
          * the display. */
-        window_native_request_draw(w, w->surface);
+        for (int i = 0; i < w->native_count; i++)
+            if (w->natives[i].surface)
+                window_native_request_draw(w, w->natives[i].surface);
         window_host_schedule(w->host);
         return;
     }
     /* The request paces the draw: the display answers it, so the window cannot
      * draw faster than the display. Requests coalesce, and a request made
      * during a draw is kept. Input is read at once; only the draw waits. */
-    yasl_surface_request_frame(w->surface);
+    for (int i = 0; i < w->native_count; i++)
+        if (w->natives[i].surface)
+            yasl_surface_request_frame(w->natives[i].surface);
 }
 
 uint64_t window_frame_time_ms(struct window *w)
