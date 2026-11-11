@@ -588,7 +588,7 @@ static void clock_evict(struct cell_class *k, int want)
 
 static void stamp(struct cell_class *k, uint32_t slot, uint32_t now)
 {
-    if (k->flags[slot] & SLOT_LIVE) {
+    if (slot < (uint32_t)k->slots && (k->flags[slot] & SLOT_LIVE)) {
         k->stamps[slot] = now;
         k->flags[slot] |= SLOT_REF;
     }

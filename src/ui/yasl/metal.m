@@ -22,6 +22,12 @@ void *window_metal_attach(struct yasl_surface *s, void *device)
     return layer;
 }
 
+void window_metal_detach(void *layer, struct yasl_surface *s)
+{
+    (void)layer;
+    (void)s;
+}
+
 static bool in_live_resize(struct yasl_surface *s)
 {
     struct yasl_native native = {0};

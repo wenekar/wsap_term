@@ -43,6 +43,7 @@ struct window_metal_watch {
 };
 
 void *window_metal_attach(struct yasl_surface *s, void *device);
+void window_metal_detach(void *layer, struct yasl_surface *s);
 
 /*
  * Prepares and submits one frame. `draw` runs once. It sees no drawable, and it

@@ -42,6 +42,7 @@ struct renderer {
     struct cell_cache *cache;
     struct decor_cache *decor;
     struct render_gpu *gpu;
+    bool gpu_initialized;
     struct render_surface scratch;
     bool force_full;
     /* WSAP_RENDER_SCROLL, read once. SCROLL_AUTO (0) follows the cost. */
@@ -124,12 +125,22 @@ struct renderer *renderer_create(const struct render_options *opt)
             goto fail;
         r->cache_workers[i] = r->workers[i].cache;
     }
-    r->gpu = render_gpu_new();
     render_surface_init(&r->scratch);
     return r;
 fail:
     renderer_destroy(r);
     return NULL;
+}
+
+static struct render_gpu *renderer_gpu_ensure(struct renderer *r)
+{
+    if (!r)
+        return NULL;
+    if (!r->gpu_initialized) {
+        r->gpu_initialized = true;
+        r->gpu = render_gpu_new();
+    }
+    return r->gpu;
 }
 
 void renderer_destroy(struct renderer *r)
@@ -157,7 +168,7 @@ void renderer_destroy(struct renderer *r)
 
 void *renderer_device(struct renderer *r)
 {
-    return r ? render_gpu_native_device(r->gpu) : NULL;
+    return r ? render_gpu_native_device(renderer_gpu_ensure(r)) : NULL;
 }
 
 int renderer_isa(const struct renderer *r)
@@ -497,7 +508,7 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
     /* 4. The GPU draws a whole frame or nothing. A frame with no drawable yet
      * asks for one inside the backend, after it builds the frame data. */
     if (gpu_first) {
-        switch (render_gpu_draw(r->gpu, s, fb, frame)) {
+        switch (render_gpu_draw(renderer_gpu_ensure(r), s, fb, frame)) {
         case RENDER_GPU_PRESENTED: {
             render_surface_invalidate(s);
             struct render_result res = result_all();
@@ -629,6 +640,6 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
     }
     /* 11. Present the CPU pixels into a drawable. */
     if (fb->drawable || fb->acquire)
-        res.presented = render_gpu_present(r->gpu, s, fb, &res.damage);
+        res.presented = render_gpu_present(renderer_gpu_ensure(r), s, fb, &res.damage);
     return res;
 }

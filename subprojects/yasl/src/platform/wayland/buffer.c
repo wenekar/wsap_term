@@ -488,26 +488,36 @@ static void commit_buffer(struct wayland_surface *w, int idx)
 
     if (!w->parent) {
         surface_request_presentation_feedback(w);
-        if (w->conn->fifo_mgr && !w->fifo)
+        if (w->conn->fifo_mgr && !w->fifo && !w->tearing)
             w->fifo = wp_fifo_manager_v1_get_fifo(w->conn->fifo_mgr, w->surface);
         if (w->conn->commit_timing_mgr && !w->commit_timer)
             w->commit_timer = wp_commit_timing_manager_v1_get_timer(
                     w->conn->commit_timing_mgr, w->surface);
+        if (w->tearing && w->conn->tearing_mgr && !w->tearing_control) {
+            w->tearing_control = wp_tearing_control_manager_v1_get_tearing_control(
+                    w->conn->tearing_mgr, w->surface);
+            if (w->tearing_control)
+                wp_tearing_control_v1_set_presentation_hint(w->tearing_control,
+                        WP_TEARING_CONTROL_V1_PRESENTATION_HINT_ASYNC);
+        }
     }
-    if (w->fifo) {
+    if (w->fifo && !w->tearing) {
         wp_fifo_v1_wait_barrier(w->fifo);
         wp_fifo_v1_set_barrier(w->fifo);
     }
-    if (w->commit_timer && w->conn->pres_clock_known && w->base.presenter != YASL_PRIVATE_PRESENTER_CPU) {
+    if (w->commit_timer && w->conn->pres_clock_known && w->base.presenter == YASL_PRIVATE_PRESENTER_CPU) {
         uint64_t now = yasl_private_loop_now_ns();
         uint64_t next = yasl_private_clock_next_present_ns(&w->clock);
         bool soon = next > now && next - now < (uint64_t)(w->clock.refresh_ns * 1.5);
         next = conn_mono_to_pres(w->conn, next);
-        if (soon)
+        if (soon) {
+            uint64_t sec = next / 1000000000ull;
+            uint32_t nsec = (uint32_t)(next % 1000000000ull);
             wp_commit_timer_v1_set_timestamp(w->commit_timer,
-                (uint32_t)(next / 1000000000ull >> 32),
-                (uint32_t)(next / 1000000000ull),
-                (uint32_t)(next % 1000000000ull));
+                (uint32_t)(sec >> 32),
+                (uint32_t)sec,
+                nsec);
+        }
     }
 
     if (w->has_pending_serial) {

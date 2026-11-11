@@ -200,6 +200,7 @@ static void test_drawable_attempt(void)
     f.lazy.fresh = true;
     f.ref.fresh = true;
     draw_both(&f, "setup");
+    tterm_feed(&f.tt, "x");
     const struct terminal_frame *tf = tterm_frame(&f.tt, true);
     struct render_frame frame = tframe(tf, font, f.ref.size);
     int calls = f.calls;

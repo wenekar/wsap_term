@@ -171,6 +171,10 @@ void window_native_remove(struct window *w, struct yasl_surface *s)
     if (!n)
         return;
     framebuffer_history_release(&n->history);
+    if (n->metal_layer) {
+        window_metal_detach(n->metal_layer, n->surface);
+        n->metal_layer = NULL;
+    }
     present_watch_unref(n->watch);
     free(n->pixels);
     *n = w->natives[--w->native_count];

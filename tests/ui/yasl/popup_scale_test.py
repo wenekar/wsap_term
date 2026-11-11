@@ -25,9 +25,9 @@ SCALE = '1.5'
 SCALES = ('1', '1.5', '2')
 # The canvas can be one pixel larger than the menu, from rounding.
 SLACK = 2
-# The first visible pixel of the menu is the shadow width after the pointer.
-MARGIN = 40
-SHADOW_MAX = 30
+# The shadow extends before the pointer. The menu starts at the pointer.
+MARGIN = 45
+SHADOW_MAX = 45
 
 def ask(path, line):
     try:
@@ -93,7 +93,7 @@ def check_scale(sway, pointer, debug, swaymsg, output, scale, shot):
     if canvas[0] < menu[0] or canvas[1] < menu[1]:
         raise AssertionError(f'FAIL: at scale {scale} the popup canvas {canvas} cuts '
                              f'off the menu {menu}')
-    if not (0 <= box[0] - want[0] <= SHADOW_MAX and 0 <= box[1] - want[1] <= SHADOW_MAX):
+    if not (-SHADOW_MAX <= box[0] - want[0] <= SLACK and -SHADOW_MAX <= box[1] - want[1] <= SLACK):
         raise AssertionError(f'FAIL: at scale {scale} the menu starts at {box[:2]}, '
                              f'and the pointer is at {want}')
     ask(debug, 'key escape')

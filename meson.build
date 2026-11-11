@@ -240,6 +240,16 @@ if backend == 'wayland'
 else
     backend_deps = []
 endif
+
+has_vulkan = false
+vulkan_opt = get_option('vulkan_render')
+if vulkan_opt != 'disabled' and system != 'darwin'
+    vulkan_dep = dependency('vulkan', required: vulkan_opt == 'enabled')
+    if vulkan_dep.found()
+        has_vulkan = true
+        backend_deps += [vulkan_dep]
+    endif
+endif
 lib_deps = base_deps + font_deps + backend_deps
 deps = lib_deps + [yasl_dep]
 core_deps = deps

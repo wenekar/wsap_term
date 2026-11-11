@@ -90,13 +90,20 @@ static int run_test(enum yasl_backend backend)
     }
     free(available);
 
+    uint32_t instance_version = VK_API_VERSION_1_0;
+    PFN_vkEnumerateInstanceVersion enumerate_instance_version =
+        (PFN_vkEnumerateInstanceVersion)vkGetInstanceProcAddr(VK_NULL_HANDLE, "vkEnumerateInstanceVersion");
+    if (enumerate_instance_version)
+        enumerate_instance_version(&instance_version);
+    uint32_t target_api_version = instance_version >= VK_API_VERSION_1_3 ? VK_API_VERSION_1_3 : VK_API_VERSION_1_0;
+
     VkApplicationInfo app = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .pApplicationName = "yasl Vulkan WSI integration",
         .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
         .pEngineName = "yasl",
         .engineVersion = VK_MAKE_VERSION(1, 0, 0),
-        .apiVersion = VK_API_VERSION_1_0,
+        .apiVersion = target_api_version,
     };
     VkInstanceCreateInfo instance_info = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
@@ -231,6 +238,30 @@ static int run_test(enum yasl_backend backend)
     free(present_modes);
     if (vr != VK_SUCCESS) { status = fail_vk("vkGetPhysicalDeviceSurfacePresentModesKHR", vr); goto cleanup; }
 
+    bool has_sync2_ext = has_device_extension(selected, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
+    bool sync2_candidate = (properties.apiVersion >= VK_API_VERSION_1_3) || has_sync2_ext;
+    VkPhysicalDeviceSynchronization2Features sync2_features = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
+    };
+    VkPhysicalDeviceFeatures2 features2 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        .pNext = &sync2_features,
+    };
+    PFN_vkGetPhysicalDeviceFeatures2 get_features2 =
+        (PFN_vkGetPhysicalDeviceFeatures2)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceFeatures2");
+    if (!get_features2)
+        get_features2 =
+            (PFN_vkGetPhysicalDeviceFeatures2)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceFeatures2KHR");
+
+    bool sync2_supported = false;
+    if (sync2_candidate && get_features2) {
+        get_features2(selected, &features2);
+        sync2_supported = sync2_features.synchronization2 == VK_TRUE;
+    } else if (properties.apiVersion >= VK_API_VERSION_1_3) {
+        sync2_features.synchronization2 = VK_TRUE;
+        sync2_supported = true;
+    }
+
     float priority = 1.0f;
     VkDeviceQueueCreateInfo queue_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
@@ -238,18 +269,39 @@ static int run_test(enum yasl_backend backend)
         .queueCount = 1,
         .pQueuePriorities = &priority,
     };
-    const char *device_extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    const char *device_extensions[2] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    uint32_t device_extension_count = 1;
+    if (sync2_supported && properties.apiVersion < VK_API_VERSION_1_3 && has_sync2_ext)
+        device_extensions[device_extension_count++] = VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME;
+
     VkDeviceCreateInfo device_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pNext = sync2_supported ? &sync2_features : NULL,
         .queueCreateInfoCount = 1,
         .pQueueCreateInfos = &queue_info,
-        .enabledExtensionCount = 1,
+        .enabledExtensionCount = device_extension_count,
         .ppEnabledExtensionNames = device_extensions,
     };
     vr = vkCreateDevice(selected, &device_info, NULL, &device);
     if (vr != VK_SUCCESS) { status = fail_vk("vkCreateDevice", vr); goto cleanup; }
     VkQueue queue;
     vkGetDeviceQueue(device, queue_family, 0, &queue);
+
+    PFN_vkCmdPipelineBarrier2 cmd_pipeline_barrier2 = NULL;
+    PFN_vkQueueSubmit2 queue_submit2 = NULL;
+    if (sync2_supported) {
+        cmd_pipeline_barrier2 =
+            (PFN_vkCmdPipelineBarrier2)vkGetDeviceProcAddr(device, "vkCmdPipelineBarrier2");
+        if (!cmd_pipeline_barrier2)
+            cmd_pipeline_barrier2 =
+                (PFN_vkCmdPipelineBarrier2)vkGetDeviceProcAddr(device, "vkCmdPipelineBarrier2KHR");
+        queue_submit2 =
+            (PFN_vkQueueSubmit2)vkGetDeviceProcAddr(device, "vkQueueSubmit2");
+        if (!queue_submit2)
+            queue_submit2 =
+                (PFN_vkQueueSubmit2)vkGetDeviceProcAddr(device, "vkQueueSubmit2KHR");
+    }
+    bool use_sync2 = sync2_supported && cmd_pipeline_barrier2 && queue_submit2;
 
     VkSwapchainCreateInfoKHR swap_info = {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
@@ -309,51 +361,118 @@ static int run_test(enum yasl_backend backend)
     VkCommandBufferBeginInfo begin = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     vr = vkBeginCommandBuffer(command, &begin);
     if (vr != VK_SUCCESS) { free(images); status = fail_vk("vkBeginCommandBuffer", vr); goto cleanup; }
-    VkImageMemoryBarrier to_clear = {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .srcAccessMask = 0,
-        .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .image = images[image_index],
-        .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-    };
-    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &to_clear);
-    VkClearColorValue color = {.float32 = {0.08f, 0.18f, 0.32f, 1.0f}};
     VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    if (use_sync2) {
+        VkImageMemoryBarrier2 to_clear = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+            .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = images[image_index],
+            .subresourceRange = range,
+        };
+        VkDependencyInfo dep_clear = {
+            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .imageMemoryBarrierCount = 1,
+            .pImageMemoryBarriers = &to_clear,
+        };
+        cmd_pipeline_barrier2(command, &dep_clear);
+    } else {
+        VkImageMemoryBarrier to_clear = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = images[image_index],
+            .subresourceRange = range,
+        };
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &to_clear);
+    }
+    VkClearColorValue color = {.float32 = {0.08f, 0.18f, 0.32f, 1.0f}};
     vkCmdClearColorImage(command, images[image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1, &range);
-    VkImageMemoryBarrier to_present = {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-        .dstAccessMask = 0,
-        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .image = images[image_index],
-        .subresourceRange = range,
-    };
-    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, NULL, 0, NULL, 1, &to_present);
+    if (use_sync2) {
+        VkImageMemoryBarrier2 to_present = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+            .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = images[image_index],
+            .subresourceRange = range,
+        };
+        VkDependencyInfo dep_present = {
+            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .imageMemoryBarrierCount = 1,
+            .pImageMemoryBarriers = &to_present,
+        };
+        cmd_pipeline_barrier2(command, &dep_present);
+    } else {
+        VkImageMemoryBarrier to_present = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = images[image_index],
+            .subresourceRange = range,
+        };
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, NULL, 0, NULL, 1, &to_present);
+    }
     vr = vkEndCommandBuffer(command);
     free(images);
     if (vr != VK_SUCCESS) { status = fail_vk("vkEndCommandBuffer", vr); goto cleanup; }
-    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    VkSubmitInfo submit = {
-        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &acquired,
-        .pWaitDstStageMask = &wait_stage,
-        .commandBufferCount = 1,
-        .pCommandBuffers = &command,
-        .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &rendered,
-    };
-    vr = vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE);
-    if (vr != VK_SUCCESS) { status = fail_vk("vkQueueSubmit", vr); goto cleanup; }
+    if (use_sync2) {
+        VkSemaphoreSubmitInfo wait_info = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+            .semaphore = acquired,
+            .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+        };
+        VkCommandBufferSubmitInfo command_info = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+            .commandBuffer = command,
+        };
+        VkSemaphoreSubmitInfo signal_info = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+            .semaphore = rendered,
+            .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+        };
+        VkSubmitInfo2 submit = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+            .waitSemaphoreInfoCount = 1,
+            .pWaitSemaphoreInfos = &wait_info,
+            .commandBufferInfoCount = 1,
+            .pCommandBufferInfos = &command_info,
+            .signalSemaphoreInfoCount = 1,
+            .pSignalSemaphoreInfos = &signal_info,
+        };
+        vr = queue_submit2(queue, 1, &submit, VK_NULL_HANDLE);
+    } else {
+        VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        VkSubmitInfo submit = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &acquired,
+            .pWaitDstStageMask = &wait_stage,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &command,
+            .signalSemaphoreCount = 1,
+            .pSignalSemaphores = &rendered,
+        };
+        vr = vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE);
+    }
+    if (vr != VK_SUCCESS) { status = fail_vk(use_sync2 ? "vkQueueSubmit2" : "vkQueueSubmit", vr); goto cleanup; }
     VkPresentInfoKHR present = {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
@@ -368,8 +487,8 @@ static int run_test(enum yasl_backend backend)
     }
     vr = vkDeviceWaitIdle(device);
     if (vr != VK_SUCCESS) { status = fail_vk("vkDeviceWaitIdle", vr); goto cleanup; }
-    fprintf(stderr, "vulkan integration: created surface, cleared and presented %ux%u swapchain image\n",
-            extent.width, extent.height);
+    fprintf(stderr, "vulkan integration: created surface, cleared and presented %ux%u swapchain image (%s)\n",
+            extent.width, extent.height, use_sync2 ? "synchronization2" : "legacy synchronization");
     status = 0;
 
 cleanup:

@@ -178,6 +178,7 @@ struct yasl_popup_options {
     double x, y, anchor_width, anchor_height;
     unsigned anchor, gravity, adjust;
     void *userdata;
+    double content_x, content_y, content_width, content_height;
 };
 /** A CPU surface. Create it while handling the input that opens it; it takes
  * the input grab and gets CLOSE when dismissed. */

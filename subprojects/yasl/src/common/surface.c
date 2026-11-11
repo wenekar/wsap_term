@@ -637,9 +637,22 @@ static bool popup_spec(yasl_surface *parent, const struct yasl_popup_options *o,
     double scale = scale_of(parent);
     if (!size_valid((int)ceil(o->width * scale), (int)ceil(o->height * scale)))
         return yasl_public_fail(EINVAL);
+    struct yasl_private_rect2i content_rect = {0};
+    if (o->content_width > 0 || o->content_height > 0 || o->content_x > 0 || o->content_y > 0) {
+        if (!logical_rect(parent, o->content_x, o->content_y, o->content_width, o->content_height,
+                          &content_rect))
+            return false;
+    }
+    int sw = yasl_private_scale_to_device(o->width, parent->scale_120);
+    int sh = yasl_private_scale_to_device(o->height, parent->scale_120);
+    if (content_rect.x + content_rect.width > sw)
+        content_rect.width = sw - content_rect.x > 0 ? sw - content_rect.x : 0;
+    if (content_rect.y + content_rect.height > sh)
+        content_rect.height = sh - content_rect.y > 0 ? sh - content_rect.y : 0;
     *out = (struct yasl_private_popup_spec){
-        .size = {yasl_private_scale_to_device(o->width, parent->scale_120),
-                 yasl_private_scale_to_device(o->height, parent->scale_120)},
+        .size = {sw, sh},
+        .content_offset = {content_rect.x, content_rect.y},
+        .content_size = {content_rect.width, content_rect.height},
         .anchor_edges = (unsigned)placement[o->anchor],
         .gravity = (unsigned)placement[o->gravity],
         .constraints = o->adjust ? o->adjust

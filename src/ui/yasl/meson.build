@@ -20,6 +20,8 @@ ui_yasl_src = files(
 
 if system == 'darwin'
     ui_yasl_src += files('metal.m')
+elif has_vulkan
+    ui_yasl_src += files('vulkan.c')
 else
     ui_yasl_src += files('metal.c')
 endif

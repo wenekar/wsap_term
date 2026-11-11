@@ -415,13 +415,6 @@ int surface_build_toplevel(struct wayland_surface *w, bool fullscreen)
         xdg_toplevel_set_fullscreen(w->toplevel, NULL);
     else if (w->base.state & YASL_PRIVATE_STATE_MAXIMIZED)
         xdg_toplevel_set_maximized(w->toplevel);
-    if (w->tearing && c->tearing_mgr) {
-        w->tearing_control = wp_tearing_control_manager_v1_get_tearing_control(
-                c->tearing_mgr, w->surface);
-        if (w->tearing_control)
-            wp_tearing_control_v1_set_presentation_hint(w->tearing_control,
-                    WP_TEARING_CONTROL_V1_PRESENTATION_HINT_ASYNC);
-    }
     w->size_pending = true;
     wl_surface_commit(w->surface);
     if (wl_display_roundtrip(c->wl) < 0) {

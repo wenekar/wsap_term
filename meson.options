@@ -6,6 +6,13 @@ option(
     description: 'Window backend (Wayland is Linux-only, Metal is macOS-only)',
 )
 option(
+    'vulkan_render',
+    type: 'combo',
+    choices: ['auto', 'enabled', 'disabled'],
+    value: 'auto',
+    description: 'Vulkan GPU rendering backend (Linux default when Vulkan is available)',
+)
+option(
     'font_backend',
     type: 'combo',
     choices: ['auto', 'coretext', 'freetype'],

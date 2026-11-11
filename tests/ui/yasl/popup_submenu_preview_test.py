@@ -16,8 +16,8 @@ from headless_sway import HeadlessSway, require, wait_for
 OUTPUT = ('1280', '720')
 # Output pixels of the right click, and the offsets of the menu rows from it.
 CLICK = (202, 327)
-THEMES_ROW = 116
-SELECT_ALL_ROW = 86
+THEMES_ROW = 88
+SELECT_ALL_ROW = 58
 ROW_X = 60
 
 def ask(path, line):

@@ -174,6 +174,10 @@ if system == 'darwin'
     test_cases += [['render-gpu-slot-test', files('render/gpu_slot_test.m'), render_lib, deps]]
     standalone_tests += ['window-pacing-test', 'render-gpu-slot-test']
 endif
+if has_vulkan
+    test_cases += [['vulkan-render-test', files('render/vulkan_render_test.c'), [render_lib, ui_yasl_lib], deps]]
+    standalone_tests += ['vulkan-render-test']
+endif
 test_groups = {}
 test_executables = {}
 foreach entry : test_cases

@@ -99,9 +99,14 @@ static struct vector2i measure_popup(struct window *w, int depth)
 static struct yasl_popup_options popup_options(struct window *w, int depth,
                                                struct vector2i size, struct rect2i anchor)
 {
+    struct ui_widget *level = ui_menu_level_widget(&ui_of(w)->menu, depth);
+    struct insets2i shadow = ui_menu_level_shadow(&ui_of(w)->menu, depth);
     struct window_logical_point at = window_logical(w, anchor.pos);
     struct window_logical_point extent = window_logical(w, anchor.size);
     struct window_logical_point logical_size = window_logical(w, size);
+    struct window_logical_point content_pos = window_logical(
+        w, (struct vector2i){ .x = shadow.l, .y = shadow.t });
+    struct window_logical_point content_size = window_logical(w, level->measured_size);
     return (struct yasl_popup_options){
         .width = (int)ceil(logical_size.x - 1e-6),
         .height = (int)ceil(logical_size.y - 1e-6),
@@ -113,6 +118,10 @@ static struct yasl_popup_options popup_options(struct window *w, int depth,
         .gravity = YASL_EDGE_BOTTOM | YASL_EDGE_RIGHT,
         .adjust = YASL_ADJUST_SLIDE_X | YASL_ADJUST_SLIDE_Y | YASL_ADJUST_FLIP_X | YASL_ADJUST_FLIP_Y,
         .userdata = w,
+        .content_x = content_pos.x,
+        .content_y = content_pos.y,
+        .content_width = content_size.x,
+        .content_height = content_size.y,
     };
 }
 
