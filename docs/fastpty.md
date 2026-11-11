@@ -119,6 +119,11 @@ the transport its bytes came from. The session uses that to pick the newline
 policy for each span. The worker starts before the session returns, and a
 session that cannot start its worker does not open.
 
+The worker wakes the loop thread once for each 32 KiB that it parses, and once
+when the source runs dry. Short output therefore wakes the loop thread at once,
+and a flood does not send a signal for each short read.
+`benchmarks/pty-wake-batching.md` records the measurements.
+
 Output from independent processes has no defined order across the two
 transports, just as it has none on a single pty. Within one process, the
 barrier keeps the order across a routing move. A program that writes to
