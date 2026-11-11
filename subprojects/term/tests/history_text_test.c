@@ -188,6 +188,37 @@ static void multi_line_batch_history(void)
     wsap_vtcore_free(term);
 }
 
+/* A CRLF stream longer than 1024 bytes takes the vector line scan. The varied
+ * line lengths walk each "\r\n" pair past every offset of a 64-byte chunk. */
+static void crlf_stream_lines(void)
+{
+    static const int lens[] = { 63, 62, 60, 45, 33, 61, 59, 47, 31, 20 };
+    const int kinds = (int)(sizeof(lens) / sizeof(lens[0]));
+    struct wsap_vtcore *term = new_term(80);
+    char buf[2048], want[2048];
+    int n = 0, lines = 0;
+    while (n < (int)sizeof(buf) - 80) {
+        int len = lens[lines % kinds];
+        for (int j = 0; j < len; j++)
+            buf[n++] = (char)('a' + (lines + j) % 26);
+        buf[n++] = '\r';
+        buf[n++] = '\n';
+        lines++;
+    }
+    /* The last line and the empty row below it stay on the two screen rows. */
+    int w = 0;
+    for (int k = 0; k < lines - 1; k++) {
+        int len = lens[k % kinds];
+        for (int j = 0; j < len; j++)
+            want[w++] = (char)('a' + (k + j) % 26);
+        want[w++] = '\n';
+    }
+    want[w] = '\0';
+    wsap_vtcore_feed(term, buf, (size_t)n, 0);
+    expect_history(term, 200, want);
+    wsap_vtcore_free(term);
+}
+
 static void scrollback_zero_option(void)
 {
     struct wsap_vtcore *term = wsap_vtcore_new(&(struct wsap_vtcore_options){
@@ -223,6 +254,7 @@ int main(void)
     scrollback_zero_option();
     scrollback_small_option();
     multi_line_batch_history();
+    crlf_stream_lines();
     concurrent_history();
     puts("PASS: history text");
     return 0;
