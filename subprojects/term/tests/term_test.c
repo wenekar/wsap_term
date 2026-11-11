@@ -2832,6 +2832,10 @@ static void assert_same_modes(struct wsap_vtcore *a, struct wsap_vtcore *b)
  * takes the general parser. Both must give the same screen and modes. */
 static void test_fast_csi_matches_byte_feed(void)
 {
+    // Thirteen letters, each after its own color, on a row of twelve columns.
+#define COLOR_RUN                                                                       \
+    "a\033[38;5;1mb\033[38;5;2mc\033[38;5;3md\033[38;5;4me\033[38;5;5mf\033[38;5;6mg" \
+    "\033[38;5;7mh\033[38;5;8mi\033[38;5;9mj\033[38;5;10mk\033[38;5;11ml\033[38;5;12mm"
     static const char *cases[] = {
         // Cursor position in origin mode.
         "\033[2;3r\033[?6h\033[HZ",
@@ -2857,6 +2861,19 @@ static void test_fast_csi_matches_byte_feed(void)
         "\033[31m\033[38;2;1;2;3m\033[48;2;4\030X",
         // Prefixed colors.
         "\033[1m\033[0;38;2;10;20;30mX\033[1;48;5;200mY",
+        // A color run that reaches the last column, with and without autowrap.
+        COLOR_RUN,
+        "\033[?7l" COLOR_RUN,
+        "abcdefgh\033[1;5H\033[48;2;1;2;3mR\033[38;5;1mS\033[48;5;2mT\033[38;2;4;5;6mU"
+        "\033[48;5;3mV\033[38;5;4mW\033[48;5;5mX\033[38;5;6mY\033[48;5;7mZ",
+        "\033[?7labcdefgh\033[1;5H\033[48;2;1;2;3mR\033[38;5;1mS\033[48;5;2mT\033[38;2;4;5;6mU"
+        "\033[48;5;3mV\033[38;5;4mW\033[48;5;5mX\033[38;5;6mY\033[48;5;7mZ",
+        // A color run over either half of a wide character.
+        "ab\xf0\x9f\x98\x80" "cd\033[1;1HZ\033[1;2H\033[38;5;1mX\033[38;5;2mY\033[38;5;3mW",
+        "ab\xf0\x9f\x98\x80" "cd\033[1;1HZ\033[1;4H\033[38;5;1mX\033[38;5;2mY",
+        // A color that a control byte follows. The text after it is not a color.
+        "a\033[38;5;1m\r\nabc12mX",
+        "a\033[38;2;1;2;3m\r\na2;3;4;5mX",
         // Short SGR forms, then other finals after them.
         "\033[1m\033[2m\033[3m\033[4m\033[7mA\033[22m\033[31m\033[49m\033[97m\033[104mB\033[5mC",
         "\033[Km\033[Jm\033[Am\033[Cm",
@@ -2891,6 +2908,22 @@ static void test_fast_csi_matches_byte_feed(void)
     assert(row_is(t, 0, "X"));
     assert(tt_cell(t, 0, 0)->bg == wsap_vtcore_color_index(2));
     wsap_vtcore_free(t);
+    t = tt_new(12, 4);
+    tt_puts(t, COLOR_RUN);
+    assert(row_is(t, 0, "abcdefghijkl") && row_is(t, 1, "m"));
+    assert(tt_cell(t, 11, 0)->fg == wsap_vtcore_color_index(11));
+    wsap_vtcore_free(t);
+    t = tt_new(12, 4);
+    tt_puts(t, "\033[?7l" COLOR_RUN);
+    assert(row_is(t, 0, "abcdefghijkm") && row_is(t, 1, ""));
+    assert(tt_cell(t, 11, 0)->fg == wsap_vtcore_color_index(12));
+    wsap_vtcore_free(t);
+    t = tt_new(12, 4);
+    tt_puts(t, "a\033[38;5;1m\r\nabc12mX");
+    assert(row_is(t, 0, "a") && row_is(t, 1, "abc12mX"));
+    assert(tt_cell(t, 0, 1)->bg == WSAP_VTCORE_COLOR_BG);
+    wsap_vtcore_free(t);
+#undef COLOR_RUN
     t = tt_new(12, 4);
     tt_puts(t, "\033[1;31m\033[0;38;2;1\030X");
     assert(row_is(t, 0, "X"));

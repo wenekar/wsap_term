@@ -12,6 +12,26 @@
 WSAP_VTCORE_ALWAYS_INLINE
 static inline const char *parse_byte_delim(const char *s, const char *end, char delim, uint32_t *val)
 {
+    if (WSAP_VTCORE_EXPECT(s + 4 <= end, 1)) {
+        unsigned d0 = (unsigned char)s[0] - '0';
+        if (WSAP_VTCORE_EXPECT(d0 > 9, 0)) return NULL;
+        if (s[1] == delim) {
+            *val = d0;
+            return s + 2;
+        }
+        unsigned d1 = (unsigned char)s[1] - '0';
+        if (WSAP_VTCORE_EXPECT(d1 > 9, 0)) return NULL;
+        if (s[2] == delim) {
+            *val = d0 * 10 + d1;
+            return s + 3;
+        }
+        unsigned d2 = (unsigned char)s[2] - '0';
+        if (WSAP_VTCORE_EXPECT(d2 > 9 || s[3] != delim, 0)) return NULL;
+        unsigned v = d0 * 100 + d1 * 10 + d2;
+        if (WSAP_VTCORE_EXPECT(v > 255, 0)) return NULL;
+        *val = v;
+        return s + 4;
+    }
     if (s >= end) return NULL;
     unsigned char d0 = (unsigned char)(*s++ - '0');
     if (d0 > 9) return NULL;
@@ -38,6 +58,29 @@ static inline const char *parse_byte_delim(const char *s, const char *end, char 
 WSAP_VTCORE_ALWAYS_INLINE
 static inline const char *parse_byte_delim2(const char *s, const char *end, char delim1, char delim2, uint32_t *val, char *found_delim)
 {
+    if (WSAP_VTCORE_EXPECT(s + 4 <= end, 1)) {
+        unsigned d0 = (unsigned char)s[0] - '0';
+        if (WSAP_VTCORE_EXPECT(d0 > 9, 0)) return NULL;
+        if (s[1] == delim1 || s[1] == delim2) {
+            *val = d0;
+            if (found_delim) *found_delim = s[1];
+            return s + 2;
+        }
+        unsigned d1 = (unsigned char)s[1] - '0';
+        if (WSAP_VTCORE_EXPECT(d1 > 9, 0)) return NULL;
+        if (s[2] == delim1 || s[2] == delim2) {
+            *val = d0 * 10 + d1;
+            if (found_delim) *found_delim = s[2];
+            return s + 3;
+        }
+        unsigned d2 = (unsigned char)s[2] - '0';
+        if (WSAP_VTCORE_EXPECT(d2 > 9 || (s[3] != delim1 && s[3] != delim2), 0)) return NULL;
+        unsigned v = d0 * 100 + d1 * 10 + d2;
+        if (WSAP_VTCORE_EXPECT(v > 255, 0)) return NULL;
+        *val = v;
+        if (found_delim) *found_delim = s[3];
+        return s + 4;
+    }
     if (s >= end) return NULL;
     unsigned char d0 = (unsigned char)(*s++ - '0');
     if (d0 > 9) return NULL;
@@ -64,9 +107,58 @@ static inline const char *parse_byte_delim2(const char *s, const char *end, char
     return s + 1;
 }
 
+/* Parse a number of len 1 to 3 digits at p. p can read 3 bytes. Clear *ok if a
+ * byte is not a digit. */
+WSAP_VTCORE_ALWAYS_INLINE
+static inline uint32_t parse_num_123(const char *p, int len, bool *ok)
+{
+    unsigned d0 = (unsigned char)p[0] - '0';
+    unsigned d1 = (unsigned char)p[1] - '0';
+    unsigned d2 = (unsigned char)p[2] - '0';
+    unsigned v = d0;
+    if (len >= 2) v = v * 10 + d1;
+    if (len >= 3) v = v * 10 + d2;
+    *ok &= (d0 <= 9) & ((len < 2) | (d1 <= 9)) & ((len < 3) | (d2 <= 9));
+    return v;
+}
+
+/* Parse "R;G;Bm" after the "38;2;" or "48;2;" at p. */
+WSAP_VTCORE_ALWAYS_INLINE
 static inline const char *parse_color_sequence(const char *p, const char *end, uint32_t *color)
 {
     const char *s = p + 5;
+#if defined(__x86_64__) || defined(_M_X64)
+    // SSE2 is in the x86-64 base. One load finds both ';' and the 'm'.
+    if (WSAP_VTCORE_EXPECT(s + 16 <= end, 1)) {
+        __m128i v = _mm_loadu_si128((const __m128i *)s);
+        unsigned semi_mask = (unsigned)_mm_movemask_epi8(_mm_cmpeq_epi8(v, _mm_set1_epi8(';')));
+        unsigned m_mask = (unsigned)_mm_movemask_epi8(_mm_cmpeq_epi8(v, _mm_set1_epi8('m')));
+        unsigned semi0 = semi_mask & -semi_mask;
+        unsigned semi_rest = semi_mask ^ semi0;
+        unsigned semi1 = semi_rest & -semi_rest;
+        if (WSAP_VTCORE_LIKELY(semi0 && semi1 && m_mask)) {
+            int p0 = __builtin_ctz(semi0);
+            int p1 = __builtin_ctz(semi1);
+            int p2 = __builtin_ctz(m_mask);
+            int l0 = p0;
+            int l1 = p1 - p0 - 1;
+            int l2 = p2 - p1 - 1;
+            if (WSAP_VTCORE_LIKELY(((unsigned)(l0 - 1) <= 2) &
+                                   ((unsigned)(l1 - 1) <= 2) &
+                                   ((unsigned)(l2 - 1) <= 2) &
+                                   (p2 <= 12))) {
+                bool ok = true;
+                uint32_t r = parse_num_123(s, l0, &ok);
+                uint32_t g = parse_num_123(s + p0 + 1, l1, &ok);
+                uint32_t b = parse_num_123(s + p1 + 1, l2, &ok);
+                if (WSAP_VTCORE_LIKELY(ok & ((r | g | b) <= 255))) {
+                    *color = wsap_vtcore_rgb((int)r, (int)g, (int)b);
+                    return s + p2 + 1;
+                }
+            }
+        }
+    }
+#endif
     uint32_t r, g, b;
     s = parse_byte_delim(s, end, ';', &r);
     if (!s) return NULL;
@@ -78,7 +170,9 @@ static inline const char *parse_color_sequence(const char *p, const char *end, u
     return s;
 }
 
-static const char *parse_256color(const char *p, const char *end, uint32_t *color)
+/* Parse "Nm" after the "5;" at p. */
+WSAP_VTCORE_ALWAYS_INLINE
+static inline const char *parse_256color(const char *p, const char *end, uint32_t *color)
 {
     uint32_t v;
     const char *s = parse_byte_delim(p + 2, end, 'm', &v);
@@ -134,6 +228,37 @@ static const char *parse_sgr_colors(const char *p, const char *end, uint32_t *fg
     return s;
 }
 
+/* Test for a CSI that starts with an extended color at p, such as "\033[38;2;". */
+static inline bool is_ext_color_csi(const char *p, const char *end, char lead)
+{
+    return p + 2 <= end && p[0] == '\033' && p[1] == '[' && is_ext_color(p + 2, end, lead);
+}
+
+/* Parse the color that is_ext_color found at p. Then parse the opposite color
+ * if its CSI follows at once, as in "38;2;R;G;Bm\033[48;5;Nm". Return the end
+ * of the parsed colors. Return NULL if the first color does not parse. */
+WSAP_VTCORE_ALWAYS_INLINE
+static inline const char *parse_color_pair(const char *p, const char *end, uint32_t *fg, uint32_t *bg)
+{
+    bool is_fg = p[0] == '3';
+    uint32_t *slot = is_fg ? fg : bg;
+    uint32_t *other = is_fg ? bg : fg;
+    const char *next = p[3] == '2' ? parse_color_sequence(p, end, slot)
+                                   : parse_256color(p + 3, end, slot);
+    if (WSAP_VTCORE_EXPECT(!next, 0))
+        next = parse_sgr_colors(p, end, fg, bg);
+    if (!next)
+        return NULL;
+    p = next;
+    if (is_ext_color_csi(p, end, is_fg ? '4' : '3')) {
+        next = p[5] == '2' ? parse_color_sequence(p + 2, end, other)
+                           : parse_256color(p + 5, end, other);
+        if (next)
+            p = next;
+    }
+    return p;
+}
+
 /* Apply SGR 1, 2, 3, 4, or 7. Return false for other codes. */
 static inline bool sgr_attr_on(struct wsap_vtcore *t, char code)
 {
@@ -178,6 +303,136 @@ int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
     while (p < end) {
         if (p + 5 <= end && (p[0] == '3' || p[0] == '4') && p[1] == '8' &&
             p[2] == ';' && (p[3] == '2' || p[3] == '5') && p[4] == ';') {
+            if (WSAP_VTCORE_EXPECT(!flags_ok, 0)) {
+                flags_pad = wsap_vtcore_flags_pad(t);
+                flags_ok = true;
+            }
+            // A color run, such as "38;2;R;G;BmX\033[38;2;R;G;BmY", prints into the
+            // row here. If no character prints, the input and the colors go back
+            // to the start of the run for the general path below.
+            if (WSAP_VTCORE_LIKELY(!t->pending_wrap && !t->insert_mode &&
+                                   !t->lr_margin_mode && !t->inverse)) {
+                const char *run_start = p;
+                uint32_t run_fg = fg, run_bg = bg;
+                int cx = t->cursor_x;
+                struct srow *row = wsap_vtcore_row(t, t->cursor_y);
+                if (row->kind == ROW_TEXT && cx == row->text.cells && cx > 0 && cx + 1 < cols) {
+                    // The general path prints the last column, which sets pending_wrap.
+                    struct text_row *tr = &row->text;
+                    uint8_t *text = tr->text;
+                    int text_len = tr->text_len;
+                    struct hist_runs *r = &tr->runs;
+                    uint8_t last_char = t->last_char;
+                    bool row_dirty = false;
+
+                    for (;;) {
+                        const char *next = parse_color_pair(p, end, &fg, &bg);
+                        // An incomplete color goes to the general parser from its ESC.
+                        if (!next) {
+                            p = esc;
+                            break;
+                        }
+                        p = next;
+                        if (WSAP_VTCORE_EXPECT(p >= end, 0)) break;
+                        unsigned char ch = (unsigned char)*p;
+                        if (WSAP_VTCORE_EXPECT(ch < 0x20 || ch >= 0x7f, 0)) break;
+                        p++;
+
+                        text[text_len++] = ch;
+                        cx++;
+                        hist_runs_add_pen(r, (struct text_pen){ fg, bg, flags_pad }, 1);
+                        last_char = ch;
+                        row_dirty = true;
+
+                        if (cx + 1 < cols && is_ext_color_csi(p, end, 0)) {
+                            esc = p;
+                            p += 2;
+                            continue;
+                        }
+                        break;
+                    }
+
+                    if (row_dirty) {
+                        tr->text_len = (uint16_t)text_len;
+                        tr->cells = (uint16_t)cx;
+                        if (flags_pad >> 16)
+                            tr->flags |= HLINE_HAS_LINK;
+                        if (cx > row->len)
+                            row->len = (uint16_t)cx;
+                        row->version++;
+                        t->last_char = last_char;
+                        t->cursor_x = cx;
+                        if (p + 2 <= end && p[0] == '\033' && p[1] == '[') {
+                            esc = p;
+                            p += 2;
+                            continue;
+                        }
+                        goto tail;
+                    }
+                } else if (row->kind == ROW_CELLS && !(row->flags & RF_LINE_SIZE) &&
+                           cx <= row->len && cx < cols) {
+                    struct cell *cells = row->cells;
+                    int row_len = row->len;
+                    uint8_t last_char = t->last_char;
+                    bool row_dirty = false;
+
+                    for (;;) {
+                        const char *next = parse_color_pair(p, end, &fg, &bg);
+                        if (!next) {
+                            p = esc;
+                            break;
+                        }
+                        p = next;
+                        if (WSAP_VTCORE_EXPECT(p >= end, 0)) break;
+                        unsigned char ch = (unsigned char)*p;
+                        if (WSAP_VTCORE_EXPECT(ch < 0x20 || ch >= 0x7f, 0)) break;
+                        // A character on either half of a wide character goes to
+                        // the general path, which clears the other half.
+                        if (WSAP_VTCORE_EXPECT(cx < row_len &&
+                                               ((cells[cx].flags & CELL_TRAIL) ||
+                                                (cx + 1 < row_len && (cells[cx + 1].flags & CELL_TRAIL))), 0))
+                            break;
+                        p++;
+
+                        cells[cx] = (struct cell){ (uint32_t)ch, fg, bg,
+                                                   (uint16_t)flags_pad, (uint16_t)(flags_pad >> 16) };
+                        cx++;
+                        if (cx > row_len)
+                            row_len = cx;
+                        last_char = ch;
+                        row_dirty = true;
+
+                        if (cx < cols && is_ext_color_csi(p, end, 0)) {
+                            esc = p;
+                            p += 2;
+                            continue;
+                        }
+                        break;
+                    }
+
+                    if (row_dirty) {
+                        row->len = (uint16_t)row_len;
+                        row->version++;
+                        t->last_char = last_char;
+                        if (cx < cols) {
+                            t->cursor_x = cx;
+                        } else {
+                            t->cursor_x = cols - 1;
+                            t->pending_wrap = t->autowrap;
+                        }
+                        if (p + 2 <= end && p[0] == '\033' && p[1] == '[') {
+                            esc = p;
+                            p += 2;
+                            continue;
+                        }
+                        goto tail;
+                    }
+                }
+                p = run_start;
+                fg = run_fg;
+                bg = run_bg;
+            }
+
             bool is_fg = p[0] == '3';
             uint32_t *slot = is_fg ? &fg : &bg;
             uint32_t *other = is_fg ? &bg : &fg;
@@ -203,10 +458,6 @@ int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
             }
             if (p < end && (unsigned char)*p >= 0x20 && (unsigned char)*p < 0x7f) {
                 char ch = *p++;
-                if (WSAP_VTCORE_EXPECT(!flags_ok, 0)) {
-                    flags_pad = wsap_vtcore_flags_pad(t);
-                    flags_ok = true;
-                }
                 if (WSAP_VTCORE_EXPECT(!sc_put1_fast(t, ch, (struct text_pen){ fg, bg, flags_pad }), 0)) {
                     t->cur_fg = fg;
                     t->cur_bg = bg;
