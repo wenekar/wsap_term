@@ -23,6 +23,15 @@ endif
 if system == 'darwin'
     add_languages('objc', native: false)
     objc = meson.get_compiler('objc')
+    # Targets with Objective-C code link through the Objective-C compiler.
+    # LTO then uses the LLVM of that compiler. Apple clang and upstream
+    # clang write bitcode that the other LLVM cannot always read. Meson
+    # picks `cc` for C and `clang` for Objective-C, so a Homebrew clang in
+    # PATH gives a mixed toolchain.
+    if cc.get_id() != objc.get_id() or cc.version() != objc.version()
+        error('The C compiler (@0@ @1@) and the Objective-C compiler (@2@ @3@) differ. Set both to one toolchain, for example CC=cc OBJC=cc or CC=clang OBJC=clang.'.format(
+            cc.get_id(), cc.version(), objc.get_id(), objc.version()))
+    endif
     add_project_arguments('-fblocks', language: 'objc')
 endif
 project_languages = ['c']
