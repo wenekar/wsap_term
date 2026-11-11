@@ -1493,10 +1493,15 @@ static void bar_reveal_animates_on_boundary(void)
     assert(tick(&f, 2100));
     int hclose = ui_tabbar_height(&f.tb);
     assert(hclose > 0 && hclose < full);
-    assert(ui_tabbar_steady_height(&f.tb) == full);
+    /* The grid takes its final height when the close starts. */
+    assert(ui_tabbar_steady_height(&f.tb) == 0);
 
+    /* The bar stays collapsed after the animation ends and before the
+     * tab is removed. */
     tick(&f, 2300);
     assert(ui_tabbar_closing_done(&f.tb));
+    assert(ui_tabbar_height(&f.tb) == 0);
+    assert(bar(&f)->bounds.height == 0);
     assert(ui_tabbar_remove_tab(&f.tb, 1));
     show(&f, 1, 0);
     assert(ui_tabbar_height(&f.tb) == 0);

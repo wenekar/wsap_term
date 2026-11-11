@@ -555,13 +555,22 @@ static bool tb_ensure_tabs(struct ui_tabbar *tb, int n)
     return true;
 }
 
+/* The number of tabs that stay after the closing tab goes. The bar height
+ * and the grid height use this count. The grid then resizes once, when the
+ * close starts, and the bar does not come back after its collapse. */
+static int live_tabs(const struct ui_tabbar *tb, int n_tabs)
+{
+    int closing = ui_tabbar_closing_tab(tb);
+    return closing >= 0 && closing < n_tabs ? n_tabs - 1 : n_tabs;
+}
+
 static int bar_height(const struct ui_tabbar *tb, int css_height, int n_tabs)
 {
     if (!tb || n_tabs < 1)
         return 0;
 
     bool armed = tb->impl.reveal.start_ms != 0;
-    if (n_tabs <= 1 && !armed && !tb->impl.external_drag)
+    if (live_tabs(tb, n_tabs) <= 1 && !armed && !tb->impl.external_drag)
         return 0;
     float v = armed ? tb->impl.reveal.value : 1.0f;
     if (v <= 0.0f)
@@ -574,7 +583,7 @@ static int bar_height(const struct ui_tabbar *tb, int css_height, int n_tabs)
 static int steady_height(const struct ui_tabbar *tb, const struct tb_theme *t,
                          int n_tabs)
 {
-    if (!tb || n_tabs <= 1)
+    if (!tb || live_tabs(tb, n_tabs) <= 1)
         return 0;
     return t->height;
 }
