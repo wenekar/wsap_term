@@ -84,15 +84,6 @@ source rectangle that is larger than the attached buffer is a fatal protocol
 error. The gain is 0.1 ms on a frame that a display shows for 4 ms or more, so
 the risk is larger than the gain.
 
-Two rare cases stay open:
-
-- With output during the drag, one resize frame in 3000 waited 16.7 ms, which
-  is one frame of the 60 Hz output. The frame waited for the pacing of an
-  earlier content frame.
-- When an acquire returns `VK_SUBOPTIMAL_KHR` and the swapchain stays the
-  same, `render_gpu_draw()` and `present_pixels()` acquire a second image and
-  do not present the first. This is older than this pass.
-
 ## Resolved issues
 
 - The first resize took 6 ms to 8 ms in `vkCreateSwapchainKHR`.
@@ -104,3 +95,27 @@ Two rare cases stay open:
   at start-up.
   Maximum configure-to-resized time across nine runs fell from 5.9 ms - 8.3 ms
   to 0.77 ms - 1.47 ms. Percentiles did not change.
+- A resize frame occasionally waited 16.7 ms during high terminal output.
+  Rapid content submissions exhausted all frame slots before the resize
+  frame arrived. `render_gpu_draw()` dropped the frame, triggering a
+  display-paced retry.
+  `window_vulkan` now marks resize transactions when the surface size changes.
+  When a resize transaction is in progress and all slots are busy,
+  `slot_acquire()` waits up to 20 ms on the oldest slot fence instead of
+  dropping the frame.
+- When `vkAcquireNextImageKHR` returned `VK_SUBOPTIMAL_KHR` and the swapchain
+  did not change, the renderer acquired a second image from the same swapchain.
+  The first image was not presented and the semaphore was reused with a
+  pending signal.
+  `surface_acquire_image()` now unifies image acquisition.
+  On `VK_SUBOPTIMAL_KHR`, the renderer keeps the acquired image if the
+  swapchain does not change.
+  If the swapchain changes, it recreates the slot semaphore and acquires
+  from the new swapchain.
+  On `VK_ERROR_OUT_OF_DATE_KHR`, it forces swapchain recreation even when
+  extent and mode match.
+- On X11, the Vulkan surface extent comes from window geometry.
+  During fast resizes, the window geometry can lag behind the requested size.
+  `surface_swapchain_ensure()` now records the actual swapchain extent.
+  It sets `recheck` to query capabilities again on the next frame when
+  the extent differs from the requested size.
