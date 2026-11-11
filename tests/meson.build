@@ -22,6 +22,7 @@ test_cases = [
     ['stats-test', files('ui/yasl/stats_test.c'), ui_yasl_lib, deps],
     ['pty-fast-test', files('pty/pty_test.c'), pty_lib, [thread_dep, dl_dep]],
     ['pty-destroy-test', files('pty/pty_destroy_test.c'), pty_lib, [thread_dep, dl_dep]],
+    ['pty-ring-wake-test', files('pty/ring_wake_test.c'), pty_lib, [thread_dep, dl_dep]],
     ['settings-test', files('app/config_test.c'), app_lib, deps],
     ['thumbnail-test', files('app/thumbnail_test.c'), app_lib, deps],
     ['settings-window-test', files('app/config/window_test.c'), app_lib, deps],

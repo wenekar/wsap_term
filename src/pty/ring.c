@@ -22,6 +22,11 @@
 #define PTY_READ_SIZE PTY_CHUNK_MAX
 #define PTY_SPIN_ITERS 128
 #define PTY_SYNC_REQUEST_MS 100
+/* The bytes that the worker parses before it wakes the loop thread. The kernel
+ * pty returns a short read, so a signal for each read wakes the loop thread
+ * hundreds of times a second in a flood. A burst that stops sooner wakes the
+ * loop thread at once. */
+#define PTY_WAKE_BYTES (32u * 1024u)
 
 enum { PFD_SRC0, PFD_SRC1, PFD_REQUEST, PFD_SYNC, PFD_COUNT };
 
@@ -90,6 +95,7 @@ static enum pump_result pump(struct worker *w, unsigned i)
     int fd = r->src_fd[i];
     enum pump_result result = PUMP_EMPTY;
     bool read_any = false;
+    size_t unsignaled = 0;
 #if defined(__APPLE__)
     int spin = 0;
 #endif
@@ -117,8 +123,16 @@ static enum pump_result pump(struct worker *w, unsigned i)
 #endif
         read_any = true;
         r->cbs.data(r->ud, fd, r->buf, (size_t)n);
-        wake_consumer(r);
+        unsignaled += (size_t)n;
+        if (unsignaled >= PTY_WAKE_BYTES) {
+            wake_consumer(r);
+            unsignaled = 0;
+        }
     }
+    /* The source runs dry. The loop thread draws the content that waits, so it
+     * gets the signal that the batch holds back. */
+    if (unsignaled)
+        wake_consumer(r);
     return result;
 }
 
