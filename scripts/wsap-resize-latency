@@ -1,0 +1,441 @@
+#!/usr/bin/env python3
+"""Usage: wsap-resize-latency [OPTIONS]
+       wsap-resize-latency --analyze DIR [--json]
+
+Measure how fast wsap_term follows a fast window resize, such as a drag with
+a 1000 Hz mouse.
+
+The script starts a private headless sway and starts wsap_term in it. Each
+tick, it sends one "resize set" command over the sway IPC socket. Each tick
+has a new size: a diagonal drag of about 1 px per tick. sway logs the Wayland
+protocol (WAYLAND_DEBUG=server). The script matches each tick to the log:
+
+  tick -> configure     sway sends the configure for the tick size.
+  configure -> ack      wsap_term acknowledges that configure.
+  configure -> resized  wsap_term commits a buffer of that size.
+  tick -> shown         wsap_term commits the tick size or a later size.
+
+sway sends one configure at a time. It merges the sizes that arrive while a
+configure is in flight, so some ticks have no configure of their own.
+"tick -> shown" counts every tick. A stale commit is the first commit after
+an acknowledgement that does not have the acknowledged size.
+
+sway sends frame events when a resize applies, not at the output refresh.
+The numbers show how fast wsap_term answers. They do not show what a display
+shows. The protocol log adds a few microseconds to each message in sway.
+
+    wsap-resize-latency
+    wsap-resize-latency --gpu cpu --fill
+    wsap-resize-latency --out /tmp/rl
+    wsap-resize-latency --analyze /tmp/rl --json
+
+--gpu vulkan gives sway the GLES2 renderer on a render node, so the Vulkan
+swapchain of wsap_term gets dmabuf. --gpu cpu sets WSAP_RENDER_GPU=0. --fill
+puts 50000 long lines in the scrollback before the drag. The run uses a
+private XDG_RUNTIME_DIR and no session bus, so it does not touch the desktop.
+"""
+
+import argparse
+import glob
+import json
+import os
+import re
+import shutil
+import signal
+import socket
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+from bisect import bisect_left
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+DAY_NS = 86_400 * 10**9
+IPC_MAGIC = b'i3-ipc'
+IPC_RUN_COMMAND, IPC_GET_TREE = 0, 4
+FILL_CMD = ("seq -f 'line %g lorem ipsum dolor sit amet consectetur adipiscing "
+            "elit sed do eiusmod tempor incididunt ut labore et dolore magna "
+            "aliqua' 1 50000")
+
+
+def drag_size(i):
+    """A diagonal drag of about 1 px per tick in width and 0.6 px in height.
+    Each pass of 1000 ticks turns back. The height moves 7 px each pass, so
+    each size occurs once."""
+    lap, k = divmod(i, 1000)
+    kk = k if lap % 2 == 0 else 999 - k
+    return (800 + kk, 500 + (kk * 3) // 5 + 7 * lap)
+
+
+# ---- Run -----------------------------------------------------------------
+
+class Ipc:
+    def __init__(self, path):
+        self.sock = socket.socket(socket.AF_UNIX)
+        self.sock.connect(path)
+        self.buf = b''
+        self.replies = []
+
+    def send(self, kind, payload):
+        self.sock.sendall(IPC_MAGIC + struct.pack('=II', len(payload), kind) + payload)
+
+    def call(self, kind, payload=b''):
+        self.send(kind, payload)
+        while True:
+            reply = self._take()
+            if reply is not None:
+                return json.loads(reply)
+            chunk = self.sock.recv(65536)
+            if not chunk:
+                raise EOFError('sway closed the IPC socket')
+            self.buf += chunk
+
+    def drain(self):
+        """Read the replies that are ready, and note when each came."""
+        try:
+            while True:
+                chunk = self.sock.recv(65536, socket.MSG_DONTWAIT)
+                if not chunk:
+                    return
+                now = time.clock_gettime_ns(time.CLOCK_REALTIME)
+                self.buf += chunk
+                while self._take() is not None:
+                    self.replies.append(now)
+        except BlockingIOError:
+            pass
+
+    def _take(self):
+        if len(self.buf) < 14:
+            return None
+        n = struct.unpack('=I', self.buf[6:10])[0]
+        if len(self.buf) < 14 + n:
+            return None
+        payload, self.buf = self.buf[14:14 + n], self.buf[14 + n:]
+        return payload
+
+
+def find_view(node):
+    if node.get('app_id') or node.get('window_properties'):
+        return node
+    for child in node.get('nodes', []) + node.get('floating_nodes', []):
+        view = find_view(child)
+        if view:
+            return view
+    return None
+
+
+def wait_for(cond, timeout, what):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        value = cond()
+        if value:
+            return value
+        time.sleep(0.05)
+    sys.exit(f'wsap-resize-latency: {what}')
+
+
+def run(args, out):
+    if not shutil.which('sway'):
+        sys.exit('wsap-resize-latency: sway is required')
+    binary = Path(args.bin or REPO / 'build/bin/wsap_term')
+    if not binary.exists():
+        sys.exit(f'wsap-resize-latency: {binary} does not exist')
+    node = args.render_node or next(iter(sorted(glob.glob('/dev/dri/renderD*'))), None)
+    if args.gpu == 'vulkan' and not node:
+        sys.exit('wsap-resize-latency: --gpu vulkan needs a render node')
+
+    # Socket paths must be short, so the runtime directory is not in OUT.
+    base_rt = os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'
+    rt = tempfile.mkdtemp(prefix='wsap-rl.', dir=base_rt)
+    procs = []
+    try:
+        conf = out / 'sway.conf'
+        conf.write_text(
+            'xwayland disable\n'
+            'default_border none\n'
+            'default_floating_border none\n'
+            'floating_maximum_size -1 x -1\n'
+            'floating_minimum_size 50 x 50\n'
+            'for_window [app_id=".*"] floating enable\n'
+            'output HEADLESS-1 mode --custom 2560x1600@60Hz position 0 0\n')
+        env = {'PATH': os.environ['PATH'], 'HOME': os.environ['HOME'], 'XDG_RUNTIME_DIR': rt}
+        sway_env = dict(env, WLR_BACKENDS='headless', WLR_LIBINPUT_NO_DEVICES='1',
+                        WAYLAND_DEBUG='server')
+        if args.gpu == 'vulkan':
+            sway_env.update(WLR_RENDERER='gles2', WLR_RENDER_DRM_DEVICE=node)
+        else:
+            sway_env.update(WLR_RENDERER='pixman')
+        with open(out / 'sway.log', 'w') as log:
+            procs.append(subprocess.Popen(['sway', '--unsupported-gpu', '-c', str(conf)],
+                                          env=sway_env, stdout=log, stderr=subprocess.STDOUT))
+
+        def sockets():
+            names = os.listdir(rt)
+            way = [n for n in names if n.startswith('wayland-') and not n.endswith('.lock')]
+            ipc = [n for n in names if n.startswith('sway-ipc.')]
+            return (way[0], ipc[0]) if way and ipc else None
+        display, ipc_name = wait_for(sockets, 5, 'sway did not start; see sway.log')
+
+        app_env = dict(env, WAYLAND_DISPLAY=display)
+        if args.gpu == 'cpu':
+            app_env['WSAP_RENDER_GPU'] = '0'
+        dbg_sock = os.path.join(rt, 'dbg.sock')
+        with open(out / 'app.log', 'w') as log:
+            procs.append(subprocess.Popen([str(binary), '--debug-socket', dbg_sock],
+                                          env=app_env, stdout=log, stderr=subprocess.STDOUT))
+
+        ipc = Ipc(os.path.join(rt, ipc_name))
+        wait_for(lambda: (find_view(ipc.call(IPC_GET_TREE)) or {}).get('visible'), 10,
+                 'wsap_term did not map a window; see app.log')
+        dbg = [str(REPO / 'scripts/wsap-debug'), '-s', dbg_sock]
+        subprocess.run(dbg + ['frame'], timeout=10, capture_output=True)
+        if args.fill:
+            time.sleep(1.0)
+            subprocess.run(dbg + ['text', FILL_CMD], timeout=10, capture_output=True)
+            subprocess.run(dbg + ['key', 'enter'], timeout=10, capture_output=True)
+            time.sleep(4.0)
+
+        w, h = drag_size(0)
+        ipc.call(IPC_RUN_COMMAND, b'resize set width %d px height %d px' % (w - 20, h - 20))
+        time.sleep(0.5)
+
+        # One thread sends and drains. A reader thread would wait for the GIL
+        # of the spinning sender, and its reply times would be late.
+        ticks = []
+        period = round(1e9 / args.hz)
+        t0 = time.monotonic_ns() + 1_000_000
+        for i in range(args.ticks):
+            target = t0 + i * period
+            while time.monotonic_ns() < target:
+                ipc.drain()
+            w, h = drag_size(i)
+            stamp = time.clock_gettime_ns(time.CLOCK_REALTIME)
+            ipc.send(IPC_RUN_COMMAND, b'resize set width %d px height %d px' % (w, h))
+            ticks.append({'i': i, 'w': w, 'h': h, 'realtime_ns': stamp})
+        end = time.monotonic() + 2
+        while len(ipc.replies) < args.ticks and time.monotonic() < end:
+            ipc.drain()
+        time.sleep(1.0)
+        (out / 'ticks.json').write_text(json.dumps({
+            'gpu': args.gpu, 'hz': args.hz, 'fill': args.fill,
+            'ticks': ticks, 'replies_realtime_ns': ipc.replies}))
+    finally:
+        for p in reversed(procs):
+            if p.poll() is None:
+                p.send_signal(signal.SIGTERM)
+        # A process that hangs in a GPU wait does not leave its loop on
+        # SIGTERM, so it gets SIGKILL after a short wait.
+        end = time.monotonic() + 2
+        for p in reversed(procs):
+            try:
+                p.wait(max(0.05, end - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
+        shutil.rmtree(rt, ignore_errors=True)
+
+
+# ---- Analysis ------------------------------------------------------------
+
+# libwayland 1.26 prints the UTC time of day. Older versions print the
+# milliseconds since the epoch, modulo 2^32.
+TIME_OF_DAY = re.compile(r'(\d\d):(\d\d):(\d\d)\.(\d{6})$')
+EPOCH_MS = re.compile(r'\s*(\d+)\.(\d{3})$')
+LINE = re.compile(r'^\[([^\]]+)\] (?:discarded )?( -> )?(\w+)#(\d+)\.(\w+)\((.*)\)$')
+
+
+def log_clock(stamp):
+    """Return (log time in ns, function that maps CLOCK_REALTIME ns to it)."""
+    m = TIME_OF_DAY.match(stamp)
+    if m:
+        h, mi, s, us = (int(x) for x in m.groups())
+        # The log has microseconds, so the tick times drop their nanoseconds.
+        return (((h * 60 + mi) * 60 + s) * 10**6 + us) * 1000, lambda ns: ns // 1000 * 1000 % DAY_NS
+    m = EPOCH_MS.match(stamp)
+    if m:
+        ms, us = int(m.group(1)), int(m.group(2))
+        return (ms * 1000 + us) * 1000, lambda ns: ((ns // 10**6) % 2**32 * 1000 + ns // 1000 % 1000) * 1000
+    return None, None
+
+
+def pct(values):
+    if not values:
+        return None
+    v = sorted(values)
+    q = lambda p: v[min(len(v) - 1, round(p * (len(v) - 1)))] / 1e6
+    return {'n': len(v), 'p50': q(.5), 'p90': q(.9), 'p99': q(.99), 'max': v[-1] / 1e6}
+
+
+def analyze(out):
+    data = json.loads((out / 'ticks.json').read_text())
+    surface = xdg_surface = toplevel = None
+    buffers, viewport_of = {}, {}
+    pending_buf, pending_dest, cur_buf, cur_dest = {}, {}, {}, {}
+    cfg_size = None
+    configures, by_serial, by_size = [], {}, {}
+    commits, last_acked = [], None
+    to_log = None
+
+    with open(out / 'sway.log', errors='replace') as log:
+        for raw in log:
+            m = LINE.match(raw.rstrip('\n'))
+            if not m:
+                continue
+            t, clock = log_clock(m.group(1))
+            if t is None:
+                continue
+            to_log = to_log or clock
+            sent = m.group(2) is not None
+            iface, oid, meth, argstr = m.group(3), int(m.group(4)), m.group(5), m.group(6)
+            ids = lambda: [int(x) for x in re.findall(r'#(\d+)', argstr)]
+            if iface == 'xdg_wm_base' and meth == 'get_xdg_surface':
+                xdg_surface, surface = ids()[:2]
+            elif iface == 'xdg_surface' and meth == 'get_toplevel' and oid == xdg_surface:
+                toplevel = ids()[0]
+            elif sent and iface == 'xdg_toplevel' and meth == 'configure' and oid == toplevel:
+                w, h = argstr.split(',')[:2]
+                cfg_size = (int(w), int(h))
+            elif sent and iface == 'xdg_surface' and meth == 'configure' and oid == xdg_surface:
+                c = {'serial': int(argstr), 'size': cfg_size, 't': t}
+                configures.append(c)
+                by_serial[c['serial']] = c
+                by_size.setdefault(cfg_size, []).append(c)
+            elif not sent and iface == 'xdg_surface' and meth == 'ack_configure' and oid == xdg_surface:
+                c = by_serial.get(int(argstr))
+                if c:
+                    c['ack'] = t
+                    last_acked = c
+            elif not sent and 'new id wl_buffer#' in argstr:
+                nums = [int(x) for x in re.findall(r'-?\d+', argstr.split('wl_buffer#', 1)[1])]
+                if meth == 'create_buffer':      # id, offset, width, height, stride, format
+                    buffers[nums[0]] = (nums[2], nums[3])
+                elif meth == 'create_immed':     # id, width, height, format, flags
+                    buffers[nums[0]] = (nums[1], nums[2])
+            elif not sent and iface == 'wp_viewporter' and meth == 'get_viewport':
+                viewport, target = ids()[:2]
+                viewport_of[viewport] = target
+            elif not sent and iface == 'wp_viewport' and meth == 'set_destination':
+                target = viewport_of.get(oid)
+                if target is not None:
+                    w, h = (int(x) for x in argstr.split(','))
+                    pending_dest[target] = None if w == -1 else (w, h)
+            elif not sent and iface == 'wl_surface' and meth == 'attach':
+                b = re.findall(r'wl_buffer#(\d+)', argstr)
+                pending_buf[oid] = buffers.get(int(b[0])) if b else None
+            elif not sent and iface == 'wl_surface' and meth == 'commit':
+                if oid in pending_buf:
+                    cur_buf[oid] = pending_buf.pop(oid)
+                if oid in pending_dest:
+                    cur_dest[oid] = pending_dest.pop(oid)
+                if oid != surface:
+                    continue
+                size = cur_dest.get(oid) or cur_buf.get(oid)
+                commits.append((t, size))
+                if last_acked is not None:
+                    last_acked.setdefault('apply', size)
+                for c in reversed(by_size.get(size, [])):
+                    if 'ack' in c:
+                        c.setdefault('match', t)
+                        break
+
+    if to_log is None:
+        sys.exit('wsap-resize-latency: sway.log has no protocol messages')
+    ticks = data['ticks']
+    tick_t = [to_log(tk['realtime_ns']) for tk in ticks]
+    tick_of = {(tk['w'], tk['h']): tk['i'] for tk in ticks}
+    commit_t = [t for t, _ in commits]
+    covered, best = [], -1          # The newest tick that each commit shows, as a running max.
+    for _, size in commits:
+        best = max(best, tick_of.get(size, -1))
+        covered.append(best)
+
+    tick_cfg, tick_shown = [], []
+    for i, ti in enumerate(tick_t):
+        own = [c for c in by_size.get((ticks[i]['w'], ticks[i]['h']), []) if c['t'] >= ti]
+        if own:
+            tick_cfg.append(own[0]['t'] - ti)
+        k = max(bisect_left(commit_t, ti), bisect_left(covered, i))
+        if k < len(commits):
+            tick_shown.append(commit_t[k] - ti)
+
+    first = tick_t[0] if tick_t else 0
+    in_run = [c for c in configures if c['t'] >= first]
+    replies = data.get('replies_realtime_ns', [])
+    return {
+        'gpu': data.get('gpu'), 'fill': data.get('fill'),
+        'ticks': len(ticks),
+        'tick_rate_hz': (len(ticks) - 1) / ((tick_t[-1] - tick_t[0]) / 1e9) if len(ticks) > 1 else 0,
+        'configures': len(in_run),
+        'ticks_with_own_configure': len(tick_cfg),
+        'stale_commits': sum(1 for c in in_run if 'apply' in c and c['apply'] != c['size']),
+        'unshown_ticks': len(ticks) - len(tick_shown),
+        'ipc_reply_ms': pct([to_log(r) - tick_t[k] for k, r in enumerate(replies[:len(tick_t)])]),
+        'tick_to_configure_ms': pct(tick_cfg),
+        'configure_to_ack_ms': pct([c['ack'] - c['t'] for c in in_run if 'ack' in c]),
+        'configure_to_resized_ms': pct([c['match'] - c['t'] for c in in_run if 'match' in c]),
+        'tick_to_shown_ms': pct(tick_shown),
+    }
+
+
+def report(r):
+    print(f"{r['gpu']} renderer, {'50000 lines of' if r['fill'] else 'empty'} scrollback, "
+          f"{r['ticks']} ticks at {r['tick_rate_hz']:.0f} Hz")
+    print(f"ticks with their own configure: {r['ticks_with_own_configure']}/{r['ticks']}, "
+          f"stale commits: {r['stale_commits']}, ticks not shown: {r['unshown_ticks']}")
+    print(f"{'ms':22}{'p50':>8}{'p90':>8}{'p99':>8}{'max':>8}")
+    for key, name in [('ipc_reply_ms', 'tick -> IPC reply'),
+                      ('tick_to_configure_ms', 'tick -> configure'),
+                      ('configure_to_ack_ms', 'configure -> ack'),
+                      ('configure_to_resized_ms', 'configure -> resized'),
+                      ('tick_to_shown_ms', 'tick -> shown')]:
+        d = r[key]
+        if d:
+            print(f"{name:22}{d['p50']:8.3f}{d['p90']:8.3f}{d['p99']:8.3f}{d['max']:8.3f}")
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description='Measure how fast wsap_term follows a 1000 Hz resize drag in headless sway. '
+                    'The comment at the top of the script explains each number.')
+    ap.add_argument('--gpu', choices=['vulkan', 'cpu'], default='vulkan',
+                    help='the renderer of wsap_term (default: vulkan)')
+    ap.add_argument('--ticks', type=int, default=3000,
+                    help='the number of resize ticks (default: 3000)')
+    ap.add_argument('--hz', type=float, default=1000.0,
+                    help='the tick rate (default: 1000)')
+    ap.add_argument('--fill', action='store_true',
+                    help='put 50000 long lines in the scrollback before the drag')
+    ap.add_argument('--bin', metavar='PATH',
+                    help='the wsap_term binary (default: build/bin/wsap_term)')
+    ap.add_argument('--render-node', metavar='PATH',
+                    help='the render node of sway for --gpu vulkan (default: the first renderD*)')
+    ap.add_argument('--out', type=Path, metavar='DIR',
+                    help='keep the logs in DIR (default: a temporary directory)')
+    ap.add_argument('--analyze', type=Path, metavar='DIR',
+                    help='analyze the logs that an earlier run kept in DIR')
+    ap.add_argument('--json', action='store_true', help='print the result as JSON')
+    args = ap.parse_args()
+
+    if args.analyze:
+        result = analyze(args.analyze)
+    else:
+        if args.ticks < 1 or args.hz <= 0:
+            ap.error('--ticks and --hz must be positive')
+        out = args.out or Path(tempfile.mkdtemp(prefix='wsap-resize-latency.'))
+        out.mkdir(parents=True, exist_ok=True)
+        try:
+            run(args, out)
+            result = analyze(out)
+        finally:
+            if not args.out:
+                shutil.rmtree(out, ignore_errors=True)
+    if args.json:
+        print(json.dumps(result))
+    else:
+        report(result)
+
+
+if __name__ == '__main__':
+    main()

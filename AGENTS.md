@@ -141,6 +141,14 @@ the input or render hot paths:
   match: `env $(scripts/wayland-compositors --env kwin) build/bin/wsap_term`.
   Headless weston and sway tests do not need it.
 
+- `scripts/wsap-resize-latency` measures how fast the app follows a 1000 Hz
+  resize drag. It runs the app in a private headless sway and reads the
+  protocol log of sway. It gives, for each tick, the times to the configure,
+  the ack, and the commit at the new size. `--gpu cpu` and `--fill` select
+  the renderer and a full scrollback. `--out DIR` keeps the logs. sway does
+  not pace resizes to the refresh, so the numbers show the response of the
+  app, not the display.
+
 - The UI inspector (`src/ui/debug.h`, `src/ui/yasl/inspector.h`) is the tool for
   layout and alignment work. `docs/ui-debugging.md` has the full reference.
   - Start the app with `--debug-socket PATH` or `WSAP_DEBUG_SOCKET=PATH`.
