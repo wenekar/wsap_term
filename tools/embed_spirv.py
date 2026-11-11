@@ -19,7 +19,7 @@ SHADERS = [
 
 
 def compile_glsl(glsl_path: Path, spv_path: Path):
-    cmd = ["glslc", str(glsl_path), "-o", str(spv_path)]
+    cmd = ["glslc", "-O", str(glsl_path), "-o", str(spv_path)]
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
         sys.exit(f"glslc failed for {glsl_path}:\n{res.stderr}")

@@ -22,18 +22,10 @@ layout(location = 2) flat out float out_radius;
 layout(location = 3) flat out uint out_mode;
 layout(location = 4) flat out uint out_blur;
 
-vec2 quad_corner(uint id)
-{
-    const vec2 corners[6] = vec2[](
-        vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(1.0, 1.0),
-        vec2(0.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0)
-    );
-    return corners[id];
-}
-
 void main()
 {
-    vec2 corner = quad_corner(gl_VertexIndex);
+    vec2 corner = vec2(float((0x16u >> gl_VertexIndex) & 1u),
+                       float((0x34u >> gl_VertexIndex) & 1u));
     vec2 pos = in_rect.xy + corner * in_rect.zw;
     gl_Position = vec4(pos * (2.0 / push.viewport_size) - vec2(1.0), 0.0, 1.0);
     out_rect = in_rect;

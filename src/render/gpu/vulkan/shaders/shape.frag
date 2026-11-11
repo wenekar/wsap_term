@@ -41,10 +41,10 @@ int shape_rrect_cov(float x, float y, float x0, float y0,
     float ctl_y = y0 + r;
     float ctr_x = x0 + w - r - 1.0;
     float cbl_y = y0 + h - r - 1.0;
-    float lo_x = ctl_x <= ctr_x ? ctl_x : ctr_x;
-    float hi_x = ctl_x <= ctr_x ? ctr_x : ctl_x;
-    float lo_y = ctl_y <= cbl_y ? ctl_y : cbl_y;
-    float hi_y = ctl_y <= cbl_y ? cbl_y : ctl_y;
+    float lo_x = min(ctl_x, ctr_x);
+    float hi_x = max(ctl_x, ctr_x);
+    float lo_y = min(ctl_y, cbl_y);
+    float hi_y = max(ctl_y, cbl_y);
     if ((y >= lo_y && y <= hi_y) || (x >= lo_x && x <= hi_x))
         return 255;
     float cx = x < lo_x ? lo_x : hi_x;
@@ -59,7 +59,7 @@ int shape_circle_cov(float x, float y, float cx, float cy, float r)
 
 float shape_phi(float z)
 {
-    float x = (z < 0.0 ? -z : z) * 0.70710678;
+    float x = abs(z) * 0.70710678;
     float t = 1.0 / (1.0 + 0.3275911 * x);
     float poly = ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t
                    - 0.284496736) * t + 0.254829592) * t;

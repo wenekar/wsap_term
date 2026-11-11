@@ -165,20 +165,20 @@ struct atlas {
     VkDeviceMemory memory;
     VkImageView view;
     VkDescriptorSet desc_set;
-    VkImageLayout layout;
-    int size;
     struct atlas_entry *map;
-    uint32_t count;
-    struct shelf shelves[SHELVES_MAX];
-    int n_shelves;
-    int next_y;
     uint8_t *stage;
     size_t stage_used;
     size_t stage_cap;
     struct upload *uploads;
     VkBufferImageCopy *vk_copies;
+    VkImageLayout layout;
+    int size;
+    uint32_t count;
+    int n_shelves;
+    int next_y;
     uint32_t n_uploads;
     uint32_t cap_uploads;
+    struct shelf shelves[SHELVES_MAX];
     bool full;
 };
 
@@ -205,8 +205,8 @@ struct image_entry {
     uint64_t gen;
     struct vector2i size;
     uint64_t used;
-    bool needs_upload;
     size_t upload_offset;
+    bool needs_upload;
 };
 
 struct render_gpu {
@@ -215,6 +215,7 @@ struct render_gpu {
     VkDevice device;
     VkQueue queue;
     uint32_t queue_family;
+    VkFormat render_pass_format;
     struct vulkan_device device_info;
 
     PFN_vkQueueSubmit2 pfn_vkQueueSubmit2;
@@ -227,7 +228,7 @@ struct render_gpu {
     VkSampler sampler;
 
     VkRenderPass render_pass;
-    VkFormat render_pass_format;
+    VkRenderPass render_pass_copy;
     VkPipelineCache pipeline_cache;
 
     VkPipeline glyph_pipeline;
@@ -241,6 +242,7 @@ struct render_gpu {
 
     struct frame_slot slots[FRAME_SLOTS];
     unsigned next_slot;
+    int cap_clips;
 
     struct atlas atlas;
     struct decor_cache *decor;
@@ -250,10 +252,9 @@ struct render_gpu {
     struct stream streams[ST_COUNT];
     size_t stream_offsets[ST_COUNT];
     struct cmd *cmds;
+    struct rect2i *clips;
     uint32_t n_cmds;
     uint32_t cap_cmds;
-    struct rect2i *clips;
-    int cap_clips;
     bool failed;
 };
 
@@ -266,16 +267,24 @@ struct gpu_surface {
     VkExtent2D extent;
     VkPresentModeKHR present_mode;
     uint32_t image_count;
+    VkImageLayout pixels_layout;
     VkImage images[SWAPCHAIN_IMAGES_MAX];
     VkImageView views[SWAPCHAIN_IMAGES_MAX];
     VkFramebuffer framebuffers[SWAPCHAIN_IMAGES_MAX];
     VkSemaphore render_finished[SWAPCHAIN_IMAGES_MAX];
 
+    struct {
+        VkSwapchainKHR swapchain;
+        uint32_t image_count;
+        VkImageView views[SWAPCHAIN_IMAGES_MAX];
+        VkFramebuffer framebuffers[SWAPCHAIN_IMAGES_MAX];
+        VkSemaphore render_finished[SWAPCHAIN_IMAGES_MAX];
+    } retired;
+
     VkImage pixels_image;
     VkDeviceMemory pixels_memory;
     VkImageView pixels_view;
     VkDescriptorSet pixels_desc_set;
-    VkImageLayout pixels_layout;
     struct vector2i pixels_size;
 };
 
@@ -1472,11 +1481,15 @@ static VkShaderModule create_shader_module(VkDevice device, const uint32_t *spv,
 
 static bool ensure_render_pass(struct render_gpu *g, VkFormat format)
 {
-    if (g->render_pass && g->render_pass_format == format)
+    if (g->render_pass && g->render_pass_copy && g->render_pass_format == format)
         return true;
     if (g->render_pass) {
         vkDestroyRenderPass(g->device, g->render_pass, NULL);
         g->render_pass = VK_NULL_HANDLE;
+    }
+    if (g->render_pass_copy) {
+        vkDestroyRenderPass(g->device, g->render_pass_copy, NULL);
+        g->render_pass_copy = VK_NULL_HANDLE;
     }
     VkAttachmentDescription color_att = {
         .format = format,
@@ -1510,7 +1523,7 @@ static bool ensure_render_pass(struct render_gpu *g, VkFormat format)
             .srcSubpass = 0,
             .dstSubpass = VK_SUBPASS_EXTERNAL,
             .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            .dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
             .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
             .dstAccessMask = 0,
         },
@@ -1526,6 +1539,13 @@ static bool ensure_render_pass(struct render_gpu *g, VkFormat format)
     };
     if (vkCreateRenderPass(g->device, &rpi, NULL, &g->render_pass) != VK_SUCCESS)
         return false;
+
+    color_att.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    if (vkCreateRenderPass(g->device, &rpi, NULL, &g->render_pass_copy) != VK_SUCCESS) {
+        vkDestroyRenderPass(g->device, g->render_pass, NULL);
+        g->render_pass = VK_NULL_HANDLE;
+        return false;
+    }
     g->render_pass_format = format;
     return true;
 }
@@ -1719,23 +1739,50 @@ static struct gpu_surface *gpu_surface_of(struct render_gpu *g, struct render_su
     return s->gpu;
 }
 
-static void surface_swapchain_destroy(struct render_gpu *g, struct gpu_surface *gs)
+static void surface_swapchain_destroy_retired(struct gpu_surface *gs)
 {
-    if (g->device)
-        vkDeviceWaitIdle(g->device);
+    if (!gs->retired.swapchain)
+        return;
+    for (uint32_t i = 0; i < gs->retired.image_count; i++) {
+        if (gs->retired.render_finished[i])
+            vkDestroySemaphore(gs->device, gs->retired.render_finished[i], NULL);
+        if (gs->retired.framebuffers[i])
+            vkDestroyFramebuffer(gs->device, gs->retired.framebuffers[i], NULL);
+        if (gs->retired.views[i])
+            vkDestroyImageView(gs->device, gs->retired.views[i], NULL);
+    }
+    vkDestroySwapchainKHR(gs->device, gs->retired.swapchain, NULL);
+    memset(&gs->retired, 0, sizeof(gs->retired));
+}
+
+/*
+ * Wait until the queue completes the submitted frames. Do not wait on the slot
+ * fences: slot_acquire() resets the fence of the current slot before the
+ * swapchain is made, and that fence signals only after its frame is submitted.
+ */
+static void wait_submitted_frames(struct render_gpu *g)
+{
+    vkQueueWaitIdle(g->queue);
+}
+
+static void surface_swapchain_destroy(struct gpu_surface *gs)
+{
+    if (gs->device)
+        vkDeviceWaitIdle(gs->device);
+    surface_swapchain_destroy_retired(gs);
     for (uint32_t i = 0; i < gs->image_count; i++) {
         if (gs->render_finished[i])
-            vkDestroySemaphore(g->device, gs->render_finished[i], NULL);
+            vkDestroySemaphore(gs->device, gs->render_finished[i], NULL);
         if (gs->framebuffers[i])
-            vkDestroyFramebuffer(g->device, gs->framebuffers[i], NULL);
+            vkDestroyFramebuffer(gs->device, gs->framebuffers[i], NULL);
         if (gs->views[i])
-            vkDestroyImageView(g->device, gs->views[i], NULL);
+            vkDestroyImageView(gs->device, gs->views[i], NULL);
         gs->render_finished[i] = VK_NULL_HANDLE;
         gs->framebuffers[i] = VK_NULL_HANDLE;
         gs->views[i] = VK_NULL_HANDLE;
     }
     if (gs->swapchain) {
-        vkDestroySwapchainKHR(g->device, gs->swapchain, NULL);
+        vkDestroySwapchainKHR(gs->device, gs->swapchain, NULL);
         gs->swapchain = VK_NULL_HANDLE;
     }
     gs->present_mode = VK_PRESENT_MODE_FIFO_KHR;
@@ -1786,6 +1833,15 @@ static bool surface_swapchain_ensure(struct render_gpu *g, struct gpu_surface *g
                 }
             }
         }
+        if (present_mode != VK_PRESENT_MODE_IMMEDIATE_KHR &&
+            present_mode != VK_PRESENT_MODE_MAILBOX_KHR) {
+            for (uint32_t i = 0; i < mode_count; i++) {
+                if (modes[i] == VK_PRESENT_MODE_FIFO_RELAXED_KHR) {
+                    present_mode = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+                    break;
+                }
+            }
+        }
     } else if (modes) {
         for (uint32_t i = 0; i < mode_count; i++) {
             if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
@@ -1826,7 +1882,14 @@ static bool surface_swapchain_ensure(struct render_gpu *g, struct gpu_surface *g
     if (formats != formats_inline)
         free(formats);
 
-    uint32_t image_count = caps.minImageCount + 1;
+    uint32_t image_count;
+    if (present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+        image_count = caps.minImageCount;
+    } else if (present_mode == VK_PRESENT_MODE_MAILBOX_KHR) {
+        image_count = caps.minImageCount > 3 ? caps.minImageCount : 3;
+    } else {
+        image_count = caps.minImageCount + 1;
+    }
     if (caps.maxImageCount > 0 && image_count > caps.maxImageCount)
         image_count = caps.maxImageCount;
 
@@ -1852,7 +1915,22 @@ static bool surface_swapchain_ensure(struct render_gpu *g, struct gpu_surface *g
     if (vkCreateSwapchainKHR(g->device, &sci, NULL, &new_swapchain) != VK_SUCCESS)
         return false;
 
-    surface_swapchain_destroy(g, gs);
+    if (gs->retired.swapchain) {
+        wait_submitted_frames(g);
+        surface_swapchain_destroy_retired(gs);
+    }
+
+    if (old_swapchain) {
+        gs->retired.swapchain = old_swapchain;
+        gs->retired.image_count = gs->image_count;
+        memcpy(gs->retired.views, gs->views, sizeof(gs->views));
+        memcpy(gs->retired.framebuffers, gs->framebuffers, sizeof(gs->framebuffers));
+        memcpy(gs->retired.render_finished, gs->render_finished, sizeof(gs->render_finished));
+        memset(gs->views, 0, sizeof(gs->views));
+        memset(gs->framebuffers, 0, sizeof(gs->framebuffers));
+        memset(gs->render_finished, 0, sizeof(gs->render_finished));
+    }
+
     gs->swapchain = new_swapchain;
     gs->surface = surface;
     gs->format = selected_format.format;
@@ -1860,6 +1938,7 @@ static bool surface_swapchain_ensure(struct render_gpu *g, struct gpu_surface *g
     gs->present_mode = present_mode;
 
     if (g->render_pass_format != gs->format) {
+        wait_submitted_frames(g);
         if (!ensure_render_pass(g, gs->format) || !pipelines_create(g))
             return false;
     }
@@ -2153,6 +2232,7 @@ static bool encode_frame(struct render_gpu *g, struct frame_slot *slot, struct g
     VkDescriptorSet bound_ds = VK_NULL_HANDLE;
     VkDeviceSize bound_v_offset = (VkDeviceSize)-1;
     VkRect2D bound_scissor = {0};
+    uint32_t bound_channel = 0;
 
     if (g->n_cmds > 0) {
         vkCmdBindDescriptorSets(slot->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -2186,8 +2266,7 @@ static bool encode_frame(struct render_gpu *g, struct frame_slot *slot, struct g
             }
         }
 
-        VkDeviceSize v_offset = (VkDeviceSize)(g->stream_offsets[c->stream] +
-                                              (size_t)c->start * STREAM_STRIDE[c->stream]);
+        VkDeviceSize v_offset = (VkDeviceSize)g->stream_offsets[c->stream];
         if (v_offset != bound_v_offset) {
             vkCmdBindVertexBuffers(slot->cmd, 0, 1, &slot->instance_buffer, &v_offset);
             bound_v_offset = v_offset;
@@ -2203,12 +2282,16 @@ static bool encode_frame(struct render_gpu *g, struct frame_slot *slot, struct g
             }
             if (c->kind == CMD_SUBPX) {
                 uint32_t channel = (uint32_t)ch;
-                vkCmdPushConstants(slot->cmd, g->pipeline_layout,
-                                   VK_SHADER_STAGE_FRAGMENT_BIT,
-                                   (uint32_t)offsetof(struct push_constants, channel),
-                                   (uint32_t)sizeof(channel), &channel);
+                if (channel != bound_channel) {
+                    // The update names every stage of the push constant range.
+                    vkCmdPushConstants(slot->cmd, g->pipeline_layout,
+                                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                       (uint32_t)offsetof(struct push_constants, channel),
+                                       (uint32_t)sizeof(channel), &channel);
+                    bound_channel = channel;
+                }
             }
-            vkCmdDraw(slot->cmd, 6, c->count, 0, 0);
+            vkCmdDraw(slot->cmd, 6, c->count, 0, c->start);
         }
     }
     vkCmdEndRenderPass(slot->cmd);
@@ -2552,7 +2635,7 @@ static bool present_pixels(struct render_gpu *g, struct frame_slot *slot, struct
     VkClearValue clear = {0};
     VkRenderPassBeginInfo rpbi = {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-        .renderPass = g->render_pass,
+        .renderPass = g->render_pass_copy ? g->render_pass_copy : g->render_pass,
         .framebuffer = gs->framebuffers[image_index],
         .renderArea = { .offset = { 0, 0 }, .extent = gs->extent },
         .clearValueCount = 1,
@@ -2651,17 +2734,7 @@ void render_gpu_surface_free(void *gpu_surface)
     if (!gs)
         return;
     if (gs->device) {
-        vkDeviceWaitIdle(gs->device);
-        for (uint32_t i = 0; i < gs->image_count; i++) {
-            if (gs->render_finished[i])
-                vkDestroySemaphore(gs->device, gs->render_finished[i], NULL);
-            if (gs->framebuffers[i])
-                vkDestroyFramebuffer(gs->device, gs->framebuffers[i], NULL);
-            if (gs->views[i])
-                vkDestroyImageView(gs->device, gs->views[i], NULL);
-        }
-        if (gs->swapchain)
-            vkDestroySwapchainKHR(gs->device, gs->swapchain, NULL);
+        surface_swapchain_destroy(gs);
         if (gs->pixels_view)
             vkDestroyImageView(gs->device, gs->pixels_view, NULL);
         if (gs->pixels_image)
@@ -3154,6 +3227,8 @@ void render_gpu_free(struct render_gpu *g)
         vkDestroyPipelineCache(g->device, g->pipeline_cache, NULL);
     if (g->render_pass)
         vkDestroyRenderPass(g->device, g->render_pass, NULL);
+    if (g->render_pass_copy)
+        vkDestroyRenderPass(g->device, g->render_pass_copy, NULL);
     if (g->sampler)
         vkDestroySampler(g->device, g->sampler, NULL);
     if (g->desc_layout)
