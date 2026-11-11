@@ -432,6 +432,27 @@ int main(int argc, char **argv)
     assert(pixels[0] == 0xff102030u && pixels[(size_t)3 * w + 2] == 0xffaabbccu);
     assert(pixels[(size_t)w * h - 1] == 0);
     assert(yasl_cpu_present(s) == 0);
+    /* The same holds for a narrower size, a much larger size, and a much
+     * smaller size. Each size is not smaller than the first, so the first
+     * frame stays whole. */
+    static const int sizes[][2] = {{104, 88}, {240, 200}, {112, 96}};
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+        assert(yasl_surface_request_size(s, sizes[i][0], sizes[i][1]) == 0);
+        resize_deadline = yasl_time_ns() + 3000000000ull;
+        do {
+            assert(yasl_wait_event(&e, 20) >= 0);
+            info = yasl_surface_get_info(s);
+        } while ((info.width != sizes[i][0] || info.height != sizes[i][1]) &&
+                 yasl_time_ns() < resize_deadline);
+        assert(info.width == sizes[i][0] && info.height == sizes[i][1]);
+        pixels = yasl_cpu_pixels(s, &w, &h);
+        assert(pixels && w == info.pixel_width && h == info.pixel_height && w > fw && h > fh);
+        assert(pixels[0] == 0xff102030u && pixels[(size_t)3 * w + 2] == 0xffaabbccu);
+        assert(pixels[(size_t)(fh - 1) * w + fw - 1] == 0xff102030u);
+        assert(pixels[(size_t)(fh - 1) * w + fw] == 0 && pixels[(size_t)fh * w] == 0);
+        assert(pixels[(size_t)w * h - 1] == 0);
+        assert(yasl_cpu_present(s) == 0);
+    }
 
     /* The refresh callback is reserved for modal loops; ordinary waits deliver REFRESH. */
     s->refresh = refresh;

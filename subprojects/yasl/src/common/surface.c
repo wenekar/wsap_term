@@ -225,23 +225,47 @@ static bool size_valid(int width, int height)
     return width > 0 && height > 0 && width <= 32767 && height <= 32767 &&
            (unsigned long long)width * (unsigned)height <= INT32_MAX / 4;
 }
-/* Keeps the overlap of the old canvas and zeroes the rest. */
+/* Keeps the overlap of the old canvas and zeroes the rest. The rows move in
+ * place while the allocation has room. A new allocation costs a page fault for
+ * each page, and a resize drag changes the size on each step. */
 static bool canvas_fit(yasl_surface *s, int w, int h)
 {
     if (s->canvas && s->canvas_width == w && s->canvas_height == h)
         return true;
     if (w <= 0 || h <= 0)
         return yasl_public_fail(EAGAIN);
-    uint32_t *pixels = calloc((size_t)w * (size_t)h, sizeof(*pixels));
-    if (!pixels)
-        return yasl_public_fail(ENOMEM);
-    int keep_w = w < s->canvas_width ? w : s->canvas_width;
-    int keep_h = h < s->canvas_height ? h : s->canvas_height;
-    for (int y = 0; s->canvas && y < keep_h; y++)
-        memcpy(pixels + (size_t)y * w, s->canvas + (size_t)y * s->canvas_width,
-               (size_t)keep_w * sizeof(*pixels));
-    free(s->canvas);
-    s->canvas = pixels;
+    size_t need = (size_t)w * (size_t)h;
+    size_t old_w = s->canvas ? (size_t)s->canvas_width : 0;
+    size_t keep_w = (size_t)w < old_w ? (size_t)w : old_w;
+    size_t old_h = s->canvas ? (size_t)s->canvas_height : 0;
+    size_t keep_h = (size_t)h < old_h ? (size_t)h : old_h;
+    uint32_t *from = s->canvas, *to = s->canvas;
+    /* Half as much again is room for growth. The pages of the room stay
+     * untouched until the canvas grows into them. A canvas that uses less than
+     * a quarter of its allocation gets a smaller one. */
+    if (need > s->canvas_capacity || need < s->canvas_capacity / 4) {
+        size_t capacity = need + need / 2;
+        to = malloc(capacity * sizeof(*to));
+        if (!to)
+            return yasl_public_fail(ENOMEM);
+        s->canvas_capacity = capacity;
+    }
+    if (to != from || (size_t)w < old_w) {
+        /* A narrower row ends before the next old row starts. Move upward. */
+        for (size_t y = to == from; y < keep_h; y++)
+            memmove(to + y * (size_t)w, from + y * old_w, keep_w * sizeof(*to));
+    } else if ((size_t)w > old_w) {
+        /* A wider row starts after the old row before it ends. Move downward. */
+        for (size_t y = keep_h; y-- > 1;)
+            memmove(to + y * (size_t)w, from + y * old_w, keep_w * sizeof(*to));
+    }
+    if (keep_w < (size_t)w)
+        for (size_t y = 0; y < keep_h; y++)
+            memset(to + y * (size_t)w + keep_w, 0, ((size_t)w - keep_w) * sizeof(*to));
+    memset(to + keep_h * (size_t)w, 0, ((size_t)h - keep_h) * (size_t)w * sizeof(*to));
+    if (to != from)
+        free(from);
+    s->canvas = to;
     s->canvas_width = w;
     s->canvas_height = h;
     return true;
@@ -376,6 +400,7 @@ int yasl_surface_destroy(yasl_surface *s)
     }
     free(s->canvas);
     s->canvas = NULL;
+    s->canvas_capacity = 0;
     free(s->text_surrounding);
     s->text_surrounding = NULL;
     yasl_private_surface_destroy(s);

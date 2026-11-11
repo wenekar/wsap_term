@@ -46,6 +46,7 @@ struct yasl_surface {
     struct yasl_surface *parent;
     /* CPU canvas returned by yasl_cpu_pixels and copied into each drawn frame. */
     uint32_t *canvas;
+    size_t canvas_capacity; /* In pixels. It can be more than the canvas uses. */
     int canvas_width, canvas_height;
     struct yasl_private_damage_list cpu_damage;
     /* Window values last reported through public WINDOW events. */
