@@ -1,11 +1,22 @@
 ifeq ($(shell uname -s),Darwin)
+# Meson picks `cc` and `c++` for C and C++, but `clang` for Objective-C. With
+# Homebrew LLVM in PATH, that mixes Apple clang and Homebrew clang, and LTO
+# fails at link time. Set every compiler from one toolchain. The linker loads
+# the LTO library of the compiler that links, and llvm-ar indexes the bitcode.
 BUILD_DIR ?= build-homebrew
-LLVM_BIN ?= $(shell brew --prefix llvm)/bin
-MESON_ENV ?= CC=$(LLVM_BIN)/clang OBJC=$(LLVM_BIN)/clang AR=$(LLVM_BIN)/llvm-ar NM=$(LLVM_BIN)/llvm-nm
+LLVM_BIN ?= $(shell brew --prefix llvm 2>/dev/null)/bin
+MESON_ENV ?= CC=$(LLVM_BIN)/clang CXX=$(LLVM_BIN)/clang++ \
+	OBJC=$(LLVM_BIN)/clang OBJCXX=$(LLVM_BIN)/clang++ \
+	AR=$(LLVM_BIN)/llvm-ar NM=$(LLVM_BIN)/llvm-nm
+TOOLCHAIN_CHECK = @test -x "$(LLVM_BIN)/clang" || { \
+	echo "Homebrew LLVM not found at $(LLVM_BIN). Run 'brew install llvm', or set LLVM_BIN."; \
+	exit 1; }
 else
 BUILD_DIR ?= build
 MESON_ENV ?=
+TOOLCHAIN_CHECK = @:
 endif
+MESON_SETUP = $(MESON_ENV) meson setup
 PREFIX ?= $(HOME)/.local
 MESON_SETUP_FLAGS ?= --prefix=$(PREFIX) --buildtype=release -Doptimization=3 -Db_lto=true -Disa=native
 TEST_BUILD_DIR ?= $(BUILD_DIR)-test
@@ -26,7 +37,8 @@ all: $(BUILD_DIR)/build.ninja
 	meson compile -C $(BUILD_DIR)
 
 $(BUILD_DIR)/build.ninja:
-	$(MESON_ENV) meson setup $(BUILD_DIR) $(MESON_SETUP_FLAGS)
+	$(TOOLCHAIN_CHECK)
+	$(MESON_SETUP) $(BUILD_DIR) $(MESON_SETUP_FLAGS)
 
 test: $(TEST_BUILD_DIR)/build.ninja
 	meson test -C "$(TEST_BUILD_DIR)" --print-errorlogs
@@ -36,7 +48,8 @@ test-fuzz: $(TEST_BUILD_DIR)/build.ninja
 	env -u LD_PRELOAD -u DYLD_INSERT_LIBRARIES WSAP_NO_PRELOAD=1 "$(TEST_BUILD_DIR)/tests/write-fuzz-test" 50000
 
 $(TEST_BUILD_DIR)/build.ninja:
-	$(MESON_ENV) meson setup "$(TEST_BUILD_DIR)" $(TEST_SETUP_FLAGS)
+	$(TOOLCHAIN_CHECK)
+	$(MESON_SETUP) "$(TEST_BUILD_DIR)" $(TEST_SETUP_FLAGS)
 
 release: $(BUILD_DIR)/build.ninja
 	meson compile -C $(BUILD_DIR) install-targets
@@ -67,7 +80,8 @@ dist: $(DIST_BUILD_DIR)/build.ninja
 	meson dist -C "$(DIST_BUILD_DIR)"
 
 $(DIST_BUILD_DIR)/build.ninja:
-	$(MESON_ENV) meson setup "$(DIST_BUILD_DIR)" $(DIST_SETUP_FLAGS)
+	$(TOOLCHAIN_CHECK)
+	$(MESON_SETUP) "$(DIST_BUILD_DIR)" $(DIST_SETUP_FLAGS)
 
 dist-local: $(DIST_BUILD_DIR)/build.ninja
 	meson compile -C "$(DIST_BUILD_DIR)" install-targets
@@ -77,19 +91,22 @@ test-asan: $(BUILD_DIR)-asan/build.ninja
 	env -u LD_PRELOAD -u DYLD_INSERT_LIBRARIES meson test -C $(BUILD_DIR)-asan --setup=asan
 
 $(BUILD_DIR)-asan/build.ninja:
-	$(MESON_ENV) meson setup "$(BUILD_DIR)-asan" $(SAN_SETUP_FLAGS) -Db_sanitize=address,undefined
+	$(TOOLCHAIN_CHECK)
+	$(MESON_SETUP) "$(BUILD_DIR)-asan" $(SAN_SETUP_FLAGS) -Db_sanitize=address,undefined
 
 test-tsan: $(BUILD_DIR)-tsan/build.ninja
 	env -u LD_PRELOAD -u DYLD_INSERT_LIBRARIES meson test -C $(BUILD_DIR)-tsan --setup=tsan
 
 $(BUILD_DIR)-tsan/build.ninja:
-	$(MESON_ENV) meson setup "$(BUILD_DIR)-tsan" $(SAN_SETUP_FLAGS) -Db_sanitize=thread
+	$(TOOLCHAIN_CHECK)
+	$(MESON_SETUP) "$(BUILD_DIR)-tsan" $(SAN_SETUP_FLAGS) -Db_sanitize=thread
 
 test-msan: $(BUILD_DIR)-msan/build.ninja
 	env -u LD_PRELOAD -u DYLD_INSERT_LIBRARIES meson test -C $(BUILD_DIR)-msan --setup=msan
 
 $(BUILD_DIR)-msan/build.ninja:
-	$(MESON_ENV) meson setup "$(BUILD_DIR)-msan" $(SAN_SETUP_FLAGS) -Db_sanitize=memory
+	$(TOOLCHAIN_CHECK)
+	$(MESON_SETUP) "$(BUILD_DIR)-msan" $(SAN_SETUP_FLAGS) -Db_sanitize=memory
 
 test-sanitizers: test-asan test-msan test-tsan
 
