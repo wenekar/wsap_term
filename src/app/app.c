@@ -191,13 +191,13 @@ static struct terminal_theme_picker app_theme_picker(struct app *a)
     };
 }
 
-static struct window *open_window(void *ud, struct terminal *content,
-                                  const char *cwd, struct vector2i size)
+static struct window *open_window(void *ud, app_tab_id tab, const char *cwd,
+                                  struct vector2i size)
 {
-    return app_open_terminal(ud, content, cwd, size);
+    return app_open_terminal(ud, tab, cwd, size);
 }
 
-struct window *app_open_terminal(struct app *a, struct terminal *content,
+struct window *app_open_terminal(struct app *a, app_tab_id tab,
                                  const char *cwd, struct vector2i size)
 {
     struct window *w = window_open(&a->host, &(struct window_spec){
@@ -207,7 +207,8 @@ struct window *app_open_terminal(struct app *a, struct terminal *content,
     if (!w)
         return NULL;
     if (!app_tabs_mount(w, &(struct app_tabs_spec){
-            .config = &a->config.terminal, .cwd = cwd, .content = content,
+            .config = &a->config.terminal, .cwd = cwd,
+            .model = &a->tabs, .tab = tab,
             .theme = look_palette(a->look),
             .theme_picker = app_theme_picker(a),
             .preview_capture = app_thumbnail_capture,
@@ -285,7 +286,7 @@ static void host_reopen(void *ud)
 {
     struct app *a = ud;
     if (!a->host.count)
-        app_open_terminal(a, NULL, NULL, (struct vector2i){0});
+        app_open_terminal(a, 0, NULL, (struct vector2i){0});
 }
 
 static bool host_option_set(void *ud, const char *key, const char *value)
@@ -465,7 +466,11 @@ void app_destroy(struct app *a)
         return;
     window_debug_set_hooks(NULL);
     app_stop(a);
+    /* The host reaps the windows, and each window gives its tabs back to the
+     * model. The model then destroys what is left, such as the tab of a
+     * drag that did not end. */
     window_host_destroy(&a->host);
+    app_tab_model_fini(&a->tabs);
     yasl_loop_unwatch_signals(a->loop);
     app_free(a);
 }
@@ -474,7 +479,7 @@ int app_run(struct app *a)
 {
     latency_probe_init();
     if (!app_watch_signals(a) ||
-        !app_open_terminal(a, NULL, NULL, (struct vector2i){0}))
+        !app_open_terminal(a, 0, NULL, (struct vector2i){0}))
         return 1;
     window_debug_set_hooks(&(struct window_debug_hooks){
         .option_set = host_option_set, .ud = a,

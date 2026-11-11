@@ -108,7 +108,8 @@ static uint64_t root_tick(struct ui_widget *widget, uint64_t now_ms)
     struct app_tabs *tabs = root_tabs(widget);
     uint64_t deadline = 0;
     for (int i = 0; i < tabs->count; i++) {
-        uint64_t retire = tabs->tabs[i].retire_at_ms;
+        const struct app_tab *entry = app_tabs_entry(tabs, i);
+        uint64_t retire = entry ? entry->retire_at_ms : 0;
         if (retire && (!deadline || retire < deadline))
             deadline = retire;
     }
@@ -170,9 +171,11 @@ static void op_debug_state(struct window *w, struct json_writer *j)
     json_key(j, "tabbar_height"); json_int(j, app_tabs_bar_height(w));
     json_key(j, "tab_titles");
     json_arr_begin(j);
-    for (int i = 0; i < tabs->count; i++)
-        if (tabs->tabs[i].content)
-            json_str(j, terminal_title(tabs->tabs[i].content));
+    for (int i = 0; i < tabs->count; i++) {
+        struct terminal *content = app_tabs_content(tabs, i);
+        if (content)
+            json_str(j, terminal_title(content));
+    }
     json_arr_end(j);
     json_key(j, "palette_open"); json_bool(j, ui_palette_is_open(&tabs->palette));
     if (ui_palette_is_open(&tabs->palette)) {
@@ -181,17 +184,16 @@ static void op_debug_state(struct window *w, struct json_writer *j)
     }
 }
 
+/* The window goes. Its tabs go back to the model, which destroys them,
+ * except the tab of a running drag. */
 static void op_destroy(struct window *w)
 {
     struct app_tabs *tabs = app_tabs_of(w);
     if (!tabs)
         return;
-    app_tabs_drag_forget(w);
-    for (int i = 0; i < tabs->count; i++) {
-        free(tabs->tabs[i].label);
-        terminal_destroy(tabs->tabs[i].content);
-    }
-    free(tabs->tabs);
+    app_tabs_drag_forget(tabs->spec.model, w);
+    app_tabs_release(tabs);
+    free(tabs->ids);
     free(tabs->labels);
     if (tabs->spec.preview_release && tabs->preview_state)
         tabs->spec.preview_release(tabs->preview_state);
@@ -216,28 +218,31 @@ struct window_ui_spec app_tabs_ui_spec(struct app_tabs *tabs)
 
 bool app_tabs_mount(struct window *w, const struct app_tabs_spec *spec)
 {
-    if (!w || !spec || !spec->config || window_ui_of(w))
+    if (!w || !spec || !spec->config || !spec->model || window_ui_of(w))
         return false;
     struct app_tabs *tabs = calloc(1, sizeof(*tabs));
     if (!tabs)
         return false;
     tabs->window = w;
     tabs->spec = *spec;
-    /* The initial directory is borrowed only for this mount. */
+    /* The initial directory and the initial tab are only for this mount. */
     tabs->spec.cwd = NULL;
+    tabs->spec.tab = 0;
     tabs->active = -1;
     app_tabs_widgets_init(tabs);
-    window_set_drag_target(w, &APP_TABS_DRAG_TARGET, NULL);
+    /* Drag events reach every window. The model owns the drag, so it is the
+     * user data. */
+    window_set_drag_target(w, &APP_TABS_DRAG_TARGET, spec->model);
     struct window_ui_spec ui = app_tabs_ui_spec(tabs);
     if (!window_ui_mount(w, &ui)) {
         free(tabs);
         return false;
     }
-    /* The window mounts the root before it can take a content. A failure
-     * here leaves the window to the caller, and the destroy hook frees the
-     * app tab state. */
-    if (spec->content)
-        return app_tabs_attach(w, spec->content, -1);
+    /* The window mounts the root before it can take a tab. A failure here
+     * leaves the window to the caller, and the destroy hook frees the
+     * window tab state. The caller still holds the tab. */
+    if (spec->tab)
+        return app_tabs_bind(w, spec->tab, -1);
     if (spec->empty)
         return true;
     return app_tabs_new_in(w, spec->cwd);

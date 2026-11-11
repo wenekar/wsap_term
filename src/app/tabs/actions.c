@@ -65,7 +65,7 @@ static void palette_toggle(struct app_tabs *tabs)
 
     int listed = 0;
     for (int i = 0; i < tabs->count && listed < TAB_CMDS; i++) {
-        struct terminal *content = tabs->tabs[i].content;
+        struct terminal *content = app_tabs_content(tabs, i);
         if (!content)
             continue;
         if (asprintf(&tab_labels[listed], "Switch to Tab %d: %s", listed + 1,
@@ -226,7 +226,7 @@ void app_tabs_actions_init(struct app_tabs *tabs)
 static int next_live(const struct app_tabs *tabs, int from)
 {
     for (int step = 1; step < tabs->count; step++)
-        if (app_tab_is_live(&tabs->tabs[(from + step) % tabs->count]))
+        if (app_tab_is_live(app_tabs_entry(tabs, (from + step) % tabs->count)))
             return (from + step) % tabs->count;
     return from;
 }
@@ -234,8 +234,8 @@ static int next_live(const struct app_tabs *tabs, int from)
 static int previous_live(const struct app_tabs *tabs, int from)
 {
     for (int step = 1; step < tabs->count; step++)
-        if (app_tab_is_live(
-                &tabs->tabs[(from - step + tabs->count) % tabs->count]))
+        if (app_tab_is_live(app_tabs_entry(
+                tabs, (from - step + tabs->count) % tabs->count)))
             return (from - step + tabs->count) % tabs->count;
     return from;
 }
@@ -243,7 +243,7 @@ static int previous_live(const struct app_tabs *tabs, int from)
 static int last_live(const struct app_tabs *tabs)
 {
     for (int i = tabs->count - 1; i >= 0; i--)
-        if (app_tab_is_live(&tabs->tabs[i]))
+        if (app_tab_is_live(app_tabs_entry(tabs, i)))
             return i;
     return -1;
 }

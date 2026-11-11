@@ -24,7 +24,7 @@ struct fixture {
 static void open_window(struct fixture *f, int tabs)
 {
     test_app_init(&f->app, "/bin/cat", (struct vector2i){ .x = 800, .y = 480 });
-    f->w = test_terminal_window(&f->app.app->host, &f->app.app->config.terminal);
+    f->w = test_terminal_window(f->app.app);
     assert(f->w);
     ui_surface_set_scale(window_ui_surface(f->w), (struct css_scale_context){
         .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
@@ -174,11 +174,10 @@ static void attach_during_close_keeps_live_tabs_clickable_test(void)
     app_tabs_select(f.w, 0);
     app_tabs_close(f.w, 2);
 
-    struct window *donor = test_terminal_window(&f.app.app->host,
-                                                &f.app.app->config.terminal);
+    struct window *donor = test_terminal_window(f.app.app);
     assert(donor && app_tabs_new(donor));
-    struct terminal *incoming = app_tabs_take(donor, 0);
-    assert(incoming && app_tabs_attach(f.w, incoming, 1));
+    assert(app_tabs_move(donor, 0, f.w, 1));
+    assert(window_closed(donor));
     assert(app_tabs_count(f.w) == 3);
     app_tabs_select(f.w, 0);
     settle(&f);

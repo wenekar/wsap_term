@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include <wsap_vtcore/wsap_vtcore.h>
+#include "app/tabs/model.h"
 #include "input/input.h"
 #include "terminal/terminal.h"
 #include "util/geom.h"
@@ -34,11 +35,13 @@ struct app_tabs_spec {
     const struct wsap_vtcore_theme *theme;
     struct terminal_theme_picker theme_picker;
     const char *cwd;
-    /* A content to attach to the window. The mount takes ownership only on
+    /* The tab table of the app. It owns every terminal. The window holds
+     * tab IDs only. */
+    struct app_tab_model *model;
+    /* A tab of the model that no window holds. The window holds it only on
      * success. */
-    struct terminal *content;
-    struct window *(*open_window)(void *ud, struct terminal *content,
-                                  const char *cwd, struct vector2i size);
+    app_tab_id tab;
+    app_tabs_open_window_fn open_window;
     app_tabs_preview_capture_fn preview_capture;
     app_tabs_preview_release_fn preview_release;
     void *preview_ud;
@@ -66,11 +69,11 @@ void app_tabs_close(struct window *window, int index);
 void app_tabs_select(struct window *window, int index);
 void app_tabs_reorder(struct window *window, int from, int to);
 
-/* Takes the content out of the window. The caller then owns it. */
-struct terminal *app_tabs_take(struct window *window, int index);
-/* Adds a content that the caller owns. The window owns it on success. */
-bool app_tabs_attach(struct window *window, struct terminal *content, int slot);
-/* Moves a tab to a new window. The source keeps the content on failure. */
+/* Moves a live tab to another window of the same app, at `slot`. A
+ * negative slot adds the tab at the end. The session stays alive. On
+ * failure the source keeps the tab. */
+bool app_tabs_move(struct window *from, int index, struct window *to, int slot);
+/* Moves a tab to a new window. The source keeps the tab on failure. */
 struct window *app_tabs_detach(struct window *window, int index);
 
 void app_tabs_set_theme(struct window *window,

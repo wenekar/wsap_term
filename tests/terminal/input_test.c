@@ -109,7 +109,7 @@ int main(void)
 {
     struct test_app app;
     test_app_init(&app, "/bin/cat", (struct vector2i){ .x = 800, .y = 480 });
-    struct window *w = test_terminal_window(&app.app->host, &app.app->config.terminal);
+    struct window *w = test_terminal_window(app.app);
     assert(w && app_tabs_new(w));
     struct terminal *content = app_tabs_active(w);
     struct session *session = terminal_session(content);

@@ -29,7 +29,7 @@ static struct window *open_terminal_window(struct test_app *a,
                                            struct vector2i viewport)
 {
     test_app_init(a, "/bin/cat", viewport);
-    struct window *w = test_terminal_window(&a->app->host, &a->app->config.terminal);
+    struct window *w = test_terminal_window(a->app);
     assert(w);
     apply_test_scale(w, viewport);
     return w;

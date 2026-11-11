@@ -263,13 +263,6 @@ void terminal_set_window(struct terminal *t, struct window *window)
         window_redraw(window);
 }
 
-void terminal_set_host(struct terminal *t, const struct terminal_host *host)
-{
-    if (!t)
-        return;
-    t->host = host ? *host : (struct terminal_host){0};
-}
-
 struct ui_widget *terminal_widget(struct terminal *t)
 {
     return t ? &t->scrollview.widget : NULL;

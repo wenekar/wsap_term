@@ -4,86 +4,81 @@
 #include "ui/widgets/tabbar.h"
 #include "ui/yasl/window.h"
 
-/* The content that a native drag carries, and the one owner of it while the
- * drag is in progress. */
-struct tab_flight {
-    struct terminal *content;
-    struct window *carried;
-    struct window *origin;
-    struct window *over;
-    bool taken;
-    int origin_index;
-    struct vector2i size;
-    struct window_logical_point grab;
-    struct window_host *host;
-    struct window *(*open_window)(void *ud, struct terminal *content,
-                                  const char *cwd, struct vector2i size);
-    void *ud;
-};
-
-static struct tab_flight *running;
+/* The model owns the drag in `model->flight`. The dragged tab stays in the
+ * model for the whole drag. A carry window can hold it, or no window holds
+ * it. The flight outlives the origin window and the carry window. */
 
 enum flight_end {
     FLIGHT_TAKEN,
     FLIGHT_DROPPED,
-    FLIGHT_CANCELLED,
     FLIGHT_ABANDONED,
 };
 
-static struct terminal *flight_take(struct tab_flight *f)
+/* Takes the dragged tab out of its carry window. Returns the tab when no
+ * window holds it then, or 0. */
+static app_tab_id flight_take(struct app_tab_model *m)
 {
-    struct terminal *content = f->content;
-    f->content = NULL;
-    if (!content && f->carried && app_tabs_count(f->carried) > 0)
-        content = app_tabs_take(f->carried, 0);
-    f->carried = NULL;
-    return content;
+    struct app_tab *entry = app_tab_model_get(m, m->flight.tab);
+    if (!entry)
+        return 0;
+    struct window *carried = entry->window;
+    if (!carried)
+        return entry->id;
+    return app_tabs_unbind(carried,
+        app_tabs_index_of(app_tabs_of(carried), entry->id));
 }
 
-static bool land(struct window *w, struct terminal *content, int slot)
+/* A tab whose process ended, or a closing tab, goes instead of a landing. */
+static bool spent(const struct app_tab *entry)
 {
-    if (terminal_exited(content)) {
-        terminal_destroy(content);
+    return !app_tab_is_live(entry) || terminal_exited(entry->content);
+}
+
+static bool land(struct app_tab_model *m, struct window *w, app_tab_id id,
+                 int slot)
+{
+    struct app_tab *entry = app_tab_model_get(m, id);
+    if (!entry || spent(entry)) {
+        app_tab_model_destroy(m, id);
         return true;
     }
-    return w && !window_closed(w) && app_tabs_attach(w, content, slot);
+    return w && !window_closed(w) && app_tabs_bind(w, id, slot);
 }
 
-static void land_alone(struct tab_flight *f, struct terminal *content)
+static void land_alone(struct app_tab_model *m, const struct app_tab_flight *f,
+                       app_tab_id id)
 {
-    if (terminal_exited(content)) {
-        terminal_destroy(content);
+    struct app_tab *entry = app_tab_model_get(m, id);
+    if (!entry || spent(entry)) {
+        app_tab_model_destroy(m, id);
         return;
     }
     struct window *nw = f->open_window
-        ? f->open_window(f->ud, content, NULL, f->size) : NULL;
+        ? f->open_window(f->ud, id, NULL, f->size) : NULL;
     if (!nw) {
-        terminal_destroy(content);
+        app_tab_model_destroy(m, id);
         return;
     }
     if (window_surface(nw))
         window_place_under_pointer(nw, f->grab);
 }
 
-static void settle(struct tab_flight *f, enum flight_end how)
+/* Settles the tab of an ended drag. A window that holds the tab keeps it. */
+static void settle(struct app_tab_model *m, const struct app_tab_flight *f,
+                   enum flight_end how)
 {
+    struct app_tab *entry = app_tab_model_get(m, f->tab);
+    if (!entry || entry->window)
+        return;
     switch (how) {
     case FLIGHT_TAKEN:
         break;
     case FLIGHT_ABANDONED:
-        if (f->content)
-            terminal_destroy(f->content);
+        app_tab_model_destroy(m, f->tab);
         break;
     case FLIGHT_DROPPED:
-        if (f->content)
-            land_alone(f, f->content);
+        land_alone(m, f, f->tab);
         break;
-    case FLIGHT_CANCELLED: {
-        struct terminal *content = flight_take(f);
-        if (content && !land(f->origin, content, f->origin_index))
-            land_alone(f, content);
-        break;
-    }
     }
 }
 
@@ -94,7 +89,7 @@ static void show_incoming(struct window *w, bool active, struct vector2i pos)
         ui_tabbar_set_external_drag(&tabs->tabbar, active, pos);
 }
 
-static void set_over(struct tab_flight *f, struct window *w)
+static void set_over(struct app_tab_flight *f, struct window *w)
 {
     struct window *old = f->over;
     if (old == w)
@@ -138,45 +133,43 @@ static bool can_carry(const struct window *w)
     return window_surface(w) && (yasl_get_features() & YASL_FEATURE_DRAG_CARRY);
 }
 
-static bool start_drag(struct tab_flight *f, struct window *origin,
-                       const struct yasl_drag_image *image)
+static bool start_drag(struct app_tab_model *m, const struct app_tab_flight *f,
+                       struct window *origin, const struct yasl_drag_image *image)
 {
     if (yasl_drag_start(window_surface(origin), image) != 0)
         return false;
-    running = f;
-    window_host_hold(f->host);
+    m->flight = *f;
+    m->flight.running = true;
+    window_host_hold(m->flight.host);
     return true;
 }
 
-/* The flight owns the content while the drag runs. Open the new window from
- * the flight, so a failure keeps one owner. */
-static void carry(struct window *w, struct tab_flight *f, int index)
+/* The model holds the tab while the drag runs. Open the new window from
+ * the flight, so a failure leaves the tab with the flight. */
+static void carry(struct window *w, struct app_tab_model *m, int index)
 {
-    struct terminal *content = app_tabs_take(w, index);
-    if (!content)
+    app_tab_id id = app_tabs_unbind(w, index);
+    if (!id)
         return;
+    struct app_tab_flight *f = &m->flight;
+    f->tab = id;
     struct window *nw = f->open_window
-        ? f->open_window(f->ud, content, NULL, f->size) : NULL;
+        ? f->open_window(f->ud, id, NULL, f->size) : NULL;
     if (nw && window_drag_carry(nw,
-            (struct window_logical_point){ .x = f->grab.x })) {
-        f->carried = nw;
+            (struct window_logical_point){ .x = f->grab.x }))
         return;
-    }
-    f->content = nw ? app_tabs_take(nw, 0) : content;
+    if (nw)
+        (void)app_tabs_unbind(nw, app_tabs_index_of(app_tabs_of(nw), id));
 }
 
 bool app_tabs_drag_begin(struct window *w, int index, struct vector2i grab)
 {
     struct app_tabs *tabs = app_tabs_of(w);
-    if (!tabs || !window_surface(w) || running || index < 0 ||
+    struct app_tab_model *m = tabs ? tabs->spec.model : NULL;
+    if (!tabs || !window_surface(w) || m->flight.running || index < 0 ||
         index >= tabs->count || app_tabs_live_count(tabs) < 2)
         return false;
-    struct tab_flight *f = calloc(1, sizeof(*f));
-    if (!f)
-        return false;
-    *f = (struct tab_flight){
-        .origin = w,
-        .origin_index = index,
+    struct app_tab_flight f = {
         .size = window_size(w),
         .grab = window_logical(w, grab),
         .host = window_host(w),
@@ -194,21 +187,20 @@ bool app_tabs_drag_begin(struct window *w, int index, struct vector2i grab)
         .hotspot_y = hotspot.y,
     };
     bool started = (carrying || pixels) &&
-        start_drag(f, w, carrying ? NULL : &image);
+        start_drag(m, &f, w, carrying ? NULL : &image);
     free(pixels);
-    if (!started) {
-        free(f);
+    if (!started)
         return false;
-    }
     ui_tab_preview_hide(&tabs->preview);
     if (carrying)
-        carry(w, f, index);
+        carry(w, m, index);
     else
-        f->content = app_tabs_take(w, index);
+        m->flight.tab = app_tabs_unbind(w, index);
     return true;
 }
 
-static bool tab_drop(struct window *w, struct tab_flight *f, struct vector2i pos)
+static bool tab_drop(struct window *w, struct app_tab_model *m,
+                     struct vector2i pos)
 {
     struct app_tabs *tabs = app_tabs_of(w);
     if (!tabs || !window_surface(w))
@@ -219,26 +211,24 @@ static bool tab_drop(struct window *w, struct tab_flight *f, struct vector2i pos
         show_incoming(w, false, pos);
         return false;
     }
-    struct terminal *content = flight_take(f);
-    if (!content) {
+    app_tab_id id = flight_take(m);
+    if (!id) {
         show_incoming(w, false, pos);
         return false;
     }
-    bool landed = land(w, content, slot);
+    /* On failure the flight keeps the tab, and no window holds it. */
+    bool landed = land(m, w, id, slot);
     show_incoming(w, false, pos);
-    if (landed)
-        return true;
-    f->content = content;
-    return false;
+    return landed;
 }
 
 void app_tabs_drag(struct window *w, enum yasl_drop_action event,
                    struct vector2i pos, void *ud)
 {
-    (void)ud;
-    struct tab_flight *f = running;
-    if (!f || !w || window_closed(w))
+    struct app_tab_model *m = ud;
+    if (!m || !m->flight.running || !w || window_closed(w))
         return;
+    struct app_tab_flight *f = &m->flight;
     switch (event) {
     case YASL_DROP_OVER:
         set_over(f, w);
@@ -250,17 +240,17 @@ void app_tabs_drag(struct window *w, enum yasl_drop_action event,
         break;
     case YASL_DROP_RELEASE:
     case YASL_DROP_CANCEL:
+        /* A cancelled drag lands like a drop on the desktop. */
         if (event == YASL_DROP_RELEASE && !f->taken)
-            f->taken = tab_drop(w, f, pos);
+            f->taken = tab_drop(w, m, pos);
         set_over(f, NULL);
         enum flight_end end = f->taken ? FLIGHT_TAKEN
             : window_host_destroying(f->host) ? FLIGHT_ABANDONED
             : FLIGHT_DROPPED;
-        running = NULL;
-        settle(f, end);
-        struct window_host *host = f->host;
-        free(f);
-        window_host_release(host);
+        struct app_tab_flight ended = *f;
+        m->flight = (struct app_tab_flight){0};
+        settle(m, &ended, end);
+        window_host_release(ended.host);
         break;
     }
 }
@@ -273,17 +263,10 @@ void app_tabs_drop_hover(struct window *w, bool over, void *ud)
         terminal_set_drop_hover(content, over);
 }
 
-void app_tabs_drag_forget(struct window *w)
+void app_tabs_drag_forget(struct app_tab_model *m, struct window *w)
 {
-    struct tab_flight *f = running;
-    if (!f)
-        return;
-    if (f->origin == w)
-        f->origin = NULL;
-    if (f->carried == w)
-        f->carried = NULL;
-    if (f->over == w)
-        f->over = NULL;
+    if (m && m->flight.running && m->flight.over == w)
+        m->flight.over = NULL;
 }
 
 const struct window_drag_target APP_TABS_DRAG_TARGET = {

@@ -59,13 +59,11 @@ static void layout_window(struct window *w, struct vector2i viewport)
     app_tabs_relayout(w);
 }
 
-static struct window *open_tabs_window(struct test_app *a,
-                                       struct vector2i viewport,
-                                       const char *command)
+/* Adds a window with one tab to the app. */
+static struct window *add_tabs_window(struct test_app *a,
+                                      struct vector2i viewport)
 {
-    test_app_init(a, command, viewport);
-    struct window *w = test_terminal_window(&a->app->host,
-                                            &a->app->config.terminal);
+    struct window *w = test_terminal_window(a->app);
     assert(w);
     ui_surface_set_scale(window_ui_surface(w), (struct css_scale_context){
         .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
@@ -74,6 +72,14 @@ static struct window *open_tabs_window(struct test_app *a,
     assert(app_tabs_new(w));
     app_tabs_relayout(w);
     return w;
+}
+
+static struct window *open_tabs_window(struct test_app *a,
+                                       struct vector2i viewport,
+                                       const char *command)
+{
+    test_app_init(a, command, viewport);
+    return add_tabs_window(a, viewport);
 }
 
 static void close_window(struct window *w, struct test_app *a)
@@ -310,22 +316,23 @@ static void select_inactive_tab_after_resize_test(void)
 }
 
 /* Transfer a tab across windows. The content takes the grid of the
- * destination, and a failed attach keeps one owner. */
+ * destination, and a move to the window that holds the tab keeps it there. */
 static void transfer_tab_fits_destination_test(void)
 {
-    struct test_app source_app, target_app;
+    struct test_app a;
     struct vector2i source_size = { .x = 800, .y = 600 };
     struct vector2i target_size = { .x = 640, .y = 400 };
-    struct window *source = open_tabs_window(&source_app, source_size, "/bin/cat");
-    struct window *target = open_tabs_window(&target_app, target_size, "/bin/cat");
+    struct window *source = open_tabs_window(&a, source_size, "/bin/cat");
+    struct window *target = add_tabs_window(&a, target_size);
     assert(app_tabs_new(source));
     layout_window(source, source_size);
     struct terminal *resident = app_tabs_active(target);
+    assert(app_tabs_active_index(source) == 1);
+    struct terminal *moved = app_tabs_active(source);
 
-    struct terminal *moved = app_tabs_take(source, 1);
-    assert(moved);
+    assert(app_tabs_move(source, 1, target, -1));
     assert(app_tabs_count(source) == 1);
-    assert(app_tabs_attach(target, moved, -1));
+    assert(app_tabs_active(source) != moved);
     assert(app_tabs_active(target) == moved);
     layout_window(target, target_size);
     assert_grid_fits(moved);
@@ -344,42 +351,16 @@ static void transfer_tab_fits_destination_test(void)
     assert(grid_of(app_tabs_active(target)).x == other_grid.x);
     assert_grid_fits(app_tabs_active(target));
 
-    /* The content is already in this window. The attach fails and leaves the
-     * ownership where it is. */
-    assert(!app_tabs_attach(target, moved, 0));
+    /* The tab is already in this window. The move fails and leaves the tab
+     * where it is. */
+    assert(app_tabs_active(target) == moved);
+    assert(!app_tabs_move(target, app_tabs_active_index(target), target, 0));
     assert(app_tabs_count(target) == 2);
+    assert(app_tabs_active(target) == moved);
     assert_grid_fits(moved);
 
-    close_window(target, &target_app);
-    close_window(source, &source_app);
-}
-
-/* A detached content reports to no owner. A second attach of the same
- * content fails, and the source window keeps one live tab. */
-static void take_clears_the_source_owner_test(void)
-{
-    struct test_app a;
-    struct vector2i viewport = { .x = 800, .y = 600 };
-    struct window *w = open_tabs_window(&a, viewport, "/bin/cat");
-    assert(app_tabs_new(w));
-    layout_window(w, viewport);
-    struct terminal *first = app_tabs_active(w);
-
-    struct terminal *taken = app_tabs_take(w, app_tabs_active_index(w));
-    assert(taken && taken == first);
-    assert(app_tabs_count(w) == 1);
-    assert(app_tabs_active(w) != taken);
-
-    /* Give the content back, so the window owns it again. A second attach of
-     * the same content fails and keeps one owner. */
-    assert(app_tabs_attach(w, taken, -1));
-    assert(app_tabs_count(w) == 2);
-    assert(!app_tabs_attach(w, taken, 0));
-    assert(app_tabs_count(w) == 2);
-    layout_window(w, viewport);
-    assert_grid_fits(taken);
-
-    close_window(w, &a);
+    window_close(target);
+    close_window(source, &a);
 }
 
 /* A real shell reports the rows and the columns of its PTY. The values must
@@ -478,7 +459,6 @@ int main(void)
     close_inactive_tab_keeps_grid_until_presentation_ends_test();
     select_inactive_tab_after_resize_test();
     transfer_tab_fits_destination_test();
-    take_clears_the_source_owner_test();
     live_shell_rows_follow_the_content_test();
     puts("PASS: the tab grid follows the content box after close presentation");
     return 0;

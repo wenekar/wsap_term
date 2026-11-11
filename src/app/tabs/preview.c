@@ -10,7 +10,7 @@ static bool paint_thumbnail(struct app_tabs *tabs, int index, int width)
     struct window *w = tabs->window;
     if (!w || !window_surface(w) || index < 0 || index >= tabs->count)
         return false;
-    struct terminal *content = tabs->tabs[index].content;
+    struct terminal *content = app_tabs_content(tabs, index);
     struct session *session = terminal_session(content);
     if (!content || !session || !session->term)
         return false;
@@ -29,7 +29,7 @@ static bool capture(void *userdata, int index, int width, bool dragging,
     struct app_tabs *tabs = userdata;
     if (!paint_thumbnail(tabs, index, width))
         return false;
-    *title = terminal_title(tabs->tabs[index].content);
+    *title = terminal_title(app_tabs_content(tabs, index));
     *image = &tabs->preview_image;
     return true;
 }
@@ -52,7 +52,7 @@ void app_tabs_preview_hover(struct app_tabs *tabs, int index)
 {
     struct rect2i anchor = {0};
     if (index == tabs->active || index < 0 || index >= tabs->count ||
-        !app_tab_is_live(&tabs->tabs[index]) ||
+        !app_tab_is_live(app_tabs_entry(tabs, index)) ||
         !ui_tabbar_tab_rect(&tabs->tabbar, index, &anchor))
         index = -1;
     ui_tab_preview_hover(&tabs->preview, index, anchor);

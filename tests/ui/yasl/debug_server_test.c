@@ -112,7 +112,7 @@ static void capture_survives_next_build_test(void)
 {
     struct test_app ta;
     test_app_init(&ta, "/bin/cat", (struct vector2i){ .x = 800, .y = 600 });
-    struct window *w = test_terminal_window(&ta.app->host, &ta.app->config.terminal);
+    struct window *w = test_terminal_window(ta.app);
     assert(w && app_tabs_new(w));
     ui_surface_set_scale(window_ui_surface(w), (struct css_scale_context){
                           .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
@@ -151,7 +151,7 @@ int main(void)
     test_app_init(&ta, "/bin/cat", (struct vector2i){ .x = 800, .y = 600 });
     struct yasl_loop *loop = ta.app->loop;
     struct window_host *windows = &ta.app->host;
-    struct window *w = test_terminal_window(&ta.app->host, &ta.app->config.terminal);
+    struct window *w = test_terminal_window(ta.app);
     assert(w && app_tabs_new(w) && app_tabs_new(w));
     ui_surface_set_scale(window_ui_surface(w), (struct css_scale_context){
                           .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,

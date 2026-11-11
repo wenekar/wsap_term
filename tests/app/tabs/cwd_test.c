@@ -18,8 +18,8 @@ struct fixture {
     struct window *opened;
 };
 
-static struct window *open_window(void *ud, struct terminal *content,
-                                  const char *cwd, struct vector2i size)
+static struct window *open_window(void *ud, app_tab_id tab, const char *cwd,
+                                  struct vector2i size)
 {
     struct fixture *f = ud;
     struct window *w = window_create(&f->app.app->host,
@@ -27,7 +27,8 @@ static struct window *open_window(void *ud, struct terminal *content,
     assert(w);
     assert(app_tabs_mount(w, &(struct app_tabs_spec){
         .config = &f->app.app->config.terminal,
-        .content = content,
+        .model = &f->app.app->tabs,
+        .tab = tab,
         .cwd = cwd,
         .open_window = open_window,
         .ud = f,
@@ -58,7 +59,7 @@ int main(void)
     char resolved[PATH_MAX];
     assert(realpath(path, resolved));
 
-    struct window *first = open_window(&f, NULL, resolved,
+    struct window *first = open_window(&f, 0, resolved,
                                        (struct vector2i){ .x = 800, .y = 600 });
     expect_cwd(first, resolved);
     assert(app_tabs_new(first));

@@ -5,9 +5,9 @@
 
 #include "app/config/config.h"
 #include "app/stats.h"
+#include "app/tabs/model.h"
 #include "ui/yasl/window.h"
 
-struct terminal;
 struct look;
 struct renderer;
 
@@ -18,6 +18,9 @@ struct app {
     struct renderer *renderer;
     struct look *look;
     struct window_host host;
+    /* The tab table. It owns every terminal of the app. Windows hold tab
+     * IDs. */
+    struct app_tab_model tabs;
     struct app_stats stats;
     char **argv;
     int argc;
@@ -27,7 +30,10 @@ struct app {
 struct app *app_create(int argc, char **argv, int *status);
 void app_destroy(struct app *a);
 int app_run(struct app *a);
-struct window *app_open_terminal(struct app *a, struct terminal *content,
+/* Opens a terminal window. A nonzero tab is a tab of the app that no window
+ * holds. The window holds it only on success. A zero tab starts a new
+ * terminal in `cwd`. */
+struct window *app_open_terminal(struct app *a, app_tab_id tab,
                                  const char *cwd, struct vector2i size);
 
 bool app_apply_config(struct app *a, const struct app_config *draft);

@@ -47,8 +47,8 @@ struct terminal_theme_picker {
     void *ud;
 };
 
-/* The host reports to the owner of the content. The owner finds the content
- * by identity, never by an array index. */
+/* The host reports to the owner of the content. The owner sets it once, at
+ * creation, and finds the content by identity, never by an array index. */
 struct terminal_host {
     void (*output)(void *ud, struct terminal *terminal);
     void (*title_changed)(void *ud, struct terminal *terminal);
@@ -78,11 +78,6 @@ void terminal_destroy(struct terminal *terminal);
  * content is in transfer. The bind sets the font scale and the native
  * targets before input resumes. */
 void terminal_set_window(struct terminal *terminal, struct window *window);
-/* Replaces the host reports. The owner clears the host before it gives the
- * content away, so no report reaches the old owner. A null host sends no
- * report. */
-void terminal_set_host(struct terminal *terminal,
-                       const struct terminal_host *host);
 
 /* The widget that shows the content. The owner places it in its UI. Its laid
  * out size is the one source of the terminal geometry. */

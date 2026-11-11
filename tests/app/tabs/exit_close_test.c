@@ -23,7 +23,7 @@ int main(void)
     assert(app_watch_signals(app.app));
     struct window_host *host = &app.app->host;
 
-    struct window *w = test_terminal_window(host, &app.app->config.terminal);
+    struct window *w = test_terminal_window(app.app);
     assert(w);
     assert(app_tabs_new(w));
     step_until_closed(host);

@@ -7,12 +7,12 @@ It applies to the tab ownership refactor.
 
 | Owner | State and work |
 | --- | --- |
-| `src/app/tabs/` | Tab order, identity, selection, close state, and window transfers. It owns the tab bar, previews, and command palette. It owns each terminal-content handle. |
+| `src/app/tabs/` | The tab model, and one tab view for each window. The model owns each terminal-content handle and the native drag. A view holds tab order, selection, close state, the tab bar, previews, and command palette. |
 | `src/terminal/` | One session and its terminal widgets, snapshot, font, zoom, selection, scroll state, and terminal input. |
 | `src/ui/widgets/tabbar.*` | Tab-bar drawing, animation, focus, and hit testing. It sends actions to the app. |
 | `src/ui/yasl/` | Native windows, surfaces, input routing, scale, and frame scheduling. It has no tab policy. |
 | `src/session/` | The term core, PTY, input queue, and PTY size notification. |
-| `src/app/app.c` | Window creation and frame composition. It alone calls the renderer. |
+| `src/app/app.c` | Window creation and frame composition. It alone calls the renderer. It owns the tab model. |
 
 A terminal-content handle has no tab array or active-tab index.
 It has no tab-bar, palette, preview, or window-transfer state.
@@ -50,8 +50,12 @@ A zero content size can use a documented default before native configure.
 Do not subtract tab-bar height inside the terminal library.
 
 The host reports title changes and process exit to the app.
+The app sets the host once, at creation.
+The model is the user data of every host.
 Pass the terminal handle with each report.
-The app can then find the tab by identity, not by a saved array index.
+The model then finds the tab by identity, not by a saved array index.
+The tab names the window that holds it.
+A tab that no window holds gets no report.
 Terminal commands can request app actions through a host callback.
 The callback must not expose the app tab collection to terminal content.
 
@@ -68,7 +72,8 @@ The frame source stays valid until the next prepare or destruction.
 ## App tab interface
 
 `src/app/tabs/tabs.h` declares the app tab interface.
-`src/app/tabs/internal.h` holds its private state.
+`src/app/tabs/model.h` declares the tab model.
+`src/app/tabs/internal.h` holds the state of the window views.
 The directory has its own `meson.build`.
 `src/app/meson.build` calls `subdir('tabs')`.
 
@@ -78,8 +83,7 @@ The app interface supplies these operations:
 - Create, close, select, and reorder tabs.
 - Get the active terminal-content handle.
 - Get the live tab count and active tab index.
-- Take a terminal-content handle from a window.
-- Attach a terminal-content handle to a window.
+- Move a tab to another window of the app.
 - Detach a tab into a new app window.
 - Handle tab-bar actions, preview requests, and tab shortcuts.
 - Prepare app state before UI layout and terminal snapshot capture.
@@ -90,19 +94,49 @@ Update callers and tests instead of keeping a second owner as a wrapper.
 The app root owns the window UI mount.
 Settings windows keep their existing separate mount.
 
-An attach or open operation takes ownership only on success.
-On failure, the caller still owns the handle.
-A take operation transfers ownership to the caller.
-A failed transfer must restore the source or destroy the handle once.
-No path can leave two owners or no owner.
-Keep one explicit owner for content during a native drag.
+## Tab model
+
+`struct app` owns one tab model, `struct app_tab_model`.
+The model owns every terminal-content handle for its whole life.
+It holds the tabs in one flat table.
+Each tab has an ID, its content, its close label, and its retire time.
+It also names the window that holds it.
+The app gives the model to each tab view through `app_tabs_spec`.
+
+A window holds tab IDs and borrows the content widgets.
+Its view keeps the IDs in bar order and the active index.
+A window never destroys a terminal.
+Only the model calls `terminal_destroy()`.
+When a window goes, its destroy hook gives its IDs back to the model.
+The model then destroys those tabs.
+The host reaps a closed window at the start of a service pass.
+No terminal callback is on the stack at that time.
+
+The bind and unbind helpers move a tab into and out of a window.
+Unbind leaves the tab in the model, and no window holds it.
+The caller must then bind the tab to a window or destroy it.
+Bind and window open take the tab only on success.
+On failure, the caller still holds the tab.
+A failed transfer must restore the source or destroy the tab once.
+Bind refuses a closing tab and a tab whose process ended.
+No path can leave a tab in two windows.
+
+The model owns the native drag in `model->flight`.
+A zero flight means no drag.
+The flight names the dragged tab.
+The tab stays in the model for the whole drag.
+A carry window can hold it, or no window holds it.
+When a window goes during a drag, the model keeps the dragged tab.
+The drag target of each window has the model as its user data.
+A cancelled drag lands like a drop on the desktop.
+`app_destroy` destroys the model after the host reaps the windows.
 
 ## Tab state and close
 
 The app is the only authority for live tabs.
-A tab has a stable identity across reorder and transfer.
-A terminal pointer can serve as that identity while it is alive.
-Use a separate token if a closing display entry outlives the content.
+A tab has a stable identity across reorder and transfer: its tab ID.
+Zero means no tab.
+A model never gives an ID twice.
 
 Close changes logical state before the next frame.
 Select the next live tab in the same app operation.
@@ -187,7 +221,7 @@ Do not test private collection layout or a fixed internal call order.
 Keep these behaviors:
 
 - Tab creation inherits cwd and zoom as before.
-- Reorder, native drag, detach, and attach preserve the session.
+- Reorder, native drag, detach, and move preserve the session.
 - Theme reload, settings, clipboard, IME, accessibility, and key encoding work.
 - The tab preview and command palette still work.
 - Process exit closes the correct tab after its last output.
