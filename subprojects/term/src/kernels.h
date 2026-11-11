@@ -515,6 +515,46 @@ static inline int scan_ascii_crlf_tail(const char *buf, int i, int len, uint16_t
     return count;
 }
 
+#if defined(__aarch64__)
+static int scan_ascii_crlf_neon(const char *buf, int len, uint16_t *ends)
+{
+    int i = 0, count = 0;
+    uint64_t carry = 0;
+    ends[0] = 0;
+    const uint8x16_t k_nl = vdupq_n_u8('\n'), k_cr = vdupq_n_u8('\r');
+    const uint8x16_t k_20 = vdupq_n_u8(0x20), k_5f = vdupq_n_u8(0x5f);
+    for (; i + 64 <= len; i += 64) {
+        uint8x16_t v0 = vld1q_u8((const uint8_t *)buf + i);
+        uint8x16_t v1 = vld1q_u8((const uint8_t *)buf + i + 16);
+        uint8x16_t v2 = vld1q_u8((const uint8_t *)buf + i + 32);
+        uint8x16_t v3 = vld1q_u8((const uint8_t *)buf + i + 48);
+        uint8x16_t n0 = vceqq_u8(v0, k_nl), n1 = vceqq_u8(v1, k_nl);
+        uint8x16_t n2 = vceqq_u8(v2, k_nl), n3 = vceqq_u8(v3, k_nl);
+        uint8x16_t c0 = vceqq_u8(v0, k_cr), c1 = vceqq_u8(v1, k_cr);
+        uint8x16_t c2 = vceqq_u8(v2, k_cr), c3 = vceqq_u8(v3, k_cr);
+        uint8x16_t b0 = vbicq_u8(vbicq_u8(vcgeq_u8(vsubq_u8(v0, k_20), k_5f), n0), c0);
+        uint8x16_t b1 = vbicq_u8(vbicq_u8(vcgeq_u8(vsubq_u8(v1, k_20), k_5f), n1), c1);
+        uint8x16_t b2 = vbicq_u8(vbicq_u8(vcgeq_u8(vsubq_u8(v2, k_20), k_5f), n2), c2);
+        uint8x16_t b3 = vbicq_u8(vbicq_u8(vcgeq_u8(vsubq_u8(v3, k_20), k_5f), n3), c3);
+        if (vmaxvq_u8(vorrq_u8(vorrq_u8(b0, b1), vorrq_u8(b2, b3))))
+            break;
+        uint64_t nl = (uint64_t)scan_masks_pair(n0, n1) |
+                      ((uint64_t)scan_masks_pair(n2, n3) << 32);
+        uint64_t cr = (uint64_t)scan_masks_pair(c0, c1) |
+                      ((uint64_t)scan_masks_pair(c2, c3) << 32);
+        if (((cr << 1) | carry) ^ nl)
+            break;
+        carry = cr >> 63;
+        uint32_t base = (uint32_t)i;
+        while (nl) {
+            ends[++count] = (uint16_t)(base + (uint32_t)wsap_vtcore_ctz64(nl) + 1u);
+            nl &= nl - 1u;
+        }
+    }
+    return scan_ascii_crlf_tail(buf, i, len, ends, count);
+}
+#endif
+
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
 WSAP_VTCORE_TARGET_AVX512
 static inline uint64_t crlf_errors_avx512(__m512i v, uint64_t *nl, uint64_t *carry)
@@ -599,24 +639,7 @@ static WSAP_VTCORE_NOINLINE WSAP_VTCORE_MAYBE_UNUSED int scan_ascii_crlf(const c
     int i = 0, count = 0;
     ends[0] = 0;
 #if defined(__aarch64__)
-    uint32_t carry = 0;
-    for (; i + 32 <= len; i += 32) {
-        uint32_t nl = 0, cr = 0, bad = 0;
-        for (int q = 0; q < 2; q++) {
-            uint8x16_t v = vld1q_u8((const uint8_t *)buf + i + q * 16);
-            nl |= (uint32_t)wsap_vtcore_lane_bits(vceqq_u8(v, vdupq_n_u8('\n'))) << (q * 16);
-            cr |= (uint32_t)wsap_vtcore_lane_bits(vceqq_u8(v, vdupq_n_u8('\r'))) << (q * 16);
-            bad |= (uint32_t)wsap_vtcore_lane_bits(vcgeq_u8(vsubq_u8(v, vdupq_n_u8(0x20)),
-                                                    vdupq_n_u8(0x5f))) << (q * 16);
-        }
-        bad &= ~nl & ~cr;
-        if (bad | (((cr << 1) | carry) ^ nl)) break;
-        carry = cr >> 31;
-        while (nl) {
-            ends[++count] = (uint16_t)(i + wsap_vtcore_ctz32(nl) + 1);
-            nl &= nl - 1;
-        }
-    }
+    return scan_ascii_crlf_neon(buf, len, ends);
 #endif
     return scan_ascii_crlf_tail(buf, i, len, ends, count);
 }
