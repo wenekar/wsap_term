@@ -208,6 +208,25 @@ static void test_vulkan_presentation(void)
         assert(ctx.result == RENDER_GPU_PRESENTED);
     }
 
+    /* Test resize transactions across multiple frames. */
+    for (int frame_idx = 0; frame_idx < 6; frame_idx++) {
+        int w = 640 + (frame_idx + 1) * 16;
+        int h = 480 + (frame_idx + 1) * 12;
+        yasl_surface_request_size(ys, w, h);
+        struct render_frame rf_resize = test_grid_frame(&grid, w, h);
+        rf_resize.base = 0xFF181824u;
+        struct draw_test_context ctx = {
+            .g = g,
+            .surface = &rs,
+            .frame = &rf_resize,
+            .result = RENDER_GPU_UNUSED,
+        };
+        bool drawn = window_metal_draw(layer, ys, (struct window_metal_watch){0},
+                                       test_metal_draw_cb, &ctx);
+        assert(drawn);
+        assert(ctx.result == RENDER_GPU_PRESENTED);
+    }
+
     /* Test CPU pixel presentation via render_gpu_present. */
     struct draw_test_context cpu_ctx = {
         .g = g,

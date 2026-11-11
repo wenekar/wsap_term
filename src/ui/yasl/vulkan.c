@@ -21,6 +21,8 @@ struct window_vulkan {
     VkSurfaceKHR vk_surface;
     struct vulkan_drawable drawable;
     struct window_metal_watch watch;
+    struct vector2i last_size;
+    bool has_size;
 };
 
 static bool vulkan_loader_initialized;
@@ -89,11 +91,15 @@ bool window_metal_draw(void *layer, struct yasl_surface *s,
     struct window *w = (struct window *)yasl_surface_get_userdata(s);
     if (w && w->surface == s)
         wv->drawable.unpaced = w->unpaced;
+    /* A size change starts a resize transaction. */
+    bool transaction = wv->has_size && !vector2i_eq(wv->last_size, size);
+    wv->last_size = size;
+    wv->has_size = true;
     wv->watch = watch;
     struct window_metal_frame frame = {
         .drawable = &wv->drawable,
         .size = size,
-        .transaction = false,
+        .transaction = transaction,
         .acquire = acquire_vulkan_drawable,
         .acquire_ud = wv,
     };
