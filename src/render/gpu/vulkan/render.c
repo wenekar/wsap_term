@@ -268,6 +268,17 @@ struct gpu_surface {
     VkPresentModeKHR present_mode;
     uint32_t image_count;
     VkImageLayout pixels_layout;
+    /* The size and the pacing that the swapchain was last made or checked for. */
+    struct vector2i request_size;
+    bool request_tearing;
+    /* The driver reported that the swapchain no longer matches the surface. */
+    bool recheck;
+    /* The answers of the surface queries. They are valid for `surface` only. */
+    struct {
+        VkSurfaceKHR surface;
+        VkSurfaceFormatKHR format;
+        bool immediate, mailbox, fifo_relaxed;
+    } traits;
     VkImage images[SWAPCHAIN_IMAGES_MAX];
     VkImageView views[SWAPCHAIN_IMAGES_MAX];
     VkFramebuffer framebuffers[SWAPCHAIN_IMAGES_MAX];
@@ -1787,11 +1798,75 @@ static void surface_swapchain_destroy(struct gpu_surface *gs)
     }
     gs->present_mode = VK_PRESENT_MODE_FIFO_KHR;
     gs->image_count = 0;
+    memset(&gs->traits, 0, sizeof(gs->traits));
+}
+
+/*
+ * Read the present modes and the format of a surface. On Wayland, Mesa makes
+ * a new registry for each of these queries and waits for the compositor three
+ * times. Thus query one time for each surface, not one time for each frame.
+ */
+static bool surface_traits_ensure(struct render_gpu *g, struct gpu_surface *gs,
+                                  VkSurfaceKHR surface)
+{
+    if (gs->traits.surface == surface)
+        return true;
+    memset(&gs->traits, 0, sizeof(gs->traits));
+
+    /* Vulkan defines fewer present modes than this. VK_INCOMPLETE is not an error. */
+    VkPresentModeKHR modes[16];
+    uint32_t mode_count = 16;
+    VkResult vr = vkGetPhysicalDeviceSurfacePresentModesKHR(g->physical_device, surface,
+                                                            &mode_count, modes);
+    if (vr != VK_SUCCESS && vr != VK_INCOMPLETE)
+        mode_count = 0;
+    for (uint32_t i = 0; i < mode_count; i++) {
+        gs->traits.immediate |= modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR;
+        gs->traits.mailbox |= modes[i] == VK_PRESENT_MODE_MAILBOX_KHR;
+        gs->traits.fifo_relaxed |= modes[i] == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+    }
+
+    VkSurfaceFormatKHR formats_inline[32];
+    VkSurfaceFormatKHR *formats = formats_inline;
+    uint32_t format_count = 32;
+    vr = vkGetPhysicalDeviceSurfaceFormatsKHR(g->physical_device, surface, &format_count,
+                                              formats);
+    if (vr == VK_INCOMPLETE) {
+        format_count = 0;
+        vkGetPhysicalDeviceSurfaceFormatsKHR(g->physical_device, surface, &format_count, NULL);
+        formats = calloc(format_count ? format_count : 1, sizeof(*formats));
+        if (!formats)
+            return false;
+        vr = vkGetPhysicalDeviceSurfaceFormatsKHR(g->physical_device, surface, &format_count,
+                                                  formats);
+    }
+    bool ok = (vr == VK_SUCCESS || vr == VK_INCOMPLETE) && format_count;
+    if (ok) {
+        gs->traits.format = formats[0];
+        for (uint32_t i = 0; i < format_count; i++) {
+            if (formats[i].format == VK_FORMAT_B8G8R8A8_UNORM) {
+                gs->traits.format = formats[i];
+                break;
+            }
+        }
+        if (gs->traits.format.format == VK_FORMAT_UNDEFINED)
+            gs->traits.format.format = VK_FORMAT_B8G8R8A8_UNORM;
+        gs->traits.surface = surface;
+    }
+    if (formats != formats_inline)
+        free(formats);
+    return ok;
 }
 
 static bool surface_swapchain_ensure(struct render_gpu *g, struct gpu_surface *gs,
                                      VkSurfaceKHR surface, struct vector2i size, bool tearing)
 {
+    /* Most frames keep the surface, the size, and the pacing. Ask the driver
+     * nothing for these frames. */
+    if (gs->swapchain && gs->surface == surface && !gs->recheck &&
+        vector2i_eq(gs->request_size, size) && gs->request_tearing == tearing)
+        return true;
+
     VkSurfaceCapabilitiesKHR caps;
     if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g->physical_device, surface, &caps) != VK_SUCCESS)
         return false;
@@ -1808,79 +1883,25 @@ static bool surface_swapchain_ensure(struct render_gpu *g, struct gpu_surface *g
     if (!extent.width || !extent.height)
         return false;
 
-    uint32_t mode_count = 0;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(g->physical_device, surface, &mode_count, NULL);
-    VkPresentModeKHR modes_inline[16];
-    VkPresentModeKHR *modes = modes_inline;
-    if (mode_count > 16) {
-        modes = calloc(mode_count, sizeof(*modes));
-    }
-    if (modes)
-        vkGetPhysicalDeviceSurfacePresentModesKHR(g->physical_device, surface, &mode_count, modes);
+    if (!surface_traits_ensure(g, gs, surface))
+        return false;
     VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
-    if (tearing && modes) {
-        for (uint32_t i = 0; i < mode_count; i++) {
-            if (modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) {
-                present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
-                break;
-            }
-        }
-        if (present_mode != VK_PRESENT_MODE_IMMEDIATE_KHR) {
-            for (uint32_t i = 0; i < mode_count; i++) {
-                if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
-                    present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
-                    break;
-                }
-            }
-        }
-        if (present_mode != VK_PRESENT_MODE_IMMEDIATE_KHR &&
-            present_mode != VK_PRESENT_MODE_MAILBOX_KHR) {
-            for (uint32_t i = 0; i < mode_count; i++) {
-                if (modes[i] == VK_PRESENT_MODE_FIFO_RELAXED_KHR) {
-                    present_mode = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
-                    break;
-                }
-            }
-        }
-    } else if (modes) {
-        for (uint32_t i = 0; i < mode_count; i++) {
-            if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
-                present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
-                break;
-            }
-        }
-    }
-    if (modes && modes != modes_inline)
-        free(modes);
+    if (tearing && gs->traits.immediate)
+        present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+    else if (gs->traits.mailbox)
+        present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
+    else if (tearing && gs->traits.fifo_relaxed)
+        present_mode = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
 
     if (gs->swapchain && gs->surface == surface &&
         gs->extent.width == extent.width && gs->extent.height == extent.height &&
-        gs->present_mode == present_mode)
+        gs->present_mode == present_mode) {
+        gs->request_size = size;
+        gs->request_tearing = tearing;
+        gs->recheck = false;
         return true;
-
-    uint32_t format_count = 0;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(g->physical_device, surface, &format_count, NULL);
-    if (!format_count)
-        return false;
-    VkSurfaceFormatKHR formats_inline[32];
-    VkSurfaceFormatKHR *formats = formats_inline;
-    if (format_count > 32) {
-        formats = calloc(format_count, sizeof(*formats));
-        if (!formats)
-            return false;
     }
-    vkGetPhysicalDeviceSurfaceFormatsKHR(g->physical_device, surface, &format_count, formats);
-    VkSurfaceFormatKHR selected_format = formats[0];
-    for (uint32_t i = 0; i < format_count; i++) {
-        if (formats[i].format == VK_FORMAT_B8G8R8A8_UNORM) {
-            selected_format = formats[i];
-            break;
-        }
-    }
-    if (selected_format.format == VK_FORMAT_UNDEFINED)
-        selected_format.format = VK_FORMAT_B8G8R8A8_UNORM;
-    if (formats != formats_inline)
-        free(formats);
+    VkSurfaceFormatKHR selected_format = gs->traits.format;
 
     uint32_t image_count;
     if (present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
@@ -1912,8 +1933,11 @@ static bool surface_swapchain_ensure(struct render_gpu *g, struct gpu_surface *g
         .oldSwapchain = old_swapchain,
     };
     VkSwapchainKHR new_swapchain = VK_NULL_HANDLE;
-    if (vkCreateSwapchainKHR(g->device, &sci, NULL, &new_swapchain) != VK_SUCCESS)
+    if (vkCreateSwapchainKHR(g->device, &sci, NULL, &new_swapchain) != VK_SUCCESS) {
+        /* The surface can have changed. Query it again for the next frame. */
+        memset(&gs->traits, 0, sizeof(gs->traits));
         return false;
+    }
 
     if (gs->retired.swapchain) {
         wait_submitted_frames(g);
@@ -1936,6 +1960,9 @@ static bool surface_swapchain_ensure(struct render_gpu *g, struct gpu_surface *g
     gs->format = selected_format.format;
     gs->extent = extent;
     gs->present_mode = present_mode;
+    gs->request_size = size;
+    gs->request_tearing = tearing;
+    gs->recheck = false;
 
     if (g->render_pass_format != gs->format) {
         wait_submitted_frames(g);
@@ -2332,7 +2359,9 @@ static bool encode_frame(struct render_gpu *g, struct frame_slot *slot, struct g
         .pSwapchains = &gs->swapchain,
         .pImageIndices = &image_index,
     };
-    vkQueuePresentKHR(g->queue, &pi);
+    VkResult presented = vkQueuePresentKHR(g->queue, &pi);
+    if (presented == VK_ERROR_OUT_OF_DATE_KHR || presented == VK_SUBOPTIMAL_KHR)
+        gs->recheck = true;
 
     g->atlas.stage_used = 0;
     g->atlas.n_uploads = 0;
@@ -2368,6 +2397,7 @@ enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surfa
                                                     slot->image_acquired, VK_NULL_HANDLE,
                                                     &image_index);
                 if (vr == VK_ERROR_OUT_OF_DATE_KHR || vr == VK_SUBOPTIMAL_KHR) {
+                    gs->recheck = true;
                     if (surface_swapchain_ensure(g, gs, drawable->surface, fb->size, unpaced))
                         vr = vkAcquireNextImageKHR(g->device, gs->swapchain, UINT64_MAX,
                                                    slot->image_acquired, VK_NULL_HANDLE,
@@ -2552,7 +2582,8 @@ static bool present_pixels(struct render_gpu *g, struct frame_slot *slot, struct
     VkResult vr = vkAcquireNextImageKHR(g->device, gs->swapchain, UINT64_MAX, slot->image_acquired,
                                         VK_NULL_HANDLE, &image_index);
     if (vr == VK_ERROR_OUT_OF_DATE_KHR || vr == VK_SUBOPTIMAL_KHR) {
-        if (surface_swapchain_ensure(g, gs, drawable->surface, fb->size, fb->transaction))
+        gs->recheck = true;
+        if (surface_swapchain_ensure(g, gs, drawable->surface, fb->size, unpaced))
             vr = vkAcquireNextImageKHR(g->device, gs->swapchain, UINT64_MAX, slot->image_acquired,
                                        VK_NULL_HANDLE, &image_index);
     }
@@ -2709,7 +2740,9 @@ static bool present_pixels(struct render_gpu *g, struct frame_slot *slot, struct
         .pSwapchains = &gs->swapchain,
         .pImageIndices = &image_index,
     };
-    vkQueuePresentKHR(g->queue, &pi);
+    VkResult presented = vkQueuePresentKHR(g->queue, &pi);
+    if (presented == VK_ERROR_OUT_OF_DATE_KHR || presented == VK_SUBOPTIMAL_KHR)
+        gs->recheck = true;
     return true;
 }
 
