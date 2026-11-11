@@ -845,6 +845,15 @@ static inline void store_ascii_quad_neon(struct cell *dst, uint32x4_t cps,
     vst1q_u32_x4((uint32_t *)(void *)dst, cells);
 }
 
+/* Store eight cells as two 64-byte blocks. One widened 8-lane code point
+ * vector feeds both blocks. */
+static inline void store_ascii_oct_neon(struct cell *dst, uint16x8_t cps,
+                                        uint32x4_t fg, uint32x4_t bg_flags)
+{
+    store_ascii_quad_neon(dst, vmovl_u16(vget_low_u16(cps)), fg, bg_flags);
+    store_ascii_quad_neon(dst + 4, vmovl_u16(vget_high_u16(cps)), fg, bg_flags);
+}
+
 static inline void put_ascii_quad_neon(struct cell *dst, const char *src,
                                        uint32x4_t fg, uint32x4_t bg_flags)
 {
@@ -876,10 +885,21 @@ static inline void put_ascii_chunk(struct cell * restrict dst, const char * rest
     uint32x4_t fg4 = vdupq_n_u32(fg);
     uint32x4_t bg_flags = vcombine_u32(vcreate_u32(((uint64_t)flags << 32) | bg),
                                        vcreate_u32(((uint64_t)flags << 32) | bg));
-    for (; k + 8 <= n; k += 8) {
-        uint16x8_t cp16 = vmovl_u8(vld1_u8((const uint8_t *)src + k));
-        store_ascii_quad_neon(dst + k, vmovl_u16(vget_low_u16(cp16)), fg4, bg_flags);
-        store_ascii_quad_neon(dst + k + 4, vmovl_u16(vget_high_u16(cp16)), fg4, bg_flags);
+    if (n >= 16) {
+        for (; k + 16 <= n; k += 16) {
+            uint8x16_t bytes = vld1q_u8((const uint8_t *)src + k);
+            store_ascii_oct_neon(dst + k, vmovl_u8(vget_low_u8(bytes)), fg4, bg_flags);
+            store_ascii_oct_neon(dst + k + 8, vmovl_u8(vget_high_u8(bytes)), fg4, bg_flags);
+        }
+        if (k + 8 <= n) {
+            store_ascii_oct_neon(dst + k, vmovl_u8(vld1_u8((const uint8_t *)src + k)), fg4,
+                                 bg_flags);
+            k += 8;
+        }
+    } else if (n >= 8) {
+        store_ascii_oct_neon(dst + k, vmovl_u8(vld1_u8((const uint8_t *)src + k)), fg4,
+                             bg_flags);
+        k += 8;
     }
     if (k + 4 <= n) {
         put_ascii_quad_neon(dst + k, src + k, fg4, bg_flags);
