@@ -8,9 +8,8 @@ static bool menu_action(struct ui_widget *source, const struct ui_action *event,
                         void *ud)
 {
     (void)source;
-    struct window *w = ud;
-    struct terminal *tw = terminal_of(w);
-    struct terminal_theme_picker *picker = &tw->theme_picker;
+    struct terminal *t = ud;
+    struct terminal_theme_picker *picker = &t->theme_picker;
     int action = event->id;
     if (event->kind == UI_ACTION_CLOSE) {
         if (picker->cancel)
@@ -38,67 +37,70 @@ static bool menu_action(struct ui_widget *source, const struct ui_action *event,
         picker->commit(picker->ud);
         return true;
     }
-    terminal_ctx_menu_perform(w, action);
+    terminal_ctx_menu_perform(t, action);
     return true;
 }
 
 static const ui_menu_item *menu_on_submenu(void *ud, int action, int *n)
 {
-    struct window *w = ud;
-    struct terminal *tw = terminal_of(w);
-    struct terminal_theme_picker *picker = &tw->theme_picker;
+    struct terminal *t = ud;
+    struct terminal_theme_picker *picker = &t->theme_picker;
     *n = 0;
     if (action != CTX_ACTION_THEMES || !picker->count || !picker->label)
         return NULL;
     int n_themes = picker->count(picker->ud);
-    free(tw->menu_theme_items);
-    tw->menu_theme_items = calloc((size_t)(n_themes ? n_themes : 1),
-                                 sizeof(*tw->menu_theme_items));
-    if (!tw->menu_theme_items)
+    free(t->menu_theme_items);
+    t->menu_theme_items = calloc((size_t)(n_themes ? n_themes : 1),
+                                 sizeof(*t->menu_theme_items));
+    if (!t->menu_theme_items)
         return NULL;
     for (int i = 0; i < n_themes; i++) {
         const char *label = picker->label(picker->ud, i);
-        tw->menu_theme_items[(*n)++] = (ui_menu_item){
+        t->menu_theme_items[(*n)++] = (ui_menu_item){
             .label = label,
             .action = CTX_ACTION_THEME_BASE + i,
             .flags = picker->selected && picker->selected(picker->ud, i)
                 ? UI_LIST_ITEM_CHECKED : 0,
         };
     }
-    return tw->menu_theme_items;
+    return t->menu_theme_items;
 }
 
-void terminal_select_all(struct window *w)
+void terminal_select_all(struct terminal *t)
 {
-    struct wsap_vtcore *t = terminal_term(w);
+    if (!t || !t->session.term)
+        return;
+    struct wsap_vtcore *term = t->session.term;
+    struct wsap_vtcore_vector2i size = wsap_vtcore_size(term);
+    wsap_vtcore_select_start(term, (struct wsap_vtcore_vector2i){ 0 }, false, WSAP_VTCORE_SELECT_CELL);
+    wsap_vtcore_select_extend(term, (struct wsap_vtcore_vector2i){ .x = size.x - 1, .y = size.y - 1 }, true);
+    if (t->window)
+        window_redraw(t->window);
+}
+
+void terminal_ctx_menu_perform(struct terminal *t, int action)
+{
     if (!t)
         return;
-    struct wsap_vtcore_vector2i size = wsap_vtcore_size(t);
-    wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ 0 }, false, WSAP_VTCORE_SELECT_CELL);
-    wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = size.x - 1, .y = size.y - 1 }, true);
-    window_redraw(w);
-}
-
-void terminal_ctx_menu_perform(struct window *w, int action)
-{
-    struct terminal *tw = terminal_of(w);
-    struct wsap_vtcore *t = terminal_term(w);
+    struct window *w = t->window;
+    struct wsap_vtcore *term = t->session.term;
     switch (action) {
     case CTX_ACTION_COPY:
-        if (window_surface(w) && t)
-            terminal_copy(w);
+        if (w && window_surface(w) && term)
+            terminal_copy(t);
         break;
     case CTX_ACTION_PASTE:
-        if (window_surface(w))
+        if (w && window_surface(w))
             window_paste(w, YASL_CLIPBOARD);
         break;
     case CTX_ACTION_SELECT_ALL:
-        terminal_select_all(w);
+        terminal_select_all(t);
         break;
     case CTX_ACTION_OPEN_LINK: {
-            if (!t)
+            if (!term)
                 break;
-            char *url = wsap_vtcore_link_at(t, term_vec_from_geom(terminal_cell_at(w, tw->ctx_click)));
+            char *url = wsap_vtcore_link_at(term, term_vec_from_geom(
+                terminal_cell_at(t, t->ctx_click)));
             if (url) {
                 platform_open_url(url);
                 wsap_vtcore_text_free(url);
@@ -106,29 +108,32 @@ void terminal_ctx_menu_perform(struct window *w, int action)
             break;
         }
     case CTX_ACTION_RESET_VIEW:
-        if (t) {
-            wsap_vtcore_scroll_to(t, 0);
-            window_redraw(w);
+        if (term) {
+            wsap_vtcore_scroll_to(term, 0);
+            if (w)
+                window_redraw(w);
         }
         break;
     case CTX_ACTION_SETTINGS:
-        window_host_command(w, INPUT_SHORTCUT_SETTINGS);
+        if (w)
+            window_host_command(w, INPUT_SHORTCUT_SETTINGS);
         break;
     default:
         break;
     }
 }
 
-void terminal_open_ctx_menu(struct window *w, struct vector2i at)
+void terminal_open_ctx_menu(struct terminal *t, struct vector2i at)
 {
-    struct terminal *tw = terminal_of(w);
-    if (!window_surface(w))
+    struct window *w = t ? t->window : NULL;
+    if (!w || !window_surface(w))
         return;
 
-    struct wsap_vtcore *t = terminal_term(w);
-    char *url = t ? wsap_vtcore_link_at(t, term_vec_from_geom(terminal_cell_at(w, at))) : NULL;
-    bool has_sel = t ? wsap_vtcore_has_selection(t) : false;
-    bool can_reset = t ? wsap_vtcore_scrollback(t).offset > 0 : false;
+    struct wsap_vtcore *term = t->session.term;
+    char *url = term ? wsap_vtcore_link_at(term, term_vec_from_geom(
+        terminal_cell_at(t, at))) : NULL;
+    bool has_sel = term ? wsap_vtcore_has_selection(term) : false;
+    bool can_reset = term ? wsap_vtcore_scrollback(term).offset > 0 : false;
 
     struct input_keymap *km = input_keymap_active();
     char copy_sc[64] = {0};
@@ -163,9 +168,9 @@ void terminal_open_ctx_menu(struct window *w, struct vector2i at)
     items[n++] = UI_MENU_ITEM("Settings...", CTX_ACTION_SETTINGS);
     wsap_vtcore_text_free(url);
 
-    struct terminal_theme_picker *picker = &tw->theme_picker;
+    struct terminal_theme_picker *picker = &t->theme_picker;
     if (picker->rescan)
         picker->rescan(picker->ud);
-    tw->ctx_click = at;
-    window_menu_open(w, items, n, at, menu_action, menu_on_submenu, w);
+    t->ctx_click = at;
+    window_menu_open(w, items, n, at, menu_action, menu_on_submenu, t);
 }

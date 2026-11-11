@@ -11,14 +11,16 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include "app/tabs/tabs.h"
 #include "helpers/app_fixture.h"
+#include "paint/scene.h"
 #include "helpers/terminal_window.h"
+#include "ui/surface.h"
 #include "ui/yasl/client.h"
 #include "ui/yasl/testing.h"
 #include "yasl/yasl.h"
 #include "util/time.h"
 #include "ui/yasl/inspector.h"
-#include "terminal/internal.h"
 
 struct client {
     struct yasl_loop *loop;
@@ -111,7 +113,7 @@ static void capture_survives_next_build_test(void)
     struct test_app ta;
     test_app_init(&ta, "/bin/cat", (struct vector2i){ .x = 800, .y = 600 });
     struct window *w = test_terminal_window(&ta.app->host, &ta.app->config.terminal);
-    assert(w && terminal_new_tab(w));
+    assert(w && app_tabs_new(w));
     ui_surface_set_scale(window_ui_surface(w), (struct css_scale_context){
                           .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
                       });
@@ -150,7 +152,7 @@ int main(void)
     struct yasl_loop *loop = ta.app->loop;
     struct window_host *windows = &ta.app->host;
     struct window *w = test_terminal_window(&ta.app->host, &ta.app->config.terminal);
-    assert(w && terminal_new_tab(w) && terminal_new_tab(w));
+    assert(w && app_tabs_new(w) && app_tabs_new(w));
     ui_surface_set_scale(window_ui_surface(w), (struct css_scale_context){
                           .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
                       });
@@ -176,7 +178,7 @@ int main(void)
     assert(strstr(line_at(&c, 0), "\"tabs\":2"));
     const char *tree = line_at(&c, 1);
     assert(strstr(tree, "\"type\":\"window-root\""));
-    assert(strstr(tree, "\"type\":\"terminal-root\""));
+    assert(strstr(tree, "\"type\":\"app-tabs-root\""));
     assert(strstr(tree, "\"type\":\"tabbar\""));
     assert(strstr(tree, "\"type\":\"scrollview\""));
     assert(!strncmp(line_at(&c, 2), "{\"ok\":false,\"error\":\"unknown command", 36));

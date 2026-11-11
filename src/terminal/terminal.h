@@ -5,28 +5,19 @@
 #include <stdint.h>
 
 #include <wsap_vtcore/wsap_vtcore.h>
+#include "input/input.h"
 #include "util/geom.h"
-#include "ui/yasl/window.h"
 
 struct session;
-struct tab;
 struct window;
-struct window_host;
 struct font_instance;
+struct ui_widget;
 struct wsap_vtcore_snapshot;
-struct ui_image;
-struct ui_scene;
 
-typedef bool (*terminal_preview_capture_fn)(void *ud, void **state,
-                                             struct font_instance *font,
-                                             struct wsap_vtcore *term, int width,
-                                             struct ui_image *image);
-typedef void (*terminal_preview_release_fn)(void *state);
-typedef bool (*terminal_scene_paint_fn)(void *ud, struct font_instance *font,
-                                        uint32_t *pixels,
-                                        struct vector2i size,
-                                        const struct ui_scene *scene);
+struct terminal;
 
+/* The frame data of one content. It stays valid until the next prepare or
+ * the destruction of the content. */
 struct terminal_frame_source {
     struct wsap_vtcore_snapshot *snapshot;
     struct font_instance *font;
@@ -56,41 +47,84 @@ struct terminal_theme_picker {
     void *ud;
 };
 
+/* The host reports to the owner of the content. The owner finds the content
+ * by identity, never by an array index. */
+struct terminal_host {
+    void (*output)(void *ud, struct terminal *terminal);
+    void (*title_changed)(void *ud, struct terminal *terminal);
+    void (*exited)(void *ud, struct terminal *terminal);
+    void *ud;
+};
+
 struct terminal_spec {
     const struct terminal_config *config;
     const struct wsap_vtcore_theme *theme;
     struct terminal_theme_picker theme_picker;
-    struct tab *tab;
+    struct terminal_host host;
     const char *cwd;
-    bool empty;
-    struct window *(*open_window)(void *ud, struct tab *tab, const char *cwd,
-                                  struct vector2i size);
-    terminal_preview_capture_fn preview_capture;
-    terminal_preview_release_fn preview_release;
-    void *preview_ud;
-    terminal_scene_paint_fn scene_paint;
-    void *scene_paint_ud;
-    void *ud;
+    /* The content size in device pixels. It excludes any tab bar. A zero
+     * size uses the default window size. */
+    struct vector2i content_size;
+    /* The font size in points. Zero uses the font size of the window. */
+    int font_size;
 };
-bool terminal_mount(struct window *w, const struct terminal_spec *spec);
-bool terminal_is(const struct window *w);
-void terminal_prepare(struct window *w, uint64_t now_ms);
-bool terminal_frame_source(struct window *w, uint64_t now_ms,
+
+/* The window is borrowed. It gives native services, such as clipboard and
+ * redraw. The content keeps no ownership of it. */
+struct terminal *terminal_create(struct window *window,
+                                 const struct terminal_spec *spec);
+void terminal_destroy(struct terminal *terminal);
+/* Binds the content to another window. A null window is valid while the
+ * content is in transfer. The bind sets the font scale and the native
+ * targets before input resumes. */
+void terminal_set_window(struct terminal *terminal, struct window *window);
+/* Replaces the host reports. The owner clears the host before it gives the
+ * content away, so no report reaches the old owner. A null host sends no
+ * report. */
+void terminal_set_host(struct terminal *terminal,
+                       const struct terminal_host *host);
+
+/* The widget that shows the content. The owner places it in its UI. Its laid
+ * out size is the one source of the terminal geometry. */
+struct ui_widget *terminal_widget(struct terminal *terminal);
+/* The widget that receives the terminal input. */
+struct ui_widget *terminal_input_widget(struct terminal *terminal);
+
+struct session *terminal_session(struct terminal *terminal);
+struct font_instance *terminal_font(const struct terminal *terminal);
+const char *terminal_title(const struct terminal *terminal);
+uint32_t terminal_background(const struct terminal *terminal);
+int terminal_font_size(const struct terminal *terminal);
+bool terminal_exited(const struct terminal *terminal);
+
+/* Resizes the session to the cell grid of the content widget. An unchanged
+ * grid is a no-op. This is the only session resize of this layer. */
+void terminal_commit_geometry(struct terminal *terminal);
+/* Captures the snapshot for the frame. Call it after the geometry commit. */
+void terminal_prepare(struct terminal *terminal, uint64_t now_ms);
+bool terminal_frame_source(struct terminal *terminal, uint64_t now_ms,
                            struct terminal_frame_source *out);
-void terminal_set_theme(struct window *w, const struct wsap_vtcore_theme *theme);
 
-bool terminal_new_tab(struct window *w);
-struct window *terminal_new_window(struct window *from);
-void terminal_close_tab(struct window *w, int index);
-void terminal_select_tab(struct window *w, int index);
-void terminal_reorder_tab(struct window *w, int from, int to);
-struct tab *terminal_remove_tab(struct window *w, int index);
-bool terminal_attach(struct window *w, struct tab *t, int slot);
-struct window *terminal_detach_tab(struct window *w, int index);
+void terminal_set_theme(struct terminal *terminal,
+                        const struct wsap_vtcore_theme *theme);
+/* Applies the font family, the font size, and the cursor settings of the
+ * window to the content. */
+void terminal_restyle(struct terminal *terminal);
+void terminal_adjust_font_size(struct terminal *terminal, int delta_pt);
 
-int terminal_tab_count(const struct window *w);
-int terminal_active_index(const struct window *w);
-struct session *terminal_active_session(const struct window *w);
-int terminal_tabbar_height(const struct window *w);
+void terminal_focus(struct terminal *terminal, bool focused);
+/* Shows the scrollbar of the content for a moment. */
+void terminal_show_scrollbar(struct terminal *terminal);
+/* Hides the scrollbar of the content. An inactive content uses it, so a
+ * flash does not come back after a tab change. */
+void terminal_hide_scrollbar(struct terminal *terminal);
+/* True while the content shows its scrollbar. */
+bool terminal_scrollbar_visible(const struct terminal *terminal);
+/* Shows or hides the file drop highlight of the content. */
+void terminal_set_drop_hover(struct terminal *terminal, bool over);
+void terminal_paste(struct terminal *terminal, const char *text, size_t len);
+/* Runs the terminal commands of a shortcut. The owner runs the tab commands
+ * and leaves the rest to this function. */
+void terminal_handle_shortcut(struct terminal *terminal, enum input_shortcut sc);
 
 #endif

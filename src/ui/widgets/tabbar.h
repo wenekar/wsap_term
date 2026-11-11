@@ -87,6 +87,9 @@ bool ui_tabbar_closing_done(const struct ui_tabbar *tb);
 
 int ui_tabbar_height(const struct ui_tabbar *tb);
 int ui_tabbar_steady_height(const struct ui_tabbar *tb);
+/* The full CSS height of the bar. It does not depend on the tab count or on
+ * the animation. The owner reserves this height for the content. */
+int ui_tabbar_bar_height(const struct ui_tabbar *tb);
 bool ui_tabbar_is_dragging(const struct ui_tabbar *tb);
 
 bool ui_tabbar_tab_rect(const struct ui_tabbar *tb, int index,

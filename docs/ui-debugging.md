@@ -85,14 +85,17 @@ children, in paint order. For a terminal window:
 
 ```text
 /            window-root
-/0           terminal-root
-/0/0         tabbar
-/0/1         scrollview     (of the active tab; its bar is the track)
-/0/1/0       terminal-view
+/0           app-tabs-root
+/0/0         scrollview     (of the active content; its bar is the track)
+/0/0/0       terminal-view
+/0/1         tabbar
 /0/2         tab-preview    (while shown)
 /0/3         palette
 /1 …         menu-level     (inline levels only)
 ```
+
+The content paints first and the tab bar paints after it.
+The bar then covers the content while it collapses as an overlay.
 
 The framework paints children in tree order.
 It targets pointer input in the reverse order.

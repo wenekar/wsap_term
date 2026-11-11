@@ -14,7 +14,7 @@ allowed=(
     tests/ui/typed_widgets_test.c
     tests/ui/widget_test.c
     tests/ui/widgets/scrollview_test.c
-    tests/ui/yasl/ui_tree_test.c
+    tests/app/tabs/ui_tree_test.c
 )
 
 is_allowed() {

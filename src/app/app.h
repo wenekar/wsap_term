@@ -7,7 +7,7 @@
 #include "app/stats.h"
 #include "ui/yasl/window.h"
 
-struct tab;
+struct terminal;
 struct look;
 struct renderer;
 
@@ -27,7 +27,7 @@ struct app {
 struct app *app_create(int argc, char **argv, int *status);
 void app_destroy(struct app *a);
 int app_run(struct app *a);
-struct window *app_open_terminal(struct app *a, struct tab *tab,
+struct window *app_open_terminal(struct app *a, struct terminal *content,
                                  const char *cwd, struct vector2i size);
 
 bool app_apply_config(struct app *a, const struct app_config *draft);

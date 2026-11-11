@@ -5,141 +5,123 @@
 
 #include "terminal/internal.h"
 #include "platform/platform.h"
-#include "util/json.h"
 #include "util/time.h"
 
-const int terminal_kind;
-
-static const char *op_title(struct window *w)
+static const char *content_title(const struct terminal *t)
 {
-    struct session *s = terminal_active_session(w);
-    return s ? session_title(s) : NULL;
+    return t ? session_title(&t->session) : NULL;
 }
 
-static void update_title(struct window *w)
+static void report_output(struct terminal *t)
 {
-    window_set_title(w, op_title(w));
+    if (t->host.output)
+        t->host.output(t->host.ud, t);
+    else if (t->window)
+        window_redraw(t->window);
 }
 
-static void tab_output(void *ud)
+static void report_title(struct terminal *t)
 {
-    struct tab *t = ud;
-    struct window *w = t->window;
-    if (!w || !window_surface(w) || terminal_active_tab(w) != t)
-        return;
-    window_redraw(w);
+    if (t->host.title_changed)
+        t->host.title_changed(t->host.ud, t);
 }
 
-static void tab_title(void *ud)
+static void session_output(void *ud)
 {
-    struct tab *t = ud;
-    struct window *w = t->window;
-    if (!w || !window_surface(w))
-        return;
-    if (terminal_active_tab(w) == t)
-        update_title(w);
-    window_redraw(w);
+    report_output(ud);
 }
 
-static void tab_clipboard(void *ud, const char *text)
+static void session_title_changed(void *ud)
 {
-    struct tab *t = ud;
+    report_title(ud);
+}
+
+static void session_clipboard(void *ud, const char *text)
+{
+    struct terminal *t = ud;
     if (t->window && window_surface(t->window))
         window_copy(t->window, YASL_CLIPBOARD, text);
 }
 
-static void tab_exited(void *ud)
+static void session_exited(void *ud)
 {
-    struct tab *t = ud;
-    struct window *w = t->window;
+    struct terminal *t = ud;
     t->exited = true;
-    if (!w || window_closed(w))
-        return;
-    struct terminal *tw = terminal_of(w);
-    for (int i = 0; i < tw->tab_count; i++) {
-        if (tw->tabs[i] == t) {
-            terminal_close_tab(w, i);
-            return;
-        }
-    }
+    if (t->host.exited)
+        t->host.exited(t->host.ud, t);
 }
 
-static void tab_bell(void *ud)
+static void session_bell(void *ud)
 {
-    struct tab *t = ud;
-    if (!t || !t->window)
+    struct terminal *t = ud;
+    if (!t->config->visual_bell)
         return;
-    struct window *w = t->window;
-    struct terminal *tw = terminal_of(w);
-    if (tw && tw->config->visual_bell) {
-        tw->view.visual_bell_until_ms = yasl_time_ns() / 1000000 + 100;
-        window_redraw(w);
-    }
+    t->view.visual_bell_until_ms = yasl_time_ns() / 1000000 + 100;
+    if (t->window)
+        window_redraw(t->window);
 }
 
-static const struct session_host TAB_SESSION_HOST = {
-    .output = tab_output,
-    .title = tab_title,
-    .clipboard = tab_clipboard,
-    .exited = tab_exited,
-    .bell = tab_bell,
+static const struct session_host SESSION_HOST = {
+    .output = session_output,
+    .title = session_title_changed,
+    .clipboard = session_clipboard,
+    .exited = session_exited,
+    .bell = session_bell,
 };
 
-struct tab *tab_create(struct yasl_loop *loop, const struct session_spec *spec,
-                       int font_size)
-{
-    struct tab *t = aligned_alloc(64, (sizeof(*t) + 63) & ~(size_t)63);
-    if (!t)
-        return NULL;
-    memset(t, 0, sizeof(*t));
-    t->font_size = font_size;
-    if (!session_init(&t->session, loop, spec)) {
-        free(t);
-        return NULL;
-    }
-    session_set_host(&t->session, &TAB_SESSION_HOST, t);
-    return t;
-}
-
-void tab_destroy(struct tab *t)
-{
-    if (!t)
-        return;
-    session_fini(&t->session);
-    font_instance_unref(t->font);
-    free(t);
-}
-
-static struct vector2i terminal_size(const struct window *w)
-{
-    return window_surface(w) ? window_size(w) : window_default_size(window_host(w)->config);
-}
-
-static struct vector2i session_grid(const struct window *w, const struct tab *t,
+/* The cell grid of a content box. The content widget is the one owner of
+ * these dimensions. */
+static struct vector2i content_grid(const struct font_metrics *metrics,
                                     struct vector2i px)
 {
-    struct terminal *tw = terminal_of(w);
-    int content_h = px.y - ui_tabbar_steady_height(&tw->tabbar);
-    const struct font_metrics *metrics = tab_metrics(t);
-    struct vector2i content = { .x = px.x, .y = content_h < 1 ? 1 : content_h };
     struct vector2i grid = {
-        .x = content.x > 0 ? content.x / metrics->cell_w : 0,
-        .y = content.y > 0 ? content.y / metrics->cell_h : 0,
+        .x = px.x > 0 && metrics->cell_w > 0 ? px.x / metrics->cell_w : 0,
+        .y = px.y > 0 && metrics->cell_h > 0 ? px.y / metrics->cell_h : 0,
     };
     if (grid.x > WSAP_VTCORE_MAX_COLS)
         grid.x = WSAP_VTCORE_MAX_COLS;
     return vector2i_max(grid, vector2i_splat(1));
 }
 
-/* The core needs the cell size for CSI 14 t and CSI 16 t. The font
- * metrics give it. An unchanged size sends no report. */
-static void tab_sync_cell_pixels(struct tab *t)
+/* The core needs the cell size for CSI 14 t and CSI 16 t. The font metrics
+ * give it. An unchanged size sends no report. */
+static void sync_cell_pixels(struct terminal *t)
 {
     if (!t->session.term)
         return;
-    const struct font_metrics *m = tab_metrics(t);
+    const struct font_metrics *m = terminal_font_metrics(t);
     wsap_vtcore_set_cell_pixels(t->session.term,
         (struct wsap_vtcore_vector2i){ .x = m->cell_w, .y = m->cell_h });
+}
+
+/* The unit of font_instance_acquire(). 120 is the 1x scale. */
+#define TERMINAL_SCALE_1X 120
+
+static uint32_t content_scale(const struct terminal *t)
+{
+    if (t->window)
+        return window_scale_120(t->window);
+    return t->font ? font_instance_scale_120(t->font) : TERMINAL_SCALE_1X;
+}
+
+static bool fit_font(struct terminal *t, int size_pt)
+{
+    uint32_t scale = content_scale(t);
+    if (t->font && font_instance_size_pt(t->font) == size_pt &&
+        font_instance_scale_120(t->font) == scale) {
+        sync_cell_pixels(t);
+        return true;
+    }
+    if (size_pt < 1)
+        return false;
+    struct font_instance *fi = font_instance_acquire(size_pt, scale);
+    if (!fi)
+        return false;
+    font_instance_unref(t->font);
+    t->font = fi;
+    t->font_size = font_instance_size_pt(fi);
+    sync_cell_pixels(t);
+    return true;
 }
 
 /* The host preference. Zero means no preference, and the core then
@@ -154,366 +136,211 @@ static enum wsap_vtcore_color_scheme host_color_scheme(void)
     return WSAP_VTCORE_COLOR_SCHEME_UNKNOWN;
 }
 
-static bool tab_fit_font(struct tab *t, const struct window *w, int size_pt)
+static struct vector2i default_content_size(const struct window *w)
 {
-    uint32_t scale = window_scale_120(w);
-    if (t->font && font_instance_size_pt(t->font) == size_pt &&
-        font_instance_scale_120(t->font) == scale) {
-        tab_sync_cell_pixels(t);
-        return true;
-    }
-    struct font_instance *fi = font_instance_acquire(size_pt, scale);
-    if (!fi)
-        return false;
-    font_instance_unref(t->font);
-    t->font = fi;
-    t->font_size = font_instance_size_pt(fi);
-    tab_sync_cell_pixels(t);
-    return true;
+    return window_default_size(window_host(w)->config);
 }
 
-static void refresh_layout(struct window *w)
-{
-    if (!window_surface(w))
-        return;
-    terminal_resize_sessions(w, window_size(w));
-    update_title(w);
-    window_redraw(w);
-}
+_Static_assert(alignof(struct terminal) <= 64,
+               "the content allocation must hold the session alignment");
 
-static void deactivate_scrollbar(struct window *w)
+struct terminal *terminal_create(struct window *window,
+                                 const struct terminal_spec *spec)
 {
-    ui_scrollview_hide(&terminal_of(w)->scrollview);
-}
-
-int terminal_add_tab(struct window *w, struct tab *t, int slot)
-{
-    struct terminal *tw = terminal_of(w);
-    if (tw->tab_count == tw->tab_cap) {
-        int cap = tw->tab_cap ? tw->tab_cap * 2 : 4;
-        struct tab **tabs = realloc(tw->tabs, (size_t)cap * sizeof(*tabs));
-        if (!tabs)
-            return -1;
-        tw->tabs = tabs;
-        tw->tab_cap = cap;
-    }
-    int old_count = tw->tab_count;
-    if (slot < 0 || slot > old_count)
-        slot = old_count;
-    memmove(&tw->tabs[slot + 1], &tw->tabs[slot],
-            (size_t)(old_count - slot) * sizeof(*tw->tabs));
-    tw->tabs[slot] = t;
-    tw->tab_count++;
-    ui_tabbar_insert_tab(&tw->tabbar, slot);
-    if (old_count && tw->active_tab >= slot)
-        tw->active_tab++;
-    else if (tw->active_tab < 0)
-        tw->active_tab = slot;
-    t->window = w;
-    tab_fit_font(t, w, t->font_size);
-    return slot;
-}
-
-struct tab *terminal_remove_tab(struct window *w, int index)
-{
-    struct terminal *tw = terminal_of(w);
-    if (index < 0 || index >= tw->tab_count)
+    if (!spec || !spec->config || !window)
         return NULL;
-    struct tab *t = tw->tabs[index];
-    memmove(&tw->tabs[index], &tw->tabs[index + 1],
-            (size_t)(tw->tab_count - index - 1) * sizeof(*tw->tabs));
-    tw->tabs[--tw->tab_count] = NULL;
-    ui_tabbar_remove_tab(&tw->tabbar, index);
-    if (tw->active_tab > index)
-        tw->active_tab--;
-    if (tw->active_tab >= tw->tab_count)
-        tw->active_tab = tw->tab_count - 1;
-    t->window = NULL;
-    return t;
-}
+    struct terminal *t = aligned_alloc(64, (sizeof(*t) + 63) & ~(size_t)63);
+    if (!t)
+        return NULL;
+    memset(t, 0, sizeof(*t));
+    const struct window_config *wcfg =
+        window_host(window) ? window_host(window)->config : NULL;
+    t->window = window;
+    t->loop = window_host(window)->loop;
+    t->config = spec->config;
+    t->host = spec->host;
+    t->theme_picker = spec->theme_picker;
+    if (spec->theme)
+        t->theme = *spec->theme;
+    /* The app has no appearance-change event. Read the host preference
+     * once. Each theme change applies this value. */
+    t->host_scheme = host_color_scheme();
+    t->snapshot = wsap_vtcore_snapshot_new();
+    if (!t->snapshot)
+        goto fail;
+    t->applied_font_size = wcfg ? wcfg->font_size : 0;
+    t->applied_cursor_style = spec->config->cursor_style;
+    t->applied_cursor_blink = spec->config->cursor_blink;
+    t->focused = true;
+    if (wcfg && wcfg->font_family && !(t->applied_font_family = strdup(wcfg->font_family)))
+        goto fail;
+    if (t->applied_font_size < 1)
+        t->applied_font_size = spec->font_size > 0 ? spec->font_size : 12;
+    if (!fit_font(t, spec->font_size > 0 ? spec->font_size : t->applied_font_size))
+        goto fail;
 
-bool terminal_is(const struct window *w)
-{
-    return terminal_of(w) != NULL;
-}
-
-void terminal_set_theme(struct window *w, const struct wsap_vtcore_theme *theme)
-{
-    struct terminal *tw = terminal_of(w);
-    if (!tw || !theme)
-        return;
-    tw->theme = *theme;
-    for (int i = 0; i < tw->tab_count; i++) {
-        /* Set the host preference first. The theme change can then report
-         * the final scheme once. */
-        wsap_vtcore_set_color_scheme(tw->tabs[i]->session.term, tw->host_scheme);
-        wsap_vtcore_set_theme(tw->tabs[i]->session.term, &tw->theme);
-    }
-    ui_tabbar_set_bg_color(&tw->tabbar, tw->theme.bg);
-    window_set_background(w, tw->theme.bg);
-    window_redraw(w);
-}
-
-struct session *terminal_active_session(const struct window *w)
-{
-    struct tab *t = terminal_active_tab(w);
-    return t ? &t->session : NULL;
-}
-
-int terminal_tab_count(const struct window *w)
-{
-    const struct terminal *tw = terminal_of(w);
-    return tw ? tw->tab_count : 0;
-}
-
-int terminal_active_index(const struct window *w)
-{
-    const struct terminal *tw = terminal_of(w);
-    return tw ? tw->active_tab : -1;
-}
-
-int terminal_tabbar_height(const struct window *w)
-{
-    struct terminal *tw = terminal_of(w);
-    return tw ? ui_tabbar_height(&tw->tabbar) : 0;
-}
-
-void terminal_resize_sessions(struct window *w, struct vector2i px)
-{
-    struct terminal *tw = terminal_of(w);
-    for (int i = 0; i < tw->tab_count; i++) {
-        struct vector2i grid = session_grid(w, tw->tabs[i], px);
-        if (i == tw->active_tab) {
-            tw->tabs[i]->pending_grid = (struct vector2i){0};
-            session_resize(&tw->tabs[i]->session, grid);
-        } else {
-            tw->tabs[i]->pending_grid = grid;
-        }
-    }
-}
-
-static bool new_tab_in(struct window *w, const char *cwd)
-{
-    struct terminal *tw = terminal_of(w);
-    const struct terminal_config *config = tw->config;
-    struct vector2i size = terminal_size(w);
-    struct tab *cur = terminal_active_tab(w);
-    int font_size = cur ? cur->font_size : window_host(w)->config->font_size;
-    struct tab probe = { .font_size = font_size };
-    tab_fit_font(&probe, w, font_size);
     char default_loc[128];
-    const char *locale = config ? config->locale : NULL;
+    const char *locale = spec->config->locale;
     if (!locale || !locale[0] || strcmp(locale, "auto") == 0) {
         platform_locale_default(default_loc, sizeof(default_loc));
         locale = default_loc;
     }
-    const struct session_spec spec = {
-        .command = config->command,
-        .cwd = cwd,
+    struct vector2i px = spec->content_size;
+    if (px.x <= 0 || px.y <= 0)
+        px = default_content_size(window);
+    struct vector2i grid = content_grid(terminal_font_metrics(t), px);
+    const struct session_spec session_spec = {
+        .command = spec->config->command,
+        .cwd = spec->cwd,
         .locale = locale,
-        .grid = session_grid(w, &probe, size),
-        .scrollback = config->scrollback,
-        .theme = tw->theme,
-        .color_scheme = tw->host_scheme,
-        .cursor_style = config->cursor_style,
-        .cursor_blink = config->cursor_blink,
+        .grid = grid,
+        .scrollback = spec->config->scrollback,
+        .theme = t->theme,
+        .color_scheme = t->host_scheme,
+        .cursor_style = spec->config->cursor_style,
+        .cursor_blink = spec->config->cursor_blink,
     };
-    font_instance_unref(probe.font);
-    struct tab *t = tab_create(window_host(w)->loop, &spec, font_size);
-    if (!t)
-        return false;
-    int slot = terminal_add_tab(w, t, -1);
-    if (slot < 0) {
-        tab_destroy(t);
-        return false;
-    }
-    deactivate_scrollbar(w);
-    tw->active_tab = slot;
-    window_ui_restyle(w);
-    terminal_resize_sessions(w, size);
-    update_title(w);
-    if (tw->tab_count > 1)
-        ui_tabbar_begin_open(&tw->tabbar, slot, window_frame_time_ms(w));
-    window_redraw(w);
-    return true;
-}
-
-bool terminal_new_tab(struct window *w)
-{
-    char cwd[4096];
-    struct session *cur = terminal_active_session(w);
-    return new_tab_in(w, cur && session_cwd(cur, cwd, sizeof(cwd)) ? cwd : NULL);
-}
-
-static void finish_close_tab(struct window *w, int index)
-{
-    struct terminal *tw = terminal_of(w);
-    struct tab *cur = terminal_active_tab(w);
-    struct tab *t = terminal_remove_tab(w, index);
-    if (t == cur)
-        deactivate_scrollbar(w);
-    tab_destroy(t);
-    if (!tw->tab_count) {
-        window_close(w);
-        return;
-    }
-    refresh_layout(w);
-    window_repaint_all(w);
-    window_redraw(w);
-}
-
-void terminal_close_tab(struct window *w, int index)
-{
-    struct terminal *tw = terminal_of(w);
-    if (index < 0 || index >= tw->tab_count)
-        return;
-    uint64_t now_ms = window_frame_time_ms(w);
-    if (tw->tab_count > 1 && ui_tabbar_begin_close(&tw->tabbar, index, now_ms)) {
-        if (index == tw->active_tab) {
-            int next = index + 1 < tw->tab_count ? index + 1 : index - 1;
-            if (ui_tabbar_is_closing(&tw->tabbar, next)) {
-                int alt = next == index + 1 ? index - 1 : index + 1;
-                if (alt >= 0 && alt < tw->tab_count &&
-                    !ui_tabbar_is_closing(&tw->tabbar, alt))
-                    next = alt;
-            }
-            terminal_select_tab(w, next);
-        }
-        return;
-    }
-    finish_close_tab(w, index);
-}
-
-void terminal_finish_closing_tab(struct window *w)
-{
-    struct terminal *tw = terminal_of(w);
-    if (window_closed(w))
-        return;
-    int idx = ui_tabbar_closing_tab(&tw->tabbar);
-    if (idx >= 0 && ui_tabbar_closing_done(&tw->tabbar))
-        finish_close_tab(w, idx);
-}
-
-void terminal_select_tab(struct window *w, int index)
-{
-    struct terminal *tw = terminal_of(w);
-    if (index < 0 || index >= tw->tab_count || index == tw->active_tab)
-        return;
-    deactivate_scrollbar(w);
-    tw->active_tab = index;
-    if (tw->tabs[index]->pending_grid.x > 0 && tw->tabs[index]->pending_grid.y > 0) {
-        session_resize(&tw->tabs[index]->session, tw->tabs[index]->pending_grid);
-        tw->tabs[index]->pending_grid = (struct vector2i){0};
-    }
-    update_title(w);
-    window_repaint_all(w);
-    window_redraw(w);
-}
-
-void terminal_reorder_tab(struct window *w, int from, int to)
-{
-    struct terminal *tw = terminal_of(w);
-    if (from == to || from < 0 || to < 0 ||
-        from >= tw->tab_count || to >= tw->tab_count)
-        return;
-    struct tab *t = tw->tabs[from];
-    if (from < to)
-        memmove(&tw->tabs[from], &tw->tabs[from + 1],
-                (size_t)(to - from) * sizeof(*tw->tabs));
-    else
-        memmove(&tw->tabs[to + 1], &tw->tabs[to],
-                (size_t)(from - to) * sizeof(*tw->tabs));
-    tw->tabs[to] = t;
-    ui_tabbar_move_tab(&tw->tabbar, from, to);
-
-    if (tw->active_tab == from)
-        tw->active_tab = to;
-    else if (from < to && tw->active_tab > from && tw->active_tab <= to)
-        tw->active_tab--;
-    else if (from > to && tw->active_tab >= to && tw->active_tab < from)
-        tw->active_tab++;
-    update_title(w);
-    window_redraw(w);
-}
-
-bool terminal_attach(struct window *w, struct tab *t, int slot)
-{
-    struct terminal *tw = terminal_of(w);
-    if (!t || t->window)
-        return false;
-    slot = terminal_add_tab(w, t, slot);
-    if (slot < 0)
-        return false;
-    deactivate_scrollbar(w);
-    tw->active_tab = slot;
-    window_ui_restyle(w);
-    if (tw->tab_count > 1)
-        ui_tabbar_begin_open(&tw->tabbar, slot, window_frame_time_ms(w));
-    refresh_layout(w);
-    return true;
-}
-
-struct tab *terminal_take_tab(struct window *w, int index)
-{
-    struct tab *cur = terminal_active_tab(w);
-    struct tab *t = terminal_remove_tab(w, index);
-    if (!t)
-        return NULL;
-    if (t == cur)
-        deactivate_scrollbar(w);
-    if (terminal_of(w)->tab_count == 0) {
-        window_close(w);
-        return t;
-    }
-    refresh_layout(w);
-    window_redraw(w);
+    if (!session_init(&t->session, window_host(window)->loop, &session_spec))
+        goto fail;
+    t->grid = grid;
+    session_set_host(&t->session, &SESSION_HOST, t);
+    terminal_view_init(t);
+    terminal_view_attach(t);
     return t;
+
+fail:
+    if (t->session.term)
+        session_fini(&t->session);
+    wsap_vtcore_snapshot_free(t->snapshot);
+    font_instance_unref(t->font);
+    free(t->applied_font_family);
+    free(t);
+    return NULL;
 }
 
-struct window *terminal_detach_tab(struct window *w, int index)
+void terminal_destroy(struct terminal *t)
 {
-    struct terminal *tw = terminal_of(w);
-    if (index < 0 || index >= tw->tab_count || tw->tab_count <= 1)
-        return NULL;
-    struct tab *t = terminal_take_tab(w, index);
-    struct window *nw = tw->open_window
-        ? tw->open_window(tw->ud, t, NULL, terminal_size(w)) : NULL;
-    if (!nw)
-        terminal_attach(w, t, index);
-    return nw;
-}
-
-struct window *terminal_new_window(struct window *from)
-{
-    struct terminal *tw = terminal_of(from);
-    char cwd[4096];
-    struct session *cur = terminal_active_session(from);
-    bool has_cwd = cur && session_cwd(cur, cwd, sizeof(cwd));
-    return tw->open_window
-        ? tw->open_window(tw->ud, NULL, has_cwd ? cwd : NULL, terminal_size(from))
-        : NULL;
-}
-
-void terminal_adjust_font_size(struct window *w, int delta_pt)
-{
-    struct tab *t = terminal_active_tab(w);
-    if (!t || !tab_fit_font(t, w, t->font_size + delta_pt))
+    if (!t)
         return;
-    if (window_surface(w))
-        session_resize(&t->session, session_grid(w, t, window_size(w)));
-    window_repaint_all(w);
-    window_redraw(w);
+    if (t->view.accessibility_timer && t->loop)
+        yasl_loop_del_timer(t->loop, t->view.accessibility_timer);
+    ui_widget_destroy(&t->scrollview.widget);
+    session_fini(&t->session);
+    font_instance_unref(t->font);
+    free(t->menu_theme_items);
+    free(t->view.accessibility_text);
+    wsap_vtcore_snapshot_free(t->snapshot);
+    free(t->applied_font_family);
+    free(t);
 }
 
-static void op_resize(struct window *w, struct vector2i size)
+void terminal_set_window(struct terminal *t, struct window *window)
 {
-    terminal_resize_sessions(w, size);
+    if (!t)
+        return;
+    struct window *old = t->window;
+    t->window = window;
+    /* The caret position belongs to the old window. */
+    t->ime_caret = (struct rect2i){0};
+    /* A detached content leaves no text input target behind. */
+    if (!window && old && window_surface(old))
+        yasl_surface_set_text_input(window_surface(old),
+                                    &(struct yasl_text_input){0});
+    /* An accessibility timer belongs to the loop of the old window. */
+    if (t->view.accessibility_timer && t->loop) {
+        yasl_loop_del_timer(t->loop, t->view.accessibility_timer);
+        t->view.accessibility_timer = 0;
+        t->view.accessibility_text_valid = false;
+    }
+    if (!window)
+        return;
+    t->loop = window_host(window)->loop;
+    /* Apply the font settings and the font scale of the destination. */
+    terminal_restyle(t);
+    fit_font(t, t->font_size);
+    sync_cell_pixels(t);
+    if (window_surface(window))
+        window_redraw(window);
 }
 
-static void op_suspended(struct window *w, bool suspended)
+void terminal_set_host(struct terminal *t, const struct terminal_host *host)
 {
-    (void)suspended;
-    window_redraw(w);
+    if (!t)
+        return;
+    t->host = host ? *host : (struct terminal_host){0};
+}
+
+struct ui_widget *terminal_widget(struct terminal *t)
+{
+    return t ? &t->scrollview.widget : NULL;
+}
+
+struct ui_widget *terminal_input_widget(struct terminal *t)
+{
+    return t ? &t->view.widget : NULL;
+}
+
+struct session *terminal_session(struct terminal *t)
+{
+    return t ? &t->session : NULL;
+}
+
+struct font_instance *terminal_font(const struct terminal *t)
+{
+    return t ? t->font : NULL;
+}
+
+const char *terminal_title(const struct terminal *t)
+{
+    return content_title(t);
+}
+
+uint32_t terminal_background(const struct terminal *t)
+{
+    if (!t)
+        return 0;
+    const struct wsap_vtcore_view *view = wsap_vtcore_snapshot_view(t->snapshot);
+    return view->size.x ? view->palette[WSAP_VTCORE_PALETTE_BG] : t->theme.bg;
+}
+
+int terminal_font_size(const struct terminal *t)
+{
+    return t ? t->font_size : 0;
+}
+
+bool terminal_exited(const struct terminal *t)
+{
+    return t && t->exited;
+}
+
+void terminal_commit_geometry(struct terminal *t)
+{
+    if (!t || !t->view.widget.parent || !t->session.term)
+        return;
+    struct vector2i box = t->view.widget.bounds.size;
+    if (box.x <= 0 || box.y <= 0)
+        return;
+    struct vector2i grid = content_grid(terminal_font_metrics(t), box);
+    if (vector2i_eq(grid, t->grid))
+        return;
+    t->grid = grid;
+    session_resize(&t->session, grid);
+}
+
+void terminal_set_theme(struct terminal *t,
+                        const struct wsap_vtcore_theme *theme)
+{
+    if (!t || !theme)
+        return;
+    t->theme = *theme;
+    if (!t->session.term)
+        return;
+    /* Set the host preference first. The theme change can then report the
+     * final scheme once. */
+    wsap_vtcore_set_color_scheme(t->session.term, t->host_scheme);
+    wsap_vtcore_set_theme(t->session.term, &t->theme);
+    if (t->window)
+        window_redraw(t->window);
 }
 
 static bool same_text(const char *a, const char *b)
@@ -523,177 +350,134 @@ static bool same_text(const char *a, const char *b)
     return strcmp(a, b) == 0;
 }
 
-static void op_restyle(struct window *w)
+void terminal_restyle(struct terminal *t)
 {
-    struct terminal *tw = terminal_of(w);
-    const struct window_config *wcfg = window_host(w)->config;
-    const struct terminal_config *cfg = tw->config;
-    bool family_changed = !same_text(tw->applied_font_family, wcfg->font_family);
-    bool size_changed = tw->applied_font_size != wcfg->font_size;
+    if (!t || !t->window)
+        return;
+    const struct window_config *wcfg = window_host(t->window)->config;
+    const struct terminal_config *cfg = t->config;
+    bool family_changed = !same_text(t->applied_font_family, wcfg->font_family);
+    bool size_changed = t->applied_font_size != wcfg->font_size;
     bool font_changed = family_changed || size_changed;
-    bool cursor_changed = tw->applied_cursor_style != cfg->cursor_style ||
-        tw->applied_cursor_blink != cfg->cursor_blink;
+    bool cursor_changed = t->applied_cursor_style != cfg->cursor_style ||
+        t->applied_cursor_blink != cfg->cursor_blink;
 
-    for (int i = 0; i < tw->tab_count; i++) {
-        struct tab *t = tw->tabs[i];
-        int size = t->font_size + (size_changed ? wcfg->font_size - tw->applied_font_size : 0);
-        if (family_changed) {
-            font_instance_unref(t->font);
-            t->font = NULL;
-        }
-        tab_fit_font(t, w, size);
-        if (cursor_changed)
-            wsap_vtcore_set_cursor_default(t->session.term, cfg->cursor_style, !cfg->cursor_blink);
+    int size = t->font_size +
+        (size_changed ? wcfg->font_size - t->applied_font_size : 0);
+    if (family_changed) {
+        font_instance_unref(t->font);
+        t->font = NULL;
     }
+    fit_font(t, size);
+    if (cursor_changed)
+        wsap_vtcore_set_cursor_default(t->session.term, cfg->cursor_style,
+                                       !cfg->cursor_blink);
     if (family_changed) {
         char *family = wcfg->font_family ? strdup(wcfg->font_family) : NULL;
         if (family || !wcfg->font_family) {
-            free(tw->applied_font_family);
-            tw->applied_font_family = family;
+            free(t->applied_font_family);
+            t->applied_font_family = family;
         }
     }
-    tw->applied_font_size = wcfg->font_size;
-    tw->applied_cursor_style = cfg->cursor_style;
-    tw->applied_cursor_blink = cfg->cursor_blink;
-    if (window_surface(w))
-        terminal_resize_sessions(w, window_size(w));
+    t->applied_font_size = wcfg->font_size;
+    t->applied_cursor_style = cfg->cursor_style;
+    t->applied_cursor_blink = cfg->cursor_blink;
     if (font_changed)
-        window_repaint_all(w);
-    window_redraw(w);
+        window_repaint_all(t->window);
+    window_redraw(t->window);
 }
 
-static void op_debug_state(struct window *w, struct json_writer *j)
+void terminal_adjust_font_size(struct terminal *t, int delta_pt)
 {
-    struct terminal *tw = terminal_of(w);
-    json_key(j, "tabs"); json_int(j, tw->tab_count);
-    json_key(j, "active_tab"); json_int(j, tw->active_tab);
-    json_key(j, "tabbar_height"); json_int(j, terminal_tabbar_height(w));
-    json_key(j, "tab_titles");
-    json_arr_begin(j);
-    for (int i = 0; i < tw->tab_count; i++)
-        json_str(j, session_title(&tw->tabs[i]->session));
-    json_arr_end(j);
-    json_key(j, "palette_open"); json_bool(j, ui_palette_is_open(&tw->palette));
-    if (ui_palette_is_open(&tw->palette)) {
-        json_key(j, "palette_query");
-        json_str(j, ui_palette_query(&tw->palette));
+    if (!t || !fit_font(t, t->font_size + delta_pt))
+        return;
+    if (t->window)
+        window_repaint_all(t->window);
+    if (t->window)
+        window_redraw(t->window);
+}
+
+void terminal_prepare(struct terminal *t, uint64_t now_ms)
+{
+    (void)now_ms;
+    if (!t)
+        return;
+    t->frame_serial++;
+    struct wsap_vtcore *term = t->session.term;
+    if (!term || !t->window || window_closed(t->window))
+        return;
+    if (!wsap_vtcore_snapshot_update(t->snapshot, term))
+        return;
+    t->snapshot_frame = t->frame_serial;
+    t->snapshot_term = term;
+    bool blink_before = t->view.blink_cells;
+    terminal_scan_blink(&t->view, t->snapshot);
+    /* The UI tick runs before this capture. A new blink cell asks for one
+     * more frame, and the next tick schedules the blink flip. */
+    if (!blink_before && t->view.blink_cells)
+        window_redraw(t->window);
+    terminal_update_ime(t, term);
+}
+
+bool terminal_frame_source(struct terminal *t, uint64_t now_ms,
+                           struct terminal_frame_source *out)
+{
+    if (!t || !out || !t->session.term)
+        return false;
+    struct wsap_vtcore *term = t->session.term;
+    struct wsap_vtcore_snapshot *snap = t->snapshot;
+    /* terminal_prepare() already updated this snapshot in the current
+     * frame. Use that update. Do not take the write lock and diff the row
+     * keys a second time. A frame without terminal_prepare() updates here. */
+    if (t->snapshot_frame == t->frame_serial && t->snapshot_term == term) {
+        t->snapshot_frame = 0;
+    } else if (!wsap_vtcore_snapshot_update(snap, term)) {
+        return false;
     }
-}
-
-static void terminal_free(struct terminal *tw)
-{
-    for (int i = 0; i < tw->tab_count; i++)
-        tab_destroy(tw->tabs[i]);
-    free(tw->tabs);
-    free(tw->tab_labels);
-    terminal_root_release(tw);
-    if (tw->preview_release && tw->preview_state)
-        tw->preview_release(tw->preview_state);
-    free(tw->menu_theme_items);
-    if (tw->view.accessibility_timer)
-        yasl_loop_del_timer(window_host(tw->window)->loop,
-                            tw->view.accessibility_timer);
-    free(tw->view.accessibility_text);
-    wsap_vtcore_snapshot_free(tw->snapshot);
-    free(tw->applied_font_family);
-    free(tw);
-}
-
-static void op_destroy(struct window *w)
-{
-    terminal_tab_flight_forget(w);
-    terminal_free(terminal_of(w));
-}
-
-static const struct window_drag_target TERMINAL_DRAG_TARGET = {
-    .drag = terminal_tab_drag,
-    .drop_hover = terminal_view_drop_hover,
-};
-
-static struct window_ui_spec terminal_ui_spec(struct terminal *tw)
-{
-    return (struct window_ui_spec){
-        .name = "terminal",
-        .kind = &terminal_kind,
-        .root = &tw->root,
-        .restyle = op_restyle,
-        .resize = op_resize,
-        .suspended = op_suspended,
-        .debug_state = op_debug_state,
-        .destroy = op_destroy,
-        .content = tw,
+    *out = (struct terminal_frame_source){
+        .snapshot = snap,
+        .font = t->font,
+        .rect = terminal_view_rect(t),
+        .cursor_visible = terminal_cursor_visible(t, now_ms),
+        .text_blink_on = terminal_text_blink_on(t, now_ms),
     };
+    return true;
 }
 
-static struct terminal *terminal_new(struct window_host *host,
-                                     const struct terminal_spec *spec)
+void terminal_focus(struct terminal *t, bool focused)
 {
-    const struct terminal_config *config = spec->config;
-    const struct window_config *cfg = host->config;
-    char *family = NULL;
-    if (cfg->font_family && !(family = strdup(cfg->font_family)))
-        return NULL;
-    struct terminal *tw = calloc(1, sizeof(*tw));
-    if (!tw) {
-        free(family);
-        return NULL;
-    }
-    if (spec->theme)
-        tw->theme = *spec->theme;
-    /* The app has no appearance-change event. Read the host preference
-     * once. Each tab and theme change applies this value. */
-    tw->host_scheme = host_color_scheme();
-    tw->snapshot = wsap_vtcore_snapshot_new();
-    if (!tw->snapshot) {
-        free(family);
-        free(tw);
-        return NULL;
-    }
-    tw->config = config;
-    tw->applied_font_family = family;
-    tw->applied_font_size = cfg->font_size;
-    tw->applied_cursor_style = config->cursor_style;
-    tw->applied_cursor_blink = config->cursor_blink;
-    tw->focused = true;
-    tw->active_tab = -1;
-    terminal_root_init(tw);
-    ui_tabbar_set_bg_color(&tw->tabbar, tw->theme.bg);
-    return tw;
+    if (!t)
+        return;
+    t->focused = focused;
+    if (t->session.term)
+        wsap_vtcore_focus(t->session.term, focused);
+    if (t->window)
+        window_redraw(t->window);
 }
 
-bool terminal_mount(struct window *w, const struct terminal_spec *spec)
+void terminal_hide_scrollbar(struct terminal *t)
 {
-    if (spec->tab && spec->tab->window)
-        return false;
-    struct terminal *tw = terminal_new(window_host(w), spec);
-    if (!tw)
-        return false;
-    tw->window = w;
-    tw->theme_picker = spec->theme_picker;
-    tw->open_window = spec->open_window;
-    tw->ud = spec->ud;
-    tw->preview_capture = spec->preview_capture;
-    tw->preview_release = spec->preview_release;
-    tw->preview_ud = spec->preview_ud;
-    tw->scene_paint = spec->scene_paint;
-    tw->scene_paint_ud = spec->scene_paint_ud;
-    window_set_drag_target(w, &TERMINAL_DRAG_TARGET, NULL);
-    struct window_ui_spec ui = terminal_ui_spec(tw);
-    if (!window_ui_mount(w, &ui)) {
-        terminal_free(tw);
-        return false;
-    }
-    terminal_root_attach(w);
-    terminal_palette_init(w);
-    ui_surface_set_default_focus(window_ui_surface(w), &tw->view.widget);
-    if (spec->tab) {
-        if (terminal_add_tab(w, spec->tab, -1) < 0)
-            return false;
-        update_title(w);
-        window_ui_restyle(w);
-        refresh_layout(w);
-        window_redraw(w);
-        return true;
-    }
-    return spec->empty || new_tab_in(w, spec->cwd);
+    if (t)
+        ui_scrollview_hide(&t->scrollview);
+}
+
+bool terminal_scrollbar_visible(const struct terminal *t)
+{
+    return t && ui_scrollview_is_shown(&t->scrollview);
+}
+
+void terminal_set_drop_hover(struct terminal *t, bool over)
+{
+    if (t)
+        terminal_view_drop_hover(t, over, NULL);
+}
+
+void terminal_paste(struct terminal *t, const char *text, size_t len)
+{
+    if (!t || !session_paste(&t->session, text, len))
+        return;
+    wsap_vtcore_select_clear(t->session.term);
+    wsap_vtcore_scroll_to(t->session.term, 0);
+    if (t->window)
+        window_redraw(t->window);
 }

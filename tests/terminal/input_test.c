@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "helpers/app_fixture.h"
+#include "app/tabs/tabs.h"
 #include "helpers/terminal_window.h"
 #include "terminal/internal.h"
 #include "input/keybind.h"
@@ -109,8 +110,9 @@ int main(void)
     struct test_app app;
     test_app_init(&app, "/bin/cat", (struct vector2i){ .x = 800, .y = 480 });
     struct window *w = test_terminal_window(&app.app->host, &app.app->config.terminal);
-    assert(w && terminal_new_tab(w));
-    struct session *session = terminal_active_session(w);
+    assert(w && app_tabs_new(w));
+    struct terminal *content = app_tabs_active(w);
+    struct session *session = terminal_session(content);
     assert(session);
     int fds[2];
     assert(pipe(fds) == 0);
@@ -182,18 +184,17 @@ int main(void)
 
     /* Test double-width and double-height rows in the app. */
     assert(wsap_vtcore_feed(session->term, "\033[1;1H\033#6DoubleWidth\r\n\033#3DoubleTop\r\n\033#4DoubleBottom\r\n", 53, 0));
-    struct terminal *tw = terminal_of(w);
-    assert(wsap_vtcore_snapshot_update(tw->snapshot, session->term));
-    struct rect2i vrect = terminal_view_rect(w);
-    const struct font_metrics *met = tab_metrics(terminal_active_tab(w));
+    assert(wsap_vtcore_snapshot_update(content->snapshot, session->term));
+    struct rect2i vrect = terminal_view_rect(content);
+    const struct font_metrics *met = terminal_font_metrics(content);
     /* Cell on row 0 (double width): x position at 2 * cw + 2 must map to column 1 */
     struct vector2i pt = { .x = vrect.pos.x + 2 * met->cell_w + 2, .y = vrect.pos.y + 4 };
-    struct vector2i c = terminal_cell_at(w, pt);
+    struct vector2i c = terminal_cell_at(content, pt);
     assert(c.x == 1 && c.y == 0);
     /* Cell on row 1 (double height top half): x position at 4 * cw + 2 must map to column 2 */
     pt.y = vrect.pos.y + met->cell_h + 4;
     pt.x = vrect.pos.x + 4 * met->cell_w + 2;
-    c = terminal_cell_at(w, pt);
+    c = terminal_cell_at(content, pt);
     assert(c.x == 2 && c.y == 1);
 
     /* UI inspector lint check on scene with double-size rows */

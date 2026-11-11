@@ -555,13 +555,14 @@ static bool tb_ensure_tabs(struct ui_tabbar *tb, int n)
     return true;
 }
 
-/* The number of tabs that stay after the closing tab goes. The bar height
- * and the grid height use this count. The grid then resizes once, when the
- * close starts, and the bar does not come back after its collapse. */
+/* The number of entries that stay after all close animations end. */
 static int live_tabs(const struct ui_tabbar *tb, int n_tabs)
 {
-    int closing = ui_tabbar_closing_tab(tb);
-    return closing >= 0 && closing < n_tabs ? n_tabs - 1 : n_tabs;
+    int live = n_tabs;
+    for (int i = 0; tb && i < n_tabs && i < tb->impl.tab_cap; i++)
+        if (tb->impl.tabs[i].closing)
+            live--;
+    return live;
 }
 
 static int bar_height(const struct ui_tabbar *tb, int css_height, int n_tabs)
@@ -786,8 +787,7 @@ static bool bar_tick(struct ui_tabbar *tb, struct vector2i size, uint64_t now_ms
 
     if (tb->impl.reveal.start_ms) {
 
-        int effective = tb->impl.tab_cap -
-            (ui_tabbar_closing_tab(tb) >= 0 ? 1 : 0);
+        int effective = live_tabs(tb, tb->impl.tab_cap);
         float want = effective >= 2 || tb->impl.external_drag ? 1.0f : 0.0f;
         if (tb->impl.reveal.to != want)
             ui_hover_anim_set_target(&tb->impl.reveal, want, now_ms);
@@ -835,9 +835,11 @@ bool ui_tabbar_begin_close(struct ui_tabbar *tb, int index, uint64_t now_ms)
         tab->open.value = 1.0f;
     ui_hover_anim_set_target(&tab->open, 0.0f, now_ms);
 
-    if (tb->impl.tab_cap == 2) {
-        if (!tb->impl.reveal.start_ms)
+    if (live_tabs(tb, tb->impl.tab_cap) <= 1) {
+        if (!tb->impl.reveal.start_ms) {
             tb->impl.reveal.value = 1.0f;
+            tb->impl.reveal.to = 1.0f;
+        }
         ui_hover_anim_set_target(&tb->impl.reveal, 0.0f, now_ms);
     }
     ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
@@ -2217,6 +2219,10 @@ bool ui_tabbar_remove_tab(struct ui_tabbar *tb, int index)
             (size_t)(tb->impl.tab_cap - index - 1) * sizeof(*tb->impl.tabs));
     tb->impl.tab_cap--;
     tb->impl.tabs[tb->impl.tab_cap] = (struct ui_tab_state){0};
+    /* The label count can not exceed the tab states. A stale count would
+     * make the bar height wrong until the next label update. */
+    if (tb->impl.n_tabs > tb->impl.tab_cap)
+        tb->impl.n_tabs = tb->impl.tab_cap;
     if (tb->impl.keyboard_index > index)
         tb->impl.keyboard_index--;
     else if (tb->impl.keyboard_index == index &&
@@ -2265,6 +2271,15 @@ int ui_tabbar_steady_height(const struct ui_tabbar *tb)
     struct tb_theme theme;
     tb_theme_read(tb, &theme);
     return steady_height(tb, &theme, tb->impl.n_tabs);
+}
+
+int ui_tabbar_bar_height(const struct ui_tabbar *tb)
+{
+    if (!tb)
+        return 0;
+    struct tb_theme theme;
+    tb_theme_read(tb, &theme);
+    return theme.height;
 }
 
 static bool to_surface(const struct ui_tabbar *tb, bool ok, struct rect2i *out)

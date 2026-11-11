@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "helpers/app_fixture.h"
+#include "app/tabs/tabs.h"
 #include "terminal/terminal.h"
 #include "ui/yasl/client.h"
 #include "ui/yasl/window.h"
@@ -21,12 +22,12 @@ int main(void)
         .name = "other", .kind = &other_kind, .content = content,
     }));
 
-    assert(!terminal_is(w));
-    assert(terminal_tab_count(w) == 0);
-    assert(terminal_active_session(w) == NULL);
+    assert(!app_tabs_is(w));
+    assert(app_tabs_count(w) == 0);
+    assert(app_tabs_active(w) == NULL);
     struct terminal_frame_source source;
-    assert(!terminal_frame_source(w, 0, &source));
-    terminal_prepare(w, 0);
+    assert(!terminal_frame_source(NULL, 0, &source));
+    terminal_prepare(NULL, 0);
 
     window_close(w);
     test_app_fini(&app);

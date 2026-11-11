@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "helpers/app_fixture.h"
+#include "app/tabs/tabs.h"
 #include "helpers/terminal_window.h"
 #include "session/session.h"
 #include "terminal/internal.h"
@@ -54,7 +55,7 @@ static void expect_no_bytes(void)
 
 static void scroll(int lines, float delta)
 {
-    struct rect2i view = terminal_view_rect(test_window);
+    struct rect2i view = terminal_view_rect(app_tabs_active(test_window));
     assert(view.width > 0 && view.height > 0);
     struct vector2i pos = {
         .x = view.x + view.width / 2,
@@ -98,8 +99,8 @@ int main(void)
         .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
     });
     ui_surface_resize(window_ui_surface(w), (struct vector2i){ .x = 800, .y = 480 });
-    assert(terminal_new_tab(w));
-    struct session *session = terminal_active_session(w);
+    assert(app_tabs_new(w));
+    struct session *session = terminal_session(app_tabs_active(w));
     assert(session);
 
     assert(pipe(scroll_pipe) == 0);

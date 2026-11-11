@@ -2,6 +2,7 @@
 
 #include "helpers/app_fixture.h"
 #include "helpers/terminal_window.h"
+#include "app/tabs/tabs.h"
 #include "terminal/terminal.h"
 #include "ui/yasl/window.h"
 #include "yasl/yasl.h"
@@ -24,7 +25,7 @@ int main(void)
 
     struct window *w = test_terminal_window(host, &app.app->config.terminal);
     assert(w);
-    assert(terminal_new_tab(w));
+    assert(app_tabs_new(w));
     step_until_closed(host);
     window_host_reap(host);
 

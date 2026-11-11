@@ -1493,7 +1493,7 @@ static void bar_reveal_animates_on_boundary(void)
     assert(tick(&f, 2100));
     int hclose = ui_tabbar_height(&f.tb);
     assert(hclose > 0 && hclose < full);
-    /* The grid takes its final height when the close starts. */
+    /* The steady widget height excludes the closing entry. */
     assert(ui_tabbar_steady_height(&f.tb) == 0);
 
     /* The bar stays collapsed after the animation ends and before the
@@ -1509,6 +1509,19 @@ static void bar_reveal_animates_on_boundary(void)
 
     show(&f, 3, 0);
     assert(ui_tabbar_height(&f.tb) == full);
+    teardown(&f);
+}
+
+static void multiple_closes_collapse_the_bar(void)
+{
+    struct fixture f;
+    setup(&f, 3, 400);
+    assert(ui_tabbar_height(&f.tb) > 0);
+    assert(ui_tabbar_begin_close(&f.tb, 1, 1000));
+    assert(ui_tabbar_begin_close(&f.tb, 2, 1001));
+    tick(&f, 1300);
+    assert(ui_tabbar_height(&f.tb) == 0);
+    assert(bar(&f)->bounds.height == 0);
     teardown(&f);
 }
 
@@ -1969,6 +1982,7 @@ int main(void)
     separators_hide_next_to_hot_tabs();
     neighbor_slide_eases_on_drag();
     bar_reveal_animates_on_boundary();
+    multiple_closes_collapse_the_bar();
     opening_chip_is_opaque_and_clipped();
     fifty_tabs_frame_time_sub_half_ms();
     press_on_tab_starts_drag_and_captures_test();

@@ -5,6 +5,7 @@
 #include "ui/paint.h"
 #include "paint/text_run.h"
 #include "ui/ui_util.h"
+#include "ui/surface.h"
 #include "ui/widget_impl.h"
 #include <wsap_vtcore/unicode/grapheme.h>
 #include <wsap_vtcore/unicode/utf8.h>
@@ -14,8 +15,7 @@
 
 static struct terminal *view_terminal(const struct ui_widget *widget)
 {
-    return ui_container_of((struct ui_widget *)widget, struct terminal,
-                           view.widget);
+    return terminal_of_view(widget);
 }
 
 static struct terminal_view *view_of(const struct ui_widget *widget)
@@ -40,33 +40,24 @@ static void changed(struct terminal_view *view)
     ui_widget_invalidate(&view->widget, UI_WIDGET_INVALIDATE_PAINT);
 }
 
-static struct vector2i cell_at(const struct tab *t, struct vector2i local)
+static struct vector2i cell_at(const struct terminal *t, struct vector2i local)
 {
-    const struct font_metrics *metrics = tab_metrics(t);
+    const struct font_metrics *metrics = terminal_font_metrics(t);
     int ch = metrics->cell_h;
     int y = ch > 0 && local.y >= 0 ? local.y / ch : -1;
     int cw = metrics->cell_w;
-    if (t && t->window && y >= 0) {
-        struct terminal *tw = terminal_of(t->window);
-        if (tw && tw->snapshot) {
-            enum wsap_vtcore_line_size line = wsap_vtcore_snapshot_row_size(tw->snapshot, y);
-            if (line != WSAP_VTCORE_LINE_SINGLE)
-                cw *= 2;
-        }
-    }
+    enum wsap_vtcore_line_size line = WSAP_VTCORE_LINE_SINGLE;
+    if (t && t->snapshot && y >= 0)
+        line = wsap_vtcore_snapshot_row_size(t->snapshot, y);
+    if (line != WSAP_VTCORE_LINE_SINGLE)
+        cw *= 2;
     int x = cw > 0 && local.x >= 0 ? local.x / cw : -1;
-    if (t && t->window && y >= 0 && t->session.term) {
-        struct terminal *tw = terminal_of(t->window);
-        if (tw && tw->snapshot) {
-            enum wsap_vtcore_line_size line = wsap_vtcore_snapshot_row_size(tw->snapshot, y);
-            if (line != WSAP_VTCORE_LINE_SINGLE) {
-                int max_cols = wsap_vtcore_size(t->session.term).x / 2;
-                if (max_cols < 1)
-                    max_cols = 1;
-                if (x >= max_cols)
-                    x = max_cols - 1;
-            }
-        }
+    if (t && t->session.term && y >= 0 && line != WSAP_VTCORE_LINE_SINGLE) {
+        int max_cols = wsap_vtcore_size(t->session.term).x / 2;
+        if (max_cols < 1)
+            max_cols = 1;
+        if (x >= max_cols)
+            x = max_cols - 1;
     }
     return (struct vector2i){ .x = x, .y = y };
 }
@@ -98,7 +89,8 @@ static bool alternate_scroll(const struct wsap_vtcore_mouse_event *mev,
          mev->button == WSAP_VTCORE_MOUSE_WHEEL_DOWN);
 }
 
-static void send_alternate_scroll(struct tab *t, struct wsap_vtcore_mouse_event mev,
+static void send_alternate_scroll(struct terminal *t,
+                                  struct wsap_vtcore_mouse_event mev,
                                   const struct wsap_vtcore_modes *modes)
 {
     int total = mev.scroll_lines;
@@ -117,8 +109,8 @@ static void send_alternate_scroll(struct tab *t, struct wsap_vtcore_mouse_event 
     }
 }
 
-static bool report_mouse(struct window *w, struct tab *t,
-                         const struct ui_pointer_event *p, struct vector2i local)
+static bool report_mouse(struct terminal *t, const struct ui_pointer_event *p,
+                         struct vector2i local)
 {
     struct wsap_vtcore_mouse_event mev = {
         .pos = term_vec_from_geom(cell_at(t, local)),
@@ -129,7 +121,7 @@ static bool report_mouse(struct window *w, struct tab *t,
         .scroll_delta = p->scroll_delta,
         .kind = (enum wsap_vtcore_mouse_event_kind)pointer_kind(p->kind),
     };
-    struct wsap_vtcore_modes modes = terminal_input_modes(w);
+    struct wsap_vtcore_modes modes = terminal_input_modes(t);
     if (alternate_scroll(&mev, &modes)) {
         send_alternate_scroll(t, mev, &modes);
         return true;
@@ -141,24 +133,23 @@ static bool report_mouse(struct window *w, struct tab *t,
     return r.status != WSAP_VTCORE_INPUT_UNHANDLED;
 }
 
-static void scroll_lines(struct window *w, struct tab *t, int lines)
+static void scroll_lines(struct terminal *t, int lines)
 {
     wsap_vtcore_scroll(t->session.term, lines);
     selection_extend_to_pointer(&t->selection, t->session.term);
-    terminal_show_scrollbar(w);
+    terminal_show_scrollbar(t);
 }
 
-static void select_text(struct window *w, struct tab *t,
-                        const struct ui_pointer_event *p, struct vector2i local,
-                        uint64_t now_ms)
+static void select_text(struct terminal *t, const struct ui_pointer_event *p,
+                        struct vector2i local, uint64_t now_ms)
 {
-    const struct font_metrics *m = tab_metrics(t);
+    const struct font_metrics *m = terminal_font_metrics(t);
     struct vector2i cell = cell_at(t, local);
     int cw = m->cell_w;
-    struct terminal *tw = terminal_of(w);
     bool double_w = false;
-    if (tw && tw->snapshot && cell.y >= 0) {
-        enum wsap_vtcore_line_size line = wsap_vtcore_snapshot_row_size(tw->snapshot, cell.y);
+    if (t->snapshot && cell.y >= 0) {
+        enum wsap_vtcore_line_size line =
+            wsap_vtcore_snapshot_row_size(t->snapshot, cell.y);
         if (line != WSAP_VTCORE_LINE_SINGLE) {
             cw *= 2;
             double_w = true;
@@ -174,57 +165,60 @@ static void select_text(struct window *w, struct tab *t,
         right_half = local.x >= 0 && cw > 0 &&
                      local.x % cw >= cw / 2;
     }
-    t->selection.double_click_ms = window_double_click_ms(w);
+    struct window *w = t->window;
+    t->selection.double_click_ms = w ? window_double_click_ms(w) : 0;
     selection_handle_pointer(&t->selection, t->session.term, cell,
                              right_half, pointer_kind(p->kind), now_ms);
-    if (p->kind == UI_POINTER_RELEASE && wsap_vtcore_has_selection(t->session.term)) {
+    if (p->kind == UI_POINTER_RELEASE &&
+        wsap_vtcore_has_selection(t->session.term)) {
         char *text = wsap_vtcore_selection_text(t->session.term);
-        if (text && window_surface(w))
+        if (text && w && window_surface(w))
             window_copy(w, YASL_PRIMARY, text);
         wsap_vtcore_text_free(text);
     }
 }
 
-static void secondary_press(struct window *w, struct tab *t,
+static void secondary_press(struct terminal *t,
                             const struct ui_pointer_event *p,
                             struct vector2i local)
 {
     if (terminal_pointer_selects_text(t->session.term))
-        terminal_open_ctx_menu(w, p->pos);
+        terminal_open_ctx_menu(t, p->pos);
     else if (!t->selection.pressed)
-        report_mouse(w, t, p, local);
+        report_mouse(t, p, local);
 }
 
-static bool pointer_is_local(struct window *w, const struct tab *t)
+static bool pointer_is_local(const struct terminal *t)
 {
-    return (window_modifiers(w) & INPUT_MOD_SHIFT) ||
-           terminal_pointer_selects_text(t->session.term);
+    struct window *w = t->window;
+    return w && ((window_modifiers(w) & INPUT_MOD_SHIFT) ||
+                 terminal_pointer_selects_text(t->session.term));
 }
 
 static bool view_event(struct ui_widget *widget, const struct ui_event *event)
 {
     struct terminal_view *view = view_of(widget);
-    struct terminal *tw = view_terminal(widget);
-    struct window *w = tw->window;
-    struct tab *t = terminal_active_tab(w);
+    struct terminal *t = view_terminal(widget);
+    struct window *w = t->window;
+    struct wsap_vtcore *term = t->session.term;
     if (event->kind == UI_EVENT_CAPTURE_LOST) {
         bool opening_link = view->opening_link;
         view->opening_link = false;
-        if (!opening_link && t)
+        if (!opening_link)
             t->selection.pressed = false;
         return true;
     }
     if (event->kind == UI_EVENT_KEY) {
         const struct input_key_event *key = event->data.key.native;
-        if (!key || !terminal_key(w, key))
+        if (!key || !terminal_key(t, key))
             ui_surface_keep_key_text(ui_widget_surface(widget));
         return true;
     }
     if (event->kind == UI_EVENT_TEXT) {
-        terminal_text(w, event->data.text.data, event->data.text.len);
+        terminal_text(t, event->data.text.data, event->data.text.len);
         return true;
     }
-    if (event->kind != UI_EVENT_POINTER || !t || !t->session.term)
+    if (event->kind != UI_EVENT_POINTER || !term || !w)
         return false;
     const struct ui_pointer_event *p = &event->data.pointer;
     struct vector2i local = ui_widget_to_local(widget, p->pos);
@@ -233,11 +227,11 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
         return false;
     }
     if (p->kind == UI_POINTER_PRESS && p->button == 2) {
-        secondary_press(w, t, p, local);
+        secondary_press(t, p, local);
         return true;
     }
 
-    char *url = wsap_vtcore_link_at(t->session.term, term_vec_from_geom(cell_at(t, local)));
+    char *url = wsap_vtcore_link_at(term, term_vec_from_geom(cell_at(t, local)));
     view->hover_link = url != NULL;
     if (view->opening_link && p->button == 0 && p->kind == UI_POINTER_RELEASE) {
         view->opening_link = false;
@@ -269,20 +263,20 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
         step.scroll_lines = lines;
         step.scroll_delta = 0.0f;
         step.button = lines > 0 ? UI_POINTER_WHEEL_BUTTON : UI_POINTER_WHEEL_BUTTON + 1;
-        if (!t->selection.pressed && report_mouse(w, t, &step, local))
+        if (!t->selection.pressed && report_mouse(t, &step, local))
             return true;
-        scroll_lines(w, t, lines);
+        scroll_lines(t, lines);
         changed(view);
         return true;
     }
-    if (!t->selection.pressed && report_mouse(w, t, p, local))
+    if (!t->selection.pressed && report_mouse(t, p, local))
         return true;
-    if (p->button == 0 && pointer_is_local(w, t)) {
+    if (p->button == 0 && pointer_is_local(t)) {
         if (p->kind == UI_POINTER_PRESS)
             ui_widget_capture_pointer(widget);
         else if (p->kind == UI_POINTER_RELEASE)
             ui_widget_release_pointer(widget);
-        select_text(w, t, p, local, event->time_ms);
+        select_text(t, p, local, event->time_ms);
         changed(view);
         return true;
     }
@@ -303,13 +297,12 @@ static enum ui_cursor view_cursor(const struct ui_widget *widget,
 {
     (void)pos;
     const struct terminal_view *view = view_of(widget);
-    struct window *w = view_terminal(widget)->window;
-    struct tab *t = terminal_active_tab(w);
-    if (!t)
+    struct terminal *t = view_terminal(widget);
+    if (!t->session.term)
         return UI_CURSOR_DEFAULT;
     if (t->selection.pressed)
         return UI_CURSOR_TEXT;
-    if (!pointer_is_local(w, t))
+    if (!pointer_is_local(t))
         return UI_CURSOR_DEFAULT;
     if (view->hover_link)
         return UI_CURSOR_POINTER;
@@ -501,7 +494,8 @@ static uint64_t accessibility_text_due(void *userdata, uint64_t id,
     (void)delay_ns;
     struct terminal *terminal = userdata;
     terminal->view.accessibility_timer = 0;
-    window_redraw(terminal->window);
+    if (terminal->window)
+        window_redraw(terminal->window);
     return 0;
 }
 
@@ -516,13 +510,14 @@ static bool terminal_view_accessibility_text(struct terminal_view *view,
     if (view->accessibility_text_valid && view->accessibility_term == term &&
         view->accessibility_version == term_view->version)
         return true;
-    uint64_t now_ms = window_frame_time_ms(terminal->window);
+    struct window *w = terminal->window;
+    uint64_t now_ms = w ? window_frame_time_ms(w) : 0;
     uint64_t due_ms = view->accessibility_built_ms + ACCESSIBILITY_TEXT_INTERVAL_MS;
     if (view->accessibility_text_valid && view->accessibility_term == term &&
         now_ms < due_ms) {
-        if (!view->accessibility_timer)
+        if (!view->accessibility_timer && w)
             view->accessibility_timer = yasl_loop_add_timer(
-                window_host(terminal->window)->loop,
+                window_host(w)->loop,
                 (due_ms - now_ms) * 1000000ull, accessibility_text_due,
                 terminal);
         return true;
@@ -646,12 +641,11 @@ static bool view_accessibility(const struct ui_widget *widget,
 {
     struct terminal_view *view = view_of(widget);
     struct terminal *terminal = view_terminal(widget);
-    struct tab *tab = terminal_active_tab(terminal->window);
-    struct wsap_vtcore *term = tab ? tab->session.term : NULL;
+    struct wsap_vtcore *term = terminal->session.term;
     out->role = UI_ACCESSIBILITY_ROLE_TERMINAL;
     out->states |= UI_ACCESSIBILITY_STATE_READ_ONLY |
                    UI_ACCESSIBILITY_STATE_MULTILINE;
-    if (!term || !terminal->snapshot)
+    if (!term || !terminal->snapshot || !terminal->window)
         return true;
     wsap_vtcore_lock(term);
     bool captured = wsap_vtcore_snapshot_update(terminal->snapshot, term) &&
@@ -669,19 +663,29 @@ static bool view_accessibility(const struct ui_widget *widget,
 static uint64_t view_tick(struct ui_widget *widget, uint64_t now_ms)
 {
     const struct terminal_view *view = view_of(widget);
-    uint64_t next = view->visual_bell_until_ms > now_ms ? view->visual_bell_until_ms : 0;
-    struct window *w = view_terminal(widget)->window;
-    uint64_t flip = terminal_next_blink_ms(w, now_ms);
+    struct terminal *t = view_terminal(widget);
+    uint64_t next = view->visual_bell_until_ms > now_ms
+        ? view->visual_bell_until_ms : 0;
+    uint64_t flip = terminal_next_blink_ms(t, now_ms);
     if (flip && (!next || flip < next))
         next = flip;
-    uint64_t text_flip = terminal_next_text_blink_ms(w, now_ms);
+    uint64_t text_flip = terminal_next_text_blink_ms(t, now_ms);
     if (text_flip && (!next || text_flip < next))
         next = text_flip;
     return next;
 }
 
+static void view_prepare(struct ui_widget *widget)
+{
+    struct terminal *t = view_terminal(widget);
+    ui_scrollview_set_metrics(&t->scrollview, t->session.term
+        ? terminal_scroll_metrics(t->session.term)
+        : (struct ui_scroll_metrics){0});
+}
+
 static const struct ui_widget_ops VIEW_OPS = {
     .name = "terminal-view",
+    .prepare = view_prepare,
     .event = view_event,
     .cursor = view_cursor,
     .tick = view_tick,
@@ -694,50 +698,49 @@ static bool scrollview_action(struct ui_widget *source,
                               const struct ui_action *action, void *userdata)
 {
     (void)source;
-    struct window *w = userdata;
-    struct tab *t = terminal_active_tab(w);
-    if (action->kind != UI_ACTION_CHANGE || !t)
+    struct terminal *t = userdata;
+    if (!t || action->kind != UI_ACTION_CHANGE || !t->session.term)
         return false;
     wsap_vtcore_scroll_to(t->session.term, action->index);
-    terminal_show_scrollbar(w);
+    terminal_show_scrollbar(t);
     return true;
 }
 
-void terminal_view_init(struct terminal *tw)
+void terminal_view_init(struct terminal *t)
 {
     view_parts_init();
-    tw->view = (struct terminal_view){0};
-    ui_widget_init(&tw->view.widget, &VIEW_OPS, NULL);
-    ui_widget_set_accessible_name(&tw->view.widget, "Terminal");
-    ui_widget_set_style_identity(&tw->view.widget, "terminal-view", NULL,
+    t->view = (struct terminal_view){0};
+    ui_widget_init(&t->view.widget, &VIEW_OPS, NULL);
+    ui_widget_set_accessible_name(&t->view.widget, "Terminal");
+    ui_widget_set_style_identity(&t->view.widget, "terminal-view", NULL,
                                  "terminal-view");
-    ui_scrollview_init(&tw->scrollview);
-    ui_scrollview_set_overlay(&tw->scrollview, true);
-    ui_scrollview_set_metrics(&tw->scrollview, (struct ui_scroll_metrics){0});
-    ui_widget_add_child(ui_scrollview_widget(&tw->scrollview), &tw->view.widget);
+    ui_scrollview_init(&t->scrollview);
+    ui_scrollview_set_overlay(&t->scrollview, true);
+    ui_scrollview_set_metrics(&t->scrollview, (struct ui_scroll_metrics){0});
+    ui_widget_add_child(ui_scrollview_widget(&t->scrollview), &t->view.widget);
 }
 
-void terminal_view_attach(struct window *w)
+void terminal_view_attach(struct terminal *t)
 {
-    struct terminal *tw = terminal_of(w);
-    ui_widget_set_action_handler(ui_scrollview_widget(&tw->scrollview),
-                                 scrollview_action, w);
+    ui_widget_set_action_handler(ui_scrollview_widget(&t->scrollview),
+                                 scrollview_action, t);
 }
 
-void terminal_view_drop_hover(struct window *w, bool over, void *ud)
+void terminal_view_drop_hover(struct terminal *t, bool over, void *ud)
 {
     (void)ud;
-    struct terminal_view *view = &terminal_of(w)->view;
-    if (view->drop_hover == over)
+    if (!t || t->view.drop_hover == over)
         return;
-    view->drop_hover = over;
-    changed(view);
+    t->view.drop_hover = over;
+    changed(&t->view);
 }
 
-void terminal_view_set_preedit(struct terminal *tw, const char *text,
+void terminal_view_set_preedit(struct terminal *t, const char *text,
                                int cursor_begin, int cursor_end,
                                struct rect2i caret, uint32_t fg, uint32_t bg)
 {
+    if (!t)
+        return;
     struct terminal_preedit next = { .caret = caret, .fg = fg, .bg = bg };
     size_t len = text ? strlen(text) : 0;
     size_t off = 0;
@@ -756,23 +759,24 @@ void terminal_view_set_preedit(struct terminal *tw, const char *text,
     bool shown = off && cursor_begin >= 0;
     next.cursor_begin = shown ? (cursor_begin < (int)off ? cursor_begin : (int)off) : -1;
     next.cursor_end = shown ? (cursor_end < (int)off ? cursor_end : (int)off) : -1;
-    const struct terminal_preedit *cur = &tw->view.preedit;
+    const struct terminal_preedit *cur = &t->view.preedit;
     if (!strcmp(next.text, cur->text) && rect2i_eq(next.caret, cur->caret) &&
         next.cursor_begin == cur->cursor_begin &&
         next.cursor_end == cur->cursor_end &&
         next.fg == cur->fg && next.bg == cur->bg)
         return;
-    tw->view.preedit = next;
-    changed(&tw->view);
+    t->view.preedit = next;
+    changed(&t->view);
 }
 
-struct rect2i terminal_view_rect(const struct window *w)
+struct rect2i terminal_view_rect(const struct terminal *t)
 {
-    return terminal_of(w)->view.widget.bounds;
+    return t ? t->view.widget.bounds : (struct rect2i){0};
 }
 
-struct vector2i terminal_cell_at(const struct window *w, struct vector2i pos)
+struct vector2i terminal_cell_at(const struct terminal *t, struct vector2i pos)
 {
-    return cell_at(terminal_active_tab(w),
-                   ui_widget_to_local(&terminal_of(w)->view.widget, pos));
+    if (!t)
+        return (struct vector2i){ .x = -1, .y = -1 };
+    return cell_at(t, ui_widget_to_local(&t->view.widget, pos));
 }

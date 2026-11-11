@@ -16,8 +16,11 @@
 #include "render/term_frame.h"
 #include "util/damage.h"
 #include "session/session.h"
+#include "app/tabs/tabs.h"
 #include "terminal/terminal.h"
 #include "util/name.h"
+#include "ui/surface.h"
+#include "ui/widget.h"
 #include "ui/yasl/inspector.h"
 #include "ui/yasl/client.h"
 
@@ -30,13 +33,25 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
     struct app *a = ud;
     uint64_t now_ms = window_frame_time_ms(w);
     bool main = frame->surface == window_surface(w);
+    struct terminal *content = NULL;
+    struct rect2i content_bounds = {0};
     if (main) {
         latency_probe_stage(LATENCY_STAGE_RENDER_START);
-        /* Update the snapshot before the UI tick. The tick schedules the
-         * next text blink from the blink cells of this snapshot. */
-        terminal_prepare(w, now_ms);
-        if (!window_closed(w))
+        /* The tab model lands first, then the UI layout, then the content
+         * geometry, and only then the snapshot. */
+        app_tabs_prepare(w, now_ms);
+        if (!window_closed(w)) {
             window_ui_prepare_frame(w, now_ms);
+            ui_surface_prepare(window_ui_surface(w));
+        }
+        /* An operation can close the window. Read the active content again. */
+        content = app_tabs_active(w);
+        if (content)
+            terminal_commit_geometry(content);
+        if (content) {
+            terminal_prepare(content, now_ms);
+            content_bounds = terminal_input_widget(content)->bounds;
+        }
     }
     if (window_closed(w))
         return;
@@ -44,6 +59,14 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
     struct window_ui_frame ui = {0};
     if (!window_ui_build_frame(w, frame->surface, now_ms, &ui))
         ui.repaint = true;
+    /* Scene preparation can finish a deferred layout pass. Retry instead
+     * of showing a snapshot at a different content rectangle. */
+    if (content && !rect2i_eq(content_bounds,
+                             terminal_input_widget(content)->bounds)) {
+        window_repaint_all(w);
+        window_redraw(w);
+        return;
+    }
 
     struct render_frame render = {
         .base = ui.background,
@@ -58,7 +81,7 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
         render.ui_damage = main ? &ui.damage : NULL;
         render.repaint = ui.repaint;
         struct terminal_frame_source source = {0};
-        if (main && terminal_frame_source(w, now_ms, &source)) {
+        if (content && terminal_frame_source(content, now_ms, &source)) {
             /* The theme has no selection colors. The zero selection colors
              * of the frame give the built-in ones. */
             terminal_frame_init(&grid, source.snapshot, source.cursor_visible);
@@ -100,7 +123,8 @@ static bool app_paint_scene(void *ud, struct font_instance *font,
 static void style_window(struct app *a, struct window *w)
 {
     const struct wsap_vtcore_theme *theme = look_palette(a->look);
-    terminal_set_theme(w, theme);
+    if (app_tabs_is(w))
+        app_tabs_set_theme(w, theme);
     window_ui_set_style(w, look_sheet(a->look), theme->bg);
 }
 
@@ -167,13 +191,13 @@ static struct terminal_theme_picker app_theme_picker(struct app *a)
     };
 }
 
-static struct window *open_window(void *ud, struct tab *tab, const char *cwd,
-                                  struct vector2i size)
+static struct window *open_window(void *ud, struct terminal *content,
+                                  const char *cwd, struct vector2i size)
 {
-    return app_open_terminal(ud, tab, cwd, size);
+    return app_open_terminal(ud, content, cwd, size);
 }
 
-struct window *app_open_terminal(struct app *a, struct tab *tab,
+struct window *app_open_terminal(struct app *a, struct terminal *content,
                                  const char *cwd, struct vector2i size)
 {
     struct window *w = window_open(&a->host, &(struct window_spec){
@@ -182,8 +206,8 @@ struct window *app_open_terminal(struct app *a, struct tab *tab,
     });
     if (!w)
         return NULL;
-    if (!terminal_mount(w, &(struct terminal_spec){
-            .config = &a->config.terminal, .tab = tab, .cwd = cwd,
+    if (!app_tabs_mount(w, &(struct app_tabs_spec){
+            .config = &a->config.terminal, .cwd = cwd, .content = content,
             .theme = look_palette(a->look),
             .theme_picker = app_theme_picker(a),
             .preview_capture = app_thumbnail_capture,

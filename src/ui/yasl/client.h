@@ -18,6 +18,7 @@ struct ui_widget;
 struct window;
 struct window_ui;
 struct window_frame;
+struct yasl_surface;
 
 struct window_ui_frame {
     struct ui_scene *scene;
