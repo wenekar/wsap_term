@@ -65,11 +65,6 @@ struct tb_theme {
     int preview_shadow_blur;
     uint32_t ripple_color;
     uint32_t ripple_duration_ms;
-    bool has_border_color;
-    bool close_s_has_bg;
-    bool close_h_has_bg;
-    bool new_tab_has_hover_bg;
-    bool new_tab_has_hover_fg;
     float close_s_opacity;
     float close_h_opacity;
     float new_tab_hover_opacity;
@@ -86,6 +81,11 @@ struct tb_theme {
     int tab_pad;
     int close_side, close_side_h, close_pad;
     int new_tab_w, new_tab_h;
+    bool has_border_color;
+    bool close_s_has_bg;
+    bool close_h_has_bg;
+    bool new_tab_has_hover_bg;
+    bool new_tab_has_hover_fg;
 };
 
 static struct {

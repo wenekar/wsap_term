@@ -72,15 +72,15 @@ static inline void framebuffer_history_release(struct framebuffer_history *histo
  */
 struct framebuffer {
     uint32_t *pixels;
-    struct vector2i size;
-    bool fresh;
     struct framebuffer_history *history;
     void *drawable;
     void *(*acquire)(void *ud);
     void *acquire_ud;
-    bool transaction;
     uint32_t *(*acquire_pixels)(void *ud, struct vector2i size);
     void *acquire_pixels_ud;
+    struct vector2i size;
+    bool fresh;
+    bool transaction;
 };
 
 #endif

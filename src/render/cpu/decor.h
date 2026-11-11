@@ -66,10 +66,10 @@ struct decor_key {
  *   empty.
  */
 struct decor_mask {
-    int y0, y1;
-    bool solid;
     const uint8_t *cov;
     const uint8_t *faint;
+    int y0, y1;
+    bool solid;
 };
 
 /*

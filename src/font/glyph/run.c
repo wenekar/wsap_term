@@ -14,10 +14,10 @@ static __thread uint8_t *seg_roles;
 static __thread int seg_capacity;
 
 struct run_hit {
-    enum font_run_result result;
     const struct glyph *cells;
     const uint32_t *tiles;
     uint64_t id;
+    enum font_run_result result;
 };
 
 static struct glyph *run_build_cached_payload(struct font_instance *fi, int count,
@@ -224,10 +224,10 @@ struct segment {
     const uint32_t *cps;
     const uint32_t *canon;
     const uint8_t *roles;
-    uint16_t style;
-    uint32_t script;
     glyph_span_fn emit;
     void *ctx;
+    uint32_t script;
+    uint16_t style;
 };
 
 static void emit_span(const struct segment *s, const struct run_hit *hit,

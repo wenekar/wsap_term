@@ -33,19 +33,18 @@ struct ui_node_layout {
 };
 
 struct ui_node_desc {
-    enum ui_node_kind kind;
     const char *key;
     const char *class_name;
     const char *id_name;
     const char *tag_name;
     const struct ui_node_desc *children;
     size_t child_count;
-
-    int action_id;
     ui_action_fn on_action;
     void *action_userdata;
     ui_event_fn on_event;
     void *event_userdata;
+    enum ui_node_kind kind;
+    int action_id;
 
     union {
         struct ui_node_layout layout;

@@ -17,11 +17,11 @@ struct app_config {
     char *debug_socket;
     enum font_hint_style hinting;
     enum font_aa_mode antialias;
+    int stats_ms;
 #if defined(__APPLE__) && !defined(WSAP_USE_FREETYPE)
     bool font_smoothing;
 #endif
     bool high_contrast;
-    int stats_ms;
 };
 
 extern const struct opts_spec app_config_spec;

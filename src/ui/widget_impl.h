@@ -54,10 +54,10 @@ struct ui_widget_ops {
                                 struct ui_accessibility_node_spec *out);
     bool (*accessibility_action)(struct ui_widget *widget, uint64_t node_id,
                                  const struct ui_accessibility_action_request *request);
+    size_t child_limit;
     bool clip_children;
     bool key_release;
     bool width_sensitive;
-    size_t child_limit;
 };
 
 void ui_widget_invalidate(struct ui_widget *widget, unsigned flags);

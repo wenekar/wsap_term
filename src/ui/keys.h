@@ -99,13 +99,13 @@ enum ui_key_action : uint8_t {
 };
 
 struct ui_key_event {
+    const void *native;
     enum ui_key key;
-    enum ui_key_action action;
     unsigned mods;
     uint32_t text;
-    const void *native;
     enum ui_edit_unit edit_unit;
     enum ui_edit_command edit_command;
+    enum ui_key_action action;
     bool text_deferred;
 };
 

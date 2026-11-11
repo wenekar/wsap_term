@@ -62,40 +62,40 @@ struct index_entry {
 
 struct cell_class {
     struct cell_class *next;
-    struct vector2i cell;
-    size_t tile_px;
-    int slab_shift;
     uint32_t **slabs;
-    int n_slabs;
-    int slots;
-    /* Slots [fresh, slots) were never used. */
-    int fresh;
     struct cell_key *keys;
     uint32_t *tags;
     uint32_t *stamps;
     uint8_t *flags;
     struct index_entry *index;
+    uint32_t *free;
+    /* The L0 tables of the class. The budget does not count them. */
+    struct class_l0 *l0;
+    size_t tile_px;
+    size_t bytes;
+    struct vector2i cell;
+    int slab_shift;
+    int n_slabs;
+    int slots;
+    /* Slots [fresh, slots) were never used. */
+    int fresh;
     uint32_t index_mask;
     /*
      * The free list. Claims take [0, n_free) from the end through `cursor`,
      * so dropping the claimed part moves nothing.
      * The capacity is `slots`.
      */
-    uint32_t *free;
     int n_free;
     int hand;
     /* The claims that the last frame asked for. */
     int asked;
-    /* A hit log overflowed in the last frame: evict nothing in this one. */
-    bool protect;
     /* The clock at the last begin, and at the last publish. */
     uint32_t used;
     uint32_t last;
     /* The phase number while a phase is open, else 0. */
     uint32_t phase;
-    size_t bytes;
-    /* The L0 tables of the class. The budget does not count them. */
-    struct class_l0 *l0;
+    /* A hit log overflowed in the last frame: evict nothing in this one. */
+    bool protect;
     /* Every claim writes the cursor. It has its own cache line. */
     char pad0[64];
     _Atomic int cursor;
@@ -119,10 +119,10 @@ struct cell_cache {
  */
 struct class_l0 {
     struct cell_l0 t;
-    bool valid;
     uint64_t font;
     uint32_t fg, bg;
     int n_used;
+    bool valid;
     uint16_t used[L0_ENTRIES];
     uint64_t listed[(L0_ENTRIES + 63) / 64];
     uint32_t slot[L0_ENTRIES];
@@ -139,8 +139,8 @@ struct cell_cache_worker {
     uint32_t phase;
     int asked;
     int n_hits;
-    bool hit_overflow;
     int n_pending;
+    bool hit_overflow;
     uint32_t hits[CELL_CACHE_HIT_LOG];
     /* Slot + 1 of recent hits. A repeat hit is logged once. */
     uint32_t hit_filter[HIT_FILTER];

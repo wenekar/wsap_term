@@ -37,10 +37,10 @@ enum ui_place_kind : uint8_t {
 };
 
 struct ui_placement {
-    enum ui_place_kind kind;
     struct rect2i anchor;
     int gap;
     float y_fraction;
+    enum ui_place_kind kind;
 };
 
 struct ui_part_slot {
@@ -76,8 +76,6 @@ struct ui_widget {
         uint64_t accessibility_id;
         char *accessible_name;
         char *accessible_description;
-        bool accessibility_ignored;
-        bool accessibility_invalid;
         struct ui_placement placement;
         struct vector2i fixed_size;
         const char *style_class;
@@ -89,6 +87,8 @@ struct ui_widget {
         size_t child_count;
         unsigned style_pseudo;
         unsigned invalidation;
+        bool accessibility_ignored;
+        bool accessibility_invalid;
         bool style_valid;
         bool destroyed;
         bool hidden;

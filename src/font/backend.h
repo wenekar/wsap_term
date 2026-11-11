@@ -11,8 +11,8 @@ struct font_window {
     const uint32_t *cps;
     int len;
     int core, core_len;
-    uint16_t style;
     uint32_t script;
+    uint16_t style;
 };
 
 struct font_backend {

@@ -16,9 +16,9 @@ enum dbg_status {
 
 struct dbg_cmd {
     struct dbg_client *client;
-    int argc;
     char **argv;
     struct window *window;
+    int argc;
     int surface;
     unsigned mods;
     char err[512];

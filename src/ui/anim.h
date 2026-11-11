@@ -55,10 +55,10 @@ static inline float ui_tween_eval(struct ui_tween t, uint64_t now_ms, bool *fini
 }
 
 struct ui_hover_anim {
+    uint64_t start_ms;
     float value;
     float from;
     float to;
-    uint64_t start_ms;
 };
 
 static inline void ui_hover_anim_set_target(struct ui_hover_anim *a,

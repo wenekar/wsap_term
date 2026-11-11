@@ -27,20 +27,18 @@ struct app_tabs {
     struct ui_palette palette;
 
     struct app_tab *tabs;
+    struct ui_tab_label *labels;
+    /* The content that the root holds, and its widget. */
+    struct terminal *mounted_content;
+    struct ui_widget *mounted;
+    struct ui_image preview_image;
+    void *preview_state;
+
     int count;
     int cap;
     /* The index of the active live entry, or -1. */
     int active;
-
-    struct ui_tab_label *labels;
     int labels_cap;
-
-    /* The content that the root holds, and its widget. */
-    struct terminal *mounted_content;
-    struct ui_widget *mounted;
-
-    struct ui_image preview_image;
-    void *preview_state;
 };
 
 struct app_tabs *app_tabs_of(const struct window *window);

@@ -15,8 +15,8 @@ struct ui_scroll_metrics {
 struct ui_scrollview {
     struct ui_widget widget;
     struct {
-        struct ui_scroll_metrics metrics;
         uint64_t hide_at;
+        struct ui_scroll_metrics metrics;
         float scroll_remainder;
         int scroll_y;
         int scroll_step;

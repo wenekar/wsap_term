@@ -15,9 +15,9 @@ struct opt_type {
     bool (*parse)(const struct opt *o, const char *val, void *field);
     void (*format)(const struct opt *o, const void *field, char *buf, size_t n);
     void (*release)(void *field);
+    const char *(*choice)(const struct opt *o, size_t index);
     size_t size;
     enum opt_kind kind;
-    const char *(*choice)(const struct opt *o, size_t index);
 };
 
 struct enum_name {

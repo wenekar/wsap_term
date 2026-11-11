@@ -42,7 +42,6 @@ struct pty_ring {
     int request_wr;
     int event_watch;
     _Atomic int stop;
-    bool active;
     /* Set by the worker before it signals, cleared by the loop thread when it
      * drains the signal. A zero value sends the next signal. */
     _Atomic int wake_pending;
@@ -51,6 +50,7 @@ struct pty_ring {
     _Atomic int end_requested;
     _Atomic int worker_done;
     _Atomic int end_published;
+    bool active;
     /* The loop thread delivered the end callback. */
     bool ended_delivered;
 };

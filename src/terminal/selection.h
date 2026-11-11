@@ -5,11 +5,11 @@
 
 struct text_selection {
     uint64_t time_ms;
-    int clicks, x, y, view_offset;
     struct vector2i pointer;
+    int clicks, x, y, view_offset;
+    uint32_t double_click_ms;
     bool pressed;
     bool right_half;
-    uint32_t double_click_ms;
 };
 
 void selection_handle_pointer(struct text_selection *s, struct wsap_vtcore *t, struct vector2i cell,

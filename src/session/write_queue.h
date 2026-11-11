@@ -19,13 +19,13 @@ struct yasl_loop;
  */
 struct session_write_queue {
     pthread_mutex_t lock;
-    bool lock_ready;
     struct yasl_loop *loop;
     pthread_t owner;
-    int fd, watch;
-    int wake_fd, wake_wr, wake_watch;
     char *data;
     size_t capacity, head, length;
+    int fd, watch;
+    int wake_fd, wake_wr, wake_watch;
+    bool lock_ready;
 };
 
 bool session_write_queue_bind(struct session_write_queue *queue, struct yasl_loop *loop, int fd);

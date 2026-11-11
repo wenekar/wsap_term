@@ -34,9 +34,9 @@ struct ui_dialog_desc {
     const char *title;
     const char *message;
     struct ui_dialog_button buttons[UI_DIALOG_MAX_BUTTONS];
-    int button_count;
     ui_action_fn on_action;
     void *userdata;
+    int button_count;
 };
 
 struct ui_surface {
@@ -52,19 +52,19 @@ struct ui_surface {
         struct ui_widget *restore_focus;
         struct ui_widget *default_focus;
         struct ui_widget *paste_target, *context_target;
-        bool key_text_kept;
         struct vector2i viewport;
         struct ui_style_context style;
         struct ui_layout *layout;
         uint64_t deadline;
-        bool frame_requested;
-        bool busy;
         struct ui_widget *dialog;
         uint64_t dialog_generation;
         struct ui_dialog_frame *dialog_storage;
         struct ui_dialog_frame *retired_dialogs;
         size_t scratch_used;
         uint8_t scratch_buf[UI_SURFACE_SCRATCH_CAP];
+        bool key_text_kept;
+        bool frame_requested;
+        bool busy;
     } impl;
 };
 

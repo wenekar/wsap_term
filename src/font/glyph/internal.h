@@ -96,20 +96,20 @@ struct font_instance {
     uint32_t id;
     int refs;
     struct font_instance *next;
-
     font_handle_t *face;
     _Atomic uint64_t built_gen;
-    _Atomic uint32_t built_fg, built_bg;
+    _Atomic(struct cache_slot *) cjk;
+    _Atomic uint64_t run_stamp;
+    _Atomic(struct font_layout *) layouts[FONT_VARIANT_COUNT];
 
     struct cache_slot ascii[128];
     struct cache_slot ascii_italic[128];
     struct cache_slot latin[LATIN_CACHE_SIZE];
-    _Atomic(struct cache_slot *) cjk;
     uint32_t *ascii_tiles[128];
     struct run_slot runs[RUN_CACHE_SIZE];
-    _Atomic(struct font_layout *) layouts[FONT_VARIANT_COUNT];
     struct cache_slot tiles[TILE_CACHE_SIZE];
-    _Atomic uint64_t run_stamp;
+
+    _Atomic uint32_t built_fg, built_bg;
 };
 
 _Static_assert(sizeof(struct run_slot) * RUN_CACHE_SIZE <= 16u * 1024u,

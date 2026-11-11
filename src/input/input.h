@@ -143,10 +143,10 @@ struct input_mouse_event {
     unsigned mods;
     int scroll_lines;
     float scroll_delta;
+    int popup;
+    struct pointer_pen pen;
     enum pointer_kind kind;
     enum pointer_device device;
-    struct pointer_pen pen;
-    int popup;
 };
 
 enum input_shortcut {

@@ -1661,7 +1661,6 @@ render_kernel_blend_rect(int isa, uint32_t *dst, int n, uint32_t color, uint8_t 
 /* ---- Out-of-line table (kernels.c) ----------------------------------- */
 
 struct render_kernels {
-    int isa;
     void (*fill)(uint32_t *dst, int n, uint32_t color);
     void (*blit_tile)(uint32_t *dst, size_t dst_stride_px, const uint32_t *tile,
                       int cw, int ch);
@@ -1673,6 +1672,7 @@ struct render_kernels {
     void (*blend_any)(uint32_t *dst, const uint8_t *cov, int n, uint32_t fg);
     void (*blend_any_subpx)(uint32_t *dst, const uint8_t *cov, int n, uint32_t fg);
     void (*blend_rect)(uint32_t *dst, int n, uint32_t color, uint8_t a);
+    int isa;
 };
 
 /*

@@ -118,11 +118,11 @@ bool ui_accessibility_tree_build(const struct ui_widget *root,
 
 struct ui_accessibility_action_request {
     uint64_t node_id;
-    enum ui_accessibility_action action;
     const char *value;
     size_t caret_offset;
     size_t selection_start;
     size_t selection_end;
+    enum ui_accessibility_action action;
 };
 
 bool ui_accessibility_dispatch_action(

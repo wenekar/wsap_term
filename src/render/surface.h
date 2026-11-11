@@ -74,15 +74,15 @@ bool render_surface_key_eq(const struct render_surface_key *a,
  *   UI. The other functions in this header do not touch it.
  */
 struct render_surface {
-    bool valid;
     struct render_surface_key key;
-    int rows;
-    int cap;
     uint64_t *keys;
     struct plan_span *ui;
     uint16_t *reach;
     void *gpu;
     uint64_t ui_font_version;
+    int rows;
+    int cap;
+    bool valid;
 };
 
 /*

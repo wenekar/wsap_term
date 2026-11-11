@@ -90,10 +90,10 @@ enum raster_spill_kind : uint8_t {
  * - COLOR stores the glyph pixels. `faint` is its faint bit.
  */
 struct raster_spill {
+    size_t offset;
     int x0, x1;
     int y0, y1;
     uint32_t fg;
-    size_t offset;
     enum raster_spill_kind kind;
     bool faint;
 };

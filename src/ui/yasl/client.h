@@ -34,13 +34,13 @@ struct window_ui_spec {
     const char *name;
     const void *kind;
     struct ui_widget *root;
-    int ui_font_size;
     void (*restyle)(struct window *w);
     void (*resize)(struct window *w, struct vector2i size);
     void (*suspended)(struct window *w, bool suspended);
     void (*debug_state)(struct window *w, struct json_writer *j);
     void (*destroy)(struct window *w);
     void *content;
+    int ui_font_size;
 };
 
 bool window_ui_mount(struct window *w, const struct window_ui_spec *spec);

@@ -18,22 +18,24 @@ struct ui_input {
     struct {
         char buf[UI_INPUT_CAP];
         char placeholder[UI_INPUT_PLACEHOLDER_CAP];
+        char kill[UI_INPUT_CAP];
+        struct ui_input_history *undo, *redo;
+        uint64_t blink_at;
+        uint64_t click_at;
+        struct vector2i click_pos;
+        struct vector2i press_pos;
         int len;
         int caret;
         int anchor;
         int scroll_cells;
-        uint64_t blink_at;
-        bool blink_on;
-        bool dragging;
-        struct ui_input_history *undo, *redo;
-        int undo_count, edit_group, edit_caret;
-        bool editing;
-        char kill[UI_INPUT_CAP];
-        uint64_t click_at;
-        struct vector2i click_pos;
-        struct vector2i press_pos;
+        int undo_count;
+        int edit_group;
+        int edit_caret;
         int clicks;
         int action_id;
+        bool blink_on;
+        bool dragging;
+        bool editing;
     } impl;
 };
 

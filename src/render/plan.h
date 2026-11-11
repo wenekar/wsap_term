@@ -82,8 +82,8 @@ enum plan_row_op : uint8_t {
 };
 
 struct plan_row {
-    enum plan_row_op op;
     int src;
+    enum plan_row_op op;
 };
 
 /* Canvas rows [src, src + count) move to [dst, dst + count). */
@@ -117,13 +117,13 @@ struct plan_window {
 struct plan_input {
     struct vector2i canvas;
     struct rect2i grid;
-    int rows;
-    int ch;
-    bool invalid;
     const uint64_t *old_keys;
     const uint64_t *new_keys;
     const struct plan_span *old_ui;
     const struct ui_damage *ui_damage;
+    int rows;
+    int ch;
+    bool invalid;
 };
 
 /*

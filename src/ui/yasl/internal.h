@@ -28,6 +28,9 @@ struct window_native {
     uint32_t *pixels;
     /* The allocated words of `pixels`. A resize reuses them while they fit. */
     size_t pixels_cap;
+    /* The presentations of this surface, as the display reports them. It is
+     * NULL for a surface without a Metal layer, which reports no feedback. */
+    struct present_watch *watch;
     /* A draw of this surface is due in the next host pass. Each native surface
      * has its own intent, so a popup refresh draws only that popup. */
     bool needs_draw;
@@ -35,9 +38,6 @@ struct window_native {
      * submitted it. A drawable frame that did not submit is asked for again. */
     bool frame_drawable;
     bool frame_submitted;
-    /* The presentations of this surface, as the display reports them. It is
-     * NULL for a surface without a Metal layer, which reports no feedback. */
-    struct present_watch *watch;
     bool failing;
 };
 
@@ -62,30 +62,30 @@ struct window_ui_menu_popup {
 };
 
 struct window_ui {
-    bool mounted;
     struct window_ui_spec spec;
     const struct css_sheet *sheet;
-    uint32_t background;
     struct font_instance *ui_font;
-    bool pointer_hidden;
-    bool replace_key_text;
     struct window_debug *debug;
+    struct window_accessibility *accessibility;
+    struct ui_scene *scene_scratch;
 
     struct ui_widget root;
     struct ui_surface screen;
-    struct window_accessibility *accessibility;
 
     struct ui_menu menu;
     struct ui_menu_layer menu_layer;
     struct window_ui_menu_popup menu_popup[UI_MENU_MAX_LEVELS];
-    int menu_popups;
-    int menu_inline_from;
-    struct vector2i menu_at;
-    uint32_t menu_shown;
-
-    struct ui_scene *scene_scratch;
     struct ui_damage_tracker ui_damage;
 
+    struct vector2i menu_at;
+    uint32_t background;
+    int menu_popups;
+    int menu_inline_from;
+    uint32_t menu_shown;
+
+    bool mounted;
+    bool pointer_hidden;
+    bool replace_key_text;
     bool suspended;
 };
 
@@ -95,40 +95,41 @@ struct window {
     const struct window_drag_target *drag_target;
     void *drag_ud;
     struct yasl_surface *surface;
-    struct window_native natives[WINDOW_NATIVE_MAX];
-    int native_count;
     window_frame_composer compose;
     void *compose_ud;
-    struct window_pointer pointer;
+    struct window *next_closing;
+    char *ime_preedit;
+    uint64_t wake_ms;
+
+    struct window_native natives[WINDOW_NATIVE_MAX];
     struct input_keyboard_state keyboard;
     struct input_queue input;
     struct input_shortcut_state sc_state;
-    bool key_text_pending;
     struct yasl_event native_key;
-    bool button_held;
-    enum pointer_button held_button;
-    uint32_t double_click_ms;
     struct window_fifo inject;
     struct window_ui ui;
-
     struct frame_stats stats;
-    uint32_t frame;
 
-    struct window *next_closing;
+    struct window_pointer pointer;
+    uint32_t bg;
+
+    int native_count;
+    enum pointer_button held_button;
+    uint32_t double_click_ms;
+    uint32_t frame;
+    int ime_begin;
+    int ime_end;
+    uint32_t scale_120;
+    int modifiers;
+
+    bool key_text_pending;
+    bool button_held;
     bool closed;
     bool suspended;
     bool repaint;
-
-    char *ime_preedit;
-    int ime_begin;
-    int ime_end;
     bool focused;
     /* The configuration permits unpaced presentation: draw at once. */
     bool unpaced;
-    uint64_t wake_ms;
-    uint32_t scale_120;
-    int modifiers;
-    uint32_t bg;
     bool has_bg;
 };
 

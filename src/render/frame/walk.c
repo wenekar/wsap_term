@@ -62,18 +62,19 @@ struct walk {
     render_text_fn text;
     render_span_fn span;
     void *ctx;
-    int cols, c0, c1;
-    bool peek;
+    struct look head;
+
     /* Row policy. An empty span means that the row has none. */
     struct wsap_vtcore_span sel, cur;
     uint32_t sel_fg, sel_bg;
-    uint16_t cur_first, cur_rest;
-    bool block;
+    int cols, c0, c1;
     /* The look of the last wide head. A tail at head_next reuses it. */
     int head_next;
-    struct look head;
     /* The shaped segment [base, seg_end). Columns before next are done. */
     int base, next, seg_end;
+    uint16_t cur_first, cur_rest;
+    bool peek;
+    bool block;
 };
 
 #define ATTR_DECOR_BITS \

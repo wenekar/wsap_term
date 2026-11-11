@@ -60,8 +60,8 @@ void frame_stats_print(struct frame_stats *st)
 /* ---- Presentation counts ------------------------------------------------ */
 
 struct present_watch {
-    _Atomic unsigned refs;
     _Atomic uint64_t presented;
+    _Atomic unsigned refs;
 };
 
 struct present_watch *present_watch_new(void)

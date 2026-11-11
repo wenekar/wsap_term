@@ -37,8 +37,6 @@ struct app_tabs_spec {
     /* A content to attach to the window. The mount takes ownership only on
      * success. */
     struct terminal *content;
-    /* Open no tab. The caller then adds the first tab. */
-    bool empty;
     struct window *(*open_window)(void *ud, struct terminal *content,
                                   const char *cwd, struct vector2i size);
     app_tabs_preview_capture_fn preview_capture;
@@ -47,6 +45,8 @@ struct app_tabs_spec {
     app_tabs_scene_paint_fn scene_paint;
     void *scene_paint_ud;
     void *ud;
+    /* Open no tab. The caller then adds the first tab. */
+    bool empty;
 };
 
 bool app_tabs_mount(struct window *window, const struct app_tabs_spec *spec);

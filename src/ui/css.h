@@ -138,9 +138,9 @@ static inline float css_style_effective_opacity(const struct css_style *s)
 struct css_rule {
     char *selector;
     uint64_t set_mask;
+    size_t last_off;
     struct css_style style;
     enum css_pseudo pseudo;
-    size_t last_off;
     int class_rank;
     bool is_class;
     bool is_id;
@@ -150,9 +150,9 @@ struct css_index;
 
 struct css_sheet {
     struct css_rule *rules;
+    struct css_index *index;
     int rule_count;
     int rule_cap;
-    struct css_index *index;
     bool has_defaults; /* The sheet is built on the css_init_default rules. */
 };
 

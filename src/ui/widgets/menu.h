@@ -38,18 +38,18 @@ struct ui_menu {
         struct ui_action_handler actions;
         ui_menu_submenu_fn submenu;
         void *submenu_userdata;
-        uint32_t hover_delay_ms;
-        uint32_t generation;
-        int n_levels;
-        bool open;
-        int pending_level;
-        int pending_item;
         uint64_t hover_deadline;
-        int aim_level;
         uint64_t aim_deadline;
         uint64_t now_ms;
         struct vector2i last_pointer;
+        uint32_t hover_delay_ms;
+        uint32_t generation;
+        int n_levels;
+        int pending_level;
+        int pending_item;
+        int aim_level;
         int highlight;
+        bool open;
         bool highlight_known;
     } impl;
 };
@@ -57,12 +57,12 @@ struct ui_menu {
 struct ui_menu_layer;
 
 struct ui_menu_desc {
-    struct vector2i pos;
     const ui_menu_item *items;
-    int count;
     ui_action_fn on_action;
     ui_menu_submenu_fn on_submenu;
     void *userdata;
+    struct vector2i pos;
+    int count;
     uint32_t hover_delay_ms;
 };
 

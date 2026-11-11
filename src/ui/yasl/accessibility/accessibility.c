@@ -141,8 +141,8 @@ struct provider_window
     ui_accessibility_action_sink_fn action_sink;
     void *action_userdata;
     struct ui_accessibility_tree snapshot;
-    uint32_t scale_120;
     uint64_t focused_id;
+    uint32_t scale_120;
     unsigned active_sinks;
     int popup_level;
     bool detaching;
@@ -180,16 +180,16 @@ enum node_event_kind
 struct node_event
 {
     uint64_t node_id;
-    enum node_event_kind kind;
     const char *detail;
+    char *text;
+    struct rect2i bounds;
+    enum node_event_kind kind;
     gint32 detail1;
     gint32 detail2;
+    guint32 value_uint32;
     bool enabled;
     bool uint32_value;
     bool bounds_value;
-    guint32 value_uint32;
-    struct rect2i bounds;
-    char *text;
 };
 
 struct provider_server

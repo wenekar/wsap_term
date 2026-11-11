@@ -21,14 +21,14 @@ enum ui_pointer_kind : uint8_t {
 #define UI_POINTER_WHEEL_BUTTON POINTER_WHEEL_UP
 
 struct ui_pointer_event {
-    enum ui_pointer_kind kind;
     struct vector2i pos;
     int button;
     int scroll_lines;
     float scroll_delta;
     unsigned mods;
-    enum pointer_device device;
     struct pointer_pen pen;
+    enum ui_pointer_kind kind;
+    enum pointer_device device;
 };
 
 static inline bool ui_pointer_is_button_press(const struct ui_pointer_event *p)
@@ -57,7 +57,6 @@ enum ui_event_kind : uint8_t {
 };
 
 struct ui_event {
-    enum ui_event_kind kind;
     uint64_t time_ms;
     union {
         struct ui_pointer_event pointer;
@@ -66,6 +65,7 @@ struct ui_event {
         struct { int action; enum ui_edit_command edit; } shortcut;
         bool window_focused;
     } data;
+    enum ui_event_kind kind;
 };
 
 static inline struct ui_event ui_event_pointer(struct ui_pointer_event event,

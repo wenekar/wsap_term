@@ -17,14 +17,14 @@ enum layout_role {
 #define LAYOUT_ROLE_SHIFT 24
 
 struct font_layout {
-    bool opaque;
-    uint8_t reach_back, reach_ahead;
-    uint32_t ascii[128];
     uint64_t trigger[LAYOUT_PAIR_CPS / 64];
     uint64_t pairs[LAYOUT_PAIR_CPS][LAYOUT_PAIR_CPS / 64];
     uint64_t chain_pairs[LAYOUT_PAIR_CPS][LAYOUT_PAIR_CPS / 64];
     uint32_t *keys, *values;
+    uint32_t ascii[128];
     uint32_t mask;
+    bool opaque;
+    uint8_t reach_back, reach_ahead;
 };
 
 struct font_layout *font_layout_build(hb_face_t *face);

@@ -13,10 +13,10 @@
 
 struct window_debug {
     struct ui_scene scene[DBG_SURFACES];
-    bool captured[DBG_SURFACES];
     struct ui_debug_overlay overlay;
     struct input_shortcut_state keys;
     struct input_queue scratch;
+    bool captured[DBG_SURFACES];
 };
 
 struct dbg_client {

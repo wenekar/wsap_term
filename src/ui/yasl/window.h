@@ -15,12 +15,12 @@ struct window;
 struct window_host;
 
 struct window_config {
-    struct vector2i size;
-    bool fullscreen;
-    bool tearing;
     char *font_family;
+    struct vector2i size;
     int font_size;
     int menu_hover_delay_ms;
+    bool fullscreen;
+    bool tearing;
 };
 
 struct window_host_hooks {

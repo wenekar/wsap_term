@@ -45,25 +45,27 @@ struct session {
     const struct session_host *host;
     void *host_ud;
     struct session *next_live;
-    /* The newline mode of the bytes that the worker reads, and the stream that
-     * they came from. */
-    bool onlcr;
-    bool newline_synced;
-    int newline_fd;
     uint64_t last_keystroke_ms;
     /* The last winsize sent to the pty, the size that waits for the timer, and
      * the timer. Zero Is Initialization: no pending size, no timer. */
     uint64_t pty_resize_ns;
-    struct vector2i pty_pending;
     uint64_t pty_resize_timer;
-    bool reaped;
+    struct vector2i pty_pending;
     /* The host events that the worker thread queues for the loop thread: the
      * title, the clipboard, a notification, and the bell. The loop thread
      * applies them, so the host and the window see one thread only. */
     pthread_mutex_t host_lock;
-    bool host_lock_ready;
     struct session_host_event *host_head;
     struct session_host_event *host_tail;
+
+    /* The newline mode of the bytes that the worker reads, and the stream that
+     * they came from. */
+    int newline_fd;
+    bool onlcr;
+    bool newline_synced;
+
+    bool reaped;
+    bool host_lock_ready;
     alignas(64) struct pty pty;
 };
 

@@ -50,10 +50,15 @@ struct row_ctx {
     struct raster_worker *w;
     uint32_t *row;
     size_t stride;
+    uint64_t font_version;
+    struct cell_class *klass;
+    struct cell_cache_worker *cache;
+    const struct cell_l0 *l0;
+    const struct decor_set *decor;
+
     int cw, ch;
     int cell_w;
     enum wsap_vtcore_line_size line_size;
-    bool double_w;
     int x0, x1;
     int area, width;
     int reach;
@@ -64,11 +69,8 @@ struct row_ctx {
     uint32_t l0_fg, l0_bg;
     uint32_t margin;
     uint32_t cursor;
-    uint64_t font_version;
-    struct cell_class *klass;
-    struct cell_cache_worker *cache;
-    const struct cell_l0 *l0;
-    const struct decor_set *decor;
+
+    bool double_w;
     /* Faint coverage of one chunk. It lives here, not on the stack of the
      * cell callback, so that the callback needs no large frame. */
     uint8_t tmp[3 * COV_CHUNK];

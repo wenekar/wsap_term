@@ -14,9 +14,9 @@ struct ui_surface;
 
 struct ui_debug_part {
     const char *name;
-    int index;
-    struct rect2i rect;
     char *text;
+    struct rect2i rect;
+    int index;
 };
 
 struct ui_debug_parts {
@@ -76,12 +76,12 @@ enum ui_debug_lint_kind {
 };
 
 struct ui_debug_lint {
-    enum ui_debug_lint_kind kind;
-    int op;
-    int other_op;
     const struct ui_widget *owner;
     struct rect2i text_box;
     struct rect2i surface;
+    enum ui_debug_lint_kind kind;
+    int op;
+    int other_op;
     int offset;
 };
 
@@ -105,9 +105,9 @@ enum ui_debug_overlay_flags {
      UI_DEBUG_OVERLAY_LINT)
 
 struct ui_debug_overlay {
-    unsigned flags;
     const struct ui_widget *selected;
     struct vector2i pointer;
+    unsigned flags;
     bool has_pointer;
 };
 

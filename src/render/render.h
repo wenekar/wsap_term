@@ -92,11 +92,11 @@ struct render_grid {
  * no pointer after it returns. It holds no font reference.
  */
 struct render_frame {
-    uint32_t base;
     struct render_grid grid;
     const struct ui_scene *ui;
     struct font_instance *ui_font;
     const struct ui_damage *ui_damage;
+    uint32_t base;
     bool repaint;
     bool cpu_only;
 };

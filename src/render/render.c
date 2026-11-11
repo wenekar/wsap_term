@@ -31,29 +31,17 @@
  */
 
 struct renderer {
-    int isa;
     raster_row_fn row;
     const struct render_kernels *k;
     struct pool *pool;
-    /* The main thread and each pool worker have one raster worker. */
-    int n_workers;
     struct raster_worker *workers;
     struct cell_cache_worker *cache_workers[POOL_WORKERS_MAX + 1];
     struct cell_cache *cache;
     struct decor_cache *decor;
     struct render_gpu *gpu;
-    bool gpu_initialized;
-    struct render_surface scratch;
-    bool force_full;
-    /* WSAP_RENDER_SCROLL, read once. SCROLL_AUTO (0) follows the cost. */
-    enum { SCROLL_AUTO, SCROLL_MOVE, SCROLL_PAINT } scroll_mode;
     /* The paint cost of one cell on one thread, in ps. 0: not known yet. */
     int64_t paint_ps;
-    /* Each thread of the renderer has walk scratch for rows of this many
-     * columns (render_walk_thread_reserve). */
-    int walk_cols;
     /* The frame arrays. They hold `cap` rows and grow only. */
-    int cap;
     uint64_t *keys;
     struct plan_span *ui;
     uint16_t *reach;
@@ -61,6 +49,20 @@ struct renderer {
     struct plan_move *moves;
     struct plan_window *windows;
     struct raster_job *jobs;
+    struct render_surface scratch;
+
+    int isa;
+    /* The main thread and each pool worker have one raster worker. */
+    int n_workers;
+    /* Each thread of the renderer has walk scratch for rows of this many
+     * columns (render_walk_thread_reserve). */
+    int walk_cols;
+    int cap;
+    /* WSAP_RENDER_SCROLL, read once. SCROLL_AUTO (0) follows the cost. */
+    enum { SCROLL_AUTO, SCROLL_MOVE, SCROLL_PAINT } scroll_mode;
+
+    bool gpu_initialized;
+    bool force_full;
 };
 
 static int render_users;
