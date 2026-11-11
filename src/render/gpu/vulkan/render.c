@@ -1904,9 +1904,11 @@ static bool surface_swapchain_ensure(struct render_gpu *g, struct gpu_surface *g
     if (!recreate && gs->swapchain && gs->surface == surface &&
         gs->extent.width == extent.width && gs->extent.height == extent.height &&
         gs->present_mode == present_mode) {
-        gs->request_size = size;
+        /* Record the extent of the swapchain. On X11, extent comes from the window
+         * and can lag behind size. Recheck on the next frame if they differ. */
+        gs->request_size = (struct vector2i){ .x = (int)extent.width, .y = (int)extent.height };
         gs->request_tearing = tearing;
-        gs->recheck = false;
+        gs->recheck = (int)extent.width != size.x || (int)extent.height != size.y;
         return true;
     }
     VkSurfaceFormatKHR selected_format = gs->traits.format;
@@ -1944,6 +1946,7 @@ static bool surface_swapchain_ensure(struct render_gpu *g, struct gpu_surface *g
     if (vkCreateSwapchainKHR(g->device, &sci, NULL, &new_swapchain) != VK_SUCCESS) {
         /* The surface can have changed. Query it again for the next frame. */
         memset(&gs->traits, 0, sizeof(gs->traits));
+        gs->recheck = true;
         return false;
     }
 
@@ -1968,9 +1971,9 @@ static bool surface_swapchain_ensure(struct render_gpu *g, struct gpu_surface *g
     gs->format = selected_format.format;
     gs->extent = extent;
     gs->present_mode = present_mode;
-    gs->request_size = size;
+    gs->request_size = (struct vector2i){ .x = (int)extent.width, .y = (int)extent.height };
     gs->request_tearing = tearing;
-    gs->recheck = false;
+    gs->recheck = (int)extent.width != size.x || (int)extent.height != size.y;
     gs->out_of_date = false;
 
     if (g->render_pass_format != gs->format) {

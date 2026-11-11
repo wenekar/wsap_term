@@ -98,9 +98,10 @@ static void test_metal_draw_cb(const struct window_metal_frame *f, void *ud)
 static void test_cpu_present_cb(const struct window_metal_frame *f, void *ud)
 {
     struct draw_test_context *ctx = ud;
-    uint32_t *cpu_pixels = malloc(640 * 480 * sizeof(uint32_t));
+    size_t count = (size_t)f->size.x * (size_t)f->size.y;
+    uint32_t *cpu_pixels = malloc(count * sizeof(uint32_t));
     assert(cpu_pixels != NULL);
-    for (int i = 0; i < 640 * 480; i++)
+    for (size_t i = 0; i < count; i++)
         cpu_pixels[i] = 0xFF223344u;
     struct framebuffer fb_cpu = {
         .size = f->size,
@@ -127,9 +128,9 @@ static void test_vulkan_presentation(void)
     void *dev_ptr = render_gpu_native_device(g);
     assert(dev_ptr != NULL);
 
-    /* Initialize YASL Wayland backend. */
-    if (yasl_init(&(struct yasl_options){.backend = YASL_BACKEND_WAYLAND}) < 0) {
-        printf("vulkan_render_test: Wayland session unavailable, skipping presentation test\n");
+    /* Initialize display backend. */
+    if (yasl_init(&(struct yasl_options){.backend = YASL_BACKEND_AUTO}) < 0) {
+        printf("vulkan_render_test: display session unavailable, skipping presentation test\n");
         render_gpu_free(g);
         return;
     }
@@ -208,6 +209,26 @@ static void test_vulkan_presentation(void)
         assert(ctx.result == RENDER_GPU_PRESENTED);
     }
 
+    /* Test swapchain resize. */
+    yasl_surface_request_size(ys, 800, 600);
+    struct yasl_event ev;
+    while (yasl_wait_event(&ev, 20) > 0);
+    struct yasl_surface_info resize_info = yasl_surface_get_info(ys);
+    struct render_frame rf_resize_x11 = test_grid_frame(&grid, resize_info.pixel_width, resize_info.pixel_height);
+    rf_resize_x11.base = 0xFF181824u;
+    for (int frame_idx = 0; frame_idx < 3; frame_idx++) {
+        struct draw_test_context ctx = {
+            .g = g,
+            .surface = &rs,
+            .frame = &rf_resize_x11,
+            .result = RENDER_GPU_UNUSED,
+        };
+        bool drawn = window_metal_draw(layer, ys, (struct window_metal_watch){0},
+                                       test_metal_draw_cb, &ctx);
+        assert(drawn);
+        assert(ctx.result == RENDER_GPU_PRESENTED);
+    }
+
     /* Test resize transactions across multiple frames. */
     for (int frame_idx = 0; frame_idx < 6; frame_idx++) {
         int w = 640 + (frame_idx + 1) * 16;
@@ -257,7 +278,7 @@ static void test_vulkan_atlas_packing(void)
     void *dev_ptr = render_gpu_native_device(g);
     assert(dev_ptr != NULL);
 
-    if (yasl_init(&(struct yasl_options){.backend = YASL_BACKEND_WAYLAND}) < 0) {
+    if (yasl_init(&(struct yasl_options){.backend = YASL_BACKEND_AUTO}) < 0) {
         render_gpu_free(g);
         return;
     }
