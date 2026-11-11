@@ -430,6 +430,50 @@ static int scan_ascii_lf_avx2(const char *buf, int len, uint16_t *ends)
 }
 #endif
 
+#if defined(__aarch64__)
+static inline uint32_t scan_masks_pair(uint8x16_t m0, uint8x16_t m1)
+{
+    const uint8x16_t w = {1,2,4,8,16,32,64,128,1,2,4,8,16,32,64,128};
+    uint8x16_t p = vpaddq_u8(vandq_u8(m0, w), vandq_u8(m1, w));
+    p = vpaddq_u8(p, p);
+    p = vpaddq_u8(p, p);
+    return (uint32_t)vgetq_lane_u32(vreinterpretq_u32_u8(p), 0);
+}
+
+static int scan_ascii_lf_neon(const char *buf, int len, uint16_t *ends)
+{
+    int i = 0, count = 0;
+    ends[0] = 0;
+    const uint8x16_t k_nl = vdupq_n_u8('\n');
+    const uint8x16_t k_81 = vdupq_n_u8(0x81), k_a1 = vdupq_n_u8(0xa1);
+    for (; i + 64 <= len; i += 64) {
+        uint8x16_t v0 = vld1q_u8((const uint8_t *)buf + i);
+        uint8x16_t v1 = vld1q_u8((const uint8_t *)buf + i + 16);
+        uint8x16_t v2 = vld1q_u8((const uint8_t *)buf + i + 32);
+        uint8x16_t v3 = vld1q_u8((const uint8_t *)buf + i + 48);
+        uint8x16_t n0 = vceqq_u8(v0, k_nl), n1 = vceqq_u8(v1, k_nl);
+        uint8x16_t n2 = vceqq_u8(v2, k_nl), n3 = vceqq_u8(v3, k_nl);
+        uint8x16_t b0 = veorq_u8(vcgtq_u8(k_a1, vaddq_u8(v0, k_81)), n0);
+        uint8x16_t b1 = veorq_u8(vcgtq_u8(k_a1, vaddq_u8(v1, k_81)), n1);
+        uint8x16_t b2 = veorq_u8(vcgtq_u8(k_a1, vaddq_u8(v2, k_81)), n2);
+        uint8x16_t b3 = veorq_u8(vcgtq_u8(k_a1, vaddq_u8(v3, k_81)), n3);
+        if (vmaxvq_u8(vorrq_u8(vorrq_u8(b0, b1), vorrq_u8(b2, b3))))
+            break;
+        uint32_t m01 = scan_masks_pair(n0, n1), m23 = scan_masks_pair(n2, n3);
+        uint32_t base = (uint32_t)i;
+        for (int q = 0; q < 4; q++) {
+            uint32_t m = (q < 2 ? (m01 >> (16 * q)) : (m23 >> (16 * (q - 2)))) & 0xFFFFu;
+            while (m) {
+                ends[++count] = (uint16_t)(base + (uint32_t)__builtin_ctz(m) + 1u);
+                m &= m - 1u;
+            }
+            base += 16u;
+        }
+    }
+    return scan_ascii_lf_tail(buf, i, len, ends, count);
+}
+#endif
+
 static WSAP_VTCORE_NOINLINE WSAP_VTCORE_MAYBE_UNUSED int scan_ascii_lf(const char *buf, int len, uint16_t *ends)
 {
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
@@ -443,21 +487,7 @@ static WSAP_VTCORE_NOINLINE WSAP_VTCORE_MAYBE_UNUSED int scan_ascii_lf(const cha
     int i = 0, count = 0;
     ends[0] = 0;
 #if defined(__aarch64__)
-    for (; i + 32 <= len; i += 32) {
-        uint32_t nl = 0, bad = 0;
-        for (int q = 0; q < 2; q++) {
-            uint8x16_t v = vld1q_u8((const uint8_t *)buf + i + q * 16);
-            nl |= (uint32_t)wsap_vtcore_lane_bits(vceqq_u8(v, vdupq_n_u8('\n'))) << (q * 16);
-            bad |= (uint32_t)wsap_vtcore_lane_bits(vcgeq_u8(vsubq_u8(v, vdupq_n_u8(0x20)),
-                                                    vdupq_n_u8(0x5f))) << (q * 16);
-        }
-        bad &= ~nl;
-        if (bad) break;
-        while (nl) {
-            ends[++count] = (uint16_t)(i + wsap_vtcore_ctz32(nl) + 1);
-            nl &= nl - 1;
-        }
-    }
+    return scan_ascii_lf_neon(buf, len, ends);
 #endif
     return scan_ascii_lf_tail(buf, i, len, ends, count);
 }
