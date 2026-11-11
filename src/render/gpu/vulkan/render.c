@@ -273,6 +273,8 @@ struct gpu_surface {
     bool request_tearing;
     /* The driver reported that the swapchain no longer matches the surface. */
     bool recheck;
+    /* The swapchain cannot be used anymore and must be recreated. */
+    bool out_of_date;
     /* The answers of the surface queries. They are valid for `surface` only. */
     struct {
         VkSurfaceKHR surface;
@@ -1798,6 +1800,8 @@ static void surface_swapchain_destroy(struct gpu_surface *gs)
     }
     gs->present_mode = VK_PRESENT_MODE_FIFO_KHR;
     gs->image_count = 0;
+    gs->recheck = false;
+    gs->out_of_date = false;
     memset(&gs->traits, 0, sizeof(gs->traits));
 }
 
@@ -1859,11 +1863,14 @@ static bool surface_traits_ensure(struct render_gpu *g, struct gpu_surface *gs,
 }
 
 static bool surface_swapchain_ensure(struct render_gpu *g, struct gpu_surface *gs,
-                                     VkSurfaceKHR surface, struct vector2i size, bool tearing)
+                                     VkSurfaceKHR surface, struct vector2i size, bool tearing,
+                                     bool force)
 {
+    bool recreate = force || gs->out_of_date;
+
     /* Most frames keep the surface, the size, and the pacing. Ask the driver
      * nothing for these frames. */
-    if (gs->swapchain && gs->surface == surface && !gs->recheck &&
+    if (!recreate && gs->swapchain && gs->surface == surface && !gs->recheck &&
         vector2i_eq(gs->request_size, size) && gs->request_tearing == tearing)
         return true;
 
@@ -1893,7 +1900,7 @@ static bool surface_swapchain_ensure(struct render_gpu *g, struct gpu_surface *g
     else if (tearing && gs->traits.fifo_relaxed)
         present_mode = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
 
-    if (gs->swapchain && gs->surface == surface &&
+    if (!recreate && gs->swapchain && gs->surface == surface &&
         gs->extent.width == extent.width && gs->extent.height == extent.height &&
         gs->present_mode == present_mode) {
         gs->request_size = size;
@@ -1963,6 +1970,7 @@ static bool surface_swapchain_ensure(struct render_gpu *g, struct gpu_surface *g
     gs->request_size = size;
     gs->request_tearing = tearing;
     gs->recheck = false;
+    gs->out_of_date = false;
 
     if (g->render_pass_format != gs->format) {
         wait_submitted_frames(g);
@@ -2360,12 +2368,91 @@ static bool encode_frame(struct render_gpu *g, struct frame_slot *slot, struct g
         .pImageIndices = &image_index,
     };
     VkResult presented = vkQueuePresentKHR(g->queue, &pi);
-    if (presented == VK_ERROR_OUT_OF_DATE_KHR || presented == VK_SUBOPTIMAL_KHR)
+    if (presented == VK_ERROR_OUT_OF_DATE_KHR) {
+        gs->out_of_date = true;
         gs->recheck = true;
+    } else if (presented == VK_SUBOPTIMAL_KHR) {
+        gs->recheck = true;
+    }
 
     g->atlas.stage_used = 0;
     g->atlas.n_uploads = 0;
     return true;
+}
+
+static bool slot_recreate_acquire_semaphore(struct render_gpu *g, struct frame_slot *slot)
+{
+    VkSemaphoreCreateInfo sci_sem = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+    if (slot->image_acquired)
+        vkDestroySemaphore(g->device, slot->image_acquired, NULL);
+    slot->image_acquired = VK_NULL_HANDLE;
+    return vkCreateSemaphore(g->device, &sci_sem, NULL, &slot->image_acquired) == VK_SUCCESS;
+}
+
+/*
+ * Acquire the next swapchain image for a frame slot.
+ * On VK_SUBOPTIMAL_KHR, check if the swapchain changed. Keep the acquired image
+ * if the swapchain is unchanged. If the swapchain changed, recreate the slot
+ * semaphore and acquire from the new swapchain.
+ * On VK_ERROR_OUT_OF_DATE_KHR, force swapchain recreation and acquire again.
+ */
+static bool surface_acquire_image(struct render_gpu *g, struct frame_slot *slot,
+                                  struct gpu_surface *gs, VkSurfaceKHR surface,
+                                  struct vector2i size, bool unpaced,
+                                  uint32_t *out_image_index)
+{
+    if (!gs || !gs->swapchain)
+        return false;
+
+    uint32_t image_index = 0;
+    VkResult vr = vkAcquireNextImageKHR(g->device, gs->swapchain, UINT64_MAX,
+                                        slot->image_acquired, VK_NULL_HANDLE,
+                                        &image_index);
+    if (vr == VK_SUCCESS) {
+        *out_image_index = image_index;
+        return true;
+    }
+
+    if (vr == VK_SUBOPTIMAL_KHR) {
+        VkSwapchainKHR old_swapchain = gs->swapchain;
+        gs->recheck = true;
+        if (!surface_swapchain_ensure(g, gs, surface, size, unpaced, false)) {
+            slot_recreate_acquire_semaphore(g, slot);
+            return false;
+        }
+        if (gs->swapchain == old_swapchain) {
+            *out_image_index = image_index;
+            return true;
+        }
+        if (!slot_recreate_acquire_semaphore(g, slot))
+            return false;
+        vr = vkAcquireNextImageKHR(g->device, gs->swapchain, UINT64_MAX,
+                                   slot->image_acquired, VK_NULL_HANDLE,
+                                   &image_index);
+        if (vr != VK_SUCCESS && vr != VK_SUBOPTIMAL_KHR)
+            return false;
+        if (vr == VK_SUBOPTIMAL_KHR)
+            gs->recheck = true;
+        *out_image_index = image_index;
+        return true;
+    }
+
+    if (vr == VK_ERROR_OUT_OF_DATE_KHR) {
+        gs->recheck = true;
+        if (!surface_swapchain_ensure(g, gs, surface, size, unpaced, true))
+            return false;
+        vr = vkAcquireNextImageKHR(g->device, gs->swapchain, UINT64_MAX,
+                                   slot->image_acquired, VK_NULL_HANDLE,
+                                   &image_index);
+        if (vr != VK_SUCCESS && vr != VK_SUBOPTIMAL_KHR)
+            return false;
+        if (vr == VK_SUBOPTIMAL_KHR)
+            gs->recheck = true;
+        *out_image_index = image_index;
+        return true;
+    }
+
+    return false;
 }
 
 enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surface *s,
@@ -2388,27 +2475,19 @@ enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surfa
         } else {
             struct gpu_surface *gs = gpu_surface_of(g, s);
             bool unpaced = drawable->unpaced || fb->transaction;
-            if (!surface_swapchain_ensure(g, gs, drawable->surface, fb->size, unpaced)) {
+            if (!gs || !surface_swapchain_ensure(g, gs, drawable->surface, fb->size, unpaced, false)) {
                 atlas_reset(g);
                 status = RENDER_GPU_DROPPED;
             } else {
                 uint32_t image_index = 0;
-                VkResult vr = vkAcquireNextImageKHR(g->device, gs->swapchain, UINT64_MAX,
-                                                    slot->image_acquired, VK_NULL_HANDLE,
-                                                    &image_index);
-                if (vr == VK_ERROR_OUT_OF_DATE_KHR || vr == VK_SUBOPTIMAL_KHR) {
-                    gs->recheck = true;
-                    if (surface_swapchain_ensure(g, gs, drawable->surface, fb->size, unpaced))
-                        vr = vkAcquireNextImageKHR(g->device, gs->swapchain, UINT64_MAX,
-                                                   slot->image_acquired, VK_NULL_HANDLE,
-                                                   &image_index);
-                }
-                if (vr != VK_SUCCESS && vr != VK_SUBOPTIMAL_KHR) {
+                if (!surface_acquire_image(g, slot, gs, drawable->surface, fb->size, unpaced,
+                                           &image_index)) {
                     atlas_reset(g);
                     status = RENDER_GPU_DROPPED;
                 } else if (encode_frame(g, slot, gs, fb, image_index, frame->base)) {
                     status = RENDER_GPU_PRESENTED;
                 } else {
+                    slot_recreate_acquire_semaphore(g, slot);
                     atlas_reset(g);
                 }
             }
@@ -2533,7 +2612,7 @@ static bool present_pixels(struct render_gpu *g, struct frame_slot *slot, struct
     if (!drawable || !drawable->surface)
         return false;
     bool unpaced = drawable->unpaced || fb->transaction;
-    if (!surface_swapchain_ensure(g, gs, drawable->surface, fb->size, unpaced))
+    if (!surface_swapchain_ensure(g, gs, drawable->surface, fb->size, unpaced, false))
         return false;
 
     bool fresh = !gs->pixels_image || !vector2i_eq(gs->pixels_size, fb->size);
@@ -2579,23 +2658,18 @@ static bool present_pixels(struct render_gpu *g, struct frame_slot *slot, struct
     memcpy(slot->instance_mapped, &quad, sizeof(quad));
 
     uint32_t image_index = 0;
-    VkResult vr = vkAcquireNextImageKHR(g->device, gs->swapchain, UINT64_MAX, slot->image_acquired,
-                                        VK_NULL_HANDLE, &image_index);
-    if (vr == VK_ERROR_OUT_OF_DATE_KHR || vr == VK_SUBOPTIMAL_KHR) {
-        gs->recheck = true;
-        if (surface_swapchain_ensure(g, gs, drawable->surface, fb->size, unpaced))
-            vr = vkAcquireNextImageKHR(g->device, gs->swapchain, UINT64_MAX, slot->image_acquired,
-                                       VK_NULL_HANDLE, &image_index);
-    }
-    if (vr != VK_SUCCESS && vr != VK_SUBOPTIMAL_KHR)
+    if (!surface_acquire_image(g, slot, gs, drawable->surface, fb->size, unpaced,
+                               &image_index))
         return false;
 
     VkCommandBufferBeginInfo bi = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
-    if (vkBeginCommandBuffer(slot->cmd, &bi) != VK_SUCCESS)
+    if (vkBeginCommandBuffer(slot->cmd, &bi) != VK_SUCCESS) {
+        slot_recreate_acquire_semaphore(g, slot);
         return false;
+    }
 
     if (bytes) {
         bool undef = fresh || gs->pixels_layout == VK_IMAGE_LAYOUT_UNDEFINED;
@@ -2703,8 +2777,10 @@ static bool present_pixels(struct render_gpu *g, struct frame_slot *slot, struct
     vkCmdDraw(slot->cmd, 6, 1, 0, 0);
 
     vkCmdEndRenderPass(slot->cmd);
-    if (vkEndCommandBuffer(slot->cmd) != VK_SUCCESS)
+    if (vkEndCommandBuffer(slot->cmd) != VK_SUCCESS) {
+        slot_recreate_acquire_semaphore(g, slot);
         return false;
+    }
 
     VkCommandBufferSubmitInfo cbsi = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
@@ -2729,8 +2805,10 @@ static bool present_pixels(struct render_gpu *g, struct frame_slot *slot, struct
         .signalSemaphoreInfoCount = 1,
         .pSignalSemaphoreInfos = &signal_sem,
     };
-    if (g->pfn_vkQueueSubmit2(g->queue, 1, &si, slot->fence) != VK_SUCCESS)
+    if (g->pfn_vkQueueSubmit2(g->queue, 1, &si, slot->fence) != VK_SUCCESS) {
+        slot_recreate_acquire_semaphore(g, slot);
         return false;
+    }
 
     VkPresentInfoKHR pi = {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
@@ -2741,8 +2819,12 @@ static bool present_pixels(struct render_gpu *g, struct frame_slot *slot, struct
         .pImageIndices = &image_index,
     };
     VkResult presented = vkQueuePresentKHR(g->queue, &pi);
-    if (presented == VK_ERROR_OUT_OF_DATE_KHR || presented == VK_SUBOPTIMAL_KHR)
+    if (presented == VK_ERROR_OUT_OF_DATE_KHR) {
+        gs->out_of_date = true;
         gs->recheck = true;
+    } else if (presented == VK_SUBOPTIMAL_KHR) {
+        gs->recheck = true;
+    }
     return true;
 }
 
