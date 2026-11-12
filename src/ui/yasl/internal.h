@@ -73,6 +73,9 @@ struct window_ui_menu_popup {
     struct ui_widget root;
     struct rect2i anchor;
     struct ui_damage_tracker damage;
+    /* Set when the popup closed while its surface was busy. The popup
+     * is destroyed as soon as the surface is idle. */
+    bool closing;
 };
 
 struct window_ui {
@@ -180,6 +183,7 @@ void window_ui_destroy(struct window *w);
 void window_ui_restyle(struct window *w);
 struct ui_scene *window_ui_scene_scratch(struct window *w);
 void window_menu_relayout(struct window *w);
+void window_menu_reap(struct window *w);
 struct ui_surface *window_ui_surface_of(struct window *w,
                                         const struct yasl_surface *s);
 struct ui_surface *window_ui_surface_at(struct window *w, int popup);

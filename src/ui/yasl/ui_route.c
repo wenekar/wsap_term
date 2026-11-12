@@ -12,7 +12,7 @@ static enum ui_edit_command shortcut_edit(enum input_shortcut action)
     }
 }
 
-static enum window_input_result ui_input(struct window *w, const struct input_event *ev)
+static enum window_input_result ui_input_dispatch(struct window *w, const struct input_event *ev)
 {
     uint64_t now_ms = window_frame_time_ms(w);
     struct ui_surface *keys = window_ui_key_surface(w);
@@ -52,6 +52,13 @@ static enum window_input_result ui_input(struct window *w, const struct input_ev
     }
     window_redraw(w);
     return WINDOW_INPUT_HANDLED;
+}
+
+static enum window_input_result ui_input(struct window *w, const struct input_event *ev)
+{
+    enum window_input_result result = ui_input_dispatch(w, ev);
+    window_menu_reap(w);
+    return result;
 }
 
 static enum yasl_cursor cursor_for(enum ui_cursor cursor)

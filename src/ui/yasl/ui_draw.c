@@ -34,6 +34,7 @@ void window_ui_prepare_frame(struct window *w, uint64_t now_ms)
     struct ui_surface *ui = &ui_of(w)->screen;
     (void)ui_surface_take_frame_request(ui);
     bool animating = ui_surface_tick(&ui_of(w)->screen, now_ms);
+    window_menu_reap(w);
     window_menu_sync(w);
     if (animating)
         window_redraw(w);

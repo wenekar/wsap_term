@@ -40,6 +40,12 @@ static void close_popup(struct window *w, int depth)
     struct window_ui_menu_popup *p = &ui_of(w)->menu_popup[depth];
     if (!popup_open(p))
         return;
+    if (ui_surface_busy(&p->ui)) {
+        /* The popup closes from inside its own dispatch. Destroying the
+         * surface now would drop its sheet and layout. Wait for the end. */
+        p->closing = true;
+        return;
+    }
     window_accessibility_menu_popup_close(w, depth);
     ui_surface_destroy(&p->ui);
     while (p->root.first_child)
@@ -55,6 +61,22 @@ static void close_popups_from(struct window *w, int depth)
 {
     while (ui_of(w)->menu_popups > depth)
         close_popup(w, --ui_of(w)->menu_popups);
+}
+
+/* Destroys the popups that closed while they were busy. */
+void window_menu_reap(struct window *w)
+{
+    struct window_ui *ui = ui_of(w);
+    bool reaped = false;
+    for (int d = 0; d < UI_MENU_MAX_LEVELS; d++) {
+        if (ui->menu_popup[d].closing && !ui_surface_busy(&ui->menu_popup[d].ui)) {
+            ui->menu_popup[d].closing = false;
+            close_popup(w, d);
+            reaped = true;
+        }
+    }
+    if (reaped)
+        window_menu_sync(w);
 }
 
 static struct vector2i measure_popup(struct window *w, int depth)
@@ -156,6 +178,11 @@ void window_menu_sync(struct window *w)
         }
     }
     while (ui_of(w)->menu_popups < levels && ui_of(w)->menu_popups < ui_of(w)->menu_inline_from) {
+        if (popup_open(&ui_of(w)->menu_popup[ui_of(w)->menu_popups])) {
+            /* A closing popup still holds this slot. Retry after it is gone. */
+            ui_of(w)->menu_shown = gen - 1;
+            break;
+        }
         if (!window_surface(w) ||
             !open_popup(w, ui_of(w)->menu_popups, level_anchor(w, ui_of(w)->menu_popups))) {
             ui_of(w)->menu_inline_from = ui_of(w)->menu_popups;
@@ -256,6 +283,7 @@ void window_menu_destroy(struct window *w)
 {
     ui_menu_close(&ui_of(w)->menu);
     close_popups_from(w, 0);
+    window_menu_reap(w);
     struct ui_widget *layer = ui_menu_layer_widget(&ui_of(w)->menu_layer);
     while (layer->first_child)
         ui_widget_remove_child(layer, layer->first_child);
