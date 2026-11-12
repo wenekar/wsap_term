@@ -2,7 +2,7 @@
 #define RENDER_GPU_GPU_H
 
 /*
- * The GPU backend interface. render.c is the only caller.
+ * The GPU backend interface used by the renderer.
  *
  * One backend is in a build:
  * - gpu/metal/ on macOS.
@@ -73,32 +73,29 @@ enum render_gpu_status {
     RENDER_GPU_DROPPED,
 };
 
-/* The GPU of the renderer, or NULL when there is none. */
+/* Creates and initializes a GPU backend context. Returns NULL when unavailable. */
 struct render_gpu *render_gpu_new(void);
+/* Waits for idle GPU execution and frees all backend resources. */
 void render_gpu_free(struct render_gpu *g);
-/*
- * The native device for the window, or NULL. Metal gives an id<MTLDevice>.
- * Vulkan gives a struct vulkan_device (paint/vulkan.h).
- */
+/* Returns a pointer to the platform native device handle, or NULL when disabled. */
 void *render_gpu_native_device(struct render_gpu *g);
 
 /*
- * Draws and presents the whole frame into fb->drawable, or does nothing.
- * render.c calls it only with a drawable and without cpu_only.
+ * Builds, uploads, and draws `frame` to the target surface of `fb`.
+ * Returns RENDER_GPU_PRESENTED on successful submission,
+ * RENDER_GPU_DROPPED when slots are busy, or RENDER_GPU_UNUSED on fallback.
  */
 enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surface *s,
                                        struct framebuffer *fb, const struct render_frame *frame);
 
 /*
- * Presents the CPU pixels of fb into fb->drawable. It uploads only the
- * damage rects into a persistent texture. Full damage uploads everything.
- * Returns true when the GPU took the frame. It does not report that a display
- * showed the frame.
+ * Uploads damaged CPU framebuffer pixels and submits the surface quad for presentation.
+ * Returns true on submission success, or false on error or missing drawable.
  */
 bool render_gpu_present(struct render_gpu *g, struct render_surface *s, struct framebuffer *fb,
                         const struct damage_list *damage);
 
-/* Frees render_surface.gpu. NULL does nothing. */
+/* Frees surface GPU state allocated in `gpu_surface`. Ignores NULL pointers. */
 void render_gpu_surface_free(void *gpu_surface);
 
 #endif

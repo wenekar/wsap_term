@@ -28,9 +28,25 @@ struct session_write_queue {
     bool lock_ready;
 };
 
+/*
+ * Binds write queue `queue` to event loop `loop` and destination descriptor `fd`.
+ * Returns true on success, or false on allocation failure.
+ */
 bool session_write_queue_bind(struct session_write_queue *queue, struct yasl_loop *loop, int fd);
+
+/* Releases buffer memory and unregisters event loop watches for `queue`. */
 void session_write_queue_destroy(struct session_write_queue *queue);
+
+/*
+ * Enqueues raw bytes `data` of length `len` into write queue `queue`.
+ * Returns true on success, or false on allocation failure.
+ */
 bool session_write_queue_push_bytes(struct session_write_queue *queue, const char *data, size_t len);
+
+/*
+ * Enqueues clipboard `text` into `queue`, optionally wrapping with bracketed paste escapes.
+ * Returns true on success, or false on allocation failure.
+ */
 bool session_write_queue_push_paste(struct session_write_queue *queue, const char *text, size_t len,
                         bool bracketed);
 

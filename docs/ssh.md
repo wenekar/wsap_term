@@ -1,11 +1,13 @@
 # SSH setup
 
-`wsap-ssh` installs remote terminfo on first connection.
+The `wsap-ssh` wrapper installs remote terminfo on the first connection.
 It uses `TERM=xterm-ghostty` for remote color detection.
-It falls back to `xterm-256color` if terminfo setup fails.
-The local terminal uses `TERM=wsap_term-256color`.
+It falls back to `xterm-256color` if terminfo installation fails.
+The local terminal sets `TERM=wsap_term-256color`.
 
 ## Enable the wrapper
+
+Add the wrapper script to your shell startup configuration.
 
 For Bash or Zsh:
 
@@ -19,22 +21,22 @@ For Fish:
 source ~/.local/share/wsap_term/shell/wsap-ssh.fish
 ```
 
-Replace `~/.local` with your install prefix.
+Replace `~/.local` with your installation prefix.
 You can also run `wsap-ssh host` directly.
-The wrapper uses ordinary SSH outside supported terminal sessions.
+The wrapper calls standard `ssh` outside supported terminal sessions.
 
 ## Remote color support
 
-SSH servers can discard `COLORTERM` and `TERM_PROGRAM`.
-The wrapper sends both variables through `SendEnv`.
-To accept them, add this line to the server's SSH configuration:
+Remote SSH servers often discard `COLORTERM` and `TERM_PROGRAM`.
+The wrapper sends both variables using `SendEnv`.
+To accept these variables, add this line to the remote `/etc/ssh/sshd_config` or user SSH configuration:
 
 ```text
 AcceptEnv COLORTERM TERM_PROGRAM
 ```
 
-Alternatively, use `WSAP_SSH_FORCE_ENV=1 ssh host` for an interactive session.
-Use `WSAP_SSH_SETUP_RC=1 ssh host` to save `COLORTERM` in the remote shell config.
+Alternatively, run `WSAP_SSH_FORCE_ENV=1 ssh host` for an interactive session.
+Run `WSAP_SSH_SETUP_RC=1 ssh host` to save `COLORTERM` in the remote shell configuration.
 
 ## Environment
 
@@ -42,13 +44,15 @@ Use `WSAP_SSH_SETUP_RC=1 ssh host` to save `COLORTERM` in the remote shell confi
 | --- | --- |
 | `WSAP_SSH=0` | Use ordinary SSH. |
 | `WSAP_SSH_TERMINFO=0` | Skip terminfo setup. |
-| `WSAP_SSH_TERM` | Remote terminfo name. Default: `xterm-ghostty`. |
-| `WSAP_SSH_TERMINFO_SRC` | Terminfo source when the local database has no entry. |
-| `WSAP_SSH_FORCE_ENV=1` | Set `COLORTERM` through the remote login shell. |
-| `WSAP_SSH_SETUP_RC=1` | Add `COLORTERM` to the remote shell config. |
-| `WSAP_SSH_BIN` | SSH executable. Default: `ssh`. |
+| `WSAP_SSH_TERM` | Remote terminfo entry name. Default: `xterm-ghostty`. |
+| `WSAP_SSH_TERMINFO_SRC` | Path to a source terminfo file if not found locally. |
+| `WSAP_SSH_FORCE_ENV=1` | Force `COLORTERM` through the remote login shell. |
+| `WSAP_SSH_SETUP_RC=1` | Add `COLORTERM` to the remote shell startup files. |
+| `WSAP_SSH_BIN` | Custom SSH executable. Default: `ssh`. |
 
 ## Check the remote session
+
+Verify terminal and color support in the remote shell:
 
 ```sh
 echo "$TERM" "$COLORTERM"

@@ -136,14 +136,11 @@ static void watch_presented(struct acquire_state *state)
     [ref release];
 }
 
+/* Acquires and retains the next CAMetalDrawable for the current frame. */
 static void *acquire_drawable(void *ud)
 {
     struct acquire_state *state = ud;
     if (!state->drawable) {
-        /* nextDrawable() returns an autoreleased drawable, and the caller
-         * encodes inside its own autorelease pool. The frame owns a reference,
-         * so the drawable stays valid for the whole draw and for a CPU fallback
-         * that runs after that pool is gone. window_metal_draw() releases it. */
         state->drawable = [[state->layer nextDrawable] retain];
         if (state->drawable)
             watch_presented(state);

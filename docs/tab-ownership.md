@@ -1,37 +1,38 @@
-# Tab ownership contract
+# Tab ownership architecture
 
-This contract separates app tabs from terminal content.
-It applies to the tab ownership refactor.
+This document describes the tab ownership architecture.
+It separates application tabs from terminal content.
 
-## Owners
+## Subsystems
 
-| Owner | State and work |
+| Subsystem | Responsibility |
 | --- | --- |
-| `src/app/tabs/` | The tab model, and one tab view for each window. The model owns each terminal-content handle and the native drag. A view holds tab order, selection, close state, the tab bar, previews, and command palette. |
-| `src/terminal/` | One session and its terminal widgets, snapshot, font, zoom, selection, scroll state, and terminal input. |
-| `src/ui/widgets/tabbar.*` | Tab-bar drawing, animation, focus, and hit testing. It sends actions to the app. |
-| `src/ui/yasl/` | Native windows, surfaces, input routing, scale, and frame scheduling. Each host pass calls the service step of the owner. It has no tab policy. |
-| `src/session/` | The term core, PTY, input queue, and PTY size notification. |
-| `src/app/app.c` | Window creation and frame composition. It alone calls the renderer. It owns the tab model. Its host hook runs the tab service step. |
+| `src/app/tabs/` | Manages the tab model and tab views. `src/app/tabs/model.c` owns each terminal handle and the native drag. Each window view holds tab order, selection, close state, the tab bar, previews, and the command palette. |
+| `src/terminal/` | Manages one session and its terminal widgets, snapshot, font, zoom, selection, scroll state, and terminal input. |
+| `src/ui/widgets/tabbar.*` | Draws, animates, focuses, and hit-tests the tab bar. It sends tab bar actions to the application. |
+| `src/ui/yasl/` | Manages native windows, surfaces, input routing, scale, and frame scheduling. Each host pass calls the service step of the owner. It contains no tab policy. |
+| `src/session/` | Manages the term core, PTY, input queue, and PTY size notifications. |
+| `src/app/app.c` | Creates windows and composes frames. It alone calls the renderer. It owns the tab model. Its host hook runs the tab service step. |
 
-A terminal-content handle has no tab array or active-tab index.
+A terminal handle has no tab array and no active-tab index.
 It has no tab-bar, palette, preview, or window-transfer state.
-The app must use public terminal headers.
-The terminal library must not include an app header.
-Do not relax the include graph to make the move compile.
+The application uses public terminal headers.
+The terminal library includes no application header.
+The include graph enforces this separation.
 
 ## Terminal-content interface
 
-`src/terminal/terminal.h` declares an opaque `struct terminal`.
-The public interface acts on this handle, not on a window lookup.
-Keep terminal configuration and frame-source data in this layer.
-Keep the theme-picker host interface if the terminal menu needs it.
+The header `src/terminal/terminal.h` declares an opaque `struct terminal`.
+The public interface operates on this handle.
+It does not use window lookups.
+This layer holds terminal configuration and frame-source data.
+It provides the theme-picker host interface for the terminal menu.
 
-The core interface has these operations:
+The core interface provides these operations:
 
 ```c
 struct terminal *terminal_create(struct window *window,
-                                  const struct terminal_spec *spec);
+                                 const struct terminal_spec *spec);
 void terminal_destroy(struct terminal *terminal);
 struct ui_widget *terminal_widget(struct terminal *terminal);
 void terminal_set_window(struct terminal *terminal, struct window *window);
@@ -40,246 +41,235 @@ const char *terminal_title(const struct terminal *terminal);
 void terminal_commit_geometry(struct terminal *terminal);
 void terminal_prepare(struct terminal *terminal, uint64_t now_ms);
 bool terminal_frame_source(struct terminal *terminal, uint64_t now_ms,
-                            struct terminal_frame_source *out);
+                           struct terminal_frame_source *out);
 ```
 
 The create spec supplies the initial content size and font size.
-It also supplies the session config, theme, cwd, and host callbacks.
-Use the initial content size to start the PTY at the target cell grid.
-A zero content size can use a documented default before native configure.
-Do not subtract tab-bar height inside the terminal library.
+It also supplies the session configuration, theme, current working directory, and host callbacks.
+The initial content size starts the PTY at the target cell grid.
+A zero content size uses a default size before native configure.
+The terminal library does not subtract tab-bar height.
 
-The host reports title changes and process exit to the app.
-The app sets the host once, at creation.
+The host reports title changes and process exit to the application.
+The application sets the host once at creation time.
 The model is the user data of every host.
-Pass the terminal handle with each report.
-The model then finds the tab by identity, not by a saved array index.
-The tab names the window that holds it.
-A tab that no window holds gets no report.
-Terminal commands can request app actions through a host callback.
-The callback must not expose the app tab collection to terminal content.
+Every report passes the terminal handle.
+The model finds the tab by identity, not by an array index.
+The tab records the window that holds it.
+A tab without a window receives no reports.
+Terminal commands request application actions through host callbacks.
+Host callbacks do not expose application tabs to terminal content.
 
-The window pointer is borrowed.
-It supplies native services, such as clipboard and redraw.
-A null window is valid while content is in transfer.
-A window bind does not move ownership of the terminal handle.
-A bind must update scale and native service targets before input resumes.
+The terminal borrows the window pointer.
+The window pointer provides native services, such as clipboard and redraw.
+A null window pointer is valid while content is in transfer.
+Binding a window does not move ownership of the terminal handle.
+A bind updates scale and native service targets before input resumes.
 
 The session and widget accessors return borrowed pointers.
-The app keeps the terminal handle alive while it uses these pointers.
-The frame source stays valid until the next prepare or destruction.
+The application keeps the terminal handle alive while it uses these pointers.
+The frame source stays valid until the next prepare call or destruction.
 
 ## App tab interface
 
-`src/app/tabs/tabs.h` declares the app tab interface.
-`src/app/tabs/model.h` declares the tab model.
-`src/app/tabs/internal.h` holds the state of the window views.
-The directory has its own `meson.build`.
-`src/app/meson.build` calls `subdir('tabs')`.
+The header `src/app/tabs/tabs.h` declares the application tab interface.
+The header `src/app/tabs/model.h` declares the tab model.
+The header `src/app/tabs/internal.h` holds the state of the window views.
+The directory `src/app/tabs/` has its own `meson.build`.
+The build file `src/app/meson.build` calls `subdir('tabs')`.
 
-The app interface supplies these operations:
+The application interface provides these operations:
 
-- Mount a tabbed app root in a window.
-- Create, close, select, and reorder tabs.
-- Get the active terminal-content handle.
-- Get the live tab count and active tab index.
-- Move a tab to another window of the app.
-- Detach a tab into a new app window.
-- Handle tab-bar actions, preview requests, and tab shortcuts.
-- Retire closing tabs in the service step of the host pass.
+- Mount a tabbed root widget in a window (`app_tabs_mount`).
+- Create, close, select, and reorder tabs (`app_tabs_new`, `app_tabs_close`, `app_tabs_select`, `app_tabs_reorder`).
+- Get the active terminal handle (`app_tabs_active`).
+- Get the live tab count and active tab index (`app_tabs_count`, `app_tabs_active_index`).
+- Move a tab to another window (`app_tabs_move`).
+- Detach a tab into a new window (`app_tabs_detach`).
+- Handle tab-bar actions, preview requests, and tab shortcuts (`app_tabs_shortcut`).
+- Retire closing tabs in the service step (`app_tabs_service`).
 
-Use an `app_tabs_` prefix for this interface.
-Remove tab ownership operations from the terminal interface.
-Update callers and tests instead of keeping a second owner as a wrapper.
-The app root owns the window UI mount.
-Settings windows keep their existing separate mount.
+Functions in this interface use the `app_tabs_` prefix.
+The terminal interface contains no tab ownership operations.
+The application root owns the window UI mount.
+Settings windows keep a separate mount.
 
 ## Tab model
 
-`struct app` owns one tab model, `struct app_tab_model`.
-The model owns every terminal-content handle for its whole life.
-It holds the tabs in one flat table.
-Each tab has an ID, its content, its close label, and its retire time.
-It also names the window that holds it.
-The app gives the model to each tab view through `app_tabs_spec`.
+The application struct `struct app` owns one tab model: `struct app_tab_model`.
+The module `src/app/tabs/model.c` owns every terminal handle for its full life.
+The model stores tabs in a flat array sorted by ID.
+Each tab entry holds an ID, its terminal content, its close label, and its retire timestamp.
+Each tab entry records the window that currently holds it.
+The application provides the model to each tab view in `app_tabs_spec`.
 
-A window holds tab IDs and borrows the content widgets.
-Its view keeps the IDs in bar order and the active index.
+Windows hold tab IDs and borrow content widgets.
+The window view keeps tab IDs in tab-bar order and tracks the active index.
 A window never destroys a terminal.
-Only the model calls `terminal_destroy()`.
-When a window goes, its destroy hook gives its IDs back to the model.
+Only `src/app/tabs/model.c` calls `terminal_destroy()`.
+When a window closes, its destroy hook returns its tab IDs to the model.
 The model then destroys those tabs.
-The host reaps a closed window at the start of a host pass.
-No terminal callback is on the stack at that time.
+The host reaps closed windows at the start of each host pass.
+No terminal callback is on the call stack at that time.
 
-The model destroys a terminal only from these places:
+The model destroys a terminal only in these situations:
 
 - The service step of the host pass.
-- The window reap.
-- A drag end or a failed transfer. These run outside a terminal callback.
-- App teardown.
+- The window reap pass.
+- A drag completion or a failed transfer outside terminal callbacks.
+- Application teardown.
 
-Callbacks and hooks can mark a tab as closing, select a tab, or reorder
-tabs. They never destroy a terminal.
+Callbacks and hooks can mark a tab as closing, select a tab, or reorder tabs.
+Callbacks and hooks never destroy a terminal.
 
-The bind and unbind helpers move a tab into and out of a window.
-Unbind leaves the tab in the model, and no window holds it.
-The caller must then bind the tab to a window or destroy it.
-Bind and window open take the tab only on success.
+The function `app_tabs_move` handles tab moves between windows.
+Internal helpers bind and unbind tabs from windows.
+Unbinding leaves the tab in the model without a window.
+The caller then binds the tab to a window or destroys the tab.
+Binding and window opening take the tab only on success.
 On failure, the caller still holds the tab.
-A failed transfer must restore the source or destroy the tab once.
-Bind refuses a closing tab and a tab whose process ended.
-No path can leave a tab in two windows.
+A failed transfer restores the source window or destroys the tab.
+Binding rejects a closing tab or an exited terminal process.
+No code path leaves a tab in two windows at the same time.
 
-The model owns the native drag in `model->flight`.
-A zero flight means no drag.
-The flight names the dragged tab.
-The tab stays in the model for the whole drag.
-A carry window can hold it, or no window holds it.
-When a window goes during a drag, the model keeps the dragged tab.
-The drag target of each window has the model as its user data.
-A cancelled drag lands like a drop on the desktop.
-`app_destroy` destroys the model after the host reaps the windows.
+The model owns the native drag operation in `model->flight`.
+A zero flight value indicates no active drag.
+The flight structure tracks the dragged tab.
+The tab remains in the model during the full drag.
+A carry window can hold the tab during a drag, or no window holds it.
+If a window closes during a drag, the model keeps the dragged tab.
+The drag target of each window sets the model as its user data pointer.
+A cancelled drag operates like a drop onto the desktop.
+The function `app_destroy` destroys the model after the host reaps all windows.
 
 ## Tab state and close
 
-The app is the only authority for live tabs.
-A tab has a stable identity across reorder and transfer: its tab ID.
-Zero means no tab.
-A model never gives an ID twice.
+The application is the only authority for live tabs.
+A tab has a stable identity across reorders and transfers: its tab ID.
+A zero ID indicates no tab.
+The model never reuses an ID.
 
-Close changes logical state before the next frame.
-Select the next live tab in the same app operation.
-Do not select, send input to, preview, or transfer a closing tab.
-Count all closing tabs when the app derives the live count.
+Closing a tab changes its logical state before the next frame.
+The application selects the next live tab in the same operation.
+The application does not select, send input to, preview, or transfer a closing tab.
+The live tab count calculation excludes closing tabs.
 Closing the last live tab closes the window.
 
-The app may keep an owned label as a display entry for a close animation.
-That entry is not a live terminal tab.
+The application can keep an owned label as a display entry for a close animation.
+A closing display entry is not a live terminal tab.
 The service step of the host pass retires session content.
-It runs outside every frame, every input event, and every content callback.
-Do not free content while one of its callbacks is on the stack.
-Widget animation completion must not decide when a session is destroyed.
-An app-owned presentation deadline retires the display entry.
-The step first removes each due entry from its window.
-The window then updates its bar and labels, invalidates its layout, and
-asks for a frame.
-Then the model destroys the content.
-A window that is closed but not reaped keeps its tabs until the reap.
-The root tick returns the deadline, so a frame or a wake follows it even if
-the widget is idle.
-The service step and the frames of one pass use the same time.
-Thus no frame sees a deadline that the step did not apply.
-`app_destroy` destroys the remaining content after the host reaps the
-windows, because a destroying host runs no more service steps.
+The service step runs outside every frame, input event, and content callback.
+The system never frees content while a callback of that content is on the stack.
+Widget animation completion does not decide session destruction.
+An application presentation deadline retires the display entry.
+The service step first removes each expired entry from its window.
+The window then updates its bar and labels, invalidates its layout, and requests a frame.
+The model then destroys the terminal content.
+A closed window that is not yet reaped keeps its tabs until the reap pass.
+The root tick returns the deadline.
+A frame or a wake follows the deadline even if the widget is idle.
+The service step and the frames of a single pass use the same timestamp.
+No frame observes an expired deadline that the service step did not process.
+The function `app_destroy` destroys all remaining content after the host reaps the windows.
 
-Publish the full label and selection state after each model change.
-Do not wait for root prepare to repair an incomplete tab mutation.
-Widget array capacity and label count are not app state.
-Remove the stale-count window between widget removal and label update.
+The application publishes label and selection state immediately after each model change.
+The application does not defer tab updates to root prepare.
+Widget array capacity and label count are not application state.
+The view updates labels immediately when widgets are removed.
 
 ## Geometry commit
 
-There is one source of terminal geometry: the laid-out content widget.
-The app derives its rectangle from native bounds, CSS, and tab presentation.
-Use whole `rect2i` and `vector2i` values across interfaces.
+The laid-out content widget is the only source of terminal geometry.
+The application derives the content rectangle from native window bounds, CSS, and tab presentation.
+Interfaces pass whole `rect2i` and `vector2i` values.
 
-Reserve the full CSS tab-bar height while at least two tab entries exist.
-A closing display entry keeps its reservation until its presentation ends.
-Logical close and selection still take effect at once.
-Release the bar space after the app retires the last closing entry.
-Commit the resulting grid change once, after UI layout.
+The view reserves the full CSS tab-bar height while two or more tab entries exist.
+A closing display entry keeps this reservation until its presentation ends.
+Logical close and tab selection take effect immediately.
+The view releases the tab-bar space after the application retires the last closing entry.
+The application commits the resulting grid change once, after UI layout.
 The content origin follows the visible tab-bar height.
 The content slides up as the bar collapses.
-Keep the reserved content size until the close presentation ends.
-Then expand the content once at its final origin.
-A drag preview can reveal as an overlay.
-Animation progress can move the content origin.
-It must not change the content size or cell grid.
-If needed, add a tab-bar query for the full CSS height.
-That query must not depend on animation progress or widget tab count.
+The view keeps the reserved content size until the close presentation ends.
+The content then expands once at its final origin.
+A drag preview can display as an overlay.
+Animation progress can change the content origin.
+Animation progress does not change content size or the cell grid.
+The function `ui_tabbar_steady_height` provides the full CSS height.
+This height does not depend on animation progress or widget tab count.
 
-A tab mutation, configure, restyle, scale change, or zoom invalidates layout.
-These paths must not each resize the session directly.
-After UI layout, `terminal_commit_geometry()` derives the cell grid from
-its content widget and font metrics.
-This is the terminal layer's only session-resize call site.
-Creation can use the same grid calculation for the initial session size.
-An unchanged grid is a no-op.
-Do not use a separate cached tab-bar height to suppress a geometry commit.
+A tab mutation, configure event, restyle, scale change, or zoom invalidates layout.
+These paths do not resize the session directly.
+After UI layout, `terminal_commit_geometry()` derives the cell grid from the content widget and font metrics.
+This call is the only session-resize site in the terminal layer.
+Terminal creation uses this grid calculation for initial session size.
+An unchanged grid performs no work.
+The layer does not use a cached tab-bar height to suppress geometry commits.
 
-Inactive content can keep its last grid until it becomes active.
-Before selection is rendered or receives input, apply its current geometry.
-Do not carry a pending grid computed for a different window or font.
-The session owns PTY notification throttling.
-Keep the latest pending size and the final trailing notification.
+Inactive content keeps its last grid until that tab becomes active.
+Before a newly selected tab renders or receives input, the application applies current geometry.
+The tab does not retain a pending grid computed for a different window or font.
+The session owns PTY size notification throttling.
+The session keeps the latest pending size and sends the final notification.
 
 ## Frame order
 
 Each host pass runs these stages in order:
 
-1. Reap the closed windows. Each window gives its tabs back to the model.
-2. Run the service step of the app.
-3. Drain the input of each window.
-4. Run the service step again, with the frame time of the pass.
-5. Draw the windows that are due.
+1. Reap closed windows. Each closed window returns its tabs to the model.
+2. Run the application service step.
+3. Drain input events for each window.
+4. Run the application service step again, with the frame timestamp of the pass.
+5. Draw due windows.
 
-The tab model changes in events, in content reports, and in the service
-step.
-It never changes in a frame.
-For the main surface, the app runs these stages in order:
+The tab model changes during input events, content reports, and the service step.
+The tab model never changes during frame drawing.
+For the main surface, the application runs these stages in order:
 
 1. Tick and lay out the UI.
 2. Commit active terminal geometry.
 3. Capture the active terminal snapshot.
 4. Build the UI scene and compose the frame.
-5. Present and schedule the next frame.
+5. Present the surface and schedule the next frame.
 
-A frame closes no window and changes no tab.
-Thus the frame reads the active handle once.
-The tab service step opens and closes no window.
+A frame never closes a window and never changes a tab.
+The frame reads the active terminal handle once.
+The tab service step never opens or closes a window.
 
-During a macOS live resize, the platform blocks the loop, and no host pass
-runs.
-The refresh callback then runs a modal service step before it draws.
-The platform refuses to create or destroy a surface at that time.
-A modal step must not open or close a window.
+During macOS live resize, the platform blocks the main loop, and no normal host pass runs.
+The display refresh callback runs a modal service step before it draws.
+The platform permits no surface creation or destruction at that time.
+A modal service step does not open or close a window.
 
-Never use a snapshot from before a geometry change in the same frame.
-If scene preparation changes the content bounds, skip the frame and retry.
-Keep text-blink scheduling correct when snapshot capture moves after layout.
-Do not add a second snapshot update to hide a wrong frame order.
+A frame never uses a snapshot from before a geometry change in that same frame.
+If scene preparation changes content bounds, the application skips the frame and retries.
+Snapshot capture after layout keeps text-blink scheduling accurate.
+The frame pipeline performs one snapshot capture per frame in the established sequence.
 
-## Migration and acceptance
+## Behavioral guarantees and verification
 
-Move app behavior under `src/app/tabs/`.
-Do not create a new sibling library for the tab controller.
-Move tests only when their behavior now belongs to the app subsystem.
-Keep test names flat and unchanged after a file move.
-Do not test private collection layout or a fixed internal call order.
+The tab architecture provides these guarantees:
 
-Keep these behaviors:
+- Tab creation inherits current working directory and zoom level.
+- Tab reorder, native drag, detach, and move operations preserve terminal sessions.
+- Theme reload, settings, clipboard, IME, accessibility, and key encoding operate correctly.
+- Tab previews and the command palette operate correctly.
+- Process exit closes the correct tab after its final output.
+- The application renderer and native windows maintain their established ownership.
 
-- Tab creation inherits cwd and zoom as before.
-- Reorder, native drag, detach, and move preserve the session.
-- Theme reload, settings, clipboard, IME, accessibility, and key encoding work.
-- The tab preview and command palette still work.
-- Process exit closes the correct tab after its last output.
-- The app renderer and native window keep their current ownership.
+The automated test suite verifies these behaviors:
 
-Add behavior coverage for the known failures:
+- Opening a second tab and closing it restores original shell rows.
+- Closing multiple tabs during animations keeps the grid size stable.
+- The content origin slides with the bar during collapse animations.
+- A geometry resize occurs once after close presentation completes.
+- Closing and reopening tabs during animations maintains bar height reservation.
+- Selecting an inactive tab after resize or zoom adjusts its grid to content bounds.
+- Transferring a tab between windows adjusts its grid to the destination window.
 
-- Open a second tab, then close it. Shell rows return to the first size.
-- Close several tabs before the animation ends. Keep the grid size fixed.
-- Slide the content origin with the bar during collapse.
-- Resize once after the close presentation ends.
-- Close and reopen during an animation. Keep the bar reservation.
-- Select an inactive tab after resize or zoom. Its grid fits its content.
-- Transfer a tab across windows. Its grid fits the destination.
+Verification tools enforce architecture rules:
 
-Run the build and the relevant unit tests.
-Run `python3 tools/dev/dirgraph.py build` with no violations or cycles.
-Check the changed UI with the inspector.
-The inspector lint must report no findings.
-Measure shell rows as well as view bounds in the live resize check.
-A correct screenshot alone does not prove that the PTY grid is correct.
+- `python3 tools/dev/dirgraph.py build` validates the include graph with zero violations and zero cycles.
+- The UI inspector lint reports zero findings.
+- Live resize tests verify both shell row counts and view bounds.
+- Screenshots alone do not verify PTY grid correctness.

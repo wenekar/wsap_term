@@ -1,16 +1,14 @@
 # Correctness audit
 
-The 2026-10-15 audit reproduced three issues that the existing tests missed.
-The unit suite reported 41 passing test entries under AddressSanitizer and
-UndefinedBehaviorSanitizer. At that time, the resize allocation-failure test
-skipped its checks under sanitizers. The probe below used linker wrappers to
-inject failures in a sanitized build. The resize test now uses the same
-wrappers, so it runs under sanitizers too.
+The 2026-10-15 audit found three defects that earlier tests missed.
+The unit test suite showed 41 passing tests under AddressSanitizer and UndefinedBehaviorSanitizer.
+The resize allocation-failure test skipped checks under sanitizers at that time.
+A custom probe used linker wrappers to inject memory allocation failures into a sanitized build.
+The main test suite now uses these wrappers and runs under sanitizers.
 
-## Run the reproducer
+## Audit reproducer
 
-From the repository root, with Meson, a C compiler, and a linker supporting
-GNU `--wrap`:
+Run the audit reproducer with Meson, a C compiler, and GNU `ld`:
 
 ```sh
 meson setup build-audit --buildtype=debug -Db_lto=false \
@@ -23,151 +21,98 @@ cc -std=c11 -g -UNDEBUG -fsanitize=address,undefined \
 ASAN_OPTIONS=detect_leaks=0 build-audit/correctness-probe
 ```
 
-`tests/correctness_probe.c` prints the observed behavior. It intentionally
-includes `src/snapshot.c` to inspect its private arena counters and links
-against the static library. It is a diagnostic, outside the default suite;
-it returns a nonzero status if any of the three findings still reproduces.
+`tests/correctness_probe.c` inspects internal state.
+The probe includes `src/snapshot.c` to read private arena counters.
+It returns a non-zero exit code if any finding reproduces.
 
-Leak detection was disabled because LeakSanitizer could not run in the audit
-sandbox. Address and undefined-behavior checks remained enabled. To repeat
-the unit suite in that environment:
+The audit sandbox disabled LeakSanitizer.
+Address and undefined-behavior checks remained active.
+Run the unit suite in this configuration with:
 
 ```sh
 ASAN_OPTIONS=detect_leaks=0 meson test -C build-audit --suite unit \
   --num-processes 4 --print-errorlogs
 ```
 
-Kitty compatibility and cross-platform tests were outside this sanitized run.
+## Primary findings and fixes
 
-## Findings
+### Combining mark loss on snapshot allocation failure
 
-### Snapshot allocation failure silently loses combining marks
+- **Fault**: `arena_add()` in `src/snapshot.c` returned only the base code point when `realloc` failed. The update reported success and cached the row key. Subsequent updates never restored the missing combining marks.
+- **Observed**: The probe fed `e` followed by U+0301 and failed the next `realloc`. Two successive snapshot captures reported a cluster length of 1 instead of 2.
+- **Fix**: Snapshot allocation failures now return false and preserve the previous snapshot. The snapshot allocates memory before mutating internal fields. A retry performs a normal incremental update.
 
-In `src/snapshot.c`, `arena_add()` returns the first code point when its
-allocation fails. The update reports success and caches the row key, so a
-later update does not restore the omitted code points.
+### Snapshot arena record leak during scrolling
 
-The probe prints an `e` followed by U+0301, fails the next `realloc`, and
-captures twice. Both captures report a cluster length of 1 instead of 2.
-An allocation failure should report false and leave the snapshot empty,
-as documented. A successful retry should capture both code points.
+- **Fault**: Viewport scrolling moved `row_clusters` pointers without adding discarded row records to `arena_dead`. Memory compaction therefore missed discarded records.
+- **Observed**: On an 8-column by 24-row terminal with history capped at 5 lines, the probe fed `e` with U+0301 and CRLF after each line:
+  ```text
+  after 1000 lines: arena_words=3000 dead_words=0 history_rows=5
+  after 10000 lines: arena_words=30000 dead_words=0 history_rows=5
+  ```
+- **Fix**: Viewport scrolling now marks discarded cluster records as dead. Compaction reclaims this memory. Snapshot memory remains bounded by viewport dimensions and the compaction threshold.
 
-### Scrolling leaks snapshot arena records
+### State corruption on failed height shrink
 
-The scroll optimization moves `row_clusters` without adding the discarded
-rows' records to `arena_dead`. Compaction therefore misses those records.
+- **Fault**: `wsap_vtcore_resize_internal()` in `src/screen.c` scrolled content and moved the cursor before allocating replacement screen buffers. When this allocation failed, the function returned false after modifying the active screen state.
+- **Observed**: An 8x4 terminal contained rows A through D. Shrinking height to 2 rows failed during screen buffer allocation:
+  ```text
+  before failed height shrink: top=A cursor_y=3 history=0
+  after failed height shrink: resize=0 height=4 top=C cursor_y=1 history=2
+  ```
+- **Fix**: Height shrink allocates replacement screen buffers before moving rows or updating the cursor. A failed allocation returns false and leaves terminal state unchanged.
 
-On an 8-column, 24-row terminal with history capped at five lines, the probe
-feeds `e` plus U+0301 and CRLF, capturing after each line. The original
-output is:
+### Audit validation summary
 
-```text
-after 1000 lines: arena_words=3000 dead_words=0 history_rows=5
-after 10000 lines: arena_words=30000 dead_words=0 history_rows=5
-```
+Dedicated regression tests now verify these three behaviors:
+- Prolonged scrolling maintains bounded snapshot memory.
+- Snapshot allocation failures preserve state and allow recovery.
+- Failed height shrinks preserve terminal state on normal and alternate screens.
 
-Snapshot arena storage should remain bounded by the viewport and compaction
-threshold, independently of how many lines have scrolled past it.
+All 43 unit tests and the standalone probe passed in debug builds and sanitized builds (ASan and UBSan).
 
-### Failed height shrink changes terminal state
+## Follow-up audit: 2026-10-28
 
-In `src/screen.c`, `wsap_vtcore_resize_internal()` scrolls and adjusts the cursor
-before allocating the replacement screen. If that allocation fails, it
-returns false after changing the terminal, violating the documented promise
-that a failed resize leaves it unchanged.
+Fuzzing and systematic allocation failure tests found six additional faults:
 
-The probe fills an 8-by-4 terminal with rows A through D and fails the
-replacement screen allocation while shrinking to two rows. The original
-result is:
-
-```text
-before failed height shrink: top=A cursor_y=3 history=0
-after failed height shrink: resize=0 height=4 top=C cursor_y=1 history=2
-```
-
-After failure, the screen should still start with A, the cursor should
-remain on row 3, and history should remain empty.
-
-## Checks to retain
-
-- Inject allocation failures and verify each API's documented failure state.
-- Compare incremental snapshots with fresh captures, including grapheme text.
-- Assert bounded storage during prolonged scrolling with a fixed viewport.
-
-## Fixes
-
-- Snapshot scroll accounting now counts discarded cluster records as dead,
-  allowing compaction to reclaim them.
-- Snapshot allocation failures now report false and leave the previous
-  snapshot unchanged. Every allocation happens before a field changes, so a
-  retry is an ordinary incremental update.
-- Height shrink allocates the replacement screen before moving rows or
-  changing the cursor, preserving state if allocation fails.
-
-Dedicated regression tests cover sustained scrolling, snapshot allocation
-failure and recovery, and failed height shrink on both normal and alternate
-screens. The output above records the original failures for reference.
-
-Validation after the fixes: all 43 unit test entries passed in an
-unsanitized debug build and all 43 passed with address and undefined-behavior
-sanitizers. The standalone probe also passed in both builds. Leak detection
-remained disabled in the sandbox.
-
-## Follow-up: 2026-10-28
-
-The libFuzzer target, a sweep that fails each allocation in turn, and new
-generator cases found these faults. Each fix has a regression check.
-
-| Fault | Fix | Check |
+| Fault | Root cause and fix | Regression check |
 | --- | --- | --- |
-| The fast CSI path kept six digits of a parameter. A truecolor component of a million or more gave a different color than the base parser. | The fast path sends such a color to the base parser. | `write-fuzz-test` big-number cases |
-| An OSC string of 255 bytes, or a DCS payload of 256 bytes, was dropped when its terminator came in a later write. | A full buffer marks the string truncated only when bytes are dropped. | `write-fuzz-test` buffer-edge strings |
-| `wsap_vtcore_scan_printable_span` gave different results at different SIMD levels for `hi` up to 0x20. | The function returns 0 for that range. | `public-helpers-test` at each level |
-| Erase display (ED 2) read the stale cells of an ASCII row. It could drop rows from history. | ED 2 reads the text of an ASCII row. | `write-fuzz-test` plain-line runs |
-| A line stream on a one-row screen called `memcpy` with a null buffer. | The stream copies only a non-empty tail. | Sanitizer runs of `model-test` |
-| Insert mode with left and right margins grew the row past the margin and showed erased cells. | The row length grows only up to the right margin. | `term-test` margin insert case |
+| Fast CSI parser parsed only six digits. Truecolor values of 1,000,000 or greater produced incorrect colors. | The fast parser routes large color parameters to the base parser. | `write-fuzz-test` (large numbers) |
+| A 255-byte OSC string or 256-byte DCS string dropped data when its terminator arrived in a later write. | The buffer marks strings truncated only when bytes are discarded. | `write-fuzz-test` (buffer edge strings) |
+| `wsap_vtcore_scan_printable_span` produced inconsistent results across SIMD levels for `hi <= 0x20`. | The function returns 0 for this input range. | `public-helpers-test` (all SIMD levels) |
+| Erase display (ED 2) read stale cells from an ASCII row and dropped history rows. | ED 2 now reads current text from ASCII rows. | `write-fuzz-test` (plain text lines) |
+| Line streaming on a single-row screen passed a null pointer to `memcpy`. | The stream copies data only when the tail buffer is non-empty. | `model-test` (sanitized runs) |
+| Insert mode with margins expanded rows past the right margin and exposed erased cells. | Row length now expands only to the right margin. | `term-test` (margin insert) |
 
-One fault stayed open. With left and right margins, insert mode, and
-grapheme clusters together, different write splits could give different
-screens. The margin follow-up below fixes it.
+## Follow-up audit: 2026-11-07 (Fast paths)
 
-## Follow-up: 2026-11-07
+Integrating fast paths from wsap_term-ng uncovered six faults:
 
-The fast paths from wsap_term-ng came back to this tree. Tests, fuzzing, and
-review found these faults in them. Each fix has a regression check.
-
-| Fault | Fix | Check |
+| Fault | Root cause and fix | Regression check |
 | --- | --- | --- |
-| The fast `CSI H` and `CSI 1;1H` forms, and short SGR forms with another final byte (`CSI H m`, `CSI 1 H m`, `CSI d m`), moved the cursor with no origin offset. | These forms go to the base parser in origin mode. Only the general fast branch can parse other final bytes, and it keeps its mode guard. | `spec-test` origin cases, `term-test` fast CSI cases |
-| `CSI 1;1H` read one byte past the end of the write. A write that ended in `1;1` printed the `H` of the next write. | The test reads four bytes only if they are in the write. | `term-test` color runs with each split |
-| A color that ended in `;` in a second sequence (`CSI 48;5;2;4m`) left `4m` on the screen as text. | The second sequence must end with `m`. | `term-test` fast CSI cases, `model-test` |
-| The `0;` and `1;` prefixes and the two-color form changed the pen and then gave the sequence to the base parser. A cancel byte after a cut sequence then kept the change. | The fast path parses the whole sequence before it changes the pen. | `term-test` cancel cases, `write-fuzz-test` cut forms |
-| A full snapshot update on the staged path set the arena length to zero. Cluster text then read as empty. | Each path sets the arena length from the plan. | `snapshot-failure-test` |
-| The direct snapshot path reserved arena room for each stored cluster, not for each cell. A row that repeats a cluster needs more. A failed allocation then left half-written rows. | The direct path reserves room for each cell of each new row, so it cannot fail after it starts. | `snapshot-failure-test` |
+| Fast `CSI H`, `CSI 1;1H`, and short SGR forms (`CSI H m`, `CSI 1 H m`, `CSI d m`) ignored origin mode offsets. | Origin mode routes these sequences to the base parser. Only the general fast branch parses other final bytes with mode guards. | `spec-test` (origin mode), `term-test` (fast CSI) |
+| `CSI 1;1H` read one byte past write buffer bounds when a write chunk ended in `1;1`. | The parser verifies four available bytes before reading. | `term-test` (split color writes) |
+| Trailing semicolons in compound SGR sequences (`CSI 48;5;2;4m`) leaked `4m` as screen text. | The parser requires final character `m` on second color sequences. | `term-test` (fast CSI), `model-test` |
+| Fast paths modified pen state before validating complete sequences. Cancel bytes after incomplete sequences left corrupt pen state. | The fast path validates complete sequences before changing pen state. | `term-test` (cancel bytes), `write-fuzz-test` |
+| Staged snapshot updates reset arena lengths to zero and corrupted cluster text. | Both staged and direct snapshot paths read arena lengths from the plan. | `snapshot-failure-test` |
+| Direct snapshot paths reserved arena capacity per unique cluster instead of per cell. Repeated clusters exhausted reserved space. | Direct snapshot paths reserve space for each cell in new rows. | `snapshot-failure-test` |
 
-The fast `CSI ? N h` and `CSI ? N l` forms set the same fields as the base
-parser for modes 1, 7, 12, 25, 1004, 2004, and 2026. Mode 7 also clears the
-pending wrap, as the base parser does. The `escape.c` SGR shortcuts gave the
-same result as the general loop, including the low byte of a large RGB value.
-They and the other paths with no measured gain were removed. See
-`benchmarks/term-ng-sync.md` in the main tree.
+Modes 1, 7, 12, 25, 1004, 2004, and 2026 produce identical state in fast and base parsers.
+Mode 7 clears pending line wraps in both parsers.
+SGR shortcuts without measurable performance benefits were removed.
 
-## Follow-up: 2026-11-07, left and right margins
+## Follow-up audit: 2026-11-07 (Left and right margins)
 
-`tests/fuzz_gen.h` now sets and resets left and right margins (DECLRMM and
-DECSLRM). The generator and an xterm comparison found these faults. Each fix
-has a regression check.
+Testing left and right margins (DECLRMM and DECSLRM) against xterm uncovered nine faults:
 
-| Fault | Fix | Check |
+| Fault | Root cause and fix | Regression check |
 | --- | --- | --- |
-| A wide character at the right margin wrapped and set the row length to the full width. Erased cells past the margin appeared again. | The row grows only up to the pad cell at the margin. | `term-test` margin wide wrap case, `write-fuzz-test` |
-| IL, DL, SU, SD, a line feed at the bottom margin, and RI at the top margin moved full rows. | These scroll only the cells between the margins. Outside the margins, IL and DL do nothing, and LF and RI stop at the margin. | `term-test` margin scroll cases |
-| A burst of line feeds in one write scrolled the margin area once by n rows. Single line feeds gave other row lengths, and a resize then gave other history. | The margin area scrolls one row at a time. | `term-test` burst case, `write-fuzz-test` |
-| A margin scroll kept the wrap flag of each row. A blank row could then join the next row in a reflow. | A margin scroll clears the wrap flag of each row it changes. | `write-fuzz-test` |
-| CR, BS, CUF, CUB, HPR, HT, NEL, and CNL ignored the margins. | Each stops at the margin when the cursor starts inside it, as in xterm. | `term-test` margin motion cases |
-| Text right of the right margin went back to the margin in one path and wrapped in another. | Text right of the margin continues to the last column. | `term-test` margin motion cases |
-| With DECLRMM set, `CSI s` saved the cursor. ICH and DCH left of the left margin changed cells. DECSTBM homed to column 0 in origin mode. | `CSI s` sets the margins. ICH and DCH outside the margins do nothing. DECSTBM homes to the margin. | `term-test` margin cases |
-
-Two other faults: DECSED and DECSEL (`CSI ? J`, `CSI ? K`) did nothing, and
-DECRQM reported mode 1048 as unknown. With no protected cells, DECSED and
-DECSEL now erase as ED and EL. DECRQM reports 1048 as reset.
+| Wide characters at the right margin wrapped to full row width and exposed erased cells. | Row length extends only to the margin pad cell. | `term-test` (wide character wrap), `write-fuzz-test` |
+| IL, DL, SU, SD, line feeds at bottom margin, and RI at top margin moved full screen rows. | Scrolling operations modify only cells between active margins. IL and DL outside margins do nothing. LF and RI stop at margin boundaries. | `term-test` (margin scrolling) |
+| Line feed bursts in a single write scrolled the margin area by N rows at once. This produced mismatched row lengths and history reflow. | Margin areas scroll one row at a time. | `term-test` (burst line feeds), `write-fuzz-test` |
+| Margin scrolling preserved row wrap flags. Blank scrolled rows joined following rows during reflow. | Margin scrolling clears wrap flags on modified rows. | `write-fuzz-test` |
+| Cursor movement commands (CR, BS, CUF, CUB, HPR, HT, NEL, CNL) ignored margins. | Movement commands stop at margins when the cursor starts inside the margins. | `term-test` (margin motion) |
+| Text written right of the right margin wrapped in some code paths. | Text written right of the right margin extends to the rightmost column. | `term-test` (margin motion) |
+| With DECLRMM enabled, `CSI s` saved the cursor, ICH/DCH modified cells outside margins, and DECSTBM homed to column 0 in origin mode. | `CSI s` sets margins when DECLRMM is set. ICH and DCH outside margins do nothing. DECSTBM homes to the left margin. | `term-test` (margin commands) |
+| DECSED and DECSEL (`CSI ? J`, `CSI ? K`) performed no action. | Without protected cells, DECSED and DECSEL execute standard ED and EL erasures. | `term-test` |
+| DECRQM reported mode 1048 as unknown. | DECRQM reports mode 1048 as reset. | `term-test` |

@@ -146,8 +146,8 @@ struct wsap_vtcore_key_event {
     uint32_t base;
     uint32_t text;
     bool text_deferred;
-    /* Borrowed UTF-8 bytes. Valid only during the encoder call. This takes
-     * precedence over text when non-NULL. The caller owns the bytes.
+    /* Borrowed UTF-8 text bytes for the duration of the encoder call.
+     * Takes precedence over text when non-NULL.
      */
     const char *text_utf8;
     size_t text_len;
@@ -185,8 +185,8 @@ enum wsap_vtcore_input_status {
     WSAP_VTCORE_INPUT_BUFFER_FULL,
 };
 
-/* Encoders write into caller-owned buffers. len is the number of bytes
- * written. Check status before sending those bytes.
+/* Encoded input result. `len` is the number of bytes written to the buffer.
+ * Check `status` before processing output bytes.
  */
 struct wsap_vtcore_input_result {
     size_t len;

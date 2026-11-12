@@ -110,16 +110,14 @@ SHAPE_FN int shape_shadow_edge(int p, float sigma)
 }
 
 /*
- * The shadow of a rounded corner is a sum of n slices of the quarter
- * disc. These helpers give the terms of the sum. A caller adds
- * row_term(i, k) * col_term(j, k) for k = 0..n-1 in order, then calls
- * shape_shadow_tile. p is the pixel offset (index - extent) plus 0.5.
+ * Computes the sample offset along the quarter-disc arc for slice `k` of `n`.
  */
 SHAPE_FN float shape_shadow_slice(float r, int k, int n)
 {
     return ((float)k + 0.5f) * (r / (float)n);
 }
 
+/* Computes the row gaussian term for corner shadow slice `v`. */
 SHAPE_FN float shape_shadow_row_term(float p, float v, float r, int n, float sigma)
 {
     float t = (p - v) / sigma;
@@ -127,13 +125,14 @@ SHAPE_FN float shape_shadow_row_term(float p, float v, float r, int n, float sig
     return norm * SHAPE_EXP(-0.5f * t * t) * (r / (float)n);
 }
 
+/* Computes the column cumulative normal distribution term for slice `v`. */
 SHAPE_FN float shape_shadow_col_term(float p, float v, float r, float sigma)
 {
     float l = r - SHAPE_SQRT(v * (2.0f * r - v));
     return shape_phi((p - l) / sigma);
 }
 
-/* The coverage of one tile cell. sum is the slice sum; x and y are the offsets. */
+/* Computes corner shadow coverage value for accumulated slice sum `sum`. */
 SHAPE_FN int shape_shadow_tile(float sum, float x, float y, float r, float sigma)
 {
     float tail = shape_phi((y - r) / sigma);

@@ -62,6 +62,7 @@ struct css_scale_context {
     float cell_h;
 };
 
+/* Resolves a CSS value to physical pixels. */
 float css_value_resolve(struct css_value v, float parent_dim, float auto_val,
                         const struct css_scale_context *ctx);
 
@@ -130,6 +131,7 @@ struct css_style {
 
 };
 
+/* Returns the effective opacity of `s`, or 1.0 when unset. */
 static inline float css_style_effective_opacity(const struct css_style *s)
 {
     return (s && s->has_opacity) ? s->opacity : 1.0f;
@@ -156,14 +158,20 @@ struct css_sheet {
     bool has_defaults; /* The sheet is built on the css_init_default rules. */
 };
 
+/* Parses CSS text and adds the rules to `sheet`. */
 bool css_parse(struct css_sheet *sheet, const char *css_text);
+/* Appends rules from `src` to `dst`. */
 bool css_sheet_append(struct css_sheet *dst, const struct css_sheet *src);
+/* Releases all rules and indexed data from `sheet`. */
 void css_sheet_clear(struct css_sheet *sheet);
 
+/* Populates `sheet` with default built-in CSS rules. */
 void css_init_default(struct css_sheet *sheet);
 
+/* Returns the shared default stylesheet instance. */
 const struct css_sheet *css_default_sheet(void);
 
+/* Resolves styling properties matching selector names and pseudo-class flags. */
 void css_style_resolve(const struct css_sheet *sheet,
                        const char *class_name,
                        const char *id_name,
@@ -171,6 +179,7 @@ void css_style_resolve(const struct css_sheet *sheet,
                        unsigned pseudo_flags,
                        struct css_style *out_style);
 
+/* Resolves styling properties matching selector names, flags, and ancestor path. */
 void css_style_resolve_ex(const struct css_sheet *sheet,
                           const char *class_name,
                           const char *id_name,
@@ -179,6 +188,7 @@ void css_style_resolve_ex(const struct css_sheet *sheet,
                           const char *ancestor_path,
                           struct css_style *out_style);
 
+/* Returns true when two styles have identical layout properties. */
 bool css_style_layout_eq(const struct css_style *a, const struct css_style *b);
 
 #endif

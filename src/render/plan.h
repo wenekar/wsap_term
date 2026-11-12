@@ -4,8 +4,8 @@
 /*
  * The frame planner. It decides, from keys and spans only, what each grid
  * row needs, where the UI repaints, and what the damage is. It touches no
- * pixel, no font, and no global. It allocates nothing: the caller gives
- * every output array. Unit tests drive it through this header alone.
+ * pixel, no font, and no global. It allocates no memory and writes to
+ * provided output arrays. Unit tests drive it through this header alone.
  *
  * Words
  * - canvas row r of the grid: the band of pixels
@@ -51,9 +51,8 @@
  *    window outside these rects gives the same pixels as before, so it adds
  *    no damage. On overflow the list becomes one rect: its bounds.
  *
- * The caller paints the UI in each region: it fills `base` in the part of
- * the region outside the grid rect, then paints the scene clipped to the
- * region and to the scene bounds.
+ * UI rendering clips scene operations to each region and fills `base`
+ * color outside the grid rect.
  */
 
 #include <stdbool.h>
@@ -127,7 +126,7 @@ struct plan_input {
 };
 
 /*
- * The caller sets the array pointers. plan_frame() fills the rest.
+ * Output buffers and results populated by plan_frame().
  * - `rows[in->rows]`: one op for each row. src is set for PLAN_MOVE.
  * - `moves[in->rows]`: n_moves blocks, in execution order.
  * - `windows[PLAN_WINDOWS_MAX(in->rows)]`: n_windows windows, ordered by
@@ -152,13 +151,15 @@ struct plan_output {
     bool all;
 };
 
+/*
+ * Computes row paint operations, block moves, UI dirty regions, and damage bounds.
+ * Reads keys and UI spans from `in` and writes plan directives to `out`.
+ */
 void plan_frame(const struct plan_input *in, struct plan_output *out);
 
 /*
- * Computes the UI ink of each row of a grid: out[rows + 1]. Each op adds its
- * ink rect, clipped by its clip stack and by the grid rect, to every row
- * band that it touches. An op that draws nothing (alpha 0) adds no ink.
- * Spans are grid-local. A NULL or invalid scene gives no ink. Pure.
+ * Calculates horizontal UI pixel coverage spans for each grid row in `scene`.
+ * Writes `rows + 1` spans to `out`, including bottom margin coverage.
  */
 void plan_ui_ink(const struct ui_scene *scene, struct rect2i grid, int ch, int rows,
                  struct plan_span *out);

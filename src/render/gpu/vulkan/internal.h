@@ -170,43 +170,52 @@ struct gpu_surface {
 void vulkan_wait_idle(struct render_gpu *g);
 
 /*
- * Makes `t` a texture of `size`. A texture of that size stays as it is. A
- * texture of another size is replaced after vulkan_wait_idle(), and its
- * pixels are lost. On failure `t` holds no image.
+ * Allocates or resizes texture `t` to `size`.
+ * Waits for idle queue execution before resizing.
+ * Returns true on success, or false on allocation failure.
  */
 bool vulkan_texture_ensure(struct render_gpu *g, struct vulkan_texture *t, struct vector2i size);
-/* Destroys the texture now. The caller makes sure that no frame uses it. */
+/* Destroys texture resources and resets `t`. */
 void vulkan_texture_destroy(struct render_gpu *g, struct vulkan_texture *t);
 
-/* Makes room for `bytes`. A buffer that grows loses its content. The GPU
- * must not use the buffer: it belongs to a free frame slot. */
+/*
+ * Reallocates buffer `b` to at least `bytes` capacity.
+ * Maps host memory for CPU writes.
+ * Returns true on success, or false on failure.
+ */
 bool vulkan_buffer_ensure(struct render_gpu *g, struct vulkan_buffer *b, size_t bytes,
                           VkBufferUsageFlags usage);
+/* Unmaps and destroys buffer resources and resets `b`. */
 void vulkan_buffer_destroy(struct render_gpu *g, struct vulkan_buffer *b);
 
-/* Makes the pipelines draw to `format`. It waits for the queue when it
- * must replace pipelines. */
+/*
+ * Creates or updates graphics pipelines for `format`.
+ * Waits for queue execution before pipeline replacement.
+ * Returns true on success, or false on compilation failure.
+ */
 bool vulkan_pipelines_ensure(struct render_gpu *g, VkFormat format);
 
 /* ---- swapchain.c -------------------------------------------------------- */
 
-/* The surface state of `s`. It makes the state on first use. NULL: no memory. */
+/* Finds or creates the Vulkan surface state for `s`. Returns NULL on allocation failure. */
 struct gpu_surface *vulkan_surface_of(struct render_gpu *g, struct render_surface *s);
-/* Destroys the Vulkan objects of the surface and takes it from its renderer.
- * It waits for the queue first. */
+/*
+ * Waits for queue execution and destroys all Vulkan objects of surface `gs`.
+ * Removes `gs` from the renderer surface list.
+ */
 void vulkan_surface_release(struct gpu_surface *gs);
 
 /*
- * Makes the swapchain of the surface fit `size` and the pacing. `tearing`
- * asks for a present mode that does not wait for the display. `force`
- * replaces the swapchain in any case.
+ * Configures the surface swapchain for `size` and presentation mode.
+ * Recreates images and views when dimensions change or when `force` is set.
+ * Returns true on success, or false on configuration error.
  */
 bool vulkan_swapchain_ensure(struct render_gpu *g, struct gpu_surface *gs, VkSurfaceKHR surface,
                              struct vector2i size, bool tearing, bool force);
 /*
- * Takes the next image of the swapchain for the frame of `slot`. It waits
- * for `wait_ns` at most. It replaces a swapchain that is out of date.
- * False: no image, and the frame is dropped.
+ * Acquires the next presentable image index from swapchain `gs`.
+ * Recreates out-of-date swapchains up to timeout `wait_ns`.
+ * Returns true on success, or false if acquisition fails or times out.
  */
 bool vulkan_swapchain_acquire(struct render_gpu *g, struct gpu_surface *gs,
                               struct frame_slot *slot, VkSurfaceKHR surface,
@@ -215,8 +224,7 @@ bool vulkan_swapchain_acquire(struct render_gpu *g, struct gpu_surface *gs,
 
 /* ---- frame.c ------------------------------------------------------------ */
 
-/* Gives the slot a new semaphore. Use it when the old one can hold a signal
- * that no submit waits for. */
+/* Replaces and destroys the acquired image semaphore of `slot`. Returns true on success. */
 bool vulkan_slot_renew_semaphore(struct render_gpu *g, struct frame_slot *slot);
 
 #endif

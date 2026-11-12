@@ -2,170 +2,180 @@
 
 ## Unicode environment
 
-Child shells receive `TERM=wsap_term-256color`, `TERM_PROGRAM=wsap_term`, and
-`UNICODE_VERSION=18.0.0`, with the Unicode version taken from the terminal's
-property-table version. `COLORTERM=truecolor` is exported for direct truecolor
-detection. An inherited `TERM_PROGRAM_VERSION` is cleared because it describes
-the parent terminal, not wsap_term.
+Child shells receive `TERM=wsap_term-256color` and `TERM_PROGRAM=wsap_term`.
+They also receive `UNICODE_VERSION=18.0.0`.
+The property-table version of the terminal sets `UNICODE_VERSION`.
+The terminal exports `COLORTERM=truecolor` for direct truecolor detection.
+The terminal clears an inherited `TERM_PROGRAM_VERSION`.
+That variable describes the parent terminal, not wsap_term.
 
-The Unicode version describes the terminal's Unicode tables; glyph coverage
-also depends on installed fonts. Applications must opt in to reading this
-environment variable. For example, older Python `wcwidth` versions use it,
-while newer versions only ship their latest tables.
+The Unicode version describes the terminal's Unicode tables.
+Glyph coverage also depends on installed fonts.
+Applications must opt in to read this environment variable.
+For example, older versions of Python `wcwidth` read it.
+Newer versions include only their latest built-in tables.
 
 `terminal-quick-test` uses `Terminal::Capabilities` environment heuristics.
-Its detector defaults unknown UTF-8 terminals to `Uni1` and does not read
-`UNICODE_VERSION`. That label is not a measured Unicode conformance result;
-the detector needs a wsap_term entry to report `Uni13`.
+Its detector assigns unknown UTF-8 terminals to `Uni1`.
+It does not read `UNICODE_VERSION`.
+The `Uni1` label is not a measured Unicode conformance result.
+The detector requires a wsap_term entry to report `Uni13`.
 
 ## Output post-processing
 
 The fast pipe carries the bytes that the child wrote.
 The reader passes these bytes to the parser without a copy or scan.
-The pipe bypasses the PTY output processing.
+The pipe bypasses PTY output processing.
 The session reads `OPOST` and `ONLCR` from the PTY settings.
-If both flags are set, it feeds the bytes with `TERM_FEED_ONLCR`.
+If both flags are set, the session feeds the bytes with `TERM_FEED_ONLCR`.
 This feed flag makes LF return the cursor to column zero.
 
-Direct PTY output keeps the kernel output processing.
-The kernel applies the child's settings when the child writes.
+Direct PTY output keeps kernel output processing.
+The kernel applies child settings when the child writes.
 The parser does not add a carriage return to these bytes.
-A later change to the shell's input mode cannot change their line endings.
+A later change to the shell input mode cannot change their line endings.
 
 The feed flag is separate from DEC LNM mode (ANSI mode 20).
 LNM belongs to the child.
-A terminal reset clears LNM but does not change the transport policy.
-A query for mode 20 reports only the child's LNM setting.
+A terminal reset clears LNM, but does not change transport policy.
+A query for mode 20 reports only the child LNM setting.
 
-A program that clears `ICANON` gets its output moved to the pty; see
-*Raw-mode routing* below. The kernel then applies that program's own OPOST
-setting, so a raw-mode program that clears OPOST gets a bare LF.
+When a program clears `ICANON`, the shim routes its output to the PTY.
+See *Raw-mode routing* below.
+The kernel applies the program's own `OPOST` setting.
+Therefore, a raw-mode program that clears `OPOST` receives a bare LF.
 
-Set `WSAP_FAST_PIPE=0` to disable the fast pipe and fall back to ordinary pty
-output on all platforms; on opt-in platforms `WSAP_FAST_PIPE=1` remains
-required. That is also the escape hatch for an application that needs a single
-ordered output stream, or true raw-mode line endings.
+Set `WSAP_FAST_PIPE=0` to disable the fast pipe.
+The session then falls back to standard PTY output on all platforms.
+On opt-in platforms, `WSAP_FAST_PIPE=1` remains required to enable the fast pipe.
+Use `WSAP_FAST_PIPE=0` if an application requires a single ordered output stream or true raw-mode line endings.
 
 ## Privilege-command fallback
 
-On Linux, fastpty switches fast-pipe stdout/stderr back to the real PTY when
-its `execve`, `posix_spawn`, or `posix_spawnp` hook launches commands that require
-direct PTY access (such as `sudo`, `doas`, `su`, `pkexec`, `bwrap`, or `agy`).
-The list is `PTY_TTY_CMDS` in `src/pty/cmdline.h`.
-Explicit file-open redirects are applied by the child after the fallback's
-temporary descriptor substitution. Stream-duplication actions that reference
-stdout or stderr (for example, `2>&1`) therefore do not retain the original
-fast-pipe descriptors. Calls without such actions switch fast-pipe
-stdout/stderr to the real PTY. If execution fails, the original output
-descriptors are restored; ordinary commands continue to use the fast pipe.
+On Linux, fastpty hooks `execve`, `posix_spawn`, and `posix_spawnp`.
+Some commands require direct PTY access.
+Examples include `sudo`, `doas`, `su`, `pkexec`, `bwrap`, and `agy`.
+`PTY_TTY_CMDS` in `src/pty/cmdline.h` defines this command list.
+When a hook launches one of these commands, fastpty redirects fast-pipe stdout and stderr to the real PTY.
 
-Fast-pipe sessions set `fish_use_posix_spawn=0` for compatibility with older
-Fish versions. Direct system calls and launch mechanisms outside these libc
-hooks bypass the fallback. This fallback is not implemented for the optional
-macOS fast-pipe backend.
+The child process applies file-open redirections after this descriptor change.
+Stream duplications for stdout or stderr (such as `2>&1`) do not keep fast-pipe descriptors.
+They duplicate the real PTY descriptors instead.
+Calls without stream duplications switch stdout and stderr to the real PTY.
+If execution fails, fastpty restores the original output descriptors.
+Ordinary commands continue to use the fast pipe.
+
+Fast-pipe sessions set `fish_use_posix_spawn=0` for compatibility with older Fish versions.
+Direct system calls and launch mechanisms outside these libc hooks bypass the fallback.
+The optional macOS fast-pipe backend does not implement this fallback.
 
 ## Terminal lookup
 
-The child gets no extra file descriptors: only stdio is open at exec.
-When a shimmed call must reach the terminal, the shim opens the slave by
-the path in `WSAP_PTY_PATH`. If that fails, it tries `/dev/tty`, then
-fd 0. The shim remembers the device and inode of the fd it opened. If the
-app closes that fd number and reuses it, the shim sees a different file.
-It then opens the terminal again and does not close the app's fd.
+The child receives no extra file descriptors.
+Only standard streams remain open at exec.
+When a shim call must access the terminal, the shim opens the slave path from `WSAP_PTY_PATH`.
+If that open fails, the shim tries `/dev/tty`, then file descriptor 0.
+The shim records the device number and inode of the opened descriptor.
+If the application closes that descriptor and reuses the number, the shim detects the file change.
+The shim opens the terminal again.
+The shim does not close the application descriptor.
 
 ## Spawn and hangup
 
-`pty_spawn` splits the command line into words before it forks. Blanks
-separate words. Single quotes are literal. Double quotes allow `\"`, `\\`,
-`\$` and `` \` `` escapes. A backslash outside quotes escapes the next
-character. There is no expansion. The parent also builds the environment
-and resolves `PATH`. After `fork()` the child only calls async-signal-safe
-functions, so a lock held by another thread cannot deadlock it.
+`pty_spawn` splits the command line into words before it forks.
+Spaces and tabs separate words.
+Single quotes keep characters literal.
+Double quotes allow `\"`, `\\`, `\$`, and `` \` `` escapes.
+A backslash outside quotes escapes the next character.
+The parser performs no variable or shell expansion.
+The parent process builds the environment and resolves `PATH`.
+After `fork()`, the child calls only async-signal-safe functions.
+A lock held by another thread cannot cause a deadlock.
 
-`pty_destroy` sends SIGHUP and SIGCONT to the child and its process
-group, closes the descriptors, and returns at once. A background thread
-reaps the child. If the child is still alive after 2 seconds, the thread
-sends SIGKILL. This gives a shell time to save history on hangup.
+`pty_destroy` sends SIGHUP and SIGCONT to the child and its process group.
+It closes all descriptors and returns immediately.
+A background thread reaps the child process.
+If the child remains alive after 2 seconds, the thread sends SIGKILL.
+This delay gives a shell time to save history on hangup.
 
 ## Raw-mode routing
 
-On Linux, the shim watches `tcsetattr` and the `TCSETS*` ioctls. When a
-program clears `ICANON` on the session's terminal, the shim moves that
-program's fast-pipe stdout and stderr to the pty. When `ICANON` returns, it
-moves them back. Shells do this at every prompt: line editing runs on the
-pty, and the commands they start run on the fast pipe. Interactive programs
-do not need the pipe's throughput. Bulk output (`cat`, compilers, logs)
-stays in cooked mode and keeps it.
+On Linux, the shim monitors `tcsetattr` and the `TCSETS*` ioctls.
+A program can clear `ICANON` on the session terminal.
+When this occurs, the shim moves that program's stdout and stderr to the PTY.
+When `ICANON` is restored, the shim moves them back to the fast pipe.
+Shells perform this cycle at each prompt.
+Line editing runs on the PTY.
+Commands started by the shell run on the fast pipe.
+Interactive programs do not need fast-pipe throughput.
+Bulk output (`cat`, compilers, logs) runs in cooked mode and uses the fast pipe.
 
-Each move first passes a barrier (`src/pty/sync.h`). The shim connects to
-the session's sync socket, whose abstract name is in `WSAP_SYNC`. It names
-the transport it leaves, and waits up to 200 ms for an acknowledgement. The
-ring worker parses that transport into the terminal before it replies. Output
-the program wrote before the move is therefore ahead of output written
-after it. If the barrier fails or times out, the output stays where it is:
-a lost move costs speed or line endings, never order. The barrier can make
-`tcsetattr` wait while the terminal clears a backlog.
+Each route change passes a synchronization barrier (`src/pty/sync.h`).
+The shim connects to the session sync socket.
+`WSAP_SYNC` contains the abstract name of this socket.
+The shim identifies the transport that it leaves.
+It waits up to 200 ms for an acknowledgment.
+The ring worker parses data from that transport into the terminal.
+Then the ring worker sends the acknowledgment.
+Thus, output written before the move processes before output written after the move.
+If the barrier fails or times out, output remains on the current transport.
+A failed move can reduce throughput or alter line endings.
+A failed move never changes output order.
+The barrier can delay `tcsetattr` while the terminal clears backlog data.
 
-Routing is per process. `stty raw` changes the terminal but routes only
-`stty` itself. Set `WSAP_TTY_ROUTE=0` to turn routing off. Darwin has no
-barrier yet, so it does not route.
+Routing applies per process.
+`stty raw` modifies terminal settings, but routing affects only `stty` itself.
+Set `WSAP_TTY_ROUTE=0` to disable routing.
+macOS (Darwin) has no barrier support, so macOS does not route.
 
 ## Reader ownership and stream ordering
 
-The ring worker is the only reader. It reads the fast pipe and the PTY
-master and parses each read into the terminal at once, so the terminal sees
-the bytes in the order that the worker read them. Each `data` callback names
-the transport its bytes came from. The session uses that to pick the newline
-policy for each span. The worker starts before the session returns, and a
-session that cannot start its worker does not open.
+The ring worker is the only reader.
+It reads from the fast pipe and the PTY master.
+It parses bytes into the terminal immediately after each read.
+The terminal receives bytes in the exact order of those reads.
+Each `data` callback identifies the source transport.
+The session uses this source to select the newline policy for each data span.
+The worker starts before the session returns.
+If the worker cannot start, the session does not open.
 
-The worker wakes the loop thread once for each 32 KiB that it parses, and once
-when the source runs dry. Short output therefore wakes the loop thread at once,
-and a flood does not send a signal for each short read.
-`benchmarks/pty-wake-batching.md` records the measurements.
+The worker wakes the loop thread once for each 32 KiB of parsed data.
+It also wakes the loop thread when an input source runs dry.
+Short output wakes the loop thread immediately.
+A high-volume stream does not signal the loop thread for each small read.
+`benchmarks/pty-wake-batching.md` records benchmark measurements.
 
-Output from independent processes has no defined order across the two
-transports, just as it has none on a single pty. Within one process, the
-barrier keeps the order across a routing move. A program that writes to
-`/dev/tty` directly while its stdout is on the fast pipe gets no barrier,
-so those two streams can still interleave. `WSAP_FAST_PIPE=0` places all
-output on the PTY.
+Output from independent processes has no guaranteed order across the two transports.
+Standard PTY operation has this same limitation.
+Within a single process, the barrier preserves output order across route changes.
+A program can write directly to `/dev/tty` while its stdout uses the fast pipe.
+That write uses no barrier, so the two streams can interleave.
+Set `WSAP_FAST_PIPE=0` to route all output through the PTY.
 
 ## Writers and input backpressure
 
-The shim recognizes duplicated fast-pipe descriptors by their file identity, so
-configuring a nested PTY does not disturb the outer terminal. Exec propagation
-covers stderr-only fast-pipe output and avoids adding preload entries already
-present in the child environment.
+The shim recognizes duplicated fast-pipe descriptors by their file identity.
+Therefore, configuring a nested PTY does not affect the outer terminal.
+Exec propagation handles stderr-only fast-pipe output.
+It also skips preload entries that already exist in the child environment.
 
-Keyboard bytes, terminal replies, and paste data share the input queue. Raw
-input retains its control bytes, and pending writes resume on `POLLOUT`.
-This prevents short writes from dropping input and prevents subsequent keys
-or replies from being inserted inside a pending paste. The queue has a lock,
-so a terminal reply can enter it on the worker thread while the loop thread
-adds a key.
+Keyboard bytes, terminal replies, and paste data share one input queue.
+Raw input keeps its control bytes.
+Pending writes resume when the transport reports `POLLOUT`.
+This rule prevents partial writes from dropping input.
+It also prevents subsequent keys or replies from breaking into a pending paste.
+The input queue has a mutex lock.
+A worker thread can push a terminal reply while the loop thread pushes a key event.
 
-The privilege-command spawn fallback temporarily changes process-wide
-stdout/stderr descriptors, so a concurrent writer in another thread can observe
-the substitution. Resolving that needs launch routing, not reader changes.
+The privilege-command spawn fallback temporarily changes process-wide stdout and stderr descriptors.
+A concurrent writer thread can observe this substitution.
+Fixing this issue requires launch routing instead of reader changes.
 
 ## Regression checks
 
-- `meson test -C build pty-fast-test`: byte fidelity of a spawned child's
-  output (high-entropy payload including raw LF, which also detects a silent
-  fallback to the pty) and locale environment setup.
-- `meson test -C build term-test`: that the transport's newline policy survives
-  RIS, DECSTR and `ESC[20l`, and that the DEC LNM mode on its own still does
-  not.
-- `meson test -C build fastpty-test`: actual preload/exec routing, duplicated descriptors,
-  unrelated PTYs, stderr-only propagation, and preload deduplication.
-- `meson test -C build pty-route-test`: a raw-mode helper switches mode 200
-  times behind 32 KiB pipe bursts, with a slow consumer that makes the worker
-  fall behind. It checks that raw-mode output arrives on the pty, cooked
-  output on the pipe, and the stream stays in program order.
-- `meson test -C build paste-test`: partial writes and byte-preserving input after queued paste.
-- `meson test -C build pty-order-test`: optional Linux integration test requiring Sway and `-Dintegration_tests=true`; starts
-  a private headless compositor and verifies 8,000 ordered PTY cursor replies
-  while fastpipe carries concurrent write traffic. A test-only preload library
-  delays background PTY reads after consumption to exercise competing-reader
-  schedules.
+- `meson test -C build pty-fast-test`: checks byte fidelity of child output and locale environment setup. It tests high-entropy data with raw LF bytes to detect silent PTY fallbacks.
+- `meson test -C build term-test`: verifies that the transport newline policy survives RIS, DECSTR, and `ESC[20l`, and that DEC LNM mode alone does not alter transport policy.
+- `meson test -C build fastpty-test`: tests preload routing, exec propagation, duplicated descriptors, unrelated PTY isolation, stderr-only propagation, and preload deduplication.
+- `meson test -C build pty-route-test`: switches raw and cooked mode 200 times behind 32 KiB pipe bursts with a slow consumer. It verifies that raw output uses the PTY, cooked output uses the pipe, and data order remains correct.
+- `meson test -C build paste-test`: tests partial writes and byte-preserving input after queued paste data.
+- `meson test -C build pty-order-test`: optional Linux integration test that requires Sway and `-Dintegration_tests=true`. It starts a headless compositor and checks 8,000 ordered PTY cursor replies during concurrent fast-pipe write traffic. A test preload library delays background PTY reads after consumption to test competing-reader schedules.

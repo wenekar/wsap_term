@@ -5,17 +5,19 @@ For the UI API and a screen example, see [UI library](ui-library-state.md).
 ## Native windows
 
 yasl owns native windows, the event loop, input, and frame pacing.
-`subprojects/yasl/include/yasl/yasl.h` gives its surface and event
+`subprojects/yasl/include/yasl/yasl.h` provides its surface and event
 contracts.
 
 The window in `src/ui/yasl/window.c` makes one yasl surface for each
 window. A menu popup gets a yasl popup surface of its own.
 The window keeps the framebuffer history of each surface.
 
-`window_native_draw()` gives the app composer the framebuffer of one surface.
+`window_native_draw()` prepares the render target of one surface for the app composer.
 The app composer renders the frame.
-It calls `window_present()` with the frame and its damage.
-`window_present()` calls `yasl_cpu_present()` to show the frame.
+The composer calls `window_present()` with the frame, the damage list, and the presentation state.
+For a GPU target, `window_present()` records whether the GPU submitted the frame.
+For a CPU target, `window_present()` presents damage rectangles with `yasl_cpu_present_damage()`.
+It calls `yasl_cpu_present()` when the full surface changes.
 
 ## Shortcut input
 
@@ -57,17 +59,17 @@ The backend does not quote paths for a shell.
 
 The window core updates held keys and the pointer before the UI sees an event.
 The UI client routes each event next.
-The inspector overlay shortcut comes first, and it ends routing.
+The inspector overlay shortcut comes first. It ends routing.
 The app's command hook gets other shortcuts next. If the hook runs one, routing ends.
 Otherwise the UI gets the shortcut.
 Keys, text, and paste go straight to the UI.
 The key surface takes them. It is the top menu popup, or else the main surface.
-A key goes to the focused widget. With nothing focused, the default focus takes it.
+A key goes to the focused widget. If no widget has focus, the default focus takes it.
 In a terminal window, the terminal view is the default focus.
 The terminal root takes paste, file drops, shortcuts, and window focus.
 A key capture on a root runs before the focused widget. Settings uses one on its root.
-A handled key requests no frame by itself. A widget that changes requests a frame through invalidation.
-A handled key drops the text that follows it when the key defers its text.
+A handled key requests no frame by itself. A widget requests a frame through invalidation when widget state changes.
+A handled key drops following text when the key defers its text.
 A key handler can keep that text with `ui_surface_keep_key_text()`.
 
 Each text event records its source.
@@ -97,51 +99,55 @@ Paste and file-drop helpers accept the whole payload or return zero.
 
 ## Event loop
 
-The app has one loop, a `yasl_loop`. The app owns it. The sessions, the
-signal watch, the inspector socket, the host timers and the yasl display all
-run on it. Each session has one worker thread that reads its pty and parses
-the output into the terminal; the loop thread only wakes and draws.
+The app has one loop, a `yasl_loop`. The app owns it.
+The sessions, the signal watch, the inspector socket, the host timers, and the yasl display all run on it.
+Each session has one worker thread that reads its pty and parses the output into the terminal.
+The loop thread only wakes and draws.
 `app_run()` runs the loop with `yasl_loop_run()`.
 
-At the first `window_open()`, the window host gives yasl the loop and an
-event callback. Each loop step then does these things, in this order:
+At the first `window_open()`, the window host gives yasl the loop and an event callback.
+Each loop step then does these things, in this order:
 
 1. yasl draws the surfaces that are due and arms its display read.
-2. The loop waits for a descriptor, a timer or the display.
+2. The loop waits for a descriptor, a timer, or the display.
 3. yasl reads the display and gives each event to
    `window_host_dispatch_event()`.
 4. Descriptor callbacks run, then the timers that are due, then the
    signal callbacks.
 
-Work schedules itself. Each event, `window_redraw()`,
-`window_inject_input()` and `window_close()` arm the host service. The host
-service is a zero-delay timer. It frees closed windows, runs the service step
-of the app, drains input, runs the service step again, and draws the windows
-that asked for a frame. Thus the loop never waits while work is pending.
+Work schedules itself.
+Each event, `window_redraw()`, `window_inject_input()`, and `window_close()` arms the host service.
+The host service is a zero-delay timer.
+It frees closed windows and runs the app service step.
+It drains input and runs the service step again.
+Then it draws the windows that asked for a frame.
+Thus the loop never waits while work is pending.
 
-The service step is the `service` hook of the host. The app applies its
-deferred model changes there, outside every frame. For example, it destroys
-the content of a closed tab after the close animation. The second step and
-the frames of the pass use one time. `window_frame_time_ms()` returns that
-time during the pass.
+The service step is the `service` hook of the host.
+The app applies its deferred model changes there, outside every frame.
+For example, it destroys the content of a closed tab after the close animation.
+The second step and the frames of the pass use one time.
+`window_frame_time_ms()` returns that time during the pass.
 
-A window can ask for a redraw while it draws, for the next frame of an
-animation. Then `window_redraw()` calls `yasl_surface_request_frame()`. That
-frame waits until the compositor shows the frame being drawn.
+A window can ask for a redraw while it draws, for the next frame of an animation.
+Then `window_redraw()` calls `yasl_surface_request_frame()`.
+That frame waits until the compositor shows the frame being drawn.
 
-No timer holds a window. A window that wants a frame later calls
-`window_wake_at()`. The host keeps one wake timer for all windows, and it
-finds the windows when it fires. So a closed window needs no cleanup. The
-cursor blink and the visual bell are deadlines that the tick of the terminal
-view returns.
+No timer holds a window.
+A window that wants a frame later calls `window_wake_at()`.
+The host keeps one wake timer for all windows.
+It finds the windows when the timer fires.
+So a closed window needs no cleanup.
+The cursor blink and the visual bell are deadlines that the tick of the terminal view returns.
 
-A child's exit reaches its tab after the child's last output. On SIGCHLD,
-`session_reap_exited()` calls `pty_ring_end()`. The worker thread reads what the
-transports still hold, parses those bytes into the terminal, and then reports
-the end. Only then does the tab close.
+A child's exit reaches its tab after the child's last output.
+On SIGCHLD, `session_reap_exited()` calls `pty_ring_end()`.
+The worker thread reads what the transports still hold.
+It parses those bytes into the terminal, and then reports the end.
+Only then does the tab close.
 
-When the display is lost and cannot come back, the app quits. A Wayland
-compositor that restarts is not such a loss: the windows wait for it.
+When the display is lost and cannot reconnect, the app quits.
+If a Wayland compositor restarts, windows wait for it to return.
 
 ## Tests
 

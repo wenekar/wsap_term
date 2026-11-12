@@ -69,26 +69,53 @@ struct session {
     alignas(64) struct pty pty;
 };
 
+/*
+ * Initializes terminal session `s`, spawns the child process, and starts reader threads.
+ * Returns true on success, or false on failure.
+ */
 bool session_init(struct session *s, struct yasl_loop *loop,
                   const struct session_spec *spec);
+
+/* Terminates the child process, stops worker threads, and releases session resources. */
 void session_fini(struct session *s);
+
+/* Sets the event host callbacks and user context pointer for session `s`. */
 void session_set_host(struct session *s, const struct session_host *host, void *ud);
 
 /*
- * Resizes the terminal at once. The pty gets the new size at once only when
- * the last pty resize is old enough. Else it gets the latest size from a
- * timer. A fast drag then sends few SIGWINCH signals to the shell, and the
- * shell always ends with the final size.
+ * Resizes the terminal emulator grid immediately.
+ * Throttles window size updates sent to the pseudo-terminal.
  */
 void session_resize(struct session *s, struct vector2i grid);
+
+/*
+ * Enqueues raw bytes for writing to the pseudo-terminal.
+ * Returns true on success, or false on failure.
+ */
 bool session_write_bytes(struct session *s, const char *data, size_t len);
+
+/*
+ * Enqueues clipboard text for writing to the pseudo-terminal with bracketed paste framing.
+ * Returns true on success, or false on failure.
+ */
 bool session_paste(struct session *s, const char *text, size_t len);
+
+/* Returns the current window title of session `s`, or "shell" when unset. */
 const char *session_title(const struct session *s);
+
+/*
+ * Copies current working directory of session `s` into buffer `out`.
+ * Returns true on success, or false on failure.
+ */
 bool session_cwd(const struct session *s, char *out, size_t sz);
 
+/* Records timestamp `time_ms` for the most recent keystroke in session `s`. */
 void session_on_keystroke(struct session *s, uint64_t time_ms);
+
+/* Returns the timestamp of the most recent keystroke in milliseconds. */
 uint64_t session_last_keystroke_ms(const struct session *s);
 
+/* Reaps exited child processes for all active sessions and notifies hosts. */
 void session_reap_exited(void);
 
 #endif

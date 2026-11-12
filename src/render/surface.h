@@ -117,9 +117,8 @@ void render_surface_invalidate(struct render_surface *s);
 uint64_t render_surface_row_key(const struct terminal_frame *f, int row);
 
 /*
- * Records what the canvas holds after a frame: `key`, and `rows` entries
- * of keys and reach, and rows + 1 entries of ui. Sets valid. The caller
- * reserved the room before.
+ * Stores canvas cache key, row keys, UI spans, and reach values in `s`.
+ * Marks surface state valid.
  */
 void render_surface_commit(struct render_surface *s, const struct render_surface_key *key,
                            int rows, const uint64_t *keys, const struct plan_span *ui,

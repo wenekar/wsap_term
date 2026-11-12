@@ -487,8 +487,7 @@ bool app_tabs_bind(struct window *window, app_tab_id id, int slot)
     struct app_tab *entry = tabs ? app_tab_model_get(tabs->spec.model, id) : NULL;
     if (!entry || entry->window)
         return false;
-    /* A content whose process ended keeps no tab, and neither does a closing
-     * tab. The caller still holds the tab, and it destroys the tab once. */
+    /* Rejects binding if the tab is closing or if its child process exited. */
     if (!app_tab_is_live(entry) || terminal_exited(entry->content))
         return false;
     struct terminal *content = entry->content;

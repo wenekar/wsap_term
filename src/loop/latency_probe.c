@@ -53,7 +53,7 @@ static uint64_t pending;
  * No callback and no parse runs while it is held. */
 static pthread_mutex_t state_lock = PTHREAD_MUTEX_INITIALIZER;
 
-/* The caller holds state_lock. */
+/* Synchronizes active request with atomic probe state under state_lock. */
 static void sync_request_locked(void)
 {
     if (!probe) return;
@@ -65,7 +65,7 @@ static void sync_request_locked(void)
     }
 }
 
-/* The caller holds state_lock. */
+/* Records latency stage timestamp under state_lock. */
 static void stage_locked(enum latency_stage stage)
 {
     if (!probe) return;
@@ -127,8 +127,7 @@ static uint64_t waiting_sample(void)
     sync_request_locked();
     uint64_t sample = 0;
     if (rendered) {
-        /* The store of `presented` publishes the record, so this load also
-         * orders the record reads of the caller. */
+        /* The store of presented publishes the record, so this load orders subsequent record reads. */
         if (atomic_load_explicit(&probe->presented, memory_order_acquire) != rendered)
             sample = rendered;
     }

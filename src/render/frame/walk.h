@@ -163,10 +163,8 @@ struct render_glyph_ref {
 };
 
 /*
- * Returns the glyph of the cell. In a peek walk it fetches the glyph from
- * the font. Each call fetches again, so call it once per column. The result
- * is valid until the callback returns or until the next glyph fetch on this
- * thread, whichever comes first.
+ * Retrieves the rasterized glyph for `ref`.
+ * Fetches from the font glyph cache when `ref` was deferred during a peek walk.
  */
 static inline const struct glyph *render_glyph_get(const struct render_glyph_ref *ref)
 {
@@ -292,17 +290,12 @@ void render_row_walk(struct font_instance *fi, const struct terminal_frame *f, i
                      int c0, int c1, unsigned flags, const struct render_walk_sink *sink);
 
 /*
- * Makes room in the scratch of the calling thread for a segment of `cols`
- * cells: the segment code points of the walk and the segment scratch of the
- * font (glyph_cache_reserve_segment()). The room only grows. Returns false
- * when the memory is missing. Then a later walk grows the room itself.
+ * Reserves thread-local scratch storage for a segment of `cols` cells.
+ * Returns true on success, or false on allocation failure.
  */
 bool render_walk_thread_reserve(int cols);
 
-/*
- * Frees the scratch of the calling thread. Pool workers call it before they
- * exit. A later walk on the same thread allocates it again.
- */
+/* Frees thread-local scratch memory allocated for frame walks. */
 void render_walk_thread_release(void);
 
 #endif

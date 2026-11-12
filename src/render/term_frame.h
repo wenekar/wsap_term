@@ -25,7 +25,7 @@
  * - `source` NULL means: no grid. terminal_frame_valid() is then false.
  * - `cols` and `rows` are the snapshot size.
  * - `cursor_y` < 0 means: draw no cursor. terminal_frame_init() sets -1
- *   when the cursor is hidden or the caller asks for no cursor.
+ *   when the cursor is hidden or invisible.
  * - `cursor_style` is an enum wsap_vtcore_cursor_style value.
  * - `has_selection` is true when some row has a selection span. It lets
  *   rows skip the selection lookup.
@@ -51,9 +51,8 @@ _Static_assert(sizeof(struct terminal_frame) == 64,
                "terminal_frame must fit in exactly one 64-byte cache line");
 
 /*
- * Fills `frame` from `snap`. It keeps no reference to the caller.
- * A NULL snapshot or an empty view gives an invalid frame. The selection
- * colors stay zero. Set them after this call.
+ * Populates `frame` with grid dimensions, palette data, and cursor state from `snap`.
+ * Sets an invalid frame when `snap` is NULL or empty.
  */
 void terminal_frame_init(struct terminal_frame *frame, const struct wsap_vtcore_snapshot *snap,
                          bool cursor_visible);

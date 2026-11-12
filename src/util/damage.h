@@ -15,6 +15,10 @@ struct damage_list {
     bool all;
 };
 
+/*
+ * Adds damage rectangle `r` to damage list `d`.
+ * Merges adjacent rectangles or records overflow.
+ */
 static inline void damage_add(struct damage_list *d, struct rect2i r)
 {
     d->any = true;
@@ -31,6 +35,9 @@ static inline void damage_add(struct damage_list *d, struct rect2i r)
         d->n = -1;
 }
 
+/*
+ * Marks damage list `d` as completely damaged.
+ */
 static inline void damage_add_all(struct damage_list *d)
 {
     d->any = true;

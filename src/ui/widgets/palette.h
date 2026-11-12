@@ -29,13 +29,19 @@ struct ui_palette {
     } impl;
 };
 
+/* Initializes command palette widget `p`. */
 void ui_palette_init(struct ui_palette *p);
+/* Opens palette `p` populated with `n` command descriptors from `cmds`. */
 bool ui_palette_open(struct ui_palette *p, const struct ui_palette_cmd *cmds,
                      int n);
+/* Closes command palette `p`. */
 void ui_palette_close(struct ui_palette *p);
+/* Returns true when command palette `p` is open. */
 bool ui_palette_is_open(const struct ui_palette *p);
+/* Returns the current search filter string in palette `p`. */
 const char *ui_palette_query(const struct ui_palette *p);
 
+/* Returns the base widget pointer of `p`, or NULL if `p` is NULL. */
 static inline struct ui_widget *ui_palette_widget(struct ui_palette *p)
 {
     return p ? &p->widget : NULL;

@@ -58,17 +58,17 @@ int app_tabs_live_count(const struct app_tabs *tabs);
 /* The bar index of a tab, or -1. */
 int app_tabs_index_of(const struct app_tabs *tabs, app_tab_id id);
 
-/* Takes a live tab out of the window. The tab stays in the model, and no
- * window holds it. The caller then puts it in a window or destroys it.
- * Returns 0 on failure. */
+/*
+ * Removes the tab at `index` from `window` while retaining it in the tab model.
+ * Returns the unlinked tab ID, or 0 on failure.
+ */
 app_tab_id app_tabs_unbind(struct window *window, int index);
-/* Puts a tab that no window holds in the window, at `slot`. A tab whose
- * process ended, or a closing tab, stays out. On failure the caller still
- * holds the tab. */
+/*
+ * Attaches tab `id` to `window` at `slot` position.
+ * Returns true on success, or false if the tab cannot be bound.
+ */
 bool app_tabs_bind(struct window *window, app_tab_id id, int slot);
-/* Gives the tabs of a window back to the model when the window goes. The
- * model destroys them. The tab of a running drag stays in the model, and no
- * window holds it. */
+/* Unbinds all tabs from `tabs` and marks non-dragged entries for destruction. */
 void app_tabs_release(struct app_tabs *tabs);
 
 /* Sends the labels and the selection of the entry array to the bar. */

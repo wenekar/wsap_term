@@ -1,136 +1,139 @@
 # High-refresh displays
 
-A terminal on a 120 Hz or a 240 Hz display must show each change in one frame
-period. It must also keep input and output moving between frames.
+A terminal on a 120 Hz or 240 Hz display shows each change in one frame period.
+It processes input and output between frames.
 
 ## Frame stages
 
-Four stages stay apart. A debug report, a test, or a benchmark must not mix them.
+The frame pipeline has four distinct stages.
+Do not mix these stages in debug reports, tests, or benchmarks.
 
 | Stage | Meaning |
 | --- | --- |
 | Draw | The loop builds and encodes a frame. |
-| Submission | The GPU took the frame. The frame is not on screen yet. |
-| GPU completion | The GPU finished the frame, so the frame slot is free again. |
-| Presentation | The display showed the frame. Only the display reports this. |
+| Submission | The GPU receives the frame. The frame is not yet on screen. |
+| GPU completion | The GPU finishes the frame. The frame slot becomes free. |
+| Presentation | The display shows the frame. Only the display reports this stage. |
 
-`--stats-ms` prints one line for each interval:
+The `--stats-ms` option prints one line for each interval:
 
     [stats   7.52s] frames=752 drop=2 submit=750 present=748 fps=99.8 dt(ms) ...
 
-- `frames` counts the draw passes. It is the loop rate.
-- `submit` counts the passes that the GPU or the surface took.
-- `drop` counts the passes that did not submit. A busy GPU or a missing
-  drawable gives a drop, and the window asks for the next frame.
-- `present` counts the frames that a display reported. It is zero on a
-  platform without presentation feedback. The count is current when it is read,
-  also while the window draws nothing: a report does not wait for a draw.
+- `frames` counts draw passes. This count shows the loop rate.
+- `submit` counts passes accepted by the GPU or the surface.
+- `drop` counts passes that did not submit. A busy GPU or a missing drawable causes a drop. The window then requests the next frame.
+- `present` counts frames reported by the display. This count is zero on platforms without presentation feedback. The count updates when read, even when the window draws nothing. A report does not wait for a draw pass.
 
-A submitted frame can be presented one or more frames later. A frame that the
-display discards is never counted as presented.
+The display presents a submitted frame one or more frames later.
+The display does not count discarded frames as presented.
 
 ## Pacing
 
-A window takes one of two paths:
+A window uses one of two pacing modes:
 
-- With vsync on, the window requests a frame from the surface. The window layer
-  answers the request at its next display callback, or after one refresh
-  interval when it has no callback. The draw therefore waits for the display,
-  and the window cannot draw faster than the display. The request wakes that
-  answer only. It never draws at once, so an animation cannot outrun the
-  display by asking for a frame in each refresh.
-- With `vsync = false`, the draw starts at once. The display does not pace the
-  frame, so a frame can tear. A present that finds no free drawable blocks
-  until the display frees one.
+- With vsync enabled, the window requests a frame from the surface.
+  The window layer answers at the next display callback.
+  Without a callback, it answers after one refresh period.
+  Drawing waits for the display.
+  The window cannot draw faster than the display refresh rate.
+  The request only schedules that callback.
+  It does not draw immediately.
+  An animation cannot outrun the display by requesting frames continuously.
+- With `vsync = false`, drawing starts immediately.
+  The display does not pace the frame.
+  Screen tearing can occur.
+  If no drawable is free, presentation blocks until the display frees one.
 
-The display link of a macOS window measures its own period. On a ProMotion
-display that period follows the rate that the system chose, so it varies. A
-frame request uses that period for its fallback timer.
+The display link of a macOS window measures its own refresh period.
+On a ProMotion display, this period varies with the system refresh rate.
+A frame request uses this period for its fallback timer.
 
-## Behaviour by refresh rate
+## Behavior by refresh rate
 
-The table states the behaviour of the code. It is not a measurement.
+The table states the behavior of the code.
+It is not a measurement.
 
 | Case | 60 Hz fixed | 120 Hz fixed | 240 Hz fixed | 120 Hz variable (ProMotion) |
 | --- | --- | --- | --- | --- |
-| vsync on | One frame per 16.7 ms tick. | One frame per 8.3 ms tick. | One frame per 4.2 ms tick. | One frame per tick; the tick follows the rate that the system chose. |
-| vsync off | Draws at once; tearing possible. | Draws at once; tearing possible. | Draws at once; tearing possible. | Draws at once; tearing possible. |
-| Monitor move | The link follows the new display and measures its period. | Same. | Same. | The link measures the new rate after the move. |
-| Scale change | `drawableSize` changes in points × scale; a frame whose drawable has another size is dropped and drawn again. | Same. | Same. | Same. |
-| Live resize | The frame draws at once and presents in the Core Animation transaction. No tick wait. | Same. | Same. | Same. |
-| Flood output | The worker thread parses, so a frame gets loop time at every rate. | Same. | Same. | Same. |
-| Idle, then wake | The link pauses after 8 idle frames; the wake draws at once. | Same. | Same. | Same. |
-| Occluded | The window is suspended and draws nothing. It draws again when it is visible. | Same. | Same. | Same. |
+| vsync on | One frame per 16.7 ms tick. | One frame per 8.3 ms tick. | One frame per 4.2 ms tick. | One frame per tick. The tick matches the active system rate. |
+| vsync off | Draws immediately. Screen tearing is possible. | Draws immediately. Screen tearing is possible. | Draws immediately. Screen tearing is possible. | Draws immediately. Screen tearing is possible. |
+| Monitor move | The link tracks the new display and measures its period. | Same. | Same. | The link measures the new refresh rate after the move. |
+| Scale change | `drawableSize` changes to points × scale. A frame with a mismatched drawable size drops and redraws. | Same. | Same. | Same. |
+| Live resize | The frame draws immediately and presents in the Core Animation transaction without waiting for a tick. | Same. | Same. | Same. |
+| Flood output | The worker thread parses output. The render loop receives CPU time at every refresh rate. | Same. | Same. | Same. |
+| Idle, then wake | The link pauses after 8 idle frames. A wake event triggers an immediate draw. | Same. | Same. | Same. |
+| Occluded | The window suspends drawing while occluded. It resumes drawing when visible. | Same. | Same. | Same. |
 
-Two bounds do not depend on the rate:
+Two limits do not depend on the refresh rate:
 
-- The GPU holds three frame slots. With no free slot the frame is dropped at
-  once, and the window asks for the next frame.
-- The PTY parse runs on the worker thread, so the main thread holds no budget.
-  The worker parses one read in pieces of 32 KiB, so a snapshot waits for one
-  piece at most.
+- The GPU queue holds three frame slots.
+  If all slots are full, the engine drops the frame immediately.
+  The window then requests the next frame.
+- PTY parsing runs on the worker thread.
+  This offloads parsing work from the main thread.
+  The worker parses data in 32 KiB chunks.
+  Snapshot capture waits for at most one chunk.
 
 ## Presentation feedback on macOS
 
-The Metal backend attaches one presented handler to the drawable of each frame.
-The handler reads `presentedTime` and the time it runs, and it writes both to
-the latency probe. The frame carries the identity of its request into the
-handler, so late or out-of-order feedback cannot complete another sample.
+The Metal backend attaches a presentation handler to the drawable of each frame.
+The handler reads `presentedTime` and the execution timestamp.
+It writes both timestamps to the latency probe.
+The frame carries the request identity into the handler.
+Out-of-order feedback cannot complete a different sample.
 
-- `presentedTime` is zero when the display did not show the frame. The probe
-  then records a discard, not a presentation.
-- A real presentation also sets the supported flag of the probe, including the
-  frames of the startup screen, which carry no request sample. The benchmark
-  reads that flag before it starts, so it must not depend on a finished sample.
-- One record per sample is published. The first presentation of a sample is the
-  one that counts, so a second report cannot change a record that a reader
-  already took. A report of an older sample cannot complete a newer one, also
-  when the report was delayed across the start of the newer request: the probe
-  checks the request again under the lock that publishes a record. The fields of
-  one record are written under a small lock that covers the record only; no
-  renderer work and no callback runs while it is held.
-- A frame carries the sample until a display presents that sample, or until the
-  benchmark starts the next one. The submission of a frame is separate. A frame
-  that the display discards retires nothing, so a later frame of the same
-  request carries the sample again and can publish it.
-- The probe sets the vsync flag only for a paced frame. A frame that
-  draws with `vsync = false`, and a frame that presents inside the Core
-  Animation transaction of a live resize, carry no vsync flag.
-- The handler runs on a thread of the display. It holds one reference of the
-  presentation count, so it reads no window, no surface, and no layer. A window
-  that closes leaks nothing.
-- `presentedTime` uses the Mach host clock, which stops while the machine
-  sleeps. The probe uses the loop clock, which keeps counting. The two clocks
-  differ, so the code maps `presentedTime` through the offset that they have
-  when the handler runs.
+- `presentedTime` is zero when the display does not show the frame.
+  In this case, the probe records a discard instead of a presentation.
+- A valid presentation sets the supported flag of the probe.
+  This includes startup frames without a request sample.
+  The benchmark reads this flag before start.
+  The benchmark does not depend on a finished sample.
+- The system publishes one record per sample.
+  Only the first presentation of a sample counts.
+  A duplicate report cannot modify an existing record.
+  A delayed report for an old sample cannot complete a newer sample.
+  The probe checks the request identity under the record lock.
+  This lock protects record fields only.
+  No renderer work or callback runs while holding the lock.
+- A frame retains its sample until presentation occurs or until the next sample begins.
+  Frame submission is independent of sample retirement.
+  A discarded frame does not retire the sample.
+  A later frame for the same request carries the sample and can publish it.
+- The probe sets the vsync flag only for paced frames.
+  Frames drawn with `vsync = false` omit the vsync flag.
+  Frames presented during live resize Core Animation transactions omit the vsync flag.
+- The handler executes on a display thread.
+  It retains only a reference to the presentation count.
+  It does not read window, surface, or layer pointers.
+  Closing a window causes no memory leak.
+- `presentedTime` uses the Mach host clock.
+  The Mach host clock stops during system sleep.
+  The probe uses the monotonic loop clock.
+  The loop clock continues counting during sleep.
+  The handler computes the clock offset and maps `presentedTime` to the loop clock.
 
-## Measure it
+## Measurement
 
-- `wsap_term --stats-ms 1000` prints the four counts.
-- `WSAP_LATENCY_PROBE` with `benchmarks/input-latency-bench` measures input to
-  presentation. The benchmark needs a real display that presents to the
-  session. See [input latency](../benchmarks/input-latency-bench.md).
-- `render-bench` measures the CPU render path only. It reports no presentation.
+- `wsap_term --stats-ms 1000` prints the four frame counters.
+- `WSAP_LATENCY_PROBE` with `benchmarks/input-latency-bench` measures input-to-presentation latency.
+  This benchmark requires a physical display that presents output.
+  See [input latency](../benchmarks/input-latency-bench.md).
+- `render-bench` measures the CPU render path only.
+  It reports no presentation data.
 
-## Limits
+## Limitations
 
-- No 240 Hz hardware was available for the work in this repository. 120 Hz was
-  measured on a live display. No 240 Hz frame rate is claimed.
-- A display that does not present to the session gives no presentation
-  feedback. A remote or occluded session then reports submissions only.
-- The window layer of Wayland reports no presentation feedback to the probe, so
-  a Wayland run reports submissions only.
-- `presentedTime` measures the display commit, not the panel response. It does
-  not include the scanout of the panel or the physical response time.
+- The project measured 120 Hz on physical hardware.
+  No 240 Hz test hardware was available.
+  The project does not claim 240 Hz performance.
+- A display that does not present output provides no presentation feedback.
+  Remote or occluded sessions report submissions only.
+- The Wayland window backend provides no presentation feedback to the probe.
+  Wayland sessions report submissions only.
+- `presentedTime` measures display commit time.
+  It does not measure panel scanout or physical pixel response time.
 
 ## References
 
 - [Apple: MTLDrawable.addPresentedHandler](https://developer.apple.com/documentation/metal/mtldrawable/addpresentedhandler(_:))
 - [Apple: MTLDrawable.presentedTime](https://developer.apple.com/documentation/metal/mtldrawable/presentedtime)
-- [Apple: CACurrentMediaTime](https://developer.apple.com/documentation/quartzcore/cacurrentmediatime())
-- [Apple: CADisplayLink](https://developer.apple.com/documentation/quartzcore/cadisplaylink)
-- [Apple: CADisplayLink.targetTimestamp](https://developer.apple.com/documentation/quartzcore/cadisplaylink/targettimestamp)
-- [Apple: CADisplayLink.duration](https://developer.apple.com/documentation/quartzcore/cadisplaylink/duration)
-- [Apple: CAMetalLayer.displaySyncEnabled](https://developer.apple.com/documentation/quartzcore/cametallayer/displaysyncenabled)
-- [Apple: CAMetalLayer.presentsWithTransaction](https://developer.apple.com/documentation/quartzcore/cametallayer/presentswithtransaction)
-- [Apple: CAMetalLayer.allowsNextDrawableTimeout](https://developer.apple.com/documentation/quartzcore/cametallayer/allowsnextdrawabletimeout)

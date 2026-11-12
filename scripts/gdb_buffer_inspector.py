@@ -22,12 +22,12 @@ try:
 
             width = int(w['buffers'][idx]['width'])
             height = int(w['buffers'][idx]['height'])
-            bounds = w['frame']['damage']['bounds']
+            bounds = w['damage']['bounds']
             dmg_w = int(bounds['width'])
             dmg_h = int(bounds['height'])
             dmg_x = int(bounds['x'])
             dmg_y = int(bounds['y'])
-            full_dmg = int(gdb.parse_and_eval("full_damage")) if "full_damage" in [s.name for s in gdb.selected_frame().block()] else -1
+            full_dmg = 1 if int(w['damage']['n']) < 0 or not bool(w['buffers'][idx]['presented']) else 0
 
             mid_idx = (height // 2) * width + (width // 2) if width > 0 and height > 0 else 0
             p_mid = int(px_ptr[mid_idx]) if width > 0 and height > 0 else 0

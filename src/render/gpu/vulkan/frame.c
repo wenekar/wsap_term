@@ -35,10 +35,9 @@ bool vulkan_slot_renew_semaphore(struct render_gpu *g, struct frame_slot *slot)
 }
 
 /*
- * Takes a slot that the GPU does not use, or returns NULL. With `wait_ns`
- * it waits that long for the oldest slot. The fence of a free slot stays
- * signaled until frame_submit() takes it, so a frame that stops before the
- * submit leaves the slot free.
+ * Acquires an idle frame slot.
+ * Waits up to `wait_ns` nanoseconds when all slots are busy.
+ * Returns the available slot, or NULL on timeout.
  */
 static struct frame_slot *slot_acquire(struct render_gpu *g, uint64_t wait_ns)
 {
@@ -105,7 +104,7 @@ static VkImageMemoryBarrier2 image_barrier(VkImage image, VkImageLayout from, Vk
     return barrier;
 }
 
-/* Adds the change of a texture to layout `to`. The texture records it. */
+/* Appends an image layout transition barrier for texture `t` to `to`. */
 static void barriers_add(struct barriers *bs, struct vulkan_texture *t, VkImageLayout to)
 {
     if (t->layout == to)
@@ -156,8 +155,8 @@ static void set_scissor(VkCommandBuffer cmd, struct rect2i r)
 }
 
 /*
- * Starts the command buffer of the slot. The caller records its uploads
- * next, and then calls pass_begin().
+ * Begins recording commands in the command buffer of `slot`.
+ * Returns true on success, or false on failure.
  */
 static bool frame_begin(struct frame_slot *slot)
 {
@@ -169,9 +168,9 @@ static bool frame_begin(struct frame_slot *slot)
 }
 
 /*
- * Starts drawing into a swapchain image. `clear` NULL means: the pass
- * writes every pixel, so the old pixels do not matter. The viewport is the
- * canvas, so one unit is one pixel also when the image is smaller.
+ * Begins dynamic rendering into swapchain image `image_index`.
+ * Transitions image layout, binds rendering attachments, and sets viewport.
+ * Clears attachment color when `clear` is non-NULL.
  */
 static void pass_begin(struct render_gpu *g, VkCommandBuffer cmd, const struct gpu_surface *gs,
                        uint32_t image_index, struct vector2i canvas,
@@ -220,8 +219,8 @@ static void pass_begin(struct render_gpu *g, VkCommandBuffer cmd, const struct g
 }
 
 /*
- * Ends the pass, submits the frame, and presents the image. On failure the
- * frame did not reach the GPU, and the slot is free again.
+ * Ends rendering, submits recorded commands to the queue, and presents `image_index`.
+ * Returns true on success, or false on submission failure.
  */
 static bool frame_submit(struct render_gpu *g, struct gpu_surface *gs, struct frame_slot *slot,
                          uint32_t image_index)
@@ -293,9 +292,8 @@ static bool frame_submit(struct render_gpu *g, struct gpu_surface *gs, struct fr
 }
 
 /*
- * A frame stopped after it acquired its image. The semaphore of the slot
- * can hold a signal, and the swapchain keeps the image. A new semaphore and
- * a new swapchain put both right.
+ * Aborts frame rendering after image acquisition.
+ * Renews the acquired semaphore of `slot` and marks swapchain `gs` out of date.
  */
 static void frame_abandon(struct render_gpu *g, struct gpu_surface *gs, struct frame_slot *slot)
 {
@@ -305,7 +303,7 @@ static void frame_abandon(struct render_gpu *g, struct gpu_surface *gs, struct f
 
 /* ---- Drawing a built frame ---------------------------------------------- */
 
-/* Makes each texture of the frame fit what the builder asks for. */
+/* Allocates or resizes the glyph atlas and UI image textures for the frame. */
 static bool textures_sync(struct render_gpu *g)
 {
     const struct gpu_build *b = &g->build;
@@ -319,8 +317,7 @@ static bool textures_sync(struct render_gpu *g)
     return true;
 }
 
-/* Copies the new glyph pixels and the new image pixels of the frame into
- * the upload buffer of the slot. */
+/* Copies pending glyph atlas and UI image pixels into the slot upload buffer. */
 static bool uploads_stage(struct render_gpu *g, struct frame_slot *slot)
 {
     const struct gpu_build *b = &g->build;
@@ -352,8 +349,7 @@ static bool uploads_stage(struct render_gpu *g, struct frame_slot *slot)
     return true;
 }
 
-/* Records the copies from the upload buffer into the textures. After it,
- * every texture of the frame can be sampled. */
+/* Records buffer-to-image copies and shader read barriers for dirty textures. */
 static void uploads_record(struct render_gpu *g, struct frame_slot *slot)
 {
     const struct gpu_build *b = &g->build;
@@ -401,11 +397,7 @@ static void uploads_record(struct render_gpu *g, struct frame_slot *slot)
     barriers_flush(cmd, &barriers);
 }
 
-/*
- * The recorded uploads never ran. Their textures hold unknown pixels, and
- * the builder loads all of them again: gpu_build_abort() forgets the atlas,
- * and the images of the frame stay dirty.
- */
+/* Resets texture layouts to undefined when recorded uploads are not submitted. */
 static void uploads_forget(struct render_gpu *g)
 {
     const struct gpu_build *b = &g->build;
@@ -415,7 +407,7 @@ static void uploads_forget(struct render_gpu *g)
             g->images[i].layout = VK_IMAGE_LAYOUT_UNDEFINED;
 }
 
-/* Records the draw commands of the frame, in order. */
+/* Records draw commands and pipeline state for frame instances. */
 static void commands_record(struct render_gpu *g, struct frame_slot *slot,
                             const size_t offsets[GPU_ST_COUNT], struct vector2i bounds)
 {
@@ -473,7 +465,7 @@ static void commands_record(struct render_gpu *g, struct frame_slot *slot,
     }
 }
 
-/* Draws and presents the frame that the builder holds. */
+/* Uploads resources, records render passes, and presents built frame instances. */
 static enum render_gpu_status draw_built(struct render_gpu *g, struct gpu_surface *gs,
                                          struct frame_slot *slot, struct framebuffer *fb,
                                          uint32_t base, uint64_t wait_ns)
@@ -517,7 +509,7 @@ static enum render_gpu_status draw_built(struct render_gpu *g, struct gpu_surfac
     return RENDER_GPU_PRESENTED;
 }
 
-/* True when the frame changes the size of the surface. */
+/* Checks whether framebuffer `fb` resizes swapchain surface `gs`. */
 static bool frame_resizes(const struct gpu_surface *gs, const struct framebuffer *fb)
 {
     return fb->transaction || !vector2i_eq(gs->request_size, fb->size);
@@ -549,6 +541,7 @@ enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surfa
 
 /* ---- Presenting CPU pixels ---------------------------------------------- */
 
+/* Uploads CPU framebuffer pixels and presents damage regions to `gs`. */
 static bool present_pixels(struct render_gpu *g, struct gpu_surface *gs, struct frame_slot *slot,
                            struct framebuffer *fb, const struct damage_list *damage,
                            uint64_t wait_ns)

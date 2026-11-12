@@ -48,7 +48,7 @@ struct app_tabs_spec {
     app_tabs_scene_paint_fn scene_paint;
     void *scene_paint_ud;
     void *ud;
-    /* Open no tab. The caller then adds the first tab. */
+    /* When true, initializes tab model without creating an initial tab. */
     bool empty;
 };
 
@@ -56,11 +56,10 @@ bool app_tabs_mount(struct window *window, const struct app_tabs_spec *spec);
 bool app_tabs_is(const struct window *window);
 
 struct terminal *app_tabs_active(const struct window *window);
-/* The count of the live tabs. A closing tab is not live. */
+/* Returns the count of live active tabs. */
 int app_tabs_count(const struct window *window);
 int app_tabs_active_index(const struct window *window);
-/* The reserved bar height. Closing entries keep this space until their
- * presentation ends. */
+/* Returns the reserved tab bar height in pixels. */
 int app_tabs_bar_height(const struct window *window);
 
 bool app_tabs_new(struct window *window);
@@ -69,26 +68,28 @@ void app_tabs_close(struct window *window, int index);
 void app_tabs_select(struct window *window, int index);
 void app_tabs_reorder(struct window *window, int from, int to);
 
-/* Moves a live tab to another window of the same app, at `slot`. A
- * negative slot adds the tab at the end. The session stays alive. On
- * failure the source keeps the tab. */
+/*
+ * Moves the tab at `index` from window `from` to window `to` at `slot`.
+ * Appends to the end when `slot` is negative.
+ * Returns true on success, or false on transfer failure.
+ */
 bool app_tabs_move(struct window *from, int index, struct window *to, int slot);
-/* Moves a tab to a new window. The source keeps the tab on failure. */
+/*
+ * Detaches the tab at `index` from `window` into a newly created window.
+ * Returns the new window pointer, or NULL on failure.
+ */
 struct window *app_tabs_detach(struct window *window, int index);
 
 void app_tabs_set_theme(struct window *window,
                         const struct wsap_vtcore_theme *theme);
-/* Runs the tab commands and leaves the other shortcuts to the content. */
+/* Executes tab management shortcuts for `window`. */
 void app_tabs_shortcut(struct window *window, enum input_shortcut sc);
-/* The service step of the tab model. Call it outside every frame and every
- * content callback, as the host pass does. It retires each closing tab whose
- * time is due: the window drops its bar entry, and the model then destroys
- * the content. The time is the frame time of the pass. A window closed but
- * not reaped keeps its tabs until the host reaps it. The step opens and
- * closes no window. */
+/*
+ * Retires expired closing tabs in `model` relative to `now_ms`.
+ * Destroys associated terminal content and releases bar entries.
+ */
 void app_tabs_service(struct app_tab_model *model, uint64_t now_ms);
-/* Mounts the active content, lays the UI out, and commits the geometry of
- * the active content. */
+/* Updates UI layout and content mount geometry for the active tab in `window`. */
 void app_tabs_relayout(struct window *window);
 
 #endif

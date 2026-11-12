@@ -1,8 +1,8 @@
 # Architecture
 
-The core has no renderer, PTY, font system, or window dependency.
-Only headers under `include/wsap_vtcore/` form the public interface.
-Do not include private source headers from a host.
+wsap_vtcore has no renderer, PTY, font system, or window dependency.
+Headers under `include/wsap_vtcore/` form the entire public interface.
+Private source headers in `src/` remain internal to the core.
 
 ## Source map
 
@@ -38,65 +38,65 @@ Each source directory lists its own build inputs.
 
 ## Write core
 
-Text and control sequences use shared primitives in `core.c`.
-These primitives handle printing, line feeds, margins, and cursor movement.
-Fast paths must preserve the same visible behavior as the base path.
+Text parsing and control sequences use shared primitives in `core.c`.
+These primitives process printing, line feeds, scroll margins, and cursor movement.
+Fast paths preserve identical visible behavior to the scalar base path.
 See `src/simd.h` for runtime target rules.
 
-The `translate` bit is set when GL holds a character set other than ASCII
-or a single shift waits. The print fast paths test only this bit. When it
-is set, text takes the base path, which maps each character through the
-set. Change the character set state only through the functions in
-`text/charset.h` or call `wsap_vtcore_charset_sync` after the change.
+The `translate` bit is active when GL holds a non-ASCII character set or when a single shift is pending.
+Print fast paths test only this bit.
+When the bit is set, text routes through the base path to map characters through the designated set.
+Character set state changes must use functions in `text/charset.h` or call `wsap_vtcore_charset_sync()`.
 
-A write of 1 KiB or more of complete printable ASCII lines takes a line
-stream. The stream accepts LF lines in newline mode and CRLF lines in other
-modes. Both give the same screen and history. The stream sends the lines that
-leave the screen to history in one batch. The remaining rows point into one
-copy of the input. Code that reads a row must convert an ASCII row first
-(`screen_get_row`) or read its text, because its cells are stale.
+Writes of 1 KiB or larger with complete printable ASCII lines use a line stream.
+The line stream accepts LF line endings in newline mode and CRLF line endings in other modes.
+Both modes generate identical screen and history contents.
+The stream flushes scrolled-off rows to history in a single batch.
+Remaining visible rows reference a shared copy of input text.
+Row access functions convert ASCII rows on demand through `screen_get_row()` to materialize cell attributes.
 
 ## Screen and history
 
-The screen is a circular ring of rows.
-Rows that leave the screen enter the logical-line history store.
+The screen consists of a circular ring of rows.
+Rows that scroll off the top enter the logical-line history store.
 History stores UTF-8 text and delta-encoded attribute runs.
-The alternate screen has no history.
+The alternate screen maintains no scrollback history.
 
-A cell has 16 bits of flags and a 16-bit pad field (`cell.h`).
-The pad field holds blink, conceal, and DECSCA protection, and a style id.
-The style table maps the id to a link and an underline color.
-Id zero means neither, so plain text needs no table lookup.
-History runs, text rows, and reflow copy the pad field without a change.
-When the table is full, a sweep frees the ids that no cell uses.
-The link table frees its links after the same sweep.
+A cell stores 16 bits of flags and a 16-bit pad field (`cell.h`).
+The pad field stores blink, conceal, DECSCA protection flags, and a style identifier.
+The style table maps the style identifier to an OSC 8 hyperlink and an underline color.
+Identifier zero represents plain text without links or custom underline colors, avoiding table lookups.
+History runs, text rows, and reflow operations copy the pad field without modification.
+When the style table fills, a sweep pass reclaims unused identifiers.
+The link table releases unused hyperlinks during the same sweep.
 
-A viewport anchor identifies a logical line and a cell offset before wrapping.
-Output keeps the anchor on the same retained text.
-Resize maps the cell offset to a segment at the new width.
-Eviction clamps the anchor to retained history.
-A long line can lose its prefix when it exceeds the history byte budget.
-The anchor accounts for those removed cells.
+A viewport anchor records a logical line index and an unwrapped cell offset.
+Terminal output keeps the anchor fixed to the same logical text.
+Terminal resize maps the cell offset to the corresponding row segment at the new width.
+History eviction clamps the anchor within retained history bounds.
+When a line exceeds the history byte budget, eviction removes line prefix bytes.
+The anchor adjusts its cell offset for removed prefix cells.
 
-Relative scroll walks from the anchor.
-Absolute scroll uses a circular Fenwick index of wrapped row counts.
-Snapshot capture builds this index when a history view first needs it.
-The write path does not maintain the index.
-A width change starts wide lines with estimated row counts.
-Snapshot capture refines the counts for lines in the view.
+Relative scrolling traverses lines from the viewport anchor.
+Absolute scrolling indexes rows with a circular Fenwick tree of wrapped row counts.
+Snapshot capture constructs this index on the first history query.
+The write path does not update the Fenwick index.
+Width changes assign estimated row counts to wide lines.
+Snapshot capture resolves exact counts for lines visible in the view.
 
 ## Snapshot publication
 
-A snapshot owns copied cells, colors, selection spans, and grapheme data.
-It does not borrow terminal storage.
-The host must not update a snapshot while a reader uses it.
-The host can use separate snapshot objects for separate readers.
+`struct wsap_vtcore_snapshot` owns copied cells, colors, selection spans, and grapheme clusters.
+The snapshot does not borrow memory from the terminal instance.
+A snapshot allows concurrent read access.
+Updating or freeing a snapshot requires exclusive access.
+Separate snapshot instances isolate independent reader threads.
 
-Row keys identify row contents for incremental rendering.
-A scroll result lets a renderer shift retained pixels and repaint changed rows.
-The host shapes and draws text. The core does not skip shaping under load.
+Row keys uniquely identify row contents for incremental presentation.
+Scroll metadata reports vertical row movements to permit pixel shifting and selective repainting.
+The core provides text attributes and graphemes without rendering or shaping glyphs.
+The core never alters text layout or skips shaping state under write load.
 
-Snapshot capture can update private history query metadata.
-It therefore takes the terminal writer lock.
-Getters read the completed snapshot without that lock.
-See [api.md](api.md) for pointer lifetimes and allocation-failure rules.
+Snapshot capture queries internal history state and acquires the terminal writer lock.
+Getter functions access snapshot data without acquiring the terminal lock.
+See [api.md](api.md) for pointer lifetimes and allocation failure contracts.

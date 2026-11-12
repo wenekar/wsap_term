@@ -238,16 +238,35 @@ enum input_push_result {
     INPUT_PUSH_EVICTED_MOTION,
 };
 
+/*
+ * Adds event `ev` to queue `q`.
+ * Merges consecutive pointer motion or scroll events when possible.
+ * Evicts older pointer motion events when the queue is full.
+ * Returns the queue push status.
+ */
 enum input_push_result input_queue_add(struct input_queue *q,
                                         const struct input_event *ev);
 
+/*
+ * Enqueues a file drop event containing URI list `uris` of length `len`.
+ * Returns the number of bytes queued, or 0 on failure.
+ */
 size_t input_queue_push_drop_files(struct input_queue *q, const char *uris,
                                   size_t len);
+
+/*
+ * Enqueues a paste event containing clipboard `data` of length `len`.
+ * Returns the number of bytes queued, or 0 on failure.
+ */
 size_t input_queue_push_paste(struct input_queue *q, const char *data,
                               size_t len);
 
 #define INPUT_SCROLL_MAX_LINES 15
 
+/*
+ * Clamps scroll line count `lines` to the range [-INPUT_SCROLL_MAX_LINES, INPUT_SCROLL_MAX_LINES].
+ * Returns the clamped line count.
+ */
 static inline int input_scroll_clamp(int lines)
 {
     if (lines > INPUT_SCROLL_MAX_LINES) return INPUT_SCROLL_MAX_LINES;
@@ -255,23 +274,41 @@ static inline int input_scroll_clamp(int lines)
     return lines;
 }
 
+/*
+ * Splits UTF-8 text into chunks and enqueues them as text input events.
+ * Returns the total number of bytes enqueued.
+ */
 size_t input_queue_push_text(struct input_queue *q, const char *text,
                            size_t len, enum input_text_source source);
 
+/*
+ * Removes the next event from queue `q` and copies it to `out`.
+ * Merges consecutive scroll events into `out`.
+ * Returns true when an event is retrieved, or false when the queue is empty.
+ */
 bool input_queue_take(struct input_queue *q, struct input_event *out);
 
+/* Clears all events from queue `q` and releases their dynamic buffers. */
 void input_queue_reset(struct input_queue *q);
 
+/* Releases dynamically allocated memory owned by input event `ev`. */
 void input_event_release(struct input_event *ev);
 
 struct input_keyboard_state {
     uint64_t down[(INPUT_KEY_COUNT + 63) / 64];
 };
 
+/* Clears all pressed key states in keyboard tracker `s`. */
 void input_keyboard_reset(struct input_keyboard_state *s);
+
+/* Updates pressed key state in `s` according to key event `ev`. */
 void input_keyboard_update(struct input_keyboard_state *s,
                            const struct input_key_event *ev);
 
+/*
+ * Checks whether key `key` is currently pressed in state `s`.
+ * Returns true if the key is down, or false otherwise.
+ */
 static inline bool input_keyboard_key_down(
         const struct input_keyboard_state *s, enum input_key key)
 {
@@ -301,6 +338,11 @@ enum input_key_route {
     INPUT_KEY_DROPPED,
 };
 
+/*
+ * Matches key event `key` against keymap `km` and shortcut state `st`.
+ * Enqueues shortcut events into `q` and writes matched action to `out_sc`.
+ * Returns the routing action for the key event.
+ */
 enum input_key_route input_shortcut_route_key(const struct input_keymap *km,
         struct input_queue *q,
         struct input_shortcut_state *st,

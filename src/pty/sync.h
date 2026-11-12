@@ -17,6 +17,10 @@
 #define PTY_SYNC_SEND_FLAGS 0
 #endif
 
+/*
+ * Populates Unix domain socket address `addr` with abstract or filesystem `name`.
+ * Returns the address length in bytes, or 0 when `name` is invalid.
+ */
 static inline socklen_t pty_sync_addr(struct sockaddr_un *addr,
                                       const char *name)
 {
@@ -34,6 +38,10 @@ static inline socklen_t pty_sync_addr(struct sockaddr_un *addr,
 #endif
 }
 
+/*
+ * Creates a Unix domain socket with close-on-exec enabled.
+ * Returns the socket file descriptor, or -1 on failure.
+ */
 static inline int pty_sync_socket(void)
 {
 #if defined(__linux__)

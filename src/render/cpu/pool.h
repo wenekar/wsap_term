@@ -50,45 +50,34 @@
 struct pool;
 
 /*
- * Runs fn(ctx, worker, begin, end) for chunks of the items [0, n).
- * - `worker` is 0 on the main thread and 1..pool_workers(p) on the workers.
- *   Use it to pick a per-worker context.
- * - Chunks do not overlap. Together they cover [0, n) once.
- * - `grain` < 1 means 1. With n <= grain, with no workers, or with p NULL,
- *   the main thread runs everything and wakes no worker.
- * - Main thread only. One run at a time. `fn` must not call pool_run().
- *   If it does, that call runs all of its items on the calling thread,
- *   with the worker number of that thread.
+ * Runs `fn` over items [0, n) partitioned into chunks of size `grain`.
+ * Dispatches chunks across worker threads and calling thread.
  */
 typedef void (*pool_fn)(void *ctx, int worker, int begin, int end);
 void pool_run(struct pool *p, int n, int grain, pool_fn fn, void *ctx);
 
 /*
- * Runs fn(ctx, worker) once on each worker and once on the main thread.
- * Returns when every call returned. `worker` is as in pool_run(). With p
- * NULL or with no workers, only the main thread calls fn. Main thread
- * only, not inside pool_run(). `fn` must not call pool_run() or
- * pool_each().
+ * Runs `fn` once on each worker thread and once on the calling thread.
+ * Waits for all executions to complete.
  */
 typedef void (*pool_each_fn)(void *ctx, int worker);
 void pool_each(struct pool *p, pool_each_fn fn, void *ctx);
 
 /*
- * Starts a pool with `workers` threads, clamped to [0, POOL_WORKERS_MAX].
- * A thread that fails to start is left out. It returns when each worker
- * has called font_thread_attach(). Returns NULL only when the memory is
- * missing. Main thread only.
+ * Creates a worker pool with up to `workers` threads.
+ * Returns a pointer to the created pool, or NULL on allocation failure.
  */
 struct pool *pool_create(int workers);
-/* Stops and joins the workers. NULL does nothing. Main thread only. */
+
+/* Stops and joins all worker threads in pool `p` and frees pool memory. */
 void pool_destroy(struct pool *p);
-/* The number of workers that run, not counting the main thread. */
+
+/* Returns the number of worker threads in pool `p`. */
 int pool_workers(const struct pool *p);
 
 /*
- * The default worker count. It is WSAP_RENDER_THREADS when that is a valid
- * count >= 0. Else it is min(nproc - 1, 3). An invalid value prints one
- * warning on stderr.
+ * Computes default worker thread count from environment or processor count.
+ * Returns the resolved worker count.
  */
 int pool_default_workers(void);
 

@@ -95,7 +95,7 @@ bool terminal_exited(const struct terminal *terminal);
 /* Resizes the session to the cell grid of the content widget. An unchanged
  * grid is a no-op. This is the only session resize of this layer. */
 void terminal_commit_geometry(struct terminal *terminal);
-/* Captures the snapshot for the frame. Call it after the geometry commit. */
+/* Captures the terminal snapshot and cursor blink state for the current frame at `now_ms`. */
 void terminal_prepare(struct terminal *terminal, uint64_t now_ms);
 bool terminal_frame_source(struct terminal *terminal, uint64_t now_ms,
                            struct terminal_frame_source *out);
@@ -110,8 +110,7 @@ void terminal_adjust_font_size(struct terminal *terminal, int delta_pt);
 void terminal_focus(struct terminal *terminal, bool focused);
 /* Shows the scrollbar of the content for a moment. */
 void terminal_show_scrollbar(struct terminal *terminal);
-/* Hides the scrollbar of the content. An inactive content uses it, so a
- * flash does not come back after a tab change. */
+/* Hides the content scrollbar overlay. */
 void terminal_hide_scrollbar(struct terminal *terminal);
 /* True while the content shows its scrollbar. */
 bool terminal_scrollbar_visible(const struct terminal *terminal);

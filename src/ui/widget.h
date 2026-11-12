@@ -98,62 +98,88 @@ struct ui_widget {
     } impl;
 };
 
+/* Initializes `widget` with operations table `ops` and user data `userdata`. */
 void ui_widget_init(struct ui_widget *widget,
                     const struct ui_widget_ops *ops, void *userdata);
+/* Destroys `widget` and releases all associated resources. */
 void ui_widget_destroy(struct ui_widget *widget);
+/* Returns the unique accessibility node identifier of `widget`. */
 uint64_t ui_widget_accessibility_id(const struct ui_widget *widget);
 
+/* Sets the accessible name string of `widget`. */
 bool ui_widget_set_accessible_name(struct ui_widget *widget, const char *name);
+/* Sets the accessible description text of `widget`. */
 bool ui_widget_set_accessible_description(struct ui_widget *widget,
                                           const char *description);
+/* Marks the accessibility state of `widget` as invalid or valid. */
 bool ui_widget_set_accessible_invalid(struct ui_widget *widget, bool invalid);
+/* Sets whether accessibility tools ignore `widget`. */
 void ui_widget_set_accessibility_ignored(struct ui_widget *widget,
                                          bool ignored);
 
+/* Appends `child` as the last child of `parent`. */
 bool ui_widget_add_child(struct ui_widget *parent, struct ui_widget *child);
+/* Appends `count` children to `parent`. */
 bool ui_widget_add_children(struct ui_widget *parent,
                             struct ui_widget * const children[], size_t count);
+/* Inserts `child` into `parent` immediately before `before`. */
 bool ui_widget_insert_child(struct ui_widget *parent, struct ui_widget *child,
                             struct ui_widget *before);
+/* Removes `child` from `parent`. */
 bool ui_widget_remove_child(struct ui_widget *parent, struct ui_widget *child);
+/* Returns the count of immediate children in `widget`. */
 size_t ui_widget_child_count(const struct ui_widget *widget);
+/* Returns the child widget at `index`, or NULL if out of bounds. */
 struct ui_widget *ui_widget_child_at(struct ui_widget *widget, size_t index);
+/* Returns the host surface of `widget`, or NULL if unmounted. */
 struct ui_surface *ui_widget_surface(const struct ui_widget *widget);
 
+/* Sets the visibility of `widget`. */
 void ui_widget_set_hidden(struct ui_widget *widget, bool hidden);
+/* Returns true when `widget` is marked hidden. */
 bool ui_widget_is_hidden(const struct ui_widget *widget);
+/* Sets the placement descriptor of `widget`. */
 void ui_widget_set_placement(struct ui_widget *widget,
                              struct ui_placement placement);
+/* Sets an explicit fixed layout size for `widget`. */
 void ui_widget_set_fixed_size(struct ui_widget *widget, struct vector2i size);
 
+/* Registers action callback `fn` and `userdata` for `widget`. */
 void ui_widget_set_action_handler(struct ui_widget *widget, ui_action_fn fn,
                                   void *userdata);
 
+/* Registers event callback `fn` and `userdata` for `widget`. */
 void ui_widget_set_event_handler(struct ui_widget *widget, ui_event_fn fn,
                                  void *userdata);
 
+/* Registers key capture callback `fn` and `userdata` for `widget`. */
 void ui_widget_set_key_capture(struct ui_widget *widget, ui_capture_fn fn,
                                void *userdata);
 
+/* Dispatches input `event` to `widget`. */
 bool ui_widget_event(struct ui_widget *widget, const struct ui_event *event);
 
+/* Sets CSS class, id, and tag names for `widget`. */
 void ui_widget_set_style_identity(struct ui_widget *widget,
                                   const char *class_name,
                                   const char *id_name,
                                   const char *tag_name);
 
+/* Converts surface coordinates to widget local coordinates. */
 static inline struct vector2i ui_widget_to_local(const struct ui_widget *widget,
                                                  struct vector2i surface)
 {
     return vector2i_sub(surface, widget->bounds.pos);
 }
 
+/* Converts widget local coordinates to surface coordinates. */
 static inline struct vector2i ui_widget_to_surface(const struct ui_widget *widget,
                                                    struct vector2i local)
 {
     return vector2i_add(local, widget->bounds.pos);
 }
 
+/* Converts a widget local rectangle to surface coordinates. */
 static inline struct rect2i ui_widget_rect_to_surface(const struct ui_widget *widget,
                                                       struct rect2i local)
 {

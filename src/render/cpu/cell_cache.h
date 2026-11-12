@@ -176,9 +176,8 @@ struct cell_l0 {
 };
 
 /*
- * Looks up an ASCII cell of the default pair. The caller checks the domain
- * first: unshaped id, text < 128, no pixel flags, half 0, the default fg
- * and bg, and a style with only variant bits.
+ * Finds the cached tile for ASCII code point `cp` and `style` in L0 cache.
+ * Returns the matching tile pixels and spill bit.
  */
 static inline struct cell_tile cell_l0_find(const struct cell_l0 *l0, uint32_t cp, uint16_t style)
 {
@@ -204,9 +203,8 @@ static inline unsigned cell_l0_index(uint64_t id)
 }
 
 /*
- * Looks up a cell of the default pair by its glyph id. The caller checks
- * the domain first: id not 0, no pixel flags, half 0, and the default fg
- * and bg.
+ * Finds the cached tile for glyph identifier `id` in L0 cache.
+ * Returns the matching tile pixels and spill bit.
  */
 static inline struct cell_tile cell_l0_find_id(const struct cell_l0 *l0, uint64_t id)
 {
@@ -255,12 +253,8 @@ struct cell_tile cell_cache_find(const struct cell_class *k, struct cell_cache_w
                                  const struct cell_key *key);
 
 /*
- * Asks for a slot for a key that missed. The seen filter admits the key on
- * its second sighting. Returns a tile buffer of cw * ch pixels to compose
- * into, or NULL: compose straight into the canvas. The caller must fill
- * the whole tile before its next call into the cache. `spill` is the spill
- * flag that cell_cache_find() returns for this key later.
- * Any thread during the phase.
+ * Allocates a worker cache slot for missing `key` and records `spill` status.
+ * Returns a pointer to the destination tile buffer, or NULL when unadmitted.
  */
 uint32_t *cell_cache_claim(struct cell_class *k, struct cell_cache_worker *w,
                            const struct cell_key *key, bool spill);

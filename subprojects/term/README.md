@@ -1,8 +1,9 @@
 # wsap_vtcore
 
-wsap_vtcore is a headless terminal core. It parses terminal output and keeps
-screen, scrollback, input-mode, and snapshot state. It is a C11 library. It
-needs libm and threads.
+wsap_vtcore is a headless terminal core.
+It parses terminal output and maintains screen, scrollback, input-mode, and snapshot state.
+The library uses C11.
+It requires libm and a threads library.
 
 | Path | Contents |
 | --- | --- |
@@ -11,9 +12,9 @@ needs libm and threads.
 | `tests/` | Unit, model, fuzz, portability, and Kitty parser tests |
 | `benchmarks/` | Write, resize, and history benchmarks |
 | `tools/` | Amalgamation and Unicode generators |
-| `examples/` | Small stdin-to-snapshot embedding example |
+| `examples/` | Stdin-to-snapshot embedding example |
 
-Build and test the library alone:
+Build and test the standalone library:
 
 ```sh
 meson setup build && meson test -C build
@@ -21,79 +22,61 @@ meson setup build && meson test -C build
 
 ## Embedding
 
-Use `#include <wsap_vtcore/wsap_vtcore.h>`. The header includes the input and
-type headers. It compiles as C11 and as C++. The package adds only the
-include directory, so a `wsap_vtcore.h` from another library does not shadow
-it. Initialize options with `{0}`. See [docs/api.md](docs/api.md) for
-ownership, locking, and failure rules.
+Include `<wsap_vtcore/wsap_vtcore.h>`.
+The header includes input and type definitions.
+The header compiles with C11 and C++ compilers.
+The package exports only its include directory.
+This prevents header shadowing from other libraries.
+Zero-initialize `struct wsap_vtcore_options` with `{0}`.
+See [docs/api.md](docs/api.md) for ownership, locking, and failure rules.
 
-- **Meson subproject:** use `dependency('wsap_vtcore')` or get
-  `wsap_vtcore_dep` from `subproject('wsap_vtcore')`. The dependency adds
-  libm and threads.
-- **Amalgamation:** run `tools/amalgamate.py . OUT`. It writes
-  `OUT/wsap_vtcore.c` and `OUT/wsap_vtcore.h`. Compile `wsap_vtcore.c` with a
-  C11 compiler and link libm and threads. On POSIX, pass `-pthread`. A Rust
-  `build.rs` needs one `cc::Build::new().file("wsap_vtcore.c")` call.
-- **Sources:** compile `src/*.c` and `src/osc/*.c` once each. Do not compile
-  `src/gstore.c`, `src/hist.c`, or `src/term.c`: `src/term_state.c` includes
-  them. Add `src` and `include/wsap_vtcore` to the include path. Link libm
-  and threads. `term-cross-test` uses this list.
+Embedding options:
 
-On Windows the writer lock is an SRWLOCK from the system library. It needs no
-extra link.
+- **Meson subproject:** Use `dependency('wsap_vtcore')` or `subproject('wsap_vtcore').get_variable('wsap_vtcore_dep')`. The dependency adds libm and threads.
+- **Amalgamation:** Run `tools/amalgamate.py . OUT`. The script writes `OUT/wsap_vtcore.c` and `OUT/wsap_vtcore.h`. Compile `wsap_vtcore.c` with a C11 compiler and link libm and threads. On POSIX systems, add `-pthread`. In Rust `build.rs`, call `cc::Build::new().file("wsap_vtcore.c")`.
+- **Direct sources:** Compile `src/*.c` and `src/osc/*.c`. Do not compile `src/gstore.c`, `src/hist.c`, or `src/term.c` directly. `src/term_state.c` includes them. Add `src` and `include/wsap_vtcore` to the include path. Link libm and threads. `term-cross-test` validates this configuration.
 
-A host connects the terminal in four places:
+On Windows, the internal writer lock uses system `SRWLOCK` primitives without additional links.
 
-1. Create it with `wsap_vtcore_new()`. Set `callbacks.reply` to send replies
-   to the program. Set `name` to the name that programs read with XTVERSION
-   and XTGETTCAP.
-2. Feed program output with `wsap_vtcore_feed()`.
-3. Put key and mouse events into `struct wsap_vtcore_key_event` and
-   `struct wsap_vtcore_mouse_event`. Encode them with
-   `wsap_vtcore_input_encode_key()` and `wsap_vtcore_input_encode_mouse()`.
-   Send the bytes to the program.
-4. Paint from a `struct wsap_vtcore_snapshot`. The snapshot gives code points,
-   colors, and attributes. The host shapes and draws the glyphs.
+Integration uses four main interfaces:
 
-`examples/stdin_snapshot.c` shows steps 1, 2, and 4. It builds against the
-installed Meson dependency, or against the amalgamation with
-`-DWSAP_VTCORE_AMALGAMATION`.
+1. `wsap_vtcore_new()` creates the terminal instance. The `callbacks.reply` function pointer receives terminal replies. The `name` string sets the terminal name for XTVERSION and XTGETTCAP reports.
+2. `wsap_vtcore_feed()` accepts terminal output bytes for parsing.
+3. `wsap_vtcore_input_encode_key()` and `wsap_vtcore_input_encode_mouse()` encode input events into terminal escape sequences.
+4. `struct wsap_vtcore_snapshot` exposes screen contents, colors, and cell attributes for drawing.
+
+`examples/stdin_snapshot.c` demonstrates instance creation, byte feeding, and snapshot reading.
+It compiles against the installed Meson dependency or against the amalgamation with `-DWSAP_VTCORE_AMALGAMATION`.
 
 ## SIMD
 
-The hot paths have AVX2, AVX-512, and NEON kernels. Without them, scroll and
-line-feed output runs 8 to 30 times slower. The build needs no flags to get
-them:
+Hot code paths provide AVX2, AVX-512, and NEON kernels.
+Kernels accelerate line feed bursts and scroll operations.
+The build requires no special flags:
 
-- On x86-64 with GCC or Clang, each kernel compiles at every level with a
-  target attribute. The first `wsap_vtcore_new()` selects the highest level
-  that the CPU supports: `base` (x86-64), `avx2` (x86-64-v3), or `avx512`
-  (x86-64-v4 with VBMI and VBMI2). `wsap_vtcore_isa()` names the level in use.
-  Set `WSAP_VTCORE_ISA` to a lower level name to force it.
-- The `arch_flag` option, such as `-march=x86-64-v3`, sets the lowest level.
-  Checks at or below that level become constants, and their kernels inline.
-- aarch64 always has NEON, so it needs no choice at run time.
-- MSVC gets only the levels that its `/arch` flag enables.
+- On x86-64 with GCC or Clang, functions compile with target attributes for each level. The first call to `wsap_vtcore_new()` selects the highest supported CPU level: `base` (x86-64), `avx2` (x86-64-v3), or `avx512` (x86-64-v4 with VBMI and VBMI2). `wsap_vtcore_isa()` returns the active level name. The `WSAP_VTCORE_ISA` environment variable overrides this selection.
+- The `arch_flag` option (such as `-march=x86-64-v3`) sets the minimum target level. Checks at or below that level evaluate as compile-time constants and inline their kernels.
+- On aarch64, code always uses NEON without runtime selection.
+- On MSVC, builds enable only the levels specified by the `/arch` flag.
 
-See `src/simd.h` before you change or add a kernel.
+See `src/simd.h` for SIMD kernel rules.
 
 ## Public API
 
-`wsap_vtcore_version()` returns the library version. Every global symbol
-starts with `wsap_vtcore_`. The library builds with hidden symbols, so a
-shared build exports only the `WSAP_VTCORE_API` functions. `term-symbols-test`
-checks both rules.
+`wsap_vtcore_version()` returns the library version code.
+Every public symbol begins with `wsap_vtcore_`.
+The library hides internal symbols by default.
+Shared library builds export only `WSAP_VTCORE_API` symbols.
+`term-symbols-test` verifies both rules.
 
-Public structs are not opaque. Their layout is part of the current interface,
-but this version makes no ABI promise. See
-[docs/compatibility.md](docs/compatibility.md).
+Public structs are non-opaque for direct field access.
+Struct layouts belong to the current interface version without ABI stability guarantees across releases.
+See [docs/compatibility.md](docs/compatibility.md).
 
-The `static inline` helpers (`wsap_vtcore_color_*`, `wsap_vtcore_view_color`,
-`wsap_vtcore_attr_underline`) decode documented bit layouts. Binding
-generators such as bindgen skip them. Copy them into the binding, or use the
-generator's wrappers for static functions.
+Static inline helpers (`wsap_vtcore_color_*`, `wsap_vtcore_view_color`, `wsap_vtcore_attr_underline`) decode bit layouts.
+Foreign-function bindings can reimplement these helpers or use static wrapper functions.
 
-The library does not provide a renderer, font system, PTY, or process runner.
+The core contains no renderer, font rasterizer, PTY driver, or process runner.
 
 ## Documents
 

@@ -24,13 +24,17 @@ struct ui_debug_parts {
     int n, cap;
 };
 
+/* Frees memory allocated in a debug parts collection. */
 void ui_debug_parts_free(struct ui_debug_parts *parts);
 
+/* Appends a named debug part rectangle to `out`. */
 void ui_debug_part(struct ui_debug_parts *out, const char *name, int index,
                    struct rect2i rect);
+/* Appends a named debug part rectangle with label text to `out`. */
 void ui_debug_part_text(struct ui_debug_parts *out, const char *name,
                         int index, struct rect2i rect,
                         const char *text, size_t len);
+/* Collects debug inspection parts from `widget` into `out`. */
 void ui_debug_collect_parts(const struct ui_widget *widget,
                             struct ui_debug_parts *out);
 
@@ -41,30 +45,40 @@ struct ui_debug_view {
     const struct ui_scene *scene;
 };
 
+/* Returns the type name string of `widget`. */
 const char *ui_debug_type_name(const struct ui_widget *widget);
 
+/* Finds a widget in `root` matching `selector`. */
 const struct ui_widget *ui_debug_find(const struct ui_widget *root,
                                       const char *selector);
+/* Writes the hierarchy path from `root` to `widget` into `buf`. */
 bool ui_debug_path(const struct ui_widget *root,
                    const struct ui_widget *widget, char *buf, size_t cap);
 
+/* Finds the topmost visible widget at point `p` under `root`. */
 const struct ui_widget *ui_debug_widget_at(const struct ui_widget *root,
                                            struct vector2i p);
 
+/* Returns the widget that owns scene operation `op_index`. */
 const struct ui_widget *ui_debug_op_owner(const struct ui_debug_view *view,
                                           int op_index);
 
+/* Calculates the bounding box of scene text operation `op`. */
 struct rect2i ui_debug_text_box(const struct ui_scene *scene,
                                 const struct ui_scene_op *op);
 
+/* Writes the widget hierarchy tree starting at `start` to `j` as JSON. */
 void ui_debug_write_tree(struct json_writer *j,
                          const struct ui_debug_view *view,
                          const struct ui_widget *start, int max_depth);
+/* Writes the properties and layout of `widget` to `j` as JSON. */
 void ui_debug_write_widget(struct json_writer *j,
                            const struct ui_debug_view *view,
                            const struct ui_widget *widget);
+/* Writes hit test information for point `p` to `j` as JSON. */
 void ui_debug_write_hit(struct json_writer *j,
                         const struct ui_debug_view *view, struct vector2i p);
+/* Writes scene operations in `view` to `j` as JSON, optionally filtered by `filter`. */
 void ui_debug_write_scene(struct json_writer *j,
                           const struct ui_debug_view *view,
                           const struct ui_widget *filter);
@@ -85,8 +99,10 @@ struct ui_debug_lint {
     int offset;
 };
 
+/* Inspects scene operations in `view` for alignment and overflow defects. */
 int ui_debug_lint_scene(const struct ui_debug_view *view,
                         struct ui_debug_lint *out, int cap);
+/* Writes scene lint results for `view` to `j` as JSON. */
 void ui_debug_write_lint(struct json_writer *j,
                          const struct ui_debug_view *view);
 
@@ -111,6 +127,7 @@ struct ui_debug_overlay {
     bool has_pointer;
 };
 
+/* Appends debug overlay graphics to `scene`. */
 bool ui_debug_overlay_append(struct ui_scene *scene,
                              const struct ui_debug_view *view,
                              const struct ui_debug_overlay *overlay);

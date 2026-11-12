@@ -7,6 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+/*
+ * Expands dynamic buffer `buf` to hold at least `need` elements of size `elem`.
+ * Doubles buffer capacity until `need` fits.
+ * Returns true on success, or false on allocation failure.
+ */
 static inline bool util_grow(void *buf, int *cap, int need, size_t elem)
 {
     if (need <= *cap)

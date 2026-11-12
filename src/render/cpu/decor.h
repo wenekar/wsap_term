@@ -99,11 +99,9 @@ struct decor_cache *decor_cache_create(void);
 void decor_cache_destroy(struct decor_cache *c);
 
 /*
- * Returns the set for the metrics of a font. It builds a missing set, and
- * it can evict the least recently used one. Main thread, before the
- * parallel phase. Returns NULL when the memory is missing. The caller then
- * draws no decorations and caches no decorated cell. Steady state
- * allocates nothing.
+ * Retrieves or rasterizes the decoration glyph set matching font metrics `m`.
+ * Evicts least recently used sets when cache capacity is exceeded.
+ * Returns the decoration set, or NULL on allocation failure.
  */
 const struct decor_set *decor_get(struct decor_cache *c, const struct font_metrics *m);
 

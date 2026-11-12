@@ -238,9 +238,7 @@ bool app_tabs_mount(struct window *w, const struct app_tabs_spec *spec)
         free(tabs);
         return false;
     }
-    /* The window mounts the root before it can take a tab. A failure here
-     * leaves the window to the caller, and the destroy hook frees the
-     * window tab state. The caller still holds the tab. */
+    /* Binds the initial tab or creates a new tab in the mounted window. */
     if (spec->tab)
         return app_tabs_bind(w, spec->tab, -1);
     if (spec->empty)

@@ -56,21 +56,21 @@ struct app_tab_model {
     struct app_tab_flight flight;
 };
 
-/* Adds a content to the table. The table owns the content, also on
- * failure: it then destroys the content and returns 0. */
+/*
+ * Adds terminal `content` to `model` and assigns a new tab ID.
+ * Destroys `content` and returns 0 on allocation failure.
+ */
 app_tab_id app_tab_model_add(struct app_tab_model *model,
                              struct terminal *content);
-/* The tab with this ID, or NULL. The pointer is valid until the next add or
- * destroy. */
+/* Finds the tab associated with `id` in `model`. Returns NULL if not found. */
 struct app_tab *app_tab_model_get(const struct app_tab_model *model,
                                   app_tab_id id);
-/* The tab that holds this content, or NULL. */
+/* Finds the tab containing terminal `content` in `model`. Returns NULL if not found. */
 struct app_tab *app_tab_model_find(const struct app_tab_model *model,
                                    const struct terminal *content);
-/* Destroys the tab and its content. This is the only place that destroys
- * app content. */
+/* Removes tab `id` from `model` and frees its terminal content and label. */
 void app_tab_model_destroy(struct app_tab_model *model, app_tab_id id);
-/* Destroys every tab. Call it after the windows are gone. */
+/* Destroys all tabs in `model` and frees model storage. */
 void app_tab_model_fini(struct app_tab_model *model);
 
 #endif

@@ -8,6 +8,7 @@
 
 /* The state of one surface: its swapchain and the texture of its CPU pixels. */
 
+/* Destroys swapchain semaphores, image views, and handle. */
 static void chain_destroy(struct render_gpu *g, struct vulkan_swapchain *c)
 {
     VkDevice device = g->dev.device;
@@ -65,11 +66,7 @@ void render_gpu_surface_free(void *gpu_surface)
     free(gs);
 }
 
-/*
- * Reads what the surface supports. On Wayland, Mesa makes a new registry
- * for each of these queries and waits for the compositor each time. Thus
- * query one time for each surface, not one time for each frame.
- */
+/* Queries and caches surface formats and present modes supported by physical device. */
 static bool traits_ensure(struct render_gpu *g, struct gpu_surface *gs, VkSurfaceKHR surface)
 {
     if (gs->traits.surface == surface)
@@ -116,7 +113,7 @@ static bool traits_ensure(struct render_gpu *g, struct gpu_surface *gs, VkSurfac
     return ok;
 }
 
-/* Makes the view and the semaphore of each swapchain image. */
+/* Creates image views and rendered semaphores for all swapchain images. */
 static bool chain_images(struct render_gpu *g, struct vulkan_swapchain *c, VkFormat format)
 {
     VkDevice device = g->dev.device;
@@ -153,8 +150,7 @@ static VkPresentModeKHR present_mode_of(const struct gpu_surface *gs, bool teari
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
-/* Records what the swapchain was checked for. On X11 the extent comes from
- * the window, and it can lag behind `size`. Then check again at the next frame. */
+/* Records requested surface dimensions and presentation flags for `gs`. */
 static void record_request(struct gpu_surface *gs, struct vector2i size, bool tearing)
 {
     gs->request_size = (struct vector2i){ .x = (int)gs->extent.width,

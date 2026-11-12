@@ -55,13 +55,7 @@ void latency_probe_fullscreen(bool fullscreen);
  * sample.
  */
 
-/* The sample that the frame being submitted belongs to, or 0 when no sample
- * waits for a presentation. A sample waits from the frame that renders it until
- * a display presents one of its frames, or until the benchmark starts the next
- * sample. The completion of a frame is separate: a frame that the display
- * discards retires nothing, so a later frame of the same request carries the
- * sample again. Call it on the thread that submits the frame, before the frame
- * completes, and copy the result. */
+/* Returns the active probe sample ID pending presentation, or 0 if none is pending. */
 uint64_t latency_probe_frame_target(void);
 
 /*

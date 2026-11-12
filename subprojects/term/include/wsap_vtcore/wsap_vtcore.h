@@ -156,8 +156,9 @@ WSAP_VTCORE_API size_t wsap_vtcore_scan_printable_span(const char *buf, size_t l
 
 WSAP_VTCORE_API const char *wsap_vtcore_isa(void);
 
-/* Returns NULL for invalid options or allocation failure. The core copies the
- * options' theme, callbacks and name; callback userdata remains caller-owned.
+/* Creates a new terminal instance from options.
+ * Returns NULL for invalid options or allocation failure.
+ * Copies options theme, callbacks, and name.
  */
 WSAP_VTCORE_API struct wsap_vtcore *wsap_vtcore_new(const struct wsap_vtcore_options *opt);
 /* NULL is allowed. Stop all users before freeing the terminal. */
@@ -262,11 +263,17 @@ WSAP_VTCORE_API struct wsap_vtcore_input_result wsap_vtcore_input_encode_paste(
     char *buf, size_t capacity
 );
 WSAP_VTCORE_API struct wsap_vtcore_cursor wsap_vtcore_cursor(const struct wsap_vtcore *t);
-/* Returned strings belong to the caller. Release them with text_free.
- * NULL means no value, invalid input, or allocation failure.
+/* Returns the current working directory string.
+ * Release with wsap_vtcore_text_free().
+ * Returns NULL when unset or on allocation failure.
  */
 WSAP_VTCORE_API char *wsap_vtcore_cwd(const struct wsap_vtcore *t);
+/* Returns the current pointer shape string.
+ * Release with wsap_vtcore_text_free().
+ * Returns NULL when unset or on allocation failure.
+ */
 WSAP_VTCORE_API char *wsap_vtcore_pointer_shape(const struct wsap_vtcore *t);
+/* Releases string memory returned by wsap_vtcore_cwd() or wsap_vtcore_pointer_shape(). */
 WSAP_VTCORE_API void wsap_vtcore_text_free(char *text);
 
 struct wsap_vtcore_scrollback {

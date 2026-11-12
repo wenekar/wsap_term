@@ -1,6 +1,24 @@
 # Build validation
 
-Build the core without the app:
+## Prerequisites
+
+The standalone build requires these tools and libraries:
+
+- A C11 compiler
+- Meson and Ninja
+- pkg-config
+- System math library (`libm`)
+- POSIX threads
+
+Tests also require:
+
+- Python 3.10 or later
+- Bash
+- Zig (for cross-compilation checks)
+
+## Standalone build
+
+Build and test the core without the application:
 
 ```sh
 meson setup build -Dkitty=disabled
@@ -8,16 +26,40 @@ meson compile -C build
 meson test -C build --print-errorlogs
 ```
 
-The `term-cross-test` uses Zig to check the source files and amalgamation for
-Linux AArch64, macOS x86-64 and AArch64, and Windows GNU x86-64. It returns a
-Meson skip when Zig is not installed. Install Zig to run this check.
+## Validation targets
 
-`term-package-test` builds with tests disabled, installs to a temporary prefix,
-and runs C shared and static consumers, a C++ shared consumer, and an
-amalgamation consumer. It uses only public headers.
+### Cross-platform test
 
-Build with `-Dfuzzing=true` and Clang to add the libFuzzer target and its
-`fuzz` suite. [testing.md](testing.md) describes all test layers.
+`term-cross-test` uses Zig to verify compilation.
+It builds the source files and the amalgamation for these targets:
+
+- Linux AArch64
+- macOS x86-64 and AArch64
+- Windows GNU x86-64
+
+The test skips automatically when Zig is not installed.
+Install Zig to run this check.
+
+### Package test
+
+`term-package-test` validates installation and public consumers.
+It disables tests and installs the core to a temporary prefix.
+It then builds and links four consumer programs:
+
+- A C shared-library consumer
+- A C static-library consumer
+- A C++ shared-library consumer
+- An amalgamation consumer
+
+Consumers use only public headers.
+
+### Fuzzing target
+
+Configure with `-Dfuzzing=true` under Clang to enable libFuzzer targets.
+This option adds the `fuzz` test suite.
+See [testing.md](testing.md) for full test suite details.
+
+## Source distribution
 
 Create a source archive with:
 
@@ -25,6 +67,4 @@ Create a source archive with:
 meson dist -C build --no-tests
 ```
 
-The standalone build needs a C11 compiler, Meson, Ninja, pkg-config, libm, and
-threads. Tests also use Python 3.10 or newer and Bash. The standalone source
-archive contains the public headers, implementation files, tests, and tools.
+The standalone archive contains public headers, source files, tests, and tools.

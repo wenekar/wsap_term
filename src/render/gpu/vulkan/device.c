@@ -27,8 +27,7 @@ static uint32_t memory_type(struct render_gpu *g, uint32_t type_bits, VkMemoryPr
     return UINT32_MAX;
 }
 
-/* Allocates memory with the `want` properties. With `any`, memory without
- * them is permitted when the device has none with them. */
+/* Allocates device memory matching required memory properties. */
 static bool memory_allocate(struct render_gpu *g, const VkMemoryRequirements *reqs,
                             VkMemoryPropertyFlags want, bool any, VkDeviceMemory *out)
 {
@@ -45,7 +44,7 @@ static bool memory_allocate(struct render_gpu *g, const VkMemoryRequirements *re
     return vkAllocateMemory(g->dev.device, &info, NULL, out) == VK_SUCCESS;
 }
 
-/* Destroys the image of the texture. The descriptor set stays. */
+/* Destroys image and memory handles of texture `t` and preserves descriptor set. */
 static void texture_drop_image(struct render_gpu *g, struct vulkan_texture *t)
 {
     VkDevice device = g->dev.device;
@@ -405,11 +404,7 @@ enum gpu_choice {
     GPU_SOFTWARE,
 };
 
-/*
- * WSAP_RENDER_GPU: "0" or "off" gives no GPU. "software" also accepts a
- * Vulkan device that runs on the CPU, such as lavapipe. The default
- * refuses one, because the CPU renderer of this program is faster.
- */
+/* Evaluates the WSAP_RENDER_GPU environment variable to select GPU backend mode. */
 static enum gpu_choice gpu_choice(void)
 {
     const char *env = getenv("WSAP_RENDER_GPU");
@@ -426,11 +421,7 @@ static bool has_extension(const VkExtensionProperties *list, uint32_t count, con
     return false;
 }
 
-/*
- * The window layer makes the VkSurfaceKHR of each window, and this layer
- * cannot ask it which extensions it needs. So the instance enables
- * VK_KHR_surface and every window system extension that the loader has.
- */
+/* Creates the Vulkan instance with surface and window system extension support. */
 static bool instance_create(struct render_gpu *g)
 {
     static const char *const window_systems[] = {
@@ -472,7 +463,7 @@ static bool instance_create(struct render_gpu *g)
     return vkCreateInstance(&info, NULL, &g->dev.instance) == VK_SUCCESS;
 }
 
-/* True when the device can run the backend. Writes its graphics queue family. */
+/* Checks physical device capabilities and retrieves its graphics queue family index. */
 static bool device_usable(VkPhysicalDevice pd, bool software_ok, uint32_t *queue_family)
 {
     VkPhysicalDeviceProperties props;
@@ -522,12 +513,7 @@ static bool device_usable(VkPhysicalDevice pd, bool software_ok, uint32_t *queue
     return found;
 }
 
-/*
- * Takes the first usable device in the order of the loader. That order is
- * the choice of the system: the loader and the Mesa device selection put
- * the default GPU first, and they obey DRI_PRIME and MESA_VK_DEVICE_SELECT.
- * So a terminal does not wake a second GPU on its own.
- */
+/* Selects a compatible physical device and creates the logical device and graphics queue. */
 static bool device_create(struct render_gpu *g, bool software_ok)
 {
     uint32_t count = 0;
@@ -572,7 +558,7 @@ static bool device_create(struct render_gpu *g, bool software_ok)
     return true;
 }
 
-/* The pools, the layouts, the sampler, and the frame slots. */
+/* Creates command pools, descriptor layouts, samplers, and per-frame slot resources. */
 static bool objects_create(struct render_gpu *g)
 {
     VkDevice device = g->dev.device;

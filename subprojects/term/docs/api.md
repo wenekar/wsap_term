@@ -1,84 +1,79 @@
 # API guide
 
-Include `wsap_vtcore/wsap_vtcore.h`. Use C11. The public header also works
-as C++ and declares functions with C linkage.
+Include `<wsap_vtcore/wsap_vtcore.h>`.
+The public header compiles as C11 and C++.
+Functions use C linkage.
 
 ## Create and free
 
-Zero-initialize `struct wsap_vtcore_options`. Passing `NULL` has the same
-effect as zero options. A zero width or height selects 80 columns or 24 rows.
-Zero scrollback selects `WSAP_VTCORE_SCROLLBACK_DEFAULT`; use
-`WSAP_VTCORE_SCROLLBACK_MAX` as the maximum. Zero theme selects built-in
-colors. A null or empty name selects `wsap_vtcore`. Zero cursor style selects
-a block cursor. A zero reserved field is required.
+Zero-initialize `struct wsap_vtcore_options`.
+Passing `NULL` selects default options.
+A zero width or height selects 80 columns and 24 rows.
+Zero scrollback selects `WSAP_VTCORE_SCROLLBACK_DEFAULT`.
+`WSAP_VTCORE_SCROLLBACK_MAX` is the maximum scrollback limit.
+Zero theme selects built-in colors.
+A NULL or empty name selects `wsap_vtcore`.
+Zero cursor style selects a block cursor (`WSAP_VTCORE_CURSOR_BLOCK`).
+The reserved field requires zero initialization.
 
-`wsap_vtcore_new` returns `NULL` for invalid options or allocation failure.
-It copies option values. It does not copy callback userdata. The host owns
-that data and must keep it valid until the core is freed. Free a core with
-`wsap_vtcore_free`; do not call any other core function after free.
+`wsap_vtcore_new()` creates a terminal instance.
+The function returns `NULL` for invalid options or memory allocation failures.
+The core copies configuration options except `callbacks.ud`.
+The host retains ownership of `callbacks.ud` pointer targets.
+`wsap_vtcore_free()` releases a terminal instance.
+Calling core functions on a freed terminal causes undefined behavior.
 
-Allocation failure can also affect later operations. Check boolean results
-where provided. A function without a failure result does not report all
-internal allocation failures. An allocation failure can lose output, but the
-terminal stays valid. When memory returns, a full reset (`ESC c`) gives the
-same screen as a new terminal. `alloc-failure-test` checks this for each
-allocation in its workloads.
+Internal allocation failure preserves terminal state validity.
+Functions with boolean return types return false on allocation failure.
+Functions without failure return values drop unallocatable output without crashing.
+A full reset (`ESC c`) restores initial screen state after memory becomes available.
+`alloc-failure-test` verifies core behavior under allocation failures.
 
 ## Threads and callbacks
 
-Core operations on one terminal serialize through an internal writer lock.
-`wsap_vtcore_lock` and `wsap_vtcore_unlock` let a host group calls under one
-lock. Lock and unlock on the same thread, and balance every lock. Calls made
-inside a held lock are re-entrant on that thread. Do not free a terminal while
-another thread uses it. Snapshot objects are separate caller-owned objects.
-Multiple threads can read one snapshot if no thread updates or frees it.
+An internal writer lock serializes core operations on each terminal instance.
+`wsap_vtcore_lock()` and `wsap_vtcore_unlock()` expose this lock for batch operations.
+The lock supports recursive locking on the same thread.
+Each lock call requires a matching unlock call on that thread.
+Concurrent destruction of a terminal instance causes undefined behavior.
+Snapshot objects operate independently from terminal instances.
+Multiple threads can read the same snapshot concurrently when no thread updates or frees it.
 
-Callbacks run synchronously during core operations. Callback text is borrowed
-and must not be retained after the callback returns. Callback userdata remains
-owned by the host. Callback work runs while the terminal is locked. Keep it
-short. Avoid waiting for a thread that may need the same terminal. A reply
-callback receives the response bytes and their length; it must send or copy
-them before it returns.
-
-Do not feed, resize, free, or otherwise change the terminal from a callback.
-The recursive lock does not make parser re-entry safe. Queue such work until
-the enclosing call returns. Explicit locking outside callbacks can group
-ordinary API calls.
+Callbacks execute synchronously during core operations.
+Callback text pointers reference temporary buffers that become invalid when the callback returns.
+The terminal holds its internal lock during callback execution.
+Callbacks must not invoke mutating operations (`wsap_vtcore_feed`, `wsap_vtcore_resize`, `wsap_vtcore_free`).
+The recursive lock does not permit parser re-entry.
+Queue deferred mutations until enclosing calls return.
+The `reply` callback delivers terminal response bytes and their byte length.
+The callback must copy or transmit response bytes before returning.
 
 ## Feeding output
 
-Pass a byte span to `wsap_vtcore_feed`. `NULL` is valid only when `len` is
-zero. The only defined feed flag is `WSAP_VTCORE_FEED_ONLCR`; other flag bits
-are rejected. The function returns false for a null terminal, invalid byte
-pointer, or unsupported flags. These argument failures happen before parsing
-input. True means the supplied span was accepted by the parser. It does not
-mean that every sequence was supported or that every internal allocation
-succeeded. The caller can release or reuse the input buffer after return.
-
-Feeding arbitrary chunks is supported, including chunks that end inside a
-multibyte character or escape sequence. Preserve byte order between calls.
+`wsap_vtcore_feed()` supplies output bytes to the terminal parser.
+A NULL byte pointer is valid only when `len` is zero.
+`WSAP_VTCORE_FEED_ONLCR` is the only supported flag.
+The function returns false for a NULL terminal, an invalid byte pointer, or unsupported flags.
+The function returns true when the parser accepts the byte span.
+A true return does not guarantee support for every sequence or success of every internal allocation.
+The core does not retain input buffers after the function returns.
+The parser accepts arbitrary chunk boundaries, including splits inside multibyte characters or escape sequences.
 
 ## Character sets
 
-The core decodes output as UTF-8. It also supports the ISO 2022 character
-sets of DEC terminals, as xterm does in UTF-8 mode. A set changes only the
-printable ASCII codes 0x21 to 0x7E. A space, DEL, and all other code points
-do not change.
+The core decodes input as UTF-8.
+It supports ISO 2022 character sets from DEC terminals.
+A character set mapping modifies only printable ASCII codes (0x21 to 0x7E).
+Space (0x20), DEL (0x7F), and non-ASCII code points do not change.
 
-- `ESC ( F`, `ESC ) F`, `ESC * F`, and `ESC + F` designate a 94-character
-  set into G0, G1, G2, or G3. `ESC - F`, `ESC . F`, and `ESC / F` designate a
-  96-character set into G1, G2, or G3.
-- SI puts G0 into GL. SO puts G1 into GL. `ESC n` (LS2) and `ESC o` (LS3)
-  put G2 or G3 into GL.
-- `ESC N` (SS2) and `ESC O` (SS3) select G2 or G3 for the next character
-  only. The C1 forms U+008E and U+008F do the same. A control sequence
-  before the character does not cancel the single shift. A combining mark
-  joins the previous cell, so it does not use the single shift.
-- `ESC ~`, `ESC }`, and `ESC |` (LS1R, LS2R, LS3R) select GR. Bytes from 0x80
-  are UTF-8, so GR does not change text. xterm maps U+00A0 to U+00FF through
-  GR. The core does not. It keeps GR only for DECSC and DECCIR.
+- `ESC ( F`, `ESC ) F`, `ESC * F`, and `ESC + F` designate 94-character sets into G0, G1, G2, or G3.
+- `ESC - F`, `ESC . F`, and `ESC / F` designate 96-character sets into G1, G2, or G3.
+- SI activates G0 in GL. SO activates G1 in GL.
+- `ESC n` (LS2) and `ESC o` (LS3) activate G2 or G3 in GL.
+- `ESC N` (SS2) and `ESC O` (SS3) select G2 or G3 for the next character only. U+008E and U+008F provide equivalent C1 controls. Intervening control sequences do not cancel a pending single shift. Combining marks join the previous cell without consuming the single shift.
+- `ESC ~`, `ESC }`, and `ESC |` (LS1R, LS2R, LS3R) activate character sets in GR. Bytes from 0x80 decode as UTF-8, so GR mappings do not alter displayed text. The core retains GR designations for DECSC and DECCIR.
 
-| Final byte | Set |
+| Final byte | Character set |
 | --- | --- |
 | `B` | ASCII |
 | `0` | DEC Special Graphics |
@@ -98,286 +93,237 @@ do not change.
 | `H` or `7` | Swedish |
 | `=` | Swiss |
 
-The last 12 sets are the national replacement sets (NRCS). They follow
-xterm:
+National Replacement Character Sets (NRCS):
 
-- The national sets other than UK need NRCS mode (DECNRCM, `CSI ? 42 h`).
-  Without NRCS mode, their designators select ASCII. A designated national
-  set stays when NRCS mode ends.
-- UK replaces `#` with `£` only in NRCS mode.
-- NRCS mode does not change the UTF-8 decoder. xterm stops UTF-8 decoding in
-  NRCS mode. The core does not.
-- DECRQM reports mode 42. A full reset (RIS) clears it. A soft reset
-  (DECSTR) keeps it.
+- National sets other than UK require NRCS mode (DECNRCM, `CSI ? 42 h`). Without NRCS mode, these designators select ASCII. Disabling NRCS mode preserves current designations.
+- The UK set replaces `#` with `£` only in NRCS mode.
+- NRCS mode does not alter UTF-8 decoding.
+- DECRQM reports mode 42 state. Full reset (RIS) clears mode 42. Soft reset (DECSTR) preserves mode 42.
 
-Other rules:
+Character set mapping rules:
 
-- DEC Supplemental Graphics maps a code to the DEC Multinational character
-  at the code plus 0x80. ISO Latin-1 Supplemental maps a code to U+0080 plus
-  the code. xterm maps these two sets only through GR. The core maps them in
-  GL, as a DEC terminal does.
-- Unicode has no glyphs for the four summation parts of DEC Technical
-  (0x38 to 0x3B) and for five other positions. An undefined position of a
-  DEC set shows U+2426, the reversed question mark.
-- The core ignores an unknown designator and a designator with two
-  intermediate bytes. A C0 control ends a designator and runs. Sets that
-  need a VT500 (for example `% 2` and `" 4`) are unknown.
-- DECSC saves G0 to G3, GL, and GR. DECRC restores them. As in xterm, DECSC
-  does not save a single shift, and DECRC keeps a single shift that waits.
-  The alternate screen (modes 47, 1047, and 1049) saves and restores the
-  sets with the cursor.
-- DECCIR restore (`DCS 1 $ t`) sets the single shift, GL, GR, and the four
-  designations. Bit n of the Scss field tells that Gn holds a 96-character
-  set.
-- A soft reset and a full reset put ASCII into G0 to G3, G0 into GL, and G2
-  into GR. They also cancel a single shift.
-- REP repeats the last character as the screen shows it. It does not map it
-  again. DECFRA does not map its fill character.
+- DEC Supplemental Graphics maps codes to DEC Multinational characters at `code + 0x80`. ISO Latin-1 Supplemental maps codes to `0x80 + code`. The core maps both sets in GL.
+- Unassigned DEC Technical positions (including summation components 0x38 to 0x3B) map to U+2426 (reversed question mark).
+- The parser ignores unknown set designators and designators with two intermediate bytes. C0 controls terminate designator sequences immediately. VT500 sets (such as `% 2` and `" 4`) are unsupported.
+- DECSC saves G0 through G3, GL, and GR. DECRC restores them. DECSC does not save active single shifts. DECRC preserves pending single shifts. Alternate screen switches (modes 47, 1047, 1049) save and restore character sets with cursor state.
+- DECCIR restore (`DCS 1 $ t`) sets single shifts, GL, GR, and all four designations. Bit *n* of the Scss field indicates a 96-character set in G*n*.
+- Soft reset (DECSTR) and full reset (RIS) restore G0 through G3 to ASCII, set GL to G0, set GR to G2, and cancel pending single shifts.
+- REP repeats the previous character as displayed on screen without remapping. DECFRA does not remap its fill character.
 
 ## Snapshots and text
 
-Create a snapshot with `wsap_vtcore_snapshot_new`; free it with
-`wsap_vtcore_snapshot_free`. `wsap_vtcore_snapshot_update` copies the current
-view and returns false for invalid pointers or reported allocation failure.
-The view, row, palette, and selection data belong to the snapshot. Getter
-pointers remain valid until the next update attempt or free. A failed update
-preserves the prior values, but it can move the backing buffers. Re-fetch all
-getter pointers after any update attempt.
+`wsap_vtcore_snapshot_new()` creates a snapshot instance.
+`wsap_vtcore_snapshot_free()` releases a snapshot instance.
+`wsap_vtcore_snapshot_update()` captures current terminal state into the snapshot.
+The function returns false for NULL arguments or memory allocation failures.
+View structures, row buffers, palettes, and selection spans belong to the snapshot.
+Pointers from snapshot getters remain valid until the next update call or snapshot destruction.
+A failed update preserves previous contents, but can relocate internal buffers.
+Re-fetch getter pointers after every update attempt.
 
-The snapshot is a copy. It remains valid after its source terminal is freed.
-Read it without holding the terminal lock. Multiple readers can share a
-snapshot, but updates and free need exclusive access. One snapshot can capture
-different terminals in turn.
+A snapshot owns an independent copy of terminal state.
+It remains valid after releasing its source terminal instance.
+Getters read snapshot data without acquiring the terminal writer lock.
+Multiple threads can read one snapshot concurrently.
+Updating or freeing a snapshot requires exclusive access.
+One snapshot instance can capture different terminal instances across successive updates.
 
-A cell with `text & WSAP_VTCORE_TEXT_CLUSTER` contains a snapshot cluster
-handle, not a Unicode scalar value. Call `wsap_vtcore_snapshot_cluster` to
-obtain its code points. The return value is the full cluster length, even
-when the supplied capacity is smaller. A plain cell returns one code point.
-A zero return means the snapshot or cluster data is invalid. Use text values
-from the current snapshot. Do not retain cluster handles across updates.
-A width-zero
-cell is a continuation cell; do not print its text again. For width-one and
-width-two cells, render the scalar or all cluster code points once. Cell width
-is terminal cell width, not a pixel size.
+Cells with `text & WSAP_VTCORE_TEXT_CLUSTER` hold cluster handles instead of scalar code points.
+`wsap_vtcore_snapshot_cluster()` copies code points for a cluster handle into a caller-supplied buffer.
+The function returns total cluster length, even when capacity is smaller.
+A normal cell returns one code point.
+The function returns zero for invalid handles or NULL snapshot pointers.
+`wsap_vtcore_snapshot_cluster_direct()` returns a direct pointer to cluster code points and sets cluster length.
+Cluster handles belong only to the current snapshot version.
+Do not retain cluster handles across snapshot updates.
 
-`wsap_vtcore_snapshot_row_size` returns the line size of a view row. A
-double-size row shows only the first half of the columns, and at least one
-column. Draw each cell two columns wide. The other cells are blank. A
-double-height row shows the top or the bottom half of each glyph at twice the
-height. A history row and an invalid row are single width. A change of the
-line size changes the row key.
+Cell width defines grid column spans:
+- Width zero marks a continuation cell of a wide character. Continuation cells emit no text.
+- Width one marks a single-column cell. Render the code point or cluster once.
+- Width two marks a double-column cell. Render the code point or cluster once across two columns.
 
-The view and its palette pointer are snapshot-owned. Resolve palette slot
-colors through `wsap_vtcore_view_color` while that view remains valid.
+`wsap_vtcore_snapshot_row_size()` returns the line size of a view row:
+- `WSAP_VTCORE_LINE_SINGLE`: standard single-width line.
+- `WSAP_VTCORE_LINE_DOUBLE_WIDTH`: double-width line (DECDWL). Draw cells in the first half of the columns at double width. Remaining columns are blank.
+- `WSAP_VTCORE_LINE_DOUBLE_TOP`: top half of a double-height line (DECDHL). Render upper halves of glyphs at double height and double width.
+- `WSAP_VTCORE_LINE_DOUBLE_BOTTOM`: bottom half of a double-height line (DECDHL). Render lower halves of glyphs at double height and double width.
+History rows and invalid row indices always return `WSAP_VTCORE_LINE_SINGLE`.
+Line size modifications alter the row key.
+
+The view and its palette belong to the snapshot.
+`wsap_vtcore_view_color()` resolves a `wsap_vtcore_color` value to an ARGB integer using the view palette.
 
 ## Reports and host data
 
-The core answers report requests through the reply callback. Some reports
-need data that only the host has. Give the core that data:
+The core emits report responses through the `reply` callback.
+Certain reports require host configuration:
 
-- `wsap_vtcore_set_cell_pixels` sets the size of one cell in pixels: `x` is
-  the width and `y` is the height. `CSI 14 t` reports the text area and
-  `CSI 16 t` reports one cell. Set the size again when the font changes. A
-  zero or negative component means unknown. Then these reports give zero
-  pixels, as `TIOCGWINSZ` does for an unknown pixel size. The core still
-  replies, so a program that waits for the reply does not stop. Mouse mode
-  1016 (SGR pixels) does not use the cell size. It reports the `pixel`
-  field of the mouse event.
-- `wsap_vtcore_set_color_scheme` sets the dark or light preference.
-  `CSI ? 996 n` reports it as `CSI ? 997 ; 1 n` (dark) or `CSI ? 997 ; 2 n`
-  (light). With `WSAP_VTCORE_COLOR_SCHEME_UNKNOWN`, the core compares the
-  theme colors. It reports light when the theme background is brighter than
-  the theme foreground. Otherwise it reports dark. The core ignores values
-  that are not in the enum.
+- `wsap_vtcore_set_cell_pixels()` sets cell dimensions in pixels: `x` is width and `y` is height. `CSI 14 t` reports text area in pixels. `CSI 16 t` reports cell size in pixels. Zero or negative values indicate unknown pixel dimensions; reports then give zero pixels. Mouse mode 1016 (SGR pixels) does not use this setting; it reports coordinates directly from `wsap_vtcore_mouse_event.pixel`.
+- `wsap_vtcore_set_color_scheme()` sets color scheme preference. `CSI ? 996 n` requests the active scheme. The core replies with `CSI ? 997 ; 1 n` for dark mode or `CSI ? 997 ; 2 n` for light mode. With `WSAP_VTCORE_COLOR_SCHEME_UNKNOWN`, the core compares theme foreground and background luminance. It reports light mode when background luminance exceeds foreground luminance. Otherwise, it reports dark mode. The core ignores invalid enum values.
 
-Other reports need no host data. `CSI 18 t` and `CSI 19 t` report the rows
-and columns. `CSI ? 6 n` (DECXCPR) reports the cursor and page 1. It obeys
-origin mode, as `CSI 6 n` does. `CSI = c` (DA3) reports the unit ID
-`00000000`.
+Autonomous report notifications:
 
-The core sends two reports without a request:
+- Mode 2031: When mode 2031 is active, the core emits `CSI ? 997` when the effective color scheme changes. Only `wsap_vtcore_set_color_scheme()` and `wsap_vtcore_set_theme()` trigger this report. Dynamic palette changes (OSC 11) do not trigger it.
+- Mode 2048: When mode 2048 is active, the core emits `CSI 48 ; rows ; cols ; height ; width t` upon enabling the mode, after size-changing resizes, and upon cell pixel size updates. Pixel values report as zero when cell dimensions are unknown.
 
-- While mode 2031 is set, the core sends the `CSI ? 997` report when the
-  reported scheme changes. Only `wsap_vtcore_set_color_scheme` and
-  `wsap_vtcore_set_theme` can change it. Output that changes the palette
-  (OSC 11) does not change it.
-- While mode 2048 is set, the core sends
-  `CSI 48 ; rows ; cols ; height ; width t`. It sends the report when the
-  mode is set, after each resize that changes the size, and when the cell
-  size changes. The pixel values are zero when the cell size is unknown. A
-  host that changes the font and the size in one step can get two reports.
-  The last report is correct.
+Other reports requiring no host data:
+- `CSI 18 t` reports text area size in characters.
+- `CSI 19 t` reports display screen size in characters.
+- `CSI ? 6 n` (DECXCPR) reports cursor position and page 1, respecting origin mode (DECOM).
+- `CSI = c` (DA3) reports unit identification `00000000`.
 
-A report that a host call causes comes from inside that call, while the
-core holds the lock. The callback rules apply to it. A soft reset (DECSTR) and a full reset
-(RIS) clear modes 2031 and 2048. They do not clear the host data.
+Reports caused by host API calls execute synchronously during the call while holding the terminal lock.
+Soft reset (DECSTR) and full reset (RIS) clear modes 2031 and 2048 without resetting host parameters.
 
 ## Titles
 
-With a title callback, the core keeps the last title from OSC 0, 1, or 2.
-The core has one title. Icon names and window titles share it. `CSI 22 t`
-saves the title on a stack. `CSI 23 t` removes the top title from the stack
-and sends it again through the title callback. The parameters 0, 1, and 2
-select the same title. A request with another parameter or with an xterm
-stack index does nothing.
+When configured with `callbacks.title`, the core stores the latest title set by OSC 0, 1, or 2.
+Window titles and icon names share one common string storage.
+`CSI 22 t` pushes the current title onto an internal title stack.
+`CSI 23 t` pops the top title from the stack and delivers it through the `title` callback.
+Parameters 0, 1, and 2 select the same title.
+Other parameters and xterm stack index parameters perform no action.
 
-The stack holds 10 titles. A save on a full stack drops the oldest title.
-A restore from an empty stack does nothing. The core keeps the first 4096
-bytes of each title and does not cut a UTF-8 character. A title saved
-before any title was set restores as an empty title. A full reset clears the
-stack and keeps the current title. Without a title callback, the stack does
-nothing.
+The title stack holds up to 10 titles.
+Pushing to a full stack discards the oldest title.
+Popping an empty stack performs no action.
+The core truncates titles at 4096 bytes without splitting multibyte UTF-8 sequences.
+A title saved before setting any title restores as an empty string.
+Full reset (RIS) clears the title stack and preserves the current title.
+Without a title callback, title stack commands perform no action.
 
 ## Shell integration
 
-The core reads these OSC sequences from the shell.
+The core parses OSC sequences for shell integration:
 
-- `OSC 133 ; A` starts a prompt at the cursor row. A `k` option other than
-  `k=i` marks a secondary prompt. The core ignores a secondary prompt.
-- `OSC 133 ; B` starts the command input. It needs no state.
-- `OSC 133 ; C` starts the command output.
-- `OSC 133 ; D` ends the command. An optional decimal value is the exit
-  status. The core ignores a value outside the 32-bit range.
+- `OSC 133 ; A` starts a prompt at the cursor row. A parameter other than `k=i` marks a secondary prompt, which the core ignores.
+- `OSC 133 ; B` marks the start of command input.
+- `OSC 133 ; C` marks the start of command output.
+- `OSC 133 ; D` marks the end of command execution with an optional 32-bit exit code. The core ignores out-of-range or non-decimal exit codes.
 
-A row can have a prompt mark and an output mark. The marks follow the row
-into history, through a scroll, and through a resize. The alternate screen
-has no marks. A full reset clears the marks of the screen. ED 3 removes the
-marks of history. A whole-line erase clears the marks of that line.
+A row can retain one prompt mark and one output mark.
+Marks follow rows into history, through scrolls, and through grid resizes.
+The alternate screen maintains no marks.
+Full reset (RIS) clears marks on visible screen rows.
+ED 3 removes marks from history rows.
+Erasing an entire line clears marks on that line.
 
-Rows in `wsap_vtcore_find_prompt` and `wsap_vtcore_command_at` are view rows:
-row 0 is the top row of the view. A negative row is above the view. A row at
-or after the view height is below the view. `wsap_vtcore_scroll(t, -row)`
-moves a row to the top of the view. On the alternate screen, these calls
-return false. They return false for invalid arguments. The command values
-stay valid until the next change to the terminal or its view.
+Row indices in `wsap_vtcore_find_prompt()` and `wsap_vtcore_command_at()` use viewport coordinates.
+Row 0 represents the top row of the viewport.
+Negative row indices reference history lines above the viewport.
+Indices equal to or greater than viewport height reference lines below the viewport.
+`wsap_vtcore_scroll(t, -row)` scrolls the specified row to the top of the viewport.
+These functions return false on the alternate screen or for invalid arguments.
+Returned command structures stay valid until the next terminal or viewport mutation.
 
-`wsap_vtcore_find_prompt` returns the nearest prompt above or below a row.
-It does not count the row itself. The `dir` argument selects the direction.
-`wsap_vtcore_command_at` returns the command that contains a row. A command
-starts at a prompt row and ends before the next prompt row. `finished` is
-true after `OSC 133 ; D` or after a later prompt. `has_output` is true when
-`OSC 133 ; C` marked a row before the next prompt. The output of the last
-command ends at the cursor row. A cursor in the first column has not written
-to its row yet.
+`wsap_vtcore_find_prompt()` returns the nearest prompt row above (`dir < 0`) or below (`dir > 0`) a specified row.
+The search excludes the start row itself.
+`wsap_vtcore_command_at()` describes the command containing a specified row.
+A command begins at a prompt row and ends before the next prompt row.
+`cmd->finished` is true after `OSC 133 ; D` or after encountering a subsequent prompt.
+`cmd->has_output` is true when `OSC 133 ; C` marked a row before the next prompt.
+Command output ends at the cursor row.
 
-`OSC 9 ; 4 ; state ; percent` reports progress. The progress callback gets
-the state and the percent. State 0 removes the report. State 1 is normal,
-state 2 is an error, state 3 is indeterminate, and state 4 is paused. The
-percent is -1 when the state has no value. A missing percent for state 1
-gives 0. A percent above 100 gives 100. The core ignores a state above 4 and
-a value that is not a decimal. A progress report does not go to the notify
-callback.
+Other shell integration sequences:
 
-`OSC 9 ; 9 ; path` and `OSC 1337 ; CurrentDir=path` set the current
-directory. `wsap_vtcore_cwd` returns it. A path with quotes at both ends
-loses the quotes. The core keeps at most 4096 bytes of a path.
+- `OSC 9 ; 4 ; state ; percent` reports command progress through `callbacks.progress`:
+  - `WSAP_VTCORE_PROGRESS_REMOVE` (0): removes the progress state.
+  - `WSAP_VTCORE_PROGRESS_NORMAL` (1): indicates normal progress.
+  - `WSAP_VTCORE_PROGRESS_ERROR` (2): indicates an error state.
+  - `WSAP_VTCORE_PROGRESS_INDETERMINATE` (3): indicates indeterminate progress.
+  - `WSAP_VTCORE_PROGRESS_PAUSED` (4): pauses progress.
+  Percent is -1 when the state provides no percentage value. A missing percent for state 1 defaults to 0. Percents above 100 clamp to 100. Non-decimal values or states above 4 are ignored. Progress reports do not trigger `callbacks.notify`.
+- `OSC 9 ; 9 ; path` and `OSC 1337 ; CurrentDir=path` set the current working directory. `wsap_vtcore_cwd()` returns a newly allocated copy of this path. Enclosing quotes are stripped. The core stores at most 4096 bytes of a path.
+- `OSC 1337 ; SetUserVar=name=base64` decodes a base64 value and delivers it to `callbacks.user_var`. The callback receives the decoded byte length and a terminating NUL character. Variable names support up to 255 bytes. Decoded values support up to 4096 bytes. The core rejects longer names, longer values, and invalid base64 text. Name and value pointers remain valid only during callback execution.
 
-`OSC 1337 ; SetUserVar=name=base64` sends one user variable to the
-`user_var` callback. The value is base64. The decoded value can hold zero
-bytes. The callback gets the decoded length and a NUL after the value. The
-name can have 255 bytes. The value can have 4096 bytes. The core ignores a
-longer name or value and invalid base64 text. The name and value pointers
-are valid only during the callback.
-
-Set `callbacks.progress` and `callbacks.user_var` in
-`wsap_vtcore_options`. Their pointers replace the first reserved words, so
-the options struct keeps its size.
+`callbacks.progress` and `callbacks.user_var` overlay the first reserved fields of `struct wsap_vtcore_options` to preserve struct size across versions.
 
 ## Cell styles
 
-`attrs` holds the SGR attributes of a cell. `WSAP_VTCORE_ATTR_BLINK` comes
-from SGR 5 and SGR 6; the core does not tell slow blink from rapid blink.
-`WSAP_VTCORE_ATTR_CONCEAL` comes from SGR 8. The core keeps the text of a
-concealed cell. The host decides how to draw blinking and concealed text.
+The `attrs` field holds SGR attributes in a 16-bit bitfield (`wsap_vtcore_attr`).
+`WSAP_VTCORE_ATTR_BLINK` represents SGR 5 and SGR 6 without distinction between slow and rapid blink.
+`WSAP_VTCORE_ATTR_CONCEAL` represents SGR 8.
+Concealed cells preserve underlying text characters.
+`wsap_vtcore_attr_underline()` extracts the active `wsap_vtcore_underline` style from the attribute bitfield.
 
-`wsap_vtcore_snapshot_row_underline_colors` returns the underline colors
-(SGR 58) of one view row, one color for each column. Resolve each color with
-`wsap_vtcore_view_color`. `WSAP_VTCORE_COLOR_NONE` means that the cell has no
-underline color: draw its underline in the foreground color of the cell. A
-NULL return means that no cell of the row has an underline color. The pointer
-follows the getter pointer rules above.
+`wsap_vtcore_snapshot_row_underline_colors()` returns an array of underline colors (SGR 58) for one view row.
+The array provides one color value per column.
+`WSAP_VTCORE_COLOR_NONE` indicates that the cell has no custom underline color.
+Underlines without custom colors use the foreground color of the cell.
+A NULL return indicates that no cell in the row uses an underline color.
+Returned pointers follow getter lifetime rules.
 
-DECSCA protection is not a public attribute. It controls which cells the
-selective erases (DECSED, DECSEL, DECSERA) keep. ED, EL, and ECH erase
-protected cells too. DECSERA writes spaces and keeps the colors and attributes
-of the cells.
+DECSCA protection controls cell preservation during selective erases (DECSED, DECSEL, DECSERA).
+Standard erase commands (ED, EL, ECH) erase protected cells.
+DECSERA replaces characters with spaces while preserving attributes and colors.
 
-The core interns each pair of link and underline color in a table. Cells,
-history, and reflow keep the pair. The table holds 8191 pairs that cells use
-at the same time. When the table is full, new text loses its link and
-underline color until cells that use old pairs leave the history.
+The core interns hyperlink and underline color pairs in a style table.
+Cells, history runs, and reflow operations retain style table identifiers.
+The style table holds up to 8191 concurrent style pairs.
+When the table fills, newly written text drops link and underline color attributes until unused entries are swept.
 
 ## Private modes
 
-Reverse wraparound changes BS and CUB. Mode 45 and mode 1045 work only
-while autowrap (mode 7) is set. One step left from the left limit goes to the
-right margin of the row above. The left limit is the left margin, or column 0
-when the cursor is left of the left margin.
+Reverse wraparound alters Backspace (BS) and Cursor Backward (CUB) behavior.
+Modes 45 and 1045 require autowrap mode (DECAWM, mode 7).
+Moving left past the left margin moves the cursor to the right margin of the row above:
+- Mode 45 enters a row only when that row wrapped into the current row. It stops at the start of a wrapped line. It can cross the top margin.
+- Mode 1045 enters any row. At the top margin, it wraps to the bottom margin. Above the top margin, the cursor stops at the top of the screen.
+- After filling a line, the cursor retains a pending wrap state. The first backward step clears the pending wrap without moving the cursor.
 
-- Mode 45 enters a row only when that row wrapped into the current row. It
-  stops at the start of a wrapped line. It can cross the top margin.
-- Mode 1045 enters any row. From the top margin, it goes to the bottom
-  margin. Above the top margin, the cursor stops at the top of the screen.
-- After a full line, the cursor has a pending wrap. The first step clears the
-  pending wrap and does not move the cursor. A BS then stays on the last
-  column. xterm 412 drops one more step when CUB has a count of 2 or more.
-  The core does not drop it.
-
-Mode 1007 (alternate scroll) is reset at start, as the xterm resource
-`alternateScroll` is. `wsap_vtcore_modes` reports it in `alternate_scroll`.
-These conditions make `wsap_vtcore_input_encode_mouse` send wheel up and
-wheel down as cursor up and cursor down keys:
-
-- `alternate_scroll` is set.
+Mode 1007 (alternate scroll) defaults to disabled.
+`wsap_vtcore_modes.alternate_scroll` reports this setting.
+`wsap_vtcore_input_encode_mouse()` converts wheel events into Up and Down cursor keys when all conditions match:
+- Mode 1007 is active.
 - The alternate screen is active.
-- No mouse report mode is set.
-- The event is a press or a scroll.
+- Mouse reporting is disabled.
+- The event is a button press or scroll event.
+The encoder emits one key per line of `scroll_lines`, and at least one key.
+Application cursor mode (DECCKM, mode 1) emits `ESC O A` and `ESC O B` instead of `ESC [ A` and `ESC [ B`.
 
-The encoder sends one key for each line of `scroll_lines`, and at least one
-key. Each key has 3 bytes. Application cursor mode (mode 1) sends `ESC O A`,
-not `ESC [ A`. Other events keep their usual result.
+Private mode save and restore:
+- `CSI ? Pm s` (XTSAVE) saves states for specified DEC private modes.
+- `CSI ? Pm r` (XTRESTORE) restores saved mode values.
+Each mode retains one saved state.
+Saving a mode overwrites its previous saved state.
+The core ignores unknown or fixed modes.
+XTRESTORE alters a mode only when its current value differs from the saved value.
+Modes without saved values do not change.
+Mode 1048 saves and restores cursor state.
+Mouse mode numbers are saved individually.
+`CSI s` and `CSI r` without `?` retain standard ANSI/DEC meanings (SCOSC or DECSLRM, and DECSTBM).
 
-`CSI ? Pm s` (XTSAVE) saves the values of the listed DEC private modes.
-`CSI ? Pm r` (XTRESTORE) restores them. Each mode has one saved value. A new
-save replaces it. The core does not save unknown modes or permanent modes.
-XTRESTORE changes a mode only when its value differs from the saved value. A
-mode without a saved value does not change. Mode 1048 saves and restores the
-cursor, as in xterm. The core saves each mouse mode number alone. Thus
-XTRESTORE cannot bring back a different mouse mode, as xterm can. `CSI s` and
-`CSI r` without `?` keep their meaning (SCOSC or DECSLRM, and DECSTBM).
+Keypad mode 66 (DECNKM) mirrors `ESC =` (application keypad) and `ESC >` (numeric keypad).
 
-Mode 66 (DECNKM) is the keypad mode that `ESC =` and `ESC >` also set.
+DECRQM (`CSI ? Pm $ p`) reports status 3 (permanently set) for immutable features:
+- Mode 2 (DECANM): ANSI mode is permanent; VT52 mode is unsupported.
+- Mode 1046: alternate screen switching is always available.
+- Mode 2027: grapheme cluster joining (UAX #29) is always active.
+- ANSI mode 12 (SRM, `CSI 12 $ p`): local echo is permanently disabled.
+Mode 1048 reports status 2 (reset).
 
-DECRQM (`CSI ? Pm $ p`) reports 3 (permanently set) for behavior that the core
-always applies:
-
-- Mode 2 (DECANM): the core has no VT52 mode.
-- Mode 1046: the alternate screen is always available.
-- Mode 2027: the core always joins grapheme clusters (UAX #29).
-- ANSI mode 12 (SRM, `CSI 12 $ p`): the core never echoes input.
-
-Mode 1048 has no value and reports reset.
-
-A soft reset (DECSTR) and a full reset (RIS) reset modes 45, 1045, and 66.
-As in xterm, they keep mode 1007. A soft reset keeps the XTSAVE values. A
-full reset clears them.
+Soft reset (DECSTR) and full reset (RIS) reset modes 45, 1045, and 66.
+Both resets preserve mode 1007.
+Soft reset preserves XTSAVE values.
+Full reset clears all XTSAVE values.
 
 ## Input encoding and allocated strings
 
-Input encoders write into caller-provided buffers and return a result with a
-status and length. Check `status`; do not assume the buffer is large enough.
-`WSAP_VTCORE_INPUT_BUFFER_FULL` means the result did not fit. The encoder can
-write a partial prefix on this path. Send no bytes unless the status is
-`WSAP_VTCORE_INPUT_BYTES`. The encoder does not allocate its output.
+Input encoders (`wsap_vtcore_input_encode_key`, `wsap_vtcore_input_encode_mouse`, `wsap_vtcore_input_encode_paste`) write into caller-provided byte buffers.
+Each function returns `struct wsap_vtcore_input_result`:
+- `status == WSAP_VTCORE_INPUT_BYTES`: The buffer contains a valid encoded sequence of `len` bytes.
+- `status == WSAP_VTCORE_INPUT_NONE`: The event produces no terminal input bytes.
+- `status == WSAP_VTCORE_INPUT_BUFFER_FULL`: The provided buffer capacity is insufficient. Partial sequences may be written; discard buffer contents.
+- `status == WSAP_VTCORE_INPUT_INVALID`: Input event arguments or mode parameters are invalid.
 
-Functions that return `char *`, including selection, link, cwd, pointer shape,
-and history text getters, return allocated text or `NULL`. Release returned
-text with `wsap_vtcore_text_free`. Do not use `free` as the public ownership
-rule.
+Functions returning heap-allocated strings (`wsap_vtcore_cwd`, `wsap_vtcore_pointer_shape`, `wsap_vtcore_selection_text`, `wsap_vtcore_link_at`, `wsap_vtcore_history_text`):
+- Return a newly allocated NUL-terminated string, or NULL on empty values or allocation failure.
+- Release returned strings with `wsap_vtcore_text_free()`.
+- Do not pass returned pointers to standard `free()`.
 
 ## Invalid arguments
 
-Null handling is function-specific. Several query functions return zero or
-null values for null input, while mutating calls may do nothing. Read each
-function's return contract before use. Do not pass invalid enum values or
-out-of-range coordinates unless the function documents its response.
+Functions validate input parameters individually.
+Query functions return zero or NULL values when given NULL pointers or out-of-range coordinates.
+Mutating functions reject invalid arguments without altering terminal state.
+Documented function contracts define specific return behaviors for invalid parameters.

@@ -12,10 +12,9 @@ The rules that constrain new code:
   files at the repository root. Source paths there are independent of install
   paths; changing one does not change the other.
 - `tests/` mirrors the `src/` subsystem layout (`tests/pty/`, `tests/ui/`,
-  …), with `tests/stubs/` and `tests/helpers/` as the non-subsystem
-  exceptions. Test *names* in `tests/meson.build` stay
-  flat and carry no directory prefix, so a file move never changes how a test
-  is invoked. Keep it that way.
+  …), with `tests/helpers/` as the non-subsystem exception.
+  Test *names* in `tests/meson.build` stay flat and carry no directory
+  prefix, so a file move never changes how a test is invoked. Keep it that way.
 - Source directories form a tree. Each directory lists its own sources in
   its `meson.build` and calls `subdir()` for its children. `src/meson.build`
   only links the libraries, lowest layer first. A new module goes under the
@@ -28,12 +27,14 @@ The rules that constrain new code:
   and the inspector server. Only base, pty, session, ui_yasl, terminal, and
   app can include `yasl/` headers. `dirgraph.py` checks this rule.
 - Window content lives in its own directory, such as `src/terminal/`.
-  Content mounts its widgets with `window_ui_mount`. Producers send frame
-  data to the app composer. Only `src/app/` opens app windows.
+  Content provides its root widget to the app. Only `src/app/` mounts window
+  widgets with `window_ui_mount` and opens app windows. Producers send frame
+  data to the app composer.
 - The term core is the subproject `subprojects/term`, the lowest layer
   after base. It builds, tests, and benchmarks alone, and it includes
-  nothing from the main tree. Its public headers are in `include/wsap_vtcore/`:
-  `wsap_vtcore.h` and the header-only `unicode/` (the UTF-8 codec and the Unicode
+  nothing from the main tree. Its public headers are in
+  `subprojects/term/include/wsap_vtcore/`: `wsap_vtcore.h` and the header-only
+  `unicode/` (the UTF-8 codec and the Unicode
   tables). The main tree gets only those, through `term_dep`. Its tests
   and benchmarks live in the subproject and run as `term:<name>`.
   `subprojects/term/README.md` describes embedding and the amalgamation.
@@ -54,8 +55,8 @@ The rules that constrain new code:
   instance lists, the draw commands, the atlas, and the UI image slots of a
   frame, and it calls no GPU API. A backend holds only the code that talks
   to its GPU API. `gpu/metal/` and `gpu/vulkan/` follow this rule. Do not
-  copy frame logic into a backend. The Vulkan shader header is generated at
-  build time. Do not check it in.
+  copy frame logic into a backend. The Vulkan and Metal shader headers are
+  generated at build time. Do not check them in.
 - Themes live in `src/theme/`. The app owns the theme store.
   The window UI API is `src/ui/yasl/client.h`.
   The window inspector API is `src/ui/yasl/inspector.h`.
@@ -98,13 +99,14 @@ the input or render hot paths:
 
 - Write explicit SIMD for the hot loops: AVX-512 and AVX2 on x86, NEON on
   aarch64, keeping the portable scalar path as fallback. See
-  `scan_ascii_run`, `put_ascii_chunk`, and `clear_row` in `subprojects/term/src/` for the
-  established pattern (widen inputs, permute/zip into the cell layout, block
-  stores; fold range checks into a single unsigned subtract+compare).
+  `scan_ascii_run`, `put_ascii_chunk`, and `clear_cells_default` in
+  `subprojects/term/src/` for the established pattern (widen inputs,
+  permute/zip into the cell layout, block stores; fold range checks into a single
+  unsigned subtract+compare).
 - The term core compiles once and picks its x86 level at run time. Do not
   test `__AVX2__` or `__AVX512*__` in `subprojects/term/`. Put each AVX2 or AVX-512
-  path in its own function marked `TERM_TARGET_AVX2` or `TERM_TARGET_AVX512`.
-  Call it only when `term_use_avx2()` or `term_use_avx512()` is true.
+  path in its own function marked `WSAP_VTCORE_TARGET_AVX2` or `WSAP_VTCORE_TARGET_AVX512`.
+  Call it only when `wsap_vtcore_use_avx2()` or `wsap_vtcore_use_avx512()` is true.
   `subprojects/term/src/simd.h` states the rules. Give a kernel only scalar and pointer
   parameters. Keep inputs shorter than one vector on the inline base path,
   because a call costs more than a short scan. For a large function with
@@ -128,10 +130,7 @@ the input or render hot paths:
 - Never make what a cell shows depend on load or timing. Shaping cost is
   bounded by the layout analysis in `src/font/glyph/layout.c` and the shaping
   windows in `src/font/glyph/run.c`, not by skipping shaping. Measure floods
-  with the `flood-*` cases of `render-bench` and `metal-render-bench`.
-- On the SDL/macOS backend, never issue `SDL_UpdateTexture` per item during a
-  frame — each call flushes SDL's Metal command queue. Stage into a CPU copy
-  and upload one dirty rect per frame before drawing.
+  with the `flood-*` cases of `render-bench`.
 
 ## Debugging and tools
 

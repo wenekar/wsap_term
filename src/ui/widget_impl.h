@@ -15,6 +15,7 @@
 
 struct ui_debug_parts;
 
+/* Allocates a unique identifier for an accessibility node. */
 uint64_t ui_widget_accessibility_id_allocate(void);
 
 enum ui_widget_invalidation {
@@ -60,31 +61,47 @@ struct ui_widget_ops {
     bool width_sensitive;
 };
 
+/* Marks layout, measure, or paint caches of `widget` as invalid. */
 void ui_widget_invalidate(struct ui_widget *widget, unsigned flags);
 
+/* Sets whether `widget` can receive keyboard focus. */
 void ui_widget_set_focusable(struct ui_widget *widget, bool focusable);
+/* Sets whether `widget` modal mode restricts input outside its subtree. */
 void ui_widget_set_modal(struct ui_widget *widget, bool modal);
+/* Sets whether `widget` passes pointer events through to widgets underneath. */
 void ui_widget_set_pointer_transparent(struct ui_widget *widget,
                                        bool transparent);
+/* Updates the CSS pseudo-class state flags of `widget`. */
 void ui_widget_set_style_pseudo(struct ui_widget *widget, unsigned pseudo_flags);
 
+/* Dispatches `action` up the widget hierarchy until handled. */
 bool ui_widget_notify(struct ui_widget *source, struct ui_action action);
 
+/* Gives keyboard focus to `widget`. */
 void ui_widget_focus(struct ui_widget *widget);
+/* Returns true when `widget` currently holds keyboard focus. */
 bool ui_widget_has_focus(const struct ui_widget *widget);
+/* Captures subsequent pointer events to `widget`. */
 void ui_widget_capture_pointer(struct ui_widget *widget);
+/* Releases an active pointer capture held by `widget`. */
 void ui_widget_release_pointer(struct ui_widget *widget);
+/* Returns true when `widget` holds pointer capture. */
 bool ui_widget_is_captured(const struct ui_widget *widget);
 
+/* Computes the desired layout size of `widget` within `constraints`. */
 struct vector2i ui_widget_measure(struct ui_widget *widget,
                                   struct ui_constraints constraints);
+/* Positions and sizes `widget` into rectangle `bounds`. */
 void ui_widget_place(struct ui_widget *widget, struct rect2i bounds);
+/* Positions floating `child` relative to `parent_bounds`. */
 void ui_widget_place_child(struct ui_widget *child, struct rect2i parent_bounds);
 
+/* Resolves CSS styles for sub-part `class_name` of `widget`. */
 struct css_style ui_widget_part_style(const struct ui_widget *widget,
                                       const char *class_name,
                                       unsigned pseudo_flags);
 
+/* Resolves cached CSS styles for built-in sub-part `part` of `widget`. */
 struct css_style ui_widget_part(const struct ui_widget *widget,
                                 ui_part_id part, unsigned pseudo_flags);
 

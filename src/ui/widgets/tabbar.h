@@ -71,43 +71,66 @@ struct ui_tabbar {
     } impl;
 };
 
+/* Initializes tab bar widget `tb`. */
 void ui_tabbar_init(struct ui_tabbar *tb);
+/* Sets tab labels and tab count for `tb`. */
 void ui_tabbar_set_tabs(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
                         int n_tabs);
+/* Sets the background color of tab bar `tb`. */
 void ui_tabbar_set_bg_color(struct ui_tabbar *tb, uint32_t bg);
 
+/* Inserts a new tab entry at `slot`. */
 bool ui_tabbar_insert_tab(struct ui_tabbar *tb, int slot);
+/* Removes the tab at `index`. */
 bool ui_tabbar_remove_tab(struct ui_tabbar *tb, int index);
+/* Moves a tab from index `from` to index `to`. */
 void ui_tabbar_move_tab(struct ui_tabbar *tb, int from, int to);
+/* Starts the tab open animation for the tab at `index` at `now_ms`. */
 bool ui_tabbar_begin_open(struct ui_tabbar *tb, int index, uint64_t now_ms);
+/* Starts the tab close animation for the tab at `index` at `now_ms`. */
 bool ui_tabbar_begin_close(struct ui_tabbar *tb, int index, uint64_t now_ms);
+/* Returns the index of the tab currently closing, or -1 if none is closing. */
 int ui_tabbar_closing_tab(const struct ui_tabbar *tb);
+/* Returns true when the tab at `index` is in closing animation. */
 bool ui_tabbar_is_closing(const struct ui_tabbar *tb, int index);
+/* Returns true when all closing tab animations have finished. */
 bool ui_tabbar_closing_done(const struct ui_tabbar *tb);
 
+/* Returns the current animated height of `tb`. */
 int ui_tabbar_height(const struct ui_tabbar *tb);
+/* Returns the resting height of `tb` without animations. */
 int ui_tabbar_steady_height(const struct ui_tabbar *tb);
-/* The full CSS height of the bar. It does not depend on the tab count or on
- * the animation. The owner reserves this height for the content. */
+/*
+ * Returns the full CSS height of the tab bar.
+ * Does not depend on tab count or animations.
+ */
 int ui_tabbar_bar_height(const struct ui_tabbar *tb);
+/* Returns true when a tab drag operation is in progress. */
 bool ui_tabbar_is_dragging(const struct ui_tabbar *tb);
 
+/* Calculates the bounding rectangle of the tab at `index`. */
 bool ui_tabbar_tab_rect(const struct ui_tabbar *tb, int index,
                         struct rect2i *out);
+/* Calculates the bounding rectangle of the close button for the tab at `index`. */
 bool ui_tabbar_close_rect(const struct ui_tabbar *tb, int index,
                           struct rect2i *out);
+/* Calculates the bounding rectangle of the new tab button. */
 bool ui_tabbar_new_tab_rect(const struct ui_tabbar *tb, struct rect2i *out);
 
+/* Updates external tab drag hover state and pointer position `pos`. */
 void ui_tabbar_set_external_drag(struct ui_tabbar *tb, bool active,
                                  struct vector2i pos);
+/* Returns the target insertion slot index for an external tab drop. */
 int ui_tabbar_external_slot(const struct ui_tabbar *tb);
 
+/* Builds scene draw commands and thumbnail image for dragging the tab at `index`. */
 bool ui_tabbar_build_drag_scene(struct ui_tabbar *tb, int index,
                                 const struct ui_image *preview_image,
                                 struct ui_scene *scene,
                                 struct vector2i *image_size,
                                 struct vector2i *hotspot);
 
+/* Returns the base widget pointer of `tb`, or NULL if `tb` is NULL. */
 static inline struct ui_widget *ui_tabbar_widget(struct ui_tabbar *tb)
 {
     return tb ? &tb->widget : NULL;

@@ -204,34 +204,38 @@ struct gpu_build {
     bool failed;
 };
 
-/* Prepares a zeroed builder. Returns false when the memory is missing. */
+/* Initializes builder streams, atlas, and command storage. Returns true on success. */
 bool gpu_build_init(struct gpu_build *b);
-/* Frees what the builder owns. A zeroed builder is valid input. */
+/* Releases all memory allocated by builder `b`. */
 void gpu_build_release(struct gpu_build *b);
 
-/* See "The frame is all or nothing" at the top of this file. */
+/*
+ * Generates instance streams and draw commands from `frame` for `canvas`.
+ * Returns true on success, or false on allocation failure.
+ */
 bool gpu_build_frame(struct gpu_build *b, const struct render_frame *frame,
                      struct vector2i canvas);
+/* Commits staged atlas glyphs and advances the builder frame counter. */
 void gpu_build_commit(struct gpu_build *b);
+/* Clears staged atlas glyphs and resets atlas state after an unsubmitted frame. */
 void gpu_build_abort(struct gpu_build *b);
 
-/* True when the frame draws images[index] and its texture needs the pixels. */
+/* Checks whether image slot `index` requires texture upload for the current frame. */
 static inline bool gpu_image_needs_upload(const struct gpu_build *b, int index)
 {
     return b->images[index].frame == b->frame && b->images[index].dirty;
 }
 
 /*
- * The layout of the instance buffer of a frame: stream after stream, each
- * at a multiple of GPU_STREAM_ALIGN. Writes the offset of each stream and
- * returns the total bytes, which are never zero.
+ * Calculates aligned byte offsets for all instance streams in `b`.
+ * Populates `offsets` and returns total aligned instance buffer size in bytes.
  */
 size_t gpu_build_instance_layout(const struct gpu_build *b, size_t offsets[GPU_ST_COUNT]);
-/* Copies every stream to its offset in `dst`. */
+/* Copies instance data from all streams into contiguous buffer `dst` using `offsets`. */
 void gpu_build_copy_instances(const struct gpu_build *b, const size_t offsets[GPU_ST_COUNT],
                               void *dst);
 
-/* A straight color from 0xAARRGGBB. The opacity scales the alpha. */
+/* Converts an ARGB8888 color integer and opacity value to normalized RGBA floats. */
 static inline void gpu_color(uint32_t argb, float opacity, float out[4])
 {
     out[0] = ((argb >> 16) & 0xff) / 255.0f;
@@ -241,21 +245,15 @@ static inline void gpu_color(uint32_t argb, float opacity, float out[4])
 }
 
 /*
- * Presenting CPU pixels. The backend keeps the pixels of a surface in a
- * texture, and it uploads only the rects that changed.
- */
-
-/*
- * The rects of the framebuffer that the texture needs, clipped to the
- * framebuffer. `whole` takes every pixel: use it for a new texture. `rects`
- * holds DAMAGE_RECTS_MAX rects. Returns the count and writes the bytes of
- * their pixels.
+ * Computes clipped damage rectangles and required upload byte size for `fb`.
+ * When `whole` is true, covers entire framebuffer area.
+ * Returns the count of rectangles in `rects` and writes total byte size to `bytes`.
  */
 int gpu_pixels_rects(const struct framebuffer *fb, const struct damage_list *damage, bool whole,
                      struct rect2i *rects, size_t *bytes);
-/* Packs the pixels of the rects into `dst`, rect after rect, without row gaps. */
+/* Packs rectangle pixel spans from `fb` into contiguous destination buffer `dst`. */
 void gpu_pixels_pack(const struct framebuffer *fb, const struct rect2i *rects, int n, void *dst);
-/* The quad that draws a whole texture of `size` over a canvas of `size`. */
+/* Generates a textured fullscreen quad covering dimensions `size`. */
 void gpu_pixels_quad(struct vector2i size, struct gpu_glyph_inst *quad);
 
 #endif

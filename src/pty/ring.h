@@ -15,13 +15,11 @@
  * The ring keeps no copy of the output.
  */
 struct pty_ring_cbs {
-    /* Runs on the worker thread. Parse or copy buf before it returns. Do not
-     * wait for the loop thread. */
+    /* Processes a chunk of reader data on the worker thread. */
     void (*data)(void *ud, int fd, const char *buf, size_t len);
-    /* Runs on the loop thread when the worker has content, a host event, or
-     * the end of the output for it. */
+    /* Notifies the event loop thread of pending updates. */
     void (*wake)(void *ud);
-    /* Runs on the loop thread after every byte of the pty ended. */
+    /* Notifies the event loop thread that reader stream ended. */
     void (*ended)(void *ud);
 };
 
@@ -55,12 +53,23 @@ struct pty_ring {
     bool ended_delivered;
 };
 
+/*
+ * Starts the reader worker thread and registers event loop watches for `p`.
+ * Returns 0 on success, or -1 on failure.
+ */
 int pty_ring_start(struct pty_ring *r, struct yasl_loop *loop, const struct pty *p,
                    const struct pty_ring_cbs *cbs, void *ud);
+
+/* Stops and joins the worker thread and releases ring resources. */
 void pty_ring_stop(struct pty_ring *r);
+
+/* Requests the worker thread to drain remaining output and signal completion. */
 void pty_ring_end(struct pty_ring *r);
-/* Wake the loop thread. Any thread. It signals content that the callbacks
- * queued for the loop thread. */
+
+/*
+ * Signals the event loop to process available reader data.
+ * Safe to call from any thread.
+ */
 void pty_ring_wake(struct pty_ring *r);
 
 #endif
