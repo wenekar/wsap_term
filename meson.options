@@ -10,7 +10,7 @@ option(
     type: 'combo',
     choices: ['auto', 'enabled', 'disabled'],
     value: 'auto',
-    description: 'Vulkan GPU rendering backend (Linux default when Vulkan is available)',
+    description: 'Vulkan GPU rendering backend (Linux default when Vulkan 1.3 and glslc are available)',
 )
 option(
     'font_backend',

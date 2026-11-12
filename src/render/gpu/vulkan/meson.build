@@ -1,4 +1,7 @@
-vulkan_shader_target = custom_target(
+# The SPIR-V of the shaders is embedded in a generated header. `render_inc`
+# makes the header visible to the backend. The header is not in the source
+# tree, so a shader edit always reaches the build.
+vulkan_shaders = custom_target(
     'vulkan-shaders-spv',
     input: files(
         'shaders/glyph.vert',
@@ -11,10 +14,16 @@ vulkan_shader_target = custom_target(
     command: [
         python,
         files('../../../../tools/embed_spirv.py'),
+        glslc,
         '@OUTPUT@',
-        meson.current_source_dir() / 'shaders',
+        '@PRIVATE_DIR@',
+        '@INPUT@',
     ],
 )
 
-render_src += [vulkan_shader_target] + files('render.c')
+render_src += [vulkan_shaders] + files(
+    'device.c',
+    'frame.c',
+    'swapchain.c',
+)
 render_inc += include_directories('.')

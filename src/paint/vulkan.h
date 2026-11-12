@@ -16,7 +16,6 @@ struct vulkan_device {
     VkDevice device;
     VkQueue queue;
     uint32_t queue_family;
-    VkFormat surface_format;
 };
 
 /* The surface target for window presentation. */

@@ -10,8 +10,8 @@ layout(push_constant) uniform PushConstants {
     uint channel;
 } push;
 
-layout(set = 0, binding = 0) uniform sampler2D atlas;
-layout(set = 0, binding = 1) uniform sampler2D image_tex;
+/* The texture of the draw: the atlas, or one UI image. */
+layout(set = 0, binding = 0) uniform sampler2D tex;
 
 layout(location = 0) in vec2 in_uv;
 layout(location = 1) flat in vec4 in_color;
@@ -36,11 +36,11 @@ void main()
     }
 
     if (in_mode == MODE_IMAGE) {
-        out_color = vec4(texelFetch(image_tex, ivec2(in_uv), 0).rgb, 1.0);
+        out_color = vec4(texelFetch(tex, ivec2(in_uv), 0).rgb, 1.0);
         return;
     }
 
-    vec4 t = texelFetch(atlas, ivec2(in_uv), 0);
+    vec4 t = texelFetch(tex, ivec2(in_uv), 0);
     if (in_mode == MODE_COLOR) {
         float a = t.a * in_color.a;
         if (a <= 0.0)

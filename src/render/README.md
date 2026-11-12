@@ -3,9 +3,9 @@
 This directory turns a terminal snapshot and a UI scene into canvas pixels.
 The CPU path is the reference. The GPU path draws the same cells.
 
-The design is the render rewrite plan. Milestone 4 is the CPU renderer
-behind the headers listed here. Every system builds `gpu/none.c` in this
-milestone. Milestone 6 adds the Metal backend.
+The design is the render rewrite plan. The CPU renderer is behind the
+headers listed here. One GPU backend is in a build: Metal on macOS, Vulkan
+on Linux, or `gpu/none.c` without a GPU.
 
 ## Modules
 
@@ -28,7 +28,9 @@ milestone. Milestone 6 adds the Metal backend.
 | `cpu/pool.c/.h` | The worker pool of one renderer. |
 | `cpu/scene.c` | The UI scene painter behind `scene_paint.h`. |
 | `gpu/gpu.h`, `gpu/none.c` | The GPU interface, and the build without a GPU. |
-| `gpu/metal/` | The Metal backend. It does not exist yet. It arrives in milestone 6. |
+| `gpu/build.c/.h` | The CPU half of a GPU backend: instance lists, draw commands, the atlas, UI image slots. |
+| `gpu/metal/` | The Metal backend. It does not use `gpu/build.c` yet. |
+| `gpu/vulkan/` | The Vulkan backend: `device.c`, `swapchain.c`, `frame.c`. `internal.h` states its design. |
 
 ## Ownership
 

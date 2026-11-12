@@ -4,8 +4,19 @@
 /*
  * The GPU backend interface. render.c is the only caller.
  *
- * Milestone 4 builds only gpu/none.c on every system. Milestone 6 adds
- * gpu/metal/ behind the same calls.
+ * One backend is in a build:
+ * - gpu/metal/ on macOS.
+ * - gpu/vulkan/ on Linux, when the build has Vulkan 1.3 and glslc.
+ * - gpu/none.c in all other builds. It has no GPU.
+ *
+ * gpu/build.c is the CPU half of a GPU backend. It turns a render_frame
+ * into instance lists, draw commands, and atlas uploads. A backend that
+ * uses it holds only the code that talks to its GPU API. The Vulkan backend
+ * uses it. The Metal backend still holds its own copy of that logic.
+ *
+ * WSAP_RENDER_GPU selects the GPU at run time. "0" or "off" gives no GPU.
+ * "software" lets the Vulkan backend use a device that runs on the CPU,
+ * such as lavapipe. This value is for tests.
  *
  * Rules for a backend
  * - The GPU draws a whole frame or nothing. It decides before it changes
@@ -15,8 +26,10 @@
  *   RENDER_GPU_UNUSED. The CPU then paints the frame and
  *   render_gpu_present() shows the pixels.
  * - With no free frame slot it returns RENDER_GPU_DROPPED: nothing drawn,
- *   nothing presented, no state changed. It does not wait for a slot, so the
- *   main thread keeps its time for input and PTY reads.
+ *   nothing presented, no state changed. It does not wait for the GPU or
+ *   for the display without a limit, so the main thread keeps its time for
+ *   input and PTY reads. A backend can wait a few milliseconds when a
+ *   dropped frame costs more, as in a resize. It states each such wait.
  * - It asks for the drawable of the frame after it builds the frame data, so
  *   the drawable is held for the shortest time. `framebuffer.drawable` holds
  *   the drawable that it acquired.
@@ -63,7 +76,10 @@ enum render_gpu_status {
 /* The GPU of the renderer, or NULL when there is none. */
 struct render_gpu *render_gpu_new(void);
 void render_gpu_free(struct render_gpu *g);
-/* The native device for the window (an id<MTLDevice>), or NULL. */
+/*
+ * The native device for the window, or NULL. Metal gives an id<MTLDevice>.
+ * Vulkan gives a struct vulkan_device (paint/vulkan.h).
+ */
 void *render_gpu_native_device(struct render_gpu *g);
 
 /*

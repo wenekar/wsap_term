@@ -248,11 +248,14 @@ else
     backend_deps = []
 endif
 
+# The Vulkan backend needs Vulkan 1.3 and glslc, which compiles its shaders.
+# `auto` builds the CPU-only renderer when one of them is missing.
 has_vulkan = false
 vulkan_opt = get_option('vulkan_render')
 if vulkan_opt != 'disabled' and system != 'darwin'
-    vulkan_dep = dependency('vulkan', required: vulkan_opt == 'enabled')
-    if vulkan_dep.found()
+    vulkan_dep = dependency('vulkan', version: '>=1.3.0', required: vulkan_opt == 'enabled')
+    glslc = find_program('glslc', native: true, required: vulkan_opt == 'enabled')
+    if vulkan_dep.found() and glslc.found()
         has_vulkan = true
         backend_deps += [vulkan_dep]
     endif

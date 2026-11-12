@@ -105,6 +105,7 @@ jobs:
             libdbus-1-dev \
             libegl1-mesa-dev \
             libvulkan-dev \
+            glslc \
             fontconfig \
             fonts-dejavu \
             fonts-jetbrains-mono \

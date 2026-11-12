@@ -17,9 +17,9 @@ time, so each step paid a page fault for each page and one `munmap`.
 
 ## What changed
 
-- `src/render/gpu/vulkan/render.c`: `surface_swapchain_ensure()` returns at
+- `src/render/gpu/vulkan/swapchain.c`: `vulkan_swapchain_ensure()` returns at
   once when the surface, the requested size, and the pacing are the same as
-  for the last frame. It asks the driver nothing. `surface_traits_ensure()`
+  for the last frame. It asks the driver nothing. `traits_ensure()`
   reads the present modes and the format one time for each surface. A failed
   swapchain creation clears the stored answers.
 - The driver result `VK_ERROR_OUT_OF_DATE_KHR` or `VK_SUBOPTIMAL_KHR`, from an
@@ -107,7 +107,7 @@ the risk is larger than the gain.
   did not change, the renderer acquired a second image from the same swapchain.
   The first image was not presented and the semaphore was reused with a
   pending signal.
-  `surface_acquire_image()` now unifies image acquisition.
+  `vulkan_swapchain_acquire()` now unifies image acquisition.
   On `VK_SUBOPTIMAL_KHR`, the renderer keeps the acquired image if the
   swapchain does not change.
   If the swapchain changes, it recreates the slot semaphore and acquires
@@ -116,6 +116,6 @@ the risk is larger than the gain.
   extent and mode match.
 - On X11, the Vulkan surface extent comes from window geometry.
   During fast resizes, the window geometry can lag behind the requested size.
-  `surface_swapchain_ensure()` now records the actual swapchain extent.
+  `vulkan_swapchain_ensure()` now records the actual swapchain extent.
   It sets `recheck` to query capabilities again on the next frame when
   the extent differs from the requested size.
