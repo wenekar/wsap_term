@@ -53,9 +53,8 @@ The rules that constrain new code:
 - `src/render/gpu/build.c` is the CPU half of a GPU backend. It builds the
   instance lists, the draw commands, the atlas, and the UI image slots of a
   frame, and it calls no GPU API. A backend holds only the code that talks
-  to its GPU API. `gpu/vulkan/` follows this rule. `gpu/metal/` still holds
-  its own copy of the frame logic and must move to `build.c`. Do not copy
-  frame logic into a backend. The Vulkan shader header is generated at
+  to its GPU API. `gpu/metal/` and `gpu/vulkan/` follow this rule. Do not
+  copy frame logic into a backend. The Vulkan shader header is generated at
   build time. Do not check it in.
 - Themes live in `src/theme/`. The app owns the theme store.
   The window UI API is `src/ui/yasl/client.h`.

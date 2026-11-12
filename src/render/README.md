@@ -29,7 +29,7 @@ on Linux, or `gpu/none.c` without a GPU.
 | `cpu/scene.c` | The UI scene painter behind `scene_paint.h`. |
 | `gpu/gpu.h`, `gpu/none.c` | The GPU interface, and the build without a GPU. |
 | `gpu/build.c/.h` | The CPU half of a GPU backend: instance lists, draw commands, the atlas, UI image slots. |
-| `gpu/metal/` | The Metal backend. It does not use `gpu/build.c` yet. |
+| `gpu/metal/` | The Metal backend: `render.m` and `shaders.metal`. It draws the frame data of `gpu/build.c`. |
 | `gpu/vulkan/` | The Vulkan backend: `device.c`, `swapchain.c`, `frame.c`. `internal.h` states its design. |
 
 ## Ownership
