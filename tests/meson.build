@@ -81,7 +81,7 @@ test_cases = [
     ['css-index-test', files('ui/css/index_test.c'), ui_lib, ui_test_deps],
 ]
 
-# metal-render-test and metal-render-bench are off until milestone 6 brings back the Metal backend.
+# metal-render-bench is off. It is not ported to the current renderer.
 
 if system == 'darwin'
     test(
@@ -172,6 +172,7 @@ standalone_tests = [
 if system == 'darwin'
     test_cases += [['window-pacing-test', files('ui/yasl/window_pacing_test.m'), app_lib, deps]]
     test_cases += [['render-gpu-slot-test', files('render/gpu_slot_test.m'), render_lib, deps]]
+    test_cases += [['metal-render-test', files('render/metal_render_test.m'), render_lib, deps]]
     standalone_tests += ['window-pacing-test', 'render-gpu-slot-test']
 endif
 if has_vulkan
