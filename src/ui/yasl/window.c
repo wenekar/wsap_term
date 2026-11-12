@@ -458,7 +458,7 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
     void *layer = NULL;
     if (w->surface && options.type == YASL_SURFACE_NATIVE &&
         !(layer = window_metal_attach(w->surface, spec->graphics_device))) {
-        fprintf(stderr, "window: no metal layer, drawing on the CPU: %s\n",
+        fprintf(stderr, "window: no GPU surface, drawing on the CPU: %s\n",
                 strerror(errno));
         yasl_surface_destroy(w->surface);
         options.type = YASL_SURFACE_CPU;

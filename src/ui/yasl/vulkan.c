@@ -27,6 +27,24 @@ struct window_vulkan {
 
 static bool vulkan_loader_initialized;
 
+/*
+ * True when the device of the renderer can show images on the surface. A
+ * display server without buffer sharing gives a surface that takes no
+ * swapchain: a software compositor, or an X server without DRI3. The
+ * window then draws on the CPU.
+ */
+static bool surface_presentable(const struct vulkan_device *dev, VkSurfaceKHR surface)
+{
+    VkBool32 supported = VK_FALSE;
+    uint32_t formats = 0;
+    return vkGetPhysicalDeviceSurfaceSupportKHR(dev->physical_device, dev->queue_family,
+                                                surface, &supported) == VK_SUCCESS &&
+           supported &&
+           vkGetPhysicalDeviceSurfaceFormatsKHR(dev->physical_device, surface, &formats,
+                                                NULL) == VK_SUCCESS &&
+           formats > 0;
+}
+
 void *window_metal_attach(struct yasl_surface *s, void *device)
 {
     if (!s || !device)
@@ -44,6 +62,11 @@ void *window_metal_attach(struct yasl_surface *s, void *device)
     VkResult vr = yasl_vulkan_create_surface(s, vdev->instance, NULL, &vk_surface);
     if (vr != VK_SUCCESS)
         return NULL;
+    if (!surface_presentable(vdev, vk_surface)) {
+        yasl_vulkan_destroy_surface(s);
+        errno = ENOTSUP;
+        return NULL;
+    }
     struct window_vulkan *wv = calloc(1, sizeof(*wv));
     if (!wv) {
         yasl_vulkan_destroy_surface(s);
