@@ -31,6 +31,8 @@ build-tsan/
 build-msan/
 dist/
 /subprojects/.wraplock
+/subprojects/accesskit-c-0.23.2/
+/subprojects/packagecache/
 
 vgcore.*
 core

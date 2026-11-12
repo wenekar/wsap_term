@@ -139,6 +139,12 @@ compositor that restarts is not such a loss: the windows wait for it.
 
 ## Tests
 
+`accessibility-atspi-test` checks the Linux accessibility adapter.
+It needs Sway, `dbus-run-session`, at-spi2-core, Python GI, and the AT-SPI typelib.
+It skips if the tools, GI, or typelib are absent.
+It uses a private accessibility bus and a headless compositor.
+Enable it with `-Dintegration_tests=true`.
+
 Tests share one link per source library by default.
 Each test starts in a separate process.
 Test names and binary paths stay the same.

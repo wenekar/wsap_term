@@ -24,7 +24,7 @@ The macOS job runs on `macos-14` (Apple Silicon).
 It installs these Homebrew packages:
 
 ```sh
-brew install llvm meson ninja pkgconf yyjson harfbuzz icu4c
+brew install llvm meson ninja pkgconf yyjson harfbuzz icu4c rust
 ```
 
 The build script selects Homebrew LLVM and its archive tools.
@@ -41,6 +41,8 @@ It installs GCC 14, Wayland libraries, HarfBuzz, ICU, FreeType, and fonts.
 The fonts are JetBrains Mono, DejaVu, Noto, Noto CJK, and Noto Color Emoji.
 It uses the CMake and Ninja of the runner image.
 It installs Meson with pip and compiles yyjson from source.
+It updates the stable Rust toolchain for the AccessKit source fallback.
+Both jobs build the pinned AccessKit C library with Meson.
 It keeps the fontconfig settings of the image. They select RGB subpixel antialiasing.
 The font and render tests set their own rendering mode.
 The regular tests do not need a display server.

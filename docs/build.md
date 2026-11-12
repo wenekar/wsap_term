@@ -1,5 +1,19 @@
 # Build and install
 
+## AccessKit
+
+The build links AccessKit C statically for accessibility.
+Meson first checks for the `accesskit-c-0.23` pkg-config package.
+It needs version 0.23.2 or a later 0.23 release.
+If the package is absent, Meson downloads the pinned 0.23.2 source archive.
+The fallback needs Cargo and Rust 1.87 or later.
+The wrap adds the dependency version to the upstream Meson metadata.
+Its first build downloads the Rust dependencies.
+Later builds can use the Cargo cache.
+Set `PKG_CONFIG_PATH` if the system package uses a custom prefix.
+Use `--wrap-mode=nofallback` to require the system package.
+`make install` skips subprojects and installs only the app files.
+
 ## Build targets
 
 | Command | Result |

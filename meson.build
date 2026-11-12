@@ -181,6 +181,13 @@ dl_dep = cc.find_library('dl', required: system == 'linux')
 m_dep = cc.find_library('m')
 thread_dep = dependency('threads')
 yyjson_dep = dependency('yyjson', version: '>=0.12.0')
+accesskit_dep = dependency(
+    'accesskit-c-0.23',
+    version: ['>=0.23.2', '<0.24.0'],
+    static: true,
+    fallback: ['accesskit-c', 'accesskit_c_dep'],
+    default_options: ['default_library=static'],
+)
 icu_uc_dep = dependency('icu-uc', required: false)
 icu_i18n_dep = dependency('icu-i18n', required: false)
 if icu_uc_dep.found() and icu_i18n_dep.found()

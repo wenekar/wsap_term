@@ -289,9 +289,10 @@ The dispatcher checks the current control before it runs an action.
 It rejects hidden, disabled, ignored, and unsupported targets.
 The tree indexes IDs for lookup and duplicate checks.
 
-Linux maps the tree to AT-SPI.
-macOS maps it to AppKit accessibility elements.
-A Windows UI Automation provider can use the same tree and action sink later.
+AccessKit maps the tree to AT-SPI on Linux.
+Its macOS adapter maps the tree to AppKit accessibility elements.
+The C adapter stays in `src/ui/yasl/accessibility/`.
+The UI core has no AccessKit dependency.
 Keep native platform types in the surface provider.
 Keep the UI tree and provider contract platform neutral.
 While a modal is open, the tree contains its path and content.
@@ -300,9 +301,10 @@ Password nodes do not copy their value or text offsets into the tree.
 
 Each drawn frame publishes accessibility changes without a UI damage check.
 A window publishes only while its provider is active.
-On Linux, the provider is active when an assistive technology sets
-`IsEnabled` or `ScreenReaderEnabled` in `org.a11y.Status`.
-Set `WSAP_ACCESSIBILITY=1` for a client that does not set these properties.
+On Linux, AccessKit activates when `IsEnabled` is true in `org.a11y.Status`.
+Set this property before a client reads the tree.
+`WSAP_ACCESSIBILITY=1` prepares local snapshots before activation.
+It does not enable the accessibility bus or change desktop settings.
 When a client starts to listen, the provider sends an empty action request.
 The window then draws a frame, and the frame publishes the full tree.
 The terminal view builds its text at most once each 100 ms.
@@ -311,6 +313,9 @@ A terminal text change does not need to change the UI scene.
 Removed or detached macOS elements return empty results.
 They cannot run actions.
 A provider with no action sink is read-only.
+Text runs use ICU grapheme and word boundaries.
+The adapter maps text selections between run character indices and UTF-8 bytes.
+AccessKit manages native events and platform text offsets.
 
 The terminal view exposes up to 500 history rows before the current viewport.
 It also exposes visible text, its caret, and its selected text range.

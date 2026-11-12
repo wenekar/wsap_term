@@ -61,7 +61,7 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: "1"
           HOMEBREW_NO_INSTALL_CLEANUP: "1"
         run: |
-          brew install llvm meson ninja pkgconf yyjson harfbuzz icu4c
+          brew install llvm meson ninja pkgconf yyjson harfbuzz icu4c rust
       - name: Build and test
         run: bash tools/ci/build.sh
       - name: Upload build and test logs
@@ -112,6 +112,8 @@ jobs:
             fonts-noto-cjk \
             fonts-noto-color-emoji
           python3 -m pip install --break-system-packages "meson>=1.12.0"
+          rustup update stable --no-self-update
+          rustup default stable
       - name: Install yyjson
         run: |
           git clone --depth 1 --branch 0.13.0 https://github.com/ibireme/yyjson.git /tmp/yyjson

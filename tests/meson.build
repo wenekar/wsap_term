@@ -474,6 +474,16 @@ if get_option('integration_tests')
             )
         endif
     endif
+    test(
+        'accessibility-atspi-test',
+        python,
+        args: files('ui/yasl/accessibility_test.py'),
+        depends: [program],
+        env: {'BIN': program.full_path()},
+        suite: 'integration',
+        is_parallel: false,
+        timeout: 120,
+    )
     foreach it : integration_tests
         test(
             it[0],
