@@ -166,6 +166,23 @@ static bool thread_count_settles(int want)
     }
     return false;
 }
+
+/*
+ * The thread count after the joined threads of earlier tests leave /proc.
+ * The count only goes down while they leave, so it is settled when it
+ * stays the same for 100 ms.
+ */
+static int settled_thread_count(void)
+{
+    int n = live_thread_count();
+    for (int same = 0, i = 0; same < 10 && i < 300; i++) {
+        nanosleep(&(struct timespec){ .tv_nsec = 10 * 1000 * 1000 }, NULL);
+        int now = live_thread_count();
+        same = now == n ? same + 1 : 0;
+        n = now;
+    }
+    return n;
+}
 #endif
 
 /* Each renderer owns its workers: create starts them, destroy joins them. */
@@ -180,7 +197,7 @@ static void worker_pool_lifecycle_test(void)
     assert(want && got);
     test_render_paint_full(want, w, h, true, t);
 #ifdef __linux__
-    int before = live_thread_count();
+    int before = settled_thread_count();
 #endif
     for (int round = 0; round < 3; round++) {
         struct renderer *r = renderer_create(&(struct render_options){ .threads = 3 });
@@ -231,7 +248,7 @@ static void scale_respawn_test(void)
     (void)draw_grid(r, px, size, &history, true, &frame, test_font());
     assert(!memcmp(px, want, bytes));
 
-    int before = live_thread_count();
+    int before = settled_thread_count();
     struct font_instance *big = font_instance_acquire(
         font_instance_size_pt(font_instance_default()), 180);
     assert(big && big != font_instance_default());
