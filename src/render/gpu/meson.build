@@ -1,6 +1,6 @@
-# build.c is the CPU half of a GPU backend. The Vulkan backend uses it. The
-# Metal backend still holds its own copy of that logic.
+# build.c is the CPU half of a GPU backend. Both GPU backends use it.
 if system == 'darwin'
+    render_src += files('build.c')
     subdir('metal')
 elif has_vulkan
     render_src += files('build.c')

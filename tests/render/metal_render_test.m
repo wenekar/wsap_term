@@ -1,571 +1,539 @@
 #import <Metal/Metal.h>
-#include "render/backends/metal/render.h"
-#include "font/font.h"
-#include "render/render.h"
-#include "render/backend.h"
-#include "render/cell.h"
-#include "render/term_frame.h"
-#include "paint/scene.h"
-#include "font/cell_draw.h"
-#include "font/glyph_cache.h"
-#include "term_api.h"
-#include "helpers/flood.h"
+#import <QuartzCore/CAMetalLayer.h>
+
 #include <assert.h>
-#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
-static const struct wsap_vtcore_cell TEST_ROW[] = {
-    { .text = 'H', .fg = 0xFFFFFFFFu, .bg = 0xFF112233u, .width = 1 },
-    { .text = 'i', .fg = 0xFFFFFFFFu, .bg = 0xFF112233u, .width = 1 },
-};
+#include "helpers/render_frame_helpers.h"
+#include "paint/framebuffer.h"
+#include "paint/scene.h"
+#include "render/gpu/build.h"
+#include "render/gpu/gpu.h"
+#include "render/render.h"
+#include "render/surface.h"
+#include "util/damage.h"
 
-static const struct wsap_vtcore_cell *dummy_row(const struct terminal_frame *f, int row)
-{
-    (void)f;
-    return (row == 0) ? TEST_ROW : NULL;
+/*
+ * Tests of the Metal backend through render/gpu/gpu.h.
+ *
+ * The frames draw into offscreen textures, so the tests need a Metal device
+ * and no display. Without a device, a test prints a note and does nothing.
+ * A test reads the pixels after render_gpu_free(), because that call waits
+ * until the GPU finishes every frame.
+ *
+ * Run the tests with the Metal validation layer to check the Metal calls
+ * too: MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1.
+ */
+
+/* A drawable with a texture that the test can read. */
+@interface TestDrawable : NSObject <CAMetalDrawable>
+- (instancetype)initWithDevice:(id<MTLDevice>)device size:(struct vector2i)size;
+@end
+
+@implementation TestDrawable {
+    id<MTLTexture> _texture;
+    CAMetalLayer *_layer;
 }
 
-static void dummy_selection(const struct terminal_frame *f, int row, int cols, int *c0, int *c1)
+- (instancetype)initWithDevice:(id<MTLDevice>)device size:(struct vector2i)size
 {
-    (void)f; (void)row; (void)cols;
-    *c0 = -1; *c1 = -2;
-}
-
-static struct wsap_vtcore_cell dummy_resolve_cell(const struct terminal_frame *f,
-                                           const struct wsap_vtcore_cell *cells, int c,
-                                           int sel_c0, int sel_c1, int cursor)
-{
-    (void)f; (void)sel_c0; (void)sel_c1; (void)cursor;
-    return cells[c];
-}
-
-static uint64_t dummy_row_gen(const struct terminal_frame *f, int row)
-{
-    (void)f; (void)row;
-    return 1;
-}
-
-static uint64_t dummy_font_gen(const struct font_instance *fi)
-{
-    (void)fi;
-    return 1;
-}
-
-static const struct glyph *dummy_glyph(struct font_instance *fi, uint32_t cp, uint16_t flags)
-{
-    (void)fi; (void)flags;
-    static uint32_t color[40];
-    static struct glyph glyph = { .width = 2, .color = color, .has_color = true };
-    for (int i = 0; i < 40; i++) color[i] = 0xFFF01020u;
-    return cp == 'H' ? &glyph : NULL;
-}
-
-static void dummy_shape(struct font_instance *fi, const uint32_t *cps, int count,
-                        uint16_t flags, glyph_span_fn emit, void *ctx)
-{
-    (void)fi; (void)cps; (void)count; (void)flags; (void)emit; (void)ctx;
-}
-
-static bool dummy_symbol(uint32_t cp)
-{
-    (void)cp;
-    return false;
-}
-
-static uint32_t churn_cp = 0x100;
-static uint64_t churn_gen = 1;
-static struct wsap_vtcore_cell churn_rows[2][2];
-
-static uint32_t churn_color(uint32_t cp)
-{
-    return 0xFF000000u | ((cp * 2654435761u) & 0x00FFFFFFu) | 0x00010101u;
-}
-
-static const struct wsap_vtcore_cell *churn_row(const struct terminal_frame *f, int row)
-{
-    (void)f;
-    churn_rows[0][0] = (struct wsap_vtcore_cell){ .text = 'A', .fg = 0xFFFFFFFFu, .width = 1 };
-    churn_rows[1][0] = (struct wsap_vtcore_cell){ .text = churn_cp, .fg = 0xFFFFFFFFu, .width = 1 };
-    return churn_rows[row];
-}
-
-static uint64_t churn_row_gen(const struct terminal_frame *f, int row)
-{
-    (void)f;
-    return row == 0 ? 1 : churn_gen;
-}
-
-static const struct glyph *churn_glyph(struct font_instance *fi, uint32_t cp, uint16_t flags)
-{
-    (void)fi; (void)flags;
-    static uint32_t color[40];
-    static struct glyph glyph = { .width = 2, .color = color, .has_color = true };
-    for (int i = 0; i < 40; i++) color[i] = churn_color(cp);
-    return &glyph;
-}
-
-static void test_atlas_reuse_keeps_cached_rows(id<MTLDevice> device)
-{
-    struct framebuffer_history history = {0};
-    struct metal_render *r = metal_render_create(device);
-    assert(r);
-    static const int snapshot_tag;
-    struct terminal_frame frame = {
-        .source = (const struct wsap_vtcore_snapshot *)&snapshot_tag,
-        .cols = 2, .rows = 2,
-        .default_bg = 0xFF000000u, .default_fg = 0xFFFFFFFFu,
-        .cursor_y = -1,
-    };
-    struct render_backend_view view = {
-        .cols = 2, .rows = 2, .cell_w = 10, .cell_h = 20,
-        .row = churn_row,
-        .row_selection = dummy_selection,
-        .resolve_cell = dummy_resolve_cell,
-        .row_gen = churn_row_gen,
-        .font_version = dummy_font_gen,
-        .fetch_glyph = churn_glyph,
-        .shape_segment = dummy_shape,
-        .cell_aligned_symbol = dummy_symbol,
-    };
-    MTLTextureDescriptor *td =
+    self = [super init];
+    if (!self)
+        return nil;
+    MTLTextureDescriptor *d =
         [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-                                                           width:20 height:40 mipmapped:NO];
-    td.storageMode = MTLStorageModeShared;
-    td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
-    id<MTLTexture> target = [device newTextureWithDescriptor:td];
-    MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
-    pass.colorAttachments[0].texture = target;
-    pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-    pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-
-    uint32_t pixels[20 * 40];
-    for (int i = 0; i < 9000; i++, churn_cp++, churn_gen++) {
-        metal_render_begin(r);
-        assert(metal_render_terminal(r, &history, &frame, &view) == RENDER_BACKEND_DREW);
-        assert(metal_render_submit(r, nil, pass, (struct vector2i){ .x = 20, .y = 40 }, false));
-        if (i % 97 && i < 8990)
-            continue;
-        [target getBytes:pixels bytesPerRow:20 * sizeof(uint32_t)
-              fromRegion:MTLRegionMake2D(0, 0, 20, 40) mipmapLevel:0];
-        assert(pixels[0] == churn_color('A'));
-        assert(pixels[20 * 20] == churn_color(churn_cp));
-    }
-    [target release];
-    metal_render_destroy(r);
-    framebuffer_history_release(&history);
-}
-
-static const int output_tags[2];
-
-static const struct wsap_vtcore_cell *output_row(const struct terminal_frame *frame, int row)
-{
-    (void)row;
-    static const struct wsap_vtcore_cell cells[2][2] = {
-        {{ .text = 'A', .fg = 0xFFFFFFFFu, .width = 1 }},
-        {{ .text = 'B', .fg = 0xFFFFFFFFu, .width = 1 }},
-    };
-    return cells[frame->source == (const struct wsap_vtcore_snapshot *)&output_tags[1]];
-}
-
-static void test_alternating_outputs(id<MTLDevice> device)
-{
-    struct metal_render *r = metal_render_create(device);
-    assert(r);
-    struct framebuffer_history histories[2] = {0};
-    struct render_backend_view view = {
-        .cols = 2, .rows = 1, .cell_w = 10, .cell_h = 20,
-        .row = output_row, .row_selection = dummy_selection,
-        .resolve_cell = dummy_resolve_cell, .row_gen = dummy_row_gen,
-        .font_version = dummy_font_gen, .fetch_glyph = churn_glyph,
-        .shape_segment = dummy_shape, .cell_aligned_symbol = dummy_symbol,
-    };
-    MTLTextureDescriptor *td =
-        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-                                                           width:20 height:20 mipmapped:NO];
-    td.storageMode = MTLStorageModeShared;
-    td.usage = MTLTextureUsageRenderTarget;
-    id<MTLTexture> target = [device newTextureWithDescriptor:td];
-    assert(target);
-    MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
-    pass.colorAttachments[0].texture = target;
-    pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-    pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-    for (int i = 0; i < 6; i++) {
-        int output = i % 2;
-        struct terminal_frame frame = {
-            .source = (const struct wsap_vtcore_snapshot *)&output_tags[output],
-            .cols = 2, .rows = 1, .cursor_y = -1,
-            .default_bg = 0xFF000000u, .default_fg = 0xFFFFFFFFu,
-        };
-        metal_render_begin(r);
-        assert(metal_render_terminal(r, &histories[output], &frame, &view) ==
-               RENDER_BACKEND_DREW);
-        assert(metal_render_submit(r, nil, pass, (struct vector2i){ .x = 20, .y = 20 }, false));
-        uint32_t pixels[400];
-        [target getBytes:pixels bytesPerRow:20 * sizeof(uint32_t)
-              fromRegion:MTLRegionMake2D(0, 0, 20, 20) mipmapLevel:0];
-        assert(pixels[0] == churn_color(output ? 'B' : 'A'));
-    }
-    [target release];
-    framebuffer_history_release(&histories[0]);
-    framebuffer_history_release(&histories[1]);
-    metal_render_destroy(r);
-}
-
-static uint64_t mono_font_gen = 1;
-
-static uint64_t mono_font_generation(const struct font_instance *fi)
-{
-    (void)fi;
-    return mono_font_gen;
-}
-
-static int mono_ink(uint32_t cp, uint16_t flags)
-{
-    if (cp != 'A')
-        return 7;
-    return (flags & FONT_STYLE_BOLD) ? 5 : 2 + (int)mono_font_gen;
-}
-
-static const struct glyph *mono_glyph(struct font_instance *fi, uint32_t cp, uint16_t flags)
-{
-    (void)fi;
-    static uint8_t pixels[20][10];
-    static uint8_t *rows[20];
-    static struct glyph glyph = { .width = 10, .alpha = rows };
-    int ink = mono_ink(cp, flags);
-    for (int y = 0; y < 20; y++) {
-        rows[y] = pixels[y];
-        for (int x = 0; x < 10; x++)
-            pixels[y][x] = x < ink ? 255 : x == ink ? 128 : 0;
-    }
-    return &glyph;
-}
-
-static const struct wsap_vtcore_cell MONO_ROW[] = {
-    { .text = 'A', .fg = 0xFFFFFFFFu, .width = 1 },
-    { .text = 'A', .fg = 0xFFFFFFFFu, .attrs = WSAP_VTCORE_ATTR_BOLD, .width = 1 },
-    { .text = 0xE9, .fg = 0xFFFFFFFFu, .width = 1 },
-};
-
-static const struct wsap_vtcore_cell *mono_row(const struct terminal_frame *f, int row)
-{
-    (void)f; (void)row;
-    return MONO_ROW;
-}
-
-static void check_mono_row(const uint32_t *pixels, const int ink[3])
-{
-    for (int c = 0; c < 3; c++) {
-        const uint32_t *px = pixels + 10 * 30 + c * 10;
-        for (int x = 0; x < 10; x++) {
-            uint32_t blue = px[x] & 0xFFu;
-            if (x < ink[c])
-                assert(px[x] == 0xFFFFFFFFu);
-            else if (x == ink[c])
-                assert(blue >= 0x78 && blue <= 0x88);
-            else
-                assert(px[x] == 0xFF000000u);
-        }
-    }
-}
-
-static void test_ascii_mono_glyphs(id<MTLDevice> device)
-{
-    struct framebuffer_history history = {0};
-    struct metal_render *r = metal_render_create(device);
-    assert(r);
-    struct terminal_frame frame = {
-        .cols = 3, .rows = 1,
-        .default_bg = 0xFF000000u, .default_fg = 0xFFFFFFFFu,
-        .cursor_y = -1,
-    };
-    struct render_backend_view view = {
-        .cols = 3, .rows = 1, .cell_w = 10, .cell_h = 20,
-        .row = mono_row,
-        .row_selection = dummy_selection,
-        .resolve_cell = dummy_resolve_cell,
-        .row_gen = dummy_row_gen,
-        .font_version = mono_font_generation,
-        .fetch_glyph = mono_glyph,
-        .shape_segment = dummy_shape,
-        .cell_aligned_symbol = dummy_symbol,
-    };
-    MTLTextureDescriptor *td =
-        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-                                                           width:30 height:20 mipmapped:NO];
-    td.storageMode = MTLStorageModeShared;
-    td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
-    id<MTLTexture> target = [device newTextureWithDescriptor:td];
-    MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
-    pass.colorAttachments[0].texture = target;
-    pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-    pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-
-    uint32_t pixels[30 * 20];
-    for (int i = 0; i < 6; i++) {
-        if (i == 3)
-            mono_font_gen++;
-        metal_render_begin(r);
-        assert(metal_render_terminal(r, &history, &frame, &view) == RENDER_BACKEND_DREW);
-        assert(metal_render_submit(r, nil, pass, (struct vector2i){ .x = 30, .y = 20 }, false));
-        [target getBytes:pixels bytesPerRow:30 * sizeof(uint32_t)
-              fromRegion:MTLRegionMake2D(0, 0, 30, 20) mipmapLevel:0];
-        int ink[3] = { mono_ink('A', 0), mono_ink('A', FONT_STYLE_BOLD), mono_ink(0xE9, 0) };
-        check_mono_row(pixels, ink);
-    }
-    [target release];
-    metal_render_destroy(r);
-    framebuffer_history_release(&history);
-}
-
-static double bench_now(void)
-{
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return t.tv_sec + t.tv_nsec / 1e9;
-}
-
-static void metal_flood_benchmark(id<MTLDevice> device, enum flood_kind kind, const char *name)
-{
-    int cols = 160, rows = 50;
-    int frames = getenv("FLOOD_FRAMES") ? atoi(getenv("FLOOD_FRAMES")) : 200;
-    struct font_instance *fi = font_instance_default();
-    const struct font_metrics *m = font_instance_metrics(fi);
-    struct framebuffer_history history = {0};
-    struct metal_render *r = metal_render_create(device);
-    struct wsap_vtcore *t = tt_new(cols, rows);
-    struct wsap_vtcore_snapshot *snap = wsap_vtcore_snapshot_new();
-    assert(r && t && snap);
-    tt_puts(t, "\033[?25l");
-    int w = cols * m->cell_w, h = rows * m->cell_h;
-    MTLTextureDescriptor *td =
-        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-                                                           width:(NSUInteger)w
-                                                          height:(NSUInteger)h
+                                                           width:(NSUInteger)size.x
+                                                          height:(NSUInteger)size.y
                                                        mipmapped:NO];
-    td.storageMode = MTLStorageModePrivate;
-    td.usage = MTLTextureUsageRenderTarget;
-    id<MTLTexture> target = [device newTextureWithDescriptor:td];
-    MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
-    pass.colorAttachments[0].texture = target;
-    pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-    pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-    const struct render_backend_view view = {
-        .font = fi, .cols = cols, .rows = rows,
-        .cell_w = (float)m->cell_w, .cell_h = (float)m->cell_h,
-        .cell_size = sizeof(struct wsap_vtcore_cell),
-        .row = terminal_frame_row,
-        .row_selection = terminal_frame_row_selection,
-        .resolve_cell = render_resolve_cell,
-        .row_gen = terminal_frame_row_key,
-        .font_version = font_instance_version,
-        .fetch_glyph = glyph_cache_fetch,
-        .shape_segment = glyph_cache_shape_segment,
-        .cell_aligned_symbol = is_cell_aligned_symbol,
-    };
-    uint32_t seed = 0x9e3779b9u;
-    static char chunk[8192];
-    double total = 0, worst = 0, submit = 0;
-    for (int f = 0; f < frames + 10; f++) {
-        @autoreleasepool {
-            tt_write(t, chunk, flood_chunk(kind, &seed, chunk, sizeof(chunk)));
-            assert(wsap_vtcore_snapshot_update(snap, t));
-            struct terminal_frame frame;
-            terminal_frame_init(&frame, snap, false);
-            glyph_cache_begin_frame(fi, frame.default_fg, frame.default_bg);
-            metal_render_begin(r);
-            double begin = bench_now();
-            assert(metal_render_terminal(r, &history, &frame, &view) == RENDER_BACKEND_DREW);
-            double dt = bench_now() - begin;
-            begin = bench_now();
-            assert(metal_render_submit(r, nil, pass, (struct vector2i){ .x = w, .y = h },
-                                       false));
-            if (f >= 10) {
-                total += dt;
-                submit += bench_now() - begin;
-                if (dt > worst) worst = dt;
-            }
-        }
+    d.usage = MTLTextureUsageRenderTarget;
+    d.storageMode = MTLStorageModeShared;
+    _texture = [device newTextureWithDescriptor:d];
+    _layer = [[CAMetalLayer alloc] init];
+    _layer.device = device;
+    if (!_texture) {
+        [self release];
+        return nil;
     }
-    printf("metal-flood-%-10s %.3f ms/frame worst=%.3f ms submit=%.3f ms/frame\n", name,
-           total * 1000 / frames, worst * 1000, submit * 1000 / frames);
-    [target release];
-    wsap_vtcore_snapshot_free(snap);
-    wsap_vtcore_free(t);
-    metal_render_destroy(r);
-    framebuffer_history_release(&history);
+    return self;
 }
 
-static int metal_benchmark(id<MTLDevice> device)
+- (void)dealloc
 {
-    assert(render_init());
-    const char *only = getenv("FLOOD");
-    for (unsigned i = 0; i < sizeof(flood_kinds) / sizeof(flood_kinds[0]); i++)
-        if (!only || !strcmp(only, flood_kinds[i].name))
-            metal_flood_benchmark(device, flood_kinds[i].kind, flood_kinds[i].name);
+    [_texture release];
+    [_layer release];
+    [super dealloc];
+}
+
+- (id<MTLTexture>)texture { return _texture; }
+- (CAMetalLayer *)layer { return _layer; }
+- (NSUInteger)drawableID { return 1; }
+- (CFTimeInterval)presentedTime { return 0; }
+- (void)present {}
+- (void)presentAtTime:(CFTimeInterval)time
+{
+    (void)time;
+}
+- (void)presentAfterMinimumDuration:(CFTimeInterval)duration
+{
+    (void)duration;
+}
+- (void)addPresentedHandler:(MTLDrawablePresentedHandler)block
+{
+    (void)block;
+}
+
+/* Metal asks for this handler when a frame presents the drawable. The test
+ * holds no presentation, so the handler runs at once. */
+- (void)addPresentScheduledHandler:(MTLDrawablePresentedHandler)block
+{
+    if (block)
+        block(self);
+}
+
+@end
+
+enum { SHOTS_MAX = 8 };
+
+/* One GPU, one render surface, and the drawables that the test reads. */
+struct fixture {
+    id<MTLDevice> device;
+    struct render_gpu *g;
+    struct render_surface rs;
+    TestDrawable *shots[SHOTS_MAX];
+    int n_shots;
+};
+
+static bool fixture_open(struct fixture *f, const char *title)
+{
+    *f = (struct fixture){0};
+    f->g = render_gpu_new();
+    if (!f->g) {
+        printf("metal_render_test: no Metal device, %s skipped\n", title);
+        return false;
+    }
+    f->device = [(id<MTLDevice>)render_gpu_native_device(f->g) retain];
+    return true;
+}
+
+/* A new drawable of `size`. The fixture owns it. */
+static TestDrawable *fixture_shot(struct fixture *f, struct vector2i size)
+{
+    assert(f->n_shots < SHOTS_MAX);
+    TestDrawable *d = [[TestDrawable alloc] initWithDevice:f->device size:size];
+    assert(d);
+    f->shots[f->n_shots++] = d;
+    return d;
+}
+
+/* Frees the GPU. After this, every frame is finished and its pixels can be read. */
+static void fixture_finish(struct fixture *f)
+{
+    render_gpu_surface_free(f->rs.gpu);
+    f->rs.gpu = NULL;
+    render_gpu_free(f->g);
+    f->g = NULL;
+}
+
+static void fixture_close(struct fixture *f)
+{
+    fixture_finish(f);
+    for (int i = 0; i < f->n_shots; i++)
+        [f->shots[i] release];
+    [f->device release];
+}
+
+/* The pixels of a drawable, as 0xAARRGGBB. The caller frees them. */
+static uint32_t *shot_pixels(TestDrawable *d)
+{
+    id<MTLTexture> t = d.texture;
+    uint32_t *px = malloc(t.width * t.height * sizeof(*px));
+    assert(px);
+    [t getBytes:px
+        bytesPerRow:t.width * sizeof(*px)
+         fromRegion:MTLRegionMake2D(0, 0, t.width, t.height)
+        mipmapLevel:0];
+    return px;
+}
+
+struct acquire_call {
+    TestDrawable *drawable;
+    int count;
+};
+
+static void *acquire(void *ud)
+{
+    struct acquire_call *call = ud;
+    call->count++;
+    return call->drawable;
+}
+
+/*
+ * Draws `frame`, or presents `pixels` when they are given, into `drawable`.
+ * `drawable` nil means that the window has no drawable. A frame that finds
+ * every slot in use gets more tries, with time for the GPU between them.
+ */
+static enum render_gpu_status draw_into(struct fixture *f, const struct render_frame *frame,
+                                        uint32_t *pixels, const struct damage_list *damage,
+                                        TestDrawable *drawable, struct vector2i size)
+{
+    struct acquire_call call = { .drawable = drawable };
+    enum render_gpu_status status = RENDER_GPU_UNUSED;
+    for (int attempt = 0; attempt < 2000; attempt++) {
+        struct framebuffer fb = {
+            .pixels = pixels,
+            .size = size,
+            .acquire = acquire,
+            .acquire_ud = &call,
+        };
+        call.count = 0;
+        if (pixels)
+            status = render_gpu_present(f->g, &f->rs, &fb, damage) ? RENDER_GPU_PRESENTED
+                                                                     : RENDER_GPU_DROPPED;
+        else
+            status = render_gpu_draw(f->g, &f->rs, &fb, frame);
+        if (call.count || status != RENDER_GPU_DROPPED)
+            return status;
+        usleep(1000);
+    }
+    return status;
+}
+
+static enum render_gpu_status draw(struct fixture *f, const struct render_frame *frame,
+                                   TestDrawable *drawable, struct vector2i size)
+{
+    return draw_into(f, frame, NULL, NULL, drawable, size);
+}
+
+/* The number of pixels that are neither `a` nor `b`. */
+static size_t count_other(const uint32_t *px, size_t n, uint32_t a, uint32_t b)
+{
+    size_t count = 0;
+    for (size_t i = 0; i < n; i++)
+        count += px[i] != a && px[i] != b;
+    return count;
+}
+
+/* The backend starts, gives its device, and refuses calls without a drawable. */
+static void test_lifecycle(void)
+{
+    struct render_gpu *g = render_gpu_new();
+    if (!g) {
+        printf("metal_render_test: no Metal device, lifecycle skipped\n");
+        return;
+    }
+    id<MTLDevice> device = render_gpu_native_device(g);
+    assert(device && [device conformsToProtocol:@protocol(MTLDevice)]);
+
+    struct render_surface surface = {0};
+    struct framebuffer fb = { .size = { .x = 100, .y = 100 } };
+    struct render_frame frame = {0};
+    assert(render_gpu_draw(g, &surface, &fb, &frame) == RENDER_GPU_UNUSED);
+    assert(!render_gpu_present(g, &surface, &fb, NULL));
+    assert(render_gpu_native_device(NULL) == NULL);
+    render_gpu_surface_free(NULL);
+    render_gpu_free(NULL);
+    render_gpu_free(g);
+}
+
+/* A terminal with styled text, decorations, wide glyphs, color glyphs, and
+ * box drawing. */
+static struct wsap_vtcore *styled_terminal(void)
+{
+    struct wsap_vtcore *term =
+        wsap_vtcore_new(&(struct wsap_vtcore_options){ .size = { .x = 80, .y = 24 } });
+    assert(term);
+    const char *text =
+        "\033[1;32mbold green \033[0;31mred \033[3mitalic\033[0m \033[7minverse\033[0m\r\n"
+        "\033[4mul\033[0m \033[21mdouble\033[0m \033[4:3mcurly\033[0m \033[4:4mdotted\033[0m "
+        "\033[4:5mdashed\033[0m \033[9mstrike\033[0m \033[53mover\033[0m\r\n"
+        "\033[38;5;208m256 \033[48;2;40;80;160m truecolor \033[0m \033[2mdim\033[0m\r\n"
+        "\xe4\xbd\xa0\xe5\xa5\xbd \xf0\x9f\x98\x80\xf0\x9f\x9a\x80 e\xcc\x81 "
+        "\xe2\x94\x8c\xe2\x94\x80\xe2\x94\x90 \xe2\x96\x88\xe2\x96\x80\xe2\x96\x92 "
+        "\xe2\xa0\x81\xe2\xa3\xbf\r\n"
+        "prompt$ ";
+    wsap_vtcore_feed(term, text, strlen(text), 0);
+    return term;
+}
+
+/* One op of each kind, a text run, and a clip. */
+static void scene_fill(struct ui_scene *scene, const struct ui_image *image)
+{
+    assert(ui_scene_rect(scene, (struct rect2i){ .x = 10, .y = 300, .width = 200, .height = 100 },
+                         0xFF334455u));
+    assert(ui_scene_blend_rect(scene,
+                               (struct rect2i){ .x = 20, .y = 310, .width = 180, .height = 80 },
+                               0xFFAABBCCu, 160));
+    assert(ui_scene_rounded_rect(scene,
+                                 (struct rect2i){ .x = 250, .y = 300, .width = 150, .height = 100 },
+                                 12, 0xFF4488AAu));
+    assert(ui_scene_circle(scene, (struct vector2i){ .x = 480, .y = 350 }, 40, 0xFF66BBAAu, 200));
+    assert(ui_scene_shadow(scene,
+                           (struct rect2i){ .x = 50, .y = 430, .width = 300, .height = 120 }, 8,
+                           12, 0xAA000000u));
+    assert(ui_scene_image(scene, (struct vector2i){ .x = 600, .y = 300 }, image));
+    const struct font_metrics *m = font_instance_metrics(test_font());
+    struct ui_text_style style = { .advance = m->cell_w, .cell_h = m->cell_h };
+    assert(ui_scene_push_clip(scene,
+                              (struct rect2i){ .x = 600, .y = 420, .width = 120, .height = 30 }));
+    const char *text = "clipped UI text \xe4\xbd\xa0\xe5\xa5\xbd";
+    const struct rect2i bounds = { .x = 580, .y = 425, .width = 300, .height = m->cell_h };
+    assert(ui_scene_text_run(scene, bounds, style, 0xFFFFFF00u, text, strlen(text)));
+    assert(ui_scene_pop_clip(scene));
+}
+
+/* Fills the terminal with `count` wide glyphs that no earlier call used. */
+static void feed_new_glyphs(struct wsap_vtcore *term, uint32_t *next_cp, int count)
+{
+    wsap_vtcore_feed(term, "\033[H", 3, 0);
+    for (int i = 0; i < count; i++) {
+        uint32_t cp = (*next_cp)++;
+        char utf8[3] = {
+            (char)(0xE0 | (cp >> 12)),
+            (char)(0x80 | ((cp >> 6) & 0x3F)),
+            (char)(0x80 | (cp & 0x3F)),
+        };
+        wsap_vtcore_feed(term, utf8, sizeof(utf8), 0);
+    }
+}
+
+/*
+ * A frame shows the same pixels whatever the atlas held before: with new
+ * glyphs, with known glyphs, and after a flood of new glyphs. The flood is
+ * more than the atlas keeps, so the atlas grows and starts again.
+ */
+static void test_same_frame_same_pixels(void)
+{
+    struct fixture f;
+    if (!fixture_open(&f, "same frame"))
+        return;
+    const struct vector2i size = { .x = 1000, .y = 640 };
+    TestDrawable *cold = fixture_shot(&f, size);
+    TestDrawable *warm = fixture_shot(&f, size);
+    TestDrawable *after = fixture_shot(&f, size);
+    TestDrawable *scratch = fixture_shot(&f, size);
+
+    struct wsap_vtcore *term = styled_terminal();
+    uint32_t image_pixels[32 * 32];
+    for (int i = 0; i < 32 * 32; i++)
+        image_pixels[i] = 0xFF00FF00u | (uint32_t)i;
+    struct ui_image image = { .size = { .x = 32, .y = 32 }, .pixels = image_pixels, .gen = 1 };
+    struct ui_scene scene = {0};
+    ui_scene_init(&scene);
+    scene_fill(&scene, &image);
+
+    struct terminal_frame grid;
+    test_frame_init(&grid, term, true);
+    struct render_frame rf = test_grid_frame(&grid, size.x, size.y);
+    rf.grid.rect = (struct rect2i){ .x = 7, .y = 5, .width = size.x - 20, .height = size.y - 12 };
+    rf.base = 0xFF181824u;
+    rf.ui = &scene;
+    assert(draw(&f, &rf, cold, size) == RENDER_GPU_PRESENTED);
+    assert(draw(&f, &rf, warm, size) == RENDER_GPU_PRESENTED);
+
+    struct wsap_vtcore *flood =
+        wsap_vtcore_new(&(struct wsap_vtcore_options){ .size = { .x = 100, .y = 30 } });
+    assert(flood);
+    uint32_t next_cp = 0x4E00;
+    for (int batch = 0; batch < 14; batch++) {
+        feed_new_glyphs(flood, &next_cp, 50 * 30);
+        struct terminal_frame flood_grid;
+        test_frame_init(&flood_grid, flood, true);
+        struct render_frame ff = test_grid_frame(&flood_grid, size.x, size.y);
+        assert(draw(&f, &ff, scratch, size) == RENDER_GPU_PRESENTED);
+    }
+
+    /* The flood took the snapshot of the grid, so take it again. */
+    test_frame_init(&grid, term, true);
+    assert(draw(&f, &rf, after, size) == RENDER_GPU_PRESENTED);
+    fixture_finish(&f);
+
+    size_t n = (size_t)size.x * (size_t)size.y;
+    uint32_t *a = shot_pixels(cold), *b = shot_pixels(warm), *c = shot_pixels(after);
+    assert(a[0] == rf.base);
+    /* The frame drew more than the base and the grid background. */
+    uint32_t grid_bg = a[(size_t)(size.y - 10) * (size_t)size.x + 20];
+    assert(grid_bg != rf.base);
+    assert(count_other(a, n, rf.base, grid_bg) > 10000);
+    assert(!memcmp(a, b, n * sizeof(*a)));
+    assert(!memcmp(a, c, n * sizeof(*a)));
+    free(a);
+    free(b);
+    free(c);
+
+    ui_scene_destroy(&scene);
+    wsap_vtcore_free(flood);
+    wsap_vtcore_free(term);
+    fixture_close(&f);
+}
+
+/* True when the drawable shows `src` at `pos` as an opaque copy. */
+static bool shows_image(const uint32_t *px, int stride, struct vector2i pos, const uint32_t *src,
+                        struct vector2i size)
+{
+    for (int y = 0; y < size.y; y++)
+        for (int x = 0; x < size.x; x++)
+            if (px[(size_t)(pos.y + y) * (size_t)stride + (size_t)(pos.x + x)] !=
+                (src[y * size.x + x] | 0xFF000000u))
+                return false;
+    return true;
+}
+
+/*
+ * An image draws as an opaque copy of its pixels. An image that changes in
+ * place shows its new pixels. A frame with more images than the backend
+ * keeps goes to the CPU, and a frame that fits works again after it.
+ */
+static void test_images(void)
+{
+    struct fixture f;
+    if (!fixture_open(&f, "images"))
+        return;
+    const struct vector2i size = { .x = 320, .y = 200 };
+    const struct vector2i pos = { .x = 40, .y = 30 };
+    enum { SIDE = 24 };
+    TestDrawable *first = fixture_shot(&f, size);
+    TestDrawable *changed = fixture_shot(&f, size);
+
+    /* Translucent source pixels: the copy is opaque. */
+    uint32_t pixels[SIDE * SIDE], first_pixels[SIDE * SIDE];
+    for (int i = 0; i < SIDE * SIDE; i++)
+        pixels[i] = 0x80000000u | (uint32_t)(i * 2654435761u >> 8);
+    memcpy(first_pixels, pixels, sizeof(pixels));
+    struct ui_image image = { .size = { .x = SIDE, .y = SIDE }, .pixels = pixels, .gen = 1 };
+    struct ui_scene scene = {0};
+    ui_scene_init(&scene);
+    assert(ui_scene_image(&scene, pos, &image));
+    struct render_frame rf = { .ui = &scene, .ui_font = test_font(), .base = 0xFF102030u };
+    assert(draw(&f, &rf, first, size) == RENDER_GPU_PRESENTED);
+    for (int i = 0; i < SIDE * SIDE; i++)
+        pixels[i] = 0xFF000000u | (uint32_t)(i * 40503u);
+    image.gen++;
+    assert(draw(&f, &rf, changed, size) == RENDER_GPU_PRESENTED);
+    ui_scene_destroy(&scene);
+
+    enum { IMAGES = GPU_IMAGES + 1 };
+    static uint32_t many_pixels[IMAGES][8 * 8];
+    struct ui_image many[IMAGES];
+    for (int i = 0; i < IMAGES; i++) {
+        for (int p = 0; p < 8 * 8; p++)
+            many_pixels[i][p] = 0xFF000000u | (uint32_t)(i * 40);
+        many[i] = (struct ui_image){
+            .size = { .x = 8, .y = 8 }, .pixels = many_pixels[i], .gen = 1,
+        };
+    }
+    TestDrawable *scratch = fixture_shot(&f, size);
+    for (int n = IMAGES; n >= GPU_IMAGES; n--) {
+        ui_scene_init(&scene);
+        for (int i = 0; i < n; i++)
+            assert(ui_scene_image(&scene, (struct vector2i){ .x = 10 + i * 12, .y = 10 },
+                                  &many[i]));
+        rf.ui = &scene;
+        enum render_gpu_status want = n <= GPU_IMAGES ? RENDER_GPU_PRESENTED : RENDER_GPU_UNUSED;
+        assert(draw(&f, &rf, scratch, size) == want);
+        ui_scene_destroy(&scene);
+    }
+    fixture_finish(&f);
+
+    uint32_t *a = shot_pixels(first), *b = shot_pixels(changed);
+    assert(a[0] == rf.base && b[0] == rf.base);
+    assert(shows_image(a, size.x, pos, first_pixels, image.size));
+    assert(shows_image(b, size.x, pos, pixels, image.size));
+    free(a);
+    free(b);
+    fixture_close(&f);
+}
+
+/*
+ * Presents CPU pixels: first every pixel, then only a damaged part. The
+ * drawable shows the pixels as they are.
+ */
+static void test_cpu_pixels(void)
+{
+    struct fixture f;
+    if (!fixture_open(&f, "cpu pixels"))
+        return;
+    const struct vector2i size = { .x = 320, .y = 200 };
+    size_t n = (size_t)size.x * (size_t)size.y;
+    TestDrawable *whole = fixture_shot(&f, size);
+    TestDrawable *part = fixture_shot(&f, size);
+    uint32_t *pixels = malloc(n * sizeof(*pixels));
+    uint32_t *first = malloc(n * sizeof(*first));
+    assert(pixels && first);
+    for (size_t i = 0; i < n; i++)
+        pixels[i] = 0xFF000000u | (uint32_t)(i * 2654435761u >> 8);
+    memcpy(first, pixels, n * sizeof(*pixels));
+    assert(draw_into(&f, NULL, pixels, NULL, whole, size) == RENDER_GPU_PRESENTED);
+
+    const struct rect2i r = { .x = 8, .y = 8, .width = 64, .height = 32 };
+    for (int y = r.y; y < r.y + r.height; y++)
+        for (int x = r.x; x < r.x + r.width; x++)
+            pixels[(size_t)y * (size_t)size.x + (size_t)x] = 0xFFFF8000u;
+    struct damage_list damage = { .any = true, .n = 1, .rects = { r }, .bounds = r };
+    assert(draw_into(&f, NULL, pixels, &damage, part, size) == RENDER_GPU_PRESENTED);
+    fixture_finish(&f);
+
+    uint32_t *a = shot_pixels(whole), *b = shot_pixels(part);
+    assert(!memcmp(a, first, n * sizeof(*a)));
+    assert(!memcmp(b, pixels, n * sizeof(*b)));
+    free(a);
+    free(b);
+    free(first);
+    free(pixels);
+    fixture_close(&f);
+}
+
+/*
+ * A frame with a new image is dropped, because the window has no drawable.
+ * Then the image goes away. The backend must not read its pixels later.
+ * A sanitizer build shows a read of the freed pixels.
+ */
+static void test_dropped_frame_image(void)
+{
+    struct fixture f;
+    if (!fixture_open(&f, "dropped frame"))
+        return;
+    const struct vector2i size = { .x = 320, .y = 200 };
+    TestDrawable *drawable = fixture_shot(&f, size);
+    struct wsap_vtcore *term = styled_terminal();
+    struct terminal_frame grid;
+    test_frame_init(&grid, term, true);
+    struct render_frame rf = test_grid_frame(&grid, size.x, size.y);
+
+    uint32_t *image_pixels = malloc(64 * 64 * sizeof(*image_pixels));
+    assert(image_pixels);
+    memset(image_pixels, 0x80, 64 * 64 * sizeof(*image_pixels));
+    struct ui_image image = { .size = { .x = 64, .y = 64 }, .pixels = image_pixels, .gen = 3 };
+    struct ui_scene scene = {0};
+    ui_scene_init(&scene);
+    assert(ui_scene_image(&scene, (struct vector2i){ .x = 30, .y = 30 }, &image));
+    rf.ui = &scene;
+    assert(draw(&f, &rf, nil, size) == RENDER_GPU_DROPPED);
+
+    free(image_pixels);
+    rf.ui = NULL;
+    for (int i = 0; i < 3; i++)
+        assert(draw(&f, &rf, drawable, size) == RENDER_GPU_PRESENTED);
+
+    ui_scene_destroy(&scene);
+    wsap_vtcore_free(term);
+    fixture_close(&f);
+}
+
+int main(void)
+{
+    /* Without the font system a frame has no grid and no UI. */
+    bool fonts = render_init();
+    assert(fonts && font_instance_default());
+    test_lifecycle();
+    test_same_frame_same_pixels();
+    test_images();
+    test_cpu_pixels();
+    test_dropped_frame_image();
+    test_frame_helpers_fini();
     render_shutdown();
+    printf("metal_render_test passed\n");
     return 0;
-}
-
-int main(int argc, char **argv)
-{
-    @autoreleasepool {
-        id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-        if (!device) {
-            printf("SKIPPED: No Metal device available\n");
-            return 77;
-        }
-        if (argc > 1 && !strcmp(argv[1], "--bench"))
-            return metal_benchmark(device);
-
-        test_atlas_reuse_keeps_cached_rows(device);
-        test_ascii_mono_glyphs(device);
-        test_alternating_outputs(device);
-
-        struct framebuffer_history history = {0};
-        struct metal_render *r = metal_render_create(device);
-        assert(r);
-
-        struct terminal_frame frame = {
-            .cols = 2,
-            .rows = 1,
-            .default_bg = 0xFF000000u,
-            .default_fg = 0xFFFFFFFFu,
-        };
-
-        struct render_backend_view view = {
-            .font = NULL,
-            .cols = 2,
-            .rows = 1,
-            .cell_w = 10,
-            .cell_h = 20,
-            .row = dummy_row,
-            .row_selection = dummy_selection,
-            .resolve_cell = dummy_resolve_cell,
-            .row_gen = dummy_row_gen,
-            .font_version = dummy_font_gen,
-            .fetch_glyph = dummy_glyph,
-            .shape_segment = dummy_shape,
-            .cell_aligned_symbol = dummy_symbol,
-        };
-
-        enum render_backend_result res = metal_render_terminal(r, &history, &frame, &view);
-        assert(res == RENDER_BACKEND_DREW);
-
-        struct ui_scene scene = {0};
-        ui_scene_init(&scene);
-        struct rect2i clip_box = (struct rect2i){ .pos = { .x = 0, .y = 0 }, .size = { .x = 20, .y = 20 } };
-        assert(ui_scene_push_clip(&scene, clip_box));
-        struct rect2i rbox = (struct rect2i){ .pos = { .x = 2, .y = 2 }, .size = { .x = 16, .y = 16 } };
-        assert(ui_scene_rect(&scene, rbox, 0xFFFF0000u));
-        assert(ui_scene_pop_clip(&scene));
-
-        assert(metal_render_scene(r, &scene, NULL));
-        ui_scene_destroy(&scene);
-
-        MTLTextureDescriptor *td =
-            [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-                                                               width:20
-                                                              height:20
-                                                           mipmapped:NO];
-        td.storageMode = MTLStorageModeShared;
-        td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
-        id<MTLTexture> target_tex = [device newTextureWithDescriptor:td];
-        assert(target_tex);
-
-        MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
-        pass.colorAttachments[0].texture = target_tex;
-        pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-        pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1);
-        pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-
-        assert(metal_render_submit(r, nil, pass, (struct vector2i){ .x = 20, .y = 20 }, false));
-        uint32_t pixels[400];
-        [target_tex getBytes:pixels bytesPerRow:20 * sizeof(uint32_t)
-            fromRegion:MTLRegionMake2D(0, 0, 20, 20) mipmapLevel:0];
-        assert(pixels[0] == 0xFFF01020u);
-        assert(pixels[2] == 0xFF112233u);
-        assert(pixels[3 * 20 + 3] == 0xFFFF0000u);
-
-        ui_scene_init(&scene);
-        metal_render_begin(r);
-        metal_render_clear(r, 0xFF000000u);
-        struct rect2i negative = { .x = -5, .y = -5, .width = 10, .height = 10 };
-        assert(ui_scene_push_clip(&scene, negative));
-        assert(ui_scene_rect(&scene, clip_box, 0xFF00FF00u));
-        assert(ui_scene_pop_clip(&scene));
-        assert(metal_render_scene(r, &scene, NULL));
-        assert(metal_render_submit(r, nil, pass, (struct vector2i){ .x = 20, .y = 20 }, false));
-        [target_tex getBytes:pixels bytesPerRow:20 * sizeof(uint32_t)
-            fromRegion:MTLRegionMake2D(0, 0, 20, 20) mipmapLevel:0];
-        assert(pixels[4 * 20 + 4] == 0xFF00FF00u);
-        assert(pixels[5 * 20 + 5] == 0xFF000000u);
-
-        uint32_t image_pixels[] = {0x00FF0000u, 0x000000FFu};
-        struct ui_image image = { .pixels = image_pixels, .size = { .x = 2, .y = 1 } };
-        ui_scene_init(&scene);
-        metal_render_begin(r);
-        metal_render_clear(r, 0xFF000000u);
-        assert(ui_scene_image(&scene, (struct vector2i){0}, &image));
-        assert(metal_render_scene(r, &scene, NULL));
-        assert(metal_render_submit(r, nil, pass, (struct vector2i){ .x = 20, .y = 20 }, false));
-        [target_tex getBytes:pixels bytesPerRow:20 * sizeof(uint32_t)
-            fromRegion:MTLRegionMake2D(0, 0, 20, 20) mipmapLevel:0];
-        assert(pixels[0] == 0xFFFF0000u);
-        assert(pixels[1] == 0xFF0000FFu);
-        ui_scene_init(&scene);
-        metal_render_begin(r);
-        metal_render_clear(r, 0xFF000000u);
-        for (int i = 0; i < 40; i++)
-            assert(ui_scene_push_clip(&scene, i == 39 ? rbox : clip_box));
-        assert(ui_scene_pop_clip(&scene));
-        assert(ui_scene_blend_rect(&scene, clip_box, 0xFFFF0000u, 128));
-        for (int i = 0; i < 39; i++) assert(ui_scene_pop_clip(&scene));
-        assert(metal_render_scene(r, &scene, NULL));
-        assert(metal_render_submit(r, nil, pass, (struct vector2i){ .x = 20, .y = 20 }, false));
-        [target_tex getBytes:pixels bytesPerRow:20 * sizeof(uint32_t)
-            fromRegion:MTLRegionMake2D(0, 0, 20, 20) mipmapLevel:0];
-        assert(pixels[0] == 0xFF800000u);
-        ui_scene_destroy(&scene);
-
-        for (int i = 0; i < 12; i++) {
-            assert(metal_render_terminal(r, &history, &frame, &view) == RENDER_BACKEND_DREW);
-            assert(metal_render_submit(r, nil, pass, (struct vector2i){ .x = 20, .y = 20 }, false));
-            [target_tex getBytes:pixels bytesPerRow:20 * sizeof(uint32_t)
-                fromRegion:MTLRegionMake2D(0, 0, 20, 20) mipmapLevel:0];
-            assert(pixels[0] == 0xFFF01020u);
-            assert(pixels[2] == 0xFF112233u);
-        }
-        ui_scene_destroy(&scene);
-
-        metal_render_destroy(r);
-        framebuffer_history_release(&history);
-        r = metal_render_create(device);
-        assert(r);
-        assert(render_init());
-        struct font_instance *font = font_instance_default();
-        const struct font_metrics *metrics = font_instance_metrics(font);
-        ui_scene_init(&scene);
-        assert(ui_scene_text_run(&scene, clip_box,
-            (struct ui_text_style){ .advance = metrics->cell_w, .cell_h = metrics->cell_h },
-            0xFFFFFFFFu, "H", 1));
-        metal_render_clear(r, 0xFF000000u);
-        assert(metal_render_scene(r, &scene, font));
-        assert(metal_render_submit(r, nil, pass, (struct vector2i){ .x = 20, .y = 20 }, false));
-        [target_tex getBytes:pixels bytesPerRow:20 * sizeof(uint32_t)
-            fromRegion:MTLRegionMake2D(0, 0, 20, 20) mipmapLevel:0];
-        bool ink = false;
-        for (int i = 0; i < 400; i++) ink |= (pixels[i] & 0x00FFFFFFu) != 0;
-        assert(ink);
-        ui_scene_destroy(&scene);
-        metal_render_destroy(r);
-        framebuffer_history_release(&history);
-        render_shutdown();
-        [target_tex release];
-        printf("PASS: Metal renderer and scene test\n");
-        return 0;
-    }
 }

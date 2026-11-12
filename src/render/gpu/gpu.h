@@ -11,8 +11,8 @@
  *
  * gpu/build.c is the CPU half of a GPU backend. It turns a render_frame
  * into instance lists, draw commands, and atlas uploads. A backend that
- * uses it holds only the code that talks to its GPU API. The Vulkan backend
- * uses it. The Metal backend still holds its own copy of that logic.
+ * uses it holds only the code that talks to its GPU API. The Metal and
+ * Vulkan backends use it.
  *
  * WSAP_RENDER_GPU selects the GPU at run time. "0" or "off" gives no GPU.
  * "software" lets the Vulkan backend use a device that runs on the CPU,
