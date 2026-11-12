@@ -100,7 +100,7 @@ stays in cooked mode and keeps it.
 Each move first passes a barrier (`src/pty/sync.h`). The shim connects to
 the session's sync socket, whose abstract name is in `WSAP_SYNC`. It names
 the transport it leaves, and waits up to 200 ms for an acknowledgement. The
-ring worker drains that transport into the ring before it replies. Output
+reader worker drains and parses that transport before it replies. Output
 the program wrote before the move is therefore ahead of output written
 after it. If the barrier fails or times out, the output stays where it is:
 a lost move costs speed or line endings, never order. The barrier can make
@@ -112,12 +112,23 @@ barrier yet, so it does not route.
 
 ## Reader ownership and stream ordering
 
-The ring worker is the only reader. It reads the fast pipe and the PTY
-master into one ring, so the ring order is the order it read them in.
-Switch points between the two are recorded beside the ring, and each
-`data` callback names the transport its bytes came from. The session uses
-that to pick the newline policy for each span. If the worker cannot start,
-the main loop reads both descriptors.
+The worker is the only reader.
+It reads the fast pipe and the PTY master into a buffer of 256 KiB.
+Only the worker reads or writes that buffer.
+It parses each batch before it reads the next source.
+Each `data` callback names the transport that supplied the bytes.
+The session uses that source to select the newline policy.
+If the worker cannot start, the main loop reads both descriptors.
+
+A full batch can leave more bytes ready to read.
+The worker can read another batch without a new poll.
+It checks the poll deadline between batches.
+The deadline is 100 microseconds after the last poll.
+During a flood, it sends output notices at most once per millisecond.
+It sends a pending notice before it waits for more data.
+Terminal replies and routing barriers do not wait for that interval.
+An empty read returns the worker to the blocking poll.
+Shutdown checks run between batches.
 
 Output from independent processes has no defined order across the two
 transports, just as it has none on a single pty. Within one process, the

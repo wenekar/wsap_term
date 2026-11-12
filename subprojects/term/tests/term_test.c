@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static char response[64];
 static size_t response_len;
@@ -1918,11 +1919,145 @@ static void test_lock_reentrant_across_threads(void)
     wsap_vtcore_free(t);
 }
 
+static uint64_t test_now_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+struct flood_worker_args {
+    struct wsap_vtcore *t;
+    _Atomic bool started;
+    _Atomic bool stop;
+};
+
+static void *contention_flood_worker(void *arg)
+{
+    struct flood_worker_args *w = arg;
+    char chunk[65536];
+    for (size_t i = 0; i < sizeof(chunk); i++)
+        chunk[i] = (char)('a' + (i % 26));
+    for (size_t i = 79; i < sizeof(chunk); i += 80)
+        chunk[i] = '\n';
+
+    atomic_store(&w->started, true);
+    while (!atomic_load(&w->stop)) {
+        wsap_vtcore_feed(w->t, chunk, sizeof(chunk), 0);
+    }
+    return NULL;
+}
+
+static void test_contended_lock_bounded_wait_under_flood(void)
+{
+    struct wsap_vtcore_options opt = {
+        .size = { .x = 80, .y = 24 },
+        .scrollback = 1000,
+    };
+    struct wsap_vtcore *t = wsap_vtcore_new(&opt);
+    assert(t != NULL);
+    assert(!wsap_vtcore_lock_contended(t));
+
+    /* Yield with no waiters must return immediately without blocking. */
+    wsap_vtcore_yield_to_waiters(t);
+
+    struct wsap_vtcore_snapshot *snap = wsap_vtcore_snapshot_new();
+    assert(snap != NULL);
+
+    struct flood_worker_args w = { .t = t, .started = false, .stop = false };
+    pthread_t th;
+    assert(pthread_create(&th, NULL, contention_flood_worker, &w) == 0);
+
+    while (!atomic_load(&w.started))
+        sched_yield();
+
+    for (int i = 0; i < 50; i++) {
+        uint64_t t0 = test_now_ns();
+        wsap_vtcore_lock(t);
+        uint64_t wait_ns = test_now_ns() - t0;
+        assert(wsap_vtcore_lock_contended(t));
+
+        /* Turnstile ensures bounded wait under flood (well under 50 ms). */
+        assert(wait_ns < 50000000ull);
+
+        bool ok = wsap_vtcore_snapshot_update(snap, t);
+        assert(ok);
+        const struct wsap_vtcore_view *view = wsap_vtcore_snapshot_view(snap);
+        assert(view->size.x == 80 && view->size.y == 24);
+
+        wsap_vtcore_unlock(t);
+
+        struct timespec pause_ts = { .tv_sec = 0, .tv_nsec = 100000 };
+        nanosleep(&pause_ts, NULL);
+    }
+
+    atomic_store(&w.stop, true);
+    assert(pthread_join(th, NULL) == 0);
+    assert(!wsap_vtcore_lock_contended(t));
+
+    wsap_vtcore_snapshot_free(snap);
+    wsap_vtcore_free(t);
+}
+
+static void test_concurrent_resize_during_flood(void)
+{
+    struct wsap_vtcore_options opt = {
+        .size = { .x = 80, .y = 24 },
+        .scrollback = 1000,
+    };
+    struct wsap_vtcore *t = wsap_vtcore_new(&opt);
+    assert(t != NULL);
+
+    struct wsap_vtcore_snapshot *snap = wsap_vtcore_snapshot_new();
+    assert(snap != NULL);
+
+    struct flood_worker_args w = { .t = t, .started = false, .stop = false };
+    pthread_t th;
+    assert(pthread_create(&th, NULL, contention_flood_worker, &w) == 0);
+
+    while (!atomic_load(&w.started))
+        sched_yield();
+
+    static const struct wsap_vtcore_vector2i sizes[] = {
+        { 40, 12 }, { 120, 36 }, { 80, 24 }, { 20, 8 }, { 100, 40 },
+        { 60, 20 }, { 132, 43 }, { 80, 25 }, { 50, 15 }, { 90, 30 }
+    };
+    size_t num_sizes = sizeof(sizes) / sizeof(sizes[0]);
+
+    for (int i = 0; i < 100; i++) {
+        struct wsap_vtcore_vector2i target = sizes[(size_t)i % num_sizes];
+        bool resized = wsap_vtcore_resize(t, target);
+        assert(resized);
+
+        bool ok = wsap_vtcore_snapshot_update(snap, t);
+        assert(ok);
+
+        const struct wsap_vtcore_view *view = wsap_vtcore_snapshot_view(snap);
+        assert(view->size.x == target.x && view->size.y == target.y);
+
+        for (int y = 0; y < target.y; y++) {
+            const struct wsap_vtcore_cell *row = wsap_vtcore_snapshot_row(snap, y);
+            assert(row != NULL);
+        }
+
+        struct timespec pause_ts = { .tv_sec = 0, .tv_nsec = 50000 };
+        nanosleep(&pause_ts, NULL);
+    }
+
+    atomic_store(&w.stop, true);
+    assert(pthread_join(th, NULL) == 0);
+
+    wsap_vtcore_snapshot_free(snap);
+    wsap_vtcore_free(t);
+}
+
 int main(void)
 {
     test_reserved_options_must_be_zero();
     test_concurrent_feed_and_snapshot();
     test_lock_reentrant_across_threads();
+    test_contended_lock_bounded_wait_under_flood();
+    test_concurrent_resize_during_flood();
     test_grow_past_reservation();
     test_skipped_cells_read_blank();
     test_csi_text_chunks();

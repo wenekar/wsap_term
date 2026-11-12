@@ -85,9 +85,8 @@ static bool report_mouse(struct window *w, struct tab *t,
 
 static void scroll_lines(struct window *w, struct tab *t, int lines)
 {
-    struct wsap_vtcore_modes modes_now = wsap_vtcore_modes(t->session.term);
-    if (modes_now.alternate && modes_now.mouse == WSAP_VTCORE_MOUSE_OFF) {
-        struct wsap_vtcore_modes modes = terminal_input_modes(w);
+    struct wsap_vtcore_modes modes = wsap_vtcore_modes(t->session.term);
+    if (modes.alternate && modes.mouse == WSAP_VTCORE_MOUSE_OFF) {
         struct wsap_vtcore_key_event key = {
             .key = lines > 0 ? WSAP_VTCORE_KEY_UP : WSAP_VTCORE_KEY_DOWN,
             .action = WSAP_VTCORE_KEY_PRESS,
@@ -99,8 +98,10 @@ static void scroll_lines(struct window *w, struct tab *t, int lines)
             session_write_bytes(&t->session, buf, r.len);
         return;
     }
+    wsap_vtcore_lock(t->session.term);
     wsap_vtcore_scroll(t->session.term, lines);
     selection_extend_to_pointer(&t->selection, t->session.term);
+    wsap_vtcore_unlock(t->session.term);
     terminal_show_scrollbar(w);
 }
 
@@ -113,11 +114,15 @@ static void select_text(struct window *w, struct tab *t,
                       local.x % m->cell_w >= m->cell_w / 2;
     struct vector2i cell = cell_at(t, local);
     t->selection.double_click_ms = window_double_click_ms(w);
+    char *text = NULL;
+    wsap_vtcore_lock(t->session.term);
     selection_handle_pointer(&t->selection, t->session.term, cell,
                              right_half, pointer_kind(p->kind), now_ms);
-    if (p->kind == UI_POINTER_RELEASE && wsap_vtcore_has_selection(t->session.term)) {
-        char *text = wsap_vtcore_selection_text(t->session.term);
-        if (text && window_surface(w))
+    if (p->kind == UI_POINTER_RELEASE && wsap_vtcore_has_selection(t->session.term))
+        text = wsap_vtcore_selection_text(t->session.term);
+    wsap_vtcore_unlock(t->session.term);
+    if (text) {
+        if (window_surface(w))
             window_copy(w, YASL_PRIMARY, text);
         wsap_vtcore_text_free(text);
     }
@@ -247,11 +252,17 @@ static enum ui_cursor view_cursor(const struct ui_widget *widget,
         return UI_CURSOR_DEFAULT;
     if (t->selection.pressed)
         return UI_CURSOR_TEXT;
-    if (!pointer_is_local(w, t))
+    wsap_vtcore_lock(t->session.term);
+    if (!pointer_is_local(w, t)) {
+        wsap_vtcore_unlock(t->session.term);
         return UI_CURSOR_DEFAULT;
-    if (view->hover_link)
+    }
+    if (view->hover_link) {
+        wsap_vtcore_unlock(t->session.term);
         return UI_CURSOR_POINTER;
+    }
     char *shape = wsap_vtcore_pointer_shape(t->session.term);
+    wsap_vtcore_unlock(t->session.term);
     enum ui_cursor cursor = UI_CURSOR_TEXT;
     if (shape && !strcmp(shape, "pointer"))
         cursor = UI_CURSOR_POINTER;

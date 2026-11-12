@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -242,6 +243,117 @@ static void check_whole_event(void)
     assert(!input_queue_take(&input, &ev));
 }
 
+struct concurrent_test_ctx {
+    struct session_write_queue *queue;
+    int count;
+    _Atomic bool started;
+};
+
+static void *worker_thread_replies(void *arg)
+{
+    struct concurrent_test_ctx *ctx = arg;
+    while (!atomic_load(&ctx->started))
+        sched_yield();
+
+    char msg[64];
+    for (int i = 0; i < ctx->count; i++) {
+        int n = snprintf(msg, sizeof(msg), "REPLY:%06d\n", i);
+        assert(n > 0);
+        assert(session_write_queue_stage(ctx->queue, msg, (size_t)n));
+        assert(session_write_queue_flush(ctx->queue));
+    }
+    return NULL;
+}
+
+static void *main_thread_inputs(void *arg)
+{
+    struct concurrent_test_ctx *ctx = arg;
+    while (!atomic_load(&ctx->started))
+        sched_yield();
+
+    char msg[64];
+    for (int i = 0; i < ctx->count; i++) {
+        int n = snprintf(msg, sizeof(msg), "INPUT:%06d\n", i);
+        assert(n > 0);
+        assert(session_write_queue_push_bytes(ctx->queue, msg, (size_t)n));
+    }
+    return NULL;
+}
+
+static void check_concurrent_writes(void)
+{
+    int fds[2];
+    assert(pipe_nonblocking_cloexec(fds) == 0);
+    struct yasl_loop *loop = yasl_loop_create();
+    assert(loop);
+    struct session_write_queue queue = {0};
+    assert(session_write_queue_bind(&queue, loop, fds[1]));
+
+    const int count = 2000;
+    struct concurrent_test_ctx ctx = {
+        .queue = &queue,
+        .count = count,
+        .started = false,
+    };
+
+    pthread_t th1, th2;
+    assert(pthread_create(&th1, NULL, worker_thread_replies, &ctx) == 0);
+    assert(pthread_create(&th2, NULL, main_thread_inputs, &ctx) == 0);
+
+    atomic_store(&ctx.started, true);
+
+    int next_reply = 0;
+    int next_input = 0;
+    char line_buf[128];
+    size_t line_pos = 0;
+
+    while (next_reply < count || next_input < count) {
+        char chunk[4096];
+        ssize_t n = read(fds[0], chunk, sizeof(chunk));
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                struct timespec ts = { .tv_sec = 0, .tv_nsec = 100000 };
+                nanosleep(&ts, NULL);
+                continue;
+            }
+            assert(0 && "read error");
+        }
+        assert(n > 0);
+
+        for (ssize_t i = 0; i < n; i++) {
+            char c = chunk[i];
+            assert(line_pos < sizeof(line_buf) - 1);
+            line_buf[line_pos++] = c;
+            if (c == '\n') {
+                line_buf[line_pos] = '\0';
+                int seq = -1;
+                if (sscanf(line_buf, "REPLY:%d\n", &seq) == 1) {
+                    assert(seq == next_reply);
+                    next_reply++;
+                } else if (sscanf(line_buf, "INPUT:%d\n", &seq) == 1) {
+                    assert(seq == next_input);
+                    next_input++;
+                } else {
+                    fprintf(stderr, "corrupted line: %s\n", line_buf);
+                    assert(0 && "line corrupted");
+                }
+                line_pos = 0;
+            }
+        }
+    }
+
+    assert(next_reply == count);
+    assert(next_input == count);
+
+    assert(pthread_join(th1, NULL) == 0);
+    assert(pthread_join(th2, NULL) == 0);
+
+    session_write_queue_destroy(&queue);
+    yasl_loop_destroy(loop);
+    close(fds[0]);
+    close(fds[1]);
+}
+
 int main(void)
 {
     const char input[] = "hi 世界\r\nnext\n\033\003";
@@ -276,6 +388,7 @@ int main(void)
     check_reuse_and_atomic_rejection();
     check_failure_recovery();
     check_queue_cap();
+    check_concurrent_writes();
     puts("PASS: paste framing, filtering, ordering, partial-write, and queue-cap tests");
     return 0;
 }

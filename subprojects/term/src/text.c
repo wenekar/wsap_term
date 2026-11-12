@@ -193,6 +193,7 @@ static void wsap_vtcore_feed_inner(struct wsap_vtcore *t, const char *buf, size_
     t->transport_newline = (flags & WSAP_VTCORE_FEED_ONLCR) != 0;
     uint16_t cur_flags = wsap_vtcore_current_flags(t);
 
+    size_t last_yield = 0;
     for (size_t i = 0; i < len; i++) {
         while (t->state != ST_GROUND) {
             if (t->state == ST_CSI)
@@ -203,6 +204,15 @@ static void wsap_vtcore_feed_inner(struct wsap_vtcore *t, const char *buf, size_
                 wsap_vtcore_escape_byte(t, (unsigned char)buf[i++]);
             cur_flags = wsap_vtcore_current_flags(t);
             if (i == len) return;
+        }
+
+        if (WSAP_VTCORE_EXPECT(i - last_yield >= 32768, 0) &&
+            t->utf8_state == WSAP_VTCORE_UTF8_ACCEPT) {
+            last_yield = i;
+            if (WSAP_VTCORE_EXPECT(atomic_load_explicit(&t->waiters, memory_order_relaxed) > 0, 0)) {
+                wsap_vtcore_check_yield(t);
+                cur_flags = wsap_vtcore_current_flags(t);
+            }
         }
 
         unsigned char ch = (unsigned char)buf[i];

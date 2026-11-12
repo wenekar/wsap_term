@@ -132,9 +132,9 @@ int wsap_vtcore_history_rows(const struct wsap_vtcore *t)
 {
     if (!t)
         return 0;
-    wsap_vtcore_write_begin((struct wsap_vtcore *)t);
+    wsap_vtcore_lock((struct wsap_vtcore *)t);
     int rows = wsap_vtcore_screen_history_rows(t);
-    wsap_vtcore_write_end((struct wsap_vtcore *)t);
+    wsap_vtcore_unlock((struct wsap_vtcore *)t);
     return rows;
 }
 
@@ -209,7 +209,7 @@ void wsap_vtcore_scroll_to(struct wsap_vtcore *t, int offset)
 {
     if (!t)
         return;
-    wsap_vtcore_write_begin(t);
+    wsap_vtcore_lock(t);
     if (t->alternate || offset < 0)
         offset = 0;
     struct view_anchor old = t->view.anchor;
@@ -217,16 +217,16 @@ void wsap_vtcore_scroll_to(struct wsap_vtcore *t, int offset)
     if (old.active != t->view.anchor.active || old.line_id != t->view.anchor.line_id ||
         old.seg != t->view.anchor.seg)
         t->full_gen++;
-    wsap_vtcore_write_end(t);
+    wsap_vtcore_unlock(t);
 }
 
 void wsap_vtcore_scroll(struct wsap_vtcore *t, int lines)
 {
     if (!t)
         return;
-    wsap_vtcore_write_begin(t);
+    wsap_vtcore_lock(t);
     if (t->alternate) {
-        wsap_vtcore_write_end(t);
+        wsap_vtcore_unlock(t);
         return;
     }
     struct view_anchor old = t->view.anchor;
@@ -234,20 +234,20 @@ void wsap_vtcore_scroll(struct wsap_vtcore *t, int lines)
     if (old.active != t->view.anchor.active || old.line_id != t->view.anchor.line_id ||
         old.seg != t->view.anchor.seg)
         t->full_gen++;
-    wsap_vtcore_write_end(t);
+    wsap_vtcore_unlock(t);
 }
 
 struct wsap_vtcore_scrollback wsap_vtcore_scrollback(const struct wsap_vtcore *t)
 {
     if (!t)
         return (struct wsap_vtcore_scrollback){ 0 };
-    wsap_vtcore_write_begin((struct wsap_vtcore *)t);
+    wsap_vtcore_lock((struct wsap_vtcore *)t);
     struct wsap_vtcore_scrollback sb = { 0 };
     if (!t->alternate) {
         sb.offset = wsap_vtcore_view_offset(t);
         sb.total = wsap_vtcore_screen_history_rows(t);
     }
-    wsap_vtcore_write_end((struct wsap_vtcore *)t);
+    wsap_vtcore_unlock((struct wsap_vtcore *)t);
     return sb;
 }
 
@@ -855,6 +855,19 @@ struct wsap_vtcore *wsap_vtcore_new(const struct wsap_vtcore_options *opt)
         free(t);
         return NULL;
     }
+    atomic_init(&t->waiters, 0);
+    atomic_init(&t->yielding, 0);
+    if (!wsap_vtcore_mutex_init(&t->yield_lock)) {
+        wsap_vtcore_mutex_destroy(&t->write_lock);
+        free(t);
+        return NULL;
+    }
+    if (!wsap_vtcore_cond_init(&t->yield_cond)) {
+        wsap_vtcore_mutex_destroy(&t->yield_lock);
+        wsap_vtcore_mutex_destroy(&t->write_lock);
+        free(t);
+        return NULL;
+    }
     memcpy(t->name, name, strlen(name) + 1);
     atomic_init(&t->writer_tid, 0);
     t->write_depth = 0;
@@ -870,12 +883,16 @@ struct wsap_vtcore *wsap_vtcore_new(const struct wsap_vtcore_options *opt)
 
     t->next_row_uid = 1;
     if (!screen_setup(&t->scr, cols, rows, &t->next_row_uid)) {
+        wsap_vtcore_cond_destroy(&t->yield_cond);
+        wsap_vtcore_mutex_destroy(&t->yield_lock);
         wsap_vtcore_mutex_destroy(&t->write_lock);
         free(t);
         return NULL;
     }
     if (!wsap_vtcore_hist_init(&t->hist, t->sb_capacity, 0)) {
         screen_free(&t->scr);
+        wsap_vtcore_cond_destroy(&t->yield_cond);
+        wsap_vtcore_mutex_destroy(&t->yield_lock);
         wsap_vtcore_mutex_destroy(&t->write_lock);
         free(t);
         return NULL;
@@ -933,6 +950,8 @@ void wsap_vtcore_free(struct wsap_vtcore *t)
     free(t->tabs);
     wsap_vtcore_osc_cleanup(t);
     wsap_vtcore_gstore_free(t->gstore);
+    wsap_vtcore_cond_destroy(&t->yield_cond);
+    wsap_vtcore_mutex_destroy(&t->yield_lock);
     wsap_vtcore_mutex_destroy(&t->write_lock);
     free(t);
 }
@@ -1511,9 +1530,9 @@ bool wsap_vtcore_resize(struct wsap_vtcore *t, struct wsap_vtcore_vector2i size)
     int rows = size.y;
     if (cols < 1 || rows < 1 || cols > WSAP_VTCORE_MAX_COLS)
         return false;
-    wsap_vtcore_write_begin(t);
+    wsap_vtcore_lock(t);
     if (cols == t->cols && rows == t->rows) {
-        wsap_vtcore_write_end(t);
+        wsap_vtcore_unlock(t);
         return true;
     }
 
@@ -1521,7 +1540,7 @@ bool wsap_vtcore_resize(struct wsap_vtcore *t, struct wsap_vtcore_vector2i size)
         int new_cap = cols + 64;
         uint8_t *new_tabs = realloc(t->tabs, (size_t)new_cap);
         if (!new_tabs) {
-            wsap_vtcore_write_end(t);
+            wsap_vtcore_unlock(t);
             return false;
         }
         memset(new_tabs + t->tabs_cap, 0, (size_t)(new_cap - t->tabs_cap));
@@ -1541,7 +1560,7 @@ bool wsap_vtcore_resize(struct wsap_vtcore *t, struct wsap_vtcore_vector2i size)
         int new_cap = cols + 64;
         struct cell *new_scratch = realloc(t->view_row_scratch, (size_t)new_cap * sizeof(struct cell));
         if (!new_scratch) {
-            wsap_vtcore_write_end(t);
+            wsap_vtcore_unlock(t);
             return false;
         }
         memset(new_scratch + t->view_scratch_cap, 0, (size_t)(new_cap - t->view_scratch_cap) * sizeof(struct cell));
@@ -1550,6 +1569,6 @@ bool wsap_vtcore_resize(struct wsap_vtcore *t, struct wsap_vtcore_vector2i size)
     }
 
     bool ok = wsap_vtcore_resize_internal(t, cols, rows);
-    wsap_vtcore_write_end(t);
+    wsap_vtcore_unlock(t);
     return ok;
 }

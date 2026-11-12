@@ -10,7 +10,9 @@ static bool blinking(const struct window *w)
     struct wsap_vtcore *t = terminal_term(w);
     if (!window_surface(w) || window_closed(w) || window_suspended(w) || !t)
         return false;
-    struct wsap_vtcore_cursor cursor = wsap_vtcore_cursor(t);
+    const struct wsap_vtcore_view *view = wsap_vtcore_snapshot_view(tw->snapshot);
+    struct wsap_vtcore_cursor cursor = view->size.x
+        ? view->cursor : wsap_vtcore_cursor(t);
     return cursor.visible && cursor.blink;
 }
 

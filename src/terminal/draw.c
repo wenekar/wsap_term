@@ -1,22 +1,30 @@
 #include "terminal/internal.h"
+#include "ui/yasl/stats.h"
 
 struct ui_scroll_metrics terminal_scroll_metrics(const struct wsap_vtcore *term)
 {
+    wsap_vtcore_lock((struct wsap_vtcore *)term);
     struct wsap_vtcore_scrollback sb = wsap_vtcore_scrollback(term);
-    return (struct ui_scroll_metrics){
+    struct ui_scroll_metrics m = {
         .history_lines = sb.total,
         .visible_lines = wsap_vtcore_size(term).y,
         .view_offset = sb.offset,
     };
+    wsap_vtcore_unlock((struct wsap_vtcore *)term);
+    return m;
 }
 
 static bool cursor_visible(const struct window *w, const struct tab *tab, uint64_t now_ms)
 {
-    struct wsap_vtcore_cursor cursor = wsap_vtcore_cursor(tab->session.term);
+    struct terminal *tw = terminal_of(w);
+    if (!tw)
+        return false;
+    const struct wsap_vtcore_view *view = wsap_vtcore_snapshot_view(tw->snapshot);
+    struct wsap_vtcore_cursor cursor = view->size.x
+        ? view->cursor : wsap_vtcore_cursor(tab->session.term);
     if (!cursor.visible)
         return false;
-    struct terminal *tw = terminal_of(w);
-    if (!tw || !tw->focused || !cursor.blink)
+    if (!tw->focused || !cursor.blink)
         return true;
     uint64_t last_key = session_last_keystroke_ms(&tab->session);
     uint64_t elapsed = last_key > 0 && now_ms >= last_key ? now_ms - last_key : now_ms;
@@ -28,21 +36,21 @@ void terminal_show_scrollbar(struct window *w)
     ui_scrollview_flash(&terminal_of(w)->scrollview);
 }
 
-static void update_ime(struct window *w, const struct wsap_vtcore *t)
+static void update_ime(struct window *w)
 {
     const struct font_metrics *m = terminal_metrics(w);
     int cw = m->cell_w, ch = m->cell_h;
-    struct wsap_vtcore_cursor cursor = wsap_vtcore_cursor(t);
-    int row = cursor.pos.y + wsap_vtcore_scrollback(t).offset;
-    if (row < 0 || row >= wsap_vtcore_size(t).y)
-        row = cursor.pos.y;
+    const struct wsap_vtcore_view *view = wsap_vtcore_snapshot_view(terminal_of(w)->snapshot);
+    struct wsap_vtcore_cursor cursor = view->cursor;
+    int row = cursor.pos.y;
+    if (row < 0 || row >= view->size.y)
+        row = cursor.pos.y - view->scroll_offset;
     struct rect2i caret = {
         .pos = vector2i_add(terminal_view_rect(w).pos, (struct vector2i){
             .x = cursor.pos.x * cw, .y = row * ch,
         }),
         .size = { .x = cw, .y = ch },
     };
-    const struct wsap_vtcore_view *view = wsap_vtcore_snapshot_view(terminal_of(w)->snapshot);
     int begin = -1, end = -1;
     struct yasl_surface *s = window_surface(w);
     if (s) {
@@ -70,13 +78,25 @@ static void update_ime(struct window *w, const struct wsap_vtcore *t)
 
 void terminal_prepare(struct window *w, uint64_t now_ms)
 {
-    (void)now_ms;
-    if (!terminal_of(w))
+    struct terminal *tw = terminal_of(w);
+    if (!tw)
         return;
+    tw->snapshot_prepared = false;
     terminal_finish_closing_tab(w);
     struct wsap_vtcore *t = terminal_term(w);
-    if (t && !window_closed(w) && wsap_vtcore_snapshot_update(terminal_of(w)->snapshot, t)) {
-        update_ime(w, t);
+    if (t && !window_closed(w)) {
+        const struct wsap_vtcore_view *view = wsap_vtcore_snapshot_view(tw->snapshot);
+        bool was_blinking = view->size.x && view->cursor.visible && view->cursor.blink;
+        uint64_t t0 = yasl_time_ns();
+        if (wsap_vtcore_snapshot_update(tw->snapshot, t)) {
+            uint64_t dt_ns = yasl_time_ns() - t0;
+            frame_stats_snapshot_wait(window_stats(w), (double)dt_ns / 1e3);
+            tw->snapshot_prepared = true;
+            update_ime(w);
+            bool now_blinking = view->cursor.visible && view->cursor.blink;
+            if (now_blinking != was_blinking)
+                (void)ui_surface_tick(window_ui_surface(w), now_ms);
+        }
     }
 }
 
@@ -86,9 +106,16 @@ bool terminal_frame_source(struct window *w, uint64_t now_ms,
     struct tab *tab = terminal_active_tab(w);
     if (!tab || !out)
         return false;
-    struct wsap_vtcore_snapshot *snap = terminal_of(w)->snapshot;
-    if (!wsap_vtcore_snapshot_update(snap, tab->session.term))
-        return false;
+    struct terminal *tw = terminal_of(w);
+    struct wsap_vtcore_snapshot *snap = tw->snapshot;
+    if (!tw->snapshot_prepared) {
+        uint64_t t0 = yasl_time_ns();
+        if (!wsap_vtcore_snapshot_update(snap, tab->session.term))
+            return false;
+        uint64_t dt_ns = yasl_time_ns() - t0;
+        frame_stats_snapshot_wait(window_stats(w), (double)dt_ns / 1e3);
+    }
+    tw->snapshot_prepared = false;
     struct rect2i rect = terminal_view_rect(w);
     *out = (struct terminal_frame_source){
         .snapshot = snap,

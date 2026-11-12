@@ -242,6 +242,7 @@ static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, c
     s->view.size = (struct wsap_vtcore_vector2i){ .x = cols, .y = rows };
     s->view.cursor = cursor;
     s->view.scroll_offset = view_offset;
+    s->view.history_lines = wsap_vtcore_history_rows(t);
     s->view.scrolled = k;
     s->view.reverse_video = t->reverse_video;
     if (changed || k)
@@ -374,9 +375,9 @@ bool wsap_vtcore_snapshot_update(struct wsap_vtcore_snapshot *s, struct wsap_vtc
 {
     if (!s || !t)
         return false;
-    wsap_vtcore_write_begin(t);
+    wsap_vtcore_lock(t);
     bool ok = wsap_vtcore_snapshot_update_inner(s, t);
-    wsap_vtcore_write_end(t);
+    wsap_vtcore_unlock(t);
     return ok;
 }
 

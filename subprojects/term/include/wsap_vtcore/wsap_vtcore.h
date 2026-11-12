@@ -113,6 +113,8 @@ WSAP_VTCORE_API void wsap_vtcore_free(struct wsap_vtcore *t);
 
 WSAP_VTCORE_API void wsap_vtcore_lock(struct wsap_vtcore *t);
 WSAP_VTCORE_API void wsap_vtcore_unlock(struct wsap_vtcore *t);
+WSAP_VTCORE_API bool wsap_vtcore_lock_contended(const struct wsap_vtcore *t);
+WSAP_VTCORE_API void wsap_vtcore_yield_to_waiters(struct wsap_vtcore *t);
 
 WSAP_VTCORE_API bool wsap_vtcore_resize(struct wsap_vtcore *t, struct wsap_vtcore_vector2i size);
 
@@ -271,6 +273,7 @@ struct wsap_vtcore_view {
     struct wsap_vtcore_vector2i size;
     struct wsap_vtcore_cursor cursor;
     int scroll_offset;
+    int history_lines;
     int scrolled;
     bool reverse_video;
     uint64_t version;

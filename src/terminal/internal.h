@@ -107,6 +107,7 @@ struct terminal {
     struct ui_tab_label *tab_labels;
     int tab_labels_cap;
     struct wsap_vtcore_snapshot *snapshot;
+    bool snapshot_prepared;
     bool focused;
     struct rect2i ime_caret;
 

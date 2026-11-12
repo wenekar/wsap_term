@@ -14,15 +14,21 @@ void selection_extend_to_pointer(const struct text_selection *s, struct wsap_vtc
 {
     if (!s->pressed)
         return;
+    wsap_vtcore_lock(t);
     wsap_vtcore_select_extend(t, term_vec_from_geom(clamp_cell(t, s->pointer)), s->right_half);
+    wsap_vtcore_unlock(t);
 }
 
 void selection_handle_pointer(struct text_selection *s, struct wsap_vtcore *t, struct vector2i cell,
                        bool right_half, enum pointer_kind kind, uint64_t time_ms)
 {
     int x = cell.x, y = cell.y;
+    wsap_vtcore_lock(t);
     struct wsap_vtcore_vector2i size = wsap_vtcore_size(t);
-    if (!size.x || !size.y) return;
+    if (!size.x || !size.y) {
+        wsap_vtcore_unlock(t);
+        return;
+    }
     if (x < 0) { x = 0; right_half = false; }
     if (x >= size.x) { x = size.x - 1; right_half = true; }
     y = y < 0 ? 0 : y >= size.y ? size.y - 1 : y;
@@ -40,5 +46,6 @@ void selection_handle_pointer(struct text_selection *s, struct wsap_vtcore *t, s
     } else {
         selection_extend_to_pointer(s, t);
     }
+    wsap_vtcore_unlock(t);
     if (kind == PTR_RELEASE) s->pressed = false;
 }

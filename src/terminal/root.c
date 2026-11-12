@@ -72,8 +72,14 @@ static void root_prepare(struct ui_widget *widget)
     ui_tabbar_set_bg_color(&tw->tabbar, bg);
     window_set_background(w, bg);
     struct wsap_vtcore *t = terminal_term(w);
-    ui_scrollview_set_metrics(&tw->scrollview, t ? terminal_scroll_metrics(t)
-                                                 : (struct ui_scroll_metrics){0});
+    struct ui_scroll_metrics metrics = tw->snapshot_prepared && view->size.x
+        ? (struct ui_scroll_metrics){
+            .history_lines = view->history_lines,
+            .visible_lines = view->size.y,
+            .view_offset = view->scroll_offset,
+        }
+        : (t ? terminal_scroll_metrics(t) : (struct ui_scroll_metrics){0});
+    ui_scrollview_set_metrics(&tw->scrollview, metrics);
 }
 
 static bool root_event(struct ui_widget *widget, const struct ui_event *event)

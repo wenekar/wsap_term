@@ -31,6 +31,129 @@ static void notify_output(struct session *s)
         s->host->output(s->host_ud);
 }
 
+static void report_exit(struct session *s)
+{
+    if (s->host && s->host->exited)
+        s->host->exited(s->host_ud);
+}
+
+static void session_eventfd_signal(int fd)
+{
+    if (fd >= 0) {
+        uint64_t one = 1;
+        ssize_t ret = write(fd, &one, sizeof(one));
+        (void)ret;
+    }
+}
+
+static void session_eventfd_drain(int fd)
+{
+    uint64_t wake = 0;
+    ssize_t ret = read(fd, &wake, sizeof(wake));
+    (void)ret;
+}
+
+static void session_mailbox_ready(void *data, int fd, short events)
+{
+    (void)events;
+    struct session *s = data;
+    session_eventfd_drain(fd);
+
+    uint32_t ev = atomic_exchange_explicit(&s->mailbox.pending_events, 0, memory_order_acq_rel);
+    if (!ev)
+        return;
+
+    if (ev & SESSION_EVENT_ARM_WRITE_WATCH)
+        session_write_queue_arm_watch(&s->input_writer);
+
+    if (ev & SESSION_EVENT_TITLE) {
+        char *title = NULL;
+        pthread_mutex_lock(&s->mailbox.lock);
+        title = s->mailbox.pending_title;
+        s->mailbox.pending_title = NULL;
+        pthread_mutex_unlock(&s->mailbox.lock);
+
+        if (title) {
+            free(s->title);
+            s->title = title;
+            if (s->host && s->host->title)
+                s->host->title(s->host_ud);
+        }
+    }
+
+    if (ev & SESSION_EVENT_CLIPBOARD) {
+        char *text = NULL;
+        pthread_mutex_lock(&s->mailbox.lock);
+        text = s->mailbox.pending_clipboard;
+        s->mailbox.pending_clipboard = NULL;
+        pthread_mutex_unlock(&s->mailbox.lock);
+
+        if (text) {
+            if (s->host && s->host->clipboard)
+                s->host->clipboard(s->host_ud, text);
+            free(text);
+        }
+    }
+
+    if (ev & SESSION_EVENT_NOTIFY) {
+        struct session_notify_item items[SESSION_NOTIFY_FIFO_CAP];
+        int count = 0;
+        pthread_mutex_lock(&s->mailbox.lock);
+        count = s->mailbox.notify_count;
+        for (int i = 0; i < count; i++) {
+            int idx = (s->mailbox.notify_head + i) % SESSION_NOTIFY_FIFO_CAP;
+            items[i] = s->mailbox.notify_fifo[idx];
+            s->mailbox.notify_fifo[idx] = (struct session_notify_item){0};
+        }
+        s->mailbox.notify_head = 0;
+        s->mailbox.notify_count = 0;
+        pthread_mutex_unlock(&s->mailbox.lock);
+
+        for (int i = 0; i < count; i++) {
+            platform_notify(items[i].title, items[i].body);
+            free(items[i].title);
+            free(items[i].body);
+        }
+    }
+
+    if (ev & SESSION_EVENT_BELL) {
+        platform_bell();
+        if (s->host && s->host->bell)
+            s->host->bell(s->host_ud);
+    }
+
+    if (ev & SESSION_EVENT_OUTPUT) {
+        if (s->host && s->host->output)
+            s->host->output(s->host_ud);
+    }
+
+    if (ev & SESSION_EVENT_ENDED) {
+        report_exit(s);
+        return;
+    }
+}
+
+static void session_stage_event(struct session *s, uint32_t mask)
+{
+    uint32_t prev = atomic_fetch_or_explicit(&s->mailbox.pending_events, mask,
+                                             memory_order_acq_rel);
+    if (prev == 0)
+        atomic_store_explicit(&s->mailbox.need_wake, true, memory_order_release);
+}
+
+static void session_mailbox_flush_notify(struct session *s)
+{
+    if (atomic_exchange_explicit(&s->mailbox.need_wake, false, memory_order_acq_rel))
+        session_eventfd_signal(s->mailbox.event_wr);
+}
+
+static void session_arm_pollout_cb(void *ud)
+{
+    struct session *s = ud;
+    session_stage_event(s, SESSION_EVENT_ARM_WRITE_WATCH);
+    session_mailbox_flush_notify(s);
+}
+
 void session_on_keystroke(struct session *s, uint64_t time_ms)
 {
     s->last_keystroke_ms = time_ms;
@@ -44,12 +167,14 @@ uint64_t session_last_keystroke_ms(const struct session *s)
 static void session_feed(struct session *s, const char *buf, size_t len)
 {
     wsap_vtcore_feed(s->term, buf, len, s->onlcr ? WSAP_VTCORE_FEED_ONLCR : 0);
+    session_write_queue_flush(&s->input_writer);
+    session_mailbox_flush_notify(s);
 }
 
 static void on_term_response(void *ud, const char *data, size_t len)
 {
     struct session *s = ud;
-    if (!session_write_queue_push_bytes(&s->input_writer, data, len))
+    if (!session_write_queue_stage(&s->input_writer, data, len))
         fprintf(stderr, "[%s] failed to queue terminal input\n", app_name());
 }
 
@@ -61,37 +186,53 @@ static void on_term_title(void *ud, const char *title)
     char *copy = strdup(title);
     if (!copy)
         return;
-    free(s->title);
-    s->title = copy;
-    if (s->host && s->host->title)
-        s->host->title(s->host_ud);
+    pthread_mutex_lock(&s->mailbox.lock);
+    free(s->mailbox.pending_title);
+    s->mailbox.pending_title = copy;
+    pthread_mutex_unlock(&s->mailbox.lock);
+    session_stage_event(s, SESSION_EVENT_TITLE);
 }
 
 static void on_term_clipboard(void *ud, const char *selection, const char *data,
                               size_t len)
 {
     struct session *s = ud;
-    if (!data || !strchr(selection, 'c') || !s->host || !s->host->clipboard)
+    if (!data || !strchr(selection, 'c'))
         return;
     char *text = strndup(data, len);
     if (!text)
         return;
-    s->host->clipboard(s->host_ud, text);
-    free(text);
+    pthread_mutex_lock(&s->mailbox.lock);
+    free(s->mailbox.pending_clipboard);
+    s->mailbox.pending_clipboard = text;
+    pthread_mutex_unlock(&s->mailbox.lock);
+    session_stage_event(s, SESSION_EVENT_CLIPBOARD);
 }
 
 static void on_term_notify(void *ud, const char *title, const char *body)
 {
-    (void)ud;
-    platform_notify(title, body);
+    struct session *s = ud;
+    char *t_copy = title ? strdup(title) : NULL;
+    char *b_copy = body ? strdup(body) : NULL;
+    pthread_mutex_lock(&s->mailbox.lock);
+    if (s->mailbox.notify_count < SESSION_NOTIFY_FIFO_CAP) {
+        int idx = (s->mailbox.notify_head + s->mailbox.notify_count) % SESSION_NOTIFY_FIFO_CAP;
+        s->mailbox.notify_fifo[idx].title = t_copy;
+        s->mailbox.notify_fifo[idx].body = b_copy;
+        s->mailbox.notify_count++;
+        pthread_mutex_unlock(&s->mailbox.lock);
+        session_stage_event(s, SESSION_EVENT_NOTIFY);
+    } else {
+        pthread_mutex_unlock(&s->mailbox.lock);
+        free(t_copy);
+        free(b_copy);
+    }
 }
 
 static void on_term_bell(void *ud)
 {
     struct session *s = ud;
-    platform_bell();
-    if (s && s->host && s->host->bell)
-        s->host->bell(s->host_ud);
+    session_stage_event(s, SESSION_EVENT_BELL);
 }
 
 static void on_term_trace(void *ud, const char *line)
@@ -157,18 +298,17 @@ static void on_ring_drained(void *ud)
 {
     struct session *s = ud;
     s->newline_synced = false;
-    notify_output(s);
-}
-
-static void report_exit(struct session *s)
-{
-    if (s->host && s->host->exited)
-        s->host->exited(s->host_ud);
+    if (!wsap_vtcore_modes(s->term).synchronized) {
+        session_stage_event(s, SESSION_EVENT_OUTPUT);
+        session_mailbox_flush_notify(s);
+    }
 }
 
 static void on_ring_ended(void *ud)
 {
-    report_exit(ud);
+    struct session *s = ud;
+    session_stage_event(s, SESSION_EVENT_OUTPUT | SESSION_EVENT_ENDED);
+    session_mailbox_flush_notify(s);
 }
 
 static const struct pty_ring_cbs ring_callbacks = {
@@ -211,6 +351,10 @@ static bool start_pty(struct session *s, const struct session_spec *spec)
 
     s->onlcr = pty_pipe_fd(&s->pty) >= 0;
 
+    if (!session_write_queue_bind(&s->input_writer, s->loop, pty_master_fd(&s->pty)))
+        return false;
+    session_write_queue_set_arm_cb(&s->input_writer, session_arm_pollout_cb, s);
+
     if (pty_ring_start(&s->ring, s->loop, &s->pty, &ring_callbacks, s) < 0)
         fprintf(stderr, "[%s] pty_ring_start failed, falling back to direct read\n",
                 app_name());
@@ -223,7 +367,7 @@ static bool start_pty(struct session *s, const struct session_spec *spec)
         if (s->pty_watch[i] < 0)
             return false;
     }
-    return session_write_queue_bind(&s->input_writer, s->loop, pty_master_fd(&s->pty));
+    return true;
 }
 
 bool session_init(struct session *s, struct yasl_loop *loop,
@@ -231,6 +375,25 @@ bool session_init(struct session *s, struct yasl_loop *loop,
 {
     memset(s, 0, sizeof(*s));
     s->loop = loop;
+    s->mailbox.event_fd = -1;
+    s->mailbox.event_wr = -1;
+    s->mailbox.event_watch = -1;
+    if (pthread_mutex_init(&s->mailbox.lock, NULL) != 0)
+        return false;
+    atomic_init(&s->mailbox.pending_events, 0);
+
+    s->mailbox.event_fd = platform_eventfd(&s->mailbox.event_wr);
+    if (s->mailbox.event_fd < 0) {
+        pthread_mutex_destroy(&s->mailbox.lock);
+        return false;
+    }
+    s->mailbox.event_watch = yasl_loop_add_fd(s->loop, s->mailbox.event_fd, POLLIN,
+                                              session_mailbox_ready, s);
+    if (s->mailbox.event_watch < 0) {
+        proc_eventfd_close(s->mailbox.event_fd, s->mailbox.event_wr);
+        pthread_mutex_destroy(&s->mailbox.lock);
+        return false;
+    }
 
     struct vector2i grid_size = vector2i_max(spec->grid, vector2i_splat(1));
     s->term = wsap_vtcore_new(&(struct wsap_vtcore_options){
@@ -275,8 +438,30 @@ static void unlink_live(struct session *s)
 void session_fini(struct session *s)
 {
     unlink_live(s);
-    session_write_queue_destroy(&s->input_writer);
     pty_ring_stop(&s->ring);
+
+    if (s->mailbox.event_watch > 0 && s->loop)
+        yasl_loop_del_fd(s->loop, s->mailbox.event_watch);
+    s->mailbox.event_watch = -1;
+    proc_eventfd_close(s->mailbox.event_fd, s->mailbox.event_wr);
+    s->mailbox.event_fd = -1;
+    s->mailbox.event_wr = -1;
+
+    pthread_mutex_lock(&s->mailbox.lock);
+    free(s->mailbox.pending_title);
+    s->mailbox.pending_title = NULL;
+    free(s->mailbox.pending_clipboard);
+    s->mailbox.pending_clipboard = NULL;
+    for (int i = 0; i < s->mailbox.notify_count; i++) {
+        int idx = (s->mailbox.notify_head + i) % SESSION_NOTIFY_FIFO_CAP;
+        free(s->mailbox.notify_fifo[idx].title);
+        free(s->mailbox.notify_fifo[idx].body);
+    }
+    s->mailbox.notify_count = 0;
+    pthread_mutex_unlock(&s->mailbox.lock);
+    pthread_mutex_destroy(&s->mailbox.lock);
+
+    session_write_queue_destroy(&s->input_writer);
     for (size_t i = 0; i < 2; i++) {
         if (s->pty_watch[i] > 0)
             yasl_loop_del_fd(s->loop, s->pty_watch[i]);

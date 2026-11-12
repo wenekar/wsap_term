@@ -5,6 +5,7 @@
 #include "pty/ring.h"
 
 #include <assert.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +23,7 @@ struct capture {
     char *source;
     size_t len;
     size_t cap;
+    _Atomic bool done;
 };
 
 static void on_data(void *ud, int fd, const char *buf, size_t len,
@@ -36,7 +38,17 @@ static void on_data(void *ud, int fd, const char *buf, size_t len,
     memset(c->source + c->len, tag, len);
     c->len += len;
     if (c->len >= 3 && !memcmp(c->bytes + c->len - 3, "END", 3))
-        yasl_loop_quit(c->loop);
+        atomic_store_explicit(&c->done, true, memory_order_release);
+}
+
+static uint64_t on_progress(void *ud, uint64_t id, uint64_t interval_ns)
+{
+    (void)id;
+    struct capture *c = ud;
+    if (!atomic_load_explicit(&c->done, memory_order_acquire))
+        return interval_ns;
+    yasl_loop_quit(c->loop);
+    return 0;
 }
 
 static uint64_t on_timeout(void *ud, uint64_t id, uint64_t interval_ns)
@@ -104,6 +116,7 @@ int main(int argc, char **argv)
     struct pty_ring ring;
     const struct pty_ring_cbs cbs = { .data = on_data };
     assert(pty_ring_start(&ring, c.loop, &p, &cbs, &c) == 0);
+    yasl_loop_add_timer(c.loop, MS_TO_NS(1), on_progress, &c);
     yasl_loop_add_timer(c.loop, MS_TO_NS(TIMEOUT_MS), on_timeout, c.loop);
     assert(yasl_loop_run(c.loop) == 0);
     pty_ring_stop(&ring);

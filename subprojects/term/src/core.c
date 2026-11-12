@@ -676,6 +676,9 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void emit_stream_row(struct stream_emit_
 
 static WSAP_VTCORE_NOINLINE size_t stream_ascii_wrapped(struct wsap_vtcore *t, const char *buf, size_t len)
 {
+    if (WSAP_VTCORE_EXPECT(len > 65536 &&
+                           atomic_load_explicit(&t->waiters, memory_order_relaxed) > 0, 0))
+        len = 65536;
     int limit = len > INT32_MAX ? INT32_MAX : (int)len;
     int run = scan_ascii_run(buf, limit);
     if (!run) return 0;
@@ -1070,6 +1073,9 @@ static inline WSAP_VTCORE_ALWAYS_INLINE size_t bulk_ascii_lines_body(struct wsap
     };
 
     while (i < len) {
+        if (WSAP_VTCORE_EXPECT(i >= 32768 &&
+                               atomic_load_explicit(&t->waiters, memory_order_relaxed) > 0, 0))
+            break;
         if (lnm && !t->pending_wrap) {
             size_t scan = i;
             while (scan + 64 <= len) {

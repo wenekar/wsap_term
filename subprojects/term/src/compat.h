@@ -183,8 +183,10 @@ static inline void wsap_vtcore_cpu_relax(void)
 
 #if defined(_WIN32)
 typedef SRWLOCK wsap_vtcore_mutex;
+typedef CONDITION_VARIABLE wsap_vtcore_cond;
 #else
 typedef pthread_mutex_t wsap_vtcore_mutex;
+typedef pthread_cond_t wsap_vtcore_cond;
 #if !defined(PTHREAD_PRIO_INHERIT)
 #define PTHREAD_PRIO_INHERIT 1
 #endif
@@ -232,6 +234,52 @@ static inline void wsap_vtcore_mutex_destroy(wsap_vtcore_mutex *m)
     (void)m;
 #else
     (void)pthread_mutex_destroy(m);
+#endif
+}
+
+static inline bool wsap_vtcore_cond_init(wsap_vtcore_cond *c)
+{
+#if defined(_WIN32)
+    InitializeConditionVariable(c);
+    return true;
+#else
+    return pthread_cond_init(c, NULL) == 0;
+#endif
+}
+
+static inline void wsap_vtcore_cond_wait(wsap_vtcore_cond *c, wsap_vtcore_mutex *m)
+{
+#if defined(_WIN32)
+    SleepConditionVariableSRW(c, m, INFINITE, 0);
+#else
+    (void)pthread_cond_wait(c, m);
+#endif
+}
+
+static inline void wsap_vtcore_cond_signal(wsap_vtcore_cond *c)
+{
+#if defined(_WIN32)
+    WakeConditionVariable(c);
+#else
+    (void)pthread_cond_signal(c);
+#endif
+}
+
+static inline void wsap_vtcore_cond_broadcast(wsap_vtcore_cond *c)
+{
+#if defined(_WIN32)
+    WakeAllConditionVariable(c);
+#else
+    (void)pthread_cond_broadcast(c);
+#endif
+}
+
+static inline void wsap_vtcore_cond_destroy(wsap_vtcore_cond *c)
+{
+#if defined(_WIN32)
+    (void)c;
+#else
+    (void)pthread_cond_destroy(c);
 #endif
 }
 

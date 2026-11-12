@@ -34,76 +34,128 @@ void latency_probe_init(void)
     probe = map;
 }
 
-static uint64_t active, rendered;
-static uint64_t stamps[LATENCY_STAGE_COUNT];
-static uint64_t pending;
+static _Atomic uint64_t active, rendered;
+static _Atomic uint64_t stamps[LATENCY_STAGE_COUNT];
 
-static void sync_request(void)
+static uint64_t sync_request(void)
 {
-    if (!probe) return;
+    if (!probe)
+        return 0;
     uint64_t id = atomic_load_explicit(&probe->request, memory_order_acquire);
-    if (id != active) {
-        active = id;
-        rendered = 0;
-        memset(stamps, 0, sizeof(stamps));
+    uint64_t cur = atomic_load_explicit(&active, memory_order_acquire);
+    if (id != cur &&
+        atomic_compare_exchange_strong_explicit(&active, &cur, id,
+                                                memory_order_acq_rel,
+                                                memory_order_acquire)) {
+        atomic_store_explicit(&rendered, 0, memory_order_relaxed);
+        for (int i = 0; i < LATENCY_STAGE_COUNT; i++)
+            atomic_store_explicit(&stamps[i], 0, memory_order_relaxed);
     }
+    return id;
 }
 
 void latency_probe_stage(enum latency_stage stage)
 {
-    if (!probe) return;
-    sync_request();
-    if (!active || atomic_load_explicit(&probe->completed, memory_order_relaxed) == active)
+    if (!probe)
+        return;
+    uint64_t id = sync_request();
+    if (!id || atomic_load_explicit(&probe->completed, memory_order_relaxed) == id)
         return;
     if (stage == LATENCY_STAGE_RENDER_START) {
-        if (!stamps[LATENCY_STAGE_PTY_READ]) return;
-        rendered = active;
+        if (!atomic_load_explicit(&stamps[LATENCY_STAGE_PTY_READ], memory_order_acquire))
+            return;
+        atomic_store_explicit(&rendered, id, memory_order_release);
     }
-    if ((unsigned)stage < LATENCY_STAGE_COUNT && !stamps[stage])
-        stamps[stage] = yasl_time_ns();
+    if ((unsigned)stage < LATENCY_STAGE_COUNT) {
+        uint64_t zero = 0;
+        uint64_t now = yasl_time_ns();
+        atomic_compare_exchange_strong_explicit(&stamps[stage], &zero, now,
+                                                memory_order_release,
+                                                memory_order_relaxed);
+    }
 }
 
 void latency_probe_scan_output(const char *data, size_t len)
 {
-    if (!probe) return;
-    static char marker[64];
-    static size_t used;
-    sync_request();
-    for (size_t i = 0; i < len; i++) {
+    if (!probe)
+        return;
+    static const char prefix[] = "\033]777;latency=";
+    const size_t prefix_len = sizeof(prefix) - 1;
+    static _Thread_local char marker[64];
+    static _Thread_local size_t used;
+    static _Thread_local uint64_t pending;
+
+    uint64_t want = sync_request();
+    if (!want) {
+        used = 0;
+        pending = 0;
+        return;
+    }
+
+    size_t i = 0;
+    while (i < len) {
         if (pending) {
-            if (data[i] == 'a' && pending == active && stamps[LATENCY_STAGE_KEY_IN])
+            if (data[i] == 'a' && pending == want &&
+                atomic_load_explicit(&stamps[LATENCY_STAGE_KEY_IN], memory_order_acquire))
                 latency_probe_stage(LATENCY_STAGE_PTY_READ);
             pending = 0;
         }
-        if (data[i] == '\033') used = 0;
-        if (used < sizeof(marker) - 1) marker[used++] = data[i];
-        if (data[i] == '\007') {
-            marker[used] = 0;
-            unsigned long long id = 0;
-            int end = 0;
-            if (sscanf(marker, "\033]777;latency=%llu\007%n", &id, &end) == 1 &&
-                end == (int)used && id == active)
-                pending = id;
-            used = 0;
+        if (used == 0) {
+            const char *esc = memchr(data + i, '\033', len - i);
+            if (!esc)
+                return;
+            i = (size_t)(esc - data);
         }
+        char ch = data[i++];
+        if (ch == '\033') {
+            marker[0] = '\033';
+            used = 1;
+            continue;
+        }
+        if (used < prefix_len) {
+            if (ch == prefix[used])
+                marker[used++] = ch;
+            else
+                used = 0;
+            continue;
+        }
+        if (ch >= '0' && ch <= '9' && used < sizeof(marker) - 1) {
+            marker[used++] = ch;
+            continue;
+        }
+        if (ch == '\007' && used > prefix_len) {
+            uint64_t id = 0;
+            for (size_t k = prefix_len; k < used; k++)
+                id = id * 10 + (uint64_t)(marker[k] - '0');
+            if (id == want)
+                pending = id;
+        }
+        used = 0;
     }
 }
 
 static uint64_t pending_frame_id(void)
 {
-    if (!probe) return 0;
+    if (!probe)
+        return 0;
     sync_request();
-    return rendered && atomic_load_explicit(&probe->completed, memory_order_relaxed) != rendered
-        ? rendered : 0;
+    uint64_t id = atomic_load_explicit(&rendered, memory_order_acquire);
+    return id && atomic_load_explicit(&probe->completed, memory_order_relaxed) != id
+        ? id : 0;
 }
 
 void latency_probe_complete(void)
 {
     uint64_t id = pending_frame_id();
-    if (!id) return;
-    if (!stamps[LATENCY_STAGE_COMMIT])
-        stamps[LATENCY_STAGE_COMMIT] = yasl_time_ns();
-    memcpy(probe->stage_ns, stamps, sizeof(probe->stage_ns));
+    if (!id)
+        return;
+    uint64_t zero = 0;
+    uint64_t now = yasl_time_ns();
+    atomic_compare_exchange_strong_explicit(&stamps[LATENCY_STAGE_COMMIT], &zero, now,
+                                            memory_order_release,
+                                            memory_order_relaxed);
+    for (int i = 0; i < LATENCY_STAGE_COUNT; i++)
+        probe->stage_ns[i] = atomic_load_explicit(&stamps[i], memory_order_acquire);
     atomic_store_explicit(&probe->completed, id, memory_order_release);
 }
 

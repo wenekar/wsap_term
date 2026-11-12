@@ -56,18 +56,18 @@ static char *link_at_text(const struct wsap_vtcore *t, struct wsap_vtcore_vector
 char *wsap_vtcore_link_at(const struct wsap_vtcore *t, struct wsap_vtcore_vector2i cell)
 {
     if (!t) return NULL;
-    wsap_vtcore_write_begin((struct wsap_vtcore *)t);
+    wsap_vtcore_lock((struct wsap_vtcore *)t);
     char *text = link_at_text(t, cell);
-    wsap_vtcore_write_end((struct wsap_vtcore *)t);
+    wsap_vtcore_unlock((struct wsap_vtcore *)t);
     return text;
 }
 
 void wsap_vtcore_select_clear(struct wsap_vtcore *t)
 {
     if (t) {
-        wsap_vtcore_write_begin(t);
+        wsap_vtcore_lock(t);
         t->selection = false;
-        wsap_vtcore_write_end(t);
+        wsap_vtcore_unlock(t);
     }
 }
 
@@ -492,11 +492,11 @@ bool wsap_vtcore_select_start(struct wsap_vtcore *t, struct wsap_vtcore_vector2i
                        enum wsap_vtcore_select_unit unit)
 {
     if (!t) return false;
-    wsap_vtcore_write_begin(t);
+    wsap_vtcore_lock(t);
     struct lines L;
     if (!lines_init(&L, t)) {
         lines_free(&L);
-        wsap_vtcore_write_end(t);
+        wsap_vtcore_unlock(t);
         return false;
     }
     struct wsap_vtcore_sel_point first, last;
@@ -516,18 +516,18 @@ bool wsap_vtcore_select_start(struct wsap_vtcore *t, struct wsap_vtcore_vector2i
         t->sel_anchor_last = old_last;
         t->selection = old_selection;
     }
-    wsap_vtcore_write_end(t);
+    wsap_vtcore_unlock(t);
     return ok;
 }
 
 bool wsap_vtcore_select_extend(struct wsap_vtcore *t, struct wsap_vtcore_vector2i cell, bool right_half)
 {
     if (!t) return false;
-    wsap_vtcore_write_begin(t);
+    wsap_vtcore_lock(t);
     struct lines L;
     if (!lines_init(&L, t)) {
         lines_free(&L);
-        wsap_vtcore_write_end(t);
+        wsap_vtcore_unlock(t);
         return false;
     }
     struct wsap_vtcore_sel_point first, last;
@@ -539,7 +539,7 @@ bool wsap_vtcore_select_extend(struct wsap_vtcore *t, struct wsap_vtcore_vector2
     else
         select_range(t, &L, first, sel_point_prev(&L, last));
     lines_free(&L);
-    wsap_vtcore_write_end(t);
+    wsap_vtcore_unlock(t);
     return true;
 }
 
@@ -547,9 +547,9 @@ bool wsap_vtcore_has_selection(const struct wsap_vtcore *t)
 {
     if (!t)
         return false;
-    wsap_vtcore_write_begin((struct wsap_vtcore *)t);
+    wsap_vtcore_lock((struct wsap_vtcore *)t);
     bool has = t->selection && t->sel_end.line_id >= first_retained_line(t);
-    wsap_vtcore_write_end((struct wsap_vtcore *)t);
+    wsap_vtcore_unlock((struct wsap_vtcore *)t);
     return has;
 }
 
@@ -787,22 +787,22 @@ char *wsap_vtcore_history_text(struct wsap_vtcore *t, int max_rows)
 {
     if (!t)
         return NULL;
-    wsap_vtcore_write_begin(t);
+    wsap_vtcore_lock(t);
     wsap_vtcore_hist_prepare_rows(&t->hist, t->cols);
     if (!wsap_vtcore_hist_view_sync(&t->view, &t->hist, t->cols)) {
-        wsap_vtcore_write_end(t);
+        wsap_vtcore_unlock(t);
         return NULL;
     }
     int end_row = wsap_vtcore_screen_history_rows(t) - wsap_vtcore_view_offset(t);
     if (max_rows <= 0 || end_row <= 0) {
-        wsap_vtcore_write_end(t);
+        wsap_vtcore_unlock(t);
         return wsap_vtcore_strdup("");
     }
     int begin_row = end_row > max_rows ? end_row - max_rows : 0;
     struct lines L;
     if (!lines_init(&L, t)) {
         lines_free(&L);
-        wsap_vtcore_write_end(t);
+        wsap_vtcore_unlock(t);
         return NULL;
     }
     struct wsap_vtcore_sel_point bounds[2] = {0};
@@ -830,15 +830,15 @@ char *wsap_vtcore_history_text(struct wsap_vtcore *t, int max_rows)
         }
     }
     lines_free(&L);
-    wsap_vtcore_write_end(t);
+    wsap_vtcore_unlock(t);
     return text;
 }
 
 char *wsap_vtcore_selection_text(const struct wsap_vtcore *t)
 {
     if (!t) return NULL;
-    wsap_vtcore_write_begin((struct wsap_vtcore *)t);
+    wsap_vtcore_lock((struct wsap_vtcore *)t);
     char *text = range_text_inner(t, NULL);
-    wsap_vtcore_write_end((struct wsap_vtcore *)t);
+    wsap_vtcore_unlock((struct wsap_vtcore *)t);
     return text;
 }

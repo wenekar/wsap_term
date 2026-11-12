@@ -348,15 +348,16 @@ static bool ensure_segment(int count)
 {
     if (count <= seg_capacity)
         return true;
-    uint32_t *canon = realloc(seg_canon, (size_t)count * sizeof(*canon));
+    int cap = count < 64 ? 64 : count;
+    uint32_t *canon = realloc(seg_canon, (size_t)cap * sizeof(*canon));
     if (canon)
         seg_canon = canon;
-    uint8_t *roles = realloc(seg_roles, (size_t)count);
+    uint8_t *roles = realloc(seg_roles, (size_t)cap);
     if (roles)
         seg_roles = roles;
     if (!canon || !roles)
         return false;
-    seg_capacity = count;
+    seg_capacity = cap;
     return true;
 }
 

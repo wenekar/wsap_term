@@ -36,18 +36,18 @@ void terminal_send_input(struct window *w, const char *data, size_t len)
     if (tab) {
         struct wsap_vtcore *t = tab->session.term;
         session_on_keystroke(&tab->session, yasl_time_ns() / 1000000);
-        if (wsap_vtcore_cursor(t).blink)
-            window_redraw(w);
-        bool changed = false;
+        wsap_vtcore_lock(t);
+        bool redraw = wsap_vtcore_cursor(t).blink;
         if (wsap_vtcore_has_selection(t)) {
             wsap_vtcore_select_clear(t);
-            changed = true;
+            redraw = true;
         }
         if (wsap_vtcore_scrollback(t).offset > 0) {
             wsap_vtcore_scroll_to(t, 0);
-            changed = true;
+            redraw = true;
         }
-        if (changed)
+        wsap_vtcore_unlock(t);
+        if (redraw)
             window_redraw(w);
     }
     session_write_bytes(terminal_active_session(w), data, len);
@@ -67,8 +67,10 @@ void terminal_paste(struct window *w, const char *text, size_t len)
     struct session *s = terminal_active_session(w);
     if (!session_paste(s, text, len))
         return;
+    wsap_vtcore_lock(s->term);
     wsap_vtcore_select_clear(s->term);
     wsap_vtcore_scroll_to(s->term, 0);
+    wsap_vtcore_unlock(s->term);
     window_redraw(w);
 }
 
@@ -77,8 +79,10 @@ static void scroll_view_lines(struct window *w, int delta_lines)
     struct tab *t = terminal_active_tab(w);
     if (!t)
         return;
+    wsap_vtcore_lock(t->session.term);
     wsap_vtcore_scroll(t->session.term, delta_lines);
     selection_extend_to_pointer(&t->selection, t->session.term);
+    wsap_vtcore_unlock(t->session.term);
     terminal_show_scrollbar(w);
     window_redraw(w);
 }
@@ -89,15 +93,17 @@ void terminal_handle_shortcut(struct window *w, enum input_shortcut sc)
     switch (sc) {
     case INPUT_SHORTCUT_FONT_LARGER:  terminal_adjust_font_size(w, 1); break;
     case INPUT_SHORTCUT_FONT_SMALLER: terminal_adjust_font_size(w, -1); break;
-    case INPUT_SHORTCUT_COPY:
-        if (terminal_term(w) && wsap_vtcore_has_selection(terminal_term(w))) {
+    case INPUT_SHORTCUT_COPY: {
+        struct wsap_vtcore *t = terminal_term(w);
+        if (t && wsap_vtcore_has_selection(t)) {
             terminal_copy(w);
-            wsap_vtcore_select_clear(terminal_term(w));
+            wsap_vtcore_select_clear(t);
             window_redraw(w);
         } else {
             terminal_send_input(w, "\x03", 1);
         }
         break;
+    }
     case INPUT_SHORTCUT_PASTE:        window_paste(w, YASL_CLIPBOARD); break;
     case INPUT_SHORTCUT_SELECT_ALL:   terminal_select_all(w); break;
     case INPUT_SHORTCUT_KILL_LINE:    terminal_send_input(w, "\x15", 1); break;

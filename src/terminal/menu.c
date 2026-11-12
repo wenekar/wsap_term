@@ -73,9 +73,11 @@ void terminal_select_all(struct window *w)
     struct wsap_vtcore *t = terminal_term(w);
     if (!t)
         return;
+    wsap_vtcore_lock(t);
     struct wsap_vtcore_vector2i size = wsap_vtcore_size(t);
     wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ 0 }, false, WSAP_VTCORE_SELECT_CELL);
     wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = size.x - 1, .y = size.y - 1 }, true);
+    wsap_vtcore_unlock(t);
     window_redraw(w);
 }
 
@@ -126,9 +128,16 @@ void terminal_open_ctx_menu(struct window *w, struct vector2i at)
         return;
 
     struct wsap_vtcore *t = terminal_term(w);
-    char *url = t ? wsap_vtcore_link_at(t, term_vec_from_geom(terminal_cell_at(w, at))) : NULL;
-    bool has_sel = t ? wsap_vtcore_has_selection(t) : false;
-    bool can_reset = t ? wsap_vtcore_scrollback(t).offset > 0 : false;
+    char *url = NULL;
+    bool has_sel = false;
+    bool can_reset = false;
+    if (t) {
+        wsap_vtcore_lock(t);
+        url = wsap_vtcore_link_at(t, term_vec_from_geom(terminal_cell_at(w, at)));
+        has_sel = wsap_vtcore_has_selection(t);
+        can_reset = wsap_vtcore_scrollback(t).offset > 0;
+        wsap_vtcore_unlock(t);
+    }
 
     struct input_keymap *km = input_keymap_active();
     char copy_sc[64] = {0};

@@ -252,19 +252,70 @@ static const char *injector_name(void) { return "CGEventPost (HID tap)"; }
 static volatile sig_atomic_t stopped;
 static void on_signal(int sig) { stopped = sig; }
 
+#include <sys/socket.h>
+#include <sys/un.h>
+
+static bool debug_send_cmd(const char *sock_path, const char *cmd)
+{
+    int s = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (s < 0)
+        return false;
+    struct sockaddr_un addr = { .sun_family = AF_UNIX };
+    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", sock_path);
+    bool ok = false;
+    if (connect(s, (const struct sockaddr *)&addr, sizeof(addr)) == 0) {
+        size_t len = strlen(cmd);
+        if (write(s, cmd, len) == (ssize_t)len) {
+            char reply[256];
+            ssize_t n = read(s, reply, sizeof(reply) - 1);
+            if (n > 0) {
+                reply[n] = '\0';
+                ok = strstr(reply, "\"ok\":true") != NULL;
+            }
+        }
+    }
+    close(s);
+    return ok;
+}
+
 static int echo_helper(void)
 {
-    struct termios t;
-    if (tcgetattr(STDIN_FILENO, &t) < 0) return 1;
-    cfmakeraw(&t);
-    if (tcsetattr(STDIN_FILENO, TCSANOW, &t) < 0) return 1;
     const char *path = getenv("WSAP_LATENCY_PROBE");
     int fd = path ? open(path, O_RDWR | O_CLOEXEC) : -1;
     if (fd < 0) return 1;
     struct latency_probe_shm *probe = mmap(NULL, sizeof(*probe), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     close(fd);
     if (probe == MAP_FAILED) return 1;
-    atomic_store_explicit(&probe->ready, 1, memory_order_release);
+
+    const char *bg_flood = getenv("WSAP_BG_FLOOD");
+    uint32_t tab_idx = atomic_fetch_add_explicit(&probe->ready, 1, memory_order_acq_rel);
+    if (bg_flood && *bg_flood == '1' && tab_idx == 0) {
+        /* Tab A: wait for Tab B to become ready, then flood STDOUT_FILENO. */
+        while (atomic_load_explicit(&probe->ready, memory_order_acquire) < 2)
+            sleep_ns(1000000);
+        uint8_t buf[65536];
+        uint32_t s = 0x12345678u;
+        for (size_t i = 0; i < sizeof(buf); i++) {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            buf[i] = (uint8_t)s;
+        }
+        for (;;) {
+            ssize_t w = write(STDOUT_FILENO, buf, sizeof(buf));
+            if (w < 0 && (errno == EINTR || errno == EAGAIN))
+                continue;
+            if (w <= 0)
+                break;
+        }
+        return 0;
+    }
+
+    struct termios t;
+    if (tcgetattr(STDIN_FILENO, &t) < 0) return 1;
+    cfmakeraw(&t);
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &t) < 0) return 1;
+    atomic_store_explicit(&probe->ready, 2, memory_order_release);
     unsigned long long seq = 0;
     char c;
     while (read(STDIN_FILENO, &c, 1) == 1) {
@@ -310,12 +361,19 @@ static bool number(const char *arg, int *value, bool zero)
 int main(int argc, char **argv)
 {
     if (argc == 2 && !strcmp(argv[1], "--echo")) return echo_helper();
+    bool bg_flood = false;
+    int pos = 1;
+    if (pos < argc && !strcmp(argv[pos], "--bg-flood")) {
+        bg_flood = true;
+        pos++;
+    }
     int iterations = 300, warmup = 20;
-    if (argc > 4 || (argc > 1 && !number(argv[1], &iterations, false)) ||
-        (argc > 2 && !number(argv[2], &warmup, true))) {
-        fprintf(stderr, "usage: %s [samples [warmup [output.csv]]]\n", argv[0]);
+    if (argc - pos > 3 || (pos < argc && !number(argv[pos], &iterations, false)) ||
+        (pos + 1 < argc && !number(argv[pos + 1], &warmup, true))) {
+        fprintf(stderr, "usage: %s [--bg-flood] [samples [warmup [output.csv]]]\n", argv[0]);
         return 1;
     }
+    const char *csv_arg = pos + 2 < argc ? argv[pos + 2] : NULL;
     char self[PATH_MAX];
     if (!realpath(argv[0], self) || strpbrk(self, " \t\r\n")) {
         fprintf(stderr, "cannot resolve a safe helper path\n"); return 1;
@@ -337,13 +395,14 @@ int main(int argc, char **argv)
         if (!bin) bin = "build/bin/wsap_term";
     }
     if (access(bin, X_OK)) { perror(bin); return 1; }
-    FILE *csv = argc > 3 ? fopen(argv[3], "wx") : NULL;
-    if (argc > 3 && !csv) { perror(argv[3]); return 1; }
+    FILE *csv = csv_arg ? fopen(csv_arg, "wx") : NULL;
+    if (csv_arg && !csv) { perror(csv_arg); return 1; }
     if (csv) fputs("sequence,warmup,status,inject_ns,key_ns,queued_ns,parsed_ns,render_ns,commit_ns,presentation_observed_ns,presentation_flags,presentation_refresh_ns\n", csv);
     char dir[] = "/tmp/wsap-latency-XXXXXX";
     if (!mkdtemp(dir)) { perror("mkdtemp"); return 1; }
-    char probe_path[128], conf_dir[128], conf_path[160];
+    char probe_path[128], sock_path[128], conf_dir[128], conf_path[160];
     snprintf(probe_path, sizeof(probe_path), "%s/probe", dir);
+    snprintf(sock_path, sizeof(sock_path), "%s/debug.sock", dir);
     snprintf(conf_dir, sizeof(conf_dir), "%s/wsap_term", dir);
     snprintf(conf_path, sizeof(conf_path), "%s/term.conf", conf_dir);
     int result = 1, n = 0, pn = 0;
@@ -372,6 +431,10 @@ int main(int argc, char **argv)
     if (!pid) {
         setenv("WSAP_LATENCY_PROBE", probe_path, 1);
         setenv("XDG_CONFIG_HOME", dir, 1);
+        if (bg_flood) {
+            setenv("WSAP_BG_FLOOD", "1", 1);
+            setenv("WSAP_DEBUG_SOCKET", sock_path, 1);
+        }
         execl(bin, bin, (char *)NULL);
         _exit(127);
     }
@@ -395,6 +458,20 @@ int main(int argc, char **argv)
             goto cleanup;
         }
         sleep_ns(1000000);
+    }
+    if (bg_flood) {
+        if (!debug_send_cmd(sock_path, "shortcut new_tab\n")) {
+            fprintf(stderr, "failed to open foreground Tab B via debug socket\n");
+            goto cleanup;
+        }
+        deadline = bench_now_ns() + 5000000000ull;
+        while (atomic_load_explicit(&probe->ready, memory_order_acquire) < 2) {
+            if (stopped || bench_now_ns() > deadline) {
+                fprintf(stderr, "foreground Tab B echo helper did not become ready\n");
+                goto cleanup;
+            }
+            sleep_ns(1000000);
+        }
     }
     if (!injector_ready && !injector_open()) goto cleanup;
     sleep_ns(700000000);
@@ -504,7 +581,7 @@ cleanup:
     if (pid > 0) { kill(pid, SIGTERM); waitpid(pid, NULL, 0); }
     if (probe != MAP_FAILED) munmap(probe, sizeof(*probe));
     if (csv && fclose(csv)) result = 1;
-    unlink(conf_path); rmdir(conf_dir); unlink(probe_path); rmdir(dir);
+    unlink(conf_path); rmdir(conf_dir); unlink(probe_path); unlink(sock_path); rmdir(dir);
     free(values);
     return result;
 }

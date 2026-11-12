@@ -48,6 +48,12 @@ static void test_feed_null_buffer(void)
 
     assert(!wsap_vtcore_feed(NULL, "a", 1, 0));
     assert(!wsap_vtcore_feed(NULL, NULL, 0, 0));
+
+    wsap_vtcore_lock(NULL);
+    wsap_vtcore_unlock(NULL);
+    assert(!wsap_vtcore_lock_contended(NULL));
+    wsap_vtcore_yield_to_waiters(NULL);
+
     wsap_vtcore_free(t);
 }
 

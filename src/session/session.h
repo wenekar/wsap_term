@@ -1,7 +1,9 @@
 #ifndef SESSION_SESSION_H
 #define SESSION_SESSION_H
 
+#include <pthread.h>
 #include <stdalign.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -13,6 +15,37 @@
 
 struct yasl_loop;
 struct session;
+
+enum session_event_flags {
+    SESSION_EVENT_OUTPUT          = 1u << 0,
+    SESSION_EVENT_TITLE           = 1u << 1,
+    SESSION_EVENT_CLIPBOARD       = 1u << 2,
+    SESSION_EVENT_NOTIFY          = 1u << 3,
+    SESSION_EVENT_BELL            = 1u << 4,
+    SESSION_EVENT_ARM_WRITE_WATCH = 1u << 5,
+    SESSION_EVENT_ENDED           = 1u << 6,
+};
+
+struct session_notify_item {
+    char *title;
+    char *body;
+};
+
+#define SESSION_NOTIFY_FIFO_CAP 16
+
+struct session_mailbox {
+    pthread_mutex_t lock;
+    _Atomic uint32_t pending_events;
+    _Atomic bool need_wake;
+    char *pending_title;
+    char *pending_clipboard;
+    struct session_notify_item notify_fifo[SESSION_NOTIFY_FIFO_CAP];
+    int notify_head;
+    int notify_count;
+    int event_fd;
+    int event_wr;
+    int event_watch;
+};
 
 struct session_host {
     void (*output)(void *ud);
@@ -47,6 +80,7 @@ struct session {
     bool onlcr;
     uint64_t last_keystroke_ms;
     bool reaped;
+    struct session_mailbox mailbox;
     alignas(64) struct pty pty;
 };
 

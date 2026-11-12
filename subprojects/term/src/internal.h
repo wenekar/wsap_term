@@ -98,6 +98,10 @@ struct wsap_vtcore {
     wsap_vtcore_mutex write_lock;
     _Atomic uint64_t writer_tid;
     uint32_t write_depth;
+    _Atomic unsigned int waiters;
+    _Atomic unsigned int yielding;
+    wsap_vtcore_mutex yield_lock;
+    wsap_vtcore_cond yield_cond;
     int cols;
     int rows;
     int cursor_x;
@@ -367,6 +371,17 @@ static inline void wsap_vtcore_write_end(struct wsap_vtcore *t)
     if (--t->write_depth == 0) {
         atomic_store_explicit(&t->writer_tid, 0, memory_order_relaxed);
         wsap_vtcore_mutex_unlock(&t->write_lock);
+    }
+}
+
+static inline void wsap_vtcore_check_yield(struct wsap_vtcore *t)
+{
+    if (WSAP_VTCORE_EXPECT(atomic_load_explicit(&t->waiters, memory_order_relaxed) > 0, 0)) {
+        if (t->write_depth == 1) {
+            wsap_vtcore_write_end(t);
+            wsap_vtcore_yield_to_waiters(t);
+            wsap_vtcore_write_begin(t);
+        }
     }
 }
 

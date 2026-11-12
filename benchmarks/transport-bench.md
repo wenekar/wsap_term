@@ -1,5 +1,9 @@
 # Transport Benchmark: PTY vs Fast Pipe
 
+This benchmark measures the pipe and PTY limits.
+It does not run the reader worker or the session.
+Use [session-ingest-bench](session-ingest-bench.md) to measure that path.
+
 Run with:
 
 ```sh

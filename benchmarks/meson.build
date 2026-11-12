@@ -12,10 +12,12 @@ if font_backend != 'coretext'
 endif
 
 executable('termbench', 'termbench.c', build_by_default: false)
+executable('da1-bench', 'da1_bench.c', build_by_default: false)
 
 if system == 'linux'
     bench_cases += [
         ['transport-bench', files('transport_bench.c'), pty_lib, [thread_dep, dl_dep]],
+        ['session-ingest-bench', files('session_ingest_bench.c'), session_lib, [yasl_dep, thread_dep, dl_dep]],
     ]
 endif
 

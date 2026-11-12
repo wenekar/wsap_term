@@ -58,9 +58,138 @@ static const char *parse_256color(const char *p, const char *end, uint32_t *colo
     return s;
 }
 
-WSAP_VTCORE_NOINLINE
-int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
+static inline WSAP_VTCORE_ALWAYS_INLINE const char *fast_parse_rgb_m(const char *p, uint32_t *color)
 {
+    unsigned char d0 = (unsigned char)(*p++ - '0');
+    if (d0 > 9) return NULL;
+    uint32_t r = d0;
+    unsigned char d1 = (unsigned char)(*p - '0');
+    if (d1 <= 9) {
+        r = r * 10 + d1;
+        p++;
+        unsigned char d2 = (unsigned char)(*p - '0');
+        if (d2 <= 9) {
+            r = r * 10 + d2;
+            p++;
+        }
+    }
+    if (*p++ != ';') return NULL;
+
+    d0 = (unsigned char)(*p++ - '0');
+    if (d0 > 9) return NULL;
+    uint32_t g = d0;
+    d1 = (unsigned char)(*p - '0');
+    if (d1 <= 9) {
+        g = g * 10 + d1;
+        p++;
+        unsigned char d2 = (unsigned char)(*p - '0');
+        if (d2 <= 9) {
+            g = g * 10 + d2;
+            p++;
+        }
+    }
+    if (*p++ != ';') return NULL;
+
+    d0 = (unsigned char)(*p++ - '0');
+    if (d0 > 9) return NULL;
+    uint32_t b = d0;
+    d1 = (unsigned char)(*p - '0');
+    if (d1 <= 9) {
+        b = b * 10 + d1;
+        p++;
+        unsigned char d2 = (unsigned char)(*p - '0');
+        if (d2 <= 9) {
+            b = b * 10 + d2;
+            p++;
+        }
+    }
+    if (*p++ != 'm') return NULL;
+    if (r > 255 || g > 255 || b > 255) return NULL;
+    *color = 0xFF000000u | (r << 16) | (g << 8) | b;
+    return p;
+}
+
+#if defined(WSAP_VTCORE_KERNEL_AVX2)
+static const int8_t truecolor_simd_lut[27][16] __attribute__((aligned(16))) = {
+    /*  0: 1,1,1 */ { -1, -1,  0, -1, -1, -1,  2, -1, -1, -1,  4, -1, -1, -1, -1, -1 },
+    /*  1: 1,1,2 */ { -1, -1,  0, -1, -1, -1,  2, -1, -1,  4,  5, -1, -1, -1, -1, -1 },
+    /*  2: 1,1,3 */ { -1, -1,  0, -1, -1, -1,  2, -1,  4,  5,  6, -1, -1, -1, -1, -1 },
+    /*  3: 1,2,1 */ { -1, -1,  0, -1, -1,  2,  3, -1, -1, -1,  5, -1, -1, -1, -1, -1 },
+    /*  4: 1,2,2 */ { -1, -1,  0, -1, -1,  2,  3, -1, -1,  5,  6, -1, -1, -1, -1, -1 },
+    /*  5: 1,2,3 */ { -1, -1,  0, -1, -1,  2,  3, -1,  5,  6,  7, -1, -1, -1, -1, -1 },
+    /*  6: 1,3,1 */ { -1, -1,  0, -1,  2,  3,  4, -1, -1, -1,  6, -1, -1, -1, -1, -1 },
+    /*  7: 1,3,2 */ { -1, -1,  0, -1,  2,  3,  4, -1, -1,  6,  7, -1, -1, -1, -1, -1 },
+    /*  8: 1,3,3 */ { -1, -1,  0, -1,  2,  3,  4, -1,  6,  7,  8, -1, -1, -1, -1, -1 },
+    /*  9: 2,1,1 */ { -1,  0,  1, -1, -1, -1,  3, -1, -1, -1,  5, -1, -1, -1, -1, -1 },
+    /* 10: 2,1,2 */ { -1,  0,  1, -1, -1, -1,  3, -1, -1,  5,  6, -1, -1, -1, -1, -1 },
+    /* 11: 2,1,3 */ { -1,  0,  1, -1, -1, -1,  3, -1,  5,  6,  7, -1, -1, -1, -1, -1 },
+    /* 12: 2,2,1 */ { -1,  0,  1, -1, -1,  3,  4, -1, -1, -1,  6, -1, -1, -1, -1, -1 },
+    /* 13: 2,2,2 */ { -1,  0,  1, -1, -1,  3,  4, -1, -1,  6,  7, -1, -1, -1, -1, -1 },
+    /* 14: 2,2,3 */ { -1,  0,  1, -1, -1,  3,  4, -1,  6,  7,  8, -1, -1, -1, -1, -1 },
+    /* 15: 2,3,1 */ { -1,  0,  1, -1,  3,  4,  5, -1, -1, -1,  7, -1, -1, -1, -1, -1 },
+    /* 16: 2,3,2 */ { -1,  0,  1, -1,  3,  4,  5, -1, -1,  7,  8, -1, -1, -1, -1, -1 },
+    /* 17: 2,3,3 */ { -1,  0,  1, -1,  3,  4,  5, -1,  7,  8,  9, -1, -1, -1, -1, -1 },
+    /* 18: 3,1,1 */ {  0,  1,  2, -1, -1, -1,  4, -1, -1, -1,  6, -1, -1, -1, -1, -1 },
+    /* 19: 3,1,2 */ {  0,  1,  2, -1, -1, -1,  4, -1, -1,  6,  7, -1, -1, -1, -1, -1 },
+    /* 20: 3,1,3 */ {  0,  1,  2, -1, -1, -1,  4, -1,  6,  7,  8, -1, -1, -1, -1, -1 },
+    /* 21: 3,2,1 */ {  0,  1,  2, -1, -1,  4,  5, -1, -1, -1,  7, -1, -1, -1, -1, -1 },
+    /* 22: 3,2,2 */ {  0,  1,  2, -1, -1,  4,  5, -1, -1,  7,  8, -1, -1, -1, -1, -1 },
+    /* 23: 3,2,3 */ {  0,  1,  2, -1, -1,  4,  5, -1,  7,  8,  9, -1, -1, -1, -1, -1 },
+    /* 24: 3,3,1 */ {  0,  1,  2, -1,  4,  5,  6, -1, -1, -1,  8, -1, -1, -1, -1, -1 },
+    /* 25: 3,3,2 */ {  0,  1,  2, -1,  4,  5,  6, -1, -1,  8,  9, -1, -1, -1, -1, -1 },
+    /* 26: 3,3,3 */ {  0,  1,  2, -1,  4,  5,  6, -1,  8,  9, 10, -1, -1, -1, -1, -1 },
+};
+
+WSAP_VTCORE_TARGET_AVX2
+static inline const char *fast_parse_rgb_m_avx2(const char *p, uint32_t *color)
+{
+    __m128i raw = _mm_loadu_si128((const __m128i *)p);
+    int semi_mask = _mm_movemask_epi8(_mm_cmpeq_epi8(raw, _mm_set1_epi8(';')));
+    int m_mask = _mm_movemask_epi8(_mm_cmpeq_epi8(raw, _mm_set1_epi8('m')));
+
+    if (WSAP_VTCORE_EXPECT(!semi_mask || !m_mask, 0)) return NULL;
+    int s1 = wsap_vtcore_ctz32(semi_mask);
+    int rest_semi = semi_mask & (semi_mask - 1);
+    if (WSAP_VTCORE_EXPECT(!rest_semi, 0)) return NULL;
+    int s2 = wsap_vtcore_ctz32(rest_semi);
+    int m = wsap_vtcore_ctz32(m_mask);
+
+    int lr = s1;
+    int lg = s2 - s1 - 1;
+    int lb = m - s2 - 1;
+
+    if (WSAP_VTCORE_EXPECT((unsigned)(lr - 1) > 2 || (unsigned)(lg - 1) > 2 || (unsigned)(lb - 1) > 2, 0))
+        return NULL;
+
+    int id = (lr - 1) * 9 + (lg - 1) * 3 + (lb - 1);
+    __m128i sub_zero = _mm_sub_epi8(raw, _mm_set1_epi8('0'));
+    __m128i shuf = _mm_load_si128((const __m128i *)truecolor_simd_lut[id]);
+    __m128i digits = _mm_shuffle_epi8(sub_zero, shuf);
+
+    __m128i max9 = _mm_max_epu8(digits, _mm_set1_epi8(9));
+    if (WSAP_VTCORE_EXPECT(_mm_movemask_epi8(_mm_cmpeq_epi8(max9, _mm_set1_epi8(9))) != 0xFFFF, 0))
+        return NULL;
+
+    __m128i weights = _mm_set1_epi32(0x00010a64);
+    __m128i w_mul = _mm_maddubs_epi16(digits, weights);
+    __m128i rgb = _mm_madd_epi16(w_mul, _mm_set1_epi32(0x00010001));
+
+    if (WSAP_VTCORE_EXPECT(_mm_movemask_epi8(_mm_cmpgt_epi32(rgb, _mm_set1_epi32(255))) != 0, 0))
+        return NULL;
+
+    uint32_t r = (uint32_t)_mm_extract_epi32(rgb, 0);
+    uint32_t g = (uint32_t)_mm_extract_epi32(rgb, 1);
+    uint32_t b = (uint32_t)_mm_extract_epi32(rgb, 2);
+
+    *color = 0xFF000000u | (r << 16) | (g << 8) | b;
+    return p + m + 1;
+}
+#endif
+
+static inline WSAP_VTCORE_ALWAYS_INLINE
+int try_fast_csi_body(struct wsap_vtcore *t, const char *buf, size_t rem, int isa)
+{
+    (void)isa;
     const char *end = buf + rem;
     const char *p = buf;
     const char *esc = buf;
@@ -77,8 +206,20 @@ int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
             bool is_fg = p[0] == '3';
             uint32_t *slot = is_fg ? &fg : &bg;
             uint32_t *other = is_fg ? &bg : &fg;
-            const char *next = p[3] == '2' ? parse_color_sequence(p, end, slot)
-                                           : parse_256color(p + 3, end, slot);
+            const char *next = NULL;
+            if (p[3] == '2') {
+#if defined(WSAP_VTCORE_KERNEL_AVX2)
+                if (isa >= WSAP_VTCORE_ISA_AVX2 && p + 21 <= end)
+                    next = fast_parse_rgb_m_avx2(p + 5, slot);
+                else
+#endif
+                if (p + 17 <= end)
+                    next = fast_parse_rgb_m(p + 5, slot);
+                else
+                    next = parse_color_sequence(p, end, slot);
+            } else {
+                next = parse_256color(p + 3, end, slot);
+            }
             if (!next) {
                 p = esc;
                 break;
@@ -87,9 +228,23 @@ int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
             if (p + 7 <= end && p[0] == '\033' && p[1] == '[' &&
                 p[2] == (is_fg ? '4' : '3') && p[3] == '8' &&
                 p[4] == ';' && (p[5] == '2' || p[5] == '5') && p[6] == ';') {
-                next = p[5] == '2' ? parse_color_sequence(p + 2, end, other)
-                                   : parse_256color(p + 5, end, other);
-                if (!next) break;
+                if (p[5] == '2') {
+#if defined(WSAP_VTCORE_KERNEL_AVX2)
+                    if (isa >= WSAP_VTCORE_ISA_AVX2 && p + 23 <= end)
+                        next = fast_parse_rgb_m_avx2(p + 7, other);
+                    else
+#endif
+                    if (p + 19 <= end)
+                        next = fast_parse_rgb_m(p + 7, other);
+                    else
+                        next = parse_color_sequence(p + 2, end, other);
+                } else {
+                    next = parse_256color(p + 5, end, other);
+                }
+                if (!next) {
+                    p = esc;
+                    break;
+                }
                 p = next;
             }
             if (p < end && (unsigned char)*p >= 0x20 && (unsigned char)*p < 0x7f) {
@@ -358,4 +513,27 @@ done:
     if (p > buf)
         return (int)(p - buf);
     return 0;
+}
+
+#if defined(WSAP_VTCORE_KERNEL_AVX2)
+WSAP_VTCORE_TARGET_AVX2
+static WSAP_VTCORE_NOINLINE int try_fast_csi_avx2(struct wsap_vtcore *t, const char *buf, size_t rem)
+{
+    return try_fast_csi_body(t, buf, rem, WSAP_VTCORE_ISA_AVX2);
+}
+#endif
+
+static WSAP_VTCORE_NOINLINE int try_fast_csi_base(struct wsap_vtcore *t, const char *buf, size_t rem)
+{
+    return try_fast_csi_body(t, buf, rem, WSAP_VTCORE_ISA_BASE);
+}
+
+WSAP_VTCORE_NOINLINE
+int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
+{
+#if defined(WSAP_VTCORE_KERNEL_AVX2)
+    if (wsap_vtcore_use_avx2())
+        return try_fast_csi_avx2(t, buf, rem);
+#endif
+    return try_fast_csi_base(t, buf, rem);
 }
