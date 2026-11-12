@@ -86,9 +86,8 @@ struct pending_press {
 };
 
 struct press_queue {
-    struct pending_press ev[8];
-    int head;
-    int n;
+    struct pending_press *ev;
+    size_t n, capacity;
 };
 
 struct drag_icon {
@@ -132,6 +131,16 @@ struct touch_point {
     bool up;
 };
 
+#define IME_SNAPSHOT_COUNT 64
+struct ime_snapshot {
+    uint32_t serial;
+    struct wayland_surface *surface;
+    bool valid, surrounding;
+    size_t offset, length, cursor, begin, end;
+    uint64_t revision, generation;
+    char text[4001];
+};
+
 struct seat {
     /* 8-byte aligned pointers and 64-bit values */
     struct wayland_display *conn;
@@ -149,6 +158,12 @@ struct seat {
     struct tablet_device *tablet_devices;
     struct tablet_pad *tablet_pads;
     struct zwp_text_input_v3 *text_input;
+    struct ime_snapshot *ime_snapshots;
+    uint32_t ime_serial;
+    unsigned ime_history_count;
+    uint32_t ime_barrier_serial;
+    struct wl_callback *ime_barrier;
+    bool ime_deferred, ime_wait_matching;
     struct clipboard *clipboard;
     struct xkb_keymap *xkb_keymap;
     struct xkb_state *xkb_state;
@@ -172,7 +187,7 @@ struct seat {
     uint32_t axis_source;
     bool scroll_gesture, axis_stop_pending;
     unsigned axis_phase;
-    bool ime_enabled;
+    bool ime_enabled, ime_no_surrounding;
     bool axis_has_value120[2], axis_has_discrete[2];
     double touch_scroll_y;
 
@@ -216,8 +231,8 @@ struct wayland_display {
     struct yasl_private_display base;
     /* 8-byte pointers & 64-bit masks */
     struct wl_display *wl;
-    /* The thread that opened the display: the only one that arms frame callbacks. */
-    pthread_t owner;
+    /* Serialize EGL swaps and native surface changes. Dispatch events without this lock. */
+    pthread_mutex_t native_mutex;
 #if YASL_HAS_EGL
     EGLDisplay egl_display;
     EGLint egl_api;
@@ -310,9 +325,9 @@ struct wayland_surface {
     char *ime_preedit;
     char *ime_commit;
     char *ime_shown;
+    uint64_t ime_shown_revision, ime_shown_generation;
     struct seat *ime_seat;
-    size_t ime_delete_begin, ime_delete_end;
-    uint64_t ime_delete_revision, ime_delete_generation;
+    uint32_t ime_delete_before, ime_delete_after;
     struct wp_tearing_control_v1 *tearing_control;
     struct latency_feedback *latency_feedbacks;
     struct latency_feedback latency_pool[8];
@@ -331,6 +346,7 @@ struct wayland_surface {
     /* Sub-structures */
     struct yasl_private_rect2i ime_caret;
     struct yasl_private_rect2i content;
+    struct yasl_private_popup_spec popup_pending_spec;
     struct yasl_private_frame_clock clock;
     struct buffer buffers[NBUF];
     struct yasl_private_frame frame;
@@ -353,12 +369,16 @@ struct wayland_surface {
     uint32_t scale_120;
     uint32_t pending_scale_120;
     uint32_t pending_serial;
+    uint32_t popup_pending_token;
 
     /* 1-byte booleans packed tightly */
     bool frame_active;
     bool frame_presented;
     bool has_shown;
     bool size_pending;
+    bool popup_spec_pending;
+    bool popup_spec_ready;
+    bool popup_repositioned;
     bool sample_refresh;
     bool has_pending_serial;
     bool configured;
@@ -370,7 +390,6 @@ struct wayland_surface {
     bool pointer_locked;
     bool ime_delete_pending;
     /* Set by a swap on a rendering thread; the owner arms the frame request at its next flush. */
-    atomic_bool frame_deferred;
 };
 
 
@@ -382,6 +401,8 @@ int  buffer_pick_free_index(const struct buffer *bufs, int cur);
 int  buffer_prepare(struct wayland_surface *w, struct buffer *b, int width, int height,
                     const struct wl_buffer_listener *listener);
 int  apply_pending_geometry(struct wayland_surface *w);
+int  surface_apply_configure(struct wayland_surface *w, struct xdg_surface *xdg_surface, uint32_t serial);
+bool popup_apply_pending_spec(struct wayland_surface *w);
 
 static inline void wl_damage_list(struct wl_surface *s, const struct yasl_private_damage_list *d)
 {
@@ -397,7 +418,6 @@ static inline void wl_damage_list(struct wl_surface *s, const struct yasl_privat
 
 void surface_update_opaque_region(struct wayland_surface *w);
 int  surface_init_scaling(struct wayland_surface *w);
-void surface_arm_deferred(struct wayland_surface *w);
 
 uint64_t conn_output_mask(const struct wayland_display *c, const struct wl_output *proxy);
 uint32_t conn_output_scale_120(const struct wayland_display *c, uint64_t outputs);
@@ -408,7 +428,7 @@ uint64_t conn_mono_to_pres(const struct wayland_display *c, uint64_t ns);
 /* True when surface_draw_frame would draw now. */
 bool surface_draw_ready(const struct wayland_surface *w);
 void surface_draw_frame(struct wayland_surface *w);
-void wayland_surface_arm_frame(struct wayland_surface *w);
+bool wayland_surface_arm_frame(struct wayland_surface *w);
 void surface_fail(struct wayland_surface *w);
 void display_leave(struct wayland_display *c);
 /* Native objects of a toplevel: built at creation and again after a reconnect. */
@@ -470,6 +490,9 @@ extern const struct xdg_surface_listener shell_surface_listener;
 extern const struct wl_registry_listener registry_listener;
 
 void surface_feedback_destroy(struct wayland_surface *w);
+void surface_feedback_rollback(struct wayland_surface *w, struct latency_feedback *previous);
 void surface_request_presentation_feedback(struct wayland_surface *w);
+
+void wayland_surface_refresh_cursor(struct wayland_surface *w);
 
 #endif

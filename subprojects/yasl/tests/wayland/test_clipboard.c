@@ -1,6 +1,8 @@
 #include "../../src/platform/wayland/clipboard.c"
 #include "common/loop.h"
 #include <assert.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
 
 struct received {
     int count;
@@ -36,8 +38,77 @@ static void receive(const char *text, size_t len, bool uri_list,
     }
 }
 
+struct closing_receiver {
+    struct yasl_loop *loop;
+    int fd, watch;
+};
+
+static void close_receiver(void *ud, int fd, short events)
+{
+    (void)fd;
+    struct closing_receiver *receiver = ud;
+    assert(events & POLLOUT);
+    close(receiver->fd);
+    assert(yasl_loop_del_fd(receiver->loop, receiver->watch) == 0);
+}
+
+static void test_closed_receiver(bool pending_signal)
+{
+    pid_t child = fork();
+    assert(child >= 0);
+    if (!child) {
+        struct sigaction action = {.sa_handler = SIG_DFL};
+        sigemptyset(&action.sa_mask);
+        assert(sigaction(SIGPIPE, &action, NULL) == 0);
+        sigset_t pipe_signal, old_mask, pending;
+        sigemptyset(&pipe_signal);
+        sigaddset(&pipe_signal, SIGPIPE);
+        assert(pthread_sigmask(pending_signal ? SIG_BLOCK : SIG_UNBLOCK,
+                               &pipe_signal, &old_mask) == 0);
+        if (pending_signal) assert(raise(SIGPIPE) == 0);
+
+        int sockets[2], pipe_fds[2];
+        assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+        struct wl_display *display = wl_display_connect_to_fd(sockets[0]);
+        assert(display);
+        struct wl_data_device_manager *manager = (struct wl_data_device_manager *)
+            wl_proxy_create((struct wl_proxy *)display, &wl_data_device_manager_interface);
+        struct wl_seat *seat = (struct wl_seat *)
+            wl_proxy_create((struct wl_proxy *)display, &wl_seat_interface);
+        struct yasl_loop *loop = yasl_loop_create();
+        assert(manager && seat && loop && pipe(pipe_fds) == 0);
+        struct clipboard *clipboard = clipboard_create(display, manager, seat, loop, NULL, NULL);
+        assert(clipboard && clipboard_copy(clipboard, "copy", 1));
+        struct closing_receiver receiver = {.loop = loop, .fd = pipe_fds[0]};
+        receiver.watch = yasl_loop_add_fd(loop, pipe_fds[1], POLLOUT, close_receiver, &receiver);
+        assert(receiver.watch > 0);
+        source_listener.send(clipboard, NULL, "text/plain", pipe_fds[1]);
+        /* Both watches see a writable pipe. The first closes its receiver. */
+        assert(yasl_loop_step(loop, 0) >= 0);
+        assert(sigpending(&pending) == 0);
+        assert((sigismember(&pending, SIGPIPE) == 1) == pending_signal);
+        if (pending_signal) {
+            struct timespec timeout = {0};
+            assert(sigtimedwait(&pipe_signal, NULL, &timeout) == SIGPIPE);
+        }
+        assert(pthread_sigmask(SIG_SETMASK, &old_mask, NULL) == 0);
+        clipboard_destroy(clipboard);
+        wl_proxy_destroy((struct wl_proxy *)seat);
+        wl_proxy_destroy((struct wl_proxy *)manager);
+        yasl_loop_destroy(loop);
+        wl_display_disconnect(display);
+        close(sockets[1]);
+        _exit(0);
+    }
+    int status;
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
 int main(void)
 {
+    test_closed_receiver(false);
+    test_closed_receiver(true);
     struct received received = {0};
     struct clipboard c = {.loop = yasl_loop_create(), .receive = receive, .ud = &received};
     received.clipboard = &c;

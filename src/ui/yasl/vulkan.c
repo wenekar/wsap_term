@@ -4,10 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "loop/latency_probe.h"
 #include "paint/vulkan.h"
 #include "ui/yasl/internal.h"
-#include "ui/yasl/stats.h"
 #include "yasl/yasl.h"
 #include "yasl/vulkan.h"
 
@@ -127,13 +125,5 @@ bool window_metal_draw(void *layer, struct yasl_surface *s,
         .acquire_ud = wv,
     };
     draw(&frame, ud);
-    if (watch.presents)
-        present_watch_note_presented(watch.presents);
-    if (watch.sample) {
-        uint64_t sample = latency_probe_frame_target();
-        uint64_t now_ns = yasl_time_ns();
-        uint32_t interval_ns = (uint32_t)yasl_surface_frame_interval_ns(s);
-        latency_probe_presented(sample, now_ns, now_ns, interval_ns, LATENCY_PRESENTATION_VSYNC);
-    }
     return true;
 }

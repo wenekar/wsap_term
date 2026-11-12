@@ -63,13 +63,20 @@ static void icon_show(struct wayland_display *c, const struct yasl_private_drag_
                WL_SURFACE_SET_BUFFER_SCALE_SINCE_VERSION) {
         wl_surface_set_buffer_scale(icon->surface, (int32_t)(scale / YASL_PRIVATE_SCALE_UNIT));
     }
-    if (wl_proxy_get_version((struct wl_proxy *)icon->surface) >=
-        WL_SURFACE_OFFSET_SINCE_VERSION)
-        wl_surface_offset(icon->surface,
-                          -yasl_private_scale_to_logical(image->hotspot.x, scale),
-                          -yasl_private_scale_to_logical(image->hotspot.y, scale));
-    wl_surface_attach(icon->surface, icon->buffer, 0, 0);
-    wl_surface_damage_buffer(icon->surface, 0, 0, image->size.x, image->size.y);
+    uint32_t version = wl_surface_get_version(icon->surface);
+    struct yasl_private_vector2i offset = {
+        .x = -yasl_private_scale_to_logical(image->hotspot.x, scale),
+        .y = -yasl_private_scale_to_logical(image->hotspot.y, scale),
+    };
+    if (version >= WL_SURFACE_OFFSET_SINCE_VERSION) {
+        wl_surface_offset(icon->surface, offset.x, offset.y);
+        offset = (struct yasl_private_vector2i){0};
+    }
+    wl_surface_attach(icon->surface, icon->buffer, offset.x, offset.y);
+    if (version >= WL_SURFACE_DAMAGE_BUFFER_SINCE_VERSION)
+        wl_surface_damage_buffer(icon->surface, 0, 0, image->size.x, image->size.y);
+    else
+        wl_surface_damage(icon->surface, 0, 0, INT32_MAX, INT32_MAX);
     wl_surface_commit(icon->surface);
 }
 

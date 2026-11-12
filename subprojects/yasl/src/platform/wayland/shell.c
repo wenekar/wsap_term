@@ -54,13 +54,18 @@ static void output_geometry(void *data, struct wl_output *output,
     (void)transform;
 }
 
+static void output_done(void *data, struct wl_output *output);
+
 static void output_mode(void *data, struct wl_output *output, uint32_t flags,
         int32_t width, int32_t height, int32_t refresh)
 {
     (void)output; (void)width; (void)height;
     struct wl_conn_output *o = data;
-    if ((flags & WL_OUTPUT_MODE_CURRENT) && refresh > 0)
+    if ((flags & WL_OUTPUT_MODE_CURRENT) && refresh > 0) {
         o->pending_refresh_ns = (uint32_t)(1000000000000ull / (uint32_t)refresh);
+        if (wl_output_get_version(output) < WL_OUTPUT_DONE_SINCE_VERSION)
+            output_done(data, output);
+    }
 }
 
 static void conn_follow_outputs(struct wayland_display *c)
@@ -353,20 +358,23 @@ static const struct xdg_toplevel_listener toplevel_listener = {
 static void xdg_surface_configure(void *data, struct xdg_surface *xdg_surface, uint32_t serial)
 {
     struct wayland_surface *w = data;
-    w->pending_serial = serial;
-    w->has_pending_serial = true;
-    w->size_pending = true;
-    w->configured = true;
+    if (w->popup_repositioned) {
+        w->popup_repositioned = false;
+        w->popup_spec_ready = true;
+    }
     /* CPU surfaces acknowledge with their SHM commit. External presenters
      * commit through EGL/Vulkan, so apply the configure and acknowledge it
      * before renderer code can submit that first native buffer. */
     if (w->base.presenter != YASL_PRIVATE_PRESENTER_CPU) {
-        xdg_surface_ack_configure(xdg_surface, serial);
-        w->has_pending_serial = false;
-        if (apply_pending_geometry(w) < 0) {
+        if (surface_apply_configure(w, xdg_surface, serial) < 0) {
             surface_fail(w);
             return;
         }
+    } else {
+        w->pending_serial = serial;
+        w->has_pending_serial = true;
+        w->size_pending = true;
+        w->configured = true;
     }
     wayland_surface_schedule_redraw(w);
 }

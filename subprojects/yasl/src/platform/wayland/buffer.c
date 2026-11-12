@@ -157,12 +157,72 @@ static void surface_request_scale(struct wayland_surface *w, uint32_t scale_120)
     wayland_surface_schedule_redraw(w);
 }
 
-int apply_pending_geometry(struct wayland_surface *w)
+static int apply_pending_geometry_locked(struct wayland_surface *w)
 {
     if (!w->size_pending) return 0;
-    if (w->parent && w->pending_scale_120 == w->scale_120) {
-        w->size_pending = false;
-        return 0;
+    int old_logical_width = w->logical_width;
+    int old_logical_height = w->logical_height;
+    int old_width = w->width, old_height = w->height;
+    uint32_t old_scale = w->scale_120;
+    bool new_popup_spec = w->popup_spec_ready;
+    int popup_width = 0, popup_height = 0;
+    if (w->popup && !popup_apply_pending_spec(w))
+        return -1;
+    if (w->parent && !new_popup_spec && old_scale != w->pending_scale_120) {
+        int x = yasl_private_scale_to_logical(w->content.x, old_scale);
+        int y = yasl_private_scale_to_logical(w->content.y, old_scale);
+        int cw = yasl_private_scale_to_logical(w->content.width, old_scale);
+        int ch = yasl_private_scale_to_logical(w->content.height, old_scale);
+        if (cw < 1) cw = 1;
+        if (ch < 1) ch = 1;
+        w->content.x = x ? device_px(x, w->pending_scale_120) : 0;
+        w->content.y = y ? device_px(y, w->pending_scale_120) : 0;
+        w->content.width = device_px(cw, w->pending_scale_120);
+        w->content.height = device_px(ch, w->pending_scale_120);
+        if (w->content.x < 0 || w->content.y < 0 ||
+            w->content.width <= 0 || w->content.height <= 0)
+            return -1;
+    }
+    if (w->parent && w->req_width > 0 && w->req_height > 0) {
+        uint32_t content_scale = new_popup_spec ? w->scale_120 : w->pending_scale_120;
+        int old_content_w = yasl_private_scale_to_logical(w->content.width, content_scale);
+        int old_content_h = yasl_private_scale_to_logical(w->content.height, content_scale);
+        if (old_content_w < 1) old_content_w = 1;
+        if (old_content_h < 1) old_content_h = 1;
+        int64_t logical_w = (int64_t)w->logical_width - old_content_w + w->req_width;
+        int64_t logical_h = (int64_t)w->logical_height - old_content_h + w->req_height;
+        if (logical_w <= 0 || logical_h <= 0 || logical_w > INT_MAX || logical_h > INT_MAX)
+            return -1;
+        int content_w = w->req_width == old_content_w ? w->content.width :
+            device_px(w->req_width, w->pending_scale_120);
+        int content_h = w->req_height == old_content_h ? w->content.height :
+            device_px(w->req_height, w->pending_scale_120);
+        int64_t device_w = device_extent((int)logical_w, w->pending_scale_120);
+        int64_t device_h = device_extent((int)logical_h, w->pending_scale_120);
+        if (w->viewport) {
+            int64_t full_w = new_popup_spec || old_scale == w->pending_scale_120 ? w->width :
+                device_extent(w->logical_width, w->pending_scale_120);
+            int64_t full_h = new_popup_spec || old_scale == w->pending_scale_120 ? w->height :
+                device_extent(w->logical_height, w->pending_scale_120);
+            device_w = full_w - w->content.width + content_w;
+            device_h = full_h - w->content.height + content_h;
+        }
+        if (content_w <= 0 || content_h <= 0 || device_w <= 0 || device_h <= 0 ||
+            device_w > DEVICE_SIDE_MAX || device_h > DEVICE_SIDE_MAX ||
+            (double)device_w * device_h > DEVICE_AREA_MAX)
+            return -1;
+        if (w->viewport) {
+            popup_width = (int)device_w;
+            popup_height = (int)device_h;
+        }
+        w->logical_width = (int)logical_w;
+        w->logical_height = (int)logical_h;
+        w->content.width = content_w;
+        w->content.height = content_h;
+        int gx = yasl_private_scale_to_logical(w->content.x, content_scale);
+        int gy = yasl_private_scale_to_logical(w->content.y, content_scale);
+        xdg_surface_set_window_geometry(w->xdg_surface, gx, gy, w->req_width, w->req_height);
+        w->req_width = w->req_height = 0;
     }
     bool floating = !w->parent && !(w->base.state &
             (YASL_PRIVATE_STATE_MAXIMIZED | YASL_PRIVATE_STATE_FULLSCREEN | YASL_PRIVATE_STATE_TILED));
@@ -192,22 +252,23 @@ int apply_pending_geometry(struct wayland_surface *w)
         logical_w = yasl_private_scale_to_logical((int)device_w, w->pending_scale_120);
         logical_h = yasl_private_scale_to_logical((int)device_h, w->pending_scale_120);
     }
-    int width = (int)device_w;
-    int height = (int)device_h;
+    int width = popup_width ? popup_width : (int)device_w;
+    int height = popup_height ? popup_height : (int)device_h;
     size_t bytes;
     if (w->base.presenter == YASL_PRIVATE_PRESENTER_CPU && !buffer_size(width, height, &bytes))
         return -1;
-    bool rescaled = w->scale_120 != w->pending_scale_120;
-    bool resized = width != w->width || height != w->height;
+    bool rescaled = old_scale != w->pending_scale_120;
+    bool resized = width != old_width || height != old_height;
     w->size_pending = false;
     if (floating) {
         w->floating_width = logical_w;
         w->floating_height = logical_h;
     }
-    if (!rescaled && !resized && logical_w == w->logical_width && logical_h == w->logical_height)
+    if (!rescaled && !resized && logical_w == old_logical_width && logical_h == old_logical_height)
         return 0;
 
     w->scale_120 = w->pending_scale_120;
+    if (rescaled) wayland_surface_refresh_cursor(w);
     w->scale_factor = (double)w->scale_120 / YASL_PRIVATE_SCALE_UNIT;
     w->width = width;
     w->height = height;
@@ -233,6 +294,31 @@ int apply_pending_geometry(struct wayland_surface *w)
             return -1;
     }
     return 0;
+}
+
+int apply_pending_geometry(struct wayland_surface *w)
+{
+    bool gl = w->base.presenter == YASL_PRIVATE_PRESENTER_GL;
+    if (gl) pthread_mutex_lock(&w->conn->native_mutex);
+    int result = apply_pending_geometry_locked(w);
+    if (gl) pthread_mutex_unlock(&w->conn->native_mutex);
+    return result;
+}
+
+int surface_apply_configure(struct wayland_surface *w, struct xdg_surface *xdg_surface, uint32_t serial)
+{
+    bool gl = w->base.presenter == YASL_PRIVATE_PRESENTER_GL;
+    if (gl) pthread_mutex_lock(&w->conn->native_mutex);
+    w->pending_serial = serial;
+    w->has_pending_serial = true;
+    w->size_pending = true;
+    w->configured = true;
+    xdg_surface_ack_configure(xdg_surface, serial);
+    w->has_pending_serial = false;
+    int result = apply_pending_geometry_locked(w);
+    if (result < 0) w->configured = false;
+    if (gl) pthread_mutex_unlock(&w->conn->native_mutex);
+    return result;
 }
 
 static void fractional_preferred_scale(void *data,
@@ -265,8 +351,11 @@ void surface_follow_outputs(struct wayland_surface *w)
     }
     if (!refresh && w->conn->outputs)
         refresh = w->conn->outputs->refresh_ns;
+    bool gl = w->base.presenter == YASL_PRIVATE_PRESENTER_GL;
+    if (gl) pthread_mutex_lock(&w->conn->native_mutex);
     if (refresh)
         w->clock.refresh_ns = refresh;
+    if (gl) pthread_mutex_unlock(&w->conn->native_mutex);
 
     if (need_scale)
         surface_request_scale(w, (uint32_t)max_scale * YASL_PRIVATE_SCALE_UNIT);
@@ -326,6 +415,8 @@ static const struct wl_buffer_listener buffer_listener = {
 static void frame_done(void *data, struct wl_callback *cb, uint32_t ms)
 {
     struct wayland_surface *w = data;
+    bool gl = w->base.presenter == YASL_PRIVATE_PRESENTER_GL;
+    if (gl) pthread_mutex_lock(&w->conn->native_mutex);
     wl_callback_destroy(cb);
     w->frame_cb = NULL;
 
@@ -334,6 +425,7 @@ static void frame_done(void *data, struct wl_callback *cb, uint32_t ms)
         yasl_private_clock_presented(&w->clock, yasl_private_clock_extend_ms(ms, now), w->sample_refresh);
         w->clock.source = YASL_PRIVATE_TIMING_FRAME_CALLBACK;
     }
+    if (gl) pthread_mutex_unlock(&w->conn->native_mutex);
 
     yasl_private_surface_notify_frame_shown(&w->base);
     if (w->base.presenter != YASL_PRIVATE_PRESENTER_CPU)
@@ -346,20 +438,21 @@ static const struct wl_callback_listener frame_listener = {
     .done = frame_done,
 };
 
-void wayland_surface_arm_frame(struct wayland_surface *w)
+bool wayland_surface_arm_frame(struct wayland_surface *w)
 {
     if (!w->configured || w->closed || w->frame_cb)
-        return;
+        return true;
     w->frame_cb = wl_surface_frame(w->surface);
-    if (!w->frame_cb) { surface_fail(w); return; }
+    if (!w->frame_cb) return false;
     w->sample_refresh = w->clock.last_present_ns &&
         yasl_private_loop_now_ns() - w->clock.last_present_ns <
             (uint64_t)(w->clock.refresh_ns / 2);
     if (wl_callback_add_listener(w->frame_cb, &frame_listener, w) < 0) {
         wl_callback_destroy(w->frame_cb);
         w->frame_cb = NULL;
-        surface_fail(w);
+        return false;
     }
+    return true;
 }
 
 static const int8_t free_buf_lut[4][8] = {
@@ -394,6 +487,12 @@ void surface_feedback_destroy(struct wayland_surface *w)
     while (w->latency_feedbacks) feedback_destroy(w->latency_feedbacks);
 }
 
+void surface_feedback_rollback(struct wayland_surface *w, struct latency_feedback *previous)
+{
+    while (w->latency_feedbacks && w->latency_feedbacks != previous)
+        feedback_destroy(w->latency_feedbacks);
+}
+
 static void sync_output(void *data, struct wp_presentation_feedback *fb,
                         struct wl_output *output)
 {
@@ -407,6 +506,8 @@ static void presented(void *data, struct wp_presentation_feedback *fb,
     (void)seq_hi; (void)seq_lo; (void)flags;
     struct latency_feedback *feedback = data;
     struct wayland_surface *w = feedback->window;
+    bool gl = w->base.presenter == YASL_PRIVATE_PRESENTER_GL;
+    if (gl) pthread_mutex_lock(&w->conn->native_mutex);
     if (w->conn->pres_clock_known) {
         uint64_t ns = conn_pres_to_mono(w->conn,
             (((uint64_t)tv_sec_hi << 32) | tv_sec_lo) * 1000000000ull + tv_nsec);
@@ -416,14 +517,19 @@ static void presented(void *data, struct wp_presentation_feedback *fb,
     }
     (void)fb;
     feedback_destroy(feedback);
+    if (gl) pthread_mutex_unlock(&w->conn->native_mutex);
 }
 
 static void discarded(void *data, struct wp_presentation_feedback *fb)
 {
     struct latency_feedback *feedback = data;
-    feedback->window->frames_skipped++;
+    struct wayland_surface *w = feedback->window;
+    bool gl = w->base.presenter == YASL_PRIVATE_PRESENTER_GL;
+    if (gl) pthread_mutex_lock(&w->conn->native_mutex);
+    w->frames_skipped++;
     (void)fb;
     feedback_destroy(feedback);
+    if (gl) pthread_mutex_unlock(&w->conn->native_mutex);
 }
 
 static const struct wp_presentation_feedback_listener feedback_listener = {
@@ -462,26 +568,15 @@ void surface_request_presentation_feedback(struct wayland_surface *w)
     wp_presentation_feedback_add_listener(fb, &feedback_listener, feedback);
 }
 
-/* A swap on a rendering thread only sets frame_deferred. The owner arms the frame
- * callback and feedback here, then commits so that the callback can fire without
- * waiting for the application's next swap. */
-void surface_arm_deferred(struct wayland_surface *w)
-{
-    if (!atomic_exchange(&w->frame_deferred, false) || w->closed)
-        return;
-    bool armed = !w->frame_cb;
-    wayland_surface_arm_frame(w);
-    surface_request_presentation_feedback(w);
-    if (armed && w->frame_cb && !w->closed)
-        wl_surface_commit(w->surface);
-}
-
 static void commit_buffer(struct wayland_surface *w, int idx)
 {
     wl_surface_attach(w->surface, w->buffers[idx].proxy, 0, 0);
 
     const struct yasl_private_damage_list *d = &w->damage;
-    if (d->n < 0 || !w->buffers[idx].presented)
+    if (wl_proxy_get_version((struct wl_proxy *)w->surface) <
+        WL_SURFACE_DAMAGE_BUFFER_SINCE_VERSION)
+        wl_surface_damage(w->surface, 0, 0, INT32_MAX, INT32_MAX);
+    else if (d->n < 0 || !w->buffers[idx].presented)
         wl_surface_damage_buffer(w->surface, 0, 0, w->width, w->height);
     else
         wl_damage_list(w->surface, d);
@@ -542,9 +637,10 @@ bool wayland_surface_present(struct wayland_surface *w, const struct yasl_privat
     w->damage.bounds = damage->bounds;
     if (damage->n > 0)
         memcpy(w->damage.rects, damage->rects, (size_t)damage->n * sizeof(damage->rects[0]));
-    wayland_surface_arm_frame(w);
-    if (w->closed)
+    if (!wayland_surface_arm_frame(w)) {
+        surface_fail(w);
         return false;
+    }
     commit_buffer(w, w->cur);
     w->frame_presented = true;
     w->shown = w->cur;

@@ -3,6 +3,7 @@
 #include "clipboard.h"
 #include "common/utf8.h"
 #include <errno.h>
+#include <signal.h>
 
 #define CLIPBOARD_TEXT_MAX (256u * 1024)
 #define CLIPBOARD_TRANSFER_TIMEOUT_NS (30ull * 1000000000ull)
@@ -133,19 +134,46 @@ static void transfer_end(struct transfer *t, bool complete)
     free(t);
 }
 
+/* A receiver can close the pipe after poll reports it writable. */
+static ssize_t write_without_sigpipe(int fd, const void *data, size_t len)
+{
+    sigset_t blocked, old, pending;
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGPIPE);
+    int error = pthread_sigmask(SIG_BLOCK, &blocked, &old);
+    if (error) { errno = error; return -1; }
+    if (sigpending(&pending) < 0) {
+        error = errno;
+        pthread_sigmask(SIG_SETMASK, &old, NULL);
+        errno = error;
+        return -1;
+    }
+    bool already_pending = sigismember(&pending, SIGPIPE) == 1;
+    ssize_t n = write(fd, data, len);
+    error = errno;
+    if (n < 0 && error == EPIPE && !already_pending) {
+        struct timespec timeout = {0};
+        while (sigtimedwait(&blocked, NULL, &timeout) < 0 && errno == EINTR) {}
+    }
+    pthread_sigmask(SIG_SETMASK, &old, NULL);
+    errno = error;
+    return n;
+}
+
 static void transfer_io(void *ud, int fd, short events)
 {
     struct transfer *t = ud;
     if (events & (POLLERR | POLLNVAL)) { transfer_end(t, false); return; }
     if (t->sending) {
-        ssize_t n = write(fd, t->text + t->offset, t->len - t->offset);
+        ssize_t n = write_without_sigpipe(fd, t->text + t->offset, t->len - t->offset);
         if (n > 0) t->offset += (size_t)n;
         if (t->offset == t->len || n == 0 ||
             (n < 0 && errno != EAGAIN && errno != EINTR)) transfer_end(t, false);
     } else {
         if (t->capacity - t->len < 4096) {
             size_t capacity = t->capacity ? t->capacity * 2 : 8192;
-            if (capacity > CLIPBOARD_TEXT_MAX) capacity = CLIPBOARD_TEXT_MAX;
+            /* Keep one byte for the read that detects an oversized transfer. */
+            if (capacity > CLIPBOARD_TEXT_MAX + 1) capacity = CLIPBOARD_TEXT_MAX + 1;
             if (capacity <= t->len) { transfer_end(t, false); return; }
             char *text = realloc(t->text, capacity);
             if (!text) { transfer_end(t, false); return; }
@@ -155,6 +183,7 @@ static void transfer_io(void *ud, int fd, short events)
         ssize_t n = read(fd, t->text + t->len, t->capacity - t->len);
         if (n > 0) {
             t->len += (size_t)n;
+            if (t->len > CLIPBOARD_TEXT_MAX) transfer_end(t, false);
         } else if (n == 0) {
             bool valid = yasl_private_utf8_validate(t->text, t->len);
             transfer_end(t, valid);
@@ -168,8 +197,13 @@ static struct transfer *start_transfer_text(struct clipboard *c, int fd, bool se
     struct transfer *t = calloc(1, sizeof(*t));
     if (!t) { close(fd); return NULL; }
     t->owner = c; t->fd = fd; t->sending = sending; t->uri_list = uri_list;
-    fcntl(fd, F_SETFD, FD_CLOEXEC);
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+    int flags = fcntl(fd, F_GETFL);
+    if (flags < 0 || fcntl(fd, F_SETFD, FD_CLOEXEC) < 0 ||
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        close(fd);
+        free(t);
+        return NULL;
+    }
     if (sending) {
         t->text = strdup(send_text ? send_text : "");
         if (!t->text) { close(fd); free(t); return NULL; }

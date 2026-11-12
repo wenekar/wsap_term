@@ -122,7 +122,11 @@ static void set_cursor_theme_fallback(struct seat *s, struct wayland_surface *w,
     struct wayland_display *c = s->conn;
     int scale = (int)((w->scale_120 + YASL_PRIVATE_SCALE_UNIT - 1) / YASL_PRIVATE_SCALE_UNIT);
     if (scale < 1) scale = 1;
-    if (!seat_cursor_surface(s) || !cursor_theme_for(c, scale)) return;
+    if (!seat_cursor_surface(s)) return;
+    uint32_t version = wl_surface_get_version(s->cursor_surface);
+    if (!s->cursor_viewport && version < WL_SURFACE_SET_BUFFER_SCALE_SINCE_VERSION)
+        scale = 1;
+    if (!cursor_theme_for(c, scale)) return;
     static const char *names[][2] = {
         {"default", "left_ptr"},
         {"text", "xterm"},
@@ -153,14 +157,18 @@ static void set_cursor_theme_fallback(struct seat *s, struct wayland_surface *w,
     } else {
         if (img->width % (uint32_t)theme_scale || img->height % (uint32_t)theme_scale)
             theme_scale = 1;
-        wl_surface_set_buffer_scale(s->cursor_surface, theme_scale);
+        if (version >= WL_SURFACE_SET_BUFFER_SCALE_SINCE_VERSION)
+            wl_surface_set_buffer_scale(s->cursor_surface, theme_scale);
     }
     int shown = s->cursor_viewport ? c->cursor_theme_scale : theme_scale;
     wl_pointer_set_cursor(s->pointer, s->pointer_serial, s->cursor_surface,
             (int32_t)img->hotspot_x / shown, (int32_t)img->hotspot_y / shown);
     wl_surface_attach(s->cursor_surface, buffer, 0, 0);
-    wl_surface_damage_buffer(s->cursor_surface, 0, 0,
-            (int32_t)img->width, (int32_t)img->height);
+    if (version >= WL_SURFACE_DAMAGE_BUFFER_SINCE_VERSION)
+        wl_surface_damage_buffer(s->cursor_surface, 0, 0,
+                (int32_t)img->width, (int32_t)img->height);
+    else
+        wl_surface_damage(s->cursor_surface, 0, 0, INT32_MAX, INT32_MAX);
     wl_surface_commit(s->cursor_surface);
 }
 
@@ -196,6 +204,16 @@ static void seat_set_cursor(struct seat *s, struct wayland_surface *w)
     s->cursor_shape = shape;
 }
 
+void wayland_surface_refresh_cursor(struct wayland_surface *w)
+{
+    if (!w || !w->conn || w->destroyed) return;
+    for (struct seat *s = w->conn->seats; s; s = s->next) {
+        if (s->pointer_focus != w || s->cursor_shape_dev) continue;
+        s->cursor_shape = -1;
+        seat_set_cursor(s, w);
+    }
+}
+
 static void tool_set_cursor(struct tablet_tool *t, enum yasl_private_cursor shape)
 {
     if (!t->proximity_serial)
@@ -222,10 +240,10 @@ static void press_queue_flush(struct seat *s, struct press_queue *q,
                               struct wayland_surface *only, uint64_t *buttons,
                               struct yasl_private_pointer_event like)
 {
-    int kept = 0;
-    int count = q->n;
-    for (int i = 0; i < count; i++) {
-        struct pending_press p = q->ev[(q->head + i) & 7];
+    size_t kept = 0;
+    size_t count = q->n;
+    for (size_t i = 0; i < count; i++) {
+        struct pending_press p = q->ev[i];
         if (only && p.surface != only) {
             q->ev[kept++] = p;
             continue;
@@ -242,30 +260,42 @@ static void press_queue_flush(struct seat *s, struct press_queue *q,
         enum yasl_private_event_type type = p.release ? YASL_PRIVATE_EVENT_POINTER_UP : YASL_PRIVATE_EVENT_POINTER_DOWN;
         push_pointer(s, p.surface, type, ev);
     }
-    q->head = 0;
     q->n = kept;
 }
 
-static void press_queue_push(struct press_queue *q, struct wayland_surface *w,
+static void press_queue_push(struct seat *s, struct press_queue *q, uint64_t *buttons,
+                             struct yasl_private_pointer_event like, struct wayland_surface *w,
                              struct yasl_private_vector2i pos, struct yasl_private_vector2d precise,
                              int button, bool release)
 {
-    if (q->n == 8) {
-        q->head = (q->head + 1) & 7;
-        q->n--;
+    if (q->n == q->capacity) {
+        size_t capacity = q->capacity ? q->capacity * 2 : 8;
+        struct pending_press *ev = NULL;
+        if (capacity >= q->capacity && capacity <= SIZE_MAX / sizeof(*q->ev))
+            ev = realloc(q->ev, capacity * sizeof(*ev));
+        if (!ev) {
+            press_queue_flush(s, q, NULL, buttons, like);
+            struct pending_press event = {
+                .surface = w, .pos = pos, .precise = precise,
+                .button = button, .release = release,
+            };
+            struct press_queue one = {.ev = &event, .n = 1};
+            press_queue_flush(s, &one, NULL, buttons, like);
+            return;
+        }
+        q->ev = ev;
+        q->capacity = capacity;
     }
-    q->ev[(q->head + q->n) & 7] = (struct pending_press){
+    q->ev[q->n++] = (struct pending_press){
         .surface = w, .pos = pos, .precise = precise, .button = button, .release = release,
     };
-    q->n++;
 }
 
 static void press_queue_forget(struct press_queue *q, struct wayland_surface *w)
 {
-    for (int i = 0; i < q->n; i++) {
-        int idx = (q->head + i) & 7;
-        if (q->ev[idx].surface == w)
-            q->ev[idx].surface = NULL;
+    for (size_t i = 0; i < q->n; i++) {
+        if (q->ev[i].surface == w)
+            q->ev[i].surface = NULL;
     }
 }
 
@@ -385,7 +415,8 @@ static void pointer_button(void *data, struct wl_pointer *pointer,
         s->press_serial = serial;
         s->press_surface = w;
     }
-    press_queue_push(&s->ptr_presses, w, s->pointer_pos, s->pointer_precise, b, release);
+    press_queue_push(s, &s->ptr_presses, &s->pointer_buttons,
+                     (struct yasl_private_pointer_event){0}, w, s->pointer_pos, s->pointer_precise, b, release);
     pointer_event_done(s);
 }
 
@@ -826,8 +857,8 @@ static void push_pen_sample(struct tablet_tool *tool, struct wayland_surface *w,
     struct seat *s = tool->seat;
     if (!w) return;
     uint64_t buttons = s->tool_buttons;
-    for (int i = 0; i < s->tool_presses.n; i++) {
-        const struct pending_press *press = &s->tool_presses.ev[(s->tool_presses.head + i) & 7];
+    for (size_t i = 0; i < s->tool_presses.n; i++) {
+        const struct pending_press *press = &s->tool_presses.ev[i];
         if (press->surface && press->button >= 0 && press->button < 32) {
             uint64_t bit = 1ull << press->button;
             buttons = (buttons & ~bit) | ((uint64_t)!press->release << press->button);
@@ -951,7 +982,7 @@ static void tablet_tool_down(void *data, struct zwp_tablet_tool_v2 *tool, uint32
     seat_note_input(s, serial);
     s->press_serial = serial;
     s->press_surface = w;
-    press_queue_push(&s->tool_presses, w, s->tool_pos, s->tool_precise, 0, false);
+    press_queue_push(s, &s->tool_presses, &s->tool_buttons, tool_event(s), w, s->tool_pos, s->tool_precise, 0, false);
     t->in_contact = true;
     pen_action_push(t, YASL_PRIVATE_PEN_DOWN, 0);
 }
@@ -964,7 +995,7 @@ static void tablet_tool_up(void *data, struct zwp_tablet_tool_v2 *tool)
     struct wayland_surface *w = s->tablet_focus;
     if (!w) return;
     s->pen.pressure = 0;
-    press_queue_push(&s->tool_presses, w, s->tool_pos, s->tool_precise, 0, true);
+    press_queue_push(s, &s->tool_presses, &s->tool_buttons, tool_event(s), w, s->tool_pos, s->tool_precise, 0, true);
     t->pressure = 0;
     t->in_contact = false;
     pen_action_push(t, YASL_PRIVATE_PEN_UP, 0);
@@ -1002,7 +1033,7 @@ static void tablet_tool_button(void *data, struct zwp_tablet_tool_v2 *tool,
     default: return;
     }
     bool release = state == ZWP_TABLET_TOOL_V2_BUTTON_STATE_RELEASED;
-    press_queue_push(&s->tool_presses, w, s->tool_pos, s->tool_precise, b, release);
+    press_queue_push(s, &s->tool_presses, &s->tool_buttons, tool_event(s), w, s->tool_pos, s->tool_precise, b, release);
     pen_action_push(t, YASL_PRIVATE_PEN_BUTTON, (unsigned)b);
 }
 
@@ -1504,6 +1535,20 @@ void seat_bind(struct wayland_display *c, struct wl_registry *registry,
 void seat_forget_surface(struct seat *s, struct wayland_surface *w)
 {
     clipboard_forget_surface(s->clipboard, w->surface);
+    if (s->ime_snapshots) {
+        for (size_t i = 0; i < IME_SNAPSHOT_COUNT; i++) {
+            if (s->ime_snapshots[i].surface == w) {
+                s->ime_snapshots[i].valid = false;
+                s->ime_snapshots[i].surface = NULL;
+            }
+        }
+    }
+    if (s->ime_focus == w) {
+        s->ime_enabled = false;
+        s->ime_no_surrounding = false;
+        s->ime_wait_matching = false;
+        s->ime_deferred = false;
+    }
     struct wayland_surface **refs[] = {
         &s->pointer_focus, &s->keyboard_focus,
         &s->tablet_focus, &s->ime_focus, &s->focus_leaving, &s->ptr_left,
@@ -1559,6 +1604,10 @@ void seat_destroy(struct seat *s)
         input_queue_push(&left->input, &ev);
     }
     seat_drop_touch(s);
+    if (s->ime_barrier) wl_callback_destroy(s->ime_barrier);
+    free(s->ime_snapshots);
+    free(s->ptr_presses.ev);
+    free(s->tool_presses.ev);
     clipboard_destroy(s->clipboard);
     if (s->repeat_watch > 0) yasl_loop_del_fd(c->loop, s->repeat_watch);
     if (s->repeat_fd >= 0) close(s->repeat_fd);

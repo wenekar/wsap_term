@@ -57,6 +57,10 @@ def popup_canvas(debug, path):
     tree = ask(debug, '-p 0 tree --depth 1')
     if not shot or not tree:
         raise RuntimeError('the popup answered no screenshot or tree')
+    for command in ('lint', '-p 0 lint'):
+        lint = ask(debug, command)
+        if not lint or lint['count']:
+            raise AssertionError(f'FAIL: alignment lint found issues: {lint}')
     path.unlink()
     return tuple(shot['size']), tuple(tree['bounds'][2:])
 

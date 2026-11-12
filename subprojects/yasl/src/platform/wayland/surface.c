@@ -67,10 +67,12 @@ static void display_lose(struct wayland_display *c)
 
 void surface_fail(struct wayland_surface *w)
 {
-    if (w->closed)
-        return;
+    bool gl = w->base.presenter == YASL_PRIVATE_PRESENTER_GL;
+    if (gl) pthread_mutex_lock(&w->conn->native_mutex);
+    bool notify = !w->closed;
     w->closed = true;
-    yasl_private_surface_notify_close(&w->base);
+    if (gl) pthread_mutex_unlock(&w->conn->native_mutex);
+    if (notify) yasl_private_surface_notify_close(&w->base);
 }
 
 /* The display fd is read in wayland_display_check, before any callback. */
@@ -161,7 +163,6 @@ void wayland_display_flush(struct wayland_display *c)
     c->depth++;
     for (struct wayland_surface *w = c->surfaces, *next; w; w = next) {
         next = w->conn_next;
-        surface_arm_deferred(w);
         surface_draw_frame(w);
     }
     if (!c->lost && c->wl) {
@@ -206,10 +207,12 @@ static void connection_release(struct wayland_display *c)
     RELEASE(compositor, wl_compositor_destroy);
     RELEASE(registry, wl_registry_destroy);
 #if YASL_HAS_EGL
+    pthread_mutex_lock(&c->native_mutex);
     if (c->egl_initialized) eglTerminate(c->egl_display);
     c->egl_initialized = false;
     c->egl_display = EGL_NO_DISPLAY;
     c->egl_api = 0;
+    pthread_mutex_unlock(&c->native_mutex);
 #endif
     RELEASE(wl, wl_display_disconnect);
     c->base.native_handle = NULL;
@@ -224,11 +227,13 @@ static bool connection_open(struct wayland_display *c)
     if (!c->wl) return false;
     c->base.native_handle = c->wl;
 #if YASL_HAS_EGL
+    pthread_mutex_lock(&c->native_mutex);
     c->egl_display = eglGetDisplay((EGLNativeDisplayType)c->wl);
     if (c->egl_display != EGL_NO_DISPLAY) {
         EGLint major = 0, minor = 0;
         c->egl_initialized = eglInitialize(c->egl_display, &major, &minor) == EGL_TRUE;
     }
+    pthread_mutex_unlock(&c->native_mutex);
 #endif
     c->registry = wl_display_get_registry(c->wl);
     if (!c->registry) return false;
@@ -303,6 +308,7 @@ static void display_free(struct wayland_display *c)
         c->base.loop = NULL;
     }
     free(c->app_id);
+    pthread_mutex_destroy(&c->native_mutex);
     free(c);
 }
 
@@ -310,7 +316,8 @@ struct wayland_display *wayland_display_open(struct yasl_loop *loop, const struc
 {
     struct wayland_display *c = calloc(1, sizeof(*c));
     if (!c) return NULL;
-    c->owner = pthread_self();
+    int error = pthread_mutex_init(&c->native_mutex, NULL);
+    if (error) { free(c); errno = error; return NULL; }
     c->base.ops = &yasl_private_wayland_backend;
     c->base.reconnects = true;
     if (!loop) {
@@ -382,8 +389,6 @@ static void conn_unlink(struct wayland_surface *w)
             break;
         }
     }
-    for (struct seat *s = c->seats; s; s = s->next)
-        seat_forget_surface(s, w);
     w->conn = NULL;
 }
 
@@ -427,8 +432,13 @@ int surface_build_toplevel(struct wayland_surface *w, bool fullscreen)
 
 void surface_release_native(struct wayland_surface *w)
 {
+    if (w->conn)
+        for (struct seat *s = w->conn->seats; s; s = s->next)
+            seat_forget_surface(s, w);
     surface_unlock_pointer(w);
     w->ime_seat = NULL;
+    bool gl = w->base.presenter == YASL_PRIVATE_PRESENTER_GL;
+    if (gl) pthread_mutex_lock(&w->conn->native_mutex);
 #define DROP(field, destroy) do { if (w->field) { destroy(w->field); w->field = NULL; } } while (0)
     DROP(tearing_control, wp_tearing_control_v1_destroy);
 #if YASL_HAS_EGL
@@ -467,8 +477,8 @@ void surface_release_native(struct wayland_surface *w)
         w->base.presenter = YASL_PRIVATE_PRESENTER_NONE;
     w->configured = w->has_pending_serial = w->has_shown = false;
     w->frame_active = w->want_draw = false;
-    atomic_store(&w->frame_deferred, false);
     w->outputs = 0;
+    if (gl) pthread_mutex_unlock(&w->conn->native_mutex);
 }
 
 struct wayland_surface *wayland_surface_create_toplevel(struct wayland_display *c,

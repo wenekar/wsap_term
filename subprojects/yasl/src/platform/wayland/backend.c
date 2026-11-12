@@ -31,8 +31,11 @@ static void impl_display_check(struct yasl_private_display *d)
 static bool impl_surface_frame_in_flight(const struct yasl_surface *s)
 {
     struct wayland_surface *w = (struct wayland_surface *)s;
-    /* A swap on a rendering thread is in flight before the owner arms its callback. */
-    return w->frame_cb != NULL || atomic_load(&w->frame_deferred);
+    bool gl = w->base.presenter == YASL_PRIVATE_PRESENTER_GL;
+    if (gl) pthread_mutex_lock(&w->conn->native_mutex);
+    bool in_flight = w->frame_cb != NULL;
+    if (gl) pthread_mutex_unlock(&w->conn->native_mutex);
+    return in_flight;
 }
 
 static void impl_display_flush(struct yasl_private_display *d)
@@ -216,7 +219,7 @@ static int egl_failure_errno(void)
     return eglGetError() == EGL_CONTEXT_LOST ? ENOTCONN : EINVAL;
 }
 
-static bool impl_gl_make_current(struct yasl_private_display *display, struct yasl_surface *surface)
+static bool gl_make_current_locked(struct yasl_private_display *display, struct yasl_surface *surface)
 {
     struct wayland_display *d = (struct wayland_display *)display;
     struct wayland_surface *w = (struct wayland_surface *)surface;
@@ -250,6 +253,16 @@ static bool impl_gl_make_current(struct yasl_private_display *display, struct ya
     return true;
 }
 
+static bool impl_gl_make_current(struct yasl_private_display *display, struct yasl_surface *surface)
+{
+    struct wayland_display *d = (struct wayland_display *)display;
+    if (!d) { errno = EINVAL; return false; }
+    pthread_mutex_lock(&d->native_mutex);
+    bool result = gl_make_current_locked(display, surface);
+    pthread_mutex_unlock(&d->native_mutex);
+    return result;
+}
+
 static yasl_private_gl_proc impl_gl_get_proc_address(struct yasl_private_display *display, const char *name)
 {
     (void)display;
@@ -260,31 +273,47 @@ static bool impl_gl_swap_interval(struct yasl_private_display *display, struct y
 {
     struct wayland_display *d = (struct wayland_display *)display;
     struct wayland_surface *w = (struct wayland_surface *)surface;
-    return d && w && w->conn == d && w->base.presenter == YASL_PRIVATE_PRESENTER_GL &&
-        impl_gl_make_current(display, surface) && eglSwapInterval(d->egl_display, interval) == EGL_TRUE;
+    if (!d || !w || w->conn != d || w->base.presenter != YASL_PRIVATE_PRESENTER_GL)
+        return false;
+    pthread_mutex_lock(&d->native_mutex);
+    bool result = gl_make_current_locked(display, surface) &&
+        eglSwapInterval(d->egl_display, interval) == EGL_TRUE;
+    pthread_mutex_unlock(&d->native_mutex);
+    return result;
 }
 
 static bool impl_gl_swap_buffers(struct yasl_private_display *display, struct yasl_surface *surface)
 {
     struct wayland_display *d = (struct wayland_display *)display;
     struct wayland_surface *w = (struct wayland_surface *)surface;
-    if (!d || !w || w->conn != d || w->closed || !w->configured ||
+    if (!d || !w || w->conn != d ||
         w->base.presenter != YASL_PRIVATE_PRESENTER_GL)
         return false;
-    if (!impl_gl_make_current(display, surface)) return false;
-    /* Frame callbacks and feedback belong to the owner thread. Another thread only
-     * flags the surface and wakes the loop; the owner arms them at its next flush. */
-    bool owner = pthread_equal(pthread_self(), d->owner);
-    if (owner) {
-        wayland_surface_arm_frame(w);
-        surface_request_presentation_feedback(w);
+    pthread_mutex_lock(&d->native_mutex);
+    if (w->closed || !w->configured || !gl_make_current_locked(display, surface)) {
+        pthread_mutex_unlock(&d->native_mutex);
+        return false;
     }
+    struct wl_callback *previous_frame = w->frame_cb;
+    struct latency_feedback *previous_feedback = w->latency_feedbacks;
+    if (!wayland_surface_arm_frame(w)) {
+        pthread_mutex_unlock(&d->native_mutex);
+        errno = ENOMEM;
+        return false;
+    }
+    surface_request_presentation_feedback(w);
     bool swapped = eglSwapBuffers(d->egl_display, w->egl_surface) == EGL_TRUE;
-    if (!swapped) errno = egl_failure_errno();
-    if (!owner) {
-        atomic_store(&w->frame_deferred, true);
-        if (d->loop) yasl_private_loop_kick(d->loop);
+    int error = swapped ? 0 : egl_failure_errno();
+    if (!swapped) {
+        if (!previous_frame && w->frame_cb) {
+            wl_callback_destroy(w->frame_cb);
+            w->frame_cb = NULL;
+        }
+        surface_feedback_rollback(w, previous_feedback);
     }
+    pthread_mutex_unlock(&d->native_mutex);
+    if (d->loop) yasl_private_loop_kick(d->loop);
+    if (!swapped) errno = error;
     return swapped;
 }
 #endif

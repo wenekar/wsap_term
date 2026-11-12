@@ -169,6 +169,7 @@ def main():
     env.pop('AT_SPI_BUS_ADDRESS', None)
     env.pop('WSAP_ACCESSIBILITY', None)
     env['GSETTINGS_BACKEND'] = 'memory'
+    env['ATSPI_DBUS_IMPLEMENTATION'] = 'dbus-daemon'
     return subprocess.run(
         ['dbus-run-session', '--', sys.executable, str(Path(__file__).resolve()),
          '--session'], env=env, timeout=90).returncode

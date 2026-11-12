@@ -1,19 +1,8 @@
 #include "platform/wayland/internal.h"
 #include <assert.h>
+#include <sys/socket.h>
 
-static uint32_t acknowledged_serial;
-static unsigned acknowledge_count;
-static void test_ack_configure(struct xdg_surface *surface, uint32_t serial);
-#define xdg_surface_ack_configure test_ack_configure
 #include "../../src/platform/wayland/shell.c"
-#undef xdg_surface_ack_configure
-
-static void test_ack_configure(struct xdg_surface *surface, uint32_t serial)
-{
-    (void)surface;
-    acknowledged_serial = serial;
-    acknowledge_count++;
-}
 
 struct notifications {
     int count;
@@ -109,16 +98,48 @@ int main(void)
         .scale_120 = YASL_PRIVATE_SCALE_UNIT,
         .pending_scale_120 = 180,
     };
-    acknowledge_count = 0;
-    xdg_surface_configure(&gpu, (struct xdg_surface *)&gpu, 1234);
-    assert(acknowledge_count == 1 && acknowledged_serial == 1234);
+    int sockets[2];
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    struct wl_display *wl = wl_display_connect_to_fd(sockets[0]);
+    assert(wl);
+    struct xdg_surface *xdg = (struct xdg_surface *)
+        wl_proxy_create((struct wl_proxy *)wl, &xdg_surface_interface);
+    assert(xdg);
+    uint32_t id = wl_proxy_get_id((struct wl_proxy *)xdg);
+    xdg_surface_configure(&gpu, xdg, 1234);
+    assert(wl_display_flush(wl) >= 0);
+    uint32_t message[3];
+    assert(recv(sockets[1], message, sizeof(message), MSG_WAITALL) == sizeof(message));
+    assert(message[0] == id && (message[1] & 0xffff) == XDG_SURFACE_ACK_CONFIGURE &&
+           (message[1] >> 16) == sizeof(message) && message[2] == 1234);
     assert(!gpu.has_pending_serial && !gpu.size_pending);
     assert(gpu.configured && gpu.width == 96 && gpu.height == 96);
 
     /* CPU presentation keeps its existing deferred ack with the SHM commit. */
     struct wayland_surface cpu = {.base.presenter = YASL_PRIVATE_PRESENTER_CPU};
     xdg_surface_configure(&cpu, (struct xdg_surface *)&cpu, 5678);
-    assert(acknowledge_count == 1 && cpu.has_pending_serial && cpu.want_draw);
+    assert(cpu.has_pending_serial && cpu.want_draw);
+
+    /* Version 1 sends mode changes without a following done event. */
+    struct wl_output *output = (struct wl_output *)
+        wl_proxy_create((struct wl_proxy *)wl, &wl_output_interface);
+    struct wl_surface *native = (struct wl_surface *)
+        wl_proxy_create((struct wl_proxy *)wl, &wl_surface_interface);
+    assert(output && native);
+    struct wayland_display connection = {.base.ops = &yasl_private_wayland_backend};
+    struct wl_conn_output monitor = {.conn = &connection, .proxy = output,
+        .mask = 1, .scale = 1, .pending_scale = 1};
+    struct wayland_surface window = {.base = {.presenter = YASL_PRIVATE_PRESENTER_CPU},
+        .conn = &connection, .surface = native, .outputs = 1, .pending_scale_120 = 120};
+    connection.outputs = &monitor;
+    connection.surfaces = &window;
+    output_listener.mode(&monitor, output, WL_OUTPUT_MODE_CURRENT, 1920, 1080, 100000);
+    assert(wayland_surface_timing(&window).refresh_ns == 10000000);
+    wl_surface_destroy(native);
+    wl_output_destroy(output);
+    xdg_surface_destroy(xdg);
+    wl_display_disconnect(wl);
+    close(sockets[1]);
     yasl_private_events_unregister(&surface.base);
     yasl_private_events_close(&display);
     return 0;

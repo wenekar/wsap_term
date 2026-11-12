@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'helpers'))
 from headless_sway import HeadlessSway, require, wait_for
 
 KEY_A, KEY_B, KEY_LEFTSHIFT, KEY_INSERT = 30, 48, 42, 110
-PASTE_BYTES = 192 * 1024
+PASTE_BYTES = 256 * 1024
 
 def child(log, ready):
     tty.setraw(0)

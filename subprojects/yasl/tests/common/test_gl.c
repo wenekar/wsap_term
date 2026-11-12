@@ -2,6 +2,8 @@
 
 #include <yasl/yasl.h>
 #include <math.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -72,6 +74,61 @@ static void wait_for_size(yasl_surface *surface, int width, int height)
     snprintf(message, sizeof(message), "resize did not settle at %dx%d (got %dx%d)",
              width, height, actual_width, actual_height);
     fail(message, __LINE__);
+}
+
+struct render_thread {
+    yasl_surface *surface;
+    clear_fn clear;
+    atomic_bool stop;
+    atomic_int frames;
+    atomic_int error;
+};
+
+static void *render_frames(void *arg)
+{
+    struct render_thread *t = arg;
+    if (yasl_gl_make_current(t->surface) != 0 || yasl_gl_set_swap_interval(t->surface, 0) != 0) {
+        atomic_store(&t->error, 1);
+        return NULL;
+    }
+    while (!atomic_load(&t->stop)) {
+        t->clear(GL_COLOR_BUFFER_BIT_);
+        if (yasl_gl_present(t->surface) != 0) {
+            atomic_store(&t->error, 1);
+            break;
+        }
+        atomic_fetch_add(&t->frames, 1);
+        struct timespec pause = {.tv_nsec = 1000000};
+        nanosleep(&pause, NULL);
+    }
+    if (yasl_gl_make_current(NULL) != 0)
+        atomic_store(&t->error, 1);
+    return NULL;
+}
+
+static void test_render_thread(clear_fn clear)
+{
+    REQUIRE(yasl_gl_make_current(NULL) == 0, "detach before render thread");
+    struct render_thread thread = {.surface = primary, .clear = clear};
+    pthread_t id;
+    REQUIRE(pthread_create(&id, NULL, render_frames, &thread) == 0, "start render thread");
+    double deadline = seconds_now() + 5.0;
+    while (!atomic_load(&thread.frames) && !atomic_load(&thread.error) && seconds_now() < deadline) {
+        yasl_event event = {0};
+        REQUIRE(yasl_wait_event(&event, 20) >= 0, "wait for render thread");
+    }
+    for (int i = 0; i < 6; i++) {
+        int width = 340 + 10 * i, height = 250 + 10 * i;
+        REQUIRE(yasl_surface_request_size(primary, width, height) == 0, "resize during GL swaps");
+        wait_for_size(primary, width, height);
+        yasl_event event = {0};
+        REQUIRE(yasl_wait_event(&event, 20) >= 0, "dispatch during GL swaps");
+    }
+    atomic_store(&thread.stop, true);
+    REQUIRE(pthread_join(id, NULL) == 0, "join render thread");
+    REQUIRE(!atomic_load(&thread.error) && atomic_load(&thread.frames) > 0,
+            "present frames on render thread");
+    REQUIRE(yasl_gl_make_current(primary) == 0, "restore GL context");
 }
 
 int main(int argc, char **argv)
@@ -164,6 +221,9 @@ int main(int argc, char **argv)
     }
     fprintf(stderr, "%d REFRESH events in 1 s of GL animation\n", frames);
     REQUIRE(frames >= 20 && frames <= 75, "one REFRESH per frame shown");
+
+    if (!strcmp(argv[1], "wayland"))
+        test_render_thread(clear);
 
     REQUIRE(yasl_surface_create(&(struct yasl_surface_options){.title="invalid attrs", .width=100, .height=100, .type=YASL_SURFACE_GL, .gl = {.major = -1}}) == NULL && errno == EINVAL,
             "reject invalid GL context options");

@@ -116,6 +116,7 @@ void yasl_private_surface_notify_state(struct yasl_surface *s, uint32_t state);
 void yasl_private_surface_notify_drag(struct yasl_surface *s, enum yasl_private_drag_event ev, struct yasl_private_vector2i pos);
 void yasl_private_surface_notify_drop(struct yasl_surface *s, enum yasl_private_drop_event ev, struct yasl_private_vector2i pos);
 void yasl_private_surface_notify_composition(struct yasl_surface *s, const char *text, int begin, int end);
+void yasl_private_surface_notify_composition_at(struct yasl_surface *s, const char *text, int begin, int end, uint64_t revision, uint64_t generation);
 void yasl_private_surface_draw(struct yasl_surface *s, struct yasl_private_frame *frame);
 void yasl_private_display_notify_event(struct yasl_private_display *d, enum yasl_private_event_type type);
 void yasl_private_surface_complete_paste(struct yasl_surface *s, uint64_t request_id,

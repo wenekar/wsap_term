@@ -3,7 +3,10 @@
 static void popup_configure(void *data, struct xdg_popup *popup,
         int32_t x, int32_t y, int32_t width, int32_t height)
 {
-    (void)data; (void)popup; (void)x; (void)y; (void)width; (void)height;
+    (void)popup; (void)x; (void)y;
+    struct wayland_surface *w = data;
+    w->req_width = width;
+    w->req_height = height;
 }
 
 static void popup_done(void *data, struct xdg_popup *popup)
@@ -14,7 +17,10 @@ static void popup_done(void *data, struct xdg_popup *popup)
 
 static void popup_repositioned(void *data, struct xdg_popup *popup, uint32_t token)
 {
-    (void)data; (void)popup; (void)token;
+    (void)popup;
+    struct wayland_surface *w = data;
+    if (w->popup_spec_pending && token == w->popup_pending_token)
+        w->popup_repositioned = true;
 }
 
 static const struct xdg_popup_listener popup_listener = {
@@ -43,18 +49,22 @@ static bool popup_spec_valid(const struct wayland_surface *parent,
            spec->content_offset.x >= 0 && spec->content_offset.y >= 0 &&
            spec->content_size.x >= 0 && spec->content_size.y >= 0 &&
            (int64_t)spec->content_offset.x + spec->content_size.x <= spec->size.x &&
-           (int64_t)spec->content_offset.y + spec->content_size.y <= spec->size.y;
+           (int64_t)spec->content_offset.y + spec->content_size.y <= spec->size.y &&
+           (spec->content_size.x || spec->content_offset.x < spec->size.x) &&
+           (spec->content_size.y || spec->content_offset.y < spec->size.y);
 }
 
 static bool popup_apply_spec(struct wayland_surface *w, const struct yasl_private_popup_spec *spec)
 {
     uint32_t scale = w->parent->scale_120;
-    struct yasl_private_vector2i logical = {
-        .x = (int)(((int64_t)spec->size.x * YASL_PRIVATE_SCALE_UNIT + scale - 1) / scale),
-        .y = (int)(((int64_t)spec->size.y * YASL_PRIVATE_SCALE_UNIT + scale - 1) / scale),
-    };
-    int width = device_px(logical.x, scale);
-    int height = device_px(logical.y, scale);
+    if (!scale) return false;
+    int64_t logical_w = ((int64_t)spec->size.x * YASL_PRIVATE_SCALE_UNIT + scale - 1) / scale;
+    int64_t logical_h = ((int64_t)spec->size.y * YASL_PRIVATE_SCALE_UNIT + scale - 1) / scale;
+    if (logical_w <= 0 || logical_h <= 0 || logical_w > INT_MAX || logical_h > INT_MAX)
+        return false;
+    struct yasl_private_vector2i logical = { .x = (int)logical_w, .y = (int)logical_h };
+    int width = w->viewport ? spec->size.x : device_px(logical.x, scale);
+    int height = w->viewport ? spec->size.y : device_px(logical.y, scale);
     size_t bytes;
     if (logical.x <= 0 || logical.y <= 0 || !buffer_size(width, height, &bytes))
         return false;
@@ -63,6 +73,7 @@ static bool popup_apply_spec(struct wayland_surface *w, const struct yasl_privat
     if (!content.y) content.y = spec->size.y - spec->content_offset.y;
     bool rescaled = scale != w->scale_120;
     w->scale_120 = w->pending_scale_120 = scale;
+    if (rescaled) wayland_surface_refresh_cursor(w);
     w->scale_factor = (double)scale / YASL_PRIVATE_SCALE_UNIT;
     w->width = width;
     w->height = height;
@@ -109,8 +120,10 @@ static struct xdg_positioner *popup_positioner(struct wayland_surface *w,
     if (!pos)
         return NULL;
     uint32_t scale = parent->scale_120;
-    int gw = yasl_private_scale_to_logical(w->content.width, scale);
-    int gh = yasl_private_scale_to_logical(w->content.height, scale);
+    int cw = spec->content_size.x ? spec->content_size.x : spec->size.x - spec->content_offset.x;
+    int ch = spec->content_size.y ? spec->content_size.y : spec->size.y - spec->content_offset.y;
+    int gw = yasl_private_scale_to_logical(cw, scale);
+    int gh = yasl_private_scale_to_logical(ch, scale);
     xdg_positioner_set_size(pos, gw > 0 ? gw : 1, gh > 0 ? gh : 1);
     struct yasl_private_vector2i at = {
         .x = spec->anchor.x - parent->content.x,
@@ -205,22 +218,29 @@ bool wayland_surface_popup_reposition(struct wayland_surface *w, const struct ya
         !popup_spec_valid(w->parent, spec) ||
         xdg_popup_get_version(w->popup) < XDG_POPUP_REPOSITION_SINCE_VERSION)
         return false;
-    struct yasl_private_popup_spec old = {
-        .size = { .x = w->width, .y = w->height },
-        .content_offset = { .x = w->content.x, .y = w->content.y },
-        .content_size = { .x = w->content.width, .y = w->content.height },
-    };
-    if (!popup_apply_spec(w, spec)) {
-        popup_apply_spec(w, &old);
-        return false;
-    }
     struct xdg_positioner *pos = popup_positioner(w, spec);
     if (!pos)
         return false;
-    popup_set_geometry(w);
     static uint32_t token;
-    xdg_popup_reposition(w->popup, pos, ++token);
+    w->popup_pending_spec = *spec;
+    w->popup_pending_token = ++token;
+    w->popup_spec_pending = true;
+    w->popup_spec_ready = false;
+    w->popup_repositioned = false;
+    xdg_popup_reposition(w->popup, pos, w->popup_pending_token);
     xdg_positioner_destroy(pos);
-    wayland_surface_schedule_redraw(w);
+    return true;
+}
+
+/* Apply the spec only after the matching repositioned event and configure. */
+bool popup_apply_pending_spec(struct wayland_surface *w)
+{
+    if (!w->popup_spec_ready)
+        return true;
+    w->popup_spec_ready = false;
+    w->popup_spec_pending = false;
+    if (!popup_apply_spec(w, &w->popup_pending_spec))
+        return false;
+    popup_set_geometry(w);
     return true;
 }

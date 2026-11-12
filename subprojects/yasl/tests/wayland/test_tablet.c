@@ -16,8 +16,28 @@ static struct yasl_private_event next_pointer(struct wayland_surface *surface)
     return event;
 }
 
+static void test_pointer_frame_many_buttons(void)
+{
+    struct wayland_display display = {0};
+    struct wayland_surface surface = {.conn = &display};
+    struct seat seat = {.conn = &display, .pointer_focus = &surface};
+    for (int i = 0; i < 12; i++)
+        pointer_listener.button(&seat, NULL, (uint32_t)i + 1, 0, 0x110,
+                i % 2 ? WL_POINTER_BUTTON_STATE_RELEASED : WL_POINTER_BUTTON_STATE_PRESSED);
+    pointer_listener.frame(&seat, NULL);
+    for (int i = 0; i < 12; i++) {
+        struct yasl_private_event event = next_raw(&surface);
+        assert(event.type == (i % 2 ? YASL_PRIVATE_EVENT_POINTER_UP : YASL_PRIVATE_EVENT_POINTER_DOWN));
+    }
+    struct yasl_private_event event;
+    assert(!input_queue_pop(&surface.input, &event));
+    input_queue_clear(&surface.input);
+    free(seat.ptr_presses.ev);
+}
+
 int main(void)
 {
+    test_pointer_frame_many_buttons();
     struct wayland_display display = {.base.ops = &yasl_private_wayland_backend};
     struct wayland_surface surface = {.base.display = &display.base, .conn = &display,
                                       .scale_factor = 1.5};
@@ -154,5 +174,7 @@ int main(void)
     pointer_frame(&seat, NULL);
     assert(!input_queue_pop(&surface.input, &unused));
     input_queue_clear(&surface.input);
+    free(seat.ptr_presses.ev);
+    free(seat.tool_presses.ev);
     return 0;
 }

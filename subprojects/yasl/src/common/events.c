@@ -368,13 +368,18 @@ void yasl_private_surface_notify_drop(struct yasl_surface *s, enum yasl_private_
     yasl_private_events_push(s->display, s, &event);
 }
 
-void yasl_private_surface_notify_composition(struct yasl_surface *s, const char *text, int begin, int end)
+void yasl_private_surface_notify_composition_at(struct yasl_surface *s, const char *text, int begin, int end, uint64_t revision, uint64_t generation)
 {
     struct yasl_private_event event = {.type = YASL_PRIVATE_EVENT_COMPOSITION, .surface = s,
         .composition = {.data = text ? text : "", .len = text ? strlen(text) : 0,
             .begin = begin, .end = end, .active = text && text[0],
-            .revision = s->text_revision, .generation = s->text_generation}};
+            .revision = revision, .generation = generation}};
     yasl_private_events_push(s->display, s, &event);
+}
+
+void yasl_private_surface_notify_composition(struct yasl_surface *s, const char *text, int begin, int end)
+{
+    yasl_private_surface_notify_composition_at(s, text, begin, end, s->text_revision, s->text_generation);
 }
 
 void yasl_private_surface_complete_paste(struct yasl_surface *s, uint64_t id,
