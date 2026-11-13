@@ -20,6 +20,15 @@ endif
 test_env.set('NM', nm.full_path())
 test_env.set('CC', ' '.join(cc.cmd_array()))
 
+# term-package-test builds and runs native consumers of the installed package.
+# A cross compiler cannot build or run them, so that test gets no CC.
+package_test_env = environment()
+package_test_env.set('LD_PRELOAD', '')
+package_test_env.set('DYLD_INSERT_LIBRARIES', '')
+if not meson.is_cross_build()
+  package_test_env.set('CC', ' '.join(cc.cmd_array()))
+endif
+
 wsap_vtcore_tests = [
   ['unicode-test', files('unicode/unicode_test.c'), [], []],
   ['term-input-test', files('input_test.c'), [], []],
@@ -168,7 +177,7 @@ test('term-cross-test', bash,
 )
 test('term-package-test', bash,
   args: [files('package_test.sh'), meson.project_source_root()],
-  env: test_env,
+  env: package_test_env,
   suite: 'packaging',
   timeout: 300,
 )

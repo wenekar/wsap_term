@@ -14,11 +14,14 @@
 /* More than the core keeps in one cluster. */
 enum { CLUSTER_CAP = 32 };
 
-static long alloc_seen;
-static long fail_at = -1;
-static bool fail_rest;
-static bool failed;
-static long live_blocks;
+/* The linker renames each allocator call to a wrapper in this file.
+ * The compiler cannot see that rename, so it must not cache these values.
+ * LTO for aarch64 otherwise reads stale state. */
+static volatile long alloc_seen;
+static volatile long fail_at = -1;
+static volatile bool fail_rest;
+static volatile bool failed;
+static volatile long live_blocks;
 
 static bool should_fail(void)
 {
