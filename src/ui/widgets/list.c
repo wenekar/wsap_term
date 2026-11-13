@@ -320,11 +320,31 @@ static void row_paint(const struct ui_widget *widget,
     struct css_style label = ui_widget_part(&l->widget, parts.label, pseudo);
     uint32_t fg = label.has_text_color ? label.text_color
                 : item.has_text_color ? item.text_color : 0xFFFFFFFF;
-    ui_paint_text(paint, (struct rect2i){
+    int shortcut_w = it->shortcut && it->shortcut[0]
+        ? m->gap + ui_text_run_cells(it->shortcut, strlen(it->shortcut)) * m->cell_w
+        : 0;
+    int avail = box.width - m->item_pad.l - m->item_pad.r - shortcut_w;
+    size_t label_len = strlen(it->label);
+    int label_w = ui_text_run_cells(it->label, label_len) * m->cell_w;
+    bool ellipsis = false;
+    if (avail < 0)
+        avail = 0;
+    if (label_w > avail) {
+        int cells = avail / m->cell_w - 1;
+        label_len = ui_text_run_fit(it->label, label_len, cells > 0 ? cells : 0);
+        label_w = ui_text_run_cells(it->label, label_len) * m->cell_w;
+        ellipsis = true;
+    }
+    struct rect2i label_box = {
         .pos = { .x = box.x + m->item_pad.l, .y = text_y },
-        .size = { .x = ui_text_run_cells(it->label, strlen(it->label)) * m->cell_w,
-                  .y = m->cell_h },
-    }, text, fg, it->label, strlen(it->label));
+        .size = { .x = label_w, .y = m->cell_h },
+    };
+    ui_paint_text(paint, label_box, text, fg, it->label, label_len);
+    if (ellipsis) {
+        label_box.x += label_w;
+        label_box.width = m->cell_w;
+        ui_paint_text(paint, label_box, text, fg, "\xE2\x80\xA6", 3);
+    }
     if (!it->shortcut || !it->shortcut[0])
         return;
     struct css_style sc = ui_widget_part(&l->widget, parts.shortcut, pseudo);

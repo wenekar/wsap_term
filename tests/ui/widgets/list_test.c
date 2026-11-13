@@ -326,6 +326,42 @@ static void rows_center_and_inset_text_test(void)
         .dpi_scale = 2, .cell_w = 16, .cell_h = 34 });
 }
 
+static void long_label_stays_inside_its_row_test(void)
+{
+    const struct ui_list_item items[] = {
+        { .label = "Switch to Tab 1: /mnt/HDD/GitHub/terminal_proj/wsap_term - fish",
+          .shortcut = "Ctrl+Shift+T", .action = 1 },
+    };
+    struct fixture f;
+    show(&f, items, 1, NULL, (struct css_scale_context){
+        .dpi_scale = 1, .cell_w = 8, .cell_h = 16,
+    });
+    ui_widget_set_fixed_size(ui_list_widget(&f.list),
+                             (struct vector2i){ .x = 260, .y = 40 });
+    build(&f);
+    struct ui_debug_view view = { .root = &f.root, .scene = &f.scene,
+                                  .surface = &f.surface };
+    assert(ui_debug_lint_scene(&view, NULL, 0) == 0);
+
+    struct rect2i row = ui_list_item_rect(&f.list, 0);
+    struct rect2i shortcut = ui_debug_text_box(&f.scene,
+                                               find_text(&f.scene, "Ctrl+Shift+T"));
+    /* The label stops before the shortcut and ends with an ellipsis. */
+    assert(shortcut.width > 0);
+    bool marker = false;
+    for (int i = 0; i < f.scene.n_ops; i++) {
+        const struct ui_scene_op *op = &f.scene.ops[i];
+        if (op->kind != UI_SCENE_OP_TEXT || op->text_len != 3 ||
+            memcmp(ui_scene_op_text(&f.scene, op), "\xE2\x80\xA6", 3))
+            continue;
+        marker = true;
+        assert(rect2i_end(op->rect).x <= shortcut.x);
+    }
+    assert(marker);
+    assert(rect2i_end(row).x >= rect2i_end(shortcut).x);
+    teardown(&f);
+}
+
 static void check_mark_does_not_outlive_its_item_test(void)
 {
     const struct ui_list_item checked[] = {
@@ -466,6 +502,7 @@ int main(void)
     handler_can_destroy_list_during_release_test();
     hover_fill_stays_inside_rounded_corner_test();
     rows_center_and_inset_text_test();
+    long_label_stays_inside_its_row_test();
     check_mark_does_not_outlive_its_item_test();
     many_long_items_are_kept_test();
     pinned_geometry_survives_theme_change_test();
