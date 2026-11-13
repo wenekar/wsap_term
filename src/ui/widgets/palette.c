@@ -23,23 +23,6 @@ static const struct css_scale_context *scale_of(const struct ui_palette *p)
     return &p->widget.style_scale;
 }
 
-static int cell_w(const struct ui_palette *p)
-{
-    return ui_widget_text_style(scale_of(p)).advance;
-}
-
-static int cell_h(const struct ui_palette *p)
-{
-    return ui_widget_text_style(scale_of(p)).cell_h;
-}
-
-static int border_width(const struct ui_palette *p)
-{
-    const struct css_style *s = &p->widget.style;
-    return s->has_border_color
-        ? ui_css_resolve_int(s->border_width, 0, 0, scale_of(p), true) : 0;
-}
-
 static int separator_height(const struct ui_palette *p)
 {
     int sep = ui_ctx_px(scale_of(p), 1);
@@ -202,17 +185,17 @@ static void palette_style_changed(struct ui_widget *widget)
 {
     struct ui_palette *p = palette_of(widget);
     ui_widget_set_placement(widget, (struct ui_placement){
-        .kind = UI_PLACE_CENTER, .y_fraction = 0.125f, .gap = cell_h(p),
+        .kind = UI_PLACE_CENTER, .y_fraction = 0.125f, .gap = ui_widget_cell_h(&p->widget),
     });
 }
 
 static int panel_width(const struct ui_palette *p, int parent_width)
 {
-    int margin = cell_h(p);
+    int margin = ui_widget_cell_h(&p->widget);
     int width = parent_width / 2;
-    int min_w = 44 * cell_w(p);
+    int min_w = 44 * ui_widget_cell_w(&p->widget);
     int max_w = parent_width - 2 * margin;
-    if (max_w < 8 * cell_w(p))
+    if (max_w < 8 * ui_widget_cell_w(&p->widget))
         max_w = parent_width;
     if (width < min_w)
         width = min_w;
@@ -223,7 +206,7 @@ static int panel_width(const struct ui_palette *p, int parent_width)
 
 static int empty_height(const struct ui_palette *p)
 {
-    return cell_h(p) + 2 * ui_ctx_px(scale_of(p), 6);
+    return ui_widget_cell_h(&p->widget) + 2 * ui_ctx_px(scale_of(p), 6);
 }
 
 static struct vector2i palette_measure(const struct ui_widget *widget,
@@ -231,9 +214,9 @@ static struct vector2i palette_measure(const struct ui_widget *widget,
 {
     struct ui_palette *p = palette_of(widget);
     int width = panel_width(p, constraints.max.x);
-    int inner = width - 2 * border_width(p);
+    int inner = width - 2 * ui_widget_border_width(&p->widget);
     struct ui_constraints child = { .max = { .x = inner, .y = constraints.max.y } };
-    int height = 2 * border_width(p) + separator_height(p) +
+    int height = 2 * ui_widget_border_width(&p->widget) + separator_height(p) +
                  ui_widget_measure(&p->input.widget, child).y;
     if (!ui_widget_is_hidden(&p->list.widget))
         height += ui_widget_measure(&p->list.widget, child).y;
@@ -248,7 +231,7 @@ static struct vector2i palette_measure(const struct ui_widget *widget,
 static void palette_layout(struct ui_widget *widget, struct rect2i bounds)
 {
     struct ui_palette *p = palette_of(widget);
-    struct rect2i inner = rect2i_inset(bounds, border_width(p));
+    struct rect2i inner = rect2i_inset(bounds, ui_widget_border_width(&p->widget));
     int offset = ui_list_label_inset(&p->list) - ui_input_text_inset(&p->input);
     if (offset < 0)
         offset = 0;
@@ -264,7 +247,7 @@ static void palette_layout(struct ui_widget *widget, struct rect2i bounds)
     });
     ui_widget_place(&p->empty.widget, (struct rect2i){
         .pos = { .x = inner.x + ui_list_label_inset(&p->list),
-                 .y = y + (empty_height(p) - cell_h(p)) / 2 },
+                 .y = y + (empty_height(p) - ui_widget_cell_h(&p->widget)) / 2 },
         .size = p->empty.widget.measured_size,
     });
 
@@ -286,7 +269,7 @@ static void palette_paint(const struct ui_widget *widget,
     const struct css_scale_context *scale = scale_of(p);
     struct rect2i box = ui_paint_bounds(paint);
     int radius = ui_css_resolve_int(s->border_radius, 0, 0, scale, true);
-    int border = border_width(p);
+    int border = ui_widget_border_width(&p->widget);
     if (border > 0) {
         if (radius > 0)
             ui_paint_rounded_rect(paint, box, radius, s->border_color);

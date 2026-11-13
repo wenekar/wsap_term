@@ -154,30 +154,6 @@ static inline bool ui_scene_ripple(struct ui_scene *scene, struct rect2i clip,
            ui_scene_pop_clip(scene);
 }
 
-static inline bool ui_text_copy(char *dst, size_t cap, const char *text)
-{
-    if (!text)
-        text = "";
-    size_t len = strlen(text);
-    if (len > cap - 1) {
-        size_t off = 0;
-        while (off < len) {
-            uint32_t cp;
-            int cells;
-            int n = ui_text_run_next(text + off, len - off, &cp, &cells);
-            if (n <= 0 || off + (size_t)n > cap - 1)
-                break;
-            off += (size_t)n;
-        }
-        len = off;
-    }
-    if (memcmp(dst, text, len) == 0 && dst[len] == '\0')
-        return false;
-    memcpy(dst, text, len);
-    dst[len] = '\0';
-    return true;
-}
-
 static inline struct ui_text_style ui_widget_text_style(
     const struct css_scale_context *scale)
 {
@@ -185,5 +161,25 @@ static inline struct ui_text_style ui_widget_text_style(
         .advance = ui_cell_dim(scale->cell_w, UI_DEFAULT_CELL_W),
         .cell_h = ui_cell_dim(scale->cell_h, UI_DEFAULT_CELL_H),
     };
+}
+
+/* One text cell of this widget, in pixels. */
+static inline int ui_widget_cell_w(const struct ui_widget *widget)
+{
+    return ui_widget_text_style(&widget->style_scale).advance;
+}
+
+static inline int ui_widget_cell_h(const struct ui_widget *widget)
+{
+    return ui_widget_text_style(&widget->style_scale).cell_h;
+}
+
+/* Border width of this widget, in pixels. Zero without a border color. */
+static inline int ui_widget_border_width(const struct ui_widget *widget)
+{
+    const struct css_style *style = &widget->style;
+    return style->has_border_color
+        ? ui_css_resolve_int(style->border_width, 0, 0, &widget->style_scale, true)
+        : 0;
 }
 #endif

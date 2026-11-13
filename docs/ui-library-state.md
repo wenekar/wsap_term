@@ -250,8 +250,12 @@ Dropdowns copy their items.
 They show a searchable popup.
 A dropdown descriptor gets a popup host from the view.
 The popup can extend outside scrollviews.
+The popup follows the anchor when the layout changes.
+It closes when a clipping ancestor scrolls the anchor out of sight.
 Set `overlay_key` to select a stack in the view instead.
 For manual composition, set the overlay parent to a container with stack layout.
+`ui_dropdown_set_value()` returns false when it cannot update the label.
+A failed call keeps the previous selection.
 Scrollviews can show an optional draggable scroll track.
 Scrollviews scroll focused descendants into view.
 

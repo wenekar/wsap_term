@@ -27,34 +27,17 @@ static const struct css_scale_context *input_scale(const struct ui_input *in)
     return &in->widget.style_scale;
 }
 
-static int cell_w(const struct ui_input *in)
-{
-    return ui_widget_text_style(input_scale(in)).advance;
-}
-
-static int cell_h(const struct ui_input *in)
-{
-    return ui_widget_text_style(input_scale(in)).cell_h;
-}
-
-static int border_width(const struct ui_input *in)
-{
-    const struct css_style *s = &in->widget.style;
-    return s->has_border_color
-        ? ui_css_resolve_int(s->border_width, 0, 0, input_scale(in), true) : 0;
-}
-
 static struct rect2i content_rect(const struct ui_input *in)
 {
     struct rect2i r = rect2i_apply_insets(
         (struct rect2i){ .size = in->widget.bounds.size },
         ui_ctx_insets(input_scale(in), in->widget.style.padding, 0));
-    return rect2i_inset(r, border_width(in));
+    return rect2i_inset(r, ui_widget_border_width(&in->widget));
 }
 
 int ui_input_text_inset(const struct ui_input *in)
 {
-    return in ? border_width(in) +
+    return in ? ui_widget_border_width(&in->widget) +
                 ui_ctx_inset(input_scale(in), in->widget.style.padding.left, 0)
               : 0;
 }
@@ -130,7 +113,7 @@ static void update_scroll(struct ui_input *in)
 {
     if (!in->widget.bounds.width)
         return;
-    int cap = content_rect(in).width / cell_w(in);
+    int cap = content_rect(in).width / ui_widget_cell_w(&in->widget);
     if (cap < 1)
         cap = 1;
     int max_scroll = cells_to(in, in->impl.len) - cap + 1;
@@ -627,7 +610,7 @@ static bool handle_key(struct ui_input *in, const struct ui_key_event *ev)
 
 static int offset_at_x(const struct ui_input *in, int x)
 {
-    int cw = cell_w(in);
+    int cw = ui_widget_cell_w(&in->widget);
     int target = geom_sat_i((int64_t)in->impl.scroll_cells +
                  ((int64_t)x - ui_input_text_inset(in) + cw / 2) / cw);
     int cells = 0, pos = 0;
@@ -847,10 +830,10 @@ static struct vector2i input_measure(const struct ui_widget *widget,
 {
     const struct ui_input *in = input_of(widget);
     struct insets2i pad = ui_ctx_insets(input_scale(in), widget->style.padding, 0);
-    int border = border_width(in);
+    int border = ui_widget_border_width(&in->widget);
     struct vector2i size = {
-        .x = 8 * cell_w(in) + pad.left + pad.right + 2 * border,
-        .y = cell_h(in) + pad.top + pad.bottom + 2 * border,
+        .x = 8 * ui_widget_cell_w(&in->widget) + pad.left + pad.right + 2 * border,
+        .y = ui_widget_cell_h(&in->widget) + pad.top + pad.bottom + 2 * border,
     };
     return ui_constraints_clamp(constraints, size);
 }
@@ -878,7 +861,7 @@ static void input_paint(const struct ui_widget *widget,
     const struct ui_input *in = input_of(widget);
     const struct css_style *rs = &widget->style;
     const struct css_scale_context *scale = input_scale(in);
-    int border = border_width(in);
+    int border = ui_widget_border_width(&in->widget);
     int radius = ui_css_resolve_int(rs->border_radius, 0, 0, scale, true);
     struct rect2i outer = ui_paint_bounds(paint);
     if (rs->has_border_color && border > 0) {
@@ -899,7 +882,7 @@ static void input_paint(const struct ui_widget *widget,
     struct rect2i content = content_rect(in);
     if (rect2i_is_empty(content) || !ui_paint_push_clip(paint, content))
         return;
-    int cw = cell_w(in), ch = cell_h(in);
+    int cw = ui_widget_cell_w(&in->widget), ch = ui_widget_cell_h(&in->widget);
     int text_y = content.y + (content.height - ch) / 2;
     int lo, hi;
     sel_range(in, &lo, &hi);
