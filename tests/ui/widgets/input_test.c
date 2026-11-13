@@ -120,7 +120,7 @@ static void programmatic_text_without_action_test(void)
     assert(f.changes == 1);
     ui_surface_take_frame_request(&f.surface);
 
-    ui_input_set_text_silent(&f.in, "new");
+    ui_input_set_text(&f.in, "new");
     assert(!strcmp(text(&f), "new"));
     assert(ui_input_caret(&f.in) == 3);
     assert(f.changes == 1);
@@ -130,8 +130,8 @@ static void programmatic_text_without_action_test(void)
     assert(ch(&f, '!', 0));
     assert(!strcmp(text(&f), "new!"));
     assert(f.changes == 2);
-    ui_input_set_text(&f.in, "legacy");
-    assert(f.changes == 3);
+    ui_input_set_text(&f.in, "reset");
+    assert(f.changes == 2);
     teardown(&f);
 }
 

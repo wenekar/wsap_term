@@ -226,7 +226,7 @@ static void filter_rows(struct settings_form *form)
 static void set_row_value(struct settings_row *row, const char *value)
 {
     if (!row->choice)
-        ui_input_set_text_silent(row->input, value);
+        ui_input_set_text(row->input, value);
     if (row->choice || row->combo)
         ui_dropdown_set_value(row->dropdown, value);
 }
@@ -397,7 +397,7 @@ static bool form_action(struct ui_widget *source, const struct ui_action *action
             struct settings_row *row = &form->rows[i];
             if ((row->choice || row->combo) && source == &row->dropdown->widget) {
                 if (row->combo)
-                    ui_input_set_text_silent(row->input, ui_dropdown_value(row->dropdown));
+                    ui_input_set_text(row->input, ui_dropdown_value(row->dropdown));
             } else if (!row->choice && source == &row->input->widget) {
                 if (row->combo) ui_dropdown_set_value(row->dropdown, row_value(row));
             } else continue;

@@ -148,10 +148,9 @@ The control determines which fields apply.
 See [UI library](ui-library-state.md#actions) for the action kinds.
 
 An input emits `UI_ACTION_CHANGE` for user edits.
-`ui_input_set_text()` also emits a change action.
-Use `ui_input_set_text_silent()` to load a value without a change action.
-Both setters replace the input text, clear undo history, and move the caret to the end.
-Do not use either setter on each paint or frame.
+`ui_input_set_text()` loads a value without a change action.
+It replaces the input text, clears undo history, and moves the caret to the end.
+Do not set the text on each paint or frame.
 The screen owns the application state and decides when to update the control.
 
 Use `window_close()` to request that the app close a window.
