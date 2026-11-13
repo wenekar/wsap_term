@@ -43,6 +43,9 @@ struct window_ui_spec {
     int ui_font_size;
 };
 
+/* Copies spec and borrows its pointers. Keep them valid until destroy runs.
+ * The root is detached before destroy runs. On failure, the caller retains
+ * ownership and destroy is not called. A window accepts one mount. */
 bool window_ui_mount(struct window *w, const struct window_ui_spec *spec);
 const void *window_ui_kind(const struct window *w);
 struct window_ui *window_ui_of(const struct window *w);

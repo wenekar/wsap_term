@@ -276,7 +276,7 @@ static void input_ensure_init(struct ui_input *in)
     ui_widget_set_focusable(&in->widget, true);
 }
 
-void ui_input_set_text(struct ui_input *in, const char *utf8)
+static void input_set_text(struct ui_input *in, const char *utf8, bool notify)
 {
     if (!in)
         return;
@@ -286,7 +286,22 @@ void ui_input_set_text(struct ui_input *in, const char *utf8)
     in->impl.undo_count = in->impl.edit_group = 0;
     in->impl.len = clean_text(in->impl.buf, sizeof(in->impl.buf), utf8);
     in->impl.caret = in->impl.anchor = in->impl.len;
-    changed(in);
+    if (notify)
+        changed(in);
+    else {
+        in->impl.edit_caret = in->impl.caret;
+        caret_moved(in);
+    }
+}
+
+void ui_input_set_text(struct ui_input *in, const char *utf8)
+{
+    input_set_text(in, utf8, true);
+}
+
+void ui_input_set_text_silent(struct ui_input *in, const char *utf8)
+{
+    input_set_text(in, utf8, false);
 }
 
 void ui_input_set_placeholder(struct ui_input *in, const char *utf8)

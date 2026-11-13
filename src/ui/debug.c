@@ -116,6 +116,7 @@ static const struct ui_widget *find_by(const struct ui_widget *w,
         return NULL;
     const char *have = kind == '.' ? w->impl.style_class
                      : kind == '#' ? w->impl.style_id
+                     : kind == '@' ? w->impl.debug_key
                      : ui_debug_type_name(w);
     if (have && !strcmp(have, name))
         return w;
@@ -161,7 +162,7 @@ const struct ui_widget *ui_debug_find(const struct ui_widget *root,
             (const struct ui_widget *)(uintptr_t)addr;
         return in_tree(root, w) ? w : NULL;
     }
-    if (selector[0] == '.' || selector[0] == '#')
+    if (selector[0] == '.' || selector[0] == '#' || selector[0] == '@')
         return find_by(root, selector[0], selector + 1);
     return find_by(root, 0, selector);
 }
@@ -321,6 +322,7 @@ static void write_widget_head(struct json_writer *j,
     json_key(j, "type"); json_str(j, ui_debug_type_name(w));
     json_key(j, "path"); write_path(j, view, w);
     json_key(j, "addr"); json_hex(j, (uintptr_t)w);
+    if (w->impl.debug_key) { json_key(j, "key"); json_str(j, w->impl.debug_key); }
     if (w->impl.style_class) { json_key(j, "class"); json_str(j, w->impl.style_class); }
     if (w->impl.style_id)    { json_key(j, "id");    json_str(j, w->impl.style_id); }
     if (w->impl.style_tag)   { json_key(j, "tag");   json_str(j, w->impl.style_tag); }

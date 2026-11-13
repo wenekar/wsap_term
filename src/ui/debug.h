@@ -48,7 +48,7 @@ struct ui_debug_view {
 /* Returns the type name string of `widget`. */
 const char *ui_debug_type_name(const struct ui_widget *widget);
 
-/* Finds a widget in `root` matching `selector`. */
+/* Finds a widget by path, type, style class, style ID, or @debug key. */
 const struct ui_widget *ui_debug_find(const struct ui_widget *root,
                                       const char *selector);
 /* Writes the hierarchy path from `root` to `widget` into `buf`. */

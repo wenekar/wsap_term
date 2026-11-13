@@ -133,6 +133,12 @@ void ui_widget_set_style_identity(struct ui_widget *widget,
     ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_MEASURE);
 }
 
+void ui_widget_set_debug_key(struct ui_widget *widget, const char *key)
+{
+    if (widget)
+        widget->impl.debug_key = key;
+}
+
 void ui_widget_set_style_pseudo(struct ui_widget *widget, unsigned pseudo_flags)
 {
     if (!widget || widget->impl.style_pseudo == pseudo_flags)

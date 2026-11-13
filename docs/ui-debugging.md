@@ -79,6 +79,7 @@ Commands that take a widget accept these selectors:
 | `/1/0` | The path of child indexes from the root |
 | `tabbar` | The first widget, in paint order, with this type name |
 | `.class`, `#id` | The first widget with this style class or id |
+| `@key` | The first widget with this inspector key. View nodes use their descriptor key. |
 | `0x55d0…` | A widget address. The inspector accepts it only when the widget is in the tree. |
 
 Type names come from `ui_widget_ops.name`.

@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "ui/ui.h"
+#include "ui/debug.h"
 #include "ui/widget_impl.h"
 
 static const struct css_scale_context SCALE = {
@@ -316,8 +317,134 @@ static void button_sends_its_action_id_test(void)
     ui_widget_destroy(&button.widget);
 }
 
+static void view_diagnostic_test(void)
+{
+    struct ui_input *bound = NULL;
+    struct ui_node_desc children[] = {
+        { .kind = UI_NODE_INPUT, .key = "name", .bind.input = &bound },
+        { .kind = UI_NODE_BUTTON, .key = "name" },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .children = children, .child_count = 2,
+    };
+    struct ui_view_diagnostic diagnostic = {0};
+    assert(!ui_view_mount_ex(&root, &diagnostic));
+    assert(diagnostic.error == UI_VIEW_ERROR_DUPLICATE_KEY);
+    assert(diagnostic.node == &children[1]);
+    assert(diagnostic.detail && strstr(diagnostic.detail, "key"));
+    assert(strstr(ui_view_error_message(diagnostic.error), "key"));
+    assert(bound == NULL);
+
+    children[1].key = "submit";
+    children[1].bind.input = &bound;
+    assert(!ui_view_mount_ex(&root, &diagnostic));
+    assert(diagnostic.error == UI_VIEW_ERROR_INVALID_ARGUMENT);
+    assert(diagnostic.node == &children[1]);
+    assert(bound == NULL);
+
+    children[1].bind.input = NULL;
+    struct ui_view *view = ui_view_mount_ex(&root, &diagnostic);
+    assert(view && diagnostic.error == UI_VIEW_ERROR_NONE && !diagnostic.node);
+    assert(bound == ui_view_input(view, "name"));
+    assert(ui_debug_find(ui_view_root(view), "@name") == ui_input_widget(bound));
+    ui_view_destroy(view);
+
+    enum ui_view_error error = UI_VIEW_ERROR_NONE;
+    assert(!ui_view_mount(NULL, &error));
+    assert(error == UI_VIEW_ERROR_INVALID_ARGUMENT);
+}
+
+static void view_children_macro_test(void)
+{
+    int calls = 0;
+    const struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN,
+        UI_CHILDREN(
+            { .kind = UI_NODE_LABEL, .props.label.text = "First" },
+            { .kind = UI_NODE_BUTTON, .action_id = ++calls },
+            { .kind = UI_NODE_INPUT }
+        ),
+    };
+    assert(calls == 1);
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+    assert(ui_widget_child_count(ui_view_root(view)) == 3);
+    ui_view_destroy(view);
+}
+
+static void view_automatic_overlay_test(void)
+{
+    const struct ui_dropdown_item items[] = { { "One", "one" } };
+    struct ui_dropdown *dropdown = NULL;
+    struct ui_node_desc child = {
+        .kind = UI_NODE_DROPDOWN,
+        .key = "choice",
+        .bind.dropdown = &dropdown,
+        .props.dropdown = { .items = items, .count = 1 },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .children = &child, .child_count = 1,
+    };
+    struct ui_view_diagnostic diagnostic;
+    assert(!ui_view_mount_ex(&root, &diagnostic));
+    assert(diagnostic.error == UI_VIEW_ERROR_MISSING_OVERLAY);
+    assert(diagnostic.node == &child);
+    assert(diagnostic.detail && strstr(diagnostic.detail, "ancestor"));
+    assert(!dropdown);
+
+    root.kind = UI_NODE_STACK;
+    struct ui_view *view = ui_view_mount_ex(&root, &diagnostic);
+    assert(view && dropdown);
+    struct ui_surface surface;
+    show(&surface, ui_view_root(view), (struct vector2i){ .x = 300, .y = 200 });
+    ui_surface_prepare(&surface);
+    assert(ui_dropdown_open(dropdown));
+    assert(ui_dropdown_is_open(dropdown));
+    ui_dropdown_close(dropdown);
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+}
+
+static void view_explicit_overlay_test(void)
+{
+    const struct ui_dropdown_item items[] = { { "One", "one" } };
+    struct ui_dropdown *dropdown = NULL;
+    struct ui_node_desc children[] = {
+        { .kind = UI_NODE_STACK, .key = "overlay" },
+        { .kind = UI_NODE_DROPDOWN, .key = "choice",
+          .bind.dropdown = &dropdown,
+          .props.dropdown = { .items = items, .count = 1,
+                              .overlay_key = "overlay" } },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_ROW, .children = children, .child_count = 2,
+    };
+    struct ui_view_diagnostic diagnostic;
+    struct ui_view *view = ui_view_mount_ex(&root, &diagnostic);
+    assert(view && dropdown);
+    struct ui_surface surface;
+    show(&surface, ui_view_root(view), (struct vector2i){ .x = 300, .y = 200 });
+    ui_surface_prepare(&surface);
+    assert(ui_dropdown_open(dropdown));
+    ui_dropdown_close(dropdown);
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+
+    children[0].kind = UI_NODE_LABEL;
+    dropdown = NULL;
+    assert(!ui_view_mount_ex(&root, &diagnostic));
+    assert(diagnostic.error == UI_VIEW_ERROR_INVALID_OVERLAY);
+    assert(diagnostic.node == &children[1]);
+    assert(diagnostic.detail && strstr(diagnostic.detail, "stack"));
+    assert(!dropdown);
+}
+
 int main(void)
 {
+    view_diagnostic_test();
+    view_children_macro_test();
+    view_automatic_overlay_test();
+    view_explicit_overlay_test();
     hidden_child_takes_no_space_or_input_test();
     hidden_modal_restores_focus_test();
     placement_test();

@@ -42,7 +42,7 @@ struct css_scale_context window_ui_scale(const struct window *w)
 
 bool window_ui_mount(struct window *w, const struct window_ui_spec *spec)
 {
-    if (window_ui_of(w))
+    if (!w || !spec || window_ui_of(w))
         return false;
     struct window_ui *ui = ui_of(w);
     ui->mounted = true;

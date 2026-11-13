@@ -10,6 +10,7 @@
 | [CI](ci.md) | Runner setup and workflow controls. |
 | [Tab ownership](tab-ownership.md) | Tab model, content lifecycle, and window transfers. |
 | [UI library](ui-library-state.md) | Widgets, actions, layout, and ownership. |
+| [Build a window screen](ui-screen-guide.md) | Screen creation, mounting, styling, and debugging. |
 | [UI inspector](ui-debugging.md) | Layout checks, screenshots, and input injection. |
 | [Font API](font-api.md) | Glyph ownership, caches, and thread rules. |
 | [Data layout](data-layout.md) | Cell layout and cache line constraints. |

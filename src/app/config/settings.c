@@ -113,7 +113,6 @@ struct settings_form {
     struct ui_node_desc *field_nodes;
     size_t field_node_count, count;
     enum category category;
-    bool loading;
 };
 
 static const char *const section_keys[] = {
@@ -227,7 +226,7 @@ static void filter_rows(struct settings_form *form)
 static void set_row_value(struct settings_row *row, const char *value)
 {
     if (!row->choice)
-        ui_input_set_text(row->input, value);
+        ui_input_set_text_silent(row->input, value);
     if (row->choice || row->combo)
         ui_dropdown_set_value(row->dropdown, value);
 }
@@ -273,7 +272,6 @@ static bool format_row(const struct settings_row *row, const struct app_config *
 static void finish_load(struct settings_form *form)
 {
     sync_hinting_choices(form);
-    form->loading = false;
     update_status(form);
     filter_rows(form);
 }
@@ -281,7 +279,6 @@ static void finish_load(struct settings_form *form)
 static bool load_values(struct settings_form *form, const struct app_config *config,
                          bool baseline)
 {
-    form->loading = true;
     bool ok = true;
     for (size_t i = 0; i < form->count; i++) {
         struct settings_row *row = &form->rows[i];
@@ -313,7 +310,6 @@ static void settings_restyle(struct window *w)
     const struct app_config *config = form->host.config;
     if (!config_moved(form, config))
         return;
-    form->loading = true;
     for (size_t i = 0; i < form->count; i++) {
         struct settings_row *row = &form->rows[i];
         char value[UI_INPUT_CAP];
@@ -390,7 +386,6 @@ static bool form_action(struct ui_widget *source, const struct ui_action *action
                          void *userdata)
 {
     struct settings_form *form = userdata;
-    if (form->loading) return true;
     if (action->kind == UI_ACTION_CHANGE) {
         if (source == ui_input_widget(form->search)) {
             form->category = ALL;
@@ -402,7 +397,7 @@ static bool form_action(struct ui_widget *source, const struct ui_action *action
             struct settings_row *row = &form->rows[i];
             if ((row->choice || row->combo) && source == &row->dropdown->widget) {
                 if (row->combo)
-                    ui_input_set_text(row->input, ui_dropdown_value(row->dropdown));
+                    ui_input_set_text_silent(row->input, ui_dropdown_value(row->dropdown));
             } else if (!row->choice && source == &row->input->widget) {
                 if (row->combo) ui_dropdown_set_value(row->dropdown, row_value(row));
             } else continue;
@@ -545,6 +540,7 @@ static bool init_row(struct settings_row *row, size_t index, struct look *look)
     row->description_children[2] = (struct ui_node_desc){
         .kind = UI_NODE_LABEL,
         .key = row->error_key,
+        .bind.label = &row->error,
         .class_name = "settings-error",
         .tag_name = "",
         .props.label = {
@@ -566,6 +562,7 @@ static bool init_row(struct settings_row *row, size_t index, struct look *look)
         row->editor_children[editor_count++] = (struct ui_node_desc){
             .kind = UI_NODE_INPUT,
             .key = row->input_key,
+            .bind.input = &row->input,
             .class_name = "text-input",
             .tag_name = "",
             .id_name = key,
@@ -579,6 +576,7 @@ static bool init_row(struct settings_row *row, size_t index, struct look *look)
         row->editor_children[editor_count++] = (struct ui_node_desc){
             .kind = UI_NODE_DROPDOWN,
             .key = row->dropdown_key,
+            .bind.dropdown = &row->dropdown,
             .class_name = "dropdown",
             .tag_name = "",
             .id_name = row->choice ? key : NULL,
@@ -586,7 +584,6 @@ static bool init_row(struct settings_row *row, size_t index, struct look *look)
                 .items = row->choices.items,
                 .count = row->choices.count,
                 .accessible_name = row->label,
-                .overlay_key = "root",
             },
         };
     }
@@ -601,6 +598,7 @@ static bool init_row(struct settings_row *row, size_t index, struct look *look)
     row->node = (struct ui_node_desc){
         .kind = UI_NODE_ROW,
         .key = row->row_id,
+        .bind.box = &row->row,
         .class_name = "settings-row",
         .tag_name = "",
         .id_name = row->row_id,
@@ -632,6 +630,7 @@ static bool add_field_descriptions(struct settings_form *form)
         form->field_nodes[at++] = (struct ui_node_desc){
             .kind = UI_NODE_LABEL,
             .key = section_keys[category],
+            .bind.label = &form->section[category],
             .class_name = "settings-section",
             .tag_name = "",
             .props.label = {
@@ -648,6 +647,7 @@ static bool add_field_descriptions(struct settings_form *form)
     form->field_nodes[at++] = (struct ui_node_desc){
         .kind = UI_NODE_LABEL,
         .key = "settings-empty",
+        .bind.label = &form->empty,
         .props.label = {
             .text = "No matching settings. Try another search.",
             .wrap = UI_LABEL_WRAP_WORD,
@@ -666,6 +666,7 @@ static bool mount_form(struct settings_form *form)
         {
             .kind = UI_NODE_LABEL,
             .key = "title",
+            .bind.label = &form->title,
             .class_name = "settings-title",
             .tag_name = "",
             .props.label = {
@@ -677,6 +678,7 @@ static bool mount_form(struct settings_form *form)
         {
             .kind = UI_NODE_BUTTON,
             .key = "config-link",
+            .bind.button = &form->config,
             .class_name = "settings-button settings-link",
             .tag_name = "",
             .id_name = "config-link",
@@ -686,6 +688,7 @@ static bool mount_form(struct settings_form *form)
         {
             .kind = UI_NODE_LABEL,
             .key = "font-link",
+            .bind.label = &form->font_help,
             .class_name = "settings-button settings-link",
             .tag_name = "",
             .id_name = "font-link",
@@ -700,6 +703,7 @@ static bool mount_form(struct settings_form *form)
         {
             .kind = UI_NODE_LABEL,
             .key = "color-link",
+            .bind.label = &form->color_help,
             .class_name = "settings-button settings-link",
             .tag_name = "",
             .id_name = "color-link",
@@ -717,6 +721,7 @@ static bool mount_form(struct settings_form *form)
         nav_nodes[i] = (struct ui_node_desc){
             .kind = UI_NODE_BUTTON,
             .key = category_ids[i],
+            .bind.button = &form->nav[i],
             .class_name = "settings-button settings-nav",
             .tag_name = "",
             .id_name = category_ids[i],
@@ -727,6 +732,7 @@ static bool mount_form(struct settings_form *form)
     struct ui_node_desc sidebar = {
         .kind = UI_NODE_COLUMN,
         .key = "sidebar",
+        .bind.box = &form->sidebar,
         .class_name = "settings-sidebar",
         .tag_name = "",
         .children = nav_nodes,
@@ -736,6 +742,7 @@ static bool mount_form(struct settings_form *form)
     struct ui_node_desc scroll_child = {
         .kind = UI_NODE_COLUMN,
         .key = "fields",
+        .bind.box = &form->fields,
         .class_name = "settings-fields",
         .tag_name = "",
         .children = form->field_nodes,
@@ -746,6 +753,7 @@ static bool mount_form(struct settings_form *form)
     struct ui_node_desc scroll = {
         .kind = UI_NODE_SCROLLVIEW,
         .key = "scroll",
+        .bind.scrollview = &form->scroll,
         .class_name = "settings-scroll",
         .tag_name = "",
         .children = scroll_children,
@@ -757,6 +765,7 @@ static bool mount_form(struct settings_form *form)
         {
             .kind = UI_NODE_LABEL,
             .key = "status",
+            .bind.label = &form->status,
             .class_name = "settings-status",
             .tag_name = "",
             .id_name = "settings-status",
@@ -770,6 +779,7 @@ static bool mount_form(struct settings_form *form)
         {
             .kind = UI_NODE_BUTTON,
             .key = "reset",
+            .bind.button = &form->reset,
             .class_name = "settings-button",
             .tag_name = "",
             .id_name = "settings-reset",
@@ -779,6 +789,7 @@ static bool mount_form(struct settings_form *form)
         {
             .kind = UI_NODE_BUTTON,
             .key = "cancel",
+            .bind.button = &form->cancel,
             .class_name = "settings-button",
             .tag_name = "",
             .id_name = "settings-cancel",
@@ -788,6 +799,7 @@ static bool mount_form(struct settings_form *form)
         {
             .kind = UI_NODE_BUTTON,
             .key = "save",
+            .bind.button = &form->save,
             .class_name = "settings-button settings-primary",
             .tag_name = "",
             .id_name = "settings-save",
@@ -799,6 +811,7 @@ static bool mount_form(struct settings_form *form)
         {
             .kind = UI_NODE_ROW,
             .key = "header",
+            .bind.box = &form->header,
             .class_name = "settings-header",
             .tag_name = "",
             .children = header_nodes,
@@ -808,6 +821,7 @@ static bool mount_form(struct settings_form *form)
         {
             .kind = UI_NODE_INPUT,
             .key = "search",
+            .bind.input = &form->search,
             .class_name = "text-input settings-search",
             .tag_name = "",
             .id_name = "settings-search",
@@ -819,6 +833,7 @@ static bool mount_form(struct settings_form *form)
         {
             .kind = UI_NODE_ROW,
             .key = "body",
+            .bind.box = &form->body,
             .class_name = "settings-body",
             .tag_name = "",
             .children = body_nodes,
@@ -828,6 +843,7 @@ static bool mount_form(struct settings_form *form)
         {
             .kind = UI_NODE_ROW,
             .key = "footer",
+            .bind.box = &form->footer,
             .class_name = "settings-footer",
             .tag_name = "",
             .children = footer_nodes,
@@ -839,6 +855,7 @@ static bool mount_form(struct settings_form *form)
         {
             .kind = UI_NODE_COLUMN,
             .key = "layout",
+            .bind.box = &form->layout,
             .class_name = "settings-form",
             .tag_name = "",
             .children = layout_nodes,
@@ -858,59 +875,18 @@ static bool mount_form(struct settings_form *form)
         .on_event = root_event,
         .event_userdata = form,
     };
-    enum ui_view_error error;
-    form->view = ui_view_mount(&root, &error);
-    if (!form->view)
+    struct ui_view_diagnostic diagnostic;
+    form->view = ui_view_mount_ex(&root, &diagnostic);
+    if (!form->view) {
+        fprintf(stderr, "settings: cannot build %s: %s\n",
+                diagnostic.node && diagnostic.node->key
+                    ? diagnostic.node->key : "screen",
+                diagnostic.detail ? diagnostic.detail
+                                  : ui_view_error_message(diagnostic.error));
         return false;
+    }
 
     form->root = ui_view_root(form->view);
-    form->layout = ui_view_box(form->view, "layout");
-    form->header = ui_view_box(form->view, "header");
-    form->body = ui_view_box(form->view, "body");
-    form->sidebar = ui_view_box(form->view, "sidebar");
-    form->fields = ui_view_box(form->view, "fields");
-    form->footer = ui_view_box(form->view, "footer");
-    form->search = ui_view_input(form->view, "search");
-    form->scroll = ui_view_scrollview(form->view, "scroll");
-    form->title = ui_view_label(form->view, "title");
-    form->status = ui_view_label(form->view, "status");
-    form->empty = ui_view_label(form->view, "settings-empty");
-    form->font_help = ui_view_label(form->view, "font-link");
-    form->color_help = ui_view_label(form->view, "color-link");
-    form->config = ui_view_button(form->view, "config-link");
-    form->save = ui_view_button(form->view, "save");
-    form->cancel = ui_view_button(form->view, "cancel");
-    form->reset = ui_view_button(form->view, "reset");
-    for (int i = 0; i < CATEGORY_COUNT; i++)
-        form->nav[i] = ui_view_button(form->view, category_ids[i]);
-    for (int i = 1; i < CATEGORY_COUNT; i++)
-        form->section[i] = ui_view_label(form->view, section_keys[i]);
-    for (size_t i = 0; i < form->count; i++) {
-        struct settings_row *row = &form->rows[i];
-        row->row = ui_view_box(form->view, row->row_id);
-        row->error = ui_view_label(form->view, row->error_key);
-        if (!row->choice)
-            row->input = ui_view_input(form->view, row->input_key);
-        if (row->choice || row->combo)
-            row->dropdown = ui_view_dropdown(form->view, row->dropdown_key);
-    }
-    bool ok = form->root && form->layout && form->header && form->body &&
-        form->sidebar && form->fields && form->footer && form->search &&
-        form->scroll && form->title && form->status && form->empty &&
-        form->font_help && form->color_help && form->config && form->save &&
-        form->cancel && form->reset;
-    for (int i = 0; i < CATEGORY_COUNT; i++)
-        ok = ok && form->nav[i];
-    for (int i = 1; i < CATEGORY_COUNT; i++)
-        ok = ok && form->section[i];
-    for (size_t i = 0; i < form->count; i++) {
-        struct settings_row *row = &form->rows[i];
-        ok = ok && row->row && row->error &&
-            (row->choice || row->input) &&
-            (!(row->choice || row->combo) || row->dropdown);
-    }
-    if (!ok)
-        return false;
     for (size_t i = 0; i < form->count; i++) {
         struct settings_row *row = &form->rows[i];
         settings_choices_destroy(&row->choices);

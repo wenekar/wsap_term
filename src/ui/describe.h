@@ -32,6 +32,18 @@ struct ui_node_layout {
     struct insets2i padding;
 };
 
+/* Use the field that matches the node kind.
+ * The slots are borrowed through mount and written only on success.
+ * The view owns each returned widget until view destruction. */
+struct ui_node_bindings {
+    struct ui_box **box;
+    struct ui_label **label;
+    struct ui_button **button;
+    struct ui_input **input;
+    struct ui_dropdown **dropdown;
+    struct ui_scrollview **scrollview;
+};
+
 struct ui_node_desc {
     const char *key;
     const char *class_name;
@@ -45,6 +57,7 @@ struct ui_node_desc {
     void *event_userdata;
     enum ui_node_kind kind;
     int action_id;
+    struct ui_node_bindings bind;
 
     union {
         struct ui_node_layout layout;
@@ -70,6 +83,7 @@ struct ui_node_desc {
             size_t count;
             const char *selected_value;
             const char *accessible_name;
+            /* NULL selects the nearest ancestor stack. */
             const char *overlay_key;
         } dropdown;
         struct {
@@ -91,6 +105,22 @@ enum ui_view_error {
     UI_VIEW_ERROR_INIT_FAILED,
 };
 
+struct ui_view_diagnostic {
+    enum ui_view_error error;
+    /* Borrowed from the descriptor tree. NULL when no node applies. */
+    const struct ui_node_desc *node;
+    /* Static detail text. NULL on success. */
+    const char *detail;
+};
+
+/* Returns a static description of an error. */
+const char *ui_view_error_message(enum ui_view_error error);
+
+/* On failure, diagnostic identifies the descriptor that caused the error.
+ * The node pointer stays valid only while the descriptor tree stays valid. */
+struct ui_view *ui_view_mount_ex(const struct ui_node_desc *root,
+                                 struct ui_view_diagnostic *diagnostic);
+
 struct ui_view *ui_view_mount(const struct ui_node_desc *root,
                               enum ui_view_error *error);
 
@@ -106,5 +136,12 @@ struct ui_scrollview *ui_view_scrollview(struct ui_view *view,
                                          const char *key);
 
 #define UI_NODES(...) ((const struct ui_node_desc[]){ __VA_ARGS__ })
+
+/* Initialize children and child_count together in a node descriptor.
+ * Define nested UI_CHILDREN descriptors separately before using them. */
+#define UI_CHILDREN(...) \
+    .children = UI_NODES(__VA_ARGS__), \
+    .child_count = sizeof((const struct ui_node_desc[]){ __VA_ARGS__ }) / \
+                   sizeof(struct ui_node_desc)
 
 #endif

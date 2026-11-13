@@ -5,6 +5,7 @@ The surface manages updates.
 The widget tree manages composition.
 Controls use one action callback type.
 Rows, columns, and stacks use Clay for layout.
+For a complete window example, see [Build a window screen](ui-screen-guide.md).
 
 ## Build a screen
 
@@ -42,7 +43,8 @@ static bool settings_init(struct settings_screen *screen,
         .props.layout = { .align = UI_BOX_ALIGN_STRETCH, .gap = 8 },
         .children = UI_NODES(
             { .kind = UI_NODE_INPUT, .key = "search",
-              .props.input = { .placeholder = "Search" } },
+              .props.input = { .placeholder = "Search",
+                               .accessible_name = "Search" } },
             { .kind = UI_NODE_BUTTON, .key = "apply", .action_id = 1,
               .props.button = { .text = "Apply" } }
         ),
@@ -53,15 +55,25 @@ static bool settings_init(struct settings_screen *screen,
     screen->view = ui_view_mount(&root, NULL);
     if (!screen->view)
         return false;
-    ui_surface_set_root(surface, ui_view_root(screen->view));
+    if (!ui_surface_set_root(surface, ui_view_root(screen->view))) {
+        ui_view_destroy(screen->view);
+        screen->view = NULL;
+        return false;
+    }
     return true;
 }
 ```
 
 The descriptor arrays and strings only need to stay valid through `ui_view_mount()`.
+Use `ui_view_mount_ex()` to get the error, details, and the descriptor that caused it.
+The diagnostic node is borrowed from the descriptor tree.
+Read it while the tree is valid.
 Label descriptors can include a link target.
 `ui_view_mount()` copies that target into the label.
-Use `ui_view_input()` or another typed lookup to keep a control handle.
+Set `bind.input`, `bind.label`, or another typed binding to get a control handle.
+The view writes these slots only after a successful mount.
+The handles stay valid until the view is destroyed.
+You can also use `ui_view_input()` or another typed lookup.
 Call setters on the handle when application state changes.
 This practice preserves focus and edit state in the mounted control.
 Destroying the view detaches and destroys its widget tree.
@@ -215,7 +227,9 @@ The existing child widget remains unchanged.
 Updating list items preserves list attachments and handlers.
 Dropdowns copy their items.
 They show a searchable popup.
-Set their overlay parent to a container with stack layout.
+A dropdown descriptor uses its nearest ancestor stack for the popup.
+Set `overlay_key` to select another stack in the view.
+For manual composition, set the overlay parent to a container with stack layout.
 Scrollviews can show an optional draggable scroll track.
 Scrollviews scroll focused descendants into view.
 

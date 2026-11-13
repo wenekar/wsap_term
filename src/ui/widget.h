@@ -81,6 +81,7 @@ struct ui_widget {
         const char *style_class;
         const char *style_id;
         const char *style_tag;
+        const char *debug_key;
         uint64_t style_generation;
         struct ui_part_slot *part_slots;
         uint64_t deadline;
@@ -159,11 +160,14 @@ void ui_widget_set_key_capture(struct ui_widget *widget, ui_capture_fn fn,
 /* Dispatches input `event` to `widget`. */
 bool ui_widget_event(struct ui_widget *widget, const struct ui_event *event);
 
-/* Sets CSS class, id, and tag names for `widget`. */
+/* Sets CSS class, id, and tag names. Keep the strings alive while in use. */
 void ui_widget_set_style_identity(struct ui_widget *widget,
                                   const char *class_name,
                                   const char *id_name,
                                   const char *tag_name);
+
+/* Sets the inspector key. Keep key alive until the widget is destroyed. */
+void ui_widget_set_debug_key(struct ui_widget *widget, const char *key);
 
 /* Converts surface coordinates to widget local coordinates. */
 static inline struct vector2i ui_widget_to_local(const struct ui_widget *widget,

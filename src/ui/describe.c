@@ -12,6 +12,7 @@
 struct ui_view_node {
     const struct ui_node_desc *desc;
     size_t parent;
+    size_t overlay;
     enum ui_node_kind kind;
     char *key;
     char *class_name;
@@ -31,6 +32,8 @@ struct ui_view {
 struct validate_context {
     struct ui_view *view;
     enum ui_view_error error;
+    const struct ui_node_desc *failed_node;
+    const char *detail;
     const struct ui_node_desc *path[UI_VIEW_MAX_DEPTH];
 };
 
@@ -75,8 +78,18 @@ static bool node_kind_valid(enum ui_node_kind kind)
 }
 
 static bool node_props_valid(const struct ui_node_desc *desc,
-                             enum ui_view_error *error)
+                             enum ui_view_error *error, const char **detail)
 {
+    if ((desc->bind.box && !node_is_container(desc->kind)) ||
+        (desc->bind.label && desc->kind != UI_NODE_LABEL) ||
+        (desc->bind.button && desc->kind != UI_NODE_BUTTON) ||
+        (desc->bind.input && desc->kind != UI_NODE_INPUT) ||
+        (desc->bind.dropdown && desc->kind != UI_NODE_DROPDOWN) ||
+        (desc->bind.scrollview && desc->kind != UI_NODE_SCROLLVIEW)) {
+        *error = UI_VIEW_ERROR_INVALID_ARGUMENT;
+        *detail = "Binding does not match the node kind";
+        return false;
+    }
     switch (desc->kind) {
     case UI_NODE_ROW:
     case UI_NODE_COLUMN:
@@ -86,6 +99,7 @@ static bool node_props_valid(const struct ui_node_desc *desc,
             desc->props.layout.justify < UI_BOX_JUSTIFY_START ||
             desc->props.layout.justify > UI_BOX_JUSTIFY_END) {
             *error = UI_VIEW_ERROR_INVALID_ARGUMENT;
+            *detail = "Invalid box alignment or justification";
             return false;
         }
         return true;
@@ -95,6 +109,7 @@ static bool node_props_valid(const struct ui_node_desc *desc,
             desc->props.label.align < UI_LABEL_ALIGN_LEFT ||
             desc->props.label.align > UI_LABEL_ALIGN_RIGHT) {
             *error = UI_VIEW_ERROR_INVALID_ARGUMENT;
+            *detail = "Invalid label wrap or alignment";
             return false;
         }
         return true;
@@ -105,22 +120,26 @@ static bool node_props_valid(const struct ui_node_desc *desc,
         if (desc->props.dropdown.count > INT_MAX ||
             (desc->props.dropdown.count && !desc->props.dropdown.items)) {
             *error = UI_VIEW_ERROR_INVALID_ARGUMENT;
+            *detail = "Invalid dropdown items or count";
             return false;
         }
-        if (!desc->props.dropdown.overlay_key ||
+        if (desc->props.dropdown.overlay_key &&
             !desc->props.dropdown.overlay_key[0]) {
             *error = UI_VIEW_ERROR_MISSING_OVERLAY;
+            *detail = "Dropdown overlay key is empty";
             return false;
         }
         return true;
     case UI_NODE_SCROLLVIEW:
         if (desc->props.scrollview.scroll_step < 0) {
             *error = UI_VIEW_ERROR_INVALID_ARGUMENT;
+            *detail = "Scroll step cannot be negative";
             return false;
         }
         return true;
     }
     *error = UI_VIEW_ERROR_INVALID_KIND;
+    *detail = "Node kind is not supported";
     return false;
 }
 
@@ -144,6 +163,7 @@ static bool append_node(struct ui_view *view,
     view->nodes[*index] = (struct ui_view_node){
         .desc = desc,
         .parent = parent,
+        .overlay = SIZE_MAX,
         .kind = desc->kind,
     };
     return true;
@@ -153,41 +173,50 @@ static bool validate_node(struct validate_context *context,
                           const struct ui_node_desc *desc, size_t parent,
                           size_t depth)
 {
+    context->failed_node = desc;
     if (!desc) {
         context->error = UI_VIEW_ERROR_INVALID_ARGUMENT;
+        context->detail = "Descriptor is NULL";
         return false;
     }
     if (depth >= UI_VIEW_MAX_DEPTH) {
         context->error = UI_VIEW_ERROR_INVALID_CHILDREN;
+        context->detail = "Descriptor tree is too deep";
         return false;
     }
     for (size_t i = 0; i < depth; i++) {
         if (context->path[i] == desc) {
             context->error = UI_VIEW_ERROR_INVALID_CHILDREN;
+            context->detail = "Descriptor tree contains a cycle";
             return false;
         }
     }
     if (!node_kind_valid(desc->kind)) {
         context->error = UI_VIEW_ERROR_INVALID_KIND;
+        context->detail = "Node kind is not supported";
         return false;
     }
     if (desc->key && !desc->key[0]) {
         context->error = UI_VIEW_ERROR_INVALID_ARGUMENT;
+        context->detail = "Node key is empty";
         return false;
     }
     if (desc->child_count && !desc->children) {
         context->error = UI_VIEW_ERROR_INVALID_CHILDREN;
+        context->detail = "Child count is set but children is NULL";
         return false;
     }
     if (!node_has_children(desc->kind) && desc->child_count) {
         context->error = UI_VIEW_ERROR_INVALID_CHILDREN;
+        context->detail = "Node kind does not accept children";
         return false;
     }
     if (desc->kind == UI_NODE_SCROLLVIEW && desc->child_count > 1) {
         context->error = UI_VIEW_ERROR_INVALID_CHILDREN;
+        context->detail = "Scrollview accepts at most one child";
         return false;
     }
-    if (!node_props_valid(desc, &context->error))
+    if (!node_props_valid(desc, &context->error, &context->detail))
         return false;
 
     if (desc->key) {
@@ -195,6 +224,7 @@ static bool validate_node(struct validate_context *context,
             const char *key = context->view->nodes[i].desc->key;
             if (key && !strcmp(key, desc->key)) {
                 context->error = UI_VIEW_ERROR_DUPLICATE_KEY;
+                context->detail = "Node key occurs more than once";
                 return false;
             }
         }
@@ -203,6 +233,7 @@ static bool validate_node(struct validate_context *context,
     size_t index;
     if (!append_node(context->view, desc, parent, &index)) {
         context->error = UI_VIEW_ERROR_OUT_OF_MEMORY;
+        context->detail = "Cannot allocate descriptor list";
         return false;
     }
 
@@ -412,6 +443,7 @@ static bool initialize_node(struct ui_view_node *node,
 
     ui_widget_set_style_identity(node->widget, node->class_name,
                                  node->id_name, node->tag_name);
+    ui_widget_set_debug_key(node->widget, node->key);
     ui_widget_set_action_handler(node->widget, desc->on_action,
                                  desc->action_userdata);
     ui_widget_set_event_handler(node->widget, desc->on_event,
@@ -419,30 +451,50 @@ static bool initialize_node(struct ui_view_node *node,
     return true;
 }
 
-static bool validate_overlays(struct ui_view *view, enum ui_view_error *error)
+static bool validate_overlays(struct ui_view *view, enum ui_view_error *error,
+                              const struct ui_node_desc **failed_node,
+                              const char **detail)
 {
     for (size_t i = 0; i < view->count; i++) {
         struct ui_view_node *node = &view->nodes[i];
         if (node->kind != UI_NODE_DROPDOWN)
             continue;
+        *failed_node = node->desc;
         const char *key = node->desc->props.dropdown.overlay_key;
-        struct ui_view_node *overlay = find_descriptor_node(view, key);
+        struct ui_view_node *overlay = NULL;
+        if (key) {
+            overlay = find_descriptor_node(view, key);
+        } else {
+            size_t parent = node->parent;
+            while (parent != SIZE_MAX) {
+                if (view->nodes[parent].kind == UI_NODE_STACK) {
+                    overlay = &view->nodes[parent];
+                    break;
+                }
+                parent = view->nodes[parent].parent;
+            }
+        }
         if (!overlay) {
             *error = UI_VIEW_ERROR_MISSING_OVERLAY;
+            *detail = key ? "Dropdown overlay key was not found"
+                          : "Dropdown has no ancestor stack";
             return false;
         }
         if (overlay->kind != UI_NODE_STACK) {
             *error = UI_VIEW_ERROR_INVALID_OVERLAY;
+            *detail = "Dropdown overlay must be a stack";
             return false;
         }
         size_t ancestor = (size_t)(overlay - view->nodes);
         while (ancestor != SIZE_MAX) {
             if (ancestor == i) {
                 *error = UI_VIEW_ERROR_INVALID_OVERLAY;
+                *detail = "Dropdown overlay cannot be a descendant";
                 return false;
             }
             ancestor = view->nodes[ancestor].parent;
         }
+        node->overlay = (size_t)(overlay - view->nodes);
     }
     return true;
 }
@@ -470,43 +522,75 @@ void ui_view_destroy(struct ui_view *view)
     free(view);
 }
 
-struct ui_view *ui_view_mount(const struct ui_node_desc *root,
-                              enum ui_view_error *error)
+const char *ui_view_error_message(enum ui_view_error error)
 {
-    if (error)
-        *error = UI_VIEW_ERROR_NONE;
+    switch (error) {
+    case UI_VIEW_ERROR_NONE: return "No error";
+    case UI_VIEW_ERROR_INVALID_ARGUMENT: return "Invalid argument or property";
+    case UI_VIEW_ERROR_INVALID_KIND: return "Invalid node kind";
+    case UI_VIEW_ERROR_INVALID_CHILDREN: return "Invalid children";
+    case UI_VIEW_ERROR_DUPLICATE_KEY: return "Duplicate key";
+    case UI_VIEW_ERROR_MISSING_OVERLAY: return "Dropdown needs an overlay stack";
+    case UI_VIEW_ERROR_INVALID_OVERLAY: return "Invalid dropdown overlay";
+    case UI_VIEW_ERROR_OUT_OF_MEMORY: return "Out of memory";
+    case UI_VIEW_ERROR_INIT_FAILED: return "Widget initialization failed";
+    }
+    return "Unknown error";
+}
+
+struct ui_view *ui_view_mount_ex(const struct ui_node_desc *root,
+                                 struct ui_view_diagnostic *diagnostic)
+{
+    if (diagnostic)
+        *diagnostic = (struct ui_view_diagnostic){0};
     if (!root) {
-        if (error)
-            *error = UI_VIEW_ERROR_INVALID_ARGUMENT;
+        if (diagnostic)
+            diagnostic->error = UI_VIEW_ERROR_INVALID_ARGUMENT;
+        if (diagnostic)
+            diagnostic->detail = "Root descriptor is NULL";
         return NULL;
     }
 
     struct ui_view *view = calloc(1, sizeof(*view));
     if (!view) {
-        if (error)
-            *error = UI_VIEW_ERROR_OUT_OF_MEMORY;
+        if (diagnostic) {
+            diagnostic->error = UI_VIEW_ERROR_OUT_OF_MEMORY;
+            diagnostic->node = root;
+            diagnostic->detail = "Cannot allocate view";
+        }
         return NULL;
     }
 
     struct validate_context context = { .view = view };
     if (!validate_node(&context, root, SIZE_MAX, 0)) {
-        if (error)
-            *error = context.error;
+        if (diagnostic) {
+            diagnostic->error = context.error;
+            diagnostic->node = context.failed_node;
+            diagnostic->detail = context.detail;
+        }
         ui_view_destroy(view);
         return NULL;
     }
     enum ui_view_error mount_error = UI_VIEW_ERROR_NONE;
-    if (!validate_overlays(view, &mount_error)) {
-        if (error)
-            *error = mount_error;
+    const struct ui_node_desc *failed_node = NULL;
+    const char *detail = NULL;
+    if (!validate_overlays(view, &mount_error, &failed_node, &detail)) {
+        if (diagnostic) {
+            diagnostic->error = mount_error;
+            diagnostic->node = failed_node;
+            diagnostic->detail = detail;
+        }
         ui_view_destroy(view);
         return NULL;
     }
 
     for (size_t i = 0; i < view->count; i++) {
         if (!initialize_node(&view->nodes[i], &mount_error)) {
-            if (error)
-                *error = mount_error;
+            if (diagnostic) {
+                diagnostic->error = mount_error;
+                diagnostic->node = view->nodes[i].desc;
+                diagnostic->detail = ui_view_error_message(mount_error);
+            }
             ui_view_destroy(view);
             return NULL;
         }
@@ -516,8 +600,11 @@ struct ui_view *ui_view_mount(const struct ui_node_desc *root,
         if (node->parent >= view->count ||
             !ui_widget_add_child(view->nodes[node->parent].widget,
                                  node->widget)) {
-            if (error)
-                *error = UI_VIEW_ERROR_INVALID_CHILDREN;
+            if (diagnostic) {
+                diagnostic->error = UI_VIEW_ERROR_INVALID_CHILDREN;
+                diagnostic->node = node->desc;
+                diagnostic->detail = "Cannot attach child to parent";
+            }
             ui_view_destroy(view);
             return NULL;
         }
@@ -525,15 +612,33 @@ struct ui_view *ui_view_mount(const struct ui_node_desc *root,
     for (size_t i = 0; i < view->count; i++) {
         struct ui_view_node *node = &view->nodes[i];
         if (node->kind == UI_NODE_DROPDOWN) {
-            struct ui_view_node *overlay = find_node(
-                view, node->desc->props.dropdown.overlay_key);
+            struct ui_view_node *overlay = &view->nodes[node->overlay];
             ui_dropdown_set_overlay(node->storage, overlay->widget);
         }
     }
 
     view->root = view->nodes[0].widget;
-    for (size_t i = 0; i < view->count; i++)
+    for (size_t i = 0; i < view->count; i++) {
+        struct ui_view_node *node = &view->nodes[i];
+        const struct ui_node_bindings *bind = &node->desc->bind;
+        if (bind->box) *bind->box = node->storage;
+        if (bind->label) *bind->label = node->storage;
+        if (bind->button) *bind->button = node->storage;
+        if (bind->input) *bind->input = node->storage;
+        if (bind->dropdown) *bind->dropdown = node->storage;
+        if (bind->scrollview) *bind->scrollview = node->storage;
         view->nodes[i].desc = NULL;
+    }
+    return view;
+}
+
+struct ui_view *ui_view_mount(const struct ui_node_desc *root,
+                              enum ui_view_error *error)
+{
+    struct ui_view_diagnostic diagnostic;
+    struct ui_view *view = ui_view_mount_ex(root, &diagnostic);
+    if (error)
+        *error = diagnostic.error;
     return view;
 }
 

@@ -73,6 +73,7 @@ static void selectors_resolve_test(void)
     probe_init(&a, R(0, 0, 50, 50), 0xFF111111);
     probe_init(&b, R(50, 0, 50, 50), 0xFF222222);
     ui_widget_set_style_identity(&b.widget, "chip", "second", NULL);
+    ui_widget_set_debug_key(&b.widget, "save");
     assert(ui_widget_add_child(&root.widget, &a.widget));
     assert(ui_widget_add_child(&root.widget, &b.widget));
 
@@ -81,6 +82,7 @@ static void selectors_resolve_test(void)
     assert(ui_debug_find(&root.widget, "/2") == NULL);
     assert(ui_debug_find(&root.widget, ".chip") == &b.widget);
     assert(ui_debug_find(&root.widget, "#second") == &b.widget);
+    assert(ui_debug_find(&root.widget, "@save") == &b.widget);
     assert(ui_debug_find(&root.widget, "probe") == &root.widget);
 
     char sel[32];
@@ -208,6 +210,7 @@ static void json_describes_the_tree_test(void)
     probe_init(&root, R(0, 0, 100, 100), 0xFF000000);
     probe_init(&child, R(10, 10, 20, 20), 0xFF00FF00);
     ui_widget_set_style_identity(&child.widget, "chip", NULL, NULL);
+    ui_widget_set_debug_key(&child.widget, "save");
     assert(ui_widget_add_child(&root.widget, &child.widget));
     static struct traced t;
     struct ui_debug_view view = build(&t, &root.widget);
@@ -218,6 +221,7 @@ static void json_describes_the_tree_test(void)
     assert(tree);
     assert(strstr(tree, "\"path\":\"/0\""));
     assert(strstr(tree, "\"class\":\"chip\""));
+    assert(strstr(tree, "\"key\":\"save\""));
     assert(strstr(tree, "\"bounds\":[10,10,20,20]"));
     free(tree);
 

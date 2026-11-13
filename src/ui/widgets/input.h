@@ -45,7 +45,13 @@ const char *ui_input_text(const struct ui_input *in);
 int ui_input_caret(const struct ui_input *in);
 bool ui_input_selection(const struct ui_input *in, int *start, int *end);
 
+/* Replace the text and send UI_ACTION_CHANGE.
+ * Clear undo history and selection. Move the caret to the end.
+ * Remove control characters and limit text to UI_INPUT_CAP - 1 bytes.
+ * Pass NULL to set an empty string. */
 void ui_input_set_text(struct ui_input *in, const char *utf8);
+/* Replace the text with the same rules, but do not send an action. */
+void ui_input_set_text_silent(struct ui_input *in, const char *utf8);
 void ui_input_set_placeholder(struct ui_input *in, const char *utf8);
 void ui_input_set_action_id(struct ui_input *in, int id);
 void ui_input_select_all(struct ui_input *in);

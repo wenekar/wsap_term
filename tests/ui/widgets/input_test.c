@@ -112,6 +112,29 @@ static void insert_at_caret_test(void)
     teardown(&f);
 }
 
+static void programmatic_text_without_action_test(void)
+{
+    struct fixture f;
+    setup(&f, "old");
+    assert(ch(&f, '!', 0));
+    assert(f.changes == 1);
+    ui_surface_take_frame_request(&f.surface);
+
+    ui_input_set_text_silent(&f.in, "new");
+    assert(!strcmp(text(&f), "new"));
+    assert(ui_input_caret(&f.in) == 3);
+    assert(f.changes == 1);
+    assert(ui_surface_frame_pending(&f.surface));
+    assert(!ui_input_can_command(&f.in, UI_EDIT_UNDO));
+
+    assert(ch(&f, '!', 0));
+    assert(!strcmp(text(&f), "new!"));
+    assert(f.changes == 2);
+    ui_input_set_text(&f.in, "legacy");
+    assert(f.changes == 3);
+    teardown(&f);
+}
+
 static void backspace_delete_test(void)
 {
     struct fixture f;
@@ -593,6 +616,7 @@ static void edit_requests_frame_test(void)
 
 int main(void)
 {
+    programmatic_text_without_action_test();
     edit_requests_frame_test();
     copy_shortcut_test();
     mac_editing_test();
