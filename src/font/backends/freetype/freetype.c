@@ -21,6 +21,9 @@ struct font_handle {
 char **font_list_families(size_t *count)
 {
     *count = 0;
+    if (!fc_pin())
+        return NULL;
+    fc_query_lock();
     FcPattern *pattern = FcPatternCreate();
     FcObjectSet *objects = FcObjectSetBuild(FC_FAMILY, FC_SPACING, NULL);
     FcFontSet *fonts = pattern && objects ? FcFontList(NULL, pattern, objects) : NULL;
@@ -44,6 +47,8 @@ char **font_list_families(size_t *count)
     if (fonts) FcFontSetDestroy(fonts);
     if (objects) FcObjectSetDestroy(objects);
     if (pattern) FcPatternDestroy(pattern);
+    fc_query_unlock();
+    fc_unpin();
     if (!ok) {
         for (size_t i = 0; i < *count; i++) free(names[i]);
         free(names);
@@ -93,23 +98,17 @@ static bool ft_init(void)
         return true;
     if (!ft_new_library())
         return false;
-    if (!FcInit()) {
+    if (!fc_pin()) {
         FT_Done_FreeType(ft_lib);
         ft_lib = NULL;
         return false;
     }
-#ifdef WSAP_DEV_FONTS_DIR
-    FcConfigAppFontAddDir(NULL, (const FcChar8 *)WSAP_DEV_FONTS_DIR);
-#endif
-#ifdef WSAP_DATADIR
-    FcConfigAppFontAddDir(NULL, (const FcChar8 *)(WSAP_DATADIR "/wsap_term/fonts"));
-#endif
-    fc_ready = true;
     if (font_hinting_has_auto_axis())
         ft_apply_hinting();
 
     ft_applied_px = FONT_PT_TO_PX(font_configured_size());
     ft_reload_family();
+    fc_unpin();
     return true;
 }
 
@@ -117,6 +116,7 @@ void ft_reload_family(void)
 {
     if (!ft_lib)
         return;
+    bool pinned = fc_pin();
     shape_thread_reset();
     fallback_destroy();
     release_all_faces();
@@ -137,17 +137,20 @@ void ft_reload_family(void)
     build_cfg_usable();
     synced_epoch = atomic_fetch_add_explicit(&ft_sync_epoch, 1,
                                              memory_order_release) + 1;
+    if (pinned)
+        fc_unpin();
 }
 
 static void ft_destroy(void)
 {
-    if (!ft_lib && !shape_buffer_live() && !num_faces && !fallback_ready())
+    if (!ft_lib && !shape_buffer_live() && !num_faces && !fallback_ready() && !fc_ready)
         return;
     shape_thread_reset();
     face_stamp = 0;
     fallback_destroy();
     fallback_coverage_reset();
     release_all_faces();
+    faces_release_table();
     face_cfg_specs_destroy();
     configured_faces = 0;
 
@@ -155,8 +158,7 @@ static void ft_destroy(void)
         FT_Done_FreeType(ft_lib);
         ft_lib = NULL;
     }
-    FcFini();
-    fc_ready = false;
+    fc_fini();
     synced_epoch = 0;
     atomic_fetch_add_explicit(&ft_sync_epoch, 1, memory_order_relaxed);
 }
@@ -184,6 +186,7 @@ static bool ft_thread_attach(void)
 static void ft_thread_detach(void)
 {
     release_all_faces();
+    faces_release_table();
     shape_thread_reset();
     face_stamp = 0;
     fallback_thread_reset();

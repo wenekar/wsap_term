@@ -9,7 +9,7 @@
 
 static __thread hb_buffer_t *shape_buffer;
 
-#define RASTER_CACHE_SIZE 16384
+#define RASTER_CACHE_INIT 1024u
 
 struct raster_entry {
     FT_BitmapGlyph glyph;
@@ -28,19 +28,82 @@ _Static_assert(sizeof(struct raster_entry) == 32, "raster_entry grew");
 _Static_assert(MAX_FACES <= UINT16_MAX + 1, "face slots fit in 16 bits");
 
 static __thread struct raster_entry *raster_cache;
-
+static __thread unsigned raster_cap;
+static __thread unsigned raster_count;
 static __thread unsigned fit_pass;
+
+static unsigned raster_hash(int slot, uint32_t gid, unsigned style, unsigned cap)
+{
+    uint64_t h = (uint64_t)gid * UINT64_C(0x9e3779b97f4a7c15);
+    h ^= (uint64_t)(slot + 1) * UINT64_C(0xbf58476d1ce4e5b9);
+    h ^= (uint64_t)(style + 1) * UINT64_C(0x94d049bb133111eb);
+    h ^= h >> 29;
+    return (unsigned)h & (cap - 1);
+}
+
+/* Rehashes thread-local raster cache into a power-of-two table of size `new_cap`. */
+static bool raster_cache_rehash(unsigned new_cap)
+{
+    struct raster_entry *next = calloc(new_cap, sizeof(*next));
+    if (!next)
+        return false;
+    unsigned mask = new_cap - 1;
+    unsigned live = 0;
+    for (unsigned i = 0; i < raster_cap; i++) {
+        struct raster_entry *src = &raster_cache[i];
+        if (!src->valid) {
+            if (src->glyph)
+                FT_Done_Glyph((FT_Glyph)src->glyph);
+            continue;
+        }
+        unsigned key = (unsigned)src->style ^ ((unsigned)src->px << 4);
+        unsigned idx = raster_hash(src->slot, src->gid, key, new_cap);
+        while (next[idx].valid)
+            idx = (idx + 1) & mask;
+        next[idx] = *src;
+        live++;
+    }
+    free(raster_cache);
+    raster_cache = next;
+    raster_cap = new_cap;
+    raster_count = live;
+    return true;
+}
+
+/* Ensures `raster_cache` can hold `extra` new glyphs at <= 70% load. */
+static bool raster_cache_ensure(unsigned extra)
+{
+    if (!raster_cache) {
+        unsigned cap = RASTER_CACHE_INIT;
+        while ((uint64_t)extra * 10 > (uint64_t)cap * 7 && cap <= UINT_MAX / 2)
+            cap *= 2;
+        raster_cache = calloc(cap, sizeof(*raster_cache));
+        if (!raster_cache)
+            return false;
+        raster_cap = cap;
+        raster_count = 0;
+        return true;
+    }
+    unsigned new_cap = raster_cap;
+    while ((uint64_t)(raster_count + extra) * 10 > (uint64_t)new_cap * 7 &&
+           new_cap <= UINT_MAX / 2)
+        new_cap *= 2;
+    if (new_cap == raster_cap)
+        return true;
+    return raster_cache_rehash(new_cap);
+}
 
 void raster_cache_clear(void)
 {
-    if (raster_cache) {
-        for (int i = 0; i < RASTER_CACHE_SIZE; i++) {
-            if (raster_cache[i].glyph)
-                FT_Done_Glyph((FT_Glyph)raster_cache[i].glyph);
-            raster_cache[i].valid = false;
-            raster_cache[i].glyph = NULL;
-        }
+    if (!raster_cache)
+        return;
+    for (unsigned i = 0; i < raster_cap; i++) {
+        if (raster_cache[i].glyph)
+            FT_Done_Glyph((FT_Glyph)raster_cache[i].glyph);
+        raster_cache[i].valid = false;
+        raster_cache[i].glyph = NULL;
     }
+    raster_count = 0;
 }
 
 bool shape_buffer_live(void)
@@ -57,15 +120,8 @@ void shape_thread_reset(void)
     raster_cache_clear();
     free(raster_cache);
     raster_cache = NULL;
-}
-
-static unsigned raster_hash(int slot, uint32_t gid, unsigned style)
-{
-    uint64_t h = (uint64_t)gid * UINT64_C(0x9e3779b97f4a7c15);
-    h ^= (uint64_t)(slot + 1) * UINT64_C(0xbf58476d1ce4e5b9);
-    h ^= (uint64_t)(style + 1) * UINT64_C(0x94d049bb133111eb);
-    h ^= h >> 29;
-    return (unsigned)h & (RASTER_CACHE_SIZE - 1);
+    raster_cap = 0;
+    raster_count = 0;
 }
 
 enum { RASTER_OBLIQUE = 4, RASTER_EMBOLDEN = 8 };
@@ -77,20 +133,18 @@ static const struct raster_entry *raster_fetch(int slot, enum font_variant varia
 {
     if (slot < 0 || slot >= num_faces || (unsigned)variant >= FONT_VARIANT_COUNT || !gid)
         return NULL;
-    if (!raster_cache) {
-        raster_cache = calloc(RASTER_CACHE_SIZE, sizeof(*raster_cache));
-        if (!raster_cache)
-            return NULL;
-    }
+    if (!raster_cache && !raster_cache_ensure(1))
+        return NULL;
     FT_Face face = faces[slot].styles[variant];
     if (!face)
         return NULL;
 
     unsigned bits = (unsigned)variant | (oblique ? RASTER_OBLIQUE : 0) |
                     (embolden ? RASTER_EMBOLDEN : 0);
-    unsigned idx = raster_hash(slot, gid, bits ^ ((unsigned)ft_applied_px << 4));
+    unsigned mask = raster_cap - 1;
+    unsigned idx = raster_hash(slot, gid, bits ^ ((unsigned)ft_applied_px << 4), raster_cap);
     struct raster_entry *e = &raster_cache[idx];
-    for (unsigned p = 0; p < RASTER_CACHE_SIZE; p++) {
+    for (unsigned p = 0; p < raster_cap; p++) {
         if (e->valid && e->slot == slot &&
             e->slot_reuse == faces[slot].slot_reuse &&
             e->gid == gid && e->style == bits && e->px == ft_applied_px &&
@@ -100,7 +154,7 @@ static const struct raster_entry *raster_fetch(int slot, enum font_variant varia
         }
         if (!e->valid || e->fit_pass != fit_pass)
             break;
-        idx = (idx + 1) & (RASTER_CACHE_SIZE - 1);
+        idx = (idx + 1) & mask;
         e = &raster_cache[idx];
     }
     if (e->valid && e->fit_pass == fit_pass)
@@ -145,6 +199,8 @@ static const struct raster_entry *raster_fetch(int slot, enum font_variant varia
         return NULL;
     }
 
+    if (!e->valid)
+        raster_count++;
     if (e->glyph)
         FT_Done_Glyph((FT_Glyph)e->glyph);
     e->glyph = (FT_BitmapGlyph)owned;
@@ -287,6 +343,8 @@ static bool collect_run_ink(const struct shaped_run *run, bool by_cluster,
                             struct run_ink *out)
 {
     int64_t pen_x = 0, pen_y = 0, advance = 0;
+    if (!raster_cache_ensure((unsigned)run->count))
+        return false;
     fit_pass++;
     for (int i = 0; i < run->count; i++) {
         const struct shaped_glyph *sg = &run->glyphs[i];

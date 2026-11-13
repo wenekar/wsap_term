@@ -191,15 +191,33 @@ static struct window *open_window(void *ud, app_tab_id tab, const char *cwd,
     return app_open_terminal(ud, tab, cwd, size);
 }
 
+static void *app_acquire_device(void *ud)
+{
+    struct app *a = ud;
+    return renderer_device(a->renderer);
+}
+
+static void app_drop_unused_gpu(struct app *a, const struct window *w)
+{
+    if (!w || window_has_gpu(w))
+        return;
+    for (int i = 0; i < a->host.count; i++)
+        if (window_has_gpu(a->host.windows[i]))
+            return;
+    renderer_drop_gpu(a->renderer);
+}
+
 struct window *app_open_terminal(struct app *a, app_tab_id tab,
                                  const char *cwd, struct vector2i size)
 {
     struct window *w = window_open(&a->host, &(struct window_spec){
-        .size = size, .graphics_device = renderer_device(a->renderer),
+        .size = size,
+        .acquire_device = app_acquire_device, .device_ud = a,
         .compose = app_compose_frame, .compose_ud = a,
     });
     if (!w)
         return NULL;
+    app_drop_unused_gpu(a, w);
     if (!app_tabs_mount(w, &(struct app_tabs_spec){
             .config = &a->config.terminal, .cwd = cwd,
             .model = &a->tabs, .tab = tab,
@@ -236,9 +254,11 @@ static void open_settings(struct app *a)
     }
     w = window_open(&a->host, &(struct window_spec){
         .title = "Settings", .size = { .x = 980, .y = 740 },
-        .windowed = true, .graphics_device = renderer_device(a->renderer),
+        .windowed = true,
+        .acquire_device = app_acquire_device, .device_ud = a,
         .compose = app_compose_frame, .compose_ud = a,
     });
+    app_drop_unused_gpu(a, w);
     if (w && !settings_mount(w, &(struct settings_host){
             .config = &a->config, .config_path = a->config_path,
             .look = a->look, .apply = settings_apply, .save = settings_save,

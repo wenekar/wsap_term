@@ -72,7 +72,7 @@ ui_lib = static_library(
     ui_src,
     link_with: [base_lib, paint_lib],
     include_directories: inc,
-    dependencies: [m_dep, yyjson_dep, icu_dep] + [term_dep],
+    dependencies: [m_dep, yyjson_dep] + [term_dep],
     install: false,
 )
 

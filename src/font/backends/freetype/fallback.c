@@ -25,7 +25,9 @@ struct fallback_candidate {
 
 static FcFontSet *fallback_fonts;
 
+static pthread_mutex_t fallback_mu = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic bool fallback_ready_flag;
+static bool fallback_fc_pinned;
 
 static struct fallback_candidate *fallback_candidates;
 
@@ -186,8 +188,11 @@ bool fallback_ready(void)
     return atomic_load_explicit(&fallback_ready_flag, memory_order_acquire);
 }
 
-void fallback_destroy(void)
+static void fallback_destroy_locked(void)
 {
+    bool fc_active = embedded_charset != NULL || fallback_fonts != NULL;
+    if (fc_active)
+        fc_query_lock();
     if (embedded_charset) {
         FcCharSetDestroy(embedded_charset);
         embedded_charset = NULL;
@@ -203,6 +208,19 @@ void fallback_destroy(void)
     if (fallback_fonts) FcFontSetDestroy(fallback_fonts);
     fallback_fonts = NULL;
     fallback_total = 0;
+    if (fc_active)
+        fc_query_unlock();
+    if (fallback_fc_pinned) {
+        fallback_fc_pinned = false;
+        fc_unpin();
+    }
+}
+
+void fallback_destroy(void)
+{
+    pthread_mutex_lock(&fallback_mu);
+    fallback_destroy_locked();
+    pthread_mutex_unlock(&fallback_mu);
 }
 
 void fallback_thread_reset(void)
@@ -246,9 +264,14 @@ static bool init_embedded_charset(void)
 
 static bool fallback_init_locked(void)
 {
+    if (!fc_pin())
+        return false;
+    fallback_fc_pinned = true;
+    fc_query_lock();
+
     FcPattern *pat = FcPatternCreate();
     if (!pat)
-        return false;
+        goto fail;
     FcPatternAddString(pat, FC_FAMILY, (const FcChar8 *)"monospace");
     FcConfigSubstitute(NULL, pat, FcMatchPattern);
     FcDefaultSubstitute(pat);
@@ -256,12 +279,8 @@ static bool fallback_init_locked(void)
     fallback_fonts = FcFontSort(NULL, pat, FcFalse, NULL, &result);
     FcPatternDestroy(pat);
 
-    if (!fallback_fonts || result != FcResultMatch) {
-        if (fallback_fonts)
-            FcFontSetDestroy(fallback_fonts);
-        fallback_fonts = NULL;
-        return false;
-    }
+    if (!fallback_fonts || result != FcResultMatch)
+        goto fail;
     int nfont = fallback_fonts->nfont;
     int embedded = init_embedded_charset() ? 1 : 0;
     fallback_total = nfont + embedded;
@@ -308,19 +327,20 @@ static bool fallback_init_locked(void)
             }
         }
     }
+    fc_query_unlock();
     atomic_store_explicit(&fallback_ready_flag, true, memory_order_release);
     return true;
 fail:
-    fallback_destroy();
+    fc_query_unlock();
+    fallback_destroy_locked();
     return false;
 }
 
 bool fallback_init(void)
 {
-    static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
-    pthread_mutex_lock(&mu);
+    pthread_mutex_lock(&fallback_mu);
     bool ok = fallback_ready() ? true : fallback_init_locked();
-    pthread_mutex_unlock(&mu);
+    pthread_mutex_unlock(&fallback_mu);
     return ok;
 }
 

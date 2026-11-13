@@ -1,3 +1,4 @@
+#define VK_NO_PROTOTYPES
 #include "ui/yasl/metal.h"
 
 #include <errno.h>
@@ -23,8 +24,6 @@ struct window_vulkan {
     bool has_size;
 };
 
-static bool vulkan_loader_initialized;
-
 /*
  * True when the device of the renderer can show images on the surface. A
  * display server without buffer sharing gives a surface that takes no
@@ -33,13 +32,23 @@ static bool vulkan_loader_initialized;
  */
 static bool surface_presentable(const struct vulkan_device *dev, VkSurfaceKHR surface)
 {
+    if (!dev->get_instance_proc_addr)
+        return false;
+    PFN_vkGetPhysicalDeviceSurfaceSupportKHR get_support =
+        (PFN_vkGetPhysicalDeviceSurfaceSupportKHR)dev->get_instance_proc_addr(
+            dev->instance, "vkGetPhysicalDeviceSurfaceSupportKHR");
+    PFN_vkGetPhysicalDeviceSurfaceFormatsKHR get_formats =
+        (PFN_vkGetPhysicalDeviceSurfaceFormatsKHR)dev->get_instance_proc_addr(
+            dev->instance, "vkGetPhysicalDeviceSurfaceFormatsKHR");
+    if (!get_support || !get_formats)
+        return false;
     VkBool32 supported = VK_FALSE;
     uint32_t formats = 0;
-    return vkGetPhysicalDeviceSurfaceSupportKHR(dev->physical_device, dev->queue_family,
-                                                surface, &supported) == VK_SUCCESS &&
+    return get_support(dev->physical_device, dev->queue_family,
+                       surface, &supported) == VK_SUCCESS &&
            supported &&
-           vkGetPhysicalDeviceSurfaceFormatsKHR(dev->physical_device, surface, &formats,
-                                                NULL) == VK_SUCCESS &&
+           get_formats(dev->physical_device, surface, &formats,
+                       NULL) == VK_SUCCESS &&
            formats > 0;
 }
 
@@ -48,14 +57,11 @@ void *window_metal_attach(struct yasl_surface *s, void *device)
     if (!s || !device)
         return NULL;
     const struct vulkan_device *vdev = device;
-    if (!vdev->instance)
+    if (!vdev->instance || !vdev->get_instance_proc_addr)
         return NULL;
-    if (!vulkan_loader_initialized) {
-        struct yasl_vulkan_requirements reqs = {0};
-        if (yasl_vulkan_init(vkGetInstanceProcAddr, &reqs) != 0 && errno != EBUSY)
-            return NULL;
-        vulkan_loader_initialized = true;
-    }
+    struct yasl_vulkan_requirements reqs = {0};
+    if (yasl_vulkan_init(vdev->get_instance_proc_addr, &reqs) != 0 && errno != EBUSY)
+        return NULL;
     VkSurfaceKHR vk_surface = VK_NULL_HANDLE;
     VkResult vr = yasl_vulkan_create_surface(s, vdev->instance, NULL, &vk_surface);
     if (vr != VK_SUCCESS)

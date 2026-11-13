@@ -241,6 +241,7 @@ void window_accessibility_create(struct window *window)
         goto fail;
 
     accessibility->active = true;
+    ui_accessibility_set_loop(window_host(window)->loop);
     if (!ui_accessibility_provider_attach(
             &accessibility->provider, ops,
             ui_accessibility_native_handle(surface),
@@ -301,8 +302,10 @@ void window_accessibility_menu_popup_open(struct window *window, int depth)
         &accessibility->popups[depth];
     const struct ui_accessibility_provider_ops *ops =
         ui_accessibility_provider_ops();
-    if (!popup->surface || !ops ||
-        !ui_accessibility_provider_attach(
+    if (!popup->surface || !ops)
+        return;
+    ui_accessibility_set_loop(window_host(window)->loop);
+    if (!ui_accessibility_provider_attach(
             &popup_accessibility->provider, ops,
             ui_accessibility_native_handle(popup->surface), action_sink,
             accessibility))

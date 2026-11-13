@@ -168,6 +168,7 @@ struct gpu_atlas {
     uint32_t cap_uploads;
     struct gpu_atlas_entry *map;
     struct gpu_shelf *shelves;
+    uint32_t map_cap;
     uint32_t count;
     int n_shelves;
     int next_y;

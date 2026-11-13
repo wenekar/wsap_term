@@ -314,6 +314,8 @@ static void test_raster_invariants(void)
 
 static bool font_covers(uint32_t cp)
 {
+    if (!FcInit())
+        return false;
     FcPattern *pat = FcPatternCreate();
     FcCharSet *cs = FcCharSetCreate();
     bool covered = false;
@@ -336,6 +338,7 @@ static bool font_covers(uint32_t cp)
         FcCharSetDestroy(cs);
     if (pat)
         FcPatternDestroy(pat);
+    FcFini();
     return covered;
 }
 
@@ -1479,6 +1482,8 @@ static const char *find_cardless_font(void)
 {
     static char path[PATH_MAX];
     path[0] = 0;
+    if (!FcInit())
+        return NULL;
     FcPattern *pat = FcPatternCreate();
     FcObjectSet *os = FcObjectSetBuild(FC_FILE, FC_CHARSET, NULL);
     FcFontSet *fs = pat && os ? FcFontList(NULL, pat, os) : NULL;
@@ -1494,6 +1499,7 @@ static const char *find_cardless_font(void)
     if (fs) FcFontSetDestroy(fs);
     if (os) FcObjectSetDestroy(os);
     if (pat) FcPatternDestroy(pat);
+    FcFini();
     return path[0] ? path : NULL;
 }
 
@@ -1569,8 +1575,12 @@ static bool each_regular_font(bool (*fn)(const char *file, const char *family,
                               void *ctx)
 {
     FT_Library lib;
-    if (FT_Init_FreeType(&lib))
+    if (!FcInit())
         return false;
+    if (FT_Init_FreeType(&lib)) {
+        FcFini();
+        return false;
+    }
     FcPattern *pat = FcPatternCreate();
     FcObjectSet *os = FcObjectSetBuild(FC_FILE, FC_FAMILY, FC_WEIGHT,
                                        FC_SLANT, FC_CHARSET, NULL);
@@ -1607,6 +1617,7 @@ static bool each_regular_font(bool (*fn)(const char *file, const char *family,
     if (pat)
         FcPatternDestroy(pat);
     FT_Done_FreeType(lib);
+    FcFini();
     return found;
 }
 
@@ -1771,9 +1782,13 @@ static bool copy_file(const char *src, const char *dst)
 static const char *find_color_emoji_font(void)
 {
     static char path[PATH_MAX];
-    FcPattern *pat = FcNameParse((const FcChar8 *)"Noto Color Emoji");
-    if (!pat)
+    if (!FcInit())
         return NULL;
+    FcPattern *pat = FcNameParse((const FcChar8 *)"Noto Color Emoji");
+    if (!pat) {
+        FcFini();
+        return NULL;
+    }
     FcConfigSubstitute(NULL, pat, FcMatchPattern);
     FcDefaultSubstitute(pat);
     FcResult result;
@@ -1787,6 +1802,7 @@ static const char *find_color_emoji_font(void)
             snprintf(path, sizeof(path), "%s", (const char *)file);
         FcPatternDestroy(match);
     }
+    FcFini();
     return path[0] ? path : NULL;
 }
 

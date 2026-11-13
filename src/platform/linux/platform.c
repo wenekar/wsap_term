@@ -3,6 +3,7 @@
 #include "platform/platform.h"
 #include "util/proc.h"
 #include "util/str.h"
+#include "yasl/yasl.h"
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -10,7 +11,6 @@
 #include <string.h>
 #include <sys/eventfd.h>
 #include <unistd.h>
-#include <gio/gio.h>
 #include <locale.h>
 
 int platform_eventfd(int *wr_fd)
@@ -127,24 +127,7 @@ void platform_open_url(const char *url)
 
 void platform_notify(const char *title, const char *body)
 {
-    GError *error = NULL;
-    GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
-    if (!bus) {
-        g_clear_error(&error);
-        return;
-    }
-    GVariantBuilder hints;
-    g_variant_builder_init(&hints, G_VARIANT_TYPE("a{sv}"));
-    g_variant_builder_add(&hints, "{sv}", "desktop-entry",
-                          g_variant_new_string("wsap_term"));
-    g_dbus_connection_call(bus, "org.freedesktop.Notifications",
-        "/org/freedesktop/Notifications", "org.freedesktop.Notifications",
-        "Notify",
-        g_variant_new("(susss@as@a{sv}i)", "wsap_term", 0u, "",
-            title ? title : "", body ? body : "",
-            g_variant_new_strv(NULL, 0), g_variant_builder_end(&hints), -1),
-        G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL, NULL);
-    g_object_unref(bus);
+    (void)yasl_notify(title ? title : "", body ? body : "");
 }
 
 void platform_bell(void)

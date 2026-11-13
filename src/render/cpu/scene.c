@@ -12,6 +12,7 @@
 #include "util/geom.h"
 
 #include <limits.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,7 +56,34 @@ static const struct render_kernels *scene_kernels(void)
     return k;
 }
 
-static __thread struct pair_lut scene_luts;
+static _Thread_local struct pair_lut *scene_luts_tls;
+static pthread_key_t scene_luts_key;
+static pthread_once_t scene_luts_once = PTHREAD_ONCE_INIT;
+static bool scene_luts_key_ok;
+
+static void scene_luts_key_init(void)
+{
+    scene_luts_key_ok = pthread_key_create(&scene_luts_key, free) == 0;
+}
+
+/* Allocates one pair LUT table per thread on first glyph span blend. */
+static struct pair_lut *scene_luts_get(void)
+{
+    if (scene_luts_tls)
+        return scene_luts_tls;
+    pthread_once(&scene_luts_once, scene_luts_key_init);
+    if (!scene_luts_key_ok)
+        return NULL;
+    struct pair_lut *luts = calloc(1, sizeof(*luts));
+    if (!luts)
+        return NULL;
+    if (pthread_setspecific(scene_luts_key, luts) != 0) {
+        free(luts);
+        return NULL;
+    }
+    scene_luts_tls = luts;
+    return luts;
+}
 
 /* ---- Rects ----------------------------------------------------------- */
 
@@ -234,7 +262,8 @@ static void blend_alpha_span(const struct render_kernels *k, uint32_t *dst,
                              const uint8_t *cov, int n, uint32_t fg)
 {
     if (uniform_opaque(dst, n)) {
-        const uint32_t *lut = pair_lut_alpha(&scene_luts, fg, dst[0], false);
+        struct pair_lut *luts = scene_luts_get();
+        const uint32_t *lut = luts ? pair_lut_alpha(luts, fg, dst[0], false) : NULL;
         if (lut) {
             k->compose_alpha_lut(dst, cov, n, lut);
             return;
@@ -248,7 +277,8 @@ static void blend_subpx_span(const struct render_kernels *k, uint32_t *dst,
 {
     if (uniform_opaque(dst, n)) {
         uint32_t bg = dst[0];
-        const struct subpx_lut *lut = pair_lut_subpx(&scene_luts, fg, bg, false);
+        struct pair_lut *luts = scene_luts_get();
+        const struct subpx_lut *lut = luts ? pair_lut_subpx(luts, fg, bg, false) : NULL;
         if (lut) {
             k->compose_subpx_lut(dst, cov, n, lut, bg);
             return;

@@ -456,11 +456,23 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
     });
     if (init != 0 && init != -EALREADY)
         goto fail;
+
+    bool wants_gpu = spec->graphics_device != NULL || spec->acquire_device != NULL;
+#if !defined(__APPLE__)
+    if (wants_gpu && !(yasl_get_features() & YASL_FEATURE_VULKAN))
+        wants_gpu = false;
+#endif
+    void *device = spec->graphics_device;
+    if (wants_gpu && !device && spec->acquire_device)
+        device = spec->acquire_device(spec->device_ud);
+    if (!wants_gpu)
+        device = NULL;
+
     struct yasl_surface_options options = {
         .title = w->title ? w->title : app_name(),
         .width = size.x,
         .height = size.y,
-        .type = spec->graphics_device ? YASL_SURFACE_NATIVE : YASL_SURFACE_CPU,
+        .type = device ? YASL_SURFACE_NATIVE : YASL_SURFACE_CPU,
         .userdata = w,
         .refresh = on_refresh,
         /* Vsync is on unless the configuration asks for tearing. The platform
@@ -471,7 +483,7 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
     w->unpaced = config->tearing;
     void *layer = NULL;
     if (w->surface && options.type == YASL_SURFACE_NATIVE &&
-        !(layer = window_metal_attach(w->surface, spec->graphics_device))) {
+        !(layer = window_metal_attach(w->surface, device))) {
         fprintf(stderr, "window: no GPU surface, drawing on the CPU: %s\n",
                 strerror(errno));
         yasl_surface_destroy(w->surface);
@@ -502,6 +514,14 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
 fail:
     window_destroy(w);
     return NULL;
+}
+
+bool window_has_gpu(const struct window *w)
+{
+    for (int i = 0; w && i < w->native_count; i++)
+        if (w->natives[i].metal_layer)
+            return true;
+    return false;
 }
 
 void window_compose_frame(struct window *w, struct window_frame *frame)
