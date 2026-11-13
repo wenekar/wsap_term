@@ -194,37 +194,11 @@ accesskit_dep = dependency(
     fallback: ['accesskit-c', 'accesskit_c_dep'],
     default_options: ['default_library=static'],
 )
-icu_uc_dep = dependency('icu-uc', required: false)
-icu_i18n_dep = dependency('icu-i18n', required: false)
-if icu_uc_dep.found() and icu_i18n_dep.found()
-    icu_dep = declare_dependency(dependencies: [icu_uc_dep, icu_i18n_dep])
-else
-    icu_dep = dependency('', required: false)
-endif
-if not icu_dep.found() and system == 'darwin'
-    brew = find_program('brew', native: true, required: false)
-    if brew.found()
-        icu_prefix = run_command(brew, '--prefix', 'icu4c', check: false)
-        if icu_prefix.returncode() == 0
-            icu_root = icu_prefix.stdout().strip()
-            icu_dep = declare_dependency(
-                include_directories: include_directories(icu_root / 'include'),
-                dependencies: [
-                    cc.find_library('icui18n', dirs: icu_root / 'lib'),
-                    cc.find_library('icuuc', dirs: icu_root / 'lib'),
-                ],
-            )
-        endif
-    endif
-endif
-if not icu_dep.found()
-    error('Install the ICU development package for Unicode text editing.')
-endif
 platform_deps = []
 if system == 'darwin'
     platform_deps += [dependency('appleframeworks', modules: ['AppKit', 'CoreFoundation', 'Foundation', 'QuartzCore', 'Metal', 'UserNotifications', 'CoreText', 'CoreGraphics'])]
 endif
-base_deps = [thread_dep, m_dep, yyjson_dep, icu_dep] + platform_deps
+base_deps = [thread_dep, m_dep, yyjson_dep] + platform_deps
 yasl_dep = dependency(
     'yasl',
     fallback: 'yasl',
@@ -261,7 +235,7 @@ if vulkan_opt != 'disabled' and system != 'darwin'
     glslc = find_program('glslc', native: true, required: vulkan_opt == 'enabled')
     if vulkan_dep.found() and glslc.found()
         has_vulkan = true
-        backend_deps += [vulkan_dep]
+        backend_deps += [vulkan_dep.partial_dependency(compile_args: true, includes: true), dl_dep]
     endif
 endif
 lib_deps = base_deps + font_deps + backend_deps

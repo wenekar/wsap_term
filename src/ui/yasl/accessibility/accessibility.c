@@ -2,6 +2,7 @@
 
 #include "ui/yasl/accessibility/accessibility.h"
 
+#include "ui/text_break.h"
 #include "ui/widget_impl.h"
 #include "util/grow.h"
 #include "wsap_vtcore/unicode/utf8.h"
@@ -21,8 +22,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
-#include <unicode/ubrk.h>
-#include <unicode/utext.h>
 
 #define RUN_CHARACTERS 255
 
@@ -186,19 +185,65 @@ static bool text_offset(const struct text_model *model, uint64_t owner,
     return false;
 }
 
-static UBreakIterator *text_iterator(UText *utext, const char *value,
-                                     size_t length, UBreakIteratorType type)
+struct build_grapheme_ctx {
+    struct text_model *model;
+    const struct text_model *previous;
+    const struct ui_accessibility_tree *snapshot;
+    uint64_t node_id;
+    const char *value;
+    size_t length;
+    struct text_run *run;
+    size_t ordinal;
+    bool ok;
+};
+
+static bool build_grapheme_cb(size_t start, size_t end, void *userdata)
 {
-    UErrorCode error = U_ZERO_ERROR;
-    utext_openUTF8(utext, value, (int64_t)length, &error);
-    UBreakIterator *iterator = ubrk_open(type, NULL, NULL, 0, &error);
-    if (U_SUCCESS(error))
-        ubrk_setUText(iterator, utext, &error);
-    if (U_FAILURE(error)) {
-        ubrk_close(iterator);
-        return NULL;
+    struct build_grapheme_ctx *ctx = userdata;
+    size_t off = start;
+    while (ctx->ok && off < end) {
+        size_t bytes = end - off;
+        /* AccessKit stores one character's byte count in a uint8_t. */
+        if (bytes > UINT8_MAX) {
+            uint32_t cp;
+            bytes = (size_t)wsap_vtcore_utf8_decode_one(ctx->value + off,
+                                                       ctx->length - off, &cp);
+        }
+        if (ctx->run->characters == RUN_CHARACTERS ||
+            (ctx->run->length &&
+             ctx->value[ctx->run->offset + ctx->run->length - 1] == '\n'))
+            ctx->run = new_run(ctx->model, ctx->previous, ctx->snapshot,
+                               ctx->node_id, ctx->ordinal++, off);
+        if (!ctx->run) {
+            ctx->ok = false;
+            return false;
+        }
+        ctx->run->lengths[ctx->run->characters++] = (uint8_t)bytes;
+        ctx->run->length += bytes;
+        off += bytes;
     }
-    return iterator;
+    return ctx->ok;
+}
+
+struct build_word_ctx {
+    struct text_model *model;
+    uint64_t node_id;
+};
+
+static bool build_word_cb(size_t start, size_t end, bool is_word, void *userdata)
+{
+    (void)end;
+    if (!is_word)
+        return true;
+    struct build_word_ctx *ctx = userdata;
+    accesskit_text_position pos = text_position(ctx->model, ctx->node_id, start);
+    for (int i = 0; i < ctx->model->count; i++) {
+        struct text_run *run = &ctx->model->runs[i];
+        if (run->id == pos.node && pos.character_index < RUN_CHARACTERS &&
+            run->word_count < RUN_CHARACTERS)
+            run->words[run->word_count++] = (uint8_t)pos.character_index;
+    }
+    return true;
 }
 
 static bool build_text(struct text_model *model,
@@ -207,69 +252,35 @@ static bool build_text(struct text_model *model,
                          const struct ui_accessibility_node *node)
 {
     const char *value = node->value ? node->value : "";
-    size_t length = strlen(value), ordinal = 0;
+    size_t length = strlen(value);
     if (length > INT_MAX)
         return false;
-    UText utext = UTEXT_INITIALIZER;
-    UBreakIterator *iterator = text_iterator(&utext, value, length, UBRK_CHARACTER);
-    if (!iterator) {
-        utext_close(&utext);
+    struct text_run *run = new_run(model, previous, snapshot, node->id, 0, 0);
+    if (!run)
         return false;
-    }
-    struct text_run *run = new_run(model, previous, snapshot, node->id, ordinal++, 0);
-    bool ok = run != NULL;
-    int32_t start = ubrk_first(iterator), end;
-    while (ok && (end = ubrk_next(iterator)) != UBRK_DONE) {
-        size_t off = (size_t)start;
-        while (ok && off < (size_t)end) {
-            size_t bytes = (size_t)end - off;
-            /* AccessKit stores one character's byte count in a uint8_t. */
-            if (bytes > UINT8_MAX) {
-                uint32_t cp;
-                bytes = (size_t)wsap_vtcore_utf8_decode_one(value + off,
-                                                          length - off, &cp);
-            }
-            if (run->characters == RUN_CHARACTERS ||
-                (run->length && value[run->offset + run->length - 1] == '\n'))
-                run = new_run(model, previous, snapshot, node->id, ordinal++, off);
-            if (!run) {
-                ok = false;
-                break;
-            }
-            run->lengths[run->characters++] = (uint8_t)bytes;
-            run->length += bytes;
-            off += bytes;
-        }
-        start = end;
-    }
-    ubrk_close(iterator);
-    utext_close(&utext);
-    if (!ok)
+    struct build_grapheme_ctx gctx = {
+        .model = model,
+        .previous = previous,
+        .snapshot = snapshot,
+        .node_id = node->id,
+        .value = value,
+        .length = length,
+        .run = run,
+        .ordinal = 1,
+        .ok = true,
+    };
+    ui_text_each_grapheme(value, length, build_grapheme_cb, &gctx);
+    if (!gctx.ok)
         return false;
     if (length && value[length - 1] == '\n' &&
-        !new_run(model, previous, snapshot, node->id, ordinal, length))
+        !new_run(model, previous, snapshot, node->id, gctx.ordinal, length))
         return false;
 
-    utext = (UText)UTEXT_INITIALIZER;
-    iterator = text_iterator(&utext, value, length, UBRK_WORD);
-    if (!iterator) {
-        utext_close(&utext);
-        return false;
-    }
-    start = ubrk_first(iterator);
-    while ((end = ubrk_next(iterator)) != UBRK_DONE) {
-        if (ubrk_getRuleStatus(iterator) != UBRK_WORD_NONE) {
-            accesskit_text_position pos = text_position(model, node->id, (size_t)start);
-            for (int i = 0; i < model->count; i++) {
-                run = &model->runs[i];
-                if (run->id == pos.node && pos.character_index < RUN_CHARACTERS)
-                    run->words[run->word_count++] = (uint8_t)pos.character_index;
-            }
-        }
-        start = end;
-    }
-    ubrk_close(iterator);
-    utext_close(&utext);
+    struct build_word_ctx wctx = {
+        .model = model,
+        .node_id = node->id,
+    };
+    ui_text_each_word(value, length, build_word_cb, &wctx);
     return true;
 }
 

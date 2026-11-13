@@ -1,5 +1,5 @@
 test_c_args = ['-UNDEBUG']
-ui_test_deps = [m_dep, thread_dep, yyjson_dep, icu_dep]
+ui_test_deps = [m_dep, thread_dep, yyjson_dep]
 test_cases = [
     ['input-test', files('input/input_test.c'), input_lib, [m_dep]],
     ['glyph-intern-test', files('font/glyph/intern_test.c'), font_lib, [m_dep]],
