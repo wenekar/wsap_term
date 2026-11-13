@@ -946,15 +946,22 @@ void ui_tabbar_init(struct ui_tabbar *tb)
     ui_widget_set_style_identity(&tb->widget, NULL, NULL, "tab-bar");
 }
 
+/* Tests if the tab bar holds this label set already. A NULL label set names
+ * the tabs and leaves their text empty. */
 static bool same_labels(const struct ui_tabbar *tb,
                         const struct ui_tab_label *tabs, int n)
 {
     if (tb->impl.n_tabs != n)
         return false;
     for (int i = 0; i < n; i++) {
-        const char *a = tb->impl.labels[i].text;
-        const char *b = tabs && tabs[i].text ? tabs[i].text : "";
-        if (tb->impl.labels[i].active != (tabs && tabs[i].active) || strcmp(a, b))
+        const char *have = tb->impl.labels[i].text;
+        const char *want = "";
+        bool want_active = false;
+        if (tabs) {
+            want = tabs[i].text ? tabs[i].text : "";
+            want_active = tabs[i].active;
+        }
+        if (tb->impl.labels[i].active != want_active || strcmp(have, want))
             return false;
     }
     return true;
@@ -962,7 +969,7 @@ static bool same_labels(const struct ui_tabbar *tb,
 
 static bool reserve_labels(struct ui_tabbar *tb, int n)
 {
-    size_t have = (size_t)tb->impl.labels_cap;
+    size_t have = tb->impl.labels ? (size_t)tb->impl.labels_cap : 0;
     if ((size_t)n <= have)
         return true;
     size_t want = (size_t)n < 8 ? 8 : (size_t)n;
@@ -988,7 +995,12 @@ void ui_tabbar_set_tabs(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
     if (!reserve_labels(tb, n))
         return;
     for (int i = 0; i < n; i++) {
-        const char *text = tabs && tabs[i].text ? tabs[i].text : "";
+        const char *text = "";
+        bool active = false;
+        if (tabs) {
+            text = tabs[i].text ? tabs[i].text : "";
+            active = tabs[i].active;
+        }
         struct ui_tab_label *l = &tb->impl.labels[i];
         if (!l->text || strcmp(l->text, text)) {
             char *copy = strdup(text);
@@ -997,7 +1009,7 @@ void ui_tabbar_set_tabs(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
             free((char *)l->text);
             l->text = copy;
         }
-        l->active = tabs && tabs[i].active;
+        l->active = active;
     }
     bool count_changed = tb->impl.n_tabs != n;
     tb->impl.n_tabs = n;
