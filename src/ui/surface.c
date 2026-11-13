@@ -802,15 +802,19 @@ struct ui_widget *ui_dialog_show(struct ui_surface *surface,
     ui_widget_set_style_identity(UI_WIDGET(&f->card), "dialog", NULL, "dialog");
 
     if (desc->title) {
-        ui_label_set_text(&f->title, desc->title);
+        if (!ui_label_set_text(&f->title, desc->title))
+            goto fail;
         ui_widget_set_style_identity(UI_WIDGET(&f->title), "dialog-title", NULL, NULL);
-        ui_widget_add_child(UI_WIDGET(&f->card), UI_WIDGET(&f->title));
+        if (!ui_widget_add_child(UI_WIDGET(&f->card), UI_WIDGET(&f->title)))
+            goto fail;
     }
 
     if (desc->message) {
-        ui_label_set_text(&f->msg, desc->message);
+        if (!ui_label_set_text(&f->msg, desc->message))
+            goto fail;
         ui_widget_set_style_identity(UI_WIDGET(&f->msg), "dialog-message", NULL, NULL);
-        ui_widget_add_child(UI_WIDGET(&f->card), UI_WIDGET(&f->msg));
+        if (!ui_widget_add_child(UI_WIDGET(&f->card), UI_WIDGET(&f->msg)))
+            goto fail;
     }
 
     int btn_count = desc->button_count;
@@ -824,11 +828,14 @@ struct ui_widget *ui_dialog_show(struct ui_surface *surface,
         ui_widget_set_style_identity(UI_WIDGET(&f->btn_row), "dialog-buttons", NULL, NULL);
 
         for (int i = 0; i < btn_count; i++) {
-            ui_button_set_text(&f->btns[i], desc->buttons[i].text ? desc->buttons[i].text : "OK");
+            if (!ui_button_set_text(&f->btns[i], desc->buttons[i].text ? desc->buttons[i].text : "OK"))
+                goto fail;
             ui_button_set_action_id(&f->btns[i], desc->buttons[i].action_id);
-            ui_widget_add_child(UI_WIDGET(&f->btn_row), UI_WIDGET(&f->btns[i]));
+            if (!ui_widget_add_child(UI_WIDGET(&f->btn_row), UI_WIDGET(&f->btns[i])))
+                goto fail;
         }
-        ui_widget_add_child(UI_WIDGET(&f->card), UI_WIDGET(&f->btn_row));
+        if (!ui_widget_add_child(UI_WIDGET(&f->card), UI_WIDGET(&f->btn_row)))
+            goto fail;
     }
 
     ui_widget_set_action_handler(UI_WIDGET(&f->card), dialog_action_forwarder, f);
@@ -838,11 +845,8 @@ struct ui_widget *ui_dialog_show(struct ui_surface *surface,
         .y_fraction = 0.5f,
     });
 
-    if (!ui_widget_add_child(surface->impl.root, UI_WIDGET(&f->card))) {
-        ui_widget_destroy(UI_WIDGET(&f->card));
-        free(f);
-        return NULL;
-    }
+    if (!ui_widget_add_child(surface->impl.root, UI_WIDGET(&f->card)))
+        goto fail;
 
     surface->impl.dialog = UI_WIDGET(&f->card);
     surface->impl.dialog_storage = f;
@@ -854,4 +858,14 @@ struct ui_widget *ui_dialog_show(struct ui_surface *surface,
 
     ui_surface_request_frame(surface);
     return UI_WIDGET(&f->card);
+
+fail:
+    ui_widget_destroy(UI_WIDGET(&f->card));
+    ui_widget_destroy(UI_WIDGET(&f->title));
+    ui_widget_destroy(UI_WIDGET(&f->msg));
+    ui_widget_destroy(UI_WIDGET(&f->btn_row));
+    for (int i = 0; i < UI_DIALOG_MAX_BUTTONS; i++)
+        ui_widget_destroy(UI_WIDGET(&f->btns[i]));
+    free(f);
+    return NULL;
 }
