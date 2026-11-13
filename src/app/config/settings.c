@@ -161,7 +161,8 @@ static void validate(struct settings_form *form, struct settings_row *row)
         if (!strcmp(row->option.key, "theme"))
             row->valid = row->valid && theme_valid(form, value);
         size_t len = strlen(value);
-        if (strpbrk(value, "\r\n") || len + strlen(row->option.key) + 4 >= 1024 ||
+        if (strpbrk(value, "\r\n") ||
+            len + strlen(row->option.key) + 4 >= SETTINGS_VALUE_CAP ||
             (len && (value[0] == ' ' || value[len - 1] == ' ')))
             row->valid = false;
     }
@@ -230,8 +231,9 @@ static bool set_row_value(struct settings_row *row, const char *value)
 {
     if (!row->choice && !ui_input_set_text(row->input, value))
         return false;
-    if (row->choice || row->combo)
-        ui_dropdown_set_value(row->dropdown, value);
+    if ((row->choice || row->combo) &&
+        !ui_dropdown_set_value(row->dropdown, value))
+        return false;
     return true;
 }
 
@@ -243,30 +245,32 @@ static struct settings_row *find_row(struct settings_form *form, const char *key
     return NULL;
 }
 
-static void sync_hinting_choices(struct settings_form *form)
+static bool sync_hinting_choices(struct settings_form *form)
 {
     struct settings_row *hinting = find_row(form, "hinting");
     struct settings_row *antialias = find_row(form, "antialias");
     if (!hinting || !antialias || !hinting->choice)
-        return;
+        return true;
     char value[SETTINGS_VALUE_CAP];
     snprintf(value, sizeof(value), "%s", row_value(hinting));
     if (!build_choices(hinting, form->host.look, row_value(antialias)))
-        return;
-    set_row_value(hinting, value);
-    if (!row_value(hinting)[0])
-        set_row_value(hinting, "auto");
+        return false;
+    bool ok = set_row_value(hinting, value);
+    if (row_value(hinting)[0] == '\0')
+        ok = set_row_value(hinting, "auto") && ok;
     validate(form, hinting);
+    return ok;
 }
 
 static bool load_row(struct settings_form *form, struct settings_row *row,
                      const char *value, bool baseline, bool show)
 {
-    if (show && !set_row_value(row, value))
-        return false;
-    if (baseline) strcpy(row->baseline, value);
+    bool ok = !show || set_row_value(row, value);
+    /* format_row limits a value to the baseline size. */
+    if (baseline)
+        snprintf(row->baseline, sizeof(row->baseline), "%s", value);
     validate(form, row);
-    return true;
+    return ok;
 }
 
 static bool format_row(const struct settings_row *row, const struct app_config *config,
@@ -275,11 +279,12 @@ static bool format_row(const struct settings_row *row, const struct app_config *
     return opts_format(&app_config_spec, config, row->option.key, value, size);
 }
 
-static void finish_load(struct settings_form *form)
+static bool finish_load(struct settings_form *form)
 {
-    sync_hinting_choices(form);
+    bool ok = sync_hinting_choices(form);
     update_status(form);
     filter_rows(form);
+    return ok;
 }
 
 static bool load_values(struct settings_form *form, const struct app_config *config,
@@ -289,17 +294,12 @@ static bool load_values(struct settings_form *form, const struct app_config *con
     for (size_t i = 0; i < form->count; i++) {
         struct settings_row *row = &form->rows[i];
         char value[SETTINGS_VALUE_CAP];
-        if (!format_row(row, config, value, sizeof(value))) {
+        if (!format_row(row, config, value, sizeof(value)))
             ok = false;
-            break;
-        }
-        if (!load_row(form, row, value, baseline, true)) {
+        else if (!load_row(form, row, value, baseline, true))
             ok = false;
-            break;
-        }
     }
-    finish_load(form);
-    return ok;
+    return finish_load(form) && ok;
 }
 
 static bool config_moved(const struct settings_form *form, const struct app_config *config)
@@ -326,10 +326,8 @@ static void settings_restyle(struct window *w)
         if (!format_row(row, config, value, sizeof(value)) || !strcmp(value, row->baseline))
             continue;
         bool edited = strcmp(row_value(row), row->baseline) != 0;
-        if (!load_row(form, row, value, true, !edited)) {
+        if (!load_row(form, row, value, true, !edited))
             ok = false;
-            break;
-        }
     }
     finish_load(form);
     if (!ok)
@@ -419,11 +417,16 @@ static bool form_action(struct ui_widget *source, const struct ui_action *action
                     return true;
                 }
             } else if (!row->choice && source == &row->input->widget) {
-                if (row->combo) ui_dropdown_set_value(row->dropdown, row_value(row));
+                if (row->combo &&
+                    !ui_dropdown_set_value(row->dropdown, row_value(row))) {
+                    ui_label_set_text(form->status, "Cannot update the value.");
+                    return true;
+                }
             } else continue;
             validate(form, row);
-            if (!strcmp(row->option.key, "antialias"))
-                sync_hinting_choices(form);
+            if (!strcmp(row->option.key, "antialias") &&
+                !sync_hinting_choices(form))
+                ui_label_set_text(form->status, "Cannot rebuild the hinting choices.");
             update_status(form);
             return true;
         }
