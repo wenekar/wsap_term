@@ -61,6 +61,10 @@ static const struct field_info INFO[] = {
       SETTINGS_CHOICE_SPEC },
     { "background", "Background", "Background color. Use the Default theme.", APPEARANCE,
       SETTINGS_CHOICE_SPEC },
+    { "high-contrast", "High contrast", "Use the high-contrast palette and controls.",
+      APPEARANCE, SETTINGS_CHOICE_SPEC },
+    { "visual-bell", "Visual bell", "Flash the screen when the terminal bell rings.",
+      TERMINAL, SETTINGS_CHOICE_SPEC },
     { "cursor-style", "Cursor shape", "Updates the default cursor in open tabs.", CURSOR,
       SETTINGS_CHOICE_SPEC },
     { "cursor-blink", "Cursor blink", "Blink the default cursor in open tabs.", CURSOR,
@@ -515,7 +519,7 @@ static bool init_row(struct settings_row *row, size_t index, struct look *look)
     const char *key = row->option.key;
     snprintf(row->label, sizeof(row->label), "%s", key);
     row->category = APPEARANCE;
-    snprintf(row->help_text, sizeof(row->help_text), "ANSI palette color. Use the Default theme.");
+    row->help_text[0] = '\0';
     for (size_t i = 0; i < sizeof(INFO) / sizeof(INFO[0]); i++)
         if (!strcmp(key, INFO[i].key)) {
             row->category = INFO[i].category;
@@ -524,8 +528,11 @@ static bool init_row(struct settings_row *row, size_t index, struct look *look)
             snprintf(row->help_text, sizeof(row->help_text), "%s", INFO[i].help);
             break;
         }
-    if (!strncmp(key, "color", 5))
+    if (!strncmp(key, "color", 5)) {
         snprintf(row->label, sizeof(row->label), "ANSI color %s", key + 5);
+        snprintf(row->help_text, sizeof(row->help_text),
+                 "ANSI palette color. Use the Default theme.");
+    }
     row->choice = row->option.kind == OPT_KIND_CHOICE;
     row->combo = row->choice_source == SETTINGS_CHOICE_FONT ||
         row->choice_source == SETTINGS_CHOICE_LOCALE ||

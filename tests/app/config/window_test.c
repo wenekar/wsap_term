@@ -164,6 +164,22 @@ static void snapshot(struct app *app, struct window *window, const char *name)
     ui_scene_destroy(&scene);
 }
 
+/* A row explains itself. Only color rows talk about the palette. */
+static void row_help_text_test(struct window *window)
+{
+    const struct ui_label *bell = (const struct ui_label *)find(window,
+                                                                "@help-visual-bell");
+    const struct ui_label *contrast = (const struct ui_label *)find(window,
+                                                                    "@help-high-contrast");
+    const struct ui_label *color = (const struct ui_label *)find(window,
+                                                                 "@help-color0");
+    assert(!strcmp(ui_label_text(bell),
+                   "Flash the screen when the terminal bell rings."));
+    assert(!strcmp(ui_label_text(contrast),
+                   "Use the high-contrast palette and controls."));
+    assert(strstr(ui_label_text(color), "ANSI palette"));
+}
+
 static void editor_resize_test(struct window *window)
 {
     struct ui_widget *input = find(window, "#font");
@@ -199,6 +215,7 @@ int main(void)
     ui_surface_resize(window_ui_surface(window), (struct vector2i){ .x = 980, .y = 740 });
     ui_surface_prepare(window_ui_surface(window));
     assert(painted(window, "Settings"));
+    row_help_text_test(window);
     editor_resize_test(window);
     snapshot(app.app, window, "settings");
 
