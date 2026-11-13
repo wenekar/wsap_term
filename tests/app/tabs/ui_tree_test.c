@@ -253,6 +253,11 @@ static void palette_scene_at_rect_test(void)
     assert(ui_surface_build_scene(window_ui_surface(w), &composed));
 
     struct rect2i prect = ui_palette_widget(&tabs->palette)->bounds;
+    /* The palette is centered, so a zero size means it is invisible. */
+    assert(prect.width > 0 && prect.height > 0);
+    assert(prect.x >= 0 && prect.y >= 0);
+    assert(prect.x + prect.width <= viewport.x);
+    assert(prect.y + prect.height <= viewport.y);
     assert(ui_widget_build_scene(ui_palette_widget(&tabs->palette), &ref));
     assert(ref.n_ops > 0);
     int base = find_ops(&composed, &ref);

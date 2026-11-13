@@ -21,6 +21,9 @@ static struct vector2i root_measure(const struct ui_widget *widget,
     struct ui_widget *content = tabs->mounted;
     if (content)
         ui_widget_measure(content, constraints);
+    /* The layout places the floating children by measured size. */
+    ui_widget_measure(ui_tab_preview_widget(&tabs->preview), constraints);
+    ui_widget_measure(ui_palette_widget(&tabs->palette), constraints);
     return ui_constraints_clamp(constraints, constraints.max);
 }
 
