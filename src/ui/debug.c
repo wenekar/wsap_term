@@ -653,6 +653,13 @@ static bool rect_contains_text_start(struct rect2i r, struct rect2i box)
     return rect2i_contains(r, c);
 }
 
+/* Tests if rectangle `a` holds all of rectangle `b`. */
+static bool rect_covers(struct rect2i a, struct rect2i b)
+{
+    struct vector2i ae = rect2i_end(a), be = rect2i_end(b);
+    return b.x >= a.x && b.y >= a.y && be.x <= ae.x && be.y <= ae.y;
+}
+
 static bool text_surface(const struct ui_debug_view *view, int index,
                          const struct ui_widget *owner,
                          const struct ui_debug_parts *parts,
@@ -661,15 +668,22 @@ static bool text_surface(const struct ui_debug_view *view, int index,
     const struct ui_scene *s = view->scene;
     int row_max = box.height * 3;
     bool found = false;
-    for (int i = 0; parts && i < parts->n; i++) {
-        struct rect2i r = parts->items[i].rect;
-        if (r.height < box.height || r.height > row_max ||
-            !rect_contains_text_start(r, box))
-            continue;
-        if (!found || (int64_t)r.width * r.height <
-                      (int64_t)out->width * out->height) {
-            *out = r;
-            found = true;
+    /* A part that holds the whole text wins over one that holds only its
+     * start. A dragged row can overlap the slot it left. */
+    for (int pass = 0; pass < 2 && !found; pass++) {
+        for (int i = 0; parts && i < parts->n; i++) {
+            struct rect2i r = parts->items[i].rect;
+            if (r.height < box.height || r.height > row_max)
+                continue;
+            bool holds = pass == 0 ? rect_covers(r, box)
+                                   : rect_contains_text_start(r, box);
+            if (!holds)
+                continue;
+            if (!found || (int64_t)r.width * r.height <
+                          (int64_t)out->width * out->height) {
+                *out = r;
+                found = true;
+            }
         }
     }
     if (found)
