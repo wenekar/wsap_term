@@ -1,68 +1,58 @@
 #include "ui/text_edit.h"
-#include "wsap_vtcore/unicode/utf8.h"
+#include "ui/text_break.h"
 
-#include <unicode/ubrk.h>
-#include <unicode/utext.h>
+struct word_move_ctx {
+    size_t pos;
+    size_t result;
+    enum ui_edit_unit unit;
+    bool backward;
+};
 
-static UBreakIterator *iterator(UText *utext, const char *text, int len, UBreakIteratorType type)
+static bool word_move_cb(size_t start, size_t end, bool is_word, void *userdata)
 {
-    UErrorCode error = U_ZERO_ERROR;
-    utext_openUTF8(utext, text, len, &error);
-    UBreakIterator *it = ubrk_open(type, NULL, NULL, 0, &error);
-    if (U_SUCCESS(error))
-        ubrk_setUText(it, utext, &error);
-    if (U_FAILURE(error)) {
-        ubrk_close(it);
-        return NULL;
+    struct word_move_ctx *ctx = userdata;
+    if (!is_word)
+        return true;
+    if (ctx->backward) {
+        if (start < ctx->pos) {
+            ctx->result = start;
+            return true;
+        }
+        return false;
     }
-    return it;
-}
-
-static int character_fallback(const char *text, int len, int pos, bool backward)
-{
-    if (backward) {
-        if (pos > 0) pos--;
-        while (pos > 0 && ((unsigned char)text[pos] & 0xc0) == 0x80) pos--;
-    } else if (pos < len) {
-        uint32_t cp;
-        int n = wsap_vtcore_utf8_decode_one(text + pos, (size_t)(len - pos), &cp);
-        pos += n > 0 ? n : 1;
+    size_t target = ctx->unit == UI_EDIT_WORD_END ? end : start;
+    if (target > ctx->pos) {
+        ctx->result = target;
+        return false;
     }
-    return pos;
+    return true;
 }
 
 int ui_text_edit_move(const char *text, int len, int pos,
                        enum ui_edit_unit unit, bool backward)
 {
+    if (!text || len <= 0)
+        return 0;
+    if (pos < 0)
+        pos = 0;
+    if (pos > len)
+        pos = len;
     if (unit == UI_EDIT_LINE)
         return backward ? 0 : len;
-    UText utext = UTEXT_INITIALIZER;
-    UBreakIterator *it = iterator(&utext, text, len,
-        unit == UI_EDIT_CHARACTER ? UBRK_CHARACTER : UBRK_WORD);
-    int result = backward ? 0 : len;
-    if (!it) {
-        result = character_fallback(text, len, pos, backward);
-    } else if (unit == UI_EDIT_CHARACTER) {
-        result = backward ? ubrk_preceding(it, pos) : ubrk_following(it, pos);
-        if (result == UBRK_DONE) result = backward ? 0 : len;
-    } else {
-        int start = ubrk_first(it), end;
-        while ((end = ubrk_next(it)) != UBRK_DONE) {
-            if (ubrk_getRuleStatus(it) != UBRK_WORD_NONE) {
-                if (backward && start < pos)
-                    result = start;
-                if (!backward &&
-                    (unit == UI_EDIT_WORD_END ? end > pos : start > pos)) {
-                    result = unit == UI_EDIT_WORD_END ? end : start;
-                    break;
-                }
-            }
-            start = end;
-        }
+    if (unit == UI_EDIT_CHARACTER) {
+        size_t res = backward
+            ? ui_text_break_grapheme_prev(text, (size_t)len, (size_t)pos)
+            : ui_text_break_grapheme_next(text, (size_t)len, (size_t)pos);
+        return (int)res;
     }
-    ubrk_close(it);
-    utext_close(&utext);
-    return result;
+    struct word_move_ctx ctx = {
+        .pos = (size_t)pos,
+        .result = backward ? 0 : (size_t)len,
+        .unit = unit,
+        .backward = backward,
+    };
+    ui_text_each_word(text, (size_t)len, word_move_cb, &ctx);
+    return (int)ctx.result;
 }
 
 size_t ui_text_edit_clamp_offset(const char *text, size_t len, size_t offset)

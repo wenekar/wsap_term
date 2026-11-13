@@ -115,7 +115,13 @@ add_project_arguments(
         '-Werror=implicit-function-declaration',
         '-Werror=incompatible-pointer-types',
         '-Werror=return-type',
+        '-ffunction-sections',
+        '-fdata-sections',
     ),
+    language: project_languages,
+)
+add_project_link_arguments(
+    cc.get_supported_link_arguments('-Wl,--gc-sections'),
     language: project_languages,
 )
 
@@ -217,8 +223,6 @@ endif
 platform_deps = []
 if system == 'darwin'
     platform_deps += [dependency('appleframeworks', modules: ['AppKit', 'CoreFoundation', 'Foundation', 'QuartzCore', 'Metal', 'UserNotifications', 'CoreText', 'CoreGraphics'])]
-else
-    platform_deps += [dependency('gio-2.0')]
 endif
 base_deps = [thread_dep, m_dep, yyjson_dep, icu_dep] + platform_deps
 yasl_dep = dependency(
