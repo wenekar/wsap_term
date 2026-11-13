@@ -93,6 +93,8 @@ uint32_t window_background(const struct window *w);
 struct window_spec {
     const char *title;
     void *graphics_device;
+    void *(*acquire_device)(void *ud);
+    void *device_ud;
     window_frame_composer compose;
     void *compose_ud;
     struct vector2i size;
@@ -101,6 +103,7 @@ struct window_spec {
 
 struct window *window_open(struct window_host *host, const struct window_spec *spec);
 struct window *window_create(struct window_host *host, const struct window_spec *spec);
+bool window_has_gpu(const struct window *w);
 void window_compose_frame(struct window *w, struct window_frame *frame);
 /*
  * Shows the canvas of `frame`. `damage` lists the canvas pixels that

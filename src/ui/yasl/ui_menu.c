@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include <math.h>
+#include <stdlib.h>
 
 #include "ui/yasl/internal.h"
 #include "ui/yasl/inspector.h"
@@ -30,6 +31,17 @@ static const struct ui_widget_ops POPUP_ROOT_OPS = {
     .child_limit = 1,
 };
 
+static void menu_popup_maybe_free(struct window_ui *ui)
+{
+    if (!ui->menu_popup || ui->menu_popups > 0)
+        return;
+    for (int d = 0; d < UI_MENU_MAX_LEVELS; d++)
+        if (ui->menu_popup[d].closing)
+            return;
+    free(ui->menu_popup);
+    ui->menu_popup = NULL;
+}
+
 static bool popup_open(const struct window_ui_menu_popup *p)
 {
     return p->surface != NULL;
@@ -37,7 +49,10 @@ static bool popup_open(const struct window_ui_menu_popup *p)
 
 static void close_popup(struct window *w, int depth)
 {
-    struct window_ui_menu_popup *p = &ui_of(w)->menu_popup[depth];
+    struct window_ui *ui = ui_of(w);
+    if (!ui->menu_popup)
+        return;
+    struct window_ui_menu_popup *p = &ui->menu_popup[depth];
     if (!popup_open(p))
         return;
     if (ui_surface_busy(&p->ui)) {
@@ -54,6 +69,7 @@ static void close_popup(struct window *w, int depth)
     window_native_remove(w, p->surface);
     yasl_surface_destroy(p->surface);
     *p = (struct window_ui_menu_popup){0};
+    menu_popup_maybe_free(ui);
 }
 
 static void close_popups_from(struct window *w, int depth)
@@ -66,6 +82,8 @@ static void close_popups_from(struct window *w, int depth)
 void window_menu_reap(struct window *w)
 {
     struct window_ui *ui = ui_of(w);
+    if (!ui->menu_popup)
+        return;
     bool reaped = false;
     for (int d = 0; d < UI_MENU_MAX_LEVELS; d++) {
         if (ui->menu_popup[d].closing && !ui_surface_busy(&ui->menu_popup[d].ui)) {
@@ -129,21 +147,27 @@ static bool open_popup(struct window *w, int depth, struct rect2i anchor)
 {
     if (!(yasl_get_features() & YASL_FEATURE_POPUPS))
         return false;
-    struct window_ui_menu_popup *p = &ui_of(w)->menu_popup[depth];
-    struct ui_widget *level = ui_menu_level_widget(&ui_of(w)->menu, depth);
+    struct window_ui *ui = ui_of(w);
+    if (!ui->menu_popup) {
+        ui->menu_popup = calloc(UI_MENU_MAX_LEVELS, sizeof(*ui->menu_popup));
+        if (!ui->menu_popup)
+            return false;
+    }
+    struct window_ui_menu_popup *p = &ui->menu_popup[depth];
+    struct ui_widget *level = ui_menu_level_widget(&ui->menu, depth);
     if (level->parent)
         ui_widget_remove_child(level->parent, level);
     ui_widget_init(&p->root, &POPUP_ROOT_OPS, w);
     ui_widget_set_modal(&p->root, true);
     ui_widget_add_child(&p->root, level);
     ui_surface_init(&p->ui, &window_ui_surface_host, w);
-    ui_surface_set_sheet(&p->ui, ui_of(w)->sheet);
+    ui_surface_set_sheet(&p->ui, ui->sheet);
     ui_surface_set_scale(&p->ui, window_ui_scale(w));
     ui_surface_set_root(&p->ui, &p->root);
 
     struct vector2i size = measure_popup(w, depth);
     struct yasl_surface *parent = depth == 0 ? window_surface(w)
-                                        : ui_of(w)->menu_popup[depth - 1].surface;
+                                        : ui->menu_popup[depth - 1].surface;
     struct yasl_popup_options options = popup_options(w, depth, size, anchor);
     p->surface = yasl_popup_create(parent, &options);
     if (p->surface && !window_native_add(w, p->surface)) {
@@ -155,6 +179,7 @@ static bool open_popup(struct window *w, int depth, struct rect2i anchor)
         ui_widget_remove_child(&p->root, level);
         ui_widget_destroy(&p->root);
         *p = (struct window_ui_menu_popup){0};
+        menu_popup_maybe_free(ui);
         return false;
     }
     window_accessibility_menu_popup_open(w, depth);
@@ -186,7 +211,7 @@ void window_menu_sync(struct window *w)
         }
     }
     while (ui_of(w)->menu_popups < levels && ui_of(w)->menu_popups < ui_of(w)->menu_inline_from) {
-        if (popup_open(&ui_of(w)->menu_popup[ui_of(w)->menu_popups])) {
+        if (ui_of(w)->menu_popup && popup_open(&ui_of(w)->menu_popup[ui_of(w)->menu_popups])) {
             /* A closing popup still holds this slot. Retry after it is gone. */
             ui_of(w)->menu_shown = gen - 1;
             break;
@@ -292,6 +317,8 @@ void window_menu_destroy(struct window *w)
     ui_menu_close(&ui_of(w)->menu);
     close_popups_from(w, 0);
     window_menu_reap(w);
+    free(ui_of(w)->menu_popup);
+    ui_of(w)->menu_popup = NULL;
     struct ui_widget *layer = ui_menu_layer_widget(&ui_of(w)->menu_layer);
     while (layer->first_child)
         ui_widget_remove_child(layer, layer->first_child);

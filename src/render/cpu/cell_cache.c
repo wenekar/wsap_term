@@ -607,17 +607,11 @@ static void l0_stamp(struct cell_class *k)
         stamp(k, z->slot[z->used[i]], k->last);
 }
 
-/*
- * Fills the free list. `cells` is the cell count of the frame. The first
- * refill of a class takes room for all of them, so that a cold frame can
- * claim each new key.
- */
-static void refill(struct cell_cache *c, struct cell_class *k, int cells)
+/* Fills the free list on demand, one slab at a time. */
+static void refill(struct cell_cache *c, struct cell_class *k)
 {
     int asked = k->asked;
     int target = asked > CELL_CACHE_REFILL_MIN ? asked : CELL_CACHE_REFILL_MIN;
-    if (!k->fresh && cells > target)
-        target = cells;
     take_fresh(k, target);
     while (k->n_free < target && class_grow(c, k))
         take_fresh(k, target);
@@ -743,12 +737,13 @@ struct cell_class *cell_cache_begin(struct cell_cache *c, struct vector2i cell,
                                     uint32_t default_fg, uint32_t default_bg, int cells,
                                     struct cell_cache_worker *const *workers, int n_workers)
 {
+    (void)cells;
     struct cell_class *k = c ? class_get(c, cell) : NULL;
     if (k) {
         k->used = c->clock;
         l0_domain_set(k->l0, font_version, default_fg, default_bg);
         free_compact(k);
-        refill(c, k, cells);
+        refill(c, k);
         /* A class with no room stays in the list, so the next frame does
          * not allocate it again. It is freed when it idles. */
         if (k->slots < CELL_CACHE_MIN_TILES)

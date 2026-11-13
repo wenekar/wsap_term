@@ -18,8 +18,7 @@
 
 /* See build.h for the contract of this file. */
 
-#define ATLAS_MAP_SIZE (1u << 15)
-#define ATLAS_MAP_LIMIT (ATLAS_MAP_SIZE / 2)
+#define ATLAS_MAP_INITIAL_CAP (1u << 11)
 
 enum atlas_space {
     SPACE_GRID,
@@ -172,7 +171,8 @@ static void begin_build(struct gpu_build *b)
  * entry points to them anymore. */
 static void atlas_clear(struct gpu_atlas *a)
 {
-    memset(a->map, 0, (size_t)ATLAS_MAP_SIZE * sizeof(*a->map));
+    if (a->map && a->map_cap)
+        memset(a->map, 0, (size_t)a->map_cap * sizeof(*a->map));
     a->count = 0;
     a->n_shelves = 0;
     a->next_y = 0;
@@ -197,9 +197,12 @@ static bool atlas_key_eq(const struct gpu_atlas_entry *e, const struct gpu_atlas
 static const struct gpu_atlas_entry *atlas_find(const struct gpu_atlas *a, uint64_t id,
                                                 uint64_t version, enum atlas_space space)
 {
+    if (!a->map || !a->map_cap)
+        return NULL;
+    uint32_t mask = a->map_cap - 1;
     struct gpu_atlas_entry key = { .id = id, .version = version, .space = space };
-    for (uint32_t i = (uint32_t)atlas_hash(&key) & (ATLAS_MAP_SIZE - 1);;
-         i = (i + 1) & (ATLAS_MAP_SIZE - 1)) {
+    for (uint32_t i = (uint32_t)atlas_hash(&key) & mask;;
+         i = (i + 1) & mask) {
         const struct gpu_atlas_entry *e = &a->map[i];
         if (!e->used)
             return NULL;
@@ -208,15 +211,41 @@ static const struct gpu_atlas_entry *atlas_find(const struct gpu_atlas *a, uint6
     }
 }
 
+/* Rehashes the atlas lookup table to `new_cap` slots (a power of two). */
+static bool atlas_rehash(struct gpu_atlas *a, uint32_t new_cap)
+{
+    struct gpu_atlas_entry *next = calloc(new_cap, sizeof(*next));
+    if (!next)
+        return false;
+    uint32_t mask = new_cap - 1;
+    for (uint32_t i = 0; i < a->map_cap; i++) {
+        if (!a->map[i].used)
+            continue;
+        uint32_t j = (uint32_t)atlas_hash(&a->map[i]) & mask;
+        while (next[j].used)
+            j = (j + 1) & mask;
+        next[j] = a->map[i];
+    }
+    free(a->map);
+    a->map = next;
+    a->map_cap = new_cap;
+    return true;
+}
+
 static bool atlas_insert(struct gpu_atlas *a, const struct gpu_atlas_entry *entry)
 {
-    if (a->count >= ATLAS_MAP_LIMIT) {
-        a->full = true;
-        return false;
+    if ((uint64_t)(a->count + 1) * 10 > (uint64_t)a->map_cap * 7) {
+        if (a->map_cap > UINT32_MAX / 2) {
+            a->full = true;
+            return false;
+        }
+        if (!atlas_rehash(a, a->map_cap * 2))
+            return false;
     }
-    uint32_t i = (uint32_t)atlas_hash(entry) & (ATLAS_MAP_SIZE - 1);
+    uint32_t mask = a->map_cap - 1;
+    uint32_t i = (uint32_t)atlas_hash(entry) & mask;
     while (a->map[i].used)
-        i = (i + 1) & (ATLAS_MAP_SIZE - 1);
+        i = (i + 1) & mask;
     a->map[i] = *entry;
     a->map[i].used = true;
     a->count++;
@@ -264,7 +293,7 @@ static uint32_t *atlas_stage(struct gpu_build *b, int w, int h, uint16_t *x, uin
     }
     size_t bytes = (size_t)w * (size_t)h * 4;
     if (a->stage_used + bytes > a->stage_cap) {
-        size_t cap = a->stage_cap ? a->stage_cap * 2 : (size_t)1 << 20;
+        size_t cap = a->stage_cap ? a->stage_cap * 2 : (size_t)128 << 10;
         while (cap < a->stage_used + bytes)
             cap *= 2;
         uint8_t *p = realloc(a->stage, cap);
@@ -976,7 +1005,8 @@ static bool build_frame(struct gpu_build *b, const struct render_frame *frame,
 bool gpu_build_init(struct gpu_build *b)
 {
     b->atlas.size = GPU_ATLAS_START_SIZE;
-    b->atlas.map = calloc(ATLAS_MAP_SIZE, sizeof(*b->atlas.map));
+    b->atlas.map_cap = ATLAS_MAP_INITIAL_CAP;
+    b->atlas.map = calloc(b->atlas.map_cap, sizeof(*b->atlas.map));
     b->atlas.shelves = calloc(GPU_SHELVES_MAX, sizeof(*b->atlas.shelves));
     b->decor = decor_cache_create();
     return b->atlas.map && b->atlas.shelves && b->decor;

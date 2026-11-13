@@ -15,7 +15,7 @@ static enum font_hint_style current_style;
 static enum font_aa_mode current_aa;
 static FT_LcdFilter lcd_filter = FT_LCD_FILTER_DEFAULT;
 
-bool fc_ready;
+_Atomic bool fc_ready;
 
 static inline bool is_subpixel_aa(enum font_aa_mode aa)
 {
@@ -70,14 +70,21 @@ static void fontconfig_query_hinting(enum font_hint_style *style, enum font_aa_m
 {
     *style = FONT_HINT_SLIGHT;
     *aa = FONT_AA_GRAYSCALE;
+    if (!fc_pin())
+        return;
+    fc_query_lock();
     FcPattern *pat = FcPatternCreate();
-    if (!pat)
+    FcPattern *match = NULL;
+    if (pat) {
+        FcPatternAddString(pat, FC_FAMILY, (const FcChar8 *)"monospace");
+        match = fc_font_match(pat);
+        FcPatternDestroy(pat);
+    }
+    if (!match) {
+        fc_query_unlock();
+        fc_unpin();
         return;
-    FcPatternAddString(pat, FC_FAMILY, (const FcChar8 *)"monospace");
-    FcPattern *match = fc_font_match(pat);
-    FcPatternDestroy(pat);
-    if (!match)
-        return;
+    }
 
     FcBool antialias = FcTrue, hinting = FcTrue;
     int rgba = FC_RGBA_UNKNOWN;
@@ -89,6 +96,8 @@ static void fontconfig_query_hinting(enum font_hint_style *style, enum font_aa_m
     FcPatternGetInteger(match, FC_HINT_STYLE, 0, &hintstyle);
     FcPatternGetInteger(match, FC_LCD_FILTER, 0, &filter);
     FcPatternDestroy(match);
+    fc_query_unlock();
+    fc_unpin();
 
     switch (filter) {
     case FC_LCD_NONE:
@@ -126,7 +135,7 @@ static void fontconfig_query_hinting(enum font_hint_style *style, enum font_aa_m
 
 static void resolve_hinting(void)
 {
-    if (!fc_ready)
+    if (!ft_lib && !configured_faces && !fc_ready)
         return;
     if (current_style != FONT_HINT_AUTO &&
         current_aa != FONT_AA_AUTO)

@@ -74,7 +74,7 @@ struct window_ui {
 
     struct ui_menu menu;
     struct ui_menu_layer menu_layer;
-    struct window_ui_menu_popup menu_popup[UI_MENU_MAX_LEVELS];
+    struct window_ui_menu_popup *menu_popup;
     struct ui_damage_tracker ui_damage;
 
     struct vector2i menu_at;

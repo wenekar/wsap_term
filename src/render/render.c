@@ -52,6 +52,8 @@ struct renderer {
     struct render_surface scratch;
 
     int isa;
+    int threads;
+    ptrdiff_t cache_bytes;
     /* The main thread and each pool worker have one raster worker. */
     int n_workers;
     /* Each thread of the renderer has walk scratch for rows of this many
@@ -61,6 +63,7 @@ struct renderer {
     /* WSAP_RENDER_SCROLL, read once. SCROLL_AUTO (0) follows the cost. */
     enum { SCROLL_AUTO, SCROLL_MOVE, SCROLL_PAINT } scroll_mode;
 
+    bool cpu_initialized;
     bool gpu_initialized;
     bool force_full;
 };
@@ -88,6 +91,56 @@ void render_shutdown(void)
     ui_shadow_cache_destroy();
 }
 
+static void cpu_release(struct renderer *r)
+{
+    pool_destroy(r->pool);
+    r->pool = NULL;
+    if (r->workers) {
+        for (int i = 0; i < r->n_workers; i++)
+            raster_worker_release(&r->workers[i]);
+        free(r->workers);
+        r->workers = NULL;
+    }
+    for (int i = 0; i < r->n_workers; i++)
+        r->cache_workers[i] = NULL;
+    r->n_workers = 0;
+    cell_cache_destroy(r->cache);
+    r->cache = NULL;
+    decor_cache_destroy(r->decor);
+    r->decor = NULL;
+    r->cpu_initialized = false;
+}
+
+/* Starts the CPU worker pool and caches on first CPU frame. */
+static bool cpu_ensure(struct renderer *r)
+{
+    if (r->cpu_initialized)
+        return true;
+    if (r->threads > 0) {
+        r->pool = pool_create(r->threads);
+        if (!r->pool)
+            goto fail;
+    }
+    if (r->cache_bytes > 0)
+        r->cache = cell_cache_create((size_t)r->cache_bytes);
+
+    r->n_workers = 1 + pool_workers(r->pool);
+    r->workers = calloc((size_t)r->n_workers, sizeof(*r->workers));
+    r->decor = decor_cache_create();
+    if (!r->workers || !r->decor)
+        goto fail;
+    for (int i = 0; i < r->n_workers; i++) {
+        if (!raster_worker_init(&r->workers[i], r->cache))
+            goto fail;
+        r->cache_workers[i] = r->workers[i].cache;
+    }
+    r->cpu_initialized = true;
+    return true;
+fail:
+    cpu_release(r);
+    return false;
+}
+
 struct renderer *renderer_create(const struct render_options *opt)
 {
     struct render_options o = opt ? *opt : (struct render_options){0};
@@ -108,30 +161,10 @@ struct renderer *renderer_create(const struct render_options *opt)
     int threads = o.threads == 0 ? pool_default_workers() : o.threads < 0 ? 0 : o.threads;
     if (threads > POOL_WORKERS_MAX)
         threads = POOL_WORKERS_MAX;
-    if (threads > 0) {
-        r->pool = pool_create(threads);
-        if (!r->pool)
-            goto fail;
-    }
-    ptrdiff_t budget = o.cache_bytes == 0 ? RENDER_CACHE_DEFAULT_BYTES : o.cache_bytes;
-    if (budget > 0)
-        r->cache = cell_cache_create((size_t)budget);
-
-    r->n_workers = 1 + pool_workers(r->pool);
-    r->workers = calloc((size_t)r->n_workers, sizeof(*r->workers));
-    r->decor = decor_cache_create();
-    if (!r->workers || !r->decor)
-        goto fail;
-    for (int i = 0; i < r->n_workers; i++) {
-        if (!raster_worker_init(&r->workers[i], r->cache))
-            goto fail;
-        r->cache_workers[i] = r->workers[i].cache;
-    }
+    r->threads = threads;
+    r->cache_bytes = o.cache_bytes == 0 ? RENDER_CACHE_DEFAULT_BYTES : o.cache_bytes;
     render_surface_init(&r->scratch);
     return r;
-fail:
-    renderer_destroy(r);
-    return NULL;
 }
 
 static struct render_gpu *renderer_gpu_ensure(struct renderer *r)
@@ -149,13 +182,7 @@ void renderer_destroy(struct renderer *r)
 {
     if (!r)
         return;
-    pool_destroy(r->pool);
-    if (r->workers)
-        for (int i = 0; i < r->n_workers; i++)
-            raster_worker_release(&r->workers[i]);
-    free(r->workers);
-    cell_cache_destroy(r->cache);
-    decor_cache_destroy(r->decor);
+    cpu_release(r);
     render_surface_release(&r->scratch);
     render_gpu_free(r->gpu);
     free(r->keys);
@@ -171,6 +198,15 @@ void renderer_destroy(struct renderer *r)
 void *renderer_device(struct renderer *r)
 {
     return r ? render_gpu_native_device(renderer_gpu_ensure(r)) : NULL;
+}
+
+void renderer_drop_gpu(struct renderer *r)
+{
+    if (!r)
+        return;
+    render_gpu_free(r->gpu);
+    r->gpu = NULL;
+    r->gpu_initialized = true;
 }
 
 int renderer_isa(const struct renderer *r)
@@ -524,9 +560,9 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         }
     }
 
-    /* 5. The CPU paints the frame now, so it takes the canvas if it is not
-     * there yet. Then the moves, or paints where the pool is faster. */
-    if (!pixels_ensure(fb)) {
+    /* 5. The CPU paints the frame now, so it takes the canvas and starts the
+     * CPU state if they are not there yet. */
+    if (!pixels_ensure(fb) || !cpu_ensure(r)) {
         render_surface_invalidate(s);
         return result_all();
     }

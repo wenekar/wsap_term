@@ -185,7 +185,7 @@ static int settled_thread_count(void)
 }
 #endif
 
-/* Each renderer owns its workers: create starts them, destroy joins them. */
+/* Each renderer owns its workers: first CPU frame starts them, destroy joins them. */
 static void worker_pool_lifecycle_test(void)
 {
     struct wsap_vtcore *t = tt_new(8, 10);
@@ -203,10 +203,13 @@ static void worker_pool_lifecycle_test(void)
         struct renderer *r = renderer_create(&(struct render_options){ .threads = 3 });
         assert(r);
 #ifdef __linux__
-        assert(live_thread_count() == before + 3);
+        assert(live_thread_count() == before);
 #endif
         memset(got, 0x5a, bytes);
         test_renderer_paint(r, got, w, h, t, true);
+#ifdef __linux__
+        assert(live_thread_count() == before + 3);
+#endif
         assert(!memcmp(want, got, bytes));
         test_renderer_destroy(r);
 #ifdef __linux__

@@ -131,6 +131,8 @@ void renderer_destroy(struct renderer *r);
  * a CPU surface. The CPU-only build (render/gpu/none.c) always gives NULL.
  */
 void *renderer_device(struct renderer *r);
+/* Releases the GPU device when no surface uses GPU presentation. */
+void renderer_drop_gpu(struct renderer *r);
 /* The enum render_isa level that the renderer uses. Never RENDER_ISA_AUTO. */
 int renderer_isa(const struct renderer *r);
 

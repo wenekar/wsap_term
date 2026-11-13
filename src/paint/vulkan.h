@@ -16,6 +16,7 @@ struct vulkan_device {
     VkDevice device;
     VkQueue queue;
     uint32_t queue_family;
+    PFN_vkGetInstanceProcAddr get_instance_proc_addr;
 };
 
 /* The surface target for window presentation. */

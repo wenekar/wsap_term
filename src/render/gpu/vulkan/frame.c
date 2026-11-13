@@ -29,9 +29,9 @@ bool vulkan_slot_renew_semaphore(struct render_gpu *g, struct frame_slot *slot)
 {
     VkSemaphoreCreateInfo info = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
     if (slot->acquired)
-        vkDestroySemaphore(g->dev.device, slot->acquired, NULL);
+        g->vk.DestroySemaphore(g->dev.device, slot->acquired, NULL);
     slot->acquired = VK_NULL_HANDLE;
-    return vkCreateSemaphore(g->dev.device, &info, NULL, &slot->acquired) == VK_SUCCESS;
+    return g->vk.CreateSemaphore(g->dev.device, &info, NULL, &slot->acquired) == VK_SUCCESS;
 }
 
 /*
@@ -44,13 +44,13 @@ static struct frame_slot *slot_acquire(struct render_gpu *g, uint64_t wait_ns)
     VkDevice device = g->dev.device;
     for (unsigned i = 0; i < FRAME_SLOTS; i++) {
         unsigned index = (g->next_slot + i) % FRAME_SLOTS;
-        if (vkGetFenceStatus(device, g->slots[index].fence) == VK_SUCCESS) {
+        if (g->vk.GetFenceStatus(device, g->slots[index].fence) == VK_SUCCESS) {
             g->next_slot = (index + 1) % FRAME_SLOTS;
             return &g->slots[index];
         }
     }
     struct frame_slot *oldest = &g->slots[g->next_slot];
-    if (wait_ns && vkWaitForFences(device, 1, &oldest->fence, VK_TRUE, wait_ns) == VK_SUCCESS) {
+    if (wait_ns && g->vk.WaitForFences(device, 1, &oldest->fence, VK_TRUE, wait_ns) == VK_SUCCESS) {
         g->next_slot = (g->next_slot + 1) % FRAME_SLOTS;
         return oldest;
     }
@@ -113,7 +113,7 @@ static void barriers_add(struct barriers *bs, struct vulkan_texture *t, VkImageL
     t->layout = to;
 }
 
-static void barriers_flush(VkCommandBuffer cmd, struct barriers *bs)
+static void barriers_flush(struct render_gpu *g, VkCommandBuffer cmd, struct barriers *bs)
 {
     if (!bs->n)
         return;
@@ -122,7 +122,7 @@ static void barriers_flush(VkCommandBuffer cmd, struct barriers *bs)
         .imageMemoryBarrierCount = bs->n,
         .pImageMemoryBarriers = bs->list,
     };
-    vkCmdPipelineBarrier2(cmd, &info);
+    g->vk.CmdPipelineBarrier2(cmd, &info);
     bs->n = 0;
 }
 
@@ -145,26 +145,26 @@ static struct vector2i target_bounds(const struct gpu_surface *gs, struct vector
     };
 }
 
-static void set_scissor(VkCommandBuffer cmd, struct rect2i r)
+static void set_scissor(struct render_gpu *g, VkCommandBuffer cmd, struct rect2i r)
 {
     VkRect2D scissor = {
         .offset = { r.x, r.y },
         .extent = { (uint32_t)r.width, (uint32_t)r.height },
     };
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    g->vk.CmdSetScissor(cmd, 0, 1, &scissor);
 }
 
 /*
  * Begins recording commands in the command buffer of `slot`.
  * Returns true on success, or false on failure.
  */
-static bool frame_begin(struct frame_slot *slot)
+static bool frame_begin(struct render_gpu *g, struct frame_slot *slot)
 {
     VkCommandBufferBeginInfo info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
-    return vkBeginCommandBuffer(slot->cmd, &info) == VK_SUCCESS;
+    return g->vk.BeginCommandBuffer(slot->cmd, &info) == VK_SUCCESS;
 }
 
 /*
@@ -186,7 +186,7 @@ static void pass_begin(struct render_gpu *g, VkCommandBuffer cmd, const struct g
         .imageMemoryBarrierCount = 1,
         .pImageMemoryBarriers = &to_target,
     };
-    vkCmdPipelineBarrier2(cmd, &dependency);
+    g->vk.CmdPipelineBarrier2(cmd, &dependency);
 
     VkRenderingAttachmentInfo color = {
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -204,16 +204,16 @@ static void pass_begin(struct render_gpu *g, VkCommandBuffer cmd, const struct g
         .colorAttachmentCount = 1,
         .pColorAttachments = &color,
     };
-    vkCmdBeginRendering(cmd, &rendering);
+    g->vk.CmdBeginRendering(cmd, &rendering);
 
     VkViewport viewport = {
         .width = (float)canvas.x,
         .height = (float)canvas.y,
         .maxDepth = 1.0f,
     };
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    g->vk.CmdSetViewport(cmd, 0, 1, &viewport);
     struct push_constants push = { .viewport_size = { (float)canvas.x, (float)canvas.y } };
-    vkCmdPushConstants(cmd, g->pipeline_layout,
+    g->vk.CmdPushConstants(cmd, g->pipeline_layout,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
                        &push);
 }
@@ -226,7 +226,7 @@ static bool frame_submit(struct render_gpu *g, struct gpu_surface *gs, struct fr
                          uint32_t image_index)
 {
     VkDevice device = g->dev.device;
-    vkCmdEndRendering(slot->cmd);
+    g->vk.CmdEndRendering(slot->cmd);
     VkImageMemoryBarrier2 to_present = image_barrier(gs->chain.images[image_index],
                                                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                                      VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
@@ -235,8 +235,8 @@ static bool frame_submit(struct render_gpu *g, struct gpu_surface *gs, struct fr
         .imageMemoryBarrierCount = 1,
         .pImageMemoryBarriers = &to_present,
     };
-    vkCmdPipelineBarrier2(slot->cmd, &dependency);
-    if (vkEndCommandBuffer(slot->cmd) != VK_SUCCESS)
+    g->vk.CmdPipelineBarrier2(slot->cmd, &dependency);
+    if (g->vk.EndCommandBuffer(slot->cmd) != VK_SUCCESS)
         return false;
 
     VkCommandBufferSubmitInfo commands = {
@@ -262,16 +262,16 @@ static bool frame_submit(struct render_gpu *g, struct gpu_surface *gs, struct fr
         .signalSemaphoreInfoCount = 1,
         .pSignalSemaphoreInfos = &signal,
     };
-    vkResetFences(device, 1, &slot->fence);
-    if (vkQueueSubmit2(g->dev.queue, 1, &submit, slot->fence) != VK_SUCCESS) {
+    g->vk.ResetFences(device, 1, &slot->fence);
+    if (g->vk.QueueSubmit2(g->dev.queue, 1, &submit, slot->fence) != VK_SUCCESS) {
         /* No submit signals the fence now. Give the slot a signaled one. */
         VkFenceCreateInfo fence = {
             .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
             .flags = VK_FENCE_CREATE_SIGNALED_BIT,
         };
-        vkDestroyFence(device, slot->fence, NULL);
+        g->vk.DestroyFence(device, slot->fence, NULL);
         slot->fence = VK_NULL_HANDLE;
-        vkCreateFence(device, &fence, NULL, &slot->fence);
+        g->vk.CreateFence(device, &fence, NULL, &slot->fence);
         return false;
     }
 
@@ -283,7 +283,7 @@ static bool frame_submit(struct render_gpu *g, struct gpu_surface *gs, struct fr
         .pSwapchains = &gs->chain.handle,
         .pImageIndices = &image_index,
     };
-    VkResult presented = vkQueuePresentKHR(g->dev.queue, &present);
+    VkResult presented = g->vk.QueuePresentKHR(g->dev.queue, &present);
     if (presented == VK_ERROR_OUT_OF_DATE_KHR)
         gs->out_of_date = true;
     if (presented == VK_ERROR_OUT_OF_DATE_KHR || presented == VK_SUBOPTIMAL_KHR)
@@ -361,7 +361,7 @@ static void uploads_record(struct render_gpu *g, struct frame_slot *slot)
     for (int i = 0; i < GPU_IMAGES; i++)
         if (gpu_image_needs_upload(b, i))
             barriers_add(&barriers, &g->images[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    barriers_flush(cmd, &barriers);
+    barriers_flush(g, cmd, &barriers);
 
     if (b->atlas.n_uploads) {
         for (uint32_t i = 0; i < b->atlas.n_uploads; i++) {
@@ -373,7 +373,7 @@ static void uploads_record(struct render_gpu *g, struct frame_slot *slot)
                 .imageExtent = { u->w, u->h, 1 },
             };
         }
-        vkCmdCopyBufferToImage(cmd, slot->uploads.buffer, g->atlas.image,
+        g->vk.CmdCopyBufferToImage(cmd, slot->uploads.buffer, g->atlas.image,
                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, b->atlas.n_uploads,
                                g->copies);
     }
@@ -385,7 +385,7 @@ static void uploads_record(struct render_gpu *g, struct frame_slot *slot)
             .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
             .imageExtent = { (uint32_t)b->images[i].size.x, (uint32_t)b->images[i].size.y, 1 },
         };
-        vkCmdCopyBufferToImage(cmd, slot->uploads.buffer, g->images[i].image,
+        g->vk.CmdCopyBufferToImage(cmd, slot->uploads.buffer, g->images[i].image,
                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
     }
 
@@ -394,7 +394,7 @@ static void uploads_record(struct render_gpu *g, struct frame_slot *slot)
     for (int i = 0; i < GPU_IMAGES; i++)
         if (b->images[i].frame == b->frame)
             barriers_add(&barriers, &g->images[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    barriers_flush(cmd, &barriers);
+    barriers_flush(g, cmd, &barriers);
 }
 
 /* Resets texture layouts to undefined when recorded uploads are not submitted. */
@@ -425,21 +425,21 @@ static void commands_record(struct render_gpu *g, struct frame_slot *slot,
         if (!c->count || !rect2i_clip(&scissor, bounds))
             continue;
         if (!rect2i_eq(scissor, bound_scissor)) {
-            set_scissor(cmd, scissor);
+            set_scissor(g, cmd, scissor);
             bound_scissor = scissor;
         }
         /* The shape shaders sample nothing. */
         if (c->kind != GPU_CMD_SHAPE) {
             VkDescriptorSet set = c->image ? g->images[c->image - 1].set : g->atlas.set;
             if (set != bound_set) {
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline_layout,
+                g->vk.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline_layout,
                                         0, 1, &set, 0, NULL);
                 bound_set = set;
             }
         }
         VkDeviceSize offset = offsets[c->stream];
         if (offset != bound_offset) {
-            vkCmdBindVertexBuffers(cmd, 0, 1, &slot->instances.buffer, &offset);
+            g->vk.CmdBindVertexBuffers(cmd, 0, 1, &slot->instances.buffer, &offset);
             bound_offset = offset;
         }
         int passes = c->kind == GPU_CMD_SUBPX ? 3 : 1;
@@ -448,19 +448,19 @@ static void commands_record(struct render_gpu *g, struct frame_slot *slot,
                                                : c->kind == GPU_CMD_SUBPX ? PIPE_SUBPX + pass
                                                : PIPE_GLYPH];
             if (pipeline != bound_pipeline) {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                g->vk.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
                 bound_pipeline = pipeline;
             }
             uint32_t channel = (uint32_t)pass;
             if (c->kind == GPU_CMD_SUBPX && channel != bound_channel) {
                 /* The update names every stage of the push constant range. */
-                vkCmdPushConstants(cmd, g->pipeline_layout,
+                g->vk.CmdPushConstants(cmd, g->pipeline_layout,
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                    (uint32_t)offsetof(struct push_constants, channel),
                                    (uint32_t)sizeof(channel), &channel);
                 bound_channel = channel;
             }
-            vkCmdDraw(cmd, 6, c->count, 0, c->start);
+            g->vk.CmdDraw(cmd, 6, c->count, 0, c->start);
         }
     }
 }
@@ -491,7 +491,7 @@ static enum render_gpu_status draw_built(struct render_gpu *g, struct gpu_surfac
                                   &image_index))
         return RENDER_GPU_DROPPED;
 
-    if (!frame_begin(slot)) {
+    if (!frame_begin(g, slot)) {
         frame_abandon(g, gs, slot);
         return RENDER_GPU_DROPPED;
     }
@@ -575,7 +575,7 @@ static bool present_pixels(struct render_gpu *g, struct gpu_surface *gs, struct 
     if (!vulkan_swapchain_acquire(g, gs, slot, drawable->surface, fb->size, tearing, wait_ns,
                                   &image_index))
         return false;
-    if (!frame_begin(slot)) {
+    if (!frame_begin(g, slot)) {
         frame_abandon(g, gs, slot);
         return false;
     }
@@ -594,21 +594,21 @@ static bool present_pixels(struct render_gpu *g, struct gpu_surface *gs, struct 
             offset += (size_t)rects[i].width * (size_t)rects[i].height * 4;
         }
         barriers_add(&barriers, &gs->pixels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        barriers_flush(cmd, &barriers);
-        vkCmdCopyBufferToImage(cmd, slot->uploads.buffer, gs->pixels.image,
+        barriers_flush(g, cmd, &barriers);
+        g->vk.CmdCopyBufferToImage(cmd, slot->uploads.buffer, gs->pixels.image,
                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)n, copies);
     }
     barriers_add(&barriers, &gs->pixels, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    barriers_flush(cmd, &barriers);
+    barriers_flush(g, cmd, &barriers);
 
     pass_begin(g, cmd, gs, image_index, fb->size, NULL);
-    set_scissor(cmd, (struct rect2i){ .size = target_bounds(gs, fb->size) });
+    set_scissor(g, cmd, (struct rect2i){ .size = target_bounds(gs, fb->size) });
     VkDeviceSize offset = 0;
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline_layout, 0, 1,
+    g->vk.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline_layout, 0, 1,
                             &gs->pixels.set, 0, NULL);
-    vkCmdBindVertexBuffers(cmd, 0, 1, &slot->instances.buffer, &offset);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipelines[PIPE_COPY]);
-    vkCmdDraw(cmd, 6, 1, 0, 0);
+    g->vk.CmdBindVertexBuffers(cmd, 0, 1, &slot->instances.buffer, &offset);
+    g->vk.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipelines[PIPE_COPY]);
+    g->vk.CmdDraw(cmd, 6, 1, 0, 0);
     if (!frame_submit(g, gs, slot, image_index)) {
         /* The copies never ran. The next present loads every pixel. */
         gs->pixels.layout = VK_IMAGE_LAYOUT_UNDEFINED;

@@ -16,9 +16,12 @@ extern __thread int ft_applied_px;
 #endif
 #define UNICODE_LIMIT 0x110000u
 
+struct ft_font_blob;
+
 struct ft_face_slot {
     FT_Face styles[FONT_VARIANT_COUNT];
     hb_font_t *hb[FONT_VARIANT_COUNT];
+    struct ft_font_blob *blobs[FONT_VARIANT_COUNT];
     char *path;
     uint64_t last_used;
     int index;
@@ -33,7 +36,7 @@ _Static_assert(sizeof(struct ft_face_slot) <= 128,
 
 extern __thread FT_Library ft_lib;
 
-extern __thread struct ft_face_slot faces[MAX_FACES];
+extern _Thread_local struct ft_face_slot *faces;
 extern __thread int num_faces;
 extern int configured_faces;
 extern __thread uint64_t face_stamp;
@@ -55,7 +58,7 @@ void face_snapshot_configured(void);
 void face_reload_configured(void);
 void ft_reload_family(void);
 
-extern bool fc_ready;
+extern _Atomic bool fc_ready;
 
 int font_ft_load_flags(void);
 FT_Render_Mode font_ft_render_mode(void);
@@ -98,8 +101,14 @@ static inline int ft_px_round(FT_Pos v)
 {
     return (int)((v + 32) >> 6);
 }
+bool fc_pin(void);
+void fc_unpin(void);
+void fc_fini(void);
+void fc_query_lock(void);
+void fc_query_unlock(void);
 FcPattern *fc_font_match(FcPattern *pat);
 void release_all_faces(void);
+void faces_release_table(void);
 void face_cfg_specs_destroy(void);
 
 struct font_face_query {

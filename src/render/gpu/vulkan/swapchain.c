@@ -14,12 +14,12 @@ static void chain_destroy(struct render_gpu *g, struct vulkan_swapchain *c)
     VkDevice device = g->dev.device;
     for (uint32_t i = 0; i < c->image_count; i++) {
         if (c->rendered[i])
-            vkDestroySemaphore(device, c->rendered[i], NULL);
+            g->vk.DestroySemaphore(device, c->rendered[i], NULL);
         if (c->views[i])
-            vkDestroyImageView(device, c->views[i], NULL);
+            g->vk.DestroyImageView(device, c->views[i], NULL);
     }
     if (c->handle)
-        vkDestroySwapchainKHR(device, c->handle, NULL);
+        g->vk.DestroySwapchainKHR(device, c->handle, NULL);
     *c = (struct vulkan_swapchain){0};
 }
 
@@ -75,7 +75,7 @@ static bool traits_ensure(struct render_gpu *g, struct gpu_surface *gs, VkSurfac
     VkPhysicalDevice pd = g->dev.physical_device;
 
     VkBool32 supported = VK_FALSE;
-    if (vkGetPhysicalDeviceSurfaceSupportKHR(pd, g->dev.queue_family, surface, &supported) !=
+    if (g->vk.GetPhysicalDeviceSurfaceSupportKHR(pd, g->dev.queue_family, surface, &supported) !=
             VK_SUCCESS ||
         !supported)
         return false;
@@ -83,7 +83,7 @@ static bool traits_ensure(struct render_gpu *g, struct gpu_surface *gs, VkSurfac
     /* Vulkan defines fewer present modes than this. VK_INCOMPLETE is not an error. */
     VkPresentModeKHR modes[16];
     uint32_t mode_count = 16;
-    VkResult vr = vkGetPhysicalDeviceSurfacePresentModesKHR(pd, surface, &mode_count, modes);
+    VkResult vr = g->vk.GetPhysicalDeviceSurfacePresentModesKHR(pd, surface, &mode_count, modes);
     if (vr != VK_SUCCESS && vr != VK_INCOMPLETE)
         mode_count = 0;
     for (uint32_t i = 0; i < mode_count; i++) {
@@ -93,11 +93,11 @@ static bool traits_ensure(struct render_gpu *g, struct gpu_surface *gs, VkSurfac
     }
 
     uint32_t format_count = 0;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(pd, surface, &format_count, NULL);
+    g->vk.GetPhysicalDeviceSurfaceFormatsKHR(pd, surface, &format_count, NULL);
     VkSurfaceFormatKHR *formats = format_count ? calloc(format_count, sizeof(*formats)) : NULL;
     if (!formats)
         return false;
-    vr = vkGetPhysicalDeviceSurfaceFormatsKHR(pd, surface, &format_count, formats);
+    vr = g->vk.GetPhysicalDeviceSurfaceFormatsKHR(pd, surface, &format_count, formats);
     bool ok = (vr == VK_SUCCESS || vr == VK_INCOMPLETE) && format_count;
     if (ok) {
         gs->traits.format = formats[0];
@@ -120,7 +120,7 @@ static bool chain_images(struct render_gpu *g, struct vulkan_swapchain *c, VkFor
     uint32_t count = SWAPCHAIN_IMAGES_MAX;
     /* VK_INCOMPLETE: more images than the arrays hold. An image index could
      * then point outside the arrays, so the swapchain is not usable. */
-    if (vkGetSwapchainImagesKHR(device, c->handle, &count, c->images) != VK_SUCCESS)
+    if (g->vk.GetSwapchainImagesKHR(device, c->handle, &count, c->images) != VK_SUCCESS)
         return false;
     c->image_count = count;
     for (uint32_t i = 0; i < count; i++) {
@@ -132,8 +132,8 @@ static bool chain_images(struct render_gpu *g, struct vulkan_swapchain *c, VkFor
             .format = format,
             .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
         };
-        if (vkCreateSemaphore(device, &semaphore, NULL, &c->rendered[i]) != VK_SUCCESS ||
-            vkCreateImageView(device, &view, NULL, &c->views[i]) != VK_SUCCESS)
+        if (g->vk.CreateSemaphore(device, &semaphore, NULL, &c->rendered[i]) != VK_SUCCESS ||
+            g->vk.CreateImageView(device, &view, NULL, &c->views[i]) != VK_SUCCESS)
             return false;
     }
     return true;
@@ -174,7 +174,7 @@ bool vulkan_swapchain_ensure(struct render_gpu *g, struct gpu_surface *gs, VkSur
     VkPhysicalDevice pd = g->dev.physical_device;
     VkSurfaceCapabilitiesKHR caps;
     if (!traits_ensure(g, gs, surface) ||
-        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(pd, surface, &caps) != VK_SUCCESS)
+        g->vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(pd, surface, &caps) != VK_SUCCESS)
         return false;
     VkExtent2D extent = caps.currentExtent;
     if (extent.width == UINT32_MAX) {
@@ -220,7 +220,7 @@ bool vulkan_swapchain_ensure(struct render_gpu *g, struct gpu_surface *gs, VkSur
         .oldSwapchain = same_surface ? gs->chain.handle : VK_NULL_HANDLE,
     };
     struct vulkan_swapchain next = {0};
-    VkResult vr = vkCreateSwapchainKHR(g->dev.device, &info, NULL, &next.handle);
+    VkResult vr = g->vk.CreateSwapchainKHR(g->dev.device, &info, NULL, &next.handle);
 
     /*
      * The old swapchain is retired now, also when the call failed. Frames
@@ -264,8 +264,8 @@ bool vulkan_swapchain_acquire(struct render_gpu *g, struct gpu_surface *gs,
     for (int attempt = 0; attempt < 2; attempt++) {
         if (!gs->chain.handle)
             return false;
-        VkResult vr = vkAcquireNextImageKHR(g->dev.device, gs->chain.handle, wait_ns,
-                                            slot->acquired, VK_NULL_HANDLE, image_index);
+        VkResult vr = g->vk.AcquireNextImageKHR(g->dev.device, gs->chain.handle, wait_ns,
+                                                 slot->acquired, VK_NULL_HANDLE, image_index);
         if (vr == VK_SUCCESS)
             return true;
         if (vr == VK_SUBOPTIMAL_KHR) {
