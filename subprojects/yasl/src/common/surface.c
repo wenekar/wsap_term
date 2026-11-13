@@ -68,6 +68,7 @@ bool yasl_public_connected(yasl_surface *s)
 
 static bool refresh_ready(yasl_surface *s);
 static int take_event(yasl_event *out);
+static void cpu_discard_locked(yasl_surface *s);
 /* An owed REFRESH is an event the queue does not hold. */
 static bool public_pending(struct yasl_private_display *d)
 {
@@ -423,6 +424,7 @@ int yasl_surface_destroy(yasl_surface *s)
             break;
         yasl_surface_destroy(child);
     }
+    cpu_discard_locked(s);
     free(s->canvas);
     s->canvas = NULL;
     s->canvas_capacity = 0;
@@ -1104,6 +1106,46 @@ uint64_t yasl_time_ns(void)
 }
 
 /* CPU rendering */
+static void cpu_discard_locked(yasl_surface *s)
+{
+    if (!s->cpu_acquired)
+        return;
+    if (s->display && s->display->ops->surface_cpu_discard)
+        s->display->ops->surface_cpu_discard(s);
+    s->cpu_acquired = false;
+    s->cpu_frame = (struct yasl_private_framebuffer){0};
+}
+static bool cpu_restore_canvas(yasl_surface *s)
+{
+    if (s->cpu_acquired)
+        return yasl_public_fail(EBUSY);
+    if (s->cpu_direct) {
+        struct yasl_private_window_cbs cb = {.draw = draw_canvas};
+        yasl_private_surface_set_callbacks(s, &cb, NULL);
+        s->cpu_direct = false;
+    }
+    return true;
+}
+static bool add_public_damage(struct yasl_private_damage_list *out, const struct yasl_damage *damage,
+                              int count, bool strict)
+{
+    if (strict && (count < 0 || (count > 0 && !damage)))
+        return yasl_public_fail(EINVAL);
+    if (damage && count > 0) {
+        for (int i = 0; i < count; i++) {
+            if (strict && (damage[i].width < 0 || damage[i].height < 0))
+                return yasl_public_fail(EINVAL);
+            struct yasl_private_rect2i r = {
+                .x = damage[i].x, .y = damage[i].y,
+                .width = damage[i].width, .height = damage[i].height,
+            };
+            yasl_private_damage_union(out, &r, 1);
+        }
+    } else {
+        yasl_private_damage_union(out, NULL, 0);
+    }
+    return true;
+}
 uint32_t *yasl_cpu_pixels(yasl_surface *s, int *pw, int *ph)
 {
     if (pw)
@@ -1114,7 +1156,7 @@ uint32_t *yasl_cpu_pixels(yasl_surface *s, int *pw, int *ph)
         return NULL;
     if (s->presenter != YASL_PRIVATE_PRESENTER_CPU)
         return yasl_public_fail(ENOTSUP), NULL;
-    if (!canvas_fit(s, s->size.x, s->size.y))
+    if (!cpu_restore_canvas(s) || !canvas_fit(s, s->size.x, s->size.y))
         return NULL;
     if (pw)
         *pw = s->canvas_width;
@@ -1128,19 +1170,9 @@ int yasl_cpu_present_damage(yasl_surface *s, const struct yasl_damage *damage, i
         return -errno;
     if (s->presenter != YASL_PRIVATE_PRESENTER_CPU)
         return yasl_public_error(ENOTSUP);
-    if (!canvas_fit(s, s->size.x, s->size.y))
+    if (!cpu_restore_canvas(s) || !canvas_fit(s, s->size.x, s->size.y))
         return -errno;
-    if (damage && count > 0) {
-        for (int i = 0; i < count; i++) {
-            struct yasl_private_rect2i r = {
-                .x = damage[i].x, .y = damage[i].y,
-                .width = damage[i].width, .height = damage[i].height,
-            };
-            yasl_private_damage_union(&s->cpu_damage, &r, 1);
-        }
-    } else {
-        yasl_private_damage_union(&s->cpu_damage, NULL, 0);
-    }
+    add_public_damage(&s->cpu_damage, damage, count, false);
     yasl_private_surface_request_frame(s);
     yasl_private_display_flush(s->display);
     return 0;
@@ -1148,6 +1180,76 @@ int yasl_cpu_present_damage(yasl_surface *s, const struct yasl_damage *damage, i
 int yasl_cpu_present(yasl_surface *s)
 {
     return yasl_cpu_present_damage(s, NULL, 0);
+}
+int yasl_cpu_acquire(yasl_surface *s, struct yasl_cpu_frame *out)
+{
+    if (out)
+        *out = (struct yasl_cpu_frame){0};
+    if (!yasl_public_connected(s))
+        return -errno;
+    if (!out)
+        return yasl_public_error(EINVAL);
+    if (s->presenter != YASL_PRIVATE_PRESENTER_CPU ||
+        !s->display->ops->surface_cpu_acquire ||
+        !s->display->ops->surface_cpu_commit ||
+        !s->display->ops->surface_cpu_discard)
+        return yasl_public_error(ENOTSUP);
+    if (s->cpu_acquired)
+        return yasl_public_error(EBUSY);
+    if (!s->cpu_direct) {
+        free(s->canvas);
+        s->canvas = NULL;
+        s->canvas_capacity = 0;
+        s->canvas_width = 0;
+        s->canvas_height = 0;
+        s->cpu_damage = (struct yasl_private_damage_list){0};
+        yasl_private_surface_set_callbacks(s, NULL, NULL);
+        s->cpu_direct = true;
+    }
+    struct yasl_private_framebuffer fb = {0};
+    errno = 0;
+    if (!s->display->ops->surface_cpu_acquire(s, &fb))
+        return yasl_public_error(errno ? errno : EIO);
+    s->cpu_acquired = true;
+    s->cpu_frame = fb;
+    *out = (struct yasl_cpu_frame){
+        .pixels = fb.pixels,
+        .pixel_width = fb.size.x,
+        .pixel_height = fb.size.y,
+        .stride_bytes = fb.stride_bytes ? fb.stride_bytes : fb.size.x * (int)sizeof(uint32_t),
+    };
+    return 0;
+}
+int yasl_cpu_commit(yasl_surface *s, const struct yasl_damage *damage, int count)
+{
+    if (!yasl_public_surface(s, false))
+        return -errno;
+    if (!s->cpu_acquired)
+        return yasl_public_error(EINVAL);
+    if (atomic_load(&display->offline)) {
+        cpu_discard_locked(s);
+        return yasl_public_error(ENOTCONN);
+    }
+    struct yasl_private_damage_list raw = {0}, clipped;
+    if (!add_public_damage(&raw, damage, count, true) ||
+        !yasl_private_damage_clip(&raw, s->cpu_frame.size, &clipped)) {
+        cpu_discard_locked(s);
+        return yasl_public_error(errno ? errno : EINVAL);
+    }
+    struct yasl_private_framebuffer fb = s->cpu_frame;
+    s->cpu_acquired = false;
+    s->cpu_frame = (struct yasl_private_framebuffer){0};
+    errno = 0;
+    if (!s->display->ops->surface_cpu_commit(s, &fb, &clipped))
+        return yasl_public_error(errno ? errno : EIO);
+    atomic_store(&s->presented_ns, yasl_private_loop_now_ns());
+    return 0;
+}
+void yasl_cpu_discard(yasl_surface *s)
+{
+    if (!yasl_public_surface(s, false))
+        return;
+    cpu_discard_locked(s);
 }
 
 /* OpenGL; these may run on a rendering thread, so they read only immutable or atomic state. */

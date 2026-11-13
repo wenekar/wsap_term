@@ -27,6 +27,9 @@ void wayland_surface_set_callbacks(struct wayland_surface *s, const struct yasl_
 void wayland_surface_set_title(struct wayland_surface *s, const char *title);
 void wayland_surface_schedule_redraw(struct wayland_surface *s);
 bool wayland_surface_present(struct wayland_surface *s, const struct yasl_private_framebuffer *fb, const struct yasl_private_damage_list *damage);
+bool wayland_surface_cpu_acquire(struct wayland_surface *s, struct yasl_private_framebuffer *out);
+bool wayland_surface_cpu_commit(struct wayland_surface *s, const struct yasl_private_framebuffer *fb, const struct yasl_private_damage_list *damage);
+void wayland_surface_cpu_discard(struct wayland_surface *s);
 struct yasl_private_geometry wayland_surface_geometry(const struct wayland_surface *s);
 struct yasl_private_timing wayland_surface_timing(const struct wayland_surface *s);
 void wayland_surface_set_cursor(struct wayland_surface *s, enum yasl_private_cursor cursor);

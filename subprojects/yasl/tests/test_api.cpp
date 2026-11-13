@@ -17,6 +17,10 @@ int main()
     assert(gl.major == 0 && gl.share == nullptr);
     int w = 0, h = 0;
     assert(!yasl_cpu_pixels(nullptr, &w, &h) && errno == ENODEV);
+    yasl_cpu_frame frame{};
+    assert(yasl_cpu_acquire(nullptr, &frame) == -ENODEV);
+    assert(yasl_cpu_commit(nullptr, nullptr, 0) == -ENODEV);
+    yasl_cpu_discard(nullptr);
     yasl_native native{};
     assert(yasl_surface_get_native(nullptr, &native) == -ENODEV);
     yasl_shutdown();

@@ -156,6 +156,14 @@ void wayland_display_check(struct wayland_display *c)
     display_leave(c);
 }
 
+void wayland_conn_flush(struct wayland_display *c)
+{
+    if (!c || c->lost || !c->wl)
+        return;
+    if (wl_display_flush(c->wl) < 0 && errno != EAGAIN)
+        display_lose(c);
+}
+
 void wayland_display_flush(struct wayland_display *c)
 {
     if (!c || c->lost)
@@ -165,10 +173,7 @@ void wayland_display_flush(struct wayland_display *c)
         next = w->conn_next;
         surface_draw_frame(w);
     }
-    if (!c->lost && c->wl) {
-        if (wl_display_flush(c->wl) < 0 && errno != EAGAIN)
-            display_lose(c);
-    }
+    wayland_conn_flush(c);
     display_leave(c);
 }
 
@@ -456,7 +461,7 @@ void surface_release_native(struct wayland_surface *w)
     if (w->base.presenter == YASL_PRIVATE_PRESENTER_VULKAN)
         w->base.presenter = YASL_PRIVATE_PRESENTER_NONE;
     w->configured = w->has_pending_serial = w->has_shown = false;
-    w->frame_active = w->want_draw = false;
+    w->frame_active = w->want_draw = w->direct_acquired = false;
     w->outputs = 0;
     if (gl) pthread_mutex_unlock(&w->conn->native_mutex);
 }

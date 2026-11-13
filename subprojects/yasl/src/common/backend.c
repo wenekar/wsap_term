@@ -348,34 +348,45 @@ void yasl_private_damage_union(struct yasl_private_damage_list *list,
     }
 }
 
+bool yasl_private_damage_clip(const struct yasl_private_damage_list *damage,
+                              struct yasl_private_vector2i size,
+                              struct yasl_private_damage_list *out)
+{
+    if (!damage || !out || size.x <= 0 || size.y <= 0 ||
+        damage->n < -1 || damage->n > YASL_PRIVATE_DAMAGE_MAX)
+        return false;
+    out->n = damage->n;
+    out->merged = false;
+    if (damage->n < 0) {
+        out->bounds = damage->bounds;
+        return true;
+    }
+    out->n = 0;
+    out->bounds = (struct yasl_private_rect2i){0};
+    for (int i = 0; i < damage->n; i++) {
+        struct yasl_private_rect2i r = damage->rects[i];
+        if (r.width < 0 || r.height < 0) return false;
+        int64_t right = (int64_t)r.x + r.width;
+        int64_t bottom = (int64_t)r.y + r.height;
+        int64_t x = r.x > 0 ? r.x : 0, y = r.y > 0 ? r.y : 0;
+        if (right > size.x) right = size.x;
+        if (bottom > size.y) bottom = size.y;
+        if (right > x && bottom > y)
+            out->rects[out->n++] = (struct yasl_private_rect2i){
+                (int)x, (int)y, (int)(right - x), (int)(bottom - y),
+            };
+    }
+    return true;
+}
+
 bool yasl_private_surface_present(struct yasl_surface *s, const struct yasl_private_framebuffer *fb, const struct yasl_private_damage_list *damage)
 {
     if (!s || !s->display->ops->surface_present || !fb || !damage ||
-        !fb->generation || fb->generation != s->frame_generation ||
-        fb->size.x <= 0 || fb->size.y <= 0 ||
-        damage->n < -1 || damage->n > YASL_PRIVATE_DAMAGE_MAX)
+        !fb->generation || fb->generation != s->frame_generation)
         return false;
     struct yasl_private_damage_list clipped;
-    clipped.n = damage->n;
-    if (damage->n < 0) {
-        clipped.bounds = damage->bounds;
-    } else {
-        clipped.n = 0;
-        clipped.bounds = (struct yasl_private_rect2i){0};
-        for (int i = 0; i < damage->n; i++) {
-            struct yasl_private_rect2i r = damage->rects[i];
-            if (r.width < 0 || r.height < 0) return false;
-            int64_t right = (int64_t)r.x + r.width;
-            int64_t bottom = (int64_t)r.y + r.height;
-            int64_t x = r.x > 0 ? r.x : 0, y = r.y > 0 ? r.y : 0;
-            if (right > fb->size.x) right = fb->size.x;
-            if (bottom > fb->size.y) bottom = fb->size.y;
-            if (right > x && bottom > y)
-                clipped.rects[clipped.n++] = (struct yasl_private_rect2i){
-                    (int)x, (int)y, (int)(right - x), (int)(bottom - y),
-                };
-        }
-    }
+    if (!yasl_private_damage_clip(damage, fb->size, &clipped))
+        return false;
     if (!s->display->ops->surface_present(s, fb, &clipped))
         return false;
     atomic_store(&s->presented_ns, yasl_private_loop_now_ns());

@@ -47,6 +47,11 @@ int main(void)
     assert(yasl_clipboard_request(NULL, YASL_CLIPBOARD) == -ENODEV);
     assert(yasl_notify("title", NULL) == -ENODEV);
     assert(yasl_cpu_present(NULL) == -ENODEV);
+    struct yasl_cpu_frame cpu_frame = {.pixel_width = 7};
+    assert(yasl_cpu_acquire(NULL, NULL) == -ENODEV);
+    assert(yasl_cpu_acquire(NULL, &cpu_frame) == -ENODEV && cpu_frame.pixel_width == 0);
+    assert(yasl_cpu_commit(NULL, NULL, 0) == -ENODEV);
+    yasl_cpu_discard(NULL);
     assert(yasl_gl_set_swap_interval(NULL, 1) == -ENODEV);
     assert(yasl_gl_present(NULL) == -ENODEV);
     assert(yasl_gl_make_current(fake) == -ENODEV);

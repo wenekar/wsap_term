@@ -481,6 +481,60 @@ int main(int argc, char **argv)
 #endif
     s->refresh = NULL;
 
+    /* Direct CPU acquire/commit/discard and restoring canvas mode via yasl_cpu_pixels. */
+    struct yasl_cpu_frame direct = {0};
+    int acq = yasl_cpu_acquire(s, &direct);
+    for (int tries = 0; tries < 50 && acq == -EAGAIN; tries++) {
+        assert(yasl_wait_event(&e, 10) >= 0);
+        acq = yasl_cpu_acquire(s, &direct);
+    }
+    if (acq == 0) {
+        assert(direct.pixels && direct.pixel_width > 0 && direct.pixel_height > 0 &&
+               direct.stride_bytes >= direct.pixel_width * (int)sizeof(uint32_t));
+        struct yasl_cpu_frame dup = {0};
+        assert(yasl_cpu_acquire(s, &dup) == -EBUSY);
+        int bw = 0, bh = 0;
+        assert(!yasl_cpu_pixels(s, &bw, &bh) && errno == EBUSY);
+        assert(yasl_cpu_present(s) == -EBUSY);
+        size_t total_px = (size_t)direct.pixel_width * (size_t)direct.pixel_height;
+        for (size_t i = 0; i < total_px; i++)
+            direct.pixels[i] = 0xff224466u;
+        struct yasl_damage full_rect = {0, 0, direct.pixel_width, direct.pixel_height};
+        assert(yasl_cpu_commit(s, &full_rect, 1) == 0);
+        uint32_t *rb = malloc(total_px * sizeof(*rb));
+        struct yasl_private_vector2i rb_size = {0};
+        assert(rb && yasl_private_surface_read_pixels(s, rb, total_px, &rb_size));
+        assert(rb_size.x == direct.pixel_width && rb_size.y == direct.pixel_height &&
+               rb[0] == 0xff224466u);
+        free(rb);
+
+        /* Discard returns -EINVAL on subsequent commit, then acquire + commit succeeds. */
+        acq = yasl_cpu_acquire(s, &direct);
+        for (int tries = 0; tries < 50 && acq == -EAGAIN; tries++) {
+            assert(yasl_wait_event(&e, 10) >= 0);
+            acq = yasl_cpu_acquire(s, &direct);
+        }
+        assert(acq == 0);
+        yasl_cpu_discard(s);
+        assert(yasl_cpu_commit(s, NULL, 0) == -EINVAL);
+        acq = yasl_cpu_acquire(s, &direct);
+        for (int tries = 0; tries < 50 && acq == -EAGAIN; tries++) {
+            assert(yasl_wait_event(&e, 10) >= 0);
+            acq = yasl_cpu_acquire(s, &direct);
+        }
+        assert(acq == 0);
+        for (size_t i = 0; i < (size_t)direct.pixel_width * (size_t)direct.pixel_height; i++)
+            direct.pixels[i] = 0xff113355u;
+        assert(yasl_cpu_commit(s, NULL, 0) == 0);
+
+        /* Restoring canvas mode after direct mode keeps yasl_cpu_pixels working. */
+        int rw = 0, rh = 0;
+        assert(yasl_cpu_pixels(s, &rw, &rh) && rw > 0 && rh > 0);
+        assert(yasl_cpu_present(s) == 0);
+    } else {
+        assert(acq == -ENOTSUP);
+    }
+
     /* WINDOW events report the current geometry: resizes queued while the
      * application was away fold into one, and a size it already has reports
      * nothing. */

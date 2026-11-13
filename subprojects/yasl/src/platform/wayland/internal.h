@@ -390,6 +390,7 @@ struct wayland_surface {
     bool relative;
     bool pointer_locked;
     bool ime_delete_pending;
+    bool direct_acquired;
     /* Set by a swap on a rendering thread; the owner arms the frame request at its next flush. */
 };
 
@@ -429,6 +430,7 @@ uint64_t conn_mono_to_pres(const struct wayland_display *c, uint64_t ns);
 /* True when surface_draw_frame would draw now. */
 bool surface_draw_ready(const struct wayland_surface *w);
 void surface_draw_frame(struct wayland_surface *w);
+void wayland_conn_flush(struct wayland_display *c);
 bool wayland_surface_arm_frame(struct wayland_surface *w);
 void surface_fail(struct wayland_surface *w);
 void display_leave(struct wayland_display *c);

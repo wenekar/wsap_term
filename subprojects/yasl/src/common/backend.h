@@ -89,6 +89,9 @@ struct yasl_surface {
     bool popup;
     bool drawing;
     bool frame_presented;
+    bool cpu_direct;
+    bool cpu_acquired;
+    struct yasl_private_framebuffer cpu_frame;
     uint32_t reported_scale;
     uint64_t draw_index;
     struct yasl_private_frame *active_frame;
@@ -138,6 +141,8 @@ static inline bool yasl_private_copy_frame(const uint32_t *pixels, struct yasl_p
     return true;
 }
 
+bool yasl_private_damage_clip(const struct yasl_private_damage_list *damage,
+        struct yasl_private_vector2i size, struct yasl_private_damage_list *out);
 static inline uint64_t yasl_private_frame_begin(struct yasl_surface *s)
 {
     if (++s->frame_generation == 0) ++s->frame_generation;
@@ -199,6 +204,9 @@ struct yasl_private_backend_ops {
      * paced by the refresh interval. */
     bool (*surface_frame_in_flight)(const struct yasl_surface *s);
     bool (*surface_present)(struct yasl_surface *s, const struct yasl_private_framebuffer *fb, const struct yasl_private_damage_list *damage);
+    bool (*surface_cpu_acquire)(struct yasl_surface *s, struct yasl_private_framebuffer *out);
+    bool (*surface_cpu_commit)(struct yasl_surface *s, const struct yasl_private_framebuffer *fb, const struct yasl_private_damage_list *damage);
+    void (*surface_cpu_discard)(struct yasl_surface *s);
     /* Optional; NULL means only YASL_PRIVATE_POINTER_NORMAL is supported. Backends that
      * implement RELATIVE push POINTER_MOTION with delta set and pos frozen. */
     bool (*surface_set_pointer_mode)(struct yasl_surface *s, enum yasl_private_pointer_mode mode);

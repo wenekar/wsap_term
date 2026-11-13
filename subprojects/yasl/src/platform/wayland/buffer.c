@@ -619,15 +619,8 @@ static void commit_buffer(struct wayland_surface *w, int idx)
     w->buffers[idx].presented = true;
 }
 
-bool wayland_surface_present(struct wayland_surface *w, const struct yasl_private_framebuffer *fb,
-                          const struct yasl_private_damage_list *damage)
+static bool submit_current_buffer(struct wayland_surface *w, const struct yasl_private_damage_list *damage)
 {
-    if (!w || w->base.presenter != YASL_PRIVATE_PRESENTER_CPU ||
-        w->closed || !w->frame_active || w->frame_presented || !fb ||
-        !damage || fb->pixels != w->frame.target.pixels ||
-        fb->size.x != w->width || fb->size.y != w->height)
-        return false;
-
     w->damage.n = damage->n;
     w->damage.bounds = damage->bounds;
     if (damage->n > 0)
@@ -637,16 +630,123 @@ bool wayland_surface_present(struct wayland_surface *w, const struct yasl_privat
         return false;
     }
     commit_buffer(w, w->cur);
-    w->frame_presented = true;
     w->shown = w->cur;
     w->has_shown = true;
     return true;
 }
 
+bool wayland_surface_present(struct wayland_surface *w, const struct yasl_private_framebuffer *fb,
+                          const struct yasl_private_damage_list *damage)
+{
+    if (!w || w->base.presenter != YASL_PRIVATE_PRESENTER_CPU ||
+        w->closed || !w->frame_active || w->frame_presented || !fb ||
+        !damage || fb->pixels != w->frame.target.pixels ||
+        fb->size.x != w->width || fb->size.y != w->height)
+        return false;
+
+    if (!submit_current_buffer(w, damage))
+        return false;
+    w->frame_presented = true;
+    return true;
+}
+
+bool wayland_surface_cpu_acquire(struct wayland_surface *w, struct yasl_private_framebuffer *out)
+{
+    if (!w || !out || w->destroyed || w->closed ||
+        w->base.presenter != YASL_PRIVATE_PRESENTER_CPU) {
+        errno = EINVAL;
+        return false;
+    }
+    if (w->conn && w->conn->lost) {
+        errno = ENOTCONN;
+        return false;
+    }
+    if (w->frame_active || w->direct_acquired) {
+        errno = EBUSY;
+        return false;
+    }
+    if (!w->configured || !w->surface) {
+        errno = EAGAIN;
+        return false;
+    }
+    if (apply_pending_geometry(w) < 0) {
+        surface_fail(w);
+        errno = EIO;
+        return false;
+    }
+    if (w->closed) {
+        errno = EPIPE;
+        return false;
+    }
+    int idx = buffer_pick_free_index(w->buffers, w->cur);
+    if (idx < 0) {
+        w->frames_skipped++;
+        errno = EAGAIN;
+        return false;
+    }
+    if (w->has_shown && idx == w->shown)
+        w->has_shown = false;
+    if (buffer_prepare(w, &w->buffers[idx], w->width, w->height, &buffer_listener) < 0) {
+        w->frames_skipped++;
+        if (!errno) errno = ENOMEM;
+        return false;
+    }
+    w->cur = idx;
+    w->want_draw = false;
+    if (w->parent)
+        memset(w->buffers[idx].pixels, 0, (size_t)w->width * (size_t)w->height * sizeof(uint32_t));
+    w->damage = (struct yasl_private_damage_list){0};
+    w->direct_acquired = true;
+    *out = (struct yasl_private_framebuffer){
+        .generation = yasl_private_frame_begin(&w->base),
+        .pixels = w->buffers[idx].pixels,
+        .size = { .x = w->width, .y = w->height },
+        .stride_bytes = w->width * (int)sizeof(uint32_t),
+    };
+    return true;
+}
+
+bool wayland_surface_cpu_commit(struct wayland_surface *w, const struct yasl_private_framebuffer *fb,
+                                const struct yasl_private_damage_list *damage)
+{
+    if (!w) {
+        errno = EINVAL;
+        return false;
+    }
+    bool was_acquired = w->direct_acquired;
+    w->direct_acquired = false;
+    if (!was_acquired || w->destroyed || w->closed ||
+        w->base.presenter != YASL_PRIVATE_PRESENTER_CPU) {
+        errno = EINVAL;
+        return false;
+    }
+    if (w->conn && w->conn->lost) {
+        errno = ENOTCONN;
+        return false;
+    }
+    if (!fb || !damage || fb->pixels != w->buffers[w->cur].pixels ||
+        fb->size.x != w->width || fb->size.y != w->height) {
+        errno = EINVAL;
+        return false;
+    }
+    if (!submit_current_buffer(w, damage)) {
+        errno = EIO;
+        return false;
+    }
+    wayland_conn_flush(w->conn);
+    return true;
+}
+
+void wayland_surface_cpu_discard(struct wayland_surface *w)
+{
+    if (!w) return;
+    w->direct_acquired = false;
+}
+
 bool wayland_surface_read_pixels(struct wayland_surface *w, uint32_t *out, size_t cap,
                                  struct yasl_private_vector2i *size)
 {
-    if (!w || w->closed || w->frame_active || !w->has_shown) return false;
+    if (!w || w->closed || w->frame_active || w->direct_acquired || !w->has_shown) return false;
     const struct buffer *b = &w->buffers[w->shown];
     if (!b->pixels) return false;
     return yasl_private_copy_frame(b->pixels, (struct yasl_private_vector2i){b->width, b->height}, out, cap, size);
@@ -655,6 +755,7 @@ bool wayland_surface_read_pixels(struct wayland_surface *w, uint32_t *out, size_
 bool surface_draw_ready(const struct wayland_surface *w)
 {
     return w->want_draw && w->configured && !w->closed &&
+           w->cbs && w->cbs->draw &&
            w->base.presenter == YASL_PRIVATE_PRESENTER_CPU &&
            buffer_pick_free_index(w->buffers, w->cur) >= 0;
 }
@@ -667,8 +768,10 @@ void surface_draw_frame(struct wayland_surface *w)
         surface_fail(w);
         return;
     }
-    if (w->closed || !w->cbs->draw || !w->want_draw)
+    if (w->closed || !w->cbs->draw || !w->want_draw) {
+        if (!w->cbs->draw) w->want_draw = false;
         return;
+    }
 
     int idx = buffer_pick_free_index(w->buffers, w->cur);
     if (idx < 0) {

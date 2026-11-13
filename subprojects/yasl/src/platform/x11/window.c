@@ -638,6 +638,7 @@ struct x11_surface {
     struct yasl_private_damage_list damage;
     struct yasl_private_frame_clock clock;
     bool want_draw, drawing, presented, destroyed;
+    bool direct_acquired, direct_stale;
     bool focused;
     struct x11_surface *parent;
     bool is_popup;
@@ -1494,6 +1495,11 @@ static bool resize(struct x11_surface *s, struct yasl_private_vector2i size)
     uint64_t start = yasl_private_loop_now_ns();
     /* The presented frame goes with the old pixels. */
     s->presented = false;
+    if (s->direct_acquired) {
+        s->direct_stale = true;
+        s->direct_acquired = false;
+        s->drawing = false;
+    }
 
     if (s->shm_active) {
         XShmDetach(d->native, &s->shm_info);
@@ -3294,7 +3300,12 @@ static void dispatch(struct yasl_private_display *base)
         while (s && s->window != event.xany.window) s = s->next;
         if (!s) continue;
         switch (event.type) {
-        case Expose: s->want_draw = true; break;
+        case Expose:
+            if (s->base.cpu_direct)
+                yasl_private_surface_notify_refresh(&s->base);
+            else
+                s->want_draw = true;
+            break;
         case ConfigureNotify: {
             struct yasl_private_vector2i size = {event.xconfigure.width, event.xconfigure.height};
             if (size.x == s->size.x && size.y == s->size.y) break;
@@ -3404,14 +3415,9 @@ static void dispatch(struct yasl_private_display *base)
     leave(d);
 }
 
-static bool present(struct yasl_surface *base, const struct yasl_private_framebuffer *fb,
-                    const struct yasl_private_damage_list *damage)
+static bool present_damage(struct x11_surface *s, const struct yasl_private_damage_list *damage)
 {
-    struct x11_surface *s = (struct x11_surface *)base;
-    if (s->destroyed || !s->drawing || s->presented || !fb || !damage ||
-        fb->pixels != s->pixels || fb->size.x != s->size.x || fb->size.y != s->size.y ||
-        damage->n < -1 || damage->n > YASL_PRIVATE_DAMAGE_MAX) return false;
-    struct x11_display *d = (struct x11_display *)base->display;
+    struct x11_display *d = (struct x11_display *)s->base.display;
     if (d->lost) { errno = ENOTCONN; return false; }
     XImage *im = s->image;
     if (s->shm_active) {
@@ -3481,6 +3487,80 @@ static bool present(struct yasl_surface *base, const struct yasl_private_framebu
     return true;
 }
 
+static bool present(struct yasl_surface *base, const struct yasl_private_framebuffer *fb,
+                    const struct yasl_private_damage_list *damage)
+{
+    struct x11_surface *s = (struct x11_surface *)base;
+    if (s->destroyed || !s->drawing || s->direct_acquired || s->presented || !fb || !damage ||
+        fb->pixels != s->pixels || fb->size.x != s->size.x || fb->size.y != s->size.y ||
+        damage->n < -1 || damage->n > YASL_PRIVATE_DAMAGE_MAX) return false;
+    return present_damage(s, damage);
+}
+
+static bool cpu_acquire(struct yasl_surface *base, struct yasl_private_framebuffer *out)
+{
+    struct x11_surface *s = (struct x11_surface *)base;
+    if (!s || !out || s->destroyed || base->presenter != YASL_PRIVATE_PRESENTER_CPU) {
+        errno = EINVAL;
+        return false;
+    }
+    struct x11_display *d = (struct x11_display *)base->display;
+    if (!d || d->lost) { errno = ENOTCONN; return false; }
+    if (s->drawing || s->direct_acquired) { errno = EBUSY; return false; }
+    if (!s->pixels || s->size.x <= 0 || s->size.y <= 0) { errno = EAGAIN; return false; }
+    s->want_draw = false;
+    s->drawing = true;
+    s->presented = false;
+    s->direct_acquired = true;
+    s->direct_stale = false;
+    s->damage = (struct yasl_private_damage_list){0};
+    *out = (struct yasl_private_framebuffer){
+        .generation = yasl_private_frame_begin(base),
+        .pixels = s->pixels,
+        .size = s->size,
+        .stride_bytes = s->size.x * (int)sizeof(uint32_t),
+    };
+    return true;
+}
+
+static bool cpu_commit(struct yasl_surface *base, const struct yasl_private_framebuffer *fb,
+                       const struct yasl_private_damage_list *damage)
+{
+    struct x11_surface *s = (struct x11_surface *)base;
+    if (!s) { errno = EINVAL; return false; }
+    bool was_acquired = s->direct_acquired;
+    bool stale = s->direct_stale;
+    s->direct_acquired = false;
+    s->direct_stale = false;
+    s->drawing = false;
+    if (stale) { errno = ESTALE; return false; }
+    if (!was_acquired || s->destroyed || base->presenter != YASL_PRIVATE_PRESENTER_CPU) {
+        errno = EINVAL;
+        return false;
+    }
+    struct x11_display *d = (struct x11_display *)base->display;
+    if (!d || d->lost) { errno = ENOTCONN; return false; }
+    if (!fb || !damage || fb->pixels != s->pixels ||
+        fb->size.x != s->size.x || fb->size.y != s->size.y ||
+        damage->n < -1 || damage->n > YASL_PRIVATE_DAMAGE_MAX) {
+        errno = EINVAL;
+        return false;
+    }
+    if (!present_damage(s, damage))
+        return false;
+    if (!d->lost) XFlush(d->native);
+    return true;
+}
+
+static void cpu_discard(struct yasl_surface *base)
+{
+    struct x11_surface *s = (struct x11_surface *)base;
+    if (!s) return;
+    s->direct_acquired = false;
+    s->direct_stale = false;
+    s->drawing = false;
+}
+
 static void flush(struct yasl_private_display *base)
 {
     struct x11_display *d = (struct x11_display *)base;
@@ -3494,7 +3574,10 @@ static void flush(struct yasl_private_display *base)
             yasl_private_surface_notify_refresh(&s->base);
             continue;
         }
-        if (!s->cbs || !s->cbs->draw) continue;
+        if (!s->cbs || !s->cbs->draw) {
+            if (s->base.cpu_direct) s->want_draw = false;
+            continue;
+        }
         s->want_draw = false;
         s->drawing = true;
         s->presented = false;
@@ -4258,6 +4341,9 @@ const struct yasl_private_backend_ops yasl_private_x11_backend = {
     .surface_set_title = set_title,
     .surface_schedule_redraw = schedule_redraw,
     .surface_present = present,
+    .surface_cpu_acquire = cpu_acquire,
+    .surface_cpu_commit = cpu_commit,
+    .surface_cpu_discard = cpu_discard,
     .surface_geometry = geometry,
     .surface_timing = timing,
     .surface_frame_time_ns = frame_time,

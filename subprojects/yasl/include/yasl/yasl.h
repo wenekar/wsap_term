@@ -383,6 +383,20 @@ YASL_API int yasl_cpu_present(yasl_surface *surface);
 /* Damage adds up across presents until the surface draws. A NULL list or count 0 means full damage, which stays full until the draw. */
 YASL_API int yasl_cpu_present_damage(yasl_surface *surface, const struct yasl_damage *damage, int count);
 
+struct yasl_cpu_frame {
+    uint32_t *pixels;
+    int pixel_width, pixel_height;
+    int stride_bytes;
+};
+/** Acquires the backend CPU buffer directly without an intermediate canvas.
+ * The caller must fill every pixel before yasl_cpu_commit(). Valid until
+ * yasl_cpu_commit(), yasl_cpu_discard(), or the next wait. Returns 0 on success,
+ * -EAGAIN when waiting for configure or a free buffer, or -ENOTSUP when direct
+ * access is unavailable. */
+YASL_API int yasl_cpu_acquire(yasl_surface *surface, struct yasl_cpu_frame *out);
+YASL_API int yasl_cpu_commit(yasl_surface *surface, const struct yasl_damage *damage, int count);
+YASL_API void yasl_cpu_discard(yasl_surface *surface);
+
 typedef void (*yasl_gl_proc)(void);
 /** These four may run on a rendering thread; synchronize them with destruction.
  * NULL detaches the calling thread's context, also after DISPLAY_LOST. */

@@ -597,6 +597,21 @@ static bool impl_surface_present(struct yasl_surface *s, const struct yasl_priva
     return wayland_surface_present((struct wayland_surface *)s, fb, damage);
 }
 
+static bool impl_surface_cpu_acquire(struct yasl_surface *s, struct yasl_private_framebuffer *out)
+{
+    return wayland_surface_cpu_acquire((struct wayland_surface *)s, out);
+}
+
+static bool impl_surface_cpu_commit(struct yasl_surface *s, const struct yasl_private_framebuffer *fb, const struct yasl_private_damage_list *damage)
+{
+    return wayland_surface_cpu_commit((struct wayland_surface *)s, fb, damage);
+}
+
+static void impl_surface_cpu_discard(struct yasl_surface *s)
+{
+    wayland_surface_cpu_discard((struct wayland_surface *)s);
+}
+
 static struct yasl_private_geometry impl_surface_geometry(const struct yasl_surface *s)
 {
     return wayland_surface_geometry((const struct wayland_surface *)s);
@@ -728,6 +743,9 @@ const struct yasl_private_backend_ops yasl_private_wayland_backend = {
     .surface_set_title = impl_surface_set_title,
     .surface_schedule_redraw = impl_surface_schedule_redraw,
     .surface_present = impl_surface_present,
+    .surface_cpu_acquire = impl_surface_cpu_acquire,
+    .surface_cpu_commit = impl_surface_cpu_commit,
+    .surface_cpu_discard = impl_surface_cpu_discard,
     .surface_set_pointer_mode = impl_surface_set_pointer_mode,
     .surface_geometry = impl_surface_geometry,
     .surface_timing = impl_surface_timing,
