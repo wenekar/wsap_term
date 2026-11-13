@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ui/accessibility.h"
 #include "ui/debug.h"
 #include "ui/ui.h"
 
@@ -508,6 +509,39 @@ static void unselectable_link_focus_test(void)
     destroy(&f);
 }
 
+/* An accessibility selection keeps whole characters: an offset inside a
+ * character moves back to its first byte, and an offset past the end stops
+ * at the end. */
+static void accessibility_selection_keeps_utf8_boundary_test(void)
+{
+    struct fixture f;
+    init(&f, "\xc3\xa9\xe4\xb8\xad" "a", (struct vector2i){ .x = 48, .y = 16 });
+    ui_label_set_selectable(&f.label, true);
+    struct ui_widget *widget = ui_label_widget(&f.label);
+    struct ui_accessibility_action_request request = {
+        .node_id = ui_widget_accessibility_id(widget),
+        .action = UI_ACCESSIBILITY_ACTION_SET_SELECTION,
+        .selection_start = 3,
+        .selection_end = 64,
+    };
+    assert(ui_accessibility_dispatch_action(widget, &request));
+    size_t lo, hi;
+    assert(ui_label_selection(&f.label, &lo, &hi));
+    assert(lo == 2 && hi == 6);
+
+    request.caret_offset = 4;
+    request.selection_start = request.selection_end = 4;
+    assert(ui_accessibility_dispatch_action(widget, &request));
+    assert(!ui_label_selection(&f.label, NULL, NULL));
+    struct ui_accessibility_tree tree = {0};
+    assert(ui_accessibility_tree_build(widget, &tree));
+    const struct ui_accessibility_node *node =
+        ui_accessibility_tree_find(&tree, ui_widget_accessibility_id(widget));
+    assert(node && node->caret_offset == 2);
+    ui_accessibility_tree_destroy(&tree);
+    destroy(&f);
+}
+
 int main(void)
 {
     dynamic_storage_test();
@@ -524,5 +558,6 @@ int main(void)
     focus_in_keeps_selection_test();
     press_on_own_text_keeps_selection_test();
     unselectable_link_focus_test();
+    accessibility_selection_keeps_utf8_boundary_test();
     return 0;
 }

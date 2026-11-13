@@ -3,6 +3,7 @@
 #include "ui/debug.h"
 #include "ui/paint.h"
 #include "ui/surface.h"
+#include "ui/text_edit.h"
 #include "paint/text_run.h"
 #include "ui/ui_util.h"
 #include "ui/widget_impl.h"
@@ -483,13 +484,8 @@ static bool label_accessibility(const struct ui_widget *widget,
 
 static size_t label_clamp_offset(const struct ui_label *label, size_t offset)
 {
-    if (offset > label->impl.len)
-        offset = label->impl.len;
-    const char *text = ui_label_text(label);
-    while (offset > 0 && offset < label->impl.len &&
-           ((unsigned char)text[offset] & 0xC0) == 0x80)
-        offset--;
-    return offset;
+    return ui_text_edit_clamp_offset(ui_label_text(label), label->impl.len,
+                                     offset);
 }
 
 static bool label_accessibility_action(

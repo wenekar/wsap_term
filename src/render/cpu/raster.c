@@ -11,6 +11,7 @@
 #include "render/cpu/isa.h"
 #include "render/cpu/kernels.h"
 #include "render/frame/walk.h"
+#include "util/geom.h"
 
 /*
  * The row raster. See raster.h for the two passes and the spill rules.
@@ -75,16 +76,6 @@ struct row_ctx {
      * cell callback, so that the callback needs no large frame. */
     uint8_t tmp[3 * COV_CHUNK];
 };
-
-static inline int min_i(int a, int b)
-{
-    return a < b ? a : b;
-}
-
-static inline int max_i(int a, int b)
-{
-    return a > b ? a : b;
-}
 
 /* The rows of a glyph that the cell shows. */
 static inline int glyph_rows(const struct glyph *g, int ch)
@@ -175,7 +166,7 @@ static inline RENDER_ALWAYS_INLINE void run_flush(struct row_ctx *c, run_fill_fn
 {
     if (c->run_x1 < 0)
         return;
-    int a = max_i(c->run_x0, c->x0), b = min_i(c->run_x1, c->x1);
+    int a = geom_max_i(c->run_x0, c->x0), b = geom_min_i(c->run_x1, c->x1);
     c->run_x0 = c->run_x1 = -1;
     if (a < b)
         fill(c, a, b, c->run_bg);
@@ -235,7 +226,7 @@ static inline RENDER_ALWAYS_INLINE void put_tile_w(int isa, const struct row_ctx
         tile_blit(isa, c->row + sx0, c->stride, tile, w, c->ch);
         return;
     }
-    int a = max_i(sx0, c->x0), b = min_i(sx0 + w, c->x1);
+    int a = geom_max_i(sx0, c->x0), b = geom_min_i(sx0 + w, c->x1);
     if (a >= b)
         return;
     for (int y = 0; y < c->ch; y++)
@@ -266,7 +257,7 @@ static inline RENDER_ALWAYS_INLINE void blend_alpha_cov(int isa, uint8_t *tmp, u
         return;
     }
     for (int i = 0; i < n; i += COV_CHUNK) {
-        int m = min_i(n - i, COV_CHUNK);
+        int m = geom_min_i(n - i, COV_CHUNK);
         for (int j = 0; j < m; j++)
             tmp[j] = faint_cov(cov[i + j]);
         render_kernel_blend_any(isa, dst + i, tmp, m, fg);
@@ -283,7 +274,7 @@ static inline RENDER_ALWAYS_INLINE void blend_subpx_cov(int isa, uint8_t *tmp, u
         return;
     }
     for (int i = 0; i < n; i += COV_CHUNK) {
-        int m = min_i(n - i, COV_CHUNK);
+        int m = geom_min_i(n - i, COV_CHUNK);
         for (int j = 0; j < 3 * m; j++)
             tmp[j] = faint_cov(cov[3 * i + j]);
         render_kernel_blend_any_subpx(isa, dst + i, tmp, m, fg);
@@ -360,7 +351,7 @@ static inline RENDER_ALWAYS_INLINE void compose(int isa, struct row_ctx *c, uint
     if (!c->double_w) {
         if (ink->lo < ink->hi) {
             int ox = g->x_offset - half * cw;
-            int lo = max_i(ink->lo, -ox), hi = min_i(ink->hi, cw - ox);
+            int lo = geom_max_i(ink->lo, -ox), hi = geom_min_i(ink->hi, cw - ox);
             if (lo < hi) {
                 int n = hi - lo;
                 uint32_t *d = dst + (ox + lo);
@@ -422,8 +413,8 @@ static inline RENDER_ALWAYS_INLINE void compose(int isa, struct row_ctx *c, uint
 
     if (ink->lo < ink->hi) {
         int ox = (g->x_offset - half * cw) * 2;
-        int lo = max_i(ink->lo, ox < 0 ? (-ox + 1) / 2 : 0);
-        int hi = min_i(ink->hi, (cell_w - ox) / 2);
+        int lo = geom_max_i(ink->lo, ox < 0 ? (-ox + 1) / 2 : 0);
+        int hi = geom_min_i(ink->hi, (cell_w - ox) / 2);
         if (lo < hi) {
             int n = hi - lo;
             int sx0 = ox + 2 * lo;
@@ -547,8 +538,8 @@ static bool spill_room(struct raster_spill_list *l, size_t bytes)
 static void spill_add(struct row_ctx *c, const struct glyph *g, const struct ink *ink,
                       uint32_t fg, bool faint, int gx0, int a, int b)
 {
-    a = max_i(max_i(a, 0), c->x0);
-    b = min_i(min_i(b, c->area), c->x1);
+    a = geom_max_i(geom_max_i(a, 0), c->x0);
+    b = geom_min_i(geom_min_i(b, c->area), c->x1);
     if (a >= b)
         return;
     struct raster_spill_list *l = &c->w->spill;
@@ -626,7 +617,7 @@ static inline RENDER_ALWAYS_INLINE void cell_spill(struct row_ctx *c, int sx0,
                                                    const struct glyph *g, const struct ink *ink,
                                                    int half, struct overhang o)
 {
-    int r = max_i(o.left, o.right);
+    int r = geom_max_i(o.left, o.right);
     if (r > c->reach)
         c->reach = r;
     if (!r)
@@ -874,8 +865,8 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
         .cell_w = cell_w,
         .line_size = line,
         .double_w = double_w,
-        .x0 = max_i(job->x0, 0),
-        .x1 = min_i(job->x1, f->width),
+        .x0 = geom_max_i(job->x0, 0),
+        .x1 = geom_min_i(job->x1, f->width),
         .area = row_cols * cell_w,
         .width = f->width,
         .run_x0 = -1,
@@ -1013,7 +1004,7 @@ void raster_workers_balance(struct raster_worker *w, int n)
     int cap = 0;
     size_t size = 0, scratch = 0;
     for (int i = 0; i < n; i++) {
-        cap = max_i(cap, w[i].spill.cap);
+        cap = geom_max_i(cap, w[i].spill.cap);
         size = w[i].spill.size > size ? w[i].spill.size : size;
         scratch = w[i].scratch_px > scratch ? w[i].scratch_px : scratch;
     }

@@ -64,3 +64,12 @@ int ui_text_edit_move(const char *text, int len, int pos,
     utext_close(&utext);
     return result;
 }
+
+size_t ui_text_edit_clamp_offset(const char *text, size_t len, size_t offset)
+{
+    if (offset >= len)
+        return len;
+    while (offset > 0 && ((unsigned char)text[offset] & 0xc0) == 0x80)
+        offset--;
+    return offset;
+}

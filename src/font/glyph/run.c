@@ -21,13 +21,12 @@ struct run_hit {
 };
 
 static struct glyph *run_build_cached_payload(struct font_instance *fi, int count,
-                                              uint32_t **out_tiles, uint32_t *out_tile_cap)
+                                              uint32_t **out_tiles)
 {
     struct glyph *produced = buf_new(BK_GLYPH_ARR, count,
                                      (size_t)count * sizeof(*produced));
     if (!produced) {
         *out_tiles = NULL;
-        *out_tile_cap = 0;
         return NULL;
     }
     memcpy(produced, priv_run_cells, (size_t)count * sizeof(*produced));
@@ -35,14 +34,11 @@ static struct glyph *run_build_cached_payload(struct font_instance *fi, int coun
 
     size_t n_pixels = (size_t)count * tile_pixels(fi);
     uint32_t *tiles = buf_new(BK_PIX, n_pixels, n_pixels * sizeof(*tiles));
-    uint32_t tile_cap = tiles ? (uint32_t)n_pixels : 0;
     if (tiles && !fill_run_tiles(fi, tiles, produced, count)) {
         buf_retire(tiles);
         tiles = NULL;
-        tile_cap = 0;
     }
     *out_tiles = tiles;
-    *out_tile_cap = tile_cap;
     return produced;
 }
 
@@ -68,11 +64,10 @@ static struct run_hit run_shape_and_cache(struct font_instance *fi,
 
     struct glyph *produced = NULL;
     uint32_t *tiles = NULL;
-    uint32_t tile_cap = 0;
 
     struct run_data *new_d = buf_new(BK_RUN_DATA, 1, sizeof(*new_d));
     if (new_d && result == FONT_RUN_SHAPED) {
-        produced = run_build_cached_payload(fi, w->core_len, &tiles, &tile_cap);
+        produced = run_build_cached_payload(fi, w->core_len, &tiles);
         if (!produced) {
             buf_retire(new_d);
             new_d = NULL;
@@ -84,7 +79,6 @@ static struct run_hit run_shape_and_cache(struct font_instance *fi,
             .hash = hash,
             .cells = produced,
             .tiles = tiles,
-            .tile_cap = tile_cap,
             .script = w->script,
             .result = result,
             .flags = w->style,

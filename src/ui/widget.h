@@ -172,13 +172,6 @@ static inline struct vector2i ui_widget_to_local(const struct ui_widget *widget,
     return vector2i_sub(surface, widget->bounds.pos);
 }
 
-/* Converts widget local coordinates to surface coordinates. */
-static inline struct vector2i ui_widget_to_surface(const struct ui_widget *widget,
-                                                   struct vector2i local)
-{
-    return vector2i_add(local, widget->bounds.pos);
-}
-
 /* Converts a widget local rectangle to surface coordinates. */
 static inline struct rect2i ui_widget_rect_to_surface(const struct ui_widget *widget,
                                                       struct rect2i local)

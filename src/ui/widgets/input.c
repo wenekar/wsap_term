@@ -192,14 +192,9 @@ static int clean_text(char *out, size_t cap, const char *utf8)
     return w;
 }
 
+/* The caller limits n to the space left after selection removal. */
 static void insert_bytes(struct ui_input *in, const char *data, int n)
 {
-    int room = UI_INPUT_CAP - 1 - in->impl.len;
-    if (n > room) {
-        n = room;
-        while (n > 0 && ((unsigned char)data[n] & 0xC0) == 0x80)
-            n--;
-    }
     if (n <= 0)
         return;
     history_record(in, 1);
@@ -346,8 +341,8 @@ bool ui_input_insert_text(struct ui_input *in, const char *utf8)
         return false;
     int room = UI_INPUT_CAP - 1 - in->impl.len + abs(in->impl.caret - in->impl.anchor);
     if (n > room) {
-        n = room;
-        while (n > 0 && ((unsigned char)clean[n] & 0xc0) == 0x80) n--;
+        size_t limit = room > 0 ? (size_t)room : 0;
+        n = (int)ui_text_edit_clamp_offset(clean, (size_t)n, limit);
     }
     if (!n && in->impl.caret == in->impl.anchor) return false;
     history_record(in, n == 1 ? 1 : 0);
@@ -683,11 +678,8 @@ static bool input_event(struct ui_widget *widget, const struct ui_event *event)
 
 static int input_clamp_offset(const struct ui_input *in, size_t offset)
 {
-    int pos = offset > (size_t)in->impl.len ? in->impl.len : (int)offset;
-    while (pos > 0 && pos < in->impl.len &&
-           ((unsigned char)in->impl.buf[pos] & 0xC0) == 0x80)
-        pos--;
-    return pos;
+    return (int)ui_text_edit_clamp_offset(in->impl.buf, (size_t)in->impl.len,
+                                         offset);
 }
 
 static bool input_accessibility(const struct ui_widget *widget,

@@ -13,7 +13,6 @@ struct ui_damage {
 };
 
 void ui_damage_add(struct ui_damage *d, struct rect2i r);
-void ui_damage_merge(struct ui_damage *d, const struct ui_damage *src);
 struct rect2i ui_damage_bounds(const struct ui_damage *d);
 
 static inline bool ui_damage_is_empty(const struct ui_damage *d)

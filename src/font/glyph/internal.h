@@ -76,7 +76,6 @@ struct run_data {
     struct glyph *cells;
     uint32_t *tiles;
     uint32_t codepoints[RUN_CACHE_MAX];
-    uint32_t tile_cap;
     uint32_t script;
     enum font_run_result result;
     uint16_t flags;

@@ -1,5 +1,6 @@
 #include "ui/accessibility.h"
 
+#include "ui/text_edit.h"
 #include "ui/widget.h"
 #include "ui/widget_impl.h"
 #include "wsap_vtcore/unicode/utf8.h"
@@ -105,17 +106,6 @@ static bool tree_reserve(struct ui_accessibility_tree *tree, size_t count)
     return true;
 }
 
-/* The largest character boundary at or before offset. The text is valid
- * UTF-8, so this is the sanitized offset. */
-static size_t boundary_offset(const char *text, size_t length, size_t offset)
-{
-    if (offset >= length)
-        return length;
-    while (offset > 0 && ((unsigned char)text[offset] & 0xc0) == 0x80)
-        offset--;
-    return offset;
-}
-
 /* A value equal to the copy in the previous tree moves to the new node.
  * The copy is valid UTF-8, so the sanitized value is the same, and each
  * offset needs no decode. A terminal gives a long value at each frame, and
@@ -149,12 +139,12 @@ static bool tree_add(struct ui_accessibility_tree *tree,
         size_t length = strlen(old->value);
         node.value = old->value;
         old->value = NULL;
-        node.caret_offset = boundary_offset(node.value, length,
-                                            spec->caret_offset);
-        node.selection_start = boundary_offset(node.value, length,
-                                               spec->selection_start);
-        node.selection_end = boundary_offset(node.value, length,
-                                             spec->selection_end);
+        node.caret_offset = ui_text_edit_clamp_offset(node.value, length,
+                                                      spec->caret_offset);
+        node.selection_start = ui_text_edit_clamp_offset(node.value, length,
+                                                         spec->selection_start);
+        node.selection_end = ui_text_edit_clamp_offset(node.value, length,
+                                                       spec->selection_end);
     } else if (!password) {
         node.caret_offset = sanitized_offset(spec->value, spec->caret_offset);
         node.selection_start = sanitized_offset(spec->value,

@@ -108,8 +108,8 @@ static inline struct insets2i ui_css_resolve_insets(struct css_box box,
     return out;
 }
 
-static inline int ui_css_pos_int(struct css_value v, float fallback,
-                                 const struct css_scale_context *ctx)
+static inline int ui_ctx_size(const struct css_scale_context *ctx,
+                              struct css_value v, float fallback)
 {
     float resolved = css_value_resolve(v, 0, fallback, ctx);
     if (!isfinite(resolved) || resolved <= 0.0f)
@@ -117,23 +117,11 @@ static inline int ui_css_pos_int(struct css_value v, float fallback,
     return resolved < (float)INT_MAX ? (int)lroundf(resolved) : (int)fallback;
 }
 
-static inline int ui_css_nonneg(struct css_value v, float fallback,
-                                const struct css_scale_context *ctx)
-{
-    int px = ui_css_pos_int(v, fallback, ctx);
-    return px < 0 ? 0 : px;
-}
-
-static inline int ui_ctx_size(const struct css_scale_context *ctx,
-                              struct css_value v, float fallback)
-{
-    return ui_css_pos_int(v, fallback, ctx);
-}
-
 static inline int ui_ctx_inset(const struct css_scale_context *ctx,
                                struct css_value v, float fallback)
 {
-    return ui_css_nonneg(v, fallback, ctx);
+    int px = ui_ctx_size(ctx, v, fallback);
+    return px < 0 ? 0 : px;
 }
 
 static inline struct insets2i ui_ctx_insets(const struct css_scale_context *ctx,

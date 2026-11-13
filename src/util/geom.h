@@ -41,6 +41,24 @@ struct insets2i {
 };
 
 /*
+ * Selects the smaller of integer values `a` and `b`.
+ * Returns the smaller value.
+ */
+static inline int geom_min_i(int a, int b)
+{
+    return a < b ? a : b;
+}
+
+/*
+ * Selects the larger of integer values `a` and `b`.
+ * Returns the larger value.
+ */
+static inline int geom_max_i(int a, int b)
+{
+    return a > b ? a : b;
+}
+
+/*
  * Clamps integer value `v` between `lo` and `hi`.
  * Returns the clamped value.
  */

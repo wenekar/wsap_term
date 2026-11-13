@@ -13,6 +13,7 @@
 #include "render/frame/walk.h"
 #include "render/render.h"
 #include "util/damage.h"
+#include "util/geom.h"
 #include "util/hash.h"
 
 /* See build.h for the contract of this file. */
@@ -83,16 +84,6 @@ static inline void rect_to_vec4(float x, float y, float w, float h, float out[4]
 static inline void rect2i_to_vec4(struct rect2i r, float out[4])
 {
     rect_to_vec4((float)r.x, (float)r.y, (float)r.width, (float)r.height, out);
-}
-
-static inline int min_i(int a, int b)
-{
-    return a < b ? a : b;
-}
-
-static inline int max_i(int a, int b)
-{
-    return a > b ? a : b;
 }
 
 /* ---- Instance streams and commands -------------------------------------- */
@@ -406,8 +397,8 @@ static bool grid_geometry_of(const struct render_frame *frame, struct vector2i c
         return false;
     *out = (struct grid_geometry){
         .tf = tf, .font = font, .rect = rect, .cw = m->cell_w, .ch = m->cell_h,
-        .cols = min_i(rect.width / m->cell_w, tf->cols),
-        .rows = min_i(rect.height / m->cell_h, tf->rows),
+        .cols = geom_min_i(rect.width / m->cell_w, tf->cols),
+        .rows = geom_min_i(rect.height / m->cell_h, tf->rows),
     };
     return true;
 }
@@ -476,7 +467,7 @@ static void emit_glyph_part(struct grid_walk *w, const struct gpu_atlas_entry *e
                             int dest_x, uint32_t fg, bool faint)
 {
     const struct grid_geometry *geo = w->geo;
-    int rows = min_i(e->rows, geo->ch);
+    int rows = geom_min_i(e->rows, geo->ch);
     if (c1 <= c0 || rows <= 0)
         return;
     bool subpx = e->kind == KIND_SUBPX;
@@ -495,11 +486,11 @@ static void emit_glyph_part(struct grid_walk *w, const struct gpu_atlas_entry *e
     if (double_h) {
         int half_h = geo->ch / 2;
         if (w->line_size == WSAP_VTCORE_LINE_DOUBLE_TOP) {
-            int sub_rows = min_i(rows, half_h);
+            int sub_rows = geom_min_i(rows, half_h);
             v1 = (float)(e->y + sub_rows);
             height = (float)(sub_rows * 2);
         } else {
-            int start_row = min_i(half_h, rows);
+            int start_row = geom_min_i(half_h, rows);
             int sub_rows = rows > half_h ? rows - half_h : 0;
             v0 = (float)(e->y + start_row);
             v1 = (float)(e->y + rows);
@@ -536,12 +527,12 @@ static void emit_mask(struct grid_walk *w, int col, const struct decor_mask *m, 
         int half_h = geo->ch / 2;
         if (w->line_size == WSAP_VTCORE_LINE_DOUBLE_TOP) {
             if (y0 >= half_h) return;
-            rows = min_i(m->y1, half_h) - y0;
+            rows = geom_min_i(m->y1, half_h) - y0;
             height = (float)(rows * 2);
             dest_y += (float)(y0 * 2);
         } else {
             if (m->y1 <= half_h) return;
-            y0 = max_i(y0, half_h);
+            y0 = geom_max_i(y0, half_h);
             rows = m->y1 - y0;
             height = (float)(rows * 2);
             dest_y += (float)((y0 - half_h) * 2);
@@ -754,8 +745,8 @@ static void scene_image(struct gpu_build *b, const struct ui_scene_op *op, struc
         return;
     struct rect2i img = {
         .pos = op->rect.pos,
-        .size = { .x = min_i(op->rect.width, image->size.x),
-                  .y = min_i(op->rect.height, image->size.y) },
+        .size = { .x = geom_min_i(op->rect.width, image->size.x),
+                  .y = geom_min_i(op->rect.height, image->size.y) },
     };
     struct rect2i r = rect2i_intersect(img, clip);
     if (!rect2i_clip(&r, canvas_rect.size))
@@ -786,7 +777,7 @@ static void scene_text(struct gpu_build *b, struct font_instance *fi, const stru
     clip = rect2i_intersect(clip, ui_scene_text_ink(s, op));
     if (!rect2i_clip(&clip, canvas_rect.size))
         return;
-    const int max_rows = min_i(op->style.cell_h, font_instance_metrics(fi)->cell_h);
+    const int max_rows = geom_min_i(op->style.cell_h, font_instance_metrics(fi)->cell_h);
     const uint16_t flags = (uint16_t)(op->style.flags & (UI_TEXT_BOLD | UI_TEXT_ITALIC));
     const uint64_t version = font_instance_version(fi);
     float color[4];
@@ -805,7 +796,7 @@ static void scene_text(struct gpu_build *b, struct font_instance *fi, const stru
             else if (!atlas_add_glyph(b, id, version, SPACE_UI,
                                       glyph_cache_fetch(fi, cp, flags), true, &e))
                 return;
-            int rows = min_i(e.rows, max_rows);
+            int rows = geom_min_i(e.rows, max_rows);
             if (e.kind != KIND_NONE && rows > 0) {
                 bool subpx = e.kind == KIND_SUBPX;
                 enum gpu_cmd_kind kind = subpx ? GPU_CMD_SUBPX : GPU_CMD_GLYPH;
@@ -905,7 +896,8 @@ static bool build_scene(struct gpu_build *b, struct font_instance *ufont,
             struct rect2i visible = rect2i_intersect(op->rect, clip);
             if (!rect2i_clip(&visible, canvas_rect.size) || !(op->color >> 24))
                 break;
-            int radius = min_i(op->radius, min_i(op->rect.width / 2, op->rect.height / 2));
+            int radius = geom_min_i(op->radius,
+                                    geom_min_i(op->rect.width / 2, op->rect.height / 2));
             float c[4];
             gpu_color(op->color, 1.0f, c);
             emit_shape(b, visible, op->rect, c, (float)radius, GPU_SHAPE_ROUNDED, 0);
@@ -925,7 +917,7 @@ static bool build_scene(struct gpu_build *b, struct font_instance *ufont,
         case UI_SCENE_OP_SHADOW: {
             if (op_outside_clip(scene, op, clip) || op->blur <= 0 || !(op->color >> 24))
                 break;
-            int blur = min_i(op->blur, UI_SHADOW_MAX_BLUR);
+            int blur = geom_min_i(op->blur, UI_SHADOW_MAX_BLUR);
             int radius = geom_clamp_i(op->radius, 0, UI_SHADOW_MAX_RADIUS);
             if (rect2i_is_empty(rect2i_inset(op->rect, ui_shadow_extent(blur))))
                 break;

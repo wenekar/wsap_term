@@ -157,7 +157,8 @@ Widget bounds and event positions use surface space.
 A widget paints in its local frame.
 The local origin sits at the top left of the widget bounds.
 Widget APIs use this local frame.
-Use `ui_widget_to_local()` and `ui_widget_to_surface()` to convert positions.
+Use `ui_widget_to_local()` to convert a position to the local frame.
+Use `ui_widget_rect_to_surface()` to convert a rectangle to surface space.
 Do not add `bounds.pos` manually.
 
 ### Damage

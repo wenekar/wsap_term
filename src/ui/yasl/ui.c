@@ -192,12 +192,6 @@ struct font_instance *window_ui_font(const struct window *w)
     return ui ? ui->ui_font : NULL;
 }
 
-bool window_menu_is_open(const struct window *w)
-{
-    const struct window_ui *ui = window_ui_of(w);
-    return ui && ui_menu_is_open(&ui->menu);
-}
-
 void *window_ui_content(const struct window *w)
 {
     const struct window_ui *ui = window_ui_of(w);

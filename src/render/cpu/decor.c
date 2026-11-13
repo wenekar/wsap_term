@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "util/geom.h"
+
 #define DECOR_SETS 4
 /* Planes in one set: the zero plane, and a full and a faint plane for each mask. */
 #define DECOR_MASKS (DECOR_UNDERLINE_KINDS - 1 + 4)
@@ -34,11 +36,6 @@ struct decor_key decor_key_of(const struct font_metrics *m)
     };
 }
 
-static int clampi(int v, int lo, int hi)
-{
-    return v < lo ? lo : v > hi ? hi : v;
-}
-
 /* The geometry of one key, in whole pixel rows. */
 struct decor_geom {
     int cw, ch, t;
@@ -48,10 +45,10 @@ struct decor_geom {
 static void rows_fill(uint8_t *cov, const struct decor_geom *g, int y0, int y1,
                       int x0, int x1)
 {
-    y0 = clampi(y0, 0, g->ch);
-    y1 = clampi(y1, 0, g->ch);
-    x0 = clampi(x0, 0, g->cw);
-    x1 = clampi(x1, 0, g->cw);
+    y0 = geom_clamp_i(y0, 0, g->ch);
+    y1 = geom_clamp_i(y1, 0, g->ch);
+    x0 = geom_clamp_i(x0, 0, g->cw);
+    x1 = geom_clamp_i(x1, 0, g->cw);
     for (int y = y0; y < y1; y++)
         memset(cov + (size_t)y * g->cw + x0, 255, (size_t)(x1 - x0));
 }
@@ -100,7 +97,7 @@ static void shape_fill(uint8_t *cov, const struct decor_geom *g, enum shape shap
         k = periods(g, 4 * (4 * t + 2));
         int lo = amp * SS + t * SS / 2;
         int hi = ch * SS - lo;
-        yc = lo > hi ? ch * SS / 2 : clampi(yc, lo, hi);
+        yc = lo > hi ? ch * SS / 2 : geom_clamp_i(yc, lo, hi);
         break;
     case SHAPE_DOTTED:
         k = periods(g, 4 * (2 * t + 1));
@@ -179,9 +176,9 @@ static void set_build(struct decor_set *s, uint8_t *mem, struct decor_key key)
     size_t plane = (size_t)key.cw * (size_t)key.ch;
     memset(mem, 0, plane * DECOR_PLANES);
     struct decor_geom g = {.cw = key.cw, .ch = key.ch,
-                           .t = clampi(key.thickness, 1, key.ch)};
+                           .t = geom_clamp_i(key.thickness, 1, key.ch)};
     int t = g.t, ch = g.ch, cw = g.cw;
-    g.u = clampi(key.baseline + (ch - key.baseline) / 2, 0, ch - t);
+    g.u = geom_clamp_i(key.baseline + (ch - key.baseline) / 2, 0, ch - t);
 
     /* Plane 0 is zero. Mask i uses planes 1 + 2i (full) and 2 + 2i (faint). */
     struct decor_mask *masks[DECOR_MASKS];

@@ -67,7 +67,6 @@ bool window_menu_open(struct window *w, const ui_menu_item *items, int n,
                       ui_menu_submenu_fn submenu, void *userdata);
 void window_menu_close(struct window *w);
 void window_menu_sync(struct window *w);
-bool window_menu_is_open(const struct window *w);
 
 struct ui_surface *window_ui_surface(struct window *w);
 struct ui_widget *window_ui_root(struct window *w);

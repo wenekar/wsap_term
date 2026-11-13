@@ -219,6 +219,21 @@ static void utf8_caret_test(void)
     teardown(&f);
 }
 
+/* A short room at the end of the buffer cuts an insert at the last whole
+ * character, not inside one. */
+static void truncated_insert_keeps_utf8_boundary_test(void)
+{
+    struct fixture f;
+    char full[UI_INPUT_CAP];
+    memset(full, 'a', UI_INPUT_CAP - 5);
+    full[UI_INPUT_CAP - 5] = '\0';
+    setup(&f, full);
+    assert(ui_input_insert_text(&f.in, "\xc3\xa9\xe4\xb8\xad"));
+    assert(strlen(text(&f)) == UI_INPUT_CAP - 3);
+    assert(!strcmp(text(&f) + UI_INPUT_CAP - 5, "\xc3\xa9"));
+    teardown(&f);
+}
+
 static void text_and_paste_insert_clean_text_test(void)
 {
     struct fixture f;
@@ -591,6 +606,7 @@ int main(void)
     word_jump_test();
     word_delete_test();
     utf8_caret_test();
+    truncated_insert_keeps_utf8_boundary_test();
     text_and_paste_insert_clean_text_test();
     placeholder_test();
     blink_test();

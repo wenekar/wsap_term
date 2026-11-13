@@ -110,12 +110,6 @@ struct terminal {
     bool focused;
 };
 
-static inline struct terminal *terminal_of(const struct ui_widget *widget)
-{
-    return ui_container_of((struct ui_widget *)widget, struct terminal,
-                           scrollview.widget);
-}
-
 static inline struct terminal *terminal_of_view(const struct ui_widget *widget)
 {
     return ui_container_of((struct ui_widget *)widget, struct terminal,

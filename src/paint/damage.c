@@ -43,19 +43,6 @@ void ui_damage_add(struct ui_damage *d, struct rect2i r)
     ui_damage_add(d, r);
 }
 
-void ui_damage_merge(struct ui_damage *d, const struct ui_damage *src)
-{
-    if (!d || !src)
-        return;
-    if (src->all) {
-        d->all = true;
-        d->n = 0;
-        return;
-    }
-    for (int i = 0; i < src->n; i++)
-        ui_damage_add(d, src->rects[i]);
-}
-
 struct rect2i ui_damage_bounds(const struct ui_damage *d)
 {
     if (!d || d->n <= 0)
