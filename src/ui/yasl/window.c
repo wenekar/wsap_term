@@ -306,13 +306,38 @@ void window_native_draw(struct window *w, struct yasl_surface *s)
             attempted = false;
         }
     } else {
-        struct vector2i size = {0};
-        uint32_t *pixels = yasl_cpu_pixels(s, &size.x, &size.y);
-        native_report(n, pixels != NULL, "yasl_cpu_pixels", errno);
-        native_compose(w, n, (struct framebuffer){
-            .pixels = pixels,
-            .size = size,
-        });
+        struct yasl_cpu_frame cf = {0};
+        int acquired = yasl_cpu_acquire(s, &cf);
+        if (acquired == -EAGAIN) {
+            /* Waiting for initial configure or a released Wayland buffer. */
+            n->frame_drawable = true;
+            attempted = false;
+        } else if (acquired == -ENOTSUP) {
+            /* Fall back to YASL canvas when direct acquire is unavailable. */
+            struct vector2i size = {0};
+            uint32_t *pixels = yasl_cpu_pixels(s, &size.x, &size.y);
+            native_report(n, pixels != NULL, "yasl_cpu_pixels", errno);
+            native_compose(w, n, (struct framebuffer){
+                .pixels = pixels,
+                .size = size,
+            });
+        } else if (acquired != 0) {
+            native_report(n, false, "yasl_cpu_acquire", -acquired);
+            attempted = false;
+        } else {
+            n->cpu_direct = true;
+            n->cpu_committed = false;
+            native_compose(w, n, (struct framebuffer){
+                .pixels = cf.pixels,
+                .size = { .x = cf.pixel_width, .y = cf.pixel_height },
+            });
+            if (native_find(w, s) == n) {
+                if (n->cpu_direct && !n->cpu_committed)
+                    yasl_cpu_discard(s);
+                n->cpu_direct = false;
+                n->cpu_committed = false;
+            }
+        }
     }
     /* Three outcomes need the frame again: the GPU dropped it under load, no
      * drawable was free, or the draw reported no submit. A submitted frame is
@@ -557,18 +582,30 @@ bool window_present(struct window *w, struct window_frame *frame,
         return presented;
     }
     int status;
+    const struct yasl_damage *yd_ptr = NULL;
+    int yd_count = 0;
+    struct yasl_damage yd[DAMAGE_RECTS_MAX];
     if (damage && !damage->all && damage->n < 0) {
         /* An overflowed list presents its bounds. */
-        struct yasl_damage yd = yasl_damage_of(damage->bounds);
-        status = yasl_cpu_present_damage(frame->surface, &yd, 1);
+        yd[0] = yasl_damage_of(damage->bounds);
+        yd_ptr = yd;
+        yd_count = 1;
     } else if (damage && !damage->all && damage->n > 0) {
-        struct yasl_damage yd[DAMAGE_RECTS_MAX];
         for (int i = 0; i < damage->n; i++)
             yd[i] = yasl_damage_of(damage->rects[i]);
-        status = yasl_cpu_present_damage(frame->surface, yd, damage->n);
-    } else {
-        status = yasl_cpu_present(frame->surface);
+        yd_ptr = yd;
+        yd_count = damage->n;
     }
+    if (n && n->cpu_direct) {
+        status = yasl_cpu_commit(frame->surface, yd_ptr, yd_count);
+        n->cpu_committed = true;
+        n->cpu_direct = false;
+        n->frame_submitted = status == 0;
+        return native_report(n, status == 0, "yasl_cpu_commit", -status);
+    }
+    status = yd_ptr
+        ? yasl_cpu_present_damage(frame->surface, yd_ptr, yd_count)
+        : yasl_cpu_present(frame->surface);
     if (n)
         n->frame_submitted = status == 0;
     return native_report(n, status == 0, "yasl_cpu_present", -status);

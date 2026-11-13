@@ -38,6 +38,8 @@ struct window_native {
      * submitted it. A drawable frame that did not submit is asked for again. */
     bool frame_drawable;
     bool frame_submitted;
+    bool cpu_direct;
+    bool cpu_committed;
     bool failing;
 };
 
