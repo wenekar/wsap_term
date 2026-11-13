@@ -13,30 +13,39 @@
 #include <immintrin.h>
 #endif
 
+struct fallback_leaf {
+    uint64_t words[4];
+};
+
+struct fallback_page_leaf {
+    uint16_t page;
+    uint16_t leaf;
+};
+
 struct fallback_candidate {
-    FcCharSet *coverage;
+    const struct fallback_page_leaf *leaves;
     const char *path;
     const unsigned char *mem;
     size_t mem_len;
     int index;
+    uint16_t n_leaves;
     bool color : 1;
     bool is_emoji : 1;
 };
 
-static FcFontSet *fallback_fonts;
-
 static pthread_mutex_t fallback_mu = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic bool fallback_ready_flag;
-static bool fallback_fc_pinned;
 
 static struct fallback_candidate *fallback_candidates;
-
-static FcCharSet *embedded_charset;
+static struct fallback_leaf *fallback_leaves;
+static struct fallback_page_leaf *fallback_page_leaves;
+static char *fallback_paths;
 static int fallback_total;
 
 #define FALLBACK_PAGES (UNICODE_LIMIT >> 8)
 
-static uint64_t *fallback_page_index;
+static uint16_t *fallback_page_map;
+static uint64_t *fallback_page_rows;
 static int fallback_words;
 static __thread uint64_t *run_set;
 
@@ -54,7 +63,8 @@ static _Atomic(_Atomic uint64_t *) cp_pages[FALLBACK_PAGES];
 
 static const uint64_t *page_row(uint32_t cp)
 {
-    return fallback_page_index + (size_t)(cp >> 8) * fallback_words;
+    return fallback_page_rows +
+           (size_t)fallback_page_map[cp >> 8] * fallback_words;
 }
 
 static int bitset_next(const uint64_t *set, int from, int n)
@@ -139,9 +149,32 @@ static bool ft_has_char(void *font, uint32_t cp)
     return FT_Get_Char_Index((FT_Face)font, cp) != 0;
 }
 
-static bool fc_has_char(void *font, uint32_t cp)
+static bool candidate_has_char(const struct fallback_candidate *c, uint32_t cp)
 {
-    return FcCharSetHasChar((FcCharSet *)font, cp);
+    if (!c->leaves || !c->n_leaves)
+        return false;
+    uint16_t page = (uint16_t)(cp >> 8);
+    int lo = 0, hi = (int)c->n_leaves - 1;
+    while (lo <= hi) {
+        int mid = lo + ((hi - lo) >> 1);
+        uint16_t p = c->leaves[mid].page;
+        if (p < page) {
+            lo = mid + 1;
+        } else if (p > page) {
+            hi = mid - 1;
+        } else {
+            const struct fallback_leaf *leaf =
+                &fallback_leaves[c->leaves[mid].leaf];
+            unsigned bit = cp & 255u;
+            return (leaf->words[bit >> 6] >> (bit & 63u)) & 1u;
+        }
+    }
+    return false;
+}
+
+static bool fb_has_char(void *font, uint32_t cp)
+{
+    return candidate_has_char((const struct fallback_candidate *)font, cp);
 }
 
 static bool font_covers(has_char_fn has, void *font, uint32_t cp, int depth)
@@ -161,11 +194,11 @@ static bool font_covers(has_char_fn has, void *font, uint32_t cp, int depth)
 static bool candidate_covers_run(const struct fallback_candidate *c,
                                  const uint32_t *cps, int len)
 {
-    if (!c->path || !FcCharSetHasChar(c->coverage, cps[0]))
+    if (!c->path || !candidate_has_char(c, cps[0]))
         return false;
     for (int k = 1; k < len; k++)
         if (needs_coverage(k, cps[k]) &&
-            !font_covers(fc_has_char, c->coverage, cps[k], 0))
+            !font_covers(fb_has_char, (void *)c, cps[k], 0))
             return false;
     return true;
 }
@@ -177,7 +210,7 @@ static bool fallback_covers(uint32_t cp)
         if (row && (i = bitset_next(row, i, fallback_total)) < 0)
             break;
         const struct fallback_candidate *c = &fallback_candidates[i];
-        if (c->path && font_covers(fc_has_char, c->coverage, cp, 0))
+        if (c->path && font_covers(fb_has_char, (void *)c, cp, 0))
             return true;
     }
     return false;
@@ -190,30 +223,23 @@ bool fallback_ready(void)
 
 static void fallback_destroy_locked(void)
 {
-    bool fc_active = embedded_charset != NULL || fallback_fonts != NULL;
-    if (fc_active)
-        fc_query_lock();
-    if (embedded_charset) {
-        FcCharSetDestroy(embedded_charset);
-        embedded_charset = NULL;
-    }
+    atomic_store_explicit(&fallback_ready_flag, false, memory_order_release);
     free(fallback_candidates);
     fallback_candidates = NULL;
-    free(fallback_page_index);
-    fallback_page_index = NULL;
+    free(fallback_leaves);
+    fallback_leaves = NULL;
+    free(fallback_page_leaves);
+    fallback_page_leaves = NULL;
+    free(fallback_paths);
+    fallback_paths = NULL;
+    free(fallback_page_map);
+    fallback_page_map = NULL;
+    free(fallback_page_rows);
+    fallback_page_rows = NULL;
     free(run_set);
     run_set = NULL;
     fallback_words = 0;
-    atomic_store_explicit(&fallback_ready_flag, false, memory_order_release);
-    if (fallback_fonts) FcFontSetDestroy(fallback_fonts);
-    fallback_fonts = NULL;
     fallback_total = 0;
-    if (fc_active)
-        fc_query_unlock();
-    if (fallback_fc_pinned) {
-        fallback_fc_pinned = false;
-        fc_unpin();
-    }
 }
 
 void fallback_destroy(void)
@@ -241,97 +267,516 @@ void fallback_coverage_reset(void)
     cfg_usable_bits = 0;
 }
 
-static bool init_embedded_charset(void)
+struct fb_slice {
+    uint32_t off;
+    uint16_t count;
+};
+
+struct fb_path_ref {
+    uint32_t off;
+    uint32_t len;
+};
+
+struct fb_builder {
+    struct fallback_leaf *leaves;
+    size_t n_leaves, cap_leaves;
+    uint32_t *leaf_tab;
+    size_t leaf_tab_cap;
+
+    struct fallback_page_leaf *pl_buf;
+    size_t n_pl, cap_pl;
+    struct fb_slice *slices;
+    size_t n_slices, cap_slices;
+    uint32_t *slice_tab;
+    size_t slice_tab_cap;
+
+    char *paths;
+    size_t n_paths, cap_paths;
+    struct fb_path_ref *path_refs;
+    size_t n_path_refs, cap_path_refs;
+    uint32_t *path_tab;
+    size_t path_tab_cap;
+
+    struct fallback_page_leaf *tmp_pages;
+    uint16_t *page_map;
+    uint16_t nonempty_pages;
+};
+
+static uint64_t bytes_hash(const void *data, size_t len)
 {
+    const uint8_t *p = data;
+    uint64_t h = HASH64_BASIS;
+    size_t i = 0;
+    for (; i + 4 <= len; i += 4) {
+        uint32_t v;
+        memcpy(&v, p + i, sizeof(v));
+        h = hash64_step(h, v);
+    }
+    for (; i < len; i++)
+        h = hash64_step(h, p[i]);
+    return hash64_finish(h);
+}
+
+static bool grow_array(void **ptr, size_t *cap, size_t elem_size, size_t min_cap)
+{
+    size_t new_cap = *cap ? *cap * 2 : 64;
+    if (new_cap < min_cap)
+        new_cap = min_cap;
+    void *next = realloc(*ptr, new_cap * elem_size);
+    if (!next)
+        return false;
+    *ptr = next;
+    *cap = new_cap;
+    return true;
+}
+
+static uint64_t leaf_hash(const struct fallback_leaf *leaf)
+{
+    return bytes_hash(leaf->words, sizeof(leaf->words));
+}
+
+static bool leaf_rehash(struct fb_builder *b, size_t new_cap)
+{
+    uint32_t *tab = calloc(new_cap, sizeof(*tab));
+    if (!tab)
+        return false;
+    size_t mask = new_cap - 1;
+    for (size_t i = 0; i < b->n_leaves; i++) {
+        size_t pos = (size_t)leaf_hash(&b->leaves[i]) & mask;
+        while (tab[pos])
+            pos = (pos + 1) & mask;
+        tab[pos] = (uint32_t)i + 1;
+    }
+    free(b->leaf_tab);
+    b->leaf_tab = tab;
+    b->leaf_tab_cap = new_cap;
+    return true;
+}
+
+static bool intern_leaf(struct fb_builder *b, const struct fallback_leaf *leaf,
+                        uint16_t *out_id)
+{
+    if (!b->leaf_tab_cap && !leaf_rehash(b, 1024))
+        return false;
+    size_t mask = b->leaf_tab_cap - 1;
+    uint64_t h = leaf_hash(leaf);
+    size_t pos = (size_t)h & mask;
+    while (b->leaf_tab[pos]) {
+        uint32_t idx = b->leaf_tab[pos] - 1;
+        if (!memcmp(&b->leaves[idx], leaf, sizeof(*leaf))) {
+            *out_id = (uint16_t)idx;
+            return true;
+        }
+        pos = (pos + 1) & mask;
+    }
+    if (b->n_leaves >= UINT16_MAX)
+        return false;
+    if (b->n_leaves == b->cap_leaves &&
+        !grow_array((void **)&b->leaves, &b->cap_leaves, sizeof(*b->leaves), 512))
+        return false;
+    if ((b->n_leaves + 1) * 2 > b->leaf_tab_cap) {
+        if (!leaf_rehash(b, b->leaf_tab_cap * 2))
+            return false;
+        mask = b->leaf_tab_cap - 1;
+        pos = (size_t)h & mask;
+        while (b->leaf_tab[pos])
+            pos = (pos + 1) & mask;
+    }
+    uint16_t id = (uint16_t)b->n_leaves++;
+    b->leaves[id] = *leaf;
+    b->leaf_tab[pos] = (uint32_t)id + 1;
+    *out_id = id;
+    return true;
+}
+
+static bool slice_rehash(struct fb_builder *b, size_t new_cap)
+{
+    uint32_t *tab = calloc(new_cap, sizeof(*tab));
+    if (!tab)
+        return false;
+    size_t mask = new_cap - 1;
+    for (size_t i = 0; i < b->n_slices; i++) {
+        const struct fb_slice *s = &b->slices[i];
+        size_t pos = (size_t)bytes_hash(b->pl_buf + s->off,
+                                        (size_t)s->count * sizeof(*b->pl_buf)) & mask;
+        while (tab[pos])
+            pos = (pos + 1) & mask;
+        tab[pos] = (uint32_t)i + 1;
+    }
+    free(b->slice_tab);
+    b->slice_tab = tab;
+    b->slice_tab_cap = new_cap;
+    return true;
+}
+
+static bool intern_slice(struct fb_builder *b,
+                         const struct fallback_page_leaf *pages,
+                         uint16_t count, uint32_t *out_off)
+{
+    if (!count) {
+        *out_off = 0;
+        return true;
+    }
+    if (!b->slice_tab_cap && !slice_rehash(b, 512))
+        return false;
+    size_t bytes = (size_t)count * sizeof(*pages);
+    uint64_t h = bytes_hash(pages, bytes);
+    size_t mask = b->slice_tab_cap - 1;
+    size_t pos = (size_t)h & mask;
+    while (b->slice_tab[pos]) {
+        const struct fb_slice *s = &b->slices[b->slice_tab[pos] - 1];
+        if (s->count == count && !memcmp(b->pl_buf + s->off, pages, bytes)) {
+            *out_off = s->off;
+            return true;
+        }
+        pos = (pos + 1) & mask;
+    }
+    while (b->n_pl + count > b->cap_pl)
+        if (!grow_array((void **)&b->pl_buf, &b->cap_pl, sizeof(*b->pl_buf),
+                        b->n_pl + count))
+            return false;
+    if (b->n_slices == b->cap_slices &&
+        !grow_array((void **)&b->slices, &b->cap_slices, sizeof(*b->slices), 256))
+        return false;
+    if ((b->n_slices + 1) * 2 > b->slice_tab_cap) {
+        if (!slice_rehash(b, b->slice_tab_cap * 2))
+            return false;
+        mask = b->slice_tab_cap - 1;
+        pos = (size_t)h & mask;
+        while (b->slice_tab[pos])
+            pos = (pos + 1) & mask;
+    }
+    uint32_t off = (uint32_t)b->n_pl;
+    memcpy(b->pl_buf + off, pages, bytes);
+    b->n_pl += count;
+    uint32_t sid = (uint32_t)b->n_slices++;
+    b->slices[sid] = (struct fb_slice){ .off = off, .count = count };
+    b->slice_tab[pos] = sid + 1;
+    *out_off = off;
+    return true;
+}
+
+static bool path_rehash(struct fb_builder *b, size_t new_cap)
+{
+    uint32_t *tab = calloc(new_cap, sizeof(*tab));
+    if (!tab)
+        return false;
+    size_t mask = new_cap - 1;
+    for (size_t i = 0; i < b->n_path_refs; i++) {
+        const struct fb_path_ref *r = &b->path_refs[i];
+        size_t pos = (size_t)bytes_hash(b->paths + r->off, r->len) & mask;
+        while (tab[pos])
+            pos = (pos + 1) & mask;
+        tab[pos] = (uint32_t)i + 1;
+    }
+    free(b->path_tab);
+    b->path_tab = tab;
+    b->path_tab_cap = new_cap;
+    return true;
+}
+
+static bool intern_path(struct fb_builder *b, const char *path, uint32_t *out_off)
+{
+    if (!b->path_tab_cap && !path_rehash(b, 512))
+        return false;
+    size_t len = strlen(path);
+    uint64_t h = bytes_hash(path, len);
+    size_t mask = b->path_tab_cap - 1;
+    size_t pos = (size_t)h & mask;
+    while (b->path_tab[pos]) {
+        const struct fb_path_ref *r = &b->path_refs[b->path_tab[pos] - 1];
+        if (r->len == len && !memcmp(b->paths + r->off, path, len)) {
+            *out_off = r->off;
+            return true;
+        }
+        pos = (pos + 1) & mask;
+    }
+    while (b->n_paths + len + 1 > b->cap_paths)
+        if (!grow_array((void **)&b->paths, &b->cap_paths, sizeof(*b->paths),
+                        b->n_paths + len + 1))
+            return false;
+    if (b->n_path_refs == b->cap_path_refs &&
+        !grow_array((void **)&b->path_refs, &b->cap_path_refs,
+                    sizeof(*b->path_refs), 256))
+        return false;
+    if ((b->n_path_refs + 1) * 2 > b->path_tab_cap) {
+        if (!path_rehash(b, b->path_tab_cap * 2))
+            return false;
+        mask = b->path_tab_cap - 1;
+        pos = (size_t)h & mask;
+        while (b->path_tab[pos])
+            pos = (pos + 1) & mask;
+    }
+    uint32_t off = (uint32_t)b->n_paths;
+    memcpy(b->paths + off, path, len + 1);
+    b->n_paths += len + 1;
+    uint32_t rid = (uint32_t)b->n_path_refs++;
+    b->path_refs[rid] = (struct fb_path_ref){ .off = off, .len = (uint32_t)len };
+    b->path_tab[pos] = rid + 1;
+    *out_off = off;
+    return true;
+}
+
+static int cmp_page_leaf(const void *a, const void *b)
+{
+    const struct fallback_page_leaf *pa = a;
+    const struct fallback_page_leaf *pb = b;
+    return (pa->page > pb->page) - (pa->page < pb->page);
+}
+
+static void record_page_nonempty(struct fb_builder *b, uint16_t page)
+{
+    if (!b->page_map[page])
+        b->page_map[page] = ++b->nonempty_pages;
+}
+
+static bool collect_fc_charset(struct fb_builder *b, const FcCharSet *cs,
+                               uint32_t *out_off, uint16_t *out_count)
+{
+    uint16_t count = 0;
+    bool unsorted = false;
+    FcChar32 map[FC_CHARSET_MAP_SIZE], next;
+    for (FcChar32 base = FcCharSetFirstPage(cs, map, &next);
+         base != FC_CHARSET_DONE;
+         base = FcCharSetNextPage(cs, map, &next)) {
+        unsigned page = base >> 8;
+        if (page >= FALLBACK_PAGES)
+            continue;
+        struct fallback_leaf leaf;
+        for (int w = 0; w < 4; w++)
+            leaf.words[w] = (uint64_t)map[2 * w] | ((uint64_t)map[2 * w + 1] << 32);
+        uint16_t leaf_id;
+        if (!intern_leaf(b, &leaf, &leaf_id))
+            return false;
+        record_page_nonempty(b, (uint16_t)page);
+        if (count > 0 && (uint16_t)page <= b->tmp_pages[count - 1].page)
+            unsorted = true;
+        b->tmp_pages[count++] = (struct fallback_page_leaf){
+            .page = (uint16_t)page, .leaf = leaf_id,
+        };
+    }
+    if (unsorted)
+        qsort(b->tmp_pages, count, sizeof(*b->tmp_pages), cmp_page_leaf);
+    *out_count = count;
+    return intern_slice(b, b->tmp_pages, count, out_off);
+}
+
+static bool collect_embedded_charset(struct fb_builder *b, uint32_t *out_off,
+                                     uint16_t *out_count)
+{
+    *out_off = 0;
+    *out_count = 0;
     FT_Face probe;
     if (FT_New_Memory_Face(ft_lib, embedded_cards_font,
                            (FT_Long)sizeof(embedded_cards_font), 0, &probe))
         return false;
-    FcCharSet *cs = FcCharSetCreate();
-    if (cs) {
-        FT_ULong cp;
-        FT_UInt gid;
-        for (cp = FT_Get_First_Char(probe, &gid); gid;
-             cp = FT_Get_Next_Char(probe, cp, &gid))
-            FcCharSetAddChar(cs, (FcChar32)cp);
+    uint16_t count = 0;
+    unsigned cur_page = FALLBACK_PAGES;
+    struct fallback_leaf cur_leaf = {0};
+    bool ok = true;
+    FT_UInt gid;
+    for (FT_ULong cp = FT_Get_First_Char(probe, &gid); gid;
+         cp = FT_Get_Next_Char(probe, cp, &gid)) {
+        unsigned page = (unsigned)(cp >> 8);
+        if (page >= FALLBACK_PAGES)
+            continue;
+        if (page != cur_page) {
+            if (cur_page < FALLBACK_PAGES) {
+                uint16_t leaf_id;
+                if (!intern_leaf(b, &cur_leaf, &leaf_id)) {
+                    ok = false;
+                    break;
+                }
+                record_page_nonempty(b, (uint16_t)cur_page);
+                b->tmp_pages[count++] = (struct fallback_page_leaf){
+                    .page = (uint16_t)cur_page, .leaf = leaf_id,
+                };
+            }
+            cur_page = page;
+            cur_leaf = (struct fallback_leaf){0};
+        }
+        unsigned bit = (unsigned)(cp & 255u);
+        cur_leaf.words[bit >> 6] |= UINT64_C(1) << (bit & 63u);
     }
     FT_Done_Face(probe);
-    if (!cs)
+    if (ok && cur_page < FALLBACK_PAGES) {
+        uint16_t leaf_id;
+        if (intern_leaf(b, &cur_leaf, &leaf_id)) {
+            record_page_nonempty(b, (uint16_t)cur_page);
+            b->tmp_pages[count++] = (struct fallback_page_leaf){
+                .page = (uint16_t)cur_page, .leaf = leaf_id,
+            };
+        } else {
+            ok = false;
+        }
+    }
+    if (!ok)
         return false;
-    embedded_charset = cs;
-    return true;
+    *out_count = count;
+    return intern_slice(b, b->tmp_pages, count, out_off);
+}
+
+static void builder_free_scratch(struct fb_builder *b)
+{
+    free(b->leaf_tab);
+    free(b->slices);
+    free(b->slice_tab);
+    free(b->path_refs);
+    free(b->path_tab);
+    free(b->tmp_pages);
+}
+
+static void builder_free_all(struct fb_builder *b)
+{
+    builder_free_scratch(b);
+    free(b->leaves);
+    free(b->pl_buf);
+    free(b->paths);
+    free(b->page_map);
+}
+
+static void shrink_allocation(void **ptr, size_t used_bytes)
+{
+    if (!used_bytes) {
+        free(*ptr);
+        *ptr = NULL;
+        return;
+    }
+    void *shrunk = realloc(*ptr, used_bytes);
+    if (shrunk)
+        *ptr = shrunk;
 }
 
 static bool fallback_init_locked(void)
 {
     if (!fc_pin())
         return false;
-    fallback_fc_pinned = true;
     fc_query_lock();
 
     FcPattern *pat = FcPatternCreate();
-    if (!pat)
-        goto fail;
+    if (!pat) {
+        fc_query_unlock();
+        fc_unpin();
+        return false;
+    }
     FcPatternAddString(pat, FC_FAMILY, (const FcChar8 *)"monospace");
     FcConfigSubstitute(NULL, pat, FcMatchPattern);
     FcDefaultSubstitute(pat);
     FcResult result;
-    fallback_fonts = FcFontSort(NULL, pat, FcFalse, NULL, &result);
+    FcFontSet *fonts = FcFontSort(NULL, pat, FcFalse, NULL, &result);
     FcPatternDestroy(pat);
 
-    if (!fallback_fonts || result != FcResultMatch)
-        goto fail;
-    int nfont = fallback_fonts->nfont;
-    int embedded = init_embedded_charset() ? 1 : 0;
-    fallback_total = nfont + embedded;
-    fallback_words = (fallback_total + 63) / 64;
-    fallback_candidates = calloc((size_t)fallback_total + 1,
-                                 sizeof(*fallback_candidates));
-    run_set = calloc((size_t)fallback_words + 1, sizeof(*run_set));
-    fallback_page_index = calloc((size_t)FALLBACK_PAGES * fallback_words,
-                                 sizeof(*fallback_page_index));
-    if (!fallback_candidates || !run_set || !fallback_page_index)
-        goto fail;
+    if (!fonts || result != FcResultMatch) {
+        if (fonts)
+            FcFontSetDestroy(fonts);
+        fc_query_unlock();
+        fc_unpin();
+        return false;
+    }
 
-    for (int i = 0; i < fallback_total; i++) {
-        struct fallback_candidate *candidate = &fallback_candidates[i];
-        if (i < embedded) {
-            candidate->coverage = embedded_charset;
-            candidate->path = embedded_cards_path;
-            candidate->mem = embedded_cards_font;
-            candidate->mem_len = sizeof(embedded_cards_font);
-        } else {
-            FcPattern *match = fallback_fonts->fonts[i - embedded];
-            FcChar8 *path;
-            FcBool color = FcFalse;
-            if (FcPatternGetCharSet(match, FC_CHARSET, 0, &candidate->coverage) != FcResultMatch ||
-                FcPatternGetString(match, FC_FILE, 0, &path) != FcResultMatch)
-                continue;
-            if (strstr((const char *)path, "LastResort"))
-                continue;
-            candidate->path = (const char *)path;
-            FcPatternGetInteger(match, FC_INDEX, 0, &candidate->index);
-            FcPatternGetBool(match, FC_COLOR, 0, &color);
-            candidate->color = color;
-            candidate->is_emoji = pattern_is_emoji(match);
-        }
-        if (candidate->coverage) {
-            FcChar32 map[FC_CHARSET_MAP_SIZE], next;
-            for (FcChar32 base = FcCharSetFirstPage(candidate->coverage, map, &next);
-                 base != FC_CHARSET_DONE;
-                 base = FcCharSetNextPage(candidate->coverage, map, &next)) {
-                unsigned page = base >> 8;
-                if (page < FALLBACK_PAGES)
-                    fallback_page_index[(size_t)page * fallback_words +
-                                        (i >> 6)] |= UINT64_C(1) << (i & 63);
+    int nfont = fonts->nfont;
+    struct fb_builder b = {0};
+    b.page_map = calloc(FALLBACK_PAGES, sizeof(*b.page_map));
+    b.tmp_pages = malloc(FALLBACK_PAGES * sizeof(*b.tmp_pages));
+    uint32_t embedded_off = 0;
+    uint16_t embedded_cnt = 0;
+    int embedded = (b.page_map && b.tmp_pages &&
+                    collect_embedded_charset(&b, &embedded_off, &embedded_cnt)) ? 1 : 0;
+    int total = nfont + embedded;
+    int words = (total + 63) / 64;
+
+    struct fallback_candidate *cands = calloc((size_t)total + 1, sizeof(*cands));
+    uint32_t *slice_offs = calloc((size_t)total + 1, sizeof(*slice_offs));
+    uint32_t *path_offs = malloc(((size_t)total + 1) * sizeof(*path_offs));
+    if (!b.page_map || !b.tmp_pages || !cands || !slice_offs || !path_offs)
+        goto fail;
+    for (int i = 0; i <= total; i++)
+        path_offs[i] = UINT32_MAX;
+
+    if (embedded) {
+        cands[0].path = embedded_cards_path;
+        cands[0].mem = embedded_cards_font;
+        cands[0].mem_len = sizeof(embedded_cards_font);
+        cands[0].n_leaves = embedded_cnt;
+        slice_offs[0] = embedded_off;
+    }
+
+    for (int i = embedded; i < total; i++) {
+        FcPattern *match = fonts->fonts[i - embedded];
+        FcCharSet *cs = NULL;
+        FcChar8 *path = NULL;
+        FcBool color = FcFalse;
+        if (FcPatternGetCharSet(match, FC_CHARSET, 0, &cs) != FcResultMatch ||
+            FcPatternGetString(match, FC_FILE, 0, &path) != FcResultMatch)
+            continue;
+        if (strstr((const char *)path, "LastResort"))
+            continue;
+        if (!intern_path(&b, (const char *)path, &path_offs[i]) ||
+            !collect_fc_charset(&b, cs, &slice_offs[i], &cands[i].n_leaves))
+            goto fail;
+        FcPatternGetInteger(match, FC_INDEX, 0, &cands[i].index);
+        FcPatternGetBool(match, FC_COLOR, 0, &color);
+        cands[i].color = color;
+        cands[i].is_emoji = pattern_is_emoji(match);
+    }
+
+    FcFontSetDestroy(fonts);
+    fonts = NULL;
+
+    uint64_t *page_rows = calloc((size_t)(1 + b.nonempty_pages) * words,
+                                 sizeof(*page_rows));
+    uint64_t *rset = run_set ? run_set : calloc((size_t)words + 1, sizeof(*rset));
+    if (!page_rows || !rset) {
+        free(page_rows);
+        if (rset != run_set)
+            free(rset);
+        goto fail;
+    }
+
+    shrink_allocation((void **)&b.leaves, b.n_leaves * sizeof(*b.leaves));
+    shrink_allocation((void **)&b.pl_buf, b.n_pl * sizeof(*b.pl_buf));
+    shrink_allocation((void **)&b.paths, b.n_paths * sizeof(*b.paths));
+
+    for (int i = 0; i < total; i++) {
+        if (path_offs[i] != UINT32_MAX)
+            cands[i].path = b.paths + path_offs[i];
+        if (cands[i].n_leaves) {
+            cands[i].leaves = b.pl_buf + slice_offs[i];
+            for (uint16_t k = 0; k < cands[i].n_leaves; k++) {
+                uint16_t r = b.page_map[cands[i].leaves[k].page];
+                page_rows[(size_t)r * words + (i >> 6)] |= UINT64_C(1) << (i & 63);
             }
         }
     }
-    fc_query_unlock();
+
+    builder_free_scratch(&b);
+    free(slice_offs);
+    free(path_offs);
+
+    fallback_candidates = cands;
+    fallback_leaves = b.leaves;
+    fallback_page_leaves = b.pl_buf;
+    fallback_paths = b.paths;
+    fallback_page_map = b.page_map;
+    fallback_page_rows = page_rows;
+    fallback_total = total;
+    fallback_words = words;
+    run_set = rset;
     atomic_store_explicit(&fallback_ready_flag, true, memory_order_release);
-    return true;
-fail:
+
     fc_query_unlock();
+    fc_unpin();
+    return true;
+
+fail:
+    if (fonts)
+        FcFontSetDestroy(fonts);
+    fc_query_unlock();
+    builder_free_all(&b);
+    free(cands);
+    free(slice_offs);
+    free(path_offs);
+    fc_unpin();
     fallback_destroy_locked();
     return false;
 }
@@ -586,7 +1031,7 @@ static int run_accept_fb(struct font_face_query *q, int i,
 {
     (void)i; (void)vctx;
     if (!c->path || c->color != phase_emoji(q) ||
-        !FcCharSetHasChar(c->coverage, cps[0]))
+        !candidate_has_char(c, cps[0]))
         return -1;
     int slot = candidate_face_slot(c);
     if (slot < 0 || faces[slot].is_emoji || slot < configured_faces)

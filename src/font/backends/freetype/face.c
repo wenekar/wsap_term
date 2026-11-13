@@ -283,7 +283,7 @@ static bool fc_ensure_locked(void)
 
 static void fc_release_locked(void)
 {
-    if (fc_pins > 0 || fallback_ready())
+    if (fc_pins > 0)
         return;
     if (fc_ready) {
         FcFini();
