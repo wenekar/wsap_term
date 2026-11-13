@@ -84,8 +84,8 @@ int buffer_reserve(struct wayland_surface *w, struct buffer *b, size_t needed)
 {
     if (needed <= b->capacity) return 0;
     if (b->busy || needed > INT32_MAX) return -1;
-    size_t capacity = b->capacity <= INT32_MAX / 2 ? b->capacity * 2 : INT32_MAX;
-    if (capacity < needed) capacity = needed;
+    size_t capacity = b->capacity == 0 ? needed : needed + needed / 4;
+    if (capacity > INT32_MAX) capacity = INT32_MAX;
     int fd = memfd_create("yasl_private_surface_buffer", MFD_CLOEXEC | MFD_ALLOW_SEALING);
     if (fd < 0) return -1;
     if (!fd_truncate(fd, capacity) ||
@@ -278,7 +278,7 @@ static int apply_pending_geometry_locked(struct wayland_surface *w)
     w->logical_height = logical_h;
 #if YASL_HAS_EGL
     if (w->egl_window && (resized || rescaled))
-        wl_egl_window_resize(w->egl_window, width, height, 0, 0);
+        wayland_egl_window_resize(w, width, height);
 #endif
     surface_update_opaque_region(w);
     if (resized || rescaled) {
@@ -455,19 +455,14 @@ bool wayland_surface_arm_frame(struct wayland_surface *w)
     return true;
 }
 
-static const int8_t free_buf_lut[4][8] = {
-    [0] = { 1, 1, 2, 2, 1, 1, 0, -1 },
-    [1] = { 0, 2, 0, 2, 0, 1, 0, -1 },
-    [2] = { 0, 1, 0, 2, 0, 1, 0, -1 },
-    [3] = { 0, 1, 0, 2, 0, 1, 0, -1 },
-};
-
 int buffer_pick_free_index(const struct buffer *bufs, int cur)
 {
-    unsigned busy = ((unsigned)bufs[0].busy) |
-                    (((unsigned)bufs[1].busy) << 1) |
-                    (((unsigned)bufs[2].busy) << 2);
-    return free_buf_lut[(unsigned)cur & 3][busy];
+    (void)cur;
+    for (int i = 0; i < NBUF; i++) {
+        if (!bufs[i].busy)
+            return i;
+    }
+    return -1;
 }
 
 static void feedback_destroy(struct latency_feedback *feedback)
@@ -680,6 +675,9 @@ void surface_draw_frame(struct wayland_surface *w)
         w->frames_skipped++;
         return;
     }
+    bool preserved = w->has_shown && idx == w->shown && w->buffers[idx].presented &&
+        !w->parent && w->buffers[idx].proxy && !w->buffers[idx].busy &&
+        w->buffers[idx].width == w->width && w->buffers[idx].height == w->height;
     /* Drawing reuses the presented buffer only after the compositor released it. */
     if (w->has_shown && idx == w->shown)
         w->has_shown = false;
@@ -699,6 +697,7 @@ void surface_draw_frame(struct wayland_surface *w)
             .generation = yasl_private_frame_begin(&w->base),
             .pixels = w->buffers[idx].pixels,
             .size = { .x = w->width, .y = w->height },
+            .preserved = preserved,
         },
     };
     w->frame_active = true;

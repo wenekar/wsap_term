@@ -37,9 +37,14 @@ if system == 'linux'
     xrandr = dependency('xrandr', required: false)
     has_x11 = x11.found() and xi.found() and x11_xkb.found() and xext.found()
     if has_x11
-        deps += [x11, xi, x11_xkb, xext]
+        deps += [
+            x11.partial_dependency(compile_args: true, includes: true),
+            xi.partial_dependency(compile_args: true, includes: true),
+            x11_xkb,
+            xext.partial_dependency(compile_args: true, includes: true),
+        ]
         if xrandr.found()
-            deps += [xrandr]
+            deps += [xrandr.partial_dependency(compile_args: true, includes: true)]
             add_project_arguments('-DYASL_HAS_XRANDR=1', language: 'c')
         endif
     endif
@@ -52,16 +57,17 @@ if system == 'linux'
     wayland_egl_dep = dependency('wayland-egl', required: false)
     has_egl = egl_dep.found() and (not has_wayland or wayland_egl_dep.found())
     if has_egl
-        deps += egl_dep
+        deps += egl_dep.partial_dependency(compile_args: true, includes: true)
         if has_wayland
-            deps += wayland_egl_dep
+            deps += wayland_egl_dep.partial_dependency(compile_args: true, includes: true)
         endif
     endif
     vulkan_dep = dependency('vulkan', required: false)
     has_vulkan = vulkan_dep.found()
     m_dep = cc.find_library('m', required: false)
     rt_dep = cc.find_library('rt', required: false)
-    deps += [m_dep, rt_dep]
+    dl_dep = cc.find_library('dl', required: false)
+    deps += [m_dep, rt_dep, dl_dep]
     if has_wayland
         deps += [wl_client, wl_cursor, xkbcommon]
     endif

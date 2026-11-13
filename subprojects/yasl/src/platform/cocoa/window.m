@@ -1982,7 +1982,7 @@ uint32_t cocoa_display_caps(const struct cocoa_display *d)
                 YASL_PRIVATE_CAP_PLACE_WINDOW | YASL_PRIVATE_CAP_PRIMARY_SELECTION |
                 YASL_PRIVATE_CAP_CSD | YASL_PRIVATE_CAP_NATIVE_GRAPHICS |
                 YASL_PRIVATE_CAP_FRAME_PACING | YASL_PRIVATE_CAP_TABLET |
-                YASL_PRIVATE_CAP_TEXT_INPUT) : 0;
+                YASL_PRIVATE_CAP_VULKAN | YASL_PRIVATE_CAP_TEXT_INPUT) : 0;
 }
 
 struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,

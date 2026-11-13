@@ -1,6 +1,8 @@
 #include "platform/wayland/internal.h"
 #include "platform/freedesktop/dbus.h"
+#include <dlfcn.h>
 #include <errno.h>
+#include <stddef.h>
 
 static struct yasl_private_display *impl_display_open(struct yasl_loop *loop, const struct yasl_private_display_spec *spec)
 {
@@ -95,9 +97,164 @@ static bool impl_surface_update_text_input(struct yasl_surface *s)
 }
 
 #if YASL_HAS_EGL
+struct wayland_dl_entry {
+    const char *name;
+    size_t offset;
+};
+
+static struct {
+    bool ready;
+    __typeof__(eglGetDisplay) *eglGetDisplay;
+    __typeof__(eglInitialize) *eglInitialize;
+    __typeof__(eglTerminate) *eglTerminate;
+    __typeof__(eglChooseConfig) *eglChooseConfig;
+    __typeof__(eglBindAPI) *eglBindAPI;
+    __typeof__(eglCreateContext) *eglCreateContext;
+    __typeof__(eglCreateWindowSurface) *eglCreateWindowSurface;
+    __typeof__(eglDestroyContext) *eglDestroyContext;
+    __typeof__(eglDestroySurface) *eglDestroySurface;
+    __typeof__(eglGetError) *eglGetError;
+    __typeof__(eglGetCurrentContext) *eglGetCurrentContext;
+    __typeof__(eglMakeCurrent) *eglMakeCurrent;
+    __typeof__(eglGetProcAddress) *eglGetProcAddress;
+    __typeof__(eglSwapInterval) *eglSwapInterval;
+    __typeof__(eglSwapBuffers) *eglSwapBuffers;
+    __typeof__(wl_egl_window_create) *wl_egl_window_create;
+    __typeof__(wl_egl_window_destroy) *wl_egl_window_destroy;
+    __typeof__(wl_egl_window_resize) *wl_egl_window_resize;
+} wayland_egl_sym;
+
+static pthread_mutex_t wayland_egl_load_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static bool wayland_dl_load_table(const char *soname, void **handle_out, void *base,
+                                  const struct wayland_dl_entry *entries, size_t count)
+{
+    void *h = dlopen(soname, RTLD_LAZY | RTLD_LOCAL);
+    if (!h)
+        return false;
+    for (size_t i = 0; i < count; i++) {
+        void *sym = dlsym(h, entries[i].name);
+        if (!sym) {
+            dlclose(h);
+            return false;
+        }
+        memcpy((char *)base + entries[i].offset, &sym, sizeof(sym));
+    }
+    *handle_out = h;
+    return true;
+}
+
+static bool wayland_egl_load(void)
+{
+    if (__atomic_load_n(&wayland_egl_sym.ready, __ATOMIC_ACQUIRE))
+        return true;
+    pthread_mutex_lock(&wayland_egl_load_mutex);
+    if (wayland_egl_sym.ready) {
+        pthread_mutex_unlock(&wayland_egl_load_mutex);
+        return true;
+    }
+#define WL_EGL_ENTRY(sym) { #sym, offsetof(__typeof__(wayland_egl_sym), sym) }
+    static const struct wayland_dl_entry egl_entries[] = {
+        WL_EGL_ENTRY(eglGetDisplay),
+        WL_EGL_ENTRY(eglInitialize),
+        WL_EGL_ENTRY(eglTerminate),
+        WL_EGL_ENTRY(eglChooseConfig),
+        WL_EGL_ENTRY(eglBindAPI),
+        WL_EGL_ENTRY(eglCreateContext),
+        WL_EGL_ENTRY(eglCreateWindowSurface),
+        WL_EGL_ENTRY(eglDestroyContext),
+        WL_EGL_ENTRY(eglDestroySurface),
+        WL_EGL_ENTRY(eglGetError),
+        WL_EGL_ENTRY(eglGetCurrentContext),
+        WL_EGL_ENTRY(eglMakeCurrent),
+        WL_EGL_ENTRY(eglGetProcAddress),
+        WL_EGL_ENTRY(eglSwapInterval),
+        WL_EGL_ENTRY(eglSwapBuffers),
+    };
+    static const struct wayland_dl_entry wl_egl_entries[] = {
+        WL_EGL_ENTRY(wl_egl_window_create),
+        WL_EGL_ENTRY(wl_egl_window_destroy),
+        WL_EGL_ENTRY(wl_egl_window_resize),
+    };
+#undef WL_EGL_ENTRY
+    void *egl_handle = NULL;
+    void *wl_egl_handle = NULL;
+    bool ok = wayland_dl_load_table("libEGL.so.1", &egl_handle, &wayland_egl_sym,
+                                    egl_entries, sizeof(egl_entries) / sizeof(egl_entries[0])) &&
+              wayland_dl_load_table("libwayland-egl.so.1", &wl_egl_handle, &wayland_egl_sym,
+                                    wl_egl_entries, sizeof(wl_egl_entries) / sizeof(wl_egl_entries[0]));
+    if (!ok) {
+        if (egl_handle)
+            dlclose(egl_handle);
+        memset(&wayland_egl_sym, 0, sizeof(wayland_egl_sym));
+    } else {
+        __atomic_store_n(&wayland_egl_sym.ready, true, __ATOMIC_RELEASE);
+    }
+    pthread_mutex_unlock(&wayland_egl_load_mutex);
+    return ok;
+}
+
+bool wayland_egl_ensure(struct wayland_display *d)
+{
+    if (!d)
+        return false;
+    if (!wayland_egl_load())
+        return false;
+    pthread_mutex_lock(&d->native_mutex);
+    if (!d->egl_initialized) {
+        d->egl_display = wayland_egl_sym.eglGetDisplay((EGLNativeDisplayType)d->wl);
+        if (d->egl_display != EGL_NO_DISPLAY) {
+            EGLint major = 0, minor = 0;
+            d->egl_initialized = wayland_egl_sym.eglInitialize(d->egl_display, &major, &minor) == EGL_TRUE;
+        }
+    }
+    bool ok = d->egl_initialized;
+    pthread_mutex_unlock(&d->native_mutex);
+    return ok;
+}
+
+void wayland_egl_display_release(struct wayland_display *d)
+{
+    pthread_mutex_lock(&d->native_mutex);
+    if (d->egl_initialized && wayland_egl_sym.eglTerminate)
+        wayland_egl_sym.eglTerminate(d->egl_display);
+    d->egl_initialized = false;
+    d->egl_display = EGL_NO_DISPLAY;
+    d->egl_api = 0;
+    pthread_mutex_unlock(&d->native_mutex);
+}
+
+void wayland_egl_surface_release(struct wayland_surface *w)
+{
+    struct wayland_display *c = w->conn;
+    if (w->egl_context) {
+        if (c->egl_initialized && wayland_egl_sym.eglGetCurrentContext &&
+            wayland_egl_sym.eglGetCurrentContext() == w->egl_context)
+            wayland_egl_sym.eglMakeCurrent(c->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        if (c->egl_initialized && wayland_egl_sym.eglDestroyContext)
+            wayland_egl_sym.eglDestroyContext(c->egl_display, w->egl_context);
+        w->egl_context = 0;
+    }
+    if (w->egl_surface && c->egl_initialized && wayland_egl_sym.eglDestroySurface)
+        wayland_egl_sym.eglDestroySurface(c->egl_display, w->egl_surface);
+    w->egl_surface = 0;
+    if (w->egl_window && wayland_egl_sym.wl_egl_window_destroy) {
+        wayland_egl_sym.wl_egl_window_destroy(w->egl_window);
+        w->egl_window = NULL;
+    }
+    w->gl_built = false;
+}
+
+void wayland_egl_window_resize(struct wayland_surface *w, int width, int height)
+{
+    if (w->egl_window && wayland_egl_sym.wl_egl_window_resize)
+        wayland_egl_sym.wl_egl_window_resize(w->egl_window, width, height, 0, 0);
+}
+
 static bool egl_configure(struct wayland_display *d, const struct yasl_private_gl_options *o, EGLConfig *config)
 {
-    if (!d->egl_initialized) return false;
+    if (!d->egl_initialized || !__atomic_load_n(&wayland_egl_sym.ready, __ATOMIC_ACQUIRE))
+        return false;
     EGLint renderable = o->api == YASL_PRIVATE_GL_OPENGL_ES
         ? EGL_OPENGL_ES2_BIT : EGL_OPENGL_BIT;
 #ifdef EGL_OPENGL_ES_BIT
@@ -124,10 +281,10 @@ static bool egl_configure(struct wayland_display *d, const struct yasl_private_g
     EGLint api = o->api == YASL_PRIVATE_GL_OPENGL_ES ? EGL_OPENGL_ES_API : EGL_OPENGL_API;
     if (d->egl_api && d->egl_api != api) return false;
     EGLint count = 0;
-    if (!eglChooseConfig(d->egl_display, attrs, config, 1, &count) || count < 1)
+    if (!wayland_egl_sym.eglChooseConfig(d->egl_display, attrs, config, 1, &count) || count < 1)
         return false;
     d->egl_api = api;
-    return eglBindAPI(api) == EGL_TRUE;
+    return wayland_egl_sym.eglBindAPI(api) == EGL_TRUE;
 }
 
 bool surface_build_gl(struct wayland_surface *w)
@@ -140,7 +297,7 @@ bool surface_build_gl(struct wayland_surface *w)
         if (!w->gl_share->gl_built && !surface_build_gl(w->gl_share)) return false;
         share_context = w->gl_share->egl_context;
     }
-    w->egl_window = wl_egl_window_create(w->surface, w->width, w->height);
+    w->egl_window = wayland_egl_sym.wl_egl_window_create(w->surface, w->width, w->height);
     if (!w->egl_window) return false;
     EGLint context_attrs[12];
     int n = 0;
@@ -166,7 +323,7 @@ bool surface_build_gl(struct wayland_surface *w)
         }
     }
     context_attrs[n] = EGL_NONE;
-    w->egl_context = eglCreateContext(d->egl_display, w->egl_config, share_context, context_attrs);
+    w->egl_context = wayland_egl_sym.eglCreateContext(d->egl_display, w->egl_config, share_context, context_attrs);
     if (w->egl_context == EGL_NO_CONTEXT) { w->egl_context = 0; return false; }
     EGLint surface_attrs[] = {
 #ifdef EGL_GL_COLORSPACE_KHR
@@ -174,7 +331,7 @@ bool surface_build_gl(struct wayland_surface *w)
 #endif
         EGL_NONE,
     };
-    w->egl_surface = eglCreateWindowSurface(d->egl_display, w->egl_config,
+    w->egl_surface = wayland_egl_sym.eglCreateWindowSurface(d->egl_display, w->egl_config,
             (EGLNativeWindowType)w->egl_window, surface_attrs);
     if (w->egl_surface == EGL_NO_SURFACE) { w->egl_surface = 0; return false; }
     w->gl_built = true;
@@ -190,7 +347,7 @@ static struct yasl_surface *impl_surface_create_gl(struct yasl_private_display *
         errno = EINVAL;
         return NULL;
     }
-    if (!d->egl_initialized) {
+    if (!wayland_egl_ensure(d)) {
         errno = ENOTSUP;
         return NULL;
     }
@@ -216,7 +373,7 @@ static struct yasl_surface *impl_surface_create_gl(struct yasl_private_display *
 /* An EGL call failed: a lost context means the display is gone, anything else is a bad argument. */
 static int egl_failure_errno(void)
 {
-    return eglGetError() == EGL_CONTEXT_LOST ? ENOTCONN : EINVAL;
+    return wayland_egl_sym.eglGetError && wayland_egl_sym.eglGetError() == EGL_CONTEXT_LOST ? ENOTCONN : EINVAL;
 }
 
 static bool gl_make_current_locked(struct yasl_private_display *display, struct yasl_surface *surface)
@@ -228,10 +385,12 @@ static bool gl_make_current_locked(struct yasl_private_display *display, struct 
         return false;
     }
     if (!w) {
-        /* Nothing to detach when no context is current or the display is gone. */
-        if (eglGetCurrentContext() == EGL_NO_CONTEXT || d->egl_display == EGL_NO_DISPLAY)
+        /* Nothing to detach when EGL is unloaded, uninitialized, or no context is current. */
+        if (!d->egl_initialized || d->egl_display == EGL_NO_DISPLAY ||
+            !wayland_egl_sym.eglGetCurrentContext ||
+            wayland_egl_sym.eglGetCurrentContext() == EGL_NO_CONTEXT)
             return true;
-        if (eglMakeCurrent(d->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT) != EGL_TRUE) {
+        if (wayland_egl_sym.eglMakeCurrent(d->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT) != EGL_TRUE) {
             errno = egl_failure_errno();
             return false;
         }
@@ -241,12 +400,12 @@ static bool gl_make_current_locked(struct yasl_private_display *display, struct 
         errno = EINVAL;
         return false;
     }
-    /* A window whose rebuild failed has no context and binds nothing. */
-    if (!w->egl_context) {
+    /* A window whose rebuild failed or whose display lacks EGL binds nothing. */
+    if (!d->egl_initialized || !w->egl_context) {
         errno = ENOTCONN;
         return false;
     }
-    if (eglMakeCurrent(d->egl_display, w->egl_surface, w->egl_surface, w->egl_context) != EGL_TRUE) {
+    if (wayland_egl_sym.eglMakeCurrent(d->egl_display, w->egl_surface, w->egl_surface, w->egl_context) != EGL_TRUE) {
         errno = egl_failure_errno();
         return false;
     }
@@ -265,8 +424,15 @@ static bool impl_gl_make_current(struct yasl_private_display *display, struct ya
 
 static yasl_private_gl_proc impl_gl_get_proc_address(struct yasl_private_display *display, const char *name)
 {
-    (void)display;
-    return name ? (yasl_private_gl_proc)eglGetProcAddress(name) : NULL;
+    struct wayland_display *d = (struct wayland_display *)display;
+    if (!name || !d)
+        return NULL;
+    pthread_mutex_lock(&d->native_mutex);
+    bool ready = d->egl_initialized;
+    pthread_mutex_unlock(&d->native_mutex);
+    if (!ready || !wayland_egl_sym.eglGetProcAddress)
+        return NULL;
+    return (yasl_private_gl_proc)wayland_egl_sym.eglGetProcAddress(name);
 }
 
 static bool impl_gl_swap_interval(struct yasl_private_display *display, struct yasl_surface *surface, int interval)
@@ -277,7 +443,7 @@ static bool impl_gl_swap_interval(struct yasl_private_display *display, struct y
         return false;
     pthread_mutex_lock(&d->native_mutex);
     bool result = gl_make_current_locked(display, surface) &&
-        eglSwapInterval(d->egl_display, interval) == EGL_TRUE;
+        wayland_egl_sym.eglSwapInterval(d->egl_display, interval) == EGL_TRUE;
     pthread_mutex_unlock(&d->native_mutex);
     return result;
 }
@@ -302,7 +468,7 @@ static bool impl_gl_swap_buffers(struct yasl_private_display *display, struct ya
         return false;
     }
     surface_request_presentation_feedback(w);
-    bool swapped = eglSwapBuffers(d->egl_display, w->egl_surface) == EGL_TRUE;
+    bool swapped = wayland_egl_sym.eglSwapBuffers(d->egl_display, w->egl_surface) == EGL_TRUE;
     int error = swapped ? 0 : egl_failure_errno();
     if (!swapped) {
         if (!previous_frame && w->frame_cb) {

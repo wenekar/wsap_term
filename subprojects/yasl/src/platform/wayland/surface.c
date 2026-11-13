@@ -207,17 +207,13 @@ static void connection_release(struct wayland_display *c)
     RELEASE(compositor, wl_compositor_destroy);
     RELEASE(registry, wl_registry_destroy);
 #if YASL_HAS_EGL
-    pthread_mutex_lock(&c->native_mutex);
-    if (c->egl_initialized) eglTerminate(c->egl_display);
-    c->egl_initialized = false;
-    c->egl_display = EGL_NO_DISPLAY;
-    c->egl_api = 0;
-    pthread_mutex_unlock(&c->native_mutex);
+    wayland_egl_display_release(c);
 #endif
     RELEASE(wl, wl_display_disconnect);
     c->base.native_handle = NULL;
     c->cursor_theme_scale = 0;
     c->pres_clock_known = false;
+    c->has_dmabuf = false;
     c->active_seat = NULL;
 }
 
@@ -226,15 +222,6 @@ static bool connection_open(struct wayland_display *c)
     c->wl = wl_display_connect(NULL);
     if (!c->wl) return false;
     c->base.native_handle = c->wl;
-#if YASL_HAS_EGL
-    pthread_mutex_lock(&c->native_mutex);
-    c->egl_display = eglGetDisplay((EGLNativeDisplayType)c->wl);
-    if (c->egl_display != EGL_NO_DISPLAY) {
-        EGLint major = 0, minor = 0;
-        c->egl_initialized = eglInitialize(c->egl_display, &major, &minor) == EGL_TRUE;
-    }
-    pthread_mutex_unlock(&c->native_mutex);
-#endif
     c->registry = wl_display_get_registry(c->wl);
     if (!c->registry) return false;
     wl_registry_add_listener(c->registry, &registry_listener, c);
@@ -259,7 +246,8 @@ static void display_rebuild(struct wayland_display *c)
     }
 #if YASL_HAS_EGL
     for (struct wayland_surface *w = c->surfaces; w && !c->lost; w = w->conn_next)
-        if (w->base.presenter == YASL_PRIVATE_PRESENTER_GL && !w->closed && !w->gl_built && !surface_build_gl(w))
+        if (w->base.presenter == YASL_PRIVATE_PRESENTER_GL && !w->closed && !w->gl_built &&
+            (!wayland_egl_ensure(c) || !surface_build_gl(w)))
             surface_fail(w);
 #endif
     /* Seats announced their pointers before these surfaces existed, so lock them now. */
@@ -366,6 +354,8 @@ uint32_t wayland_display_caps(const struct wayland_display *c)
         caps |= YASL_PRIVATE_CAP_PRIMARY_SELECTION;
     if (c->relative_pointer_mgr && c->pointer_constraints)
         caps |= YASL_PRIVATE_CAP_RELATIVE_POINTER;
+    if (c->has_dmabuf)
+        caps |= YASL_PRIVATE_CAP_VULKAN;
     return caps;
 }
 
@@ -442,17 +432,7 @@ void surface_release_native(struct wayland_surface *w)
 #define DROP(field, destroy) do { if (w->field) { destroy(w->field); w->field = NULL; } } while (0)
     DROP(tearing_control, wp_tearing_control_v1_destroy);
 #if YASL_HAS_EGL
-    struct wayland_display *c = w->conn;
-    if (w->egl_context) {
-        if (eglGetCurrentContext() == w->egl_context)
-            eglMakeCurrent(c->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        eglDestroyContext(c->egl_display, w->egl_context);
-        w->egl_context = 0;
-    }
-    if (w->egl_surface) eglDestroySurface(c->egl_display, w->egl_surface);
-    w->egl_surface = 0;
-    DROP(egl_window, wl_egl_window_destroy);
-    w->gl_built = false;
+    wayland_egl_surface_release(w);
 #endif
     DROP(fifo, wp_fifo_v1_destroy);
     DROP(commit_timer, wp_commit_timer_v1_destroy);

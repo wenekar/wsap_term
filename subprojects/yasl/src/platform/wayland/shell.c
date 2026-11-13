@@ -253,6 +253,9 @@ static void registry_global(void *data, struct wl_registry *registry,
     } else if (strcmp(interface, xdg_toplevel_drag_manager_v1_interface.name) == 0) {
         c->toplevel_drag_mgr = wl_registry_bind(registry, name,
                 &xdg_toplevel_drag_manager_v1_interface, 1);
+    } else if (strcmp(interface, "zwp_linux_dmabuf_v1") == 0 ||
+               strcmp(interface, "wl_drm") == 0) {
+        c->has_dmabuf = true;
     } else if (strcmp(interface, wl_seat_interface.name) == 0) {
         seat_bind(c, registry, name, version);
     }

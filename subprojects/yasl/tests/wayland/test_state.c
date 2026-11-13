@@ -140,6 +140,17 @@ int main(void)
     xdg_surface_destroy(xdg);
     wl_display_disconnect(wl);
     close(sockets[1]);
+    /* Vulkan capability requires linux-dmabuf or wl_drm on Wayland. */
+    struct wayland_display cap_conn = {0};
+    assert(!(wayland_display_caps(&cap_conn) & YASL_PRIVATE_CAP_VULKAN));
+    registry_global(&cap_conn, NULL, 1, "zwlr_export_dmabuf_manager_v1", 1);
+    assert(!(wayland_display_caps(&cap_conn) & YASL_PRIVATE_CAP_VULKAN));
+    registry_global(&cap_conn, NULL, 2, "zwp_linux_dmabuf_v1", 3);
+    assert(wayland_display_caps(&cap_conn) & YASL_PRIVATE_CAP_VULKAN);
+    struct wayland_display drm_conn = {0};
+    registry_global(&drm_conn, NULL, 3, "wl_drm", 2);
+    assert(wayland_display_caps(&drm_conn) & YASL_PRIVATE_CAP_VULKAN);
+
     yasl_private_events_unregister(&surface.base);
     yasl_private_events_close(&display);
     return 0;

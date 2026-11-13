@@ -82,14 +82,14 @@ if has_x11
     if get_option('x11_tablet_tests')
         xorg = find_program('/usr/lib/Xorg', '/usr/lib/xorg/Xorg', 'Xorg')
         native_tablet = executable('yasl-tablet-x11-native-test', 'x11/test_tablet_native.c',
-            include_directories: inc, dependencies: yasl_dep)
+            include_directories: inc, dependencies: [yasl_dep, x11, xi])
         test('tablet-x11-native', python, args: [files('helpers/run_x11_tablet.py'), xorg, native_tablet], timeout: 30)
     endif
 endif
 x11_input_args = []
 if has_x11 and get_option('integration_tests')
     x11_input_args += [executable('yasl-input-x11-test', 'x11/test_input.c',
-        include_directories: inc, dependencies: yasl_dep)]
+        include_directories: inc, dependencies: [yasl_dep, x11])]
 endif
 if get_option('integration_tests')
     display_test_sources = has_cocoa ? files('cocoa/display.m') : []

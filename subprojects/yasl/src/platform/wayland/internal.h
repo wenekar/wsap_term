@@ -49,7 +49,7 @@
 #include <xkbcommon/xkbcommon-keysyms.h>
 #include <xkbcommon/xkbcommon-compose.h>
 
-#define NBUF 3
+#define NBUF 2
 
 struct wayland_surface;
 struct tablet_tool;
@@ -286,6 +286,7 @@ struct wayland_display {
     /* 1-byte booleans */
     bool owns_loop;
     bool pres_clock_known;
+    bool has_dmabuf;
     bool reading;
     bool lost;
 };
@@ -435,6 +436,10 @@ void display_leave(struct wayland_display *c);
 int  surface_build_toplevel(struct wayland_surface *w, bool fullscreen);
 void surface_release_native(struct wayland_surface *w);
 #if YASL_HAS_EGL
+bool wayland_egl_ensure(struct wayland_display *d);
+void wayland_egl_display_release(struct wayland_display *d);
+void wayland_egl_surface_release(struct wayland_surface *w);
+void wayland_egl_window_resize(struct wayland_surface *w, int width, int height);
 bool surface_build_gl(struct wayland_surface *w);
 #endif
 

@@ -318,6 +318,15 @@ int main(int argc, char **argv)
     pixels = yasl_cpu_pixels(s, &w, &h);
     assert(pixels[0] == 0xff102030u && pixels[(size_t)3 * w + 2] == 0xffaabbccu);
 
+    /* Partial damage updates the damaged region while preserving untouched pixels. */
+    pixels[(size_t)4 * w + 5] = 0xff556677u;
+    struct yasl_damage patch = {.x = 5, .y = 4, .width = 1, .height = 1};
+    assert(yasl_cpu_present_damage(s, &patch, 1) == 0);
+    drain();
+    pixels = yasl_cpu_pixels(s, &w, &h);
+    assert(pixels[0] == 0xff102030u && pixels[(size_t)3 * w + 2] == 0xffaabbccu &&
+           pixels[(size_t)4 * w + 5] == 0xff556677u);
+
     /* Waiting ends only on an event, the timeout or yasl_wake, never early. */
     drain();
     uint64_t start = yasl_time_ns();

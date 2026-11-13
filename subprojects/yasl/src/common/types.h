@@ -128,6 +128,7 @@ enum yasl_private_display_cap : uint32_t {
     /* Backend/protocol supports tablet axes, independent of attached hardware. */
     YASL_PRIVATE_CAP_TABLET            = 1 << 8,
     YASL_PRIVATE_CAP_RELATIVE_POINTER  = 1 << 9, /**< YASL_PRIVATE_POINTER_RELATIVE is available. */
+    YASL_PRIVATE_CAP_VULKAN            = 1 << 10, /**< Hardware graphics support for Vulkan presentation. */
     YASL_PRIVATE_CAP_TEXT_INPUT        = 1 << 11, /**< Input method support. */
 };
 
@@ -215,6 +216,8 @@ struct yasl_private_framebuffer {
     struct yasl_private_vector2i size;
     /** Row stride in bytes, populated for the active draw callback. */
     int stride_bytes;
+    /** True when pixels still hold the immediately preceding presented frame at this size. */
+    bool preserved;
 };
 
 /** One draw invocation. Do not retain its pointer after the callback returns. */

@@ -28,18 +28,206 @@
 #include <xkbcommon/xkbcommon.h>
 
 #include <assert.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
 #include <poll.h>
+#include <pthread.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <wchar.h>
 
-#define TEXT_LIMIT (16 * 1024 * 1024)
-#define PASTE_TIMEOUT_NS YASL_PRIVATE_MS_TO_NS(30000)
+struct x11_dl_entry {
+    const char *name;
+    size_t offset;
+};
+
+static bool dl_load_table(const char *soname, void **handle_out, void *base,
+                          const struct x11_dl_entry *entries, size_t count)
+{
+    void *h = dlopen(soname, RTLD_LAZY | RTLD_LOCAL);
+    if (!h)
+        return false;
+    for (size_t i = 0; i < count; i++) {
+        void *sym = dlsym(h, entries[i].name);
+        if (!sym) {
+            dlclose(h);
+            return false;
+        }
+        memcpy((char *)base + entries[i].offset, &sym, sizeof(sym));
+    }
+    *handle_out = h;
+    return true;
+}
+
+#define X11_LIB_SYMS(X) \
+    X(XBell) \
+    X(XChangeProperty) \
+    X(XCloseDisplay) \
+    X(XCloseIM) \
+    X(XConvertSelection) \
+    X(XCreateBitmapFromData) \
+    X(XCreateColormap) \
+    X(XCreateFontCursor) \
+    X(XCreateGC) \
+    X(XCreateIC) \
+    X(XCreateImage) \
+    X(XCreatePixmap) \
+    X(XCreatePixmapCursor) \
+    X(XCreateSimpleWindow) \
+    X(XCreateWindow) \
+    X(XDefineCursor) \
+    X(XDeleteProperty) \
+    X(XDestroyIC) \
+    X(XDestroyWindow) \
+    X(XEventsQueued) \
+    X(XFilterEvent) \
+    X(XFlush) \
+    X(XFree) \
+    X(XFreeColormap) \
+    X(XFreeCursor) \
+    X(XFreeEventData) \
+    X(XFreeGC) \
+    X(XFreePixmap) \
+    X(XGetDefault) \
+    X(XGetEventData) \
+    X(XGetSelectionOwner) \
+    X(XGetVisualInfo) \
+    X(XGetWindowProperty) \
+    X(XGrabPointer) \
+    X(XIconifyWindow) \
+    X(XInitThreads) \
+    X(XInternAtom) \
+    X(XLookupKeysym) \
+    X(XLookupString) \
+    X(XMapRaised) \
+    X(XMapWindow) \
+    X(XMatchVisualInfo) \
+    X(XMaxRequestSize) \
+    X(XMoveResizeWindow) \
+    X(XMoveWindow) \
+    X(XNextEvent) \
+    X(XOpenDisplay) \
+    X(XOpenIM) \
+    X(XPeekEvent) \
+    X(XPending) \
+    X(XPutImage) \
+    X(XQueryExtension) \
+    X(XQueryPointer) \
+    X(XRefreshKeyboardMapping) \
+    X(XResizeWindow) \
+    X(XSelectInput) \
+    X(XSendEvent) \
+    X(XSetClassHint) \
+    X(XSetErrorHandler) \
+    X(XSetICFocus) \
+    X(XSetICValues) \
+    X(XSetIOErrorExitHandler) \
+    X(XSetIOErrorHandler) \
+    X(XSetSelectionOwner) \
+    X(XSetWMNormalHints) \
+    X(XSetWMProtocols) \
+    X(XSetWindowBackgroundPixmap) \
+    X(XStoreName) \
+    X(XSync) \
+    X(XTranslateCoordinates) \
+    X(XUngrabPointer) \
+    X(XUnsetICFocus) \
+    X(XVaCreateNestedList) \
+    X(XkbBell) \
+    X(XkbFreeKeyboard) \
+    X(XkbGetKeyboard) \
+    X(XkbKeycodeToKeysym) \
+    X(XkbRefreshKeyboardMapping) \
+    X(XkbQueryExtension) \
+    X(XkbSelectEvents) \
+    X(Xutf8LookupString)
+
+#define XI_LIB_SYMS(X) \
+    X(XIFreeDeviceInfo) \
+    X(XIGetClientPointer) \
+    X(XIGetProperty) \
+    X(XIGrabDevice) \
+    X(XIQueryDevice) \
+    X(XIQueryVersion) \
+    X(XISelectEvents) \
+    X(XIUngrabDevice)
+
+#define XEXT_LIB_SYMS(X) \
+    X(XShmAttach) \
+    X(XShmCreateImage) \
+    X(XShmDetach) \
+    X(XShmPutImage) \
+    X(XShmQueryExtension)
+
+#if YASL_HAS_XRANDR
+#define XRANDR_LIB_SYMS(X) \
+    X(XRRFreeMonitors) \
+    X(XRRGetMonitors)
+#endif
+
+struct x11_dl_table {
+    bool ready;
+    bool xi_ready;
+    bool xext_ready;
+    bool xrandr_ready;
+#define X11_FIELD(sym) __typeof__(sym) *fn_##sym;
+    X11_LIB_SYMS(X11_FIELD)
+    XI_LIB_SYMS(X11_FIELD)
+    XEXT_LIB_SYMS(X11_FIELD)
+#if YASL_HAS_XRANDR
+    XRANDR_LIB_SYMS(X11_FIELD)
+#endif
+#undef X11_FIELD
+};
+
+static struct x11_dl_table x11_dl;
+static pthread_mutex_t x11_dl_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static bool x11_load_syms(void)
+{
+    if (__atomic_load_n(&x11_dl.ready, __ATOMIC_ACQUIRE))
+        return true;
+    pthread_mutex_lock(&x11_dl_mutex);
+    if (x11_dl.ready) {
+        pthread_mutex_unlock(&x11_dl_mutex);
+        return true;
+    }
+#define X11_ENTRY(sym) { #sym, offsetof(struct x11_dl_table, fn_##sym) },
+    static const struct x11_dl_entry x11_entries[] = { X11_LIB_SYMS(X11_ENTRY) };
+    static const struct x11_dl_entry xi_entries[] = { XI_LIB_SYMS(X11_ENTRY) };
+    static const struct x11_dl_entry xext_entries[] = { XEXT_LIB_SYMS(X11_ENTRY) };
+#if YASL_HAS_XRANDR
+    static const struct x11_dl_entry xrandr_entries[] = { XRANDR_LIB_SYMS(X11_ENTRY) };
+#endif
+#undef X11_ENTRY
+
+    void *x11_handle = NULL;
+    if (!dl_load_table("libX11.so.6", &x11_handle, &x11_dl,
+                       x11_entries, sizeof(x11_entries) / sizeof(x11_entries[0]))) {
+        memset(&x11_dl, 0, sizeof(x11_dl));
+        pthread_mutex_unlock(&x11_dl_mutex);
+        return false;
+    }
+    void *xi_handle = NULL;
+    x11_dl.xi_ready = dl_load_table("libXi.so.6", &xi_handle, &x11_dl,
+                                    xi_entries, sizeof(xi_entries) / sizeof(xi_entries[0]));
+    void *xext_handle = NULL;
+    x11_dl.xext_ready = dl_load_table("libXext.so.6", &xext_handle, &x11_dl,
+                                      xext_entries, sizeof(xext_entries) / sizeof(xext_entries[0]));
+#if YASL_HAS_XRANDR
+    void *xrandr_handle = NULL;
+    x11_dl.xrandr_ready = dl_load_table("libXrandr.so.2", &xrandr_handle, &x11_dl,
+                                        xrandr_entries, sizeof(xrandr_entries) / sizeof(xrandr_entries[0]));
+#endif
+    __atomic_store_n(&x11_dl.ready, true, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(&x11_dl_mutex);
+    return true;
+}
 
 #ifndef likely
 #define likely(x)   __builtin_expect(!!(x), 1)
@@ -47,6 +235,380 @@
 #ifndef unlikely
 #define unlikely(x) __builtin_expect(!!(x), 0)
 #endif
+
+static inline const struct x11_dl_table *x11_syms(void)
+{
+    if (unlikely(!__atomic_load_n(&x11_dl.ready, __ATOMIC_ACQUIRE)))
+        x11_load_syms();
+    return &x11_dl;
+}
+
+#ifndef XBell
+#define XBell (x11_syms()->fn_XBell)
+#endif
+#ifndef XChangeProperty
+#define XChangeProperty (x11_syms()->fn_XChangeProperty)
+#endif
+#ifndef XCloseDisplay
+#define XCloseDisplay (x11_syms()->fn_XCloseDisplay)
+#endif
+#ifndef XCloseIM
+#define XCloseIM (x11_syms()->fn_XCloseIM)
+#endif
+#ifndef XConvertSelection
+#define XConvertSelection (x11_syms()->fn_XConvertSelection)
+#endif
+#ifndef XCreateBitmapFromData
+#define XCreateBitmapFromData (x11_syms()->fn_XCreateBitmapFromData)
+#endif
+#ifndef XCreateColormap
+#define XCreateColormap (x11_syms()->fn_XCreateColormap)
+#endif
+#ifndef XCreateFontCursor
+#define XCreateFontCursor (x11_syms()->fn_XCreateFontCursor)
+#endif
+#ifndef XCreateGC
+#define XCreateGC (x11_syms()->fn_XCreateGC)
+#endif
+#ifndef XCreateIC
+#define XCreateIC (x11_syms()->fn_XCreateIC)
+#endif
+#ifndef XCreateImage
+#define XCreateImage (x11_syms()->fn_XCreateImage)
+#endif
+#ifndef XCreatePixmap
+#define XCreatePixmap (x11_syms()->fn_XCreatePixmap)
+#endif
+#ifndef XCreatePixmapCursor
+#define XCreatePixmapCursor (x11_syms()->fn_XCreatePixmapCursor)
+#endif
+#ifndef XCreateSimpleWindow
+#define XCreateSimpleWindow (x11_syms()->fn_XCreateSimpleWindow)
+#endif
+#ifndef XCreateWindow
+#define XCreateWindow (x11_syms()->fn_XCreateWindow)
+#endif
+#ifndef XDefineCursor
+#define XDefineCursor (x11_syms()->fn_XDefineCursor)
+#endif
+#ifndef XDeleteProperty
+#define XDeleteProperty (x11_syms()->fn_XDeleteProperty)
+#endif
+#ifndef XDestroyIC
+#define XDestroyIC (x11_syms()->fn_XDestroyIC)
+#endif
+#ifndef XDestroyWindow
+#define XDestroyWindow (x11_syms()->fn_XDestroyWindow)
+#endif
+#ifndef XEventsQueued
+#define XEventsQueued (x11_syms()->fn_XEventsQueued)
+#endif
+#ifndef XFilterEvent
+#define XFilterEvent (x11_syms()->fn_XFilterEvent)
+#endif
+#ifndef XFlush
+#define XFlush (x11_syms()->fn_XFlush)
+#endif
+#ifndef XFree
+#define XFree (x11_syms()->fn_XFree)
+#endif
+#ifndef XFreeColormap
+#define XFreeColormap (x11_syms()->fn_XFreeColormap)
+#endif
+#ifndef XFreeCursor
+#define XFreeCursor (x11_syms()->fn_XFreeCursor)
+#endif
+#ifndef XFreeEventData
+#define XFreeEventData (x11_syms()->fn_XFreeEventData)
+#endif
+#ifndef XFreeGC
+#define XFreeGC (x11_syms()->fn_XFreeGC)
+#endif
+#ifndef XFreePixmap
+#define XFreePixmap (x11_syms()->fn_XFreePixmap)
+#endif
+#ifndef XGetDefault
+#define XGetDefault (x11_syms()->fn_XGetDefault)
+#endif
+#ifndef XGetEventData
+#define XGetEventData (x11_syms()->fn_XGetEventData)
+#endif
+#ifndef XGetSelectionOwner
+#define XGetSelectionOwner (x11_syms()->fn_XGetSelectionOwner)
+#endif
+#ifndef XGetVisualInfo
+#define XGetVisualInfo (x11_syms()->fn_XGetVisualInfo)
+#endif
+#ifndef XGetWindowProperty
+#define XGetWindowProperty (x11_syms()->fn_XGetWindowProperty)
+#endif
+#ifndef XGrabPointer
+#define XGrabPointer (x11_syms()->fn_XGrabPointer)
+#endif
+#ifndef XIconifyWindow
+#define XIconifyWindow (x11_syms()->fn_XIconifyWindow)
+#endif
+#ifndef XInitThreads
+#define XInitThreads (x11_syms()->fn_XInitThreads)
+#endif
+#ifndef XInternAtom
+#define XInternAtom (x11_syms()->fn_XInternAtom)
+#endif
+#ifndef XLookupKeysym
+#define XLookupKeysym (x11_syms()->fn_XLookupKeysym)
+#endif
+#ifndef XLookupString
+#define XLookupString (x11_syms()->fn_XLookupString)
+#endif
+#ifndef XMapRaised
+#define XMapRaised (x11_syms()->fn_XMapRaised)
+#endif
+#ifndef XMapWindow
+#define XMapWindow (x11_syms()->fn_XMapWindow)
+#endif
+#ifndef XMatchVisualInfo
+#define XMatchVisualInfo (x11_syms()->fn_XMatchVisualInfo)
+#endif
+#ifndef XMaxRequestSize
+#define XMaxRequestSize (x11_syms()->fn_XMaxRequestSize)
+#endif
+#ifndef XMoveResizeWindow
+#define XMoveResizeWindow (x11_syms()->fn_XMoveResizeWindow)
+#endif
+#ifndef XMoveWindow
+#define XMoveWindow (x11_syms()->fn_XMoveWindow)
+#endif
+#ifndef XNextEvent
+#define XNextEvent (x11_syms()->fn_XNextEvent)
+#endif
+#ifndef XOpenDisplay
+#define XOpenDisplay (x11_syms()->fn_XOpenDisplay)
+#endif
+#ifndef XOpenIM
+#define XOpenIM (x11_syms()->fn_XOpenIM)
+#endif
+#ifndef XPeekEvent
+#define XPeekEvent (x11_syms()->fn_XPeekEvent)
+#endif
+#ifndef XPending
+#define XPending (x11_syms()->fn_XPending)
+#endif
+#ifndef XPutImage
+#define XPutImage (x11_syms()->fn_XPutImage)
+#endif
+#ifndef XQueryExtension
+#define XQueryExtension (x11_syms()->fn_XQueryExtension)
+#endif
+#ifndef XQueryPointer
+#define XQueryPointer (x11_syms()->fn_XQueryPointer)
+#endif
+#ifndef XRefreshKeyboardMapping
+#define XRefreshKeyboardMapping (x11_syms()->fn_XRefreshKeyboardMapping)
+#endif
+#ifndef XResizeWindow
+#define XResizeWindow (x11_syms()->fn_XResizeWindow)
+#endif
+#ifndef XSelectInput
+#define XSelectInput (x11_syms()->fn_XSelectInput)
+#endif
+#ifndef XSendEvent
+#define XSendEvent (x11_syms()->fn_XSendEvent)
+#endif
+#ifndef XSetClassHint
+#define XSetClassHint (x11_syms()->fn_XSetClassHint)
+#endif
+#ifndef XSetErrorHandler
+#define XSetErrorHandler (x11_syms()->fn_XSetErrorHandler)
+#endif
+#ifndef XSetICFocus
+#define XSetICFocus (x11_syms()->fn_XSetICFocus)
+#endif
+#ifndef XSetICValues
+#define XSetICValues (x11_syms()->fn_XSetICValues)
+#endif
+#ifndef XSetIOErrorExitHandler
+#define XSetIOErrorExitHandler (x11_syms()->fn_XSetIOErrorExitHandler)
+#endif
+#ifndef XSetIOErrorHandler
+#define XSetIOErrorHandler (x11_syms()->fn_XSetIOErrorHandler)
+#endif
+#ifndef XSetSelectionOwner
+#define XSetSelectionOwner (x11_syms()->fn_XSetSelectionOwner)
+#endif
+#ifndef XSetWMNormalHints
+#define XSetWMNormalHints (x11_syms()->fn_XSetWMNormalHints)
+#endif
+#ifndef XSetWMProtocols
+#define XSetWMProtocols (x11_syms()->fn_XSetWMProtocols)
+#endif
+#ifndef XSetWindowBackgroundPixmap
+#define XSetWindowBackgroundPixmap (x11_syms()->fn_XSetWindowBackgroundPixmap)
+#endif
+#ifndef XStoreName
+#define XStoreName (x11_syms()->fn_XStoreName)
+#endif
+#ifndef XSync
+#define XSync (x11_syms()->fn_XSync)
+#endif
+#ifndef XTranslateCoordinates
+#define XTranslateCoordinates (x11_syms()->fn_XTranslateCoordinates)
+#endif
+#ifndef XUngrabPointer
+#define XUngrabPointer (x11_syms()->fn_XUngrabPointer)
+#endif
+#ifndef XUnsetICFocus
+#define XUnsetICFocus (x11_syms()->fn_XUnsetICFocus)
+#endif
+#ifndef XVaCreateNestedList
+#define XVaCreateNestedList (x11_syms()->fn_XVaCreateNestedList)
+#endif
+#ifndef XkbBell
+#define XkbBell (x11_syms()->fn_XkbBell)
+#endif
+#ifndef XkbFreeKeyboard
+#define XkbFreeKeyboard (x11_syms()->fn_XkbFreeKeyboard)
+#endif
+#ifndef XkbGetKeyboard
+#define XkbGetKeyboard (x11_syms()->fn_XkbGetKeyboard)
+#endif
+#ifndef XkbKeycodeToKeysym
+#define XkbKeycodeToKeysym (x11_syms()->fn_XkbKeycodeToKeysym)
+#endif
+#ifndef XkbRefreshKeyboardMapping
+#define XkbRefreshKeyboardMapping (x11_syms()->fn_XkbRefreshKeyboardMapping)
+#endif
+#ifndef XkbQueryExtension
+#define XkbQueryExtension (x11_syms()->fn_XkbQueryExtension)
+#endif
+#ifndef XkbSelectEvents
+#define XkbSelectEvents (x11_syms()->fn_XkbSelectEvents)
+#endif
+#ifndef Xutf8LookupString
+#define Xutf8LookupString (x11_syms()->fn_Xutf8LookupString)
+#endif
+
+#ifndef XIFreeDeviceInfo
+#define XIFreeDeviceInfo (x11_syms()->fn_XIFreeDeviceInfo)
+#endif
+#ifndef XIGetClientPointer
+#define XIGetClientPointer (x11_syms()->fn_XIGetClientPointer)
+#endif
+#ifndef XIGetProperty
+#define XIGetProperty (x11_syms()->fn_XIGetProperty)
+#endif
+#ifndef XIGrabDevice
+#define XIGrabDevice (x11_syms()->fn_XIGrabDevice)
+#endif
+#ifndef XIQueryDevice
+#define XIQueryDevice (x11_syms()->fn_XIQueryDevice)
+#endif
+#ifndef XIQueryVersion
+#define XIQueryVersion (x11_syms()->fn_XIQueryVersion)
+#endif
+#ifndef XISelectEvents
+#define XISelectEvents (x11_syms()->fn_XISelectEvents)
+#endif
+#ifndef XIUngrabDevice
+#define XIUngrabDevice (x11_syms()->fn_XIUngrabDevice)
+#endif
+
+#ifndef XShmAttach
+#define XShmAttach (x11_syms()->fn_XShmAttach)
+#endif
+#ifndef XShmCreateImage
+#define XShmCreateImage (x11_syms()->fn_XShmCreateImage)
+#endif
+#ifndef XShmDetach
+#define XShmDetach (x11_syms()->fn_XShmDetach)
+#endif
+#ifndef XShmPutImage
+#define XShmPutImage (x11_syms()->fn_XShmPutImage)
+#endif
+#ifndef XShmQueryExtension
+#define XShmQueryExtension (x11_syms()->fn_XShmQueryExtension)
+#endif
+
+#if YASL_HAS_XRANDR
+#ifndef XRRFreeMonitors
+#define XRRFreeMonitors (x11_syms()->fn_XRRFreeMonitors)
+#endif
+#ifndef XRRGetMonitors
+#define XRRGetMonitors (x11_syms()->fn_XRRGetMonitors)
+#endif
+#endif
+
+#if YASL_HAS_EGL
+#define X11_EGL_LIB_SYMS(X) \
+    X(eglBindAPI) \
+    X(eglChooseConfig) \
+    X(eglCreateContext) \
+    X(eglCreateWindowSurface) \
+    X(eglDestroyContext) \
+    X(eglDestroySurface) \
+    X(eglGetConfigAttrib) \
+    X(eglGetCurrentSurface) \
+    X(eglGetDisplay) \
+    X(eglGetProcAddress) \
+    X(eglInitialize) \
+    X(eglMakeCurrent) \
+    X(eglQueryString) \
+    X(eglSwapBuffers) \
+    X(eglSwapInterval) \
+    X(eglTerminate)
+
+struct x11_egl_dl_table {
+    bool ready;
+#define X11_EGL_FIELD(sym) __typeof__(sym) *fn_##sym;
+    X11_EGL_LIB_SYMS(X11_EGL_FIELD)
+#undef X11_EGL_FIELD
+};
+
+static struct x11_egl_dl_table x11_egl_dl;
+static pthread_mutex_t x11_egl_dl_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static bool x11_egl_load(void)
+{
+    if (__atomic_load_n(&x11_egl_dl.ready, __ATOMIC_ACQUIRE))
+        return true;
+    pthread_mutex_lock(&x11_egl_dl_mutex);
+    if (x11_egl_dl.ready) {
+        pthread_mutex_unlock(&x11_egl_dl_mutex);
+        return true;
+    }
+#define X11_EGL_ENTRY(sym) { #sym, offsetof(struct x11_egl_dl_table, fn_##sym) },
+    static const struct x11_dl_entry entries[] = { X11_EGL_LIB_SYMS(X11_EGL_ENTRY) };
+#undef X11_EGL_ENTRY
+    void *handle = NULL;
+    bool ok = dl_load_table("libEGL.so.1", &handle, &x11_egl_dl,
+                            entries, sizeof(entries) / sizeof(entries[0]));
+    if (!ok)
+        memset(&x11_egl_dl, 0, sizeof(x11_egl_dl));
+    else
+        __atomic_store_n(&x11_egl_dl.ready, true, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(&x11_egl_dl_mutex);
+    return ok;
+}
+
+#define eglBindAPI (x11_egl_dl.fn_eglBindAPI)
+#define eglChooseConfig (x11_egl_dl.fn_eglChooseConfig)
+#define eglCreateContext (x11_egl_dl.fn_eglCreateContext)
+#define eglCreateWindowSurface (x11_egl_dl.fn_eglCreateWindowSurface)
+#define eglDestroyContext (x11_egl_dl.fn_eglDestroyContext)
+#define eglDestroySurface (x11_egl_dl.fn_eglDestroySurface)
+#define eglGetConfigAttrib (x11_egl_dl.fn_eglGetConfigAttrib)
+#define eglGetCurrentSurface (x11_egl_dl.fn_eglGetCurrentSurface)
+#define eglGetDisplay (x11_egl_dl.fn_eglGetDisplay)
+#define eglGetProcAddress (x11_egl_dl.fn_eglGetProcAddress)
+#define eglInitialize (x11_egl_dl.fn_eglInitialize)
+#define eglMakeCurrent (x11_egl_dl.fn_eglMakeCurrent)
+#define eglQueryString (x11_egl_dl.fn_eglQueryString)
+#define eglSwapBuffers (x11_egl_dl.fn_eglSwapBuffers)
+#define eglSwapInterval (x11_egl_dl.fn_eglSwapInterval)
+#define eglTerminate (x11_egl_dl.fn_eglTerminate)
+#endif
+
+#define TEXT_LIMIT (16 * 1024 * 1024)
+#define PASTE_TIMEOUT_NS YASL_PRIVATE_MS_TO_NS(30000)
 
 struct x11_surface {
     struct yasl_surface base;
@@ -1514,6 +2076,10 @@ static struct yasl_surface *create_toplevel(struct yasl_private_display *base,
 static bool egl_open(struct x11_display *d)
 {
     if (d->egl_ready) return true;
+    if (!x11_egl_load()) {
+        errno = ENOTSUP;
+        return false;
+    }
     d->egl = eglGetDisplay((EGLNativeDisplayType)d->native);
     EGLint major = 0, minor = 0;
     if (d->egl == EGL_NO_DISPLAY || !eglInitialize(d->egl, &major, &minor)) {
@@ -1654,8 +2220,10 @@ static bool gl_make_current(struct yasl_private_display *base, struct yasl_surfa
 
 static yasl_private_gl_proc gl_get_proc_address(struct yasl_private_display *base, const char *name)
 {
-    (void)base;
-    return name ? (yasl_private_gl_proc)eglGetProcAddress(name) : NULL;
+    struct x11_display *d = (struct x11_display *)base;
+    if (!name || !d || !d->egl_ready || !__atomic_load_n(&x11_egl_dl.ready, __ATOMIC_ACQUIRE))
+        return NULL;
+    return (yasl_private_gl_proc)eglGetProcAddress(name);
 }
 
 static bool gl_swap_interval(struct yasl_private_display *base, struct yasl_surface *surface, int interval)
@@ -1663,6 +2231,10 @@ static bool gl_swap_interval(struct yasl_private_display *base, struct yasl_surf
     struct x11_display *d = (struct x11_display *)base;
     if (!surface || surface->display != base || ((struct x11_surface *)surface)->base.presenter != YASL_PRIVATE_PRESENTER_GL) {
         errno = EINVAL;
+        return false;
+    }
+    if (!d->egl_ready) {
+        errno = ENOTSUP;
         return false;
     }
     struct x11_surface *s = (struct x11_surface *)surface;
@@ -1812,7 +2384,7 @@ static void popup_calculate_position(struct x11_display *d,
     int mon_h = d->native ? DisplayHeight(d->native, d->screen) : 1080;
 
 #if YASL_HAS_XRANDR
-    if (d->native) {
+    if (d->native && x11_syms()->xrandr_ready) {
         int nmonitors = 0;
         XRRMonitorInfo *monitors = XRRGetMonitors(d->native, RootWindow(d->native, d->screen), True, &nmonitors);
         if (monitors && nmonitors > 0) {
@@ -2986,6 +3558,7 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
 {
     struct x11_display *d = calloc(1, sizeof(*d));
     if (!d) return NULL;
+    if (!x11_load_syms()) { free(d); errno = ENODEV; return NULL; }
     d->base.ops = &yasl_private_x11_backend;
     /* GL rendering threads call Xlib, so it must be thread-safe before the first connection. */
     static bool threads_ready;
@@ -3005,7 +3578,7 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
         d->argb_visual = argb.visual;
         d->argb_depth = argb.depth;
     }
-    d->has_shm = XShmQueryExtension(d->native);
+    d->has_shm = x11_dl.xext_ready && XShmQueryExtension(d->native);
     int xkb_opcode = 0, xkb_event = 0, xkb_error = 0;
     int xkb_major = XkbMajorVersion, xkb_minor = XkbMinorVersion;
     d->has_xkb = XkbQueryExtension(d->native, &xkb_opcode, &xkb_event, &xkb_error, &xkb_major, &xkb_minor);
@@ -3017,7 +3590,8 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
     }
     int xi_event_base, xi_error_base;
     int major = 2, minor = 0;
-    d->xi2 = XQueryExtension(d->native, "XInputExtension", &d->xi_opcode,
+    d->xi2 = x11_dl.xi_ready &&
+             XQueryExtension(d->native, "XInputExtension", &d->xi_opcode,
                             &xi_event_base, &xi_error_base) &&
              XIQueryVersion(d->native, &major, &minor) == Success && major >= 2;
     if (d->xi2) {
@@ -3144,7 +3718,7 @@ static uint32_t caps(const struct yasl_private_display *d)
 {
     return YASL_PRIVATE_CAP_POPUPS | YASL_PRIVATE_CAP_DRAG | YASL_PRIVATE_CAP_DRAG_CARRY | YASL_PRIVATE_CAP_PLACE_WINDOW |
         YASL_PRIVATE_CAP_PRIMARY_SELECTION | YASL_PRIVATE_CAP_CSD | YASL_PRIVATE_CAP_NATIVE_GRAPHICS |
-        (((const struct x11_display *)d)->xi2 ? YASL_PRIVATE_CAP_TABLET : 0);
+        YASL_PRIVATE_CAP_VULKAN | (((const struct x11_display *)d)->xi2 ? YASL_PRIVATE_CAP_TABLET : 0);
 }
 
 static bool copy_text(struct yasl_private_display *base, enum yasl_private_selection sel, const char *text)

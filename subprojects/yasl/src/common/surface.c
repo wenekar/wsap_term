@@ -203,7 +203,8 @@ unsigned yasl_get_features(void)
     uint32_t caps = yasl_private_display_caps(display);
     unsigned features = display->ops->surface_create_gl ? YASL_FEATURE_OPENGL : 0;
 #if YASL_HAS_VULKAN
-    features |= YASL_FEATURE_VULKAN;
+    if (caps & YASL_PRIVATE_CAP_VULKAN)
+        features |= YASL_FEATURE_VULKAN;
 #endif
     for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++)
         if (caps & map[i].cap)
@@ -244,7 +245,7 @@ static bool canvas_fit(yasl_surface *s, int w, int h)
      * untouched until the canvas grows into them. A canvas that uses less than
      * a quarter of its allocation gets a smaller one. */
     if (need > s->canvas_capacity || need < s->canvas_capacity / 4) {
-        size_t capacity = need + need / 2;
+        size_t capacity = !s->canvas ? need : need + need / 2;
         to = malloc(capacity * sizeof(*to));
         if (!to)
             return yasl_public_fail(ENOMEM);
@@ -270,6 +271,26 @@ static bool canvas_fit(yasl_surface *s, int w, int h)
     s->canvas_height = h;
     return true;
 }
+static void copy_damage_rects(uint32_t *dst, const uint32_t *src, int w, int h,
+                              const struct yasl_private_damage_list *damage)
+{
+    for (int i = 0; i < damage->n; i++) {
+        struct yasl_private_rect2i r = damage->rects[i];
+        int x0 = r.x < 0 ? 0 : r.x;
+        int y0 = r.y < 0 ? 0 : r.y;
+        int64_t r_x1 = (int64_t)r.x + r.width;
+        int64_t r_y1 = (int64_t)r.y + r.height;
+        int x1 = r_x1 > w ? w : (int)r_x1;
+        int y1 = r_y1 > h ? h : (int)r_y1;
+        if (x1 <= x0 || y1 <= y0)
+            continue;
+        size_t row_bytes = (size_t)(x1 - x0) * sizeof(uint32_t);
+        for (int y = y0; y < y1; y++) {
+            size_t off = (size_t)y * (size_t)w + (size_t)x0;
+            memcpy(dst + off, src + off, row_bytes);
+        }
+    }
+}
 /* CPU presenter: every drawn frame shows the canvas; before the first present there is none. */
 static void draw_canvas(yasl_surface *s, struct yasl_private_frame *frame, void *ud)
 {
@@ -277,9 +298,13 @@ static void draw_canvas(yasl_surface *s, struct yasl_private_frame *frame, void 
     if (s->presenter != YASL_PRIVATE_PRESENTER_CPU || !frame->target.pixels || !s->canvas)
         return;
     int w = frame->target.size.x, h = frame->target.size.y;
+    bool same_size = s->canvas_width == w && s->canvas_height == h;
     if (!canvas_fit(s, w, h))
         return;
-    memcpy(frame->target.pixels, s->canvas, (size_t)w * (size_t)h * sizeof(uint32_t));
+    if (frame->target.preserved && same_size && s->cpu_damage.n > 0)
+        copy_damage_rects(frame->target.pixels, s->canvas, w, h, &s->cpu_damage);
+    else
+        memcpy(frame->target.pixels, s->canvas, (size_t)w * (size_t)h * sizeof(uint32_t));
     struct yasl_private_damage_list damage = s->cpu_damage.n != 0 ? s->cpu_damage : (struct yasl_private_damage_list){.n = -1};
     yasl_private_surface_present(s, &frame->target, &damage);
     s->cpu_damage = (struct yasl_private_damage_list){0};
