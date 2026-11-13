@@ -1,3 +1,5 @@
+subdir('tabbar')
+
 ui_widgets_src = files(
     'button.c',
     'dropdown.c',
@@ -8,5 +10,4 @@ ui_widgets_src = files(
     'palette.c',
     'scrollview.c',
     'tab_preview.c',
-    'tabbar.c',
-)
+) + ui_tabbar_src

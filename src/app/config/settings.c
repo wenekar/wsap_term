@@ -2,6 +2,7 @@
 #include "app/config/settings.h"
 
 #include "app/config/config.h"
+#include "app/config/settings/choices.h"
 #include "theme/look.h"
 #include "platform/platform.h"
 #include "ui/describe.h"
@@ -32,33 +33,51 @@ static const char *const category_ids[] = {
 struct field_info {
     const char *key, *label, *help;
     enum category category;
+    enum settings_choice_source source;
 };
 
 static const struct field_info INFO[] = {
-    { "theme", "Theme", "Choose a theme or enter a CSS path.", APPEARANCE },
-    { "font", "Font family", "Installed fonts or a custom pattern.", TEXT },
-    { "font-size", "Font size", "Points. Updates all open terminals.", TEXT },
+    { "theme", "Theme", "Choose a theme or enter a CSS path.", APPEARANCE,
+      SETTINGS_CHOICE_THEME },
+    { "font", "Font family", "Installed fonts or a custom pattern.", TEXT,
+      SETTINGS_CHOICE_FONT },
+    { "font-size", "Font size", "Points. Updates all open terminals.", TEXT, SETTINGS_CHOICE_SPEC },
 #if defined(__APPLE__) && !defined(WSAP_USE_FREETYPE)
-    { "hinting", "Pixel positioning", "Auto uses native pixel alignment. None keeps fractional positions.", TEXT },
+    { "hinting", "Pixel positioning",
+      "Auto uses native pixel alignment. None keeps fractional positions.", TEXT,
+      SETTINGS_CHOICE_HINTING },
 #else
-    { "hinting", "Font hinting", "Outline hinting.", TEXT },
+    { "hinting", "Font hinting", "Outline hinting.", TEXT, SETTINGS_CHOICE_HINTING },
 #endif
-    { "antialias", "Antialiasing", "Smooth glyph edges.", TEXT },
+    { "antialias", "Antialiasing", "Smooth glyph edges.", TEXT, SETTINGS_CHOICE_SPEC },
 #if defined(__APPLE__) && !defined(WSAP_USE_FREETYPE)
-    { "font-smoothing", "Font smoothing", "Use native font smoothing when antialiasing is on.", TEXT },
+    { "font-smoothing", "Font smoothing",
+      "Use native font smoothing when antialiasing is on.", TEXT, SETTINGS_CHOICE_SPEC },
 #endif
-    { "foreground", "Foreground", "Text color. Use the Default theme.", APPEARANCE },
-    { "background", "Background", "Background color. Use the Default theme.", APPEARANCE },
-    { "cursor-style", "Cursor shape", "Updates the default cursor in open tabs.", CURSOR },
-    { "cursor-blink", "Cursor blink", "Blink the default cursor in open tabs.", CURSOR },
-    { "scrollback", "History lines", "Lines kept by new tabs. 0 disables history.", TERMINAL },
-    { "command", "Shell command", "Program for new tabs. Empty uses $SHELL.", TERMINAL },
-    { "locale", "Locale", "Locale for new tabs (e.g. en_US.UTF-8). Empty uses system default.", TERMINAL },
-    { "vsync", "Vertical sync", "Frame pacing for new windows.", WINDOW },
-    { "fullscreen", "Start fullscreen", "Applies to new terminal windows.", WINDOW },
-    { "width", "Window width", "Pixels for new windows. 0 uses cell size.", WINDOW },
-    { "height", "Window height", "Pixels for new windows. 0 uses cell size.", WINDOW },
-    { "menu-hover-delay", "Submenu delay", "Milliseconds before a submenu opens.", WINDOW },
+    { "foreground", "Foreground", "Text color. Use the Default theme.", APPEARANCE,
+      SETTINGS_CHOICE_SPEC },
+    { "background", "Background", "Background color. Use the Default theme.", APPEARANCE,
+      SETTINGS_CHOICE_SPEC },
+    { "cursor-style", "Cursor shape", "Updates the default cursor in open tabs.", CURSOR,
+      SETTINGS_CHOICE_SPEC },
+    { "cursor-blink", "Cursor blink", "Blink the default cursor in open tabs.", CURSOR,
+      SETTINGS_CHOICE_SPEC },
+    { "scrollback", "History lines", "Lines kept by new tabs. 0 disables history.", TERMINAL,
+      SETTINGS_CHOICE_SPEC },
+    { "command", "Shell command", "Program for new tabs. Empty uses $SHELL.", TERMINAL,
+      SETTINGS_CHOICE_SPEC },
+    { "locale", "Locale",
+      "Locale for new tabs (e.g. en_US.UTF-8). Empty uses system default.",
+      TERMINAL, SETTINGS_CHOICE_LOCALE },
+    { "vsync", "Vertical sync", "Frame pacing for new windows.", WINDOW, SETTINGS_CHOICE_SPEC },
+    { "fullscreen", "Start fullscreen", "Applies to new terminal windows.", WINDOW,
+      SETTINGS_CHOICE_SPEC },
+    { "width", "Window width", "Pixels for new windows. 0 uses cell size.", WINDOW,
+      SETTINGS_CHOICE_SPEC },
+    { "height", "Window height", "Pixels for new windows. 0 uses cell size.", WINDOW,
+      SETTINGS_CHOICE_SPEC },
+    { "menu-hover-delay", "Submenu delay", "Milliseconds before a submenu opens.", WINDOW,
+      SETTINGS_CHOICE_SPEC },
 };
 
 struct settings_row {
@@ -68,14 +87,14 @@ struct settings_row {
     struct ui_input *input;
     struct ui_dropdown *dropdown;
     enum category category;
+    enum settings_choice_source choice_source;
     char label[64], help_text[128], row_id[80];
     char title_key[96], help_key[96], error_key[96];
     char input_key[96], dropdown_key[96];
     char baseline[UI_INPUT_CAP];
     struct ui_node_desc node, row_children[2], description_children[3];
     struct ui_node_desc editor_children[2];
-    struct ui_dropdown_item *initial_items;
-    size_t initial_item_count;
+    struct settings_choices choices;
     bool combo, choice, valid, dirty;
 };
 
@@ -92,7 +111,7 @@ struct settings_form {
     struct ui_button *nav[CATEGORY_COUNT], *save, *cancel, *reset, *config;
     struct settings_row *rows;
     struct ui_node_desc *field_nodes;
-    size_t count;
+    size_t field_node_count, count;
     enum category category;
     bool loading;
 };
@@ -459,128 +478,15 @@ static bool root_event(struct ui_widget *widget, const struct ui_event *event,
     return handle_root_event(form, event);
 }
 
-static bool hinting_allowed(const char *antialias, const char *hinting)
-{
-#if defined(__APPLE__) && !defined(WSAP_USE_FREETYPE)
-    (void)antialias;
-    (void)hinting;
-    return true;
-#else
-    return strcmp(antialias, "mono") != 0 || !strcmp(hinting, "auto") ||
-        !strcmp(hinting, "none") || !strcmp(hinting, "full");
-#endif
-}
-
-static int compare_families(const void *a, const void *b)
-{
-    return strcasecmp(*(const char *const *)a, *(const char *const *)b);
-}
-
-static bool make_choices(struct settings_row *row, struct look *look,
-                         const char *antialias,
-                         struct ui_dropdown_item **items_out,
-                         size_t *count_out)
-{
-    const char *key = row->option.key;
-    size_t count = 0, font_count = 0, locale_count = 0;
-    char **fonts = NULL, **locales = NULL;
-    if (!strcmp(key, "font")) {
-        fonts = font_list_families(&font_count);
-        if (fonts) qsort(fonts, font_count, sizeof(*fonts), compare_families);
-        count = font_count + 2;
-    } else if (!strcmp(key, "locale")) {
-        locales = platform_locales_list(&locale_count);
-        if (locales) qsort(locales, locale_count, sizeof(*locales), compare_families);
-        count = locale_count + 1;
-    } else if (!strcmp(key, "theme")) {
-        count = (size_t)look_theme_count(look) + 1;
-    } else {
-        while (opts_choice_at(&app_config_spec, key, count)) count++;
-    }
-    struct ui_dropdown_item *items = calloc(count ? count : 1, sizeof(*items));
-    if (!items) {
-        for (size_t i = 0; i < font_count; i++) free(fonts[i]);
-        free(fonts);
-        for (size_t i = 0; i < locale_count; i++) free(locales[i]);
-        free(locales);
-        return false;
-    }
-    if (!strcmp(key, "font")) {
-        items[0] = (struct ui_dropdown_item){ "Default font", "" };
-        items[1] = (struct ui_dropdown_item){ "System monospace", "monospace" };
-        for (size_t i = 0; i < font_count; i++) {
-            char *family = strdup(fonts[i]);
-            if (!family) {
-                for (size_t j = 0; j < i; j++)
-                    free((char *)items[j + 2].label);
-                free(items);
-                for (size_t j = 0; j < font_count; j++) free(fonts[j]);
-                free(fonts);
-                return false;
-            }
-            items[i + 2] = (struct ui_dropdown_item){ family, family };
-        }
-    } else if (!strcmp(key, "locale")) {
-        char def_loc[128];
-        platform_locale_default(def_loc, sizeof(def_loc));
-        char def_label[160];
-        snprintf(def_label, sizeof(def_label), "Default (%s)", def_loc);
-        items[0] = (struct ui_dropdown_item){ strdup(def_label), "" };
-        for (size_t i = 0; i < locale_count; i++) {
-            char *loc = strdup(locales[i]);
-            items[i + 1] = (struct ui_dropdown_item){ loc, loc };
-        }
-    } else if (!strcmp(key, "theme")) {
-        items[0] = (struct ui_dropdown_item){ "Default", "" };
-        for (size_t i = 1; i < count; i++) {
-            const struct look_theme *theme = look_theme_at(look, (int)i - 1);
-            items[i] = (struct ui_dropdown_item){ theme->label, theme->name };
-        }
-    } else {
-        size_t kept = 0;
-        for (size_t i = 0; i < count; i++) {
-            const char *value = opts_choice_at(&app_config_spec, key, i);
-            if (!strcmp(key, "hinting") &&
-                !hinting_allowed(antialias, value))
-                continue;
-            const char *label = !strcmp(value, "true") ? "On" :
-                !strcmp(value, "false") ? "Off" : value;
-            items[kept++] = (struct ui_dropdown_item){ label, value };
-        }
-        count = kept;
-    }
-    for (size_t i = 0; i < font_count; i++) free(fonts[i]);
-    free(fonts);
-    for (size_t i = 0; i < locale_count; i++) free(locales[i]);
-    free(locales);
-    *items_out = items;
-    *count_out = count;
-    return true;
-}
-
-static void free_choices(const struct settings_row *row,
-                         struct ui_dropdown_item *items, size_t count)
-{
-    if (!items)
-        return;
-    if (row->option.key && !strcmp(row->option.key, "font"))
-        for (size_t i = 2; i < count; i++)
-            free((char *)items[i].label);
-    if (row->option.key && !strcmp(row->option.key, "locale"))
-        for (size_t i = 0; i < count; i++)
-            free((char *)items[i].label);
-    free(items);
-}
-
 static bool build_choices(struct settings_row *row, struct look *look,
                           const char *antialias)
 {
-    struct ui_dropdown_item *items = NULL;
-    size_t count = 0;
-    if (!make_choices(row, look, antialias, &items, &count))
+    struct settings_choices choices = {0};
+    if (!settings_choices_build(&choices, row->choice_source, row->option.key,
+                                look, antialias))
         return false;
-    bool ok = ui_dropdown_set_items(row->dropdown, items, count);
-    free_choices(row, items, count);
+    bool ok = ui_dropdown_set_items(row->dropdown, choices.items, choices.count);
+    settings_choices_destroy(&choices);
     return ok;
 }
 
@@ -594,6 +500,7 @@ static bool init_row(struct settings_row *row, size_t index, struct look *look)
     for (size_t i = 0; i < sizeof(INFO) / sizeof(INFO[0]); i++)
         if (!strcmp(key, INFO[i].key)) {
             row->category = INFO[i].category;
+            row->choice_source = INFO[i].source;
             snprintf(row->label, sizeof(row->label), "%s", INFO[i].label);
             snprintf(row->help_text, sizeof(row->help_text), "%s", INFO[i].help);
             break;
@@ -601,7 +508,9 @@ static bool init_row(struct settings_row *row, size_t index, struct look *look)
     if (!strncmp(key, "color", 5))
         snprintf(row->label, sizeof(row->label), "ANSI color %s", key + 5);
     row->choice = row->option.kind == OPT_KIND_CHOICE;
-    row->combo = !strcmp(key, "font") || !strcmp(key, "theme") || !strcmp(key, "locale");
+    row->combo = row->choice_source == SETTINGS_CHOICE_FONT ||
+        row->choice_source == SETTINGS_CHOICE_LOCALE ||
+        row->choice_source == SETTINGS_CHOICE_THEME;
     snprintf(row->row_id, sizeof(row->row_id), "row-%s", key);
     snprintf(row->title_key, sizeof(row->title_key), "title-%s", key);
     snprintf(row->help_key, sizeof(row->help_key), "help-%s", key);
@@ -609,8 +518,7 @@ static bool init_row(struct settings_row *row, size_t index, struct look *look)
     snprintf(row->input_key, sizeof(row->input_key), "input-%s", key);
     snprintf(row->dropdown_key, sizeof(row->dropdown_key), "dropdown-%s", key);
     if ((row->choice || row->combo) &&
-        !make_choices(row, look, "", &row->initial_items,
-                      &row->initial_item_count))
+        !settings_choices_build(&row->choices, row->choice_source, key, look, ""))
         return false;
 
     row->description_children[0] = (struct ui_node_desc){
@@ -675,8 +583,8 @@ static bool init_row(struct settings_row *row, size_t index, struct look *look)
             .tag_name = "",
             .id_name = row->choice ? key : NULL,
             .props.dropdown = {
-                .items = row->initial_items,
-                .count = row->initial_item_count,
+                .items = row->choices.items,
+                .count = row->choices.count,
                 .accessible_name = row->label,
                 .overlay_key = "root",
             },
@@ -707,8 +615,7 @@ static void form_destroy(struct settings_form *form)
 {
     ui_view_destroy(form->view);
     for (size_t i = 0; i < form->count; i++)
-        free_choices(&form->rows[i], form->rows[i].initial_items,
-                     form->rows[i].initial_item_count);
+        settings_choices_destroy(&form->rows[i].choices);
     free(form->field_nodes);
     free(form->rows);
     free(form);
@@ -747,7 +654,10 @@ static bool add_field_descriptions(struct settings_form *form)
             .align = UI_LABEL_ALIGN_LEFT,
         },
     };
-    return at == count;
+    if (at != count)
+        return false;
+    form->field_node_count = at;
+    return true;
 }
 
 static bool mount_form(struct settings_form *form)
@@ -829,7 +739,7 @@ static bool mount_form(struct settings_form *form)
         .class_name = "settings-fields",
         .tag_name = "",
         .children = form->field_nodes,
-        .child_count = CATEGORY_COUNT - 1 + form->count + 1,
+        .child_count = form->field_node_count,
         .props.layout = { .align = UI_BOX_ALIGN_STRETCH },
     };
     struct ui_node_desc scroll_children[] = { scroll_child };
@@ -1003,9 +913,7 @@ static bool mount_form(struct settings_form *form)
         return false;
     for (size_t i = 0; i < form->count; i++) {
         struct settings_row *row = &form->rows[i];
-        free_choices(row, row->initial_items, row->initial_item_count);
-        row->initial_items = NULL;
-        row->initial_item_count = 0;
+        settings_choices_destroy(&row->choices);
         ui_widget_set_hidden(ui_label_widget(row->error), true);
     }
     return true;

@@ -7,6 +7,7 @@
 
 #include "app/config/config.h"
 #include "app/config/settings.h"
+#include "platform/platform.h"
 #include "render/scene_paint.h"
 #include "theme/look.h"
 #include "util/options.h"
@@ -77,6 +78,33 @@ static void click(struct window *window, const char *selector)
     assert(ui_surface_dispatch(window_ui_surface(window), &event));
     event.data.pointer.kind = UI_POINTER_RELEASE;
     assert(ui_surface_dispatch(window_ui_surface(window), &event));
+}
+
+static struct ui_widget *row_dropdown(struct window *window, const char *row_selector)
+{
+    struct ui_widget *dropdown = (struct ui_widget *)ui_debug_find(
+        find(window, row_selector), "dropdown");
+    assert(dropdown);
+    return dropdown;
+}
+
+static void open_dropdown(struct window *window, struct ui_widget *dropdown)
+{
+    ui_surface_prepare(window_ui_surface(window));
+    struct ui_widget *button = (struct ui_widget *)ui_debug_find(dropdown, "button");
+    assert(button);
+    ui_surface_focus(window_ui_surface(window), button);
+    key(window, UI_KEY_ENTER, 0);
+    assert(ui_surface_has_modal(window_ui_surface(window)));
+}
+
+static void choose(struct window *window, struct ui_widget *dropdown, const char *query)
+{
+    open_dropdown(window, dropdown);
+    struct ui_event text = ui_event_text(query, strlen(query), 0);
+    assert(ui_surface_dispatch(window_ui_surface(window), &text));
+    key(window, UI_KEY_ENTER, 0);
+    assert(!ui_surface_has_modal(window_ui_surface(window)));
 }
 
 static void edit(struct window *window, const char *selector, const char *value)
@@ -274,7 +302,45 @@ int main(void)
     window_host_reap(&app.app->host);
     assert(app.app->host.count == 0);
 
+    window = open_settings(app.app);
+    assert(window);
+    ui_surface_resize(window_ui_surface(window), (struct vector2i){ .x = 980, .y = 740 });
+    ui_surface_prepare(window_ui_surface(window));
+
+    /* The font list keeps its fixed entries next to the installed families. */
+    edit(window, "#settings-search", "font family");
+    open_dropdown(window, row_dropdown(window, "#row-font"));
+    assert(painted(window, "Default font"));
+    assert(painted(window, "System monospace"));
+    key(window, UI_KEY_ESCAPE, 0);
+    assert(!ui_surface_has_modal(window_ui_surface(window)));
+
+    /* The locale list starts with a heading that names the system default. */
+    char default_locale[128], locale_heading[160];
+    platform_locale_default(default_locale, sizeof(default_locale));
+    snprintf(locale_heading, sizeof(locale_heading), "Default (%s)", default_locale);
+    edit(window, "#settings-search", "locale");
+    open_dropdown(window, row_dropdown(window, "#row-locale"));
+    assert(painted(window, locale_heading));
+    key(window, UI_KEY_ESCAPE, 0);
+
+    /* Antialiasing mono drops the hinting steps that it cannot use. */
+    edit(window, "#settings-search", "antialiasing");
+    choose(window, find(window, "#antialias"), "mono");
+    edit(window, "#settings-search", "hinting");
+    open_dropdown(window, find(window, "#hinting"));
+    assert(painted(window, "none"));
+#if defined(__APPLE__) && !defined(WSAP_USE_FREETYPE)
+    assert(!painted(window, "slight"));
+#else
+    assert(painted(window, "full"));
+    assert(!painted(window, "slight"));
+#endif
+    key(window, UI_KEY_ESCAPE, 0);
+    click(window, "#settings-cancel");
     window_host_reap(&app.app->host);
+    assert(app.app->host.count == 0);
+
     window = open_settings(app.app);
     assert(window);
     struct input_event close_tab = { .kind = INPUT_SHORTCUT,

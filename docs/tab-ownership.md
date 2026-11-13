@@ -9,7 +9,7 @@ It separates application tabs from terminal content.
 | --- | --- |
 | `src/app/tabs/` | Manages the tab model and tab views. `src/app/tabs/model.c` owns each terminal handle and the native drag. Each window view holds tab order, selection, close state, the tab bar, previews, and the command palette. |
 | `src/terminal/` | Manages one session and its terminal widgets, snapshot, font, zoom, selection, scroll state, and terminal input. |
-| `src/ui/widgets/tabbar.*` | Draws, animates, focuses, and hit-tests the tab bar. It sends tab bar actions to the application. |
+| `src/ui/widgets/tabbar/` | Keeps tab bar style, geometry, scene drawing, and interaction state in separate files. It sends tab bar actions to the application. |
 | `src/ui/yasl/` | Manages native windows, surfaces, input routing, scale, and frame scheduling. Each host pass calls the service step of the owner. It contains no tab policy. |
 | `src/session/` | Manages the term core, PTY, input queue, and PTY size notifications. |
 | `src/app/app.c` | Creates windows and composes frames. It alone calls the renderer. It owns the tab model. Its host hook runs the tab service step. |
@@ -19,6 +19,10 @@ It has no tab-bar, palette, preview, or window-transfer state.
 The application uses public terminal headers.
 The terminal library includes no application header.
 The include graph enforces this separation.
+
+The tab bar public header is `src/ui/widgets/tabbar.h`.
+Its private types and functions stay in `src/ui/widgets/tabbar/internal.h`.
+Only the tab bar implementation can include that private header.
 
 ## Terminal-content interface
 

@@ -222,7 +222,9 @@ static void scrollbar_scene_in_chrome_test(void)
     apply_test_scale(w, viewport);
     int tab_h = app_tabs_bar_height(w);
 
-    assert(ui_surface_build_scene(window_ui_surface(w), &(struct ui_scene){0}));
+    struct ui_scene prepared = {0};
+    assert(ui_surface_build_scene(window_ui_surface(w), &prepared));
+    ui_scene_destroy(&prepared);
     static struct ui_scene composed, ref;
     assert(ui_surface_build_scene(window_ui_surface(w), &composed));
     struct ui_widget *sv = terminal_widget(content);
