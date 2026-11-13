@@ -117,6 +117,9 @@ bool tb_drop_rect(const struct ui_tabbar *tb, const struct tb_layout *l,
 /* Fills the visible span of the tab at `index`. False when it has no span. */
 bool tb_tab_span(const struct ui_tabbar *tb, const struct tb_layout *l,
                  int n_tabs, int width, int index, int *x, int *w);
+/* Fills the rectangle of the tab that the pointer drags. */
+bool tb_drag_rect(const struct ui_tabbar *tb, const struct tb_layout *l,
+                  int n_tabs, struct vector2i size, struct rect2i *out);
 /* Counts the tabs that stay after the close animations end. */
 int tb_live_tabs(const struct ui_tabbar *tb, int n_tabs);
 /* Returns the animated height of the bar. */

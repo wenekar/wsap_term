@@ -1910,6 +1910,31 @@ static void title_change_damages_only_its_tab(void)
     teardown(&f);
 }
 
+static void long_title_ends_with_a_marker(void)
+{
+    struct fixture f;
+    setup(&f, 2, 400);
+    struct ui_tab_label labels[] = {
+        { .text = "/mnt/HDD/GitHub/terminal_proj/wsap_term - fish",
+          .active = true },
+        { .text = "/mnt/HDD/GitHub/terminal_proj/wsap_term - vim",
+          .active = false },
+    };
+    set_tabs(&f, labels, 2);
+    const struct ui_scene *scene = build(&f);
+    assert(lint(&f) == 0);
+
+    /* The title stops inside its tab and ends with an ellipsis. */
+    struct rect2i tab;
+    assert(find_part(&f, "tab", 0, &tab));
+    const struct ui_scene_op *marker = find_text(scene, "\xE2\x80\xA6");
+    assert(marker);
+    struct rect2i box = ui_debug_text_box(scene, marker);
+    assert(box.x >= tab.x && rect2i_end(box).x <= rect2i_end(tab).x);
+    assert(!find_text(scene, labels[0].text));
+    teardown(&f);
+}
+
 static void labels_grow_and_shrink(void)
 {
     struct fixture f;
@@ -1944,6 +1969,7 @@ int main(void)
 {
     title_change_damages_only_its_tab();
     labels_grow_and_shrink();
+    long_title_ends_with_a_marker();
     css_theme_drives_layout_and_scene();
     tabbar_edge_cases();
     tab_click_and_close_activation();

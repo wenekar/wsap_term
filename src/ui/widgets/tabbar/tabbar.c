@@ -780,6 +780,8 @@ static void tb_debug_parts(const struct ui_widget *widget,
         ui_debug_part(out, "drop-preview", -1, rect2i_translate(r, o));
     if (tb_new_tab_rect_at(tb, &theme, n, size, &r))
         ui_debug_part(out, "tab-new", -1, rect2i_translate(r, o));
+    if (tb_drag_rect(tb, &l, n, size, &r))
+        ui_debug_part(out, "tab-drag", -1, rect2i_translate(r, o));
 }
 
 static void free_labels(struct ui_tabbar *tb)

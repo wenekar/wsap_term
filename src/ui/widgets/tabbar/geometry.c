@@ -136,6 +136,33 @@ static bool tb_new_tab_rect(const struct ui_tabbar *tb,
     return true;
 }
 
+bool tb_drag_rect(const struct ui_tabbar *tb, const struct tb_layout *l,
+                  int n_tabs, struct vector2i size, struct rect2i *out)
+{
+    if (!tb || !ui_tabbar_is_dragging(tb))
+        return false;
+    int index = tb->impl.drag_tab;
+    int x, w;
+    if (index < 0 || index >= n_tabs || size.x <= 0 ||
+        !tb_tab_span(tb, l, n_tabs, size.x, index, &x, &w))
+        return false;
+    int y = l->pad.t + (l->height - l->pad.t - l->pad.b - l->tab_height) / 2;
+    int drag_x = tb->impl.drag_pos.x - tb->impl.drag_grab_x;
+    if (tb->impl.drag_state == UI_TAB_DRAG_DETACH)
+        y = tb->impl.drag_pos.y - l->tab_height / 2;
+    else {
+        if (drag_x < l->pad.l)
+            drag_x = l->pad.l;
+        if (drag_x + w > size.x - l->pad.r)
+            drag_x = size.x - l->pad.r - w;
+    }
+    *out = (struct rect2i){
+        .pos = { .x = drag_x, .y = y },
+        .size = { .x = w, .y = l->tab_height },
+    };
+    return true;
+}
+
 bool tb_drop_rect(const struct ui_tabbar *tb,
                   const struct tb_layout *l, struct vector2i size,
                   struct rect2i *out)
