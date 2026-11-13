@@ -18,6 +18,15 @@ static void conf_line(void *ctx, const char *path, int line,
                 app_name(), path, line, k, v);
 }
 
+static void css_warning(const struct css_diagnostic *diagnostic, void *userdata)
+{
+    const char *path = userdata;
+    fprintf(stderr, "[%s] %s:%zu:%zu: %s '%s: %s'\n", app_name(), path,
+            diagnostic->line, diagnostic->column,
+            css_diagnostic_message(diagnostic->kind),
+            diagnostic->property, diagnostic->value);
+}
+
 struct appearance *appearance_load(const char *name, const char *css_path,
                                    const char *conf_path,
                                    const struct wsap_vtcore_theme *base)
@@ -37,7 +46,8 @@ struct appearance *appearance_load(const char *name, const char *css_path,
     }
     if (css_path) {
         char *text = util_read_file(css_path, app_name());
-        if (text && !css_parse(&ap->chrome, text))
+        if (text && !css_parse_with_diagnostics(&ap->chrome, text,
+                                                css_warning, (void *)css_path))
             fprintf(stderr, "[%s] cannot parse CSS file %s\n", app_name(), css_path);
         free(text);
     }

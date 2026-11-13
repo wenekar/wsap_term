@@ -26,6 +26,12 @@ The code has two layers:
 The build always includes the inspector.
 The inspector stays idle until you start the socket or activate the overlay.
 
+When the app loads a CSS file, it reports an unknown property, invalid value,
+invalid syntax, or unsupported pseudo-class with the file path and location.
+The parser keeps the other valid declarations.
+Use `css_parse_with_diagnostics()` to collect these messages in a UI client.
+The callback receives borrowed strings during the call.
+
 ## Quick start
 
 ```sh

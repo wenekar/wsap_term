@@ -158,6 +158,32 @@ struct css_sheet {
     bool has_defaults; /* The sheet is built on the css_init_default rules. */
 };
 
+enum css_diagnostic_kind {
+    CSS_DIAGNOSTIC_UNKNOWN_PROPERTY,
+    CSS_DIAGNOSTIC_INVALID_VALUE,
+    CSS_DIAGNOSTIC_INVALID_SYNTAX,
+    CSS_DIAGNOSTIC_UNSUPPORTED_SELECTOR,
+};
+
+/* Property and value are borrowed and valid only during the callback. */
+struct css_diagnostic {
+    enum css_diagnostic_kind kind;
+    size_t line;
+    size_t column;
+    const char *property;
+    const char *value;
+};
+
+typedef void (*css_diagnostic_fn)(const struct css_diagnostic *diagnostic,
+                                  void *userdata);
+
+const char *css_diagnostic_message(enum css_diagnostic_kind kind);
+
+/* Report invalid CSS and continue parsing. Return false on allocation failure.
+ * Pass NULL as report to ignore diagnostics. */
+bool css_parse_with_diagnostics(struct css_sheet *sheet, const char *css_text,
+                                css_diagnostic_fn report, void *userdata);
+
 /* Parses CSS text and adds the rules to `sheet`. */
 bool css_parse(struct css_sheet *sheet, const char *css_text);
 /* Appends rules from `src` to `dst`. */

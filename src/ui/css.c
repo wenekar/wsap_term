@@ -162,7 +162,7 @@ float css_value_resolve(struct css_value v, float parent_dim, float auto_val,
     return isfinite(result) ? result : auto_val;
 }
 
-static void parse_insets(const char *s, struct css_box *out)
+static bool parse_insets(const char *s, struct css_box *out)
 {
     struct css_value vals[4] = {0};
     int count = 0;
@@ -170,8 +170,13 @@ static void parse_insets(const char *s, struct css_box *out)
         s = skip_ws_and_comments(s);
         if (!*s || *s == ';') break;
         vals[count++] = parse_value(s);
+        if (vals[count - 1].unit == CSS_UNIT_NONE)
+            return false;
         while (*s && !isspace((unsigned char)*s) && *s != ';') s++;
     }
+    s = skip_ws_and_comments(s);
+    if (*s && *s != ';')
+        return false;
     switch (count) {
     case 1:
         out->v[0] = vals[0];
@@ -198,8 +203,9 @@ static void parse_insets(const char *s, struct css_box *out)
         out->v[3] = vals[3];
         break;
     default:
-        break;
+        return false;
     }
+    return true;
 }
 
 static bool parse_box_shadow(const char *s, struct css_style *out)
@@ -315,7 +321,16 @@ static const struct prop_info *const prop_by_flag[32] = {
     [23] = &props[5],
 };
 
-static void apply_prop(struct css_rule *r, const char *key, const char *val)
+enum css_declaration_result {
+    CSS_DECLARATION_OK,
+    CSS_DECLARATION_INVALID,
+    CSS_DECLARATION_UNKNOWN,
+    CSS_DECLARATION_SYNTAX,
+    CSS_DECLARATION_SELECTOR,
+};
+
+static enum css_declaration_result apply_prop(struct css_rule *r, const char *key,
+                                               const char *val)
 {
     while (isspace((unsigned char)*key)) key++;
     while (isspace((unsigned char)*val)) val++;
@@ -326,14 +341,20 @@ static void apply_prop(struct css_rule *r, const char *key, const char *val)
         switch (p->kind) {
         case P_VAL: {
             struct css_value v = parse_value(val);
-            if (v.unit == CSS_UNIT_NONE) return;
+            if (v.unit == CSS_UNIT_NONE) return CSS_DECLARATION_INVALID;
+            const char *end = val;
+            while (*end && !isspace((unsigned char)*end)) end++;
+            while (isspace((unsigned char)*end)) end++;
+            if (*end) return CSS_DECLARATION_INVALID;
             *(struct css_value *)dst = v;
             break;
         }
-        case P_INSETS:   parse_insets(val, (struct css_box *)dst); break;
+        case P_INSETS:
+            if (!parse_insets(val, (struct css_box *)dst)) return CSS_DECLARATION_INVALID;
+            break;
         case P_COLOR: {
             uint32_t color;
-            if (!parse_color(val, &color)) return;
+            if (!parse_color(val, &color)) return CSS_DECLARATION_INVALID;
             *(uint32_t *)dst = color;
             if (p->has_offset)
                 *(bool *)((char *)&r->style + p->has_offset) = true;
@@ -343,7 +364,7 @@ static void apply_prop(struct css_rule *r, const char *key, const char *val)
             char *end = NULL;
             float f = strtof(val, &end);
             while (end && isspace((unsigned char)*end)) end++;
-            if (!end || end == val || *end != '\0' || !isfinite(f)) return;
+            if (!end || end == val || *end != '\0' || !isfinite(f)) return CSS_DECLARATION_INVALID;
             if (p->offset == offsetof(struct css_style, opacity)) {
                 if (f < 0.0f) f = 0.0f;
                 if (f > 1.0f) f = 1.0f;
@@ -359,7 +380,7 @@ static void apply_prop(struct css_rule *r, const char *key, const char *val)
             else if (!strcmp(val, "row"))
                 *(enum css_flex_direction *)dst = CSS_FLEX_ROW;
             else
-                return;
+                return CSS_DECLARATION_INVALID;
             break;
         case P_ALIGN: {
             static const struct { const char *name; enum css_align val; } align_map[] = {
@@ -379,7 +400,7 @@ static void apply_prop(struct css_rule *r, const char *key, const char *val)
                     break;
                 }
             }
-            if (!found) return;
+            if (!found) return CSS_DECLARATION_INVALID;
             *(enum css_align *)dst = align;
             break;
         }
@@ -400,7 +421,7 @@ static void apply_prop(struct css_rule *r, const char *key, const char *val)
                     break;
                 }
             }
-            if (!found) return;
+            if (!found) return CSS_DECLARATION_INVALID;
             *(enum css_justify *)dst = just;
             break;
         }
@@ -426,14 +447,14 @@ static void apply_prop(struct css_rule *r, const char *key, const char *val)
                     break;
                 }
             }
-            if (!found) return;
+            if (!found) return CSS_DECLARATION_INVALID;
             *(enum ui_cursor *)dst = cur;
             break;
         }
         case P_SHADOW:
-            if (!parse_box_shadow(val, &r->style)) return;
+            if (!parse_box_shadow(val, &r->style)) return CSS_DECLARATION_INVALID;
             r->set_mask |= (1ULL << p->flag_idx);
-            return;
+            return CSS_DECLARATION_OK;
         case P_DURATION: {
             const char *s = val;
             while (*s && !isdigit((unsigned char)*s) && *s != '.')
@@ -450,14 +471,15 @@ static void apply_prop(struct css_rule *r, const char *key, const char *val)
                 memcpy(dst, &f, sizeof(f));
                 r->set_mask |= (1ULL << p->flag_idx);
                 r->style.has_transition_duration = true;
+                return CSS_DECLARATION_OK;
             }
-            return;
+            return CSS_DECLARATION_INVALID;
         }
         }
         r->set_mask |= (1ULL << p->flag_idx);
-        return;
+        return CSS_DECLARATION_OK;
     }
-    fprintf(stderr, "css: unknown property '%s'\n", key);
+    return CSS_DECLARATION_UNKNOWN;
 }
 
 static char *dup_range(const char *s, size_t len)
@@ -470,8 +492,10 @@ static char *dup_range(const char *s, size_t len)
     return out;
 }
 
-static bool parse_single_selector(struct css_rule *r, const char *s, size_t len)
+static bool parse_single_selector(struct css_rule *r, const char *s, size_t len,
+                                  bool *supported)
 {
+    *supported = true;
     while (len && isspace((unsigned char)*s)) { s++; len--; }
     while (len && isspace((unsigned char)s[len - 1])) len--;
     r->selector = dup_range(s, len);
@@ -491,9 +515,10 @@ static bool parse_single_selector(struct css_rule *r, const char *s, size_t len)
         else if (!strcmp(pseudo, "focus"))    r->pseudo = CSS_PSEUDO_FOCUS;
         else if (!strcmp(pseudo, "disabled")) r->pseudo = CSS_PSEUDO_DISABLED;
         else if (!strcmp(pseudo, "checked"))  r->pseudo = CSS_PSEUDO_CHECKED;
-        else fprintf(stderr, "css: unknown pseudo-class ':%s' in selector '%s'\n",
-                     pseudo, r->selector);
+        else *supported = false;
     }
+    if (memchr(r->selector, ':', r->last_off))
+        *supported = false;
     if (*comp == '.') {
         r->is_class = true;
         const char *stop = pseudo ? pseudo - 1 : comp + strlen(comp);
@@ -523,14 +548,19 @@ static bool sheet_reserve(struct css_sheet *sheet, int extra)
 }
 
 static bool sheet_push(struct css_sheet *sheet, const struct css_rule *proto,
-                       const char *sel, size_t len)
+                       const char *sel, size_t len, bool *supported)
 {
     if (!sheet_reserve(sheet, 1))
         return false;
     struct css_rule *r = &sheet->rules[sheet->rule_count];
     *r = *proto;
-    if (!parse_single_selector(r, sel, len))
+    if (!parse_single_selector(r, sel, len, supported))
         return false;
+    if (!*supported) {
+        free(r->selector);
+        r->selector = NULL;
+        return true;
+    }
     sheet->rule_count++;
     return true;
 }
@@ -715,14 +745,68 @@ static bool css_index_build(struct css_sheet *sheet)
     return true;
 }
 
-static bool parse_rules(struct css_sheet *sheet, const char *p)
+static void report_declaration(css_diagnostic_fn report, void *userdata,
+                               enum css_declaration_result result,
+                               const char *source, const char *position,
+                               const char *key, const char *value)
 {
+    if (!report || result == CSS_DECLARATION_OK)
+        return;
+    size_t line = 1, column = 1;
+    for (const char *p = source; p < position; p++) {
+        if (*p == '\n') {
+            line++;
+            column = 1;
+        } else {
+            column++;
+        }
+    }
+    const struct css_diagnostic diagnostic = {
+        .kind = result == CSS_DECLARATION_UNKNOWN ? CSS_DIAGNOSTIC_UNKNOWN_PROPERTY
+              : result == CSS_DECLARATION_SYNTAX ? CSS_DIAGNOSTIC_INVALID_SYNTAX
+              : result == CSS_DECLARATION_SELECTOR ? CSS_DIAGNOSTIC_UNSUPPORTED_SELECTOR
+              : CSS_DIAGNOSTIC_INVALID_VALUE,
+        .line = line,
+        .column = column,
+        .property = key,
+        .value = value,
+    };
+    report(&diagnostic, userdata);
+}
+
+const char *css_diagnostic_message(enum css_diagnostic_kind kind)
+{
+    switch (kind) {
+    case CSS_DIAGNOSTIC_UNKNOWN_PROPERTY: return "unknown property";
+    case CSS_DIAGNOSTIC_INVALID_VALUE: return "invalid value";
+    case CSS_DIAGNOSTIC_INVALID_SYNTAX: return "invalid syntax";
+    case CSS_DIAGNOSTIC_UNSUPPORTED_SELECTOR: return "unsupported selector";
+    }
+    return "CSS error";
+}
+
+static bool parse_rules(struct css_sheet *sheet, const char *source,
+                        css_diagnostic_fn report, void *userdata)
+{
+    const char *p = source;
     while (*p) {
         p = skip_ws_and_comments(p);
         if (!*p) break;
         const char *s_start = p;
-        while (*p && *p != '{') p++;
-        if (!*p) break;
+        while (*p && *p != '{') {
+            if (p[0] == '/' && p[1] == '*') {
+                p += 2;
+                while (*p && !(p[0] == '*' && p[1] == '/')) p++;
+                if (*p) p += 2;
+            } else {
+                p++;
+            }
+        }
+        if (!*p) {
+            report_declaration(report, userdata, CSS_DECLARATION_SYNTAX,
+                               source, s_start, "rule", "missing '{'");
+            break;
+        }
         const char *s_end = p;
 
         struct css_rule proto = {0};
@@ -731,8 +815,16 @@ static bool parse_rules(struct css_sheet *sheet, const char *p)
             p = skip_ws_and_comments(p);
             if (!*p || *p == '}') break;
             const char *k_start = p;
-            while (*p && *p != ':' && *p != '}') p++;
-            if (*p != ':') break;
+            while (*p && *p != ':' && *p != ';' && *p != '}') p++;
+            if (*p != ':') {
+                report_declaration(report, userdata, CSS_DECLARATION_SYNTAX,
+                                   source, k_start, "declaration", "missing ':'");
+                if (*p == ';') {
+                    p++;
+                    continue;
+                }
+                break;
+            }
             const char *k_end = p++;
             const char *v_start = p;
             while (*p && *p != ';' && *p != '}') p++;
@@ -740,6 +832,7 @@ static bool parse_rules(struct css_sheet *sheet, const char *p)
             if (*p == ';') p++;
 
             while (k_end > k_start && isspace((unsigned char)k_end[-1])) k_end--;
+            while (v_start < v_end && isspace((unsigned char)*v_start)) v_start++;
             while (v_end > v_start && isspace((unsigned char)v_end[-1])) v_end--;
             char *key = dup_range(k_start, (size_t)(k_end - k_start));
             char *val = dup_range(v_start, (size_t)(v_end - v_start));
@@ -748,21 +841,49 @@ static bool parse_rules(struct css_sheet *sheet, const char *p)
                 free(val);
                 return false;
             }
-            apply_prop(&proto, key, val);
+            enum css_declaration_result result = apply_prop(&proto, key, val);
+            report_declaration(report, userdata, result, source, k_start, key, val);
             free(key);
             free(val);
         }
-        if (*p == '}') p++;
+        if (*p == '}') {
+            p++;
+        } else {
+            report_declaration(report, userdata, CSS_DECLARATION_SYNTAX,
+                               source, s_start, "rule", "missing '}'");
+        }
 
         const char *sel_ptr = s_start;
         while (sel_ptr < s_end) {
             sel_ptr = skip_ws_and_comments(sel_ptr);
             if (sel_ptr > s_end) break;
-            const char *comma = memchr(sel_ptr, ',', (size_t)(s_end - sel_ptr));
+            const char *comma = sel_ptr;
+            while (comma < s_end && *comma != ',') {
+                if (comma[0] == '/' && comma + 1 < s_end && comma[1] == '*') {
+                    comma += 2;
+                    while (comma + 1 < s_end && !(comma[0] == '*' && comma[1] == '/'))
+                        comma++;
+                    comma = comma + 1 < s_end ? comma + 2 : s_end;
+                } else {
+                    comma++;
+                }
+            }
+            if (comma == s_end) comma = NULL;
             const char *chunk_end = comma ? comma : s_end;
-            if (chunk_end > sel_ptr &&
-                !sheet_push(sheet, &proto, sel_ptr, (size_t)(chunk_end - sel_ptr)))
-                return false;
+            if (chunk_end > sel_ptr) {
+                bool supported;
+                if (!sheet_push(sheet, &proto, sel_ptr,
+                                (size_t)(chunk_end - sel_ptr), &supported))
+                    return false;
+                if (!supported && report) {
+                    char *selector = dup_range(sel_ptr, (size_t)(chunk_end - sel_ptr));
+                    if (!selector) return false;
+                    report_declaration(report, userdata, CSS_DECLARATION_SELECTOR,
+                                       source, sel_ptr, selector,
+                                       "unsupported pseudo-class");
+                    free(selector);
+                }
+            }
             if (!comma) break;
             sel_ptr = comma + 1;
         }
@@ -770,11 +891,26 @@ static bool parse_rules(struct css_sheet *sheet, const char *p)
     return true;
 }
 
-bool css_parse(struct css_sheet *sheet, const char *p)
+bool css_parse_with_diagnostics(struct css_sheet *sheet, const char *p,
+                                css_diagnostic_fn report, void *userdata)
 {
     if (!sheet || !p) return false;
-    bool ok = parse_rules(sheet, p);
+    bool ok = parse_rules(sheet, p, report, userdata);
     return css_index_build(sheet) && ok;
+}
+
+static void css_report_stderr(const struct css_diagnostic *diagnostic, void *userdata)
+{
+    (void)userdata;
+    fprintf(stderr, "css:%zu:%zu: %s '%s: %s'\n",
+            diagnostic->line, diagnostic->column,
+            css_diagnostic_message(diagnostic->kind),
+            diagnostic->property, diagnostic->value);
+}
+
+bool css_parse(struct css_sheet *sheet, const char *p)
+{
+    return css_parse_with_diagnostics(sheet, p, css_report_stderr, NULL);
 }
 
 void css_sheet_clear(struct css_sheet *sheet)

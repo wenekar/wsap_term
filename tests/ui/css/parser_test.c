@@ -1,7 +1,77 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 #include "ui/css.h"
+
+struct css_messages {
+    int count;
+    enum css_diagnostic_kind kind[3];
+    size_t line[3], column[3];
+    char property[3][32], value[3][32];
+};
+
+static void record_css_message(const struct css_diagnostic *message, void *userdata)
+{
+    struct css_messages *messages = userdata;
+    assert(messages->count < 3);
+    int i = messages->count++;
+    messages->kind[i] = message->kind;
+    messages->line[i] = message->line;
+    messages->column[i] = message->column;
+    snprintf(messages->property[i], sizeof(messages->property[i]), "%s", message->property);
+    snprintf(messages->value[i], sizeof(messages->value[i]), "%s", message->value);
+}
+
+static void test_declaration_diagnostics(void)
+{
+    struct css_sheet sheet = {0};
+    struct css_messages messages = {0};
+    const char *css = ".item {\n  width: 12px;\n  widht: 50px;\n"
+                      "  color: nope;\n  padding: 4px invalid;\n}";
+    assert(css_parse_with_diagnostics(&sheet, css, record_css_message, &messages));
+    assert(messages.count == 3);
+    assert(messages.kind[0] == CSS_DIAGNOSTIC_UNKNOWN_PROPERTY);
+    assert(messages.line[0] == 3 && messages.column[0] == 3);
+    assert(!strcmp(messages.property[0], "widht") && !strcmp(messages.value[0], "50px"));
+    assert(messages.kind[1] == CSS_DIAGNOSTIC_INVALID_VALUE);
+    assert(messages.line[1] == 4 && !strcmp(messages.property[1], "color"));
+    assert(messages.kind[2] == CSS_DIAGNOSTIC_INVALID_VALUE);
+    assert(messages.line[2] == 5 && !strcmp(messages.property[2], "padding"));
+    struct css_style style;
+    css_style_resolve(&sheet, "item", NULL, NULL, CSS_PSEUDO_NONE, &style);
+    assert(style.width.unit == CSS_UNIT_PX && style.width.val == 12.0f);
+    assert(!style.has_text_color);
+    css_sheet_clear(&sheet);
+
+    assert(css_parse_with_diagnostics(&sheet,
+        ".item { padding: 5px; padding: 1px invalid; }", NULL, NULL));
+    css_style_resolve(&sheet, "item", NULL, NULL, CSS_PSEUDO_NONE, &style);
+    assert(style.padding.top.unit == CSS_UNIT_PX && style.padding.top.val == 5.0f);
+    css_sheet_clear(&sheet);
+
+    messages = (struct css_messages){0};
+    assert(css_parse_with_diagnostics(&sheet,
+        ".item {\n  bad declaration;\n  width: 8px;\n", record_css_message, &messages));
+    assert(messages.count == 2);
+    assert(messages.kind[0] == CSS_DIAGNOSTIC_INVALID_SYNTAX);
+    assert(messages.line[0] == 2 && messages.column[0] == 3);
+    assert(messages.kind[1] == CSS_DIAGNOSTIC_INVALID_SYNTAX);
+    css_style_resolve(&sheet, "item", NULL, NULL, CSS_PSEUDO_NONE, &style);
+    assert(style.width.unit == CSS_UNIT_PX && style.width.val == 8.0f);
+    css_sheet_clear(&sheet);
+
+    messages = (struct css_messages){0};
+    assert(css_parse_with_diagnostics(&sheet,
+        ".item:hovre, .other { color: red; }", record_css_message, &messages));
+    assert(messages.count == 1);
+    assert(messages.kind[0] == CSS_DIAGNOSTIC_UNSUPPORTED_SELECTOR);
+    css_style_resolve(&sheet, "item", NULL, NULL, CSS_PSEUDO_NONE, &style);
+    assert(!style.has_text_color);
+    css_style_resolve(&sheet, "other", NULL, NULL, CSS_PSEUDO_NONE, &style);
+    assert(style.has_text_color && style.text_color == 0xffff0000u);
+    css_sheet_clear(&sheet);
+}
 
 static void test_css_parsing(void)
 {
@@ -213,8 +283,15 @@ static void test_box_shadow_parsing(void)
 static void test_selector_comment_brace(void)
 {
     struct css_sheet sheet = {0};
-    assert(css_parse(&sheet, ".a, /* { */ .b { width: 1px; }"));
-    assert(sheet.rule_count <= 1);
+    struct css_messages messages = {0};
+    assert(css_parse_with_diagnostics(&sheet,
+        ".a, /* {, } */ .b { width: 1px; }", record_css_message, &messages));
+    assert(messages.count == 0);
+    struct css_style a, b;
+    css_style_resolve(&sheet, "a", NULL, NULL, CSS_PSEUDO_NONE, &a);
+    css_style_resolve(&sheet, "b", NULL, NULL, CSS_PSEUDO_NONE, &b);
+    assert(a.width.unit == CSS_UNIT_PX && a.width.val == 1.0f);
+    assert(b.width.unit == CSS_UNIT_PX && b.width.val == 1.0f);
     css_sheet_clear(&sheet);
 }
 
@@ -291,6 +368,7 @@ static void test_insets_and_named_colors(void)
 
 int main(void)
 {
+    test_declaration_diagnostics();
     test_css_parsing();
     test_insets_and_named_colors();
     test_layout_property_flags();
