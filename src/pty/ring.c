@@ -257,14 +257,18 @@ static void on_ring_event(void *ud, int fd, short revents)
     struct pty_ring *r = ud;
     drain_fd(fd);
     atomic_store_explicit(&r->wake_pending, 0, memory_order_seq_cst);
+    /* Read the end flag before the wake callback. The worker publishes the end
+     * after its last data callback, so this load sees every queued event, and
+     * the wake callback delivers them before the end callback runs. */
+    bool ending = !r->ended_delivered &&
+        atomic_load_explicit(&r->end_published, memory_order_acquire);
     if (r->cbs.wake)
         r->cbs.wake(r->ud);
-    if (!r->ended_delivered &&
-        atomic_load_explicit(&r->end_published, memory_order_acquire)) {
-        r->ended_delivered = true;
-        if (r->cbs.ended)
-            r->cbs.ended(r->ud);
-    }
+    if (!ending)
+        return;
+    r->ended_delivered = true;
+    if (r->cbs.ended)
+        r->cbs.ended(r->ud);
 }
 
 static void ring_release(struct pty_ring *r)
