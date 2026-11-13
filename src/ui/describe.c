@@ -66,33 +66,74 @@ static const struct ui_widget_ops OVERLAY_ROOT_OPS = {
     .event_target = overlay_event_target,
 };
 
+enum node_flag {
+    NODE_SUPPORTED = 1u << 0,
+    /* The node is a box that lays out child widgets. */
+    NODE_CONTAINER = 1u << 1,
+    /* The node accepts descriptor children. */
+    NODE_CHILDREN = 1u << 2,
+};
+
+struct node_kind_info {
+    const char *class_name;
+    const char *tag_name;
+    size_t storage_size;
+    unsigned flags;
+};
+
+#define NODE_KIND(class, tag, type, extra) \
+    { .class_name = class, .tag_name = tag, .storage_size = sizeof(type), \
+      .flags = NODE_SUPPORTED | (extra) }
+
+/* One row per node kind. An unsupported kind leaves its row zero. */
+static const struct node_kind_info NODE_KINDS[] = {
+    [UI_NODE_ROW] = NODE_KIND(NULL, "box", struct ui_box,
+                              NODE_CONTAINER | NODE_CHILDREN),
+    [UI_NODE_COLUMN] = NODE_KIND(NULL, "box", struct ui_box,
+                                 NODE_CONTAINER | NODE_CHILDREN),
+    [UI_NODE_STACK] = NODE_KIND(NULL, "box", struct ui_box,
+                                NODE_CONTAINER | NODE_CHILDREN),
+    [UI_NODE_LABEL] = NODE_KIND("label", "label", struct ui_label, 0),
+    [UI_NODE_BUTTON] = NODE_KIND("button", "button", struct ui_button, 0),
+    [UI_NODE_INPUT] = NODE_KIND("text-input", "input", struct ui_input, 0),
+    [UI_NODE_DROPDOWN] = NODE_KIND("dropdown", "dropdown",
+                                   struct ui_dropdown, 0),
+    [UI_NODE_SCROLLVIEW] = NODE_KIND("scrollview", "scrollview",
+                                     struct ui_scrollview, NODE_CHILDREN),
+    /* A supplied widget has no storage of its own. */
+    [UI_NODE_WIDGET] = { .flags = NODE_SUPPORTED | NODE_CHILDREN },
+};
+
+#undef NODE_KIND
+
+static const struct node_kind_info *node_kind_info(enum ui_node_kind kind)
+{
+    size_t index = (size_t)kind;
+    if (index >= sizeof(NODE_KINDS) / sizeof(*NODE_KINDS) ||
+        !(NODE_KINDS[index].flags & NODE_SUPPORTED))
+        return NULL;
+    return &NODE_KINDS[index];
+}
+
+static bool node_has_flag(enum ui_node_kind kind, unsigned flag)
+{
+    const struct node_kind_info *info = node_kind_info(kind);
+    return info && (info->flags & flag);
+}
+
 static bool node_is_container(enum ui_node_kind kind)
 {
-    return kind == UI_NODE_ROW || kind == UI_NODE_COLUMN ||
-           kind == UI_NODE_STACK;
+    return node_has_flag(kind, NODE_CONTAINER);
 }
 
 static bool node_has_children(enum ui_node_kind kind)
 {
-    return node_is_container(kind) || kind == UI_NODE_SCROLLVIEW ||
-           kind == UI_NODE_WIDGET;
+    return node_has_flag(kind, NODE_CHILDREN);
 }
 
 static bool node_kind_valid(enum ui_node_kind kind)
 {
-    switch (kind) {
-    case UI_NODE_ROW:
-    case UI_NODE_COLUMN:
-    case UI_NODE_STACK:
-    case UI_NODE_LABEL:
-    case UI_NODE_BUTTON:
-    case UI_NODE_INPUT:
-    case UI_NODE_DROPDOWN:
-    case UI_NODE_SCROLLVIEW:
-    case UI_NODE_WIDGET:
-        return true;
-    }
-    return false;
+    return node_kind_info(kind) != NULL;
 }
 
 static bool node_props_valid(const struct ui_node_desc *desc,
@@ -313,35 +354,14 @@ static struct ui_view_node *find_descriptor_node(struct ui_view *view,
 
 static const char *default_class(enum ui_node_kind kind)
 {
-    switch (kind) {
-    case UI_NODE_LABEL: return "label";
-    case UI_NODE_BUTTON: return "button";
-    case UI_NODE_INPUT: return "text-input";
-    case UI_NODE_DROPDOWN: return "dropdown";
-    case UI_NODE_SCROLLVIEW: return "scrollview";
-    case UI_NODE_ROW:
-    case UI_NODE_COLUMN:
-    case UI_NODE_STACK:
-    case UI_NODE_WIDGET:
-        return NULL;
-    }
-    return NULL;
+    const struct node_kind_info *info = node_kind_info(kind);
+    return info ? info->class_name : NULL;
 }
 
 static const char *default_tag(enum ui_node_kind kind)
 {
-    switch (kind) {
-    case UI_NODE_ROW:
-    case UI_NODE_COLUMN:
-    case UI_NODE_STACK: return "box";
-    case UI_NODE_LABEL: return "label";
-    case UI_NODE_BUTTON: return "button";
-    case UI_NODE_INPUT: return "input";
-    case UI_NODE_DROPDOWN: return "dropdown";
-    case UI_NODE_SCROLLVIEW: return "scrollview";
-    case UI_NODE_WIDGET: return NULL;
-    }
-    return NULL;
+    const struct node_kind_info *info = node_kind_info(kind);
+    return info ? info->tag_name : NULL;
 }
 
 static bool copy_node_strings(struct ui_view_node *node)
@@ -363,18 +383,8 @@ static bool copy_node_strings(struct ui_view_node *node)
 
 static size_t widget_size(enum ui_node_kind kind)
 {
-    switch (kind) {
-    case UI_NODE_ROW:
-    case UI_NODE_COLUMN:
-    case UI_NODE_STACK: return sizeof(struct ui_box);
-    case UI_NODE_LABEL: return sizeof(struct ui_label);
-    case UI_NODE_BUTTON: return sizeof(struct ui_button);
-    case UI_NODE_INPUT: return sizeof(struct ui_input);
-    case UI_NODE_DROPDOWN: return sizeof(struct ui_dropdown);
-    case UI_NODE_SCROLLVIEW: return sizeof(struct ui_scrollview);
-    case UI_NODE_WIDGET: return 0;
-    }
-    return 0;
+    const struct node_kind_info *info = node_kind_info(kind);
+    return info ? info->storage_size : 0;
 }
 
 static bool initialize_node(struct ui_view_node *node,
