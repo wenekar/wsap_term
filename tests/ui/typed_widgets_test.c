@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "ui/ui.h"
+#include "ui/accessibility.h"
 #include "ui/internal/tree.h"
 #include "ui/paint.h"
 #include "ui/surface.h"
@@ -152,6 +153,35 @@ static void button_activation_and_disabled_test(void)
     assert(count == 1);
     ui_widget_destroy(ui_box_widget(&panel));
     ui_surface_destroy(&context);
+}
+
+static void button_long_text_test(void)
+{
+    struct ui_button button = {0};
+    char text[512];
+    memset(text, 'x', sizeof(text) - 5);
+    memcpy(text + sizeof(text) - 5, "😀", 5);
+    assert(ui_button_set_text(&button, text));
+    text[0] = 'y';
+    assert(strlen(ui_button_text(&button)) == sizeof(text) - 1);
+    assert(ui_button_text(&button)[0] == 'x');
+    struct vector2i size = ui_widget_measure(&button.widget,
+        (struct ui_constraints){ .max = { .x = 10000, .y = 100 } });
+    assert(size.x > 2000);
+
+    struct ui_accessibility_tree tree = {0};
+    assert(ui_accessibility_tree_build(&button.widget, &tree));
+    const struct ui_accessibility_node *node = ui_accessibility_tree_find(
+        &tree, ui_widget_accessibility_id(&button.widget));
+    assert(node && !strcmp(node->name, ui_button_text(&button)));
+    ui_accessibility_tree_destroy(&tree);
+
+    const char *suffix = ui_button_text(&button) + 1;
+    assert(ui_button_set_text(&button, suffix));
+    assert(strlen(ui_button_text(&button)) == sizeof(text) - 2);
+    assert(ui_button_set_text(&button, NULL));
+    assert(!ui_button_text(&button)[0]);
+    ui_widget_destroy(&button.widget);
 }
 
 static void context_requests_state_redraw_test(void)
@@ -532,6 +562,7 @@ int main(void)
     label_natural_size_test();
     label_utf8_storage_test();
     button_activation_and_disabled_test();
+    button_long_text_test();
     button_paint_and_focus_test();
     button_key_activation_test();
     context_requests_state_redraw_test();

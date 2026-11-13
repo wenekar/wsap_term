@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "paint/scene.h"
+#include "ui/accessibility.h"
 #include "ui/ui.h"
 
 struct fixture {
@@ -242,18 +243,83 @@ static void utf8_caret_test(void)
     teardown(&f);
 }
 
-/* A short room at the end of the buffer cuts an insert at the last whole
- * character, not inside one. */
-static void truncated_insert_keeps_utf8_boundary_test(void)
+static void long_insert_keeps_utf8_text_test(void)
 {
     struct fixture f;
-    char full[UI_INPUT_CAP];
-    memset(full, 'a', UI_INPUT_CAP - 5);
-    full[UI_INPUT_CAP - 5] = '\0';
+    char full[2048];
+    memset(full, 'a', sizeof(full) - 1);
+    full[sizeof(full) - 1] = '\0';
     setup(&f, full);
     assert(ui_input_insert_text(&f.in, "\xc3\xa9\xe4\xb8\xad"));
-    assert(strlen(text(&f)) == UI_INPUT_CAP - 3);
-    assert(!strcmp(text(&f) + UI_INPUT_CAP - 5, "\xc3\xa9"));
+    assert(strlen(text(&f)) == sizeof(full) - 1 + 5);
+    assert(!strcmp(text(&f) + sizeof(full) - 1, "\xc3\xa9\xe4\xb8\xad"));
+    teardown(&f);
+}
+
+static void long_paste_undo_and_alias_test(void)
+{
+    struct fixture f;
+    setup(&f, "start");
+    char bytes[4096];
+    memset(bytes, 'x', sizeof(bytes));
+    memcpy(bytes + sizeof(bytes) - 4, "😀", 4);
+    struct ui_event event = ui_event_paste(bytes, sizeof(bytes), 0);
+    assert(ui_surface_dispatch(&f.surface, &event));
+    assert(strlen(text(&f)) == sizeof(bytes) + 5);
+    assert(!memcmp(text(&f), "start", 5));
+    assert(!memcmp(text(&f) + 5, bytes, sizeof(bytes)));
+    assert(f.changes == 1);
+    assert(ui_input_command(&f.in, UI_EDIT_UNDO));
+    assert(!strcmp(text(&f), "start"));
+    assert(ui_input_command(&f.in, UI_EDIT_REDO));
+    assert(strlen(text(&f)) == sizeof(bytes) + 5);
+    const char *same = text(&f);
+    assert(ui_input_insert_text(&f.in, same));
+    assert(strlen(text(&f)) == 2 * (sizeof(bytes) + 5));
+    assert(!memcmp(text(&f), text(&f) + sizeof(bytes) + 5,
+                   sizeof(bytes) + 5));
+
+    ui_input_select_all(&f.in);
+    int start, end;
+    assert(ui_input_selection(&f.in, &start, &end));
+    /* The buffer holds one byte. Only the length guard runs. */
+    event = ui_event_paste("x", SIZE_MAX, 0);
+    assert(!ui_surface_dispatch(&f.surface, &event));
+    assert(ui_input_selection(&f.in, NULL, NULL));
+    assert(strlen(text(&f)) == 2 * (sizeof(bytes) + 5));
+    int before = f.changes;
+    event = ui_event_paste("new", 3, 0);
+    assert(ui_surface_dispatch(&f.surface, &event));
+    assert(!strcmp(text(&f), "new"));
+    assert(f.changes == before + 1);
+    assert(ui_input_command(&f.in, UI_EDIT_UNDO));
+    assert(strlen(text(&f)) == 2 * (sizeof(bytes) + 5));
+    teardown(&f);
+}
+
+static void long_accessible_value_test(void)
+{
+    struct fixture f;
+    setup(&f, "old");
+    char value[4096];
+    memset(value, 'z', sizeof(value) - 5);
+    memcpy(value + sizeof(value) - 5, "😀", 5);
+    struct ui_accessibility_action_request request = {
+        .node_id = ui_widget_accessibility_id(ui_input_widget(&f.in)),
+        .action = UI_ACCESSIBILITY_ACTION_SET_VALUE,
+        .value = value,
+        .caret_offset = sizeof(value) - 2,
+    };
+    assert(ui_accessibility_dispatch_action(ui_input_widget(&f.in), &request));
+    assert(!strcmp(text(&f), value));
+    assert(ui_input_caret(&f.in) == (int)sizeof(value) - 5);
+    assert(f.changes == 1);
+    struct ui_accessibility_tree tree = {0};
+    assert(ui_accessibility_tree_build(ui_input_widget(&f.in), &tree));
+    const struct ui_accessibility_node *node =
+        ui_accessibility_tree_find(&tree, request.node_id);
+    assert(node && !strcmp(node->value, value));
+    ui_accessibility_tree_destroy(&tree);
     teardown(&f);
 }
 
@@ -283,6 +349,19 @@ static void placeholder_test(void)
     ch(&f, 'q', 0);
     assert(ui_surface_build_scene(&f.surface, &f.scene));
     assert(!scene_has_text(&f.scene, "Search..."));
+    teardown(&f);
+}
+
+static void long_placeholder_test(void)
+{
+    struct fixture f;
+    setup(&f, "");
+    char placeholder[300];
+    memset(placeholder, 'p', sizeof(placeholder) - 1);
+    placeholder[sizeof(placeholder) - 1] = '\0';
+    assert(ui_input_set_placeholder(&f.in, placeholder));
+    assert(ui_surface_build_scene(&f.surface, &f.scene));
+    assert(scene_has_text(&f.scene, placeholder));
     teardown(&f);
 }
 
@@ -564,6 +643,67 @@ static void keep_copied(void *userdata, const char *text)
     *copied = strdup(text);
 }
 
+static void long_clipboard_and_kill_test(void)
+{
+    char value[4096];
+    memset(value, 'a', sizeof(value) - 5);
+    memcpy(value + sizeof(value) - 5, "😀", 5);
+    char *copied = NULL;
+    const struct ui_surface_host host = { .copy_text = keep_copied };
+    struct ui_surface surface;
+    ui_surface_init(&surface, &host, &copied);
+    struct ui_input in = {0};
+    assert(ui_input_set_text(&in, value));
+    assert(ui_surface_set_root(&surface, ui_input_widget(&in)));
+    ui_input_select_all(&in);
+    assert(ui_input_command(&in, UI_EDIT_COPY));
+    assert(copied && !strcmp(copied, value));
+    assert(ui_input_command(&in, UI_EDIT_CUT));
+    assert(!ui_input_text(&in)[0]);
+    assert(ui_input_command(&in, UI_EDIT_UNDO));
+    assert(!strcmp(ui_input_text(&in), value));
+    assert(ui_input_command(&in, UI_EDIT_REDO));
+    assert(!ui_input_text(&in)[0]);
+    assert(ui_input_set_text(&in, value));
+    assert(ui_input_command(&in, UI_EDIT_KILL_START));
+    assert(!ui_input_text(&in)[0]);
+    assert(ui_input_command(&in, UI_EDIT_YANK));
+    assert(!strcmp(ui_input_text(&in), value));
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(ui_input_widget(&in));
+    free(copied);
+}
+
+static void typing_burst_is_one_undo_step_test(void)
+{
+    struct fixture f;
+    setup(&f, "");
+    assert(ch(&f, 'a', 0) && ch(&f, 'b', 0) && ch(&f, 0x00e9, 0));
+    assert(!strcmp(text(&f), "ab\xc3\xa9"));
+    assert(ui_input_command(&f.in, UI_EDIT_UNDO));
+    assert(!text(&f)[0]);
+    assert(ui_input_command(&f.in, UI_EDIT_REDO));
+    assert(!strcmp(text(&f), "ab\xc3\xa9"));
+
+    /* A new edit after undo drops the redo branch. */
+    assert(ui_input_command(&f.in, UI_EDIT_UNDO));
+    assert(ui_input_can_command(&f.in, UI_EDIT_REDO));
+    assert(ch(&f, 'z', 0));
+    assert(!strcmp(text(&f), "z"));
+    assert(!ui_input_can_command(&f.in, UI_EDIT_REDO));
+    teardown(&f);
+}
+
+static void paste_stops_at_nul_test(void)
+{
+    struct fixture f;
+    setup(&f, "");
+    struct ui_event e = ui_event_paste("a\0b", 3, 0);
+    assert(ui_surface_dispatch(&f.surface, &e));
+    assert(!strcmp(text(&f), "a"));
+    teardown(&f);
+}
+
 static void copy_shortcut_test(void)
 {
     char *copied = NULL;
@@ -619,6 +759,7 @@ int main(void)
     programmatic_text_without_action_test();
     edit_requests_frame_test();
     copy_shortcut_test();
+    long_clipboard_and_kill_test();
     mac_editing_test();
     text_cursor_test();
     text_fits_after_layout_test();
@@ -630,9 +771,14 @@ int main(void)
     word_jump_test();
     word_delete_test();
     utf8_caret_test();
-    truncated_insert_keeps_utf8_boundary_test();
+    long_insert_keeps_utf8_text_test();
+    long_paste_undo_and_alias_test();
+    typing_burst_is_one_undo_step_test();
+    paste_stops_at_nul_test();
+    long_accessible_value_test();
     text_and_paste_insert_clean_text_test();
     placeholder_test();
+    long_placeholder_test();
     blink_test();
     caret_shows_only_with_focus_test();
     part_colors_test();

@@ -118,6 +118,9 @@ bool ui_accessibility_tree_build(const struct ui_widget *root,
 
 struct ui_accessibility_action_request {
     uint64_t node_id;
+    /* For SET_VALUE: the new value. A text field removes invalid UTF-8
+     * bytes and control characters. The offsets below count bytes of the
+     * text that the field keeps. */
     const char *value;
     size_t caret_offset;
     size_t selection_start;

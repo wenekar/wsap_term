@@ -5,19 +5,18 @@
 
 #include "ui/widget.h"
 
-#define UI_BUTTON_TEXT_CAP 128
-
 struct ui_button {
     struct ui_widget widget;
     struct {
-        char text[UI_BUTTON_TEXT_CAP];
+        char *text;
         unsigned state;
         int action_id;
     } impl;
 };
 
 void ui_button_init(struct ui_button *button);
-void ui_button_set_text(struct ui_button *button, const char *text);
+/* Copy text. Pass NULL to clear it. A failure keeps the previous text. */
+bool ui_button_set_text(struct ui_button *button, const char *text);
 const char *ui_button_text(const struct ui_button *button);
 void ui_button_set_action_id(struct ui_button *button, int id);
 void ui_button_set_disabled(struct ui_button *button, bool disabled);

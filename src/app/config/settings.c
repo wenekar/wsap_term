@@ -19,6 +19,9 @@
 #include <string.h>
 #include <unistd.h>
 
+/* Configuration lines have a 1024 byte limit. */
+#define SETTINGS_VALUE_CAP 1024
+
 enum category { ALL, APPEARANCE, TEXT, CURSOR, TERMINAL, WINDOW, CATEGORY_COUNT };
 enum action_id { SAVE = 1, CANCEL, RESET, OPEN_CONFIG, FONT_HELP, COLOR_HELP, CATEGORY_BASE = 100 };
 
@@ -91,7 +94,7 @@ struct settings_row {
     char label[64], help_text[128], row_id[80];
     char title_key[96], help_key[96], error_key[96];
     char input_key[96], dropdown_key[96];
-    char baseline[UI_INPUT_CAP];
+    char baseline[SETTINGS_VALUE_CAP];
     struct ui_node_desc node, row_children[2], description_children[3];
     struct ui_node_desc editor_children[2];
     struct settings_choices choices;
@@ -223,12 +226,13 @@ static void filter_rows(struct settings_form *form)
                     category_ids[i]);
 }
 
-static void set_row_value(struct settings_row *row, const char *value)
+static bool set_row_value(struct settings_row *row, const char *value)
 {
-    if (!row->choice)
-        ui_input_set_text(row->input, value);
+    if (!row->choice && !ui_input_set_text(row->input, value))
+        return false;
     if (row->choice || row->combo)
         ui_dropdown_set_value(row->dropdown, value);
+    return true;
 }
 
 static struct settings_row *find_row(struct settings_form *form, const char *key)
@@ -245,7 +249,7 @@ static void sync_hinting_choices(struct settings_form *form)
     struct settings_row *antialias = find_row(form, "antialias");
     if (!hinting || !antialias || !hinting->choice)
         return;
-    char value[UI_INPUT_CAP];
+    char value[SETTINGS_VALUE_CAP];
     snprintf(value, sizeof(value), "%s", row_value(hinting));
     if (!build_choices(hinting, form->host.look, row_value(antialias)))
         return;
@@ -255,12 +259,14 @@ static void sync_hinting_choices(struct settings_form *form)
     validate(form, hinting);
 }
 
-static void load_row(struct settings_form *form, struct settings_row *row,
+static bool load_row(struct settings_form *form, struct settings_row *row,
                      const char *value, bool baseline, bool show)
 {
+    if (show && !set_row_value(row, value))
+        return false;
     if (baseline) strcpy(row->baseline, value);
-    if (show) set_row_value(row, value);
     validate(form, row);
+    return true;
 }
 
 static bool format_row(const struct settings_row *row, const struct app_config *config,
@@ -282,12 +288,15 @@ static bool load_values(struct settings_form *form, const struct app_config *con
     bool ok = true;
     for (size_t i = 0; i < form->count; i++) {
         struct settings_row *row = &form->rows[i];
-        char value[UI_INPUT_CAP];
+        char value[SETTINGS_VALUE_CAP];
         if (!format_row(row, config, value, sizeof(value))) {
             ok = false;
             break;
         }
-        load_row(form, row, value, baseline, true);
+        if (!load_row(form, row, value, baseline, true)) {
+            ok = false;
+            break;
+        }
     }
     finish_load(form);
     return ok;
@@ -297,7 +306,7 @@ static bool config_moved(const struct settings_form *form, const struct app_conf
 {
     for (size_t i = 0; i < form->count; i++) {
         const struct settings_row *row = &form->rows[i];
-        char value[UI_INPUT_CAP];
+        char value[SETTINGS_VALUE_CAP];
         if (format_row(row, config, value, sizeof(value)) && strcmp(value, row->baseline))
             return true;
     }
@@ -310,15 +319,21 @@ static void settings_restyle(struct window *w)
     const struct app_config *config = form->host.config;
     if (!config_moved(form, config))
         return;
+    bool ok = true;
     for (size_t i = 0; i < form->count; i++) {
         struct settings_row *row = &form->rows[i];
-        char value[UI_INPUT_CAP];
+        char value[SETTINGS_VALUE_CAP];
         if (!format_row(row, config, value, sizeof(value)) || !strcmp(value, row->baseline))
             continue;
         bool edited = strcmp(row_value(row), row->baseline) != 0;
-        load_row(form, row, value, true, !edited);
+        if (!load_row(form, row, value, true, !edited)) {
+            ok = false;
+            break;
+        }
     }
     finish_load(form);
+    if (!ok)
+        ui_label_set_text(form->status, "Cannot refresh settings.");
 }
 
 static void save_form(struct settings_form *form)
@@ -351,8 +366,9 @@ static void save_form(struct settings_form *form)
         ui_label_set_text(form->status, error);
     } else {
         bool applied = host->apply(host->ud, &draft);
-        load_values(form, &draft, true);
+        bool loaded = load_values(form, &draft, true);
         ui_label_set_text(form->status, !applied ? "Save failed." :
+                          !loaded ? "Cannot refresh settings." :
                           has_file ? "Saved." : "Applied. No config file.");
     }
     opts_destroy(&app_config_spec,&draft);
@@ -396,8 +412,12 @@ static bool form_action(struct ui_widget *source, const struct ui_action *action
         for (size_t i = 0; i < form->count; i++) {
             struct settings_row *row = &form->rows[i];
             if ((row->choice || row->combo) && source == &row->dropdown->widget) {
-                if (row->combo)
-                    ui_input_set_text(row->input, ui_dropdown_value(row->dropdown));
+                if (row->combo && !ui_input_set_text(
+                        row->input, ui_dropdown_value(row->dropdown))) {
+                    ui_dropdown_set_value(row->dropdown, ui_input_text(row->input));
+                    ui_label_set_text(form->status, "Cannot update the value.");
+                    return true;
+                }
             } else if (!row->choice && source == &row->input->widget) {
                 if (row->combo) ui_dropdown_set_value(row->dropdown, row_value(row));
             } else continue;
@@ -417,7 +437,8 @@ static bool form_action(struct ui_widget *source, const struct ui_action *action
     case RESET: {
         struct app_config defaults = {0};
         app_config_defaults(&defaults);
-        load_values(form, &defaults, false);
+        if (!load_values(form, &defaults, false))
+            ui_label_set_text(form->status, "Cannot load defaults.");
         opts_destroy(&app_config_spec,&defaults);
         break;
     }
@@ -908,7 +929,8 @@ static struct settings_form *form_create(const struct settings_host *host)
             form_destroy(form);
             return NULL;
         }
-    if (!add_field_descriptions(form) || !mount_form(form)) {
+    if (!add_field_descriptions(form) || !mount_form(form) ||
+        !load_values(form, form->host.config, true)) {
         form_destroy(form);
         return NULL;
     }
@@ -955,7 +977,6 @@ bool settings_mount(struct window *w, const struct settings_host *host)
     form->window = w;
     ui_widget_set_key_capture(ui_view_root(form->view), settings_capture, form);
     ui_surface_set_default_focus(window_ui_surface(w), ui_view_root(form->view));
-    load_values(form, form->host.config, true);
     return true;
 }
 

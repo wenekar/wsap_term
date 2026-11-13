@@ -5,6 +5,8 @@
 #include "paint/text_run.h"
 #include "ui/ui_util.h"
 
+#include <limits.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum {
@@ -39,7 +41,7 @@ static struct vector2i button_measure(const struct ui_widget *widget,
     int border = widget->style.has_border_color
         ? ui_css_resolve_int(widget->style.border_width, 0, 0, ctx, true)
         : 0;
-    const char *text = button->impl.text;
+    const char *text = ui_button_text(button);
     struct vector2i natural = {
         .x = geom_sat_i((int64_t)ui_text_run_cells(text, strlen(text)) *
                         style.advance + extent.x + 2 * (int64_t)border),
@@ -105,7 +107,7 @@ static void button_paint(const struct ui_widget *widget,
     if (!bordered && (button->impl.state & BUTTON_FOCUSED))
         button_stroke(paint, bounds, 1, fg);
 
-    const char *text = button->impl.text;
+    const char *text = ui_button_text(button);
     if (!text[0])
         return;
     struct ui_text_style style = button_style(button);
@@ -236,7 +238,8 @@ static bool button_accessibility(const struct ui_widget *widget,
     const struct ui_button *button = ui_container_of_const(
         widget, struct ui_button, widget);
     out->role = UI_ACCESSIBILITY_ROLE_BUTTON;
-    out->name = button->impl.text[0] ? button->impl.text : NULL;
+    const char *text = ui_button_text(button);
+    out->name = text[0] ? text : NULL;
     if (button->impl.state & BUTTON_DISABLED)
         out->states |= UI_ACCESSIBILITY_STATE_DISABLED;
     else
@@ -258,11 +261,19 @@ static bool button_accessibility_action(
     return true;
 }
 
+static void button_destroy(struct ui_widget *widget)
+{
+    struct ui_button *button = ui_container_of(widget, struct ui_button, widget);
+    free(button->impl.text);
+    button->impl.text = NULL;
+}
+
 static const struct ui_widget_ops BUTTON_OPS = {
     .name = "button",
     .measure = button_measure,
     .event = button_event,
     .paint = button_paint,
+    .destroy = button_destroy,
     .accessibility = button_accessibility,
     .accessibility_action = button_accessibility_action,
 };
@@ -284,19 +295,32 @@ void ui_button_init(struct ui_button *button)
     button_ensure_init(button);
 }
 
-void ui_button_set_text(struct ui_button *button, const char *text)
+bool ui_button_set_text(struct ui_button *button, const char *text)
 {
     if (!button)
-        return;
+        return false;
     button_ensure_init(button);
-    if (ui_text_copy(button->impl.text, sizeof(button->impl.text),
-                               text))
-        ui_widget_invalidate(&button->widget, UI_WIDGET_INVALIDATE_MEASURE);
+    if (!text)
+        text = "";
+    size_t len = strlen(text);
+    if (len > INT_MAX)
+        return false;
+    if (!strcmp(ui_button_text(button), text))
+        return true;
+    char *copy = len ? malloc(len + 1) : NULL;
+    if (len && !copy)
+        return false;
+    if (copy)
+        memcpy(copy, text, len + 1);
+    free(button->impl.text);
+    button->impl.text = copy;
+    ui_widget_invalidate(&button->widget, UI_WIDGET_INVALIDATE_MEASURE);
+    return true;
 }
 
 const char *ui_button_text(const struct ui_button *button)
 {
-    return button ? button->impl.text : "";
+    return button && button->impl.text ? button->impl.text : "";
 }
 
 void ui_button_set_action_id(struct ui_button *button, int id)
