@@ -189,6 +189,15 @@ static inline bool rect2i_contains(struct rect2i r, struct vector2i p)
 }
 
 /*
+ * Returns the center point of rectangle `r`.
+ */
+static inline struct vector2i rect2i_center(struct rect2i r)
+{
+    return (struct vector2i){ .x = geom_sat_i((int64_t)r.x + r.width / 2),
+                              .y = geom_sat_i((int64_t)r.y + r.height / 2) };
+}
+
+/*
  * Tests if rectangle `a` touches or overlaps rectangle `b`.
  * Returns true if the rectangles share at least one point.
  */

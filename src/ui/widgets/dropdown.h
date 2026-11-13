@@ -37,7 +37,9 @@ bool ui_dropdown_set_items(struct ui_dropdown *dropdown,
                             const struct ui_dropdown_item *items, size_t count);
 void ui_dropdown_set_overlay(struct ui_dropdown *dropdown,
                               struct ui_widget *parent);
-void ui_dropdown_set_value(struct ui_dropdown *dropdown, const char *value);
+/* Select the item with this value. Show its label.
+ * A failed label update keeps the previous selection. */
+bool ui_dropdown_set_value(struct ui_dropdown *dropdown, const char *value);
 void ui_dropdown_set_action_id(struct ui_dropdown *dropdown, int id);
 const char *ui_dropdown_value(const struct ui_dropdown *dropdown);
 bool ui_dropdown_open(struct ui_dropdown *dropdown);

@@ -683,6 +683,20 @@ static bool wants(const struct ui_widget *widget, const struct ui_event *event)
            (widget->ops && widget->ops->key_release);
 }
 
+struct ui_widget *ui_widget_event_target(struct ui_widget *widget)
+{
+    while (widget && !widget->impl.destroyed && widget->ops &&
+           widget->ops->event_target) {
+        struct ui_widget *next = widget->ops->event_target(widget);
+        if (!next || next == widget || next->impl.destroyed ||
+            next->impl.surface != widget->impl.surface ||
+            !ui_widget_is_ancestor(widget, next) || !ui_widget_visible(next))
+            break;
+        widget = next;
+    }
+    return widget;
+}
+
 bool ui_widget_bubble(struct ui_widget *target, const struct ui_event *event)
 {
     if (!target || !event || target->impl.destroyed)
@@ -719,7 +733,7 @@ bool ui_widget_event(struct ui_widget *widget, const struct ui_event *event)
                                                    event->data.pointer.pos),
                                 event);
     struct ui_widget *modal = ui_widget_modal(widget);
-    return ui_widget_bubble(modal ? modal : widget, event);
+    return ui_widget_bubble(ui_widget_event_target(modal ? modal : widget), event);
 }
 
 uint64_t ui_widget_tick(struct ui_widget *widget, uint64_t now_ms)

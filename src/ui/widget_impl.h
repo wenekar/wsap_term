@@ -32,6 +32,8 @@ struct ui_widget_ops {
                                struct ui_constraints constraints);
     void (*layout)(struct ui_widget *widget, struct rect2i bounds);
     bool (*event)(struct ui_widget *widget, const struct ui_event *event);
+    /* Redirect keyboard and explicit focus to a visible descendant. */
+    struct ui_widget *(*event_target)(struct ui_widget *widget);
     bool (*hit_test)(const struct ui_widget *widget, struct vector2i pos);
     bool (*hit_front)(const struct ui_widget *widget, struct vector2i pos);
     uint64_t (*tick)(struct ui_widget *widget, uint64_t now_ms);

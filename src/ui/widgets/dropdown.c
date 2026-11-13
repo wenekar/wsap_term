@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include "ui/widgets/dropdown.h"
 
+#include "ui/internal/tree.h"
 #include "ui/surface.h"
 #include "ui/widget_impl.h"
 
@@ -18,13 +19,19 @@ static void free_items(struct ui_dropdown_item *items, size_t count)
     free(items);
 }
 
-static void show_selection(struct ui_dropdown *d)
+static bool show_label(struct ui_dropdown *d, const char *text)
 {
-    const char *text = d->impl.selected >= 0
-        ? d->impl.items[d->impl.selected].label : "Choose";
-    char label[UI_BUTTON_TEXT_CAP];
-    snprintf(label, sizeof(label), "%s  v", text);
-    ui_button_set_text(&d->button, label);
+    if (!text)
+        text = "";
+    size_t len = strlen(text);
+    char *label = malloc(len + 4);
+    if (!label)
+        return false;
+    memcpy(label, text, len);
+    memcpy(label + len, "  v", 4);
+    bool ok = ui_button_set_text(&d->button, label);
+    free(label);
+    return ok;
 }
 
 static bool filter(struct ui_dropdown *d)
@@ -125,9 +132,12 @@ static void choose(struct ui_dropdown *d, int index)
 {
     if (index < 0 || (size_t)index >= d->impl.count)
         return;
+    if (!show_label(d, d->impl.items[index].label)) {
+        ui_dropdown_close(d);
+        return;
+    }
     bool changed = d->impl.selected != index;
     d->impl.selected = index;
-    show_selection(d);
     ui_dropdown_close(d);
     if (changed)
         ui_widget_notify(&d->widget, (struct ui_action){
@@ -276,8 +286,55 @@ static const struct ui_widget_ops DROPDOWN_OPS = {
     .accessibility_action = dropdown_accessibility_action,
 };
 
+static struct vector2i layer_measure(const struct ui_widget *widget,
+                                     struct ui_constraints constraints)
+{
+    struct ui_dropdown *d = widget->userdata;
+    ui_widget_measure(ui_box_widget(&d->panel), constraints);
+    return constraints.max;
+}
+
+static void layer_prepare(struct ui_widget *widget)
+{
+    struct ui_dropdown *d = widget->userdata;
+    if (d->impl.open &&
+        (!ui_widget_visible(&d->widget) ||
+         ui_widget_surface(&d->widget) != ui_widget_surface(widget)))
+        ui_dropdown_close(d);
+    else if (d->impl.open) {
+        struct ui_widget *root = ui_surface_root(ui_widget_surface(widget));
+        if (root && (root->impl.invalidation &
+                     (UI_WIDGET_INVALIDATE_MEASURE | UI_WIDGET_INVALIDATE_LAYOUT)))
+            ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_LAYOUT);
+    }
+}
+
+/* Return false when a clipping ancestor scrolled the button out of sight. */
+static bool anchor_visible(const struct ui_dropdown *d)
+{
+    struct vector2i at = rect2i_center(d->widget.bounds);
+    for (const struct ui_widget *w = d->widget.parent; w; w = w->parent)
+        if (w->ops && w->ops->clip_children && !rect2i_contains(w->bounds, at))
+            return false;
+    return true;
+}
+
+static void layer_layout(struct ui_widget *widget, struct rect2i bounds)
+{
+    struct ui_dropdown *d = widget->userdata;
+    if (!anchor_visible(d)) {
+        ui_dropdown_close(d);
+        return;
+    }
+    ui_widget_set_placement(&d->panel.widget, (struct ui_placement){
+        .kind = UI_PLACE_BELOW, .anchor = d->widget.bounds,
+    });
+    ui_widget_place_child(&d->panel.widget, bounds);
+}
+
 static const struct ui_widget_ops LAYER_OPS = {
-    .name = "dropdown-layer", .event = layer_event,
+    .name = "dropdown-layer", .event = layer_event, .measure = layer_measure,
+    .prepare = layer_prepare, .layout = layer_layout,
 };
 
 void ui_dropdown_init(struct ui_dropdown *d)
@@ -316,7 +373,7 @@ void ui_dropdown_init(struct ui_dropdown *d)
         ui_label_widget(&d->empty),
     }, 3);
     ui_widget_add_child(&d->scroll.widget, ui_list_widget(&d->list));
-    show_selection(d);
+    show_label(d, "Choose");
 }
 
 bool ui_dropdown_set_items(struct ui_dropdown *d,
@@ -336,12 +393,15 @@ bool ui_dropdown_set_items(struct ui_dropdown *d,
             return false;
         }
     }
+    if (!show_label(d, count ? copy[0].label : "Choose")) {
+        free_items(copy, count);
+        return false;
+    }
     ui_dropdown_close(d);
     free_items(d->impl.items, d->impl.count);
     d->impl.items = copy;
     d->impl.count = count;
     d->impl.selected = count ? 0 : -1;
-    show_selection(d);
     return true;
 }
 
@@ -354,16 +414,21 @@ void ui_dropdown_set_overlay(struct ui_dropdown *d, struct ui_widget *parent)
     d->impl.overlay = parent;
 }
 
-void ui_dropdown_set_value(struct ui_dropdown *d, const char *value)
+bool ui_dropdown_set_value(struct ui_dropdown *d, const char *value)
 {
+    if (!d)
+        return false;
     ui_dropdown_widget(d);
-    d->impl.selected = -1;
+    int selected = -1;
     for (size_t i = 0; i < d->impl.count; i++)
         if (!strcmp(d->impl.items[i].value, value ? value : "")) {
-            d->impl.selected = (int)i;
+            selected = (int)i;
             break;
         }
-    show_selection(d);
+    if (!show_label(d, selected >= 0 ? d->impl.items[selected].label : "Choose"))
+        return false;
+    d->impl.selected = selected;
+    return true;
 }
 
 void ui_dropdown_set_action_id(struct ui_dropdown *d, int id)

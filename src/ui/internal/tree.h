@@ -10,6 +10,7 @@ void ui_widget_layout(struct ui_widget *widget, struct rect2i bounds);
 void ui_widget_attach(struct ui_widget *widget, struct ui_surface *surface);
 void ui_widget_detach(struct ui_widget *widget);
 bool ui_widget_bubble(struct ui_widget *target, const struct ui_event *event);
+struct ui_widget *ui_widget_event_target(struct ui_widget *widget);
 struct ui_widget *ui_widget_hit_test(struct ui_widget *root,
                                      struct vector2i pos);
 struct ui_widget *ui_widget_modal(struct ui_widget *root);

@@ -159,6 +159,7 @@ bool ui_surface_set_root(struct ui_surface *surface, struct ui_widget *root)
         surface->impl.hovered = NULL;
         surface->impl.modal = NULL;
         surface->impl.restore_focus = NULL;
+        surface->impl.default_focus = NULL;
     }
     surface->impl.root = root;
     if (root) {
@@ -420,13 +421,13 @@ static bool dispatch_pointer(struct ui_surface *surface,
 static struct ui_widget *keyboard_target(const struct ui_surface *surface)
 {
     if (surface->impl.focused)
-        return surface->impl.focused;
+        return ui_widget_event_target(surface->impl.focused);
     if (surface->impl.modal)
-        return surface->impl.modal;
+        return ui_widget_event_target(surface->impl.modal);
     struct ui_widget *fallback = surface->impl.default_focus;
     if (fallback && !retired(surface, fallback))
-        return fallback;
-    return surface->impl.root;
+        return ui_widget_event_target(fallback);
+    return ui_widget_event_target(surface->impl.root);
 }
 
 static bool capture_keyboard(struct ui_surface *surface,
@@ -521,9 +522,10 @@ bool ui_surface_dispatch(struct ui_surface *surface,
             }
             break;
         default:
-            handled = ui_widget_bubble(surface->impl.focused
-                                       ? surface->impl.focused
-                                       : surface->impl.root, event);
+            handled = ui_widget_bubble(ui_widget_event_target(
+                                           surface->impl.focused
+                                           ? surface->impl.focused
+                                           : surface->impl.root), event);
             break;
         }
         ui_surface_sync_modal(surface);
@@ -557,6 +559,7 @@ void ui_surface_focus(struct ui_surface *surface, struct ui_widget *widget)
 {
     if (!surface)
         return;
+    widget = ui_widget_event_target(widget);
     if (widget && retired(surface, widget))
         widget = NULL;
     if (surface->impl.focused == widget)

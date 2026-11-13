@@ -134,10 +134,12 @@ The diagnostic gives an error, a detail message, and, when applicable, the descr
 The descriptor pointer is borrowed from the input tree.
 Read it before the descriptor tree goes out of scope.
 Use `ui_view_error_message()` to get a description of the error.
-For a dropdown, put a stack above it in the descriptor tree.
-The dropdown uses the nearest ancestor stack for its popup.
-Use `overlay_key` to select a different stack when necessary.
-Mounting fails if neither choice supplies a stack.
+The view supplies a popup host for dropdown descriptors.
+The host lets a popup extend outside a scrollview.
+When necessary, the view adds a host around the described root.
+Use `ui_view_widget()` with the root key to find the described root.
+Use `overlay_key` to select a stack in the view when necessary.
+For manual widget composition, set the dropdown overlay parent explicitly.
 
 ## Actions and state
 
@@ -202,11 +204,24 @@ See [UI debugging](ui-debugging.md) for headless runs, input injection, and scen
 
 ## When you need a custom widget
 
-Use the lower-level widget API for controls the descriptor does not cover.
-The caller owns the widget storage.
-Initialize the widget before attachment and do not copy it after initialization.
-`ui_widget_destroy()` destroys descendant widgets and releases their resources.
-It does not free the enclosing storage.
+Use `UI_NODE_WIDGET` for a custom widget or a control that the descriptor does not cover.
+Initialize the widget first and keep it detached until the view mounts.
+For example:
+
+```c
+struct ui_node_desc control = {
+    .kind = UI_NODE_WIDGET,
+    .key = "custom",
+    .props.widget = &custom->widget,
+};
+```
+
+The caller owns the widget storage and keeps it alive until view destruction.
+On success, the view destroys the widget and its descendants.
+It does not free their enclosing storage.
+On failure, the caller keeps the detached widget and destroys it.
+Use `ui_view_widget(view, "custom")` to find the widget by key.
+Do not copy a widget after initialization.
 Keep strings passed to `ui_widget_set_style_identity()` valid while the widget uses them.
 These rules differ from the copied descriptor strings of a view.
 See [custom widgets and lifetime](ui-library-state.md#custom-widgets) for layout, paint, invalidation, and debug parts.

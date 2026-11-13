@@ -88,11 +88,16 @@ struct vector2i ui_surface_viewport(const struct ui_surface *surface);
 bool ui_surface_dispatch(struct ui_surface *surface,
                          const struct ui_event *event);
 
+/* Set the widget that takes keyboard events when nothing is focused.
+ * A view overlay host and a focused view redirect to the described root.
+ * This call stores the widget as given. */
 void ui_surface_set_default_focus(struct ui_surface *surface,
                                   struct ui_widget *widget);
 void ui_surface_keep_key_text(struct ui_surface *surface);
 bool ui_surface_key_text_kept(const struct ui_surface *surface);
 
+/* Focus a widget. A view overlay host and a focused view redirect to the
+ * described root before the call stores the focus. */
 void ui_surface_focus(struct ui_surface *surface, struct ui_widget *widget);
 struct ui_widget *ui_surface_focused(const struct ui_surface *surface);
 struct ui_widget *ui_surface_captured(const struct ui_surface *surface);

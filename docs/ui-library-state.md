@@ -145,6 +145,27 @@ Its menu options use the same `ui_action_handler` type.
 The submenu provider returns model data.
 This provider remains separate from action delivery.
 
+## Buttons
+
+A button copies its text.
+`ui_button_set_text()` returns false if memory allocation fails.
+The call also returns false if text exceeds `INT_MAX` bytes.
+A failed call keeps the previous text.
+Pass NULL to clear the text.
+Destroy the button widget when its owner closes.
+
+## Inputs
+
+An input copies its text and placeholder.
+`ui_input_set_text()` and `ui_input_set_placeholder()` return false if memory
+allocation fails or if the source is longer than `INT_MAX` bytes.
+A failed call keeps the previous value.
+Text input removes invalid UTF-8 bytes and ASCII control characters.
+The text setter clears the edit history and moves the caret to the end.
+The text setter does not emit a change action.
+User edits and accessibility edits emit a change action.
+Destroy the input widget when its owner closes.
+
 ## Labels
 
 A label owns a dynamic copy of its text.
@@ -227,8 +248,9 @@ The existing child widget remains unchanged.
 Updating list items preserves list attachments and handlers.
 Dropdowns copy their items.
 They show a searchable popup.
-A dropdown descriptor uses its nearest ancestor stack for the popup.
-Set `overlay_key` to select another stack in the view.
+A dropdown descriptor gets a popup host from the view.
+The popup can extend outside scrollviews.
+Set `overlay_key` to select a stack in the view instead.
 For manual composition, set the overlay parent to a container with stack layout.
 Scrollviews can show an optional draggable scroll track.
 Scrollviews scroll focused descendants into view.

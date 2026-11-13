@@ -383,18 +383,13 @@ static void view_automatic_overlay_test(void)
         .props.dropdown = { .items = items, .count = 1 },
     };
     struct ui_node_desc root = {
-        .kind = UI_NODE_COLUMN, .children = &child, .child_count = 1,
+        .kind = UI_NODE_COLUMN, .key = "content",
+        .children = &child, .child_count = 1,
     };
     struct ui_view_diagnostic diagnostic;
-    assert(!ui_view_mount_ex(&root, &diagnostic));
-    assert(diagnostic.error == UI_VIEW_ERROR_MISSING_OVERLAY);
-    assert(diagnostic.node == &child);
-    assert(diagnostic.detail && strstr(diagnostic.detail, "ancestor"));
-    assert(!dropdown);
-
-    root.kind = UI_NODE_STACK;
     struct ui_view *view = ui_view_mount_ex(&root, &diagnostic);
     assert(view && dropdown);
+    assert(ui_view_root(view) != ui_view_widget(view, "content"));
     struct ui_surface surface;
     show(&surface, ui_view_root(view), (struct vector2i){ .x = 300, .y = 200 });
     ui_surface_prepare(&surface);
@@ -402,6 +397,12 @@ static void view_automatic_overlay_test(void)
     assert(ui_dropdown_is_open(dropdown));
     ui_dropdown_close(dropdown);
     ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+
+    root.kind = UI_NODE_STACK;
+    view = ui_view_mount_ex(&root, &diagnostic);
+    assert(view);
+    assert(ui_view_root(view) != ui_view_widget(view, "content"));
     ui_view_destroy(view);
 }
 
@@ -439,12 +440,230 @@ static void view_explicit_overlay_test(void)
     assert(!dropdown);
 }
 
+struct supplied_control {
+    struct ui_widget widget;
+    int *destroyed;
+};
+
+static bool supplied_control_event(struct ui_widget *widget,
+                                   const struct ui_event *event)
+{
+    if (event->kind != UI_EVENT_KEY ||
+        event->data.key.action == UI_KEY_RELEASE ||
+        event->data.key.key != UI_KEY_ENTER)
+        return false;
+    return ui_widget_notify(widget, (struct ui_action){
+        .kind = UI_ACTION_ACTIVATE, .id = 42,
+    });
+}
+
+static void supplied_control_destroy(struct ui_widget *widget)
+{
+    struct supplied_control *control =
+        ui_container_of(widget, struct supplied_control, widget);
+    (*control->destroyed)++;
+}
+
+static const struct ui_widget_ops SUPPLIED_CONTROL_OPS = {
+    .name = "supplied-control",
+    .event = supplied_control_event,
+    .destroy = supplied_control_destroy,
+};
+
+static void view_supplied_widget_test(void)
+{
+    int destroyed = 0, action = 0;
+    struct supplied_control control = { .destroyed = &destroyed };
+    ui_widget_init(&control.widget, &SUPPLIED_CONTROL_OPS, NULL);
+    ui_widget_set_focusable(&control.widget, true);
+    ui_widget_set_style_identity(&control.widget, "original", NULL, "custom");
+    struct ui_node_desc children[] = {
+        { .kind = UI_NODE_WIDGET, .key = "custom", .props.widget = &control.widget },
+        { .kind = UI_NODE_LABEL, .key = "other" },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .children = children, .child_count = 2,
+        .on_action = record_id, .action_userdata = &action,
+    };
+    struct ui_view_diagnostic diagnostic;
+
+    /* A failed mount leaves the supplied widget ready for a later mount. */
+    children[1].key = "custom";
+    assert(!ui_view_mount_ex(&root, &diagnostic));
+    assert(diagnostic.error == UI_VIEW_ERROR_DUPLICATE_KEY);
+    assert(!control.widget.parent && !ui_widget_surface(&control.widget));
+    assert(!destroyed);
+    children[1].key = "other";
+
+    struct ui_view *view = ui_view_mount_ex(&root, &diagnostic);
+    assert(view && ui_view_widget(view, "custom") == &control.widget);
+    assert(ui_debug_find(ui_view_root(view), "@custom") == &control.widget);
+    assert(ui_debug_find(ui_view_root(view), ".original") == &control.widget);
+    struct ui_surface surface;
+    show(&surface, ui_view_root(view), (struct vector2i){ .x = 100, .y = 100 });
+    ui_surface_focus(&surface, &control.widget);
+    struct ui_event enter = ui_event_key((struct ui_key_event){
+        .key = UI_KEY_ENTER,
+    }, 0);
+    assert(ui_surface_dispatch(&surface, &enter));
+    assert(action == 42);
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+    assert(destroyed == 1);
+}
+
+static void view_supplied_widget_validation_test(void)
+{
+    struct ui_widget widget = {0};
+    struct ui_node_desc node = { .kind = UI_NODE_WIDGET, .props.widget = &widget };
+    struct ui_view_diagnostic diagnostic;
+    assert(!ui_view_mount_ex(&node, &diagnostic));
+    assert(diagnostic.error == UI_VIEW_ERROR_INVALID_ARGUMENT);
+
+    ui_widget_init(&widget, NULL, NULL);
+    struct ui_node_desc children[] = { node, node };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .children = children, .child_count = 2,
+    };
+    assert(!ui_view_mount_ex(&root, &diagnostic));
+    assert(diagnostic.node == &children[1]);
+    assert(!widget.parent);
+
+    struct ui_widget parent = {0};
+    ui_widget_init(&parent, NULL, NULL);
+    assert(ui_widget_add_child(&parent, &widget));
+    assert(!ui_view_mount_ex(&node, &diagnostic));
+    assert(widget.parent == &parent);
+    assert(ui_widget_remove_child(&parent, &widget));
+    struct ui_view *view = ui_view_mount_ex(&node, &diagnostic);
+    assert(view && ui_view_root(view) == &widget);
+    ui_view_destroy(view);
+    ui_widget_destroy(&parent);
+}
+
+static const struct ui_widget_ops SINGLE_CHILD_OPS = {
+    .name = "single-child",
+    .child_limit = 1,
+};
+
+static void view_supplied_container_test(void)
+{
+    struct ui_widget container = {0};
+    ui_widget_init(&container, &SINGLE_CHILD_OPS, NULL);
+    struct ui_node_desc child = {
+        .kind = UI_NODE_BUTTON, .key = "button",
+        .props.button = { .text = "Apply" },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_WIDGET, .key = "container", .props.widget = &container,
+        .children = &child, .child_count = 1,
+    };
+    struct ui_view_diagnostic diagnostic;
+    struct ui_view *view = ui_view_mount_ex(&root, &diagnostic);
+    assert(view);
+    assert(ui_view_widget(view, "container") == &container);
+    assert(ui_widget_child_count(&container) == 1);
+    assert(ui_view_widget(view, "button") == ui_widget_child_at(&container, 0));
+    ui_view_destroy(view);
+
+    struct ui_widget old_child = {0};
+    ui_widget_init(&container, &SINGLE_CHILD_OPS, NULL);
+    ui_widget_init(&old_child, NULL, NULL);
+    assert(ui_widget_add_child(&container, &old_child));
+    assert(!ui_view_mount_ex(&root, &diagnostic));
+    assert(diagnostic.error == UI_VIEW_ERROR_INVALID_CHILDREN);
+    assert(diagnostic.node == &child);
+    assert(ui_widget_child_count(&container) == 1);
+    assert(ui_widget_child_at(&container, 0) == &old_child);
+    assert(!container.parent);
+    ui_widget_destroy(&container);
+}
+
+static void view_supplied_root_with_popup_test(void)
+{
+    int destroyed = 0;
+    struct supplied_control control = { .destroyed = &destroyed };
+    ui_widget_init(&control.widget, &SUPPLIED_CONTROL_OPS, NULL);
+    const struct ui_dropdown_item items[] = { { "One", "one" } };
+    struct ui_dropdown *dropdown = NULL;
+    struct ui_node_desc child = {
+        .kind = UI_NODE_DROPDOWN,
+        .bind.dropdown = &dropdown,
+        .props.dropdown = { .items = items, .count = 1 },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_WIDGET, .key = "content", .props.widget = &control.widget,
+        .children = &child, .child_count = 1,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view && dropdown);
+    assert(ui_view_widget(view, "content") == &control.widget);
+    assert(ui_view_root(view) != &control.widget);
+    struct ui_surface surface;
+    show(&surface, ui_view_root(view), (struct vector2i){ .x = 300, .y = 200 });
+    assert(ui_dropdown_open(dropdown));
+    ui_view_destroy(view);
+    assert(!ui_surface_root(&surface));
+    assert(!ui_surface_has_modal(&surface));
+    assert(destroyed == 1);
+    ui_surface_destroy(&surface);
+}
+
+static bool view_root_event(struct ui_widget *widget,
+                            const struct ui_event *event, void *userdata)
+{
+    (void)widget;
+    if (event->kind != UI_EVENT_KEY || event->data.key.key != UI_KEY_ESCAPE)
+        return false;
+    (*(int *)userdata)++;
+    return true;
+}
+
+static void view_overlay_root_keyboard_test(void)
+{
+    int calls = 0;
+    struct ui_node_desc child = { .kind = UI_NODE_DROPDOWN };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "content",
+        .children = &child, .child_count = 1,
+        .on_event = view_root_event, .event_userdata = &calls,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+    struct ui_widget *host = ui_view_root(view);
+    struct ui_widget *content = ui_view_widget(view, "content");
+    assert(host != content);
+    struct ui_surface surface;
+    show(&surface, host, (struct vector2i){ .x = 300, .y = 200 });
+    struct ui_event escape = ui_event_key((struct ui_key_event){
+        .key = UI_KEY_ESCAPE,
+    }, 0);
+    assert(ui_surface_dispatch(&surface, &escape));
+    assert(calls == 1);
+    ui_surface_set_default_focus(&surface, host);
+    assert(ui_surface_dispatch(&surface, &escape));
+    assert(calls == 2);
+    assert(ui_widget_event(host, &escape));
+    assert(calls == 3);
+    ui_surface_focus(&surface, host);
+    assert(ui_surface_focused(&surface) == content);
+    assert(ui_surface_dispatch(&surface, &escape));
+    assert(calls == 4);
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+}
+
 int main(void)
 {
     view_diagnostic_test();
     view_children_macro_test();
     view_automatic_overlay_test();
     view_explicit_overlay_test();
+    view_supplied_widget_test();
+    view_supplied_widget_validation_test();
+    view_supplied_container_test();
+    view_supplied_root_with_popup_test();
+    view_overlay_root_keyboard_test();
     hidden_child_takes_no_space_or_input_test();
     hidden_modal_restores_focus_test();
     placement_test();

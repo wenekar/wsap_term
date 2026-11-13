@@ -1,6 +1,7 @@
 #include "ui/describe.h"
 
 #include "ui/surface.h"
+#include "ui/widget_impl.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -27,6 +28,10 @@ struct ui_view {
     size_t count;
     size_t capacity;
     struct ui_widget *root;
+    struct ui_widget overlay_root;
+    bool overlay_initialized;
+    bool needs_overlay;
+    bool committed;
 };
 
 struct validate_context {
@@ -50,6 +55,17 @@ static char *copy_string(const char *text)
     return copy;
 }
 
+static struct ui_widget *overlay_event_target(struct ui_widget *widget)
+{
+    struct ui_view *view = widget->userdata;
+    return view->nodes[0].widget;
+}
+
+static const struct ui_widget_ops OVERLAY_ROOT_OPS = {
+    .name = "view-overlay-host",
+    .event_target = overlay_event_target,
+};
+
 static bool node_is_container(enum ui_node_kind kind)
 {
     return kind == UI_NODE_ROW || kind == UI_NODE_COLUMN ||
@@ -58,7 +74,8 @@ static bool node_is_container(enum ui_node_kind kind)
 
 static bool node_has_children(enum ui_node_kind kind)
 {
-    return node_is_container(kind) || kind == UI_NODE_SCROLLVIEW;
+    return node_is_container(kind) || kind == UI_NODE_SCROLLVIEW ||
+           kind == UI_NODE_WIDGET;
 }
 
 static bool node_kind_valid(enum ui_node_kind kind)
@@ -72,6 +89,7 @@ static bool node_kind_valid(enum ui_node_kind kind)
     case UI_NODE_INPUT:
     case UI_NODE_DROPDOWN:
     case UI_NODE_SCROLLVIEW:
+    case UI_NODE_WIDGET:
         return true;
     }
     return false;
@@ -134,6 +152,17 @@ static bool node_props_valid(const struct ui_node_desc *desc,
         if (desc->props.scrollview.scroll_step < 0) {
             *error = UI_VIEW_ERROR_INVALID_ARGUMENT;
             *detail = "Scroll step cannot be negative";
+            return false;
+        }
+        return true;
+    case UI_NODE_WIDGET:
+        if (!desc->props.widget ||
+            !ui_widget_accessibility_id(desc->props.widget) ||
+            desc->props.widget->impl.destroyed ||
+            desc->props.widget->parent ||
+            ui_widget_surface(desc->props.widget)) {
+            *error = UI_VIEW_ERROR_INVALID_ARGUMENT;
+            *detail = "Widget must be initialized and detached";
             return false;
         }
         return true;
@@ -230,6 +259,18 @@ static bool validate_node(struct validate_context *context,
         }
     }
 
+    if (desc->kind == UI_NODE_WIDGET) {
+        for (size_t i = 0; i < context->view->count; i++) {
+            const struct ui_node_desc *other = context->view->nodes[i].desc;
+            if (other->kind == UI_NODE_WIDGET &&
+                other->props.widget == desc->props.widget) {
+                context->error = UI_VIEW_ERROR_INVALID_ARGUMENT;
+                context->detail = "Widget occurs more than once";
+                return false;
+            }
+        }
+    }
+
     size_t index;
     if (!append_node(context->view, desc, parent, &index)) {
         context->error = UI_VIEW_ERROR_OUT_OF_MEMORY;
@@ -281,6 +322,7 @@ static const char *default_class(enum ui_node_kind kind)
     case UI_NODE_ROW:
     case UI_NODE_COLUMN:
     case UI_NODE_STACK:
+    case UI_NODE_WIDGET:
         return NULL;
     }
     return NULL;
@@ -297,6 +339,7 @@ static const char *default_tag(enum ui_node_kind kind)
     case UI_NODE_INPUT: return "input";
     case UI_NODE_DROPDOWN: return "dropdown";
     case UI_NODE_SCROLLVIEW: return "scrollview";
+    case UI_NODE_WIDGET: return NULL;
     }
     return NULL;
 }
@@ -329,6 +372,7 @@ static size_t widget_size(enum ui_node_kind kind)
     case UI_NODE_INPUT: return sizeof(struct ui_input);
     case UI_NODE_DROPDOWN: return sizeof(struct ui_dropdown);
     case UI_NODE_SCROLLVIEW: return sizeof(struct ui_scrollview);
+    case UI_NODE_WIDGET: return 0;
     }
     return 0;
 }
@@ -337,10 +381,12 @@ static bool initialize_node(struct ui_view_node *node,
                             enum ui_view_error *error)
 {
     const struct ui_node_desc *desc = node->desc;
-    node->storage = calloc(1, widget_size(node->kind));
-    if (!node->storage) {
-        *error = UI_VIEW_ERROR_OUT_OF_MEMORY;
-        return false;
+    if (node->kind != UI_NODE_WIDGET) {
+        node->storage = calloc(1, widget_size(node->kind));
+        if (!node->storage) {
+            *error = UI_VIEW_ERROR_OUT_OF_MEMORY;
+            return false;
+        }
     }
     if (!copy_node_strings(node)) {
         *error = UI_VIEW_ERROR_OUT_OF_MEMORY;
@@ -348,6 +394,9 @@ static bool initialize_node(struct ui_view_node *node,
     }
 
     switch (node->kind) {
+    case UI_NODE_WIDGET:
+        node->widget = desc->props.widget;
+        return true;
     case UI_NODE_ROW:
     case UI_NODE_COLUMN:
     case UI_NODE_STACK: {
@@ -388,7 +437,10 @@ static bool initialize_node(struct ui_view_node *node,
         struct ui_button *button = node->storage;
         ui_button_init(button);
         node->widget = &button->widget;
-        ui_button_set_text(button, desc->props.button.text);
+        if (!ui_button_set_text(button, desc->props.button.text)) {
+            *error = UI_VIEW_ERROR_INIT_FAILED;
+            return false;
+        }
         ui_button_set_disabled(button, desc->props.button.disabled);
         ui_button_set_action_id(button, desc->action_id);
         break;
@@ -397,8 +449,11 @@ static bool initialize_node(struct ui_view_node *node,
         struct ui_input *input = node->storage;
         ui_input_init(input);
         node->widget = &input->widget;
-        ui_input_set_text(input, desc->props.input.text);
-        ui_input_set_placeholder(input, desc->props.input.placeholder);
+        if (!ui_input_set_text(input, desc->props.input.text) ||
+            !ui_input_set_placeholder(input, desc->props.input.placeholder)) {
+            *error = UI_VIEW_ERROR_INIT_FAILED;
+            return false;
+        }
         if (desc->props.input.accessible_name &&
             !ui_widget_set_accessible_name(&input->widget,
                 desc->props.input.accessible_name)) {
@@ -417,9 +472,12 @@ static bool initialize_node(struct ui_view_node *node,
             *error = UI_VIEW_ERROR_OUT_OF_MEMORY;
             return false;
         }
-        if (desc->props.dropdown.selected_value)
-            ui_dropdown_set_value(dropdown,
-                                  desc->props.dropdown.selected_value);
+        if (desc->props.dropdown.selected_value &&
+            !ui_dropdown_set_value(dropdown,
+                                   desc->props.dropdown.selected_value)) {
+            *error = UI_VIEW_ERROR_INIT_FAILED;
+            return false;
+        }
         if (desc->props.dropdown.accessible_name &&
             !ui_widget_set_accessible_name(&dropdown->widget,
                 desc->props.dropdown.accessible_name)) {
@@ -461,23 +519,14 @@ static bool validate_overlays(struct ui_view *view, enum ui_view_error *error,
             continue;
         *failed_node = node->desc;
         const char *key = node->desc->props.dropdown.overlay_key;
-        struct ui_view_node *overlay = NULL;
-        if (key) {
-            overlay = find_descriptor_node(view, key);
-        } else {
-            size_t parent = node->parent;
-            while (parent != SIZE_MAX) {
-                if (view->nodes[parent].kind == UI_NODE_STACK) {
-                    overlay = &view->nodes[parent];
-                    break;
-                }
-                parent = view->nodes[parent].parent;
-            }
+        if (!key) {
+            view->needs_overlay = true;
+            continue;
         }
+        struct ui_view_node *overlay = find_descriptor_node(view, key);
         if (!overlay) {
             *error = UI_VIEW_ERROR_MISSING_OVERLAY;
-            *detail = key ? "Dropdown overlay key was not found"
-                          : "Dropdown has no ancestor stack";
+            *detail = "Dropdown overlay key was not found";
             return false;
         }
         if (overlay->kind != UI_NODE_STACK) {
@@ -508,8 +557,21 @@ void ui_view_destroy(struct ui_view *view)
         if (surface && ui_surface_root(surface) == view->root)
             ui_surface_set_root(surface, NULL);
     }
+    /* On failure, return supplied widgets to their caller before the owned
+     * tree is destroyed. A successful mount adopts their widget resources. */
+    if (!view->committed) {
+        for (size_t i = 0; i < view->count; i++) {
+            struct ui_view_node *node = &view->nodes[i];
+            if (node->kind == UI_NODE_WIDGET && node->widget &&
+                node->widget->parent)
+                ui_widget_remove_child(node->widget->parent, node->widget);
+        }
+    }
+    if (view->overlay_initialized)
+        ui_widget_destroy(&view->overlay_root);
     for (size_t i = 0; i < view->count; i++)
-        if (view->nodes[i].widget)
+        if (view->nodes[i].widget &&
+            (view->committed || view->nodes[i].kind != UI_NODE_WIDGET))
             ui_widget_destroy(view->nodes[i].widget);
     for (size_t i = 0; i < view->count; i++) {
         free(view->nodes[i].key);
@@ -609,15 +671,58 @@ struct ui_view *ui_view_mount_ex(const struct ui_node_desc *root,
             return NULL;
         }
     }
+    if (view->needs_overlay) {
+        ui_widget_init(&view->overlay_root, &OVERLAY_ROOT_OPS, view);
+        /* The host is a layout and input seam, not a screen element. */
+        ui_widget_set_accessibility_ignored(&view->overlay_root, true);
+        view->overlay_initialized = true;
+        /* The root is detached and validated, so this attach cannot fail. */
+        if (!ui_widget_add_child(&view->overlay_root,
+                                 view->nodes[0].widget)) {
+            if (diagnostic) {
+                diagnostic->error = UI_VIEW_ERROR_INVALID_CHILDREN;
+                diagnostic->node = view->nodes[0].desc;
+                diagnostic->detail = "Cannot attach the view root";
+            }
+            ui_view_destroy(view);
+            return NULL;
+        }
+    }
     for (size_t i = 0; i < view->count; i++) {
         struct ui_view_node *node = &view->nodes[i];
         if (node->kind == UI_NODE_DROPDOWN) {
-            struct ui_view_node *overlay = &view->nodes[node->overlay];
-            ui_dropdown_set_overlay(node->storage, overlay->widget);
+            struct ui_widget *overlay = node->overlay == SIZE_MAX
+                ? &view->overlay_root : view->nodes[node->overlay].widget;
+            ui_dropdown_set_overlay(node->storage, overlay);
         }
     }
 
-    view->root = view->nodes[0].widget;
+    view->root = view->needs_overlay ? &view->overlay_root
+                                     : view->nodes[0].widget;
+    /* Apply descriptor attributes to supplied widgets only after all
+     * fallible work has succeeded. */
+    for (size_t i = 0; i < view->count; i++) {
+        struct ui_view_node *node = &view->nodes[i];
+        const struct ui_node_desc *desc = node->desc;
+        if (node->kind != UI_NODE_WIDGET)
+            continue;
+        struct ui_widget *widget = node->widget;
+        if (desc->class_name || desc->id_name || desc->tag_name)
+            ui_widget_set_style_identity(widget,
+                desc->class_name ? node->class_name : widget->impl.style_class,
+                desc->id_name ? node->id_name : widget->impl.style_id,
+                desc->tag_name ? node->tag_name : widget->impl.style_tag);
+        if (node->key)
+            /* The view owns this string until destruction. */
+            ui_widget_set_debug_key(widget, node->key);
+        if (desc->on_action)
+            ui_widget_set_action_handler(widget, desc->on_action,
+                                         desc->action_userdata);
+        if (desc->on_event)
+            ui_widget_set_event_handler(widget, desc->on_event,
+                                        desc->event_userdata);
+    }
+    view->committed = true;
     for (size_t i = 0; i < view->count; i++) {
         struct ui_view_node *node = &view->nodes[i];
         const struct ui_node_bindings *bind = &node->desc->bind;
@@ -645,6 +750,12 @@ struct ui_view *ui_view_mount(const struct ui_node_desc *root,
 struct ui_widget *ui_view_root(struct ui_view *view)
 {
     return view ? view->root : NULL;
+}
+
+struct ui_widget *ui_view_widget(struct ui_view *view, const char *key)
+{
+    struct ui_view_node *node = find_node(view, key);
+    return node ? node->widget : NULL;
 }
 
 #define UI_VIEW_TYPED_LOOKUP(name, type, expected) \

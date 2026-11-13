@@ -23,6 +23,7 @@ enum ui_node_kind {
     UI_NODE_INPUT,
     UI_NODE_DROPDOWN,
     UI_NODE_SCROLLVIEW,
+    UI_NODE_WIDGET,
 };
 
 struct ui_node_layout {
@@ -83,13 +84,21 @@ struct ui_node_desc {
             size_t count;
             const char *selected_value;
             const char *accessible_name;
-            /* NULL selects the nearest ancestor stack. */
+            /* NULL uses the view overlay host. */
             const char *overlay_key;
         } dropdown;
         struct {
             bool scrollbar;
             int scroll_step;
         } scrollview;
+        /* Supply an initialized, detached widget or subtree.
+         * On success, the view destroys its widget resources.
+         * Keep its enclosing storage alive until view destruction.
+         * On failure, the caller retains the detached widget.
+         * Descriptor children are added after existing widget children.
+         * Unset style fields and handlers preserve the widget values.
+         * Set these descriptor fields to replace them. */
+        struct ui_widget *widget;
     } props;
 };
 
@@ -126,7 +135,11 @@ struct ui_view *ui_view_mount(const struct ui_node_desc *root,
 
 void ui_view_destroy(struct ui_view *view);
 
+/* The root can be a view-owned overlay host. Use ui_view_widget() to get
+ * the descriptor root by key when its identity matters. */
 struct ui_widget *ui_view_root(struct ui_view *view);
+/* Returns any descriptor widget with this key, or NULL. */
+struct ui_widget *ui_view_widget(struct ui_view *view, const char *key);
 struct ui_box *ui_view_box(struct ui_view *view, const char *key);
 struct ui_label *ui_view_label(struct ui_view *view, const char *key);
 struct ui_button *ui_view_button(struct ui_view *view, const char *key);
