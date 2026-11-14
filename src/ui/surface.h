@@ -12,7 +12,6 @@
 
 struct ui_scene;
 struct ui_layout;
-struct ui_dialog_frame;
 
 struct ui_surface_host {
     void (*request_frame)(void *userdata);
@@ -20,23 +19,6 @@ struct ui_surface_host {
     void (*paste_text)(void *userdata);
     void (*open_url)(void *userdata, const char *target);
     uint32_t (*double_click_interval_ms)(void *userdata);
-};
-
-#define UI_DIALOG_MAX_BUTTONS 4
-#define UI_SURFACE_SCRATCH_CAP 16384
-
-struct ui_dialog_button {
-    const char *text;
-    int action_id;
-};
-
-struct ui_dialog_desc {
-    const char *title;
-    const char *message;
-    struct ui_dialog_button buttons[UI_DIALOG_MAX_BUTTONS];
-    ui_action_fn on_action;
-    void *userdata;
-    int button_count;
 };
 
 struct ui_surface {
@@ -56,12 +38,6 @@ struct ui_surface {
         struct ui_style_context style;
         struct ui_layout *layout;
         uint64_t deadline;
-        struct ui_widget *dialog;
-        uint64_t dialog_generation;
-        struct ui_dialog_frame *dialog_storage;
-        struct ui_dialog_frame *retired_dialogs;
-        size_t scratch_used;
-        uint8_t scratch_buf[UI_SURFACE_SCRATCH_CAP];
         bool key_text_kept;
         bool frame_requested;
         bool busy;
@@ -108,13 +84,6 @@ bool ui_surface_focus_prev(struct ui_surface *surface);
 void ui_surface_cancel_capture(struct ui_surface *surface);
 bool ui_surface_has_modal(const struct ui_surface *surface);
 
-void *ui_surface_scratch_alloc(struct ui_surface *surface, size_t size);
-void ui_surface_scratch_reset(struct ui_surface *surface);
-
-struct ui_widget *ui_dialog_show(struct ui_surface *surface,
-                                 const struct ui_dialog_desc *desc);
-
-void ui_dialog_close(struct ui_surface *surface);
 enum ui_cursor ui_surface_cursor(const struct ui_surface *surface);
 
 bool ui_surface_tick(struct ui_surface *surface, uint64_t now_ms);

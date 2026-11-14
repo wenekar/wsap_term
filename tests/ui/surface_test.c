@@ -504,74 +504,6 @@ static void measurement_change_requests_another_frame_test(void)
     ui_scene_destroy(&scene);
 }
 
-struct dialog_action_probe {
-    int activated_id;
-    int actions_seen;
-};
-
-static bool on_dialog_action(struct ui_widget *source,
-                             const struct ui_action *action,
-                             void *userdata)
-{
-    (void)source;
-    struct dialog_action_probe *probe = userdata;
-    probe->actions_seen++;
-    if (action->kind == UI_ACTION_ACTIVATE) {
-        probe->activated_id = action->id;
-    }
-    return false;
-}
-
-static void scratch_arena_and_dialog_test(void)
-{
-    struct ui_surface surface = {0};
-    struct ui_box root = {0};
-    ui_surface_init(&surface, NULL, NULL);
-    ui_surface_set_root(&surface, UI_WIDGET(&root));
-    ui_surface_resize(&surface, (struct vector2i){ .x = 400, .y = 300 });
-
-    void *p1 = ui_surface_scratch_alloc(&surface, 64);
-    assert(p1 != NULL);
-    void *p2 = ui_surface_scratch_alloc(&surface, 128);
-    assert(p2 != NULL && p2 > p1);
-
-    ui_surface_scratch_reset(&surface);
-    void *p3 = ui_surface_scratch_alloc(&surface, 64);
-    assert(p3 == p1);
-    ui_surface_scratch_reset(&surface);
-
-    struct dialog_action_probe probe = { .activated_id = -1 };
-    struct ui_widget *dialog = ui_dialog_show(&surface, &(struct ui_dialog_desc){
-        .title = "Confirm",
-        .message = "Do you want to proceed?",
-        .buttons = {
-            { .text = "Yes", .action_id = 101 },
-            { .text = "No",  .action_id = 102 },
-        },
-        .button_count = 2,
-        .on_action = on_dialog_action,
-        .userdata = &probe,
-    });
-    assert(dialog != NULL);
-    assert(ui_surface_has_modal(&surface));
-
-    struct ui_scene scene = {0};
-    assert(ui_surface_build_scene(&surface, &scene));
-    assert(dialog->bounds.width > 0 && dialog->bounds.height > 0);
-
-    struct ui_event enter = ui_event_key((struct ui_key_event){
-        .key = UI_KEY_ENTER,
-    }, 0);
-    ui_surface_dispatch(&surface, &enter);
-
-    assert(probe.activated_id == 101);
-    assert(!ui_surface_has_modal(&surface));
-
-    ui_surface_destroy(&surface);
-    ui_widget_destroy(UI_WIDGET(&root));
-    ui_scene_destroy(&scene);
-}
-
 int main(void)
 {
     measurement_change_requests_another_frame_test();
@@ -585,6 +517,5 @@ int main(void)
     set_scale_rescales_styled_size_test();
     nested_scale_change_keeps_text_visible_test();
     zero_surface_test();
-    scratch_arena_and_dialog_test();
     return 0;
 }

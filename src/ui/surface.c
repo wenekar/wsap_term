@@ -1,36 +1,11 @@
 #include "ui/surface.h"
 
-#include "ui/box.h"
 #include "ui/internal/tree.h"
 #include "ui/internal/layout.h"
 #include "paint/scene.h"
 #include "ui/ui_util.h"
-#include "ui/widgets/button.h"
-#include "ui/widgets/label.h"
 
-#include <stdlib.h>
-#include <string.h>
-
-struct ui_dialog_frame {
-    struct ui_box card;
-    struct ui_label title;
-    struct ui_label msg;
-    struct ui_box btn_row;
-    struct ui_button btns[UI_DIALOG_MAX_BUTTONS];
-    ui_action_fn on_action;
-    void *userdata;
-    struct ui_surface *surface;
-    struct ui_dialog_frame *next_retired;
-};
-
-static void release_retired_dialogs(struct ui_surface *surface)
-{
-    while (surface && surface->impl.retired_dialogs) {
-        struct ui_dialog_frame *frame = surface->impl.retired_dialogs;
-        surface->impl.retired_dialogs = frame->next_retired;
-        free(frame);
-    }
-}
+#include <stddef.h>
 
 void ui_surface_init(struct ui_surface *surface,
                      const struct ui_surface_host *host, void *host_userdata)
@@ -143,7 +118,6 @@ void ui_surface_prepare(struct ui_surface *surface)
     surface->impl.busy = true;
     prepare(surface);
     surface->impl.busy = false;
-    release_retired_dialogs(surface);
 }
 
 bool ui_surface_set_root(struct ui_surface *surface, struct ui_widget *root)
@@ -151,7 +125,6 @@ bool ui_surface_set_root(struct ui_surface *surface, struct ui_widget *root)
     if (!surface || (root && (root->impl.destroyed || root->parent)))
         return false;
     if (surface->impl.root != root) {
-        ui_dialog_close(surface);
         while (surface->impl.root)
             ui_widget_detach(surface->impl.root);
         surface->impl.focused = NULL;
@@ -531,7 +504,6 @@ bool ui_surface_dispatch(struct ui_surface *surface,
         ui_surface_sync_modal(surface);
     }
     surface->impl.busy = false;
-    release_retired_dialogs(surface);
     if (handled && !keyboard_path(event->kind))
         ui_surface_request_frame(surface);
     return handled;
@@ -670,7 +642,6 @@ bool ui_surface_tick(struct ui_surface *surface, uint64_t now_ms)
     surface->impl.deadline = surface->impl.root
         ? ui_widget_tick(surface->impl.root, now_ms) : 0;
     surface->impl.busy = false;
-    release_retired_dialogs(surface);
     bool next_frame = surface->impl.deadline &&
                       surface->impl.deadline <= now_ms;
     if (next_frame)
@@ -696,7 +667,6 @@ bool ui_surface_build_scene(struct ui_surface *surface,
     prepare(surface);
     bool valid = ui_widget_build_scene(surface->impl.root, scene);
     surface->impl.busy = false;
-    release_retired_dialogs(surface);
     return valid;
 }
 
@@ -709,166 +679,9 @@ void ui_surface_destroy(struct ui_surface *surface)
 {
     if (!surface || surface->impl.busy)
         return;
-    ui_dialog_close(surface);
-    release_retired_dialogs(surface);
     while (surface->impl.root)
         ui_widget_detach(surface->impl.root);
     ui_style_context_destroy(&surface->impl.style);
     ui_layout_destroy(surface->impl.layout);
     *surface = (struct ui_surface){0};
-}
-
-void *ui_surface_scratch_alloc(struct ui_surface *surface, size_t size)
-{
-    if (!surface || size == 0)
-        return NULL;
-    size_t align = sizeof(void *) > 8 ? sizeof(void *) : 8;
-    size_t aligned = (surface->impl.scratch_used + (align - 1)) & ~(align - 1);
-    if (aligned > sizeof(surface->impl.scratch_buf) ||
-        size > sizeof(surface->impl.scratch_buf) - aligned)
-        return NULL;
-    void *ptr = &surface->impl.scratch_buf[aligned];
-    memset(ptr, 0, size);
-    surface->impl.scratch_used = aligned + size;
-    return ptr;
-}
-
-void ui_surface_scratch_reset(struct ui_surface *surface)
-{
-    if (surface)
-        surface->impl.scratch_used = 0;
-}
-
-void ui_dialog_close(struct ui_surface *surface)
-{
-    if (!surface || !surface->impl.dialog)
-        return;
-    struct ui_widget *dialog = surface->impl.dialog;
-    struct ui_dialog_frame *frame = surface->impl.dialog_storage;
-    surface->impl.dialog = NULL;
-    surface->impl.dialog_storage = NULL;
-    surface->impl.dialog_generation++;
-    if (surface->impl.root)
-        ui_widget_remove_child(surface->impl.root, dialog);
-    ui_widget_destroy(dialog);
-    if (frame) {
-        if (surface->impl.busy) {
-            frame->next_retired = surface->impl.retired_dialogs;
-            surface->impl.retired_dialogs = frame;
-        } else {
-            free(frame);
-        }
-    }
-    ui_surface_request_frame(surface);
-}
-
-static bool dialog_action_forwarder(struct ui_widget *source,
-                                    const struct ui_action *action,
-                                    void *userdata)
-{
-    struct ui_dialog_frame *f = userdata;
-    struct ui_widget *dialog = UI_WIDGET(&f->card);
-    struct ui_surface *surface = f->surface;
-    uint64_t generation = surface->impl.dialog_generation;
-    ui_action_fn on_action = f->on_action;
-    void *action_userdata = f->userdata;
-    bool activate = action->kind == UI_ACTION_ACTIVATE;
-    bool handled = false;
-    if (on_action)
-        handled = on_action(source, action, action_userdata);
-    if (activate) {
-        if (surface->impl.dialog == dialog &&
-            surface->impl.dialog_generation == generation)
-            ui_dialog_close(surface);
-        return true;
-    }
-    return handled;
-}
-
-struct ui_widget *ui_dialog_show(struct ui_surface *surface,
-                                 const struct ui_dialog_desc *desc)
-{
-    if (!surface || !desc || !surface->impl.root)
-        return NULL;
-    ui_dialog_close(surface);
-
-    struct ui_dialog_frame *f = calloc(1, sizeof(*f));
-    if (!f)
-        return NULL;
-
-    f->surface = surface;
-    f->on_action = desc->on_action;
-    f->userdata = desc->userdata;
-
-    ui_box_set_direction(&f->card, UI_BOX_COLUMN);
-    ui_box_set_gap(&f->card, 8);
-    ui_widget_set_style_identity(UI_WIDGET(&f->card), "dialog", NULL, "dialog");
-
-    if (desc->title) {
-        if (!ui_label_set_text(&f->title, desc->title))
-            goto fail;
-        ui_widget_set_style_identity(UI_WIDGET(&f->title), "dialog-title", NULL, NULL);
-        if (!ui_widget_add_child(UI_WIDGET(&f->card), UI_WIDGET(&f->title)))
-            goto fail;
-    }
-
-    if (desc->message) {
-        if (!ui_label_set_text(&f->msg, desc->message))
-            goto fail;
-        ui_widget_set_style_identity(UI_WIDGET(&f->msg), "dialog-message", NULL, NULL);
-        if (!ui_widget_add_child(UI_WIDGET(&f->card), UI_WIDGET(&f->msg)))
-            goto fail;
-    }
-
-    int btn_count = desc->button_count;
-    if (btn_count > UI_DIALOG_MAX_BUTTONS)
-        btn_count = UI_DIALOG_MAX_BUTTONS;
-
-    if (btn_count > 0) {
-        ui_box_set_direction(&f->btn_row, UI_BOX_ROW);
-        ui_box_set_gap(&f->btn_row, 8);
-        ui_box_set_justify(&f->btn_row, UI_BOX_JUSTIFY_END);
-        ui_widget_set_style_identity(UI_WIDGET(&f->btn_row), "dialog-buttons", NULL, NULL);
-
-        for (int i = 0; i < btn_count; i++) {
-            if (!ui_button_set_text(&f->btns[i], desc->buttons[i].text ? desc->buttons[i].text : "OK"))
-                goto fail;
-            ui_button_set_action_id(&f->btns[i], desc->buttons[i].action_id);
-            if (!ui_widget_add_child(UI_WIDGET(&f->btn_row), UI_WIDGET(&f->btns[i])))
-                goto fail;
-        }
-        if (!ui_widget_add_child(UI_WIDGET(&f->card), UI_WIDGET(&f->btn_row)))
-            goto fail;
-    }
-
-    ui_widget_set_action_handler(UI_WIDGET(&f->card), dialog_action_forwarder, f);
-    ui_widget_set_placement(UI_WIDGET(&f->card), (struct ui_placement){
-        .kind = UI_PLACE_CENTER,
-        .gap = 16,
-        .y_fraction = 0.5f,
-    });
-
-    if (!ui_widget_add_child(surface->impl.root, UI_WIDGET(&f->card)))
-        goto fail;
-
-    surface->impl.dialog = UI_WIDGET(&f->card);
-    surface->impl.dialog_storage = f;
-    surface->impl.dialog_generation++;
-    ui_widget_set_modal(UI_WIDGET(&f->card), true);
-
-    if (btn_count > 0)
-        ui_surface_focus(surface, UI_WIDGET(&f->btns[0]));
-
-    ui_surface_request_frame(surface);
-    return UI_WIDGET(&f->card);
-
-fail:
-    ui_widget_destroy(UI_WIDGET(&f->card));
-    ui_widget_destroy(UI_WIDGET(&f->title));
-    ui_widget_destroy(UI_WIDGET(&f->msg));
-    ui_widget_destroy(UI_WIDGET(&f->btn_row));
-    for (int i = 0; i < UI_DIALOG_MAX_BUTTONS; i++)
-        ui_widget_destroy(UI_WIDGET(&f->btns[i]));
-    free(f);
-    return NULL;
 }
