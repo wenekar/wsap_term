@@ -64,19 +64,21 @@ static bool fixture_open(struct fixture *f, const char *title)
     return true;
 }
 
-static void fixture_close(struct fixture *f)
-{
-    render_gpu_surface_free(f->rs.gpu);
-    window_metal_detach(f->layer, f->ys);
-    yasl_surface_destroy(f->ys);
-    render_gpu_free(f->g);
-}
-
 static void pump_events(int timeout_ms)
 {
     struct yasl_event ev;
     while (yasl_wait_event(&ev, timeout_ms) > 0) {
     }
+}
+
+static void fixture_close(struct fixture *f)
+{
+    render_gpu_surface_free(f->rs.gpu);
+    window_metal_detach(f->layer, f->ys);
+    render_gpu_free(f->g);
+    /* Dispatch queued events while wl_surface is live; Mesa roundtrip reads them. */
+    pump_events(0);
+    yasl_surface_destroy(f->ys);
 }
 
 struct draw_call {

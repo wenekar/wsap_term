@@ -1,10 +1,13 @@
 import json
 import os
 from pathlib import Path
+import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
+from xml.sax.saxutils import escape
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'helpers'))
 from headless_sway import HeadlessSway, require
@@ -149,6 +152,77 @@ def run_session():
         Atspi.exit()
 
 
+def find_a11y_service():
+    data_dirs = os.environ.get('XDG_DATA_DIRS') or '/usr/local/share:/usr/share'
+    candidates = [Path(entry) / 'dbus-1/services/org.a11y.Bus.service'
+                  for entry in data_dirs.split(':') if entry]
+    candidates.extend([
+        Path('/usr/local/share/dbus-1/services/org.a11y.Bus.service'),
+        Path('/usr/share/dbus-1/services/org.a11y.Bus.service'),
+    ])
+    return next((path for path in candidates if path.is_file()), None)
+
+
+def write_dbus_config(directory):
+    # Limit D-Bus activation to AT-SPI so portal helpers cannot hold test pipes.
+    service = find_a11y_service()
+    if service is not None:
+        services_dir = directory / 'services'
+        services_dir.mkdir()
+        (services_dir / 'org.a11y.Bus.service').symlink_to(service)
+        servicedir_xml = f'  <servicedir>{escape(str(services_dir))}</servicedir>'
+    else:
+        servicedir_xml = '  <standard_session_servicedirs />'
+    conf = directory / 'session.conf'
+    conf.write_text(
+        '<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"\n'
+        ' "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">\n'
+        '<busconfig>\n'
+        '  <type>session</type>\n'
+        '  <keep_umask/>\n'
+        '  <listen>unix:tmpdir=/tmp</listen>\n'
+        '  <auth>EXTERNAL</auth>\n'
+        f'{servicedir_xml}\n'
+        '  <policy context="default">\n'
+        '    <allow send_destination="*" eavesdrop="true"/>\n'
+        '    <allow eavesdrop="true"/>\n'
+        '    <allow own="*"/>\n'
+        '  </policy>\n'
+        '</busconfig>\n'
+    )
+    return conf
+
+
+def stop_session(process):
+    pgid = process.pid
+    if process.poll() is None:
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.02)
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if process.poll() is None:
+        process.wait()
+
+
 def main():
     require('sway', 'dbus-run-session')
     try:
@@ -170,9 +244,20 @@ def main():
     env.pop('WSAP_ACCESSIBILITY', None)
     env['GSETTINGS_BACKEND'] = 'memory'
     env['ATSPI_DBUS_IMPLEMENTATION'] = 'dbus-daemon'
-    return subprocess.run(
-        ['dbus-run-session', '--', sys.executable, str(Path(__file__).resolve()),
-         '--session'], env=env, timeout=90).returncode
+    with tempfile.TemporaryDirectory(prefix='wsap-dbus-') as tmp:
+        conf = write_dbus_config(Path(tmp))
+        process = None
+        try:
+            process = subprocess.Popen(
+                ['dbus-run-session', f'--config-file={conf}', '--',
+                 sys.executable, str(Path(__file__).resolve()), '--session'],
+                env=env, start_new_session=True)
+            return process.wait(timeout=90)
+        except subprocess.TimeoutExpired:
+            return 1
+        finally:
+            if process is not None:
+                stop_session(process)
 
 
 if __name__ == '__main__':
