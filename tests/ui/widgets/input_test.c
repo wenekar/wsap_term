@@ -694,6 +694,38 @@ static void typing_burst_is_one_undo_step_test(void)
     teardown(&f);
 }
 
+static void undo_history_keeps_the_last_steps_test(void)
+{
+    struct fixture f;
+    setup(&f, "x");
+    /* Each call records one step. The history keeps the last 128. */
+    for (int i = 0; i < 200; i++)
+        assert(ui_input_insert_text(&f.in, "y"));
+    assert(strlen(text(&f)) == 201);
+    int undos = 0;
+    while (ui_input_can_command(&f.in, UI_EDIT_UNDO)) {
+        assert(ui_input_command(&f.in, UI_EDIT_UNDO));
+        undos++;
+        assert(undos <= 200);
+    }
+    assert(undos == 128);
+    assert(strlen(text(&f)) == 201 - 128);
+    teardown(&f);
+}
+
+static void long_paste_stops_at_nul_test(void)
+{
+    struct fixture f;
+    setup(&f, "");
+    char bytes[2048];
+    memset(bytes, 'a', sizeof(bytes));
+    bytes[1000] = '\0';
+    struct ui_event e = ui_event_paste(bytes, sizeof(bytes), 0);
+    assert(ui_surface_dispatch(&f.surface, &e));
+    assert(strlen(text(&f)) == 1000);
+    teardown(&f);
+}
+
 static void paste_stops_at_nul_test(void)
 {
     struct fixture f;
@@ -774,7 +806,9 @@ int main(void)
     long_insert_keeps_utf8_text_test();
     long_paste_undo_and_alias_test();
     typing_burst_is_one_undo_step_test();
+    undo_history_keeps_the_last_steps_test();
     paste_stops_at_nul_test();
+    long_paste_stops_at_nul_test();
     long_accessible_value_test();
     text_and_paste_insert_clean_text_test();
     placeholder_test();
