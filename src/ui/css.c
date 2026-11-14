@@ -258,68 +258,48 @@ struct prop_info {
     uint16_t offset;
     uint16_t has_offset;
     uint8_t kind;
-    uint8_t flag_idx;
-    uint8_t pad_[2];
+    uint8_t pad_[3];
 };
 
-#define PROP(n, k, m, id) { .name = (n), .offset = offsetof(struct css_style, m), .has_offset = 0, .kind = (uint8_t)(k), .flag_idx = (id) }
-#define PROP_COLOR(n, m, has_m, id) { .name = (n), .offset = offsetof(struct css_style, m), .has_offset = offsetof(struct css_style, has_m), .kind = P_COLOR, .flag_idx = (id) }
-#define PROP_FLOAT(n, m, has_m, id) { .name = (n), .offset = offsetof(struct css_style, m), .has_offset = offsetof(struct css_style, has_m), .kind = P_FLOAT, .flag_idx = (id) }
+/* A rule records the properties it sets in `set_mask`. Bit `i` belongs to
+ * entry `i` of this table, so a set bit names its own entry. */
+#define PROP(n, k, m) { .name = (n), .offset = offsetof(struct css_style, m), .has_offset = 0, .kind = (uint8_t)(k) }
+#define PROP_COLOR(n, m, has_m) { .name = (n), .offset = offsetof(struct css_style, m), .has_offset = offsetof(struct css_style, has_m), .kind = P_COLOR }
+#define PROP_FLOAT(n, m, has_m) { .name = (n), .offset = offsetof(struct css_style, m), .has_offset = offsetof(struct css_style, has_m), .kind = P_FLOAT }
 
 static const struct prop_info props[] = {
-    PROP("width",            P_VAL,      width,          1),
-    PROP("height",           P_VAL,      height,         2),
-    PROP("min-width",        P_VAL,      min_width,      3),
-    PROP("min-height",       P_VAL,      min_height,     4),
-    PROP("max-width",        P_VAL,      max_width,     22),
-    PROP("max-height",       P_VAL,      max_height,    23),
-    PROP("gap",              P_VAL,      gap,            5),
-    PROP("border-radius",    P_VAL,      border_radius,  6),
-    PROP("border-width",     P_VAL,      border_width,   7),
-    PROP("border",           P_VAL,      border_width,   7),
-    PROP("padding",          P_INSETS,   padding,        8),
-    PROP("margin",           P_INSETS,   margin,         9),
-    PROP_COLOR("background-color", bg_color, has_bg_color, 10),
-    PROP_COLOR("background",       bg_color, has_bg_color, 10),
-    PROP_COLOR("color",            text_color, has_text_color, 11),
-    PROP_COLOR("border-color",     border_color, has_border_color, 12),
-    PROP_FLOAT("opacity",    opacity,    has_opacity,   14),
-    PROP("flex-direction",   P_FLEX_DIR, flex_direction,15),
-    PROP("align-items",      P_ALIGN,    align_items,   16),
-    PROP("justify-content",  P_JUSTIFY,  justify_content,17),
-    PROP("cursor",           P_CURSOR,   cursor,         18),
-    PROP("transition-duration", P_DURATION, transition_duration, 19),
-    PROP("animation-duration",  P_DURATION, transition_duration, 19),
-    PROP("transition",          P_DURATION, transition_duration, 19),
-    PROP("box-shadow",       P_SHADOW,   shadow_x,      20),
-    PROP_COLOR("ripple-color", ripple_color, has_ripple_color, 21),
-    PROP_COLOR("ripple",       ripple_color, has_ripple_color, 21),
+    PROP("width",            P_VAL,      width),
+    PROP("height",           P_VAL,      height),
+    PROP("min-width",        P_VAL,      min_width),
+    PROP("min-height",       P_VAL,      min_height),
+    PROP("max-width",        P_VAL,      max_width),
+    PROP("max-height",       P_VAL,      max_height),
+    PROP("gap",              P_VAL,      gap),
+    PROP("border-radius",    P_VAL,      border_radius),
+    PROP("border-width",     P_VAL,      border_width),
+    PROP("border",           P_VAL,      border_width),
+    PROP("padding",          P_INSETS,   padding),
+    PROP("margin",           P_INSETS,   margin),
+    PROP_COLOR("background-color", bg_color, has_bg_color),
+    PROP_COLOR("background",       bg_color, has_bg_color),
+    PROP_COLOR("color",            text_color, has_text_color),
+    PROP_COLOR("border-color",     border_color, has_border_color),
+    PROP_FLOAT("opacity",    opacity,    has_opacity),
+    PROP("flex-direction",   P_FLEX_DIR, flex_direction),
+    PROP("align-items",      P_ALIGN,    align_items),
+    PROP("justify-content",  P_JUSTIFY,  justify_content),
+    PROP("cursor",           P_CURSOR,   cursor),
+    PROP("transition-duration", P_DURATION, transition_duration),
+    PROP("animation-duration",  P_DURATION, transition_duration),
+    PROP("transition",          P_DURATION, transition_duration),
+    PROP("box-shadow",       P_SHADOW,   shadow_x),
+    PROP_COLOR("ripple-color", ripple_color, has_ripple_color),
+    PROP_COLOR("ripple",       ripple_color, has_ripple_color),
 };
 
-static const struct prop_info *const prop_by_flag[32] = {
-    [1]  = &props[0],
-    [2]  = &props[1],
-    [3]  = &props[2],
-    [4]  = &props[3],
-    [5]  = &props[6],
-    [6]  = &props[7],
-    [7]  = &props[8],
-    [8]  = &props[10],
-    [9]  = &props[11],
-    [10] = &props[12],
-    [11] = &props[14],
-    [12] = &props[15],
-    [14] = &props[16],
-    [15] = &props[17],
-    [16] = &props[18],
-    [17] = &props[19],
-    [18] = &props[20],
-    [19] = &props[21],
-    [20] = &props[24],
-    [21] = &props[25],
-    [22] = &props[4],
-    [23] = &props[5],
-};
+static const size_t prop_count = sizeof(props) / sizeof(props[0]);
+static_assert(sizeof(props) / sizeof(props[0]) <= 64,
+              "The rule set mask holds one bit per property");
 
 enum css_declaration_result {
     CSS_DECLARATION_OK,
@@ -334,7 +314,7 @@ static enum css_declaration_result apply_prop(struct css_rule *r, const char *ke
 {
     while (isspace((unsigned char)*key)) key++;
     while (isspace((unsigned char)*val)) val++;
-    for (size_t i = 0; i < sizeof(props)/sizeof(props[0]); i++) {
+    for (size_t i = 0; i < prop_count; i++) {
         const struct prop_info *p = &props[i];
         if (strcmp(key, p->name) != 0) continue;
         char *dst = (char *)&r->style + p->offset;
@@ -453,7 +433,7 @@ static enum css_declaration_result apply_prop(struct css_rule *r, const char *ke
         }
         case P_SHADOW:
             if (!parse_box_shadow(val, &r->style)) return CSS_DECLARATION_INVALID;
-            r->set_mask |= (1ULL << p->flag_idx);
+            r->set_mask |= (1ULL << (p - props));
             return CSS_DECLARATION_OK;
         case P_DURATION: {
             const char *s = val;
@@ -469,14 +449,14 @@ static enum css_declaration_result apply_prop(struct css_rule *r, const char *ke
                 if (f < 0.0f) f = 0.0f;
                 if (f > 3600000.0f) f = 3600000.0f;
                 memcpy(dst, &f, sizeof(f));
-                r->set_mask |= (1ULL << p->flag_idx);
+                r->set_mask |= (1ULL << (p - props));
                 r->style.has_transition_duration = true;
                 return CSS_DECLARATION_OK;
             }
             return CSS_DECLARATION_INVALID;
         }
         }
-        r->set_mask |= (1ULL << p->flag_idx);
+        r->set_mask |= (1ULL << (p - props));
         return CSS_DECLARATION_OK;
     }
     return CSS_DECLARATION_UNKNOWN;
@@ -1132,11 +1112,9 @@ static void apply_rule_props(const struct css_rule *r, struct css_style *out)
         uint64_t bit_mask = 1ULL << bit;
         mask &= ~bit_mask;
 
-        if (bit >= 32)
+        if ((size_t)bit >= prop_count)
             continue;
-        const struct prop_info *p = prop_by_flag[bit];
-        if (!p)
-            continue;
+        const struct prop_info *p = &props[bit];
         char *dst = (char *)out + p->offset;
         const char *src = (const char *)&r->style + p->offset;
         if (p->kind == P_INSETS) {
