@@ -9,8 +9,10 @@
 #include "util/geom.h"
 
 struct ui_tab_preview_source {
-    bool (*capture)(void *userdata, int index, int width, bool dragging,
-                    const char **title, const struct ui_image **image);
+    /* Captures tab title and optional thumbnail within width and max_height. */
+    bool (*capture)(void *userdata, int index, int width, int max_height,
+                    bool dragging, const char **title,
+                    const struct ui_image **image);
     void *userdata;
 };
 
@@ -23,18 +25,29 @@ struct ui_tab_preview {
          * against it. No pixels means no image. */
         struct ui_image image;
         struct rect2i anchor;
+        struct rect2i budget_box;
+        struct vector2i follow_pos;
         uint64_t show_at;
         uint64_t refresh_at;
         int index;
         int pending;
+        int budget_w;
+        int budget_h;
         bool dragging;
         bool shown;
         bool suppressed;
+        bool hidden_for_size;
+        bool managed_anchor;
     } impl;
 };
 
 /* Initializes tab preview popup `p`. */
 void ui_tab_preview_init(struct ui_tab_preview *p);
+/* Sets whether the parent layout updates anchor and size budget for `p`. */
+void ui_tab_preview_set_managed_anchor(struct ui_tab_preview *p, bool managed);
+/* Syncs hovered anchor and size budget inside a parent layout pass. Return true when the caller must measure the preview again. */
+bool ui_tab_preview_sync_anchor(struct ui_tab_preview *p, int index,
+                                struct rect2i anchor);
 /* Sets the tab capture source callback for `p`. */
 void ui_tab_preview_set_source(struct ui_tab_preview *p,
                                const struct ui_tab_preview_source *source);

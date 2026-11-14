@@ -96,6 +96,14 @@ static void set_hover_new(struct ui_tabbar *tb, bool hover_new, uint64_t now_ms)
     ui_hover_anim_set_target(&tb->impl.new_hover, hover_new ? 1.0f : 0.0f, now_ms);
 }
 
+static void clear_hover(struct ui_tabbar *tb, uint64_t now_ms)
+{
+    if (!tb)
+        return;
+    set_hover(tb, -1, -1, now_ms);
+    set_hover_new(tb, false, now_ms);
+}
+
 static bool bar_tick(struct ui_tabbar *tb, struct vector2i size, uint64_t now_ms)
 {
     (void)size;
@@ -174,6 +182,8 @@ bool ui_tabbar_begin_close(struct ui_tabbar *tb, int index, uint64_t now_ms)
     if (tab->closing)
         return true;
     tab->closing = true;
+    if (tb->impl.hover_tab == index || tb->impl.hover_close == index)
+        set_hover(tb, -1, -1, now_ms);
     if (tab->open.value <= 0.0f)
         tab->open.value = 1.0f;
     ui_hover_anim_set_target(&tab->open, 0.0f, now_ms);
@@ -1019,9 +1029,12 @@ void ui_tabbar_set_tabs(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
         }
         l->active = active;
     }
-    bool count_changed = tb->impl.n_tabs != n;
+    int prev_n = tb->impl.n_tabs;
+    bool count_changed = prev_n != n;
     tb->impl.n_tabs = n;
     tb_ensure_tabs(tb, n);
+    if (n < prev_n)
+        clear_hover(tb, 0);
     if (n > 0) {
         if (ui_widget_has_focus(&tb->widget))
             tb->impl.keyboard_index = active_tab(tb);
@@ -1056,6 +1069,7 @@ bool ui_tabbar_insert_tab(struct ui_tabbar *tb, int slot)
     tb->impl.tab_cap++;
     if (slot <= tb->impl.keyboard_index)
         tb->impl.keyboard_index++;
+    clear_hover(tb, 0);
     ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
     return true;
 }
@@ -1082,6 +1096,7 @@ bool ui_tabbar_remove_tab(struct ui_tabbar *tb, int index)
              tb->impl.keyboard_index >= tb->impl.tab_cap)
         tb->impl.keyboard_index = tb->impl.tab_cap > 0
             ? tb->impl.tab_cap - 1 : 0;
+    clear_hover(tb, 0);
     ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
     return true;
 }
@@ -1107,6 +1122,7 @@ void ui_tabbar_move_tab(struct ui_tabbar *tb, int from, int to)
     else if (from > to && tb->impl.keyboard_index >= to &&
              tb->impl.keyboard_index < from)
         tb->impl.keyboard_index++;
+    clear_hover(tb, 0);
     ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
 }
 
@@ -1194,4 +1210,13 @@ void ui_tabbar_set_external_drag(struct ui_tabbar *tb, bool active,
 int ui_tabbar_external_slot(const struct ui_tabbar *tb)
 {
     return tb && tb->impl.external_drag ? tb->impl.external_slot : -1;
+}
+
+int ui_tabbar_hovered_tab(const struct ui_tabbar *tb)
+{
+    if (!tb || tb->impl.hover_tab < 0 || tb->impl.hover_tab >= tb->impl.n_tabs ||
+        tb->impl.hover_tab >= tb->impl.tab_cap ||
+        tb->impl.tabs[tb->impl.hover_tab].closing)
+        return -1;
+    return tb->impl.hover_tab;
 }

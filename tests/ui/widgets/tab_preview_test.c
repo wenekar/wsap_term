@@ -5,6 +5,7 @@
 #include "ui/debug.h"
 #include "paint/scene.h"
 #include "ui/ui.h"
+#include "ui/widget_impl.h"
 #include "util/json.h"
 
 static uint32_t pixels[400 * 300];
@@ -20,12 +21,14 @@ struct fixture {
     int tabs;
     int captures;
     int last_width;
+    int last_max_height;
     int rows_extra;
     bool unchanged;
 };
 
-static bool capture(void *userdata, int index, int width, bool dragging,
-                    const char **title, const struct ui_image **image)
+static bool capture(void *userdata, int index, int width, int max_height,
+                    bool dragging, const char **title,
+                    const struct ui_image **image)
 {
     (void)dragging;
     struct fixture *f = userdata;
@@ -33,13 +36,30 @@ static bool capture(void *userdata, int index, int width, bool dragging,
         return false;
     f->captures++;
     f->last_width = width;
+    f->last_max_height = max_height;
     snprintf(f->title, sizeof(f->title), "tab %d", index);
+    *title = f->title;
+    if (max_height <= 0) {
+        f->image = (struct ui_image){0};
+        *image = NULL;
+        return true;
+    }
+    int img_w = width;
+    int img_h = img_w / 2 + f->rows_extra;
+    if (img_h > max_height) {
+        img_w = img_h > 0 ? img_w * max_height / img_h : 0;
+        img_h = max_height;
+    }
+    if (img_w <= 0 || img_h <= 0) {
+        f->image = (struct ui_image){0};
+        *image = NULL;
+        return true;
+    }
     f->image = (struct ui_image){
         .pixels = pixels,
-        .size = { .x = width, .y = width / 2 + f->rows_extra },
+        .size = { .x = img_w, .y = img_h },
         .gen = f->unchanged ? f->image.gen : (uint64_t)f->captures,
     };
-    *title = f->title;
     *image = &f->image;
     return true;
 }
@@ -336,6 +356,460 @@ static void unchanged_refresh_requests_no_redraw_test(void)
     teardown(&f);
 }
 
+static void assert_lint_clean(struct fixture *f)
+{
+    assert(ui_surface_build_scene(&f->surface, &f->scene));
+    struct ui_debug_view view = {
+        .root = &f->root, .scene = &f->scene, .surface = &f->surface,
+    };
+    assert(ui_debug_lint_scene(&view, NULL, 0) == 0);
+}
+
+static void short_window_hides_too_small_preview_and_shows_title_only_test(void)
+{
+    struct fixture f;
+    setup(&f, ".tab-preview { width: 200px; padding: 4px; gap: 6px; border: 1px solid #444; }");
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 60 });
+    ui_surface_prepare(&f.surface);
+
+    ui_tab_preview_hover(&f.card, 0, TAB0);
+    tick(&f, 1000);
+    tick(&f, ui_surface_next_deadline(&f.surface));
+    assert(!ui_tab_preview_is_visible(&f.card));
+    assert(f.captures == 0);
+    assert(rect2i_is_empty(bounds(&f)));
+    assert_lint_clean(&f);
+    assert(!find_op(&f.scene, UI_SCENE_OP_IMAGE));
+    assert(!find_op(&f.scene, UI_SCENE_OP_TEXT));
+
+    /* Growing enough for the title row shows a title-only card below TAB0. */
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 66 });
+    ui_surface_prepare(&f.surface);
+    assert(ui_tab_preview_is_visible(&f.card));
+    assert(f.last_max_height == 0);
+    struct rect2i b = bounds(&f);
+    assert(b.y >= rect2i_end(TAB0).y);
+    assert(rect2i_end(b).y <= 66);
+    assert_lint_clean(&f);
+    assert(!find_op(&f.scene, UI_SCENE_OP_IMAGE));
+    struct ui_debug_parts parts = {0};
+    ui_debug_collect_parts(ui_tab_preview_widget(&f.card), &parts);
+    assert(find_part(&parts, "title") && !find_part(&parts, "image"));
+    ui_debug_parts_free(&parts);
+
+    /* Shrinking below the title card height hides the shown card. */
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 60 });
+    ui_surface_prepare(&f.surface);
+    assert(!ui_tab_preview_is_visible(&f.card));
+    assert(rect2i_is_empty(bounds(&f)));
+    assert_lint_clean(&f);
+    teardown(&f);
+}
+
+static void height_constrained_window_narrows_and_resizes_test(void)
+{
+    struct fixture f;
+    setup(&f, ".tab-preview { width: 200px; padding: 4px; gap: 6px; border: 1px solid #444; }");
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 120 });
+    ui_surface_prepare(&f.surface);
+
+    ui_tab_preview_hover(&f.card, 0, TAB0);
+    tick(&f, 1000);
+    tick(&f, ui_surface_next_deadline(&f.surface));
+    assert(ui_tab_preview_is_visible(&f.card));
+    assert(f.last_max_height == 52);
+    assert(f.image.size.y > 0 && f.image.size.y <= 52);
+    struct rect2i b = bounds(&f);
+    assert(b.y >= rect2i_end(TAB0).y && rect2i_end(b).y <= 120);
+    assert(rect2i_end(b).x <= 400);
+    assert_lint_clean(&f);
+    assert(find_op(&f.scene, UI_SCENE_OP_IMAGE));
+
+    /* Narrowing width clamps the card cleanly inside the viewport. */
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 100, .y = 120 });
+    ui_surface_prepare(&f.surface);
+    assert(ui_tab_preview_is_visible(&f.card));
+    b = bounds(&f);
+    assert(b.width <= 100 && rect2i_end(b).x <= 100);
+    assert(ui_tab_preview_image_width(&f.card, false) <= 90);
+    assert_lint_clean(&f);
+
+    /* Growing gives back full image dimensions. */
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 300 });
+    ui_surface_prepare(&f.surface);
+    assert(ui_tab_preview_is_visible(&f.card));
+    assert(f.last_max_height > 52);
+    assert(f.image.size.y > 52);
+    b = bounds(&f);
+    assert(b.width == 200 && b.y >= rect2i_end(TAB0).y);
+    assert(rect2i_end(b).y <= 300);
+    assert_lint_clean(&f);
+
+    /* Shrinking to title-only height drops the image without covering TAB0. */
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 64 });
+    ui_surface_prepare(&f.surface);
+    assert(ui_tab_preview_is_visible(&f.card));
+    b = bounds(&f);
+    assert(b.y >= rect2i_end(TAB0).y && rect2i_end(b).y <= 64);
+    assert_lint_clean(&f);
+    assert(!find_op(&f.scene, UI_SCENE_OP_IMAGE));
+
+    /* Shrinking too narrow for chrome hides the preview and growing restores it. */
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 10, .y = 120 });
+    ui_surface_prepare(&f.surface);
+    assert(!ui_tab_preview_is_visible(&f.card));
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 300 });
+    ui_surface_prepare(&f.surface);
+    assert(ui_tab_preview_is_visible(&f.card));
+    assert_lint_clean(&f);
+    teardown(&f);
+}
+
+static void style_scale_change_recomputes_budget_test(void)
+{
+    struct fixture f;
+    setup(&f, ".tab-preview { width: 200px; padding: 4px; gap: 6px; border: 1px solid #444; }");
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 80 });
+    ui_surface_prepare(&f.surface);
+
+    ui_tab_preview_hover(&f.card, 0, TAB0);
+    tick(&f, 1000);
+    tick(&f, ui_surface_next_deadline(&f.surface));
+    assert(ui_tab_preview_is_visible(&f.card));
+
+    /* At 2x scale the title card no longer fits below TAB0 inside 80px. */
+    ui_surface_set_scale(&f.surface, (struct css_scale_context){
+        .dpi_scale = 2, .cell_w = 16, .cell_h = 32,
+    });
+    ui_surface_prepare(&f.surface);
+    assert(!ui_tab_preview_is_visible(&f.card));
+    assert_lint_clean(&f);
+
+    /* Restoring 1x scale reveals the preview again without covering TAB0. */
+    ui_surface_set_scale(&f.surface, (struct css_scale_context){
+        .dpi_scale = 1, .cell_w = 8, .cell_h = 16,
+    });
+    ui_surface_prepare(&f.surface);
+    assert(ui_tab_preview_is_visible(&f.card));
+    struct rect2i b = bounds(&f);
+    assert(b.y >= rect2i_end(TAB0).y && rect2i_end(b).y <= 80);
+    assert_lint_clean(&f);
+    teardown(&f);
+}
+
+static void short_window_drag_budget_test(void)
+{
+    struct fixture f;
+    setup(&f, ".tab-preview { width: 200px; padding: 4px; gap: 6px; border: 1px solid #444; }");
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 80 });
+    ui_surface_prepare(&f.surface);
+
+    ui_tab_preview_follow(&f.card, 0, (struct vector2i){ .x = 200, .y = 40 });
+    ui_surface_prepare(&f.surface);
+    assert(ui_tab_preview_is_visible(&f.card));
+    struct rect2i b = bounds(&f);
+    assert(b.y >= 0 && rect2i_end(b).y <= 80);
+    assert_lint_clean(&f);
+
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 20 });
+    ui_surface_prepare(&f.surface);
+    assert(!ui_tab_preview_is_visible(&f.card));
+
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 200 });
+    ui_surface_prepare(&f.surface);
+    assert(ui_tab_preview_is_visible(&f.card));
+    b = bounds(&f);
+    assert(b.y >= 0 && rect2i_end(b).y <= 200);
+    assert_lint_clean(&f);
+    teardown(&f);
+}
+
+static bool capture_oversized(void *userdata, int index, int width,
+                              int max_height, bool dragging,
+                              const char **title,
+                              const struct ui_image **image)
+{
+    (void)index;
+    (void)max_height;
+    (void)dragging;
+    struct fixture *f = userdata;
+    f->captures++;
+    snprintf(f->title, sizeof(f->title), "oversized");
+    f->image = (struct ui_image){
+        .pixels = pixels,
+        .size = { .x = width, .y = 200 },
+        .gen = (uint64_t)f->captures,
+    };
+    *title = f->title;
+    *image = &f->image;
+    return true;
+}
+
+static void bottom_anchor_flips_above_within_budget_test(void)
+{
+    struct fixture f;
+    setup(&f, ".tab-preview { width: 200px; padding: 4px; gap: 6px; border: 1px solid #444; }");
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 120 });
+    ui_surface_prepare(&f.surface);
+
+    struct rect2i bottom_tab = { .pos = { .x = 10, .y = 90 }, .size = { .x = 150, .y = 30 } };
+    ui_tab_preview_hover(&f.card, 0, bottom_tab);
+    tick(&f, 1000);
+    tick(&f, ui_surface_next_deadline(&f.surface));
+    assert(ui_tab_preview_is_visible(&f.card));
+    assert(f.last_max_height == 52);
+    struct rect2i b = bounds(&f);
+    assert(b.y >= 0 && rect2i_end(b).y <= bottom_tab.y);
+    assert_lint_clean(&f);
+
+    /* Moving anchor into a shorter bottom window leaves too little room above. */
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 50 });
+    bottom_tab.y = 20;
+    ui_tab_preview_hover(&f.card, 0, bottom_tab);
+    ui_surface_prepare(&f.surface);
+    assert(!ui_tab_preview_is_visible(&f.card));
+    teardown(&f);
+}
+
+static void oversized_source_image_is_dropped_test(void)
+{
+    struct fixture f;
+    setup(&f, ".tab-preview { width: 200px; padding: 4px; gap: 6px; border: 1px solid #444; }");
+    ui_tab_preview_set_source(&f.card, &(struct ui_tab_preview_source){
+        .capture = capture_oversized, .userdata = &f,
+    });
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 120 });
+    ui_surface_prepare(&f.surface);
+
+    ui_tab_preview_hover(&f.card, 0, TAB0);
+    tick(&f, 1000);
+    tick(&f, ui_surface_next_deadline(&f.surface));
+    assert(ui_tab_preview_is_visible(&f.card));
+    struct rect2i b = bounds(&f);
+    assert(b.y >= rect2i_end(TAB0).y && rect2i_end(b).y <= 120);
+    assert_lint_clean(&f);
+    assert(!find_op(&f.scene, UI_SCENE_OP_IMAGE));
+    teardown(&f);
+}
+
+static void hidden_for_size_transitions_test(void)
+{
+    struct fixture f;
+    setup(&f, ".tab-preview { width: 120px; padding: 4px; gap: 2px; border: 1px solid #444; }");
+
+    /* Switch hovered tab while hidden for tiny window, then grow back. */
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 40 });
+    ui_surface_prepare(&f.surface);
+    ui_tab_preview_hover(&f.card, 0, TAB0);
+    tick(&f, 1000);
+    tick(&f, ui_surface_next_deadline(&f.surface));
+    assert(!ui_tab_preview_is_visible(&f.card) && f.captures == 0);
+
+    ui_tab_preview_hover(&f.card, 1, TAB1);
+    ui_surface_prepare(&f.surface);
+    assert(!ui_tab_preview_is_visible(&f.card) && f.captures == 0);
+
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 300 });
+    ui_surface_prepare(&f.surface);
+    assert(ui_tab_preview_is_visible(&f.card));
+    assert(!strcmp(f.title, "tab 1"));
+    assert(bounds(&f).x >= TAB1.x && bounds(&f).y >= rect2i_end(TAB1).y);
+    assert_lint_clean(&f);
+
+    /* Leaving tabs while hidden cancels restoration on later growth. */
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 40 });
+    ui_surface_prepare(&f.surface);
+    assert(!ui_tab_preview_is_visible(&f.card));
+    ui_tab_preview_hover(&f.card, -1, (struct rect2i){0});
+    int captures = f.captures;
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 300 });
+    ui_surface_prepare(&f.surface);
+    assert(!ui_tab_preview_is_visible(&f.card) && f.captures == captures);
+
+    /* A fresh hover after leaving restarts the normal show delay. */
+    ui_tab_preview_hover(&f.card, 0, TAB0);
+    tick(&f, 3000);
+    assert(!ui_tab_preview_is_visible(&f.card));
+    uint64_t due = ui_surface_next_deadline(&f.surface);
+    assert(due > 3000);
+    tick(&f, due);
+    assert(ui_tab_preview_is_visible(&f.card) && !strcmp(f.title, "tab 0"));
+
+    /* Suppressing while hidden keeps previews blocked after growing back. */
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 40 });
+    ui_surface_prepare(&f.surface);
+    assert(!ui_tab_preview_is_visible(&f.card));
+    ui_tab_preview_suppress(&f.card);
+    captures = f.captures;
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 300 });
+    ui_surface_prepare(&f.surface);
+    ui_tab_preview_hover(&f.card, 1, TAB1);
+    tick(&f, 5000);
+    tick(&f, 7000);
+    assert(!ui_tab_preview_is_visible(&f.card) && f.captures == captures);
+
+    ui_tab_preview_hover(&f.card, -1, (struct rect2i){0});
+    ui_tab_preview_hover(&f.card, 1, TAB1);
+    tick(&f, 8000);
+    tick(&f, ui_surface_next_deadline(&f.surface));
+    assert(ui_tab_preview_is_visible(&f.card) && !strcmp(f.title, "tab 1"));
+    teardown(&f);
+}
+
+struct sync_root {
+    struct ui_tab_preview *card;
+    int sync_index;
+    struct rect2i sync_anchor;
+};
+
+static struct vector2i sync_root_measure(const struct ui_widget *widget,
+                                         struct ui_constraints constraints)
+{
+    struct sync_root *sr = widget->userdata;
+    ui_widget_measure(ui_tab_preview_widget(sr->card), constraints);
+    return ui_constraints_clamp(constraints, constraints.max);
+}
+
+static void sync_root_layout(struct ui_widget *widget, struct rect2i bounds)
+{
+    struct sync_root *sr = widget->userdata;
+    if (ui_tab_preview_sync_anchor(sr->card, sr->sync_index, sr->sync_anchor))
+        ui_widget_measure(ui_tab_preview_widget(sr->card),
+                          (struct ui_constraints){ .max = bounds.size });
+    ui_widget_place_child(ui_tab_preview_widget(sr->card), bounds);
+}
+
+static const struct ui_widget_ops SYNC_ROOT_OPS = {
+    .name = "preview-sync-root",
+    .measure = sync_root_measure,
+    .layout = sync_root_layout,
+};
+
+static void managed_anchor_sync_test(void)
+{
+    struct fixture f;
+    setup(&f, ".tab-preview { width: 120px; padding: 4px; gap: 2px; border: 1px solid #444; }");
+    struct sync_root sr = { .card = &f.card, .sync_index = -1 };
+    f.root.ops = &SYNC_ROOT_OPS;
+    f.root.userdata = &sr;
+    ui_tab_preview_set_managed_anchor(&f.card, true);
+
+    /* Sync never starts a hover when the preview is idle. */
+    assert(!ui_tab_preview_sync_anchor(&f.card, 0, TAB0));
+    assert(!ui_tab_preview_is_visible(&f.card) && f.captures == 0);
+
+    /* Pending hover receives updated anchor during resize before showing. */
+    struct rect2i moved = { .pos = { .x = 40 }, .size = { .x = 120, .y = 30 } };
+    sr.sync_index = 0;
+    sr.sync_anchor = moved;
+    ui_tab_preview_hover(&f.card, 0, TAB0);
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 280 });
+    tick(&f, 1000);
+    tick(&f, ui_surface_next_deadline(&f.surface));
+    assert(ui_tab_preview_is_visible(&f.card));
+    assert(bounds(&f).x == moved.x);
+
+    /* Scale change captures once at new scale inside root_layout cleanly. */
+    int before = f.captures;
+    struct rect2i scaled = { .pos = { .x = 80 }, .size = { .x = 240, .y = 60 } };
+    sr.sync_anchor = scaled;
+    ui_surface_set_scale(&f.surface, (struct css_scale_context){
+        .dpi_scale = 2, .cell_w = 16, .cell_h = 32,
+    });
+    (void)ui_surface_take_frame_request(&f.surface);
+    assert(ui_surface_build_scene(&f.surface, &f.scene));
+    assert(!ui_surface_frame_pending(&f.surface));
+    assert(f.captures == before + 1);
+    assert(bounds(&f).x == scaled.x && bounds(&f).y >= rect2i_end(scaled).y);
+
+    /* Index mismatch in layout hides card without setting frame pending. */
+    sr.sync_index = -1;
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 420, .y = 280 });
+    (void)ui_surface_take_frame_request(&f.surface);
+    assert(ui_surface_build_scene(&f.surface, &f.scene));
+    assert(!ui_tab_preview_is_visible(&f.card) && rect2i_is_empty(bounds(&f)));
+    assert(!ui_surface_frame_pending(&f.surface));
+
+    /* Suppressed preview stays suppressed even when sync sees index < 0. */
+    sr.sync_index = 0;
+    sr.sync_anchor = TAB0;
+    ui_tab_preview_hover(&f.card, 0, TAB0);
+    tick(&f, 3000);
+    tick(&f, ui_surface_next_deadline(&f.surface));
+    assert(ui_tab_preview_is_visible(&f.card));
+    ui_tab_preview_suppress(&f.card);
+    sr.sync_index = -1;
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 300 });
+    before = f.captures;
+    ui_tab_preview_hover(&f.card, 1, TAB1);
+    tick(&f, 4000);
+    tick(&f, 6000);
+    assert(!ui_tab_preview_is_visible(&f.card) && f.captures == before);
+
+    /* Explicitly leaving tabs lifts suppression cleanly. */
+    sr.sync_index = 1;
+    sr.sync_anchor = TAB1;
+    ui_tab_preview_hover(&f.card, -1, (struct rect2i){0});
+    ui_tab_preview_hover(&f.card, 1, TAB1);
+    tick(&f, 7000);
+    tick(&f, ui_surface_next_deadline(&f.surface));
+    assert(ui_tab_preview_is_visible(&f.card) && !strcmp(f.title, "tab 1"));
+
+    /* Dragging preview still updates budget on scale and sheet changes. */
+    ui_surface_set_scale(&f.surface, (struct css_scale_context){
+        .dpi_scale = 1, .cell_w = 8, .cell_h = 16,
+    });
+    ui_tab_preview_follow(&f.card, 0, (struct vector2i){ .x = 200, .y = 150 });
+    assert(ui_tab_preview_is_visible(&f.card));
+    int drag_w_1x = f.last_width;
+    before = f.captures;
+    ui_surface_set_scale(&f.surface, (struct css_scale_context){
+        .dpi_scale = 2, .cell_w = 16, .cell_h = 32,
+    });
+    assert(ui_tab_preview_is_visible(&f.card));
+    assert(f.captures > before && f.last_width > drag_w_1x);
+
+    struct css_sheet narrow_sheet = {0};
+    assert(css_parse(&narrow_sheet,
+                     ".tab-preview { width: 80px; padding: 4px; gap: 2px; border-width: 1px; border-color: #444; }\n"
+                     ".tab-preview.dragging { width: 80px; }"));
+    int drag_w_2x = f.last_width;
+    before = f.captures;
+    ui_surface_set_sheet(&f.surface, &narrow_sheet);
+    ui_surface_prepare(&f.surface);
+    assert(ui_tab_preview_is_visible(&f.card));
+    assert(f.captures > before && f.last_width < drag_w_2x);
+    css_sheet_clear(&narrow_sheet);
+
+    /* Bare resize on a fills-root container defers budget to parent layout. */
+    struct ui_widget wrapper;
+    ui_widget_init(&wrapper, NULL, NULL);
+    ui_widget_remove_child(&f.root, ui_tab_preview_widget(&f.card));
+    ui_surface_set_root(&f.surface, &wrapper);
+    ui_widget_add_child(&wrapper, &f.root);
+    ui_widget_add_child(&f.root, ui_tab_preview_widget(&f.card));
+    ui_surface_set_scale(&f.surface, (struct css_scale_context){
+        .dpi_scale = 1, .cell_w = 8, .cell_h = 16,
+    });
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 300 });
+    sr.sync_index = 1;
+    sr.sync_anchor = TAB1;
+    ui_tab_preview_follow(&f.card, -1, (struct vector2i){0});
+    ui_tab_preview_hover(&f.card, 1, TAB1);
+    tick(&f, 8000);
+    tick(&f, ui_surface_next_deadline(&f.surface));
+    assert(ui_tab_preview_is_visible(&f.card));
+    before = f.captures;
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 400, .y = 100 });
+    (void)ui_surface_take_frame_request(&f.surface);
+    assert(ui_surface_build_scene(&f.surface, &f.scene));
+    assert(!ui_surface_frame_pending(&f.surface));
+    assert(f.captures == before + 1);
+    assert(rect2i_end(bounds(&f)).y <= 100);
+    teardown(&f);
+    ui_widget_destroy(&wrapper);
+}
+
 int main(void)
 {
     hover_shows_card_below_tab_after_delay_test();
@@ -345,6 +819,14 @@ int main(void)
     dragged_card_follows_pointer_inside_surface_test();
     hover_picture_is_larger_than_drag_picture_test();
     restyled_sheet_updates_card_and_title_test();
+    short_window_hides_too_small_preview_and_shows_title_only_test();
+    height_constrained_window_narrows_and_resizes_test();
+    style_scale_change_recomputes_budget_test();
+    short_window_drag_budget_test();
+    bottom_anchor_flips_above_within_budget_test();
+    oversized_source_image_is_dropped_test();
+    hidden_for_size_transitions_test();
+    managed_anchor_sync_test();
     puts("PASS: tab preview tests");
     return 0;
 }

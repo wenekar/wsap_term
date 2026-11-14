@@ -432,6 +432,7 @@ void app_tabs_reorder(struct window *window, int from, int to)
                 (size_t)(from - to) * sizeof(*tabs->ids));
     tabs->ids[to] = id;
     ui_tabbar_move_tab(&tabs->tabbar, from, to);
+    ui_widget_invalidate(&tabs->root, UI_WIDGET_INVALIDATE_LAYOUT);
     if (tabs->active == from)
         tabs->active = to;
     else if (from < to && tabs->active > from && tabs->active <= to)

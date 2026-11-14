@@ -1980,6 +1980,47 @@ static void labels_grow_and_shrink(void)
     teardown(&f);
 }
 
+static void hovered_tab_clears_on_tab_mutations_test(void)
+{
+    struct fixture f;
+    setup(&f, 3, 600);
+    build(&f);
+
+    motion(&f, center(tab_rect(&f, 1)), 100);
+    assert(ui_tabbar_hovered_tab(&f.tb) == 1);
+    clear_log(&f);
+    assert(ui_tabbar_insert_tab(&f.tb, 0));
+    show(&f, 4, 0);
+    assert(ui_tabbar_hovered_tab(&f.tb) == -1);
+    assert(count(&f, UI_ACTION_HIGHLIGHT) == 0);
+    build(&f);
+
+    motion(&f, center(tab_rect(&f, 2)), 200);
+    assert(ui_tabbar_hovered_tab(&f.tb) == 2);
+    clear_log(&f);
+    assert(ui_tabbar_begin_close(&f.tb, 2, 250));
+    assert(ui_tabbar_hovered_tab(&f.tb) == -1);
+    assert(count(&f, UI_ACTION_HIGHLIGHT) == 0);
+    assert(ui_tabbar_remove_tab(&f.tb, 2));
+    show(&f, 3, 0);
+    build(&f);
+
+    motion(&f, center(tab_rect(&f, 1)), 300);
+    assert(ui_tabbar_hovered_tab(&f.tb) == 1);
+    clear_log(&f);
+    ui_tabbar_move_tab(&f.tb, 1, 2);
+    assert(ui_tabbar_hovered_tab(&f.tb) == -1);
+    assert(count(&f, UI_ACTION_HIGHLIGHT) == 0);
+
+    motion(&f, center(tab_rect(&f, 2)), 400);
+    assert(ui_tabbar_hovered_tab(&f.tb) == 2);
+    clear_log(&f);
+    show(&f, 2, 0);
+    assert(ui_tabbar_hovered_tab(&f.tb) == -1);
+    assert(count(&f, UI_ACTION_HIGHLIGHT) == 0);
+    teardown(&f);
+}
+
 int main(void)
 {
     title_change_damages_only_its_tab();
@@ -2045,6 +2086,7 @@ int main(void)
     cursor_marks_buttons_test();
     press_ripple_ticks_until_done_and_uses_css();
     transparent_ripple_color_disables_ripple();
+    hovered_tab_clears_on_tab_mutations_test();
     puts("PASS: tabbar tests");
     return 0;
 }

@@ -107,6 +107,8 @@ int ui_tabbar_steady_height(const struct ui_tabbar *tb);
 int ui_tabbar_bar_height(const struct ui_tabbar *tb);
 /* Returns true when a tab drag operation is in progress. */
 bool ui_tabbar_is_dragging(const struct ui_tabbar *tb);
+/* Returns the index of the hovered tab, or -1 if none. */
+int ui_tabbar_hovered_tab(const struct ui_tabbar *tb);
 
 /* Calculates the bounding rectangle of the tab at `index`. */
 bool ui_tabbar_tab_rect(const struct ui_tabbar *tb, int index,

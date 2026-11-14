@@ -49,6 +49,15 @@ static void root_layout(struct ui_widget *widget, struct rect2i bounds)
             .pos = { .x = bounds.x, .y = bounds.y + offset },
             .size = { .x = bounds.width, .y = bounds.height - reserve },
         });
+    int hovered = ui_tabbar_hovered_tab(&tabs->tabbar);
+    struct rect2i anchor = {0};
+    bool has_anchor = hovered >= 0 && hovered != tabs->active &&
+                      app_tab_is_live(app_tabs_entry(tabs, hovered)) &&
+                      ui_tabbar_tab_rect(&tabs->tabbar, hovered, &anchor);
+    if (ui_tab_preview_sync_anchor(&tabs->preview,
+                                   has_anchor ? hovered : -1, anchor))
+        ui_widget_measure(ui_tab_preview_widget(&tabs->preview),
+                          (struct ui_constraints){ .max = bounds.size });
     ui_widget_place_child(ui_tab_preview_widget(&tabs->preview), bounds);
     ui_widget_place_child(ui_palette_widget(&tabs->palette), bounds);
 }
@@ -133,6 +142,7 @@ void app_tabs_widgets_init(struct app_tabs *tabs)
     ui_widget_init(&tabs->root, &TABS_ROOT_OPS, NULL);
     ui_tabbar_init(&tabs->tabbar);
     ui_tab_preview_init(&tabs->preview);
+    ui_tab_preview_set_managed_anchor(&tabs->preview, true);
     ui_palette_init(&tabs->palette);
     ui_widget_add_child(&tabs->root, ui_tabbar_widget(&tabs->tabbar));
     ui_widget_add_child(&tabs->root, ui_tab_preview_widget(&tabs->preview));
