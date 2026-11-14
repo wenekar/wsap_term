@@ -43,13 +43,25 @@ static inline int tt_cursor_y(const struct wsap_vtcore *t) { return wsap_vtcore_
 static inline int tt_history(const struct wsap_vtcore *t) { return wsap_vtcore_scrollback(t).total; }
 static inline int tt_view_offset(const struct wsap_vtcore *t) { return wsap_vtcore_scrollback(t).offset; }
 
-static struct wsap_vtcore_snapshot *tt_snapshot_for(struct wsap_vtcore *t)
+static struct wsap_vtcore_snapshot *tt_snap;
+
+/* Free the shared test snapshot at process exit. */
+static inline void tt_snapshot_free(void)
 {
-    static struct wsap_vtcore_snapshot *snap;
-    if (!snap)
-        snap = wsap_vtcore_snapshot_new();
-    wsap_vtcore_snapshot_update(snap, t);
-    return snap;
+    wsap_vtcore_snapshot_free(tt_snap);
+    tt_snap = NULL;
+}
+
+static inline struct wsap_vtcore_snapshot *tt_snapshot_for(struct wsap_vtcore *t)
+{
+    if (!tt_snap) {
+        tt_snap = wsap_vtcore_snapshot_new();
+        if (tt_snap)
+            atexit(tt_snapshot_free);
+    }
+    if (tt_snap)
+        wsap_vtcore_snapshot_update(tt_snap, t);
+    return tt_snap;
 }
 
 static const struct wsap_vtcore_cell tt_blank_cell = {
