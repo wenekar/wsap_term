@@ -309,16 +309,23 @@ enum css_declaration_result {
     CSS_DECLARATION_SELECTOR,
 };
 
-static enum css_declaration_result apply_prop(struct css_rule *r, const char *key,
-                                               const char *val)
+static int find_prop_idx(const char *key)
 {
     while (isspace((unsigned char)*key)) key++;
-    while (isspace((unsigned char)*val)) val++;
     for (size_t i = 0; i < prop_count; i++) {
-        const struct prop_info *p = &props[i];
-        if (strcmp(key, p->name) != 0) continue;
-        char *dst = (char *)&r->style + p->offset;
-        switch (p->kind) {
+        if (strcmp(key, props[i].name) == 0)
+            return (int)i;
+    }
+    return -1;
+}
+
+static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
+                                                  const char *val)
+{
+    while (isspace((unsigned char)*val)) val++;
+    const struct prop_info *p = &props[idx];
+    char *dst = (char *)&r->style + p->offset;
+    switch (p->kind) {
         case P_VAL: {
             struct css_value v = parse_value(val);
             if (v.unit == CSS_UNIT_NONE) return CSS_DECLARATION_INVALID;
@@ -433,33 +440,27 @@ static enum css_declaration_result apply_prop(struct css_rule *r, const char *ke
         }
         case P_SHADOW:
             if (!parse_box_shadow(val, &r->style)) return CSS_DECLARATION_INVALID;
-            r->set_mask |= (1ULL << (p - props));
-            return CSS_DECLARATION_OK;
+            break;
         case P_DURATION: {
             const char *s = val;
             while (*s && !isdigit((unsigned char)*s) && *s != '.')
                 s++;
             char *end = NULL;
             float f = strtof(s, &end);
-            if (end && end != s && isfinite(f)) {
-                while (end && isspace((unsigned char)*end)) end++;
-                if (end && !strncmp(end, "s", 1) && strncmp(end, "ms", 2) != 0) {
-                    f *= 1000.0f;
-                }
-                if (f < 0.0f) f = 0.0f;
-                if (f > 3600000.0f) f = 3600000.0f;
-                memcpy(dst, &f, sizeof(f));
-                r->set_mask |= (1ULL << (p - props));
-                r->style.has_transition_duration = true;
-                return CSS_DECLARATION_OK;
-            }
-            return CSS_DECLARATION_INVALID;
+            if (!end || end == s || !isfinite(f))
+                return CSS_DECLARATION_INVALID;
+            while (isspace((unsigned char)*end)) end++;
+            if (!strncmp(end, "s", 1) && strncmp(end, "ms", 2) != 0)
+                f *= 1000.0f;
+            if (f < 0.0f) f = 0.0f;
+            if (f > 3600000.0f) f = 3600000.0f;
+            memcpy(dst, &f, sizeof(f));
+            r->style.has_transition_duration = true;
+            break;
         }
-        }
-        r->set_mask |= (1ULL << (p - props));
-        return CSS_DECLARATION_OK;
     }
-    return CSS_DECLARATION_UNKNOWN;
+    r->set_mask |= (1ULL << idx);
+    return CSS_DECLARATION_OK;
 }
 
 static char *dup_range(const char *s, size_t len)
@@ -512,6 +513,490 @@ static bool parse_single_selector(struct css_rule *r, const char *s, size_t len,
     return true;
 }
 
+#define CSS_VAR_MAX_DEPTH 32
+#define CSS_VAR_MAX_BYTES (64 * 1024)
+
+static const char css_var_absent_sentinel;
+#define VAR_OVERRIDE_ABSENT (&css_var_absent_sentinel)
+
+enum css_var_status {
+    CSS_VAR_OK = 0,
+    CSS_VAR_SYNTAX,
+    CSS_VAR_MISSING,
+    CSS_VAR_CYCLE,
+    CSS_VAR_LIMIT,
+    CSS_VAR_OOM,
+};
+
+struct css_buf {
+    char *data;
+    size_t len;
+    size_t cap;
+};
+
+struct css_var_change {
+    int var_idx;
+    char *old_value; /* NULL when this pass adds the variable. */
+};
+
+struct css_var_tracker {
+    struct css_var_change *changes;
+    int count;
+    int cap;
+};
+
+struct css_expand_ctx {
+    size_t bytes;
+    size_t calls;
+    const int *dirty_map; /* sheet->vars[i] -> tracker change index, or -1 */
+    const char *const *overrides;
+    const struct css_var *blame;
+    const struct css_var *first_dirty;
+    bool blame_dirty;
+    bool touched_dirty;
+    bool touched_untouched;
+    bool saw_dirty;
+};
+
+static enum css_var_status css_buf_append(struct css_buf *b, const char *s,
+                                          size_t n, size_t *work_bytes)
+{
+    if (work_bytes) {
+        if (n > CSS_VAR_MAX_BYTES - *work_bytes)
+            return CSS_VAR_LIMIT;
+        *work_bytes += n;
+    }
+    if (n > CSS_VAR_MAX_BYTES - b->len)
+        return CSS_VAR_LIMIT;
+    size_t need = b->len + n + 1;
+    if (need > b->cap) {
+        size_t cap = b->cap ? b->cap : 64;
+        while (cap < need) {
+            if (cap > (size_t)-1 / 2) {
+                cap = need;
+                break;
+            }
+            cap *= 2;
+        }
+        char *next = realloc(b->data, cap);
+        if (!next)
+            return CSS_VAR_OOM;
+        b->data = next;
+        b->cap = cap;
+    }
+    if (n > 0)
+        memcpy(b->data + b->len, s, n);
+    b->len += n;
+    b->data[b->len] = '\0';
+    return CSS_VAR_OK;
+}
+
+static void var_tracker_clear(struct css_var_tracker *t)
+{
+    for (int i = 0; i < t->count; i++)
+        free(t->changes[i].old_value);
+    free(t->changes);
+    *t = (struct css_var_tracker){0};
+}
+
+static bool var_tracker_record(struct css_var_tracker *t, int var_idx,
+                               const char *old_value)
+{
+    for (int i = 0; i < t->count; i++) {
+        if (t->changes[i].var_idx == var_idx)
+            return true;
+    }
+    char *old_copy = NULL;
+    if (old_value) {
+        old_copy = strdup(old_value);
+        if (!old_copy)
+            return false;
+    }
+    if (t->count == t->cap) {
+        int cap = t->cap ? t->cap * 2 : 16;
+        struct css_var_change *next = realloc(t->changes,
+                                              (size_t)cap * sizeof(*next));
+        if (!next) {
+            free(old_copy);
+            return false;
+        }
+        t->changes = next;
+        t->cap = cap;
+    }
+    t->changes[t->count++] = (struct css_var_change){
+        .var_idx = var_idx,
+        .old_value = old_copy,
+    };
+    return true;
+}
+
+static void rule_clear_vars(struct css_rule *r)
+{
+    for (int i = 0; i < r->var_prop_count; i++)
+        free(r->var_props[i].value);
+    free(r->var_props);
+    r->var_props = NULL;
+    r->var_prop_count = 0;
+    r->var_prop_cap = 0;
+}
+
+static bool rule_copy_var_props(struct css_rule *dst, const struct css_rule *src)
+{
+    dst->var_props = NULL;
+    dst->var_prop_count = 0;
+    dst->var_prop_cap = 0;
+    if (src->var_prop_count <= 0)
+        return true;
+    dst->var_props = calloc((size_t)src->var_prop_count, sizeof(*dst->var_props));
+    if (!dst->var_props)
+        return false;
+    dst->var_prop_cap = src->var_prop_count;
+    for (int i = 0; i < src->var_prop_count; i++) {
+        dst->var_props[i] = src->var_props[i];
+        dst->var_props[i].value = strdup(src->var_props[i].value);
+        if (!dst->var_props[i].value) {
+            rule_clear_vars(dst);
+            return false;
+        }
+        dst->var_prop_count++;
+    }
+    return true;
+}
+
+static void rule_remove_var_prop(struct css_rule *r, int idx)
+{
+    free(r->var_props[idx].value);
+    if (idx + 1 < r->var_prop_count) {
+        memmove(&r->var_props[idx], &r->var_props[idx + 1],
+                (size_t)(r->var_prop_count - 1 - idx) * sizeof(*r->var_props));
+    }
+    r->var_prop_count--;
+}
+
+static int rule_drop_matching_var_props(struct css_rule *r, int limit_idx,
+                                        size_t prop_idx)
+{
+    uint16_t off = props[prop_idx].offset;
+    uint8_t kind = props[prop_idx].kind;
+    int dropped = 0;
+    for (int i = limit_idx - 1; i >= 0; i--) {
+        size_t cur = r->var_props[i].prop_idx;
+        if (props[cur].offset == off && props[cur].kind == kind) {
+            rule_remove_var_prop(r, i);
+            dropped++;
+        }
+    }
+    return limit_idx - dropped;
+}
+
+static bool rule_set_var_prop(struct css_rule *r, size_t prop_idx, const char *val,
+                              int line, int col, bool pending)
+{
+    char *copy = strdup(val);
+    if (!copy)
+        return false;
+    if (r->var_prop_count == r->var_prop_cap) {
+        int cap = r->var_prop_cap ? r->var_prop_cap * 2 : 4;
+        struct css_var_prop *next = realloc(r->var_props,
+                                            (size_t)cap * sizeof(*next));
+        if (!next) {
+            free(copy);
+            return false;
+        }
+        r->var_props = next;
+        r->var_prop_cap = cap;
+    }
+    /* Preserve earlier live bindings while a later var() awaits :root definitions. */
+    if (!pending)
+        rule_drop_matching_var_props(r, r->var_prop_count, prop_idx);
+    r->var_props[r->var_prop_count++] = (struct css_var_prop){
+        .prop_idx = prop_idx,
+        .value = copy,
+        .line = line,
+        .column = col,
+        .pending = pending,
+    };
+    return true;
+}
+
+static bool is_valid_var_name(const char *s, size_t len)
+{
+    if (len <= 2 || s[0] != '-' || s[1] != '-')
+        return false;
+    for (size_t i = 2; i < len; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (!isalnum(c) && c != '-' && c != '_')
+            return false;
+    }
+    return true;
+}
+
+static const struct css_var *sheet_find_var(const struct css_sheet *sheet,
+                                            const char *name, size_t len)
+{
+    for (int i = 0; i < sheet->var_count; i++) {
+        const char *vn = sheet->vars[i].name;
+        if (strlen(vn) == len && memcmp(vn, name, len) == 0)
+            return &sheet->vars[i];
+    }
+    return NULL;
+}
+
+static bool sheet_set_var(struct css_sheet *sheet, struct css_var_tracker *tracker,
+                          const char *name, const char *val, int line, int col)
+{
+    char *vcopy = strdup(val);
+    if (!vcopy)
+        return false;
+    for (int i = 0; i < sheet->var_count; i++) {
+        if (strcmp(sheet->vars[i].name, name) == 0) {
+            if (tracker && !var_tracker_record(tracker, i, sheet->vars[i].value)) {
+                free(vcopy);
+                return false;
+            }
+            free(sheet->vars[i].value);
+            sheet->vars[i].value = vcopy;
+            sheet->vars[i].line = line;
+            sheet->vars[i].column = col;
+            return true;
+        }
+    }
+    char *ncopy = strdup(name);
+    if (!ncopy) {
+        free(vcopy);
+        return false;
+    }
+    if (sheet->var_count == sheet->var_cap) {
+        int cap = sheet->var_cap ? sheet->var_cap * 2 : 16;
+        struct css_var *vars = realloc(sheet->vars, (size_t)cap * sizeof(*vars));
+        if (!vars) {
+            free(ncopy);
+            free(vcopy);
+            return false;
+        }
+        sheet->vars = vars;
+        sheet->var_cap = cap;
+    }
+    int idx = sheet->var_count;
+    if (tracker && !var_tracker_record(tracker, idx, NULL)) {
+        free(ncopy);
+        free(vcopy);
+        return false;
+    }
+    sheet->vars[sheet->var_count++] = (struct css_var){
+        .name = ncopy,
+        .value = vcopy,
+        .line = line,
+        .column = col,
+    };
+    return true;
+}
+
+static bool selector_is_root(const char *s, const char *e)
+{
+    const char *p = s;
+    const char *tok = NULL;
+    size_t tok_len = 0;
+    while (p < e) {
+        if (isspace((unsigned char)*p)) {
+            p++;
+            continue;
+        }
+        if (p + 1 < e && p[0] == '/' && p[1] == '*') {
+            p += 2;
+            while (p + 1 < e && !(p[0] == '*' && p[1] == '/')) p++;
+            p = p + 1 < e ? p + 2 : e;
+            continue;
+        }
+        if (tok)
+            return false;
+        tok = p;
+        while (p < e && !isspace((unsigned char)*p) &&
+               !(p + 1 < e && p[0] == '/' && p[1] == '*'))
+            p++;
+        tok_len = (size_t)(p - tok);
+    }
+    return tok && tok_len == 5 && memcmp(tok, ":root", 5) == 0;
+}
+
+static const char *find_var_call(const char *s, const char *base)
+{
+    const char *p = s;
+    while ((p = strstr(p, "var(")) != NULL) {
+        if (p == base)
+            return p;
+        unsigned char prev = (unsigned char)p[-1];
+        if (!isalnum(prev) && prev != '-' && prev != '_')
+            return p;
+        p += 4;
+    }
+    return NULL;
+}
+
+static bool parse_var_call(const char *start, const char **out_end,
+                           const char **out_name, size_t *out_nlen,
+                           const char **out_fb, size_t *out_flen,
+                           bool *out_has_fb)
+{
+    const char *p = start + 4;
+    int depth = 1;
+    const char *comma = NULL;
+    while (*p && depth > 0) {
+        if (*p == '(')
+            depth++;
+        else if (*p == ')') {
+            depth--;
+            if (depth == 0)
+                break;
+        } else if (*p == ',' && depth == 1 && !comma) {
+            comma = p;
+        }
+        p++;
+    }
+    if (depth != 0)
+        return false;
+    const char *n_start = start + 4;
+    const char *n_end = comma ? comma : p;
+    while (n_start < n_end && isspace((unsigned char)*n_start)) n_start++;
+    while (n_end > n_start && isspace((unsigned char)n_end[-1])) n_end--;
+    size_t n_len = (size_t)(n_end - n_start);
+    if (!is_valid_var_name(n_start, n_len))
+        return false;
+    *out_end = p + 1;
+    *out_name = n_start;
+    *out_nlen = n_len;
+    *out_has_fb = (comma != NULL);
+    if (comma) {
+        const char *f_start = comma + 1;
+        const char *f_end = p;
+        while (f_start < f_end && isspace((unsigned char)*f_start)) f_start++;
+        while (f_end > f_start && isspace((unsigned char)f_end[-1])) f_end--;
+        *out_fb = f_start;
+        *out_flen = (size_t)(f_end - f_start);
+    } else {
+        *out_fb = NULL;
+        *out_flen = 0;
+    }
+    return true;
+}
+
+static const struct css_var *lookup_var_value(const struct css_sheet *sheet,
+                                              const char *name, size_t nlen,
+                                              struct css_expand_ctx *ctx,
+                                              const char **out_val,
+                                              bool *out_dirty)
+{
+    const struct css_var *v = sheet_find_var(sheet, name, nlen);
+    if (!v) {
+        *out_val = NULL;
+        *out_dirty = false;
+        return NULL;
+    }
+    int c = ctx->dirty_map ? ctx->dirty_map[v - sheet->vars] : -1;
+    if (c >= 0 && ctx->overrides && ctx->overrides[c] == VAR_OVERRIDE_ABSENT) {
+        *out_val = NULL;
+        *out_dirty = false;
+        return NULL;
+    }
+    *out_dirty = (c >= 0);
+    if (*out_dirty) {
+        ctx->touched_dirty = true;
+        if (!ctx->first_dirty)
+            ctx->first_dirty = v;
+    } else if (ctx->dirty_map) {
+        ctx->touched_untouched = true;
+    }
+    *out_val = (c >= 0 && ctx->overrides && ctx->overrides[c])
+        ? ctx->overrides[c]
+        : v->value;
+    return v;
+}
+
+static void record_var_blame(struct css_expand_ctx *ctx, const struct css_var *v,
+                             bool v_dirty, bool prefer_dirty)
+{
+    if (!ctx->blame || (prefer_dirty && v_dirty && !ctx->blame_dirty)) {
+        ctx->blame = v;
+        ctx->blame_dirty = v_dirty;
+    }
+    if (v_dirty)
+        ctx->saw_dirty = true;
+}
+
+static enum css_var_status expand_var_text(const struct css_sheet *sheet,
+                                           const char *text,
+                                           const char *stack[], int stack_len,
+                                           int depth, struct css_buf *out,
+                                           struct css_expand_ctx *ctx)
+{
+    if (depth >= CSS_VAR_MAX_DEPTH || ctx->calls >= CSS_VAR_MAX_BYTES)
+        return CSS_VAR_LIMIT;
+    ctx->calls++;
+    const char *p = text;
+    const char *call;
+    while ((call = find_var_call(p, text)) != NULL) {
+        enum css_var_status lit_st = css_buf_append(out, p, (size_t)(call - p),
+                                                    &ctx->bytes);
+        if (lit_st != CSS_VAR_OK)
+            return lit_st;
+        const char *call_end, *name, *fb;
+        size_t nlen, flen;
+        bool has_fb;
+        if (!parse_var_call(call, &call_end, &name, &nlen, &fb, &flen, &has_fb))
+            return CSS_VAR_SYNTAX;
+        const char *val = NULL;
+        bool v_dirty = false;
+        const struct css_var *v = lookup_var_value(sheet, name, nlen, ctx,
+                                                   &val, &v_dirty);
+        if (v) {
+            for (int k = 0; k < stack_len; k++) {
+                if (strcmp(stack[k], v->name) == 0) {
+                    record_var_blame(ctx, v, v_dirty, true);
+                    return CSS_VAR_CYCLE;
+                }
+            }
+            stack[stack_len] = v->name;
+            struct css_buf sub = {0};
+            enum css_var_status st = expand_var_text(sheet, val, stack,
+                                                     stack_len + 1, depth + 1,
+                                                     &sub, ctx);
+            if (st == CSS_VAR_OK) {
+                enum css_var_status cp = css_buf_append(
+                    out, sub.data ? sub.data : "", sub.len, NULL);
+                free(sub.data);
+                if (cp != CSS_VAR_OK) {
+                    record_var_blame(ctx, v, v_dirty, false);
+                    return cp;
+                }
+                p = call_end;
+                continue;
+            }
+            free(sub.data);
+            if (st != CSS_VAR_MISSING || !has_fb) {
+                record_var_blame(ctx, v, v_dirty, st == CSS_VAR_CYCLE);
+                return st;
+            }
+            if (v_dirty)
+                ctx->saw_dirty = true;
+            ctx->blame = NULL;
+            ctx->blame_dirty = false;
+        } else if (!has_fb) {
+            return CSS_VAR_MISSING;
+        }
+        char *fb_copy = dup_range(fb, flen);
+        if (!fb_copy)
+            return CSS_VAR_OOM;
+        /* Pop v->name before expanding the caller's fallback so sibling retries work. */
+        enum css_var_status st = expand_var_text(sheet, fb_copy, stack,
+                                                 stack_len, depth + 1, out, ctx);
+        free(fb_copy);
+        if (st != CSS_VAR_OK)
+            return st;
+        p = call_end;
+    }
+    return css_buf_append(out, p, strlen(p), &ctx->bytes);
+}
+
 static bool sheet_reserve(struct css_sheet *sheet, int extra)
 {
     if (sheet->rule_count + extra <= sheet->rule_cap)
@@ -527,19 +1012,35 @@ static bool sheet_reserve(struct css_sheet *sheet, int extra)
     return true;
 }
 
-static bool sheet_push(struct css_sheet *sheet, const struct css_rule *proto,
-                       const char *sel, size_t len, bool *supported)
+static bool sheet_append_rule(struct css_sheet *sheet,
+                              const struct css_rule *src,
+                              const char *sel, size_t sel_len,
+                              bool *out_supported)
 {
     if (!sheet_reserve(sheet, 1))
         return false;
     struct css_rule *r = &sheet->rules[sheet->rule_count];
-    *r = *proto;
-    if (!parse_single_selector(r, sel, len, supported))
-        return false;
-    if (!*supported) {
+    *r = *src;
+    r->var_props = NULL;
+    r->var_prop_count = 0;
+    r->var_prop_cap = 0;
+    if (out_supported) {
+        if (!parse_single_selector(r, sel, sel_len, out_supported))
+            return false;
+        if (!*out_supported) {
+            free(r->selector);
+            r->selector = NULL;
+            return true;
+        }
+    } else {
+        r->selector = strdup(src->selector);
+        if (!r->selector)
+            return false;
+    }
+    if (!rule_copy_var_props(r, src)) {
         free(r->selector);
         r->selector = NULL;
-        return true;
+        return false;
     }
     sheet->rule_count++;
     return true;
@@ -607,13 +1108,9 @@ static bool sheet_sort_rules(struct css_sheet *sheet)
     return true;
 }
 
-static void report_declaration(css_diagnostic_fn report, void *userdata,
-                               enum css_declaration_result result,
-                               const char *source, const char *position,
-                               const char *key, const char *value)
+static void source_line_col(const char *source, const char *position,
+                            size_t *out_line, size_t *out_col)
 {
-    if (!report || result == CSS_DECLARATION_OK)
-        return;
     size_t line = 1, column = 1;
     for (const char *p = source; p < position; p++) {
         if (*p == '\n') {
@@ -623,6 +1120,17 @@ static void report_declaration(css_diagnostic_fn report, void *userdata,
             column++;
         }
     }
+    *out_line = line;
+    *out_col = column;
+}
+
+static void report_at(css_diagnostic_fn report, void *userdata,
+                      enum css_declaration_result result,
+                      size_t line, size_t column,
+                      const char *key, const char *value)
+{
+    if (!report || result == CSS_DECLARATION_OK)
+        return;
     const struct css_diagnostic diagnostic = {
         .kind = result == CSS_DECLARATION_UNKNOWN ? CSS_DIAGNOSTIC_UNKNOWN_PROPERTY
               : result == CSS_DECLARATION_SYNTAX ? CSS_DIAGNOSTIC_INVALID_SYNTAX
@@ -636,6 +1144,18 @@ static void report_declaration(css_diagnostic_fn report, void *userdata,
     report(&diagnostic, userdata);
 }
 
+static void report_declaration(css_diagnostic_fn report, void *userdata,
+                               enum css_declaration_result result,
+                               const char *source, const char *position,
+                               const char *key, const char *value)
+{
+    if (!report || result == CSS_DECLARATION_OK)
+        return;
+    size_t line, column;
+    source_line_col(source, position, &line, &column);
+    report_at(report, userdata, result, line, column, key, value);
+}
+
 const char *css_diagnostic_message(enum css_diagnostic_kind kind)
 {
     switch (kind) {
@@ -647,9 +1167,299 @@ const char *css_diagnostic_message(enum css_diagnostic_kind kind)
     return "CSS error";
 }
 
+static bool try_expand_and_apply(const struct css_sheet *sheet,
+                                 struct css_rule *rule, size_t prop_idx,
+                                 const char *val, const int *dirty_map,
+                                 const char *const *overrides,
+                                 enum css_var_status *out_st,
+                                 enum css_declaration_result *out_res,
+                                 struct css_expand_ctx *out_ctx)
+{
+    const char *stack[CSS_VAR_MAX_DEPTH];
+    struct css_buf buf = {0};
+    struct css_expand_ctx ctx = {
+        .dirty_map = dirty_map,
+        .overrides = overrides,
+    };
+    *out_st = expand_var_text(sheet, val, stack, 0, 0, &buf, &ctx);
+    *out_ctx = ctx;
+    if (*out_st != CSS_VAR_OK) {
+        free(buf.data);
+        *out_res = CSS_DECLARATION_INVALID;
+        return false;
+    }
+    struct css_rule tmp = {
+        .style = rule->style,
+        .set_mask = rule->set_mask,
+    };
+    *out_res = apply_prop_at(&tmp, prop_idx, buf.data ? buf.data : "");
+    free(buf.data);
+    if (*out_res != CSS_DECLARATION_OK)
+        return false;
+    rule->style = tmp.style;
+    rule->set_mask = tmp.set_mask;
+    return true;
+}
+
+static bool probe_var_prop(const struct css_sheet *sheet,
+                           const struct css_rule *rule,
+                           const struct css_var_prop *vp,
+                           const int *dirty_map,
+                           const char *const *overrides,
+                           enum css_var_status *out_st)
+{
+    struct css_rule tmp = {
+        .style = rule->style,
+        .set_mask = rule->set_mask,
+    };
+    enum css_declaration_result res = CSS_DECLARATION_OK;
+    struct css_expand_ctx ctx = {0};
+    return try_expand_and_apply(sheet, &tmp, vp->prop_idx, vp->value,
+                                dirty_map, overrides, out_st, &res, &ctx);
+}
+
+static bool isolate_failing_var(const struct css_sheet *sheet,
+                                const struct css_rule *rule,
+                                const struct css_var_prop *vp,
+                                const struct css_var_tracker *tracker,
+                                const int *dirty_map,
+                                const struct css_expand_ctx *fail_ctx,
+                                const struct css_var **out_blame,
+                                bool *out_skip_report)
+{
+    *out_blame = NULL;
+    *out_skip_report = false;
+    if (!tracker || tracker->count <= 0 || !dirty_map)
+        return true;
+
+    const char **overrides = calloc((size_t)tracker->count, sizeof(*overrides));
+    if (!overrides)
+        return false;
+    for (int c = 0; c < tracker->count; c++) {
+        overrides[c] = tracker->changes[c].old_value
+            ? tracker->changes[c].old_value
+            : VAR_OVERRIDE_ABSENT;
+    }
+
+    enum css_var_status st = CSS_VAR_OK;
+    bool base_ok = probe_var_prop(sheet, rule, vp, dirty_map, overrides, &st);
+    if (st == CSS_VAR_OOM) {
+        free(overrides);
+        return false;
+    }
+    if (!base_ok) {
+        if (fail_ctx->touched_untouched)
+            *out_skip_report = true;
+        else
+            *out_blame = fail_ctx->first_dirty;
+        free(overrides);
+        return true;
+    }
+
+    for (int c = 0; c < tracker->count; c++) {
+        const char *saved = overrides[c];
+        overrides[c] = NULL;
+        bool ok = probe_var_prop(sheet, rule, vp, dirty_map, overrides, &st);
+        overrides[c] = saved;
+        if (st == CSS_VAR_OOM) {
+            free(overrides);
+            return false;
+        }
+        if (!ok) {
+            *out_blame = &sheet->vars[tracker->changes[c].var_idx];
+            free(overrides);
+            return true;
+        }
+    }
+
+    *out_blame = fail_ctx->first_dirty;
+    free(overrides);
+    return true;
+}
+
+static bool build_dirty_map(const struct css_sheet *sheet,
+                            const struct css_var_tracker *tracker,
+                            int **out_map)
+{
+    *out_map = NULL;
+    if (!tracker || tracker->count <= 0 || sheet->var_count <= 0)
+        return true;
+    int *map = malloc((size_t)sheet->var_count * sizeof(*map));
+    if (!map)
+        return false;
+    for (int i = 0; i < sheet->var_count; i++)
+        map[i] = -1;
+    for (int c = 0; c < tracker->count; c++)
+        map[tracker->changes[c].var_idx] = c;
+    *out_map = map;
+    return true;
+}
+
+static bool report_refresh_failure(const struct css_sheet *sheet,
+                                   const struct css_rule *rule,
+                                   const struct css_var_prop *vp,
+                                   const struct css_var_tracker *tracker,
+                                   const int *dirty_map,
+                                   enum css_var_status st,
+                                   const struct css_expand_ctx *ctx,
+                                   css_diagnostic_fn report, void *userdata)
+{
+    if (!report)
+        return true;
+    if (vp->pending) {
+        report_at(report, userdata, CSS_DECLARATION_INVALID,
+                  (size_t)vp->line, (size_t)vp->column,
+                  props[vp->prop_idx].name, vp->value);
+        return true;
+    }
+    const struct css_var *blame = NULL;
+    if (st != CSS_VAR_OK) {
+        if (!ctx->saw_dirty)
+            return true;
+        blame = ctx->blame;
+    } else {
+        if (!ctx->touched_dirty)
+            return true;
+        bool skip = false;
+        if (!isolate_failing_var(sheet, rule, vp, tracker, dirty_map, ctx,
+                                 &blame, &skip))
+            return false;
+        if (skip)
+            return true;
+    }
+    if (blame) {
+        report_at(report, userdata, CSS_DECLARATION_INVALID,
+                  (size_t)blame->line, (size_t)blame->column,
+                  blame->name, blame->value);
+    } else {
+        report_at(report, userdata, CSS_DECLARATION_INVALID,
+                  (size_t)vp->line, (size_t)vp->column,
+                  props[vp->prop_idx].name, vp->value);
+    }
+    return true;
+}
+
+static bool sheet_refresh_vars(struct css_sheet *sheet,
+                               const struct css_var_tracker *tracker,
+                               int refresh_limit, int force_from,
+                               css_diagnostic_fn report, void *userdata)
+{
+    int *dirty_map = NULL;
+    if (!build_dirty_map(sheet, tracker, &dirty_map))
+        return false;
+    bool vars_updated = dirty_map != NULL;
+
+    for (int i = 0; i < sheet->rule_count; i++) {
+        struct css_rule *r = &sheet->rules[i];
+        for (int j = 0; j < r->var_prop_count;) {
+            struct css_var_prop *vp = &r->var_props[j];
+            bool force_eval = vp->pending || i >= force_from;
+            if (!force_eval && (!vars_updated || i >= refresh_limit)) {
+                j++;
+                continue;
+            }
+            const int *prop_dirty = force_eval ? NULL : dirty_map;
+            enum css_var_status st = CSS_VAR_OK;
+            enum css_declaration_result res = CSS_DECLARATION_OK;
+            struct css_expand_ctx ctx = {0};
+            if (try_expand_and_apply(sheet, r, vp->prop_idx, vp->value,
+                                     prop_dirty, NULL, &st, &res, &ctx)) {
+                if (vp->pending) {
+                    vp->pending = false;
+                    j = rule_drop_matching_var_props(r, j, vp->prop_idx);
+                }
+                j++;
+                continue;
+            }
+            if (st == CSS_VAR_OOM) {
+                free(dirty_map);
+                return false;
+            }
+            if (!report_refresh_failure(sheet, r, vp, tracker, dirty_map, st,
+                                        &ctx, report, userdata)) {
+                free(dirty_map);
+                return false;
+            }
+            if (vp->pending) {
+                rule_remove_var_prop(r, j);
+                continue;
+            }
+            j++;
+        }
+    }
+    free(dirty_map);
+    return true;
+}
+
+static bool handle_root_decl(struct css_sheet *sheet,
+                             struct css_var_tracker *tracker,
+                             const char *source, const char *k_start,
+                             const char *key, const char *val,
+                             css_diagnostic_fn report, void *userdata)
+{
+    if (key[0] != '-' || key[1] != '-') {
+        report_declaration(report, userdata, CSS_DECLARATION_UNKNOWN,
+                           source, k_start, key, val);
+        return true;
+    }
+    if (!is_valid_var_name(key, strlen(key)) || val[0] == '\0') {
+        report_declaration(report, userdata, CSS_DECLARATION_INVALID,
+                           source, k_start, key, val);
+        return true;
+    }
+    size_t line, col;
+    source_line_col(source, k_start, &line, &col);
+    return sheet_set_var(sheet, tracker, key, val, (int)line, (int)col);
+}
+
+static bool handle_rule_decl(const struct css_sheet *sheet, struct css_rule *proto,
+                             const char *source, const char *k_start,
+                             const char *key, const char *val,
+                             bool *any_pending, css_diagnostic_fn report,
+                             void *userdata)
+{
+    int idx = find_prop_idx(key);
+    if (idx < 0) {
+        report_declaration(report, userdata, CSS_DECLARATION_UNKNOWN,
+                           source, k_start, key, val);
+        return true;
+    }
+    if (!find_var_call(val, val)) {
+        enum css_declaration_result result = apply_prop_at(proto, (size_t)idx, val);
+        if (result == CSS_DECLARATION_OK)
+            rule_drop_matching_var_props(proto, proto->var_prop_count, (size_t)idx);
+        report_declaration(report, userdata, result, source, k_start, key, val);
+        return true;
+    }
+    size_t line, col;
+    source_line_col(source, k_start, &line, &col);
+    enum css_var_status st = CSS_VAR_OK;
+    enum css_declaration_result res = CSS_DECLARATION_OK;
+    struct css_expand_ctx ctx = {0};
+    if (try_expand_and_apply(sheet, proto, (size_t)idx, val, NULL, NULL,
+                             &st, &res, &ctx)) {
+        return rule_set_var_prop(proto, (size_t)idx, val, (int)line, (int)col,
+                                 false);
+    }
+    if (st == CSS_VAR_OOM)
+        return false;
+    if (st == CSS_VAR_MISSING) {
+        *any_pending = true;
+        return rule_set_var_prop(proto, (size_t)idx, val, (int)line, (int)col,
+                                 true);
+    }
+    report_declaration(report, userdata, res, source, k_start, key, val);
+    return true;
+}
+
 static bool parse_rules(struct css_sheet *sheet, const char *source,
                         css_diagnostic_fn report, void *userdata)
 {
+    int refresh_limit = sheet->rule_count;
+    struct css_var_tracker tracker = {0};
+    bool any_pending = false;
+    bool ok = true;
+    struct css_rule proto = {0};
     const char *p = source;
     while (*p) {
         p = skip_ws_and_comments(p);
@@ -670,8 +1480,9 @@ static bool parse_rules(struct css_sheet *sheet, const char *source,
             break;
         }
         const char *s_end = p;
+        bool is_root = selector_is_root(s_start, s_end);
 
-        struct css_rule proto = {0};
+        proto = (struct css_rule){0};
         p++;
         while (*p && *p != '}') {
             p = skip_ws_and_comments(p);
@@ -701,18 +1512,32 @@ static bool parse_rules(struct css_sheet *sheet, const char *source,
             if (!key || !val) {
                 free(key);
                 free(val);
-                return false;
+                ok = false;
+                goto done;
             }
-            enum css_declaration_result result = apply_prop(&proto, key, val);
-            report_declaration(report, userdata, result, source, k_start, key, val);
+            bool decl_ok = is_root
+                ? handle_root_decl(sheet, &tracker, source, k_start, key, val,
+                                   report, userdata)
+                : handle_rule_decl(sheet, &proto, source, k_start, key, val,
+                                   &any_pending, report, userdata);
             free(key);
             free(val);
+            if (!decl_ok) {
+                ok = false;
+                goto done;
+            }
         }
         if (*p == '}') {
             p++;
         } else {
             report_declaration(report, userdata, CSS_DECLARATION_SYNTAX,
                                source, s_start, "rule", "missing '}'");
+        }
+
+        if (is_root) {
+            refresh_limit = sheet->rule_count;
+            rule_clear_vars(&proto);
+            continue;
         }
 
         const char *sel_ptr = s_start;
@@ -734,12 +1559,17 @@ static bool parse_rules(struct css_sheet *sheet, const char *source,
             const char *chunk_end = comma ? comma : s_end;
             if (chunk_end > sel_ptr) {
                 bool supported;
-                if (!sheet_push(sheet, &proto, sel_ptr,
-                                (size_t)(chunk_end - sel_ptr), &supported))
-                    return false;
+                if (!sheet_append_rule(sheet, &proto, sel_ptr,
+                                       (size_t)(chunk_end - sel_ptr), &supported)) {
+                    ok = false;
+                    goto done;
+                }
                 if (!supported && report) {
                     char *selector = dup_range(sel_ptr, (size_t)(chunk_end - sel_ptr));
-                    if (!selector) return false;
+                    if (!selector) {
+                        ok = false;
+                        goto done;
+                    }
                     report_declaration(report, userdata, CSS_DECLARATION_SELECTOR,
                                        source, sel_ptr, selector,
                                        "unsupported pseudo-class");
@@ -749,8 +1579,17 @@ static bool parse_rules(struct css_sheet *sheet, const char *source,
             if (!comma) break;
             sel_ptr = comma + 1;
         }
+        rule_clear_vars(&proto);
     }
-    return true;
+    if (tracker.count > 0 || any_pending) {
+        if (!sheet_refresh_vars(sheet, &tracker, refresh_limit,
+                                sheet->rule_count, report, userdata))
+            ok = false;
+    }
+done:
+    rule_clear_vars(&proto);
+    var_tracker_clear(&tracker);
+    return ok;
 }
 
 bool css_parse_with_diagnostics(struct css_sheet *sheet, const char *p,
@@ -779,10 +1618,28 @@ void css_sheet_clear(struct css_sheet *sheet)
 {
     if (!sheet)
         return;
-    for (int i = 0; i < sheet->rule_count; i++)
+    for (int i = 0; i < sheet->rule_count; i++) {
         free(sheet->rules[i].selector);
+        rule_clear_vars(&sheet->rules[i]);
+    }
     free(sheet->rules);
+    for (int i = 0; i < sheet->var_count; i++) {
+        free(sheet->vars[i].name);
+        free(sheet->vars[i].value);
+    }
+    free(sheet->vars);
     *sheet = (struct css_sheet){0};
+}
+
+static bool append_vars(struct css_sheet *dst, const struct css_sheet *src,
+                        struct css_var_tracker *tracker)
+{
+    for (int i = 0; i < src->var_count; i++) {
+        const struct css_var *v = &src->vars[i];
+        if (!sheet_set_var(dst, tracker, v->name, v->value, v->line, v->column))
+            return false;
+    }
+    return true;
 }
 
 static bool append_rules(struct css_sheet *dst, const struct css_sheet *src)
@@ -790,12 +1647,8 @@ static bool append_rules(struct css_sheet *dst, const struct css_sheet *src)
     if (!sheet_reserve(dst, src->rule_count))
         return false;
     for (int i = 0; i < src->rule_count; i++) {
-        struct css_rule *r = &dst->rules[dst->rule_count];
-        *r = src->rules[i];
-        r->selector = strdup(src->rules[i].selector);
-        if (!r->selector)
+        if (!sheet_append_rule(dst, &src->rules[i], NULL, 0, NULL))
             return false;
-        dst->rule_count++;
     }
     return true;
 }
@@ -804,8 +1657,17 @@ bool css_sheet_append(struct css_sheet *dst, const struct css_sheet *src)
 {
     if (!dst || !src || dst == src)
         return false;
-    bool ok = append_rules(dst, src);
+    int old_rule_count = dst->rule_count;
+    int old_var_count = dst->var_count;
+    struct css_var_tracker tracker = {0};
+    bool ok = append_vars(dst, src, &tracker) && append_rules(dst, src);
     dst->has_defaults = dst->has_defaults || src->has_defaults;
+    int force_from = old_var_count > 0 ? old_rule_count : dst->rule_count;
+    if (ok && (tracker.count > 0 || force_from < dst->rule_count)) {
+        ok = sheet_refresh_vars(dst, &tracker, old_rule_count, force_from,
+                                NULL, NULL);
+    }
+    var_tracker_clear(&tracker);
     return sheet_sort_rules(dst) && ok;
 }
 
@@ -814,59 +1676,110 @@ void css_init_default(struct css_sheet *sheet)
     if (!sheet) return;
     css_sheet_clear(sheet);
     bool ok = css_parse(sheet,
-        ".label-selection { background: #45475a; color: #ffffff; }"
-        ".label-link { color: #89b4fa; border-width: 1px; }"
-        ".label-link:hover, .label-link:focus { color: #b4befe; }"
-        ".label-link:disabled { color: #585b70; }"
-        ".label-focus { border-color: #89b4fa; border-width: 1px; }"
+        ":root {"
+        " --surface: #1e1e2e;"
+        " --border: #45475a;"
+        " --fg: #cdd6f4;"
+        " --muted: #7f849c;"
+        " --disabled-fg: #585b70;"
+        " --dim-fg: var(--muted);"
+        " --accent: #89b4fa;"
+        " --accent-hover: #b4befe;"
+        " --accent-fg: #11111b;"
+        " --danger: #f38ba8;"
+        " --danger-fg: var(--accent-fg);"
+        " --drop-bg: #89b4fa33;"
+        " --section-fg: var(--accent);"
+        " --control-bg: #313244;"
+        " --control-hover-bg: #45475a;"
+        " --control-hover-fg: var(--fg);"
+        " --control-disabled-bg: var(--control-bg);"
+        " --control-disabled-fg: var(--disabled-fg);"
+        " --button-focus-fg: #ffffff;"
+        " --menu-hover-bg: #313244;"
+        " --menu-hover-fg: var(--fg);"
+        " --shortcut-hover-fg: var(--muted);"
+        " --settings-row-bg: #181825;"
+        " --settings-help-fg: #a6adc8;"
+        " --settings-active-fg: var(--accent);"
+        " --selection-bg: #45475a;"
+        " --selection-fg: #ffffff;"
+        " --caret-color: #f5e0dc;"
+        " --tab-bg: var(--surface);"
+        " --tab-fg: #a6adc8;"
+        " --tab-hover-bg: #313244;"
+        " --tab-hover-fg: var(--fg);"
+        " --tab-active-bg: #45475a;"
+        " --tab-active-fg: #ffffff;"
+        " --tab-close-fg: #a6adc8;"
+        " --tab-radius: 4px;"
+        " --tab-close-radius: 0.5em;"
+        " --scrollbar-track-hover: #bac2de26;"
+        " --scrollbar-thumb: #a6adc8;"
+        " --scrollbar-thumb-hover: #bac2de;"
+        " --scrollbar-thumb-active: var(--accent);"
+        " --scrollbar-radius: 0px;"
+        " --menu-radius: 6px;"
+        " --menu-shadow: 0 8px 24px #00000073;"
+        " }"
+        ".label-selection { background: var(--selection-bg); color: var(--selection-fg); }"
+        ".label-link { color: var(--accent); border-width: 1px; }"
+        ".label-link:hover, .label-link:focus { color: var(--accent-hover); }"
+        ".label-link:disabled { color: var(--disabled-fg); }"
+        ".label-focus { border-color: var(--accent); border-width: 1px; }"
         ".tab-bar { height: 2.2em; flex-direction: row; align-items: center; padding: 0.25em 0.5em; gap: 0.4em; }"
-        ".tab { height: 1.6em; background: #1e1e2e; color: #a6adc8; border-radius: 4px; padding: 0 0.8em; flex-direction: row; align-items: center; gap: 0.5em; cursor: pointer; }"
-        ".tab:hover { background: #313244; color: #cdd6f4; }"
-        ".tab:focus { border-color: #89b4fa; border-width: 2px; }"
-        ".tab.active { background: #45475a; color: #ffffff; }"
-        ".tab.drop-preview { background: #89b4fa; opacity: 0.45; box-shadow: 0 2px 5px #00000066; }"
+        ".tab { height: 1.6em; background: var(--tab-bg); color: var(--tab-fg); border-radius: var(--tab-radius); padding: 0 0.8em; flex-direction: row; align-items: center; gap: 0.5em; cursor: pointer; }"
+        ".tab:hover { background: var(--tab-hover-bg); color: var(--tab-hover-fg); }"
+        ".tab:focus { border-color: var(--accent); border-width: 2px; }"
+        ".tab.active { background: var(--tab-active-bg); color: var(--tab-active-fg); }"
+        ".tab.drop-preview { background: var(--accent); opacity: 0.45; box-shadow: 0 2px 5px #00000066; }"
         ".tab-title { cursor: pointer; }"
-        ".tab-close { width: 1em; height: 1em; color: #a6adc8; border-radius: 0.5em; cursor: pointer; }"
-        ".tab-close:hover { background: #f38ba8; color: #11111b; }"
-        ".tab-new { color: #a6adc8; border-radius: 4px; padding: 0 0.4em; cursor: pointer; }"
-        ".tab-new:hover { background: #313244; color: #cdd6f4; }"
+        ".tab-close { width: 1em; height: 1em; color: var(--tab-close-fg); border-radius: var(--tab-close-radius); cursor: pointer; }"
+        ".tab-close:hover { background: var(--danger); color: var(--danger-fg); }"
+        ".tab-new { color: var(--tab-fg); border-radius: var(--tab-radius); padding: 0 0.4em; cursor: pointer; }"
+        ".tab-new:hover { background: var(--tab-hover-bg); color: var(--tab-hover-fg); }"
         ".scrollbar { width: 8px; padding: 0 1px; }"
-        ".scrollbar:hover, .scrollbar:active { width: 12px; background: #bac2de26; }"
-        ".scrollbar-thumb { width: 3px; min-height: 24px; background: #a6adc8; }"
-        ".scrollbar-thumb:hover { width: 8px; background: #bac2de; }"
-        ".scrollbar-thumb:active { width: 8px; background: #89b4fa; }"
-        ".context-menu { background: #1e1e2e; border-color: #45475a; border-radius: 6px; box-shadow: 0 8px 24px #00000073; }"
-        ".menu-item { color: #cdd6f4; cursor: pointer; }"
-        ".menu-item:hover { background: #313244; color: #cdd6f4; }"
-        ".menu-item.disabled { color: #585b70; cursor: default; }"
-        ".menu-item:disabled { color: #585b70; cursor: default; }"
-        ".menu-item:checked { color: #cdd6f4; }"
-        ".menu-item.submenu { color: #cdd6f4; }"
+        ".scrollbar:hover, .scrollbar:active { width: 12px; background: var(--scrollbar-track-hover); }"
+        ".scrollbar-thumb { width: 3px; min-height: 24px; background: var(--scrollbar-thumb); border-radius: var(--scrollbar-radius); }"
+        ".scrollbar-thumb:hover { width: 8px; background: var(--scrollbar-thumb-hover); }"
+        ".scrollbar-thumb:active { width: 8px; background: var(--scrollbar-thumb-active); }"
+        ".context-menu { background: var(--surface); border-color: var(--border); border-radius: var(--menu-radius); box-shadow: var(--menu-shadow); }"
+        ".menu-item { color: var(--fg); cursor: pointer; }"
+        ".menu-item:hover { background: var(--menu-hover-bg); color: var(--menu-hover-fg); }"
+        ".menu-item.disabled { color: var(--disabled-fg); cursor: default; }"
+        ".menu-item:disabled { color: var(--disabled-fg); cursor: default; }"
+        ".menu-item:checked { color: var(--fg); }"
+        ".menu-item.submenu { color: var(--fg); }"
         ".menu-label { cursor: pointer; }"
         ".menu-label:disabled { cursor: default; }"
-        ".menu-shortcut { color: #7f849c; }"
-        ".menu-separator { background: #45475a; }"
+        ".menu-shortcut { color: var(--muted); }"
+        ".menu-shortcut:hover, .menu-shortcut:focus { color: var(--shortcut-hover-fg); }"
+        ".menu-separator { background: var(--border); }"
         ".menu-list { flex-direction: column; padding: 4px; }"
         ".menu-list .menu-item { min-height: 1.25em; padding: 0.15em 0.8em; gap: 2ch; border-radius: 4px; cursor: pointer; }"
-        ".menu-list .menu-item:focus { background: #313244; }"
-        ".menu-list .menu-item:disabled { color: #585b70; cursor: default; }"
-        ".menu-list .menu-shortcut { color: #7f849c; }"
-        ".menu-list .menu-separator { height: 1px; margin: 4px 6px; background: #45475a; }"
-        ".text-input { background: #1e1e2e; border-color: #45475a; border-width: 1px; border-radius: 4px; padding: 2px 1ch; min-width: 20ch; cursor: text; }"
-        ".text-input:focus { border-color: #89b4fa; }"
-        ".button:focus { background: #45475a; }"
-        ".command-palette { background: #1e1e2e; border-color: #45475a; border-width: 1px; border-radius: 6px; }"
+        ".menu-list .menu-item:focus { background: var(--menu-hover-bg); color: var(--control-hover-fg); }"
+        ".menu-list .menu-item:disabled { color: var(--disabled-fg); cursor: default; }"
+        ".menu-list .menu-shortcut { color: var(--muted); }"
+        ".menu-list .menu-separator { height: 1px; margin: 4px 6px; background: var(--border); }"
+        ".text-input { background: var(--surface); border-color: var(--border); border-width: 1px; border-radius: 4px; padding: 2px 1ch; min-width: 20ch; cursor: text; }"
+        ".text-input:focus { border-color: var(--accent); }"
+        ".text-input-text { color: var(--fg); }"
+        ".text-input-text.empty { color: var(--dim-fg); }"
+        ".text-input-selection { background: var(--selection-bg); }"
+        ".text-input-caret { background: var(--caret-color); }"
+        ".button:focus { background: var(--control-hover-bg); color: var(--button-focus-fg); }"
+        ".command-palette { background: var(--surface); border-color: var(--border); border-width: 1px; border-radius: 6px; }"
         ".command-palette .text-input { background: transparent; border-width: 0; border-radius: 0; min-width: 0; padding: 6px 0; }"
-        ".palette-empty { color: #7f849c; }"
-        ".tab-preview { width: 400px; padding: 8px; gap: 6px; background: #1e1e2e; border-color: #45475a; border-width: 1px; border-radius: 8px; box-shadow: 0 6px 18px #00000073; }"
+        ".palette-empty { color: var(--dim-fg); }"
+        ".tab-preview { width: 400px; padding: 8px; gap: 6px; background: var(--surface); border-color: var(--border); border-width: 1px; border-radius: 8px; box-shadow: 0 6px 18px #00000073; }"
         ".tab-preview.dragging { width: 280px; }"
-        ".tab-preview-title { color: #cdd6f4; }"
-        ".dropdown-button { padding: 0.4em 1ch; background: #313244; color: #cdd6f4; border-radius: 4px; cursor: pointer; }"
-        ".dropdown-button:hover, .dropdown-button:focus { background: #45475a; }"
-        ".dropdown-popup { width: 46ch; height: 17em; padding: 0.6em 1ch; gap: 0.5em; background: #1e1e2e; color: #cdd6f4; border-radius: 6px; }"
+        ".tab-preview-title { color: var(--fg); }"
+        ".dropdown-button { padding: 0.4em 1ch; background: var(--control-bg); color: var(--fg); border-radius: 4px; cursor: pointer; }"
+        ".dropdown-button:hover, .dropdown-button:focus { background: var(--control-hover-bg); color: var(--control-hover-fg); }"
+        ".dropdown-popup { width: 46ch; height: 17em; padding: 0.6em 1ch; gap: 0.5em; background: var(--surface); color: var(--fg); border-radius: 6px; }"
         ".dropdown-scroll { height: grow; }"
-        ".terminal-drop-target { background: #89b4fa33; border-color: #89b4fa; border-width: 2px; }"
-        ".settings-form { flex-direction: column; padding: 1.2em 2ch; gap: 0.8em; color: #cdd6f4; }"
+        ".terminal-drop-target { background: var(--drop-bg); border-color: var(--accent); border-width: 2px; }"
+        ".settings-form { flex-direction: column; padding: 1.2em 2ch; gap: 0.8em; color: var(--fg); }"
         ".settings-header { align-items: center; gap: 2ch; }"
         ".settings-title { width: grow; }"
         ".settings-search { padding: 0.45em 1ch; }"
@@ -874,23 +1787,23 @@ void css_init_default(struct css_sheet *sheet)
         ".settings-sidebar { width: 17ch; gap: 0.4em; }"
         ".settings-scroll { width: grow; }"
         ".settings-fields { gap: 0.55em; }"
-        ".settings-section { padding: 0.4em 0; color: #89b4fa; }"
-        ".settings-row { padding: 0.65em 1ch; gap: 2ch; align-items: center; background: #181825; border-radius: 6px; }"
+        ".settings-section { padding: 0.4em 0; color: var(--section-fg); }"
+        ".settings-row { padding: 0.65em 1ch; gap: 2ch; align-items: center; background: var(--settings-row-bg); border-radius: 6px; }"
         ".settings-description { width: grow; min-width: 0; gap: 0.25em; }"
-        ".settings-help { color: #a6adc8; }"
+        ".settings-help { color: var(--settings-help-fg); }"
         ".settings-editor { width: grow; min-width: 0; align-items: stretch; gap: 0.4em; }"
         ".settings-editor .text-input { min-width: 0; padding: 0.4em 1ch; }"
-        ".settings-error { color: #f38ba8; }"
+        ".settings-error { color: var(--danger); }"
         ".settings-footer { align-items: center; gap: 1ch; }"
         ".settings-status { width: grow; }"
-        ".settings-button { padding: 0.4em 1ch; background: #313244; border-radius: 4px; cursor: pointer; }"
-        ".settings-button:hover, .settings-button:focus { background: #45475a; }"
-        ".settings-button:disabled { color: #585b70; cursor: default; }"
-        ".settings-primary { background: #89b4fa; color: #11111b; }"
-        ".settings-primary:hover, .settings-primary:focus { background: #b4befe; }"
-        ".settings-primary:disabled { background: #313244; color: #585b70; }"
-        ".settings-nav.active { background: #45475a; color: #89b4fa; }"
-        ".settings-link { color: #89b4fa; background: transparent; cursor: pointer; }"
+        ".settings-button { padding: 0.4em 1ch; background: var(--control-bg); border-radius: 4px; cursor: pointer; }"
+        ".settings-button:hover, .settings-button:focus { background: var(--control-hover-bg); color: var(--button-focus-fg); }"
+        ".settings-button:disabled { background: var(--control-disabled-bg); color: var(--control-disabled-fg); cursor: default; }"
+        ".settings-primary { background: var(--accent); color: var(--accent-fg); }"
+        ".settings-primary:hover, .settings-primary:focus { background: var(--accent-hover); color: var(--accent-fg); }"
+        ".settings-primary:disabled { background: var(--control-disabled-bg); color: var(--control-disabled-fg); }"
+        ".settings-nav.active { background: var(--tab-active-bg); color: var(--settings-active-fg); }"
+        ".settings-link { color: var(--section-fg); background: transparent; cursor: pointer; }"
     );
     sheet->has_defaults = ok;
 }

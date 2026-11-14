@@ -203,6 +203,35 @@ static void plain_host_sheet_gets_defaults_test(void)
     css_sheet_clear(&host);
 }
 
+static void host_root_variables_override_defaults_test(void)
+{
+    struct css_sheet host = {0};
+    assert(css_parse(&host, ":root { --accent: #ff00aa; --surface: #121314; }"));
+
+    struct ui_style_context context = {0};
+    ui_style_context_init(&context);
+    ui_style_context_set_sheet(&context, &host);
+
+    struct css_style bar = ui_style_context_style(&context, "tab-bar", 0);
+    assert(!bar.has_bg_color);
+
+    struct css_style link = ui_style_context_style(&context, "label-link", 0);
+    assert(link.has_text_color && link.text_color == 0xFFFF00AAu);
+
+    struct css_style focus = ui_style_context_style(&context, "label-focus", 0);
+    assert(focus.has_border_color && focus.border_color == 0xFFFF00AAu);
+
+    struct css_style tab = ui_style_context_style(&context, "tab", 0);
+    assert(tab.has_bg_color && tab.bg_color == 0xFF121314u);
+
+    struct css_style palette =
+        ui_style_context_style(&context, "command-palette", 0);
+    assert(palette.has_bg_color && palette.bg_color == 0xFF121314u);
+
+    ui_style_context_destroy(&context);
+    css_sheet_clear(&host);
+}
+
 int main(void)
 {
     style_resolution_and_inheritance_test();
@@ -211,5 +240,6 @@ int main(void)
     generic_style_sizing_test();
     host_sheet_with_defaults_is_not_duplicated_test();
     plain_host_sheet_gets_defaults_test();
+    host_root_variables_override_defaults_test();
     return 0;
 }

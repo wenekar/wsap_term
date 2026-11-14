@@ -174,6 +174,14 @@ For example:
 ```
 
 The CSS implementation is a subset of browser CSS.
+Sheets support `:root` variables and `var()` calls with fallback values.
+A theme can set `:root` variables to change default chrome styles.
+
+```css
+:root { --accent: #3daee9; --surface: #141618; }
+.panel { background: var(--surface, #1e1e2e); border-color: var(--accent); }
+```
+
 See [Clay layout](ui-library-state.md#clay-layout) for sizing and layout rules.
 Unknown properties produce a diagnostic on standard error.
 The inspector shows the resolved style.

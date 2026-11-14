@@ -137,11 +137,29 @@ static inline float css_style_effective_opacity(const struct css_style *s)
     return (s && s->has_opacity) ? s->opacity : 1.0f;
 }
 
+struct css_var {
+    char *name;
+    char *value;
+    int line;
+    int column;
+};
+
+struct css_var_prop {
+    size_t prop_idx;
+    char *value;
+    int line;
+    int column;
+    bool pending;
+};
+
 struct css_rule {
     char *selector;
     uint64_t set_mask;
     size_t last_off;
     struct css_style style;
+    struct css_var_prop *var_props; /* Unexpanded declarations referencing var(). */
+    int var_prop_count;
+    int var_prop_cap;
     enum css_pseudo pseudo;
     int class_rank;
     bool is_class;
@@ -152,6 +170,9 @@ struct css_sheet {
     struct css_rule *rules; /* Sorted in apply order. */
     int rule_count;
     int rule_cap;
+    struct css_var *vars;   /* Custom properties declared in :root blocks. */
+    int var_count;
+    int var_cap;
     bool has_defaults; /* The sheet is built on the css_init_default rules. */
 };
 

@@ -6,15 +6,15 @@
 
 struct css_messages {
     int count;
-    enum css_diagnostic_kind kind[3];
-    size_t line[3], column[3];
-    char property[3][32], value[3][32];
+    enum css_diagnostic_kind kind[16];
+    size_t line[16], column[16];
+    char property[16][32], value[16][32];
 };
 
 static void record_css_message(const struct css_diagnostic *message, void *userdata)
 {
     struct css_messages *messages = userdata;
-    assert(messages->count < 3);
+    assert(messages->count < 16);
     int i = messages->count++;
     messages->kind[i] = message->kind;
     messages->line[i] = message->line;
@@ -389,6 +389,266 @@ static void test_property_spellings_share_a_field(void)
     css_sheet_clear(&sheet);
 }
 
+/* Verify :root custom properties, var() expansion, fallbacks, and overrides. */
+static void test_root_variables_and_var_expansion(void)
+{
+    struct css_sheet sheet = {0};
+    struct css_messages messages = {0};
+    const char *css =
+        ":root {\n"
+        "  --accent: #3584E4;\n"
+        "  --derived: var(--accent);\n"
+        "  --shadow-c: #0000005A;\n"
+        "  --radius: 8px;\n"
+        "}\n"
+        ".a, .b { border-radius: var(--radius); box-shadow: 0 2px 6px var(--shadow-c); }\n"
+        ".c { color: var(--derived); background: var(--missing, #112233); }\n"
+        ".d { color: var(--missing1, var(--missing2, #445566)); }\n"
+        ".over { color: var(--accent); color: #123456; }\n"
+        ".late { color: var(--late-fg); }\n"
+        ":root { --late-fg: #778899; }\n";
+    assert(css_parse_with_diagnostics(&sheet, css, record_css_message, &messages));
+    assert(messages.count == 0);
+
+    struct css_style st;
+    css_style_resolve(&sheet, "a", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.border_radius.unit == CSS_UNIT_PX && st.border_radius.val == 8.0f);
+    assert(st.has_shadow && st.shadow_color == 0x5A000000u && st.shadow_blur.val == 6.0f);
+
+    css_style_resolve(&sheet, "b", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.border_radius.unit == CSS_UNIT_PX && st.border_radius.val == 8.0f);
+    assert(st.has_shadow && st.shadow_color == 0x5A000000u);
+
+    css_style_resolve(&sheet, "c", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFF3584E4u);
+    assert(st.has_bg_color && st.bg_color == 0xFF112233u);
+
+    css_style_resolve(&sheet, "d", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFF445566u);
+
+    css_style_resolve(&sheet, "late", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFF778899u);
+
+    /* Updating :root re-evaluates .c and .d but leaves explicit #123456 intact. */
+    assert(css_parse_with_diagnostics(&sheet,
+        ":root { --accent: #ABCDEF; --missing2: #654321; }",
+        record_css_message, &messages));
+    assert(messages.count == 0);
+    css_style_resolve(&sheet, "c", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFFABCDEFu);
+    css_style_resolve(&sheet, "d", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFF654321u);
+    css_style_resolve(&sheet, "over", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFF123456u);
+
+    /* css_init_default rules also re-resolve cleanly on :root override. */
+    css_sheet_clear(&sheet);
+    css_init_default(&sheet);
+    assert(css_parse_with_diagnostics(&sheet,
+        ":root { --accent: #224466; --surface: #102030; }",
+        record_css_message, &messages));
+    assert(messages.count == 0);
+    css_style_resolve(&sheet, "label-link", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFF224466u);
+    css_style_resolve(&sheet, "tab", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_bg_color && st.bg_color == 0xFF102030u);
+    css_sheet_clear(&sheet);
+}
+
+/* Verify missing vars, cycles, and malformed var() syntax emit diagnostics cleanly. */
+static void test_var_diagnostics_and_guards(void)
+{
+    struct css_sheet sheet = {0};
+    struct css_messages messages = {0};
+    const char *css =
+        ":root { --a: var(--b); --b: var(--a); --self: var(--self); --: #111; width: 10px; }\n"
+        ".x { color: #111111; color: var(--missing); }\n"
+        ".y { color: var(--a, #999999); }\n"
+        ".z { color: var(--self); background: var(--unclosed; }\n"
+        ".w { color: var(nodash); width: var(--a); }\n";
+    assert(css_parse_with_diagnostics(&sheet, css, record_css_message, &messages));
+    assert(messages.count == 8);
+    assert(messages.kind[0] == CSS_DIAGNOSTIC_INVALID_VALUE);
+    assert(messages.kind[1] == CSS_DIAGNOSTIC_UNKNOWN_PROPERTY);
+    assert(messages.kind[2] == CSS_DIAGNOSTIC_INVALID_VALUE); /* var(--a, #999999) cycle */
+    assert(messages.kind[3] == CSS_DIAGNOSTIC_INVALID_VALUE); /* var(--self) */
+    assert(messages.kind[4] == CSS_DIAGNOSTIC_INVALID_VALUE); /* var(--unclosed */
+    assert(messages.kind[5] == CSS_DIAGNOSTIC_INVALID_VALUE); /* var(nodash) */
+    assert(messages.kind[6] == CSS_DIAGNOSTIC_INVALID_VALUE); /* width: var(--a) */
+    assert(messages.kind[7] == CSS_DIAGNOSTIC_INVALID_VALUE); /* end-of-parse var(--missing) */
+    bool found_missing = false;
+    for (int i = 0; i < messages.count; i++) {
+        if (messages.line[i] == 2 && !strcmp(messages.value[i], "var(--missing)"))
+            found_missing = true;
+    }
+    assert(found_missing);
+
+    struct css_style st;
+    css_style_resolve(&sheet, "x", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFF111111u);
+    css_style_resolve(&sheet, "y", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(!st.has_text_color);
+    css_sheet_clear(&sheet);
+
+    /* Updating an active :root variable to an invalid value reports and preserves prior style. */
+    messages = (struct css_messages){0};
+    assert(css_parse_with_diagnostics(&sheet,
+        ":root { --c: #112233; }\n.ok { color: var(--c); }",
+        record_css_message, &messages));
+    assert(messages.count == 0);
+    assert(css_parse_with_diagnostics(&sheet,
+        ":root { --c: bogus; }",
+        record_css_message, &messages));
+    assert(messages.count == 1 && messages.kind[0] == CSS_DIAGNOSTIC_INVALID_VALUE);
+    assert(!strcmp(messages.property[0], "--c"));
+    css_style_resolve(&sheet, "ok", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFF112233u);
+    css_sheet_clear(&sheet);
+}
+
+/* Verify pending preservation, blame accuracy, dirty-only refresh, and caps. */
+static void test_var_edge_cases(void)
+{
+    struct css_sheet sheet = {0};
+    struct css_messages messages = {0};
+    struct css_style st;
+
+    /* A pending var() does not erase an earlier valid var() unless it resolves. */
+    assert(css_parse_with_diagnostics(&sheet,
+        ":root { --good: #112233; }\n"
+        ".keep { color: var(--good); color: var(--missing); }\n"
+        ".take { color: var(--good); color: var(--later); }\n"
+        ":root { --later: #778899; }\n",
+        record_css_message, &messages));
+    assert(messages.count == 1 && !strcmp(messages.value[0], "var(--missing)"));
+    css_style_resolve(&sheet, "keep", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFF112233u);
+    css_style_resolve(&sheet, "take", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFF778899u);
+
+    messages = (struct css_messages){0};
+    assert(css_parse_with_diagnostics(&sheet, ":root { --good: #445566; }",
+        record_css_message, &messages));
+    assert(messages.count == 0);
+    css_style_resolve(&sheet, "keep", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFF445566u);
+    css_style_resolve(&sheet, "take", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFF778899u);
+    css_sheet_clear(&sheet);
+
+    /* Multi-var errors blame the broken variable, and unrelated edits stay quiet. */
+    messages = (struct css_messages){0};
+    assert(css_parse_with_diagnostics(&sheet,
+        ":root { --a: 4px; --b: 8px; --c: #112233; }\n"
+        ".pad { padding: var(--a) var(--b); }\n"
+        ".fg { color: var(--c); }\n",
+        record_css_message, &messages));
+    assert(messages.count == 0);
+
+    assert(css_parse_with_diagnostics(&sheet, ":root { --b: bogus; }",
+        record_css_message, &messages));
+    assert(messages.count == 1 && !strcmp(messages.property[0], "--b"));
+    assert(!strcmp(messages.value[0], "bogus"));
+    css_style_resolve(&sheet, "pad", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.padding.top.val == 4.0f && st.padding.right.val == 8.0f);
+
+    messages = (struct css_messages){0};
+    assert(css_parse_with_diagnostics(&sheet, ":root { --unrelated: #abcdef; }",
+        record_css_message, &messages));
+    assert(messages.count == 0);
+
+    assert(css_parse_with_diagnostics(&sheet, ":root { --a: 12px; }",
+        record_css_message, &messages));
+    assert(messages.count == 0);
+
+    messages = (struct css_messages){0};
+    assert(css_parse_with_diagnostics(&sheet,
+        ":root { --a: 6px; --b: 10px; --c: #223344; }",
+        record_css_message, &messages));
+    assert(messages.count == 0);
+    css_style_resolve(&sheet, "pad", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.padding.top.val == 6.0f && st.padding.right.val == 10.0f);
+
+    assert(css_parse_with_diagnostics(&sheet, ":root { --a: 14px; --b: nope; }",
+        record_css_message, &messages));
+    assert(messages.count == 1 && !strcmp(messages.property[0], "--b"));
+    css_sheet_clear(&sheet);
+
+    /* Fallback expansion pops v->name, while self-fallback cycles still fail. */
+    messages = (struct css_messages){0};
+    assert(css_parse_with_diagnostics(&sheet,
+        ":root { --a: var(--missing); }\n"
+        ".fb { color: var(--a, var(--a, #112233)); }\n",
+        record_css_message, &messages));
+    assert(messages.count == 0);
+    css_style_resolve(&sheet, "fb", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFF112233u);
+
+    assert(css_parse_with_diagnostics(&sheet,
+        ":root { --e: var(--a, var(--e)); }\n"
+        ".cyc { color: var(--e); }\n",
+        record_css_message, &messages));
+    assert(messages.count == 1 && messages.kind[0] == CSS_DIAGNOSTIC_INVALID_VALUE);
+    css_style_resolve(&sheet, "cyc", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(!st.has_text_color);
+    css_sheet_clear(&sheet);
+
+    /* Exponential variable expansion hits the byte cap cleanly without failing OOM. */
+    messages = (struct css_messages){0};
+    assert(css_parse_with_diagnostics(&sheet,
+        ":root {\n"
+        "  --v0: 1px;\n"
+        "  --v1: var(--v0) var(--v0); --v2: var(--v1) var(--v1);\n"
+        "  --v3: var(--v2) var(--v2); --v4: var(--v3) var(--v3);\n"
+        "  --v5: var(--v4) var(--v4); --v6: var(--v5) var(--v5);\n"
+        "  --v7: var(--v6) var(--v6); --v8: var(--v7) var(--v7);\n"
+        "  --v9: var(--v8) var(--v8); --v10: var(--v9) var(--v9);\n"
+        "  --v11: var(--v10) var(--v10); --v12: var(--v11) var(--v11);\n"
+        "  --v13: var(--v12) var(--v12); --v14: var(--v13) var(--v13);\n"
+        "  --v15: var(--v14) var(--v14); --v16: var(--v15) var(--v15);\n"
+        "  --v17: var(--v16) var(--v16); --v18: var(--v17) var(--v17);\n"
+        "}\n"
+        ".bomb { width: 10px; width: var(--v18); }\n",
+        record_css_message, &messages));
+    assert(messages.count == 1 && messages.kind[0] == CSS_DIAGNOSTIC_INVALID_VALUE);
+    css_style_resolve(&sheet, "bomb", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.width.unit == CSS_UNIT_PX && st.width.val == 10.0f);
+    css_sheet_clear(&sheet);
+
+    /* Preserving saw_dirty across missing fallback emits diagnostics when broken. */
+    messages = (struct css_messages){0};
+    assert(css_parse_with_diagnostics(&sheet,
+        ":root { --a: #112233; }\n"
+        ".cls { color: var(--a, var(--still-missing)); }\n",
+        record_css_message, &messages));
+    assert(messages.count == 0);
+    css_style_resolve(&sheet, "cls", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFF112233u);
+
+    assert(css_parse_with_diagnostics(&sheet, ":root { --a: var(--missing2); }",
+        record_css_message, &messages));
+    assert(messages.count == 1 && messages.kind[0] == CSS_DIAGNOSTIC_INVALID_VALUE);
+    css_style_resolve(&sheet, "cls", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFF112233u);
+
+    messages = (struct css_messages){0};
+    assert(css_parse_with_diagnostics(&sheet, ":root { --unrelated: #445566; }",
+        record_css_message, &messages));
+    assert(messages.count == 0);
+    css_sheet_clear(&sheet);
+
+    /* Appending rules with no :root block evaluates against dst's existing :root. */
+    struct css_sheet dst = {0};
+    struct css_sheet src = {0};
+    assert(css_parse(&dst, ":root { --accent: #89b4fa; }"));
+    assert(css_parse(&src, ".panel { color: var(--accent, #000000); }"));
+    assert(css_sheet_append(&dst, &src));
+    css_style_resolve(&dst, "panel", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0xFF89B4FAu);
+    css_sheet_clear(&src);
+    css_sheet_clear(&dst);
+}
+
 int main(void)
 {
     test_declaration_diagnostics();
@@ -403,6 +663,9 @@ int main(void)
     test_transition_duration_parsing();
     test_box_shadow_parsing();
     test_property_spellings_share_a_field();
+    test_root_variables_and_var_expansion();
+    test_var_diagnostics_and_guards();
+    test_var_edge_cases();
     printf("PASS: CSS parser tests\n");
     return 0;
 }

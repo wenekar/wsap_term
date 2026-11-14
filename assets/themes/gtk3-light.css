@@ -1,218 +1,56 @@
+:root {
+    --tab-bar-bg: #F6F5F4;
+    --tab-bg: #F6F5F4;
+    --tab-fg: var(--muted);
+    --tab-hover-bg: #EAEBEB;
+    --tab-hover-fg: var(--fg);
+    --tab-active-bg: var(--accent);
+    --tab-active-fg: var(--accent-fg);
+    --tab-close-fg: var(--muted);
+    --tab-radius: 3px;
+    --tab-close-radius: 0.2em;
+
+    --surface: #FFFFFF;
+    --border: #CDC7C2;
+    --fg: #2E3436;
+    --muted: #929595;
+    --disabled-fg: var(--muted);
+    --accent: #3584E4;
+    --accent-hover: var(--accent);
+    --accent-fg: #FFFFFF;
+    --danger: #E01B24;
+    --danger-fg: var(--accent-fg);
+    --drop-bg: #3584E433;
+    --section-fg: var(--accent);
+
+    --scrollbar-track-hover: #92959526;
+    --scrollbar-thumb: var(--muted);
+    --scrollbar-thumb-hover: var(--accent);
+    --scrollbar-thumb-active: #15539E;
+    --scrollbar-radius: 3px;
+
+    --menu-radius: 3px;
+    --menu-shadow: 0 2px 6px #00000033;
+
+    --dim-fg: var(--disabled-fg);
+    --control-bg: var(--border);
+    --control-hover-bg: var(--accent);
+    --control-hover-fg: var(--accent-fg);
+    --control-disabled-bg: var(--surface);
+    --control-disabled-fg: var(--muted);
+    --button-focus-fg: var(--accent-fg);
+    --menu-hover-bg: var(--accent);
+    --menu-hover-fg: var(--accent-fg);
+    --shortcut-hover-fg: var(--accent-fg);
+    --settings-row-bg: var(--surface);
+    --settings-help-fg: var(--muted);
+    --settings-active-fg: var(--tab-active-fg);
+    --selection-bg: var(--accent);
+    --selection-fg: var(--accent-fg);
+    --caret-color: var(--fg);
+}
 
 .tab-bar {
-    background: #F6F5F4;
-    border-color: #F6F5F4;
-    height: 2.2em;
-    padding: 0.25em 0.5em;
-    gap: 0.4em;
-}
-
-.tab {
-    background: #F6F5F4;
-    color: #929595;
-    border-radius: 3px;
-    padding: 0 0.8em;
-    height: 1.6em;
-}
-
-.tab:hover {
-    background: #EAEBEB;
-    color: #2E3436;
-}
-
-.tab.active {
-    background: #3584E4;
-    color: #FFFFFF;
-}
-
-.tab-close {
-    width: 1em;
-    height: 1em;
-    color: #929595;
-    border-radius: 0.2em;
-}
-
-.tab-close:hover {
-    background: #E01B24;
-    color: #FFFFFF;
-}
-
-.context-menu {
-    background: #FFFFFF;
-    border-color: #CDC7C2;
-    border-radius: 3px;
-    box-shadow: 0 2px 6px #00000033;
-}
-
-.menu-item {
-    color: #2E3436;
-}
-
-.menu-item:checked {
-    color: #2E3436;
-}
-
-.menu-item.submenu {
-    color: #2E3436;
-}
-
-.menu-item:hover {
-    background: #3584E4;
-    color: #FFFFFF;
-}
-
-.menu-item.disabled {
-    color: #929595;
-}
-
-.text-input-text {
-    color: #2E3436;
-}
-
-.text-input-text.empty {
-    color: #929595;
-}
-
-.text-input-selection {
-    background: #3584E4;
-}
-
-.text-input-caret {
-    background: #2E3436;
-}
-
-.palette-empty {
-    color: #929595;
-}
-
-.scrollbar-thumb {
-    background: #929595;
-    border-radius: 3px;
-}
-
-.scrollbar-thumb:hover {
-    background: #3584E4;
-}
-
-.scrollbar-thumb:active {
-    background: #15539E;
-}
-
-.menu-list .menu-item:focus {
-    background: #3584E4;
-    color: #FFFFFF;
-}
-
-.menu-shortcut {
-    color: #929595;
-}
-
-.menu-shortcut:hover, .menu-shortcut:focus {
-    color: #FFFFFF;
-}
-
-.menu-separator {
-    background: #CDC7C2;
-}
-
-.text-input {
-    background: #FFFFFF;
-    border-color: #CDC7C2;
-}
-
-.button:focus {
-    background: #3584E4;
-    color: #FFFFFF;
-}
-
-.dropdown-button {
-    background: #CDC7C2;
-    color: #2E3436;
-}
-
-.dropdown-button:hover, .dropdown-button:focus {
-    background: #3584E4;
-    color: #FFFFFF;
-}
-
-.dropdown-popup {
-    background: #FFFFFF;
-    color: #2E3436;
-}
-
-.tab-preview {
-    background: #FFFFFF;
-    border-color: #CDC7C2;
-}
-
-.tab-preview-title {
-    color: #2E3436;
-}
-
-.terminal-drop-target {
-    background: #3584E433;
-    border-color: #3584E4;
-}
-
-.scrollbar:hover, .scrollbar:active {
-    background: #92959526;
-}
-
-.settings-form {
-    color: #2E3436;
-}
-
-.settings-row {
-    background: #FFFFFF;
-}
-
-.settings-section {
-    color: #3584E4;
-}
-
-.settings-help {
-    color: #929595;
-}
-
-.settings-error {
-    color: #E01B24;
-}
-
-.settings-button {
-    background: #CDC7C2;
-}
-
-.settings-link {
-    color: #3584E4;
-    background: transparent;
-}
-
-.settings-button:hover, .settings-button:focus {
-    background: #3584E4;
-    color: #FFFFFF;
-}
-
-.settings-button:disabled {
-    background: #FFFFFF;
-    color: #929595;
-}
-
-.settings-primary {
-    background: #3584E4;
-    color: #FFFFFF;
-}
-
-.settings-primary:hover, .settings-primary:focus {
-    background: #3584E4;
-    color: #FFFFFF;
-}
-
-.settings-primary:disabled {
-    background: #FFFFFF;
-    color: #929595;
-}
-
-.settings-nav.active {
-    background: #3584E4;
-    color: #FFFFFF;
+    background: var(--tab-bar-bg);
+    border-color: var(--tab-bar-bg);
 }
