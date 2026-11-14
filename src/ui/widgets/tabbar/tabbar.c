@@ -954,7 +954,7 @@ static bool same_labels(const struct ui_tabbar *tb,
     if (tb->impl.n_tabs != n)
         return false;
     for (int i = 0; i < n; i++) {
-        const char *have = tb->impl.labels[i].text;
+        const char *have = tb->impl.labels[i].text ? tb->impl.labels[i].text : "";
         const char *want = "";
         bool want_active = false;
         if (tabs) {
@@ -990,6 +990,9 @@ void ui_tabbar_set_tabs(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
     if (!tb)
         return;
     int n = n_tabs > 0 ? n_tabs : 0;
+    /* The bar takes focus only when it holds more than one tab. A label set
+     * that matches still ends a bar that dropped to one tab. */
+    ui_widget_set_focusable(&tb->widget, n >= 2);
     if (same_labels(tb, tabs, n))
         return;
     if (!reserve_labels(tb, n))
@@ -1004,17 +1007,19 @@ void ui_tabbar_set_tabs(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
         struct ui_tab_label *l = &tb->impl.labels[i];
         if (!l->text || strcmp(l->text, text)) {
             char *copy = strdup(text);
-            if (!copy)
-                break;
-            free((char *)l->text);
-            l->text = copy;
+            /* A failed copy keeps the old text and leaves no NULL label. */
+            if (!copy && !l->text)
+                l->text = calloc(1, 1);
+            if (copy) {
+                free((char *)l->text);
+                l->text = copy;
+            }
         }
         l->active = active;
     }
     bool count_changed = tb->impl.n_tabs != n;
     tb->impl.n_tabs = n;
     tb_ensure_tabs(tb, n);
-    ui_widget_set_focusable(&tb->widget, n >= 2);
     if (n > 0) {
         if (ui_widget_has_focus(&tb->widget))
             tb->impl.keyboard_index = active_tab(tb);

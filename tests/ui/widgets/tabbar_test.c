@@ -1152,6 +1152,21 @@ static void zeroed_tabbar_is_idle(void)
     free(tb);
 }
 
+static void dropping_to_one_tab_clears_the_focusable_bar(void)
+{
+    struct fixture f;
+    setup(&f, 2, 400);
+    assert(ui_widget_is_focusable(ui_tabbar_widget(&f.tb)));
+
+    /* The label set of the surviving tab is the same before and after the
+     * removal, so the setter must update the focus flag on its own. */
+    struct ui_tab_label keep[] = { { .text = "tab0", .active = false } };
+    assert(ui_tabbar_remove_tab(&f.tb, 1));
+    set_tabs(&f, keep, 1);
+    assert(!ui_widget_is_focusable(ui_tabbar_widget(&f.tb)));
+    teardown(&f);
+}
+
 static void closing_tab_tracks_through_remove(void)
 {
     struct fixture f;
@@ -1996,6 +2011,7 @@ int main(void)
     title_and_close_do_not_overlap();
     new_tab_hover_animates();
     zeroed_tabbar_is_idle();
+    dropping_to_one_tab_clears_the_focusable_bar();
     closing_tab_tracks_through_remove();
     open_tab_grows_in();
     open_tab_reflows_siblings();

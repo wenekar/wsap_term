@@ -68,6 +68,8 @@ void ui_widget_invalidate(struct ui_widget *widget, unsigned flags);
 
 /* Sets whether `widget` can receive keyboard focus. */
 void ui_widget_set_focusable(struct ui_widget *widget, bool focusable);
+/* Returns true when `widget` can receive keyboard focus. */
+bool ui_widget_is_focusable(const struct ui_widget *widget);
 /* Sets whether `widget` modal mode restricts input outside its subtree. */
 void ui_widget_set_modal(struct ui_widget *widget, bool modal);
 /* Sets whether `widget` passes pointer events through to widgets underneath. */

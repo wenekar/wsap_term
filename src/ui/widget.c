@@ -187,6 +187,11 @@ bool ui_widget_notify(struct ui_widget *widget, struct ui_action action)
     return false;
 }
 
+bool ui_widget_is_focusable(const struct ui_widget *widget)
+{
+    return widget && widget->impl.focusable;
+}
+
 void ui_widget_set_focusable(struct ui_widget *widget, bool focusable)
 {
     if (!widget || widget->impl.focusable == focusable)
