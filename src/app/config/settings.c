@@ -511,6 +511,136 @@ static bool build_choices(struct settings_row *row, struct look *look,
     return ok;
 }
 
+/* Each helper fills one descriptor from its few distinct fields.
+ * All nodes take the empty tag name, except a label whose caller sets the tag.
+ * A label wraps words, aligns left, and takes no bind unless the caller sets it.
+ * A box stretches its children. */
+struct label_spec {
+    const char *key, *class_name, *id_name, *tag_name, *text, *link;
+    struct ui_label **bind;
+    bool selectable;
+};
+
+struct button_spec {
+    const char *key, *class_name, *id_name, *text;
+    struct ui_button **bind;
+    int action_id;
+};
+
+struct input_spec {
+    const char *key, *class_name, *id_name, *placeholder, *accessible_name;
+    struct ui_input **bind;
+};
+
+struct dropdown_spec {
+    const char *key, *class_name, *id_name, *accessible_name;
+    struct ui_dropdown **bind;
+    const struct ui_dropdown_item *items;
+    size_t count;
+};
+
+static struct ui_node_desc label_node(struct label_spec spec)
+{
+    return (struct ui_node_desc){
+        .kind = UI_NODE_LABEL,
+        .key = spec.key,
+        .class_name = spec.class_name,
+        .id_name = spec.id_name,
+        .tag_name = spec.tag_name,
+        .bind.label = spec.bind,
+        .props.label = {
+            .text = spec.text,
+            .link = spec.link,
+            .wrap = UI_LABEL_WRAP_WORD,
+            .align = UI_LABEL_ALIGN_LEFT,
+            .selectable = spec.selectable,
+        },
+    };
+}
+
+static struct ui_node_desc button_node(struct button_spec spec)
+{
+    return (struct ui_node_desc){
+        .kind = UI_NODE_BUTTON,
+        .key = spec.key,
+        .class_name = spec.class_name,
+        .id_name = spec.id_name,
+        .tag_name = "",
+        .bind.button = spec.bind,
+        .action_id = spec.action_id,
+        .props.button = { .text = spec.text },
+    };
+}
+
+static struct ui_node_desc input_node(struct input_spec spec)
+{
+    return (struct ui_node_desc){
+        .kind = UI_NODE_INPUT,
+        .key = spec.key,
+        .class_name = spec.class_name,
+        .id_name = spec.id_name,
+        .tag_name = "",
+        .bind.input = spec.bind,
+        .props.input = {
+            .placeholder = spec.placeholder,
+            .accessible_name = spec.accessible_name,
+        },
+    };
+}
+
+static struct ui_node_desc dropdown_node(struct dropdown_spec spec)
+{
+    return (struct ui_node_desc){
+        .kind = UI_NODE_DROPDOWN,
+        .key = spec.key,
+        .class_name = spec.class_name,
+        .id_name = spec.id_name,
+        .tag_name = "",
+        .bind.dropdown = spec.bind,
+        .props.dropdown = {
+            .items = spec.items,
+            .count = spec.count,
+            .accessible_name = spec.accessible_name,
+        },
+    };
+}
+
+static struct ui_node_desc box_node(enum ui_node_kind kind, const char *key,
+                                    const char *class_name, const char *id_name,
+                                    struct ui_box **bind,
+                                    const struct ui_node_desc *children,
+                                    size_t child_count)
+{
+    return (struct ui_node_desc){
+        .kind = kind,
+        .key = key,
+        .class_name = class_name,
+        .id_name = id_name,
+        .tag_name = "",
+        .bind.box = bind,
+        .children = children,
+        .child_count = child_count,
+        .props.layout = { .align = UI_BOX_ALIGN_STRETCH },
+    };
+}
+
+static struct ui_node_desc scrollview_node(const char *key, const char *class_name,
+                                           struct ui_scrollview **bind,
+                                           const struct ui_node_desc *children,
+                                           size_t child_count, bool scrollbar)
+{
+    return (struct ui_node_desc){
+        .kind = UI_NODE_SCROLLVIEW,
+        .key = key,
+        .class_name = class_name,
+        .tag_name = "",
+        .bind.scrollview = bind,
+        .children = children,
+        .child_count = child_count,
+        .props.scrollview = { .scrollbar = scrollbar },
+    };
+}
+
 static bool init_row(struct settings_row *row, size_t index, struct look *look)
 {
     if (!opts_option_at(&app_config_spec, index, &row->option)) return false;
@@ -545,96 +675,32 @@ static bool init_row(struct settings_row *row, size_t index, struct look *look)
         !settings_choices_build(&row->choices, row->choice_source, key, look, ""))
         return false;
 
-    row->description_children[0] = (struct ui_node_desc){
-        .kind = UI_NODE_LABEL,
-        .key = row->title_key,
-        .props.label = {
-            .text = row->label,
-            .wrap = UI_LABEL_WRAP_WORD,
-            .align = UI_LABEL_ALIGN_LEFT,
-        },
-    };
-    row->description_children[1] = (struct ui_node_desc){
-        .kind = UI_NODE_LABEL,
-        .key = row->help_key,
-        .class_name = "settings-help",
-        .tag_name = "",
-        .props.label = {
-            .text = row->help_text,
-            .wrap = UI_LABEL_WRAP_WORD,
-            .align = UI_LABEL_ALIGN_LEFT,
-            .selectable = true,
-        },
-    };
-    row->description_children[2] = (struct ui_node_desc){
-        .kind = UI_NODE_LABEL,
-        .key = row->error_key,
-        .bind.label = &row->error,
-        .class_name = "settings-error",
-        .tag_name = "",
-        .props.label = {
-            .text = "",
-            .wrap = UI_LABEL_WRAP_WORD,
-            .align = UI_LABEL_ALIGN_LEFT,
-        },
-    };
-    row->row_children[0] = (struct ui_node_desc){
-        .kind = UI_NODE_COLUMN,
-        .class_name = "settings-description",
-        .tag_name = "",
-        .children = row->description_children,
-        .child_count = 3,
-        .props.layout = { .align = UI_BOX_ALIGN_STRETCH },
-    };
+    row->description_children[0] = label_node((struct label_spec){
+        .key = row->title_key, .text = row->label });
+    row->description_children[1] = label_node((struct label_spec){
+        .key = row->help_key, .class_name = "settings-help", .tag_name = "",
+        .text = row->help_text, .selectable = true });
+    row->description_children[2] = label_node((struct label_spec){
+        .key = row->error_key, .class_name = "settings-error", .tag_name = "",
+        .bind = &row->error, .text = "" });
+    row->row_children[0] = box_node(UI_NODE_COLUMN, NULL, "settings-description",
+        NULL, NULL, row->description_children, 3);
     size_t editor_count = 0;
-    if (!row->choice) {
-        row->editor_children[editor_count++] = (struct ui_node_desc){
-            .kind = UI_NODE_INPUT,
-            .key = row->input_key,
-            .bind.input = &row->input,
-            .class_name = "text-input",
-            .tag_name = "",
-            .id_name = key,
-            .props.input = {
-                .placeholder = "Default",
-                .accessible_name = row->label,
-            },
-        };
-    }
-    if (row->choice || row->combo) {
-        row->editor_children[editor_count++] = (struct ui_node_desc){
-            .kind = UI_NODE_DROPDOWN,
-            .key = row->dropdown_key,
-            .bind.dropdown = &row->dropdown,
-            .class_name = "dropdown",
-            .tag_name = "",
-            .id_name = row->choice ? key : NULL,
-            .props.dropdown = {
-                .items = row->choices.items,
-                .count = row->choices.count,
-                .accessible_name = row->label,
-            },
-        };
-    }
-    row->row_children[1] = (struct ui_node_desc){
-        .kind = UI_NODE_COLUMN,
-        .class_name = "settings-editor",
-        .tag_name = "",
-        .children = row->editor_children,
-        .child_count = editor_count,
-        .props.layout = { .align = UI_BOX_ALIGN_STRETCH },
-    };
-    row->node = (struct ui_node_desc){
-        .kind = UI_NODE_ROW,
-        .key = row->row_id,
-        .bind.box = &row->row,
-        .class_name = "settings-row",
-        .tag_name = "",
-        .id_name = row->row_id,
-        .children = row->row_children,
-        .child_count = 2,
-        .props.layout = { .align = UI_BOX_ALIGN_STRETCH },
-    };
+    if (!row->choice)
+        row->editor_children[editor_count++] = input_node((struct input_spec){
+            .key = row->input_key, .class_name = "text-input", .id_name = key,
+            .bind = &row->input, .placeholder = "Default",
+            .accessible_name = row->label });
+    if (row->choice || row->combo)
+        row->editor_children[editor_count++] = dropdown_node((struct dropdown_spec){
+            .key = row->dropdown_key, .class_name = "dropdown",
+            .id_name = row->choice ? key : NULL, .bind = &row->dropdown,
+            .items = row->choices.items, .count = row->choices.count,
+            .accessible_name = row->label });
+    row->row_children[1] = box_node(UI_NODE_COLUMN, NULL, "settings-editor",
+        NULL, NULL, row->editor_children, editor_count);
+    row->node = box_node(UI_NODE_ROW, row->row_id, "settings-row", row->row_id,
+        &row->row, row->row_children, 2);
     return true;
 }
 
@@ -656,33 +722,18 @@ static bool add_field_descriptions(struct settings_form *form)
         return false;
     size_t at = 0;
     for (int category = 1; category < CATEGORY_COUNT; category++) {
-        form->field_nodes[at++] = (struct ui_node_desc){
-            .kind = UI_NODE_LABEL,
-            .key = section_keys[category],
-            .bind.label = &form->section[category],
-            .class_name = "settings-section",
-            .tag_name = "",
-            .props.label = {
-                .text = categories[category],
-                .wrap = UI_LABEL_WRAP_WORD,
-                .align = UI_LABEL_ALIGN_LEFT,
-            },
-        };
+        form->field_nodes[at++] = label_node((struct label_spec){
+            .key = section_keys[category], .class_name = "settings-section",
+            .tag_name = "", .bind = &form->section[category],
+            .text = categories[category] });
         for (int combo = 1; combo >= 0; combo--)
             for (size_t i = 0; i < form->count; i++)
                 if (form->rows[i].category == (enum category)category && form->rows[i].combo == combo)
                     form->field_nodes[at++] = form->rows[i].node;
     }
-    form->field_nodes[at++] = (struct ui_node_desc){
-        .kind = UI_NODE_LABEL,
-        .key = "settings-empty",
-        .bind.label = &form->empty,
-        .props.label = {
-            .text = "No matching settings. Try another search.",
-            .wrap = UI_LABEL_WRAP_WORD,
-            .align = UI_LABEL_ALIGN_LEFT,
-        },
-    };
+    form->field_nodes[at++] = label_node((struct label_spec){
+        .key = "settings-empty", .bind = &form->empty,
+        .text = "No matching settings. Try another search." });
     if (at != count)
         return false;
     form->field_node_count = at;
@@ -692,216 +743,80 @@ static bool add_field_descriptions(struct settings_form *form)
 static bool mount_form(struct settings_form *form)
 {
     struct ui_node_desc header_nodes[] = {
-        {
-            .kind = UI_NODE_LABEL,
-            .key = "title",
-            .bind.label = &form->title,
-            .class_name = "settings-title",
-            .tag_name = "",
-            .props.label = {
-                .text = "Settings",
-                .wrap = UI_LABEL_WRAP_WORD,
-                .align = UI_LABEL_ALIGN_LEFT,
-            },
-        },
-        {
-            .kind = UI_NODE_BUTTON,
-            .key = "config-link",
-            .bind.button = &form->config,
-            .class_name = "settings-button settings-link",
-            .tag_name = "",
-            .id_name = "config-link",
-            .action_id = OPEN_CONFIG,
-            .props.button = { .text = "Config file" },
-        },
-        {
-            .kind = UI_NODE_LABEL,
-            .key = "font-link",
-            .bind.label = &form->font_help,
-            .class_name = "settings-button settings-link",
-            .tag_name = "",
-            .id_name = "font-link",
-            .props.label = {
-                .text = "Font help",
-                .link = "https://www.freedesktop.org/wiki/Software/fontconfig/",
-                .wrap = UI_LABEL_WRAP_WORD,
-                .align = UI_LABEL_ALIGN_LEFT,
-            },
-        },
-        {
-            .kind = UI_NODE_LABEL,
-            .key = "color-link",
-            .bind.label = &form->color_help,
-            .class_name = "settings-button settings-link",
-            .tag_name = "",
-            .id_name = "color-link",
-            .props.label = {
-                .text = "Color help",
-                .link = "https://en.wikipedia.org/wiki/ANSI_escape_code#Colors",
-                .wrap = UI_LABEL_WRAP_WORD,
-                .align = UI_LABEL_ALIGN_LEFT,
-            },
-        },
+        label_node((struct label_spec){
+            .key = "title", .class_name = "settings-title", .tag_name = "",
+            .bind = &form->title, .text = "Settings" }),
+        button_node((struct button_spec){
+            .key = "config-link", .class_name = "settings-button settings-link",
+            .id_name = "config-link", .bind = &form->config,
+            .text = "Config file", .action_id = OPEN_CONFIG }),
+        label_node((struct label_spec){
+            .key = "font-link", .class_name = "settings-button settings-link",
+            .id_name = "font-link", .tag_name = "", .bind = &form->font_help,
+            .text = "Font help",
+            .link = "https://www.freedesktop.org/wiki/Software/fontconfig/" }),
+        label_node((struct label_spec){
+            .key = "color-link", .class_name = "settings-button settings-link",
+            .id_name = "color-link", .tag_name = "", .bind = &form->color_help,
+            .text = "Color help",
+            .link = "https://en.wikipedia.org/wiki/ANSI_escape_code#Colors" }),
     };
     struct ui_node_desc nav_nodes[CATEGORY_COUNT];
-    for (int i = 0; i < CATEGORY_COUNT; i++) {
-        nav_nodes[i] = (struct ui_node_desc){
-            .kind = UI_NODE_BUTTON,
-            .key = category_ids[i],
-            .bind.button = &form->nav[i],
-            .class_name = "settings-button settings-nav",
-            .tag_name = "",
-            .id_name = category_ids[i],
-            .action_id = CATEGORY_BASE + i,
-            .props.button = { .text = categories[i] },
-        };
-    }
-    struct ui_node_desc sidebar = {
-        .kind = UI_NODE_COLUMN,
-        .key = "sidebar",
-        .bind.box = &form->sidebar,
-        .class_name = "settings-sidebar",
-        .tag_name = "",
-        .children = nav_nodes,
-        .child_count = CATEGORY_COUNT,
-        .props.layout = { .align = UI_BOX_ALIGN_STRETCH },
-    };
-    struct ui_node_desc scroll_child = {
-        .kind = UI_NODE_COLUMN,
-        .key = "fields",
-        .bind.box = &form->fields,
-        .class_name = "settings-fields",
-        .tag_name = "",
-        .children = form->field_nodes,
-        .child_count = form->field_node_count,
-        .props.layout = { .align = UI_BOX_ALIGN_STRETCH },
-    };
+    for (int i = 0; i < CATEGORY_COUNT; i++)
+        nav_nodes[i] = button_node((struct button_spec){
+            .key = category_ids[i], .class_name = "settings-button settings-nav",
+            .id_name = category_ids[i], .bind = &form->nav[i],
+            .text = categories[i], .action_id = CATEGORY_BASE + i });
+    struct ui_node_desc sidebar = box_node(UI_NODE_COLUMN, "sidebar",
+        "settings-sidebar", NULL, &form->sidebar, nav_nodes, CATEGORY_COUNT);
+    struct ui_node_desc scroll_child = box_node(UI_NODE_COLUMN, "fields",
+        "settings-fields", NULL, &form->fields, form->field_nodes,
+        form->field_node_count);
     struct ui_node_desc scroll_children[] = { scroll_child };
-    struct ui_node_desc scroll = {
-        .kind = UI_NODE_SCROLLVIEW,
-        .key = "scroll",
-        .bind.scrollview = &form->scroll,
-        .class_name = "settings-scroll",
-        .tag_name = "",
-        .children = scroll_children,
-        .child_count = 1,
-        .props.scrollview = { .scrollbar = true },
-    };
+    struct ui_node_desc scroll = scrollview_node("scroll", "settings-scroll",
+        &form->scroll, scroll_children, 1, true);
     struct ui_node_desc body_nodes[] = { sidebar, scroll };
     struct ui_node_desc footer_nodes[] = {
-        {
-            .kind = UI_NODE_LABEL,
-            .key = "status",
-            .bind.label = &form->status,
-            .class_name = "settings-status",
-            .tag_name = "",
-            .id_name = "settings-status",
-            .props.label = {
-                .text = "",
-                .wrap = UI_LABEL_WRAP_WORD,
-                .align = UI_LABEL_ALIGN_LEFT,
-                .selectable = true,
-            },
-        },
-        {
-            .kind = UI_NODE_BUTTON,
-            .key = "reset",
-            .bind.button = &form->reset,
-            .class_name = "settings-button",
-            .tag_name = "",
-            .id_name = "settings-reset",
-            .action_id = RESET,
-            .props.button = { .text = "Reset all" },
-        },
-        {
-            .kind = UI_NODE_BUTTON,
-            .key = "cancel",
-            .bind.button = &form->cancel,
-            .class_name = "settings-button",
-            .tag_name = "",
-            .id_name = "settings-cancel",
-            .action_id = CANCEL,
-            .props.button = { .text = "Cancel" },
-        },
-        {
-            .kind = UI_NODE_BUTTON,
-            .key = "save",
-            .bind.button = &form->save,
-            .class_name = "settings-button settings-primary",
-            .tag_name = "",
-            .id_name = "settings-save",
-            .action_id = SAVE,
-            .props.button = { .text = "Save" },
-        },
+        label_node((struct label_spec){
+            .key = "status", .class_name = "settings-status",
+            .id_name = "settings-status", .tag_name = "", .bind = &form->status,
+            .text = "", .selectable = true }),
+        button_node((struct button_spec){
+            .key = "reset", .class_name = "settings-button",
+            .id_name = "settings-reset", .bind = &form->reset,
+            .text = "Reset all", .action_id = RESET }),
+        button_node((struct button_spec){
+            .key = "cancel", .class_name = "settings-button",
+            .id_name = "settings-cancel", .bind = &form->cancel,
+            .text = "Cancel", .action_id = CANCEL }),
+        button_node((struct button_spec){
+            .key = "save", .class_name = "settings-button settings-primary",
+            .id_name = "settings-save", .bind = &form->save,
+            .text = "Save", .action_id = SAVE }),
     };
     struct ui_node_desc layout_nodes[] = {
-        {
-            .kind = UI_NODE_ROW,
-            .key = "header",
-            .bind.box = &form->header,
-            .class_name = "settings-header",
-            .tag_name = "",
-            .children = header_nodes,
-            .child_count = sizeof(header_nodes) / sizeof(header_nodes[0]),
-            .props.layout = { .align = UI_BOX_ALIGN_STRETCH },
-        },
-        {
-            .kind = UI_NODE_INPUT,
-            .key = "search",
-            .bind.input = &form->search,
-            .class_name = "text-input settings-search",
-            .tag_name = "",
-            .id_name = "settings-search",
-            .props.input = {
-                .placeholder = "Search settings... (Ctrl+F)",
-                .accessible_name = "Search settings",
-            },
-        },
-        {
-            .kind = UI_NODE_ROW,
-            .key = "body",
-            .bind.box = &form->body,
-            .class_name = "settings-body",
-            .tag_name = "",
-            .children = body_nodes,
-            .child_count = sizeof(body_nodes) / sizeof(body_nodes[0]),
-            .props.layout = { .align = UI_BOX_ALIGN_STRETCH },
-        },
-        {
-            .kind = UI_NODE_ROW,
-            .key = "footer",
-            .bind.box = &form->footer,
-            .class_name = "settings-footer",
-            .tag_name = "",
-            .children = footer_nodes,
-            .child_count = sizeof(footer_nodes) / sizeof(footer_nodes[0]),
-            .props.layout = { .align = UI_BOX_ALIGN_STRETCH },
-        },
+        box_node(UI_NODE_ROW, "header", "settings-header", NULL, &form->header,
+            header_nodes, sizeof(header_nodes) / sizeof(header_nodes[0])),
+        input_node((struct input_spec){
+            .key = "search", .class_name = "text-input settings-search",
+            .id_name = "settings-search", .bind = &form->search,
+            .placeholder = "Search settings... (Ctrl+F)",
+            .accessible_name = "Search settings" }),
+        box_node(UI_NODE_ROW, "body", "settings-body", NULL, &form->body,
+            body_nodes, sizeof(body_nodes) / sizeof(body_nodes[0])),
+        box_node(UI_NODE_ROW, "footer", "settings-footer", NULL, &form->footer,
+            footer_nodes, sizeof(footer_nodes) / sizeof(footer_nodes[0])),
     };
     struct ui_node_desc root_children[] = {
-        {
-            .kind = UI_NODE_COLUMN,
-            .key = "layout",
-            .bind.box = &form->layout,
-            .class_name = "settings-form",
-            .tag_name = "",
-            .children = layout_nodes,
-            .child_count = sizeof(layout_nodes) / sizeof(layout_nodes[0]),
-            .props.layout = { .align = UI_BOX_ALIGN_STRETCH },
-        },
+        box_node(UI_NODE_COLUMN, "layout", "settings-form", NULL, &form->layout,
+            layout_nodes, sizeof(layout_nodes) / sizeof(layout_nodes[0])),
     };
-    struct ui_node_desc root = {
-        .kind = UI_NODE_STACK,
-        .key = "root",
-        .tag_name = "",
-        .children = root_children,
-        .child_count = sizeof(root_children) / sizeof(root_children[0]),
-        .props.layout = { .align = UI_BOX_ALIGN_STRETCH },
-        .on_action = form_action,
-        .action_userdata = form,
-        .on_event = root_event,
-        .event_userdata = form,
-    };
+    struct ui_node_desc root = box_node(UI_NODE_STACK, "root", NULL, NULL, NULL,
+        root_children, sizeof(root_children) / sizeof(root_children[0]));
+    root.on_action = form_action;
+    root.action_userdata = form;
+    root.on_event = root_event;
+    root.event_userdata = form;
     struct ui_view_diagnostic diagnostic;
     form->view = ui_view_mount_ex(&root, &diagnostic);
     if (!form->view) {
