@@ -48,6 +48,14 @@
     color: #333338;
 }
 
+.menu-item:checked {
+    color: #333338;
+}
+
+.menu-item.submenu {
+    color: #333338;
+}
+
 .menu-item:hover {
     background: #3584E4;
     color: #FFFFFF;
@@ -88,4 +96,123 @@
 
 .scrollbar-thumb:active {
     background: #3584E4;
+}
+
+.menu-list .menu-item:focus {
+    background: #3584E4;
+    color: #FFFFFF;
+}
+
+.menu-shortcut {
+    color: #8C8C8F;
+}
+
+.menu-shortcut:hover, .menu-shortcut:focus {
+    color: #FFFFFF;
+}
+
+.menu-separator {
+    background: #E0E0E1;
+}
+
+.text-input {
+    background: #FFFFFF;
+    border-color: #E0E0E1;
+}
+
+.button:focus {
+    background: #3584E4;
+    color: #FFFFFF;
+}
+
+.dropdown-button {
+    background: #E0E0E1;
+    color: #333338;
+}
+
+.dropdown-button:hover, .dropdown-button:focus {
+    background: #3584E4;
+    color: #FFFFFF;
+}
+
+.dropdown-popup {
+    background: #FFFFFF;
+    color: #333338;
+}
+
+.tab-preview {
+    background: #FFFFFF;
+    border-color: #E0E0E1;
+}
+
+.tab-preview-title {
+    color: #333338;
+}
+
+.terminal-drop-target {
+    background: #3584E433;
+    border-color: #3584E4;
+}
+
+.scrollbar:hover, .scrollbar:active {
+    background: #8C8C8F26;
+}
+
+.settings-form {
+    color: #333338;
+}
+
+.settings-row {
+    background: #FFFFFF;
+}
+
+.settings-section {
+    color: #3584E4;
+}
+
+.settings-help {
+    color: #8C8C8F;
+}
+
+.settings-error {
+    color: #E01B24;
+}
+
+.settings-button {
+    background: #E0E0E1;
+}
+
+.settings-link {
+    color: #3584E4;
+    background: transparent;
+}
+
+.settings-button:hover, .settings-button:focus {
+    background: #3584E4;
+    color: #FFFFFF;
+}
+
+.settings-button:disabled {
+    background: #FFFFFF;
+    color: #8C8C8F;
+}
+
+.settings-primary {
+    background: #3584E4;
+    color: #FFFFFF;
+}
+
+.settings-primary:hover, .settings-primary:focus {
+    background: #3584E4;
+    color: #FFFFFF;
+}
+
+.settings-primary:disabled {
+    background: #FFFFFF;
+    color: #8C8C8F;
+}
+
+.settings-nav.active {
+    background: #CDE0F8;
+    color: #1A5FB4;
 }

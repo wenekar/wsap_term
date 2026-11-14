@@ -48,6 +48,14 @@
     color: #D9D9D9;
 }
 
+.menu-item:checked {
+    color: #D9D9D9;
+}
+
+.menu-item.submenu {
+    color: #D9D9D9;
+}
+
 .menu-item:hover {
     background: #0058D0;
     color: #FFFFFF;
@@ -88,4 +96,123 @@
 
 .scrollbar-thumb:active {
     background: #0058D0;
+}
+
+.menu-list .menu-item:focus {
+    background: #0058D0;
+    color: #FFFFFF;
+}
+
+.menu-shortcut {
+    color: #8C8C8C;
+}
+
+.menu-shortcut:hover, .menu-shortcut:focus {
+    color: #FFFFFF;
+}
+
+.menu-separator {
+    background: #3F3F3F;
+}
+
+.text-input {
+    background: #282828;
+    border-color: #3F3F3F;
+}
+
+.button:focus {
+    background: #0058D0;
+    color: #FFFFFF;
+}
+
+.dropdown-button {
+    background: #3F3F3F;
+    color: #D9D9D9;
+}
+
+.dropdown-button:hover, .dropdown-button:focus {
+    background: #0058D0;
+    color: #FFFFFF;
+}
+
+.dropdown-popup {
+    background: #282828;
+    color: #D9D9D9;
+}
+
+.tab-preview {
+    background: #282828;
+    border-color: #3F3F3F;
+}
+
+.tab-preview-title {
+    color: #D9D9D9;
+}
+
+.terminal-drop-target {
+    background: #0058D033;
+    border-color: #0058D0;
+}
+
+.scrollbar:hover, .scrollbar:active {
+    background: #8C8C8C26;
+}
+
+.settings-form {
+    color: #D9D9D9;
+}
+
+.settings-row {
+    background: #282828;
+}
+
+.settings-section {
+    color: #0058D0;
+}
+
+.settings-help {
+    color: #8C8C8C;
+}
+
+.settings-error {
+    color: #FF453A;
+}
+
+.settings-button {
+    background: #3F3F3F;
+}
+
+.settings-link {
+    color: #0058D0;
+    background: transparent;
+}
+
+.settings-button:hover, .settings-button:focus {
+    background: #0058D0;
+    color: #FFFFFF;
+}
+
+.settings-button:disabled {
+    background: #282828;
+    color: #8C8C8C;
+}
+
+.settings-primary {
+    background: #0058D0;
+    color: #FFFFFF;
+}
+
+.settings-primary:hover, .settings-primary:focus {
+    background: #0058D0;
+    color: #FFFFFF;
+}
+
+.settings-primary:disabled {
+    background: #282828;
+    color: #8C8C8C;
+}
+
+.settings-nav.active {
+    background: #0058D0;
+    color: #FFFFFF;
 }

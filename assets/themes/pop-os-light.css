@@ -48,6 +48,14 @@
     color: #000000;
 }
 
+.menu-item:checked {
+    color: #000000;
+}
+
+.menu-item.submenu {
+    color: #000000;
+}
+
 .menu-item:hover {
     background: #63B1BC;
     color: #FFFFFF;
@@ -88,4 +96,123 @@
 
 .scrollbar-thumb:active {
     background: #63B1BC;
+}
+
+.menu-list .menu-item:focus {
+    background: #63B1BC;
+    color: #FFFFFF;
+}
+
+.menu-shortcut {
+    color: #4D4D4D;
+}
+
+.menu-shortcut:hover, .menu-shortcut:focus {
+    color: #FFFFFF;
+}
+
+.menu-separator {
+    background: #DCDCDC;
+}
+
+.text-input {
+    background: #FFFFFF;
+    border-color: #DCDCDC;
+}
+
+.button:focus {
+    background: #63B1BC;
+    color: #FFFFFF;
+}
+
+.dropdown-button {
+    background: #DCDCDC;
+    color: #000000;
+}
+
+.dropdown-button:hover, .dropdown-button:focus {
+    background: #63B1BC;
+    color: #FFFFFF;
+}
+
+.dropdown-popup {
+    background: #FFFFFF;
+    color: #000000;
+}
+
+.tab-preview {
+    background: #FFFFFF;
+    border-color: #DCDCDC;
+}
+
+.tab-preview-title {
+    color: #000000;
+}
+
+.terminal-drop-target {
+    background: #63B1BC33;
+    border-color: #63B1BC;
+}
+
+.scrollbar:hover, .scrollbar:active {
+    background: #4D4D4D26;
+}
+
+.settings-form {
+    color: #000000;
+}
+
+.settings-row {
+    background: #FFFFFF;
+}
+
+.settings-section {
+    color: #4D4D4D;
+}
+
+.settings-help {
+    color: #4D4D4D;
+}
+
+.settings-error {
+    color: #E56A54;
+}
+
+.settings-button {
+    background: #DCDCDC;
+}
+
+.settings-link {
+    color: #4D4D4D;
+    background: transparent;
+}
+
+.settings-button:hover, .settings-button:focus {
+    background: #63B1BC;
+    color: #FFFFFF;
+}
+
+.settings-button:disabled {
+    background: #FFFFFF;
+    color: #4D4D4D;
+}
+
+.settings-primary {
+    background: #63B1BC;
+    color: #FFFFFF;
+}
+
+.settings-primary:hover, .settings-primary:focus {
+    background: #63B1BC;
+    color: #FFFFFF;
+}
+
+.settings-primary:disabled {
+    background: #FFFFFF;
+    color: #4D4D4D;
+}
+
+.settings-nav.active {
+    background: #63B1BC;
+    color: #FFFFFF;
 }

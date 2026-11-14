@@ -48,6 +48,14 @@
     color: #FFFFFF;
 }
 
+.menu-item:checked {
+    color: #FFFFFF;
+}
+
+.menu-item.submenu {
+    color: #FFFFFF;
+}
+
 .menu-item:hover {
     background: #6ACAD8;
     color: #1A1A1A;
@@ -88,4 +96,123 @@
 
 .scrollbar-thumb:active {
     background: #6ACAD8;
+}
+
+.menu-list .menu-item:focus {
+    background: #6ACAD8;
+    color: #1A1A1A;
+}
+
+.menu-shortcut {
+    color: #C7C7C7;
+}
+
+.menu-shortcut:hover, .menu-shortcut:focus {
+    color: #1A1A1A;
+}
+
+.menu-separator {
+    background: #444444;
+}
+
+.text-input {
+    background: #2A2A2A;
+    border-color: #444444;
+}
+
+.button:focus {
+    background: #6ACAD8;
+    color: #1A1A1A;
+}
+
+.dropdown-button {
+    background: #444444;
+    color: #FFFFFF;
+}
+
+.dropdown-button:hover, .dropdown-button:focus {
+    background: #6ACAD8;
+    color: #1A1A1A;
+}
+
+.dropdown-popup {
+    background: #2A2A2A;
+    color: #FFFFFF;
+}
+
+.tab-preview {
+    background: #2A2A2A;
+    border-color: #444444;
+}
+
+.tab-preview-title {
+    color: #FFFFFF;
+}
+
+.terminal-drop-target {
+    background: #6ACAD833;
+    border-color: #6ACAD8;
+}
+
+.scrollbar:hover, .scrollbar:active {
+    background: #C7C7C726;
+}
+
+.settings-form {
+    color: #FFFFFF;
+}
+
+.settings-row {
+    background: #2A2A2A;
+}
+
+.settings-section {
+    color: #6ACAD8;
+}
+
+.settings-help {
+    color: #C7C7C7;
+}
+
+.settings-error {
+    color: #EA9090;
+}
+
+.settings-button {
+    background: #444444;
+}
+
+.settings-link {
+    color: #6ACAD8;
+    background: transparent;
+}
+
+.settings-button:hover, .settings-button:focus {
+    background: #6ACAD8;
+    color: #1A1A1A;
+}
+
+.settings-button:disabled {
+    background: #2A2A2A;
+    color: #C7C7C7;
+}
+
+.settings-primary {
+    background: #6ACAD8;
+    color: #1A1A1A;
+}
+
+.settings-primary:hover, .settings-primary:focus {
+    background: #6ACAD8;
+    color: #1A1A1A;
+}
+
+.settings-primary:disabled {
+    background: #2A2A2A;
+    color: #C7C7C7;
+}
+
+.settings-nav.active {
+    background: #6ACAD8;
+    color: #1A1A1A;
 }

@@ -48,6 +48,14 @@
     color: #2E3436;
 }
 
+.menu-item:checked {
+    color: #2E3436;
+}
+
+.menu-item.submenu {
+    color: #2E3436;
+}
+
 .menu-item:hover {
     background: #3584E4;
     color: #FFFFFF;
@@ -88,4 +96,123 @@
 
 .scrollbar-thumb:active {
     background: #15539E;
+}
+
+.menu-list .menu-item:focus {
+    background: #3584E4;
+    color: #FFFFFF;
+}
+
+.menu-shortcut {
+    color: #929595;
+}
+
+.menu-shortcut:hover, .menu-shortcut:focus {
+    color: #FFFFFF;
+}
+
+.menu-separator {
+    background: #CDC7C2;
+}
+
+.text-input {
+    background: #FFFFFF;
+    border-color: #CDC7C2;
+}
+
+.button:focus {
+    background: #3584E4;
+    color: #FFFFFF;
+}
+
+.dropdown-button {
+    background: #CDC7C2;
+    color: #2E3436;
+}
+
+.dropdown-button:hover, .dropdown-button:focus {
+    background: #3584E4;
+    color: #FFFFFF;
+}
+
+.dropdown-popup {
+    background: #FFFFFF;
+    color: #2E3436;
+}
+
+.tab-preview {
+    background: #FFFFFF;
+    border-color: #CDC7C2;
+}
+
+.tab-preview-title {
+    color: #2E3436;
+}
+
+.terminal-drop-target {
+    background: #3584E433;
+    border-color: #3584E4;
+}
+
+.scrollbar:hover, .scrollbar:active {
+    background: #92959526;
+}
+
+.settings-form {
+    color: #2E3436;
+}
+
+.settings-row {
+    background: #FFFFFF;
+}
+
+.settings-section {
+    color: #3584E4;
+}
+
+.settings-help {
+    color: #929595;
+}
+
+.settings-error {
+    color: #E01B24;
+}
+
+.settings-button {
+    background: #CDC7C2;
+}
+
+.settings-link {
+    color: #3584E4;
+    background: transparent;
+}
+
+.settings-button:hover, .settings-button:focus {
+    background: #3584E4;
+    color: #FFFFFF;
+}
+
+.settings-button:disabled {
+    background: #FFFFFF;
+    color: #929595;
+}
+
+.settings-primary {
+    background: #3584E4;
+    color: #FFFFFF;
+}
+
+.settings-primary:hover, .settings-primary:focus {
+    background: #3584E4;
+    color: #FFFFFF;
+}
+
+.settings-primary:disabled {
+    background: #FFFFFF;
+    color: #929595;
+}
+
+.settings-nav.active {
+    background: #3584E4;
+    color: #FFFFFF;
 }

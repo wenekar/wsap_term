@@ -48,6 +48,14 @@
     color: #FCFCFC;
 }
 
+.menu-item:checked {
+    color: #FCFCFC;
+}
+
+.menu-item.submenu {
+    color: #FCFCFC;
+}
+
 .menu-item:hover {
     background: #3DAEE9;
     color: #FCFCFC;
@@ -88,4 +96,123 @@
 
 .scrollbar-thumb:active {
     background: #3DAEE9;
+}
+
+.menu-list .menu-item:focus {
+    background: #3DAEE9;
+    color: #FCFCFC;
+}
+
+.menu-shortcut {
+    color: #A1A9B1;
+}
+
+.menu-shortcut:hover, .menu-shortcut:focus {
+    color: #FCFCFC;
+}
+
+.menu-separator {
+    background: #292C30;
+}
+
+.text-input {
+    background: #141618;
+    border-color: #292C30;
+}
+
+.button:focus {
+    background: #3DAEE9;
+    color: #FCFCFC;
+}
+
+.dropdown-button {
+    background: #292C30;
+    color: #FCFCFC;
+}
+
+.dropdown-button:hover, .dropdown-button:focus {
+    background: #3DAEE9;
+    color: #FCFCFC;
+}
+
+.dropdown-popup {
+    background: #141618;
+    color: #FCFCFC;
+}
+
+.tab-preview {
+    background: #141618;
+    border-color: #292C30;
+}
+
+.tab-preview-title {
+    color: #FCFCFC;
+}
+
+.terminal-drop-target {
+    background: #3DAEE933;
+    border-color: #3DAEE9;
+}
+
+.scrollbar:hover, .scrollbar:active {
+    background: #A1A9B126;
+}
+
+.settings-form {
+    color: #FCFCFC;
+}
+
+.settings-row {
+    background: #141618;
+}
+
+.settings-section {
+    color: #3DAEE9;
+}
+
+.settings-help {
+    color: #A1A9B1;
+}
+
+.settings-error {
+    color: #DA4453;
+}
+
+.settings-button {
+    background: #292C30;
+}
+
+.settings-link {
+    color: #3DAEE9;
+    background: transparent;
+}
+
+.settings-button:hover, .settings-button:focus {
+    background: #3DAEE9;
+    color: #FCFCFC;
+}
+
+.settings-button:disabled {
+    background: #141618;
+    color: #A1A9B1;
+}
+
+.settings-primary {
+    background: #3DAEE9;
+    color: #FCFCFC;
+}
+
+.settings-primary:hover, .settings-primary:focus {
+    background: #3DAEE9;
+    color: #FCFCFC;
+}
+
+.settings-primary:disabled {
+    background: #141618;
+    color: #A1A9B1;
+}
+
+.settings-nav.active {
+    background: #3DAEE9;
+    color: #FCFCFC;
 }
