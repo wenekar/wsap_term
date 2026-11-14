@@ -24,7 +24,7 @@ __thread FT_Library ft_lib = NULL;
 _Thread_local struct ft_face_slot *faces = NULL;
 static _Thread_local int faces_cap = 0;
 __thread int num_faces = 0;
-int configured_faces;
+_Atomic int configured_faces;
 __thread uint64_t face_stamp;
 __thread int ft_applied_px = FONT_DEFAULT_PIXEL_SIZE;
 
@@ -428,7 +428,8 @@ static FT_Face probe_style_face(const char *family_name, int slant, int weight,
 
 static bool slot_matches_cfg_locked(int slot_idx, const struct ft_face_slot *f)
 {
-    return slot_idx >= 0 && slot_idx < configured_faces &&
+    int cfg = atomic_load_explicit(&configured_faces, memory_order_relaxed);
+    return slot_idx >= 0 && slot_idx < cfg &&
            f->path && cfg_specs[slot_idx].path &&
            cfg_specs[slot_idx].index == f->index &&
            strcmp(cfg_specs[slot_idx].path, f->path) == 0;
@@ -681,13 +682,14 @@ static int insert_face(FT_Face face, struct ft_font_blob *blob, const char *path
 
     int slot = num_faces;
     if (num_faces == MAX_FACES) {
-        if (configured_faces >= MAX_FACES) {
+        int cfg = ft_configured_faces();
+        if (cfg >= MAX_FACES) {
             FT_Done_Face(face);
             ft_blob_release(blob);
             return -1;
         }
-        slot = configured_faces;
-        for (int i = configured_faces + 1; i < num_faces; i++)
+        slot = cfg;
+        for (int i = cfg + 1; i < num_faces; i++)
             if (faces[i].last_used < faces[slot].last_used)
                 slot = i;
         release_face(slot);
@@ -803,34 +805,70 @@ static void cfg_specs_clear_locked(void)
 void face_cfg_specs_destroy(void)
 {
     pthread_mutex_lock(&cfg_style_mu);
+    atomic_store_explicit(&configured_faces, 0, memory_order_release);
     cfg_specs_clear_locked();
     pthread_mutex_unlock(&cfg_style_mu);
 }
 
+/* Publishes configured face specs before setting configured_faces. */
 void face_snapshot_configured(void)
 {
     pthread_mutex_lock(&cfg_style_mu);
+    atomic_store_explicit(&configured_faces, 0, memory_order_release);
     cfg_specs_clear_locked();
-    configured_faces = num_faces;
-    for (int i = 0; i < configured_faces; i++)
-        cfg_specs[i] = (struct cfg_face_spec){
-            .path = strdup(faces[i].path),
+    int n = faces && num_faces > 0 ? num_faces : 0;
+    if (n > MAX_FACES)
+        n = MAX_FACES;
+    int count = 0;
+    for (int i = 0; i < n; i++) {
+        char *copy = faces[i].path ? strdup(faces[i].path) : NULL;
+        if (!copy)
+            break;
+        cfg_specs[count++] = (struct cfg_face_spec){
+            .path = copy,
             .index = faces[i].index,
             .is_emoji = faces[i].is_emoji,
             .deferred = faces[i].deferred,
         };
+    }
+    atomic_store_explicit(&configured_faces, count, memory_order_release);
     pthread_mutex_unlock(&cfg_style_mu);
 }
 
+/* Copies configured face specs under cfg_style_mu. Loads each face outside the lock. */
 void face_reload_configured(void)
 {
-    for (int i = 0; i < configured_faces; i++) {
-        if (cfg_specs[i].deferred)
-            defer_face(cfg_specs[i].path, cfg_specs[i].index,
-                       cfg_specs[i].is_emoji);
+    struct cfg_face_copy {
+        char *path;
+        int index;
+        bool is_emoji;
+        bool deferred;
+    } local[MAX_FACES];
+    int count = 0;
+
+    pthread_mutex_lock(&cfg_style_mu);
+    int n = atomic_load_explicit(&configured_faces, memory_order_relaxed);
+    if (n > MAX_FACES)
+        n = MAX_FACES;
+    for (int i = 0; i < n; i++) {
+        char *copy = cfg_specs[i].path ? strdup(cfg_specs[i].path) : NULL;
+        if (!copy)
+            break;
+        local[count++] = (struct cfg_face_copy){
+            .path = copy,
+            .index = cfg_specs[i].index,
+            .is_emoji = cfg_specs[i].is_emoji,
+            .deferred = cfg_specs[i].deferred,
+        };
+    }
+    pthread_mutex_unlock(&cfg_style_mu);
+
+    for (int i = 0; i < count; i++) {
+        if (local[i].deferred)
+            defer_face(local[i].path, local[i].index, local[i].is_emoji);
         else
-            ft_load_face(cfg_specs[i].path, cfg_specs[i].index,
-                         cfg_specs[i].is_emoji);
+            ft_load_face(local[i].path, local[i].index, local[i].is_emoji);
+        free(local[i].path);
     }
 }
 

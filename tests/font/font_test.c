@@ -938,6 +938,42 @@ static void run_cache_survives_concurrent_eviction(void)
           font_instance_default() != NULL);
 }
 
+struct unattached_shape_job {
+    struct font_instance *fi;
+    int arrow;
+    int arabic;
+};
+
+static void *unattached_shape_worker(void *arg)
+{
+    struct unattached_shape_job *job = arg;
+    const uint32_t arrow[] = { '-', '>' };
+    const uint32_t arabic[] = { 0x0633, 0x0644, 0x0627, 0x0645 };
+    glyph_cache_shape_segment(job->fi, arrow, 2, 0, count_shaped_cells, &job->arrow);
+    glyph_cache_shape_segment(job->fi, arabic, 4, 0, count_shaped_cells, &job->arabic);
+    glyph_cache_thread_detach();
+    font_thread_detach();
+    return NULL;
+}
+
+static void test_unattached_worker_shape(void)
+{
+    struct font_instance *fi = font_instance_default();
+    const uint32_t arrow[] = { '-', '>' };
+    const uint32_t arabic[] = { 0x0633, 0x0644, 0x0627, 0x0645 };
+    int main_arrow = 0, main_arabic = 0;
+    glyph_cache_shape_segment(fi, arrow, 2, 0, count_shaped_cells, &main_arrow);
+    glyph_cache_shape_segment(fi, arabic, 4, 0, count_shaped_cells, &main_arabic);
+
+    struct unattached_shape_job job = { .fi = fi };
+    pthread_t th;
+    assert(pthread_create(&th, NULL, unattached_shape_worker, &job) == 0);
+    assert(pthread_join(th, NULL) == 0);
+    check("an unattached worker shapes runs with a prepared layout",
+          main_arrow == 2 && main_arabic == 4 &&
+          job.arrow == main_arrow && job.arabic == main_arabic);
+}
+
 static bool solid(const struct glyph *g, int y, int x)
 {
     return g->alpha[y][x] == 255;
@@ -2165,6 +2201,7 @@ int main(int argc, char **argv)
     test_run_with_space_shapes();
     test_font_change_in_emit();
     run_cache_survives_concurrent_eviction();
+    test_unattached_worker_shape();
     test_raster_invariants();
     test_coverage();
     test_presentation();

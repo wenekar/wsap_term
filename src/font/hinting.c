@@ -135,7 +135,7 @@ static void fontconfig_query_hinting(enum font_hint_style *style, enum font_aa_m
 
 static void resolve_hinting(void)
 {
-    if (!ft_lib && !configured_faces && !fc_ready)
+    if (!ft_lib && !ft_configured_faces() && !fc_ready)
         return;
     if (current_style != FONT_HINT_AUTO &&
         current_aa != FONT_AA_AUTO)

@@ -791,8 +791,8 @@ bool fallback_init(void)
 
 static bool candidate_in_slot(const struct fallback_candidate *candidate, int slot)
 {
-    return candidate && candidate->path && slot >= 0 && slot < num_faces && faces[slot].path &&
-           faces[slot].index == candidate->index &&
+    return candidate && candidate->path && faces && slot >= 0 && slot < num_faces &&
+           faces[slot].path && faces[slot].index == candidate->index &&
            !strcmp(faces[slot].path, candidate->path);
 }
 
@@ -909,6 +909,16 @@ static inline int next_phase(const struct font_face_query *q)
     return q->prefer_emoji && q->phase == 2 ? 4 : q->phase + 1;
 }
 
+/* Returns the number of configured faces visible on this thread. */
+static inline int cfg_face_count(void)
+{
+    if (!faces)
+        return 0;
+    int cfg = ft_configured_faces();
+    int n = cfg < num_faces ? cfg : num_faces;
+    return n > 0 ? n : 0;
+}
+
 static int face_iter_next(struct font_face_query *q, const uint32_t *cps,
                           int len, const struct face_iter_ops *ops, void *ctx)
 {
@@ -916,7 +926,8 @@ static int face_iter_next(struct font_face_query *q, const uint32_t *cps,
         return -1;
     while (q->phase < 4) {
         if (is_cfg_phase(q)) {
-            while (q->idx < configured_faces) {
+            int n_cfg = cfg_face_count();
+            while (q->idx < n_cfg) {
                 int i = q->idx++;
                 if (ops->accept_configured(q, i, cps, len, ctx))
                     return i;
@@ -948,6 +959,8 @@ static bool covering_accept_cfg(struct font_face_query *q, int i,
                                 const uint32_t *cps, int len, void *ctx)
 {
     (void)cps; (void)len; (void)ctx;
+    if (!faces || i < 0 || i >= num_faces)
+        return false;
     if (faces[i].is_emoji != phase_emoji(q))
         return false;
     ensure_primary_face(i);
@@ -989,6 +1002,8 @@ int font_next_face_covering(struct font_face_query *q,
 static bool run_accept_cfg(struct font_face_query *q, int i,
                            const uint32_t *cps, int len, void *vctx)
 {
+    if (!faces || i < 0 || i >= num_faces)
+        return false;
     uint16_t flags = (uint16_t)(uintptr_t)vctx;
     if (faces[i].is_emoji != phase_emoji(q))
         return false;
@@ -1034,7 +1049,8 @@ static int run_accept_fb(struct font_face_query *q, int i,
         !candidate_has_char(c, cps[0]))
         return -1;
     int slot = candidate_face_slot(c);
-    if (slot < 0 || faces[slot].is_emoji || slot < configured_faces)
+    if (!faces || slot < 0 || slot >= num_faces || faces[slot].is_emoji ||
+        slot < cfg_face_count())
         return -1;
     if (candidate_covers_run(c, cps, len))
         return slot;
@@ -1070,10 +1086,11 @@ static _Atomic uint64_t *cp_page(uint32_t cp)
 
 static uint64_t cp_info_compute(uint32_t cp)
 {
+    int n_cfg = cfg_face_count();
     uint64_t cfg = UINT64_MAX;
-    if (configured_faces <= CP_CFG_FACES) {
+    if (n_cfg <= CP_CFG_FACES) {
         cfg = 0;
-        for (int i = 0; i < configured_faces; i++) {
+        for (int i = 0; i < n_cfg; i++) {
             if (faces[i].is_emoji)
                 continue;
             ensure_primary_face(i);
@@ -1106,38 +1123,48 @@ static uint64_t cfg_cover_mask(uint32_t cp)
 {
     if (cp >= UNICODE_LIMIT)
         return 0;
-    if (configured_faces > CP_CFG_FACES)
+    if (ft_configured_faces() > CP_CFG_FACES)
         return UINT64_MAX;
     return cp_info(cp) & CP_CFG_MASK;
 }
 
 void build_cfg_usable(void)
 {
-    if (!cfg_usable_bits)
-        for (int i = 0; i < configured_faces && i < 64; i++)
+    if (!cfg_usable_bits) {
+        int n_cfg = cfg_face_count();
+        for (int i = 0; i < n_cfg && i < 64; i++)
             if (!faces[i].is_emoji) {
                 ensure_primary_face(i);
                 if (faces[i].styles[0])
                     cfg_usable_bits |= UINT64_C(1) << i;
             }
+    }
 }
 
 static uint64_t scan_run_coverage(const uint32_t *cps, int len, uint64_t *hash,
                         int *dead_at)
 {
-    *dead_at = -1;
+    if (dead_at)
+        *dead_at = -1;
+    if (!cps && len > 0) {
+        if (dead_at)
+            *dead_at = 0;
+        return 0;
+    }
     build_cfg_usable();
     uint64_t cfg_and = cfg_usable_bits;
+    int n_cfg = ft_configured_faces();
     for (int k = 0; k < len; k++) {
         *hash = hash64_step(*hash, cps[k]);
         if (!needs_coverage(k, cps[k]))
             continue;
         uint64_t info = cp_info(cps[k]);
         if (!(info & CP_COVERABLE)) {
-            *dead_at = k;
+            if (dead_at)
+                *dead_at = k;
             return 0;
         }
-        if (configured_faces <= CP_CFG_FACES)
+        if (n_cfg <= CP_CFG_FACES)
             cfg_and &= info & CP_CFG_MASK;
     }
     return cfg_and;
@@ -1156,7 +1183,7 @@ uint64_t ft_scan_run(const uint32_t *cps, int len, uint16_t style,
 bool run_coverable(const uint32_t *cps, int len)
 {
     uint64_t cfg_and = ~UINT64_C(0);
-    if (configured_faces <= 64) {
+    if (ft_configured_faces() <= 64) {
         for (int k = 0; k < len && cfg_and; k++)
             if (needs_coverage(k, cps[k]))
                 cfg_and &= cfg_cover_mask(cps[k]);

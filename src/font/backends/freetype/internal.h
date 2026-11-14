@@ -38,9 +38,15 @@ extern __thread FT_Library ft_lib;
 
 extern _Thread_local struct ft_face_slot *faces;
 extern __thread int num_faces;
-extern int configured_faces;
+extern _Atomic int configured_faces;
 extern __thread uint64_t face_stamp;
 extern _Atomic unsigned ft_sync_epoch;
+
+/* Returns the published count of configured faces. */
+static inline int ft_configured_faces(void)
+{
+    return atomic_load_explicit(&configured_faces, memory_order_acquire);
+}
 
 extern const char embedded_cards_path[];
 

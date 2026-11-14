@@ -2,6 +2,7 @@
 #include "font/backend.h"
 #include "font/backends/freetype/internal.h"
 #include "font/glyph/intern.h"
+#include "util/hash.h"
 
 #include <fontconfig/fontconfig.h>
 #include <hb-ft.h>
@@ -120,7 +121,6 @@ void ft_reload_family(void)
     shape_thread_reset();
     fallback_destroy();
     release_all_faces();
-    configured_faces = MAX_FACES;
     fallback_coverage_reset();
     load_named_face(font_get_family());
     if (!num_faces) load_named_face(FT_LAST_RESORT_FAMILY);
@@ -152,7 +152,6 @@ static void ft_destroy(void)
     release_all_faces();
     faces_release_table();
     face_cfg_specs_destroy();
-    configured_faces = 0;
 
     if (ft_lib) {
         FT_Done_FreeType(ft_lib);
@@ -160,7 +159,7 @@ static void ft_destroy(void)
     }
     fc_fini();
     synced_epoch = 0;
-    atomic_fetch_add_explicit(&ft_sync_epoch, 1, memory_order_relaxed);
+    atomic_fetch_add_explicit(&ft_sync_epoch, 1, memory_order_release);
 }
 
 static bool ft_thread_attach(void)
@@ -177,8 +176,13 @@ static bool ft_thread_attach(void)
     if (!ft_new_library())
         return false;
     face_reload_configured();
-    if (!num_faces)
+    if (!num_faces) {
+        faces_release_table();
+        FT_Done_FreeType(ft_lib);
+        ft_lib = NULL;
+        synced_epoch = 0;
         return false;
+    }
     synced_epoch = e;
     return true;
 }
@@ -338,6 +342,22 @@ static enum font_run_result ft_shape_run(font_handle_t *face, const struct font_
     return FONT_RUN_UNAVAILABLE;
 }
 
+/* Ensures the calling thread is attached before scanning run coverage. */
+static uint64_t ft_backend_scan_run(const uint32_t *cps, int len, uint16_t style,
+                                    uint64_t *hash, int *dead_at)
+{
+    if (ft_thread_ready())
+        return ft_scan_run(cps, len, style, hash, dead_at);
+    uint64_t h = hash64_step(HASH64_BASIS, style);
+    for (int k = 0; cps && k < len; k++)
+        h = hash64_step(h, cps[k]);
+    if (hash)
+        *hash = h;
+    if (dead_at)
+        *dead_at = len > 0 ? 0 : -1;
+    return 0;
+}
+
 static hb_face_t *ft_layout_face(font_handle_t *face, uint16_t style)
 {
     (void)face;
@@ -361,7 +381,7 @@ const struct font_backend font_backend_freetype = {
     .close = ft_face_close,
     .measure = ft_face_metrics,
     .rasterize_glyph = ft_rasterize_glyph,
-    .scan_run = ft_scan_run,
+    .scan_run = ft_backend_scan_run,
     .shape_run = ft_shape_run,
     .layout_face = ft_layout_face,
 };
