@@ -23,7 +23,7 @@
 #define SETTINGS_VALUE_CAP 1024
 
 enum category { ALL, APPEARANCE, TEXT, CURSOR, TERMINAL, WINDOW, CATEGORY_COUNT };
-enum action_id { SAVE = 1, CANCEL, RESET, OPEN_CONFIG, FONT_HELP, COLOR_HELP, CATEGORY_BASE = 100 };
+enum action_id { SAVE = 1, CANCEL, RESET, OPEN_CONFIG, CATEGORY_BASE = 100 };
 
 static const char *const categories[] = {
     "All settings", "Appearance", "Text", "Cursor", "Terminal", "Window",
@@ -450,8 +450,6 @@ static bool form_action(struct ui_widget *source, const struct ui_action *action
         break;
     }
     case OPEN_CONFIG: open_config(form); break;
-    case FONT_HELP: platform_open_url("https://www.freedesktop.org/wiki/Software/fontconfig/"); break;
-    case COLOR_HELP: platform_open_url("https://en.wikipedia.org/wiki/ANSI_escape_code#Colors"); break;
     default:
         if (action->id < CATEGORY_BASE || action->id >= CATEGORY_BASE + CATEGORY_COUNT)
             return false;
@@ -723,7 +721,6 @@ static bool mount_form(struct settings_form *form)
             .class_name = "settings-button settings-link",
             .tag_name = "",
             .id_name = "font-link",
-            .action_id = FONT_HELP,
             .props.label = {
                 .text = "Font help",
                 .link = "https://www.freedesktop.org/wiki/Software/fontconfig/",
@@ -738,7 +735,6 @@ static bool mount_form(struct settings_form *form)
             .class_name = "settings-button settings-link",
             .tag_name = "",
             .id_name = "color-link",
-            .action_id = COLOR_HELP,
             .props.label = {
                 .text = "Color help",
                 .link = "https://en.wikipedia.org/wiki/ANSI_escape_code#Colors",
