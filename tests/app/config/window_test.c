@@ -193,6 +193,16 @@ static void editor_resize_test(struct window *window)
     assert(input->bounds.width > width);
     ui_surface_resize(window_ui_surface(window), (struct vector2i){ .x = 980, .y = 740 });
     assert(painted(window, "Font family"));
+
+    /* A narrow window keeps the layout clean. Text wraps and the editor
+     * stays inside the viewport. */
+    ui_surface_resize(window_ui_surface(window), (struct vector2i){ .x = 360, .y = 740 });
+    assert(painted(window, "Settings"));
+    assert(input->bounds.width > 0);
+    assert(input->bounds.x >= 0 &&
+           input->bounds.x + input->bounds.width <= 360);
+    ui_surface_resize(window_ui_surface(window), (struct vector2i){ .x = 980, .y = 740 });
+    assert(painted(window, "Font family"));
 }
 
 int main(void)
