@@ -1,0 +1,5 @@
+# Mesa Vulkan radv allocates one-time state inside pthread_once.
+# The Vulkan loader unloads the ICD module during vkDestroyInstance.
+# Unloading drops the static root pointer and hides the module symbols.
+# LeakSanitizer then reports the one-time driver allocation as a leak.
+leak:pthread_once

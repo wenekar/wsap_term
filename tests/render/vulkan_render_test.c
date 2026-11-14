@@ -438,6 +438,7 @@ int main(void)
     test_atlas_growth();
     test_image_slots();
     test_dropped_frame_image();
+    test_frame_helpers_fini();
     if (have_display)
         yasl_shutdown();
     render_shutdown();

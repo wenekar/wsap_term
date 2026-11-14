@@ -260,6 +260,7 @@ Tests that use uninstrumented system libraries stay in `unit` and `extlib`.
 
 `tests/tsan.supp` suppresses GLib finalizers.
 `tests/asan.supp` suppresses the macOS CoreGraphics PDF lexer overread.
+`tests/lsan.supp` suppresses Mesa Vulkan one-time allocations across driver unload.
 Keep suppressions limited to system code.
 
 The regular suite runs `write-fuzz-test` with 1,000 seeds.
