@@ -50,7 +50,9 @@ static void remember(struct ui_damage_tracker *t, const struct ui_scene *s)
         return;
     }
     t->n = s->n_scopes;
-    memset(t->slots, 0, (size_t)t->slot_cap * sizeof(*t->slots));
+    /* An empty scene has no slots, and the table stays unallocated. */
+    if (t->n > 0)
+        memset(t->slots, 0, (size_t)t->slot_cap * sizeof(*t->slots));
     for (int i = 0; i < s->n_scopes; i++) {
         t->records[i] = (struct ui_damage_record){
             .key = s->scopes[i].key,

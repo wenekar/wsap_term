@@ -1323,9 +1323,11 @@ static WSAP_VTCORE_NOINLINE size_t stream_ascii_lines(struct wsap_vtcore *t, con
     s->top = 0;
     struct srow *dst = s->slot;
     uint64_t uid = t->next_row_uid;
-    uint8_t *tail_base = tail_data - source_start;
+    /* The rows point into the tail copy, so a batch with no tail bytes has no
+     * rows to add. Do not form an offset from a NULL buffer. */
+    uint8_t *tail_base = tail_data ? tail_data - source_start : NULL;
     int start = source_start;
-    for (int j = first; j < count; j++) {
+    for (int j = first; tail_base && j < count; j++) {
         int next_end = ends[j + 1];
         int n = next_end - term - start;
         do {

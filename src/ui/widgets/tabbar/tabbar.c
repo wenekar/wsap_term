@@ -997,14 +997,16 @@ void ui_tabbar_set_tabs(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
         return;
     if (!reserve_labels(tb, n))
         return;
-    for (int i = 0; i < n; i++) {
+    /* Take the array once. The loop writes the entries that it holds. */
+    struct ui_tab_label *labels = tb->impl.labels;
+    for (int i = 0; i < n && labels; i++) {
         const char *text = "";
         bool active = false;
         if (tabs) {
             text = tabs[i].text ? tabs[i].text : "";
             active = tabs[i].active;
         }
-        struct ui_tab_label *l = &tb->impl.labels[i];
+        struct ui_tab_label *l = &labels[i];
         if (!l->text || strcmp(l->text, text)) {
             char *copy = strdup(text);
             /* A failed copy keeps the old text and leaves no NULL label. */
