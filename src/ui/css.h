@@ -148,11 +148,8 @@ struct css_rule {
     bool is_id;
 };
 
-struct css_index;
-
 struct css_sheet {
-    struct css_rule *rules;
-    struct css_index *index;
+    struct css_rule *rules; /* Sorted in apply order. */
     int rule_count;
     int rule_cap;
     bool has_defaults; /* The sheet is built on the css_init_default rules. */
@@ -188,7 +185,7 @@ bool css_parse_with_diagnostics(struct css_sheet *sheet, const char *css_text,
 bool css_parse(struct css_sheet *sheet, const char *css_text);
 /* Appends rules from `src` to `dst`. */
 bool css_sheet_append(struct css_sheet *dst, const struct css_sheet *src);
-/* Releases all rules and indexed data from `sheet`. */
+/* Releases all rules from `sheet`. */
 void css_sheet_clear(struct css_sheet *sheet);
 
 /* Populates `sheet` with default built-in CSS rules. */

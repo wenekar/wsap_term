@@ -545,73 +545,8 @@ static bool sheet_push(struct css_sheet *sheet, const struct css_rule *proto,
     return true;
 }
 
-enum key_kind {
-    KEY_ANY = 0,
-    KEY_TAG,
-    KEY_CLASS,
-    KEY_ID,
-};
-
-struct css_key {
-    const char *text;
-    uint32_t len;
-    uint32_t start;
-    uint32_t count;
-    uint8_t kind;
-};
-
-struct css_index {
-    uint32_t *order;
-    uint32_t *items;
-    struct css_key *keys;
-    uint32_t key_count;
-};
-
-struct apply_slot {
-    uint32_t tier;
-    uint32_t rank;
-    uint32_t rule;
-};
-
-struct key_slot {
-    const char *text;
-    uint32_t len;
-    uint32_t pos;
-    uint8_t kind;
-};
-
-static int cmp_u32(uint32_t a, uint32_t b)
-{
-    return (a > b) - (a < b);
-}
-
-static int cmp_apply_slot(const void *pa, const void *pb)
-{
-    const struct apply_slot *a = pa, *b = pb;
-    if (a->tier != b->tier) return cmp_u32(a->tier, b->tier);
-    if (a->rank != b->rank) return cmp_u32(a->rank, b->rank);
-    return cmp_u32(a->rule, b->rule);
-}
-
-static int cmp_key_text(uint8_t ka, const char *ta, uint32_t la,
-                        uint8_t kb, const char *tb, uint32_t lb)
-{
-    if (ka != kb) return cmp_u32(ka, kb);
-    uint32_t m = la < lb ? la : lb;
-    if (m) {
-        int c = memcmp(ta, tb, m);
-        if (c) return c < 0 ? -1 : 1;
-    }
-    return cmp_u32(la, lb);
-}
-
-static int cmp_key_slot(const void *pa, const void *pb)
-{
-    const struct key_slot *a = pa, *b = pb;
-    int c = cmp_key_text(a->kind, a->text, a->len, b->kind, b->text, b->len);
-    return c ? c : cmp_u32(a->pos, b->pos);
-}
-
+/* A rule applies in tier order: an id selector beats a class selector, and a
+   class selector beats a tag selector. More classes beat fewer classes. */
 static uint32_t rule_tier(const struct css_rule *r)
 {
     return r->is_id ? 2 : r->is_class ? 1 : 0;
@@ -622,106 +557,53 @@ static uint32_t rule_rank(const struct css_rule *r)
     return r->is_class ? (uint32_t)r->class_rank : 1;
 }
 
-static struct key_slot rule_key(const struct css_rule *r, uint32_t pos)
+static int cmp_u32(uint32_t a, uint32_t b)
 {
-    struct key_slot k = { .text = NULL, .len = 0, .pos = pos, .kind = KEY_ANY };
-    const char *comp = r->selector + r->last_off;
-    const char *colon = strchr(comp, ':');
-    size_t clen = colon ? (size_t)(colon - comp) : strlen(comp);
-    if (!clen)
-        return k;
-
-    const char *text = comp;
-    size_t len = clen;
-    uint8_t kind = KEY_TAG;
-    if (r->is_class) {
-        const char *end = comp + clen;
-        text = comp + 1;
-        const char *dot = memchr(text, '.', (size_t)(end - text));
-        len = (size_t)((dot ? dot : end) - text);
-        kind = KEY_CLASS;
-    } else if (r->is_id) {
-        text = comp + 1;
-        len = clen - 1;
-        kind = KEY_ID;
-    }
-    if (!len)
-        return k;
-    k.text = text;
-    k.len = (uint32_t)len;
-    k.kind = kind;
-    return k;
+    return (a > b) - (a < b);
 }
 
-static void css_index_free(struct css_index *ix)
+struct rule_order {
+    uint32_t tier;
+    uint32_t rank;
+    uint32_t pos;
+};
+
+static int cmp_rule_order(const void *pa, const void *pb)
 {
-    if (!ix)
-        return;
-    free(ix->order);
-    free(ix->items);
-    free(ix->keys);
-    free(ix);
+    const struct rule_order *a = pa, *b = pb;
+    int c = cmp_u32(a->tier, b->tier);
+    if (c) return c;
+    c = cmp_u32(a->rank, b->rank);
+    return c ? c : cmp_u32(a->pos, b->pos);
 }
 
-static bool css_index_build(struct css_sheet *sheet)
+/* Puts the rule table in apply order, so a lookup applies the rules with no
+   sort. A later rule in the source wins a tie, because it applies last. */
+static bool sheet_sort_rules(struct css_sheet *sheet)
 {
-    css_index_free(sheet->index);
-    sheet->index = NULL;
     size_t n = (size_t)sheet->rule_count;
-    if (n == 0)
+    if (n < 2)
         return true;
-
-    struct css_index *ix = calloc(1, sizeof(*ix));
-    if (!ix)
-        return false;
-    struct apply_slot *apply = malloc(n * sizeof(*apply));
-    struct key_slot *slots = malloc(n * sizeof(*slots));
-    ix->order = malloc(n * sizeof(*ix->order));
-    ix->items = malloc(n * sizeof(*ix->items));
-    ix->keys = malloc((n + 1) * sizeof(*ix->keys));
-    if (!apply || !slots || !ix->order || !ix->items || !ix->keys) {
-        free(apply);
-        free(slots);
-        css_index_free(ix);
+    struct rule_order *keys = malloc(n * sizeof(*keys));
+    struct css_rule *sorted = malloc(n * sizeof(*sorted));
+    if (!keys || !sorted) {
+        free(keys);
+        free(sorted);
         return false;
     }
-
     for (size_t i = 0; i < n; i++) {
-        const struct css_rule *r = &sheet->rules[i];
-        apply[i] = (struct apply_slot){
-            .tier = rule_tier(r), .rank = rule_rank(r), .rule = (uint32_t)i,
+        keys[i] = (struct rule_order){
+            .tier = rule_tier(&sheet->rules[i]),
+            .rank = rule_rank(&sheet->rules[i]),
+            .pos = (uint32_t)i,
         };
     }
-    qsort(apply, n, sizeof(*apply), cmp_apply_slot);
-    for (size_t p = 0; p < n; p++) {
-        ix->order[p] = apply[p].rule;
-        slots[p] = rule_key(&sheet->rules[apply[p].rule], (uint32_t)p);
-    }
-    qsort(slots, n, sizeof(*slots), cmp_key_slot);
+    qsort(keys, n, sizeof(*keys), cmp_rule_order);
     for (size_t i = 0; i < n; i++)
-        ix->items[i] = slots[i].pos;
-
-    size_t i = 0;
-    while (i < n && slots[i].kind == KEY_ANY)
-        i++;
-    ix->keys[0] = (struct css_key){ .kind = KEY_ANY, .start = 0, .count = (uint32_t)i };
-    uint32_t nkeys = 1;
-    while (i < n) {
-        size_t j = i + 1;
-        while (j < n && cmp_key_text(slots[j].kind, slots[j].text, slots[j].len,
-                                     slots[i].kind, slots[i].text, slots[i].len) == 0)
-            j++;
-        ix->keys[nkeys++] = (struct css_key){
-            .text = slots[i].text, .len = slots[i].len, .start = (uint32_t)i,
-            .count = (uint32_t)(j - i), .kind = slots[i].kind,
-        };
-        i = j;
-    }
-    ix->key_count = nkeys;
-
-    free(apply);
-    free(slots);
-    sheet->index = ix;
+        sorted[i] = sheet->rules[keys[i].pos];
+    memcpy(sheet->rules, sorted, n * sizeof(*sorted));
+    free(keys);
+    free(sorted);
     return true;
 }
 
@@ -876,7 +758,7 @@ bool css_parse_with_diagnostics(struct css_sheet *sheet, const char *p,
 {
     if (!sheet || !p) return false;
     bool ok = parse_rules(sheet, p, report, userdata);
-    return css_index_build(sheet) && ok;
+    return sheet_sort_rules(sheet) && ok;
 }
 
 static void css_report_stderr(const struct css_diagnostic *diagnostic, void *userdata)
@@ -897,7 +779,6 @@ void css_sheet_clear(struct css_sheet *sheet)
 {
     if (!sheet)
         return;
-    css_index_free(sheet->index);
     for (int i = 0; i < sheet->rule_count; i++)
         free(sheet->rules[i].selector);
     free(sheet->rules);
@@ -925,7 +806,7 @@ bool css_sheet_append(struct css_sheet *dst, const struct css_sheet *src)
         return false;
     bool ok = append_rules(dst, src);
     dst->has_defaults = dst->has_defaults || src->has_defaults;
-    return css_index_build(dst) && ok;
+    return sheet_sort_rules(dst) && ok;
 }
 
 void css_init_default(struct css_sheet *sheet)
@@ -1156,134 +1037,6 @@ static void apply_rule_props(const struct css_rule *r, struct css_style *out)
     }
 }
 
-#define CSS_CANDIDATE_CAP 64
-
-struct lookup {
-    const char *class_name;
-    size_t class_len;
-    const char *id_name;
-    const char *tag_name;
-    unsigned pseudo_flags;
-    const char *ancestor_path;
-};
-
-struct token_cursor {
-    const char *p;
-    const char *end;
-};
-
-static bool next_class_token(struct token_cursor *c, const char **tok, uint32_t *len)
-{
-    while (c->p < c->end && isspace((unsigned char)*c->p)) c->p++;
-    if (c->p == c->end)
-        return false;
-    const char *s = c->p;
-    while (c->p < c->end && !isspace((unsigned char)*c->p)) c->p++;
-    *tok = s;
-    *len = (uint32_t)(c->p - s);
-    return true;
-}
-
-static const struct css_key *find_key(const struct css_index *ix, uint8_t kind,
-                                      const char *text, uint32_t len)
-{
-    uint32_t lo = 1, hi = ix->key_count;
-    while (lo < hi) {
-        uint32_t mid = lo + (hi - lo) / 2;
-        const struct css_key *k = &ix->keys[mid];
-        int c = cmp_key_text(k->kind, k->text, k->len, kind, text, len);
-        if (c == 0)
-            return k;
-        if (c < 0)
-            lo = mid + 1;
-        else
-            hi = mid;
-    }
-    return NULL;
-}
-
-static bool take_group(const struct css_index *ix, const struct css_key *k,
-                       uint32_t *buf, uint32_t *n)
-{
-    if (!k)
-        return true;
-    if (*n + k->count > CSS_CANDIDATE_CAP)
-        return false;
-    memcpy(buf + *n, ix->items + k->start, k->count * sizeof(*buf));
-    *n += k->count;
-    return true;
-}
-
-static bool gather_candidates(const struct css_index *ix, const struct lookup *q,
-                              uint32_t *buf, uint32_t *n)
-{
-    if (!take_group(ix, &ix->keys[0], buf, n))
-        return false;
-    if (q->tag_name &&
-        !take_group(ix, find_key(ix, KEY_TAG, q->tag_name, (uint32_t)strlen(q->tag_name)), buf, n))
-        return false;
-    if (q->id_name &&
-        !take_group(ix, find_key(ix, KEY_ID, q->id_name, (uint32_t)strlen(q->id_name)), buf, n))
-        return false;
-    if (!q->class_name)
-        return true;
-    struct token_cursor c = { q->class_name, q->class_name + q->class_len };
-    const char *tok;
-    uint32_t tlen;
-    while (next_class_token(&c, &tok, &tlen))
-        if (!take_group(ix, find_key(ix, KEY_CLASS, tok, tlen), buf, n))
-            return false;
-    return true;
-}
-
-static int64_t min_after(const struct css_index *ix, const struct css_key *k,
-                         int64_t last, int64_t best)
-{
-    if (!k || !k->count)
-        return best;
-    const uint32_t *items = ix->items + k->start;
-    uint32_t a = 0, b = k->count;
-    while (a < b) {
-        uint32_t mid = a + (b - a) / 2;
-        if ((int64_t)items[mid] > last)
-            b = mid;
-        else
-            a = mid + 1;
-    }
-    if (a == k->count)
-        return best;
-    int64_t v = items[a];
-    return (best < 0 || v < best) ? v : best;
-}
-
-static int64_t next_candidate(const struct css_index *ix, const struct lookup *q, int64_t last)
-{
-    int64_t best = min_after(ix, &ix->keys[0], last, -1);
-    if (q->tag_name)
-        best = min_after(ix, find_key(ix, KEY_TAG, q->tag_name,
-                                      (uint32_t)strlen(q->tag_name)), last, best);
-    if (q->id_name)
-        best = min_after(ix, find_key(ix, KEY_ID, q->id_name,
-                                      (uint32_t)strlen(q->id_name)), last, best);
-    if (!q->class_name)
-        return best;
-    struct token_cursor c = { q->class_name, q->class_name + q->class_len };
-    const char *tok;
-    uint32_t tlen;
-    while (next_class_token(&c, &tok, &tlen))
-        best = min_after(ix, find_key(ix, KEY_CLASS, tok, tlen), last, best);
-    return best;
-}
-
-static void apply_position(const struct css_sheet *sheet, const struct css_index *ix,
-                           uint32_t pos, const struct lookup *q, struct css_style *out)
-{
-    const struct css_rule *r = &sheet->rules[ix->order[pos]];
-    if (selector_matches(r, q->class_name, q->id_name, q->tag_name,
-                         q->pseudo_flags, q->ancestor_path))
-        apply_rule_props(r, out);
-}
-
 void css_style_resolve_ex(const struct css_sheet *sheet, const char *class_name,
                           const char *id_name, const char *tag_name,
                           unsigned pseudo_flags, const char *ancestor_path,
@@ -1292,39 +1045,16 @@ void css_style_resolve_ex(const struct css_sheet *sheet, const char *class_name,
     if (!out) return;
     memset(out, 0, sizeof(*out));
     out->opacity = 1.0f;
-    if (!sheet || !sheet->index) return;
+    if (!sheet) return;
 
-    const struct css_index *ix = sheet->index;
-    struct lookup q = {
-        .class_name = class_name,
-        .class_len = class_name ? strlen(class_name) : 0,
-        .id_name = id_name,
-        .tag_name = tag_name,
-        .pseudo_flags = pseudo_flags,
-        .ancestor_path = ancestor_path,
-    };
-
-    uint32_t buf[CSS_CANDIDATE_CAP];
-    uint32_t n = 0;
-    if (gather_candidates(ix, &q, buf, &n)) {
-        for (uint32_t i = 1; i < n; i++) {
-            uint32_t v = buf[i];
-            uint32_t j = i;
-            while (j > 0 && buf[j - 1] > v) {
-                buf[j] = buf[j - 1];
-                j--;
-            }
-            buf[j] = v;
-        }
-        for (uint32_t i = 0; i < n; i++)
-            if (i == 0 || buf[i] != buf[i - 1])
-                apply_position(sheet, ix, buf[i], &q, out);
-        return;
+    /* The table is in apply order. A rule that matches replaces the props of
+       the rules before it. */
+    for (int i = 0; i < sheet->rule_count; i++) {
+        const struct css_rule *r = &sheet->rules[i];
+        if (selector_matches(r, class_name, id_name, tag_name, pseudo_flags,
+                             ancestor_path))
+            apply_rule_props(r, out);
     }
-
-    for (int64_t last = next_candidate(ix, &q, -1); last >= 0;
-         last = next_candidate(ix, &q, last))
-        apply_position(sheet, ix, (uint32_t)last, &q, out);
 }
 
 void css_style_resolve(const struct css_sheet *sheet, const char *class_name,

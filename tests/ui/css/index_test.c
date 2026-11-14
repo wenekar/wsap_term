@@ -118,7 +118,8 @@ static void append_rule(size_t *len, const char *fmt, ...)
     *len += (size_t)n;
 }
 
-static void overflow_one_group_test(void)
+/* A sheet with more rules than one group holds keeps the same apply order. */
+static void wide_sheet_mixed_selectors_test(void)
 {
     size_t len = 0;
     append_rule(&len, ". { margin: %dpx; } div { padding: %dpx; }", 7, 3);
@@ -163,7 +164,8 @@ static void overflow_one_group_test(void)
     css_sheet_clear(&s);
 }
 
-static void overflow_two_groups_test(void)
+/* A wide sheet with two classes keeps the last rule of each class set. */
+static void wide_sheet_two_classes_test(void)
 {
     size_t len = 0;
     for (int i = 0; i < WIDE_RULES; i++)
@@ -184,8 +186,8 @@ int main(void)
     groups_merge_in_apply_order_test();
     keyless_rules_test();
     appended_sheets_test();
-    overflow_one_group_test();
-    overflow_two_groups_test();
-    puts("PASS: css index");
+    wide_sheet_mixed_selectors_test();
+    wide_sheet_two_classes_test();
+    puts("PASS: css sheet lookup");
     return 0;
 }
