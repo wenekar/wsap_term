@@ -8,47 +8,24 @@
 
 const int app_tabs_kind;
 
-static struct app_tabs *root_tabs(const struct ui_widget *widget)
+static struct app_tabs *root_tabs(struct ui_widget *widget)
 {
-    return ui_container_of((struct ui_widget *)widget, struct app_tabs, root);
+    return ui_container_of(widget, struct app_tabs, root);
 }
 
 static struct vector2i root_measure(const struct ui_widget *widget,
                                     struct ui_constraints constraints)
 {
-    struct app_tabs *tabs = root_tabs(widget);
-    ui_widget_measure(ui_tabbar_widget(&tabs->tabbar), constraints);
-    struct ui_widget *content = tabs->mounted;
-    if (content)
-        ui_widget_measure(content, constraints);
-    /* The layout places the floating children by measured size. */
-    ui_widget_measure(ui_tab_preview_widget(&tabs->preview), constraints);
-    ui_widget_measure(ui_palette_widget(&tabs->palette), constraints);
+    /* Layout places floating children by their measured size. */
+    for (struct ui_widget *c = widget->first_child; c; c = c->next_sibling) {
+        if (!ui_widget_is_hidden(c))
+            ui_widget_measure(c, constraints);
+    }
     return ui_constraints_clamp(constraints, constraints.max);
 }
 
-/* The origin follows the visible bar height. Keep the content size fixed
- * until the app releases the closing entry's bar reservation. */
-static void root_layout(struct ui_widget *widget, struct rect2i bounds)
+static void sync_preview_anchor(struct app_tabs *tabs, struct vector2i max_size)
 {
-    struct app_tabs *tabs = root_tabs(widget);
-    int bar_h = ui_tabbar_bar_height(&tabs->tabbar);
-    if (bar_h > bounds.height)
-        bar_h = bounds.height;
-    int reserve = app_tabs_bar_height(tabs->window);
-    if (reserve > bounds.height)
-        reserve = bounds.height;
-    int offset = ui_tabbar_height(&tabs->tabbar);
-    if (offset > reserve)
-        offset = reserve;
-    ui_widget_place(ui_tabbar_widget(&tabs->tabbar), (struct rect2i){
-        .pos = bounds.pos, .size = { .x = bounds.width, .y = bar_h },
-    });
-    if (tabs->mounted)
-        ui_widget_place(tabs->mounted, (struct rect2i){
-            .pos = { .x = bounds.x, .y = bounds.y + offset },
-            .size = { .x = bounds.width, .y = bounds.height - reserve },
-        });
     int hovered = ui_tabbar_hovered_tab(&tabs->tabbar);
     struct rect2i anchor = {0};
     bool has_anchor = hovered >= 0 && hovered != tabs->active &&
@@ -57,9 +34,32 @@ static void root_layout(struct ui_widget *widget, struct rect2i bounds)
     if (ui_tab_preview_sync_anchor(&tabs->preview,
                                    has_anchor ? hovered : -1, anchor))
         ui_widget_measure(ui_tab_preview_widget(&tabs->preview),
-                          (struct ui_constraints){ .max = bounds.size });
-    ui_widget_place_child(ui_tab_preview_widget(&tabs->preview), bounds);
-    ui_widget_place_child(ui_palette_widget(&tabs->palette), bounds);
+                          (struct ui_constraints){ .max = max_size });
+}
+
+/* The origin follows the visible bar height. Keep the content size fixed
+ * until the app releases the closing entry's bar reservation. */
+static void root_layout(struct ui_widget *widget, struct rect2i bounds)
+{
+    struct app_tabs *tabs = root_tabs(widget);
+    struct ui_widget *tabbar = ui_tabbar_widget(&tabs->tabbar);
+    int bar_h = geom_min_i(ui_tabbar_bar_height(&tabs->tabbar), bounds.height);
+    int reserve = geom_min_i(app_tabs_bar_height(tabs->window), bounds.height);
+    int offset = geom_min_i(ui_tabbar_height(&tabs->tabbar), reserve);
+    ui_widget_place(tabbar, (struct rect2i){
+        .pos = bounds.pos, .size = { .x = bounds.width, .y = bar_h },
+    });
+    if (tabs->mounted)
+        ui_widget_place(tabs->mounted, (struct rect2i){
+            .pos = { .x = bounds.x, .y = bounds.y + offset },
+            .size = { .x = bounds.width, .y = bounds.height - reserve },
+        });
+    /* Sync the preview anchor after tab bar placement. */
+    sync_preview_anchor(tabs, bounds.size);
+    for (struct ui_widget *c = widget->first_child; c; c = c->next_sibling) {
+        if (c != tabbar && c != tabs->mounted)
+            ui_widget_place_child(c, bounds);
+    }
 }
 
 static void root_prepare(struct ui_widget *widget)
@@ -137,7 +137,7 @@ static const struct ui_widget_ops TABS_ROOT_OPS = {
     .event = root_event,
 };
 
-void app_tabs_widgets_init(struct app_tabs *tabs)
+static void widgets_init(struct app_tabs *tabs)
 {
     ui_widget_init(&tabs->root, &TABS_ROOT_OPS, NULL);
     ui_tabbar_init(&tabs->tabbar);
@@ -214,21 +214,6 @@ static void op_destroy(struct window *w)
     free(tabs);
 }
 
-struct window_ui_spec app_tabs_ui_spec(struct app_tabs *tabs)
-{
-    return (struct window_ui_spec){
-        .name = "tabs",
-        .kind = &app_tabs_kind,
-        .root = &tabs->root,
-        .restyle = op_restyle,
-        .resize = op_resize,
-        .suspended = op_suspended,
-        .debug_state = op_debug_state,
-        .destroy = op_destroy,
-        .content = tabs,
-    };
-}
-
 bool app_tabs_mount(struct window *w, const struct app_tabs_spec *spec)
 {
     if (!w || !spec || !spec->config || !spec->model || window_ui_of(w))
@@ -242,15 +227,26 @@ bool app_tabs_mount(struct window *w, const struct app_tabs_spec *spec)
     tabs->spec.cwd = NULL;
     tabs->spec.tab = 0;
     tabs->active = -1;
-    app_tabs_widgets_init(tabs);
-    /* Drag events reach every window. The model owns the drag, so it is the
-     * user data. */
-    window_set_drag_target(w, &APP_TABS_DRAG_TARGET, spec->model);
-    struct window_ui_spec ui = app_tabs_ui_spec(tabs);
+    widgets_init(tabs);
+    struct window_ui_spec ui = {
+        .name = "tabs",
+        .kind = &app_tabs_kind,
+        .root = &tabs->root,
+        .restyle = op_restyle,
+        .resize = op_resize,
+        .suspended = op_suspended,
+        .debug_state = op_debug_state,
+        .destroy = op_destroy,
+        .content = tabs,
+    };
     if (!window_ui_mount(w, &ui)) {
+        ui_widget_destroy(&tabs->root);
         free(tabs);
         return false;
     }
+    /* Drag events reach every window. The model owns the drag, so it is the
+     * user data. */
+    window_set_drag_target(w, &APP_TABS_DRAG_TARGET, spec->model);
     /* Binds the initial tab or creates a new tab in the mounted window. */
     if (spec->tab)
         return app_tabs_bind(w, spec->tab, -1);

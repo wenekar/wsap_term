@@ -82,9 +82,7 @@ void app_tabs_commit_geometry(struct app_tabs *tabs);
 /* Starts content in the given directory. The call borrows the path. */
 bool app_tabs_new_in(struct window *window, const char *cwd);
 
-void app_tabs_widgets_init(struct app_tabs *tabs);
 void app_tabs_actions_init(struct app_tabs *tabs);
-struct window_ui_spec app_tabs_ui_spec(struct app_tabs *tabs);
 
 void app_tabs_preview_init(struct app_tabs *tabs);
 void app_tabs_preview_hover(struct app_tabs *tabs, int index);
