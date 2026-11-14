@@ -204,6 +204,36 @@ int main(void)
     c = terminal_cell_at(content, pt);
     assert(c.x == wide_cols - 1 && c.y == 0);
 
+    /* The two halves of a wide cell start a different selection. The exact
+     * span comes from the terminal core's half-cell rules. */
+    {
+        struct rect2i v = terminal_view_rect(content);
+        int half = met->cell_w / 2;
+        char *picked[2] = { NULL, NULL };
+        for (int pass = 0; pass < 2; pass++) {
+            int x = v.pos.x + (pass ? half + 1 : 1);
+            struct ui_event down = ui_event_pointer((struct ui_pointer_event){
+                .kind = UI_POINTER_PRESS, .pos = { .x = x, .y = v.pos.y + 4 },
+            }, 0);
+            assert(ui_surface_dispatch(ui, &down));
+            struct ui_event drag = ui_event_pointer((struct ui_pointer_event){
+                .kind = UI_POINTER_MOTION,
+                .pos = { .x = v.pos.x + 4 * met->cell_w + 1, .y = v.pos.y + 4 },
+            }, 10);
+            assert(ui_surface_dispatch(ui, &drag));
+            assert(wsap_vtcore_has_selection(session->term));
+            picked[pass] = wsap_vtcore_selection_text(session->term);
+            assert(picked[pass]);
+            struct ui_event up = ui_event_pointer((struct ui_pointer_event){
+                .kind = UI_POINTER_RELEASE, .pos = drag.data.pointer.pos,
+            }, 20);
+            ui_surface_dispatch(ui, &up);
+        }
+        assert(strcmp(picked[0], picked[1]) != 0);
+        wsap_vtcore_text_free(picked[0]);
+        wsap_vtcore_text_free(picked[1]);
+    }
+
     /* UI inspector lint check on scene with double-size rows */
     assert(ui_surface_build_scene(ui, scene));
     assert(ui_debug_lint_scene(&view, NULL, 0) == 0);

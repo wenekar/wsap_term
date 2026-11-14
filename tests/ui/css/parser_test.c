@@ -366,6 +366,29 @@ static void test_insets_and_named_colors(void)
     css_sheet_clear(&sheet);
 }
 
+/* Two spellings of one property reach the same field. The last one wins,
+ * both inside a rule and across rules. */
+static void test_property_spellings_share_a_field(void)
+{
+    struct css_sheet sheet = {0};
+    assert(css_parse(&sheet,
+        ".a { background-color: #111111; background: #222222; }"
+        ".b { border-width: 3px; border: 5px; }"
+        ".c { transition: 250ms; animation-duration: 750ms; }"
+        ".d { background: #333333; }"
+        ".d { background-color: #444444; }"));
+    struct css_style a, b, c, d;
+    css_style_resolve(&sheet, "a", NULL, NULL, CSS_PSEUDO_NONE, &a);
+    assert(a.has_bg_color && a.bg_color == 0xFF222222u);
+    css_style_resolve(&sheet, "b", NULL, NULL, CSS_PSEUDO_NONE, &b);
+    assert(b.border_width.unit == CSS_UNIT_PX && b.border_width.val == 5.0f);
+    css_style_resolve(&sheet, "c", NULL, NULL, CSS_PSEUDO_NONE, &c);
+    assert(c.has_transition_duration && c.transition_duration == 750.0f);
+    css_style_resolve(&sheet, "d", NULL, NULL, CSS_PSEUDO_NONE, &d);
+    assert(d.has_bg_color && d.bg_color == 0xFF444444u);
+    css_sheet_clear(&sheet);
+}
+
 int main(void)
 {
     test_declaration_diagnostics();
@@ -379,6 +402,7 @@ int main(void)
     test_every_cursor_keyword();
     test_transition_duration_parsing();
     test_box_shadow_parsing();
+    test_property_spellings_share_a_field();
     printf("PASS: CSS parser tests\n");
     return 0;
 }

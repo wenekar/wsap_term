@@ -709,7 +709,12 @@ static void undo_history_keeps_the_last_steps_test(void)
         assert(undos <= 200);
     }
     assert(undos == 128);
-    assert(strlen(text(&f)) == 201 - 128);
+    /* "x" and the 72 newest steps survive. */
+    assert(strlen(text(&f)) == 73);
+    assert(text(&f)[0] == 'x');
+    for (size_t i = 1; i < 73; i++)
+        assert(text(&f)[i] == 'y');
+    assert(text(&f)[73] == '\0');
     teardown(&f);
 }
 
