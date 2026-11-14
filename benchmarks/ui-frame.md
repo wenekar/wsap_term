@@ -143,3 +143,28 @@ the median of the three per-run medians:
 The menu-20 median is about 7 us lower than the pre-index baseline. The
 other scenarios match the earlier numbers. All four limits pass in all
 three runs.
+
+### After the sorted rule table
+
+A sheet now sorts its rule table once, when parsing ends. The sort order is
+tier, then class rank, then source order. A style lookup walks the table and
+applies each match. The key groups, the candidate buffer, and the merge walk
+are gone. `tests/ui/css/lookup_test.c` covers the order.
+
+Per-lookup cost went up, because a lookup scans every rule. The style
+context caches a resolved style per widget generation, so a frame does not
+pay it twice. The four scenario medians did not move outside noise, and the
+`render-bench` sum over all cases improved by 0.7%:
+
+| Case | Before (ms) | After (ms) |
+| --- | --- | --- |
+| flood-bytes | 0.2960 | 0.2880 |
+| flood-printable | 0.2800 | 0.2640 |
+| flood-color | 0.4930 | 0.4880 |
+| flood-truecolor | 0.3300 | 0.3310 |
+| random | 0.4570 | 0.4630 |
+| sum of all cases | 2.1739 | 2.1583 |
+
+Every `pixels=` hash was identical before and after. A differential dump of
+`struct css_style` over 60 generated sheets and the default sheet, 11 200
+queries in all, matched byte for byte.

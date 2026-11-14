@@ -81,7 +81,7 @@ test_cases = [
     ['css-parser-test', files('ui/css/parser_test.c'), ui_lib, ui_test_deps],
     ['css-clipping-test', files('ui/css/clipping_test.c', 'ui/stubs/scene_paint_deps.c'), [ui_lib, render_lib], deps],
     ['css-selector-test', files('ui/css/selector_test.c'), ui_lib, ui_test_deps],
-    ['css-index-test', files('ui/css/index_test.c'), ui_lib, ui_test_deps],
+    ['css-lookup-test', files('ui/css/lookup_test.c'), ui_lib, ui_test_deps],
 ]
 
 # metal-render-bench is off. It is not ported to the current renderer.
