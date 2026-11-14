@@ -61,8 +61,10 @@ and method:
 | tab-open | about 44.6 to 44.8 |
 | menu-20 | about 86.1 to 86.8 |
 
-The part-handle cache (commit 974473e) did not move these numbers. No
-production code calls it yet.
+At commit 974473e, no production code called the part-handle cache, so these
+numbers did not change. Widgets and `src/terminal/view.c` now call
+`ui_widget_part()`, which caches sub-part styles by widget and context
+generation.
 
 ### After the damage key index
 
@@ -151,10 +153,13 @@ tier, then class rank, then source order. A style lookup walks the table and
 applies each match. The key groups, the candidate buffer, and the merge walk
 are gone. `tests/ui/css/lookup_test.c` covers the order.
 
-Per-lookup cost went up, because a lookup scans every rule. The style
-context caches a resolved style per widget generation, so a frame does not
-pay it twice. The four scenario medians did not move outside noise, and the
-`render-bench` sum over all cases improved by 0.7%:
+Per-lookup cost went up, because a lookup scans every rule. Both
+`ui_style_context` and `ui_widget_part()` cache resolved styles by widget
+and context generation, so unchanged frames do not scan again. When a rule
+matches, `apply_rule_props()` copies each property from the property table
+by its offset, size, and presence flag. The four scenario medians did not
+move outside noise, and the `render-bench` sum over all cases improved by
+0.7%:
 
 | Case | Before (ms) | After (ms) |
 | --- | --- | --- |

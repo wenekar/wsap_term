@@ -258,14 +258,33 @@ struct prop_info {
     uint16_t offset;
     uint16_t has_offset;
     uint8_t kind;
-    uint8_t pad_[3];
+    uint8_t size;
+    uint8_t pad_[2];
 };
+
+#define PROP_FIELD_SIZE(m) ((uint8_t)sizeof(((struct css_style *)0)->m))
+#define CSS_SHADOW_SIZE \
+    (offsetof(struct css_style, shadow_color) + sizeof(uint32_t) - \
+     offsetof(struct css_style, shadow_x))
 
 /* A rule records the properties it sets in `set_mask`. Bit `i` belongs to
  * entry `i` of this table, so a set bit names its own entry. */
-#define PROP(n, k, m) { .name = (n), .offset = offsetof(struct css_style, m), .has_offset = 0, .kind = (uint8_t)(k) }
-#define PROP_COLOR(n, m, has_m) { .name = (n), .offset = offsetof(struct css_style, m), .has_offset = offsetof(struct css_style, has_m), .kind = P_COLOR }
-#define PROP_FLOAT(n, m, has_m) { .name = (n), .offset = offsetof(struct css_style, m), .has_offset = offsetof(struct css_style, has_m), .kind = P_FLOAT }
+#define PROP(n, k, m) { \
+    .name = (n), .offset = offsetof(struct css_style, m), \
+    .kind = (uint8_t)(k), .size = PROP_FIELD_SIZE(m), \
+}
+#define PROP_HAS(n, k, m, has_m) { \
+    .name = (n), .offset = offsetof(struct css_style, m), \
+    .has_offset = offsetof(struct css_style, has_m), \
+    .kind = (uint8_t)(k), .size = PROP_FIELD_SIZE(m), \
+}
+#define PROP_COLOR(n, m, has_m) PROP_HAS(n, P_COLOR, m, has_m)
+#define PROP_FLOAT(n, m, has_m) PROP_HAS(n, P_FLOAT, m, has_m)
+#define PROP_SHADOW(n, m, has_m) { \
+    .name = (n), .offset = offsetof(struct css_style, m), \
+    .has_offset = offsetof(struct css_style, has_m), \
+    .kind = P_SHADOW, .size = (uint8_t)CSS_SHADOW_SIZE, \
+}
 
 static const struct prop_info props[] = {
     PROP("width",            P_VAL,      width),
@@ -285,14 +304,14 @@ static const struct prop_info props[] = {
     PROP_COLOR("color",            text_color, has_text_color),
     PROP_COLOR("border-color",     border_color, has_border_color),
     PROP_FLOAT("opacity",    opacity,    has_opacity),
-    PROP("flex-direction",   P_FLEX_DIR, flex_direction),
-    PROP("align-items",      P_ALIGN,    align_items),
-    PROP("justify-content",  P_JUSTIFY,  justify_content),
-    PROP("cursor",           P_CURSOR,   cursor),
-    PROP("transition-duration", P_DURATION, transition_duration),
-    PROP("animation-duration",  P_DURATION, transition_duration),
-    PROP("transition",          P_DURATION, transition_duration),
-    PROP("box-shadow",       P_SHADOW,   shadow_x),
+    PROP_HAS("flex-direction",      P_FLEX_DIR, flex_direction,      has_flex_direction),
+    PROP_HAS("align-items",         P_ALIGN,    align_items,         has_align_items),
+    PROP_HAS("justify-content",     P_JUSTIFY,  justify_content,     has_justify_content),
+    PROP_HAS("cursor",              P_CURSOR,   cursor,              has_cursor),
+    PROP_HAS("transition-duration", P_DURATION, transition_duration, has_transition_duration),
+    PROP_HAS("animation-duration",  P_DURATION, transition_duration, has_transition_duration),
+    PROP_HAS("transition",          P_DURATION, transition_duration, has_transition_duration),
+    PROP_SHADOW("box-shadow",       shadow_x,                        has_shadow),
     PROP_COLOR("ripple-color", ripple_color, has_ripple_color),
     PROP_COLOR("ripple",       ripple_color, has_ripple_color),
 };
@@ -300,6 +319,11 @@ static const struct prop_info props[] = {
 static const size_t prop_count = sizeof(props) / sizeof(props[0]);
 static_assert(sizeof(props) / sizeof(props[0]) <= 64,
               "The rule set mask holds one bit per property");
+static_assert(CSS_SHADOW_SIZE <= UINT8_MAX,
+              "Shadow fields must fit in prop_info.size");
+static_assert(offsetof(struct css_style, has_bg_color) > 0 &&
+              offsetof(struct css_style, has_shadow) > 0,
+              "Zero has_offset must mean no presence flag");
 
 enum css_declaration_result {
     CSS_DECLARATION_OK,
@@ -343,8 +367,6 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
             uint32_t color;
             if (!parse_color(val, &color)) return CSS_DECLARATION_INVALID;
             *(uint32_t *)dst = color;
-            if (p->has_offset)
-                *(bool *)((char *)&r->style + p->has_offset) = true;
             break;
         }
         case P_FLOAT: {
@@ -357,8 +379,6 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
                 if (f > 1.0f) f = 1.0f;
             }
             memcpy(dst, &f, sizeof f);
-            if (p->has_offset)
-                *(bool *)((char *)&r->style + p->has_offset) = true;
             break;
         }
         case P_FLEX_DIR:
@@ -455,10 +475,11 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
             if (f < 0.0f) f = 0.0f;
             if (f > 3600000.0f) f = 3600000.0f;
             memcpy(dst, &f, sizeof(f));
-            r->style.has_transition_duration = true;
             break;
         }
     }
+    if (p->has_offset && p->kind != P_SHADOW)
+        *(bool *)((char *)&r->style + p->has_offset) = true;
     r->set_mask |= (1ULL << idx);
     return CSS_DECLARATION_OK;
 }
@@ -1903,8 +1924,7 @@ static void apply_rule_props(const struct css_rule *r, struct css_style *out)
     uint64_t mask = r->set_mask;
     while (mask) {
         int bit = __builtin_ctzll(mask);
-        uint64_t bit_mask = 1ULL << bit;
-        mask &= ~bit_mask;
+        mask &= ~(1ULL << bit);
 
         if ((size_t)bit >= prop_count)
             continue;
@@ -1919,33 +1939,10 @@ static void apply_rule_props(const struct css_rule *r, struct css_style *out)
                     dstv[e] = srcv[e];
             continue;
         }
-        size_t sz = (p->kind == P_SHADOW)
-                        ? offsetof(struct css_style, shadow_color) +
-                          sizeof(uint32_t) -
-                          offsetof(struct css_style, shadow_x) :
-                    (p->kind == P_COLOR)  ? sizeof(uint32_t) :
-                    (p->kind == P_VAL)    ? sizeof(struct css_value) :
-                    (p->kind == P_FLOAT)  ? sizeof(float) : sizeof(int);
-        memcpy(dst, src, sz);
-        if (p->kind == P_COLOR) {
-            if (p->offset == offsetof(struct css_style, bg_color)) out->has_bg_color = true;
-            else if (p->offset == offsetof(struct css_style, text_color)) out->has_text_color = true;
-            else if (p->offset == offsetof(struct css_style, border_color)) out->has_border_color = true;
-            else if (p->offset == offsetof(struct css_style, ripple_color)) out->has_ripple_color = true;
-        } else if (p->offset == offsetof(struct css_style, opacity)) {
-            out->has_opacity = true;
-        } else if (p->offset == offsetof(struct css_style, cursor)) {
-            out->has_cursor = true;
-        } else if (p->offset == offsetof(struct css_style, transition_duration)) {
-            out->has_transition_duration = true;
-        } else if (p->offset == offsetof(struct css_style, flex_direction)) {
-            out->has_flex_direction = true;
-        } else if (p->offset == offsetof(struct css_style, align_items)) {
-            out->has_align_items = true;
-        } else if (p->offset == offsetof(struct css_style, justify_content)) {
-            out->has_justify_content = true;
-        } else if (p->kind == P_SHADOW) {
-            out->has_shadow = r->style.has_shadow;
+        memcpy(dst, src, p->size);
+        if (p->has_offset) {
+            const bool *has = (const bool *)((const char *)&r->style + p->has_offset);
+            *(bool *)((char *)out + p->has_offset) = *has;
         }
     }
 }

@@ -791,10 +791,165 @@ static void edit_requests_frame_test(void)
     teardown(&f);
 }
 
+static void edit_commands_test(void)
+{
+    struct fixture f;
+    setup(&f, "hello world");
+    for (int i = 0; i < 6; i++)
+        assert(key(&f, UI_KEY_LEFT, 0));
+    assert(ui_input_command(&f.in, UI_EDIT_DELETE_FORWARD));
+    assert(!strcmp(text(&f), "helloworld") && ui_input_caret(&f.in) == 5);
+    assert(ui_input_command(&f.in, UI_EDIT_DELETE_BACK));
+    assert(!strcmp(text(&f), "hellworld") && ui_input_caret(&f.in) == 4);
+
+    assert(ui_input_command(&f.in, UI_EDIT_KILL_END));
+    assert(!strcmp(text(&f), "hell"));
+    assert(ui_input_command(&f.in, UI_EDIT_YANK));
+    assert(!strcmp(text(&f), "hellworld"));
+
+    assert(ui_input_command(&f.in, UI_EDIT_KILL_WORD));
+    assert(ui_input_command(&f.in, UI_EDIT_YANK));
+    assert(!strcmp(text(&f), "hellworld"));
+
+    /* An empty kill updates the kill buffer without wiping undo history. */
+    assert(key(&f, UI_KEY_HOME, 0));
+    assert(ui_input_command(&f.in, UI_EDIT_KILL_START));
+    assert(!strcmp(text(&f), "hellworld"));
+    assert(ui_input_can_command(&f.in, UI_EDIT_UNDO));
+    assert(ui_input_command(&f.in, UI_EDIT_YANK));
+    assert(!strcmp(text(&f), "hellworld"));
+
+    ui_input_set_text(&f.in, "abc");
+    assert(key(&f, UI_KEY_LEFT, 0));
+    assert(ui_input_command(&f.in, UI_EDIT_TRANSPOSE));
+    assert(!strcmp(text(&f), "acb") && ui_input_caret(&f.in) == 3);
+    assert(ui_input_command(&f.in, UI_EDIT_TRANSPOSE));
+    assert(!strcmp(text(&f), "abc") && ui_input_caret(&f.in) == 3);
+
+    ui_input_set_text(&f.in, "a\xc3\xa9");
+    assert(ui_input_command(&f.in, UI_EDIT_TRANSPOSE));
+    assert(!strcmp(text(&f), "\xc3\xa9" "a") && ui_input_caret(&f.in) == 3);
+
+    ui_input_select_all(&f.in);
+    assert(ui_input_command(&f.in, UI_EDIT_TRANSPOSE));
+    assert(!strcmp(text(&f), "\xc3\xa9" "a"));
+    teardown(&f);
+}
+
+static void edit_navigation_and_unhandled_commands_test(void)
+{
+    struct fixture f;
+    setup(&f, "abcd");
+    assert(!ui_input_command(&f.in, UI_EDIT_NONE));
+    assert(!ui_input_command(&f.in, UI_EDIT_START));
+    assert(!ui_input_command(&f.in, UI_EDIT_END));
+    assert(!ui_input_command(&f.in, UI_EDIT_LEFT));
+    assert(!ui_input_command(&f.in, UI_EDIT_RIGHT));
+
+    struct ui_event e = ui_event_key((struct ui_key_event){
+        .edit_command = UI_EDIT_START,
+    }, 0);
+    assert(ui_surface_dispatch(&f.surface, &e));
+    assert(ui_input_caret(&f.in) == 0);
+
+    e = ui_event_key((struct ui_key_event){
+        .edit_command = UI_EDIT_RIGHT, .mods = UI_MOD_SHIFT,
+    }, 0);
+    assert(ui_surface_dispatch(&f.surface, &e));
+    int s, end;
+    assert(ui_input_selection(&f.in, &s, &end) && s == 0 && end == 1);
+
+    e = ui_event_key((struct ui_key_event){ .edit_command = UI_EDIT_END }, 0);
+    assert(ui_surface_dispatch(&f.surface, &e));
+    assert(ui_input_caret(&f.in) == 4);
+    assert(!ui_input_selection(&f.in, NULL, NULL));
+
+    e = ui_event_key((struct ui_key_event){ .edit_command = UI_EDIT_LEFT }, 0);
+    assert(ui_surface_dispatch(&f.surface, &e));
+    assert(ui_input_caret(&f.in) == 3);
+    teardown(&f);
+}
+
+static void accessibility_selection_actions_test(void)
+{
+    struct fixture f;
+    setup(&f, "init");
+    uint64_t id = ui_widget_accessibility_id(ui_input_widget(&f.in));
+    struct ui_accessibility_action_request req = {
+        .node_id = id + 1,
+        .action = UI_ACCESSIBILITY_ACTION_SET_SELECTION,
+    };
+    assert(!ui_accessibility_dispatch_action(ui_input_widget(&f.in), &req));
+
+    req = (struct ui_accessibility_action_request){
+        .node_id = id,
+        .action = UI_ACCESSIBILITY_ACTION_SET_VALUE,
+        .value = "a\xc3\xa9" "bc",
+        .selection_start = 2, /* Mid-UTF-8 byte clamps to 1. */
+        .selection_end = 99,
+    };
+    assert(ui_accessibility_dispatch_action(ui_input_widget(&f.in), &req));
+    int s, e;
+    assert(ui_input_selection(&f.in, &s, &e) && s == 1 && e == 5);
+    assert(ui_input_caret(&f.in) == 5);
+
+    req = (struct ui_accessibility_action_request){
+        .node_id = id,
+        .action = UI_ACCESSIBILITY_ACTION_SET_SELECTION,
+        .caret_offset = 2,
+    };
+    assert(ui_accessibility_dispatch_action(ui_input_widget(&f.in), &req));
+    assert(!ui_input_selection(&f.in, NULL, NULL));
+    assert(ui_input_caret(&f.in) == 1);
+
+    req = (struct ui_accessibility_action_request){
+        .node_id = id,
+        .action = UI_ACCESSIBILITY_ACTION_SET_SELECTION,
+        .selection_start = 2,
+        .selection_end = 4,
+    };
+    assert(ui_accessibility_dispatch_action(ui_input_widget(&f.in), &req));
+    assert(ui_input_selection(&f.in, &s, &e) && s == 1 && e == 4);
+    assert(ui_input_caret(&f.in) == 4);
+    teardown(&f);
+}
+
+static void fallback_part_colors_test(void)
+{
+    struct css_sheet widget_only = { .has_defaults = true };
+    struct css_sheet empty_sheet = { .has_defaults = true };
+    assert(css_parse(&widget_only, ".text-input { color: #224466; }"));
+
+    struct fixture f;
+    setup(&f, "text");
+    ui_input_set_placeholder(&f.in, "Hint");
+    ui_surface_set_sheet(&f.surface, &widget_only);
+    ui_input_select_all(&f.in);
+    assert(ui_surface_build_scene(&f.surface, &f.scene));
+    assert(scene_has_text_color(&f.scene, "text", 0xFF224466u));
+    assert(scene_has_rect_color(&f.scene, 0xFF45475Au));
+    assert(scene_has_rect_color(&f.scene, 0xFFF5E0DCu));
+
+    ui_surface_set_sheet(&f.surface, &empty_sheet);
+    assert(ui_surface_build_scene(&f.surface, &f.scene));
+    assert(scene_has_text_color(&f.scene, "text", 0xFFCDD6F4u));
+
+    ui_input_clear(&f.in);
+    assert(ui_surface_build_scene(&f.surface, &f.scene));
+    assert(scene_has_text_color(&f.scene, "Hint", 0xFF7F849Cu));
+    teardown(&f);
+    css_sheet_clear(&widget_only);
+    css_sheet_clear(&empty_sheet);
+}
+
 int main(void)
 {
     programmatic_text_without_action_test();
     edit_requests_frame_test();
+    edit_commands_test();
+    edit_navigation_and_unhandled_commands_test();
+    accessibility_selection_actions_test();
+    fallback_part_colors_test();
     copy_shortcut_test();
     long_clipboard_and_kill_test();
     mac_editing_test();

@@ -72,6 +72,7 @@ test_cases = [
     ['ui-palette-test', files('ui/widgets/palette_test.c'), ui_lib, ui_test_deps],
     ['ui-list-test', files('ui/widgets/list_test.c'), ui_lib, ui_test_deps],
     ['ui-input-test', files('ui/widgets/input_test.c'), ui_lib, ui_test_deps],
+    ['ui-input-oom-test', files('ui/widgets/input_oom_test.c'), ui_lib, ui_test_deps + [dl_dep]],
     ['ui-label-test', files('ui/widgets/label_test.c'), ui_lib, ui_test_deps],
     ['ui-dropdown-test', files('ui/widgets/dropdown_test.c'), ui_lib, ui_test_deps],
     ['ui-tab-preview-test', files('ui/widgets/tab_preview_test.c'), ui_lib, ui_test_deps],
@@ -156,6 +157,7 @@ msan_safe_tests = [
     'ui-palette-test',
     'ui-list-test',
     'ui-input-test',
+    'ui-input-oom-test',
     'ui-acceptance-test',
     'css-parser-test',
     'css-clipping-test',
@@ -169,7 +171,7 @@ standalone_tests = [
     'render-plan-test', 'render-decor-test', 'render-cache-test', 'render-scene-test',
     'render-raster-test', 'render-damage-test', 'render-incremental-test',
     'anim-test', 'ui-scene-text-test', 'css-clipping-test',
-    'metal-render-test',
+    'ui-input-oom-test', 'metal-render-test',
 ]
 
 # The window cadence test drives a real Cocoa window and its Metal layer. It
