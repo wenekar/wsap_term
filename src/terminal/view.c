@@ -40,25 +40,36 @@ static void changed(struct terminal_view *view)
     ui_widget_invalidate(&view->widget, UI_WIDGET_INVALIDATE_PAINT);
 }
 
+int terminal_row_cell_width(const struct terminal *t, int row)
+{
+    int cw = terminal_font_metrics(t)->cell_w;
+    if (t && t->snapshot && row >= 0 &&
+        wsap_vtcore_snapshot_row_size(t->snapshot, row) !=
+            WSAP_VTCORE_LINE_SINGLE)
+        cw *= 2;
+    return cw;
+}
+
+int terminal_row_cols(const struct terminal *t, int row)
+{
+    int cols = t && t->session.term ? wsap_vtcore_size(t->session.term).x : 1;
+    if (t && t->snapshot && row >= 0 &&
+        wsap_vtcore_snapshot_row_size(t->snapshot, row) !=
+            WSAP_VTCORE_LINE_SINGLE)
+        cols /= 2;
+    return cols > 0 ? cols : 1;
+}
+
 static struct vector2i cell_at(const struct terminal *t, struct vector2i local)
 {
-    const struct font_metrics *metrics = terminal_font_metrics(t);
-    int ch = metrics->cell_h;
+    int ch = terminal_font_metrics(t)->cell_h;
     int y = ch > 0 && local.y >= 0 ? local.y / ch : -1;
-    int cw = metrics->cell_w;
-    enum wsap_vtcore_line_size line = WSAP_VTCORE_LINE_SINGLE;
-    if (t && t->snapshot && y >= 0)
-        line = wsap_vtcore_snapshot_row_size(t->snapshot, y);
-    if (line != WSAP_VTCORE_LINE_SINGLE)
-        cw *= 2;
+    int cw = terminal_row_cell_width(t, y);
     int x = cw > 0 && local.x >= 0 ? local.x / cw : -1;
-    if (t && t->session.term && y >= 0 && line != WSAP_VTCORE_LINE_SINGLE) {
-        int max_cols = wsap_vtcore_size(t->session.term).x / 2;
-        if (max_cols < 1)
-            max_cols = 1;
-        if (x >= max_cols)
-            x = max_cols - 1;
-    }
+    /* A wide row has half as many columns as the grid. */
+    if (cw > terminal_font_metrics(t)->cell_w &&
+        x >= terminal_row_cols(t, y))
+        x = terminal_row_cols(t, y) - 1;
     return (struct vector2i){ .x = x, .y = y };
 }
 
@@ -143,28 +154,15 @@ static void scroll_lines(struct terminal *t, int lines)
 static void select_text(struct terminal *t, const struct ui_pointer_event *p,
                         struct vector2i local, uint64_t now_ms)
 {
-    const struct font_metrics *m = terminal_font_metrics(t);
     struct vector2i cell = cell_at(t, local);
-    int cw = m->cell_w;
-    bool double_w = false;
-    if (t->snapshot && cell.y >= 0) {
-        enum wsap_vtcore_line_size line =
-            wsap_vtcore_snapshot_row_size(t->snapshot, cell.y);
-        if (line != WSAP_VTCORE_LINE_SINGLE) {
-            cw *= 2;
-            double_w = true;
-        }
-    }
-    int max_cols = wsap_vtcore_size(t->session.term).x;
-    if (double_w)
-        max_cols = max_cols / 2 > 0 ? max_cols / 2 : 1;
+    int cw = terminal_row_cell_width(t, cell.y);
+    /* A wide row uses two grid columns for one cell. */
+    bool double_w = cw > terminal_font_metrics(t)->cell_w;
     bool right_half;
-    if (double_w && local.x >= max_cols * cw) {
+    if (double_w && local.x >= terminal_row_cols(t, cell.y) * cw)
         right_half = true;
-    } else {
-        right_half = local.x >= 0 && cw > 0 &&
-                     local.x % cw >= cw / 2;
-    }
+    else
+        right_half = local.x >= 0 && cw > 0 && local.x % cw >= cw / 2;
     struct window *w = t->window;
     t->selection.double_click_ms = w ? window_double_click_ms(w) : 0;
     selection_handle_pointer(&t->selection, t->session.term, cell,

@@ -35,18 +35,12 @@ void terminal_update_ime(struct terminal *t, const struct wsap_vtcore *term)
     struct window *w = t->window;
     if (!w || !term)
         return;
-    const struct font_metrics *m = terminal_font_metrics(t);
-    int cw = m->cell_w, ch = m->cell_h;
+    int ch = terminal_font_metrics(t)->cell_h;
     struct wsap_vtcore_cursor cursor = wsap_vtcore_cursor(term);
     int row = cursor.pos.y + wsap_vtcore_scrollback(term).offset;
     if (row < 0 || row >= wsap_vtcore_size(term).y)
         row = cursor.pos.y;
-    if (t->snapshot && row >= 0) {
-        enum wsap_vtcore_line_size line =
-            wsap_vtcore_snapshot_row_size(t->snapshot, row);
-        if (line != WSAP_VTCORE_LINE_SINGLE)
-            cw *= 2;
-    }
+    int cw = terminal_row_cell_width(t, row);
     struct rect2i caret = {
         .pos = vector2i_add(terminal_view_rect(t).pos, (struct vector2i){
             .x = cursor.pos.x * cw, .y = row * ch,

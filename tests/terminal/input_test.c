@@ -197,6 +197,13 @@ int main(void)
     c = terminal_cell_at(content, pt);
     assert(c.x == 2 && c.y == 1);
 
+    /* A click past the right edge of a wide row stays on its last column. */
+    int wide_cols = wsap_vtcore_size(session->term).x / 2;
+    pt.y = vrect.pos.y + 4;
+    pt.x = vrect.pos.x + (wide_cols + 5) * 2 * met->cell_w;
+    c = terminal_cell_at(content, pt);
+    assert(c.x == wide_cols - 1 && c.y == 0);
+
     /* UI inspector lint check on scene with double-size rows */
     assert(ui_surface_build_scene(ui, scene));
     assert(ui_debug_lint_scene(&view, NULL, 0) == 0);

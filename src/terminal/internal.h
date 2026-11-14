@@ -124,6 +124,11 @@ static inline const struct font_metrics *terminal_font_metrics(
                                      : font_instance_default());
 }
 
+/* Returns the cell width of row `row`, doubled on a wide line. */
+int terminal_row_cell_width(const struct terminal *terminal, int row);
+/* Returns the column count of row `row`, halved on a wide line. */
+int terminal_row_cols(const struct terminal *terminal, int row);
+
 void terminal_view_init(struct terminal *terminal);
 void terminal_view_attach(struct terminal *terminal);
 struct rect2i terminal_view_rect(const struct terminal *terminal);
