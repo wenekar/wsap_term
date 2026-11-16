@@ -436,8 +436,10 @@ static char **copy_args(int argc, char **argv)
 
 static void app_free(struct app *a)
 {
-    renderer_destroy(a->renderer);
-    a->renderer = NULL;
+    if (a->renderer) {
+        renderer_destroy(a->renderer);
+        a->renderer = NULL;
+    }
     if (a->render_started)
         render_shutdown();
     if (a->look) {
@@ -530,6 +532,11 @@ void app_destroy(struct app *a)
         return;
     window_debug_set_hooks(NULL);
     app_stop(a);
+    window_host_reap(&a->host);
+    if (a->renderer) {
+        renderer_destroy(a->renderer);
+        a->renderer = NULL;
+    }
     /* The host reaps the windows, and each window gives its tabs back to the
      * model. A destroying host runs no more service steps. The model then
      * destroys what is left, such as the tab of a drag that did not end. */

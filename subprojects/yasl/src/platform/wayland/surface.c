@@ -187,6 +187,9 @@ static void connection_release(struct wayland_display *c)
     if (c->loop && c->watch > 0) yasl_loop_del_fd(c->loop, c->watch);
     c->watch = 0;
     if (c->wl) display_cancel_read(c);
+    /* Queued events hold proxy references. Run them before the disconnect. */
+    while (c->wl && wl_display_dispatch_pending(c->wl) > 0)
+        ;
     while (c->seats)
         seat_destroy(c->seats);
     RELEASE(toplevel_drag_mgr, xdg_toplevel_drag_manager_v1_destroy);

@@ -176,7 +176,21 @@ bool portal_read_int(const char *ns, const char *key, int64_t *out)
     return false;
 }
 
+void yasl_private_dbus_shutdown(void)
+{
+    if (bus) {
+        dbus_connection_close(bus);
+        dbus_connection_unref(bus);
+        bus = NULL;
+    }
+    dbus_shutdown();
+}
+
 #else
+
+void yasl_private_dbus_shutdown(void)
+{
+}
 
 bool bus_notify(const char *app, const char *title, const char *body)
 {

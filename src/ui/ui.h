@@ -19,4 +19,7 @@
 #include "ui/widgets/tab_preview.h"
 #include "ui/widgets/tabbar.h"
 
+/* Releases global UI caches including the default stylesheet and interned parts. */
+void ui_shutdown(void);
+
 #endif

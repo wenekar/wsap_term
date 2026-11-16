@@ -685,3 +685,9 @@ void ui_surface_destroy(struct ui_surface *surface)
     ui_layout_destroy(surface->impl.layout);
     *surface = (struct ui_surface){0};
 }
+
+void ui_shutdown(void)
+{
+    css_shutdown();
+    ui_part_shutdown();
+}

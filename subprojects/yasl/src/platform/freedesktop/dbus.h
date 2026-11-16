@@ -15,5 +15,7 @@ bool bus_notify(const char *app, const char *title, const char *body);
 bool portal_read_int(const char *ns, const char *key, int64_t *out);
 /* The KDE or GNOME double-click interval from the portal, or zero. */
 int portal_double_click_ms(void);
+/* Closes the cached session bus and releases libdbus global resources. */
+void yasl_private_dbus_shutdown(void);
 
 #endif

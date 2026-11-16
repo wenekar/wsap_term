@@ -215,6 +215,9 @@ void css_init_default(struct css_sheet *sheet);
 /* Returns the shared default stylesheet instance. */
 const struct css_sheet *css_default_sheet(void);
 
+/* Clears the shared default stylesheet instance. */
+void css_shutdown(void);
+
 /* Resolves styling properties matching selector names and pseudo-class flags. */
 void css_style_resolve(const struct css_sheet *sheet,
                        const char *class_name,
