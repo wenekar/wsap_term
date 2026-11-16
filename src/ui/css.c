@@ -1829,15 +1829,24 @@ void css_init_default(struct css_sheet *sheet)
     sheet->has_defaults = ok;
 }
 
+static struct css_sheet default_sheet;
+static bool default_sheet_ready;
+
 const struct css_sheet *css_default_sheet(void)
 {
-    static struct css_sheet sheet;
-    static bool ready;
-    if (!ready) {
-        css_init_default(&sheet);
-        ready = true;
+    if (!default_sheet_ready) {
+        css_init_default(&default_sheet);
+        default_sheet_ready = true;
     }
-    return &sheet;
+    return &default_sheet;
+}
+
+void css_shutdown(void)
+{
+    if (default_sheet_ready) {
+        css_sheet_clear(&default_sheet);
+        default_sheet_ready = false;
+    }
 }
 
 static bool class_list_has(const char *list, size_t list_len,

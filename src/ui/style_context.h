@@ -32,6 +32,7 @@ uint64_t ui_style_context_generation(const struct ui_style_context *context);
 typedef uint32_t ui_part_id;
 ui_part_id ui_part_intern(const char *name);
 const char *ui_part_name(ui_part_id part);
+void ui_part_shutdown(void);
 
 void ui_style_context_apply(struct ui_style_context *context,
                             struct ui_widget *root);

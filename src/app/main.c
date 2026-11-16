@@ -3,6 +3,7 @@
 #include "app/app.h"
 #include "input/keybind.h"
 #include "platform/platform.h"
+#include "ui/ui.h"
 
 int main(int argc, char **argv)
 {
@@ -18,5 +19,7 @@ int main(int argc, char **argv)
 
     int result = app_run(app);
     app_destroy(app);
+    /* The process owns the UI tables. Free them once, after the last app. */
+    ui_shutdown();
     return result;
 }

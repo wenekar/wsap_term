@@ -316,6 +316,15 @@ const char *ui_part_name(ui_part_id part)
     return part_table.names[part - 1];
 }
 
+void ui_part_shutdown(void)
+{
+    for (uint32_t i = 0; i < part_table.count; i++)
+        free(part_table.names[i]);
+    free(part_table.names);
+    free(part_table.buckets);
+    part_table = (struct part_table){0};
+}
+
 static struct ui_part_slot *find_part_slot(const struct ui_widget *widget,
                                            ui_part_id part,
                                            unsigned pseudo_flags)

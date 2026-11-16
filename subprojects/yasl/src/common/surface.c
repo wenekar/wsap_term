@@ -177,6 +177,10 @@ int yasl_shutdown(void)
     extern void yasl_private_vulkan_reset(void);
     yasl_private_vulkan_reset();
 #endif
+#if YASL_HAS_DBUS
+    extern void yasl_private_dbus_shutdown(void);
+    yasl_private_dbus_shutdown();
+#endif
     return 0;
 }
 enum yasl_backend yasl_get_backend(void)

@@ -47,6 +47,8 @@ struct ui_surface {
 void ui_surface_init(struct ui_surface *surface,
                      const struct ui_surface_host *host, void *host_userdata);
 void ui_surface_destroy(struct ui_surface *surface);
+/* Releases global UI caches including the default stylesheet and interned parts. */
+void ui_shutdown(void);
 /* True while the surface dispatches, ticks, or builds. Destroy waits then. */
 bool ui_surface_busy(const struct ui_surface *surface);
 
