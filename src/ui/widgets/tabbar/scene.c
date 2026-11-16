@@ -18,15 +18,21 @@
 #define TB_NEW_MARK   "+"
 
 #define TB_PART_TAB(i) ((uint64_t)(unsigned)(i))
+#define TB_PART_NEW    (1ULL << 32)
+#define TB_PART_DRAG   (2ULL << 32)
+#define TB_PART_DROP   (3ULL << 32)
 
-/* Paint a tab title at `box`. Cut it to `cap` cells. End a cut title with a
- * marker so the reader knows the title continues. */
+/* Paints a tab title at `at`. Cuts it to `cap` cells. A cut title ends with
+ * a marker. The marker takes one of the `cap` cells. When no cell fits, the
+ * title paints nothing. */
 static bool tb_title(struct ui_scene *scene, struct vector2i at, int advance,
                      int text_h, uint32_t color, bool bold, const char *label,
                      int cap)
 {
+    if (cap <= 0 || advance <= 0)
+        return true;
     size_t total = strlen(label);
-    size_t len = cap > 0 ? ui_text_run_fit(label, total, cap) : 0;
+    size_t len = ui_text_run_fit(label, total, cap);
     bool cut = len < total;
     if (cut)
         len = cap > 1 ? ui_text_run_fit(label, total, cap - 1) : 0;
@@ -45,9 +51,6 @@ static bool tb_title(struct ui_scene *scene, struct vector2i at, int advance,
         .size = { .x = advance, .y = text_h },
     }, style, color, "\xE2\x80\xA6", 3);
 }
-#define TB_PART_NEW    (1ULL << 32)
-#define TB_PART_DRAG   (2ULL << 32)
-#define TB_PART_DROP   (3ULL << 32)
 
 static float tb_open_fade(float open)
 {
@@ -56,41 +59,6 @@ static float tb_open_fade(float open)
     if (open >= 0.6f)
         return 1.0f;
     return open / 0.6f;
-}
-
-static bool scene_stroke(struct ui_scene *scene, struct rect2i bounds,
-                         int width, uint32_t color)
-{
-    if (width <= 0 || rect2i_is_empty(bounds))
-        return true;
-    if (width * 2 > bounds.width)
-        width = bounds.width / 2;
-    if (width * 2 > bounds.height)
-        width = bounds.height / 2;
-    if (width <= 0)
-        return true;
-
-    struct rect2i inner = rect2i_inset(bounds, width);
-    if (!ui_scene_rect(scene, (struct rect2i){
-            .pos = bounds.pos,
-            .size = { .x = bounds.width, .y = width },
-        }, color) ||
-        !ui_scene_rect(scene, (struct rect2i){
-            .pos = { .x = bounds.x, .y = bounds.y + bounds.height - width },
-            .size = { .x = bounds.width, .y = width },
-        }, color))
-        return false;
-    if (inner.height <= 0)
-        return true;
-    return ui_scene_rect(scene, (struct rect2i){
-            .pos = { .x = bounds.x, .y = bounds.y + width },
-            .size = { .x = width, .y = inner.height },
-        }, color) &&
-        ui_scene_rect(scene, (struct rect2i){
-            .pos = { .x = bounds.x + bounds.width - width,
-                     .y = bounds.y + width },
-            .size = { .x = width, .y = inner.height },
-        }, color);
 }
 
 bool ui_tabbar_build_drag_scene(struct ui_tabbar *tb, int index,
@@ -147,13 +115,9 @@ bool ui_tabbar_build_drag_scene(struct ui_tabbar *tb, int index,
     int cap = advance > 0 && avail > 0 ? avail / advance : 0;
     const char *label = tabs[index].text && tabs[index].text[0]
         ? tabs[index].text : "shell";
-    size_t len = ui_text_run_fit(label, strlen(label), cap);
-    if (len > 0 && !ui_scene_text_run(scene, (struct rect2i){
-            .pos = { .x = text_x, .y = (r.height - text_h) / 2 },
-            .size = { .x = avail, .y = text_h },
-        }, (struct ui_text_style){
-            .advance = advance, .cell_h = text_h, .flags = UI_TEXT_BOLD,
-        }, t->active_text_color, label, len))
+    if (!tb_title(scene, (struct vector2i){
+                      .x = text_x, .y = (r.height - text_h) / 2 },
+                  advance, text_h, t->active_text_color, true, label, cap))
         goto fail;
 
     struct ui_text_style mark_style = {
@@ -252,12 +216,8 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
             return false;
         uint32_t bg = ui_color_opacity(t->drop_preview_bg,
                                        t->drop_preview_opacity);
-        if (t->tab_radius > 0) {
-            if (!ui_scene_rounded_rect(scene, drop_r, t->tab_radius, bg))
-                return false;
-        } else if (!ui_scene_rect(scene, drop_r, bg)) {
+        if (!ui_scene_rounded_rect(scene, drop_r, t->tab_radius, bg))
             return false;
-        }
         if (!ui_scene_end_scope(scene))
             return false;
     }
@@ -320,16 +280,12 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
         else
             bg_c = t->tab_idle_bg;
 
-        if (t->tab_radius > 0) {
-            if (!ui_scene_rounded_rect(scene, r, t->tab_radius, bg_c))
-                return false;
-        } else {
-            if (!ui_scene_rect(scene, r, bg_c))
-                return false;
-        }
+        if (!ui_scene_rounded_rect(scene, r, t->tab_radius, bg_c))
+            return false;
 
-        if (tb && i < tb->impl.tab_cap)
-            ui_scene_ripple(scene, r, &tb->impl.tabs[i].ripple, now_ms);
+        if (tb && i < tb->impl.tab_cap &&
+            !ui_scene_ripple(scene, r, &tb->impl.tabs[i].ripple, now_ms))
+            return false;
 
         bool content_clip = open < 1.0f;
         if (content_clip && !ui_scene_push_clip(scene, r))
@@ -425,8 +381,8 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
             return false;
         if (tb && ui_widget_has_focus(&tb->widget) &&
             i == tb->impl.keyboard_index &&
-            !scene_stroke(scene, r, t->focus_width,
-                          ui_color_opacity(t->focus_color, fade)))
+            !ui_scene_rect_stroke(scene, r, t->focus_width,
+                                  ui_color_opacity(t->focus_color, fade)))
             return false;
         if (!ui_scene_end_scope(scene))
             return false;
@@ -485,7 +441,8 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
             uint32_t hbg = ui_color_opacity(t->new_tab_hover_bg, alpha);
             int crad = nr.height < nr.width ? nr.height / 2 : nr.width / 2;
             struct vector2i cc = { .x = nr.x + nr.width / 2, .y = nr.y + nr.height / 2 };
-            ui_scene_circle(scene, cc, crad, hbg, (uint8_t)(hbg >> 24));
+            if (!ui_scene_circle(scene, cc, crad, hbg, (uint8_t)(hbg >> 24)))
+                return false;
         }
         struct ui_text_style n_style = {
             .advance = advance,
@@ -498,10 +455,12 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
             .size = { .x = advance, .y = text_h },
         };
         uint32_t n_color = progress > 0.001f ? t->new_tab_hover_fg : t->new_tab_fg;
-        ui_scene_text_run(scene, n_text_r, n_style, n_color, TB_NEW_MARK, sizeof(TB_NEW_MARK) - 1);
+        if (!ui_scene_text_run(scene, n_text_r, n_style, n_color, TB_NEW_MARK,
+                               sizeof(TB_NEW_MARK) - 1))
+            return false;
         if (tb && ui_widget_has_focus(&tb->widget) &&
             tb->impl.keyboard_index == n_tabs &&
-            !scene_stroke(scene, nr, t->focus_width, t->focus_color))
+            !ui_scene_rect_stroke(scene, nr, t->focus_width, t->focus_color))
             return false;
         if (!ui_scene_end_scope(scene))
             return false;
@@ -509,60 +468,49 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
 
     struct rect2i drag_r;
     if (dragging && tb_drag_rect(tb, &l, n_tabs, size, &drag_r)) {
-        {
-            int drag_x = drag_r.x, drag_y = drag_r.y, orig_w = drag_r.width;
-            if (!ui_scene_begin_part(scene, TB_PART_DRAG))
-                return false;
-            struct rect2i r = drag_r;
+        if (!ui_scene_begin_part(scene, TB_PART_DRAG))
+            return false;
+        struct rect2i r = drag_r;
+        int radius = t->tab_radius;
+        struct rect2i sh = rect2i_translate(r, t->preview_shadow_offset);
+        if (!ui_scene_rounded_rect(scene, sh, radius > 0 ? radius + 2 : 0,
+                                   t->preview_shadow))
+            return false;
 
-            int radius = t->tab_radius;
-            struct vector2i shadow_at = t->preview_shadow_offset;
-            struct rect2i sh = { .pos = { .x = drag_x + shadow_at.x,
-                                          .y = drag_y + shadow_at.y },
-                                 .size = { .x = orig_w, .y = l.tab_height } };
-            if (radius > 0)
-                ui_scene_rounded_rect(scene, sh, radius + 2,
-                                      t->preview_shadow);
-            else
-                ui_scene_rect(scene, sh, t->preview_shadow);
+        uint32_t bg = ui_color_opacity(
+            t->tab_active_bg,
+            tb->impl.drag_state == UI_TAB_DRAG_DETACH ? 0.85f : 0.95f);
+        uint32_t bcol = ui_color_opacity(t->drop_preview_bg, 0.8f);
+        if (!ui_scene_rounded_rect(scene, r, radius, bg) ||
+            !ui_scene_rect_stroke(scene, r, ui_ctx_px(tb_ctx(tb), 1), bcol))
+            return false;
 
-            uint32_t bg = ui_color_opacity(t->tab_active_bg,
-                                           tb->impl.drag_state == UI_TAB_DRAG_DETACH ? 0.85f : 0.95f);
-            if (radius > 0)
-                ui_scene_rounded_rect(scene, r, radius, bg);
-            else
-                ui_scene_rect(scene, r, bg);
+        const char *label = tabs[drag_idx].text && tabs[drag_idx].text[0]
+                            ? tabs[drag_idx].text : "shell";
+        struct rect2i close = tb_close_box(r, t->close_side, t->close_side_h, t->close_pad);
+        int text_x = r.x + t->tab_pad;
+        int avail = close.x - ui_ctx_px(tb_ctx(tb), 4) - text_x;
+        int cap = advance > 0 && avail > 0 ? avail / advance : 0;
+        if (!tb_title(scene,
+                      (struct vector2i){ .x = text_x,
+                                         .y = r.y + (r.height - text_h) / 2 },
+                      advance, text_h, t->active_text_color, true, label, cap))
+            return false;
 
-            uint32_t bcol = ui_color_opacity(t->drop_preview_bg, 0.8f);
-            if (radius > 0)
-                ui_scene_rounded_rect(scene, r, radius, bcol);
-
-            const char *label = tabs[drag_idx].text && tabs[drag_idx].text[0]
-                                ? tabs[drag_idx].text : "shell";
-            struct rect2i close = tb_close_box(r, t->close_side, t->close_side_h, t->close_pad);
-            int text_x = r.x + t->tab_pad;
-            int avail = close.x - ui_ctx_px(tb_ctx(tb), 4) - text_x;
-            int cap = advance > 0 && avail > 0 ? avail / advance : 0;
-            if (!tb_title(scene,
-                          (struct vector2i){ .x = text_x,
-                                             .y = r.y + (r.height - text_h) / 2 },
-                          advance, text_h, t->active_text_color, true, label, cap))
-                return false;
-
-            struct ui_text_style m_style = {
-                .advance = advance,
-                .cell_h = text_h,
-                .flags = UI_TEXT_PLAIN,
-            };
-            struct rect2i mr = {
-                .pos = { .x = close.x + (close.width - advance) / 2, .y = close.y + (close.height - text_h) / 2 },
-                .size = { .x = advance, .y = text_h },
-            };
-            ui_scene_text_run(scene, mr, m_style, t->close_hover_color,
-                              TB_CLOSE_MARK, sizeof(TB_CLOSE_MARK) - 1);
-            if (!ui_scene_end_scope(scene))
-                return false;
-        }
+        struct ui_text_style m_style = {
+            .advance = advance,
+            .cell_h = text_h,
+            .flags = UI_TEXT_PLAIN,
+        };
+        struct rect2i mr = {
+            .pos = { .x = close.x + (close.width - advance) / 2,
+                     .y = close.y + (close.height - text_h) / 2 },
+            .size = { .x = advance, .y = text_h },
+        };
+        if (!ui_scene_text_run(scene, mr, m_style, t->close_hover_color,
+                               TB_CLOSE_MARK, sizeof(TB_CLOSE_MARK) - 1) ||
+            !ui_scene_end_scope(scene))
+            return false;
     }
 
     if (!ui_scene_rect(scene, (struct rect2i){

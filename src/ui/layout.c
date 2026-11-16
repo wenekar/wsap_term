@@ -144,12 +144,9 @@ static size_t collect(struct layout_pass *pass, struct ui_widget *widget,
         if (pass->measuring)
             widget->impl.invalidation &= ~UI_WIDGET_INVALIDATE_MEASURE;
         bool stack = node->params.direction == UI_BOX_STACK;
-        struct vector2i padding = {
-            .x = geom_sat_i((int64_t)node->params.padding.left + node->params.padding.right),
-            .y = geom_sat_i((int64_t)node->params.padding.top + node->params.padding.bottom),
-        };
+        struct vector2i padding = insets2i_extent(node->params.padding);
         constraints.max = vector2i_max(vector2i_sub(constraints.max, padding),
-                                         (struct vector2i){0});
+                                       (struct vector2i){0});
         constraints.min = (struct vector2i){0};
         for (struct ui_widget *child = widget->first_child; child;
              child = child->next_sibling) {
@@ -227,14 +224,53 @@ static Clay_ChildAlignment alignment(struct ui_box_params p)
 }
 
 static void emit(struct layout_pass *pass, size_t index,
+                  Clay_Sizing size, Clay_FloatingElementConfig floating);
+
+static void emit_children(struct layout_pass *pass, size_t index)
+{
+    struct layout_node *node = &pass->nodes[index];
+    struct ui_box_params p = node->params;
+    for (size_t child = index + 1; child < node->end;
+         child = pass->nodes[child].end) {
+        struct layout_node *c = &pass->nodes[child];
+        bool column = p.direction == UI_BOX_COLUMN;
+        bool stack = p.direction == UI_BOX_STACK;
+        Clay_Sizing child_size = {
+            .width = sizing(c, 0, ((column || stack) && p.align == UI_BOX_ALIGN_STRETCH),
+                pass->measuring, c->offer.x),
+            .height = sizing(c, 1, ((!column || stack) && p.align == UI_BOX_ALIGN_STRETCH),
+                pass->measuring, c->offer.y),
+        };
+        if (stack && !ui_widget_is_box(node->widget) && !c->anchored &&
+            !pass->measuring)
+            child_size = (Clay_Sizing){ .width = CLAY_SIZING_GROW(),
+                                       .height = CLAY_SIZING_GROW() };
+        if (stack) {
+            Clay_FloatingAttachPointType point = p.align == UI_BOX_ALIGN_CENTER
+                ? CLAY_ATTACH_POINT_CENTER_CENTER : p.align == UI_BOX_ALIGN_END
+                ? CLAY_ATTACH_POINT_RIGHT_BOTTOM : CLAY_ATTACH_POINT_LEFT_TOP;
+            emit(pass, child, child_size,
+                (Clay_FloatingElementConfig){ .attachTo = CLAY_ATTACH_TO_PARENT,
+                    .attachPoints = { .parent = point, .element = point } });
+        } else {
+            emit(pass, child, child_size, (Clay_FloatingElementConfig){0});
+        }
+    }
+}
+
+static void emit(struct layout_pass *pass, size_t index,
                   Clay_Sizing size, Clay_FloatingElementConfig floating)
 {
     struct layout_node *node = &pass->nodes[index];
     struct ui_box_params p = node->params;
+    bool padded_stack = node->container && p.direction == UI_BOX_STACK &&
+                        !insets2i_eq(p.padding, (struct insets2i){0});
     Clay_ElementDeclaration config = {
         .floating = floating,
         .layout = { .sizing = size,
-                    .intrinsicSize = { .width = node->natural.x, .height = node->natural.y },
+                    .intrinsicSize = padded_stack ? (Clay_Dimensions){0} :
+                        (Clay_Dimensions){ .width = node->natural.x,
+                                           .height = node->natural.y },
                     .padding = padding(p.padding),
                     .childGap = spacing(p.gap),
                     .childAlignment = alignment(p),
@@ -242,33 +278,24 @@ static void emit(struct layout_pass *pass, size_t index,
                         ? CLAY_TOP_TO_BOTTOM : CLAY_LEFT_TO_RIGHT },
     };
     CLAY(node_id(index), config) {
-        if (node->container) {
-            for (size_t child = index + 1; child < node->end;
-                 child = pass->nodes[child].end) {
-                struct layout_node *c = &pass->nodes[child];
-                bool column = p.direction == UI_BOX_COLUMN;
-                bool stack = p.direction == UI_BOX_STACK;
-                Clay_Sizing child_size = {
-                    .width = sizing(c, 0, ((column || stack) && p.align == UI_BOX_ALIGN_STRETCH),
-                        pass->measuring, c->offer.x),
-                    .height = sizing(c, 1, ((!column || stack) && p.align == UI_BOX_ALIGN_STRETCH),
-                        pass->measuring, c->offer.y),
-                };
-                if (stack && !ui_widget_is_box(node->widget) && !c->anchored &&
-                    !pass->measuring)
-                    child_size = (Clay_Sizing){ .width = CLAY_SIZING_GROW(),
-                                               .height = CLAY_SIZING_GROW() };
-                if (stack) {
-                    Clay_FloatingAttachPointType point = p.align == UI_BOX_ALIGN_CENTER
-                        ? CLAY_ATTACH_POINT_CENTER_CENTER : p.align == UI_BOX_ALIGN_END
-                        ? CLAY_ATTACH_POINT_RIGHT_BOTTOM : CLAY_ATTACH_POINT_LEFT_TOP;
-                    emit(pass, child, child_size,
-                        (Clay_FloatingElementConfig){ .attachTo = CLAY_ATTACH_TO_PARENT,
-                            .attachPoints = { .parent = point, .element = point } });
-                } else {
-                    emit(pass, child, child_size, (Clay_FloatingElementConfig){0});
-                }
+        if (padded_stack) {
+            Clay_ElementDeclaration inner = {
+                .layout = {
+                    .sizing = {
+                        .width = pass->measuring ? CLAY_SIZING_FIT(0, CLAY__MAXFLOAT)
+                                                 : CLAY_SIZING_GROW(),
+                        .height = pass->measuring ? CLAY_SIZING_FIT(0, CLAY__MAXFLOAT)
+                                                  : CLAY_SIZING_GROW(),
+                    },
+                    .intrinsicSize = { .width = node->natural.x,
+                                       .height = node->natural.y },
+                },
+            };
+            CLAY(CLAY_IDI("stack", (uint32_t)index), inner) {
+                emit_children(pass, index);
             }
+        } else if (node->container) {
+            emit_children(pass, index);
         }
     }
 }

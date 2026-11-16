@@ -810,6 +810,38 @@ static void managed_anchor_sync_test(void)
     ui_widget_destroy(&wrapper);
 }
 
+static void card_opacity_and_border_test(void)
+{
+    struct fixture f;
+    setup(&f,
+          ".tab-preview { width: 120px; padding: 4px; gap: 2px; "
+          "background: #112233; border-color: #445566; border-width: 2px; "
+          "border-radius: 6px; box-shadow: 0 4px 12px #00000080; "
+          "opacity: 0.5; }"
+          ".tab-preview-title { color: #aabbcc; }");
+    ui_tab_preview_hover(&f.card, 0, TAB0);
+    tick(&f, 1000);
+    tick(&f, ui_surface_next_deadline(&f.surface));
+    assert(ui_tab_preview_is_visible(&f.card));
+    assert_lint_clean(&f);
+
+    const struct ui_scene_op *shadow = find_op(&f.scene, UI_SCENE_OP_SHADOW);
+    assert(shadow && shadow->color == 0x40000000u && shadow->radius == 6);
+    bool saw_border = false, saw_bg = false;
+    for (int i = 0; i < f.scene.n_ops; i++) {
+        const struct ui_scene_op *op = &f.scene.ops[i];
+        if (op->kind == UI_SCENE_OP_ROUNDED_RECT && op->color == 0x80445566u &&
+            op->radius == 6)
+            saw_border = true;
+        if (op->kind == UI_SCENE_OP_ROUNDED_RECT && op->color == 0x80112233u &&
+            op->radius == 4)
+            saw_bg = true;
+    }
+    assert(saw_border && saw_bg);
+    assert(has_text_color(&f.scene, 0x80AABBCCu));
+    teardown(&f);
+}
+
 int main(void)
 {
     hover_shows_card_below_tab_after_delay_test();
@@ -827,6 +859,7 @@ int main(void)
     oversized_source_image_is_dropped_test();
     hidden_for_size_transitions_test();
     managed_anchor_sync_test();
+    card_opacity_and_border_test();
     puts("PASS: tab preview tests");
     return 0;
 }

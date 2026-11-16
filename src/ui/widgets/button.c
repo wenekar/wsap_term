@@ -38,9 +38,7 @@ static struct vector2i button_measure(const struct ui_widget *widget,
     const struct css_scale_context *ctx = button_scale_ctx(button);
     struct insets2i pad = ui_ctx_insets(ctx, widget->style.padding, 0);
     struct vector2i extent = insets2i_extent(pad);
-    int border = widget->style.has_border_color
-        ? ui_css_resolve_int(widget->style.border_width, 0, 0, ctx, true)
-        : 0;
+    int border = ui_widget_border_width(widget);
     const char *text = ui_button_text(button);
     struct vector2i natural = {
         .x = geom_sat_i((int64_t)ui_text_run_cells(text, strlen(text)) *
@@ -49,26 +47,6 @@ static struct vector2i button_measure(const struct ui_widget *widget,
                         2 * (int64_t)border),
     };
     return ui_constraints_clamp(constraints, natural);
-}
-
-static void button_stroke(struct ui_paint_context *paint,
-                          struct rect2i bounds, int px, uint32_t color)
-{
-    if (px <= 0 || rect2i_is_empty(bounds))
-        return;
-    struct rect2i inner = rect2i_inset(bounds, px);
-    ui_paint_rect(paint, (struct rect2i){
-        .pos = bounds.pos,
-        .size = { .x = bounds.width, .y = px } }, color);
-    ui_paint_rect(paint, (struct rect2i){
-        .pos = { .x = bounds.x, .y = bounds.y + bounds.height - px },
-        .size = { .x = bounds.width, .y = px } }, color);
-    ui_paint_rect(paint, (struct rect2i){
-        .pos = { .x = bounds.x, .y = bounds.y + px },
-        .size = { .x = px, .y = inner.height } }, color);
-    ui_paint_rect(paint, (struct rect2i){
-        .pos = { .x = bounds.x + bounds.width - px, .y = bounds.y + px },
-        .size = { .x = px, .y = inner.height } }, color);
 }
 
 static void button_paint(const struct ui_widget *widget,
@@ -80,40 +58,23 @@ static void button_paint(const struct ui_widget *widget,
         return;
     struct rect2i bounds = ui_paint_bounds(paint);
     const struct css_scale_context *ctx = button_scale_ctx(button);
-    int radius = ui_css_resolve_int(widget->style.border_radius, 0, 0,
-                                    ctx, true);
-    int border = widget->style.has_border_color
-        ? ui_css_resolve_int(widget->style.border_width, 0, 0, ctx, true) : 0;
-    uint32_t fg = widget->style.has_text_color
-        ? widget->style.text_color : 0xFFFFFFFF;
-
-    bool bordered = false;
-    if (widget->style.has_border_color && border > 0) {
-        bordered = radius > 0
-            ? ui_paint_rounded_rect(paint, bounds, radius,
-                                    widget->style.border_color)
-            : ui_paint_rect(paint, bounds, widget->style.border_color);
-    }
-    if (widget->style.has_bg_color) {
-        struct rect2i fill = border > 0 ? rect2i_inset(bounds, border)
-                                        : bounds;
-        int fill_radius = radius > border ? radius - border : 0;
-        if (fill_radius > 0)
-            ui_paint_rounded_rect(paint, fill, fill_radius,
-                                  widget->style.bg_color);
-        else
-            ui_paint_rect(paint, fill, widget->style.bg_color);
-    }
+    uint32_t fg = ui_color_opacity(
+        widget->style.has_text_color ? widget->style.text_color : 0xFFFFFFFF,
+        css_style_effective_opacity(&widget->style));
+    struct ui_paint_box_style box = ui_paint_box_style_of(&widget->style, ctx);
+    struct rect2i fill;
+    if (!ui_paint_box(paint, bounds, &box, &fill))
+        return;
+    bool bordered = box.border_width > 0 && (box.border_color >> 24);
     if (!bordered && (button->impl.state & BUTTON_FOCUSED))
-        button_stroke(paint, bounds, 1, fg);
+        ui_paint_rect_stroke(paint, bounds, 1, fg);
 
     const char *text = ui_button_text(button);
-    if (!text[0])
+    if (!text[0] || rect2i_is_empty(fill))
         return;
     struct ui_text_style style = button_style(button);
     struct insets2i pad = ui_ctx_insets(ctx, widget->style.padding, 0);
-    struct rect2i content = rect2i_apply_insets(bounds, pad);
-    content = rect2i_inset(content, border);
+    struct rect2i content = rect2i_apply_insets(fill, pad);
     int cap = style.advance > 0 && content.width > 0
         ? content.width / style.advance : 0;
     size_t len = ui_text_run_fit(text, strlen(text), cap);

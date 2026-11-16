@@ -542,6 +542,44 @@ static void accessibility_selection_keeps_utf8_boundary_test(void)
     destroy(&f);
 }
 
+static void border_and_opacity_test(void)
+{
+    struct fixture f;
+    init(&f, "Hi", (struct vector2i){ .x = 36, .y = 28 });
+    assert(css_parse(&f.sheet,
+        ".label { padding: 4px 8px; border-color: #224466; border-width: 2px; "
+        "background: #112233; color: #ddeeff; opacity: 0.5; }"
+        ".label-selection { background: #446688; color: #aabbcc; }"));
+    ui_surface_set_sheet(&f.surface, &f.sheet);
+    ui_label_set_selectable(&f.label, true);
+    ui_label_select_all(&f.label);
+    build(&f);
+
+    struct ui_widget *w = ui_label_widget(&f.label);
+    assert(vector2i_eq(w->measured_size, (struct vector2i){ .x = 36, .y = 28 }));
+    const struct ui_scene_op *op = text_op(&f, 0);
+    assert(rect2i_eq(op->rect, (struct rect2i){
+        .pos = { .x = 10, .y = 6 }, .size = { .x = 16, .y = 16 },
+    }));
+    assert(op->color == 0x80AABBCCu);
+    assert(rect_count(&f, 0x80224466u, 0) == 4);
+    assert(rect_count(&f, 0x80112233u, 24) == 1);
+    assert(rect_count(&f, 0x80446688u, 16) == 1);
+
+    struct ui_debug_parts parts = {0};
+    ui_debug_collect_parts(w, &parts);
+    bool saw_content = false, saw_line = false;
+    for (int i = 0; i < parts.n; i++) {
+        if (!strcmp(parts.items[i].name, "content"))
+            saw_content = rect2i_eq(parts.items[i].rect, op->rect);
+        if (!strcmp(parts.items[i].name, "text-line"))
+            saw_line = rect2i_eq(parts.items[i].rect, op->rect);
+    }
+    assert(saw_content && saw_line);
+    ui_debug_parts_free(&parts);
+    destroy(&f);
+}
+
 int main(void)
 {
     dynamic_storage_test();
@@ -559,5 +597,6 @@ int main(void)
     press_on_own_text_keeps_selection_test();
     unselectable_link_focus_test();
     accessibility_selection_keeps_utf8_boundary_test();
+    border_and_opacity_test();
     return 0;
 }

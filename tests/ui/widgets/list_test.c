@@ -359,6 +359,14 @@ static void long_label_stays_inside_its_row_test(void)
     }
     assert(marker);
     assert(rect2i_end(row).x >= rect2i_end(shortcut).x);
+
+    /* When no cell fits before the shortcut, the label emits no ellipsis. */
+    ui_widget_set_fixed_size(ui_list_widget(&f.list),
+                             (struct vector2i){ .x = 140, .y = 40 });
+    build(&f);
+    assert(ui_debug_lint_scene(&view, NULL, 0) == 0);
+    assert(!find_text(&f.scene, "\xE2\x80\xA6"));
+    assert(find_text(&f.scene, "Ctrl+Shift+T"));
     teardown(&f);
 }
 

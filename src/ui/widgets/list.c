@@ -230,36 +230,6 @@ static void list_layout(struct ui_widget *widget, struct rect2i bounds)
     }
 }
 
-static void paint_box(struct ui_paint_context *paint, struct rect2i box,
-                      const struct css_style *style,
-                      const struct css_scale_context *scale, int max_radius)
-{
-    int border = style->has_border_color
-        ? ui_css_resolve_int(style->border_width, 0, 0, scale, true) : 0;
-    int radius = ui_css_resolve_int(style->border_radius, 0, 0, scale, true);
-    if (max_radius >= 0 && radius > max_radius)
-        radius = max_radius;
-    float opacity = css_style_effective_opacity(style);
-    if (style->has_border_color && border > 0) {
-        uint32_t color = ui_color_opacity(style->border_color, opacity);
-        if (radius > 0)
-            ui_paint_rounded_rect(paint, box, radius, color);
-        else
-            ui_paint_rect(paint, box, color);
-    }
-    if (!style->has_bg_color)
-        return;
-    struct rect2i fill = border > 0 ? rect2i_inset(box, border) : box;
-    int fill_radius = radius > border ? radius - border : 0;
-    uint32_t bg = ui_color_opacity(style->bg_color, opacity);
-    if (rect2i_is_empty(fill))
-        return;
-    if (fill_radius > 0)
-        ui_paint_rounded_rect(paint, fill, fill_radius, bg);
-    else
-        ui_paint_rect(paint, fill, bg);
-}
-
 static void list_paint(const struct ui_widget *widget,
                        struct ui_paint_context *paint)
 {
@@ -267,20 +237,22 @@ static void list_paint(const struct ui_widget *widget,
     const struct css_style *style = &widget->style;
     const struct css_scale_context *scale = &widget->style_scale;
     struct rect2i bounds = ui_paint_bounds(paint);
+    struct ui_paint_box_style box = ui_paint_box_style_of(style, scale);
     int max_radius = l->impl.metrics.edge_pad;
+    if (box.radius > max_radius)
+        box.radius = max_radius;
     if (style->has_shadow && !insets2i_eq(l->impl.metrics.shadow,
                                           (struct insets2i){0})) {
         int sx = ui_css_resolve_int(style->shadow_x, 0, 0, scale, true);
         int sy = ui_css_resolve_int(style->shadow_y, 0, 0, scale, true);
         int blur = ui_css_resolve_int(style->shadow_blur, 0, 0, scale, true);
-        int radius = ui_css_resolve_int(style->border_radius, 0, 0, scale, true);
         ui_paint_shadow(paint,
                         rect2i_translate(bounds, (struct vector2i){ .x = sx, .y = sy }),
-                        radius < max_radius ? radius : max_radius, blur,
+                        box.radius, blur,
                         ui_color_opacity(style->shadow_color,
                                          css_style_effective_opacity(style)));
     }
-    paint_box(paint, bounds, style, scale, max_radius);
+    ui_paint_box(paint, bounds, &box, NULL);
 }
 
 static const struct ui_list_row *row_of(const struct ui_widget *widget)
@@ -304,7 +276,9 @@ static void row_paint(const struct ui_widget *widget,
         struct rect2i line = rect2i_apply_insets(box, m->sep_margin);
         line.height = m->sep_thickness;
         if (sep.has_bg_color && !rect2i_is_empty(line))
-            ui_paint_rect(paint, line, ui_color_opacity(sep.bg_color, sep.opacity));
+            ui_paint_rect(paint, line,
+                          ui_color_opacity(sep.bg_color,
+                                           css_style_effective_opacity(&sep)));
         return;
     }
     unsigned pseudo = 0;
@@ -313,7 +287,8 @@ static void row_paint(const struct ui_widget *widget,
     if (it->flags & UI_LIST_ITEM_DISABLED) pseudo |= CSS_PSEUDO_DISABLED;
     if (it->flags & UI_LIST_ITEM_CHECKED) pseudo |= CSS_PSEUDO_CHECKED;
     struct css_style item = ui_widget_part(&l->widget, item_part(it), pseudo);
-    paint_box(paint, box, &item, scale, -1);
+    struct ui_paint_box_style box_style = ui_paint_box_style_of(&item, scale);
+    ui_paint_box(paint, box, &box_style, NULL);
 
     struct ui_text_style text = { .advance = m->cell_w, .cell_h = m->cell_h };
     int text_y = box.y + (box.height - m->cell_h) / 2;
@@ -324,22 +299,19 @@ static void row_paint(const struct ui_widget *widget,
         ? m->gap + ui_text_run_cells(it->shortcut, strlen(it->shortcut)) * m->cell_w
         : 0;
     int avail = box.width - m->item_pad.l - m->item_pad.r - shortcut_w;
-    size_t label_len = strlen(it->label);
+    int cap = m->cell_w > 0 && avail > 0 ? avail / m->cell_w : 0;
+    size_t total = strlen(it->label);
+    size_t label_len = cap > 0 ? ui_text_run_fit(it->label, total, cap) : 0;
+    bool ellipsis = label_len < total && cap > 0;
+    if (ellipsis)
+        label_len = cap > 1 ? ui_text_run_fit(it->label, total, cap - 1) : 0;
     int label_w = ui_text_run_cells(it->label, label_len) * m->cell_w;
-    bool ellipsis = false;
-    if (avail < 0)
-        avail = 0;
-    if (label_w > avail) {
-        int cells = avail / m->cell_w - 1;
-        label_len = ui_text_run_fit(it->label, label_len, cells > 0 ? cells : 0);
-        label_w = ui_text_run_cells(it->label, label_len) * m->cell_w;
-        ellipsis = true;
-    }
     struct rect2i label_box = {
         .pos = { .x = box.x + m->item_pad.l, .y = text_y },
         .size = { .x = label_w, .y = m->cell_h },
     };
-    ui_paint_text(paint, label_box, text, fg, it->label, label_len);
+    if (label_len > 0)
+        ui_paint_text(paint, label_box, text, fg, it->label, label_len);
     if (ellipsis) {
         label_box.x += label_w;
         label_box.width = m->cell_w;

@@ -317,6 +317,30 @@ static void query_lines_up_with_labels_test(void)
     teardown(&f);
 }
 
+static void fallback_opacity_test(void)
+{
+    struct css_sheet sheet = { .has_defaults = true };
+    assert(css_parse(&sheet, ".command-palette { opacity: 0.5; }"));
+    struct fixture f;
+    setup(&f, &sheet, (struct css_scale_context){
+        .dpi_scale = 1, .cell_w = 8, .cell_h = 16,
+    });
+    assert(ui_surface_build_scene(&f.surface, &f.scene));
+    bool saw_bg = false, saw_sep = false;
+    for (int i = 0; i < f.scene.n_ops; i++) {
+        const struct ui_scene_op *op = &f.scene.ops[i];
+        if (op->kind != UI_SCENE_OP_RECT)
+            continue;
+        if (op->color == 0x801E1E2Eu)
+            saw_bg = true;
+        if (op->color == 0x8045475Au)
+            saw_sep = true;
+    }
+    assert(saw_bg && saw_sep);
+    teardown(&f);
+    css_sheet_clear(&sheet);
+}
+
 int main(void)
 {
     filter_and_activate_test();
@@ -330,6 +354,7 @@ int main(void)
     follows_parent_resize_test();
     themed_scaled_and_empty_query_test();
     query_lines_up_with_labels_test();
+    fallback_opacity_test();
     puts("PASS: palette tests");
     return 0;
 }

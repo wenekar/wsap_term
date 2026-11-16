@@ -690,8 +690,9 @@ static bool text_surface(const struct ui_debug_view *view, int index,
         return true;
     for (int i = index - 1; i >= 0; i--) {
         const struct ui_scene_op *op = &s->ops[i];
-        if (!op_is_fill(op) || op->rect.height < box.height ||
-            op->rect.height > row_max || !rect_contains_text_start(op->rect, box))
+        if (!op_is_fill(op) || op->rect.width < box.height ||
+            op->rect.height < box.height || op->rect.height > row_max ||
+            !rect_contains_text_start(op->rect, box))
             continue;
         if (owner && ui_debug_op_owner(view, i) != owner)
             continue;
@@ -873,23 +874,8 @@ static void ov_fill(struct overlay_ctx *o, struct rect2i r, uint32_t rgb,
 static void ov_outline(struct overlay_ctx *o, struct rect2i r, uint32_t rgb,
                        uint8_t alpha, int t)
 {
-    if (r.width <= 0 || r.height <= 0)
-        return;
-    if (t * 2 >= r.width || t * 2 >= r.height) {
-        ov_fill(o, r, rgb, alpha);
-        return;
-    }
-    struct vector2i end = rect2i_end(r);
-    ov_fill(o, (struct rect2i){ .pos = r.pos, .size = { .x = r.width, .y = t } },
-            rgb, alpha);
-    ov_fill(o, (struct rect2i){ .pos = { .x = r.x, .y = end.y - t },
-                                .size = { .x = r.width, .y = t } }, rgb, alpha);
-    ov_fill(o, (struct rect2i){ .pos = { .x = r.x, .y = r.y + t },
-                                .size = { .x = t, .y = r.height - 2 * t } },
-            rgb, alpha);
-    ov_fill(o, (struct rect2i){ .pos = { .x = end.x - t, .y = r.y + t },
-                                .size = { .x = t, .y = r.height - 2 * t } },
-            rgb, alpha);
+    ui_scene_rect_stroke(o->scene, r, t,
+                         ((uint32_t)alpha << 24) | (rgb & 0x00FFFFFFu));
 }
 
 static void ov_band(struct overlay_ctx *o, struct rect2i outer,
@@ -923,7 +909,8 @@ static struct rect2i widget_content(const struct ui_widget *w,
     struct insets2i pad = ui_css_resolve_insets(w->style.padding,
                                                 w->bounds.size,
                                                 &w->style_scale, true);
-    return rect2i_apply_insets(w->bounds, pad);
+    return rect2i_inset(rect2i_apply_insets(w->bounds, pad),
+                        ui_widget_border_width(w));
 }
 
 static void ov_box(struct overlay_ctx *o, const struct ui_widget *w,
@@ -1068,13 +1055,8 @@ bool ui_debug_overlay_append(struct ui_scene *scene,
                 ov_outline(&o, hovered->rect, OV_PART, 255, 2 * o.line);
         }
         ov_outline(&o, focus->bounds, 0xFFFFFF, 230, o.line);
-        if (flags & UI_DEBUG_OVERLAY_LABEL) {
-            struct ui_text_style style = {
-                .advance = ui_cell_dim(scale->cell_w, UI_DEFAULT_CELL_W),
-                .cell_h = ui_cell_dim(scale->cell_h, UI_DEFAULT_CELL_H),
-            };
-            ov_label(&o, view, focus, hovered, style);
-        }
+        if (flags & UI_DEBUG_OVERLAY_LABEL)
+            ov_label(&o, view, focus, hovered, ui_widget_text_style(scale));
     }
     return !o.scene->overflow;
 }

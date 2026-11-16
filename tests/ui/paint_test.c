@@ -198,11 +198,142 @@ static void moved_widget_damage_test(void)
     ui_widget_destroy(&widget);
 }
 
+struct box_probe {
+    struct ui_paint_box_style box;
+    struct rect2i fill;
+    int stroke_w;
+    uint32_t stroke_color;
+};
+
+static void box_probe_paint(const struct ui_widget *widget,
+                            struct ui_paint_context *paint)
+{
+    struct box_probe *probe = widget->userdata;
+    struct rect2i bounds = ui_paint_bounds(paint);
+    assert(ui_paint_box(paint, bounds, &probe->box, &probe->fill));
+    if (probe->stroke_w > 0)
+        assert(ui_paint_rect_stroke(paint, bounds, probe->stroke_w,
+                                    probe->stroke_color));
+}
+
+static const struct ui_widget_ops BOX_PROBE_OPS = {
+    .paint = box_probe_paint,
+};
+
+static void paint_box_and_stroke_test(void)
+{
+    struct box_probe probe = {
+        .box = {
+            .bg_color = 0xFF445566,
+            .border_color = 0xFF112233,
+            .border_width = 2,
+            .radius = 6,
+        },
+        .stroke_w = 2,
+        .stroke_color = 0xFFABCDEF,
+    };
+    struct ui_widget widget = {0};
+    ui_widget_init(&widget, &BOX_PROBE_OPS, &probe);
+    ui_widget_layout(&widget, (struct rect2i){
+        .pos = { .x = 10, .y = 20 }, .size = { .x = 40, .y = 24 },
+    });
+    struct ui_scene scene = {0};
+    assert(ui_widget_build_scene(&widget, &scene));
+    assert(rect2i_eq(probe.fill, (struct rect2i){
+        .pos = { .x = 2, .y = 2 }, .size = { .x = 36, .y = 20 },
+    }));
+    assert(scene.n_ops == 6);
+    assert(scene.ops[0].kind == UI_SCENE_OP_ROUNDED_RECT &&
+           scene.ops[0].radius == 6 && scene.ops[0].color == 0xFF112233 &&
+           rect2i_eq(scene.ops[0].rect, (struct rect2i){
+               .pos = { .x = 10, .y = 20 }, .size = { .x = 40, .y = 24 },
+           }));
+    assert(scene.ops[1].kind == UI_SCENE_OP_ROUNDED_RECT &&
+           scene.ops[1].radius == 4 && scene.ops[1].color == 0xFF445566 &&
+           rect2i_eq(scene.ops[1].rect, (struct rect2i){
+               .pos = { .x = 12, .y = 22 }, .size = { .x = 36, .y = 20 },
+           }));
+    for (int i = 2; i < 6; i++) {
+        assert(scene.ops[i].kind == UI_SCENE_OP_RECT);
+        assert(scene.ops[i].color == 0xFFABCDEF);
+        for (int j = i + 1; j < 6; j++)
+            assert(rect2i_is_empty(rect2i_intersect(scene.ops[i].rect, scene.ops[j].rect)));
+    }
+
+    probe.stroke_w = 0;
+    probe.box.border_width = 3;
+    probe.box.radius = 2;
+    ui_widget_invalidate(&widget, UI_WIDGET_INVALIDATE_PAINT);
+    assert(ui_widget_build_scene(&widget, &scene));
+    assert(scene.n_ops == 2);
+    assert(scene.ops[0].kind == UI_SCENE_OP_ROUNDED_RECT &&
+           scene.ops[0].radius == 2);
+    assert(scene.ops[1].kind == UI_SCENE_OP_RECT);
+
+    probe.box.bg_color = 0x00445566;
+    ui_widget_invalidate(&widget, UI_WIDGET_INVALIDATE_PAINT);
+    assert(ui_widget_build_scene(&widget, &scene));
+    assert(scene.n_ops == 1 && !rect2i_is_empty(probe.fill));
+
+    probe.box.bg_color = 0xFF445566;
+    probe.box.border_width = 12;
+    ui_widget_invalidate(&widget, UI_WIDGET_INVALIDATE_PAINT);
+    assert(ui_widget_build_scene(&widget, &scene));
+    assert(scene.n_ops == 1 && rect2i_is_empty(probe.fill));
+
+    probe.box.bg_color = 0x80445566;
+    probe.box.border_width = 2;
+    probe.box.radius = 0;
+    ui_widget_invalidate(&widget, UI_WIDGET_INVALIDATE_PAINT);
+    assert(ui_widget_build_scene(&widget, &scene));
+    assert(scene.n_ops == 5);
+    assert(rect2i_eq(probe.fill, (struct rect2i){
+        .pos = { .x = 2, .y = 2 }, .size = { .x = 36, .y = 20 },
+    }));
+    assert(scene.ops[4].kind == UI_SCENE_OP_RECT &&
+           scene.ops[4].color == 0x80445566 &&
+           rect2i_eq(scene.ops[4].rect, (struct rect2i){
+               .pos = { .x = 12, .y = 22 }, .size = { .x = 36, .y = 20 },
+           }));
+    for (int i = 0; i < 4; i++) {
+        assert(scene.ops[i].kind == UI_SCENE_OP_RECT);
+        assert(scene.ops[i].color == 0xFF112233);
+        assert(rect2i_is_empty(rect2i_intersect(scene.ops[i].rect,
+                                                scene.ops[4].rect)));
+    }
+
+    struct ui_paint_context pctx = { .scene = &scene, .size = { .x = 20, .y = 10 } };
+    assert(!ui_paint_box(NULL, (struct rect2i){ .size = { .x = 10, .y = 10 } },
+                         &probe.box, NULL));
+    assert(!ui_paint_box(&pctx, (struct rect2i){ .size = { .x = 10, .y = 10 } },
+                         NULL, NULL));
+    assert(ui_paint_box(&pctx, (struct rect2i){0}, &probe.box, NULL));
+
+    struct css_sheet sheet = {0};
+    assert(css_parse(&sheet,
+        ".a { background: #00ff00; border-color: #ff0000; border-width: 2px; "
+        "border-radius: 5px; opacity: 0.5; }"
+        ".b { background: #112233; border-width: 4px; }"));
+    struct css_style a = {0}, b = {0};
+    css_style_resolve(&sheet, "a", NULL, NULL, 0, &a);
+    css_style_resolve(&sheet, "b", NULL, NULL, 0, &b);
+    struct ui_paint_box_style ba = ui_paint_box_style_of(&a, NULL);
+    struct ui_paint_box_style bb = ui_paint_box_style_of(&b, NULL);
+    assert(ba.border_width == 2 && ba.radius == 5);
+    assert((ba.bg_color >> 24) == 0x80 && (ba.border_color >> 24) == 0x80);
+    assert(bb.border_width == 0 && bb.bg_color == 0xFF112233u);
+
+    css_sheet_clear(&sheet);
+    ui_scene_destroy(&scene);
+    ui_widget_destroy(&widget);
+}
+
 int main(void)
 {
     paint_order_translation_test();
     clipping_and_zero_test();
     label_text_damage_test();
     moved_widget_damage_test();
+    paint_box_and_stroke_test();
     return 0;
 }

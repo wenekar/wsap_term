@@ -95,6 +95,9 @@ bool ui_scene_copy(struct ui_scene *dst, const struct ui_scene *src);
 bool ui_scene_push_clip(struct ui_scene *s, struct rect2i r);
 bool ui_scene_pop_clip(struct ui_scene *s);
 bool ui_scene_rect(struct ui_scene *s, struct rect2i r, uint32_t color);
+/* Emits four non-overlapping edge rectangles to outline `box`. */
+bool ui_scene_rect_stroke(struct ui_scene *s, struct rect2i box, int width,
+                          uint32_t color);
 bool ui_scene_blend_rect(struct ui_scene *s, struct rect2i r,
                          uint32_t color, uint8_t alpha);
 bool ui_scene_rounded_rect(struct ui_scene *s, struct rect2i r,

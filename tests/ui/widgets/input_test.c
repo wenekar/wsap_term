@@ -918,7 +918,9 @@ static void fallback_part_colors_test(void)
 {
     struct css_sheet widget_only = { .has_defaults = true };
     struct css_sheet empty_sheet = { .has_defaults = true };
+    struct css_sheet half_opacity = { .has_defaults = true };
     assert(css_parse(&widget_only, ".text-input { color: #224466; }"));
+    assert(css_parse(&half_opacity, ".text-input { opacity: 0.5; }"));
 
     struct fixture f;
     setup(&f, "text");
@@ -934,12 +936,19 @@ static void fallback_part_colors_test(void)
     assert(ui_surface_build_scene(&f.surface, &f.scene));
     assert(scene_has_text_color(&f.scene, "text", 0xFFCDD6F4u));
 
+    ui_surface_set_sheet(&f.surface, &half_opacity);
+    assert(ui_surface_build_scene(&f.surface, &f.scene));
+    assert(scene_has_text_color(&f.scene, "text", 0x80CDD6F4u));
+    assert(scene_has_rect_color(&f.scene, 0x8045475Au));
+    assert(scene_has_rect_color(&f.scene, 0x80F5E0DCu));
+
     ui_input_clear(&f.in);
     assert(ui_surface_build_scene(&f.surface, &f.scene));
-    assert(scene_has_text_color(&f.scene, "Hint", 0xFF7F849Cu));
+    assert(scene_has_text_color(&f.scene, "Hint", 0x807F849Cu));
     teardown(&f);
     css_sheet_clear(&widget_only);
     css_sheet_clear(&empty_sheet);
+    css_sheet_clear(&half_opacity);
 }
 
 int main(void)

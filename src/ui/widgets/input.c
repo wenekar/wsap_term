@@ -29,10 +29,11 @@ static const struct css_scale_context *input_scale(const struct ui_input *in)
 
 static struct rect2i content_rect(const struct ui_input *in)
 {
-    struct rect2i r = rect2i_apply_insets(
+    struct rect2i fill = rect2i_inset(
         (struct rect2i){ .size = in->widget.bounds.size },
-        ui_ctx_insets(input_scale(in), in->widget.style.padding, 0));
-    return rect2i_inset(r, ui_widget_border_width(&in->widget));
+        ui_widget_border_width(&in->widget));
+    return rect2i_apply_insets(
+        fill, ui_ctx_insets(input_scale(in), in->widget.style.padding, 0));
 }
 
 int ui_input_text_inset(const struct ui_input *in)
@@ -908,9 +909,11 @@ static uint32_t part_color(const struct ui_widget *widget, ui_part_id part,
                            bool bg, uint32_t fallback)
 {
     struct css_style s = ui_widget_part(widget, part, 0);
-    if (bg)
-        return s.has_bg_color ? s.bg_color : fallback;
-    return s.has_text_color ? s.text_color : fallback;
+    uint32_t color = bg ? (s.has_bg_color ? s.bg_color : fallback)
+                        : (s.has_text_color ? s.text_color : fallback);
+    return ui_color_opacity(color,
+                            css_style_effective_opacity(&widget->style) *
+                                css_style_effective_opacity(&s));
 }
 
 static void input_paint(const struct ui_widget *widget,
@@ -919,25 +922,13 @@ static void input_paint(const struct ui_widget *widget,
     const struct ui_input *in = input_of(widget);
     const struct css_style *rs = &widget->style;
     const struct css_scale_context *scale = input_scale(in);
-    int border = ui_widget_border_width(&in->widget);
-    int radius = ui_css_resolve_int(rs->border_radius, 0, 0, scale, true);
-    struct rect2i outer = ui_paint_bounds(paint);
-    if (rs->has_border_color && border > 0) {
-        if (radius > 0)
-            ui_paint_rounded_rect(paint, outer, radius, rs->border_color);
-        else
-            ui_paint_rect(paint, outer, rs->border_color);
-    }
-    if (rs->has_bg_color && rs->bg_color >> 24) {
-        struct rect2i fill = border > 0 ? rect2i_inset(outer, border) : outer;
-        int fill_radius = radius > border ? radius - border : 0;
-        if (fill_radius > 0)
-            ui_paint_rounded_rect(paint, fill, fill_radius, rs->bg_color);
-        else
-            ui_paint_rect(paint, fill, rs->bg_color);
-    }
+    struct ui_paint_box_style box = ui_paint_box_style_of(rs, scale);
+    struct rect2i fill;
+    if (!ui_paint_box(paint, ui_paint_bounds(paint), &box, &fill))
+        return;
 
-    struct rect2i content = content_rect(in);
+    struct rect2i content = rect2i_apply_insets(
+        fill, ui_ctx_insets(scale, rs->padding, 0));
     if (rect2i_is_empty(content) || !ui_paint_push_clip(paint, content))
         return;
     int cw = ui_widget_cell_w(&in->widget), ch = ui_widget_cell_h(&in->widget);

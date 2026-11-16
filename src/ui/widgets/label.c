@@ -149,7 +149,9 @@ static bool next_line(struct label_iter *it, struct label_line *line)
 
 static struct rect2i content_rect(const struct ui_label *label, struct vector2i size)
 {
-    return rect2i_apply_insets((struct rect2i){ .size = size },
+    struct rect2i fill = rect2i_inset((struct rect2i){ .size = size },
+                                      ui_widget_border_width(&label->widget));
+    return rect2i_apply_insets(fill,
         ui_ctx_insets(&label->widget.style_scale, label->widget.style.padding, 0));
 }
 
@@ -169,12 +171,17 @@ static struct vector2i label_measure(const struct ui_widget *widget,
     struct ui_text_style style = ui_widget_text_style(&widget->style_scale);
     struct vector2i pad = insets2i_extent(ui_ctx_insets(
         &widget->style_scale, widget->style.padding, 0));
+    int border = ui_widget_border_width(widget);
+    struct vector2i chrome = {
+        .x = geom_sat_i((int64_t)pad.x + 2 * (int64_t)border),
+        .y = geom_sat_i((int64_t)pad.y + 2 * (int64_t)border),
+    };
     int width = constraints.min.x == constraints.max.x ? constraints.max.x :
         ui_css_resolve_int(widget->style.width, (float)constraints.max.x,
             (float)constraints.max.x, &widget->style_scale, true);
     if (widget->impl.fixed_size.x)
         width = widget->impl.fixed_size.x;
-    int content_w = geom_sat_i((int64_t)width - pad.x);
+    int content_w = geom_sat_i((int64_t)width - chrome.x);
     struct label_iter it = line_iter(label, content_w);
     struct label_line line;
     int widest = 0;
@@ -185,8 +192,8 @@ static struct vector2i label_measure(const struct ui_widget *widget,
         lines++;
     }
     return ui_constraints_clamp(constraints, (struct vector2i){
-        .x = geom_sat_i((int64_t)widest * style.advance + pad.x),
-        .y = geom_sat_i(lines * style.cell_h + pad.y),
+        .x = geom_sat_i((int64_t)widest * style.advance + chrome.x),
+        .y = geom_sat_i(lines * style.cell_h + chrome.y),
     });
 }
 
@@ -235,6 +242,7 @@ static void paint_line(const struct ui_label *label, struct ui_paint_context *pa
 {
     const char *text = ui_label_text(label);
     struct ui_text_style style = ui_widget_text_style(&label->widget.style_scale);
+    float opacity = css_style_effective_opacity(&label->widget.style);
     size_t lo = 0, hi = 0, end = line->start + line->len;
     bool selected = ui_label_selection(label, &lo, &hi) && hi > line->start && lo < end;
     if (selected) {
@@ -246,8 +254,11 @@ static void paint_line(const struct ui_label *label, struct ui_paint_context *pa
         selection.x += before;
         selection.width = width;
         struct css_style sel = label_part(label, parts.selection);
-        uint32_t bg = sel.has_bg_color ? sel.bg_color : 0xFF45475A;
-        uint32_t fg = sel.has_text_color ? sel.text_color : color;
+        float sel_opacity = opacity * css_style_effective_opacity(&sel);
+        uint32_t bg = ui_color_opacity(
+            sel.has_bg_color ? sel.bg_color : 0xFF45475A, sel_opacity);
+        uint32_t fg = sel.has_text_color
+            ? ui_color_opacity(sel.text_color, sel_opacity) : color;
         ui_paint_rect(paint, selection, bg);
         paint_span(label, paint, rect, line->start, lo, color);
         paint_span(label, paint, selection, lo, hi, fg);
@@ -280,21 +291,23 @@ static void label_paint(const struct ui_widget *widget, struct ui_paint_context 
 {
     const struct ui_label *label = label_of(widget);
     struct rect2i bounds = ui_paint_bounds(paint);
-    if (widget->style.has_bg_color) {
-        int radius = ui_css_resolve_int(widget->style.border_radius, 0, 0,
-                                        &widget->style_scale, true);
-        ui_paint_rounded_rect(paint, bounds, radius, widget->style.bg_color);
-    }
+    struct ui_paint_box_style box = ui_paint_box_style_of(
+        &widget->style, &widget->style_scale);
+    if (!ui_paint_box(paint, bounds, &box, NULL))
+        return;
     struct rect2i content = content_rect(label, bounds.size);
     struct ui_text_style style = ui_widget_text_style(&widget->style_scale);
     if (content.width <= 0 || content.height < style.cell_h || !label->impl.len)
         return;
+    float opacity = css_style_effective_opacity(&widget->style);
     uint32_t color = widget->style.has_text_color ? widget->style.text_color : 0xFFFFFFFF;
     if (label->impl.link) {
         struct css_style link = label_part(label, parts.link);
         if (link.has_text_color)
             color = link.text_color;
+        opacity *= css_style_effective_opacity(&link);
     }
+    color = ui_color_opacity(color, opacity);
     if (!ui_paint_push_clip(paint, content))
         return;
     struct label_iter it = line_iter(label, content.width);
@@ -309,22 +322,13 @@ static void label_paint(const struct ui_widget *widget, struct ui_paint_context 
     ui_paint_pop_clip(paint);
     if (ui_widget_has_focus(widget) && !label->impl.disabled) {
         struct css_style fs = label_part(label, parts.focus);
-        uint32_t focus = fs.has_border_color ? fs.border_color : 0xFF89B4FA;
+        uint32_t focus = ui_color_opacity(
+            fs.has_border_color ? fs.border_color : 0xFF89B4FA,
+            css_style_effective_opacity(&widget->style) *
+                css_style_effective_opacity(&fs));
         int edge = ui_css_resolve_int(fs.border_width, 0, 1,
                                       &widget->style_scale, true);
-        edge = geom_clamp_i(edge, 0, bounds.height / 2);
-        if (edge > 0) {
-            ui_paint_rect(paint, (struct rect2i){ .pos = bounds.pos,
-                .size = { .x = bounds.width, .y = edge } }, focus);
-            ui_paint_rect(paint, (struct rect2i){
-                .pos = { .x = bounds.x, .y = bounds.y + bounds.height - edge },
-                .size = { .x = bounds.width, .y = edge } }, focus);
-            ui_paint_rect(paint, (struct rect2i){ .pos = bounds.pos,
-                .size = { .x = edge, .y = bounds.height } }, focus);
-            ui_paint_rect(paint, (struct rect2i){
-                .pos = { .x = bounds.x + bounds.width - edge, .y = bounds.y },
-                .size = { .x = edge, .y = bounds.height } }, focus);
-        }
+        ui_paint_rect_stroke(paint, bounds, edge, focus);
     }
 }
 

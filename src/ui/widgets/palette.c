@@ -213,10 +213,11 @@ static struct vector2i palette_measure(const struct ui_widget *widget,
                                        struct ui_constraints constraints)
 {
     struct ui_palette *p = palette_of(widget);
+    int border = ui_widget_border_width(&p->widget);
     int width = panel_width(p, constraints.max.x);
-    int inner = width - 2 * ui_widget_border_width(&p->widget);
+    int inner = geom_max_i(0, width - 2 * border);
     struct ui_constraints child = { .max = { .x = inner, .y = constraints.max.y } };
-    int height = 2 * ui_widget_border_width(&p->widget) + separator_height(p) +
+    int height = 2 * border + separator_height(p) +
                  ui_widget_measure(&p->input.widget, child).y;
     if (!ui_widget_is_hidden(&p->list.widget))
         height += ui_widget_measure(&p->list.widget, child).y;
@@ -232,13 +233,12 @@ static void palette_layout(struct ui_widget *widget, struct rect2i bounds)
 {
     struct ui_palette *p = palette_of(widget);
     struct rect2i inner = rect2i_inset(bounds, ui_widget_border_width(&p->widget));
-    int offset = ui_list_label_inset(&p->list) - ui_input_text_inset(&p->input);
-    if (offset < 0)
-        offset = 0;
+    int offset = geom_max_i(0, ui_list_label_inset(&p->list) -
+                               ui_input_text_inset(&p->input));
     int input_h = p->input.widget.measured_size.y;
     ui_widget_place(&p->input.widget, (struct rect2i){
         .pos = { .x = inner.x + offset, .y = inner.y },
-        .size = { .x = inner.width - offset, .y = input_h },
+        .size = { .x = geom_max_i(0, inner.width - offset), .y = input_h },
     });
     int y = inner.y + input_h + separator_height(p);
     ui_widget_place(&p->list.widget, (struct rect2i){
@@ -266,30 +266,25 @@ static void palette_paint(const struct ui_widget *widget,
 {
     const struct ui_palette *p = palette_of(widget);
     const struct css_style *s = &widget->style;
-    const struct css_scale_context *scale = scale_of(p);
-    struct rect2i box = ui_paint_bounds(paint);
-    int radius = ui_css_resolve_int(s->border_radius, 0, 0, scale, true);
-    int border = ui_widget_border_width(&p->widget);
-    if (border > 0) {
-        if (radius > 0)
-            ui_paint_rounded_rect(paint, box, radius, s->border_color);
-        else
-            ui_paint_rect(paint, box, s->border_color);
-    }
-    struct rect2i fill = border > 0 ? rect2i_inset(box, border) : box;
-    if (rect2i_is_empty(fill))
+    float opacity = css_style_effective_opacity(s);
+    struct ui_paint_box_style box_style = ui_paint_box_style_of(s, scale_of(p));
+    if (!s->has_bg_color)
+        box_style.bg_color = ui_color_opacity(0xFF1E1E2Eu, opacity);
+    struct rect2i fill;
+    if (!ui_paint_box(paint, ui_paint_bounds(paint), &box_style, &fill) ||
+        rect2i_is_empty(fill))
         return;
-    uint32_t bg = s->has_bg_color ? s->bg_color : 0xFF1E1E2Eu;
-    int fill_radius = radius > border ? radius - border : 0;
-    if (fill_radius > 0)
-        ui_paint_rounded_rect(paint, fill, fill_radius, bg);
-    else
-        ui_paint_rect(paint, fill, bg);
+    int sep_y = fill.y + p->input.widget.measured_size.y;
+    int sep_h = geom_min_i(separator_height(p), rect2i_end(fill).y - sep_y);
+    if (sep_h <= 0)
+        return;
+    uint32_t sep_color = s->has_border_color
+        ? box_style.border_color
+        : ui_color_opacity(0xFF45475Au, opacity);
     ui_paint_rect(paint, (struct rect2i){
-        .pos = { .x = fill.x,
-                 .y = fill.y + p->input.widget.measured_size.y },
-        .size = { .x = fill.width, .y = separator_height(p) },
-    }, s->has_border_color ? s->border_color : 0xFF45475Au);
+        .pos = { .x = fill.x, .y = sep_y },
+        .size = { .x = fill.width, .y = sep_h },
+    }, sep_color);
 }
 
 static void palette_destroy(struct ui_widget *widget)

@@ -174,12 +174,18 @@ static inline int ui_widget_cell_h(const struct ui_widget *widget)
     return ui_widget_text_style(&widget->style_scale).cell_h;
 }
 
+/* Border width of `style`, in pixels. Zero without a border color. */
+static inline int ui_css_border_width(const struct css_style *style,
+                                      const struct css_scale_context *scale)
+{
+    return style && style->has_border_color
+        ? ui_css_resolve_int(style->border_width, 0, 0, scale, true)
+        : 0;
+}
+
 /* Border width of this widget, in pixels. Zero without a border color. */
 static inline int ui_widget_border_width(const struct ui_widget *widget)
 {
-    const struct css_style *style = &widget->style;
-    return style->has_border_color
-        ? ui_css_resolve_int(style->border_width, 0, 0, &widget->style_scale, true)
-        : 0;
+    return widget ? ui_css_border_width(&widget->style, &widget->style_scale) : 0;
 }
 #endif

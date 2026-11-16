@@ -35,11 +35,10 @@ struct bar_skin {
     int track_w;
     int thumb_w;
     int thumb_min;
-    int thumb_radius;
     struct insets2i margin;
     struct insets2i pad;
-    uint32_t track_color;
-    uint32_t thumb_color;
+    struct ui_paint_box_style track_box;
+    struct ui_paint_box_style thumb_box;
 };
 
 struct bar {
@@ -92,19 +91,31 @@ static struct bar_skin bar_skin(const struct ui_scrollview *sv, int state)
     int track_w = ui_ctx_size(scale, track.width,
         ui_ctx_px(scale, state == BAR_IDLE ? BAR_TRACK_IDLE : BAR_TRACK_HOVER));
     int inner = track_w - pad.l - pad.r;
+    float widget_opacity = css_style_effective_opacity(&widget->style);
+    float track_opacity = widget_opacity * css_style_effective_opacity(&track);
+    float thumb_opacity = widget_opacity * css_style_effective_opacity(&thumb);
+    struct ui_paint_box_style track_box = ui_paint_box_style_of(&track, scale);
+    track_box.bg_color = ui_color_opacity(
+        track.has_bg_color ? track.bg_color
+                           : (state == BAR_IDLE ? 0 : BAR_TRACK_HOVER_COLOR),
+        track_opacity);
+    track_box.border_color = ui_color_opacity(track_box.border_color,
+                                              widget_opacity);
+    struct ui_paint_box_style thumb_box = ui_paint_box_style_of(&thumb, scale);
+    thumb_box.bg_color = ui_color_opacity(
+        thumb.has_bg_color ? thumb.bg_color : BAR_THUMB_COLOR,
+        thumb_opacity);
+    thumb_box.border_color = ui_color_opacity(thumb_box.border_color,
+                                              widget_opacity);
     return (struct bar_skin){
         .track_w = track_w,
         .thumb_w = ui_ctx_size(scale, thumb.width, (float)inner),
         .thumb_min = ui_ctx_size(scale, thumb.min_height,
                                  ui_ctx_px(scale, BAR_THUMB_MIN)),
-        .thumb_radius = ui_ctx_size(scale, thumb.border_radius, 0),
         .margin = ui_ctx_insets(scale, track.margin, 0),
         .pad = pad,
-        .track_color = track.has_bg_color
-            ? ui_color_opacity(track.bg_color, track.opacity)
-            : state == BAR_IDLE ? 0 : BAR_TRACK_HOVER_COLOR,
-        .thumb_color = thumb.has_bg_color
-            ? ui_color_opacity(thumb.bg_color, thumb.opacity) : BAR_THUMB_COLOR,
+        .track_box = track_box,
+        .thumb_box = thumb_box,
     };
 }
 
@@ -385,14 +396,9 @@ static void scrollview_paint_front(const struct ui_widget *widget,
     if (!bar_visible(sv) || !bar_geometry(sv, sv->impl.bar_state, &g))
         return;
     struct bar_skin s = bar_skin(sv, sv->impl.bar_state);
-    if (s.track_color)
-        ui_paint_rect(paint, g.track, s.track_color);
-    if (!s.thumb_color)
+    if (!ui_paint_box(paint, g.track, &s.track_box, NULL))
         return;
-    if (s.thumb_radius > 0)
-        ui_paint_rounded_rect(paint, g.thumb, s.thumb_radius, s.thumb_color);
-    else
-        ui_paint_rect(paint, g.thumb, s.thumb_color);
+    ui_paint_box(paint, g.thumb, &s.thumb_box, NULL);
 }
 
 static uint64_t scrollview_tick(struct ui_widget *widget, uint64_t now_ms)

@@ -329,21 +329,17 @@ static void paint_drop_hover(const struct ui_widget *widget,
                              struct ui_paint_context *paint)
 {
     struct css_style st = ui_widget_part(widget, view_parts.drop_target, 0);
-    struct rect2i box = { .size = widget->bounds.size };
-    ui_paint_rect(paint, box, st.has_bg_color ? st.bg_color : 0x3389B4FA);
-    int width = ui_css_resolve_int(st.border_width, 0, 2,
-                                   &widget->style_scale, true);
-    if (width <= 0)
-        return;
-    uint32_t color = st.has_border_color ? st.border_color : 0xFF89B4FA;
-    struct rect2i edges[] = {
-        { .x = 0, .y = 0, .width = box.width, .height = width },
-        { .x = 0, .y = box.height - width, .width = box.width, .height = width },
-        { .x = 0, .y = 0, .width = width, .height = box.height },
-        { .x = box.width - width, .y = 0, .width = width, .height = box.height },
-    };
-    for (size_t i = 0; i < sizeof(edges) / sizeof(edges[0]); i++)
-        ui_paint_rect(paint, edges[i], color);
+    float widget_opacity = css_style_effective_opacity(&widget->style);
+    float opacity = widget_opacity * css_style_effective_opacity(&st);
+    struct ui_paint_box_style box = ui_paint_box_style_of(
+        &st, &widget->style_scale);
+    box.bg_color = ui_color_opacity(
+        st.has_bg_color ? st.bg_color : 0x3389B4FAu, opacity);
+    box.border_color = ui_color_opacity(
+        st.has_border_color ? st.border_color : 0xFF89B4FAu, opacity);
+    box.border_width = ui_css_resolve_int(st.border_width, 0, 2,
+                                          &widget->style_scale, true);
+    ui_paint_box(paint, ui_paint_bounds(paint), &box, NULL);
 }
 
 static void view_paint(const struct ui_widget *widget,
@@ -353,10 +349,9 @@ static void view_paint(const struct ui_widget *widget,
     if (view->drop_hover)
         paint_drop_hover(widget, paint);
     if (view->visual_bell_until_ms > yasl_time_ns() / 1000000)
-        ui_paint_rect(paint, (struct rect2i){
-            .pos = { .x = 0, .y = 0 },
-            .size = widget->bounds.size,
-        }, 0x40FFFFFF);
+        ui_paint_rect(paint, ui_paint_bounds(paint),
+                      ui_color_opacity(0x40FFFFFFu,
+                                       css_style_effective_opacity(&widget->style)));
     const struct terminal_preedit *p = &view->preedit;
     if (!p->text[0])
         return;

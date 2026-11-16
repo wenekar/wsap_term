@@ -191,6 +191,69 @@ static void wrapped_label_test(void)
     ui_scene_destroy(&scene);
 }
 
+static void box_border_and_paint_test(void)
+{
+    struct ui_box box = {0}, stack = {0};
+    struct probe child = {0}, stack_child = {0};
+    struct css_sheet sheet = {0};
+    struct ui_surface surface = {0};
+    struct ui_scene scene = {0};
+    struct ui_debug_parts parts = {0};
+
+    ui_box_init(&box);
+    ui_box_set_align(&box, UI_BOX_ALIGN_STRETCH);
+    ui_widget_set_style_identity(&box.widget, "card", NULL, NULL);
+    probe_init(&child, "child", (struct vector2i){ .x = 20, .y = 10 });
+    assert(ui_widget_add_child(&box.widget, &child.widget));
+
+    assert(css_parse(&sheet,
+        ".card { padding: 4px; border-color: #112233; border-width: 2px; "
+        "border-radius: 5px; background: #445566; }"));
+    show(&surface, &box.widget, &sheet, (struct vector2i){ .x = 100, .y = 40 });
+    struct vector2i natural = ui_widget_measure(&box.widget,
+        (struct ui_constraints){ .max = { .x = 200, .y = 200 } });
+    assert(vector2i_eq(natural, (struct vector2i){ .x = 32, .y = 22 }));
+    assert(rect2i_eq(child.widget.bounds, (struct rect2i){
+        .pos = { .x = 6, .y = 6 }, .size = { .x = 20, .y = 28 },
+    }));
+    ui_debug_collect_parts(&box.widget, &parts);
+    assert(parts.n == 1 && !strcmp(parts.items[0].name, "content"));
+    assert(rect2i_eq(parts.items[0].rect, (struct rect2i){
+        .pos = { .x = 6, .y = 6 }, .size = { .x = 88, .y = 28 },
+    }));
+    assert(ui_surface_build_scene(&surface, &scene));
+    assert(scene.n_ops == 2);
+    assert(scene.ops[0].kind == UI_SCENE_OP_ROUNDED_RECT &&
+           scene.ops[0].radius == 5 && scene.ops[0].color == 0xFF112233u);
+    assert(scene.ops[1].kind == UI_SCENE_OP_ROUNDED_RECT &&
+           scene.ops[1].radius == 3 && scene.ops[1].color == 0xFF445566u &&
+           rect2i_eq(scene.ops[1].rect, (struct rect2i){
+               .pos = { .x = 2, .y = 2 }, .size = { .x = 96, .y = 36 },
+           }));
+
+    ui_box_init(&stack);
+    ui_box_set_direction(&stack, UI_BOX_STACK);
+    ui_box_set_align(&stack, UI_BOX_ALIGN_STRETCH);
+    ui_widget_set_style_identity(&stack.widget, "card", NULL, NULL);
+    probe_init(&stack_child, "child", (struct vector2i){ .x = 20, .y = 10 });
+    assert(ui_widget_add_child(&stack.widget, &stack_child.widget));
+    ui_surface_set_root(&surface, &stack.widget);
+    ui_surface_prepare(&surface);
+    natural = ui_widget_measure(&stack.widget,
+        (struct ui_constraints){ .max = { .x = 200, .y = 200 } });
+    assert(vector2i_eq(natural, (struct vector2i){ .x = 32, .y = 22 }));
+    assert(rect2i_eq(stack_child.widget.bounds, (struct rect2i){
+        .pos = { .x = 6, .y = 6 }, .size = { .x = 88, .y = 28 },
+    }));
+
+    ui_debug_parts_free(&parts);
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&box.widget);
+    ui_widget_destroy(&stack.widget);
+    css_sheet_clear(&sheet);
+    ui_scene_destroy(&scene);
+}
+
 int main(void)
 {
     wrapped_label_test();
@@ -198,5 +261,6 @@ int main(void)
     nested_percent_and_limits_test();
     float_edges_test();
     fixed_and_fit_overflow_test();
+    box_border_and_paint_test();
     return 0;
 }

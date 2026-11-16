@@ -16,16 +16,14 @@
 #define BELOW_GAP_PX  6
 
 struct ui_tab_preview_skin {
+    struct ui_paint_box_style box;
     struct insets2i pad;
     struct vector2i shadow_offset;
-    uint32_t background;
-    uint32_t border_color;
     uint32_t shadow_color;
     int shadow_blur;
-    int border;
-    int radius;
     int gap;
     int width;
+    float opacity;
 };
 
 static struct {
@@ -53,16 +51,18 @@ static struct ui_tab_preview_skin skin_of(const struct ui_widget *widget,
 {
     const struct css_scale_context *scale = &widget->style_scale;
     struct css_style card = ui_widget_part(widget, parts.card[dragging ? 1 : 0], 0);
+    float widget_opacity = css_style_effective_opacity(&widget->style);
+    float opacity = widget_opacity * css_style_effective_opacity(&card);
+    struct ui_paint_box_style box = ui_paint_box_style_of(&card, scale);
+    box.bg_color = ui_color_opacity(box.bg_color, widget_opacity);
+    box.border_color = ui_color_opacity(box.border_color, widget_opacity);
     return (struct ui_tab_preview_skin){
-        .border = card.has_border_color
-            ? ui_ctx_inset(scale, card.border_width, 0) : 0,
-        .radius = ui_ctx_size(scale, card.border_radius, 0),
+        .box = box,
         .pad = ui_ctx_insets(scale, card.padding, 0),
         .gap = ui_ctx_inset(scale, card.gap, 0),
         .width = ui_ctx_size(scale, card.width, 400),
-        .background = card.has_bg_color ? card.bg_color : 0,
-        .border_color = card.has_border_color ? card.border_color : 0,
-        .shadow_color = card.has_shadow ? card.shadow_color : 0,
+        .shadow_color = card.has_shadow
+            ? ui_color_opacity(card.shadow_color, opacity) : 0,
         .shadow_blur = card.has_shadow
             ? ui_css_resolve_int(card.shadow_blur, 0, 0, scale, true) : 0,
         .shadow_offset = card.has_shadow
@@ -70,6 +70,7 @@ static struct ui_tab_preview_skin skin_of(const struct ui_widget *widget,
                   .x = ui_css_resolve_int(card.shadow_x, 0, 0, scale, false),
                   .y = ui_css_resolve_int(card.shadow_y, 0, 0, scale, false),
               } : (struct vector2i){},
+        .opacity = opacity,
     };
 }
 
@@ -112,7 +113,7 @@ struct horiz_fit {
 static struct horiz_fit fit_horiz(const struct ui_tab_preview *p,
                                   const struct ui_tab_preview_skin *s)
 {
-    int chrome_w = 2 * s->border + s->pad.l + s->pad.r;
+    int chrome_w = 2 * s->box.border_width + s->pad.l + s->pad.r;
     int want = s->width - chrome_w;
     if (want < 1)
         want = 1;
@@ -165,7 +166,7 @@ static struct budget compute_budget(const struct ui_tab_preview *p,
     if (rect2i_is_empty(h.box) || h.max_w <= 0)
         return (struct budget){ .box = h.box };
     int cell_h = ui_widget_text_style(&p->widget.style_scale).cell_h;
-    int title_h = 2 * s->border + s->pad.t + cell_h + s->pad.b;
+    int title_h = 2 * s->box.border_width + s->pad.t + cell_h + s->pad.b;
     int avail_h = p->impl.dragging
         ? h.box.height : hover_avail_height(p, h.box);
     if (avail_h < title_h)
@@ -191,8 +192,9 @@ static struct card card_layout(const struct ui_tab_preview *p,
                                const struct ui_tab_preview_skin *s)
 {
     int cell_h = ui_widget_text_style(&p->widget.style_scale).cell_h;
-    int x = s->border + s->pad.l;
-    int y = s->border + s->pad.t;
+    int border = s->box.border_width;
+    int x = border + s->pad.l;
+    int y = border + s->pad.t;
     int want_w = fit_horiz(p, s).width;
     struct vector2i img = p->impl.image.size;
     int content_w = want_w > img.x ? want_w : img.x;
@@ -204,31 +206,28 @@ static struct card card_layout(const struct ui_tab_preview *p,
     l.image = (struct rect2i){ .pos = { .x = x, .y = y }, .size = img };
     y += img.y;
     l.size = (struct vector2i){
-        .x = x + content_w + s->pad.r + s->border,
-        .y = y + s->pad.b + s->border,
+        .x = x + content_w + s->pad.r + border,
+        .y = y + s->pad.b + border,
     };
     return l;
 }
 
 struct paint_rects {
     struct card card;
-    struct rect2i fill;
     struct rect2i title;
     struct rect2i image;
 };
 
 static struct paint_rects paint_rects_of(const struct ui_tab_preview *p,
                                          const struct ui_tab_preview_skin *s,
-                                         struct rect2i box)
+                                         struct rect2i fill)
 {
-    struct rect2i fill = s->border > 0 ? rect2i_inset(box, s->border) : box;
     struct card card = card_layout(p, s);
     if (rect2i_is_empty(fill))
         return (struct paint_rects){ .card = card };
     struct rect2i content = rect2i_apply_insets(fill, s->pad);
     return (struct paint_rects){
         .card = card,
-        .fill = fill,
         .title = rect2i_intersect(card.title, content),
         .image = rect2i_intersect(card.image, fill),
     };
@@ -535,23 +534,20 @@ static void preview_paint(const struct ui_widget *widget,
         return;
     if (s.shadow_color >> 24)
         ui_paint_shadow(paint, rect2i_translate(box, s.shadow_offset),
-                        s.radius, s.shadow_blur, s.shadow_color);
-    if (s.border > 0 && s.border_color)
-        ui_paint_rounded_rect(paint, box, s.radius, s.border_color);
-    struct paint_rects r = paint_rects_of(p, &s, box);
-    if (rect2i_is_empty(r.fill))
+                        s.box.radius, s.shadow_blur, s.shadow_color);
+    struct rect2i fill;
+    if (!ui_paint_box(paint, box, &s.box, &fill) || rect2i_is_empty(fill))
         return;
-    int radius = s.radius > s.border ? s.radius - s.border : 0;
-    if (s.background)
-        ui_paint_rounded_rect(paint, r.fill, radius, s.background);
-    if (!ui_paint_push_clip(paint, r.fill))
+    if (!ui_paint_push_clip(paint, fill))
         return;
 
+    struct paint_rects r = paint_rects_of(p, &s, fill);
     struct ui_text_style text = ui_widget_text_style(&widget->style_scale);
     text.flags = UI_TEXT_BOLD;
     struct css_style title_style = ui_widget_part(widget, parts.title, 0);
-    uint32_t title_color = title_style.has_text_color
-        ? title_style.text_color : 0xFFFFFFFFu;
+    uint32_t title_color = ui_color_opacity(
+        title_style.has_text_color ? title_style.text_color : 0xFFFFFFFFu,
+        s.opacity * css_style_effective_opacity(&title_style));
     const char *title = p->impl.title;
     if (title && *title && !rect2i_is_empty(r.title) && text.advance > 0) {
         size_t len = ui_text_run_fit(title, strlen(title),
@@ -571,9 +567,11 @@ static void preview_debug_parts(const struct ui_widget *widget,
         return;
     struct ui_tab_preview_skin s = skin_of(widget, p->impl.dragging);
     struct rect2i box = { .size = widget->bounds.size };
-    struct paint_rects r = paint_rects_of(p, &s, box);
-    if (rect2i_is_empty(r.fill))
+    struct rect2i fill = s.box.border_width > 0
+        ? rect2i_inset(box, s.box.border_width) : box;
+    if (rect2i_is_empty(fill))
         return;
+    struct paint_rects r = paint_rects_of(p, &s, fill);
     if (!rect2i_is_empty(r.title)) {
         const char *title = p->impl.title;
         ui_debug_part_text(out, "title", -1,

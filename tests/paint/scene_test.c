@@ -364,10 +364,53 @@ static void scene_copy_test(void)
     ui_scene_destroy(&dst);
 }
 
+static void scene_rect_stroke_test(void)
+{
+    struct ui_scene s = {0};
+    ui_scene_init(&s);
+    assert(ui_scene_rect_stroke(&s, r_at(10, 20, 30, 12), 2, 0xFF112233));
+    assert(s.n_ops == 4 && ui_scene_is_valid(&s));
+    for (int i = 0; i < s.n_ops; i++) {
+        assert(s.ops[i].kind == UI_SCENE_OP_RECT);
+        assert(s.ops[i].color == 0xFF112233);
+        for (int j = i + 1; j < s.n_ops; j++)
+            assert(rect2i_is_empty(rect2i_intersect(s.ops[i].rect, s.ops[j].rect)));
+    }
+    assert(rect2i_eq(s.ops[0].rect, r_at(10, 20, 30, 2)));
+    assert(rect2i_eq(s.ops[1].rect, r_at(10, 30, 30, 2)));
+    assert(rect2i_eq(s.ops[2].rect, r_at(10, 22, 2, 8)));
+    assert(rect2i_eq(s.ops[3].rect, r_at(38, 22, 2, 8)));
+
+    ui_scene_init(&s);
+    assert(ui_scene_rect_stroke(&s, r_at(1, 2, 4, 10), 2, 0xFF445566));
+    assert(s.n_ops == 1 && s.ops[0].kind == UI_SCENE_OP_RECT);
+    assert(rect2i_eq(s.ops[0].rect, r_at(1, 2, 4, 10)));
+
+    ui_scene_init(&s);
+    assert(ui_scene_rect_stroke(&s, r_at(1, 2, 10, 3), 2, 0xFF445566));
+    assert(s.n_ops == 1 && rect2i_eq(s.ops[0].rect, r_at(1, 2, 10, 3)));
+
+    ui_scene_init(&s);
+    assert(ui_scene_rect_stroke(&s, r_at(0, 0, 10, 10), 0, 0xFF112233));
+    assert(ui_scene_rect_stroke(&s, r_at(0, 0, 10, 10), -1, 0xFF112233));
+    assert(ui_scene_rect_stroke(&s, r_at(0, 0, 0, 10), 1, 0xFF112233));
+    assert(ui_scene_rect_stroke(&s, r_at(0, 0, 10, 10), 1, 0x00112233));
+    assert(s.n_ops == 0 && ui_scene_is_valid(&s));
+
+    assert(ui_scene_rounded_rect(&s, r_at(0, 0, 10, 10), 0, 0xFF112233));
+    assert(s.n_ops == 1 && s.ops[0].kind == UI_SCENE_OP_RECT);
+    assert(ui_scene_rounded_rect(&s, r_at(0, 0, 10, 10), 4, 0xFF112233));
+    assert(s.n_ops == 2 && s.ops[1].kind == UI_SCENE_OP_ROUNDED_RECT &&
+           s.ops[1].radius == 4);
+
+    ui_scene_destroy(&s);
+}
+
 int main(void)
 {
     scene_builder_bounds_test();
     scene_copy_test();
+    scene_rect_stroke_test();
     scene_node_origin_test();
     scene_damage_test();
     damage_bounds_test();

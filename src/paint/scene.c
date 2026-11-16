@@ -304,6 +304,37 @@ bool ui_scene_rect(struct ui_scene *s, struct rect2i r, uint32_t color)
     return scene_commit(s, op);
 }
 
+bool ui_scene_rect_stroke(struct ui_scene *s, struct rect2i box, int width,
+                          uint32_t color)
+{
+    if (!ui_scene_ok(s))
+        return false;
+    if (width <= 0 || rect2i_is_empty(box) || !(color >> 24))
+        return true;
+    struct rect2i inner = rect2i_inset(box, width);
+    if (rect2i_is_empty(inner))
+        return ui_scene_rect(s, box, color);
+    int right_x = geom_sat_i((int64_t)box.x + box.width - width);
+    int bottom_y = geom_sat_i((int64_t)box.y + box.height - width);
+    int side_y = geom_sat_i((int64_t)box.y + width);
+    return ui_scene_rect(s, (struct rect2i){
+            .pos = box.pos,
+            .size = { .x = box.width, .y = width },
+        }, color) &&
+        ui_scene_rect(s, (struct rect2i){
+            .pos = { .x = box.x, .y = bottom_y },
+            .size = { .x = box.width, .y = width },
+        }, color) &&
+        ui_scene_rect(s, (struct rect2i){
+            .pos = { .x = box.x, .y = side_y },
+            .size = { .x = width, .y = inner.height },
+        }, color) &&
+        ui_scene_rect(s, (struct rect2i){
+            .pos = { .x = right_x, .y = side_y },
+            .size = { .x = width, .y = inner.height },
+        }, color);
+}
+
 bool ui_scene_blend_rect(struct ui_scene *s, struct rect2i r,
                          uint32_t color, uint8_t alpha)
 {
@@ -318,6 +349,8 @@ bool ui_scene_blend_rect(struct ui_scene *s, struct rect2i r,
 bool ui_scene_rounded_rect(struct ui_scene *s, struct rect2i r,
                            int radius, uint32_t color)
 {
+    if (radius <= 0)
+        return ui_scene_rect(s, r, color);
     struct ui_scene_op *op = scene_alloc(s, UI_SCENE_OP_ROUNDED_RECT, r);
     if (!op)
         return false;

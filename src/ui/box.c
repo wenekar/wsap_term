@@ -74,6 +74,11 @@ struct ui_box_params ui_box_params(const struct ui_box *box,
             v, (float)((i & 1) ? basis.x : basis.y),
             (float)out.padding.v[i], scale, true);
     }
+    int border = ui_widget_border_width(&box->widget);
+    if (border > 0) {
+        for (int i = 0; i < 4; i++)
+            out.padding.v[i] = geom_sat_i((int64_t)out.padding.v[i] + border);
+    }
     if (style->gap.unit != CSS_UNIT_AUTO &&
         style->gap.unit != CSS_UNIT_NONE) {
         float main_basis = (float)(out.direction == UI_BOX_COLUMN
@@ -116,15 +121,9 @@ static void box_debug_parts(const struct ui_widget *widget,
 
 static void box_paint(const struct ui_widget *widget, struct ui_paint_context *paint)
 {
-    if (!widget->style.has_bg_color)
-        return;
-    int radius = ui_css_resolve_int(widget->style.border_radius, 0, 0,
-                                    &widget->style_scale, true);
-    struct rect2i bounds = ui_paint_bounds(paint);
-    if (radius > 0)
-        ui_paint_rounded_rect(paint, bounds, radius, widget->style.bg_color);
-    else
-        ui_paint_rect(paint, bounds, widget->style.bg_color);
+    struct ui_paint_box_style style = ui_paint_box_style_of(
+        &widget->style, &widget->style_scale);
+    ui_paint_box(paint, ui_paint_bounds(paint), &style, NULL);
 }
 
 static const struct ui_widget_ops BOX_OPS = {

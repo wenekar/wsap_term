@@ -1062,6 +1062,7 @@ static void detach_drag_chip_bounds_test(void)
     tick(&f, 100);
 
     const struct ui_scene *scene = build(&f);
+    assert(lint(&f) == 0);
     int below = 0;
     for (int i = 0; i < scene->n_ops; i++) {
         const struct ui_scene_op *op = &scene->ops[i];
@@ -1070,6 +1071,8 @@ static void detach_drag_chip_bounds_test(void)
             continue;
         assert(op->rect.height <= r1.height + 8);
         assert(op->rect.width <= r1.width + 8);
+        assert(op->kind != UI_SCENE_OP_ROUNDED_RECT ||
+               (op->color & 0xFFFFFFu) != 0x89B4FAu);
         below++;
     }
     assert(below > 0);
@@ -1947,6 +1950,12 @@ static void long_title_ends_with_a_marker(void)
     struct rect2i box = ui_debug_text_box(scene, marker);
     assert(box.x >= tab.x && rect2i_end(box).x <= rect2i_end(tab).x);
     assert(!find_text(scene, labels[0].text));
+
+    /* When no cell fits before the close button, the title emits nothing. */
+    show(&f, 12, 0);
+    scene = build(&f);
+    assert(lint(&f) == 0);
+    assert(!find_text(scene, "\xE2\x80\xA6"));
     teardown(&f);
 }
 
