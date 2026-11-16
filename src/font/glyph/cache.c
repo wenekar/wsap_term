@@ -287,15 +287,11 @@ void glyph_cache_rebuild(struct font_instance *fi)
     atomic_store_explicit(&fi->built_fg, glyph_tile_fg(), memory_order_relaxed);
     atomic_store_explicit(&fi->built_bg, glyph_tile_bg(), memory_order_relaxed);
     drop_all(fi);
-    for (uint32_t c = 32; c < 256; c++) {
-        if (c == 0x7f || (c >= 0x80 && c <= 0x9f))
+    for (uint32_t c = 32; c < 128; c++) {
+        if (c == 0x7f)
             continue;
-        struct cache_slot *slot = c < 128 ? &fi->ascii[c] : &fi->latin[c];
-        const struct glyph *g = slot_fill(fi, slot, c, 0);
-        if (c < 128)
-            prime_ascii_tile(fi, c, g);
-        else if (glyph_tile_eligible(fi, g))
-            glyph_cache_fetch_tile(fi, c, 0);
+        const struct glyph *g = slot_fill(fi, &fi->ascii[c], c, 0);
+        prime_ascii_tile(fi, c, g);
     }
 }
 

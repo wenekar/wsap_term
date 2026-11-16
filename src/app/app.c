@@ -4,6 +4,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 
 #include "app/app.h"
 #include "app/config/settings.h"
@@ -92,6 +96,14 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
     if (window_present(w, frame, &result.damage, result.presented) && main)
         latency_probe_complete();
     window_ui_frame_done(w, frame, now_ms);
+
+    static bool trimmed_first_frame;
+    if (!trimmed_first_frame && main) {
+        trimmed_first_frame = true;
+#ifdef __GLIBC__
+        malloc_trim(0);
+#endif
+    }
 }
 
 static bool app_paint_scene(void *ud, struct font_instance *font,
@@ -191,9 +203,24 @@ static struct window *open_window(void *ud, app_tab_id tab, const char *cwd,
     return app_open_terminal(ud, tab, cwd, size);
 }
 
+static bool app_wants_cpu(const struct app *a)
+{
+    if (a->config.lightweight || a->config.renderer == APP_RENDERER_CPU)
+        return true;
+    const char *env_gpu = getenv("WSAP_RENDER_GPU");
+    if (env_gpu && (!strcmp(env_gpu, "0") || !strcasecmp(env_gpu, "off")))
+        return true;
+    const char *env_rend = getenv("WSAP_RENDERER");
+    if (env_rend && (!strcasecmp(env_rend, "cpu") || !strcasecmp(env_rend, "shm")))
+        return true;
+    return false;
+}
+
 static void *app_acquire_device(void *ud)
 {
     struct app *a = ud;
+    if (app_wants_cpu(a))
+        return NULL;
     return renderer_device(a->renderer);
 }
 
@@ -210,9 +237,10 @@ static void app_drop_unused_gpu(struct app *a, const struct window *w)
 struct window *app_open_terminal(struct app *a, app_tab_id tab,
                                  const char *cwd, struct vector2i size)
 {
+    bool cpu_mode = app_wants_cpu(a);
     struct window *w = window_open(&a->host, &(struct window_spec){
         .size = size,
-        .acquire_device = app_acquire_device, .device_ud = a,
+        .acquire_device = cpu_mode ? NULL : app_acquire_device, .device_ud = a,
         .compose = app_compose_frame, .compose_ud = a,
     });
     if (!w)
@@ -252,10 +280,11 @@ static void open_settings(struct app *a)
         window_redraw(w);
         return;
     }
+    bool cpu_mode = app_wants_cpu(a);
     w = window_open(&a->host, &(struct window_spec){
         .title = "Settings", .size = { .x = 980, .y = 740 },
         .windowed = true,
-        .acquire_device = app_acquire_device, .device_ud = a,
+        .acquire_device = cpu_mode ? NULL : app_acquire_device, .device_ud = a,
         .compose = app_compose_frame, .compose_ud = a,
     });
     app_drop_unused_gpu(a, w);
@@ -452,7 +481,17 @@ struct app *app_create(int argc, char **argv, int *status)
         app_free(a);
         return NULL;
     }
-    a->renderer = renderer_create(NULL);
+    bool cpu_mode = app_wants_cpu(a);
+    struct render_options ro = {
+        .disable_gpu = cpu_mode,
+    };
+    if (a->config.lightweight) {
+        ro.cache_bytes = (ptrdiff_t)1 << 20;
+        ro.threads = 1;
+        if (a->config.terminal.scrollback == WSAP_VTCORE_SCROLLBACK_DEFAULT)
+            a->config.terminal.scrollback = 2000;
+    }
+    a->renderer = renderer_create(&ro);
     if (!a->renderer) {
         fprintf(stderr, "wsap_term: cannot create the renderer\n");
         *status = 1;
@@ -512,6 +551,9 @@ int app_run(struct app *a)
     const char *sock = a->config.debug_socket;
     if (sock)
         window_debug_server_start(a->loop, &a->host, sock);
+#ifdef __GLIBC__
+    malloc_trim(0);
+#endif
     int result = run_loop(a);
     if (sock)
         window_debug_server_stop();

@@ -85,6 +85,10 @@ static const struct field_info INFO[] = {
       SETTINGS_CHOICE_SPEC },
     { "menu-hover-delay", "Submenu delay", "Milliseconds before a submenu opens.", WINDOW,
       SETTINGS_CHOICE_SPEC },
+    { "renderer", "Renderer backend", "Renderer backend (auto, vulkan, cpu).", WINDOW,
+      SETTINGS_CHOICE_SPEC },
+    { "lightweight", "Lightweight mode", "Use CPU/SHM renderer and compact caches.", WINDOW,
+      SETTINGS_CHOICE_SPEC },
 };
 
 struct settings_row {

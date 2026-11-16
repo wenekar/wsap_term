@@ -402,12 +402,20 @@ static enum args_result split_args(const struct opts_spec *spec, int argc,
         if (eq) {
             out->klen = (size_t)(eq - out->key);
             out->val = eq + 1;
-        } else if (i + 1 < argc) {
-            out->klen = strlen(out->key);
-            out->val = argv[++i];
         } else {
-            fprintf(stderr, "[%s] '%s' needs a value\n", spec->name(), a);
-            return ARGS_BAD;
+            out->klen = strlen(out->key);
+            const struct opt *o = opt_find(spec, out->key, out->klen);
+            if (o && (o->type == &OPT_TYPE_BOOL || o->type == &OPT_TYPE_NOT_BOOL)) {
+                if (i + 1 < argc && util_parse_bool(argv[i + 1]) >= 0)
+                    out->val = argv[++i];
+                else
+                    out->val = "true";
+            } else if (i + 1 < argc) {
+                out->val = argv[++i];
+            } else {
+                fprintf(stderr, "[%s] '%s' needs a value\n", spec->name(), a);
+                return ARGS_BAD;
+            }
         }
     }
     return ARGS_OK;

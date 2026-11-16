@@ -114,6 +114,15 @@ static const struct enum_name CURSOR_NAMES[] = {
     { 0 },
 };
 
+static const struct enum_name RENDERER_NAMES[] = {
+    { "auto", APP_RENDERER_AUTO },
+    { "vulkan", APP_RENDERER_VULKAN },
+    { "gpu", APP_RENDERER_VULKAN },
+    { "cpu", APP_RENDERER_CPU },
+    { "shm", APP_RENDERER_CPU },
+    { 0 },
+};
+
 static void set_defaults(void *base)
 {
     struct app_config *c = base;
@@ -169,6 +178,10 @@ static const struct opt OPTS[] = {
     COLOR(0), COLOR(1), COLOR(2), COLOR(3), COLOR(4), COLOR(5), COLOR(6),
     COLOR(7), COLOR(8), COLOR(9), COLOR(10), COLOR(11), COLOR(12), COLOR(13),
     COLOR(14), COLOR(15),
+    { .key = "renderer", .type = &OPT_TYPE_ENUM, .off = F(renderer),
+      .names = RENDERER_NAMES, .doc = "renderer backend: auto, vulkan (gpu), cpu (shm)" },
+    { .key = "lightweight", .type = &OPT_TYPE_BOOL, .off = F(lightweight),
+      .doc = "lightweight memory-saving mode (CPU/SHM renderer, compact caches)" },
     { .key = "cursor-style", .type = &OPT_TYPE_ENUM, .off = F(terminal.cursor_style),
       .names = CURSOR_NAMES, .doc = "cursor style: block, line, underline" },
     { .key = "cursor-blink", .type = &OPT_TYPE_BOOL, .off = F(terminal.cursor_blink),

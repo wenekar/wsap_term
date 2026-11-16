@@ -44,6 +44,8 @@ struct ui_scene;
  * - `cache_bytes`: the byte budget of the composited cell cache.
  *   0: RENDER_CACHE_DEFAULT_BYTES. RENDER_NONE: no cell cache.
  *   A budget too small for the cell size also gives no cache.
+ * - `disable_gpu`: true skips GPU device creation. The renderer uses only
+ *   CPU paths.
  *
  * The settings never change pixels. They change only speed and memory.
  */
@@ -51,6 +53,7 @@ struct render_options {
     int isa;
     int threads;
     ptrdiff_t cache_bytes;
+    bool disable_gpu;
 };
 
 /*

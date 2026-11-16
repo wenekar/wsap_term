@@ -65,6 +65,7 @@ struct renderer {
 
     bool cpu_initialized;
     bool gpu_initialized;
+    bool disable_gpu;
     bool force_full;
 };
 
@@ -163,13 +164,14 @@ struct renderer *renderer_create(const struct render_options *opt)
         threads = POOL_WORKERS_MAX;
     r->threads = threads;
     r->cache_bytes = o.cache_bytes == 0 ? RENDER_CACHE_DEFAULT_BYTES : o.cache_bytes;
+    r->disable_gpu = o.disable_gpu;
     render_surface_init(&r->scratch);
     return r;
 }
 
 static struct render_gpu *renderer_gpu_ensure(struct renderer *r)
 {
-    if (!r)
+    if (!r || r->disable_gpu)
         return NULL;
     if (!r->gpu_initialized) {
         r->gpu_initialized = true;
@@ -197,7 +199,7 @@ void renderer_destroy(struct renderer *r)
 
 void *renderer_device(struct renderer *r)
 {
-    return r ? render_gpu_native_device(renderer_gpu_ensure(r)) : NULL;
+    return (r && !r->disable_gpu) ? render_gpu_native_device(renderer_gpu_ensure(r)) : NULL;
 }
 
 void renderer_drop_gpu(struct renderer *r)

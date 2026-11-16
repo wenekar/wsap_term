@@ -9,6 +9,12 @@
 #include "util/options.h"
 #include "ui/yasl/window.h"
 
+enum app_renderer_mode {
+    APP_RENDERER_AUTO = 0,
+    APP_RENDERER_VULKAN,
+    APP_RENDERER_CPU,
+};
+
 struct app_config {
     struct window_config window;
     struct terminal_config terminal;
@@ -17,6 +23,8 @@ struct app_config {
     char *debug_socket;
     enum font_hint_style hinting;
     enum font_aa_mode antialias;
+    enum app_renderer_mode renderer;
+    bool lightweight;
     int stats_ms;
 #if defined(__APPLE__) && !defined(WSAP_USE_FREETYPE)
     bool font_smoothing;

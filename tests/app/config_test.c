@@ -181,7 +181,9 @@ static void test_key_parsing(void)
         "command = /bin/echo hello world\n"
         "theme = /tmp/theme.css\n"
         "menu-hover-delay = 500\n"
-        "fullscreen = true\n");
+        "fullscreen = true\n"
+        "renderer = cpu\n"
+        "lightweight = true\n");
     struct app_config c;
     assert(parse(&c, conf) == 0);
     assert(c.palette.fg == 0xFF102030u);
@@ -205,6 +207,13 @@ static void test_key_parsing(void)
     assert(c.theme && !strcmp(c.theme, "/tmp/theme.css"));
     assert(c.window.menu_hover_delay_ms == 500);
     assert(c.window.fullscreen);
+    assert(c.renderer == APP_RENDERER_CPU);
+    assert(c.lightweight);
+
+    char *renderer_args[] = { (char *)"--renderer", (char *)"shm", (char *)"--lightweight" };
+    assert(parse_args(&c, conf, 3, renderer_args) == 0);
+    assert(c.renderer == APP_RENDERER_CPU);
+    assert(c.lightweight);
 
     write_file(conf,
         "foreground = #102030\n"
