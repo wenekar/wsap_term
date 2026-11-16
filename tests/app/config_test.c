@@ -209,6 +209,7 @@ static void test_key_parsing(void)
     assert(c.window.fullscreen);
     assert(c.renderer == APP_RENDERER_CPU);
     assert(c.lightweight);
+    opts_destroy(&app_config_spec, &c);
 
     char *renderer_args[] = { (char *)"--renderer", (char *)"shm", (char *)"--lightweight" };
     assert(parse_args(&c, conf, 3, renderer_args) == 0);
