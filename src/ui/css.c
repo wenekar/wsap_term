@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+static bool sheet_build_index(struct css_sheet *sheet);
+
 static const char *skip_ws_and_comments(const char *p)
 {
     while (*p && (isspace((unsigned char)*p) || *p == '/')) {
@@ -1811,7 +1813,9 @@ bool css_parse_with_diagnostics(struct css_sheet *sheet, const char *p,
 {
     if (!sheet || !p) return false;
     bool ok = parse_rules(sheet, p, report, userdata);
-    return sheet_sort_rules(sheet) && ok;
+    if (!sheet_sort_rules(sheet))
+        return false;
+    return sheet_build_index(sheet) && ok;
 }
 
 static void css_report_stderr(const struct css_diagnostic *diagnostic, void *userdata)
@@ -1837,6 +1841,7 @@ void css_sheet_clear(struct css_sheet *sheet)
         rule_clear_vars(&sheet->rules[i]);
     }
     free(sheet->rules);
+    free(sheet->index);
     for (int i = 0; i < sheet->var_count; i++) {
         free(sheet->vars[i].name);
         free(sheet->vars[i].value);
@@ -1882,7 +1887,9 @@ bool css_sheet_append(struct css_sheet *dst, const struct css_sheet *src)
                                 NULL, NULL);
     }
     var_tracker_clear(&tracker);
-    return sheet_sort_rules(dst) && ok;
+    if (!sheet_sort_rules(dst))
+        return false;
+    return sheet_build_index(dst) && ok;
 }
 
 void css_init_default(struct css_sheet *sheet)
@@ -2150,6 +2157,205 @@ static void apply_rule_props(const struct css_rule *r, struct css_style *out)
     }
 }
 
+static int index_cmp_key(enum css_key_kind kind, const char *key, size_t len,
+                         const struct css_index_entry *entry)
+{
+    if (kind != entry->kind)
+        return kind < entry->kind ? -1 : 1;
+    size_t n = entry->key_len < len ? entry->key_len : len;
+    int c = memcmp(key, entry->key, n);
+    if (c)
+        return c < 0 ? -1 : 1;
+    if (len == entry->key_len)
+        return 0;
+    return len < entry->key_len ? -1 : 1;
+}
+
+static int cmp_index_entry(const void *pa, const void *pb)
+{
+    const struct css_index_entry *a = pa, *b = pb;
+    if (a->kind != b->kind)
+        return a->kind < b->kind ? -1 : 1;
+    size_t n = a->key_len < b->key_len ? a->key_len : b->key_len;
+    int c = memcmp(a->key, b->key, n);
+    if (c)
+        return c;
+    if (a->key_len != b->key_len)
+        return a->key_len < b->key_len ? -1 : 1;
+    return (a->rule > b->rule) - (a->rule < b->rule);
+}
+
+/* Indexes every rule under the key of its last compound. A lookup then reads
+   only the rules that the key of one element can select. */
+static bool sheet_build_index(struct css_sheet *sheet)
+{
+    free(sheet->index);
+    sheet->index = NULL;
+    sheet->index_count = 0;
+    sheet->index_ready = false;
+    int count = 0;
+    for (int i = 0; i < sheet->rule_count; i++) {
+        const struct css_rule *r = &sheet->rules[i];
+        if (r->part_count == 0)
+            continue;
+        if (r->parts[r->part_count - 1].kind != CSS_KEY_NONE)
+            count++;
+    }
+    if (count == 0) {
+        sheet->index_ready = true;
+        return true;
+    }
+    struct css_index_entry *index = malloc((size_t)count * sizeof(*index));
+    if (!index)
+        return false;
+    int at = 0;
+    for (int i = 0; i < sheet->rule_count; i++) {
+        const struct css_rule *r = &sheet->rules[i];
+        if (r->part_count == 0)
+            continue;
+        const struct css_selector_part *last = &r->parts[r->part_count - 1];
+        if (last->kind == CSS_KEY_NONE)
+            continue;
+        const char *text = r->selector + last->offset;
+        struct css_index_entry *entry = &index[at++];
+        entry->kind = last->kind;
+        entry->rule = (uint32_t)i;
+        if (last->kind == CSS_KEY_CLASS) {
+            if (last->class_count == 0) {
+                /* A lone point matches any class list, so its key is empty. */
+                entry->key = "";
+                entry->key_len = 0;
+            } else {
+                const struct css_class_token *token = &r->classes[last->class_first];
+                entry->key = r->selector + token->offset;
+                entry->key_len = token->length;
+            }
+        } else if (last->kind == CSS_KEY_ID) {
+            entry->key = text + 1;
+            entry->key_len = (uint16_t)(last->length - 1);
+        } else {
+            entry->key = text;
+            entry->key_len = last->length;
+        }
+    }
+    qsort(index, (size_t)count, sizeof(*index), cmp_index_entry);
+    sheet->index = index;
+    sheet->index_count = count;
+    sheet->index_ready = true;
+    return true;
+}
+
+/* Finds the first entry whose key is not less than the query key. */
+static int index_lower_bound(const struct css_sheet *sheet, enum css_key_kind kind,
+                             const char *key, size_t len)
+{
+    int lo = 0, hi = sheet->index_count;
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        if (index_cmp_key(kind, key, len, &sheet->index[mid]) > 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
+#define CANDIDATE_INLINE 128
+
+/* Adds the rules that the key selects to `candidates`, keeping them in apply
+   order. Returns false when a candidate does not fit. */
+static bool candidates_add_key(const struct css_sheet *sheet, enum css_key_kind kind,
+                               const char *key, size_t len, uint32_t *candidates,
+                               size_t *count, size_t cap)
+{
+    for (int i = index_lower_bound(sheet, kind, key, len);
+         i < sheet->index_count &&
+         index_cmp_key(kind, key, len, &sheet->index[i]) == 0; i++) {
+        uint32_t rule = sheet->index[i].rule;
+        if (*count == cap)
+            return false;
+        size_t at = *count;
+        while (at > 0 && candidates[at - 1] > rule) {
+            candidates[at] = candidates[at - 1];
+            at--;
+        }
+        candidates[at] = rule;
+        (*count)++;
+    }
+    return true;
+}
+
+static bool candidates_add_classes(const struct css_sheet *sheet, const char *list,
+                                   uint32_t *candidates, size_t *count, size_t cap)
+{
+    if (!list)
+        return true;
+    for (const char *p = list; *p;) {
+        while (*p && isspace((unsigned char)*p)) p++;
+        const char *start = p;
+        while (*p && !isspace((unsigned char)*p)) p++;
+        if (p == start)
+            break;
+        if (!candidates_add_key(sheet, CSS_KEY_CLASS, start, (size_t)(p - start),
+                                candidates, count, cap))
+            return false;
+    }
+    return true;
+}
+
+/* Collects the rules that can match `element` and applies them in apply order. */
+static void apply_candidates(const struct css_sheet *sheet,
+                             const struct css_element *element,
+                             unsigned pseudo_flags,
+                             const struct css_element *ancestors,
+                             size_t ancestor_count, const uint32_t *candidates,
+                             size_t count, struct css_style *out)
+{
+    uint32_t previous = UINT32_MAX;
+    for (size_t i = 0; i < count; i++) {
+        uint32_t rule = candidates[i];
+        if (rule == previous)
+            continue;
+        previous = rule;
+        const struct css_rule *r = &sheet->rules[rule];
+        if (rule_matches(r, element, pseudo_flags, ancestors, ancestor_count))
+            apply_rule_props(r, out);
+    }
+}
+
+/* Applies the rules that the rule index selects for `element`. Returns false
+   when the candidate list needs heap storage. */
+static bool apply_indexed(const struct css_sheet *sheet,
+                          const struct css_element *element, unsigned pseudo_flags,
+                          const struct css_element *ancestors,
+                          size_t ancestor_count, struct css_style *out)
+{
+    uint32_t stack_candidates[CANDIDATE_INLINE];
+    size_t count = 0;
+    bool fits = true;
+    if (element->class_name) {
+        fits = candidates_add_key(sheet, CSS_KEY_CLASS, "", 0, stack_candidates,
+                                  &count, CANDIDATE_INLINE);
+        if (fits)
+            fits = candidates_add_classes(sheet, element->class_name,
+                                          stack_candidates, &count,
+                                          CANDIDATE_INLINE);
+    }
+    if (fits && element->id_name)
+        fits = candidates_add_key(sheet, CSS_KEY_ID, element->id_name,
+                                  strlen(element->id_name), stack_candidates,
+                                  &count, CANDIDATE_INLINE);
+    if (fits && element->tag_name)
+        fits = candidates_add_key(sheet, CSS_KEY_TAG, element->tag_name,
+                                  strlen(element->tag_name), stack_candidates,
+                                  &count, CANDIDATE_INLINE);
+    if (!fits)
+        return false;
+    apply_candidates(sheet, element, pseudo_flags, ancestors, ancestor_count,
+                     stack_candidates, count, out);
+    return true;
+}
+
 void css_style_resolve_node(const struct css_sheet *sheet,
                             const struct css_element *element,
                             unsigned pseudo_flags,
@@ -2164,6 +2370,11 @@ void css_style_resolve_node(const struct css_sheet *sheet,
 
     /* The table is in apply order. A rule that matches replaces the props of
        the rules before it. */
+    if (sheet->index_ready && apply_indexed(sheet, element, pseudo_flags,
+                                            ancestors, ancestor_count, out))
+        return;
+    memset(out, 0, sizeof(*out));
+    out->opacity = 1.0f;
     for (int i = 0; i < sheet->rule_count; i++) {
         const struct css_rule *r = &sheet->rules[i];
         if (rule_matches(r, element, pseudo_flags, ancestors, ancestor_count))

@@ -192,13 +192,26 @@ struct css_rule {
     struct css_style style;
 };
 
+/* One entry of the rule index. Every rule whose last compound names a class,
+   an id, or a tag appears here under that key, so a lookup reads only the
+   rules that can match. */
+struct css_index_entry {
+    const char *key; /* Borrowed from the selector string of the rule. */
+    uint32_t rule;
+    uint16_t key_len;
+    enum css_key_kind kind;
+};
+
 struct css_sheet {
     struct css_rule *rules; /* Sorted in apply order. */
     int rule_count;
     int rule_cap;
+    struct css_index_entry *index; /* Sorted by key, then by apply order. */
+    int index_count;
     struct css_var *vars;   /* Custom properties declared in :root blocks. */
     int var_count;
     int var_cap;
+    bool index_ready;
     bool has_defaults; /* The sheet is built on the css_init_default rules. */
 };
 
