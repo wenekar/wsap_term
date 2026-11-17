@@ -107,10 +107,7 @@ static void keyboard_keymap(void *data, struct wl_keyboard *keyboard,
 
     if (s->xkb_keymap) {
         s->xkb_state = xkb_state_new(s->xkb_keymap);
-        s->mod_shift = xkb_keymap_mod_get_index(s->xkb_keymap, XKB_MOD_NAME_SHIFT);
         s->mod_alt = xkb_keymap_mod_get_index(s->xkb_keymap, XKB_MOD_NAME_ALT);
-        s->mod_ctrl = xkb_keymap_mod_get_index(s->xkb_keymap, XKB_MOD_NAME_CTRL);
-        s->mod_super = xkb_keymap_mod_get_index(s->xkb_keymap, XKB_MOD_NAME_LOGO);
         resolve_input_mod_masks(s);
     }
 }
@@ -194,25 +191,6 @@ static void keyboard_leave(void *data, struct wl_keyboard *keyboard,
     s->focus_leaving = w;
 }
 
-static unsigned input_modifiers(struct seat *s)
-{
-    if (!s->input_mods_ready)
-        resolve_input_mod_masks(s);
-
-    unsigned mods = 0;
-    xkb_mod_mask_t reported = 0;
-    for (unsigned i = 0; i < 5; i++) {
-        xkb_mod_mask_t mask = s->input_mod_masks[i];
-        if (mask && (mask & ~reported) &&
-            xkb_state_mod_name_is_active(s->xkb_state, input_mod_names[i],
-                                         XKB_STATE_MODS_EFFECTIVE) > 0) {
-            mods |= 1u << i;
-            reported |= mask;
-        }
-    }
-    return mods;
-}
-
 static uint32_t key_codepoint_at_level(struct seat *s, uint32_t key, xkb_layout_index_t layout, xkb_level_index_t level)
 {
     const xkb_keysym_t *syms;
@@ -229,7 +207,7 @@ static struct yasl_private_key_event xkb_key_event(struct seat *s, uint32_t key,
     struct yasl_private_key_event k = {
         .key = yasl_private_key_from_evdev(key),
         .action = action,
-        .mods = input_modifiers(s),
+        .mods = seat_modifiers(s),
         .codepoint = yasl_private_key_label(key_codepoint_at_level(s, key, layout, 0)),
         .shifted = yasl_private_key_label(key_codepoint_at_level(s, key, layout, 1)),
         .native_code = key,
@@ -240,7 +218,7 @@ static struct yasl_private_key_event xkb_key_event(struct seat *s, uint32_t key,
 static void keyboard_text(struct seat *s, struct wayland_surface *w, uint32_t key)
 {
     uint32_t code = key + XKB_EVDEV_OFFSET;
-    unsigned mods = input_modifiers(s);
+    unsigned mods = (unsigned)seat_modifiers(s);
     if ((mods & (YASL_PRIVATE_MOD_CTRL | YASL_PRIVATE_MOD_SUPER)) ||
         ((mods & YASL_PRIVATE_MOD_ALT) &&
          !xkb_state_mod_index_is_consumed(s->xkb_state, code, s->mod_alt))) {
@@ -402,23 +380,27 @@ int keyboard_repeat_init(struct seat *s)
     return 0;
 }
 
-int seat_modifiers(const struct seat *s)
+/* Modifier bits of the seat's current state. Key and pointer events both call
+ * this, so one keyboard state gives one modifier set on either path. Bit i is
+ * the YASL_PRIVATE_MOD_* value of input_mod_names[i]. */
+int seat_modifiers(struct seat *s)
 {
     if (unlikely(!s || !s->xkb_state)) return 0;
-    return ((s->mod_shift != XKB_MOD_INVALID &&
-             xkb_state_mod_index_is_active(s->xkb_state, s->mod_shift,
-                                           XKB_STATE_MODS_EFFECTIVE) > 0) * YASL_PRIVATE_MOD_SHIFT) |
-           ((s->mod_alt != XKB_MOD_INVALID &&
-             xkb_state_mod_index_is_active(s->xkb_state, s->mod_alt,
-                                           XKB_STATE_MODS_EFFECTIVE) > 0) * YASL_PRIVATE_MOD_ALT) |
-           ((s->mod_ctrl != XKB_MOD_INVALID &&
-             xkb_state_mod_index_is_active(s->xkb_state, s->mod_ctrl,
-                                           XKB_STATE_MODS_EFFECTIVE) > 0) * YASL_PRIVATE_MOD_CTRL) |
-           ((s->mod_super != XKB_MOD_INVALID &&
-             xkb_state_mod_index_is_active(s->xkb_state, s->mod_super,
-                                           XKB_STATE_MODS_EFFECTIVE) > 0) * YASL_PRIVATE_MOD_SUPER) |
-           ((xkb_state_mod_name_is_active(s->xkb_state, XKB_MOD_NAME_CAPS,
-                                          XKB_STATE_MODS_EFFECTIVE) > 0) * YASL_PRIVATE_MOD_CAPS);
+    if (!s->input_mods_ready)
+        resolve_input_mod_masks(s);
+
+    unsigned mods = 0;
+    xkb_mod_mask_t reported = 0;
+    for (unsigned i = 0; i < 5; i++) {
+        xkb_mod_mask_t mask = s->input_mod_masks[i];
+        if (mask && (mask & ~reported) &&
+            xkb_state_mod_name_is_active(s->xkb_state, input_mod_names[i],
+                                         XKB_STATE_MODS_EFFECTIVE) > 0) {
+            mods |= 1u << i;
+            reported |= mask;
+        }
+    }
+    return (int)mods;
 }
 
 int wayland_display_modifiers(const struct wayland_display *c)

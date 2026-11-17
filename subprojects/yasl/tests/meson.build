@@ -67,7 +67,7 @@ if system == 'linux'
     endif
 endif
 if has_wayland
-    foreach unit : ['state', 'clipboard', 'keyboard', 'input', 'tablet', 'cursor', 'relative_pointer', 'app_input', 'popup_positioner', 'surface_lifetime']
+    foreach unit : ['state', 'clipboard', 'keyboard', 'modifiers', 'input', 'tablet', 'cursor', 'relative_pointer', 'app_input', 'popup_positioner', 'surface_lifetime']
         exe = executable('yasl-' + unit + '-wayland-test', 'wayland/test_' + unit + '.c',
             include_directories: inc, dependencies: yasl_dep)
         test(unit + '-wayland', exe)

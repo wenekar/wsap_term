@@ -204,7 +204,7 @@ struct seat {
 
     /* 4-byte integers */
     uint32_t name;
-    xkb_mod_index_t mod_shift, mod_alt, mod_ctrl, mod_super;
+    xkb_mod_index_t mod_alt;
     int repeat_fd, repeat_watch;
     int32_t repeat_rate, repeat_delay;
     uint32_t repeat_key;
@@ -480,7 +480,7 @@ void keyboard_settle_focus(struct wayland_display *c);
 bool conn_keyboard_on(const struct wayland_display *c, const struct wayland_surface *w,
                       const struct seat *except);
 extern const struct wl_keyboard_listener keyboard_listener;
-int  seat_modifiers(const struct seat *s);
+int  seat_modifiers(struct seat *s);
 
 void surface_init_cursor(struct wayland_display *c);
 void seat_destroy_tablet(struct seat *s);
