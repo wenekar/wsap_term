@@ -47,6 +47,18 @@ static bool popup_open(const struct window_ui_menu_popup *p)
     return p->surface != NULL;
 }
 
+/* True when a popup deeper than depth still holds its surface. Each such
+ * popup descends from depth. yasl destroys descendants with their parent. */
+static bool descendant_open(const struct window_ui *ui, int depth)
+{
+    for (int d = depth + 1; d < UI_MENU_MAX_LEVELS; d++)
+        if (popup_open(&ui->menu_popup[d]))
+            return true;
+    return false;
+}
+
+/* Closes the popup at depth. A busy popup, or a popup with an open
+ * descendant, stays until window_menu_reap destroys it. */
 static void close_popup(struct window *w, int depth)
 {
     struct window_ui *ui = ui_of(w);
@@ -55,9 +67,10 @@ static void close_popup(struct window *w, int depth)
     struct window_ui_menu_popup *p = &ui->menu_popup[depth];
     if (!popup_open(p))
         return;
-    if (ui_surface_busy(&p->ui)) {
+    if (ui_surface_busy(&p->ui) || descendant_open(ui, depth)) {
         /* The popup closes from inside its own dispatch. Destroying the
-         * surface now would drop its sheet and layout. Wait for the end. */
+         * surface now would drop its sheet and layout. A parent also waits
+         * for its children, because destroying it would free them. */
         p->closing = true;
         return;
     }
@@ -78,14 +91,17 @@ static void close_popups_from(struct window *w, int depth)
         close_popup(w, --ui_of(w)->menu_popups);
 }
 
-/* Destroys the popups that closed while they were busy. */
+/* Destroys the popups that closed while they waited. Call it when no popup
+ * is busy. The deepest popup goes first, so a child closes before its parent.
+ * The lowest level goes last. Its close can free the popup array, so the
+ * loop must not read the array after that. */
 void window_menu_reap(struct window *w)
 {
     struct window_ui *ui = ui_of(w);
     if (!ui->menu_popup)
         return;
     bool reaped = false;
-    for (int d = 0; d < UI_MENU_MAX_LEVELS; d++) {
+    for (int d = UI_MENU_MAX_LEVELS - 1; d >= 0; d--) {
         if (ui->menu_popup[d].closing && !ui_surface_busy(&ui->menu_popup[d].ui)) {
             ui->menu_popup[d].closing = false;
             close_popup(w, d);
