@@ -11,7 +11,7 @@
 #include "terminal/terminal.h"
 #include "ui/widgets/menu.h"
 #include "ui/widgets/scrollview.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 #include "ui/yasl/client.h"
 #include "ui/yasl/window.h"
 #include <wsap_vtcore/wsap_vtcore.h>

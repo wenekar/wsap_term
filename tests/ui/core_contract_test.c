@@ -2,7 +2,7 @@
 #include <string.h>
 
 #include "ui/ui.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 #include "ui/widgets/scrollview.h"
 
 static void click(struct ui_surface *surface, struct vector2i pos)

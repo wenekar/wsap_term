@@ -1,5 +1,5 @@
-#ifndef WSAP_UI_WIDGET_IMPL_H
-#define WSAP_UI_WIDGET_IMPL_H
+#ifndef WSAP_UI_WIDGET_OPS_H
+#define WSAP_UI_WIDGET_OPS_H
 
 #include <stdbool.h>
 #include <stddef.h>

@@ -4,7 +4,7 @@
 #include "ui/box.h"
 #include "ui/debug.h"
 #include "ui/surface.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 #include "ui/widgets/label.h"
 #include "ui/widgets/scrollview.h"
 

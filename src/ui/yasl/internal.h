@@ -9,7 +9,7 @@
 #include "paint/framebuffer.h"
 #include "ui/damage.h"
 #include "ui/surface.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 #include "ui/widgets/menu.h"
 #include "util/damage.h"
 #include "ui/yasl/stats.h"

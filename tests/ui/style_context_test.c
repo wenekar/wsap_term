@@ -2,7 +2,7 @@
 #include <string.h>
 
 #include "ui/style_context.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 #include "ui/widgets/button.h"
 #include "ui/widgets/label.h"
 #include "ui/box.h"

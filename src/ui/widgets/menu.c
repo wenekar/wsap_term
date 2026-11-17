@@ -1,6 +1,6 @@
 #include "ui/widgets/menu.h"
 
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 
 #include <ctype.h>
 #include <limits.h>

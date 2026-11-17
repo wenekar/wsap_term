@@ -3,7 +3,7 @@
 
 #include "ui/internal/tree.h"
 #include "ui/surface.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 
 #include <limits.h>
 #include <stdio.h>

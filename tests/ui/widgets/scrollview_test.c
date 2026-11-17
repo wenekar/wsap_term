@@ -11,7 +11,7 @@
 #include "ui/debug.h"
 #include "paint/scene.h"
 #include "ui/ui.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 
 struct probe_child {
     struct ui_widget widget;
