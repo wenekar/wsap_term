@@ -225,11 +225,14 @@ static void wait_until(struct harness *h, bool (*ready)(const struct harness *),
 {
     uint64_t deadline = yasl_time_ns() + WAIT_NS;
     while (!ready(h)) {
-        assert(yasl_time_ns() < deadline && !"timed out waiting for a drop reply");
+        if (yasl_time_ns() >= deadline) {
+            fprintf(stderr, "timed out waiting for %s\n", what);
+            abort();
+        }
         source_pump(&h->src);
         yasl_event ev;
         int got = yasl_wait_event(&ev, 1);
-        assert(got >= 0 && what);
+        assert(got >= 0);
         if (got == 1) record(&h->log, &ev);
     }
 }
@@ -357,6 +360,26 @@ static void check_invalid_text(struct harness *h, yasl_surface *surface)
     assert(!find_action(&h->log, YASL_DROP_RELEASE));
 }
 
+static void check_large(struct harness *h, yasl_surface *surface)
+{
+    /* A drop of 20 MiB is under the 64 MiB cap, so it arrives whole. */
+    const char *types[] = {"image/*"};
+    assert(yasl_surface_set_drop_types(surface, types, 1) == 0);
+    size_t length = 20u * 1024u * 1024u;
+    unsigned char *payload = malloc(length);
+    assert(payload);
+    fill(payload, length, 3);
+    offer(h, "image/png", payload, length);
+    const char *offered[] = {"image/png"};
+    begin_drag(h, offered, 1);
+    assert(h->src.accepted);
+    finish_drag(h);
+    const struct drop_record *release = find_action(&h->log, YASL_DROP_RELEASE);
+    assert(h->src.finished_ok && release && release->length == length);
+    assert(memcmp(release->bytes, payload, length) == 0);
+    free(payload);
+}
+
 static void check_oversize(struct harness *h, yasl_surface *surface)
 {
     /* A drop above the 64 MiB cap fails. */
@@ -417,6 +440,7 @@ int main(void)
     check_text(&h, surface);
     check_type_list(&h, surface);
     check_invalid_text(&h, surface);
+    check_large(&h, surface);
     check_oversize(&h, surface);
 
     log_clear(&h.log);

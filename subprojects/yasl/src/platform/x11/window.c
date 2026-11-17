@@ -2932,16 +2932,25 @@ static void selection_notify(struct x11_display *d, XSelectionEvent *event)
         paste_complete(d, p, status, NULL, 0);
         return;
     }
-    /* Probe without deleting first; the type tells an INCR marker apart. */
+    /* Probe without deleting first. The type tells an INCR marker apart, and
+     * the marker's one value is the total size that the owner announces. */
     Atom probe_type = None;
     int probe_format = 0;
     unsigned long probe_count = 0, probe_left = 0;
     unsigned char *probe_data = NULL;
     int probe_result = XGetWindowProperty(d->native, r->window, event->property,
-            0, 0, False, AnyPropertyType, &probe_type, &probe_format,
+            0, 1, False, AnyPropertyType, &probe_type, &probe_format,
             &probe_count, &probe_left, &probe_data);
-    if (probe_data) XFree(probe_data);
     if (probe_result == Success && probe_type == d->incr) {
+        unsigned long announced = probe_format == 32 && probe_count && probe_data ?
+            *(unsigned long *)probe_data : 0;
+        if (probe_data) XFree(probe_data);
+        /* Too big: fail now, and leave the marker in place. The owner waits for
+         * a deletion that never comes, so it sends no chunk to a closed window. */
+        if (announced > receive_limit(r)) {
+            paste_complete(d, p, YASL_PRIVATE_TRANSFER_FAILED, NULL, 0);
+            return;
+        }
         /* Deleting the marker tells the owner to send the first chunk. The
          * request stays queued until a zero-length chunk ends the transfer. */
         XDeleteProperty(d->native, r->window, event->property);
@@ -2950,6 +2959,7 @@ static void selection_notify(struct x11_display *d, XSelectionEvent *event)
         XFlush(d->native);
         return;
     }
+    if (probe_data) XFree(probe_data);
     Atom actual = None;
     int format = 0;
     unsigned long count = 0, left = 0;
