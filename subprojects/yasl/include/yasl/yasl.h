@@ -208,6 +208,14 @@ YASL_API int yasl_surface_place_under_pointer(yasl_surface *surface, double x, d
  * the end. If capacity exceeds the length, writes it with a NUL and advances
  * cursor; otherwise changes nothing, so retry larger. Thread-safe. */
 YASL_API size_t yasl_drop_next_path(const char **cursor, char *out, size_t capacity);
+/** Sets the data types that external drops on `surface` can deliver, best first.
+ * Each entry is a MIME type such as "text/plain;charset=utf-8", or a major type
+ * with a star such as "image/" "*". A drag takes the first entry that it offers,
+ * and DROP events report the offered type in drop.mime. A drag that offers no
+ * entry is refused. Without a call, a surface takes "text/uri-list" only.
+ * The list is copied; count 0 restores that default. Call it on the loop thread. */
+YASL_API int yasl_surface_set_drop_types(yasl_surface *surface, const char *const *types,
+                                         size_t count);
 
 /* Events */
 enum yasl_event_type {
@@ -231,7 +239,8 @@ enum yasl_event_type {
     YASL_EVENT_INPUT_RESET, /**< Forget held keys, buttons and strokes. */
     YASL_EVENT_CLIPBOARD,   /**< text; action is a yasl_transfer. */
     YASL_EVENT_DROP,        /**< External data: x, y; action is a yasl_drop_action;
-                             * text on RELEASE is a text/uri-list. */
+                             * drop.mime on OVER and RELEASE; text on RELEASE holds
+                             * length bytes of that type, which can include NULs. */
     YASL_EVENT_DRAG,        /**< A yasl_drag_start drag: x, y; action is a yasl_drop_action.
                              * Each drag ends once: RELEASE on the surface it drops on,
                              * or CANCEL on its origin when it ends anywhere else. */
@@ -303,6 +312,12 @@ struct yasl_ime_event {
     uint64_t revision;
     uint64_t key_id; /**< Zero for input method commits without a physical key. */
 };
+#define YASL_DROP_MIME_MAX 64
+struct yasl_drop_event {
+    /** The offered type that this drop delivers, from yasl_surface_set_drop_types.
+     * Empty on LEAVE and CANCEL. A type that does not fit is never picked. */
+    char mime[YASL_DROP_MIME_MAX];
+};
 struct yasl_event {
     enum yasl_event_type type;
     yasl_surface *surface;
@@ -319,6 +334,7 @@ struct yasl_event {
         struct yasl_scroll_event scroll;
         struct yasl_pen_event pen;
         struct yasl_ime_event ime;
+        struct yasl_drop_event drop;
     };
 };
 /** 1 with an event, 0 once timeout_ms passes or after yasl_wake. 0 polls and -1

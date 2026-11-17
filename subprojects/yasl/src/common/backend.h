@@ -97,7 +97,17 @@ struct yasl_surface {
     struct yasl_private_frame *active_frame;
     yasl_private_pacing_mode pacing;
     yasl_private_timer_id pacing_timer;
+    /* yasl_surface_set_drop_types, best first. NULL means "text/uri-list" only. */
+    char **drop_types;
+    size_t drop_type_count;
 };
+
+/* Returns the entry of `offered` that the drop types of `s` take first, or NULL
+ * to refuse the drag. Backends call it when a drag enters or offers new types,
+ * and copy the result into the DROP and DROP_HOVER events. A drop goes to the
+ * root surface, so pass the root. */
+const char *yasl_private_surface_pick_drop_type(const struct yasl_surface *s,
+                                                const char *const *offered, size_t count);
 
 bool yasl_private_events_open(struct yasl_private_display *d);
 void yasl_private_events_close(struct yasl_private_display *d);

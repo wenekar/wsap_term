@@ -7,8 +7,21 @@
 #include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+
+_Static_assert(YASL_DROP_MIME_MAX == YASL_PRIVATE_DROP_MIME_MAX, "drop MIME buffers differ");
+
+static void drop_types_clear(yasl_surface *s)
+{
+    for (size_t i = 0; i < s->drop_type_count; i++)
+        free(s->drop_types[i]);
+    free(s->drop_types);
+    s->drop_types = NULL;
+    s->drop_type_count = 0;
+}
 
 static struct yasl_private_display *display;
 static pthread_t owner;
@@ -434,6 +447,7 @@ int yasl_surface_destroy(yasl_surface *s)
     s->canvas_capacity = 0;
     free(s->text_surrounding);
     s->text_surrounding = NULL;
+    drop_types_clear(s);
     yasl_private_surface_destroy(s);
     return 0;
 }
@@ -472,6 +486,55 @@ int yasl_surface_set_title(yasl_surface *s, const char *title)
         return yasl_public_error(ENOTSUP);
     s->display->ops->surface_set_title(s, title);
     return 0;
+}
+int yasl_surface_set_drop_types(yasl_surface *s, const char *const *types, size_t count)
+{
+    if (!yasl_public_surface(s, false))
+        return -errno;
+    if (count && !types)
+        return yasl_public_error(EINVAL);
+    for (size_t i = 0; i < count; i++)
+        if (!types[i] || !types[i][0] || strlen(types[i]) >= YASL_DROP_MIME_MAX)
+            return yasl_public_error(EINVAL);
+    char **copy = count ? calloc(count, sizeof(*copy)) : NULL;
+    if (count && !copy)
+        return yasl_public_error(ENOMEM);
+    for (size_t i = 0; i < count; i++) {
+        copy[i] = strdup(types[i]);
+        if (!copy[i]) {
+            while (i--)
+                free(copy[i]);
+            free(copy);
+            return yasl_public_error(ENOMEM);
+        }
+    }
+    drop_types_clear(s);
+    s->drop_types = copy;
+    s->drop_type_count = count;
+    return 0;
+}
+/* True when `offered` is the type that `entry` names. An entry such as
+ * "image/" "*" takes every subtype of its major type. */
+static bool drop_type_matches(const char *entry, const char *offered)
+{
+    size_t n = strlen(entry);
+    if (n >= 2 && entry[n - 1] == '*' && entry[n - 2] == '/')
+        return !strncasecmp(entry, offered, n - 1) && offered[n - 1];
+    return !strcasecmp(entry, offered);
+}
+const char *yasl_private_surface_pick_drop_type(const struct yasl_surface *s,
+                                                const char *const *offered, size_t count)
+{
+    static const char *const uri_list_only[] = { "text/uri-list" };
+    bool custom = s && s->drop_type_count;
+    const char *const *types = custom ? (const char *const *)s->drop_types : uri_list_only;
+    size_t type_count = custom ? s->drop_type_count : 1;
+    for (size_t t = 0; t < type_count; t++)
+        for (size_t i = 0; i < count; i++)
+            if (offered[i] && strlen(offered[i]) < YASL_DROP_MIME_MAX &&
+                drop_type_matches(types[t], offered[i]))
+                return offered[i];
+    return NULL;
 }
 int yasl_surface_request(yasl_surface *s, enum yasl_request request)
 {
@@ -847,6 +910,13 @@ static bool refresh_ready(yasl_surface *s)
 {
     return s->reported_size.x > 0 && s->reported_size.y > 0;
 }
+/* Copies the type of a drop into a public event. A backend that sets no type
+ * delivers file drops only, so an empty type means "text/uri-list". */
+static void drop_mime(char out[YASL_DROP_MIME_MAX], const char *mime)
+{
+    snprintf(out, YASL_DROP_MIME_MAX, "%.*s", YASL_DROP_MIME_MAX - 1,
+             mime[0] ? mime : "text/uri-list");
+}
 static bool with_text(yasl_event *e, const char *data, size_t length)
 {
     e->length = length;
@@ -926,6 +996,7 @@ static bool convert_event(const struct yasl_private_event *p, yasl_event *e)
     case YASL_PRIVATE_EVENT_DROP:
         e->type = YASL_EVENT_DROP;
         e->action = YASL_DROP_RELEASE;
+        drop_mime(e->drop.mime, p->text.mime);
         return with_text(e, p->text.data, p->text.len);
     case YASL_PRIVATE_EVENT_PASTE:
         e->type = YASL_EVENT_CLIPBOARD;
@@ -1015,6 +1086,8 @@ static bool convert_event(const struct yasl_private_event *p, yasl_event *e)
         e->action = p->drop.action == YASL_PRIVATE_DROP_LEAVE ? YASL_DROP_LEAVE : YASL_DROP_OVER;
         e->x = p->drop.pos.x / scale;
         e->y = p->drop.pos.y / scale;
+        if (e->action == YASL_DROP_OVER)
+            drop_mime(e->drop.mime, p->drop.mime);
         return true;
     default:
         return false;
