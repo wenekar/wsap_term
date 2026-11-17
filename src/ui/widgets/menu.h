@@ -51,7 +51,7 @@ struct ui_menu {
         int highlight;
         bool open;
         bool highlight_known;
-    } impl;
+    } state;
 };
 
 struct ui_menu_layer;
@@ -112,7 +112,7 @@ struct ui_menu_layer {
         int first_level;
         uint32_t shown;
         bool stale;
-    } impl;
+    } state;
 };
 
 /* Initializes menu layer widget `layer` associated with `menu`. */

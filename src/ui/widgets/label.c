@@ -34,7 +34,8 @@ static void label_parts_init(void)
 
 static struct css_style label_part(const struct ui_label *label, ui_part_id part)
 {
-    return ui_widget_part(&label->widget, part, label->widget.impl.style_pseudo);
+    return ui_widget_part(&label->widget, part,
+                          ui_widget_style_pseudo(&label->widget));
 }
 
 /* Walks the text of one label and looks for the end of each line. */
@@ -141,18 +142,18 @@ static bool lines_reserve(struct label_lines *lines, size_t count)
  * to the label, so a caller with a const label only reads it. */
 static const struct label_lines *lines_for(const struct ui_label *label, int width)
 {
-    struct label_lines *lines = &((struct ui_label *)label)->impl.lines;
+    struct label_lines *lines = &((struct ui_label *)label)->state.lines;
     struct ui_text_style style = ui_widget_text_style(&label->widget.style_scale);
-    if (lines->items && lines->text_gen == label->impl.text_gen &&
+    if (lines->items && lines->text_gen == label->state.text_gen &&
         lines->width == width && lines->advance == style.advance &&
-        lines->cell_h == style.cell_h && lines->wrap == label->impl.wrap)
+        lines->cell_h == style.cell_h && lines->wrap == label->state.wrap)
         return lines;
     lines->count = 0;
     struct label_scan scan = {
         .text = ui_label_text(label),
-        .len = label->impl.len,
+        .len = label->state.len,
         .cap = style.advance > 0 && width > 0 ? width / style.advance : 0,
-        .wrap = label->impl.wrap,
+        .wrap = label->state.wrap,
     };
     struct label_line line;
     while (scan_line(&scan, &line)) {
@@ -163,11 +164,11 @@ static const struct label_lines *lines_for(const struct ui_label *label, int wid
         }
         lines->items[lines->count++] = line;
     }
-    lines->text_gen = label->impl.text_gen;
+    lines->text_gen = label->state.text_gen;
     lines->width = width;
     lines->advance = style.advance;
     lines->cell_h = style.cell_h;
-    lines->wrap = label->impl.wrap;
+    lines->wrap = label->state.wrap;
     return lines;
 }
 
@@ -218,8 +219,8 @@ static struct rect2i line_rect(const struct ui_label *label, struct rect2i conte
     struct ui_text_style style = ui_widget_text_style(&label->widget.style_scale);
     int width = geom_sat_i((int64_t)(line->cells + (line->ellipsis ? 1 : 0)) * style.advance);
     int free = content.width > width ? content.width - width : 0;
-    int dx = label->impl.align == UI_LABEL_ALIGN_CENTER ? free / 2
-           : label->impl.align == UI_LABEL_ALIGN_RIGHT ? free : 0;
+    int dx = label->state.align == UI_LABEL_ALIGN_CENTER ? free / 2
+           : label->state.align == UI_LABEL_ALIGN_RIGHT ? free : 0;
     int dy = 0;
     if (row == 0 && lines_for(label, content.width)->count == 1)
         dy = geom_sat_i(geom_half_up((int64_t)content.height - style.cell_h));
@@ -234,7 +235,7 @@ bool ui_label_selection(const struct ui_label *label, size_t *start, size_t *end
 {
     if (!label)
         return false;
-    return ui_text_select_range(&label->impl.select, start, end);
+    return ui_text_select_range(&label->state.select, start, end);
 }
 
 static void paint_span(const struct ui_label *label, struct ui_paint_context *paint,
@@ -287,7 +288,7 @@ static void paint_line(const struct ui_label *label, struct ui_paint_context *pa
         marker.width = style.advance;
         ui_paint_text(paint, marker, style, color, "\xE2\x80\xA6", 3);
     }
-    if (label->impl.link && rect.width > 0) {
+    if (label->state.link && rect.width > 0) {
         struct css_style link = label_part(label, parts.link);
         int thickness = ui_css_resolve_int(link.border_width,
             0, 1, &label->widget.style_scale, true);
@@ -310,11 +311,11 @@ static void label_paint(const struct ui_widget *widget, struct ui_paint_context 
         return;
     struct rect2i content = content_rect(label, bounds.size);
     struct ui_text_style style = ui_widget_text_style(&widget->style_scale);
-    if (content.width <= 0 || content.height < style.cell_h || !label->impl.len)
+    if (content.width <= 0 || content.height < style.cell_h || !label->state.len)
         return;
     float opacity = css_style_effective_opacity(&widget->style);
     uint32_t color = widget->style.has_text_color ? widget->style.text_color : 0;
-    if (label->impl.link) {
+    if (label->state.link) {
         struct css_style link = label_part(label, parts.link);
         if (link.has_text_color)
             color = link.text_color;
@@ -333,7 +334,7 @@ static void label_paint(const struct ui_widget *widget, struct ui_paint_context 
         paint_line(label, paint, rect, &line, color);
     }
     ui_paint_pop_clip(paint);
-    if (ui_widget_has_focus(widget) && !label->impl.disabled) {
+    if (ui_widget_has_focus(widget) && !label->state.disabled) {
         struct css_style fs = label_part(label, parts.focus);
         uint32_t focus = ui_color_opacity(
             fs.has_border_color ? fs.border_color : 0,
@@ -350,7 +351,7 @@ static void label_parts(const struct ui_widget *widget, struct ui_debug_parts *p
     const struct ui_label *label = label_of(widget);
     struct rect2i content = content_rect(label, widget->bounds.size);
     ui_debug_part(parts, "content", -1, ui_widget_rect_to_surface(widget, content));
-    if (label->impl.selectable)
+    if (label->state.selectable)
         ui_debug_part(parts, "selection-area", -1, widget->bounds);
     if (content.width <= 0 || content.height < ui_widget_text_style(&widget->style_scale).cell_h)
         return;
@@ -381,7 +382,7 @@ static size_t offset_at(const struct ui_label *label, struct vector2i pos)
         return line.start + ui_text_offset_at_x(text, line.len,
                                                 (int64_t)pos.x - rect.x, style.advance);
     }
-    return label->impl.len;
+    return label->state.len;
 }
 
 static bool text_hit(const struct ui_label *label, struct vector2i surface)
@@ -404,15 +405,15 @@ static bool text_hit(const struct ui_label *label, struct vector2i surface)
 static bool label_hit_test(const struct ui_widget *widget, struct vector2i pos)
 {
     const struct ui_label *label = label_of(widget);
-    return label->impl.link && !label->impl.selectable
+    return label->state.link && !label->state.selectable
         ? text_hit(label, pos) : rect2i_contains(widget->bounds, pos);
 }
 
 static void update_pseudo(struct ui_label *label)
 {
-    unsigned pseudo = label->widget.impl.style_pseudo & CSS_PSEUDO_HOVER;
-    if (label->impl.select.pressed) pseudo |= CSS_PSEUDO_ACTIVE;
-    if (label->impl.disabled) pseudo |= CSS_PSEUDO_DISABLED;
+    unsigned pseudo = ui_widget_style_pseudo(&label->widget) & CSS_PSEUDO_HOVER;
+    if (label->state.select.pressed) pseudo |= CSS_PSEUDO_ACTIVE;
+    if (label->state.disabled) pseudo |= CSS_PSEUDO_DISABLED;
     if (ui_widget_has_focus(&label->widget)) pseudo |= CSS_PSEUDO_FOCUS;
     ui_widget_set_style_pseudo(&label->widget, pseudo);
 }
@@ -420,10 +421,10 @@ static void update_pseudo(struct ui_label *label)
 static void activate(struct ui_label *label)
 {
     bool handled = ui_widget_notify(&label->widget, (struct ui_action){
-        .kind = UI_ACTION_ACTIVATE, .id = label->impl.action_id, .index = -1,
+        .kind = UI_ACTION_ACTIVATE, .id = label->state.action_id, .index = -1,
     });
-    if (!handled && !label->widget.impl.destroyed && label->impl.link)
-        ui_surface_open_url(ui_widget_surface(&label->widget), label->impl.link);
+    if (!handled && !ui_widget_is_destroyed(&label->widget) && label->state.link)
+        ui_surface_open_url(ui_widget_surface(&label->widget), label->state.link);
 }
 
 static bool label_accessibility(const struct ui_widget *widget,
@@ -431,19 +432,19 @@ static bool label_accessibility(const struct ui_widget *widget,
 {
     const struct ui_label *label = label_of(widget);
     const char *text = ui_label_text(label);
-    out->role = label->impl.link ? UI_ACCESSIBILITY_ROLE_LINK
+    out->role = label->state.link ? UI_ACCESSIBILITY_ROLE_LINK
                                  : UI_ACCESSIBILITY_ROLE_LABEL;
     out->name = text[0] ? text : NULL;
-    if (label->impl.disabled)
+    if (label->state.disabled)
         out->states |= UI_ACCESSIBILITY_STATE_DISABLED;
-    if (!label->impl.disabled && label->impl.link)
+    if (!label->state.disabled && label->state.link)
         out->actions |= UI_ACCESSIBILITY_ACTION_INVOKE;
-    if (!label->impl.disabled && label->impl.selectable) {
+    if (!label->state.disabled && label->state.selectable) {
         out->value = text;
         out->actions |= UI_ACCESSIBILITY_ACTION_SET_SELECTION;
-        ui_text_select_range(&label->impl.select, &out->selection_start,
+        ui_text_select_range(&label->state.select, &out->selection_start,
                              &out->selection_end);
-        out->caret_offset = label->impl.select.caret;
+        out->caret_offset = label->state.select.caret;
     }
     return true;
 }
@@ -454,17 +455,17 @@ static bool label_accessibility_action(
 {
     struct ui_label *label = label_of(widget);
     if (node_id != ui_widget_accessibility_id(widget) ||
-        label->impl.disabled)
+        label->state.disabled)
         return false;
     if (request->action == UI_ACCESSIBILITY_ACTION_INVOKE &&
-        label->impl.link) {
+        label->state.link) {
         activate(label);
         return true;
     }
     if (request->action == UI_ACCESSIBILITY_ACTION_SET_SELECTION &&
-        label->impl.selectable) {
-        ui_text_select_apply(&label->impl.select, ui_label_text(label),
-                             label->impl.len, request->selection_start,
+        label->state.selectable) {
+        ui_text_select_apply(&label->state.select, ui_label_text(label),
+                             label->state.len, request->selection_start,
                              request->selection_end, request->caret_offset);
         ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
         return true;
@@ -480,9 +481,9 @@ static bool label_edit(struct ui_label *label, enum ui_edit_command command,
         return false;
     switch (command) {
     case UI_EDIT_COPY:
-        return label->impl.selectable && ui_label_copy_selection(label);
+        return label->state.selectable && ui_label_copy_selection(label);
     case UI_EDIT_SELECT_ALL:
-        if (!label->impl.selectable)
+        if (!label->state.selectable)
             return false;
         ui_label_select_all(label);
         return true;
@@ -490,7 +491,7 @@ static bool label_edit(struct ui_label *label, enum ui_edit_command command,
     case UI_EDIT_END:
     case UI_EDIT_LEFT:
     case UI_EDIT_RIGHT:
-        if (!label->impl.selectable)
+        if (!label->state.selectable)
             return false;
         break;
     default:
@@ -499,13 +500,13 @@ static bool label_edit(struct ui_label *label, enum ui_edit_command command,
     switch (command) {
     case UI_EDIT_START:
     case UI_EDIT_END:
-        ui_text_select_to(&label->impl.select,
-                          command == UI_EDIT_START ? 0 : label->impl.len,
+        ui_text_select_to(&label->state.select,
+                          command == UI_EDIT_START ? 0 : label->state.len,
                           extend);
         break;
     default:
-        ui_text_select_move(&label->impl.select, ui_label_text(label),
-                            label->impl.len, UI_EDIT_CHARACTER,
+        ui_text_select_move(&label->state.select, ui_label_text(label),
+                            label->state.len, UI_EDIT_CHARACTER,
                             command == UI_EDIT_LEFT, extend);
         break;
     }
@@ -519,21 +520,21 @@ static bool label_key(struct ui_label *label, const struct ui_key_event *key)
     bool key_only = (key->mods & (UI_MOD_ALT | UI_MOD_CTRL | UI_MOD_SUPER)) == 0;
     if (label_edit(label, key->edit_command, shift))
         return true;
-    if (label->impl.selectable) {
+    if (label->state.selectable) {
         switch (key->key) {
         case UI_KEY_LEFT:
         case UI_KEY_RIGHT:
-            ui_text_select_move(&label->impl.select, ui_label_text(label),
-                                label->impl.len, key->edit_unit,
+            ui_text_select_move(&label->state.select, ui_label_text(label),
+                                label->state.len, key->edit_unit,
                                 key->key == UI_KEY_LEFT, shift);
             ui_widget_invalidate(&label->widget, UI_WIDGET_INVALIDATE_PAINT);
             return true;
         case UI_KEY_HOME:
-            ui_text_select_to(&label->impl.select, 0, shift);
+            ui_text_select_to(&label->state.select, 0, shift);
             ui_widget_invalidate(&label->widget, UI_WIDGET_INVALIDATE_PAINT);
             return true;
         case UI_KEY_END:
-            ui_text_select_to(&label->impl.select, label->impl.len, shift);
+            ui_text_select_to(&label->state.select, label->state.len, shift);
             ui_widget_invalidate(&label->widget, UI_WIDGET_INVALIDATE_PAINT);
             return true;
         case UI_KEY_ESCAPE:
@@ -543,7 +544,7 @@ static bool label_key(struct ui_label *label, const struct ui_key_event *key)
             break;
         }
     }
-    if (label->impl.link && key_only &&
+    if (label->state.link && key_only &&
         (key->key == UI_KEY_ENTER || (key->key == UI_KEY_CHAR && key->text == ' '))) {
         if (key->action == UI_KEY_PRESS)
             activate(label);
@@ -556,7 +557,7 @@ static bool label_event(struct ui_widget *widget, const struct ui_event *event)
 {
     struct ui_label *label = label_of(widget);
     if (event->kind == UI_EVENT_CAPTURE_LOST || event->kind == UI_EVENT_FOCUS_OUT) {
-        ui_text_select_end(&label->impl.select);
+        ui_text_select_end(&label->state.select);
         ui_widget_release_pointer(widget);
         if (event->kind == UI_EVENT_FOCUS_OUT)
             ui_label_clear_selection(label);
@@ -567,7 +568,7 @@ static bool label_event(struct ui_widget *widget, const struct ui_event *event)
         update_pseudo(label);
         return true;
     }
-    if (label->impl.disabled)
+    if (label->state.disabled)
         return false;
     if (event->kind == UI_EVENT_SHORTCUT)
         return label_edit(label, event->data.shortcut.edit, false);
@@ -577,19 +578,19 @@ static bool label_event(struct ui_widget *widget, const struct ui_event *event)
         return false;
     const struct ui_pointer_event *p = &event->data.pointer;
     if (p->kind == UI_POINTER_LEAVE || p->kind == UI_POINTER_MOTION) {
-        unsigned pseudo = widget->impl.style_pseudo & ~CSS_PSEUDO_HOVER;
+        unsigned pseudo = ui_widget_style_pseudo(widget) & ~CSS_PSEUDO_HOVER;
         if (p->kind == UI_POINTER_MOTION && text_hit(label, p->pos)) pseudo |= CSS_PSEUDO_HOVER;
         ui_widget_set_style_pseudo(widget, pseudo);
     }
     if (p->kind == UI_POINTER_PRESS) {
-        if (p->button != 0 || (!label->impl.selectable && !label->impl.link) ||
+        if (p->button != 0 || (!label->state.selectable && !label->state.link) ||
             !rect2i_contains(widget->bounds, p->pos) ||
-            (!label->impl.selectable && !text_hit(label, p->pos)))
+            (!label->state.selectable && !text_hit(label, p->pos)))
             return false;
         ui_widget_focus(widget);
         ui_widget_capture_pointer(widget);
-        ui_text_select_press(&label->impl.select, ui_label_text(label),
-            label->impl.len, &(struct ui_text_select_click){
+        ui_text_select_press(&label->state.select, ui_label_text(label),
+            label->state.len, &(struct ui_text_select_click){
                 .pos = p->pos,
                 .time_ms = event->time_ms,
                 .offset = offset_at(label, ui_widget_to_local(widget, p->pos)),
@@ -598,15 +599,15 @@ static bool label_event(struct ui_widget *widget, const struct ui_event *event)
                 .threshold_px = ui_px(widget->style_scale.dpi_scale,
                                       UI_TEXT_SELECT_DRAG_PX),
                 .mods = p->mods,
-                .selects = label->impl.selectable,
+                .selects = label->state.selectable,
             });
         update_pseudo(label);
         ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
         return true;
     }
-    if (p->kind == UI_POINTER_MOTION && label->impl.select.pressed) {
-        if (ui_text_select_drag(&label->impl.select, ui_label_text(label),
-                                label->impl.len,
+    if (p->kind == UI_POINTER_MOTION && label->state.select.pressed) {
+        if (ui_text_select_drag(&label->state.select, ui_label_text(label),
+                                label->state.len,
                                 offset_at(label, ui_widget_to_local(widget, p->pos)),
                                 p->pos,
                                 ui_px(widget->style_scale.dpi_scale,
@@ -614,11 +615,11 @@ static bool label_event(struct ui_widget *widget, const struct ui_event *event)
             ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
         return true;
     }
-    if (p->kind == UI_POINTER_RELEASE && p->button == 0 && label->impl.select.pressed) {
-        bool open = label->impl.link && !label->impl.select.dragged &&
-                    label->impl.select.clicks == 1 &&
+    if (p->kind == UI_POINTER_RELEASE && p->button == 0 && label->state.select.pressed) {
+        bool open = label->state.link && !label->state.select.dragged &&
+                    label->state.select.clicks == 1 &&
                     !ui_label_selection(label, NULL, NULL) && text_hit(label, p->pos);
-        ui_text_select_release(&label->impl.select);
+        ui_text_select_release(&label->state.select);
         ui_widget_release_pointer(widget);
         update_pseudo(label);
         if (open) activate(label);
@@ -632,21 +633,21 @@ static enum ui_cursor label_cursor(const struct ui_widget *widget, struct vector
     const struct ui_label *label = label_of(widget);
     if (widget->style.has_cursor && widget->style.cursor != UI_CURSOR_AUTO)
         return widget->style.cursor;
-    if (label->impl.disabled) return UI_CURSOR_DEFAULT;
-    if (label->impl.link && text_hit(label, pos)) return UI_CURSOR_POINTER;
-    return label->impl.selectable ? UI_CURSOR_TEXT : UI_CURSOR_AUTO;
+    if (label->state.disabled) return UI_CURSOR_DEFAULT;
+    if (label->state.link && text_hit(label, pos)) return UI_CURSOR_POINTER;
+    return label->state.selectable ? UI_CURSOR_TEXT : UI_CURSOR_AUTO;
 }
 
 static void label_destroy(struct ui_widget *widget)
 {
     struct ui_label *label = label_of(widget);
-    free(label->impl.lines.items);
-    label->impl.lines = (struct label_lines){0};
-    free(label->impl.text);
-    free(label->impl.link);
-    label->impl.text = label->impl.link = NULL;
-    label->impl.len = 0;
-    ui_text_select_clear(&label->impl.select);
+    free(label->state.lines.items);
+    label->state.lines = (struct label_lines){0};
+    free(label->state.text);
+    free(label->state.link);
+    label->state.text = label->state.link = NULL;
+    label->state.len = 0;
+    ui_text_select_clear(&label->state.select);
 }
 
 static const struct ui_widget_ops LABEL_OPS = {
@@ -686,14 +687,14 @@ bool ui_label_set_text(struct ui_label *label, const char *text)
     if (!text) text = "";
     size_t len = strlen(text);
     if (len > INT_MAX) return false;
-    if (len == label->impl.len && !memcmp(ui_label_text(label), text, len)) return true;
+    if (len == label->state.len && !memcmp(ui_label_text(label), text, len)) return true;
     char *copy = len ? strdup(text) : NULL;
     if (len && !copy) return false;
-    free(label->impl.text);
-    label->impl.text = copy;
-    label->impl.len = len;
-    label->impl.text_gen++;
-    ui_text_select_clear(&label->impl.select);
+    free(label->state.text);
+    label->state.text = copy;
+    label->state.len = len;
+    label->state.text_gen++;
+    ui_text_select_clear(&label->state.select);
     ui_widget_release_pointer(&label->widget);
     update_pseudo(label);
     ui_widget_invalidate(&label->widget, UI_WIDGET_INVALIDATE_MEASURE);
@@ -702,15 +703,15 @@ bool ui_label_set_text(struct ui_label *label, const char *text)
 
 const char *ui_label_text(const struct ui_label *label)
 {
-    return label && label->impl.text ? label->impl.text : "";
+    return label && label->state.text ? label->state.text : "";
 }
 
 void ui_label_set_wrap(struct ui_label *label, enum ui_label_wrap wrap)
 {
     if (!label || wrap > UI_LABEL_ELLIPSIS) return;
     label_ensure_init(label);
-    if (label->impl.wrap == wrap) return;
-    label->impl.wrap = wrap;
+    if (label->state.wrap == wrap) return;
+    label->state.wrap = wrap;
     ui_widget_invalidate(&label->widget, UI_WIDGET_INVALIDATE_MEASURE);
 }
 
@@ -718,23 +719,23 @@ void ui_label_set_align(struct ui_label *label, enum ui_label_align align)
 {
     if (!label || align > UI_LABEL_ALIGN_RIGHT) return;
     label_ensure_init(label);
-    if (label->impl.align == align) return;
-    label->impl.align = align;
+    if (label->state.align == align) return;
+    label->state.align = align;
     ui_widget_invalidate(&label->widget, UI_WIDGET_INVALIDATE_PAINT);
 }
 
 static void update_focusable(struct ui_label *label)
 {
     ui_widget_set_focusable(&label->widget,
-        !label->impl.disabled && (label->impl.selectable || label->impl.link));
+        !label->state.disabled && (label->state.selectable || label->state.link));
 }
 
 void ui_label_set_selectable(struct ui_label *label, bool selectable)
 {
     if (!label) return;
     label_ensure_init(label);
-    label->impl.selectable = selectable;
-    ui_text_select_end(&label->impl.select);
+    label->state.selectable = selectable;
+    ui_text_select_end(&label->state.select);
     ui_widget_release_pointer(&label->widget);
     if (!selectable) ui_label_clear_selection(label);
     update_focusable(label);
@@ -744,15 +745,15 @@ void ui_label_set_selectable(struct ui_label *label, bool selectable)
 
 void ui_label_select_all(struct ui_label *label)
 {
-    if (!label || !label->impl.selectable) return;
-    ui_text_select_all(&label->impl.select, label->impl.len);
+    if (!label || !label->state.selectable) return;
+    ui_text_select_all(&label->state.select, label->state.len);
     ui_widget_invalidate(&label->widget, UI_WIDGET_INVALIDATE_PAINT);
 }
 
 void ui_label_clear_selection(struct ui_label *label)
 {
     if (!label) return;
-    ui_text_select_clear(&label->impl.select);
+    ui_text_select_clear(&label->state.select);
     ui_widget_invalidate(&label->widget, UI_WIDGET_INVALIDATE_PAINT);
 }
 
@@ -777,9 +778,9 @@ bool ui_label_set_link(struct ui_label *label, const char *target)
     if (!strcmp(ui_label_link(label), target)) return true;
     char *copy = *target ? strdup(target) : NULL;
     if (*target && !copy) return false;
-    free(label->impl.link);
-    label->impl.link = copy;
-    ui_text_select_end(&label->impl.select);
+    free(label->state.link);
+    label->state.link = copy;
+    ui_text_select_end(&label->state.select);
     ui_widget_release_pointer(&label->widget);
     update_focusable(label);
     update_pseudo(label);
@@ -789,22 +790,22 @@ bool ui_label_set_link(struct ui_label *label, const char *target)
 
 const char *ui_label_link(const struct ui_label *label)
 {
-    return label && label->impl.link ? label->impl.link : "";
+    return label && label->state.link ? label->state.link : "";
 }
 
 void ui_label_set_action_id(struct ui_label *label, int id)
 {
     if (!label) return;
     label_ensure_init(label);
-    label->impl.action_id = id;
+    label->state.action_id = id;
 }
 
 void ui_label_set_disabled(struct ui_label *label, bool disabled)
 {
     if (!label) return;
     label_ensure_init(label);
-    label->impl.disabled = disabled;
-    ui_text_select_end(&label->impl.select);
+    label->state.disabled = disabled;
+    ui_text_select_end(&label->state.select);
     ui_widget_release_pointer(&label->widget);
     update_focusable(label);
     update_pseudo(label);

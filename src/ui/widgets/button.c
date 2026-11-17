@@ -68,7 +68,7 @@ static void button_paint(const struct ui_widget *widget,
     if (!ui_paint_box(paint, bounds, &box, &fill))
         return;
     bool bordered = box.border_width > 0 && (box.border_color >> 24);
-    if (!bordered && (button->impl.state & BUTTON_FOCUSED))
+    if (!bordered && (button->state.flags & BUTTON_FOCUSED))
         ui_paint_rect_stroke(paint, bounds, 1, fg);
 
     const char *text = ui_button_text(button);
@@ -99,9 +99,9 @@ static void button_paint(const struct ui_widget *widget,
 
 static bool button_set_state(struct ui_button *button, unsigned state)
 {
-    if (button->impl.state == state)
+    if (button->state.flags == state)
         return false;
-    button->impl.state = state;
+    button->state.flags = state;
     unsigned pseudo = 0;
     if (state & BUTTON_HOVERED) pseudo |= CSS_PSEUDO_HOVER;
     if (state & BUTTON_PRESSED) pseudo |= CSS_PSEUDO_ACTIVE;
@@ -116,7 +116,7 @@ static void button_clicked(struct ui_button *button)
 {
     ui_widget_notify(&button->widget, (struct ui_action){
         .kind = UI_ACTION_ACTIVATE,
-        .id = button->impl.action_id,
+        .id = button->state.action_id,
         .index = -1,
     });
 }
@@ -129,18 +129,18 @@ static bool button_event(struct ui_widget *widget, const struct ui_event *event)
         return false;
 
     if (event->kind == UI_EVENT_CAPTURE_LOST) {
-        button_set_state(button, button->impl.state & ~BUTTON_PRESSED);
+        button_set_state(button, button->state.flags & ~BUTTON_PRESSED);
         return true;
     }
-    if (button->impl.state & BUTTON_DISABLED)
+    if (button->state.flags & BUTTON_DISABLED)
         return false;
 
     if (event->kind == UI_EVENT_FOCUS_IN) {
-        button_set_state(button, button->impl.state | BUTTON_FOCUSED);
+        button_set_state(button, button->state.flags | BUTTON_FOCUSED);
         return true;
     }
     if (event->kind == UI_EVENT_FOCUS_OUT) {
-        button_set_state(button, button->impl.state &
+        button_set_state(button, button->state.flags &
                          ~(BUTTON_FOCUSED | BUTTON_PRESSED));
         return true;
     }
@@ -160,7 +160,7 @@ static bool button_event(struct ui_widget *widget, const struct ui_event *event)
     bool inside = rect2i_contains(button->widget.bounds, pointer->pos);
     switch (pointer->kind) {
     case UI_POINTER_MOTION: {
-        unsigned state = button->impl.state;
+        unsigned state = button->state.flags;
         if (inside)
             state |= BUTTON_HOVERED;
         else
@@ -169,12 +169,12 @@ static bool button_event(struct ui_widget *widget, const struct ui_event *event)
         return false;
     }
     case UI_POINTER_LEAVE:
-        button_set_state(button, button->impl.state & ~BUTTON_HOVERED);
+        button_set_state(button, button->state.flags & ~BUTTON_HOVERED);
         return false;
     case UI_POINTER_PRESS:
         if (!inside || pointer->button != 0)
             return false;
-        button_set_state(button, button->impl.state | BUTTON_PRESSED);
+        button_set_state(button, button->state.flags | BUTTON_PRESSED);
         ui_widget_focus(widget);
         ui_widget_capture_pointer(widget);
         return true;
@@ -182,8 +182,8 @@ static bool button_event(struct ui_widget *widget, const struct ui_event *event)
         if (pointer->button != 0)
             return false;
         ui_widget_release_pointer(widget);
-        bool activate = inside && (button->impl.state & BUTTON_PRESSED);
-        button_set_state(button, button->impl.state & ~BUTTON_PRESSED);
+        bool activate = inside && (button->state.flags & BUTTON_PRESSED);
+        button_set_state(button, button->state.flags & ~BUTTON_PRESSED);
         if (activate)
             button_clicked(button);
         return activate;
@@ -203,7 +203,7 @@ static bool button_accessibility(const struct ui_widget *widget,
     out->role = UI_ACCESSIBILITY_ROLE_BUTTON;
     const char *text = ui_button_text(button);
     out->name = text[0] ? text : NULL;
-    if (button->impl.state & BUTTON_DISABLED)
+    if (button->state.flags & BUTTON_DISABLED)
         out->states |= UI_ACCESSIBILITY_STATE_DISABLED;
     else
         out->actions |= UI_ACCESSIBILITY_ACTION_INVOKE;
@@ -218,7 +218,7 @@ static bool button_accessibility_action(
                                                widget);
     if (node_id != ui_widget_accessibility_id(widget) ||
         request->action != UI_ACCESSIBILITY_ACTION_INVOKE ||
-        (button->impl.state & BUTTON_DISABLED))
+        (button->state.flags & BUTTON_DISABLED))
         return false;
     button_clicked(button);
     return true;
@@ -227,8 +227,8 @@ static bool button_accessibility_action(
 static void button_destroy(struct ui_widget *widget)
 {
     struct ui_button *button = ui_container_of(widget, struct ui_button, widget);
-    free(button->impl.text);
-    button->impl.text = NULL;
+    free(button->state.text);
+    button->state.text = NULL;
 }
 
 static const struct ui_widget_ops BUTTON_OPS = {
@@ -275,15 +275,15 @@ bool ui_button_set_text(struct ui_button *button, const char *text)
         return false;
     if (copy)
         memcpy(copy, text, len + 1);
-    free(button->impl.text);
-    button->impl.text = copy;
+    free(button->state.text);
+    button->state.text = copy;
     ui_widget_invalidate(&button->widget, UI_WIDGET_INVALIDATE_MEASURE);
     return true;
 }
 
 const char *ui_button_text(const struct ui_button *button)
 {
-    return button && button->impl.text ? button->impl.text : "";
+    return button && button->state.text ? button->state.text : "";
 }
 
 void ui_button_set_action_id(struct ui_button *button, int id)
@@ -291,7 +291,7 @@ void ui_button_set_action_id(struct ui_button *button, int id)
     if (!button)
         return;
     button_ensure_init(button);
-    button->impl.action_id = id;
+    button->state.action_id = id;
 }
 
 void ui_button_set_disabled(struct ui_button *button, bool disabled)
@@ -302,7 +302,7 @@ void ui_button_set_disabled(struct ui_button *button, bool disabled)
     ui_widget_set_focusable(&button->widget, !disabled);
     if (disabled)
         ui_widget_release_pointer(&button->widget);
-    unsigned state = button->impl.state;
+    unsigned state = button->state.flags;
     if (disabled)
         state = (state | BUTTON_DISABLED) &
                 ~(BUTTON_PRESSED | BUTTON_HOVERED | BUTTON_FOCUSED);
@@ -313,10 +313,10 @@ void ui_button_set_disabled(struct ui_button *button, bool disabled)
 
 bool ui_button_is_disabled(const struct ui_button *button)
 {
-    return button && (button->impl.state & BUTTON_DISABLED) != 0;
+    return button && (button->state.flags & BUTTON_DISABLED) != 0;
 }
 
 bool ui_button_is_pressed(const struct ui_button *button)
 {
-    return button && (button->impl.state & BUTTON_PRESSED) != 0;
+    return button && (button->state.flags & BUTTON_PRESSED) != 0;
 }

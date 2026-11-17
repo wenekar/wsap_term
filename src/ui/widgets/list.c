@@ -60,8 +60,8 @@ static bool selectable(const struct ui_list_item *it)
 
 static bool has_selectable_item(const struct ui_list *l)
 {
-    for (int i = 0; i < l->impl.n; i++)
-        if (selectable(&l->impl.items[i]))
+    for (int i = 0; i < l->state.n; i++)
+        if (selectable(&l->state.items[i]))
             return true;
     return false;
 }
@@ -95,20 +95,20 @@ static char *shortcut_text(const struct ui_list_item *it)
 
 static void free_items(struct ui_list *l)
 {
-    for (int i = 0; i < l->impl.n; i++) {
-        free((char *)l->impl.items[i].label);
-        free((char *)l->impl.items[i].shortcut);
+    for (int i = 0; i < l->state.n; i++) {
+        free((char *)l->state.items[i].label);
+        free((char *)l->state.items[i].shortcut);
     }
-    free(l->impl.items);
-    l->impl.items = NULL;
+    free(l->state.items);
+    l->state.items = NULL;
 }
 
 static void free_rows(struct ui_list *l)
 {
-    for (int i = 0; i < l->impl.n; i++)
-        ui_widget_destroy(&l->impl.rows[i].widget);
-    free(l->impl.rows);
-    l->impl.rows = NULL;
+    for (int i = 0; i < l->state.n; i++)
+        ui_widget_destroy(&l->state.rows[i].widget);
+    free(l->state.rows);
+    l->state.rows = NULL;
 }
 
 static int edge_or(struct css_value v, int fallback,
@@ -176,16 +176,16 @@ static bool same_scale(struct css_scale_context a, struct css_scale_context b)
 static void list_style_changed(struct ui_widget *widget)
 {
     struct ui_list *l = list_of(widget);
-    if (l->impl.pinned && l->impl.metrics.valid &&
-        same_scale(l->impl.metrics.scale, widget->style_scale))
+    if (l->state.pinned && l->state.metrics.valid &&
+        same_scale(l->state.metrics.scale, widget->style_scale))
         return;
-    l->impl.metrics = compute_metrics(l);
+    l->state.metrics = compute_metrics(l);
 }
 
 static struct vector2i row_size(const struct ui_list *l, int i)
 {
-    const struct ui_list_metrics *m = &l->impl.metrics;
-    const struct ui_list_item *it = &l->impl.items[i];
+    const struct ui_list_metrics *m = &l->state.metrics;
+    const struct ui_list_item *it = &l->state.items[i];
     if (it->flags & UI_LIST_ITEM_SEPARATOR)
         return (struct vector2i){
             .x = m->sep_margin.l + m->sep_margin.r,
@@ -203,10 +203,10 @@ static struct vector2i list_measure(const struct ui_widget *widget,
                                     struct ui_constraints constraints)
 {
     const struct ui_list *l = list_of(widget);
-    int pad = l->impl.metrics.edge_pad;
+    int pad = l->state.metrics.edge_pad;
     struct vector2i size = { .x = 2 * pad, .y = 2 * pad };
     int width = 0;
-    for (int i = 0; i < l->impl.n; i++) {
+    for (int i = 0; i < l->state.n; i++) {
         struct vector2i row = row_size(l, i);
         if (row.x > width)
             width = row.x;
@@ -219,11 +219,11 @@ static struct vector2i list_measure(const struct ui_widget *widget,
 static void list_layout(struct ui_widget *widget, struct rect2i bounds)
 {
     struct ui_list *l = list_of(widget);
-    int pad = l->impl.metrics.edge_pad;
+    int pad = l->state.metrics.edge_pad;
     int y = bounds.y + pad;
-    for (int i = 0; i < l->impl.n; i++) {
+    for (int i = 0; i < l->state.n; i++) {
         int h = row_size(l, i).y;
-        ui_widget_place(&l->impl.rows[i].widget, (struct rect2i){
+        ui_widget_place(&l->state.rows[i].widget, (struct rect2i){
             .pos = { .x = bounds.x + pad, .y = y },
             .size = { .x = bounds.width - 2 * pad, .y = h },
         });
@@ -239,10 +239,10 @@ static void list_paint(const struct ui_widget *widget,
     const struct css_scale_context *scale = &widget->style_scale;
     struct rect2i bounds = ui_paint_bounds(paint);
     struct ui_paint_box_style box = ui_paint_box_style_of(style, scale);
-    int max_radius = l->impl.metrics.edge_pad;
+    int max_radius = l->state.metrics.edge_pad;
     if (box.radius > max_radius)
         box.radius = max_radius;
-    if (style->has_shadow && !insets2i_eq(l->impl.metrics.shadow,
+    if (style->has_shadow && !insets2i_eq(l->state.metrics.shadow,
                                           (struct insets2i){0})) {
         int sx = ui_css_resolve_int(style->shadow_x, 0, 0, scale, true);
         int sy = ui_css_resolve_int(style->shadow_y, 0, 0, scale, true);
@@ -268,8 +268,8 @@ static void row_paint(const struct ui_widget *widget,
 {
     const struct ui_list_row *row = row_of(widget);
     const struct ui_list *l = row->list;
-    const struct ui_list_item *it = &l->impl.items[row->index];
-    const struct ui_list_metrics *m = &l->impl.metrics;
+    const struct ui_list_item *it = &l->state.items[row->index];
+    const struct ui_list_metrics *m = &l->state.metrics;
     const struct css_scale_context *scale = &l->widget.style_scale;
     struct rect2i box = ui_paint_bounds(paint);
     if (it->flags & UI_LIST_ITEM_SEPARATOR) {
@@ -283,8 +283,8 @@ static void row_paint(const struct ui_widget *widget,
         return;
     }
     unsigned pseudo = 0;
-    if (l->impl.hovered == row->index) pseudo |= CSS_PSEUDO_HOVER;
-    if (l->impl.selected == row->index) pseudo |= CSS_PSEUDO_FOCUS;
+    if (l->state.hovered == row->index) pseudo |= CSS_PSEUDO_HOVER;
+    if (l->state.selected == row->index) pseudo |= CSS_PSEUDO_FOCUS;
     if (it->flags & UI_LIST_ITEM_DISABLED) pseudo |= CSS_PSEUDO_DISABLED;
     if (it->flags & UI_LIST_ITEM_CHECKED) pseudo |= CSS_PSEUDO_CHECKED;
     struct css_style item = ui_widget_part(&l->widget, item_part(it), pseudo);
@@ -333,7 +333,7 @@ static void row_debug_parts(const struct ui_widget *widget,
                             struct ui_debug_parts *out)
 {
     const struct ui_list_row *row = row_of(widget);
-    const struct ui_list_item *it = &row->list->impl.items[row->index];
+    const struct ui_list_item *it = &row->list->state.items[row->index];
     ui_debug_part_text(out,
                        (it->flags & UI_LIST_ITEM_SEPARATOR) ? "separator" : "item",
                        row->index, widget->bounds, it->label,
@@ -345,16 +345,16 @@ static bool row_accessibility(const struct ui_widget *widget,
 {
     const struct ui_list_row *row = row_of(widget);
     const struct ui_list *list = row->list;
-    if (row->index < 0 || row->index >= list->impl.n)
+    if (row->index < 0 || row->index >= list->state.n)
         return false;
-    const struct ui_list_item *item = &list->impl.items[row->index];
+    const struct ui_list_item *item = &list->state.items[row->index];
     if (!item->label || (item->flags & UI_LIST_ITEM_SEPARATOR))
         return false;
     out->role = UI_ACCESSIBILITY_ROLE_LIST_ITEM;
     out->name = item->label;
     out->description = item->shortcut && item->shortcut[0]
         ? item->shortcut : NULL;
-    if (row->index == list->impl.selected) {
+    if (row->index == list->state.selected) {
         out->states |= UI_ACCESSIBILITY_STATE_SELECTED;
         if (ui_widget_has_focus(&list->widget))
             out->states |= UI_ACCESSIBILITY_STATE_FOCUSED;
@@ -380,12 +380,12 @@ static bool row_accessibility_action(
     struct ui_list *list = row->list;
     int index = row->index;
     if (node_id != ui_widget_accessibility_id(widget) ||
-        index < 0 || index >= list->impl.n ||
-        !selectable(&list->impl.items[index]))
+        index < 0 || index >= list->state.n ||
+        !selectable(&list->state.items[index]))
         return false;
     if (request->action == UI_ACCESSIBILITY_ACTION_FOCUS) {
         ui_widget_focus(&list->widget);
-        if (!list->widget.impl.destroyed)
+        if (!ui_widget_is_destroyed(&list->widget))
             ui_list_select(list, index);
         return true;
     }
@@ -406,36 +406,36 @@ static void notify(struct ui_list *l, enum ui_action_kind kind, int index)
 {
     ui_widget_notify(&l->widget, (struct ui_action){
         .kind = kind,
-        .id = index >= 0 ? l->impl.items[index].action : -1,
+        .id = index >= 0 ? l->state.items[index].action : -1,
         .index = index,
     });
 }
 
 static int row_at(const struct ui_list *l, struct vector2i pos)
 {
-    for (int i = 0; i < l->impl.n; i++)
-        if (rect2i_contains(l->impl.rows[i].widget.bounds, pos))
+    for (int i = 0; i < l->state.n; i++)
+        if (rect2i_contains(l->state.rows[i].widget.bounds, pos))
             return i;
     return -1;
 }
 
 static void set_hovered(struct ui_list *l, int index)
 {
-    if (l->impl.hovered == index)
+    if (l->state.hovered == index)
         return;
-    l->impl.hovered = index;
+    l->state.hovered = index;
     ui_widget_invalidate(&l->widget, UI_WIDGET_INVALIDATE_PAINT);
     notify(l, UI_ACTION_HIGHLIGHT, index);
 }
 
 void ui_list_select_edge(struct ui_list *l, int dir)
 {
-    if (!l || !l->impl.n || !dir)
+    if (!l || !l->state.n || !dir)
         return;
     dir = dir > 0 ? 1 : -1;
-    int start = dir > 0 ? 0 : l->impl.n - 1;
-    for (int i = start; i >= 0 && i < l->impl.n; i += dir)
-        if (selectable(&l->impl.items[i])) {
+    int start = dir > 0 ? 0 : l->state.n - 1;
+    for (int i = start; i >= 0 && i < l->state.n; i += dir)
+        if (selectable(&l->state.items[i])) {
             ui_list_select(l, i);
             return;
         }
@@ -443,21 +443,21 @@ void ui_list_select_edge(struct ui_list *l, int dir)
 
 static bool activate(struct ui_list *l, int index)
 {
-    if (index < 0 || !selectable(&l->impl.items[index]))
+    if (index < 0 || !selectable(&l->state.items[index]))
         return false;
     ui_list_select(l, index);
-    if (!l->widget.impl.destroyed)
+    if (!ui_widget_is_destroyed(&l->widget))
         notify(l, UI_ACTION_ACTIVATE, index);
     return true;
 }
 
 static void step_without_wrap(struct ui_list *l, int dir)
 {
-    int index = l->impl.selected;
+    int index = l->state.selected;
     if (index < 0)
-        index = dir > 0 ? -1 : l->impl.n;
-    for (index += dir; index >= 0 && index < l->impl.n; index += dir)
-        if (selectable(&l->impl.items[index])) {
+        index = dir > 0 ? -1 : l->state.n;
+    for (index += dir; index >= 0 && index < l->state.n; index += dir)
+        if (selectable(&l->state.items[index])) {
             ui_list_select(l, index);
             return;
         }
@@ -470,7 +470,7 @@ static bool list_key(struct ui_list *l, const struct ui_key_event *key)
     case UI_KEY_DOWN:
         if (key->action == UI_KEY_RELEASE)
             return true;
-        if (l->impl.stop_at_edges)
+        if (l->state.stop_at_edges)
             step_without_wrap(l, key->key == UI_KEY_DOWN ? 1 : -1);
         else
             ui_list_step(l, key->key == UI_KEY_DOWN ? 1 : -1);
@@ -482,9 +482,9 @@ static bool list_key(struct ui_list *l, const struct ui_key_event *key)
     case UI_KEY_ENTER: {
         if (key->action != UI_KEY_PRESS)
             return true;
-        int index = l->impl.selected;
+        int index = l->state.selected;
         if (index < 0 ||
-            (l->impl.items[index].flags & UI_LIST_ITEM_SUBMENU))
+            (l->state.items[index].flags & UI_LIST_ITEM_SUBMENU))
             return false;
         return activate(l, index);
     }
@@ -512,18 +512,18 @@ static bool list_event(struct ui_widget *widget, const struct ui_event *event)
         if (p->button != 0)
             return false;
         set_hovered(l, row_at(l, p->pos));
-        if (l->impl.hovered >= 0 &&
-            selectable(&l->impl.items[l->impl.hovered])) {
-            if (l->impl.allow_focus)
+        if (l->state.hovered >= 0 &&
+            selectable(&l->state.items[l->state.hovered])) {
+            if (l->state.allow_focus)
                 ui_widget_focus(widget);
         } else {
             struct ui_surface *surface = ui_widget_surface(widget);
             if (surface && !ui_surface_has_modal(surface))
                 ui_surface_focus(surface, NULL);
         }
-        return l->impl.hovered >= 0;
+        return l->state.hovered >= 0;
     case UI_POINTER_RELEASE:
-        return p->button == 0 && activate(l, l->impl.hovered);
+        return p->button == 0 && activate(l, l->state.hovered);
     default:
         return false;
     }
@@ -534,8 +534,8 @@ static enum ui_cursor list_cursor(const struct ui_widget *widget,
 {
     const struct ui_list *l = list_of(widget);
     (void)pos;
-    int index = l->impl.hovered;
-    if (index < 0 || index >= l->impl.n)
+    int index = l->state.hovered;
+    if (index < 0 || index >= l->state.n)
         return UI_CURSOR_AUTO;
     struct css_style style = ui_widget_part(widget, parts.item[0],
                                             CSS_PSEUDO_HOVER);
@@ -547,7 +547,7 @@ static void list_destroy(struct ui_widget *widget)
     struct ui_list *l = list_of(widget);
     free_rows(l);
     free_items(l);
-    l->impl.n = 0;
+    l->state.n = 0;
 }
 
 static bool list_accessibility(const struct ui_widget *widget,
@@ -577,9 +577,9 @@ void ui_list_init(struct ui_list *l)
         return;
     list_parts_init();
     *l = (struct ui_list){0};
-    l->impl.hovered = -1;
-    l->impl.selected = -1;
-    l->impl.allow_focus = true;
+    l->state.hovered = -1;
+    l->state.selected = -1;
+    l->state.allow_focus = true;
     ui_widget_init(&l->widget, &LIST_OPS, NULL);
     ui_widget_set_focusable(&l->widget, false);
     ui_list_set_style_class(l, NULL);
@@ -589,7 +589,7 @@ void ui_list_set_focusable(struct ui_list *l, bool focusable)
 {
     if (!l)
         return;
-    l->impl.allow_focus = focusable;
+    l->state.allow_focus = focusable;
     ui_widget_set_focusable(&l->widget, focusable && has_selectable_item(l));
 }
 
@@ -597,16 +597,16 @@ void ui_list_set_style_class(struct ui_list *l, const char *class_name)
 {
     if (!l)
         return;
-    snprintf(l->impl.style_class, sizeof(l->impl.style_class), "%s%smenu-list",
+    snprintf(l->state.style_class, sizeof(l->state.style_class), "%s%smenu-list",
              class_name ? class_name : "", class_name ? " " : "");
-    ui_widget_set_style_identity(&l->widget, l->impl.style_class, NULL, NULL);
+    ui_widget_set_style_identity(&l->widget, l->state.style_class, NULL, NULL);
 }
 
 void ui_list_set_wrap_navigation(struct ui_list *l, bool wrap)
 {
     if (!l)
         return;
-    l->impl.stop_at_edges = !wrap;
+    l->state.stop_at_edges = !wrap;
 }
 
 bool ui_list_set_items(struct ui_list *l, const struct ui_list_item *items,
@@ -616,26 +616,26 @@ bool ui_list_set_items(struct ui_list *l, const struct ui_list_item *items,
         return false;
     free_rows(l);
     free_items(l);
-    l->impl.n = 0;
-    l->impl.hovered = -1;
-    l->impl.selected = -1;
+    l->state.n = 0;
+    l->state.hovered = -1;
+    l->state.selected = -1;
     ui_widget_invalidate(&l->widget, UI_WIDGET_INVALIDATE_MEASURE);
     if (!items || n <= 0) {
         ui_widget_set_focusable(&l->widget, false);
         return true;
     }
-    l->impl.items = calloc((size_t)n, sizeof(*l->impl.items));
-    l->impl.rows = calloc((size_t)n, sizeof(*l->impl.rows));
-    if (!l->impl.items || !l->impl.rows) {
-        free(l->impl.items);
-        free(l->impl.rows);
-        l->impl.items = NULL;
-        l->impl.rows = NULL;
+    l->state.items = calloc((size_t)n, sizeof(*l->state.items));
+    l->state.rows = calloc((size_t)n, sizeof(*l->state.rows));
+    if (!l->state.items || !l->state.rows) {
+        free(l->state.items);
+        free(l->state.rows);
+        l->state.items = NULL;
+        l->state.rows = NULL;
         ui_widget_set_focusable(&l->widget, false);
         return false;
     }
     for (int i = 0; i < n; i++) {
-        struct ui_list_item *it = &l->impl.items[i];
+        struct ui_list_item *it = &l->state.items[i];
         *it = (struct ui_list_item){
             .action = items[i].action,
             .flags = items[i].flags,
@@ -647,14 +647,14 @@ bool ui_list_set_items(struct ui_list *l, const struct ui_list_item *items,
         else if (!(it->flags & UI_LIST_ITEM_SEPARATOR))
             it->shortcut = shortcut_text(&(struct ui_list_item){
                 .shortcut = items[i].shortcut, .flags = it->flags });
-        struct ui_list_row *row = &l->impl.rows[i];
+        struct ui_list_row *row = &l->state.rows[i];
         row->list = l;
         row->index = i;
         ui_widget_init(&row->widget, &ROW_OPS, NULL);
         ui_widget_add_child(&l->widget, &row->widget);
-        l->impl.n = i + 1;
+        l->state.n = i + 1;
     }
-    ui_widget_set_focusable(&l->widget, l->impl.allow_focus && has_selectable_item(l));
+    ui_widget_set_focusable(&l->widget, l->state.allow_focus && has_selectable_item(l));
     return true;
 }
 
@@ -662,56 +662,56 @@ void ui_list_pin_metrics(struct ui_list *l, const struct ui_list *like)
 {
     if (!l)
         return;
-    if (like && like->impl.metrics.valid)
-        l->impl.metrics = like->impl.metrics;
-    l->impl.pinned = true;
+    if (like && like->state.metrics.valid)
+        l->state.metrics = like->state.metrics;
+    l->state.pinned = true;
     ui_widget_invalidate(&l->widget, UI_WIDGET_INVALIDATE_MEASURE);
 }
 
 int ui_list_count(const struct ui_list *l)
 {
-    return l ? l->impl.n : 0;
+    return l ? l->state.n : 0;
 }
 
 const struct ui_list_item *ui_list_item(const struct ui_list *l, int index)
 {
-    return l && index >= 0 && index < l->impl.n ? &l->impl.items[index] : NULL;
+    return l && index >= 0 && index < l->state.n ? &l->state.items[index] : NULL;
 }
 
 int ui_list_selected(const struct ui_list *l)
 {
-    return l ? l->impl.selected : -1;
+    return l ? l->state.selected : -1;
 }
 
 int ui_list_hovered(const struct ui_list *l)
 {
-    return l ? l->impl.hovered : -1;
+    return l ? l->state.hovered : -1;
 }
 
 void ui_list_select(struct ui_list *l, int index)
 {
     if (!l)
         return;
-    if (index < 0 || index >= l->impl.n || !selectable(&l->impl.items[index]))
+    if (index < 0 || index >= l->state.n || !selectable(&l->state.items[index]))
         index = -1;
-    if (l->impl.selected == index)
+    if (l->state.selected == index)
         return;
-    l->impl.selected = index;
+    l->state.selected = index;
     ui_widget_invalidate(&l->widget, UI_WIDGET_INVALIDATE_PAINT);
     notify(l, UI_ACTION_CHANGE, index);
 }
 
 int ui_list_step(struct ui_list *l, int dir)
 {
-    if (!l || l->impl.n <= 0 || !dir)
+    if (!l || l->state.n <= 0 || !dir)
         return -1;
     dir = dir > 0 ? 1 : -1;
-    int i = l->impl.selected;
+    int i = l->state.selected;
     if (i < 0)
         i = dir > 0 ? -1 : 0;
-    for (int k = 0; k < l->impl.n; k++) {
-        i = (i + dir + l->impl.n) % l->impl.n;
-        if (selectable(&l->impl.items[i])) {
+    for (int k = 0; k < l->state.n; k++) {
+        i = (i + dir + l->state.n) % l->state.n;
+        if (selectable(&l->state.items[i])) {
             ui_list_select(l, i);
             return i;
         }
@@ -721,30 +721,30 @@ int ui_list_step(struct ui_list *l, int dir)
 
 struct rect2i ui_list_item_rect(const struct ui_list *l, int index)
 {
-    return l && index >= 0 && index < l->impl.n
-        ? l->impl.rows[index].widget.bounds : (struct rect2i){0};
+    return l && index >= 0 && index < l->state.n
+        ? l->state.rows[index].widget.bounds : (struct rect2i){0};
 }
 
 int ui_list_label_inset(const struct ui_list *l)
 {
-    return l ? l->impl.metrics.edge_pad + l->impl.metrics.item_pad.l : 0;
+    return l ? l->state.metrics.edge_pad + l->state.metrics.item_pad.l : 0;
 }
 
 struct insets2i ui_list_shadow(const struct ui_list *l)
 {
-    return l ? l->impl.metrics.shadow : (struct insets2i){0};
+    return l ? l->state.metrics.shadow : (struct insets2i){0};
 }
 
 int ui_list_row_height(const struct ui_list *l)
 {
-    if (!l || !l->impl.metrics.valid)
+    if (!l || !l->state.metrics.valid)
         return 0;
-    const struct ui_list_metrics *m = &l->impl.metrics;
+    const struct ui_list_metrics *m = &l->state.metrics;
     int row = m->cell_h + m->item_pad.t + m->item_pad.b;
     return row < m->min_h ? m->min_h : row;
 }
 
 int ui_list_edge_pad(const struct ui_list *l)
 {
-    return l && l->impl.metrics.valid ? l->impl.metrics.edge_pad : 0;
+    return l && l->state.metrics.valid ? l->state.metrics.edge_pad : 0;
 }

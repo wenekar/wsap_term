@@ -36,20 +36,20 @@ static bool show_label(struct ui_dropdown *d, const char *text)
 
 static bool filter(struct ui_dropdown *d)
 {
-    struct ui_list_item *items = calloc(d->impl.count ? d->impl.count : 1,
+    struct ui_list_item *items = calloc(d->state.count ? d->state.count : 1,
                                         sizeof(*items));
     if (!items)
         return false;
     const char *query = ui_input_text(&d->search);
     int count = 0, selected = -1;
-    for (size_t i = 0; i < d->impl.count; i++) {
-        if (!strcasestr(d->impl.items[i].label, query) &&
-            !strcasestr(d->impl.items[i].value, query))
+    for (size_t i = 0; i < d->state.count; i++) {
+        if (!strcasestr(d->state.items[i].label, query) &&
+            !strcasestr(d->state.items[i].value, query))
             continue;
-        if ((int)i == d->impl.selected) selected = count;
+        if ((int)i == d->state.selected) selected = count;
         items[count++] = (struct ui_list_item){
-            .label = d->impl.items[i].label, .action = (int)i,
-            .flags = (int)i == d->impl.selected ? UI_LIST_ITEM_CHECKED : 0,
+            .label = d->state.items[i].label, .action = (int)i,
+            .flags = (int)i == d->state.selected ? UI_LIST_ITEM_CHECKED : 0,
         };
     }
     bool ok = ui_list_set_items(&d->list, items, count);
@@ -130,18 +130,18 @@ static void step_selection(struct ui_dropdown *d, int dir)
 
 static void choose(struct ui_dropdown *d, int index)
 {
-    if (index < 0 || (size_t)index >= d->impl.count)
+    if (index < 0 || (size_t)index >= d->state.count)
         return;
-    if (!show_label(d, d->impl.items[index].label)) {
+    if (!show_label(d, d->state.items[index].label)) {
         ui_dropdown_close(d);
         return;
     }
-    bool changed = d->impl.selected != index;
-    d->impl.selected = index;
+    bool changed = d->state.selected != index;
+    d->state.selected = index;
     ui_dropdown_close(d);
     if (changed)
         ui_widget_notify(&d->widget, (struct ui_action){
-            .kind = UI_ACTION_CHANGE, .id = d->impl.action_id,
+            .kind = UI_ACTION_CHANGE, .id = d->state.action_id,
             .index = index,
         });
 }
@@ -243,10 +243,10 @@ static bool dropdown_accessibility(
                     UI_ACCESSIBILITY_ACTION_INVOKE;
     if (ui_widget_has_focus(&d->button.widget))
         out->states |= UI_ACCESSIBILITY_STATE_FOCUSED;
-    if (d->impl.open)
+    if (d->state.open)
         out->states |= UI_ACCESSIBILITY_STATE_EXPANDED;
-    if (d->impl.selected >= 0 && (size_t)d->impl.selected < d->impl.count)
-        out->value = d->impl.items[d->impl.selected].label;
+    if (d->state.selected >= 0 && (size_t)d->state.selected < d->state.count)
+        out->value = d->state.items[d->state.selected].label;
     return true;
 }
 
@@ -263,7 +263,7 @@ static bool dropdown_accessibility_action(
     }
     if (request->action != UI_ACCESSIBILITY_ACTION_INVOKE)
         return false;
-    if (d->impl.open) {
+    if (d->state.open) {
         ui_dropdown_close(d);
         return true;
     }
@@ -275,9 +275,9 @@ static void dropdown_destroy(struct ui_widget *widget)
     struct ui_dropdown *d = widget->userdata;
     ui_dropdown_close(d);
     ui_widget_destroy(&d->layer);
-    free_items(d->impl.items, d->impl.count);
-    d->impl.items = NULL;
-    d->impl.count = 0;
+    free_items(d->state.items, d->state.count);
+    d->state.items = NULL;
+    d->state.count = 0;
 }
 
 static const struct ui_widget_ops DROPDOWN_OPS = {
@@ -297,13 +297,12 @@ static struct vector2i layer_measure(const struct ui_widget *widget,
 static void layer_prepare(struct ui_widget *widget)
 {
     struct ui_dropdown *d = widget->userdata;
-    if (d->impl.open &&
+    if (d->state.open &&
         ui_widget_stale(ui_widget_surface(widget), &d->widget))
         ui_dropdown_close(d);
-    else if (d->impl.open) {
+    else if (d->state.open) {
         struct ui_widget *root = ui_surface_root(ui_widget_surface(widget));
-        if (root && (root->impl.invalidation &
-                     (UI_WIDGET_INVALIDATE_MEASURE | UI_WIDGET_INVALIDATE_LAYOUT)))
+        if (ui_widget_needs_layout(root))
             ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_LAYOUT);
     }
 }
@@ -339,7 +338,7 @@ static const struct ui_widget_ops LAYER_OPS = {
 void ui_dropdown_init(struct ui_dropdown *d)
 {
     *d = (struct ui_dropdown){0};
-    d->impl.selected = -1;
+    d->state.selected = -1;
     ui_widget_init(&d->widget, &DROPDOWN_OPS, d);
     ui_widget_set_style_identity(&d->widget, "dropdown", NULL, "dropdown");
     ui_button_init(&d->button);
@@ -396,10 +395,10 @@ bool ui_dropdown_set_items(struct ui_dropdown *d,
         return false;
     }
     ui_dropdown_close(d);
-    free_items(d->impl.items, d->impl.count);
-    d->impl.items = copy;
-    d->impl.count = count;
-    d->impl.selected = count ? 0 : -1;
+    free_items(d->state.items, d->state.count);
+    d->state.items = copy;
+    d->state.count = count;
+    d->state.selected = count ? 0 : -1;
     return true;
 }
 
@@ -409,14 +408,14 @@ bool ui_dropdown_set_value(struct ui_dropdown *d, const char *value)
         return false;
     ui_dropdown_widget(d);
     int selected = -1;
-    for (size_t i = 0; i < d->impl.count; i++)
-        if (!strcmp(d->impl.items[i].value, value ? value : "")) {
+    for (size_t i = 0; i < d->state.count; i++)
+        if (!strcmp(d->state.items[i].value, value ? value : "")) {
             selected = (int)i;
             break;
         }
-    if (!show_label(d, selected >= 0 ? d->impl.items[selected].label : "Choose"))
+    if (!show_label(d, selected >= 0 ? d->state.items[selected].label : "Choose"))
         return false;
-    d->impl.selected = selected;
+    d->state.selected = selected;
     return true;
 }
 
@@ -425,21 +424,21 @@ void ui_dropdown_set_action_id(struct ui_dropdown *d, int id)
     if (!d)
         return;
     ui_dropdown_widget(d);
-    d->impl.action_id = id;
+    d->state.action_id = id;
 }
 
 const char *ui_dropdown_value(const struct ui_dropdown *d)
 {
-    return d && d->impl.selected >= 0 ? d->impl.items[d->impl.selected].value : "";
+    return d && d->state.selected >= 0 ? d->state.items[d->state.selected].value : "";
 }
 
 bool ui_dropdown_open(struct ui_dropdown *d)
 {
     ui_dropdown_widget(d);
-    if (d->impl.open)
+    if (d->state.open)
         return true;
     struct ui_surface *surface = ui_widget_surface(&d->widget);
-    if (!surface || !d->impl.count)
+    if (!surface || !d->state.count)
         return false;
     ui_input_clear(&d->search);
     if (!filter(d))
@@ -452,7 +451,7 @@ bool ui_dropdown_open(struct ui_dropdown *d)
         ui_widget_set_hidden(&d->layer, true);
         return false;
     }
-    d->impl.open = true;
+    d->state.open = true;
     ui_surface_prepare(surface);
     ui_widget_focus(ui_input_widget(&d->search));
     reveal_selection(d);
@@ -461,9 +460,9 @@ bool ui_dropdown_open(struct ui_dropdown *d)
 
 void ui_dropdown_close(struct ui_dropdown *d)
 {
-    if (!d || !d->impl.open)
+    if (!d || !d->state.open)
         return;
-    d->impl.open = false;
+    d->state.open = false;
     ui_widget_set_hidden(&d->layer, true);
     struct ui_surface *surface = ui_widget_surface(&d->layer);
     if (surface)
@@ -475,5 +474,5 @@ void ui_dropdown_close(struct ui_dropdown *d)
 
 bool ui_dropdown_is_open(const struct ui_dropdown *d)
 {
-    return d && d->impl.open;
+    return d && d->state.open;
 }

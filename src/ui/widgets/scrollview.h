@@ -28,7 +28,7 @@ struct ui_scrollview {
         bool bar_off;
         bool fixed_bar;
         bool shown;
-    } impl;
+    } state;
 };
 
 void ui_scrollview_init(struct ui_scrollview *sv);

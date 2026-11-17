@@ -18,7 +18,7 @@ struct ui_box {
     struct ui_widget widget;
     struct {
         enum ui_box_direction direction;
-    } impl;
+    } state;
 };
 
 void ui_box_init(struct ui_box *box);

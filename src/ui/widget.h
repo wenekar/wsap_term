@@ -141,6 +141,9 @@ struct ui_surface *ui_widget_surface(const struct ui_widget *widget);
 void ui_widget_set_hidden(struct ui_widget *widget, bool hidden);
 /* Returns true when `widget` is marked hidden. */
 bool ui_widget_is_hidden(const struct ui_widget *widget);
+/* Returns true when `widget` was destroyed. Read this only while the storage
+ * of `widget` is alive, as inside a dispatch after a handler returns. */
+bool ui_widget_is_destroyed(const struct ui_widget *widget);
 /* Sets the placement descriptor of `widget`. */
 void ui_widget_set_placement(struct ui_widget *widget,
                              struct ui_placement placement);
@@ -158,6 +161,8 @@ void ui_widget_set_pointer_transparent(struct ui_widget *widget,
 /* Returns true when `widget` or a descendant of it needs a measure or a
  * layout pass. */
 bool ui_widget_needs_layout(const struct ui_widget *widget);
+/* Returns true when `widget` needs a measure pass. */
+bool ui_widget_needs_measure(const struct ui_widget *widget);
 /* Returns true when the style of `widget` is resolved and still matches the
  * current sheet of its surface. A widget outside a surface needs no sheet
  * match, so it is current once resolved. A false result means that the

@@ -9,9 +9,9 @@ struct ui_button {
     struct ui_widget widget;
     struct {
         char *text;
-        unsigned state;
+        unsigned flags;
         int action_id;
-    } impl;
+    } state;
 };
 
 void ui_button_init(struct ui_button *button);
