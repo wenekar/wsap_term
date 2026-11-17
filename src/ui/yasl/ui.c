@@ -34,7 +34,7 @@ struct css_scale_context window_ui_scale(const struct window *w)
         return (struct css_scale_context){0};
     const struct font_metrics *m = font_instance_metrics(ui->ui_font);
     return (struct css_scale_context){
-        .dpi_scale = (float)window_scale_120(w) / YASL_SCALE_UNIT,
+        .dpi_scale = (float)window_scale(w),
         .cell_w = (float)m->cell_w,
         .cell_h = (float)m->cell_h,
     };

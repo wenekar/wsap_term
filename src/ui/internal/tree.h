@@ -1,7 +1,7 @@
 #ifndef WSAP_UI_INTERNAL_TREE_H
 #define WSAP_UI_INTERNAL_TREE_H
 
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 
 struct ui_scene;
 

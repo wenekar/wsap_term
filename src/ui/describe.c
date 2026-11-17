@@ -1,7 +1,7 @@
 #include "ui/describe.h"
 
 #include "ui/surface.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 
 #include <limits.h>
 #include <stdint.h>

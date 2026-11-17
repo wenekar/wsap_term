@@ -1,6 +1,6 @@
 #include "ui/widgets/menu.h"
 
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 
 #include <ctype.h>
 #include <limits.h>
@@ -17,21 +17,21 @@ static struct ui_menu_level *level_of(const struct ui_widget *widget)
 
 static struct ui_menu_level *top_level(struct ui_menu *m)
 {
-    return m->impl.n_levels > 0 ? &m->levels[m->impl.n_levels - 1] : NULL;
+    return m->state.n_levels > 0 ? &m->levels[m->state.n_levels - 1] : NULL;
 }
 
 static void emit(struct ui_menu *m, struct ui_widget *source,
                  enum ui_action_kind kind, int id, int index)
 {
-    if (m->impl.actions.fn)
-        m->impl.actions.fn(source, &(struct ui_action){
+    if (m->state.actions.fn)
+        m->state.actions.fn(source, &(struct ui_action){
             .kind = kind, .id = id, .index = index,
-        }, m->impl.actions.userdata);
+        }, m->state.actions.userdata);
 }
 
 static void changed(struct ui_menu *m)
 {
-    m->impl.generation++;
+    m->state.generation++;
     ui_widget_invalidate(&m->levels[0].widget, UI_WIDGET_INVALIDATE_MEASURE);
 }
 
@@ -50,35 +50,35 @@ static void report_highlight(struct ui_menu *m)
     int index = highlighted(m);
     const struct ui_list_item *it = top ? ui_list_item(&top->list, index) : NULL;
     int action = it ? it->action : -1;
-    if (m->impl.highlight_known && action == m->impl.highlight)
+    if (m->state.highlight_known && action == m->state.highlight)
         return;
-    m->impl.highlight = action;
-    m->impl.highlight_known = true;
+    m->state.highlight = action;
+    m->state.highlight_known = true;
     emit(m, top ? &top->widget : NULL, UI_ACTION_HIGHLIGHT, action, index);
 }
 
 static void close_above(struct ui_menu *m, int depth)
 {
-    if (m->impl.n_levels > depth + 1) {
-        m->impl.n_levels = depth + 1;
+    if (m->state.n_levels > depth + 1) {
+        m->state.n_levels = depth + 1;
         changed(m);
     }
-    m->impl.pending_level = 0;
-    m->impl.aim_level = 0;
+    m->state.pending_level = 0;
+    m->state.aim_level = 0;
 }
 
 static bool open_submenu(struct ui_menu *m, int depth, int index,
                          bool select_first)
 {
-    if (depth + 1 >= UI_MENU_MAX_LEVELS || depth >= m->impl.n_levels)
+    if (depth + 1 >= UI_MENU_MAX_LEVELS || depth >= m->state.n_levels)
         return false;
     struct ui_menu_level *parent = &m->levels[depth];
     const struct ui_list_item *it = ui_list_item(&parent->list, index);
     if (!it || !(it->flags & UI_LIST_ITEM_SUBMENU))
         return false;
     int n = 0;
-    const ui_menu_item *items = m->impl.submenu
-        ? m->impl.submenu(m->impl.submenu_userdata, it->action, &n) : NULL;
+    const ui_menu_item *items = m->state.submenu
+        ? m->state.submenu(m->state.submenu_userdata, it->action, &n) : NULL;
     close_above(m, depth);
     if (!items || n <= 0)
         return false;
@@ -87,7 +87,7 @@ static bool open_submenu(struct ui_menu *m, int depth, int index,
         return false;
     ui_list_pin_metrics(&child->list, &m->levels[0].list);
     child->parent_item = index;
-    m->impl.n_levels = depth + 2;
+    m->state.n_levels = depth + 2;
     changed(m);
     if (select_first)
         ui_list_step(&child->list, 1);
@@ -125,47 +125,47 @@ static void pointer_moved(struct ui_menu *m, struct ui_menu_level *level,
                           struct vector2i pos)
 {
     int depth = level->depth;
-    if (m->impl.aim_level && depth >= m->impl.aim_level)
-        m->impl.aim_level = 0;
+    if (m->state.aim_level && depth >= m->state.aim_level)
+        m->state.aim_level = 0;
     int hovered = ui_list_hovered(&level->list);
-    bool child_open = depth + 1 < m->impl.n_levels;
+    bool child_open = depth + 1 < m->state.n_levels;
     if (child_open && hovered != m->levels[depth + 1].parent_item) {
         struct rect2i sub = child_rect(m, depth);
-        int dx = pos.x - m->impl.last_pointer.x;
-        bool toward = (sub.x > m->impl.last_pointer.x && dx > 0) ||
-                      (rect2i_end(sub).x < m->impl.last_pointer.x && dx < 0);
+        int dx = pos.x - m->state.last_pointer.x;
+        bool toward = (sub.x > m->state.last_pointer.x && dx > 0) ||
+                      (rect2i_end(sub).x < m->state.last_pointer.x && dx < 0);
         if (toward) {
-            m->impl.aim_level = depth + 1;
-            m->impl.aim_deadline = m->impl.now_ms + MENU_AIM_GRACE_MS;
+            m->state.aim_level = depth + 1;
+            m->state.aim_deadline = m->state.now_ms + MENU_AIM_GRACE_MS;
         } else {
             close_above(m, depth);
             child_open = false;
         }
     } else if (child_open) {
-        m->impl.aim_level = 0;
+        m->state.aim_level = 0;
     }
 
     const struct ui_list_item *it = ui_list_item(&level->list, hovered);
     bool opens_child = child_open &&
                        m->levels[depth + 1].parent_item == hovered;
     if (it && (it->flags & UI_LIST_ITEM_SUBMENU) && !opens_child &&
-        !m->impl.aim_level) {
-        m->impl.pending_level = depth + 1;
-        m->impl.pending_item = hovered;
-        m->impl.hover_deadline = m->impl.now_ms +
-            (m->impl.hover_delay_ms ? m->impl.hover_delay_ms
+        !m->state.aim_level) {
+        m->state.pending_level = depth + 1;
+        m->state.pending_item = hovered;
+        m->state.hover_deadline = m->state.now_ms +
+            (m->state.hover_delay_ms ? m->state.hover_delay_ms
                                     : MENU_HOVER_DELAY_MS);
-    } else if (m->impl.pending_level == depth + 1 &&
-               m->impl.pending_item != hovered) {
-        m->impl.pending_level = 0;
+    } else if (m->state.pending_level == depth + 1 &&
+               m->state.pending_item != hovered) {
+        m->state.pending_level = 0;
     }
-    m->impl.last_pointer = pos;
+    m->state.last_pointer = pos;
     report_highlight(m);
 }
 
 static void pop_level(struct ui_menu *m)
 {
-    close_above(m, m->impl.n_levels - 2);
+    close_above(m, m->state.n_levels - 2);
     report_highlight(m);
 }
 
@@ -205,14 +205,14 @@ static void menu_key(struct ui_menu *m, const struct ui_key_event *key)
     bool ctrl = key->mods & UI_MOD_CTRL;
     switch (key->key) {
     case UI_KEY_ESCAPE:
-        if (m->impl.n_levels > 1)
+        if (m->state.n_levels > 1)
             pop_level(m);
         else
             ui_menu_close(m);
         return;
     case UI_KEY_LEFT:
     case UI_KEY_BACKSPACE:
-        if (m->impl.n_levels > 1)
+        if (m->state.n_levels > 1)
             pop_level(m);
         return;
     case UI_KEY_UP:
@@ -248,7 +248,7 @@ static void menu_key(struct ui_menu *m, const struct ui_key_event *key)
         return;
     case UI_KEY_CHAR:
         if (ctrl && (key->text == 'c' || key->text == 'C')) {
-            if (m->impl.n_levels > 1)
+            if (m->state.n_levels > 1)
                 pop_level(m);
             else
                 ui_menu_close(m);
@@ -268,13 +268,13 @@ static bool level_event(struct ui_widget *widget, const struct ui_event *event)
     struct ui_menu_level *level = level_of(widget);
     struct ui_menu *m = level->menu;
     if (event->time_ms)
-        m->impl.now_ms = event->time_ms;
+        m->state.now_ms = event->time_ms;
     switch (event->kind) {
     case UI_EVENT_KEY:
         menu_key(m, &event->data.key);
         return true;
     case UI_EVENT_TEXT:
-        for (size_t i = 0; m->impl.open && i < event->data.text.len; i++) {
+        for (size_t i = 0; m->state.open && i < event->data.text.len; i++) {
             unsigned char c = (unsigned char)event->data.text.data[i];
             if (c < 0x80)
                 menu_key(m, &(struct ui_key_event){
@@ -283,7 +283,7 @@ static bool level_event(struct ui_widget *widget, const struct ui_event *event)
         }
         return true;
     case UI_EVENT_POINTER:
-        if (event->data.pointer.kind == UI_POINTER_MOTION && m->impl.open)
+        if (event->data.pointer.kind == UI_POINTER_MOTION && m->state.open)
             pointer_moved(m, level, event->data.pointer.pos);
         return true;
     case UI_EVENT_FOCUS_IN:
@@ -339,8 +339,8 @@ void ui_menu_destroy(struct ui_menu *m)
 {
     if (!m)
         return;
-    m->impl.open = false;
-    m->impl.n_levels = 0;
+    m->state.open = false;
+    m->state.n_levels = 0;
     for (int i = 0; i < UI_MENU_MAX_LEVELS; i++)
         ui_widget_destroy(&m->levels[i].widget);
 }
@@ -349,7 +349,7 @@ void ui_menu_set_action_handler(struct ui_menu *m, ui_action_fn fn,
                                 void *userdata)
 {
     if (m)
-        m->impl.actions = (struct ui_action_handler){ fn, userdata };
+        m->state.actions = (struct ui_action_handler){ fn, userdata };
 }
 
 void ui_menu_set_submenu_provider(struct ui_menu *m, ui_menu_submenu_fn fn,
@@ -357,14 +357,14 @@ void ui_menu_set_submenu_provider(struct ui_menu *m, ui_menu_submenu_fn fn,
 {
     if (!m)
         return;
-    m->impl.submenu = fn;
-    m->impl.submenu_userdata = userdata;
+    m->state.submenu = fn;
+    m->state.submenu_userdata = userdata;
 }
 
 void ui_menu_set_hover_delay(struct ui_menu *m, uint32_t ms)
 {
     if (m)
-        m->impl.hover_delay_ms = ms;
+        m->state.hover_delay_ms = ms;
 }
 
 bool ui_menu_open(struct ui_menu *m, const ui_menu_item *items, int n)
@@ -375,14 +375,14 @@ bool ui_menu_open(struct ui_menu *m, const ui_menu_item *items, int n)
     struct ui_menu_level *root = &m->levels[0];
     if (!ui_list_set_items(&root->list, items, n))
         return false;
-    root->list.impl.metrics.valid = false;
-    root->list.widget.impl.style_valid = false;
+    root->list.state.metrics.valid = false;
+    ui_widget_restyle(&root->list.widget);
     ui_list_pin_metrics(&root->list, NULL);
-    m->impl.n_levels = 1;
-    m->impl.open = true;
-    m->impl.highlight_known = false;
-    m->impl.pending_level = 0;
-    m->impl.aim_level = 0;
+    m->state.n_levels = 1;
+    m->state.open = true;
+    m->state.highlight_known = false;
+    m->state.pending_level = 0;
+    m->state.aim_level = 0;
     changed(m);
     return true;
 }
@@ -392,49 +392,49 @@ void ui_menu_close(struct ui_menu *m)
     if (!ui_menu_is_open(m))
         return;
     struct ui_widget *source = &m->levels[0].widget;
-    m->impl.open = false;
-    m->impl.n_levels = 0;
-    m->impl.pending_level = 0;
-    m->impl.aim_level = 0;
+    m->state.open = false;
+    m->state.n_levels = 0;
+    m->state.pending_level = 0;
+    m->state.aim_level = 0;
     changed(m);
     emit(m, source, UI_ACTION_CLOSE, -1, -1);
 }
 
 bool ui_menu_is_open(const struct ui_menu *m)
 {
-    return m && m->impl.open;
+    return m && m->state.open;
 }
 
 uint32_t ui_menu_generation(const struct ui_menu *m)
 {
-    return m ? m->impl.generation : 0;
+    return m ? m->state.generation : 0;
 }
 
 int ui_menu_level_count(const struct ui_menu *m)
 {
-    return m ? m->impl.n_levels : 0;
+    return m ? m->state.n_levels : 0;
 }
 
 struct ui_widget *ui_menu_level_widget(struct ui_menu *m, int depth)
 {
-    return m && depth >= 0 && depth < m->impl.n_levels
+    return m && depth >= 0 && depth < m->state.n_levels
         ? &m->levels[depth].widget : NULL;
 }
 
 struct rect2i ui_menu_level_anchor(const struct ui_menu *m, int depth)
 {
-    if (!m || depth <= 0 || depth >= m->impl.n_levels)
+    if (!m || depth <= 0 || depth >= m->state.n_levels)
         return (struct rect2i){0};
     const struct ui_menu_level *child = &m->levels[depth];
     struct rect2i row = ui_list_item_rect(&m->levels[depth - 1].list,
                                           child->parent_item);
-    row.y -= child->list.impl.metrics.edge_pad;
+    row.y -= child->list.state.metrics.edge_pad;
     return row;
 }
 
 struct insets2i ui_menu_level_shadow(const struct ui_menu *m, int depth)
 {
-    return m && depth >= 0 && depth < m->impl.n_levels
+    return m && depth >= 0 && depth < m->state.n_levels
         ? ui_list_shadow(&m->levels[depth].list) : (struct insets2i){0};
 }
 
@@ -442,17 +442,17 @@ uint64_t ui_menu_tick(struct ui_menu *m, uint64_t now_ms)
 {
     if (!ui_menu_is_open(m))
         return 0;
-    m->impl.now_ms = now_ms;
-    if (m->impl.pending_level && now_ms >= m->impl.hover_deadline) {
-        int depth = m->impl.pending_level - 1;
-        m->impl.pending_level = 0;
-        open_submenu(m, depth, m->impl.pending_item, false);
+    m->state.now_ms = now_ms;
+    if (m->state.pending_level && now_ms >= m->state.hover_deadline) {
+        int depth = m->state.pending_level - 1;
+        m->state.pending_level = 0;
+        open_submenu(m, depth, m->state.pending_item, false);
     }
-    if (m->impl.aim_level && now_ms >= m->impl.aim_deadline)
-        close_above(m, m->impl.aim_level - 1);
-    uint64_t next = m->impl.pending_level ? m->impl.hover_deadline : 0;
-    if (m->impl.aim_level && (!next || m->impl.aim_deadline < next))
-        next = m->impl.aim_deadline;
+    if (m->state.aim_level && now_ms >= m->state.aim_deadline)
+        close_above(m, m->state.aim_level - 1);
+    uint64_t next = m->state.pending_level ? m->state.hover_deadline : 0;
+    if (m->state.aim_level && (!next || m->state.aim_deadline < next))
+        next = m->state.aim_deadline;
     return next;
 }
 
@@ -465,13 +465,13 @@ static struct ui_menu_layer *layer_of(const struct ui_widget *widget)
 static void layer_prepare(struct ui_widget *widget)
 {
     struct ui_menu_layer *layer = layer_of(widget);
-    struct ui_menu *m = layer->impl.menu;
+    struct ui_menu *m = layer->state.menu;
     uint32_t gen = ui_menu_generation(m);
-    if (!layer->impl.stale && layer->impl.shown == gen)
+    if (!layer->state.stale && layer->state.shown == gen)
         return;
-    layer->impl.stale = false;
-    layer->impl.shown = gen;
-    int first = layer->impl.first_level;
+    layer->state.stale = false;
+    layer->state.shown = gen;
+    int first = layer->state.first_level;
     int count = ui_menu_level_count(m);
     for (struct ui_widget *c = widget->first_child, *next; c; c = next) {
         next = c->next_sibling;
@@ -482,7 +482,7 @@ static void layer_prepare(struct ui_widget *widget)
     for (int d = first; d < count; d++) {
         struct ui_widget *level = ui_menu_level_widget(m, d);
         struct rect2i anchor = d == 0
-            ? (struct rect2i){ .pos = layer->impl.origin }
+            ? (struct rect2i){ .pos = layer->state.origin }
             : ui_menu_level_anchor(m, d);
         ui_widget_set_placement(level, (struct ui_placement){
             .kind = UI_PLACE_RIGHT, .anchor = anchor,
@@ -501,7 +501,7 @@ static bool layer_event(struct ui_widget *widget, const struct ui_event *event)
     if (event->kind != UI_EVENT_POINTER)
         return false;
     if (ui_pointer_is_button_press(&event->data.pointer))
-        ui_menu_close(layer_of(widget)->impl.menu);
+        ui_menu_close(layer_of(widget)->state.menu);
     return true;
 }
 
@@ -515,7 +515,7 @@ void ui_menu_layer_init(struct ui_menu_layer *layer, struct ui_menu *menu)
 {
     if (!layer)
         return;
-    *layer = (struct ui_menu_layer){ .impl.menu = menu, .impl.stale = true };
+    *layer = (struct ui_menu_layer){ .state.menu = menu, .state.stale = true };
     ui_widget_init(&layer->widget, &LAYER_OPS, NULL);
     ui_widget_set_modal(&layer->widget, true);
     ui_widget_set_hidden(&layer->widget, true);
@@ -526,8 +526,8 @@ void ui_menu_layer_set_origin(struct ui_menu_layer *layer,
 {
     if (!layer)
         return;
-    layer->impl.origin = origin;
-    layer->impl.stale = true;
+    layer->state.origin = origin;
+    layer->state.stale = true;
     ui_widget_invalidate(&layer->widget, UI_WIDGET_INVALIDATE_MEASURE);
 }
 
@@ -539,10 +539,10 @@ void ui_menu_layer_set_first_level(struct ui_menu_layer *layer, int first)
         first = 0;
     if (first > UI_MENU_MAX_LEVELS)
         first = UI_MENU_MAX_LEVELS;
-    if (layer->impl.first_level == first)
+    if (layer->state.first_level == first)
         return;
-    layer->impl.first_level = first;
-    layer->impl.stale = true;
+    layer->state.first_level = first;
+    layer->state.stale = true;
     ui_widget_invalidate(&layer->widget, UI_WIDGET_INVALIDATE_MEASURE);
 }
 

@@ -8,7 +8,7 @@
 #include "ui/debug.h"
 #include "paint/scene.h"
 #include "ui/ui.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 #include "app/tabs/tabbar.h"
 #include <wsap_vtcore/unicode/utf8.h>
 

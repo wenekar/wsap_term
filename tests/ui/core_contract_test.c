@@ -2,7 +2,7 @@
 #include <string.h>
 
 #include "ui/ui.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 #include "ui/widgets/scrollview.h"
 
 static void click(struct ui_surface *surface, struct vector2i pos)
@@ -59,10 +59,10 @@ static void topmost_child_receives_pointer_test(void)
         .kind = UI_POINTER_MOTION, .pos = { .x = 4, .y = 4 },
     }, 0);
     ui_surface_dispatch(&surface, &motion);
-    assert(upper.widget.impl.style_pseudo & CSS_PSEUDO_HOVER);
+    assert(ui_widget_style_pseudo(&upper.widget) & CSS_PSEUDO_HOVER);
     motion.data.pointer.pos = (struct vector2i){ .x = 90, .y = 40 };
     ui_surface_dispatch(&surface, &motion);
-    assert(!(upper.widget.impl.style_pseudo & CSS_PSEUDO_HOVER));
+    assert(!(ui_widget_style_pseudo(&upper.widget) & CSS_PSEUDO_HOVER));
 
     click(&surface, (struct vector2i){ .x = 4, .y = 4 });
     assert(lower_clicks == 0);
@@ -146,7 +146,7 @@ static void action_bubbles_and_can_destroy_source_test(void)
 
     click(&surface, (struct vector2i){ .x = 4, .y = 4 });
     assert(state.calls == 1);
-    assert(button.widget.impl.destroyed);
+    assert(ui_widget_is_destroyed(&button.widget));
     assert(ui_widget_child_count(&root.widget) == 0);
 
     ui_surface_destroy(&surface);

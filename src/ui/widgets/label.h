@@ -49,7 +49,7 @@ struct ui_label {
         enum ui_label_wrap wrap;
         enum ui_label_align align;
         bool selectable, disabled;
-    } impl;
+    } state;
 };
 
 void ui_label_init(struct ui_label *label);

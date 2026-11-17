@@ -29,7 +29,7 @@ struct ui_input {
         size_t edit_caret;
         int action_id;
         bool blink_on;
-    } impl;
+    } state;
 };
 
 void ui_input_init(struct ui_input *in);

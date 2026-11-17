@@ -305,7 +305,7 @@ gdb -ex "source scripts/gdb_ui_inspector.py" build-debug/bin/wsap_term
 (gdb) ui-cmd tree --depth 1
 (gdb) ui-cmd -p 0 lint
 (gdb) ui-tree
-(gdb) ui-widget &((struct terminal *)w->ui.spec.content)->tabbar.widget
+(gdb) ui-widget &((struct app_tabs *)w->ui.spec.content)->tabbar.widget
 ```
 
 A window embeds its UI state in `w->ui` as a `struct window_ui`.

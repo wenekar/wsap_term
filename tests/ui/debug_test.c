@@ -4,9 +4,9 @@
 #include <string.h>
 
 #include "ui/debug.h"
-#include "ui/internal/tree.h"
 #include "ui/paint.h"
 #include "ui/surface.h"
+#include "ui/widget_ops.h"
 #include "paint/scene.h"
 #include "ui/widget.h"
 #include "util/json.h"
@@ -61,9 +61,20 @@ struct traced {
     struct ui_scene scene;
 };
 
+/* Builds the scene of `root` through a surface, as the app does. */
+static bool build_scene(struct ui_widget *root, struct ui_scene *scene)
+{
+    struct ui_surface surface = {0};
+    ui_surface_init(&surface, NULL, NULL);
+    bool ok = ui_surface_set_root(&surface, root);
+    bool valid = ok && ui_surface_build_scene(&surface, scene);
+    ui_surface_destroy(&surface);
+    return valid;
+}
+
 static struct ui_debug_view build(struct traced *t, struct ui_widget *root)
 {
-    assert(ui_widget_build_scene(root, &t->scene));
+    assert(build_scene(root, &t->scene));
     return (struct ui_debug_view){ .root = root, .scene = &t->scene };
 }
 

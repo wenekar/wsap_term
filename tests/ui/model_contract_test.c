@@ -4,7 +4,7 @@
 
 #include "ui/ui.h"
 #include "ui/debug.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 
 static const struct css_scale_context SCALE = {
     .dpi_scale = 1, .cell_w = 8, .cell_h = 16,

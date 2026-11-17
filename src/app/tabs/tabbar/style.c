@@ -1,7 +1,7 @@
 #include "app/tabs/tabbar/internal.h"
 
-#include "ui/ui_util.h"
-#include "ui/widget_impl.h"
+#include "ui/css.h"
+#include "ui/widget_ops.h"
 
 static struct tb_parts parts;
 

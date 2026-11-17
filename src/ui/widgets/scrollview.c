@@ -4,8 +4,8 @@
 #include "ui/debug.h"
 #include "ui/internal/tree.h"
 #include "ui/paint.h"
-#include "ui/ui_util.h"
-#include "ui/widget_impl.h"
+#include "ui/css.h"
+#include "ui/widget_ops.h"
 
 #include <limits.h>
 #include <math.h>
@@ -65,19 +65,19 @@ static struct ui_widget *sv_child(const struct ui_scrollview *sv)
 
 static bool is_overlay(const struct ui_scrollview *sv)
 {
-    return !sv->impl.fixed_bar;
+    return !sv->state.fixed_bar;
 }
 
 static int sv_step(const struct ui_scrollview *sv)
 {
-    if (sv->impl.scroll_step > 0)
-        return sv->impl.scroll_step;
+    if (sv->state.scroll_step > 0)
+        return sv->state.scroll_step;
     return ui_px(sv->widget.style_scale.dpi_scale, 3 * UI_DEFAULT_CELL_H);
 }
 
 static int sv_max_offset(const struct ui_scrollview *sv)
 {
-    if (sv->impl.has_metrics)
+    if (sv->state.has_metrics)
         return 0;
     int64_t max = (int64_t)ui_scrollview_content_height(sv) -
                   sv->widget.bounds.height;
@@ -126,24 +126,24 @@ static struct bar_skin bar_skin(const struct ui_scrollview *sv, int state)
 
 static struct ui_scroll_metrics bar_metrics(const struct ui_scrollview *sv)
 {
-    if (sv->impl.has_metrics)
-        return sv->impl.metrics;
+    if (sv->state.has_metrics)
+        return sv->state.metrics;
     int max = sv_max_offset(sv);
     return (struct ui_scroll_metrics){
         .history_lines = max,
         .visible_lines = sv->widget.bounds.height,
-        .view_offset = max - sv->impl.scroll_y,
+        .view_offset = max - sv->state.scroll_y,
     };
 }
 
 static bool bar_visible(const struct ui_scrollview *sv)
 {
-    return !sv->impl.bar_off && (!is_overlay(sv) || sv->impl.shown);
+    return !sv->state.bar_off && (!is_overlay(sv) || sv->state.shown);
 }
 
 static int bar_reserve(const struct ui_scrollview *sv)
 {
-    if (sv->impl.bar_off || is_overlay(sv))
+    if (sv->state.bar_off || is_overlay(sv))
         return 0;
     struct bar_skin s = bar_skin(sv, BAR_IDLE);
     return s.margin.l + s.track_w + s.margin.r;
@@ -157,7 +157,7 @@ static int geometry_state(const struct ui_scrollview *sv, int state)
 static bool bar_geometry(const struct ui_scrollview *sv, int state,
                          struct bar *out)
 {
-    if (sv->impl.bar_off)
+    if (sv->state.bar_off)
         return false;
     struct bar_skin s = bar_skin(sv, geometry_state(sv, state));
     struct ui_scroll_metrics m = bar_metrics(sv);
@@ -195,28 +195,28 @@ static bool bar_geometry(const struct ui_scrollview *sv, int state,
 
 static void set_bar_state(struct ui_scrollview *sv, int state)
 {
-    if (sv->impl.bar_state == state)
+    if (sv->state.bar_state == state)
         return;
-    sv->impl.bar_state = state;
+    sv->state.bar_state = state;
     if (state == BAR_IDLE)
-        sv->impl.hide_at = 0;
+        sv->state.hide_at = 0;
     else
-        sv->impl.shown = true;
+        sv->state.shown = true;
     ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_LAYOUT);
 }
 
 static void set_scroll(struct ui_scrollview *sv, int y)
 {
     int clamped = geom_clamp_i(y, 0, sv_max_offset(sv));
-    if (clamped == sv->impl.scroll_y)
+    if (clamped == sv->state.scroll_y)
         return;
-    sv->impl.scroll_y = clamped;
+    sv->state.scroll_y = clamped;
     ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_LAYOUT);
 }
 
 static void emit_offset(struct ui_scrollview *sv, int offset)
 {
-    if (offset == sv->impl.metrics.view_offset)
+    if (offset == sv->state.metrics.view_offset)
         return;
     ui_widget_notify(&sv->widget, (struct ui_action){
         .kind = UI_ACTION_CHANGE, .index = offset,
@@ -226,14 +226,14 @@ static void emit_offset(struct ui_scrollview *sv, int offset)
 static void bar_drag_to(struct ui_scrollview *sv, int y)
 {
     struct bar g = {0};
-    int state = sv->impl.bar_state;
+    int state = sv->state.bar_state;
     int travel = bar_geometry(sv, state, &g) ? g.travel : 0;
     struct bar_skin s = bar_skin(sv, geometry_state(sv, state));
     int top = travel > 0
-        ? geom_clamp_i(y - sv->impl.grab_y - s.margin.t - s.pad.t, 0, travel)
+        ? geom_clamp_i(y - sv->state.grab_y - s.margin.t - s.pad.t, 0, travel)
         : 0;
-    if (sv->impl.has_metrics) {
-        int history = sv->impl.metrics.history_lines;
+    if (sv->state.has_metrics) {
+        int history = sv->state.metrics.history_lines;
         if (travel > 0)
             emit_offset(sv, history -
                 (int)(((int64_t)top * history + travel / 2) / travel));
@@ -245,24 +245,24 @@ static void bar_drag_to(struct ui_scrollview *sv, int y)
 
 static bool wheel(struct ui_scrollview *sv, const struct ui_pointer_event *p)
 {
-    if (sv->impl.has_metrics || !rect2i_contains(sv->widget.bounds, p->pos) ||
+    if (sv->state.has_metrics || !rect2i_contains(sv->widget.bounds, p->pos) ||
         ui_pointer_is_horizontal_wheel(p))
         return false;
-    int before = sv->impl.scroll_y;
+    int before = sv->state.scroll_y;
     float delta = p->scroll_delta != 0.0f
         ? p->scroll_delta : (float)p->scroll_lines;
-    float pixels = sv->impl.scroll_remainder - delta * sv_step(sv);
+    float pixels = sv->state.scroll_remainder - delta * sv_step(sv);
     const float limit = (float)(1 << 24);
     pixels = isnan(pixels) ? 0.0f : fminf(fmaxf(pixels, -limit), limit);
     int dy = (int)pixels;
-    sv->impl.scroll_remainder = pixels - (float)dy;
+    sv->state.scroll_remainder = pixels - (float)dy;
     ui_scrollview_scroll_by(sv, dy);
-    return sv->impl.scroll_y != before;
+    return sv->state.scroll_y != before;
 }
 
 static int hit_state(const struct ui_scrollview *sv)
 {
-    return sv->impl.bar_state == BAR_PRESSED ? BAR_PRESSED : BAR_HOVER;
+    return sv->state.bar_state == BAR_PRESSED ? BAR_PRESSED : BAR_HOVER;
 }
 
 static bool over_track(const struct ui_scrollview *sv, struct vector2i local,
@@ -297,7 +297,7 @@ static bool scrollview_event(struct ui_widget *widget,
     }
     if (event->kind == UI_EVENT_KEY &&
         (event->data.key.key == UI_KEY_PAGE_UP || event->data.key.key == UI_KEY_PAGE_DOWN)) {
-        if (sv->impl.has_metrics)
+        if (sv->state.has_metrics)
             return false;
         ui_scrollview_scroll_by(sv, (event->data.key.key == UI_KEY_PAGE_UP ? -1 : 1) *
                                     widget->bounds.height);
@@ -332,7 +332,7 @@ static bool scrollview_event(struct ui_widget *widget,
             return !captured && forward_to_child(sv, event);
         set_bar_state(sv, BAR_PRESSED);
         bar_geometry(sv, BAR_PRESSED, &g);
-        sv->impl.grab_y = local.y >= g.thumb.y && local.y < rect2i_end(g.thumb).y
+        sv->state.grab_y = local.y >= g.thumb.y && local.y < rect2i_end(g.thumb).y
             ? local.y - g.thumb.y : g.thumb.height / 2;
         ui_widget_capture_pointer(widget);
         bar_drag_to(sv, local.y);
@@ -347,7 +347,7 @@ static bool scrollview_event(struct ui_widget *widget,
         set_bar_state(sv, over_track(sv, local, BAR_HOVER) ? BAR_HOVER : BAR_IDLE);
         return true;
     case UI_POINTER_SCROLL:
-        if ((sv->impl.has_metrics || !bar_visible(sv)) &&
+        if ((sv->state.has_metrics || !bar_visible(sv)) &&
             over_track(sv, local, hit_state(sv)) && forward_to_child(sv, event))
             return true;
         return wheel(sv, p);
@@ -389,9 +389,9 @@ static void bar_paint(const struct ui_widget *widget,
 {
     struct ui_scrollview *sv = widget->userdata;
     struct bar g = {0};
-    if (!bar_visible(sv) || !bar_geometry(sv, sv->impl.bar_state, &g))
+    if (!bar_visible(sv) || !bar_geometry(sv, sv->state.bar_state, &g))
         return;
-    struct bar_skin s = bar_skin(sv, sv->impl.bar_state);
+    struct bar_skin s = bar_skin(sv, sv->state.bar_state);
     struct rect2i track = { .size = widget->bounds.size };
     if (!ui_paint_box(paint, track, &s.track_box, NULL))
         return;
@@ -406,7 +406,7 @@ static void bar_parts(const struct ui_widget *widget, struct ui_debug_parts *out
 {
     struct ui_scrollview *sv = widget->userdata;
     struct bar g = {0};
-    if (!bar_visible(sv) || !bar_geometry(sv, sv->impl.bar_state, &g))
+    if (!bar_visible(sv) || !bar_geometry(sv, sv->state.bar_state, &g))
         return;
     ui_debug_part(out, "scroll-track", -1, widget->bounds);
     struct rect2i thumb = rect2i_translate(g.thumb, (struct vector2i){
@@ -426,13 +426,13 @@ static const struct ui_widget_ops BAR_OPS = {
 static uint64_t scrollview_tick(struct ui_widget *widget, uint64_t now_ms)
 {
     struct ui_scrollview *sv = sv_of(widget);
-    if (!is_overlay(sv) || !sv->impl.shown || sv->impl.bar_state != BAR_IDLE)
+    if (!is_overlay(sv) || !sv->state.shown || sv->state.bar_state != BAR_IDLE)
         return 0;
-    if (!sv->impl.hide_at)
-        sv->impl.hide_at = now_ms + BAR_HIDE_AFTER_MS;
-    if (now_ms < sv->impl.hide_at)
-        return sv->impl.hide_at;
-    sv->impl.shown = false;
+    if (!sv->state.hide_at)
+        sv->state.hide_at = now_ms + BAR_HIDE_AFTER_MS;
+    if (now_ms < sv->state.hide_at)
+        return sv->state.hide_at;
+    sv->state.shown = false;
     ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_LAYOUT);
     return 0;
 }
@@ -465,7 +465,7 @@ static void sync_bar(struct ui_scrollview *sv)
     struct bar g = {0};
     /* The bar takes the pointer where the track is, also when it hides. A
      * hover over the track then shows it again. */
-    bool placed = bar_geometry(sv, sv->impl.bar_state, &g);
+    bool placed = bar_geometry(sv, sv->state.bar_state, &g);
     ui_widget_set_hidden(&sv->bar, !placed);
     if (placed)
         ui_widget_place(&sv->bar,
@@ -489,22 +489,22 @@ static void scrollview_layout(struct ui_widget *widget, struct rect2i bounds)
     if (child) {
         int tw = bar_reserve(sv);
         int child_w = geom_clamp_i(geom_sat_i((int64_t)bounds.width - tw), 0, bounds.width);
-        if (child->measured_size.x != child_w || (child->impl.invalidation & UI_WIDGET_INVALIDATE_MEASURE)) {
+        if (child->measured_size.x != child_w || ui_widget_needs_measure(child)) {
             ui_widget_measure(child, (struct ui_constraints){
                 .min = { .x = child_w, .y = 0 },
                 .max = { .x = child_w, .y = INT_MAX },
             });
         }
     }
-    sv->impl.scroll_y = geom_clamp_i(sv->impl.scroll_y, 0, sv_max_offset(sv));
+    sv->state.scroll_y = geom_clamp_i(sv->state.scroll_y, 0, sv_max_offset(sv));
     if (!child)
         return;
     int tw = bar_reserve(sv);
     int child_w = geom_clamp_i(geom_sat_i((int64_t)bounds.width - tw), 0, bounds.width);
-    int child_h = sv->impl.has_metrics ? bounds.height : child->measured_size.y;
+    int child_h = sv->state.has_metrics ? bounds.height : child->measured_size.y;
     ui_widget_place(child, (struct rect2i){
         .pos = { .x = bounds.pos.x,
-                 .y = geom_sat_i((int64_t)bounds.pos.y - sv->impl.scroll_y) },
+                 .y = geom_sat_i((int64_t)bounds.pos.y - sv->state.scroll_y) },
         .size = { .x = child_w, .y = child_h },
     });
     sync_bar(sv);
@@ -572,7 +572,7 @@ struct ui_widget *ui_scrollview_child(const struct ui_scrollview *sv)
 
 int ui_scrollview_offset(const struct ui_scrollview *sv)
 {
-    return sv ? sv->impl.scroll_y : 0;
+    return sv ? sv->state.scroll_y : 0;
 }
 
 int ui_scrollview_content_height(const struct ui_scrollview *sv)
@@ -599,9 +599,9 @@ void ui_scrollview_scroll_by(struct ui_scrollview *sv, int dy)
     if (!sv)
         return;
     scrollview_ensure_init(sv);
-    int before = sv->impl.scroll_y;
-    set_scroll(sv, geom_sat_i((int64_t)sv->impl.scroll_y + dy));
-    if (sv->impl.scroll_y != before && is_overlay(sv))
+    int before = sv->state.scroll_y;
+    set_scroll(sv, geom_sat_i((int64_t)sv->state.scroll_y + dy));
+    if (sv->state.scroll_y != before && is_overlay(sv))
         ui_scrollview_flash(sv);
 }
 
@@ -610,7 +610,7 @@ void ui_scrollview_set_scroll_step(struct ui_scrollview *sv, int px)
     if (!sv)
         return;
     scrollview_ensure_init(sv);
-    sv->impl.scroll_step = px;
+    sv->state.scroll_step = px;
 }
 
 void ui_scrollview_set_scrollbar(struct ui_scrollview *sv, bool enabled)
@@ -618,12 +618,12 @@ void ui_scrollview_set_scrollbar(struct ui_scrollview *sv, bool enabled)
     if (!sv)
         return;
     scrollview_ensure_init(sv);
-    if (sv->impl.bar_off != !enabled) {
-        sv->impl.bar_off = !enabled;
+    if (sv->state.bar_off != !enabled) {
+        sv->state.bar_off = !enabled;
         if (!enabled) {
             ui_widget_release_pointer(&sv->widget);
             set_bar_state(sv, BAR_IDLE);
-            sv->impl.shown = false;
+            sv->state.shown = false;
         }
         ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_MEASURE);
     }
@@ -635,17 +635,17 @@ void ui_scrollview_set_metrics(struct ui_scrollview *sv,
     if (!sv)
         return;
     scrollview_ensure_init(sv);
-    struct ui_scroll_metrics *old = &sv->impl.metrics;
-    bool first = !sv->impl.has_metrics;
+    struct ui_scroll_metrics *old = &sv->state.metrics;
+    bool first = !sv->state.has_metrics;
     if (!first && old->history_lines == metrics.history_lines &&
         old->visible_lines == metrics.visible_lines &&
         old->view_offset == metrics.view_offset)
         return;
-    sv->impl.has_metrics = true;
-    sv->impl.metrics = metrics;
+    sv->state.has_metrics = true;
+    sv->state.metrics = metrics;
     if (first) {
-        sv->impl.scroll_y = 0;
-        sv->impl.scroll_remainder = 0.0f;
+        sv->state.scroll_y = 0;
+        sv->state.scroll_remainder = 0.0f;
         ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_LAYOUT);
     } else if (bar_visible(sv)) {
         ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_LAYOUT);
@@ -657,12 +657,12 @@ void ui_scrollview_clear_metrics(struct ui_scrollview *sv)
     if (!sv)
         return;
     scrollview_ensure_init(sv);
-    if (!sv->impl.has_metrics)
+    if (!sv->state.has_metrics)
         return;
     ui_widget_release_pointer(&sv->widget);
     set_bar_state(sv, BAR_IDLE);
-    sv->impl.has_metrics = false;
-    sv->impl.metrics = (struct ui_scroll_metrics){0};
+    sv->state.has_metrics = false;
+    sv->state.metrics = (struct ui_scroll_metrics){0};
     ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_LAYOUT);
 }
 
@@ -675,8 +675,8 @@ void ui_scrollview_set_overlay(struct ui_scrollview *sv, bool overlay)
         return;
     ui_widget_release_pointer(&sv->widget);
     set_bar_state(sv, BAR_IDLE);
-    sv->impl.fixed_bar = !overlay;
-    sv->impl.shown = false;
+    sv->state.fixed_bar = !overlay;
+    sv->state.shown = false;
     ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_MEASURE);
 }
 
@@ -685,8 +685,8 @@ void ui_scrollview_flash(struct ui_scrollview *sv)
     if (!sv)
         return;
     scrollview_ensure_init(sv);
-    sv->impl.shown = true;
-    sv->impl.hide_at = 0;
+    sv->state.shown = true;
+    sv->state.hide_at = 0;
     ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_LAYOUT);
 }
 
@@ -695,11 +695,11 @@ void ui_scrollview_hide(struct ui_scrollview *sv)
     if (!sv)
         return;
     scrollview_ensure_init(sv);
-    if (!sv->impl.shown && sv->impl.bar_state == BAR_IDLE)
+    if (!sv->state.shown && sv->state.bar_state == BAR_IDLE)
         return;
-    sv->impl.shown = false;
-    sv->impl.bar_state = BAR_IDLE;
-    sv->impl.hide_at = 0;
+    sv->state.shown = false;
+    sv->state.bar_state = BAR_IDLE;
+    sv->state.hide_at = 0;
     ui_widget_release_pointer(&sv->widget);
     ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_LAYOUT);
 }

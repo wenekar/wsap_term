@@ -2,15 +2,12 @@
 
 #include "ui/internal/tree.h"
 #include "paint/scene.h"
-#include "ui/ui_util.h"
+#include "ui/css.h"
 
 #include <assert.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* The double-click interval, in ms, of a surface whose host reports none. */
-#define UI_DOUBLE_CLICK_FALLBACK_MS 400
 
 void ui_surface_init(struct ui_surface *surface,
                      const struct ui_surface_host *host, void *host_userdata)

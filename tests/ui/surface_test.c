@@ -4,7 +4,7 @@
 #include "ui/box.h"
 #include "ui/debug.h"
 #include "ui/surface.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 #include "ui/widgets/label.h"
 #include "ui/widgets/scrollview.h"
 
@@ -236,14 +236,13 @@ static void update_cycle_test(void)
     assert(ui_surface_build_scene(&surface, &scene));
     assert(label.widget.bounds.width == 80);
     assert(label.widget.bounds.height == 24);
-    assert(!((&box.widget)->impl.invalidation &
-             (UI_WIDGET_INVALIDATE_MEASURE | UI_WIDGET_INVALIDATE_LAYOUT)));
+    assert(!ui_widget_needs_layout(&box.widget));
 
     int measures = probe.measures;
     ui_widget_invalidate(&meter, UI_WIDGET_INVALIDATE_LAYOUT);
     assert(ui_surface_build_scene(&surface, &scene));
     assert(probe.measures == measures);
-    assert(!((&meter)->impl.invalidation & UI_WIDGET_INVALIDATE_LAYOUT));
+    assert(!ui_widget_needs_layout(&meter));
 
     ui_surface_destroy(&surface);
     ui_widget_destroy(&box.widget);
@@ -266,14 +265,15 @@ static void zero_size_retains_layout_test(void)
 
     struct ui_scene scene = {0};
     assert(ui_surface_build_scene(&surface, &scene));
-    assert((&box.widget)->impl.invalidation & UI_WIDGET_INVALIDATE_LAYOUT);
+    /* A zero viewport keeps the layout pending. ui_widget_needs_layout() also
+     * covers measure, but the count above pins that measure already ran. */
+    assert(ui_widget_needs_layout(&box.widget));
     assert(probe.measures == 1);
 
     ui_surface_set_scale(&surface, (struct css_scale_context){0});
     ui_surface_resize(&surface, (struct vector2i){ .x = 100, .y = 50 });
     assert(ui_surface_build_scene(&surface, &scene));
-    assert(!((&box.widget)->impl.invalidation &
-             UI_WIDGET_INVALIDATE_LAYOUT));
+    assert(!ui_widget_needs_layout(&box.widget));
     assert(meter.bounds.width == 30 && meter.bounds.height == 10);
 
     ui_surface_destroy(&surface);

@@ -55,6 +55,11 @@ uint32_t window_scale_120(const struct window *w)
     return window_scale_120_of(yasl_surface_get_info(w->surface).scale);
 }
 
+double window_scale(const struct window *w)
+{
+    return (double)window_scale_120(w) / (double)YASL_SCALE_UNIT;
+}
+
 /* Marks one native surface as due in the next host pass. A redraw asked for
  * during a draw stays for the next pass, so no intent is lost. */
 void window_native_request_draw(struct window *w, struct yasl_surface *s)
@@ -733,7 +738,7 @@ int window_modifiers(const struct window *w)
 struct window_logical_point window_logical(const struct window *w,
                                            struct vector2i device)
 {
-    double scale = window_scale_120(w) / (double)YASL_SCALE_UNIT;
+    double scale = window_scale(w);
     return (struct window_logical_point){ .x = device.x / scale, .y = device.y / scale };
 }
 

@@ -9,7 +9,7 @@
 #include "ui/ui.h"
 #include "util/options.h"
 #include "ui/yasl/client.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 #include "ui/yasl/window.h"
 
 #include <errno.h>

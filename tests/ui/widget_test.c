@@ -4,8 +4,8 @@
 
 #include "ui/box.h"
 #include "ui/surface.h"
-#include "ui/internal/tree.h"
 #include "ui/widget.h"
+#include "ui/widget_ops.h"
 
 struct probe {
     int measures;
@@ -22,11 +22,6 @@ struct probe {
     struct ui_widget *destroy_in_tick;
     struct rect2i bounds;
 };
-
-static unsigned widget_invalidation(const struct ui_widget *widget)
-{
-    return widget->impl.invalidation;
-}
 
 static struct vector2i measure(const struct ui_widget *widget,
                                struct ui_constraints constraints)
@@ -105,26 +100,23 @@ static void widget_lifecycle_test(void)
     struct probe probe = { .handle_event = true };
     struct ui_widget widget = {0};
     ui_widget_init(&widget, &OPS, &probe);
-    assert(widget_invalidation(&widget) ==
-           (UI_WIDGET_INVALIDATE_MEASURE |
-            UI_WIDGET_INVALIDATE_LAYOUT));
+    assert(ui_widget_needs_measure(&widget) && ui_widget_needs_layout(&widget));
 
     struct vector2i size = ui_widget_measure(&widget, (struct ui_constraints){
         .min = { .x = 10, .y = 5 },
         .max = { .x = 80, .y = 20 },
     });
     assert(size.x == 80 && size.y == 20);
-    assert(!(widget_invalidation(&widget) & UI_WIDGET_INVALIDATE_MEASURE));
+    assert(!ui_widget_needs_measure(&widget));
 
     struct rect2i bounds = {
         .pos = { .x = 3, .y = 4 },
         .size = { .x = 50, .y = 60 },
     };
-    ui_widget_layout(&widget, bounds);
+    ui_widget_place(&widget, bounds);
     assert(probe.layouts == 1);
     assert(widget.bounds.x == 3 && widget.bounds.height == 60);
-    assert(!(widget_invalidation(&widget) &
-             (UI_WIDGET_INVALIDATE_MEASURE | UI_WIDGET_INVALIDATE_LAYOUT)));
+    assert(!ui_widget_needs_layout(&widget));
 
     struct ui_event key = ui_event_key((struct ui_key_event){
         .key = UI_KEY_ENTER,
@@ -133,9 +125,12 @@ static void widget_lifecycle_test(void)
     assert(probe.events == 1);
 
     probe.animate = true;
-    assert(ui_widget_tick(&widget, 42));
+    struct ui_surface context = {0};
+    ui_surface_set_root(&context, &widget);
+    assert(ui_surface_tick(&context, 42));
     assert(probe.ticks == 1);
 
+    ui_surface_destroy(&context);
     ui_widget_destroy(&widget);
     assert(probe.destroys == 1);
 }
@@ -231,24 +226,28 @@ static void hierarchy_test(void)
     };
     first.bounds = bounds;
     second.bounds = bounds;
-    ui_widget_layout(&parent, bounds);
+    ui_widget_place(&parent, bounds);
     assert(parent_probe.layouts == 1);
     assert(first_probe.layouts == 1 && second_probe.layouts == 1);
 
     struct ui_event key = ui_event_key((struct ui_key_event){
         .key = UI_KEY_ENTER,
     }, 10);
-    assert(ui_widget_bubble(&first, &key));
+    struct ui_surface context = {0};
+    ui_surface_set_root(&context, &parent);
+    /* The surface lays the root out, so the mount leaves no pending layout. */
+    ui_surface_resize(&context, bounds.size);
+    assert(ui_widget_event(&first, &key));
     assert(parent_probe.events == 1);
     assert(first_probe.events == 1 && second_probe.events == 0);
 
-    assert(ui_widget_tick(&parent, 10));
+    assert(ui_surface_tick(&context, 10));
     assert(parent_probe.ticks == 1);
     assert(first_probe.ticks == 1 && second_probe.ticks == 1);
 
     ui_widget_invalidate(&second, UI_WIDGET_INVALIDATE_PAINT);
-    assert(widget_invalidation(&second) == UI_WIDGET_INVALIDATE_NONE);
-    assert(widget_invalidation(&parent) == UI_WIDGET_INVALIDATE_NONE);
+    assert(!ui_widget_needs_layout(&second));
+    assert(!ui_widget_needs_layout(&parent));
 
     assert(ui_widget_remove_child(&parent, &first));
     assert(first.parent == NULL && ui_widget_child_count(&parent) == 1);
@@ -265,6 +264,7 @@ static void hierarchy_test(void)
 
     ui_widget_destroy(&first);
     assert(first_probe.destroys == 1);
+    ui_surface_destroy(&context);
 }
 
 static void ctx_propagation_test(void)
@@ -301,14 +301,17 @@ static void zero_init_test(void)
     assert(pointer.kind == UI_POINTER_NONE);
     assert(event.kind == UI_EVENT_NONE);
     assert(ui_constraints_clamp(constraints, (struct vector2i){0}).x == 0);
-    assert(widget_invalidation(&widget) == UI_WIDGET_INVALIDATE_NONE);
+    assert(!ui_widget_needs_layout(&widget));
     assert(ui_widget_measure(&widget, constraints).x == 0);
     assert(!ui_widget_event(&widget, NULL));
-    assert(!ui_widget_tick(&widget, 0));
     assert(!ui_surface_dispatch(&context, NULL));
     assert(!ui_surface_tick(&context, 0));
     assert(!ui_surface_frame_pending(&context));
     assert(!ui_surface_take_frame_request(&context));
+    assert(ui_surface_next_deadline(&context) == 0);
+    /* The zeroed widget also mounts and ticks with no work. */
+    assert(ui_surface_set_root(&context, &widget));
+    assert(!ui_surface_tick(&context, 0));
     assert(ui_surface_next_deadline(&context) == 0);
     ui_surface_destroy(&context);
 }
@@ -332,11 +335,12 @@ static void destroy_parent_during_dispatch_test(void)
     struct ui_event key = ui_event_key((struct ui_key_event){
         .key = UI_KEY_ENTER,
     }, 1);
-    assert(!ui_widget_bubble(&child, &key));
+    assert(!ui_widget_event(&child, &key));
     assert(root_probe.events == 0);
     assert(child_probe.events == 1);
     assert(sibling_probe.events == 0);
-    assert(root.impl.destroyed && child.impl.destroyed && sibling.impl.destroyed);
+    assert(ui_widget_is_destroyed(&root) && ui_widget_is_destroyed(&child) &&
+           ui_widget_is_destroyed(&sibling));
     assert(root_probe.destroys == 1 && child_probe.destroys == 1 &&
            sibling_probe.destroys == 1);
     ui_surface_destroy(&context);
@@ -370,7 +374,7 @@ static void detach_mutation_robust_test(void)
     struct ui_event key = ui_event_key((struct ui_key_event){
         .key = UI_KEY_ENTER,
     }, 1);
-    assert(!ui_widget_bubble(&trigger, &key));
+    assert(!ui_widget_event(&trigger, &key));
 
     assert(b.focus_out == 1);
     assert(wa.parent == NULL);
@@ -398,11 +402,15 @@ static void tick_destroyed_parent_test(void)
     assert(ui_widget_add_child(&parent, &child));
     assert(ui_widget_add_child(&parent, &sibling));
 
+    struct ui_surface context = {0};
+    ui_surface_set_root(&context, &parent);
     child_probe.destroy_in_tick = &parent;
-    assert(!ui_widget_tick(&parent, 10));
+    assert(!ui_surface_tick(&context, 10));
     assert(parent_probe.ticks == 1);
     assert(child_probe.ticks == 1 && sibling_probe.ticks == 0);
-    assert(parent.impl.destroyed && child.impl.destroyed && sibling.impl.destroyed);
+    assert(ui_widget_is_destroyed(&parent) && ui_widget_is_destroyed(&child) &&
+           ui_widget_is_destroyed(&sibling));
+    ui_surface_destroy(&context);
 }
 
 struct typed_widget_probe {

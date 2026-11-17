@@ -1,10 +1,15 @@
 #ifndef WSAP_UI_CSS_H
 #define WSAP_UI_CSS_H
 
+#include <limits.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+
+#include "ui/metrics.h"
+#include "util/geom.h"
 
 enum css_flex_direction : uint8_t {
     CSS_FLEX_ROW = 0,
@@ -302,5 +307,149 @@ void css_style_resolve_node(const struct css_sheet *sheet,
 
 /* Returns true when two styles have identical layout properties. */
 bool css_style_layout_eq(const struct css_style *a, const struct css_style *b);
+
+/* Returns `v` when it is finite and above zero, else `fallback`. */
+static inline float ui_positive_or(float v, float fallback)
+{
+    return isfinite(v) && v > 0.0f ? v : fallback;
+}
+
+/* Returns `dpi_scale` as a scale of one or more. */
+static inline float ui_dpi_scale(float dpi_scale)
+{
+    return ui_positive_or(dpi_scale, 1.0f);
+}
+
+/* Resolves `px` logical pixels to physical pixels at `dpi_scale`. */
+static inline int ui_px(float dpi_scale, int px)
+{
+    float v = (float)px * ui_dpi_scale(dpi_scale);
+    return v > 0.0f && v < (float)INT_MAX ? (int)lroundf(v) : px;
+}
+
+/* Resolves `px` logical pixels to physical pixels at the scale of `ctx`. */
+static inline int ui_ctx_px(const struct css_scale_context *ctx, int px)
+{
+    return ui_px(ctx ? ctx->dpi_scale : 0.0f, px);
+}
+
+/* Stores `v` in `dst` and returns true only when `v` is above zero. */
+static inline bool ui_set_if_positive(float *dst, float v)
+{
+    if (!dst || !isfinite(v) || v <= 0.0f)
+        return false;
+    *dst = v;
+    return true;
+}
+
+/* Sets the scale fields of `ctx` that `dpi_scale`, `cell_w`, and `cell_h`
+   hold a positive value for. */
+static inline void ui_scale_ctx_set(struct css_scale_context *ctx,
+                                    float dpi_scale, float cell_w, float cell_h)
+{
+    if (!ctx)
+        return;
+    ui_set_if_positive(&ctx->dpi_scale, dpi_scale);
+    ui_set_if_positive(&ctx->cell_w, cell_w);
+    ui_set_if_positive(&ctx->cell_h, cell_h);
+}
+
+/* Returns the scale context of an unscaled surface with default cells. */
+static inline struct css_scale_context ui_scale_ctx_default(void)
+{
+    return (struct css_scale_context){
+        .dpi_scale = 1.0f,
+        .cell_w = (float)UI_DEFAULT_CELL_W,
+        .cell_h = (float)UI_DEFAULT_CELL_H,
+    };
+}
+
+/* Returns `color` with its alpha multiplied by `opacity`. */
+static inline uint32_t ui_color_opacity(uint32_t color, float opacity)
+{
+    if (!isfinite(opacity) || opacity <= 0.0f)
+        return color & 0x00FFFFFFu;
+    if (opacity >= 1.0f)
+        return color;
+    uint32_t a = (uint32_t)(color >> 24);
+    a = (uint32_t)((float)a * opacity + 0.5f);
+    return (color & 0x00FFFFFFu) | (a << 24);
+}
+
+/* Returns `v` as a whole number, clamped to the int range. A nonnegative
+   result is zero or more. */
+static inline int ui_float_to_int(float v, bool nonnegative)
+{
+    if (!isfinite(v))
+        return 0;
+    if (nonnegative && v < 0.0f)
+        return 0;
+    if (v >= (float)INT_MAX)
+        return INT_MAX;
+    if (v <= (float)INT_MIN)
+        return nonnegative ? 0 : INT_MIN;
+    return (int)v;
+}
+
+/* Resolves CSS value `v` to whole pixels. */
+static inline int ui_css_resolve_int(struct css_value v, float parent_dim,
+                                     float auto_val,
+                                     const struct css_scale_context *ctx,
+                                     bool nonnegative)
+{
+    return ui_float_to_int(css_value_resolve(v, parent_dim, auto_val, ctx),
+                           nonnegative);
+}
+
+/* Resolves the four edges of `box` to whole pixels against `basis`. */
+static inline struct insets2i ui_css_resolve_insets(struct css_box box,
+                                                    struct vector2i basis,
+                                                    const struct css_scale_context *ctx,
+                                                    bool nonnegative)
+{
+    struct insets2i out = {0};
+    for (int i = 0; i < 4; i++)
+        out.v[i] = ui_css_resolve_int(box.v[i], (i & 1) ? (float)basis.x : (float)basis.y,
+                                      0, ctx, nonnegative);
+    return out;
+}
+
+/* Resolves CSS value `v` to whole pixels, with `fallback` when the result is
+   not positive. */
+static inline int ui_ctx_size(const struct css_scale_context *ctx,
+                              struct css_value v, float fallback)
+{
+    float resolved = css_value_resolve(v, 0, fallback, ctx);
+    if (!isfinite(resolved) || resolved <= 0.0f)
+        return (int)fallback;
+    return resolved < (float)INT_MAX ? (int)lroundf(resolved) : (int)fallback;
+}
+
+/* Resolves CSS value `v` to a whole pixel inset. A negative result is zero. */
+static inline int ui_ctx_inset(const struct css_scale_context *ctx,
+                               struct css_value v, float fallback)
+{
+    int px = ui_ctx_size(ctx, v, fallback);
+    return px < 0 ? 0 : px;
+}
+
+/* Resolves the four edges of `box` to whole pixel insets. */
+static inline struct insets2i ui_ctx_insets(const struct css_scale_context *ctx,
+                                            struct css_box box, float fallback)
+{
+    struct insets2i out = {0};
+    for (int i = 0; i < 4; i++)
+        out.v[i] = ui_ctx_inset(ctx, box.v[i], fallback);
+    return out;
+}
+
+/* Border width of `style`, in pixels. Zero without a border color. */
+static inline int ui_css_border_width(const struct css_style *style,
+                                      const struct css_scale_context *scale)
+{
+    return style && style->has_border_color
+        ? ui_css_resolve_int(style->border_width, 0, 0, scale, true)
+        : 0;
+}
 
 #endif

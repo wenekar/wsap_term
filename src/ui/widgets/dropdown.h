@@ -28,7 +28,7 @@ struct ui_dropdown {
         int selected;
         int action_id;
         bool open;
-    } impl;
+    } state;
 };
 
 void ui_dropdown_init(struct ui_dropdown *dropdown);

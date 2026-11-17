@@ -6,7 +6,7 @@
 #include "ui/box.h"
 #include "ui/surface.h"
 #include "ui/ui.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 
 struct probe {
     int keys, texts, shortcuts, drops, captures;

@@ -93,8 +93,6 @@ bool ui_surface_destroy(struct ui_surface *surface);
  * again. Returns false only when memory is short. */
 bool ui_surface_post(struct ui_surface *surface, ui_post_fn fn, void *userdata);
 
-/* Releases global UI caches including the default stylesheet and interned parts. */
-void ui_shutdown(void);
 /* True while the surface dispatches, ticks, or builds, and reads its stored
  * targets. Use ui_surface_post to free storage then. */
 bool ui_surface_busy(const struct ui_surface *surface);
@@ -163,6 +161,8 @@ bool ui_surface_paste_text(struct ui_surface *surface);
 bool ui_surface_open_url(struct ui_surface *surface, const char *target);
 uint32_t ui_surface_double_click_interval_ms(
     const struct ui_surface *surface);
+/* The double-click interval, in ms, when no host reports one. */
+#define UI_DOUBLE_CLICK_FALLBACK_MS 400
 void ui_surface_request_frame(struct ui_surface *surface);
 bool ui_surface_frame_pending(const struct ui_surface *surface);
 bool ui_surface_take_frame_request(struct ui_surface *surface);

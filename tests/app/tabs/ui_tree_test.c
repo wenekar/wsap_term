@@ -7,6 +7,7 @@
 #include "app/tabs/internal.h"
 #include "helpers/app_fixture.h"
 #include "helpers/terminal_window.h"
+#include "ui/debug.h"
 #include "ui/surface.h"
 #include "ui/yasl/client.h"
 #include "ui/yasl/native_input.h"
@@ -15,7 +16,6 @@
 #include <wsap_vtcore/wsap_vtcore.h>
 #include "paint/scene.h"
 #include "session/session.h"
-#include "ui/internal/tree.h"
 
 static void apply_test_scale(struct window *w, struct vector2i viewport)
 {
@@ -74,7 +74,49 @@ static void fill_scrollback(struct window *w)
         wsap_vtcore_feed(terminal_session(content)->term, "line\r\n", 6, 0);
 }
 
-static int find_ops(const struct ui_scene *whole, const struct ui_scene *part);
+/* Returns true when `widget` is `subtree` or one of its descendants. */
+static bool in_subtree(const struct ui_widget *subtree,
+                       const struct ui_widget *widget)
+{
+    for (const struct ui_widget *w = widget; w; w = w->parent)
+        if (w == subtree)
+            return true;
+    return false;
+}
+
+/* Returns true when scene operation `index` belongs to `subtree`. */
+static bool op_in_subtree(const struct ui_debug_view *view, int index,
+                          const struct ui_widget *subtree)
+{
+    return in_subtree(subtree, ui_debug_op_owner(view, index));
+}
+
+/* Returns the count of scene operations of `subtree`, and writes the first and
+ * last index to `first` and `last`. Both are -1 when the subtree paints
+ * nothing. It also requires the operations to form one contiguous block, since
+ * a subtree paints in one pass.
+ *
+ * The subtree is a child of the window root, so it cannot mount on a second
+ * surface to build a standalone scene: a widget belongs to one surface. The
+ * composed block is thus the whole check, and it does not compare operation
+ * fields with a second build. */
+static int subtree_ops(const struct ui_debug_view *view,
+                       const struct ui_widget *subtree, int *first, int *last)
+{
+    int count = 0;
+    *first = -1;
+    *last = -1;
+    for (int i = 0; i < view->scene->n_ops; i++) {
+        if (!op_in_subtree(view, i, subtree))
+            continue;
+        if (*first < 0)
+            *first = i;
+        *last = i;
+        count++;
+    }
+    assert(count == 0 || *last - *first + 1 == count);
+    return count;
+}
 
 static void open_menu(struct window *w, const ui_menu_item *items, int n,
                       struct vector2i at, ui_action_fn fn, void *userdata,
@@ -172,42 +214,23 @@ static void tabbar_scene_in_chrome_test(void)
     int tab_h = app_tabs_bar_height(w);
     assert(tab_h > 0);
 
-    static struct ui_scene composed, ref;
+    static struct ui_scene composed;
     assert(ui_surface_build_scene(window_ui_surface(w), &composed));
-    assert(ui_widget_build_scene(ui_tabbar_widget(&tabs->tabbar), &ref));
-    assert(ref.n_ops > 0);
-    assert(find_ops(&composed, &ref) >= 0);
-    for (int i = 0; i < ref.n_ops; i++)
-        assert(ref.ops[i].rect.y < tab_h);
+    struct ui_debug_view view = {
+        .root = ui_surface_root(window_ui_surface(w)),
+        .surface = window_ui_surface(w),
+        .scene = &composed,
+    };
+    struct ui_widget *tabbar = ui_tabbar_widget(&tabs->tabbar);
+    int first, last;
+    int ops = subtree_ops(&view, tabbar, &first, &last);
+    assert(ops > 0);
+    for (int i = first; i <= last; i++) {
+        assert(op_in_subtree(&view, i, tabbar));
+        assert(composed.ops[i].rect.y < tab_h);
+    }
 
     close_terminal_window(w, &a);
-}
-
-static bool op_equal(const struct ui_scene *sa, const struct ui_scene_op *a,
-                     const struct ui_scene *sb, const struct ui_scene_op *b)
-{
-    if (a->kind != b->kind || a->alpha != b->alpha || a->color != b->color ||
-        a->radius != b->radius || !vector2i_eq(a->rect.pos, b->rect.pos) ||
-        !vector2i_eq(a->rect.size, b->rect.size))
-        return false;
-    if (a->kind != UI_SCENE_OP_TEXT)
-        return true;
-    return a->text_len == b->text_len &&
-           !memcmp(ui_scene_op_text(sa, a), ui_scene_op_text(sb, b),
-                   a->text_len);
-}
-
-static int find_ops(const struct ui_scene *whole, const struct ui_scene *part)
-{
-    for (int base = 0; base + part->n_ops <= whole->n_ops; base++) {
-        int i = 0;
-        while (i < part->n_ops &&
-               op_equal(whole, &whole->ops[base + i], part, &part->ops[i]))
-            i++;
-        if (i == part->n_ops)
-            return base;
-    }
-    return -1;
 }
 
 static void scrollbar_scene_in_chrome_test(void)
@@ -225,15 +248,22 @@ static void scrollbar_scene_in_chrome_test(void)
     struct ui_scene prepared = {0};
     assert(ui_surface_build_scene(window_ui_surface(w), &prepared));
     ui_scene_destroy(&prepared);
-    static struct ui_scene composed, ref;
+    static struct ui_scene composed;
     assert(ui_surface_build_scene(window_ui_surface(w), &composed));
+    struct ui_debug_view view = {
+        .root = ui_surface_root(window_ui_surface(w)),
+        .surface = window_ui_surface(w),
+        .scene = &composed,
+    };
     struct ui_widget *sv = terminal_widget(content);
     assert(sv->bounds.y == tab_h);
-    assert(ui_widget_build_scene(sv, &ref));
-    assert(ref.n_ops > 0);
-    assert(find_ops(&composed, &ref) >= 0);
-    for (int i = 0; i < ref.n_ops; i++)
-        assert(ref.ops[i].rect.y >= tab_h);
+    int first, last;
+    int ops = subtree_ops(&view, sv, &first, &last);
+    assert(ops > 0);
+    for (int i = first; i <= last; i++) {
+        assert(op_in_subtree(&view, i, sv));
+        assert(composed.ops[i].rect.y >= tab_h);
+    }
 
     close_terminal_window(w, &a);
 }
@@ -249,21 +279,31 @@ static void palette_scene_at_rect_test(void)
     struct ui_palette_cmd cmds[1] = { { .label = "Test Command", .action = 1 } };
     assert(ui_palette_open(&tabs->palette, cmds, 1));
 
-    static struct ui_scene composed, ref;
+    static struct ui_scene composed;
     assert(ui_surface_build_scene(window_ui_surface(w), &composed));
 
-    struct rect2i prect = ui_palette_widget(&tabs->palette)->bounds;
+    struct ui_widget *palette = ui_palette_widget(&tabs->palette);
+    struct rect2i prect = palette->bounds;
     /* The palette is centered, so a zero size means it is invisible. */
     assert(prect.width > 0 && prect.height > 0);
     assert(prect.x >= 0 && prect.y >= 0);
     assert(prect.x + prect.width <= viewport.x);
     assert(prect.y + prect.height <= viewport.y);
-    assert(ui_widget_build_scene(ui_palette_widget(&tabs->palette), &ref));
-    assert(ref.n_ops > 0);
-    int base = find_ops(&composed, &ref);
-    assert(base == composed.n_ops - ref.n_ops);
-    assert(composed.ops[base].rect.x >= prect.x);
-    assert(composed.ops[base].rect.y >= prect.y);
+
+    struct ui_debug_view view = {
+        .root = ui_surface_root(window_ui_surface(w)),
+        .surface = window_ui_surface(w),
+        .scene = &composed,
+    };
+    int first, last;
+    int ops = subtree_ops(&view, palette, &first, &last);
+    assert(ops > 0);
+    /* The palette floats above the window, so its operations come last. */
+    assert(last == composed.n_ops - 1);
+    for (int i = first; i <= last; i++)
+        assert(op_in_subtree(&view, i, palette));
+    assert(composed.ops[first].rect.x >= prect.x);
+    assert(composed.ops[first].rect.y >= prect.y);
 
     close_terminal_window(w, &a);
 }

@@ -1,9 +1,10 @@
 #include "ui/box.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 
 #include "ui/debug.h"
 #include "ui/internal/layout.h"
-#include "ui/ui_util.h"
+#include "ui/css.h"
+#include "ui/widget.h"
 
 #include <limits.h>
 
@@ -11,7 +12,7 @@ struct ui_box_params ui_box_params(const struct ui_box *box,
                                    struct vector2i basis)
 {
     struct ui_box_params out = {
-        .direction = box ? box->impl.direction : UI_BOX_ROW,
+        .direction = box ? box->state.direction : UI_BOX_ROW,
         .align = CSS_ALIGN_START,
         .justify = CSS_JUSTIFY_START,
     };
@@ -110,9 +111,9 @@ void ui_box_set_direction(struct ui_box *box,
     if (!box)
         return;
     box_ensure_init(box);
-    if (box->impl.direction == direction)
+    if (box->state.direction == direction)
         return;
-    box->impl.direction = direction;
+    box->state.direction = direction;
     ui_widget_invalidate(&box->widget, UI_WIDGET_INVALIDATE_MEASURE);
 }
 

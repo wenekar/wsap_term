@@ -1,7 +1,7 @@
 #include "ui/paint.h"
 
 #include "ui/internal/tree.h"
-#include "ui/ui_util.h"
+#include "ui/css.h"
 
 struct ui_paint_box_style ui_paint_box_style_of(
     const struct css_style *style, const struct css_scale_context *scale)

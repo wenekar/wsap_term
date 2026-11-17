@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <math.h>
+#include "paint/scene.h"
 #include "util/geom.h"
 
 enum ui_ease : uint8_t {
@@ -162,6 +163,23 @@ static inline bool ui_ripple_eval(const struct ui_ripple *r, uint64_t now_ms,
     if (alpha_out)
         *alpha_out = (uint8_t)((float)base_alpha * alpha_p + 0.5f);
     return true;
+}
+
+/* Draws `ripple` into `scene`, clipped to `clip`. Returns false when the
+   scene is full. */
+static inline bool ui_scene_ripple(struct ui_scene *scene, struct rect2i clip,
+                                   const struct ui_ripple *ripple,
+                                   uint64_t now_ms)
+{
+    int radius;
+    uint8_t alpha;
+    if (!now_ms || !ripple->active ||
+        !ui_ripple_eval(ripple, now_ms, &radius, &alpha))
+        return true;
+    return ui_scene_push_clip(scene, clip) &&
+           ui_scene_circle(scene, ripple->origin, radius, ripple->color,
+                           alpha) &&
+           ui_scene_pop_clip(scene);
 }
 
 #endif

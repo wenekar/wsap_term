@@ -4,8 +4,9 @@
 #include "paint/text_run.h"
 #include "ui/text_break.h"
 #include "ui/surface.h"
-#include "ui/ui_util.h"
-#include "ui/widget_impl.h"
+#include "ui/css.h"
+#include "ui/widget.h"
+#include "ui/widget_ops.h"
 #include "wsap_vtcore/unicode/utf8.h"
 
 #include <limits.h>
@@ -46,9 +47,9 @@ static int cells_to(const struct ui_input *in, size_t pos)
 
 static void sel_range(const struct ui_input *in, size_t *lo, size_t *hi)
 {
-    if (ui_text_select_range(&in->impl.select, lo, hi))
+    if (ui_text_select_range(&in->state.select, lo, hi))
         return;
-    *lo = *hi = in->impl.select.caret;
+    *lo = *hi = in->state.select.caret;
 }
 
 struct ui_input_history {
@@ -69,44 +70,44 @@ static void history_free(struct ui_input_history **stack)
 static struct ui_input_history *history_snapshot(const struct ui_input *in)
 {
     struct ui_input_history *entry =
-        malloc(sizeof(*entry) + in->impl.len + 1);
+        malloc(sizeof(*entry) + in->state.len + 1);
     if (!entry) return NULL;
-    *entry = (struct ui_input_history){ .len = in->impl.len,
-        .caret = in->impl.select.caret, .anchor = in->impl.select.anchor };
-    memcpy(entry->text, ui_input_text(in), in->impl.len + 1);
+    *entry = (struct ui_input_history){ .len = in->state.len,
+        .caret = in->state.select.caret, .anchor = in->state.select.anchor };
+    memcpy(entry->text, ui_input_text(in), in->state.len + 1);
     return entry;
 }
 
 /* Drop the edit history. An edit that cannot record history still applies. */
 static void history_drop(struct ui_input *in)
 {
-    history_free(&in->impl.undo);
-    history_free(&in->impl.redo);
-    in->impl.undo_count = 0;
-    in->impl.edit_group = 0;
+    history_free(&in->state.undo);
+    history_free(&in->state.redo);
+    in->state.undo_count = 0;
+    in->state.edit_group = 0;
 }
 
 static void history_record(struct ui_input *in, int group)
 {
-    if (!group || in->impl.edit_group != group || in->impl.select.caret != in->impl.edit_caret ||
-        in->impl.select.caret != in->impl.select.anchor) {
+    if (!group || in->state.edit_group != group || in->state.select.caret != in->state.edit_caret ||
+        in->state.select.caret != in->state.select.anchor) {
         struct ui_input_history *entry = history_snapshot(in);
         if (!entry) {
             history_drop(in);
             return;
         }
-        entry->next = in->impl.undo;
-        in->impl.undo = entry;
-        in->impl.undo_count++;
-        if (in->impl.undo_count > 128) {
-            struct ui_input_history *last = in->impl.undo;
+        entry->next = in->state.undo;
+        in->state.undo = entry;
+        in->state.undo_count++;
+        if (in->state.undo_count > 128) {
+            struct ui_input_history *last = in->state.undo;
             for (int i = 1; i < 128; i++) last = last->next;
             history_free(&last->next);
-            in->impl.undo_count = 128;
+            in->state.undo_count = 128;
         }
     }
-    history_free(&in->impl.redo);
-    in->impl.edit_group = group;
+    history_free(&in->state.redo);
+    in->state.edit_group = group;
 }
 
 static void update_scroll(struct ui_input *in)
@@ -116,47 +117,47 @@ static void update_scroll(struct ui_input *in)
     int cap = content_rect(in).width / ui_widget_cell_w(&in->widget);
     if (cap < 1)
         cap = 1;
-    int max_scroll = cells_to(in, in->impl.len) - cap + 1;
+    int max_scroll = cells_to(in, in->state.len) - cap + 1;
     if (max_scroll < 0)
         max_scroll = 0;
-    if (in->impl.scroll_cells > max_scroll)
-        in->impl.scroll_cells = max_scroll;
-    int caret = cells_to(in, in->impl.select.caret);
-    if (caret - in->impl.scroll_cells >= cap)
-        in->impl.scroll_cells = caret - cap + 1;
-    if (caret < in->impl.scroll_cells)
-        in->impl.scroll_cells = caret;
-    if (in->impl.scroll_cells < 0)
-        in->impl.scroll_cells = 0;
+    if (in->state.scroll_cells > max_scroll)
+        in->state.scroll_cells = max_scroll;
+    int caret = cells_to(in, in->state.select.caret);
+    if (caret - in->state.scroll_cells >= cap)
+        in->state.scroll_cells = caret - cap + 1;
+    if (caret < in->state.scroll_cells)
+        in->state.scroll_cells = caret;
+    if (in->state.scroll_cells < 0)
+        in->state.scroll_cells = 0;
 }
 
 static void caret_moved(struct ui_input *in)
 {
-    in->impl.blink_on = true;
-    in->impl.blink_at = 0;
+    in->state.blink_on = true;
+    in->state.blink_at = 0;
     update_scroll(in);
     ui_widget_invalidate(&in->widget, UI_WIDGET_INVALIDATE_PAINT);
 }
 
 static void changed(struct ui_input *in)
 {
-    in->impl.edit_caret = in->impl.select.caret;
+    in->state.edit_caret = in->state.select.caret;
     caret_moved(in);
     ui_widget_notify(&in->widget, (struct ui_action){
-        .kind = UI_ACTION_CHANGE, .id = in->impl.action_id, .index = -1,
+        .kind = UI_ACTION_CHANGE, .id = in->state.action_id, .index = -1,
     });
 }
 
 static void delete_range(struct ui_input *in, size_t lo, size_t hi)
 {
-    if (hi > in->impl.len)
-        hi = in->impl.len;
+    if (hi > in->state.len)
+        hi = in->state.len;
     if (lo >= hi)
         return;
     history_record(in, 0);
-    memmove(in->impl.buf + lo, in->impl.buf + hi, in->impl.len - hi + 1);
-    in->impl.len -= hi - lo;
-    in->impl.select.caret = in->impl.select.anchor = lo;
+    memmove(in->state.buf + lo, in->state.buf + hi, in->state.len - hi + 1);
+    in->state.len -= hi - lo;
+    in->state.select.caret = in->state.select.anchor = lo;
     changed(in);
 }
 
@@ -201,9 +202,9 @@ static bool reserve_text(struct ui_input *in, size_t len)
     if (len > INT_MAX)
         return false;
     size_t need = len + 1;
-    if (need <= in->impl.capacity)
+    if (need <= in->state.capacity)
         return true;
-    size_t capacity = in->impl.capacity ? in->impl.capacity : 32;
+    size_t capacity = in->state.capacity ? in->state.capacity : 32;
     while (capacity < need) {
         size_t next = capacity * 2;
         if (next > (size_t)INT_MAX + 1 || next < capacity) {
@@ -212,48 +213,48 @@ static bool reserve_text(struct ui_input *in, size_t len)
         }
         capacity = next;
     }
-    bool empty = !in->impl.buf;
-    char *buf = realloc(in->impl.buf, capacity);
+    bool empty = !in->state.buf;
+    char *buf = realloc(in->state.buf, capacity);
     if (!buf)
         return false;
     if (empty)
         buf[0] = '\0';
-    in->impl.buf = buf;
-    in->impl.capacity = capacity;
+    in->state.buf = buf;
+    in->state.capacity = capacity;
     return true;
 }
 
 static void caret_move_to(struct ui_input *in, size_t pos, bool extend)
 {
-    in->impl.edit_group = 0;
-    if (pos > in->impl.len)
-        pos = in->impl.len;
-    ui_text_select_to(&in->impl.select, pos, extend);
+    in->state.edit_group = 0;
+    if (pos > in->state.len)
+        pos = in->state.len;
+    ui_text_select_to(&in->state.select, pos, extend);
     caret_moved(in);
 }
 
 static void caret_move(struct ui_input *in, enum ui_edit_unit unit,
                        bool backward, bool extend)
 {
-    in->impl.edit_group = 0;
-    ui_text_select_move(&in->impl.select, ui_input_text(in),
-                        in->impl.len, unit, backward, extend);
+    in->state.edit_group = 0;
+    ui_text_select_move(&in->state.select, ui_input_text(in),
+                        in->state.len, unit, backward, extend);
     caret_moved(in);
 }
 
 const char *ui_input_text(const struct ui_input *in)
 {
-    return in && in->impl.buf ? in->impl.buf : "";
+    return in && in->state.buf ? in->state.buf : "";
 }
 
 size_t ui_input_caret(const struct ui_input *in)
 {
-    return in ? in->impl.select.caret : 0;
+    return in ? in->state.select.caret : 0;
 }
 
 bool ui_input_selection(const struct ui_input *in, size_t *start, size_t *end)
 {
-    return ui_text_select_range(in ? &in->impl.select : NULL, start, end);
+    return ui_text_select_range(in ? &in->state.select : NULL, start, end);
 }
 
 static struct {
@@ -279,7 +280,7 @@ static void input_ensure_init(struct ui_input *in)
 {
     if (!in || in->widget.ops)
         return;
-    in->impl.blink_on = true;
+    in->state.blink_on = true;
     input_parts_init();
     ui_widget_init(&in->widget, &INPUT_OPS, NULL);
     ui_widget_set_style_identity(&in->widget, "text-input", NULL, "input");
@@ -298,12 +299,12 @@ bool ui_input_set_text(struct ui_input *in, const char *utf8)
     if (!copy_text(utf8, strlen(utf8), true, &copy, &len))
         return false;
     history_drop(in);
-    free(in->impl.buf);
-    in->impl.buf = copy;
-    in->impl.len = len;
-    in->impl.capacity = copy ? len + 1 : 0;
-    in->impl.select.caret = in->impl.select.anchor = in->impl.len;
-    in->impl.edit_caret = in->impl.select.caret;
+    free(in->state.buf);
+    in->state.buf = copy;
+    in->state.len = len;
+    in->state.capacity = copy ? len + 1 : 0;
+    in->state.select.caret = in->state.select.anchor = in->state.len;
+    in->state.edit_caret = in->state.select.caret;
     caret_moved(in);
     return true;
 }
@@ -318,8 +319,8 @@ bool ui_input_set_placeholder(struct ui_input *in, const char *utf8)
     char *copy;
     if (!copy_text(utf8, strlen(utf8), false, &copy, NULL))
         return false;
-    free(in->impl.placeholder);
-    in->impl.placeholder = copy;
+    free(in->state.placeholder);
+    in->state.placeholder = copy;
     ui_widget_invalidate(&in->widget, UI_WIDGET_INVALIDATE_PAINT);
     return true;
 }
@@ -329,7 +330,7 @@ void ui_input_set_action_id(struct ui_input *in, int id)
     if (!in)
         return;
     input_ensure_init(in);
-    in->impl.action_id = id;
+    in->state.action_id = id;
 }
 
 void ui_input_select_all(struct ui_input *in)
@@ -337,7 +338,7 @@ void ui_input_select_all(struct ui_input *in)
     if (!in)
         return;
     input_ensure_init(in);
-    ui_text_select_all(&in->impl.select, in->impl.len);
+    ui_text_select_all(&in->state.select, in->state.len);
     caret_moved(in);
 }
 
@@ -347,11 +348,11 @@ void ui_input_clear(struct ui_input *in)
         return;
     input_ensure_init(in);
     history_record(in, 0);
-    in->impl.len = 0;
-    if (in->impl.buf)
-        in->impl.buf[0] = '\0';
-    in->impl.select.caret = in->impl.select.anchor = 0;
-    in->impl.scroll_cells = 0;
+    in->state.len = 0;
+    if (in->state.buf)
+        in->state.buf[0] = '\0';
+    in->state.select.caret = in->state.select.anchor = 0;
+    in->state.scroll_cells = 0;
     changed(in);
 }
 
@@ -368,19 +369,19 @@ static bool input_insert_text(struct ui_input *in, const char *utf8, size_t len,
         return false;
     size_t lo, hi;
     sel_range(in, &lo, &hi);
-    size_t result_len = in->impl.len - (hi - lo) + n;
+    size_t result_len = in->state.len - (hi - lo) + n;
     if ((!n && lo == hi) || !reserve_text(in, result_len)) {
         free(clean);
         return false;
     }
     history_record(in, group);
-    memmove(in->impl.buf + lo + n, in->impl.buf + hi,
-            in->impl.len - hi + 1);
+    memmove(in->state.buf + lo + n, in->state.buf + hi,
+            in->state.len - hi + 1);
     if (n)
-        memcpy(in->impl.buf + lo, clean, n);
+        memcpy(in->state.buf + lo, clean, n);
     free(clean);
-    in->impl.len = result_len;
-    in->impl.select.caret = in->impl.select.anchor = lo + n;
+    in->state.len = result_len;
+    in->state.select.caret = in->state.select.anchor = lo + n;
     changed(in);
     return true;
 }
@@ -405,8 +406,8 @@ static char *dup_slice(const struct ui_input *in, size_t lo, size_t hi)
 static size_t edit_move(const struct ui_input *in, enum ui_edit_unit unit,
                         bool backward)
 {
-    return ui_text_move(ui_input_text(in), in->impl.len,
-                        in->impl.select.caret, unit, backward);
+    return ui_text_move(ui_input_text(in), in->state.len,
+                        in->state.select.caret, unit, backward);
 }
 
 static void edit_range(const struct ui_input *in, enum ui_edit_unit unit,
@@ -418,7 +419,7 @@ static void edit_range(const struct ui_input *in, enum ui_edit_unit unit,
     if (backward)
         *lo = to_edge ? 0 : edit_move(in, unit, true);
     else
-        *hi = to_edge ? in->impl.len : edit_move(in, unit, false);
+        *hi = to_edge ? in->state.len : edit_move(in, unit, false);
 }
 
 bool ui_input_can_command(const struct ui_input *in, enum ui_edit_command command)
@@ -426,22 +427,22 @@ bool ui_input_can_command(const struct ui_input *in, enum ui_edit_command comman
     if (!in) return false;
     struct ui_surface *surface = ui_widget_surface(&in->widget);
     switch (command) {
-    case UI_EDIT_UNDO: return in->impl.undo != NULL;
-    case UI_EDIT_REDO: return in->impl.redo != NULL;
+    case UI_EDIT_UNDO: return in->state.undo != NULL;
+    case UI_EDIT_REDO: return in->state.redo != NULL;
     case UI_EDIT_COPY:
     case UI_EDIT_CUT:
-        return in->impl.select.caret != in->impl.select.anchor &&
+        return in->state.select.caret != in->state.select.anchor &&
                ui_surface_can_copy(surface);
     case UI_EDIT_PASTE: return ui_surface_can_paste(surface);
-    case UI_EDIT_SELECT_ALL: return in->impl.len > 0;
+    case UI_EDIT_SELECT_ALL: return in->state.len > 0;
     default: return true;
     }
 }
 
 static bool history_restore(struct ui_input *in, bool redo)
 {
-    struct ui_input_history **from = redo ? &in->impl.redo : &in->impl.undo;
-    struct ui_input_history **to = redo ? &in->impl.undo : &in->impl.redo;
+    struct ui_input_history **from = redo ? &in->state.redo : &in->state.undo;
+    struct ui_input_history **to = redo ? &in->state.undo : &in->state.redo;
     if (!*from) return true;
     struct ui_input_history *current = history_snapshot(in);
     if (!current) return false;
@@ -453,13 +454,13 @@ static bool history_restore(struct ui_input *in, bool redo)
     *to = current;
     struct ui_input_history *entry = *from;
     *from = entry->next;
-    in->impl.len = entry->len;
-    in->impl.select.caret = entry->caret;
-    in->impl.select.anchor = entry->anchor;
-    memcpy(in->impl.buf, entry->text, entry->len + 1);
+    in->state.len = entry->len;
+    in->state.select.caret = entry->caret;
+    in->state.select.anchor = entry->anchor;
+    memcpy(in->state.buf, entry->text, entry->len + 1);
     free(entry);
-    in->impl.undo_count += redo ? 1 : -1;
-    in->impl.edit_group = 0;
+    in->state.undo_count += redo ? 1 : -1;
+    in->state.edit_group = 0;
     changed(in);
     return true;
 }
@@ -518,7 +519,7 @@ static bool cmd_paste(struct ui_input *in, const struct input_cmd *cmd)
 static bool cmd_yank(struct ui_input *in, const struct input_cmd *cmd)
 {
     (void)cmd;
-    ui_input_insert_text(in, in->impl.kill);
+    ui_input_insert_text(in, in->state.kill);
     return true;
 }
 
@@ -531,8 +532,8 @@ static bool cmd_delete(struct ui_input *in, const struct input_cmd *cmd)
         char *kill = dup_slice(in, lo, hi);
         if (!kill)
             return true;
-        free(in->impl.kill);
-        in->impl.kill = kill;
+        free(in->state.kill);
+        in->state.kill = kill;
     }
     delete_range(in, lo, hi);
     return true;
@@ -543,14 +544,14 @@ static bool cmd_transpose(struct ui_input *in, const struct input_cmd *cmd)
     (void)cmd;
     size_t lo, hi;
     sel_range(in, &lo, &hi);
-    if (lo != hi || in->impl.len == 0 || in->impl.select.caret == 0)
+    if (lo != hi || in->state.len == 0 || in->state.select.caret == 0)
         return true;
-    size_t end = in->impl.select.caret == in->impl.len
-        ? in->impl.len
+    size_t end = in->state.select.caret == in->state.len
+        ? in->state.len
         : edit_move(in, UI_EDIT_CHARACTER, false);
-    size_t middle = ui_text_move(in->impl.buf, in->impl.len, end,
+    size_t middle = ui_text_move(in->state.buf, in->state.len, end,
                                  UI_EDIT_CHARACTER, true);
-    size_t start = ui_text_move(in->impl.buf, in->impl.len, middle,
+    size_t start = ui_text_move(in->state.buf, in->state.len, middle,
                                 UI_EDIT_CHARACTER, true);
     if (start == middle)
         return true;
@@ -560,11 +561,11 @@ static bool cmd_transpose(struct ui_input *in, const struct input_cmd *cmd)
     if (!text)
         return true;
     history_record(in, 0);
-    memcpy(text, in->impl.buf + start, first);
-    memmove(in->impl.buf + start, in->impl.buf + middle, second);
-    memcpy(in->impl.buf + start + second, text, first);
+    memcpy(text, in->state.buf + start, first);
+    memmove(in->state.buf + start, in->state.buf + middle, second);
+    memcpy(in->state.buf + start + second, text, first);
     free(text);
-    in->impl.select.caret = in->impl.select.anchor = end;
+    in->state.select.caret = in->state.select.anchor = end;
     changed(in);
     return true;
 }
@@ -614,7 +615,7 @@ static bool input_edit(struct ui_input *in, enum ui_edit_command command,
         caret_move_to(in, 0, extend);
         return true;
     case UI_EDIT_END:
-        caret_move_to(in, in->impl.len, extend);
+        caret_move_to(in, in->state.len, extend);
         return true;
     case UI_EDIT_LEFT:
     case UI_EDIT_RIGHT:
@@ -638,7 +639,7 @@ static bool handle_key(struct ui_input *in, const struct ui_key_event *ev)
         return true;
     case UI_KEY_HOME:
     case UI_KEY_END:
-        caret_move_to(in, ev->key == UI_KEY_HOME ? 0 : in->impl.len, shift);
+        caret_move_to(in, ev->key == UI_KEY_HOME ? 0 : in->state.len, shift);
         return true;
     case UI_KEY_BACKSPACE:
     case UI_KEY_DELETE:
@@ -667,8 +668,8 @@ static size_t offset_at_x(const struct ui_input *in, int x)
 {
     int cw = ui_widget_cell_w(&in->widget);
     int64_t rel = (int64_t)x - ui_input_text_inset(in) +
-                  (int64_t)in->impl.scroll_cells * cw;
-    return ui_text_offset_at_x(ui_input_text(in), in->impl.len, rel, cw);
+                  (int64_t)in->state.scroll_cells * cw;
+    return ui_text_offset_at_x(ui_input_text(in), in->state.len, rel, cw);
 }
 
 static bool handle_pointer(struct ui_input *in, const struct ui_pointer_event *p,
@@ -692,9 +693,9 @@ static bool handle_pointer(struct ui_input *in, const struct ui_pointer_event *p
             return false;
         ui_widget_focus(widget);
         ui_widget_capture_pointer(widget);
-        in->impl.edit_group = 0;
-        ui_text_select_press(&in->impl.select, ui_input_text(in),
-            in->impl.len, &(struct ui_text_select_click){
+        in->state.edit_group = 0;
+        ui_text_select_press(&in->state.select, ui_input_text(in),
+            in->state.len, &(struct ui_text_select_click){
                 .pos = p->pos,
                 .time_ms = time_ms,
                 .offset = offset_at_x(in, x),
@@ -707,16 +708,16 @@ static bool handle_pointer(struct ui_input *in, const struct ui_pointer_event *p
         caret_moved(in);
         return true;
     case UI_POINTER_MOTION:
-        if (!ui_text_select_drag(&in->impl.select, ui_input_text(in),
-                                 in->impl.len, offset_at_x(in, x), p->pos,
+        if (!ui_text_select_drag(&in->state.select, ui_input_text(in),
+                                 in->state.len, offset_at_x(in, x), p->pos,
                                  threshold))
-            return in->impl.select.pressed;
+            return in->state.select.pressed;
         caret_moved(in);
         return true;
     case UI_POINTER_RELEASE:
-        if (!in->impl.select.pressed)
+        if (!in->state.select.pressed)
             return false;
-        ui_text_select_release(&in->impl.select);
+        ui_text_select_release(&in->state.select);
         ui_widget_release_pointer(widget);
         return true;
     default:
@@ -730,14 +731,14 @@ static bool input_event(struct ui_widget *widget, const struct ui_event *event)
     switch (event->kind) {
     case UI_EVENT_FOCUS_IN:
     case UI_EVENT_FOCUS_OUT:
-        in->impl.edit_group = 0;
-        ui_text_select_end(&in->impl.select);
+        in->state.edit_group = 0;
+        ui_text_select_end(&in->state.select);
         ui_widget_set_style_pseudo(widget,
             event->kind == UI_EVENT_FOCUS_IN ? CSS_PSEUDO_FOCUS : 0);
         caret_moved(in);
         return true;
     case UI_EVENT_CAPTURE_LOST:
-        ui_text_select_end(&in->impl.select);
+        ui_text_select_end(&in->state.select);
         return true;
     case UI_EVENT_TEXT:
     case UI_EVENT_PASTE: {
@@ -777,7 +778,7 @@ static bool input_accessibility(const struct ui_widget *widget,
     sel_range(in, &start, &end);
     out->role = UI_ACCESSIBILITY_ROLE_TEXT_FIELD;
     out->value = ui_input_text(in);
-    out->caret_offset = in->impl.select.caret;
+    out->caret_offset = in->state.select.caret;
     out->selection_start = start;
     out->selection_end = end;
     out->states |= UI_ACCESSIBILITY_STATE_EDITABLE;
@@ -790,7 +791,7 @@ static void apply_accessible_selection(
     struct ui_input *in,
     const struct ui_accessibility_action_request *request)
 {
-    ui_text_select_apply(&in->impl.select, ui_input_text(in), in->impl.len,
+    ui_text_select_apply(&in->state.select, ui_input_text(in), in->state.len,
                          request->selection_start, request->selection_end,
                          request->caret_offset);
 }
@@ -811,7 +812,7 @@ static bool input_accessibility_action(
     }
     if (request->action == UI_ACCESSIBILITY_ACTION_SET_SELECTION) {
         apply_accessible_selection(in, request);
-        in->impl.edit_group = 0;
+        in->state.edit_group = 0;
         caret_moved(in);
         return true;
     }
@@ -823,15 +824,15 @@ static uint64_t input_tick(struct ui_widget *widget, uint64_t now_ms)
     struct ui_input *in = input_of(widget);
     if (!ui_widget_has_focus(widget))
         return 0;
-    if (!in->impl.blink_at) {
-        in->impl.blink_at = now_ms + UI_INPUT_BLINK_MS;
-    } else if (now_ms >= in->impl.blink_at) {
-        in->impl.blink_on = !in->impl.blink_on;
-        while (now_ms >= in->impl.blink_at)
-            in->impl.blink_at += UI_INPUT_BLINK_MS;
+    if (!in->state.blink_at) {
+        in->state.blink_at = now_ms + UI_INPUT_BLINK_MS;
+    } else if (now_ms >= in->state.blink_at) {
+        in->state.blink_on = !in->state.blink_on;
+        while (now_ms >= in->state.blink_at)
+            in->state.blink_at += UI_INPUT_BLINK_MS;
         ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
     }
-    return in->impl.blink_at;
+    return in->state.blink_at;
 }
 
 static struct vector2i input_measure(const struct ui_widget *widget,
@@ -891,7 +892,7 @@ static void input_paint(const struct ui_widget *widget,
         uint32_t color = part_color(widget, input_parts.selection, true, 0);
         ui_paint_rect(paint, (struct rect2i){
             .pos = { .x = geom_sat_i((int64_t)content.x +
-                          ((int64_t)cells_to(in, lo) - in->impl.scroll_cells) * cw),
+                          ((int64_t)cells_to(in, lo) - in->state.scroll_cells) * cw),
                      .y = content.y },
             .size = { .x = geom_sat_i(((int64_t)cells_to(in, hi) - cells_to(in, lo)) * cw),
                       .y = content.height },
@@ -899,10 +900,10 @@ static void input_paint(const struct ui_widget *widget,
     }
 
     const char *text = ui_input_text(in);
-    size_t len = in->impl.len;
+    size_t len = in->state.len;
     uint32_t fg;
-    if (!len && in->impl.placeholder && in->impl.placeholder[0]) {
-        text = in->impl.placeholder;
+    if (!len && in->state.placeholder && in->state.placeholder[0]) {
+        text = in->state.placeholder;
         len = strlen(text);
         fg = part_color(widget, input_parts.empty, false,
                         rs->has_text_color ? rs->text_color : 0);
@@ -911,7 +912,7 @@ static void input_paint(const struct ui_widget *widget,
                         rs->has_text_color ? rs->text_color : 0);
     }
     if (len > 0) {
-        int64_t offset = (int64_t)in->impl.scroll_cells * cw;
+        int64_t offset = (int64_t)in->state.scroll_cells * cw;
         ui_paint_text(paint, (struct rect2i){
             .pos = { .x = geom_sat_i((int64_t)content.x - offset), .y = text_y },
             .size = { .x = geom_sat_i(offset + (int64_t)ui_text_run_cells(text, len) * cw),
@@ -920,12 +921,12 @@ static void input_paint(const struct ui_widget *widget,
            text, len);
     }
 
-    if (in->impl.blink_on && ui_widget_has_focus(widget)) {
+    if (in->state.blink_on && ui_widget_has_focus(widget)) {
         int caret_w = ui_ctx_px(scale, 2);
         uint32_t color = part_color(widget, input_parts.caret, true, 0);
         ui_paint_rect(paint, (struct rect2i){
             .pos = { .x = geom_sat_i((int64_t)content.x +
-                          ((int64_t)cells_to(in, in->impl.select.caret) - in->impl.scroll_cells) * cw),
+                          ((int64_t)cells_to(in, in->state.select.caret) - in->state.scroll_cells) * cw),
                      .y = text_y },
             .size = { .x = caret_w > 0 ? caret_w : 1, .y = ch },
         }, color);
@@ -936,15 +937,15 @@ static void input_paint(const struct ui_widget *widget,
 static void input_destroy(struct ui_widget *widget)
 {
     struct ui_input *in = input_of(widget);
-    history_free(&in->impl.undo);
-    history_free(&in->impl.redo);
-    free(in->impl.buf);
-    free(in->impl.placeholder);
-    free(in->impl.kill);
-    in->impl.buf = NULL;
-    in->impl.placeholder = NULL;
-    in->impl.kill = NULL;
-    in->impl.capacity = 0;
+    history_free(&in->state.undo);
+    history_free(&in->state.redo);
+    free(in->state.buf);
+    free(in->state.placeholder);
+    free(in->state.kill);
+    in->state.buf = NULL;
+    in->state.placeholder = NULL;
+    in->state.kill = NULL;
+    in->state.capacity = 0;
 }
 
 static const struct ui_widget_ops INPUT_OPS = {

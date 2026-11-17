@@ -4,7 +4,7 @@
 
 #include "ui/debug.h"
 #include "ui/ui.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 
 static const struct ui_widget_ops ROOT_OPS = { .name = "test-overlay" };
 

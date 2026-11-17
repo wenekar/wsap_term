@@ -1,5 +1,5 @@
-#ifndef WSAP_UI_WIDGET_IMPL_H
-#define WSAP_UI_WIDGET_IMPL_H
+#ifndef WSAP_UI_WIDGET_OPS_H
+#define WSAP_UI_WIDGET_OPS_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -68,6 +68,13 @@ bool ui_widget_is_focusable(const struct ui_widget *widget);
 void ui_widget_set_keeps_press_focus(struct ui_widget *widget, bool keeps);
 /* Updates the CSS pseudo-class state flags of `widget`. */
 void ui_widget_set_style_pseudo(struct ui_widget *widget, unsigned pseudo_flags);
+/* Returns the CSS pseudo-class state flags of `widget`. */
+unsigned ui_widget_style_pseudo(const struct ui_widget *widget);
+/* Marks the resolved style of `widget` stale, so the next frame resolves it
+ * again. This call requests no frame and starts no layout pass. The caller
+ * invalidates measure when the new style can change the size, and asks for the
+ * frame. */
+void ui_widget_restyle(struct ui_widget *widget);
 
 /* Dispatches `action` up the widget hierarchy until handled. */
 bool ui_widget_notify(struct ui_widget *source, struct ui_action action);

@@ -5,7 +5,7 @@
 #include "app/tabs/palette.h"
 #include "app/tabs/tab_preview.h"
 #include "app/tabs/tabbar.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 #include "ui/yasl/client.h"
 #include "ui/yasl/window.h"
 

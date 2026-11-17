@@ -3,7 +3,7 @@
 #include "ui/anchor.h"
 #include "ui/internal/layout.h"
 #include "ui/surface.h"
-#include "ui/ui_util.h"
+#include "ui/css.h"
 
 #include <stdlib.h>
 #include <stdatomic.h>
@@ -154,6 +154,17 @@ void ui_widget_set_style_pseudo(struct ui_widget *widget, unsigned pseudo_flags)
     ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
 }
 
+unsigned ui_widget_style_pseudo(const struct ui_widget *widget)
+{
+    return widget ? widget->impl.style_pseudo : 0;
+}
+
+void ui_widget_restyle(struct ui_widget *widget)
+{
+    if (widget)
+        widget->impl.style_valid = false;
+}
+
 void ui_widget_set_action_handler(struct ui_widget *widget, ui_action_fn fn,
                                   void *userdata)
 {
@@ -249,6 +260,11 @@ bool ui_widget_is_hidden(const struct ui_widget *widget)
     return widget && widget->impl.hidden;
 }
 
+bool ui_widget_is_destroyed(const struct ui_widget *widget)
+{
+    return widget && widget->impl.destroyed;
+}
+
 static bool ui_placement_eq(struct ui_placement a, struct ui_placement b)
 {
     return rect2i_eq(a.anchor, b.anchor) &&
@@ -277,6 +293,12 @@ bool ui_widget_needs_layout(const struct ui_widget *widget)
     unsigned dirty = UI_WIDGET_INVALIDATE_MEASURE |
                      UI_WIDGET_INVALIDATE_LAYOUT;
     return widget && (widget->impl.invalidation & dirty);
+}
+
+bool ui_widget_needs_measure(const struct ui_widget *widget)
+{
+    return widget &&
+           (widget->impl.invalidation & UI_WIDGET_INVALIDATE_MEASURE);
 }
 
 bool ui_widget_is_style_current(const struct ui_widget *widget)

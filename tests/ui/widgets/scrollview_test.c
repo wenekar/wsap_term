@@ -6,12 +6,11 @@
 
 #include "ui/widgets/scrollview.h"
 #include "ui/surface.h"
-#include "ui/internal/tree.h"
 #include "ui/paint.h"
 #include "ui/debug.h"
 #include "paint/scene.h"
 #include "ui/ui.h"
-#include "ui/widget_impl.h"
+#include "ui/widget_ops.h"
 
 struct probe_child {
     struct ui_widget widget;
@@ -102,6 +101,24 @@ static struct ui_event scroll_event(struct vector2i pos, int lines)
     }, 0);
 }
 
+/* Builds the scene of `root` through a surface, as the app does. */
+static bool build_scene(struct ui_widget *root, struct ui_scene *scene)
+{
+    struct ui_surface surface = {0};
+    ui_surface_init(&surface, NULL, NULL);
+    bool ok = ui_surface_set_root(&surface, root);
+    bool valid = ok && ui_surface_build_scene(&surface, scene);
+    ui_surface_destroy(&surface);
+    return valid;
+}
+
+/* Lays out `widget` again, as a frame does after a change. */
+static void layout_at(struct ui_widget *widget, struct rect2i bounds)
+{
+    ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_LAYOUT);
+    ui_widget_place(widget, bounds);
+}
+
 static struct ui_event press_event(struct vector2i pos, uint64_t time_ms)
 {
     return ui_event_pointer((struct ui_pointer_event){
@@ -114,7 +131,7 @@ static void fit(struct ui_scrollview *sv, struct rect2i rect)
     ui_widget_measure(&sv->widget, (struct ui_constraints){
         .max = rect.size,
     });
-    ui_widget_layout(&sv->widget, rect);
+    layout_at(&sv->widget, rect);
 }
 
 static void set_root_100x50(struct ui_surface *ctx, struct ui_widget *root)
@@ -146,7 +163,7 @@ static void test_zero(void)
 
     struct ui_scene scene = {0};
     ui_scene_init(&scene);
-    assert(ui_widget_build_scene(&sv.widget, &scene));
+    assert(build_scene(&sv.widget, &scene));
     assert(scene.n_ops == 0);
     ui_scene_destroy(&scene);
 }
@@ -169,7 +186,7 @@ static void test_measure_layout(void)
     assert(measured.x == 40 && measured.y == 50);
     assert(ui_scrollview_content_height(&sv) == 200);
 
-    ui_widget_layout(&sv.widget, (struct rect2i){
+    layout_at(&sv.widget, (struct rect2i){
         .pos = { .x = 10, .y = 20 }, .size = { .x = 100, .y = 50 },
     });
     assert(ui_scrollview_viewport_height(&sv) == 50);
@@ -192,7 +209,7 @@ static void test_scroll_and_forward(void)
     struct ui_event ev = scroll_event((struct vector2i){ .x = 5, .y = 5 }, -1);
     assert(ui_widget_event(&sv.widget, &ev));
     assert(ui_scrollview_offset(&sv) == 48);
-    ui_widget_layout(&sv.widget, sv.widget.bounds);
+    layout_at(&sv.widget, sv.widget.bounds);
     assert(child.widget.bounds.pos.y == -48);
 
     ev = scroll_event((struct vector2i){ .x = 5, .y = 5 }, -100);
@@ -201,7 +218,7 @@ static void test_scroll_and_forward(void)
     ev = scroll_event((struct vector2i){ .x = 5, .y = 5 }, 100);
     assert(ui_widget_event(&sv.widget, &ev));
     assert(ui_scrollview_offset(&sv) == 0);
-    ui_widget_layout(&sv.widget, sv.widget.bounds);
+    layout_at(&sv.widget, sv.widget.bounds);
     assert(child.widget.bounds.pos.y == 0);
 
     ev = scroll_event((struct vector2i){ .x = 200, .y = 5 }, -1);
@@ -267,7 +284,7 @@ static void test_press_hits_scrolled_child(void)
         .pos = { .x = 10, .y = 20 }, .size = { .x = 100, .y = 50 },
     });
     ui_scrollview_scroll_to(&sv, 48);
-    ui_widget_layout(&sv.widget, sv.widget.bounds);
+    layout_at(&sv.widget, sv.widget.bounds);
     assert(child.widget.bounds.pos.y == -28);
 
     struct ui_event press = press_event((struct vector2i){ .x = 15, .y = 50 }, 0);
@@ -288,14 +305,14 @@ static void test_paint_clips_viewport(void)
         .min = { .x = 0, .y = 0 },
         .max = { .x = 100, .y = 30 },
     });
-    ui_widget_layout(&sv.widget, (struct rect2i){
+    layout_at(&sv.widget, (struct rect2i){
         .pos = { .x = 100, .y = 50 }, .size = { .x = 20, .y = 30 },
     });
     ui_scrollview_scroll_to(&sv, 10);
-    ui_widget_layout(&sv.widget, sv.widget.bounds);
+    layout_at(&sv.widget, sv.widget.bounds);
 
     struct ui_scene scene = {0};
-    assert(ui_widget_build_scene(&sv.widget, &scene));
+    assert(build_scene(&sv.widget, &scene));
     assert(scene.n_ops == 3);
     assert(scene.ops[0].kind == UI_SCENE_OP_PUSH_CLIP);
     assert(scene.ops[0].rect.x == 100 && scene.ops[0].rect.y == 50);
@@ -321,7 +338,7 @@ static void test_offset_clamps_when_emptied(void)
     assert(ui_scrollview_offset(&sv) == 48);
 
     assert(replace_child(&sv, NULL));
-    ui_widget_layout(&sv.widget, sv.widget.bounds);
+    layout_at(&sv.widget, sv.widget.bounds);
     assert(ui_scrollview_offset(&sv) == 0);
     ui_widget_destroy(&sv.widget);
 }
@@ -461,17 +478,18 @@ static void test_set_child_and_lifecycle(void)
     assert(ui_widget_surface(&first.widget) == &ctx);
     assert(replace_child(&sv, &second.widget));
     assert(ui_widget_surface(&first.widget) == NULL && first.widget.parent == NULL);
-    assert(!first.widget.impl.destroyed);
+    assert(!ui_widget_is_destroyed(&first.widget));
     assert(ui_widget_surface(&second.widget) == &ctx);
     assert(second.widget.parent == &sv.widget);
 
     assert(replace_child(&sv, NULL));
     assert(ui_scrollview_child(&sv) == NULL);
-    assert(ui_widget_surface(&second.widget) == NULL && !second.widget.impl.destroyed);
+    assert(ui_widget_surface(&second.widget) == NULL &&
+           !ui_widget_is_destroyed(&second.widget));
 
     assert(replace_child(&sv, &first.widget));
     ui_widget_destroy(&sv.widget);
-    assert(first.widget.impl.destroyed);
+    assert(ui_widget_is_destroyed(&first.widget));
     ui_widget_destroy(&first.widget);
     ui_widget_destroy(&second.widget);
     ui_surface_destroy(&ctx);

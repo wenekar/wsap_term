@@ -55,7 +55,7 @@ struct ui_list {
         bool pinned;
         bool stop_at_edges;
         bool allow_focus;
-    } impl;
+    } state;
 };
 
 void ui_list_init(struct ui_list *l);
