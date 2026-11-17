@@ -37,6 +37,13 @@ size_t ui_text_move(const char *text, size_t len, size_t pos,
 void ui_text_unit_range(const char *text, size_t len, size_t pos,
                         enum ui_edit_unit unit, size_t *start, size_t *end);
 
+/* Returns the end of the last word-wrap opportunity in (`start`, `limit`],
+ * or `start` when there is none. A wrap opportunity comes after a space run
+ * or after a hyphen.
+ * Call it to choose where a wrapped line ends. */
+size_t ui_text_break_before(const char *text, size_t len, size_t start,
+                            size_t limit);
+
 /* Returns the end of the character at `pos` and sets `*cells` to its width.
  * The width is the width that the painter draws.
  * Call it to lay out text one character at a time, as line wrapping does. */

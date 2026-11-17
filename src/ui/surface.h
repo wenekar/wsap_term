@@ -88,6 +88,10 @@ enum ui_cursor ui_surface_cursor(const struct ui_surface *surface);
 
 bool ui_surface_tick(struct ui_surface *surface, uint64_t now_ms);
 uint64_t ui_surface_next_deadline(const struct ui_surface *surface);
+/* Returns true when the host of `surface` can copy text. */
+bool ui_surface_can_copy(const struct ui_surface *surface);
+/* Returns true when the host of `surface` can paste text. */
+bool ui_surface_can_paste(const struct ui_surface *surface);
 bool ui_surface_copy_text(struct ui_surface *surface, const char *text);
 bool ui_surface_paste_text(struct ui_surface *surface);
 bool ui_surface_open_url(struct ui_surface *surface, const char *target);

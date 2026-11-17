@@ -112,6 +112,8 @@ static void edit(struct window *window, const char *selector, const char *value)
     ui_surface_focus(window_ui_surface(window), find(window, selector));
     struct ui_event select = ui_event_key((struct ui_key_event){
         .key = UI_KEY_CHAR, .text = 'a', .mods = UI_MOD_CTRL,
+        .edit_command = ui_edit_command_for_key(UI_KEY_CHAR, 'a', UI_MOD_CTRL,
+                                                UI_EDIT_BINDINGS_DEFAULT),
     }, 0);
     assert(ui_surface_dispatch(window_ui_surface(window), &select));
     struct ui_event text = ui_event_text(value, strlen(value), 0);

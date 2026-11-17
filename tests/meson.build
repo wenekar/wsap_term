@@ -80,6 +80,7 @@ test_cases = [
     ['ui-acceptance-test', files('ui/acceptance_test.c'), ui_lib, ui_test_deps],
     ['ui-debug-test', files('ui/debug_test.c'), ui_lib, ui_test_deps],
     ['ui-text-break-test', files('ui/text_break_test.c'), ui_lib, [m_dep, thread_dep, yyjson_dep]],
+    ['ui-text-select-test', files('ui/text_select_test.c'), ui_lib, ui_test_deps],
     ['look-test', files('theme/look_test.c'), theme_lib, deps],
     ['css-parser-test', files('ui/css/parser_test.c'), ui_lib, ui_test_deps],
     ['css-clipping-test', files('ui/css/clipping_test.c', 'ui/stubs/scene_paint_deps.c'), [ui_lib, render_lib], deps],
@@ -164,6 +165,7 @@ msan_safe_tests = [
     'css-clipping-test',
     'css-selector-test',
     'ui-text-break-test',
+    'ui-text-select-test',
 ]
 
 standalone_tests = [

@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "ui/css.h"
+#include "ui/text_select.h"
 #include "ui/widget.h"
 
 #define UI_INPUT_BLINK_MS        500
@@ -19,29 +20,25 @@ struct ui_input {
         char *kill;
         size_t capacity;
         struct ui_input_history *undo, *redo;
+        struct ui_text_select select;
         uint64_t blink_at;
-        uint64_t click_at;
-        struct vector2i click_pos;
-        struct vector2i press_pos;
-        int len;
-        int caret;
-        int anchor;
+        size_t len;
         int scroll_cells;
         int undo_count;
         int edit_group;
-        int edit_caret;
-        int clicks;
+        size_t edit_caret;
         int action_id;
         bool blink_on;
-        bool dragging;
     } impl;
 };
 
 void ui_input_init(struct ui_input *in);
 
 const char *ui_input_text(const struct ui_input *in);
-int ui_input_caret(const struct ui_input *in);
-bool ui_input_selection(const struct ui_input *in, int *start, int *end);
+/* Returns the caret byte offset. */
+size_t ui_input_caret(const struct ui_input *in);
+/* Returns the selected byte range. The result is false when it is empty. */
+bool ui_input_selection(const struct ui_input *in, size_t *start, size_t *end);
 
 /* Replace the text without sending an action.
  * Clear undo history and selection. Move the caret to the end.

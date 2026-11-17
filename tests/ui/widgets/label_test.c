@@ -146,6 +146,8 @@ static bool key(struct fixture *f, enum ui_key k, uint32_t text, unsigned mods)
     struct ui_event event = ui_event_key((struct ui_key_event){
         .key = k, .text = text, .mods = mods,
         .edit_unit = ui_edit_unit_for_mods(mods, UI_EDIT_BINDINGS_DEFAULT),
+        .edit_command = ui_edit_command_for_key(k, text, mods,
+                                                UI_EDIT_BINDINGS_DEFAULT),
     }, 1000);
     return ui_surface_dispatch(&f->surface, &event);
 }
@@ -219,6 +221,51 @@ static void wrapping_and_blank_lines_test(void)
     destroy(&f);
 }
 
+/* The lines follow the width, the wrap mode, the text, and the cell size. */
+static void lines_follow_their_inputs_test(void)
+{
+    struct fixture f;
+    init(&f, "one two three", (struct vector2i){ .x = 40, .y = 64 });
+    build(&f);
+    expect_text(&f, 0, "one ");
+    ui_label_set_wrap(&f.label, UI_LABEL_WRAP_CHAR);
+    build(&f);
+    expect_text(&f, 0, "one t");
+    ui_label_set_wrap(&f.label, UI_LABEL_WRAP_WORD);
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 80, .y = 64 });
+    build(&f);
+    expect_text(&f, 0, "one two ");
+    ui_surface_set_scale(&f.surface, (struct css_scale_context){
+        .dpi_scale = 1, .cell_w = 16, .cell_h = 32,
+    });
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 40, .y = 64 });
+    build(&f);
+    expect_text(&f, 0, "on");
+    assert(ui_label_set_text(&f.label, "ab"));
+    build(&f);
+    assert(text_count(&f) == 1);
+    expect_text(&f, 0, "ab");
+    destroy(&f);
+}
+
+/* A word wrap breaks after a Unicode space, and it does not break at a
+ * no-break space. */
+static void word_wrap_at_unicode_spaces_test(void)
+{
+    struct fixture f;
+    init(&f, "ab\xE3\x80\x80" "cdef", (struct vector2i){ .x = 40, .y = 64 });
+    build(&f);
+    expect_text(&f, 0, "ab\xE3\x80\x80");
+    expect_text(&f, 1, "cdef");
+    destroy(&f);
+
+    init(&f, "ab\xC2\xA0" "cdef", (struct vector2i){ .x = 40, .y = 64 });
+    build(&f);
+    expect_text(&f, 0, "ab\xC2\xA0" "cd");
+    expect_text(&f, 1, "ef");
+    destroy(&f);
+}
+
 static void alignment_ellipsis_and_theme_test(void)
 {
     struct fixture f;
@@ -265,7 +312,7 @@ static void word_line_and_keyboard_selection_test(void)
     build(&f);
     click(&f, pos, 300);
     expect_selection(&f, "Hello café world\n");
-    assert(key(&f, UI_KEY_CHAR, 'a', UI_MOD_SUPER));
+    assert(key(&f, UI_KEY_CHAR, 'a', UI_MOD_CTRL));
     expect_selection(&f, ui_label_text(&f.label));
     assert(key(&f, UI_KEY_CHAR, 'c', UI_MOD_CTRL));
     assert(key(&f, UI_KEY_LEFT, 0, 0));
@@ -452,6 +499,25 @@ static void link_hover_and_focus_styles_test(void)
     destroy(&f);
 }
 
+/* A drag on a link that cannot be selected shows no selection and does not
+ * activate the link. */
+static void link_drag_shows_no_selection_test(void)
+{
+    struct fixture f;
+    init(&f, "Read docs", (struct vector2i){ .x = 160, .y = 16 });
+    assert(ui_label_set_link(&f.label, "https://example.org/docs"));
+    build(&f);
+    struct vector2i start = { .x = 12, .y = 8 };
+    struct vector2i end = { .x = 60, .y = 8 };
+    assert(pointer(&f, UI_POINTER_PRESS, start, 0, 100));
+    assert(pointer(&f, UI_POINTER_MOTION, end, 0, 101));
+    assert(pointer(&f, UI_POINTER_RELEASE, end, 0, 102));
+    assert(!ui_label_selection(&f.label, NULL, NULL));
+    assert(f.opens == 0);
+    build(&f);
+    destroy(&f);
+}
+
 static void select_word(struct fixture *f, uint64_t time)
 {
     struct vector2i word = { .x = 60, .y = 8 };
@@ -619,6 +685,8 @@ int main(void)
 {
     dynamic_storage_test();
     wrapping_and_blank_lines_test();
+    word_wrap_at_unicode_spaces_test();
+    lines_follow_their_inputs_test();
     alignment_ellipsis_and_theme_test();
     word_line_and_keyboard_selection_test();
     cluster_and_word_keyboard_test();
@@ -628,6 +696,7 @@ int main(void)
     clip_mode_preserves_explicit_lines_test();
     narrow_box_keeps_utf8_whole_test();
     link_hover_and_focus_styles_test();
+    link_drag_shows_no_selection_test();
     focus_move_clears_selection_test();
     blank_press_clears_selection_test();
     focus_in_keeps_selection_test();

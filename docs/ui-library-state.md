@@ -90,11 +90,15 @@ A row, a column, and a stack take `flex-direction`, `align-items`,
 Send keys and pointer input through `ui_surface_dispatch()`.
 The host sets `ui_key_event.edit_unit` for editing keys.
 Use `ui_edit_unit_for_mods()` with the binding policy of the host.
-The input widget uses this unit for arrow movement and text deletion.
+The host also sets `ui_key_event.edit_command` for keys that edit text.
+Use `ui_edit_command_for_key()` with the same policy.
+The input widget uses `edit_unit` for arrow movement and text deletion.
 Shift extends a text selection during arrow movement.
 Click an input to place the caret.
 Drag to select text.
-Double-click to select all text.
+Double-click selects a word.
+Triple-click selects the whole value in an input.
+Triple-click selects the line in a label.
 Ctrl+A or Command+A also selects all text.
 The host supplies the platform double-click interval.
 The default interval is 400 ms.

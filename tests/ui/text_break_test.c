@@ -302,6 +302,40 @@ static void test_cluster_next_and_fit(void)
     assert(ui_text_fit(family, 18, ui_text_run_cells(family, 18) - 1) == 0);
 }
 
+/* A wrap opportunity comes after a space run or a hyphen. */
+static void test_break_before(void)
+{
+    const char *word = "alpha beta";
+    size_t len = strlen(word);
+    /* The space run ends at 6. */
+    assert(ui_text_break_before(word, len, 0, 6) == 6);
+    assert(ui_text_break_before(word, len, 0, 5) == 0);
+    assert(ui_text_break_before(word, len, 6, len) == 6);
+    assert(ui_text_break_before(word, len, 6, 6) == 6);
+
+    const char *hyphen = "well-known";
+    len = strlen(hyphen);
+    assert(ui_text_break_before(hyphen, len, 0, 5) == 5);
+
+    /* A full stop is not a wrap opportunity. */
+    const char *dots = "foo.bar";
+    len = strlen(dots);
+    assert(ui_text_break_before(dots, len, 0, 3) == 0);
+
+    /* An ideographic space is a wrap opportunity. */
+    const char *ideographic = "ab\xE3\x80\x80" "cd";
+    len = strlen(ideographic);
+    assert(ui_text_break_before(ideographic, len, 0, 5) == 5);
+
+    /* A no-break space is not. */
+    const char *no_break = "ab\xC2\xA0" "cd";
+    len = strlen(no_break);
+    assert(ui_text_break_before(no_break, len, 0, 4) == 0);
+
+    /* A limit past the end stops at the end of the text. */
+    assert(ui_text_break_before(word, strlen(word), 0, 99) == 6);
+}
+
 static void test_offset_at_x(void)
 {
     assert(ui_text_offset_at_x(NULL, 0, 0, 10) == 0);
@@ -413,6 +447,7 @@ int main(void)
     test_word_breaks();
     test_invalid_utf8_and_early_stop();
     test_cluster_next_and_fit();
+    test_break_before();
     test_offset_at_x();
     test_unit_range();
     test_move();

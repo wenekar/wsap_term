@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+#include "ui/text_select.h"
 #include "ui/widget.h"
 
 #define UI_LABEL_TEXT_CAP 256
@@ -20,19 +21,34 @@ enum ui_label_align : uint8_t {
     UI_LABEL_ALIGN_RIGHT,
 };
 
+/* One line of label text. */
+struct label_line {
+    size_t start, len;
+    int cells;
+    bool ellipsis;
+};
+
+/* The lines of one label text for one width, wrap mode, and cell size. */
+struct label_lines {
+    struct label_line *items;
+    size_t count, capacity;
+    unsigned text_gen;
+    int width, advance, cell_h;
+    enum ui_label_wrap wrap;
+};
+
 struct ui_label {
     struct ui_widget widget;
     struct {
         char *text, *link;
-        size_t len, anchor, caret;
-        size_t gesture_start, gesture_end;
-        uint64_t click_time;
-        struct vector2i click_pos, press_pos;
+        size_t len;
+        struct ui_text_select select;
+        struct label_lines lines;
         int action_id;
-        unsigned clicks;
+        unsigned text_gen;
         enum ui_label_wrap wrap;
         enum ui_label_align align;
-        bool selectable, disabled, pressed, dragged;
+        bool selectable, disabled;
     } impl;
 };
 
