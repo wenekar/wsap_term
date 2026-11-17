@@ -409,11 +409,45 @@ static const struct wl_data_device_listener device_listener = {
     .leave = drag_offer_clear, .motion = drag_motion, .drop = drag_drop
 };
 static void source_target(void *ud, struct wl_data_source *s, const char *mime) { (void)ud; (void)s; (void)mime; }
+/* STRING and TEXT carry Latin-1 bytes. The other text targets carry UTF-8. */
+static bool target_is_latin1(const char *mime)
+{
+    return mime && (!strcasecmp(mime, "STRING") || !strcasecmp(mime, "TEXT"));
+}
+
+/* Call before offering STRING or TEXT. Latin-1 cannot hold every UTF-8 text. */
+static bool text_has_latin1(const char *text)
+{
+    size_t len = 0;
+    char *latin1 = yasl_private_utf8_to_latin1(text, &len);
+    free(latin1);
+    return latin1 != NULL;
+}
+
+/* Starts sending text in the encoding that the requested target expects. The
+ * fd is closed without bytes if the text cannot be converted to Latin-1. */
+static void send_text_for_target(struct clipboard *c, int fd, const char *mime, const char *text)
+{
+    if (!text) text = "";
+    if (!target_is_latin1(mime)) {
+        start_transfer_text(c, fd, true, false, text);
+        return;
+    }
+    size_t len = 0;
+    char *latin1 = yasl_private_utf8_to_latin1(text, &len);
+    if (!latin1) {
+        close(fd);
+        return;
+    }
+    start_transfer_text(c, fd, true, false, latin1);
+    free(latin1);
+}
+
 static void source_send(void *ud, struct wl_data_source *s, const char *mime, int32_t fd)
 {
     struct clipboard *c = ud;
-    (void)s; (void)mime;
-    start_transfer_text(c, fd, true, false, c->text);
+    (void)s;
+    send_text_for_target(c, fd, mime, c->text);
 }
 static void source_cancelled(void *ud, struct wl_data_source *s)
 {
@@ -500,9 +534,9 @@ static const struct zwp_primary_selection_device_v1_listener primary_device_list
 static void primary_source_send(void *ud, struct zwp_primary_selection_source_v1 *s,
                                 const char *mime, int32_t fd)
 {
-    (void)s; (void)mime;
+    (void)s;
     struct clipboard *c = ud;
-    start_transfer_text(c, fd, true, false, c->primary_text);
+    send_text_for_target(c, fd, mime, c->primary_text);
 }
 
 static void primary_source_cancelled(void *ud, struct zwp_primary_selection_source_v1 *s)
@@ -627,8 +661,10 @@ bool clipboard_copy(struct clipboard *c, const char *text, uint32_t serial)
     wl_data_source_offer(c->source, "text/plain;charset=utf-8");
     wl_data_source_offer(c->source, "text/plain");
     wl_data_source_offer(c->source, "UTF8_STRING");
-    wl_data_source_offer(c->source, "STRING");
-    wl_data_source_offer(c->source, "TEXT");
+    if (text_has_latin1(copy)) {
+        wl_data_source_offer(c->source, "STRING");
+        wl_data_source_offer(c->source, "TEXT");
+    }
     wl_data_device_set_selection(c->device, c->source, serial);
     return true;
 }
@@ -648,8 +684,10 @@ bool clipboard_copy_primary(struct clipboard *c, const char *text, uint32_t seri
     zwp_primary_selection_source_v1_offer(c->primary_source, "text/plain;charset=utf-8");
     zwp_primary_selection_source_v1_offer(c->primary_source, "text/plain");
     zwp_primary_selection_source_v1_offer(c->primary_source, "UTF8_STRING");
-    zwp_primary_selection_source_v1_offer(c->primary_source, "STRING");
-    zwp_primary_selection_source_v1_offer(c->primary_source, "TEXT");
+    if (text_has_latin1(copy)) {
+        zwp_primary_selection_source_v1_offer(c->primary_source, "STRING");
+        zwp_primary_selection_source_v1_offer(c->primary_source, "TEXT");
+    }
     zwp_primary_selection_device_v1_set_selection(c->primary_device, c->primary_source, serial);
     return true;
 }

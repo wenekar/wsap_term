@@ -1,6 +1,8 @@
 #include "../../src/platform/wayland/clipboard.c"
 #include "common/loop.h"
+#include "wire.h"
 #include <assert.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 
@@ -105,10 +107,144 @@ static void test_closed_receiver(bool pending_signal)
     assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 }
 
+/* True when the client offered mime for source. */
+static bool offers_mime(const struct wire_inbox *in, uint32_t source, const char *mime)
+{
+    struct wire_message m;
+    size_t pos = 0;
+    bool found = false;
+    while (wire_next(in, &pos, &m)) {
+        if (m.object != source || m.opcode != 0)
+            continue;
+        size_t offset = 0;
+        if (strcmp(wire_get_string(m.args, &offset), mime) == 0)
+            found = true;
+    }
+    return found;
+}
+
+/* First argument of the last request with opcode sent to object. */
+static uint32_t last_argument(const struct wire_inbox *in, uint32_t object, uint16_t opcode)
+{
+    struct wire_message m;
+    size_t pos = 0;
+    uint32_t value = 0;
+    while (wire_next(in, &pos, &m))
+        if (m.object == object && m.opcode == opcode)
+            value = wire_u32(m.args);
+    assert(value);
+    return value;
+}
+
+/* Plays one paste: the compositor asks source for mime and reads the bytes back. */
+static size_t request_target(struct wl_display *display, int server, struct yasl_loop *loop,
+                             uint32_t source, uint16_t send_opcode, const char *mime,
+                             char *out, size_t cap)
+{
+    int fds[2];
+    assert(pipe2(fds, O_CLOEXEC) == 0);
+    assert(fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0);
+    uint8_t args[128];
+    size_t n = wire_put_string(args, mime);
+    wire_event(server, source, send_opcode, args, n, fds[1]);
+    close(fds[1]);
+    wire_pump(display);
+    size_t len = 0;
+    for (int spins = 0; ; spins++) {
+        assert(spins < 100 && len < cap);
+        assert(yasl_loop_step(loop, 0) >= 0);
+        ssize_t got = read(fds[0], out + len, cap - len);
+        if (got == 0)
+            break;
+        if (got > 0)
+            len += (size_t)got;
+        else
+            assert(errno == EAGAIN);
+    }
+    close(fds[0]);
+    return len;
+}
+
+/* The text targets: STRING and TEXT carry Latin-1, the UTF-8 targets carry UTF-8. */
+static void test_text_targets(void)
+{
+    int sockets[2];
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    struct wl_display *display = wl_display_connect_to_fd(sockets[0]);
+    assert(display);
+    struct wl_data_device_manager *manager = (struct wl_data_device_manager *)
+        wl_proxy_create((struct wl_proxy *)display, &wl_data_device_manager_interface);
+    struct wl_seat *seat = (struct wl_seat *)
+        wl_proxy_create((struct wl_proxy *)display, &wl_seat_interface);
+    struct yasl_loop *loop = yasl_loop_create();
+    assert(manager && seat && loop);
+    struct clipboard *c = clipboard_create(display, manager, seat, loop, NULL, NULL);
+    assert(c);
+    uint32_t device = wl_proxy_get_id((struct wl_proxy *)clipboard_data_device(c));
+    struct wire_inbox in = {0};
+    char out[64];
+
+    static const char utf8[] = "caf\xc3\xa9 \xc2\xa3"; /* café £ */
+    static const char latin1[] = "caf\xe9 \xa3";
+    assert(clipboard_copy(c, utf8, 1));
+    wire_flush(display);
+    wire_read(sockets[1], &in);
+    uint32_t source = last_argument(&in, device, 1 /* data device set_selection */);
+    assert(offers_mime(&in, source, "STRING") && offers_mime(&in, source, "TEXT"));
+    const char *utf8_targets[] = {"UTF8_STRING", "text/plain;charset=utf-8", "text/plain"};
+    for (size_t i = 0; i < sizeof(utf8_targets) / sizeof(utf8_targets[0]); i++) {
+        size_t n = request_target(display, sockets[1], loop, source, 1 /* send */,
+                                  utf8_targets[i], out, sizeof(out));
+        assert(n == sizeof(utf8) - 1 && memcmp(out, utf8, n) == 0);
+    }
+    const char *latin1_targets[] = {"STRING", "TEXT"};
+    for (size_t i = 0; i < sizeof(latin1_targets) / sizeof(latin1_targets[0]); i++) {
+        size_t n = request_target(display, sockets[1], loop, source, 1 /* send */,
+                                  latin1_targets[i], out, sizeof(out));
+        assert(n == sizeof(latin1) - 1 && memcmp(out, latin1, n) == 0);
+    }
+
+    /* Text that Latin-1 cannot hold offers no Latin-1 target. */
+    assert(clipboard_copy(c, "\xe5\xad\x97", 2)); /* 字 */
+    wire_flush(display);
+    wire_read(sockets[1], &in);
+    source = last_argument(&in, device, 1);
+    assert(offers_mime(&in, source, "UTF8_STRING"));
+    assert(!offers_mime(&in, source, "STRING") && !offers_mime(&in, source, "TEXT"));
+
+    /* The primary selection follows the same rules. */
+    struct zwp_primary_selection_device_manager_v1 *primary = (struct zwp_primary_selection_device_manager_v1 *)
+        wl_proxy_create((struct wl_proxy *)display, &zwp_primary_selection_device_manager_v1_interface);
+    assert(primary);
+    clipboard_set_primary_manager(c, primary);
+    assert(clipboard_copy_primary(c, utf8, 3));
+    wire_flush(display);
+    wire_read(sockets[1], &in);
+    uint32_t primary_device = last_argument(&in, wl_proxy_get_id((struct wl_proxy *)primary),
+                                            1 /* get_device */);
+    uint32_t primary_source = last_argument(&in, primary_device, 0 /* set_selection */);
+    assert(offers_mime(&in, primary_source, "STRING") && offers_mime(&in, primary_source, "TEXT"));
+    size_t n = request_target(display, sockets[1], loop, primary_source, 0 /* send */,
+                              "STRING", out, sizeof(out));
+    assert(n == sizeof(latin1) - 1 && memcmp(out, latin1, n) == 0);
+    n = request_target(display, sockets[1], loop, primary_source, 0 /* send */,
+                       "UTF8_STRING", out, sizeof(out));
+    assert(n == sizeof(utf8) - 1 && memcmp(out, utf8, n) == 0);
+
+    clipboard_destroy(c);
+    wl_proxy_destroy((struct wl_proxy *)primary);
+    wl_proxy_destroy((struct wl_proxy *)seat);
+    wl_proxy_destroy((struct wl_proxy *)manager);
+    yasl_loop_destroy(loop);
+    wl_display_disconnect(display);
+    close(sockets[1]);
+}
+
 int main(void)
 {
     test_closed_receiver(false);
     test_closed_receiver(true);
+    test_text_targets();
     struct received received = {0};
     struct clipboard c = {.loop = yasl_loop_create(), .receive = receive, .ud = &received};
     received.clipboard = &c;
