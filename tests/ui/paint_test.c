@@ -2,10 +2,11 @@
 #include <stdint.h>
 
 #include "ui/damage.h"
-#include "ui/internal/tree.h"
 #include "ui/paint.h"
-#include "ui/widgets/label.h"
+#include "ui/surface.h"
 #include "ui/widget.h"
+#include "ui/widget_ops.h"
+#include "ui/widgets/label.h"
 
 struct paint_probe {
     uint32_t color;
@@ -35,6 +36,17 @@ static const struct ui_widget_ops PAINT_OPS = {
     .paint = paint_probe_widget,
 };
 
+/* Builds the scene of `root` through a surface, as the app does. */
+static bool build_scene(struct ui_widget *root, struct ui_scene *scene)
+{
+    struct ui_surface surface = {0};
+    ui_surface_init(&surface, NULL, NULL);
+    ui_surface_set_root(&surface, root);
+    bool valid = ui_surface_build_scene(&surface, scene);
+    ui_surface_destroy(&surface);
+    return valid;
+}
+
 static void paint_order_translation_test(void)
 {
     struct paint_probe parent_probe = { .color = 0xff000001 };
@@ -44,7 +56,7 @@ static void paint_order_translation_test(void)
     ui_widget_init(&parent, &PAINT_OPS, &parent_probe);
     ui_widget_init(&child, &PAINT_OPS, &child_probe);
     assert(ui_widget_add_child(&parent, &child));
-    ui_widget_layout(&parent, (struct rect2i){
+    ui_widget_place(&parent, (struct rect2i){
         .pos = { .x = 10, .y = 20 }, .size = { .x = 80, .y = 60 },
     });
     child.bounds = (struct rect2i){
@@ -52,7 +64,7 @@ static void paint_order_translation_test(void)
     };
 
     static struct ui_scene scene;
-    assert(ui_widget_build_scene(&parent, &scene));
+    assert(build_scene(&parent, &scene));
     assert(scene.n_ops == 2);
     assert(scene.ops[0].kind == UI_SCENE_OP_RECT);
     assert(scene.ops[0].rect.x == 11 && scene.ops[0].rect.y == 22);
@@ -66,16 +78,16 @@ static void paint_order_translation_test(void)
 static void clipping_and_zero_test(void)
 {
     static struct ui_scene scene;
-    assert(ui_widget_build_scene(NULL, &scene));
+    assert(build_scene(NULL, &scene));
     assert(scene.n_ops == 0);
 
     struct paint_probe probe = { .color = 1, .clip = true };
     struct ui_widget widget = {0};
     ui_widget_init(&widget, &PAINT_OPS, &probe);
-    ui_widget_layout(&widget, (struct rect2i){
+    ui_widget_place(&widget, (struct rect2i){
         .pos = { .x = 4, .y = 5 }, .size = { .x = 8, .y = 9 },
     });
-    assert(ui_widget_build_scene(&widget, &scene));
+    assert(build_scene(&widget, &scene));
     assert(scene.n_ops == 3);
     assert(scene.ops[0].kind == UI_SCENE_OP_PUSH_CLIP);
     assert(scene.ops[0].rect.x == 4 && scene.ops[0].rect.y == 5);
@@ -83,7 +95,7 @@ static void clipping_and_zero_test(void)
     assert(scene.ops[2].kind == UI_SCENE_OP_POP_CLIP);
 
     probe.unbalanced = true;
-    assert(!ui_widget_build_scene(&widget, &scene));
+    assert(!build_scene(&widget, &scene));
     ui_widget_destroy(&widget);
 }
 
@@ -114,19 +126,19 @@ static bool damage_within(const struct ui_damage *damage, struct rect2i r)
 }
 
 static struct ui_damage track(struct ui_damage_tracker *t,
-                              const struct ui_widget *root)
+                              struct ui_widget *root)
 {
     static struct ui_scene scene;
-    assert(ui_widget_build_scene(root, &scene));
+    assert(build_scene(root, &scene));
     struct ui_damage d;
     ui_damage_track(t, &scene, &d);
     return d;
 }
 
-static struct rect2i label_text(const struct ui_widget *widget, struct rect2i *ink)
+static struct rect2i label_text(struct ui_widget *widget, struct rect2i *ink)
 {
     struct ui_scene scene = {0};
-    assert(ui_widget_build_scene(widget, &scene));
+    assert(build_scene(widget, &scene));
     struct rect2i box = {0};
     for (int i = 0; i < scene.n_ops; i++)
         if (scene.ops[i].kind == UI_SCENE_OP_TEXT) {
@@ -143,7 +155,7 @@ static void label_text_damage_test(void)
 {
     struct ui_label label = {0};
     ui_label_init(&label);
-    ui_widget_layout(&label.widget, (struct rect2i){
+    ui_widget_place(&label.widget, (struct rect2i){
         .pos = { .x = 20, .y = 12 }, .size = { .x = 400, .y = 20 },
     });
     static struct ui_damage_tracker t;
@@ -175,7 +187,7 @@ static void moved_widget_damage_test(void)
     struct paint_probe probe = { .color = 0xff000003 };
     struct ui_widget widget = {0};
     ui_widget_init(&widget, &PAINT_OPS, &probe);
-    ui_widget_layout(&widget, (struct rect2i){
+    ui_widget_place(&widget, (struct rect2i){
         .pos = { .x = 1, .y = 2 }, .size = { .x = 10, .y = 20 },
     });
     static struct ui_damage_tracker t;
@@ -183,7 +195,7 @@ static void moved_widget_damage_test(void)
     struct ui_damage d = track(&t, &widget);
     assert(ui_damage_is_empty(&d));
 
-    ui_widget_layout(&widget, (struct rect2i){
+    ui_widget_place(&widget, (struct rect2i){
         .pos = { .x = 50, .y = 60 }, .size = { .x = 10, .y = 20 },
     });
     d = track(&t, &widget);
@@ -230,11 +242,11 @@ static void paint_box_and_stroke_test(void)
     };
     struct ui_widget widget = {0};
     ui_widget_init(&widget, &BOX_PROBE_OPS, &probe);
-    ui_widget_layout(&widget, (struct rect2i){
+    ui_widget_place(&widget, (struct rect2i){
         .pos = { .x = 10, .y = 20 }, .size = { .x = 40, .y = 24 },
     });
     struct ui_scene scene = {0};
-    assert(ui_widget_build_scene(&widget, &scene));
+    assert(build_scene(&widget, &scene));
     assert(rect2i_eq(probe.fill, (struct rect2i){
         .pos = { .x = 2, .y = 2 }, .size = { .x = 36, .y = 20 },
     }));
@@ -260,7 +272,7 @@ static void paint_box_and_stroke_test(void)
     probe.box.border_width = 3;
     probe.box.radius = 2;
     ui_widget_invalidate(&widget, UI_WIDGET_INVALIDATE_PAINT);
-    assert(ui_widget_build_scene(&widget, &scene));
+    assert(build_scene(&widget, &scene));
     assert(scene.n_ops == 2);
     assert(scene.ops[0].kind == UI_SCENE_OP_ROUNDED_RECT &&
            scene.ops[0].radius == 2);
@@ -268,20 +280,20 @@ static void paint_box_and_stroke_test(void)
 
     probe.box.bg_color = 0x00445566;
     ui_widget_invalidate(&widget, UI_WIDGET_INVALIDATE_PAINT);
-    assert(ui_widget_build_scene(&widget, &scene));
+    assert(build_scene(&widget, &scene));
     assert(scene.n_ops == 1 && !rect2i_is_empty(probe.fill));
 
     probe.box.bg_color = 0xFF445566;
     probe.box.border_width = 12;
     ui_widget_invalidate(&widget, UI_WIDGET_INVALIDATE_PAINT);
-    assert(ui_widget_build_scene(&widget, &scene));
+    assert(build_scene(&widget, &scene));
     assert(scene.n_ops == 1 && rect2i_is_empty(probe.fill));
 
     probe.box.bg_color = 0x80445566;
     probe.box.border_width = 2;
     probe.box.radius = 0;
     ui_widget_invalidate(&widget, UI_WIDGET_INVALIDATE_PAINT);
-    assert(ui_widget_build_scene(&widget, &scene));
+    assert(build_scene(&widget, &scene));
     assert(scene.n_ops == 5);
     assert(rect2i_eq(probe.fill, (struct rect2i){
         .pos = { .x = 2, .y = 2 }, .size = { .x = 36, .y = 20 },

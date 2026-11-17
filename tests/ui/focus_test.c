@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #include "ui/surface.h"
-#include "ui/internal/tree.h"
+#include "ui/widget_ops.h"
 #include "ui/widget.h"
 
 struct probe {

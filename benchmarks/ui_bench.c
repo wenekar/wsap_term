@@ -6,9 +6,9 @@
 #include "ui/box.h"
 #include "ui/css.h"
 #include "ui/damage.h"
-#include "ui/internal/tree.h"
 #include "ui/style_context.h"
 #include "ui/surface.h"
+#include "ui/widget_ops.h"
 
 #include <string.h>
 
@@ -111,7 +111,8 @@ static void bench_layout(void)
     BENCH_RUN("layout/16x4", 1000, {
         for (int i = 0; i < 1000; i++) {
             ui_widget_measure(&root.widget, (struct ui_constraints){ .max = bounds.size });
-            ui_widget_layout(&root.widget, bounds);
+            ui_widget_invalidate(&root.widget, UI_WIDGET_INVALIDATE_LAYOUT);
+            ui_widget_place(&root.widget, bounds);
         }
     });
     ui_surface_destroy(&surface);

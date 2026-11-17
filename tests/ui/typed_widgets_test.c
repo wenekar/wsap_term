@@ -3,12 +3,23 @@
 
 #include "ui/ui.h"
 #include "ui/accessibility.h"
-#include "ui/internal/tree.h"
+#include "ui/widget_ops.h"
 #include "ui/paint.h"
 #include "ui/surface.h"
 #include "ui/widgets/button.h"
 #include "ui/widgets/label.h"
 #include "ui/box.h"
+
+/* Builds the scene of `root` through a surface, as the app does. */
+static bool build_scene(struct ui_widget *root, struct ui_scene *scene)
+{
+    struct ui_surface surface = {0};
+    ui_surface_init(&surface, NULL, NULL);
+    bool ok = ui_surface_set_root(&surface, root);
+    bool valid = ok && ui_surface_build_scene(&surface, scene);
+    ui_surface_destroy(&surface);
+    return valid;
+}
 
 static void panel_init(struct ui_box *panel)
 {
@@ -64,7 +75,7 @@ static void panel_measure_and_label_test(void)
     };
     assert(vector2i_eq(ui_widget_measure(ui_box_widget(&panel), constraints),
                        (struct vector2i){ .x = 64, .y = 20 }));
-    ui_widget_layout(ui_box_widget(&panel), (struct rect2i){
+    ui_widget_place(ui_box_widget(&panel), (struct rect2i){
         .pos = { .x = 8, .y = 4 }, .size = { .x = 100, .y = 40 },
     });
     assert(label.widget.bounds.x == 8 && label.widget.bounds.y == 4);
@@ -78,12 +89,12 @@ static void label_paint_produces_text_op_test(void)
     ui_label_init(&label);
     ui_label_set_text(&label, "Hi");
     ui_widget_set_fixed_size(&label.widget, (struct vector2i){ .x = 32, .y = 16 });
-    ui_widget_layout(&label.widget, (struct rect2i){
+    ui_widget_place(&label.widget, (struct rect2i){
         .pos = { .x = 4, .y = 2 }, .size = { .x = 32, .y = 16 },
     });
 
     struct ui_scene scene = {0};
-    assert(ui_widget_build_scene(&label.widget, &scene));
+    assert(build_scene(&label.widget, &scene));
 
     bool found = false;
     for (int i = 0; i < scene.n_ops; i++) {
@@ -101,19 +112,19 @@ static void label_empty_produces_no_text_op_test(void)
 {
     struct ui_label label = {0};
     ui_label_init(&label);
-    ui_widget_layout(&label.widget, (struct rect2i){
+    ui_widget_place(&label.widget, (struct rect2i){
         .pos = { .x = 0, .y = 0 }, .size = { .x = 0, .y = 0 },
     });
 
     struct ui_scene scene = {0};
-    assert(ui_widget_build_scene(&label.widget, &scene));
+    assert(build_scene(&label.widget, &scene));
     for (int i = 0; i < scene.n_ops; i++)
         assert(scene.ops[i].kind != UI_SCENE_OP_TEXT);
     ui_widget_destroy(&label.widget);
 
     struct ui_label raw = {0};
     struct ui_scene raw_scene = {0};
-    assert(ui_widget_build_scene(&raw.widget, &raw_scene));
+    assert(build_scene(&raw.widget, &raw_scene));
     assert(raw_scene.n_ops == 0);
     ui_scene_destroy(&raw_scene);
     ui_scene_destroy(&scene);
@@ -132,7 +143,7 @@ static void button_activation_and_disabled_test(void)
     assert(ui_widget_add_child(ui_box_widget(&panel), &button.widget));
     ui_surface_set_root(&context, ui_box_widget(&panel));
     ui_widget_set_action_handler(&button.widget, activated, &count);
-    ui_widget_layout(&button.widget, (struct rect2i){
+    ui_widget_place(&button.widget, (struct rect2i){
         .pos = { .x = 10, .y = 5 }, .size = { .x = 70, .y = 24 },
     });
 
@@ -189,7 +200,7 @@ static void context_requests_state_redraw_test(void)
     struct ui_surface context = {0};
     struct ui_button button = {0};
     ui_button_init(&button);
-    ui_widget_layout(&button.widget, (struct rect2i){
+    ui_widget_place(&button.widget, (struct rect2i){
         .pos = { .x = 0, .y = 0 }, .size = { .x = 80, .y = 24 },
     });
     ui_surface_set_root(&context, &button.widget);
@@ -200,7 +211,7 @@ static void context_requests_state_redraw_test(void)
         .kind = UI_POINTER_MOTION, .pos = { .x = 10, .y = 10 },
     }, 1);
     assert(!ui_surface_dispatch(&context, &motion));
-    assert(button.widget.impl.style_pseudo & CSS_PSEUDO_HOVER);
+    assert(ui_widget_style_pseudo(&button.widget) & CSS_PSEUDO_HOVER);
     assert(ui_surface_frame_pending(&context));
     ui_surface_destroy(&context);
 }
@@ -238,7 +249,7 @@ static void mismatched_release_preserves_press_test(void)
     assert(ui_widget_add_child(ui_box_widget(&panel), &button.widget));
     ui_surface_set_root(&context, ui_box_widget(&panel));
     ui_widget_set_action_handler(&button.widget, activated, &count);
-    ui_widget_layout(&button.widget, (struct rect2i){
+    ui_widget_place(&button.widget, (struct rect2i){
         .pos = { .x = 0, .y = 0 }, .size = { .x = 80, .y = 24 },
     });
     struct ui_event press = ui_event_pointer((struct ui_pointer_event){
@@ -379,7 +390,7 @@ static void button_key_activation_test(void)
     int count = 0;
     panel_init(&panel);
     ui_button_init(&button);
-    assert(button.widget.impl.focusable);
+    assert(ui_widget_is_focusable(&button.widget));
     assert(ui_widget_add_child(ui_box_widget(&panel), &button.widget));
     ui_surface_set_root(&context, ui_box_widget(&panel));
     ui_widget_set_action_handler(&button.widget, activated, &count);
@@ -413,7 +424,7 @@ static void disabling_clears_focus_test(void)
     ui_button_set_disabled(&button, true);
     assert(!ui_widget_has_focus(&button.widget));
     assert(!ui_button_is_pressed(&button));
-    assert(!(button.widget.impl.style_pseudo & CSS_PSEUDO_HOVER));
+    assert(!(ui_widget_style_pseudo(&button.widget) & CSS_PSEUDO_HOVER));
     ui_surface_destroy(&surface);
     ui_widget_destroy(&button.widget);
 }
@@ -432,12 +443,12 @@ static void disabled_button_leaves_tab_order_test(void)
     ui_surface_set_root(&context, ui_box_widget(&panel));
 
     ui_button_set_disabled(&first, true);
-    assert(!first.widget.impl.focusable);
+    assert(!ui_widget_is_focusable(&first.widget));
     assert(ui_surface_focus_next(&context));
     assert(ui_surface_focused(&context) == &second.widget);
 
     ui_button_set_disabled(&first, false);
-    assert(first.widget.impl.focusable);
+    assert(ui_widget_is_focusable(&first.widget));
     assert(ui_surface_focus_next(&context));
     assert(ui_surface_focused(&context) == &first.widget);
     ui_widget_destroy(ui_box_widget(&panel));

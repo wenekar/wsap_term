@@ -38,7 +38,7 @@ static void style_resolution_and_inheritance_test(void)
     assert(parent->has_text_color && parent->text_color == 0xFF112233);
     assert(child->has_text_color && child->text_color == 0xFFABCDEF);
     assert(child->opacity > 0.49f && child->opacity < 0.51f);
-    assert(button.widget.impl.style_generation == ui_style_context_generation(&context));
+    assert(ui_widget_is_style_current(&button.widget));
 
     ui_widget_destroy(ui_box_widget(&panel));
     ui_style_context_destroy(&context);
@@ -105,7 +105,7 @@ static void scale_feeds_widget_resolution_test(void)
     ui_widget_set_style_identity(&child, "fixed", NULL, NULL);
     assert(ui_widget_add_child(&widget, &child));
     ui_style_context_apply(&context, &widget);
-    assert(child.impl.style_valid && child.style_scale.dpi_scale == 2.0f);
+    assert(ui_widget_is_style_current(&child) && child.style_scale.dpi_scale == 2.0f);
     size = ui_widget_measure(&child, ui_constraints_unbounded());
     assert(size.x == 20 && size.y == 10);
 

@@ -3,7 +3,6 @@
 #include <string.h>
 
 #include "ui/damage.h"
-#include "ui/internal/tree.h"
 #include "ui/metrics.h"
 #include "ui/paint.h"
 #include "paint/scene.h"
