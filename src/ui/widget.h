@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "paint/scene.h"
 #include "ui/action.h"
 #include "ui/css.h"
 #include "ui/event.h"
@@ -199,6 +200,39 @@ static inline struct rect2i ui_widget_rect_to_surface(const struct ui_widget *wi
                                                       struct rect2i local)
 {
     return rect2i_translate(local, widget->bounds.pos);
+}
+
+static inline int ui_cell_dim(float cell, int fallback)
+{
+    return isfinite(cell) && cell >= 1.0f && cell < (float)INT_MAX
+        ? (int)lroundf(cell) : fallback;
+}
+
+/* The text style of this widget, in pixels. */
+static inline struct ui_text_style ui_widget_text_style(
+    const struct css_scale_context *scale)
+{
+    return (struct ui_text_style){
+        .advance = ui_cell_dim(scale->cell_w, UI_DEFAULT_CELL_W),
+        .cell_h = ui_cell_dim(scale->cell_h, UI_DEFAULT_CELL_H),
+    };
+}
+
+/* One text cell of this widget, in pixels. */
+static inline int ui_widget_cell_w(const struct ui_widget *widget)
+{
+    return ui_widget_text_style(&widget->style_scale).advance;
+}
+
+static inline int ui_widget_cell_h(const struct ui_widget *widget)
+{
+    return ui_widget_text_style(&widget->style_scale).cell_h;
+}
+
+/* Border width of this widget, in pixels. Zero without a border color. */
+static inline int ui_widget_border_width(const struct ui_widget *widget)
+{
+    return widget ? ui_css_border_width(&widget->style, &widget->style_scale) : 0;
 }
 
 #endif

@@ -3,7 +3,8 @@
 #include "ui/internal/tree.h"
 #include "ui/surface.h"
 #include "ui/style_context.h"
-#include "ui/ui_util.h"
+#include "ui/css.h"
+#include "ui/widget.h"
 #include "util/grow.h"
 
 #include <stdio.h>
