@@ -3,12 +3,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "ui/box.h"
 #include "ui/surface.h"
 #include "ui/ui.h"
 #include "ui/widget_impl.h"
 
 struct probe {
     int keys, texts, shortcuts, drops, captures;
+    int focus_in, focus_out, leave, motions;
     bool handle_key;
     bool keep_text;
     bool invalidate_key;
@@ -42,7 +44,35 @@ static bool probe_event(struct ui_widget *widget, const struct ui_event *event)
         p->drops++;
         return p->handle_other;
     case UI_EVENT_POINTER:
+        if (event->data.pointer.kind == UI_POINTER_LEAVE)
+            p->leave++;
+        if (event->data.pointer.kind == UI_POINTER_MOTION)
+            p->motions++;
         return p->handle_other;
+    default:
+        return false;
+    }
+}
+
+static bool probe_handler(struct ui_widget *widget, const struct ui_event *event,
+                          void *userdata)
+{
+    struct probe *p = userdata;
+    (void)widget;
+    switch (event->kind) {
+    case UI_EVENT_FOCUS_IN:
+        p->focus_in++;
+        return false;
+    case UI_EVENT_FOCUS_OUT:
+        p->focus_out++;
+        return false;
+    case UI_EVENT_POINTER:
+        if (event->data.pointer.kind == UI_POINTER_LEAVE)
+            p->leave++;
+        return false;
+    case UI_EVENT_CAPTURE_LOST:
+        p->captures++;
+        return false;
     default:
         return false;
     }
@@ -62,6 +92,11 @@ static bool probe_capture(struct ui_widget *widget,
 static const struct ui_widget_ops PROBE_OPS = {
     .name = "probe",
     .event = probe_event,
+};
+
+/* A widget that takes pointer events but has no event op. */
+static const struct ui_widget_ops HANDLER_ONLY_OPS = {
+    .name = "handler-only",
 };
 
 static void probe_init(struct probe *p)
@@ -280,6 +315,72 @@ static void frame_requests_test(void)
     ui_widget_destroy(&root.widget);
 }
 
+static void hover_leave_goes_to_one_widget_test(void)
+{
+    struct ui_box root = {0};
+    struct probe first, second;
+    ui_box_init(&root);
+    probe_init(&first);
+    probe_init(&second);
+    ui_widget_set_fixed_size(&first.widget, (struct vector2i){ .x = 20, .y = 20 });
+    ui_widget_set_fixed_size(&second.widget, (struct vector2i){ .x = 20, .y = 20 });
+    assert(ui_widget_add_child(&root.widget, &first.widget));
+    assert(ui_widget_add_child(&root.widget, &second.widget));
+    struct probe parent = {0};
+    *(&parent) = (struct probe){0};
+    ui_widget_set_event_handler(&root.widget, probe_handler, &parent);
+
+    struct ui_surface s = {0};
+    set_root_200x100(&s, &root.widget);
+    ui_surface_prepare(&s);
+    assert(first.widget.bounds.x == 0 && second.widget.bounds.x == 20);
+
+    struct ui_event motion = ui_event_pointer((struct ui_pointer_event){
+        .kind = UI_POINTER_MOTION, .pos = { .x = 5, .y = 5 },
+    }, 0);
+    assert(ui_surface_dispatch(&s, &motion) == false);
+    assert(first.motions == 1 && second.motions == 0);
+
+    motion.data.pointer.pos = (struct vector2i){ .x = 25, .y = 5 };
+    assert(ui_surface_dispatch(&s, &motion) == false);
+    assert(first.leave == 1 && second.leave == 0);
+    assert(parent.leave == 0);
+
+    ui_surface_destroy(&s);
+    ui_widget_destroy(&root.widget);
+}
+
+static void handler_gets_focus_and_capture_events_test(void)
+{
+    struct ui_box root = {0};
+    struct probe first, second;
+    ui_box_init(&root);
+    *(&first) = (struct probe){0};
+    *(&second) = (struct probe){0};
+    ui_widget_init(&first.widget, &HANDLER_ONLY_OPS, &first);
+    ui_widget_init(&second.widget, &HANDLER_ONLY_OPS, &second);
+    ui_widget_set_event_handler(&first.widget, probe_handler, &first);
+    ui_widget_set_event_handler(&second.widget, probe_handler, &second);
+    assert(ui_widget_add_child(&root.widget, &first.widget));
+    assert(ui_widget_add_child(&root.widget, &second.widget));
+
+    struct ui_surface s = {0};
+    set_root_200x100(&s, &root.widget);
+    ui_surface_prepare(&s);
+    ui_surface_focus(&s, &first.widget);
+    assert(first.focus_in == 1 && first.focus_out == 0);
+
+    ui_surface_focus(&s, &second.widget);
+    assert(first.focus_out == 1 && second.focus_in == 1);
+
+    ui_widget_capture_pointer(&second.widget);
+    ui_surface_cancel_capture(&s);
+    assert(second.captures == 1);
+
+    ui_surface_destroy(&s);
+    ui_widget_destroy(&root.widget);
+}
+
 int main(void)
 {
     default_focus_test();
@@ -289,6 +390,8 @@ int main(void)
     shortcut_bubbles_test();
     keep_key_text_test();
     frame_requests_test();
-    puts("PASS: default focus, shortcut events, and key capture");
+    hover_leave_goes_to_one_widget_test();
+    handler_gets_focus_and_capture_events_test();
+    puts("PASS: default focus, shortcut events, key capture, hover leave, and handlers");
     return 0;
 }

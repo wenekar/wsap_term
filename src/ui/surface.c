@@ -223,9 +223,8 @@ static bool retired(const struct ui_surface *surface,
 
 static void send(struct ui_widget *widget, struct ui_event event)
 {
-    if (widget && !widget->impl.destroyed && widget->ops &&
-        widget->ops->event)
-        widget->ops->event(widget, &event);
+    if (widget && !widget->impl.destroyed)
+        ui_widget_deliver(widget, &event);
 }
 
 static void leave(struct ui_widget *widget)
@@ -307,9 +306,8 @@ void ui_surface_sync_modal(struct ui_surface *surface)
         struct ui_widget *hovered = surface->impl.hovered;
         if (hovered && !ui_widget_is_ancestor(modal, hovered)) {
             surface->impl.hovered = NULL;
-            struct ui_event out = ui_event_pointer(
-                (struct ui_pointer_event){ .kind = UI_POINTER_LEAVE }, 0);
-            ui_widget_bubble(hovered, &out);
+            send(hovered, ui_event_pointer(
+                (struct ui_pointer_event){ .kind = UI_POINTER_LEAVE }, 0));
         }
         if (!ui_widget_is_ancestor(modal, surface->impl.focused))
             ui_surface_focus(surface, first_focusable(modal));
@@ -390,9 +388,10 @@ static bool dispatch_pointer(struct ui_surface *surface,
         struct ui_widget *previous = surface->impl.hovered;
         surface->impl.hovered = NULL;
         if (previous && previous != target) {
+            /* Hover leave goes to the widget that lost the pointer only. */
             struct ui_event out = *event;
             out.data.pointer.kind = UI_POINTER_LEAVE;
-            ui_widget_bubble(previous, &out);
+            send(previous, out);
         }
         if (target && !retired(surface, target))
             surface->impl.hovered = target;

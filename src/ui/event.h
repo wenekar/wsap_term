@@ -68,6 +68,19 @@ struct ui_event {
     enum ui_event_kind kind;
 };
 
+/* How a widget receives an event.
+ *
+ * The surface gives an event to one widget at a time. The event op of the
+ * widget runs first. The handler that ui_widget_set_event_handler sets runs
+ * next, when the op returns false. A widget is thus one widget to both ways of
+ * handling an event: an event op and a handler see the same events.
+ *
+ * An event bubbles to the parents of its target while each widget returns
+ * false. A hover leave is the exception. It goes to the one widget that lost
+ * the pointer and does not bubble. So a parent gets no hover state for a child
+ * that the pointer left.
+ */
+
 static inline struct ui_event ui_event_pointer(struct ui_pointer_event event,
                                                 uint64_t time_ms)
 {

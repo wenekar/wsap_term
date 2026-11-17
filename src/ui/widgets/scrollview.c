@@ -274,17 +274,9 @@ static bool forward_to_child(struct ui_scrollview *sv,
     if (!child || ui_widget_is_captured(child))
         return false;
     struct ui_widget *w = ui_widget_hit_test(child, event->data.pointer.pos);
-    for (; w && w != &sv->widget; w = w->parent) {
-        if (w->impl.destroyed)
-            return false;
-        if (w->ops && w->ops->event && w->ops->event(w, event))
+    for (; w && w != &sv->widget; w = w->parent)
+        if (ui_widget_deliver(w, event))
             return true;
-        if (w->impl.destroyed)
-            return false;
-        if (w->impl.event_fn &&
-            w->impl.event_fn(w, event, w->impl.event_userdata))
-            return true;
-    }
     return false;
 }
 

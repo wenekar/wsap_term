@@ -716,6 +716,23 @@ static bool wants(const struct ui_widget *widget, const struct ui_event *event)
            (widget->ops && widget->ops->key_release);
 }
 
+/* Gives `event` to the event op of `widget`, and then to the handler that
+ * ui_widget_set_event_handler set when the op does not handle it. */
+bool ui_widget_deliver(struct ui_widget *widget, const struct ui_event *event)
+{
+    if (!widget || !event || widget->impl.destroyed || !wants(widget, event))
+        return false;
+    bool key_release = event->kind == UI_EVENT_KEY &&
+                       event->data.key.action == UI_KEY_RELEASE;
+    bool handled = widget->ops && widget->ops->event &&
+                   (!key_release || widget->ops->key_release) &&
+                   widget->ops->event(widget, event);
+    if (!handled && !widget->impl.destroyed && widget->impl.event_fn)
+        handled = widget->impl.event_fn(widget, event,
+                                        widget->impl.event_userdata);
+    return handled;
+}
+
 struct ui_widget *ui_widget_event_target(struct ui_widget *widget)
 {
     while (widget && !widget->impl.destroyed && widget->ops &&
@@ -737,19 +754,8 @@ bool ui_widget_bubble(struct ui_widget *target, const struct ui_event *event)
     struct ui_surface *surface = target->impl.surface;
     for (struct ui_widget *w = target; w;) {
         struct ui_widget *parent = w->parent;
-        if (!w->impl.destroyed && w->impl.surface == surface &&
-            wants(w, event)) {
-            bool key_release = event->kind == UI_EVENT_KEY &&
-                               event->data.key.action == UI_KEY_RELEASE;
-            bool handled = w->ops && w->ops->event &&
-                           (!key_release || w->ops->key_release) &&
-                           w->ops->event(w, event);
-            if (!handled && !w->impl.destroyed && w->impl.surface == surface &&
-                w->impl.event_fn)
-                handled = w->impl.event_fn(w, event, w->impl.event_userdata);
-            if (handled)
-                return true;
-        }
+        if (w->impl.surface == surface && ui_widget_deliver(w, event))
+            return true;
         if (target->impl.destroyed || target->impl.surface != surface)
             break;
         w = parent;
