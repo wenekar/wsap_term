@@ -95,10 +95,11 @@ static uint32_t us_base(enum yasl_key key)
 
 static uint32_t fallback_key_text(const struct yasl_event *in)
 {
-    bool letter = in->key.key >= YASL_KEY_A && in->key.key <= YASL_KEY_Z;
-    bool caps = letter && (in->mods & YASL_MOD_CAPS);
+    bool letter = input_key_is_letter(in->key.codepoint, in->key.shifted);
     bool shift = (in->mods & YASL_MOD_SHIFT) != 0;
-    return (shift != caps) && in->key.shifted ? in->key.shifted : in->key.codepoint;
+    bool caps = (in->mods & YASL_MOD_CAPS) != 0;
+    bool shifted = input_key_selects_shifted(letter, shift, caps);
+    return shifted && in->key.shifted ? in->key.shifted : in->key.codepoint;
 }
 
 static enum input_action action_of(unsigned action)

@@ -94,10 +94,53 @@ static void pointer_test(void)
     assert(ui_pointer_from_input(NULL).kind == UI_POINTER_NONE);
 }
 
+/* Caps Lock changes letter keys only. Shift and Caps Lock cancel on letters. */
+static void caps_lock_test(void)
+{
+    struct input_key_event ev = {
+        .key = INPUT_KEY_NONE, .action = INPUT_PRESS, .base = '1',
+        .codepoint = '1', .shifted = '!', .mods = INPUT_MOD_CAPS,
+    };
+    assert(ui_key_from_input(&ev).text == '1');
+    ev.mods = INPUT_MOD_CAPS | INPUT_MOD_SHIFT;
+    assert(ui_key_from_input(&ev).text == '!');
+    ev.mods = INPUT_MOD_SHIFT;
+    assert(ui_key_from_input(&ev).text == '!');
+
+    ev = (struct input_key_event){
+        .key = INPUT_KEY_NONE, .action = INPUT_PRESS, .base = 'a',
+        .codepoint = 'a', .shifted = 'A', .mods = INPUT_MOD_CAPS,
+    };
+    assert(ui_key_from_input(&ev).text == 'A');
+    ev.mods = INPUT_MOD_CAPS | INPUT_MOD_SHIFT;
+    assert(ui_key_from_input(&ev).text == 'a');
+    ev.mods = INPUT_MOD_SHIFT;
+    assert(ui_key_from_input(&ev).text == 'A');
+    ev.mods = 0;
+    assert(ui_key_from_input(&ev).text == 'a');
+
+    /* s-cedilla on a Turkish layout sits on the US ';' key. */
+    ev = (struct input_key_event){
+        .key = INPUT_KEY_NONE, .action = INPUT_PRESS, .base = ';',
+        .codepoint = 0x15F, .shifted = 0x15E, .mods = INPUT_MOD_CAPS,
+    };
+    assert(ui_key_from_input(&ev).text == 0x15E);
+    ev.mods = INPUT_MOD_CAPS | INPUT_MOD_SHIFT;
+    assert(ui_key_from_input(&ev).text == 0x15F);
+
+    /* e-acute on an AZERTY layout has an ASCII shifted label: not a letter. */
+    ev = (struct input_key_event){
+        .key = INPUT_KEY_NONE, .action = INPUT_PRESS, .base = '2',
+        .codepoint = 0xE9, .shifted = '2', .mods = INPUT_MOD_CAPS,
+    };
+    assert(ui_key_from_input(&ev).text == 0xE9);
+}
+
 int main(void)
 {
     key_test();
     editing_bindings_test();
     pointer_test();
+    caps_lock_test();
     return 0;
 }

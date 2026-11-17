@@ -1,4 +1,5 @@
 #include "ui/yasl/ui_input.h"
+#include "ui/yasl/native_input.h"
 
 static enum ui_key_action key_action(enum input_action action)
 {
@@ -59,7 +60,10 @@ static struct ui_key_event raw_key_from_input(const struct input_key_event *ev)
     }
     if (ev->codepoint || ev->shifted) {
         out.key = UI_KEY_CHAR;
-        if ((ev->mods & (INPUT_MOD_SHIFT | INPUT_MOD_CAPS)) && ev->shifted)
+        bool letter = input_key_is_letter(ev->codepoint, ev->shifted);
+        bool shift = (ev->mods & INPUT_MOD_SHIFT) != 0;
+        bool caps = (ev->mods & INPUT_MOD_CAPS) != 0;
+        if (input_key_selects_shifted(letter, shift, caps) && ev->shifted)
             out.text = ev->shifted;
         else
             out.text = ev->codepoint ? ev->codepoint : ev->shifted;

@@ -5,6 +5,7 @@
 #include "input/input.h"
 #include "ui/yasl/internal.h"
 #include "ui/yasl/native_input.h"
+#include "ui/yasl/ui_input.h"
 
 /* The window is zeroed for each case. It has no surface and no popups, so
  * native input only queues events. */
@@ -138,11 +139,60 @@ static void pen_contact_test(void)
     assert(m.kind == PTR_MOTION && m.button == POINTER_BUTTON_NONE);
 }
 
+/* Sends one key press that carries no native text. Returns the queued key. */
+static struct input_key_event feed_key(enum yasl_key key, uint32_t codepoint,
+                                       uint32_t shifted, unsigned mods)
+{
+    struct yasl_event e = { .type = YASL_EVENT_KEY, .action = YASL_KEY_PRESS, .mods = mods };
+    e.key.key = key;
+    e.key.codepoint = codepoint;
+    e.key.shifted = shifted;
+    e.key.text_input = YASL_KEY_TEXT_UNSPECIFIED;
+    window_native_input(&w, &e);
+    struct input_event out;
+    bool queued = input_queue_take(&w.input, &out);
+    assert(queued);
+    assert(out.kind == INPUT_KEY);
+    return out.key;
+}
+
+/* Caps Lock changes letter keys only. Shift cancels it on letters. */
+static void caps_lock_key_text_test(void)
+{
+    fresh_window();
+    struct input_key_event k = feed_key(YASL_KEY_1, '1', '!', YASL_MOD_CAPS);
+    assert(k.text == '1');
+    assert(ui_key_from_input(&k).text == '1');
+
+    k = feed_key(YASL_KEY_A, 'a', 'A', YASL_MOD_CAPS);
+    assert(k.text == 'A');
+    assert(ui_key_from_input(&k).text == 'A');
+
+    k = feed_key(YASL_KEY_A, 'a', 'A', YASL_MOD_CAPS | YASL_MOD_SHIFT);
+    assert(k.text == 'a');
+    assert(ui_key_from_input(&k).text == 'a');
+
+    /* s-cedilla on a Turkish layout sits on the US ';' key. */
+    k = feed_key(YASL_KEY_SEMICOLON, 0x15F, 0x15E, YASL_MOD_CAPS);
+    assert(k.text == 0x15E);
+    assert(ui_key_from_input(&k).text == 0x15E);
+
+    k = feed_key(YASL_KEY_SEMICOLON, 0x15F, 0x15E, YASL_MOD_CAPS | YASL_MOD_SHIFT);
+    assert(k.text == 0x15F);
+    assert(ui_key_from_input(&k).text == 0x15F);
+
+    /* e-acute on an AZERTY layout sits on the '2' key. Its shifted label is ASCII. */
+    k = feed_key(YASL_KEY_2, 0xE9, '2', YASL_MOD_CAPS);
+    assert(k.text == 0xE9);
+    assert(ui_key_from_input(&k).text == 0xE9);
+}
+
 int main(void)
 {
     drag_survives_second_button_test();
     drag_moves_to_other_held_button_test();
     drag_keeps_starting_button_test();
     pen_contact_test();
+    caps_lock_key_text_test();
     return 0;
 }
