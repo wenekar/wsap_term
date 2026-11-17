@@ -59,7 +59,6 @@ bool example_mount(struct window *window)
     const struct ui_node_desc root = {
         .kind = UI_NODE_COLUMN,
         .class_name = "example",
-        .props.layout = { .align = UI_BOX_ALIGN_STRETCH },
         UI_CHILDREN(
             { .kind = UI_NODE_INPUT, .key = "name",
               .bind.input = &screen->name,
@@ -169,7 +168,7 @@ The UI resolves CSS values over the C layout defaults.
 For example:
 
 ```css
-.example { flex-direction: column; padding: 12px; gap: 8px; }
+.example { flex-direction: column; align-items: stretch; padding: 12px; gap: 8px; }
 #result { color: #ffffff; }
 ```
 
@@ -182,7 +181,7 @@ A theme can set `:root` variables to change default chrome styles.
 .panel { background: var(--surface, #1e1e2e); border-color: var(--accent); }
 ```
 
-See [Clay layout](ui-library-state.md#clay-layout) for sizing and layout rules.
+See [Flex layout](ui-library-state.md#flex-layout) for sizing and layout rules.
 Unknown properties produce a diagnostic on standard error.
 The inspector shows the resolved style.
 

@@ -74,14 +74,16 @@ static void bench_layout(void)
 {
     struct ui_box root, rows[16];
     struct ui_widget children[64];
+    struct css_sheet sheet = {0};
+    assert(css_parse(&sheet, ".bench-root { gap: 4px; padding: 8px; }"
+                              ".bench-row { gap: 2px; }"));
     ui_box_init(&root);
     ui_box_set_direction(&root, UI_BOX_COLUMN);
-    ui_box_set_gap(&root, 4);
-    ui_box_set_padding(&root, insets2i_splat(8));
+    ui_widget_set_style_identity(&root.widget, "bench-root", NULL, "box");
     for (int r = 0; r < 16; r++) {
         ui_box_init(&rows[r]);
         ui_box_set_direction(&rows[r], UI_BOX_ROW);
-        ui_box_set_gap(&rows[r], 2);
+        ui_widget_set_style_identity(&rows[r].widget, "bench-row", NULL, "box");
         ui_widget_add_child(&root.widget, &rows[r].widget);
         for (int c = 0; c < 4; c++) {
             struct ui_widget *child = &children[r * 4 + c];
@@ -93,6 +95,7 @@ static void bench_layout(void)
     struct rect2i bounds = { .size = { .x = 1024, .y = 768 } };
     struct ui_surface surface = {0};
     ui_surface_init(&surface, NULL, NULL);
+    ui_surface_set_sheet(&surface, &sheet);
     ui_surface_set_root(&surface, &root.widget);
     ui_surface_resize(&surface, bounds.size);
     BENCH_RUN("layout/16x4", 1000, {
@@ -103,6 +106,7 @@ static void bench_layout(void)
     });
     ui_surface_destroy(&surface);
     ui_widget_destroy(&root.widget);
+    css_sheet_clear(&sheet);
 }
 
 static void bench_blend(void)

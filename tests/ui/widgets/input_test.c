@@ -549,13 +549,16 @@ static void attached_layout_is_stable_test(void)
     struct ui_input in;
     struct ui_surface surface = {0};
     struct ui_scene scene = {0};
+    struct css_sheet sheet = {0};
     ui_box_init(&box);
-    ui_box_set_padding(&box, (struct insets2i){ .top = 30, .left = 40 });
+    ui_widget_set_style_identity(ui_box_widget(&box), "padded", NULL, "box");
+    assert(css_parse(&sheet, ".padded { padding: 30px 40px; }"));
     ui_input_init(&in);
     ui_input_set_text(&in, "abcd");
     assert(ui_widget_add_child(ui_box_widget(&box), ui_input_widget(&in)));
     ui_surface_set_scale(&surface, (struct css_scale_context){
         .dpi_scale = 1, .cell_w = 10, .cell_h = 20 });
+    ui_surface_set_sheet(&surface, &sheet);
     ui_surface_set_root(&surface, ui_box_widget(&box));
     ui_surface_resize(&surface, (struct vector2i){ .x = 400, .y = 100 });
     assert(ui_surface_build_scene(&surface, &scene));
@@ -582,6 +585,7 @@ static void attached_layout_is_stable_test(void)
     ui_surface_destroy(&surface);
     ui_widget_destroy(ui_box_widget(&box));
     ui_scene_destroy(&scene);
+    css_sheet_clear(&sheet);
 }
 
 static void assert_text_at_start(struct fixture *f)

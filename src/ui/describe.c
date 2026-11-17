@@ -153,12 +153,6 @@ static bool node_props_valid(const struct ui_node_desc *desc,
     case UI_NODE_ROW:
     case UI_NODE_COLUMN:
     case UI_NODE_STACK:
-        if (desc->props.layout.align > UI_BOX_ALIGN_STRETCH ||
-            desc->props.layout.justify > UI_BOX_JUSTIFY_END) {
-            *error = UI_VIEW_ERROR_INVALID_ARGUMENT;
-            *detail = "Invalid box alignment or justification";
-            return false;
-        }
         return true;
     case UI_NODE_LABEL:
         if (desc->props.label.wrap > UI_LABEL_ELLIPSIS ||
@@ -415,10 +409,6 @@ static bool initialize_node(struct ui_view_node *node,
             ? UI_BOX_COLUMN : node->kind == UI_NODE_STACK
             ? UI_BOX_STACK : UI_BOX_ROW;
         ui_box_set_direction(box, direction);
-        ui_box_set_align(box, desc->props.layout.align);
-        ui_box_set_justify(box, desc->props.layout.justify);
-        ui_box_set_gap(box, desc->props.layout.gap);
-        ui_box_set_padding(box, desc->props.layout.padding);
         break;
     }
     case UI_NODE_LABEL: {

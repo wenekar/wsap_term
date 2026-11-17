@@ -1,7 +1,6 @@
 #include "ui/surface.h"
 
 #include "ui/internal/tree.h"
-#include "ui/internal/layout.h"
 #include "paint/scene.h"
 #include "ui/ui_util.h"
 
@@ -682,7 +681,6 @@ void ui_surface_destroy(struct ui_surface *surface)
     while (surface->impl.root)
         ui_widget_detach(surface->impl.root);
     ui_style_context_destroy(&surface->impl.style);
-    ui_layout_destroy(surface->impl.layout);
     *surface = (struct ui_surface){0};
 }
 

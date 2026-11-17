@@ -162,13 +162,13 @@ static void wrapped_label_test(void)
     ui_box_init(&root);
     ui_box_init(&column);
     ui_box_set_direction(&column, UI_BOX_COLUMN);
-    ui_box_set_align(&column, UI_BOX_ALIGN_STRETCH);
     ui_widget_set_style_identity(&column.widget, "column", NULL, NULL);
     ui_label_init(&label);
     assert(ui_label_set_text(&label, "aaaaa bbbbb ccccc"));
     ui_button_init(&button);
     ui_button_set_text(&button, "OK");
-    assert(css_parse(&sheet, ".column { width: 50%; }"));
+    assert(css_parse(&sheet,
+        ".column { width: 50%; align-items: stretch; }"));
     assert(ui_widget_add_child(&root.widget, &column.widget));
     assert(ui_widget_add_children(&column.widget, (struct ui_widget *[]){
         &label.widget, &button.widget }, 2));
@@ -201,14 +201,13 @@ static void box_border_and_paint_test(void)
     struct ui_debug_parts parts = {0};
 
     ui_box_init(&box);
-    ui_box_set_align(&box, UI_BOX_ALIGN_STRETCH);
     ui_widget_set_style_identity(&box.widget, "card", NULL, NULL);
     probe_init(&child, "child", (struct vector2i){ .x = 20, .y = 10 });
     assert(ui_widget_add_child(&box.widget, &child.widget));
 
     assert(css_parse(&sheet,
         ".card { padding: 4px; border-color: #112233; border-width: 2px; "
-        "border-radius: 5px; background: #445566; }"));
+        "border-radius: 5px; background: #445566; align-items: stretch; }"));
     show(&surface, &box.widget, &sheet, (struct vector2i){ .x = 100, .y = 40 });
     struct vector2i natural = ui_widget_measure(&box.widget,
         (struct ui_constraints){ .max = { .x = 200, .y = 200 } });
@@ -233,7 +232,6 @@ static void box_border_and_paint_test(void)
 
     ui_box_init(&stack);
     ui_box_set_direction(&stack, UI_BOX_STACK);
-    ui_box_set_align(&stack, UI_BOX_ALIGN_STRETCH);
     ui_widget_set_style_identity(&stack.widget, "card", NULL, NULL);
     probe_init(&stack_child, "child", (struct vector2i){ .x = 20, .y = 10 });
     assert(ui_widget_add_child(&stack.widget, &stack_child.widget));
@@ -254,6 +252,277 @@ static void box_border_and_paint_test(void)
     ui_scene_destroy(&scene);
 }
 
+static void min_over_max_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_surface standalone_surface = {0};
+    struct ui_surface row_surface = {0};
+    struct ui_box row = {0};
+    struct probe standalone = {0}, child = {0};
+    assert(css_parse(&sheet, ".overlap { min-width: 80px; max-width: 20px; }"));
+
+    probe_init(&standalone, "overlap", (struct vector2i){ .x = 10, .y = 10 });
+    show(&standalone_surface, &standalone.widget, &sheet,
+         (struct vector2i){ .x = 400, .y = 100 });
+    struct vector2i natural = ui_widget_measure(&standalone.widget,
+        (struct ui_constraints){ .max = { .x = 400, .y = 100 } });
+    assert(natural.x == 80);
+
+    ui_box_init(&row);
+    probe_init(&child, "overlap", (struct vector2i){ .x = 10, .y = 10 });
+    assert(ui_widget_add_child(&row.widget, &child.widget));
+    show(&row_surface, &row.widget, &sheet,
+         (struct vector2i){ .x = 400, .y = 100 });
+    assert(child.widget.bounds.width == 80);
+
+    ui_surface_destroy(&standalone_surface);
+    ui_surface_destroy(&row_surface);
+    ui_widget_destroy(&row.widget);
+    ui_widget_destroy(&standalone.widget);
+    css_sheet_clear(&sheet);
+}
+
+static void margin_moves_child_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_surface row_surface = {0}, column_surface = {0},
+                      stack_surface = {0};
+    struct ui_box row = {0}, column = {0}, stack = {0};
+    struct probe margined[3] = {0}, next[2] = {0};
+    assert(css_parse(&sheet,
+        ".row { flex-direction: row; padding: 4px; }"
+        ".column { flex-direction: column; padding: 4px; }"
+        ".stack { padding: 4px; }"
+        ".margined { width: 20px; height: 10px; margin: 6px 2px 4px 3px; }"
+        ".next { width: 10px; height: 10px; }"));
+
+    ui_box_init(&row);
+    ui_widget_set_style_identity(&row.widget, "row", NULL, NULL);
+    probe_init(&margined[0], "margined", (struct vector2i){ .x = 20, .y = 10 });
+    probe_init(&next[0], "next", (struct vector2i){ .x = 10, .y = 10 });
+    assert(ui_widget_add_children(&row.widget, (struct ui_widget *[]){
+        &margined[0].widget, &next[0].widget }, 2));
+    show(&row_surface, &row.widget, &sheet, (struct vector2i){ .x = 100, .y = 40 });
+    assert(margined[0].widget.bounds.x == 7 && margined[0].widget.bounds.y == 10);
+    assert(next[0].widget.bounds.x == 29);
+
+    ui_box_init(&column);
+    ui_box_set_direction(&column, UI_BOX_COLUMN);
+    ui_widget_set_style_identity(&column.widget, "column", NULL, NULL);
+    probe_init(&margined[1], "margined", (struct vector2i){ .x = 20, .y = 10 });
+    probe_init(&next[1], "next", (struct vector2i){ .x = 10, .y = 10 });
+    assert(ui_widget_add_children(&column.widget, (struct ui_widget *[]){
+        &margined[1].widget, &next[1].widget }, 2));
+    show(&column_surface, &column.widget, &sheet,
+         (struct vector2i){ .x = 100, .y = 40 });
+    assert(margined[1].widget.bounds.x == 7 && margined[1].widget.bounds.y == 10);
+    assert(next[1].widget.bounds.y == 24);
+
+    ui_box_init(&stack);
+    ui_box_set_direction(&stack, UI_BOX_STACK);
+    ui_widget_set_style_identity(&stack.widget, "stack", NULL, NULL);
+    probe_init(&margined[2], "margined", (struct vector2i){ .x = 20, .y = 10 });
+    assert(ui_widget_add_child(&stack.widget, &margined[2].widget));
+    show(&stack_surface, &stack.widget, &sheet,
+         (struct vector2i){ .x = 100, .y = 40 });
+    assert(margined[2].widget.bounds.x == 7 && margined[2].widget.bounds.y == 10);
+
+    ui_surface_destroy(&row_surface);
+    ui_surface_destroy(&column_surface);
+    ui_surface_destroy(&stack_surface);
+    ui_widget_destroy(&row.widget);
+    ui_widget_destroy(&column.widget);
+    ui_widget_destroy(&stack.widget);
+    css_sheet_clear(&sheet);
+}
+
+static void wide_sibling_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_surface surface = {0};
+    struct ui_box root = {0}, column = {0};
+    struct probe cells[40] = {0}, tail = {0};
+    assert(css_parse(&sheet,
+        ".column { flex-direction: column; }"
+        ".cell { width: 10px; height: 5px; }"));
+
+    ui_box_init(&root);
+    ui_box_set_direction(&root, UI_BOX_COLUMN);
+    ui_widget_set_style_identity(&root.widget, "root", NULL, NULL);
+    ui_box_init(&column);
+    ui_widget_set_style_identity(&column.widget, "column", NULL, NULL);
+    for (size_t i = 0; i < 40; i++) {
+        probe_init(&cells[i], "cell", (struct vector2i){ .x = 10, .y = 5 });
+        assert(ui_widget_add_child(&column.widget, &cells[i].widget));
+    }
+    probe_init(&tail, "cell", (struct vector2i){ .x = 10, .y = 5 });
+    assert(ui_widget_add_children(&root.widget, (struct ui_widget *[]){
+        &column.widget, &tail.widget }, 2));
+
+    show(&surface, &root.widget, &sheet, (struct vector2i){ .x = 100, .y = 300 });
+    assert(column.widget.bounds.height == 200);
+    assert(cells[39].widget.bounds.y == 195);
+    assert(tail.widget.bounds.y == 200);
+
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&root.widget);
+    css_sheet_clear(&sheet);
+}
+
+static void indefinite_percent_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_surface surface = {0};
+    struct probe half = {0};
+    assert(css_parse(&sheet, ".half { width: 50%; height: 50%; }"));
+
+    probe_init(&half, "half", (struct vector2i){ .x = 40, .y = 10 });
+    show(&surface, &half.widget, &sheet, (struct vector2i){ .x = 100, .y = 100 });
+    struct vector2i natural = ui_widget_measure(&half.widget,
+        (struct ui_constraints){ .max = { .x = INT_MAX, .y = INT_MAX } });
+    assert(vector2i_eq(natural, (struct vector2i){ .x = 40, .y = 10 }));
+
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&half.widget);
+    css_sheet_clear(&sheet);
+}
+
+static void root_measure_only_test(void)
+{
+    struct ui_surface surface = {0};
+    struct probe root = {0}, child = {0};
+    probe_init(&root, "root", (struct vector2i){ .x = 40, .y = 20 });
+    probe_init(&child, "child", (struct vector2i){ .x = 10, .y = 10 });
+    assert(ui_widget_add_child(&root.widget, &child.widget));
+
+    show(&surface, &root.widget, NULL, (struct vector2i){ .x = 100, .y = 50 });
+    assert(rect2i_eq(child.widget.bounds, (struct rect2i){
+        .size = { .x = 100, .y = 50 },
+    }));
+
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&root.widget);
+}
+
+static void fixed_size_limits_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_surface standalone_surface = {0}, row_surface = {0};
+    struct ui_box row = {0};
+    struct probe standalone = {0}, child = {0};
+    assert(css_parse(&sheet,
+        ".bounded { max-width: 10px; min-height: 30px; }"));
+
+    probe_init(&standalone, "bounded", (struct vector2i){ .x = 5, .y = 5 });
+    ui_widget_set_fixed_size(&standalone.widget,
+                             (struct vector2i){ .x = 20, .y = 10 });
+    show(&standalone_surface, &standalone.widget, &sheet,
+         (struct vector2i){ .x = 400, .y = 400 });
+    struct vector2i natural = ui_widget_measure(&standalone.widget,
+        (struct ui_constraints){ .max = { .x = 400, .y = 400 } });
+    assert(vector2i_eq(natural, (struct vector2i){ .x = 10, .y = 30 }));
+
+    ui_box_init(&row);
+    probe_init(&child, "bounded", (struct vector2i){ .x = 5, .y = 5 });
+    ui_widget_set_fixed_size(&child.widget,
+                             (struct vector2i){ .x = 20, .y = 10 });
+    assert(ui_widget_add_child(&row.widget, &child.widget));
+    show(&row_surface, &row.widget, &sheet,
+         (struct vector2i){ .x = 400, .y = 400 });
+    assert(child.widget.bounds.width == 10 && child.widget.bounds.height == 30);
+
+    ui_surface_destroy(&standalone_surface);
+    ui_surface_destroy(&row_surface);
+    ui_widget_destroy(&row.widget);
+    ui_widget_destroy(&standalone.widget);
+    css_sheet_clear(&sheet);
+}
+
+static void justify_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_box rows[3] = {0};
+    struct probe cells[3] = {0};
+    struct ui_surface surfaces[3] = {0};
+    static const char *const classes[3] = {
+        "justify-start", "justify-center", "justify-end",
+    };
+    assert(css_parse(&sheet,
+        ".justify-start { justify-content: start; }"
+        ".justify-center { justify-content: center; }"
+        ".justify-end { justify-content: end; }"
+        ".cell { width: 10px; height: 10px; }"));
+
+    for (size_t i = 0; i < 3; i++) {
+        ui_box_init(&rows[i]);
+        ui_widget_set_style_identity(&rows[i].widget, classes[i], NULL, NULL);
+        probe_init(&cells[i], "cell", (struct vector2i){ .x = 10, .y = 10 });
+        assert(ui_widget_add_child(&rows[i].widget, &cells[i].widget));
+        show(&surfaces[i], &rows[i].widget, &sheet,
+             (struct vector2i){ .x = 100, .y = 40 });
+    }
+    assert(cells[0].widget.bounds.x == 0);
+    assert(cells[1].widget.bounds.x == 45);
+    assert(cells[2].widget.bounds.x == 90);
+
+    for (size_t i = 0; i < 3; i++) {
+        ui_surface_destroy(&surfaces[i]);
+        ui_widget_destroy(&rows[i].widget);
+    }
+    css_sheet_clear(&sheet);
+}
+
+static void align_and_stack_placement_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_box rows[2] = {0}, stacks[2] = {0};
+    struct probe cells[4] = {0};
+    struct ui_surface surfaces[4] = {0};
+    static const char *const row_classes[2] = {
+        "align-center", "align-end",
+    };
+    static const char *const stack_classes[2] = {
+        "stack-center", "stack-end",
+    };
+    assert(css_parse(&sheet,
+        ".align-center { align-items: center; }"
+        ".align-end { align-items: end; }"
+        ".stack-center { align-items: center; }"
+        ".stack-end { align-items: end; }"
+        ".cell { width: 10px; height: 10px; }"
+        ".wide { width: 20px; height: 10px; }"));
+
+    for (size_t i = 0; i < 2; i++) {
+        ui_box_init(&rows[i]);
+        ui_widget_set_style_identity(&rows[i].widget, row_classes[i], NULL, NULL);
+        probe_init(&cells[i], "cell", (struct vector2i){ .x = 10, .y = 10 });
+        assert(ui_widget_add_child(&rows[i].widget, &cells[i].widget));
+        show(&surfaces[i], &rows[i].widget, &sheet,
+             (struct vector2i){ .x = 100, .y = 40 });
+
+        ui_box_init(&stacks[i]);
+        ui_box_set_direction(&stacks[i], UI_BOX_STACK);
+        ui_widget_set_style_identity(&stacks[i].widget, stack_classes[i],
+                                     NULL, NULL);
+        probe_init(&cells[i + 2], "wide", (struct vector2i){ .x = 20, .y = 10 });
+        assert(ui_widget_add_child(&stacks[i].widget, &cells[i + 2].widget));
+        show(&surfaces[i + 2], &stacks[i].widget, &sheet,
+             (struct vector2i){ .x = 100, .y = 40 });
+    }
+    assert(cells[0].widget.bounds.y == 15);
+    assert(cells[1].widget.bounds.y == 30);
+    assert(cells[2].widget.bounds.x == 40 && cells[2].widget.bounds.y == 15);
+    assert(cells[3].widget.bounds.x == 80 && cells[3].widget.bounds.y == 30);
+
+    for (size_t i = 0; i < 4; i++)
+        ui_surface_destroy(&surfaces[i]);
+    for (size_t i = 0; i < 2; i++) {
+        ui_widget_destroy(&rows[i].widget);
+        ui_widget_destroy(&stacks[i].widget);
+    }
+    css_sheet_clear(&sheet);
+}
+
 int main(void)
 {
     wrapped_label_test();
@@ -262,5 +531,13 @@ int main(void)
     float_edges_test();
     fixed_and_fit_overflow_test();
     box_border_and_paint_test();
+    min_over_max_test();
+    margin_moves_child_test();
+    wide_sibling_test();
+    indefinite_percent_test();
+    root_measure_only_test();
+    fixed_size_limits_test();
+    justify_test();
+    align_and_stack_placement_test();
     return 0;
 }

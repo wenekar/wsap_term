@@ -500,6 +500,49 @@ struct ui_widget *ui_widget_child_at(struct ui_widget *widget, size_t index)
     return c;
 }
 
+/* Applies the CSS size, min, max, and the fixed size of `widget` on `axis`
+ * to the measure limits. A definite parent limit wins. Otherwise min wins
+ * over max. */
+static void measure_axis_limits(const struct ui_widget *widget, int axis,
+                                struct ui_constraints *limits)
+{
+    int parent_min = limits->min.v[axis];
+    int parent_max = limits->max.v[axis];
+    if (parent_min == parent_max)
+        return;
+    const struct css_style *style = &widget->style;
+    const struct css_scale_context *scale = &widget->style_scale;
+    float basis = (float)parent_max;
+    int style_min = ui_css_resolve_int(style->min_size[axis], basis, 0.0f,
+                                       scale, true);
+    int style_max = ui_css_resolve_int(style->max_size[axis], basis,
+                                       (float)parent_max, scale, true);
+    if (style_min > style_max)
+        style_max = style_min;
+
+    int fixed = widget->impl.fixed_size.v[axis];
+    struct css_value value = style->size[axis];
+    /* A percent needs a definite basis. css_value_resolve returns the
+     * fallback for a basis of 1e9 or more, so the size is not definite. */
+    bool percent = value.unit == CSS_UNIT_PERCENT && basis < 1e9f;
+    bool definite = fixed > 0 || percent ||
+                    value.unit == CSS_UNIT_PX || value.unit == CSS_UNIT_EM ||
+                    value.unit == CSS_UNIT_REM || value.unit == CSS_UNIT_CH;
+    int lo, hi;
+    if (definite) {
+        int size = fixed > 0 ? fixed
+            : ui_css_resolve_int(value, basis, (float)parent_max, scale, true);
+        size = geom_clamp_i(size, style_min, style_max);
+        lo = hi = geom_clamp_i(size, parent_min,
+                               geom_max_i(parent_max, parent_min));
+    } else {
+        lo = geom_max_i(parent_min, style_min);
+        hi = geom_max_i(lo, geom_min_i(parent_max, style_max));
+    }
+    limits->min.v[axis] = lo;
+    limits->max.v[axis] = hi;
+}
+
 struct vector2i ui_widget_measure(struct ui_widget *widget,
                                   struct ui_constraints constraints)
 {
@@ -507,38 +550,16 @@ struct vector2i ui_widget_measure(struct ui_widget *widget,
         return (struct vector2i){0};
 
     widget->impl.invalidation &= ~UI_WIDGET_INVALIDATE_MEASURE;
-    struct vector2i size = constraints.min;
+    struct ui_constraints limits = constraints;
+    measure_axis_limits(widget, 0, &limits);
+    measure_axis_limits(widget, 1, &limits);
+    struct vector2i size;
     if (widget->ops && widget->ops->measure) {
-        size = widget->ops->measure(widget, constraints);
+        size = widget->ops->measure(widget, limits);
     } else {
-        size = ui_layout_measure(widget, constraints);
+        size = ui_layout_measure(widget, limits);
     }
-
-    size.x = ui_css_resolve_int(widget->style.width,
-                                (float)constraints.max.x, (float)size.x,
-                                &widget->style_scale, true);
-    size.y = ui_css_resolve_int(widget->style.height,
-                                (float)constraints.max.y, (float)size.y,
-                                &widget->style_scale, true);
-    int min_w = ui_css_resolve_int(widget->style.min_width,
-                                   (float)constraints.max.x, 0.0f,
-                                   &widget->style_scale, true);
-    int min_h = ui_css_resolve_int(widget->style.min_height,
-                                   (float)constraints.max.y, 0.0f,
-                                   &widget->style_scale, true);
-    if (min_w > size.x) size.x = min_w;
-    if (min_h > size.y) size.y = min_h;
-    for (int axis = 0; axis < 2; axis++) {
-        int max = ui_css_resolve_int(widget->style.max_size[axis],
-            (float)constraints.max.v[axis], (float)constraints.max.v[axis],
-            &widget->style_scale, true);
-        if (size.v[axis] > max)
-            size.v[axis] = max;
-    }
-    if (widget->impl.fixed_size.x) size.x = widget->impl.fixed_size.x;
-    if (widget->impl.fixed_size.y) size.y = widget->impl.fixed_size.y;
-
-    widget->measured_size = ui_constraints_clamp(constraints, size);
+    widget->measured_size = vector2i_clamp(size, limits.min, limits.max);
     return widget->measured_size;
 }
 

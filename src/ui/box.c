@@ -7,27 +7,16 @@
 
 #include <limits.h>
 
-static int box_nonneg(int value)
-{
-    return value > 0 ? value : 0;
-}
-
 struct ui_box_params ui_box_params(const struct ui_box *box,
-                                       struct vector2i basis)
+                                   struct vector2i basis)
 {
-    struct ui_box_params out = {0};
+    struct ui_box_params out = {
+        .direction = box ? box->impl.direction : UI_BOX_ROW,
+        .align = CSS_ALIGN_START,
+        .justify = CSS_JUSTIFY_START,
+    };
     if (!box)
         return out;
-    out.direction = box->impl.direction;
-    out.align = box->impl.align;
-    out.justify = box->impl.justify;
-    out.padding = (struct insets2i){
-        .top = box_nonneg(box->impl.padding.top),
-        .right = box_nonneg(box->impl.padding.right),
-        .bottom = box_nonneg(box->impl.padding.bottom),
-        .left = box_nonneg(box->impl.padding.left),
-    };
-    out.gap = box_nonneg(box->impl.gap);
 
     const struct css_style *style = &box->widget.style;
     const struct css_scale_context *scale = &box->widget.style_scale;
@@ -35,57 +24,19 @@ struct ui_box_params ui_box_params(const struct ui_box *box,
         out.direction = style->flex_direction == CSS_FLEX_COLUMN
             ? UI_BOX_COLUMN : UI_BOX_ROW;
     }
-    if (style->has_align_items) {
-        switch (style->align_items) {
-        case CSS_ALIGN_START:
-            out.align = UI_BOX_ALIGN_START;
-            break;
-        case CSS_ALIGN_CENTER:
-            out.align = UI_BOX_ALIGN_CENTER;
-            break;
-        case CSS_ALIGN_END:
-            out.align = UI_BOX_ALIGN_END;
-            break;
-        case CSS_ALIGN_STRETCH:
-        default:
-            out.align = UI_BOX_ALIGN_STRETCH;
-            break;
-        }
-    }
-    if (style->has_justify_content) {
-        switch (style->justify_content) {
-        case CSS_JUSTIFY_CENTER:
-            out.justify = UI_BOX_JUSTIFY_CENTER;
-            break;
-        case CSS_JUSTIFY_END:
-            out.justify = UI_BOX_JUSTIFY_END;
-            break;
-        case CSS_JUSTIFY_START:
-        default:
-            out.justify = UI_BOX_JUSTIFY_START;
-            break;
-        }
-    }
-    for (int i = 0; i < 4; i++) {
-        struct css_value v = style->padding.v[i];
-        if (v.unit == CSS_UNIT_AUTO || v.unit == CSS_UNIT_NONE)
-            continue;
-        out.padding.v[i] = ui_css_resolve_int(
-            v, (float)((i & 1) ? basis.x : basis.y),
-            (float)out.padding.v[i], scale, true);
-    }
+    if (style->has_align_items)
+        out.align = style->align_items;
+    if (style->has_justify_content)
+        out.justify = style->justify_content;
+    out.padding = ui_css_resolve_insets(style->padding, basis, scale, true);
     int border = ui_widget_border_width(&box->widget);
     if (border > 0) {
         for (int i = 0; i < 4; i++)
             out.padding.v[i] = geom_sat_i((int64_t)out.padding.v[i] + border);
     }
-    if (style->gap.unit != CSS_UNIT_AUTO &&
-        style->gap.unit != CSS_UNIT_NONE) {
-        float main_basis = (float)(out.direction == UI_BOX_COLUMN
-            ? basis.y : basis.x);
-        out.gap = ui_css_resolve_int(style->gap, main_basis,
-                                     (float)out.gap, scale, true);
-    }
+    float main_basis = (float)(out.direction == UI_BOX_COLUMN
+        ? basis.y : basis.x);
+    out.gap = ui_css_resolve_int(style->gap, main_basis, 0, scale, true);
     return out;
 }
 
@@ -154,7 +105,7 @@ void ui_box_init(struct ui_box *box)
 }
 
 void ui_box_set_direction(struct ui_box *box,
-                                  enum ui_box_direction direction)
+                          enum ui_box_direction direction)
 {
     if (!box)
         return;
@@ -165,49 +116,3 @@ void ui_box_set_direction(struct ui_box *box,
     ui_widget_invalidate(&box->widget, UI_WIDGET_INVALIDATE_MEASURE);
 }
 
-void ui_box_set_align(struct ui_box *box,
-                              enum ui_box_align align)
-{
-    if (!box)
-        return;
-    box_ensure_init(box);
-    if (box->impl.align == align)
-        return;
-    box->impl.align = align;
-    ui_widget_invalidate(&box->widget, UI_WIDGET_INVALIDATE_LAYOUT);
-}
-
-void ui_box_set_justify(struct ui_box *box,
-                                enum ui_box_justify justify)
-{
-    if (!box)
-        return;
-    box_ensure_init(box);
-    if (box->impl.justify == justify)
-        return;
-    box->impl.justify = justify;
-    ui_widget_invalidate(&box->widget, UI_WIDGET_INVALIDATE_LAYOUT);
-}
-
-void ui_box_set_gap(struct ui_box *box, int gap)
-{
-    if (!box)
-        return;
-    box_ensure_init(box);
-    if (box->impl.gap == gap)
-        return;
-    box->impl.gap = gap;
-    ui_widget_invalidate(&box->widget, UI_WIDGET_INVALIDATE_MEASURE);
-}
-
-void ui_box_set_padding(struct ui_box *box,
-                                struct insets2i padding)
-{
-    if (!box)
-        return;
-    box_ensure_init(box);
-    if (insets2i_eq(box->impl.padding, padding))
-        return;
-    box->impl.padding = padding;
-    ui_widget_invalidate(&box->widget, UI_WIDGET_INVALIDATE_MEASURE);
-}
