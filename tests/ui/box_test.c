@@ -337,6 +337,39 @@ static void margin_moves_child_test(void)
     css_sheet_clear(&sheet);
 }
 
+static void wide_sibling_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_surface surface = {0};
+    struct ui_box root = {0}, column = {0};
+    struct probe cells[40] = {0}, tail = {0};
+    assert(css_parse(&sheet,
+        ".column { flex-direction: column; }"
+        ".cell { width: 10px; height: 5px; }"));
+
+    ui_box_init(&root);
+    ui_box_set_direction(&root, UI_BOX_COLUMN);
+    ui_widget_set_style_identity(&root.widget, "root", NULL, NULL);
+    ui_box_init(&column);
+    ui_widget_set_style_identity(&column.widget, "column", NULL, NULL);
+    for (size_t i = 0; i < 40; i++) {
+        probe_init(&cells[i], "cell", (struct vector2i){ .x = 10, .y = 5 });
+        assert(ui_widget_add_child(&column.widget, &cells[i].widget));
+    }
+    probe_init(&tail, "cell", (struct vector2i){ .x = 10, .y = 5 });
+    assert(ui_widget_add_children(&root.widget, (struct ui_widget *[]){
+        &column.widget, &tail.widget }, 2));
+
+    show(&surface, &root.widget, &sheet, (struct vector2i){ .x = 100, .y = 300 });
+    assert(column.widget.bounds.height == 200);
+    assert(cells[39].widget.bounds.y == 195);
+    assert(tail.widget.bounds.y == 200);
+
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&root.widget);
+    css_sheet_clear(&sheet);
+}
+
 int main(void)
 {
     wrapped_label_test();
@@ -347,5 +380,6 @@ int main(void)
     box_border_and_paint_test();
     min_over_max_test();
     margin_moves_child_test();
+    wide_sibling_test();
     return 0;
 }

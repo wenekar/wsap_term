@@ -647,17 +647,20 @@ static void collect_node(struct layout_pass *pass, size_t index,
     node = &pass->nodes[index];
     node->first_child = first;
     node->child_count = count;
+    /* The child loop may reallocate `pass->nodes`. Keep a copy of the inner
+     * size; `node` must not be read again until it is looked up by index. */
+    float inner[2] = { node->inner[0], node->inner[1] };
     size_t slot = first;
     for (struct ui_widget *child = widget->first_child; child;
          child = child->next_sibling) {
         if (child->impl.hidden)
             continue;
         struct layout_node *entry = &pass->nodes[slot];
-        entry->margin = child_margin(child, node->inner);
+        entry->margin = child_margin(child, inner);
         float child_available[2] = {
-            fmaxf(0, node->inner[0] -
+            fmaxf(0, inner[0] -
                        (float)(entry->margin.left + entry->margin.right)),
-            fmaxf(0, node->inner[1] -
+            fmaxf(0, inner[1] -
                        (float)(entry->margin.top + entry->margin.bottom)),
         };
         bool child_container = !stack && is_layout_container(child);
