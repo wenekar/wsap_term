@@ -19,6 +19,16 @@ void ui_surface_init(struct ui_surface *surface,
     ui_style_context_init(&surface->impl.style);
 }
 
+bool ui_surface_can_copy(const struct ui_surface *surface)
+{
+    return surface && surface->impl.host.copy_text;
+}
+
+bool ui_surface_can_paste(const struct ui_surface *surface)
+{
+    return surface && surface->impl.host.paste_text;
+}
+
 bool ui_surface_copy_text(struct ui_surface *surface, const char *text)
 {
     if (!surface || !text || !surface->impl.host.copy_text)

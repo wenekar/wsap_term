@@ -683,6 +683,11 @@ static void keep_copied(void *userdata, const char *text)
     *copied = strdup(text);
 }
 
+static void paste_text(void *userdata)
+{
+    (void)userdata;
+}
+
 static void long_clipboard_and_kill_test(void)
 {
     char value[4096];
@@ -779,6 +784,34 @@ static void paste_stops_at_nul_test(void)
     assert(ui_surface_dispatch(&f.surface, &e));
     assert(!strcmp(text(&f), "a"));
     teardown(&f);
+}
+
+/* A host without a clipboard offers no copy, cut, or paste command. */
+static void clipboard_commands_follow_the_host_test(void)
+{
+    const struct ui_surface_host host = { .paste_text = paste_text };
+    struct ui_surface surface;
+    ui_surface_init(&surface, &host, NULL);
+    struct ui_input in;
+    ui_input_init(&in);
+    ui_input_set_text(&in, "value");
+    ui_surface_set_root(&surface, ui_input_widget(&in));
+    ui_input_select_all(&in);
+    assert(!ui_input_can_command(&in, UI_EDIT_COPY));
+    assert(!ui_input_can_command(&in, UI_EDIT_CUT));
+    assert(ui_input_can_command(&in, UI_EDIT_PASTE));
+
+    const struct ui_surface_host copy_only = {
+        .copy_text = keep_copied, .paste_text = paste_text,
+    };
+    ui_surface_destroy(&surface);
+    ui_surface_init(&surface, &copy_only, NULL);
+    ui_surface_set_root(&surface, ui_input_widget(&in));
+    assert(ui_input_can_command(&in, UI_EDIT_COPY));
+    assert(ui_input_can_command(&in, UI_EDIT_CUT));
+
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(ui_input_widget(&in));
 }
 
 static void copy_shortcut_test(void)
@@ -1000,6 +1033,7 @@ int main(void)
     accessibility_selection_actions_test();
     fallback_part_colors_test();
     copy_shortcut_test();
+    clipboard_commands_follow_the_host_test();
     long_clipboard_and_kill_test();
     mac_editing_test();
     text_cursor_test();

@@ -436,8 +436,8 @@ bool ui_input_can_command(const struct ui_input *in, enum ui_edit_command comman
     case UI_EDIT_COPY:
     case UI_EDIT_CUT:
         return in->impl.select.caret != in->impl.select.anchor &&
-               surface && surface->impl.host.copy_text;
-    case UI_EDIT_PASTE: return surface && surface->impl.host.paste_text;
+               ui_surface_can_copy(surface);
+    case UI_EDIT_PASTE: return ui_surface_can_paste(surface);
     case UI_EDIT_SELECT_ALL: return in->impl.len > 0;
     default: return true;
     }
