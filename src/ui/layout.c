@@ -693,9 +693,28 @@ static void compute_naturals(struct layout_pass *pass)
     }
 }
 
-/* Re-measures the width-sensitive children at their placed width. Returns true
- * when a natural size changed. */
-static bool remeasure_width_sensitive(struct layout_pass *pass);
+static bool remeasure_width_sensitive(struct layout_pass *pass)
+{
+    bool changed = false;
+    for (size_t i = 0; i < pass->count; i++) {
+        struct layout_node *node = &pass->nodes[i];
+        struct ui_widget *widget = node->widget;
+        if (node->container || !widget->ops || !widget->ops->width_sensitive)
+            continue;
+        int width = raster_rect(node->pos, node->size).width;
+        struct ui_constraints constraints = {
+            .min = { .x = width },
+            .max = { .x = width, .y = INT_MAX },
+        };
+        struct vector2i natural = ui_widget_measure(widget, constraints);
+        if (vector2i_eq(natural, raster_size(node->natural)))
+            continue;
+        node->natural[0] = (float)natural.x;
+        node->natural[1] = (float)natural.y;
+        changed = true;
+    }
+    return changed;
+}
 
 struct vector2i ui_layout_measure(struct ui_widget *root,
                                    struct ui_constraints constraints)
@@ -737,29 +756,6 @@ struct vector2i ui_layout_measure(struct ui_widget *root,
                                 .y = round_edge(size[1]) };
     struct vector2i hi = vector2i_max(constraints.max, constraints.min);
     return vector2i_clamp(natural, constraints.min, hi);
-}
-
-static bool remeasure_width_sensitive(struct layout_pass *pass)
-{
-    bool changed = false;
-    for (size_t i = 0; i < pass->count; i++) {
-        struct layout_node *node = &pass->nodes[i];
-        struct ui_widget *widget = node->widget;
-        if (node->container || !widget->ops || !widget->ops->width_sensitive)
-            continue;
-        int width = raster_rect(node->pos, node->size).width;
-        struct ui_constraints constraints = {
-            .min = { .x = width },
-            .max = { .x = width, .y = INT_MAX },
-        };
-        struct vector2i natural = ui_widget_measure(widget, constraints);
-        if (vector2i_eq(natural, raster_size(node->natural)))
-            continue;
-        node->natural[0] = (float)natural.x;
-        node->natural[1] = (float)natural.y;
-        changed = true;
-    }
-    return changed;
 }
 
 void ui_layout_place(struct ui_widget *root, struct rect2i bounds)
