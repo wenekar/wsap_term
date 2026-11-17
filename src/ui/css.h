@@ -314,6 +314,7 @@ static inline float ui_positive_or(float v, float fallback)
     return isfinite(v) && v > 0.0f ? v : fallback;
 }
 
+/* Returns `dpi_scale` as a scale of one or more. */
 static inline float ui_dpi_scale(float dpi_scale)
 {
     return ui_positive_or(dpi_scale, 1.0f);
@@ -332,6 +333,7 @@ static inline int ui_ctx_px(const struct css_scale_context *ctx, int px)
     return ui_px(ctx ? ctx->dpi_scale : 0.0f, px);
 }
 
+/* Stores `v` in `dst` and returns true only when `v` is above zero. */
 static inline bool ui_set_if_positive(float *dst, float v)
 {
     if (!dst || !isfinite(v) || v <= 0.0f)
@@ -362,6 +364,7 @@ static inline struct css_scale_context ui_scale_ctx_default(void)
     };
 }
 
+/* Returns `color` with its alpha multiplied by `opacity`. */
 static inline uint32_t ui_color_opacity(uint32_t color, float opacity)
 {
     if (!isfinite(opacity) || opacity <= 0.0f)
@@ -373,6 +376,8 @@ static inline uint32_t ui_color_opacity(uint32_t color, float opacity)
     return (color & 0x00FFFFFFu) | (a << 24);
 }
 
+/* Returns `v` as a whole number, clamped to the int range. A nonnegative
+   result is zero or more. */
 static inline int ui_float_to_int(float v, bool nonnegative)
 {
     if (!isfinite(v))

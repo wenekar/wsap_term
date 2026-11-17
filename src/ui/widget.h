@@ -1,6 +1,8 @@
 #ifndef WSAP_UI_WIDGET_H
 #define WSAP_UI_WIDGET_H
 
+#include <limits.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -207,6 +209,7 @@ static inline struct rect2i ui_widget_rect_to_surface(const struct ui_widget *wi
     return rect2i_translate(local, widget->bounds.pos);
 }
 
+/* Returns cell dimension `cell` in whole pixels, or `fallback` below one. */
 static inline int ui_cell_dim(float cell, int fallback)
 {
     return isfinite(cell) && cell >= 1.0f && cell < (float)INT_MAX
@@ -229,6 +232,7 @@ static inline int ui_widget_cell_w(const struct ui_widget *widget)
     return ui_widget_text_style(&widget->style_scale).advance;
 }
 
+/* One text cell height of this widget, in pixels. */
 static inline int ui_widget_cell_h(const struct ui_widget *widget)
 {
     return ui_widget_text_style(&widget->style_scale).cell_h;
