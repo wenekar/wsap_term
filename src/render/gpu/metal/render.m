@@ -172,7 +172,7 @@ static struct frame_slot *slot_acquire(struct render_gpu *g)
  *
  * The completed handler frees the frame slot. It reports GPU completion, not
  * presentation: a display reports the presentation later, through the handler
- * that the window attaches in window_metal_draw().
+ * that the window attaches in window_gpu_draw().
  */
 static void commit_and_present(id<MTLCommandBuffer> cb, id<CAMetalDrawable> drawable,
                                dispatch_semaphore_t ready, bool transaction)

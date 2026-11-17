@@ -53,7 +53,7 @@ void terminal_update_ime(struct terminal *t, const struct wsap_vtcore *term)
     if (s) {
         if (!rect2i_eq(t->ime_caret, caret)) {
             t->ime_caret = caret;
-            double scale = window_scale_120(w) / 120.0;
+            double scale = window_scale(w);
             yasl_surface_set_text_input(s, &(struct yasl_text_input){
                 .purpose = YASL_TEXT_NORMAL,
                 .text = "",

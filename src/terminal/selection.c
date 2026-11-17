@@ -1,5 +1,6 @@
 #include "terminal/selection.h"
 #include "internal.h"
+#include "ui/surface.h"
 
 static struct vector2i clamp_cell(const struct wsap_vtcore *t, struct vector2i cell)
 {
@@ -29,7 +30,8 @@ void selection_handle_pointer(struct text_selection *s, struct wsap_vtcore *t, s
     s->pointer = (struct vector2i){ .x = x, .y = y }; s->right_half = right_half;
     if (kind == PTR_PRESS) {
         int offset = wsap_vtcore_scrollback(t).offset;
-        uint64_t interval = s->double_click_ms ? s->double_click_ms : 400;
+        uint64_t interval = s->double_click_ms ? s->double_click_ms
+                                               : UI_DOUBLE_CLICK_FALLBACK_MS;
         s->clicks = s->clicks && time_ms - s->time_ms <= interval && x == s->x && y == s->y
                   && offset == s->view_offset ? s->clicks % 3 + 1 : 1;
         s->x = x; s->y = y; s->view_offset = offset;

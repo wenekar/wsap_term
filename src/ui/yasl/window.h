@@ -134,6 +134,8 @@ void window_set_drag_target(struct window *w, const struct window_drag_target *t
  * a pass, it is the current time. */
 uint64_t window_frame_time_ms(struct window *w);
 uint32_t window_scale_120(const struct window *w);
+/* The scale of `w` as a factor of one, where 1.0 is a scale of 120. */
+double window_scale(const struct window *w);
 #define WINDOW_DEFAULT_COLS 132
 #define WINDOW_DEFAULT_ROWS 42
 struct vector2i window_default_size(const struct window_config *config);

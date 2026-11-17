@@ -125,8 +125,9 @@ the input or render hot paths:
   base x86-64. Write a kernel for any loop that must run at vector speed,
   as `scan_byte_run` does for line feed bursts.
 - Keep per-iteration state in registers and batch bookkeeping: hoist
-  `cursor_x`, defer `row_len`/`row_gen` updates to the end of a run, and fuse
-  known sequence pairs (e.g. `38;2;`/`48;2;` SGR) in the CSI fast path.
+  `cursor_x`, defer the `next_row_uid` and `full_gen` updates to the end of a
+  run, and fuse known sequence pairs (e.g. `38;2;`/`48;2;` SGR) in the CSI
+  fast path.
 - Measure with `meson compile -C build term-live-bench` (samples the
   live terminal), and the headless benchmarks:
   `meson test -C build --benchmark term-write-bench --verbose` and

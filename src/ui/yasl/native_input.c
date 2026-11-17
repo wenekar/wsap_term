@@ -240,7 +240,7 @@ static enum input_key_route queue_key(struct window *w, const struct yasl_event 
 
 static struct vector2i device_pos(const struct window *w, const struct yasl_event *in)
 {
-    double scale = window_scale_120(w) / (double)YASL_SCALE_UNIT;
+    double scale = window_scale(w);
     return (struct vector2i){ .x = (int)lround(in->x * scale), .y = (int)lround(in->y * scale) };
 }
 
