@@ -169,7 +169,7 @@ static void selection_replace_test(void)
     setup(&f, "hello");
     key(&f, UI_KEY_LEFT, UI_MOD_SHIFT);
     key(&f, UI_KEY_LEFT, UI_MOD_SHIFT);
-    int s, e;
+    size_t s, e;
     assert(ui_input_selection(&f.in, &s, &e) && s == 3 && e == 5);
     assert(ch(&f, 'y', 0));
     assert(!strcmp(text(&f), "hely"));
@@ -183,7 +183,7 @@ static void select_all_type_test(void)
     struct fixture f;
     setup(&f, "old");
     assert(ch(&f, 'a', UI_MOD_CTRL));
-    int s, e;
+    size_t s, e;
     assert(ui_input_selection(&f.in, &s, &e));
     assert(s == 0 && e == 3);
     assert(ch(&f, 'x', 0));
@@ -198,7 +198,7 @@ static void shift_extend_test(void)
     key(&f, UI_KEY_HOME, 0);
     key(&f, UI_KEY_RIGHT, UI_MOD_SHIFT);
     key(&f, UI_KEY_RIGHT, UI_MOD_SHIFT);
-    int s, e;
+    size_t s, e;
     assert(ui_input_selection(&f.in, &s, &e) && s == 0 && e == 2);
     key(&f, UI_KEY_RIGHT, 0);
     assert(!ui_input_selection(&f.in, &s, &e));
@@ -218,7 +218,7 @@ static void word_jump_test(void)
     key(&f, UI_KEY_RIGHT, UI_MOD_CTRL);
     assert(ui_input_caret(&f.in) == 13);
     key(&f, UI_KEY_RIGHT, UI_MOD_CTRL);
-    assert(ui_input_caret(&f.in) == (int)strlen("foo  bar_baz qux"));
+    assert(ui_input_caret(&f.in) == strlen("foo  bar_baz qux"));
     key(&f, UI_KEY_LEFT, UI_MOD_CTRL);
     assert(ui_input_caret(&f.in) == 13);
     key(&f, UI_KEY_LEFT, UI_MOD_CTRL);
@@ -295,7 +295,7 @@ static void long_paste_undo_and_alias_test(void)
                    sizeof(bytes) + 5));
 
     ui_input_select_all(&f.in);
-    int start, end;
+    size_t start, end;
     assert(ui_input_selection(&f.in, &start, &end));
     /* The buffer holds one byte. Only the length guard runs. */
     event = ui_event_paste("x", SIZE_MAX, 0);
@@ -327,7 +327,7 @@ static void long_accessible_value_test(void)
     };
     assert(ui_accessibility_dispatch_action(ui_input_widget(&f.in), &request));
     assert(!strcmp(text(&f), value));
-    assert(ui_input_caret(&f.in) == (int)sizeof(value) - 5);
+    assert(ui_input_caret(&f.in) == sizeof(value) - 5);
     assert(f.changes == 1);
     struct ui_accessibility_tree tree = {0};
     assert(ui_accessibility_tree_build(ui_input_widget(&f.in), &tree));
@@ -499,10 +499,10 @@ static void pointer_test(void)
     assert(pointer(&f, UI_POINTER_PRESS, inset + 20, 0));
     assert(ui_input_caret(&f.in) == 2);
     assert(pointer(&f, UI_POINTER_MOTION, inset - 5, 0));
-    int s, e;
+    size_t s, e;
     assert(ui_input_selection(&f.in, &s, &e) && s == 0 && e == 2);
     assert(pointer(&f, UI_POINTER_RELEASE, inset - 5, 0));
-    int caret = ui_input_caret(&f.in);
+    size_t caret = ui_input_caret(&f.in);
     assert(!pointer(&f, UI_POINTER_MOTION, inset + 30, 0));
     assert(ui_input_caret(&f.in) == caret);
     pointer(&f, UI_POINTER_PRESS, inset + 10, 2);
@@ -518,14 +518,14 @@ static void wide_cluster_click_test(void)
         .dpi_scale = 1, .cell_w = 10, .cell_h = 20,
     });
     int inset = ui_input_text_inset(&f.in);
-    int end = (int)strlen(FAMILY_EMOJI);
+    size_t end = strlen(FAMILY_EMOJI);
     bool saw_start = false, saw_end = false;
     uint64_t time = 0;
     for (int x = inset; x < inset + 100; x++) {
         time += 1000;
         assert(pointer_at_time(&f, UI_POINTER_PRESS, x, time));
         assert(pointer_at_time(&f, UI_POINTER_RELEASE, x, time + 1));
-        int caret = ui_input_caret(&f.in);
+        size_t caret = ui_input_caret(&f.in);
         assert(caret == 0 || caret == end);
         saw_start |= caret == 0;
         saw_end |= caret == end;
@@ -653,7 +653,7 @@ static void mac_editing_test(void)
     assert(mac_key(&f, UI_KEY_RIGHT, UI_MOD_ALT));
     assert(ui_input_caret(&f.in) == 3);
     assert(mac_key(&f, UI_KEY_RIGHT, UI_MOD_ALT | UI_MOD_SHIFT));
-    int start, end;
+    size_t start, end;
     assert(ui_input_selection(&f.in, &start, &end) && start == 3 && end == 8);
     assert(mac_key(&f, UI_KEY_RIGHT, UI_MOD_SUPER));
     assert(ui_input_caret(&f.in) == 12);
@@ -896,7 +896,7 @@ static void edit_navigation_and_unhandled_commands_test(void)
         .edit_command = UI_EDIT_RIGHT, .mods = UI_MOD_SHIFT,
     }, 0);
     assert(ui_surface_dispatch(&f.surface, &e));
-    int s, end;
+    size_t s, end;
     assert(ui_input_selection(&f.in, &s, &end) && s == 0 && end == 1);
 
     e = ui_event_key((struct ui_key_event){ .edit_command = UI_EDIT_END }, 0);
@@ -929,7 +929,7 @@ static void accessibility_selection_actions_test(void)
         .selection_end = 99,
     };
     assert(ui_accessibility_dispatch_action(ui_input_widget(&f.in), &req));
-    int s, e;
+    size_t s, e;
     assert(ui_input_selection(&f.in, &s, &e) && s == 1 && e == 5);
     assert(ui_input_caret(&f.in) == 5);
 

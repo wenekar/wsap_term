@@ -192,7 +192,7 @@ static void live_actions_and_modal_scope(void)
     request.selection_start = 2;
     request.selection_end = 5;
     assert(ui_accessibility_dispatch_action(root_widget, &request));
-    int start, end;
+    size_t start, end;
     assert(ui_input_selection(&input, &start, &end));
     assert(start == 1 && end == 5);
     ui_widget_set_hidden(dialog_widget, true);

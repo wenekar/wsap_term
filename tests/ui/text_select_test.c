@@ -56,10 +56,10 @@ static struct selected label_selected(const struct ui_label *label)
 static struct selected input_selected(const struct ui_input *in)
 {
     struct selected out = { .empty = true };
-    int lo = 0, hi = 0;
-    if (!ui_input_selection(in, &lo, &hi) || (size_t)(hi - lo) >= sizeof(out.text))
+    size_t lo = 0, hi = 0;
+    if (!ui_input_selection(in, &lo, &hi) || hi - lo >= sizeof(out.text))
         return out;
-    memcpy(out.text, ui_input_text(in) + lo, (size_t)(hi - lo));
+    memcpy(out.text, ui_input_text(in) + lo, hi - lo);
     out.empty = false;
     return out;
 }
