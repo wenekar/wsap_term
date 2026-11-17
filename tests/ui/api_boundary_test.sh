@@ -3,12 +3,8 @@ set -euo pipefail
 cd "${1:-$(dirname "$0")/../..}"
 
 # Files outside the UI core that may use UI internals. Add a reason with each
-# entry: the public API must not state the same behavior.
-allowed=(
-    # Drives ui_widget_bubble and ui_widget_tick, the event and tick entry
-    # points of the tree, on trees that have no surface.
-    tests/ui/widget_test.c
-)
+# entry: the public API must not state the same behavior. The list is empty.
+allowed=()
 
 is_allowed() {
     local f
