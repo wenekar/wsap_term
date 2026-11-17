@@ -1,3 +1,10 @@
+/*
+ * Step 1 of the input path.
+ *
+ * It turns yasl events into input events, and it queues them. Step 2 is
+ * `ui_input.c`. Step 3 is `ui_route.c`.
+ */
+
 #define _GNU_SOURCE
 #include "ui/yasl/native_input.h"
 

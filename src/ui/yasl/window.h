@@ -140,6 +140,8 @@ struct vector2i window_default_size(const struct window_config *config);
 void window_redraw(struct window *w);
 void window_set_title(struct window *w, const char *title);
 const char *window_title(const struct window *w);
+/* Sends the queued input events to their surfaces. The host calls this once
+ * for each window in each pass. */
 void window_drain_input(struct window *w);
 bool window_inject_input(struct window *w, const struct input_event *ev);
 
