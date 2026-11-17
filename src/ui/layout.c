@@ -214,8 +214,7 @@ static float axis_clamp(const struct flex_axis *axis, float natural)
  * `content`. */
 static float axis_stretch(const struct flex_axis *axis, float content)
 {
-    float size = fminf(content, axis->max);
-    return fmaxf(axis->min, fminf(size, content));
+    return fmaxf(axis->min, fminf(content, axis->max));
 }
 
 /* Returns the margins of a child in CSS order top, right, bottom, left. */
