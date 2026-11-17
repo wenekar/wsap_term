@@ -489,7 +489,8 @@ static void place_stack_children(struct layout_pass *pass, struct layout_node *n
         size_t index = node->first_child + i;
         struct layout_node *child = &pass->nodes[index];
         if (child->out_of_flow) {
-            ui_widget_place_child(child->widget, node->widget->bounds);
+            if (pass->applying)
+                ui_widget_place_child(child->widget, node->widget->bounds);
             continue;
         }
         float size[2], pos[2] = { content[0], content[1] };
