@@ -355,7 +355,6 @@ static void write_widget_head(struct json_writer *j,
     json_arr_begin(j);
     if (w->impl.invalidation & UI_WIDGET_INVALIDATE_MEASURE) json_str(j, "measure");
     if (w->impl.invalidation & UI_WIDGET_INVALIDATE_LAYOUT) json_str(j, "layout");
-    if (w->impl.invalidation & UI_WIDGET_INVALIDATE_PAINT) json_str(j, "paint");
     json_arr_end(j);
 
     int first, end;

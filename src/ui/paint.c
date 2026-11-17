@@ -130,25 +130,13 @@ static void paint_tree(const struct ui_widget *widget, struct ui_scene *scene)
     ui_scene_end_scope(scene);
 }
 
-static void clear_paint_invalidation(struct ui_widget *widget)
-{
-    if (!widget || widget->impl.destroyed)
-        return;
-    ui_widget_clear_invalidation(widget, UI_WIDGET_INVALIDATE_PAINT);
-    for (struct ui_widget *c = widget->first_child; c; c = c->next_sibling)
-        clear_paint_invalidation(c);
-}
-
 bool ui_widget_append_scene(const struct ui_widget *root,
                             struct ui_scene *scene)
 {
     if (!scene)
         return false;
     paint_tree(root, scene);
-    if (!ui_scene_ok(scene))
-        return false;
-    clear_paint_invalidation((struct ui_widget *)root);
-    return true;
+    return ui_scene_ok(scene);
 }
 
 bool ui_widget_build_scene(const struct ui_widget *root,

@@ -48,8 +48,7 @@ void ui_widget_init(struct ui_widget *widget,
         .ops = ops,
         .userdata = userdata,
         .impl.invalidation = UI_WIDGET_INVALIDATE_MEASURE |
-                             UI_WIDGET_INVALIDATE_LAYOUT |
-                             UI_WIDGET_INVALIDATE_PAINT,
+                             UI_WIDGET_INVALIDATE_LAYOUT,
         .impl.accessibility_id = ui_widget_accessibility_id_allocate(),
     };
 }
@@ -631,7 +630,6 @@ void ui_widget_layout(struct ui_widget *widget, struct rect2i bounds)
         .size = { .x = bounds.width, .y = bounds.height },
     };
     widget->impl.invalidation &= ~UI_WIDGET_INVALIDATE_LAYOUT;
-    widget->impl.invalidation |= UI_WIDGET_INVALIDATE_PAINT;
     if (widget->ops && widget->ops->layout) {
         widget->ops->layout(widget, bounds);
         return;
@@ -798,10 +796,11 @@ void ui_widget_invalidate(struct ui_widget *widget, unsigned flags)
     if (!widget || widget->impl.destroyed ||
         flags == UI_WIDGET_INVALIDATE_NONE)
         return;
+    /* Paint is not a stored state. Any invalidation asks for a frame, and the
+     * frame paints the tree. */
     if (flags & UI_WIDGET_INVALIDATE_MEASURE)
-        flags |= UI_WIDGET_INVALIDATE_LAYOUT | UI_WIDGET_INVALIDATE_PAINT;
-    else if (flags & UI_WIDGET_INVALIDATE_LAYOUT)
-        flags |= UI_WIDGET_INVALIDATE_PAINT;
+        flags |= UI_WIDGET_INVALIDATE_LAYOUT;
+    flags &= UI_WIDGET_INVALIDATE_MEASURE | UI_WIDGET_INVALIDATE_LAYOUT;
 
     for (struct ui_widget *p = widget; p; p = p->parent)
         p->impl.invalidation |= flags;
