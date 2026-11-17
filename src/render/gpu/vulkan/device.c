@@ -5,6 +5,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __linux__
+#include <dirent.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 #include "render/gpu/gpu.h"
 
@@ -813,11 +818,123 @@ static bool objects_create(struct render_gpu *g)
     return true;
 }
 
-struct render_gpu *render_gpu_new(void)
+/* ---- Driver memory ------------------------------------------------------- */
+
+/* Each kernel GPU driver and the loader manifest names of its Vulkan drivers. */
+static const struct {
+    const char *kernel;
+    const char *manifests;
+} driver_manifests[] = {
+    { "amdgpu", "*radeon*,*amd*" },
+    { "radeon", "*radeon*,*amd*" },
+    { "i915", "*intel*" },
+    { "xe", "*intel*" },
+    { "nouveau", "*nouveau*" },
+    { "nvidia", "*nvidia*" },
+    { "virtio_gpu", "*virtio*" },
+    { "msm", "*freedreno*" },
+    { "panfrost", "*panfrost*" },
+    { "panthor", "*panfrost*" },
+    { "asahi", "*asahi*" },
+    { "v3d", "*broadcom*" },
+};
+
+static bool append_manifests(char *out, size_t cap, const char *kernel)
 {
-    enum gpu_choice choice = gpu_choice();
-    if (choice == GPU_OFF)
-        return NULL;
+    for (size_t i = 0; i < sizeof(driver_manifests) / sizeof(driver_manifests[0]); i++) {
+        if (strcmp(driver_manifests[i].kernel, kernel))
+            continue;
+        const char *add = driver_manifests[i].manifests;
+        if (strstr(out, add))
+            return true;
+        size_t len = strlen(out);
+        int n = snprintf(out + len, cap - len, "%s%s", len ? "," : "", add);
+        return n > 0 && (size_t)n < cap - len;
+    }
+    return false;
+}
+
+/* Makes the loader filter for the Vulkan drivers of the GPUs in the machine.
+ * The loader opens every driver it finds to ask for devices. Each driver
+ * that has no device still maps its library and its dependencies, and that
+ * raises the peak RSS. Returns false if a user setting or an unknown kernel
+ * driver means the full list must stay. */
+static bool driver_filter(char *out, size_t cap)
+{
+    static const char *const user_settings[] = {
+        "VK_LOADER_DRIVERS_SELECT", "VK_LOADER_DRIVERS_DISABLE",
+        "VK_DRIVER_FILES", "VK_ICD_FILENAMES", "VK_ADD_DRIVER_FILES",
+    };
+    for (size_t i = 0; i < sizeof(user_settings) / sizeof(user_settings[0]); i++)
+        if (getenv(user_settings[i]))
+            return false;
+    out[0] = '\0';
+#ifdef __linux__
+    DIR *dir = opendir("/sys/class/drm");
+    if (!dir)
+        return false;
+    bool ok = true;
+    struct dirent *e;
+    while (ok && (e = readdir(dir))) {
+        if (strncmp(e->d_name, "renderD", 7))
+            continue;
+        char path[300], target[256];
+        snprintf(path, sizeof(path), "/sys/class/drm/%s/device/driver", e->d_name);
+        ssize_t n = readlink(path, target, sizeof(target) - 1);
+        if (n <= 0) {
+            ok = false;
+            break;
+        }
+        target[n] = '\0';
+        const char *slash = strrchr(target, '/');
+        ok = append_manifests(out, cap, slash ? slash + 1 : target);
+    }
+    closedir(dir);
+    return ok && out[0];
+#else
+    (void)cap;
+    return false;
+#endif
+}
+
+/* Gives back the resident pages of the LLVM library. RADV links LLVM, and
+ * the static constructors of LLVM touch about 20 MiB of its code and
+ * read-only data when the loader opens the driver. RADV compiles with ACO,
+ * so the pages are not used again. The function releases only read-only
+ * mappings that hold no private copy. Those pages are clean page cache, and
+ * a later access maps them again from the file. Relocated (RELRO) and
+ * writable mappings hold anonymous pages. It keeps those. */
+static void driver_pages_release(void)
+{
+#ifdef __linux__
+    FILE *f = fopen("/proc/self/smaps", "re");
+    if (!f)
+        return;
+    char line[512];
+    unsigned long start = 0, end = 0;
+    bool candidate = false;
+    while (fgets(line, sizeof(line), f)) {
+        char perms[8], path[384];
+        unsigned long s, e, anon;
+        int fields = sscanf(line, "%lx-%lx %7s %*s %*s %*s %383s", &s, &e, perms, path);
+        if (fields >= 3) {
+            const char *base = fields == 4 ? strrchr(path, '/') : NULL;
+            start = s;
+            end = e;
+            candidate = base && !strncmp(base + 1, "libLLVM", 7) && perms[1] != 'w' &&
+                        perms[3] == 'p';
+        } else if (candidate && sscanf(line, "Anonymous: %lu", &anon) == 1) {
+            if (anon == 0)
+                madvise((void *)start, end - start, MADV_DONTNEED);
+            candidate = false;
+        }
+    }
+    fclose(f);
+#endif
+}
+
+static struct render_gpu *gpu_open(enum gpu_choice choice, const char *drivers)
+{
     struct render_gpu *g = calloc(1, sizeof(*g));
     if (!g)
         return NULL;
@@ -826,12 +943,20 @@ struct render_gpu *render_gpu_new(void)
         return NULL;
     }
     /* Skip Mesa software rasterizer probing unless software mode was requested. */
-    bool hide_lvp = choice == GPU_HARDWARE && !getenv("VK_LOADER_DRIVERS_DISABLE");
-    if (hide_lvp)
+    bool hide_lvp = !drivers && choice == GPU_HARDWARE && !getenv("VK_LOADER_DRIVERS_DISABLE");
+    if (drivers)
+        setenv("VK_LOADER_DRIVERS_SELECT", drivers, 1);
+    else if (hide_lvp)
         setenv("VK_LOADER_DRIVERS_DISABLE", "*lvp*", 1);
     bool inst_ok = instance_create(g);
-    if (hide_lvp)
+    if (drivers)
+        unsetenv("VK_LOADER_DRIVERS_SELECT");
+    else if (hide_lvp)
         unsetenv("VK_LOADER_DRIVERS_DISABLE");
+    /* Release the pages before the device and the pipelines allocate, so
+     * the two do not add up in the peak. */
+    if (inst_ok)
+        driver_pages_release();
 
     const struct vector2i atlas_size = { .x = GPU_ATLAS_START_SIZE, .y = GPU_ATLAS_START_SIZE };
     if (!inst_ok || !device_create(g, choice == GPU_SOFTWARE) || !objects_create(g) ||
@@ -841,6 +966,21 @@ struct render_gpu *render_gpu_new(void)
         return NULL;
     }
     return g;
+}
+
+struct render_gpu *render_gpu_new(void)
+{
+    enum gpu_choice choice = gpu_choice();
+    if (choice == GPU_OFF)
+        return NULL;
+    char drivers[256];
+    if (choice == GPU_HARDWARE && driver_filter(drivers, sizeof(drivers))) {
+        struct render_gpu *g = gpu_open(choice, drivers);
+        if (g)
+            return g;
+    }
+    /* The filter can miss a driver with an unusual manifest name. */
+    return gpu_open(choice, NULL);
 }
 
 void render_gpu_free(struct render_gpu *g)
