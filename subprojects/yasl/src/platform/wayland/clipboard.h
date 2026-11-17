@@ -14,7 +14,9 @@ struct wl_data_device;
 struct clipboard;
 struct zwp_primary_selection_device_manager_v1;
 
-typedef void (*clipboard_receive_fn)(const char *, size_t, bool uri_list,
+/* Called when a transfer ends. A paste passes drop_mime NULL and its request id.
+ * A drop passes the type it received, and its bytes can include NULs. */
+typedef void (*clipboard_receive_fn)(const char *, size_t, const char *drop_mime,
                                      struct wl_surface *on, uint64_t request_id,
                                      enum yasl_private_transfer_status, void *);
 
@@ -34,8 +36,9 @@ typedef void (*clipboard_drag_fn)(enum yasl_private_drag_event, struct wl_surfac
                                   double x, double y, void *);
 void clipboard_set_drag_handler(struct clipboard *, clipboard_drag_fn, void *);
 
+/* Reports a drop hover. `mime` is the picked drop type on OVER, and NULL otherwise. */
 typedef void (*clipboard_drop_fn)(enum yasl_private_drop_event, struct wl_surface *on,
-                                  double x, double y, void *);
+                                  double x, double y, const char *mime, void *);
 void clipboard_set_drop_handler(struct clipboard *, clipboard_drop_fn, void *);
 const char *clipboard_drag_mime(void);
 struct wl_data_device *clipboard_data_device(const struct clipboard *);

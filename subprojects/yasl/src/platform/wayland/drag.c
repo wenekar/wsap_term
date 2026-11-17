@@ -251,14 +251,14 @@ static struct yasl_private_vector2i drag_device_pos(const struct wayland_surface
 }
 
 void conn_drop_target(struct wayland_display *c, enum yasl_private_drop_event ev,
-                      struct wl_surface *on, double x, double y)
+                      struct wl_surface *on, double x, double y, const char *mime)
 {
     (void)c;
     struct wayland_surface *w = on ?
         (struct wayland_surface *)wl_surface_get_user_data(on) : NULL;
     if (!w || w->parent || w->closed)
         return;
-    yasl_private_surface_notify_drop(&w->base, ev, drag_device_pos(w, x, y));
+    yasl_private_surface_notify_drop_mime(&w->base, ev, drag_device_pos(w, x, y), mime);
 }
 
 void conn_drag_target(struct wayland_display *c, enum yasl_private_drag_event ev,

@@ -6,13 +6,22 @@
 #include <signal.h>
 
 #define CLIPBOARD_TEXT_MAX (256u * 1024)
+/* Drops can carry images, so they allow more bytes than a paste. */
+#define CLIPBOARD_DROP_MAX (64u * 1024 * 1024)
 #define CLIPBOARD_TRANSFER_TIMEOUT_NS (30ull * 1000000000ull)
+/* Most types that one offer keeps. Types past this count are ignored. */
+#define OFFER_MIME_MAX 32
 
 struct offer {
     struct offer *next;
     struct wl_data_offer *proxy;
+    /* Text type that a paste from the selection receives. */
     char *mime;
-    bool uri_list;
+    /* Every type that the offer lists, in offer order. */
+    char *mimes[OFFER_MIME_MAX];
+    size_t mime_count;
+    /* Drag type that the enter accepted. NULL refuses the drag. Points into mimes. */
+    const char *picked;
     bool tab;
 };
 struct primary_offer {
@@ -29,9 +38,14 @@ struct transfer {
     yasl_private_timer_id timeout;
     char *text;
     size_t len, offset, capacity;
+    /* Most bytes that a receiving transfer accepts. A transfer that gets more fails. */
+    size_t limit;
     uint64_t request_id;
+    /* Drop type that this transfer receives. Empty for a paste. */
+    char drop_mime[YASL_PRIVATE_DROP_MIME_MAX];
     bool sending;
-    bool uri_list;
+    /* The bytes are not text, so they skip the UTF-8 check. */
+    bool raw;
     bool paste;
     bool cancelled;
 };
@@ -79,11 +93,13 @@ static void drag_event(struct clipboard *c, enum yasl_private_drag_event ev,
                 c->drag_ud);
 }
 
-static void drop_event(struct clipboard *c, enum yasl_private_drop_event ev)
+/* Reports a hover of the drag that entered the drag surface. `mime` is the
+ * picked type, or NULL for a leave. */
+static void drop_event(struct clipboard *c, enum yasl_private_drop_event ev, const char *mime)
 {
     if (c->drop && c->drag_surface)
         c->drop(ev, c->drag_surface, wl_fixed_to_double(c->drag_x),
-                wl_fixed_to_double(c->drag_y), c->drop_ud);
+                wl_fixed_to_double(c->drag_y), mime, c->drop_ud);
 }
 
 static void free_offer(struct offer *o);
@@ -124,12 +140,13 @@ static void transfer_end(struct transfer *t, bool complete)
     void *receive_ud = owner->ud;
     struct wl_surface *surface = t->drop_surface;
     uint64_t request_id = t->request_id;
-    bool uri_list = t->uri_list;
+    /* The offer is freed, but t still holds the type until the callback returns. */
+    const char *drop_mime = t->drop_mime[0] ? t->drop_mime : NULL;
     enum yasl_private_transfer_status status = complete ? YASL_PRIVATE_TRANSFER_OK : YASL_PRIVATE_TRANSFER_FAILED;
     const char *text = complete ? (t->text ? t->text : "") : NULL;
     size_t len = complete ? t->len : 0;
     if (notify)
-        receive(text, len, uri_list, surface, request_id, status, receive_ud);
+        receive(text, len, drop_mime, surface, request_id, status, receive_ud);
     free(t->text);
     free(t);
 }
@@ -173,7 +190,7 @@ static void transfer_io(void *ud, int fd, short events)
         if (t->capacity - t->len < 4096) {
             size_t capacity = t->capacity ? t->capacity * 2 : 8192;
             /* Keep one byte for the read that detects an oversized transfer. */
-            if (capacity > CLIPBOARD_TEXT_MAX + 1) capacity = CLIPBOARD_TEXT_MAX + 1;
+            if (capacity > t->limit + 1) capacity = t->limit + 1;
             if (capacity <= t->len) { transfer_end(t, false); return; }
             char *text = realloc(t->text, capacity);
             if (!text) { transfer_end(t, false); return; }
@@ -183,20 +200,23 @@ static void transfer_io(void *ud, int fd, short events)
         ssize_t n = read(fd, t->text + t->len, t->capacity - t->len);
         if (n > 0) {
             t->len += (size_t)n;
-            if (t->len > CLIPBOARD_TEXT_MAX) transfer_end(t, false);
+            if (t->len > t->limit) transfer_end(t, false);
         } else if (n == 0) {
-            bool valid = yasl_private_utf8_validate(t->text, t->len);
+            bool valid = t->raw || yasl_private_utf8_validate(t->text, t->len);
             transfer_end(t, valid);
         } else if (errno != EAGAIN && errno != EINTR) transfer_end(t, false);
     }
 }
 
+/* Starts a transfer on `fd`. A sending transfer writes `send_text`. A receiving
+ * transfer accepts up to CLIPBOARD_TEXT_MAX bytes. A drop raises that limit
+ * after the call. Returns NULL and closes `fd` on failure. */
 static struct transfer *start_transfer_text(struct clipboard *c, int fd, bool sending,
-                                            bool uri_list, const char *send_text)
+                                            const char *send_text)
 {
     struct transfer *t = calloc(1, sizeof(*t));
     if (!t) { close(fd); return NULL; }
-    t->owner = c; t->fd = fd; t->sending = sending; t->uri_list = uri_list;
+    t->owner = c; t->fd = fd; t->sending = sending; t->limit = CLIPBOARD_TEXT_MAX;
     int flags = fcntl(fd, F_GETFL);
     if (flags < 0 || fcntl(fd, F_SETFD, FD_CLOEXEC) < 0 ||
         fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
@@ -227,7 +247,7 @@ static struct transfer *start_transfer_text(struct clipboard *c, int fd, bool se
 static struct transfer *start_transfer_paste(struct clipboard *c, int fd,
         struct wl_surface *target, uint64_t request_id)
 {
-    struct transfer *t = start_transfer_text(c, fd, false, false, NULL);
+    struct transfer *t = start_transfer_text(c, fd, false, NULL);
     if (t) {
         t->drop_surface = target;
         t->request_id = request_id;
@@ -258,12 +278,20 @@ static void offer_keep_mime(char **slot, const char *mime)
     *slot = copy;
 }
 
+/* Keeps a copy of a type that the offer lists. Types past OFFER_MIME_MAX are ignored. */
+static void offer_add_mime(struct offer *o, const char *mime)
+{
+    if (o->mime_count == OFFER_MIME_MAX) return;
+    char *copy = strdup(mime);
+    if (copy) o->mimes[o->mime_count++] = copy;
+}
+
 static void offer_mime(void *ud, struct wl_data_offer *proxy, const char *mime)
 {
     (void)proxy;
     struct offer *o = ud;
     if (!strcmp(mime, clipboard_drag_mime())) o->tab = true;
-    if (!strcmp(mime, "text/uri-list")) o->uri_list = true;
+    offer_add_mime(o, mime);
     const char *match = match_text_mime(mime);
     if (match) {
         if (!o->mime || !strcasecmp(match, "text/plain;charset=utf-8"))
@@ -281,7 +309,12 @@ static const struct wl_data_offer_listener offer_listener = {
 };
 static void free_offer(struct offer *o)
 {
-    if (o) { wl_data_offer_destroy(o->proxy); free(o->mime); free(o); }
+    if (!o) return;
+    wl_data_offer_destroy(o->proxy);
+    free(o->mime);
+    for (size_t i = 0; i < o->mime_count; i++)
+        free(o->mimes[i]);
+    free(o);
 }
 static void take_pending_offer(struct clipboard *c, struct offer *o)
 {
@@ -320,6 +353,25 @@ static void selection(void *ud, struct wl_data_device *device, struct wl_data_of
     if (c->selection != o) free_offer(c->selection);
     c->selection = o;
 }
+/* True for a type whose bytes are UTF-8 text, so a drop checks them. Other
+ * types, such as image/png, reach the application unchanged. */
+static bool drop_type_is_text(const char *mime)
+{
+    return !strncasecmp(mime, "text/", 5) || !strcasecmp(mime, "UTF8_STRING");
+}
+
+/* Returns the type that a drag entering `surface` takes from `o`, or NULL to
+ * refuse the drag. The drop types of the root surface decide, because a drop
+ * goes to the root. Call it once, when the drag enters. */
+static const char *drop_pick(struct wl_surface *surface, const struct offer *o)
+{
+    struct wayland_surface *w = surface ? wl_surface_get_user_data(surface) : NULL;
+    struct wayland_surface *root = surface_root(w);
+    if (!root || root->closed || root->destroyed) return NULL;
+    return yasl_private_surface_pick_drop_type(&root->base,
+            (const char *const *)o->mimes, o->mime_count);
+}
+
 static void drag_offer_enter(void *ud, struct wl_data_device *device, uint32_t serial,
                        struct wl_surface *surface, wl_fixed_t x, wl_fixed_t y, struct wl_data_offer *proxy)
 {
@@ -331,9 +383,14 @@ static void drag_offer_enter(void *ud, struct wl_data_device *device, uint32_t s
         if (c->selection == o) c->selection = NULL;
         if (c->drag_offer && c->drag_offer != o) free_offer(c->drag_offer);
         c->drag_offer = o;
-        const char *mime = o && o->tab ? clipboard_drag_mime()
-                         : o && o->uri_list ? "text/uri-list"
-                         : o ? o->mime : NULL;
+        /* The internal tab drag keeps its own type. Every other drag takes a drop type. */
+        const char *mime = NULL;
+        if (o && o->tab)
+            mime = clipboard_drag_mime();
+        else if (o) {
+            o->picked = drop_pick(surface, o);
+            mime = o->picked;
+        }
         wl_data_offer_accept(proxy, serial, mime);
         if (mime && wl_data_offer_get_version(proxy) >= 3) {
             uint32_t action = o->tab ? WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE
@@ -345,8 +402,8 @@ static void drag_offer_enter(void *ud, struct wl_data_device *device, uint32_t s
         c->drag_surface = surface;
         if (o && o->tab)
             drag_event(c, YASL_PRIVATE_DRAG_OVER, x, y);
-        else if (o && !o->tab && (o->uri_list || o->mime))
-            drop_event(c, YASL_PRIVATE_DROP_OVER);
+        else if (o && o->picked)
+            drop_event(c, YASL_PRIVATE_DROP_OVER, o->picked);
     }
 }
 static void drag_offer_clear(void *ud, struct wl_data_device *device)
@@ -355,9 +412,8 @@ static void drag_offer_clear(void *ud, struct wl_data_device *device)
     struct clipboard *c = ud;
     if (c->drag_offer && c->drag_offer->tab)
         drag_event(c, YASL_PRIVATE_DRAG_LEAVE, c->drag_x, c->drag_y);
-    else if (c->drag_offer && !c->drag_offer->tab &&
-             (c->drag_offer->uri_list || c->drag_offer->mime))
-        drop_event(c, YASL_PRIVATE_DROP_LEAVE);
+    else if (c->drag_offer && c->drag_offer->picked)
+        drop_event(c, YASL_PRIVATE_DROP_LEAVE, NULL);
     free_offer(c->drag_offer);
     c->drag_offer = NULL;
     c->drag_surface = NULL;
@@ -370,9 +426,8 @@ static void drag_motion(void *ud, struct wl_data_device *device, uint32_t time, 
     c->drag_y = y;
     if (c->drag_offer && c->drag_offer->tab)
         drag_event(c, YASL_PRIVATE_DRAG_OVER, x, y);
-    else if (c->drag_offer && !c->drag_offer->tab &&
-             (c->drag_offer->uri_list || c->drag_offer->mime))
-        drop_event(c, YASL_PRIVATE_DROP_OVER);
+    else if (c->drag_offer && c->drag_offer->picked)
+        drop_event(c, YASL_PRIVATE_DROP_OVER, c->drag_offer->picked);
 }
 static void drag_drop(void *ud, struct wl_data_device *device)
 {
@@ -386,14 +441,17 @@ static void drag_drop(void *ud, struct wl_data_device *device)
         drag_event(c, YASL_PRIVATE_DRAG_DROP, c->drag_x, c->drag_y);
         if (v3)
             wl_data_offer_finish(o->proxy);
-    } else if (o && !o->tab && (o->uri_list || o->mime)) {
-        drop_event(c, YASL_PRIVATE_DROP_LEAVE);
+    } else if (o->picked) {
+        drop_event(c, YASL_PRIVATE_DROP_LEAVE, NULL);
         int fds[2];
         if (pipe2(fds, O_CLOEXEC) == 0) {
-            wl_data_offer_receive(o->proxy, o->uri_list ? "text/uri-list" : o->mime, fds[1]);
+            wl_data_offer_receive(o->proxy, o->picked, fds[1]);
             close(fds[1]);
-            struct transfer *t = start_transfer_text(c, fds[0], false, o->uri_list, c->text);
+            struct transfer *t = start_transfer_text(c, fds[0], false, NULL);
             if (t) {
+                t->limit = CLIPBOARD_DROP_MAX;
+                t->raw = !drop_type_is_text(o->picked);
+                snprintf(t->drop_mime, sizeof(t->drop_mime), "%s", o->picked);
                 t->drop = o;
                 t->drop_surface = c->drag_surface;
                 o = NULL;
@@ -430,7 +488,7 @@ static void send_text_for_target(struct clipboard *c, int fd, const char *mime, 
 {
     if (!text) text = "";
     if (!target_is_latin1(mime)) {
-        start_transfer_text(c, fd, true, false, text);
+        start_transfer_text(c, fd, true, text);
         return;
     }
     size_t len = 0;
@@ -439,7 +497,7 @@ static void send_text_for_target(struct clipboard *c, int fd, const char *mime, 
         close(fd);
         return;
     }
-    start_transfer_text(c, fd, true, false, latin1);
+    start_transfer_text(c, fd, true, latin1);
     free(latin1);
 }
 
@@ -700,12 +758,12 @@ bool clipboard_request_paste(struct clipboard *c, enum yasl_private_selection se
     int fds[2];
     if (selection == YASL_PRIVATE_PRIMARY) {
         if (!c->primary_device || !c->primary_selection || !c->primary_selection->mime) {
-            c->receive(NULL, 0, false, target, request_id,
+            c->receive(NULL, 0, NULL, target, request_id,
                        YASL_PRIVATE_TRANSFER_UNAVAILABLE, c->ud);
             return true;
         }
         if (pipe2(fds, O_CLOEXEC) < 0) {
-            c->receive(NULL, 0, false, target, request_id,
+            c->receive(NULL, 0, NULL, target, request_id,
                        YASL_PRIVATE_TRANSFER_FAILED, c->ud);
             return true;
         }
@@ -714,12 +772,12 @@ bool clipboard_request_paste(struct clipboard *c, enum yasl_private_selection se
         close(fds[1]);
     } else {
         if (!c->device || !c->selection || !c->selection->mime) {
-            c->receive(NULL, 0, false, target, request_id,
+            c->receive(NULL, 0, NULL, target, request_id,
                        YASL_PRIVATE_TRANSFER_UNAVAILABLE, c->ud);
             return true;
         }
         if (pipe2(fds, O_CLOEXEC) < 0) {
-            c->receive(NULL, 0, false, target, request_id,
+            c->receive(NULL, 0, NULL, target, request_id,
                        YASL_PRIVATE_TRANSFER_FAILED, c->ud);
             return true;
         }
@@ -728,7 +786,7 @@ bool clipboard_request_paste(struct clipboard *c, enum yasl_private_selection se
     }
     struct transfer *transfer = start_transfer_paste(c, fds[0], target, request_id);
     if (!transfer) {
-        c->receive(NULL, 0, false, target, request_id,
+        c->receive(NULL, 0, NULL, target, request_id,
                    YASL_PRIVATE_TRANSFER_FAILED, c->ud);
         return true;
     }

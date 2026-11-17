@@ -43,6 +43,11 @@ static inline uint32_t wire_u32(const uint8_t *p)
     return v;
 }
 
+static inline void wire_put_u32(uint8_t *out, uint32_t v)
+{
+    memcpy(out, &v, sizeof(v));
+}
+
 /* Writes a string argument: the length with its NUL, the bytes, and padding. */
 static inline size_t wire_put_string(uint8_t *out, const char *s)
 {

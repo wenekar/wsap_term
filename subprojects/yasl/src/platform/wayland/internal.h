@@ -453,8 +453,9 @@ static inline struct wayland_surface *surface_root(struct wayland_surface *w)
 }
 
 void conn_drag_end(struct wayland_display *c);
+/* Reports a drop hover on `on`. `mime` is the picked drop type, or NULL. */
 void conn_drop_target(struct wayland_display *c, enum yasl_private_drop_event ev,
-                      struct wl_surface *on, double x, double y);
+                      struct wl_surface *on, double x, double y, const char *mime);
 void conn_drag_target(struct wayland_display *c, enum yasl_private_drag_event ev,
                       struct wl_surface *on, double x, double y);
 
