@@ -2,6 +2,7 @@
 #define WSAP_UI_SURFACE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "ui/css.h"
@@ -20,11 +21,17 @@ struct ui_surface_host {
     uint32_t (*double_click_interval_ms)(void *userdata);
 };
 
+/* The most overlay widgets that a surface holds. */
+#define UI_SURFACE_OVERLAY_MAX 4
+
 struct ui_surface {
     struct {
         struct ui_surface_host host;
         void *host_userdata;
         struct ui_widget *root;
+        /* Ordered from the bottom up. Each overlay sits above the root. */
+        struct ui_widget *overlays[UI_SURFACE_OVERLAY_MAX];
+        size_t overlay_count;
         struct ui_widget *focused;
         struct ui_widget *captured;
         struct ui_widget *hovered;
@@ -52,6 +59,24 @@ bool ui_surface_busy(const struct ui_surface *surface);
 
 bool ui_surface_set_root(struct ui_surface *surface, struct ui_widget *root);
 struct ui_widget *ui_surface_root(const struct ui_surface *surface);
+
+/* Adds `overlay` above the root, or above the overlays already there. The
+ * surface places it with its ui_placement against the viewport, tests hits on
+ * it before the root, and paints it after the root. The widget must be
+ * detached. Returns false when the list is full. */
+bool ui_surface_add_overlay(struct ui_surface *surface,
+                            struct ui_widget *overlay);
+/* Removes `overlay` from the list and detaches it from the surface. */
+bool ui_surface_remove_overlay(struct ui_surface *surface,
+                               struct ui_widget *overlay);
+size_t ui_surface_overlay_count(const struct ui_surface *surface);
+/* The overlay at `index`, counted from the bottom up. */
+struct ui_widget *ui_surface_overlay_at(const struct ui_surface *surface,
+                                        size_t index);
+/* Returns the widget under `pos`: the topmost overlay that covers it, or else
+ * a widget of the root tree. */
+struct ui_widget *ui_surface_hit_test(struct ui_surface *surface,
+                                      struct vector2i pos);
 
 void ui_surface_set_sheet(struct ui_surface *surface,
                           const struct css_sheet *sheet);

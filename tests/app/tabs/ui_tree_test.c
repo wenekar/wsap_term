@@ -675,15 +675,20 @@ static void chrome_is_in_widget_tree_test(void)
     assert(rebuild_child(root, w, 0) == sv);
     assert(rebuild_child(root, w, 1) == ui_tabbar_widget(&tabs->tabbar));
     assert(rebuild_child(sv, w, 0) == terminal_input_widget(content));
-    assert(rebuild_child(root, w, 2) == ui_tab_preview_widget(&tabs->preview));
-    assert(rebuild_child(root, w, 3) == palette);
-    assert(ui_widget_child_count(root) == 4);
+    assert(ui_widget_child_count(root) == 2);
+    /* The tab preview and the palette float above the root. The surface
+     * places, paints, and hit-tests them. */
+    struct ui_surface *screen = window_ui_surface(w);
+    assert(ui_surface_overlay_count(screen) == 2);
+    assert(ui_surface_overlay_at(screen, 0) ==
+           ui_tab_preview_widget(&tabs->preview));
+    assert(ui_surface_overlay_at(screen, 1) == palette);
     assert(ui_widget_is_hidden(palette));
     struct ui_palette_cmd cmd = { .label = "Test", .action = 1 };
     assert(ui_palette_open(&tabs->palette, &cmd, 1));
-    assert(rebuild_child(root, w, 3) == palette && !ui_widget_is_hidden(palette));
+    assert(!ui_widget_is_hidden(palette));
     ui_palette_close(&tabs->palette);
-    assert(ui_widget_is_hidden(rebuild_child(root, w, 3)));
+    assert(ui_widget_is_hidden(palette));
 
     app_tabs_select(w, 0);
     struct terminal *first = app_tabs_active(w);

@@ -92,14 +92,100 @@ static struct ui_constraints viewport_constraints(const struct ui_surface *s)
     return (struct ui_constraints){ .max = s->impl.viewport };
 }
 
+static bool overlay_live(const struct ui_widget *overlay)
+{
+    return overlay && !overlay->impl.destroyed && !overlay->impl.hidden;
+}
+
+/* Removes overlay `index` from the list. It does not detach the widget. */
+static void drop_overlay_at(struct ui_surface *surface, size_t index)
+{
+    if (index >= surface->impl.overlay_count)
+        return;
+    for (size_t i = index; i + 1 < surface->impl.overlay_count; i++)
+        surface->impl.overlays[i] = surface->impl.overlays[i + 1];
+    surface->impl.overlay_count--;
+    surface->impl.overlays[surface->impl.overlay_count] = NULL;
+}
+
+/* Removes each overlay that `subtree` holds, without detaching it. */
+static void drop_overlays_in(struct ui_surface *surface, struct ui_widget *subtree)
+{
+    for (size_t i = surface->impl.overlay_count; i > 0; i--)
+        if (ui_widget_is_ancestor(subtree, surface->impl.overlays[i - 1]))
+            drop_overlay_at(surface, i - 1);
+}
+
+bool ui_surface_add_overlay(struct ui_surface *surface,
+                            struct ui_widget *overlay)
+{
+    if (!surface || !overlay || overlay->impl.destroyed || overlay->parent ||
+        (overlay->impl.surface && overlay->impl.surface != surface) ||
+        surface->impl.overlay_count >= UI_SURFACE_OVERLAY_MAX)
+        return false;
+    surface->impl.overlays[surface->impl.overlay_count++] = overlay;
+    ui_widget_attach(overlay, surface);
+    ui_widget_invalidate(overlay, UI_WIDGET_INVALIDATE_MEASURE);
+    ui_surface_sync_modal(surface);
+    ui_surface_prepare(surface);
+    ui_surface_request_frame(surface);
+    return true;
+}
+
+bool ui_surface_remove_overlay(struct ui_surface *surface,
+                               struct ui_widget *overlay)
+{
+    if (!surface || !overlay)
+        return false;
+    for (size_t i = 0; i < surface->impl.overlay_count; i++) {
+        if (surface->impl.overlays[i] != overlay)
+            continue;
+        drop_overlay_at(surface, i);
+        ui_widget_detach(overlay);
+        ui_surface_sync_modal(surface);
+        ui_surface_prepare(surface);
+        ui_surface_request_frame(surface);
+        return true;
+    }
+    return false;
+}
+
+size_t ui_surface_overlay_count(const struct ui_surface *surface)
+{
+    return surface ? surface->impl.overlay_count : 0;
+}
+
+struct ui_widget *ui_surface_overlay_at(const struct ui_surface *surface,
+                                        size_t index)
+{
+    return surface && index < surface->impl.overlay_count
+        ? surface->impl.overlays[index] : NULL;
+}
+
+static void measure_overlays(struct ui_surface *surface)
+{
+    struct rect2i viewport = { .size = surface->impl.viewport };
+    for (size_t i = 0; i < surface->impl.overlay_count; i++) {
+        struct ui_widget *overlay = surface->impl.overlays[i];
+        if (!overlay_live(overlay))
+            continue;
+        if (overlay->impl.invalidation & UI_WIDGET_INVALIDATE_MEASURE)
+            ui_widget_measure(overlay, viewport_constraints(surface));
+        ui_widget_place_child(overlay, viewport);
+    }
+}
+
 static void measure_and_layout(struct ui_surface *surface)
 {
     struct ui_widget *root = surface->impl.root;
-    if (!root)
+    if (!root) {
+        measure_overlays(surface);
         return;
+    }
     if (root->impl.invalidation & UI_WIDGET_INVALIDATE_MEASURE)
         ui_widget_measure(root, viewport_constraints(surface));
     if (root->impl.invalidation & UI_WIDGET_INVALIDATE_MEASURE) {
+        measure_overlays(surface);
         ui_surface_request_frame(surface);
         return;
     }
@@ -107,18 +193,36 @@ static void measure_and_layout(struct ui_surface *surface)
     if ((root->impl.invalidation & UI_WIDGET_INVALIDATE_LAYOUT) &&
         size.x > 0 && size.y > 0)
         ui_widget_layout(root, (struct rect2i){ .size = size });
+    /* The overlays follow the root, because a root layout can move them. */
+    measure_overlays(surface);
+}
+
+static void prepare_overlays(struct ui_surface *surface)
+{
+    for (size_t i = 0; i < surface->impl.overlay_count; i++) {
+        struct ui_widget *overlay = surface->impl.overlays[i];
+        ui_widget_prepare(overlay);
+        ui_style_context_apply(&surface->impl.style, overlay);
+    }
 }
 
 static void prepare(struct ui_surface *surface)
 {
     struct ui_widget *root = surface->impl.root;
-    if (!root)
+    if (!root) {
+        prepare_overlays(surface);
+        measure_and_layout(surface);
+        ui_surface_sync_modal(surface);
         return;
+    }
     ui_widget_prepare(root);
-    root = surface->impl.root;
-    if (!root)
-        return;
     ui_style_context_apply(&surface->impl.style, root);
+    prepare_overlays(surface);
+    root = surface->impl.root;
+    if (!root) {
+        measure_and_layout(surface);
+        return;
+    }
     measure_and_layout(surface);
     ui_surface_sync_modal(surface);
 }
@@ -137,6 +241,9 @@ bool ui_surface_set_root(struct ui_surface *surface, struct ui_widget *root)
     if (!surface || (root && (root->impl.destroyed || root->parent)))
         return false;
     if (surface->impl.root != root) {
+        while (surface->impl.overlay_count)
+            ui_surface_remove_overlay(surface,
+                surface->impl.overlays[surface->impl.overlay_count - 1]);
         while (surface->impl.root)
             ui_widget_detach(surface->impl.root);
         surface->impl.focused = NULL;
@@ -206,6 +313,9 @@ void ui_surface_resize(struct ui_surface *surface, struct vector2i viewport)
         if (surface->impl.root)
             ui_widget_invalidate(surface->impl.root,
                                  UI_WIDGET_INVALIDATE_MEASURE);
+        for (size_t i = 0; i < surface->impl.overlay_count; i++)
+            ui_widget_invalidate(surface->impl.overlays[i],
+                                 UI_WIDGET_INVALIDATE_MEASURE);
     }
     ui_surface_prepare(surface);
 }
@@ -245,6 +355,7 @@ void ui_surface_cancel_capture(struct ui_surface *surface)
 
 void ui_surface_forget(struct ui_surface *surface, struct ui_widget *subtree)
 {
+    drop_overlays_in(surface, subtree);
     struct ui_widget *captured = surface->impl.captured;
     if (captured && ui_widget_is_ancestor(subtree, captured))
         ui_surface_cancel_capture(surface);
@@ -285,9 +396,21 @@ static struct ui_widget *first_focusable(struct ui_widget *root)
     return NULL;
 }
 
+/* The topmost modal widget: one in an overlay masks the overlays below it and
+ * the root. */
+static struct ui_widget *surface_modal(struct ui_surface *surface)
+{
+    for (size_t i = surface->impl.overlay_count; i > 0; i--) {
+        struct ui_widget *modal = ui_widget_modal(surface->impl.overlays[i - 1]);
+        if (modal)
+            return modal;
+    }
+    return ui_widget_modal(surface->impl.root);
+}
+
 void ui_surface_sync_modal(struct ui_surface *surface)
 {
-    struct ui_widget *modal = ui_widget_modal(surface->impl.root);
+    struct ui_widget *modal = surface_modal(surface);
     if (modal == surface->impl.modal &&
         (modal || !surface->impl.restore_focus)) {
         if (modal && !ui_widget_is_ancestor(modal, surface->impl.focused))
@@ -339,7 +462,7 @@ enum ui_cursor ui_surface_cursor(const struct ui_surface *surface)
 
 bool ui_surface_has_modal(const struct ui_surface *surface)
 {
-    return surface && ui_widget_modal(surface->impl.root) != NULL;
+    return surface && surface_modal((struct ui_surface *)surface) != NULL;
 }
 
 static void drop_retired(struct ui_surface *surface)
@@ -363,6 +486,25 @@ static bool is_interactive_widget(const struct ui_widget *widget)
     return false;
 }
 
+struct ui_widget *ui_surface_hit_test(struct ui_surface *surface,
+                                      struct vector2i pos)
+{
+    if (!surface)
+        return NULL;
+    for (size_t i = surface->impl.overlay_count; i > 0; i--) {
+        struct ui_widget *overlay = surface->impl.overlays[i - 1];
+        if (!overlay_live(overlay))
+            continue;
+        /* A modal overlay takes a press that misses it, so that it can
+         * close, and it masks everything below. */
+        struct ui_widget *hit = ui_widget_hit_test(overlay, pos);
+        if (hit)
+            return hit;
+    }
+    return surface->impl.root
+        ? ui_widget_hit_test(surface->impl.root, pos) : NULL;
+}
+
 static bool dispatch_pointer(struct ui_surface *surface,
                              const struct ui_event *event)
 {
@@ -371,7 +513,7 @@ static bool dispatch_pointer(struct ui_surface *surface,
         surface->impl.pointer = pe->pos;
     struct ui_widget *target = surface->impl.captured
         ? surface->impl.captured
-        : ui_widget_hit_test(surface->impl.root, pe->pos);
+        : ui_surface_hit_test(surface, pe->pos);
     if (pe->kind == UI_POINTER_LEAVE)
         target = NULL;
     if (pe->kind == UI_POINTER_PRESS && pe->button == 0 &&
@@ -380,7 +522,7 @@ static bool dispatch_pointer(struct ui_surface *surface,
         ui_surface_sync_modal(surface);
         target = surface->impl.captured
             ? surface->impl.captured
-            : ui_widget_hit_test(surface->impl.root, pe->pos);
+            : ui_surface_hit_test(surface, pe->pos);
     }
     if (pe->kind == UI_POINTER_MOTION || pe->kind == UI_POINTER_LEAVE) {
         struct ui_widget *previous = surface->impl.hovered;
@@ -403,21 +545,27 @@ static bool dispatch_pointer(struct ui_surface *surface,
 static struct ui_widget *keyboard_target(const struct ui_surface *surface)
 {
     if (surface->impl.focused)
-        return ui_widget_event_target(surface->impl.focused);
+        return surface->impl.focused;
     if (surface->impl.modal)
-        return ui_widget_event_target(surface->impl.modal);
+        return surface->impl.modal;
     struct ui_widget *fallback = surface->impl.default_focus;
     if (fallback && !retired(surface, fallback))
-        return ui_widget_event_target(fallback);
-    return ui_widget_event_target(surface->impl.root);
+        return fallback;
+    return surface->impl.root;
 }
 
 static bool capture_keyboard(struct ui_surface *surface,
                              struct ui_widget *target,
                              const struct ui_event *event)
 {
-    struct ui_widget *start = surface->impl.modal ? surface->impl.modal
-                                                  : surface->impl.root;
+    /* The path stops at the modal, or else at the top of the target's tree:
+     * the root, or an overlay. */
+    struct ui_widget *start = surface->impl.root;
+    if (surface->impl.modal && ui_widget_is_ancestor(surface->impl.modal, target))
+        start = surface->impl.modal;
+    else
+        while (start && !ui_widget_is_ancestor(start, target))
+            start = start->parent;
     struct ui_widget *path[UI_CAPTURE_PATH_MAX];
     size_t depth = 0;
     struct ui_widget *w = target;
@@ -504,10 +652,9 @@ bool ui_surface_dispatch(struct ui_surface *surface,
             }
             break;
         default:
-            handled = ui_widget_bubble(ui_widget_event_target(
-                                           surface->impl.focused
+            handled = ui_widget_bubble(surface->impl.focused
                                            ? surface->impl.focused
-                                           : surface->impl.root), event);
+                                           : surface->impl.root, event);
             break;
         }
         ui_surface_sync_modal(surface);
@@ -540,7 +687,6 @@ void ui_surface_focus(struct ui_surface *surface, struct ui_widget *widget)
 {
     if (!surface)
         return;
-    widget = ui_widget_event_target(widget);
     if (widget && retired(surface, widget))
         widget = NULL;
     if (surface->impl.focused == widget)
@@ -643,13 +789,26 @@ bool ui_surface_focus_prev(struct ui_surface *surface)
     return focus_step(surface, -1);
 }
 
+static uint64_t sooner(uint64_t a, uint64_t b)
+{
+    if (!a)
+        return b;
+    if (!b)
+        return a;
+    return a < b ? a : b;
+}
+
 bool ui_surface_tick(struct ui_surface *surface, uint64_t now_ms)
 {
     if (!surface || surface->impl.busy)
         return false;
     surface->impl.busy = true;
-    surface->impl.deadline = surface->impl.root
+    uint64_t deadline = surface->impl.root
         ? ui_widget_tick(surface->impl.root, now_ms) : 0;
+    for (size_t i = 0; i < surface->impl.overlay_count; i++)
+        deadline = sooner(deadline,
+                          ui_widget_tick(surface->impl.overlays[i], now_ms));
+    surface->impl.deadline = deadline;
     surface->impl.busy = false;
     bool next_frame = surface->impl.deadline &&
                       surface->impl.deadline <= now_ms;
@@ -668,15 +827,21 @@ bool ui_surface_build_scene(struct ui_surface *surface,
 {
     if (!scene || (surface && surface->impl.busy))
         return false;
-    if (!surface || !surface->impl.root) {
+    if (!surface) {
         ui_scene_init(scene);
         return true;
     }
     surface->impl.busy = true;
     prepare(surface);
-    bool valid = ui_widget_build_scene(surface->impl.root, scene);
+    /* The root first, then each overlay, so that the overlays are on top. */
+    ui_scene_init(scene);
+    bool valid = true;
+    if (surface->impl.root)
+        valid = ui_widget_append_scene(surface->impl.root, scene);
+    for (size_t i = 0; valid && i < surface->impl.overlay_count; i++)
+        valid = ui_widget_append_scene(surface->impl.overlays[i], scene);
     surface->impl.busy = false;
-    return valid;
+    return valid && ui_scene_is_valid(scene);
 }
 
 bool ui_surface_busy(const struct ui_surface *surface)

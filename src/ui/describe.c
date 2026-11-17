@@ -13,7 +13,6 @@
 struct ui_view_node {
     const struct ui_node_desc *desc;
     uint32_t parent;
-    uint32_t overlay;
     char *key;
     char *class_name;
     char *id_name;
@@ -28,9 +27,6 @@ struct ui_view {
     size_t count;
     size_t capacity;
     struct ui_widget *root;
-    struct ui_widget overlay_root;
-    bool overlay_initialized;
-    bool needs_overlay;
     bool committed;
 };
 
@@ -54,17 +50,6 @@ static char *copy_string(const char *text)
         memcpy(copy, text, len + 1);
     return copy;
 }
-
-static struct ui_widget *overlay_event_target(struct ui_widget *widget)
-{
-    struct ui_view *view = widget->userdata;
-    return view->nodes[0].widget;
-}
-
-static const struct ui_widget_ops OVERLAY_ROOT_OPS = {
-    .name = "view-overlay-host",
-    .event_target = overlay_event_target,
-};
 
 enum node_flag {
     NODE_SUPPORTED = 1u << 0,
@@ -172,12 +157,6 @@ static bool node_props_valid(const struct ui_node_desc *desc,
             *detail = "Invalid dropdown items or count";
             return false;
         }
-        if (desc->props.dropdown.overlay_key &&
-            !desc->props.dropdown.overlay_key[0]) {
-            *error = UI_VIEW_ERROR_MISSING_OVERLAY;
-            *detail = "Dropdown overlay key is empty";
-            return false;
-        }
         return true;
     case UI_NODE_SCROLLVIEW:
         if (desc->props.scrollview.scroll_step < 0) {
@@ -225,7 +204,6 @@ static bool append_node(struct ui_view *view,
     view->nodes[*index] = (struct ui_view_node){
         .desc = desc,
         .parent = parent,
-        .overlay = UINT32_MAX,
         .kind = desc->kind,
     };
     return true;
@@ -325,20 +303,6 @@ static struct ui_view_node *find_node(struct ui_view *view, const char *key)
         return NULL;
     for (size_t i = 0; i < view->count; i++) {
         if (view->nodes[i].key && !strcmp(view->nodes[i].key, key))
-            return &view->nodes[i];
-    }
-    return NULL;
-}
-
-static struct ui_view_node *find_descriptor_node(struct ui_view *view,
-                                                  const char *key)
-{
-    if (!view || !key)
-        return NULL;
-    for (size_t i = 0; i < view->count; i++) {
-        const char *node_key = view->nodes[i].desc
-            ? view->nodes[i].desc->key : NULL;
-        if (node_key && !strcmp(node_key, key))
             return &view->nodes[i];
     }
     return NULL;
@@ -507,45 +471,6 @@ static bool initialize_node(struct ui_view_node *node,
     return true;
 }
 
-static bool validate_overlays(struct ui_view *view, enum ui_view_error *error,
-                              const struct ui_node_desc **failed_node,
-                              const char **detail)
-{
-    for (size_t i = 0; i < view->count; i++) {
-        struct ui_view_node *node = &view->nodes[i];
-        if (node->kind != UI_NODE_DROPDOWN)
-            continue;
-        *failed_node = node->desc;
-        const char *key = node->desc->props.dropdown.overlay_key;
-        if (!key) {
-            view->needs_overlay = true;
-            continue;
-        }
-        struct ui_view_node *overlay = find_descriptor_node(view, key);
-        if (!overlay) {
-            *error = UI_VIEW_ERROR_MISSING_OVERLAY;
-            *detail = "Dropdown overlay key was not found";
-            return false;
-        }
-        if (overlay->kind != UI_NODE_STACK) {
-            *error = UI_VIEW_ERROR_INVALID_OVERLAY;
-            *detail = "Dropdown overlay must be a stack";
-            return false;
-        }
-        uint32_t ancestor = (uint32_t)(overlay - view->nodes);
-        while (ancestor != UINT32_MAX) {
-            if (ancestor == i) {
-                *error = UI_VIEW_ERROR_INVALID_OVERLAY;
-                *detail = "Dropdown overlay cannot be a descendant";
-                return false;
-            }
-            ancestor = view->nodes[ancestor].parent;
-        }
-        node->overlay = (uint32_t)(overlay - view->nodes);
-    }
-    return true;
-}
-
 void ui_view_destroy(struct ui_view *view)
 {
     if (!view)
@@ -565,8 +490,6 @@ void ui_view_destroy(struct ui_view *view)
                 ui_widget_remove_child(node->widget->parent, node->widget);
         }
     }
-    if (view->overlay_initialized)
-        ui_widget_destroy(&view->overlay_root);
     for (size_t i = 0; i < view->count; i++)
         if (view->nodes[i].widget &&
             (view->committed || view->nodes[i].kind != UI_NODE_WIDGET))
@@ -590,8 +513,6 @@ const char *ui_view_error_message(enum ui_view_error error)
     case UI_VIEW_ERROR_INVALID_KIND: return "Invalid node kind";
     case UI_VIEW_ERROR_INVALID_CHILDREN: return "Invalid children";
     case UI_VIEW_ERROR_DUPLICATE_KEY: return "Duplicate key";
-    case UI_VIEW_ERROR_MISSING_OVERLAY: return "Dropdown needs an overlay stack";
-    case UI_VIEW_ERROR_INVALID_OVERLAY: return "Invalid dropdown overlay";
     case UI_VIEW_ERROR_OUT_OF_MEMORY: return "Out of memory";
     case UI_VIEW_ERROR_INIT_FAILED: return "Widget initialization failed";
     }
@@ -632,18 +553,6 @@ struct ui_view *ui_view_mount_ex(const struct ui_node_desc *root,
         return NULL;
     }
     enum ui_view_error mount_error = UI_VIEW_ERROR_NONE;
-    const struct ui_node_desc *failed_node = NULL;
-    const char *detail = NULL;
-    if (!validate_overlays(view, &mount_error, &failed_node, &detail)) {
-        if (diagnostic) {
-            diagnostic->error = mount_error;
-            diagnostic->node = failed_node;
-            diagnostic->detail = detail;
-        }
-        ui_view_destroy(view);
-        return NULL;
-    }
-
     for (size_t i = 0; i < view->count; i++) {
         if (!initialize_node(&view->nodes[i], &mount_error)) {
             if (diagnostic) {
@@ -669,34 +578,7 @@ struct ui_view *ui_view_mount_ex(const struct ui_node_desc *root,
             return NULL;
         }
     }
-    if (view->needs_overlay) {
-        ui_widget_init(&view->overlay_root, &OVERLAY_ROOT_OPS, view);
-        /* The host is a layout and input seam, not a screen element. */
-        ui_widget_set_accessibility_ignored(&view->overlay_root, true);
-        view->overlay_initialized = true;
-        /* The root is detached and validated, so this attach cannot fail. */
-        if (!ui_widget_add_child(&view->overlay_root,
-                                 view->nodes[0].widget)) {
-            if (diagnostic) {
-                diagnostic->error = UI_VIEW_ERROR_INVALID_CHILDREN;
-                diagnostic->node = view->nodes[0].desc;
-                diagnostic->detail = "Cannot attach the view root";
-            }
-            ui_view_destroy(view);
-            return NULL;
-        }
-    }
-    for (size_t i = 0; i < view->count; i++) {
-        struct ui_view_node *node = &view->nodes[i];
-        if (node->kind == UI_NODE_DROPDOWN) {
-            struct ui_widget *overlay = node->overlay == UINT32_MAX
-                ? &view->overlay_root : view->nodes[node->overlay].widget;
-            ui_dropdown_set_overlay(node->storage, overlay);
-        }
-    }
-
-    view->root = view->needs_overlay ? &view->overlay_root
-                                     : view->nodes[0].widget;
+    view->root = view->nodes[0].widget;
     /* Apply descriptor attributes to supplied widgets only after all
      * fallible work has succeeded. */
     for (size_t i = 0; i < view->count; i++) {

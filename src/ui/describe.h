@@ -77,8 +77,6 @@ struct ui_node_desc {
             size_t count;
             const char *selected_value;
             const char *accessible_name;
-            /* NULL uses the view overlay host. */
-            const char *overlay_key;
         } dropdown;
         struct {
             bool scrollbar;
@@ -101,8 +99,6 @@ enum ui_view_error {
     UI_VIEW_ERROR_INVALID_KIND,
     UI_VIEW_ERROR_INVALID_CHILDREN,
     UI_VIEW_ERROR_DUPLICATE_KEY,
-    UI_VIEW_ERROR_MISSING_OVERLAY,
-    UI_VIEW_ERROR_INVALID_OVERLAY,
     UI_VIEW_ERROR_OUT_OF_MEMORY,
     UI_VIEW_ERROR_INIT_FAILED,
 };
@@ -128,8 +124,7 @@ struct ui_view *ui_view_mount(const struct ui_node_desc *root,
 
 void ui_view_destroy(struct ui_view *view);
 
-/* The root can be a view-owned overlay host. Use ui_view_widget() to get
- * the descriptor root by key when its identity matters. */
+/* Returns the widget of the descriptor root. */
 struct ui_widget *ui_view_root(struct ui_view *view);
 /* Returns any descriptor widget with this key, or NULL. */
 struct ui_widget *ui_view_widget(struct ui_view *view, const char *key);

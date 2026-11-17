@@ -372,7 +372,7 @@ static void view_children_macro_test(void)
     ui_view_destroy(view);
 }
 
-static void view_automatic_overlay_test(void)
+static void view_dropdown_overlay_test(void)
 {
     const struct ui_dropdown_item items[] = { { "One", "one" } };
     struct ui_dropdown *dropdown = NULL;
@@ -389,55 +389,18 @@ static void view_automatic_overlay_test(void)
     struct ui_view_diagnostic diagnostic;
     struct ui_view *view = ui_view_mount_ex(&root, &diagnostic);
     assert(view && dropdown);
-    assert(ui_view_root(view) != ui_view_widget(view, "content"));
+    assert(ui_view_root(view) == ui_view_widget(view, "content"));
     struct ui_surface surface;
     show(&surface, ui_view_root(view), (struct vector2i){ .x = 300, .y = 200 });
     ui_surface_prepare(&surface);
     assert(ui_dropdown_open(dropdown));
     assert(ui_dropdown_is_open(dropdown));
+    /* The list floats above the view root, as a surface overlay. */
+    assert(ui_surface_overlay_count(&surface) == 1);
     ui_dropdown_close(dropdown);
+    assert(ui_surface_overlay_count(&surface) == 0);
     ui_surface_destroy(&surface);
     ui_view_destroy(view);
-
-    root.kind = UI_NODE_STACK;
-    view = ui_view_mount_ex(&root, &diagnostic);
-    assert(view);
-    assert(ui_view_root(view) != ui_view_widget(view, "content"));
-    ui_view_destroy(view);
-}
-
-static void view_explicit_overlay_test(void)
-{
-    const struct ui_dropdown_item items[] = { { "One", "one" } };
-    struct ui_dropdown *dropdown = NULL;
-    struct ui_node_desc children[] = {
-        { .kind = UI_NODE_STACK, .key = "overlay" },
-        { .kind = UI_NODE_DROPDOWN, .key = "choice",
-          .bind.dropdown = &dropdown,
-          .props.dropdown = { .items = items, .count = 1,
-                              .overlay_key = "overlay" } },
-    };
-    struct ui_node_desc root = {
-        .kind = UI_NODE_ROW, .children = children, .child_count = 2,
-    };
-    struct ui_view_diagnostic diagnostic;
-    struct ui_view *view = ui_view_mount_ex(&root, &diagnostic);
-    assert(view && dropdown);
-    struct ui_surface surface;
-    show(&surface, ui_view_root(view), (struct vector2i){ .x = 300, .y = 200 });
-    ui_surface_prepare(&surface);
-    assert(ui_dropdown_open(dropdown));
-    ui_dropdown_close(dropdown);
-    ui_surface_destroy(&surface);
-    ui_view_destroy(view);
-
-    children[0].kind = UI_NODE_LABEL;
-    dropdown = NULL;
-    assert(!ui_view_mount_ex(&root, &diagnostic));
-    assert(diagnostic.error == UI_VIEW_ERROR_INVALID_OVERLAY);
-    assert(diagnostic.node == &children[1]);
-    assert(diagnostic.detail && strstr(diagnostic.detail, "stack"));
-    assert(!dropdown);
 }
 
 struct supplied_control {
@@ -598,7 +561,7 @@ static void view_supplied_root_with_popup_test(void)
     struct ui_view *view = ui_view_mount(&root, NULL);
     assert(view && dropdown);
     assert(ui_view_widget(view, "content") == &control.widget);
-    assert(ui_view_root(view) != &control.widget);
+    assert(ui_view_root(view) == &control.widget);
     struct ui_surface surface;
     show(&surface, ui_view_root(view), (struct vector2i){ .x = 300, .y = 200 });
     assert(ui_dropdown_open(dropdown));
@@ -619,7 +582,7 @@ static bool view_root_event(struct ui_widget *widget,
     return true;
 }
 
-static void view_overlay_root_keyboard_test(void)
+static void view_root_keyboard_test(void)
 {
     int calls = 0;
     struct ui_node_desc child = { .kind = UI_NODE_DROPDOWN };
@@ -630,22 +593,21 @@ static void view_overlay_root_keyboard_test(void)
     };
     struct ui_view *view = ui_view_mount(&root, NULL);
     assert(view);
-    struct ui_widget *host = ui_view_root(view);
-    struct ui_widget *content = ui_view_widget(view, "content");
-    assert(host != content);
+    struct ui_widget *content = ui_view_root(view);
+    assert(content == ui_view_widget(view, "content"));
     struct ui_surface surface;
-    show(&surface, host, (struct vector2i){ .x = 300, .y = 200 });
+    show(&surface, content, (struct vector2i){ .x = 300, .y = 200 });
     struct ui_event escape = ui_event_key((struct ui_key_event){
         .key = UI_KEY_ESCAPE,
     }, 0);
     assert(ui_surface_dispatch(&surface, &escape));
     assert(calls == 1);
-    ui_surface_set_default_focus(&surface, host);
+    ui_surface_set_default_focus(&surface, content);
     assert(ui_surface_dispatch(&surface, &escape));
     assert(calls == 2);
-    assert(ui_widget_event(host, &escape));
+    assert(ui_widget_event(content, &escape));
     assert(calls == 3);
-    ui_surface_focus(&surface, host);
+    ui_surface_focus(&surface, content);
     assert(ui_surface_focused(&surface) == content);
     assert(ui_surface_dispatch(&surface, &escape));
     assert(calls == 4);
@@ -657,13 +619,12 @@ int main(void)
 {
     view_diagnostic_test();
     view_children_macro_test();
-    view_automatic_overlay_test();
-    view_explicit_overlay_test();
+    view_dropdown_overlay_test();
     view_supplied_widget_test();
     view_supplied_widget_validation_test();
     view_supplied_container_test();
     view_supplied_root_with_popup_test();
-    view_overlay_root_keyboard_test();
+    view_root_keyboard_test();
     hidden_child_takes_no_space_or_input_test();
     hidden_modal_restores_focus_test();
     placement_test();
