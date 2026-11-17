@@ -170,13 +170,22 @@ static struct flex_axis axis_sizing(const struct ui_widget *widget, int axis,
 {
     const struct css_style *style = &widget->style;
     const struct css_scale_context *scale = &widget->style_scale;
+    int fixed = widget->impl.fixed_size.v[axis];
+    /* A fixed size needs no limit resolve when neither limit is set. Both
+     * limits then resolve to their fallbacks, so the clamp cannot change the
+     * size. */
+    if (fixed > 0 &&
+        (style->min_size[axis].unit == CSS_UNIT_AUTO ||
+         style->min_size[axis].unit == CSS_UNIT_NONE) &&
+        (style->max_size[axis].unit == CSS_UNIT_AUTO ||
+         style->max_size[axis].unit == CSS_UNIT_NONE))
+        return axis_fixed((float)fixed);
     struct flex_axis out;
     out.min = css_value_resolve(style->min_size[axis], basis, 0, scale);
     float max = css_value_resolve(style->max_size[axis], basis,
                                   (float)INT_MAX, scale);
     out.min = fmaxf(0, out.min);
     out.max = fmaxf(out.min, max);
-    int fixed = widget->impl.fixed_size.v[axis];
     if (fixed > 0) {
         float size = fminf(out.max, fmaxf(out.min, (float)fixed));
         return axis_fixed(size);
