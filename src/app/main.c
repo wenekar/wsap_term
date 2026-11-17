@@ -13,7 +13,8 @@ int main(int argc, char **argv)
     platform_reserve_fds();
     input_config_init();
     int status = 0;
-    struct app *app = app_create(argc, argv, &status);
+    /* The program opens a window next, so the GPU device starts first. */
+    struct app *app = app_create_gpu_first(argc, argv, &status);
     if (!app)
         return status;
 

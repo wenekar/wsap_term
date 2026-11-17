@@ -454,7 +454,7 @@ static void app_free(struct app *a)
     free(a);
 }
 
-struct app *app_create(int argc, char **argv, int *status)
+static struct app *app_new(int argc, char **argv, bool gpu_first, int *status)
 {
     struct app *a = calloc(1, sizeof(*a));
     if (!a) {
@@ -474,15 +474,8 @@ struct app *app_create(int argc, char **argv, int *status)
         app_free(a);
         return NULL;
     }
-    struct font_settings fs = app_config_font_settings(&a->config);
-    font_apply_settings(NULL, &fs);
-    a->render_started = render_init();
-    if (!a->render_started) {
-        fprintf(stderr, "wsap_term: cannot start the font system\n");
-        *status = 1;
-        app_free(a);
-        return NULL;
-    }
+    /* The renderer comes before the font system, so a GPU device can start
+     * while the process holds little else. */
     bool cpu_mode = app_wants_cpu(a);
     struct render_options ro = {
         .disable_gpu = cpu_mode,
@@ -496,6 +489,19 @@ struct app *app_create(int argc, char **argv, int *status)
     a->renderer = renderer_create(&ro);
     if (!a->renderer) {
         fprintf(stderr, "wsap_term: cannot create the renderer\n");
+        *status = 1;
+        app_free(a);
+        return NULL;
+    }
+    /* A failed start is not an error: the first window then gets a CPU
+     * surface, as it does when renderer_device() fails. */
+    if (gpu_first)
+        renderer_start_gpu(a->renderer);
+    struct font_settings fs = app_config_font_settings(&a->config);
+    font_apply_settings(NULL, &fs);
+    a->render_started = render_init();
+    if (!a->render_started) {
+        fprintf(stderr, "wsap_term: cannot start the font system\n");
         *status = 1;
         app_free(a);
         return NULL;
@@ -524,6 +530,16 @@ struct app *app_create(int argc, char **argv, int *status)
                      });
     look_set_listener(a->look, look_changed, a);
     return a;
+}
+
+struct app *app_create(int argc, char **argv, int *status)
+{
+    return app_new(argc, argv, false, status);
+}
+
+struct app *app_create_gpu_first(int argc, char **argv, int *status)
+{
+    return app_new(argc, argv, true, status);
 }
 
 void app_destroy(struct app *a)

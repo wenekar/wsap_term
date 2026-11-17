@@ -28,6 +28,12 @@ struct app {
 };
 
 struct app *app_create(int argc, char **argv, int *status);
+/* Like app_create(), but it creates the GPU device right after it reads the
+ * configuration. The driver load sets the peak RSS of the startup. At this
+ * point the font system and the window are not resident yet. Use it only
+ * when a window opens next. app_create() leaves the device to the first
+ * window. */
+struct app *app_create_gpu_first(int argc, char **argv, int *status);
 void app_destroy(struct app *a);
 int app_run(struct app *a);
 /* Opens a terminal window. A nonzero tab is a tab of the app that no window

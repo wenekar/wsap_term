@@ -203,6 +203,11 @@ void *renderer_device(struct renderer *r)
     return (r && !r->disable_gpu) ? render_gpu_native_device(renderer_gpu_ensure(r)) : NULL;
 }
 
+bool renderer_start_gpu(struct renderer *r)
+{
+    return renderer_gpu_ensure(r) != NULL;
+}
+
 void renderer_drop_gpu(struct renderer *r)
 {
     if (!r)

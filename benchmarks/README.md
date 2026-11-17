@@ -62,6 +62,7 @@ meson test -C build --benchmark transport-bench --verbose
 | [input-latency-bench.md](input-latency-bench.md) | End-to-end key press to presentation latency. |
 | [input-queue-bench.md](input-queue-bench.md) | Lock-free input queue throughput and contention. |
 | [resize-latency.md](resize-latency.md) | 1000 Hz resize drag latency and configure timing. |
+| [vulkan-rss.md](vulkan-rss.md) | Vulkan renderer peak RSS and driver library pages. |
 
 ### PTY and transport
 
