@@ -97,7 +97,22 @@ struct yasl_surface {
     struct yasl_private_frame *active_frame;
     yasl_private_pacing_mode pacing;
     yasl_private_timer_id pacing_timer;
+    /* yasl_surface_set_drop_types, best first. NULL means "text/uri-list" only. */
+    char **drop_types;
+    size_t drop_type_count;
 };
+
+/* Returns the entry of `offered` that the drop types of `s` take first, or NULL
+ * to refuse the drag. Backends call it when a drag enters or offers new types,
+ * and copy the result into the DROP and DROP_HOVER events. A drop goes to the
+ * root surface, so pass the root. */
+const char *yasl_private_surface_pick_drop_type(const struct yasl_surface *s,
+                                                const char *const *offered, size_t count);
+/* Stores a copy of the drop types of `s`, best first; count 0 restores the
+ * default. Returns false with errno set on a bad entry or no memory. The
+ * public yasl_surface_set_drop_types calls it; tests can call it directly. */
+bool yasl_private_surface_set_drop_types(struct yasl_surface *s, const char *const *types,
+                                         size_t count);
 
 bool yasl_private_events_open(struct yasl_private_display *d);
 void yasl_private_events_close(struct yasl_private_display *d);
@@ -118,6 +133,9 @@ void yasl_private_surface_notify_close(struct yasl_surface *s);
 void yasl_private_surface_notify_state(struct yasl_surface *s, uint32_t state);
 void yasl_private_surface_notify_drag(struct yasl_surface *s, enum yasl_private_drag_event ev, struct yasl_private_vector2i pos);
 void yasl_private_surface_notify_drop(struct yasl_surface *s, enum yasl_private_drop_event ev, struct yasl_private_vector2i pos);
+/* Queues a drop hover that reports `mime`, the type that a drop here would
+ * deliver. Pass NULL on leave. Call it for each OVER of an accepted drag. */
+void yasl_private_surface_notify_drop_mime(struct yasl_surface *s, enum yasl_private_drop_event ev, struct yasl_private_vector2i pos, const char *mime);
 void yasl_private_surface_notify_composition(struct yasl_surface *s, const char *text, int begin, int end);
 void yasl_private_surface_notify_composition_at(struct yasl_surface *s, const char *text, int begin, int end, uint64_t revision, uint64_t generation);
 void yasl_private_surface_draw(struct yasl_surface *s, struct yasl_private_frame *frame);

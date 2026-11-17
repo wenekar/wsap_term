@@ -434,12 +434,17 @@ struct yasl_private_pointer_event {
     struct yasl_private_pointer_pen pen;
 };
 
+/** Size of a drop MIME buffer, NUL included. Equals YASL_DROP_MIME_MAX. */
+#define YASL_PRIVATE_DROP_MIME_MAX 64
+
 /** Borrowed NUL-terminated UTF-8, shared by TEXT, PASTE and DROP. */
 struct yasl_private_text_event {
     /** Borrowed NUL-terminated bytes; valid until the next successful display poll or display close. */
     const char *data;
-    /** Length in bytes excluding the terminating NUL. */
+    /** Length in bytes excluding the terminating NUL. DROP data can hold NULs. */
     size_t len;
+    /** DROP only: the type of data, from yasl_private_surface_pick_drop_type. */
+    char mime[YASL_PRIVATE_DROP_MIME_MAX];
 };
 
 /** Clipboard transfer outcome. */
@@ -478,6 +483,8 @@ struct yasl_private_drag_target_event {
 struct yasl_private_drop_hover_event {
     enum yasl_private_drop_event action; /**< Hover or leave. */
     struct yasl_private_vector2i pos; /**< Surface-relative device pixels. */
+    /** The type a drop here would deliver. Empty on leave. */
+    char mime[YASL_PRIVATE_DROP_MIME_MAX];
 };
 
 /** Keyboard focus transition. */

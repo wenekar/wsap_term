@@ -3,6 +3,7 @@
 #include "platform/sync.h"
 
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -350,7 +351,14 @@ void yasl_private_surface_notify_drag(struct yasl_surface *s, enum yasl_private_
 
 void yasl_private_surface_notify_drop(struct yasl_surface *s, enum yasl_private_drop_event action, struct yasl_private_vector2i pos)
 {
-    struct yasl_private_event event = {.type = YASL_PRIVATE_EVENT_DROP_HOVER, .surface = s, .drop = {action, pos}};
+    yasl_private_surface_notify_drop_mime(s, action, pos, NULL);
+}
+
+void yasl_private_surface_notify_drop_mime(struct yasl_surface *s, enum yasl_private_drop_event action, struct yasl_private_vector2i pos, const char *mime)
+{
+    struct yasl_private_event event = {.type = YASL_PRIVATE_EVENT_DROP_HOVER, .surface = s, .drop = {.action = action, .pos = pos}};
+    if (mime)
+        snprintf(event.drop.mime, sizeof(event.drop.mime), "%s", mime);
     yasl_private_events_push(s->display, s, &event);
 }
 
