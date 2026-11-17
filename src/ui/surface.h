@@ -23,6 +23,34 @@ struct ui_surface_host {
 
 /* The most overlay widgets that a surface holds. */
 #define UI_SURFACE_OVERLAY_MAX 4
+/* The most functions that a surface holds for the end of its busy section. */
+#define UI_SURFACE_POST_MAX 8
+
+/* A function that ui_surface_post queues. The surface passes itself and the
+ * user data that the poster gave. */
+typedef void (*ui_post_fn)(struct ui_surface *surface, void *userdata);
+
+struct ui_surface_post {
+    ui_post_fn fn;
+    void *userdata;
+};
+
+/* What a handler may do while the surface dispatches, ticks, or builds.
+ *
+ * A handler can detach or destroy any widget, itself included. It must not
+ * free the storage of a widget or a surface while the surface is busy: the
+ * dispatch still reads the surface, the tree, and the stored targets after the
+ * handler returns.
+ *
+ * An owner that must free storage calls ui_surface_post. The function runs
+ * after the outermost busy section ends, so no code uses the storage then.
+ * ui_surface_destroy returns false for a busy surface, and asserts in a debug
+ * build. A busy owner posts its own free instead.
+ *
+ * State that a handler can change stays readable while the surface is busy.
+ * A stored target is thus safe to test, but not to use: any use follows a
+ * ui_widget_stale test.
+ */
 
 struct ui_surface {
     struct {
@@ -43,6 +71,8 @@ struct ui_surface {
         struct vector2i viewport;
         struct ui_style_context style;
         uint64_t deadline;
+        struct ui_surface_post post[UI_SURFACE_POST_MAX];
+        size_t post_count;
         bool key_text_kept;
         bool frame_requested;
         bool busy;
@@ -51,10 +81,17 @@ struct ui_surface {
 
 void ui_surface_init(struct ui_surface *surface,
                      const struct ui_surface_host *host, void *host_userdata);
-void ui_surface_destroy(struct ui_surface *surface);
+/* Releases the root, the overlays, and the styles of `surface`. Returns false
+ * when the surface is busy, and asserts in a debug build. */
+bool ui_surface_destroy(struct ui_surface *surface);
+/* Queues `fn` to run after the outermost busy section of `surface` ends, or
+ * runs it now when the surface is idle. Returns false when the queue is full. */
+bool ui_surface_post(struct ui_surface *surface, ui_post_fn fn, void *userdata);
+
 /* Releases global UI caches including the default stylesheet and interned parts. */
 void ui_shutdown(void);
-/* True while the surface dispatches, ticks, or builds. Destroy waits then. */
+/* True while the surface dispatches, ticks, or builds, and reads its stored
+ * targets. Use ui_surface_post to free storage then. */
 bool ui_surface_busy(const struct ui_surface *surface);
 
 bool ui_surface_set_root(struct ui_surface *surface, struct ui_widget *root);
@@ -89,9 +126,7 @@ struct vector2i ui_surface_viewport(const struct ui_surface *surface);
 bool ui_surface_dispatch(struct ui_surface *surface,
                          const struct ui_event *event);
 
-/* Set the widget that takes keyboard events when nothing is focused.
- * A view overlay host and a focused view redirect to the described root.
- * This call stores the widget as given. */
+/* Set the widget that takes keyboard events when nothing is focused. */
 void ui_surface_set_default_focus(struct ui_surface *surface,
                                   struct ui_widget *widget);
 void ui_surface_keep_key_text(struct ui_surface *surface);

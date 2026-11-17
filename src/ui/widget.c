@@ -31,6 +31,13 @@ bool ui_widget_is_ancestor(const struct ui_widget *ancestor,
     return false;
 }
 
+bool ui_widget_stale(const struct ui_surface *surface,
+                     const struct ui_widget *widget)
+{
+    return !widget || widget->impl.destroyed || widget->impl.surface != surface ||
+           !ui_widget_visible(widget);
+}
+
 bool ui_widget_visible(const struct ui_widget *widget)
 {
     for (const struct ui_widget *p = widget; p; p = p->parent)

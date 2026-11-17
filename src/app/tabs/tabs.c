@@ -365,6 +365,23 @@ bool app_tabs_new_window(struct window *window)
                                   window_size(window)) != NULL;
 }
 
+static void close_window_post(struct ui_surface *surface, void *userdata)
+{
+    (void)surface;
+    window_close(userdata);
+}
+
+/* Closes `window`. A close that runs inside a UI dispatch posts the call,
+ * because the window surface frees its storage. */
+static void close_window_later(struct window *window)
+{
+    struct ui_surface *surface = window_ui_surface(window);
+    if (surface && ui_surface_busy(surface) &&
+        ui_surface_post(surface, close_window_post, window))
+        return;
+    window_close(window);
+}
+
 void app_tabs_close(struct window *window, int index)
 {
     struct app_tabs *tabs = app_tabs_of(window);
@@ -387,7 +404,7 @@ void app_tabs_close(struct window *window, int index)
     app_tabs_publish(tabs);
     if (!more) {
         app_tabs_mount_content(tabs);
-        window_close(window);
+        close_window_later(window);
         return;
     }
     /* Keep the bar reservation until the app retires the closing entry. */
@@ -470,7 +487,7 @@ app_tab_id app_tabs_unbind(struct window *window, int index)
         tabs->active = next_live_entry(tabs, index);
     app_tabs_publish(tabs);
     if (tabs->active < 0) {
-        window_close(window);
+        close_window_later(window);
         return id;
     }
     app_tabs_update_title(tabs);

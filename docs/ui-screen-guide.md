@@ -133,12 +133,9 @@ The diagnostic gives an error, a detail message, and, when applicable, the descr
 The descriptor pointer is borrowed from the input tree.
 Read it before the descriptor tree goes out of scope.
 Use `ui_view_error_message()` to get a description of the error.
-The view supplies a popup host for dropdown descriptors.
-The host lets a popup extend outside a scrollview.
-When necessary, the view adds a host around the described root.
-Use `ui_view_widget()` with the root key to find the described root.
-Use `overlay_key` to select a stack in the view when necessary.
-For manual widget composition, set the dropdown overlay parent explicitly.
+A dropdown descriptor adds its popup to the surface overlay layer.
+The layer lets a popup extend outside a scrollview.
+`ui_view_root()` returns the widget of the described root.
 
 ## Actions and state
 

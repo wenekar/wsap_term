@@ -57,8 +57,27 @@ static bool descendant_open(const struct window_ui *ui, int depth)
     return false;
 }
 
-/* Closes the popup at depth. A busy popup, or a popup with an open
- * descendant, stays until window_menu_reap destroys it. */
+static void close_popup(struct window *w, int depth);
+
+/* Closes the popup that `surface` belongs to, after its dispatch ends. */
+static void close_popup_post(struct ui_surface *surface, void *userdata)
+{
+    struct window *w = userdata;
+    struct window_ui *ui = ui_of(w);
+    if (!ui->menu_popup)
+        return;
+    for (int d = 0; d < UI_MENU_MAX_LEVELS; d++)
+        if (&ui->menu_popup[d].ui == surface) {
+            close_popup(w, d);
+            return;
+        }
+}
+
+static void close_popup_now(struct window *w, int depth);
+
+/* Closes the popup at depth. A popup that closes from its own dispatch posts
+ * the close, and a popup with an open descendant stays until
+ * window_menu_reap destroys it. */
 static void close_popup(struct window *w, int depth)
 {
     struct window_ui *ui = ui_of(w);
@@ -67,13 +86,26 @@ static void close_popup(struct window *w, int depth)
     struct window_ui_menu_popup *p = &ui->menu_popup[depth];
     if (!popup_open(p))
         return;
-    if (ui_surface_busy(&p->ui) || descendant_open(ui, depth)) {
+    if (ui_surface_busy(&p->ui)) {
         /* The popup closes from inside its own dispatch. Destroying the
-         * surface now would drop its sheet and layout. A parent also waits
-         * for its children, because destroying it would free them. */
-        p->closing = true;
+         * surface now would drop the sheet and the tree that the dispatch
+         * still reads, so the close waits for the end of that dispatch. */
+        if (ui_surface_post(&p->ui, close_popup_post, w))
+            return;
+    } else if (!descendant_open(ui, depth)) {
+        close_popup_now(w, depth);
         return;
     }
+    /* A parent waits for its children, because destroying it would free
+     * them. The lowest level then closes first, in window_menu_reap. */
+    p->closing = true;
+}
+
+/* Closes the popup at depth and frees its storage. */
+static void close_popup_now(struct window *w, int depth)
+{
+    struct window_ui *ui = ui_of(w);
+    struct window_ui_menu_popup *p = &ui->menu_popup[depth];
     window_accessibility_menu_popup_close(w, depth);
     ui_surface_destroy(&p->ui);
     while (p->root.first_child)

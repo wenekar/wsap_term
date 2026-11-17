@@ -471,12 +471,28 @@ static bool initialize_node(struct ui_view_node *node,
     return true;
 }
 
+static void free_view(struct ui_surface *surface, void *userdata)
+{
+    (void)surface;
+    struct ui_view *view = userdata;
+    for (size_t i = 0; i < view->count; i++) {
+        free(view->nodes[i].key);
+        free(view->nodes[i].class_name);
+        free(view->nodes[i].id_name);
+        free(view->nodes[i].tag_name);
+        free(view->nodes[i].storage);
+    }
+    free(view->nodes);
+    free(view);
+}
+
 void ui_view_destroy(struct ui_view *view)
 {
     if (!view)
         return;
+    struct ui_surface *surface = NULL;
     if (view->root) {
-        struct ui_surface *surface = ui_widget_surface(view->root);
+        surface = ui_widget_surface(view->root);
         if (surface && ui_surface_root(surface) == view->root)
             ui_surface_set_root(surface, NULL);
     }
@@ -494,15 +510,12 @@ void ui_view_destroy(struct ui_view *view)
         if (view->nodes[i].widget &&
             (view->committed || view->nodes[i].kind != UI_NODE_WIDGET))
             ui_widget_destroy(view->nodes[i].widget);
-    for (size_t i = 0; i < view->count; i++) {
-        free(view->nodes[i].key);
-        free(view->nodes[i].class_name);
-        free(view->nodes[i].id_name);
-        free(view->nodes[i].tag_name);
-        free(view->nodes[i].storage);
-    }
-    free(view->nodes);
-    free(view);
+    /* The widgets are gone. The storage waits when the surface still reads
+     * its tree, because a widget handler can call this function. */
+    if (surface && ui_surface_busy(surface) &&
+        ui_surface_post(surface, free_view, view))
+        return;
+    free_view(surface, view);
 }
 
 const char *ui_view_error_message(enum ui_view_error error)

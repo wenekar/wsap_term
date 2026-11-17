@@ -4,7 +4,9 @@
 #include "paint/scene.h"
 #include "ui/ui_util.h"
 
+#include <assert.h>
 #include <stddef.h>
+#include <string.h>
 
 /* The double-click interval, in ms, of a surface whose host reports none. */
 #define UI_DOUBLE_CLICK_FALLBACK_MS 400
@@ -76,6 +78,44 @@ void ui_surface_request_frame(struct ui_surface *surface)
 bool ui_surface_frame_pending(const struct ui_surface *surface)
 {
     return surface && surface->impl.frame_requested;
+}
+
+bool ui_surface_post(struct ui_surface *surface, ui_post_fn fn, void *userdata)
+{
+    if (!fn)
+        return false;
+    if (!surface) {
+        fn(NULL, userdata);
+        return true;
+    }
+    if (!surface->impl.busy) {
+        fn(surface, userdata);
+        return true;
+    }
+    assert(surface->impl.post_count < UI_SURFACE_POST_MAX);
+    if (surface->impl.post_count >= UI_SURFACE_POST_MAX)
+        return false;
+    surface->impl.post[surface->impl.post_count++] =
+        (struct ui_surface_post){ .fn = fn, .userdata = userdata };
+    return true;
+}
+
+/* Runs the posted functions. Call it last in each entry point, after the busy
+ * section ends, so that no widget in use is freed.
+ *
+ * The queue is copied before the functions run, because one of them can free
+ * the storage of the surface. A function that posts again waits for the next
+ * entry point. */
+static void flush_posts(struct ui_surface *surface)
+{
+    size_t count = surface->impl.post_count;
+    if (!count)
+        return;
+    struct ui_surface_post posts[UI_SURFACE_POST_MAX];
+    memcpy(posts, surface->impl.post, count * sizeof(*posts));
+    surface->impl.post_count = 0;
+    for (size_t i = 0; i < count; i++)
+        posts[i].fn(surface, posts[i].userdata);
 }
 
 bool ui_surface_take_frame_request(struct ui_surface *surface)
@@ -234,6 +274,7 @@ void ui_surface_prepare(struct ui_surface *surface)
     surface->impl.busy = true;
     prepare(surface);
     surface->impl.busy = false;
+    flush_posts(surface);
 }
 
 bool ui_surface_set_root(struct ui_surface *surface, struct ui_widget *root)
@@ -325,11 +366,6 @@ struct vector2i ui_surface_viewport(const struct ui_surface *surface)
     return surface ? surface->impl.viewport : (struct vector2i){0};
 }
 
-static bool retired(const struct ui_surface *surface,
-                    const struct ui_widget *widget)
-{
-    return widget->impl.surface != surface || !ui_widget_visible(widget);
-}
 
 static void send(struct ui_widget *widget, struct ui_event event)
 {
@@ -438,7 +474,7 @@ void ui_surface_sync_modal(struct ui_surface *surface)
         surface->impl.modal = NULL;
         struct ui_widget *restore = surface->impl.restore_focus;
         surface->impl.restore_focus = NULL;
-        if (restore && !retired(surface, restore))
+        if (restore && !ui_widget_stale(surface, restore))
             ui_surface_focus(surface, restore);
     }
 }
@@ -467,11 +503,11 @@ bool ui_surface_has_modal(const struct ui_surface *surface)
 
 static void drop_retired(struct ui_surface *surface)
 {
-    if (surface->impl.focused && retired(surface, surface->impl.focused))
+    if (surface->impl.focused && ui_widget_stale(surface, surface->impl.focused))
         surface->impl.focused = NULL;
-    if (surface->impl.captured && retired(surface, surface->impl.captured))
+    if (surface->impl.captured && ui_widget_stale(surface, surface->impl.captured))
         surface->impl.captured = NULL;
-    if (surface->impl.hovered && retired(surface, surface->impl.hovered))
+    if (surface->impl.hovered && ui_widget_stale(surface, surface->impl.hovered))
         surface->impl.hovered = NULL;
 }
 
@@ -533,10 +569,10 @@ static bool dispatch_pointer(struct ui_surface *surface,
             out.data.pointer.kind = UI_POINTER_LEAVE;
             send(previous, out);
         }
-        if (target && !retired(surface, target))
+        if (target && !ui_widget_stale(surface, target))
             surface->impl.hovered = target;
     }
-    return target && !retired(surface, target) &&
+    return target && !ui_widget_stale(surface, target) &&
            ui_widget_bubble(target, event);
 }
 
@@ -549,7 +585,7 @@ static struct ui_widget *keyboard_target(const struct ui_surface *surface)
     if (surface->impl.modal)
         return surface->impl.modal;
     struct ui_widget *fallback = surface->impl.default_focus;
-    if (fallback && !retired(surface, fallback))
+    if (fallback && !ui_widget_stale(surface, fallback))
         return fallback;
     return surface->impl.root;
 }
@@ -646,7 +682,7 @@ bool ui_surface_dispatch(struct ui_surface *surface,
             if (surface->impl.paste_target) {
                 struct ui_widget *target = surface->impl.paste_target;
                 surface->impl.paste_target = NULL;
-                handled = !retired(surface, target) && ui_widget_bubble(target, event);
+                handled = !ui_widget_stale(surface, target) && ui_widget_bubble(target, event);
             } else {
                 handled = dispatch_keyboard(surface, event);
             }
@@ -662,6 +698,7 @@ bool ui_surface_dispatch(struct ui_surface *surface,
     surface->impl.busy = false;
     if (handled && !keyboard_path(event->kind))
         ui_surface_request_frame(surface);
+    flush_posts(surface);
     return handled;
 }
 
@@ -687,7 +724,7 @@ void ui_surface_focus(struct ui_surface *surface, struct ui_widget *widget)
 {
     if (!surface)
         return;
-    if (widget && retired(surface, widget))
+    if (widget && ui_widget_stale(surface, widget))
         widget = NULL;
     if (surface->impl.focused == widget)
         return;
@@ -697,11 +734,11 @@ void ui_surface_focus(struct ui_surface *surface, struct ui_widget *widget)
     send(previous, ui_event_focus(false, 0));
     if (surface->impl.focused)
         return;
-    if (widget && retired(surface, widget))
+    if (widget && ui_widget_stale(surface, widget))
         widget = NULL;
     surface->impl.focused = widget;
     send(widget, ui_event_focus(true, 0));
-    if (widget && surface->impl.focused == widget && retired(surface, widget))
+    if (widget && surface->impl.focused == widget && ui_widget_stale(surface, widget))
         surface->impl.focused = NULL;
     if (widget && surface->impl.focused == widget)
         for (struct ui_widget *parent = widget->parent; parent; parent = parent->parent)
@@ -814,6 +851,7 @@ bool ui_surface_tick(struct ui_surface *surface, uint64_t now_ms)
                       surface->impl.deadline <= now_ms;
     if (next_frame)
         ui_surface_request_frame(surface);
+    flush_posts(surface);
     return next_frame;
 }
 
@@ -841,6 +879,7 @@ bool ui_surface_build_scene(struct ui_surface *surface,
     for (size_t i = 0; valid && i < surface->impl.overlay_count; i++)
         valid = ui_widget_append_scene(surface->impl.overlays[i], scene);
     surface->impl.busy = false;
+    flush_posts(surface);
     return valid && ui_scene_is_valid(scene);
 }
 
@@ -849,14 +888,33 @@ bool ui_surface_busy(const struct ui_surface *surface)
     return surface && surface->impl.busy;
 }
 
-void ui_surface_destroy(struct ui_surface *surface)
+bool ui_surface_destroy(struct ui_surface *surface)
 {
-    if (!surface || surface->impl.busy)
-        return;
+    if (!surface)
+        return false;
+    /* A busy surface still reads its tree, so the owner posts its free. */
+    assert(!surface->impl.busy);
+    if (surface->impl.busy)
+        return false;
+    while (surface->impl.overlay_count)
+        ui_surface_remove_overlay(surface,
+            surface->impl.overlays[surface->impl.overlay_count - 1]);
     while (surface->impl.root)
         ui_widget_detach(surface->impl.root);
+    /* A queued free still runs, so that no owner leaks its storage. */
+    for (int round = 0; round < UI_SURFACE_POST_MAX; round++) {
+        if (!surface->impl.post_count)
+            break;
+        struct ui_surface_post post = surface->impl.post[0];
+        surface->impl.post_count--;
+        memmove(&surface->impl.post[0], &surface->impl.post[1],
+                surface->impl.post_count * sizeof(surface->impl.post[0]));
+        post.fn(surface, post.userdata);
+    }
+    surface->impl.post_count = 0;
     ui_style_context_destroy(&surface->impl.style);
     *surface = (struct ui_surface){0};
+    return true;
 }
 
 void ui_shutdown(void)

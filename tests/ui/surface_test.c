@@ -669,8 +669,78 @@ static void overlay_modal_focus_test(void)
     ui_widget_destroy(&layer.widget);
 }
 
+struct post_probe {
+    int runs;
+    bool ran_busy;
+    struct ui_widget widget;
+};
+
+static void post_run(struct ui_surface *surface, void *userdata)
+{
+    struct post_probe *probe = userdata;
+    probe->runs++;
+    probe->ran_busy = ui_surface_busy(surface);
+}
+
+static bool post_press(struct ui_widget *widget, const struct ui_event *event)
+{
+    struct post_probe *probe = widget->userdata;
+    if (event->kind != UI_EVENT_KEY)
+        return false;
+    /* A handler frees nothing while the surface is busy; it posts. */
+    assert(ui_surface_busy(ui_widget_surface(widget)));
+    assert(ui_surface_post(ui_widget_surface(widget), post_run, probe));
+    return true;
+}
+
+static bool post_handler(struct ui_widget *widget, const struct ui_event *event,
+                         void *userdata)
+{
+    (void)userdata;
+    return post_press(widget, event);
+}
+
+static const struct ui_widget_ops POST_OPS = {
+    .name = "post-probe",
+    .event = post_press,
+};
+
+static void surface_post_runs_after_dispatch_test(void)
+{
+    struct post_probe probe = {0};
+    ui_widget_init(&probe.widget, &POST_OPS, &probe);
+    ui_widget_set_focusable(&probe.widget, true);
+
+    struct ui_surface surface = {0};
+    ui_surface_init(&surface, NULL, NULL);
+    ui_surface_set_root(&surface, &probe.widget);
+    ui_surface_resize(&surface, (struct vector2i){ .x = 100, .y = 80 });
+    ui_surface_prepare(&surface);
+
+    struct ui_event key = ui_event_key((struct ui_key_event){
+        .key = UI_KEY_CHAR, .text = 'k',
+    }, 0);
+    assert(ui_surface_dispatch(&surface, &key));
+    assert(probe.runs == 1 && !probe.ran_busy);
+
+    /* An idle surface runs the function at once. */
+    assert(ui_surface_post(&surface, post_run, &probe));
+    assert(probe.runs == 2);
+
+    /* A handler that runs during dispatch posts its free. */
+    ui_widget_set_event_handler(&probe.widget, post_handler, &probe);
+    assert(ui_surface_dispatch(&surface, &key));
+    assert(ui_surface_busy(&surface) == false);
+    assert(ui_surface_destroy(&surface));
+    /* A destroyed surface holds no root and no overlay. */
+    assert(ui_surface_root(&surface) == NULL);
+    assert(ui_surface_overlay_count(&surface) == 0);
+    ui_widget_destroy(&probe.widget);
+}
+
 int main(void)
 {
+    surface_post_runs_after_dispatch_test();
     overlay_layer_test();
     overlay_modal_focus_test();
     measurement_change_requests_another_frame_test();
