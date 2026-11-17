@@ -1,5 +1,5 @@
-#ifndef WSAP_UI_WIDGETS_TAB_PREVIEW_H
-#define WSAP_UI_WIDGETS_TAB_PREVIEW_H
+#ifndef WSAP_APP_TABS_TAB_PREVIEW_H
+#define WSAP_APP_TABS_TAB_PREVIEW_H
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -38,7 +38,7 @@ struct ui_tab_preview {
         bool suppressed;
         bool hidden_for_size;
         bool managed_anchor;
-    } impl;
+    } state;
 };
 
 /* Initializes tab preview popup `p`. */

@@ -1,4 +1,4 @@
-#include "ui/widgets/tabbar/internal.h"
+#include "app/tabs/tabbar/internal.h"
 
 #include "paint/text_run.h"
 #include "ui/text_break.h"
@@ -62,6 +62,16 @@ static float tb_open_fade(float open)
     return open / 0.6f;
 }
 
+/* Returns the text color of the bar. A part with no color falls back to the
+ * text color of the bar widget. */
+static uint32_t tb_text_color(const struct ui_tabbar *tb,
+                              const struct css_style *part)
+{
+    if (part->has_text_color)
+        return part->text_color;
+    return tb->widget.style.has_text_color ? tb->widget.style.text_color : 0;
+}
+
 bool ui_tabbar_build_drag_scene(struct ui_tabbar *tb, int index,
                                 const struct ui_image *preview_image,
                                 struct ui_scene *scene,
@@ -69,22 +79,28 @@ bool ui_tabbar_build_drag_scene(struct ui_tabbar *tb, int index,
                                 struct vector2i *hotspot)
 {
     if (!tb || !scene || !image_size || !hotspot ||
-        index < 0 || index >= tb->impl.n_tabs)
+        index < 0 || index >= tb->state.n_tabs)
         return false;
-    const struct ui_tab_label *tabs = tb->impl.labels;
-    struct tb_theme snapshot;
-    tb_theme_read(tb, &snapshot);
-    const struct tb_theme *t = &snapshot;
+    const struct ui_tab_label *tabs = tb->state.labels;
+    const struct tb_parts *p = tb_part();
+    const struct css_scale_context *ctx = tb_ctx(tb);
+    struct ui_text_style text = ui_widget_text_style(ctx);
+    struct css_style active = tb_style(tb, p->tab_active, CSS_PSEUDO_NONE);
+    struct css_style close = tb_style(tb, p->tab_close, CSS_PSEUDO_NONE);
+    struct css_style card = tb_style(tb, p->tab_preview, CSS_PSEUDO_NONE);
+    struct tb_layout l = tb_layout_for(tb, tb->state.n_tabs, tb->state.size);
     struct rect2i tab_rect;
-    if (!tb_tab_rect_at(tb, t, tb->impl.n_tabs, tb->impl.size, index, &tab_rect))
+    if (!tb_tab_rect_at(tb, tb->state.n_tabs, tb->state.size, index,
+                        &tab_rect))
         return false;
     ui_scene_init(scene);
 
     bool has_preview = preview_image && preview_image->pixels &&
                        preview_image->size.x > 0 && preview_image->size.y > 0;
 
-    int pad = t->preview_pad;
-    int gap = t->preview_gap;
+    struct insets2i card_pad = ui_ctx_insets(ctx, card.padding, 0);
+    int pad = card_pad.l;
+    int gap = ui_ctx_inset(ctx, card.gap, 0);
     int card_w = has_preview ? preview_image->size.x + pad * 2 : 0;
     int card_h = has_preview ? preview_image->size.y + pad * 2 : 0;
 
@@ -96,29 +112,35 @@ bool ui_tabbar_build_drag_scene(struct ui_tabbar *tb, int index,
     if (has_preview)
         total_h += gap + card_h;
 
-    int radius = t->tab_radius;
-    struct vector2i shadow_at = t->preview_shadow_offset;
-    int blur = t->preview_shadow_blur;
+    int radius = l.radius;
+    struct vector2i shadow_at = card.has_shadow
+        ? (struct vector2i){
+              .x = ui_css_resolve_int(card.shadow_x, 0, 0, ctx, false),
+              .y = ui_css_resolve_int(card.shadow_y, 0, 0, ctx, false),
+          } : (struct vector2i){0};
+    int blur = card.has_shadow
+        ? ui_css_resolve_int(card.shadow_blur, 0, 0, ctx, true) : 0;
+    uint32_t shadow_color = card.has_shadow ? card.shadow_color : 0;
     struct rect2i r = { .pos = { .x = 0, .y = 0 }, .size = tab_rect.size };
     if (!ui_scene_shadow(scene, (struct rect2i){
             .pos = { .x = shadow_at.x, .y = shadow_at.y }, .size = r.size },
-            radius + 2, blur, t->preview_shadow) ||
-        !ui_scene_rounded_rect(scene, r, radius, t->tab_active_bg))
+            radius + 2, blur, shadow_color) ||
+        !ui_scene_rounded_rect(scene, r, radius,
+                               active.has_bg_color ? active.bg_color : 0))
         goto fail;
 
-    int advance = ui_cell_dim(tb->widget.style_scale.cell_w, ui_ctx_px(tb_ctx(tb), 8));
-    int text_h = ui_cell_dim(tb->widget.style_scale.cell_h, ui_ctx_px(tb_ctx(tb), 16));
-    struct rect2i close = tb_close_box(r, t->close_side,
-                                       t->close_side_h,
-                                       t->close_pad);
-    int text_x = t->tab_pad;
-    int avail = close.x - ui_ctx_px(tb_ctx(tb), 4) - text_x;
+    int advance = text.advance;
+    int text_h = text.cell_h;
+    struct rect2i close_box = tb_close_box(r, l.close_w, l.close_h,
+                                           l.close_pad);
+    int text_x = l.tab_pad;
+    int avail = close_box.x - l.close_gap - text_x;
     int cap = advance > 0 && avail > 0 ? avail / advance : 0;
     const char *label = tabs[index].text && tabs[index].text[0]
         ? tabs[index].text : "shell";
     if (!tb_title(scene, (struct vector2i){
                       .x = text_x, .y = (r.height - text_h) / 2 },
-                  advance, text_h, t->active_text_color, true, label, cap))
+                  advance, text_h, tb_text_color(tb, &active), true, label, cap))
         goto fail;
 
     struct ui_text_style mark_style = {
@@ -127,37 +149,38 @@ bool ui_tabbar_build_drag_scene(struct ui_tabbar *tb, int index,
         .flags = UI_TEXT_PLAIN,
     };
     struct rect2i mark = {
-        .pos = { .x = close.x + (close.width - advance) / 2,
-                 .y = close.y + (close.height - text_h) / 2 },
+        .pos = { .x = close_box.x + (close_box.width - advance) / 2,
+                 .y = close_box.y + (close_box.height - text_h) / 2 },
         .size = { .x = advance, .y = text_h },
     };
-    if (!ui_scene_text_run(scene, mark, mark_style, t->close_color,
+    if (!ui_scene_text_run(scene, mark, mark_style, tb_text_color(tb, &close),
                            TB_CLOSE_MARK, sizeof(TB_CLOSE_MARK) - 1))
         goto fail;
 
     if (has_preview) {
-        struct rect2i card = {
+        struct rect2i card_box = {
             .pos = { .x = 0, .y = tab_rect.height + gap },
             .size = { .x = card_w, .y = card_h },
         };
         if (!ui_scene_shadow(scene, (struct rect2i){
-                .pos = { .x = card.x + shadow_at.x, .y = card.y + shadow_at.y },
-                .size = card.size }, t->preview_radius, blur,
-                t->preview_shadow) ||
-            !ui_scene_rounded_rect(scene, card, t->preview_radius,
-                                   t->preview_bg))
+                .pos = { .x = card_box.x + shadow_at.x,
+                         .y = card_box.y + shadow_at.y },
+                .size = card_box.size }, l.preview_radius, blur,
+                shadow_color) ||
+            !ui_scene_rounded_rect(scene, card_box, l.preview_radius,
+                                   card.has_bg_color ? card.bg_color : 0))
             goto fail;
         struct vector2i img_pos = {
-            .x = card.x + pad,
-            .y = card.y + pad,
+            .x = card_box.x + pad,
+            .y = card_box.y + pad,
         };
         if (!ui_scene_image(scene, img_pos, preview_image))
             goto fail;
     }
 
     *image_size = (struct vector2i){ .x = total_w, .y = total_h };
-    hotspot->x = tb->impl.drag_grab_x;
-    hotspot->y = tb->impl.drag_origin.y - tab_rect.y;
+    hotspot->x = tb->state.drag_grab_x;
+    hotspot->y = tb->state.drag_origin.y - tab_rect.y;
     if (hotspot->x < 0) hotspot->x = 0;
     if (hotspot->x >= total_w) hotspot->x = total_w - 1;
     if (hotspot->y < 0) hotspot->y = 0;
@@ -169,64 +192,97 @@ fail:
     return false;
 }
 
-bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
-                   const struct ui_tab_label *tabs, int n_tabs,
-                   struct vector2i size, struct ui_scene *scene,
+bool tb_scene_emit(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
+                   int n_tabs, struct vector2i size, struct ui_scene *scene,
                    uint64_t now_ms)
 {
     if (!scene || !tabs || n_tabs < 1 || size.x <= 0)
         return false;
     if (tb && !tb_ensure_tabs(tb, n_tabs))
         return false;
-    struct tb_layout l = tb_layout_for(tb, t, n_tabs, size);
+    struct tb_layout l = tb_layout_for(tb, n_tabs, size);
     if (l.height <= 0)
         return false;
+    const struct tb_parts *p = tb_part();
+    const struct css_scale_context *ctx = tb_ctx(tb);
+    struct ui_text_style text = ui_widget_text_style(ctx);
+    struct css_style bar = tb_style(tb, p->bar, CSS_PSEUDO_NONE);
+    struct css_style idle = tb_style(tb, p->tab, CSS_PSEUDO_NONE);
+    struct css_style hover = tb_style(tb, p->tab, CSS_PSEUDO_HOVER);
+    struct css_style active = tb_style(tb, p->tab_active, CSS_PSEUDO_NONE);
+    struct css_style focus = tb_style(tb, p->tab, CSS_PSEUDO_FOCUS);
+    struct css_style drop = tb_style(tb, p->tab_drop, CSS_PSEUDO_NONE);
+    struct css_style close = tb_style(tb, p->tab_close, CSS_PSEUDO_NONE);
+    struct css_style close_h = tb_style(tb, p->tab_close, CSS_PSEUDO_HOVER);
+    struct css_style fresh = tb_style(tb, p->tab_new, CSS_PSEUDO_NONE);
+    struct css_style fresh_h = tb_style(tb, p->tab_new, CSS_PSEUDO_HOVER);
+    struct css_style sep = tb_style(tb, p->tab_sep, CSS_PSEUDO_NONE);
+    struct css_style card = tb_style(tb, p->tab_preview, CSS_PSEUDO_NONE);
 
-    uint32_t bar_bg = ui_color_opacity(t->bar_bg, t->bar_opacity);
-    if (!ui_scene_rect(scene, (struct rect2i){ .size = { .x = size.x, .y = l.height } }, bar_bg))
+    uint32_t bar_color = bar.has_bg_color ? bar.bg_color
+        : (tb->state.bg_color ? tb->state.bg_color : 0);
+    uint32_t bar_bg = ui_color_opacity(bar_color,
+                                       css_style_effective_opacity(&bar));
+    if (!ui_scene_rect(scene, (struct rect2i){
+            .size = { .x = size.x, .y = l.height } }, bar_bg))
         return false;
 
-    bool bar_clip = tb && tb->impl.reveal.start_ms != 0 &&
-        tb->impl.reveal.value < 1.0f;
+    uint32_t text_color = tb_text_color(tb, &idle);
+    uint32_t active_text = tb_text_color(tb, &active);
+    uint32_t tab_active_bg = active.has_bg_color ? active.bg_color : 0;
+
+    bool bar_clip = tb->state.reveal.start_ms != 0 &&
+        tb->state.reveal.value < 1.0f;
     if (bar_clip &&
         !ui_scene_push_clip(scene, (struct rect2i){
             .size = { .x = size.x, .y = l.height } }))
         return false;
 
-    int advance = ui_cell_dim(tb ? tb->widget.style_scale.cell_w : 0, ui_ctx_px(tb_ctx(tb), 8));
-    int text_h = ui_cell_dim(tb ? tb->widget.style_scale.cell_h : 0, ui_ctx_px(tb_ctx(tb), 16));
+    int advance = text.advance;
+    int text_h = text.cell_h;
 
-    bool dragging = tb && (tb->impl.drag_state == UI_TAB_DRAG_REORDER ||
-                           tb->impl.drag_state == UI_TAB_DRAG_DETACH);
-    int drag_idx = dragging ? tb->impl.drag_tab : -1;
+    bool dragging = tb->state.drag_state == UI_TAB_DRAG_REORDER ||
+                    tb->state.drag_state == UI_TAB_DRAG_DETACH;
+    int drag_idx = dragging ? tb->state.drag_tab : -1;
 
     float base_x = (float)l.pad.l;
     int tab_y = l.pad.t + (l.height - l.pad.t - l.pad.b - l.tab_height) / 2;
     bool clipped_right = false;
 
     struct rect2i drop_r;
-    if (tb && tb_drop_rect(tb, &l, size, &drop_r)) {
+    if (tb_drop_rect(tb, &l, size, &drop_r)) {
         if (!ui_scene_begin_part(scene, TB_PART_DROP))
             return false;
-        struct rect2i shadow = rect2i_translate(
-            drop_r, t->drop_preview_shadow_offset);
-        if ((t->drop_preview_shadow >> 24) &&
-            !ui_scene_shadow(scene, shadow, t->tab_radius,
-                             t->drop_preview_shadow_blur,
-                             t->drop_preview_shadow))
+        struct vector2i drop_shadow_at = drop.has_shadow
+            ? (struct vector2i){
+                  .x = ui_css_resolve_int(drop.shadow_x, 0, 0, ctx, false),
+                  .y = ui_css_resolve_int(drop.shadow_y, 0, 0, ctx, false),
+              } : (struct vector2i){0};
+        int drop_blur = drop.has_shadow
+            ? ui_css_resolve_int(drop.shadow_blur, 0, 0, ctx, true) : 0;
+        struct rect2i shadow = rect2i_translate(drop_r, drop_shadow_at);
+        if (drop.has_shadow && (drop.shadow_color >> 24) &&
+            !ui_scene_shadow(scene, shadow, l.radius, drop_blur,
+                             drop.shadow_color))
             return false;
-        uint32_t bg = ui_color_opacity(t->drop_preview_bg,
-                                       t->drop_preview_opacity);
-        if (!ui_scene_rounded_rect(scene, drop_r, t->tab_radius, bg))
+        uint32_t drop_bg = ui_color_opacity(
+            drop.has_bg_color ? drop.bg_color : tab_active_bg,
+            css_style_effective_opacity(&drop));
+        if (!ui_scene_rounded_rect(scene, drop_r, l.radius, drop_bg))
             return false;
         if (!ui_scene_end_scope(scene))
             return false;
     }
 
+    uint32_t tab_hover_bg = hover.has_bg_color ? hover.bg_color : 0;
+    uint32_t sep_color = sep.has_text_color
+        ? sep.text_color
+        : ui_color_opacity(text_color, 0.30f);
+
     #define TB_TAB_HOT(idx)                                                 \
         (tabs[idx].active || (idx) == drag_idx ||                           \
-         (tb && ((tb->impl.hover_tab == (idx) || tb->impl.hover_close == (idx) ||     \
-                 tb->impl.pressed_tab == (idx)))))
+         (tb->state.hover_tab == (idx) || tb->state.hover_close == (idx) || \
+          tb->state.pressed_tab == (idx)))
 
     for (int i = 0; i < n_tabs; i++) {
         float open = tb_open_progress(tb, i);
@@ -265,7 +321,7 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
             int sep_x = l.gap > 0 ? r.x - (l.gap + 1) / 2 : r.x - 1;
             if (sep_x < 0) sep_x = 0;
             int sep_h = r.height / 2;
-            uint32_t sep_c = ui_color_opacity(t->sep_color, sep_fade);
+            uint32_t sep_c = ui_color_opacity(sep_color, sep_fade);
             if (!ui_scene_rect(scene, (struct rect2i){
                     .pos = { .x = sep_x, .y = r.y + (r.height - sep_h) / 2 },
                     .size = { .x = 1, .y = sep_h } },
@@ -273,39 +329,39 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
                 return false;
         }
 
-        uint32_t bg_c;
-        if (tabs[i].active)
-            bg_c = t->tab_active_bg;
-        else if (tb && tb->impl.hover_tab == i)
-            bg_c = t->tab_hover_bg;
-        else
-            bg_c = t->tab_idle_bg;
+        uint32_t bg_c = tab_active_bg;
+        if (!tabs[i].active) {
+            if (tb->state.hover_tab == i)
+                bg_c = tab_hover_bg;
+            else
+                bg_c = idle.has_bg_color ? idle.bg_color : 0;
+        }
 
-        if (!ui_scene_rounded_rect(scene, r, t->tab_radius, bg_c))
+        if (!ui_scene_rounded_rect(scene, r, l.radius, bg_c))
             return false;
 
-        if (tb && i < tb->impl.tab_cap &&
-            !ui_scene_ripple(scene, r, &tb->impl.tabs[i].ripple, now_ms))
+        if (i < tb->state.tab_cap &&
+            !ui_scene_ripple(scene, r, &tb->state.tabs[i].ripple, now_ms))
             return false;
 
         bool content_clip = open < 1.0f;
         if (content_clip && !ui_scene_push_clip(scene, r))
             return false;
 
-        struct rect2i close;
+        struct rect2i close_box;
         bool has_close = false;
-        if (content_clip || r.width >= t->close_side + t->close_pad * 2) {
-            close = tb_close_box(r, t->close_side, t->close_side_h, t->close_pad);
+        if (content_clip || r.width >= l.close_w + l.close_pad * 2) {
+            close_box = tb_close_box(r, l.close_w, l.close_h, l.close_pad);
             has_close = true;
         }
-        int title_right = has_close ? close.x - ui_ctx_px(tb_ctx(tb), 4)
-                                    : rect2i_end(r).x - t->tab_pad;
+        int title_right = has_close ? close_box.x - l.close_gap
+                                    : rect2i_end(r).x - l.tab_pad;
 
         const char *label = tabs[i].text && tabs[i].text[0] ? tabs[i].text : "shell";
-        int text_x = r.x + t->tab_pad;
+        int text_x = r.x + l.tab_pad;
         int avail = title_right - text_x;
         int cap = advance > 0 && avail > 0 ? avail / advance : 0;
-        uint32_t txt_c = tabs[i].active ? t->active_text_color : t->text_color;
+        uint32_t txt_c = tabs[i].active ? active_text : text_color;
         txt_c = ui_color_opacity(txt_c, fade);
         int pad_t = (r.height - text_h) / 2;
         if (pad_t < 0) pad_t = 0;
@@ -314,22 +370,27 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
             return false;
 
         if (has_close) {
-            float progress = (tb && i < tb->impl.tab_cap)
-                ? ui_hover_anim_value(&tb->impl.tabs[i].close_hover) : 0.0f;
+            float progress = (i < tb->state.tab_cap)
+                ? ui_hover_anim_value(&tb->state.tabs[i].close_hover) : 0.0f;
             if (progress < 0.0f) progress = 0.0f;
             if (progress > 1.0f) progress = 1.0f;
 
-            int crad = close.height < close.width ? close.height / 2 : close.width / 2;
+            int crad = close_box.height < close_box.width
+                ? close_box.height / 2 : close_box.width / 2;
             struct vector2i cc = {
-                .x = close.x + close.width / 2,
-                .y = close.y + close.height / 2,
+                .x = close_box.x + close_box.width / 2,
+                .y = close_box.y + close_box.height / 2,
             };
-            if (progress > 0.0f && t->close_h_has_bg) {
-                uint32_t c = ui_color_opacity(t->close_h_bg, t->close_h_opacity * progress * fade);
+            float close_h_opacity = css_style_effective_opacity(&close_h);
+            if (progress > 0.0f && close_h.has_bg_color) {
+                uint32_t c = ui_color_opacity(close_h.bg_color,
+                                              close_h_opacity * progress * fade);
                 if (!ui_scene_circle(scene, cc, crad, c, (uint8_t)(c >> 24)))
                     return false;
-            } else if (t->close_s_has_bg) {
-                uint32_t c = ui_color_opacity(t->close_s_bg, t->close_s_opacity * (1.0f - progress) * fade);
+            } else if (close.has_bg_color) {
+                float close_opacity = css_style_effective_opacity(&close);
+                uint32_t c = ui_color_opacity(close.bg_color,
+                                              close_opacity * (1.0f - progress) * fade);
                 if (!ui_scene_circle(scene, cc, crad, c, (uint8_t)(c >> 24)))
                     return false;
             }
@@ -341,7 +402,7 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
                 size_t blen = (bn > 0 && (size_t)bn < sizeof(badge)) ? (size_t)bn : 0;
                 int b_w = ui_text_run_cells(badge, blen) * advance;
                 if (b_w <= r.width) {
-                    int bx = close.x + (close.width - b_w) / 2;
+                    int bx = close_box.x + (close_box.width - b_w) / 2;
                     if (bx < r.x) bx = r.x;
                     if (bx + b_w > rect2i_end(r).x) bx = rect2i_end(r).x - b_w;
                     struct ui_text_style b_style = {
@@ -350,10 +411,11 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
                         .flags = UI_TEXT_PLAIN,
                     };
                     struct rect2i br = {
-                        .pos = { .x = bx, .y = close.y + (close.height - text_h) / 2 },
+                        .pos = { .x = bx, .y = close_box.y + (close_box.height - text_h) / 2 },
                         .size = { .x = b_w, .y = text_h },
                     };
-                    uint32_t badge_c = ui_color_opacity(t->close_color, badge_alpha);
+                    uint32_t badge_c = ui_color_opacity(tb_text_color(tb, &close),
+                                                        badge_alpha);
                     if (!ui_scene_text_run(scene, br, b_style, badge_c, badge, blen))
                         return false;
                 }
@@ -361,15 +423,16 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
 
             float close_alpha = progress * fade;
             if (close_alpha > 0.001f) {
-                uint32_t mark_c = ui_color_opacity(t->close_hover_color, close_alpha);
+                uint32_t mark_c = ui_color_opacity(tb_text_color(tb, &close_h),
+                                                   close_alpha);
                 struct ui_text_style m_style = {
                     .advance = advance,
                     .cell_h = text_h,
                     .flags = UI_TEXT_PLAIN,
                 };
                 struct rect2i mr = {
-                    .pos = { .x = close.x + (close.width - advance) / 2,
-                             .y = close.y + (close.height - text_h) / 2 },
+                    .pos = { .x = close_box.x + (close_box.width - advance) / 2,
+                             .y = close_box.y + (close_box.height - text_h) / 2 },
                     .size = { .x = advance, .y = text_h },
                 };
                 if (!ui_scene_text_run(scene, mr, m_style, mark_c, TB_CLOSE_MARK,
@@ -380,10 +443,12 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
 
         if (content_clip && !ui_scene_pop_clip(scene))
             return false;
-        if (tb && ui_widget_has_focus(&tb->widget) &&
-            i == tb->impl.keyboard_index &&
-            !ui_scene_rect_stroke(scene, r, t->focus_width,
-                                  ui_color_opacity(t->focus_color, fade)))
+        if (ui_widget_has_focus(&tb->widget) &&
+            i == tb->state.keyboard_index &&
+            !ui_scene_rect_stroke(scene, r, l.focus_w,
+                                  ui_color_opacity(
+                                      focus.has_border_color
+                                          ? focus.border_color : 0, fade)))
             return false;
         if (!ui_scene_end_scope(scene))
             return false;
@@ -392,7 +457,7 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
     #undef TB_TAB_HOT
 
     if (clipped_right) {
-        int fade_w = ui_ctx_px(tb_ctx(tb), UI_TABBAR_FADE_DP);
+        int fade_w = l.fade_w;
         int edge_x = size.x - l.pad.r;
         if (fade_w > edge_x) fade_w = edge_x;
         if (fade_w > 0) {
@@ -407,7 +472,7 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
                 if (!ui_scene_blend_rect(scene, (struct rect2i){
                         .pos = { .x = fx, .y = 0 },
                         .size = { .x = sw, .y = l.height } },
-                        t->bar_bg, stops[s]))
+                        bar_color, stops[s]))
                     return false;
                 fx += sw;
             }
@@ -418,7 +483,7 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
     bool has_new = false;
     if (l.new_tab_width > 0) {
         int nx = (int)roundf(base_x);
-        if (tb && tb->impl.external_drag)
+        if (tb->state.external_drag)
             nx += (int)roundf(l.share) + l.gap;
         int max_x = size.x - l.pad.r - l.new_tab_width;
         if (nx > max_x)
@@ -435,11 +500,12 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
     if (has_new) {
         if (!ui_scene_begin_part(scene, TB_PART_NEW))
             return false;
-        float progress = tb ? ui_hover_anim_value(&tb->impl.new_hover) : 0.0f;
+        float progress = ui_hover_anim_value(&tb->state.new_hover);
         if (progress > 0.001f) {
-            float alpha = t->new_tab_has_hover_bg
-                ? progress * t->new_tab_hover_opacity : progress;
-            uint32_t hbg = ui_color_opacity(t->new_tab_hover_bg, alpha);
+            uint32_t hover_bg = fresh_h.has_bg_color
+                ? fresh_h.bg_color : tab_hover_bg;
+            float alpha = css_style_effective_opacity(&fresh_h) * progress;
+            uint32_t hbg = ui_color_opacity(hover_bg, alpha);
             int crad = nr.height < nr.width ? nr.height / 2 : nr.width / 2;
             struct vector2i cc = { .x = nr.x + nr.width / 2, .y = nr.y + nr.height / 2 };
             if (!ui_scene_circle(scene, cc, crad, hbg, (uint8_t)(hbg >> 24)))
@@ -455,13 +521,17 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
                      .y = nr.y + (nr.height - text_h) / 2 },
             .size = { .x = advance, .y = text_h },
         };
-        uint32_t n_color = progress > 0.001f ? t->new_tab_hover_fg : t->new_tab_fg;
+        uint32_t n_color = progress > 0.001f
+            ? (fresh_h.has_text_color ? fresh_h.text_color : active_text)
+            : (fresh.has_text_color ? fresh.text_color : text_color);
         if (!ui_scene_text_run(scene, n_text_r, n_style, n_color, TB_NEW_MARK,
                                sizeof(TB_NEW_MARK) - 1))
             return false;
-        if (tb && ui_widget_has_focus(&tb->widget) &&
-            tb->impl.keyboard_index == n_tabs &&
-            !ui_scene_rect_stroke(scene, nr, t->focus_width, t->focus_color))
+        if (ui_widget_has_focus(&tb->widget) &&
+            tb->state.keyboard_index == n_tabs &&
+            !ui_scene_rect_stroke(scene, nr, l.focus_w,
+                                  focus.has_border_color
+                                      ? focus.border_color : 0))
             return false;
         if (!ui_scene_end_scope(scene))
             return false;
@@ -472,30 +542,38 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
         if (!ui_scene_begin_part(scene, TB_PART_DRAG))
             return false;
         struct rect2i r = drag_r;
-        int radius = t->tab_radius;
-        struct rect2i sh = rect2i_translate(r, t->preview_shadow_offset);
+        int radius = l.radius;
+        struct vector2i shadow_at = card.has_shadow
+            ? (struct vector2i){
+                  .x = ui_css_resolve_int(card.shadow_x, 0, 0, ctx, false),
+                  .y = ui_css_resolve_int(card.shadow_y, 0, 0, ctx, false),
+              } : (struct vector2i){0};
+        struct rect2i sh = rect2i_translate(r, shadow_at);
         if (!ui_scene_rounded_rect(scene, sh, radius > 0 ? radius + 2 : 0,
-                                   t->preview_shadow))
+                                   card.has_shadow ? card.shadow_color : 0))
             return false;
 
         uint32_t bg = ui_color_opacity(
-            t->tab_active_bg,
-            tb->impl.drag_state == UI_TAB_DRAG_DETACH ? 0.85f : 0.95f);
-        uint32_t bcol = ui_color_opacity(t->drop_preview_bg, 0.8f);
+            tab_active_bg,
+            tb->state.drag_state == UI_TAB_DRAG_DETACH ? 0.85f : 0.95f);
+        uint32_t bcol = ui_color_opacity(drop.has_bg_color ? drop.bg_color
+                                                          : tab_active_bg, 0.8f);
         if (!ui_scene_rounded_rect(scene, r, radius, bg) ||
-            !ui_scene_rect_stroke(scene, r, ui_ctx_px(tb_ctx(tb), 1), bcol))
+            !ui_scene_rect_stroke(scene, r, l.stroke_w, bcol))
             return false;
 
         const char *label = tabs[drag_idx].text && tabs[drag_idx].text[0]
                             ? tabs[drag_idx].text : "shell";
-        struct rect2i close = tb_close_box(r, t->close_side, t->close_side_h, t->close_pad);
-        int text_x = r.x + t->tab_pad;
-        int avail = close.x - ui_ctx_px(tb_ctx(tb), 4) - text_x;
+        struct rect2i close_box = tb_close_box(r, l.close_w, l.close_h,
+                                               l.close_pad);
+        int text_x = r.x + l.tab_pad;
+        int avail = close_box.x - l.close_gap - text_x;
         int cap = advance > 0 && avail > 0 ? avail / advance : 0;
         if (!tb_title(scene,
                       (struct vector2i){ .x = text_x,
                                          .y = r.y + (r.height - text_h) / 2 },
-                      advance, text_h, t->active_text_color, true, label, cap))
+                      advance, text_h, tb_text_color(tb, &active), true, label,
+                      cap))
             return false;
 
         struct ui_text_style m_style = {
@@ -504,11 +582,11 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
             .flags = UI_TEXT_PLAIN,
         };
         struct rect2i mr = {
-            .pos = { .x = close.x + (close.width - advance) / 2,
-                     .y = close.y + (close.height - text_h) / 2 },
+            .pos = { .x = close_box.x + (close_box.width - advance) / 2,
+                     .y = close_box.y + (close_box.height - text_h) / 2 },
             .size = { .x = advance, .y = text_h },
         };
-        if (!ui_scene_text_run(scene, mr, m_style, t->close_hover_color,
+        if (!ui_scene_text_run(scene, mr, m_style, tb_text_color(tb, &close_h),
                                TB_CLOSE_MARK, sizeof(TB_CLOSE_MARK) - 1) ||
             !ui_scene_end_scope(scene))
             return false;
@@ -517,7 +595,7 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
     if (!ui_scene_rect(scene, (struct rect2i){
             .pos = { .x = 0, .y = l.height - 1 },
             .size = { .x = size.x, .y = 1 } },
-            t->border_color))
+            bar.has_border_color ? bar.border_color : bar_bg))
         return false;
 
     if (bar_clip && !ui_scene_pop_clip(scene))

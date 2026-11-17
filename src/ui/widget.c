@@ -267,6 +267,28 @@ void ui_widget_set_placement(struct ui_widget *widget,
                          UI_WIDGET_INVALIDATE_LAYOUT);
 }
 
+struct ui_placement ui_widget_placement(const struct ui_widget *widget)
+{
+    return widget ? widget->impl.placement : (struct ui_placement){0};
+}
+
+bool ui_widget_needs_layout(const struct ui_widget *widget)
+{
+    unsigned dirty = UI_WIDGET_INVALIDATE_MEASURE |
+                     UI_WIDGET_INVALIDATE_LAYOUT;
+    return widget && (widget->impl.invalidation & dirty);
+}
+
+bool ui_widget_is_style_current(const struct ui_widget *widget)
+{
+    if (!widget || !widget->impl.style_valid)
+        return false;
+    const struct ui_surface *surface = widget->impl.surface;
+    return !surface ||
+           widget->impl.style_generation ==
+               ui_style_context_generation(&surface->impl.style);
+}
+
 void ui_widget_set_fixed_size(struct ui_widget *widget, struct vector2i size)
 {
     if (!widget)

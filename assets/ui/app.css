@@ -3,13 +3,13 @@
    the tab preview, the settings screen, and the terminal drop target. */
 
 .tab-bar { height: 2.2em; flex-direction: row; align-items: center; padding: 0.25em 0.5em; gap: 0.4em; }
-.tab { height: 1.6em; background: var(--tab-bg); color: var(--tab-fg); border-radius: var(--tab-radius); padding: 0 0.8em; flex-direction: row; align-items: center; gap: 0.5em; cursor: pointer; }
+.tab { height: 1.6em; background: var(--tab-bg); color: var(--tab-fg); border-radius: var(--tab-radius); padding: 0 0.8em; flex-direction: row; align-items: center; gap: 0.5em; cursor: pointer; ripple: #ffffff30; transition-duration: 300ms; }
 .tab:hover { background: var(--tab-hover-bg); color: var(--tab-hover-fg); }
 .tab:focus { border-color: var(--accent); border-width: 2px; }
 .tab.active { background: var(--tab-active-bg); color: var(--tab-active-fg); }
-.tab.drop-preview { background: var(--accent); opacity: 0.45; box-shadow: 0 2px 5px #00000066; }
+.tab.drop-preview { background: var(--accent); opacity: 0.45; border-width: 1px; box-shadow: 0 2px 5px #00000066; }
 .tab-title { cursor: pointer; }
-.tab-close { width: 1em; height: 1em; color: var(--tab-close-fg); border-radius: var(--tab-close-radius); cursor: pointer; }
+.tab-close { width: 1em; height: 1em; color: var(--tab-close-fg); border-radius: var(--tab-close-radius); padding: 0 4px; margin: 0 0 0 4px; cursor: pointer; }
 .tab-close:hover { background: var(--danger); color: var(--danger-fg); }
 .tab-new { color: var(--tab-fg); border-radius: var(--tab-radius); padding: 0 0.4em; cursor: pointer; }
 .tab-new:hover { background: var(--tab-hover-bg); color: var(--tab-hover-fg); }

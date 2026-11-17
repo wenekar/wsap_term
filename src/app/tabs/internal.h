@@ -2,9 +2,9 @@
 #define APP_TABS_INTERNAL_H
 
 #include "app/tabs/tabs.h"
-#include "ui/widgets/palette.h"
-#include "ui/widgets/tab_preview.h"
-#include "ui/widgets/tabbar.h"
+#include "app/tabs/palette.h"
+#include "app/tabs/tab_preview.h"
+#include "app/tabs/tabbar.h"
 #include "ui/widget_impl.h"
 #include "ui/yasl/client.h"
 #include "ui/yasl/window.h"

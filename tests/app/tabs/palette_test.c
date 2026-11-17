@@ -5,6 +5,7 @@
 #include "ui/debug.h"
 #include "paint/scene.h"
 #include "ui/ui.h"
+#include "app/tabs/palette.h"
 
 static const struct ui_palette_cmd CMDS[] = {
     { .label = "New Tab", .shortcut = "Ctrl+Shift+T", .action = 1 },
@@ -320,10 +321,14 @@ static void query_lines_up_with_labels_test(void)
     teardown(&f);
 }
 
-static void fallback_opacity_test(void)
+/* The panel colors come from the sheet, and the palette opacity scales
+ * them. */
+static void sheet_colors_follow_opacity_test(void)
 {
     struct css_sheet sheet = { .has_defaults = true };
-    assert(css_parse(&sheet, ".command-palette { opacity: 0.5; }"));
+    assert(css_parse(&sheet,
+        ".command-palette { opacity: 0.5; background: #1e1e2e;"
+        " border-color: #45475a; }"));
     struct fixture f;
     setup(&f, &sheet, (struct css_scale_context){
         .dpi_scale = 1, .cell_w = 8, .cell_h = 16,
@@ -448,7 +453,7 @@ int main(void)
     follows_parent_resize_test();
     themed_scaled_and_empty_query_test();
     query_lines_up_with_labels_test();
-    fallback_opacity_test();
+    sheet_colors_follow_opacity_test();
     puts("PASS: palette tests");
     return 0;
 }

@@ -1,5 +1,5 @@
-#ifndef WSAP_UI_WIDGETS_TABBAR_H
-#define WSAP_UI_WIDGETS_TABBAR_H
+#ifndef WSAP_APP_TABS_TABBAR_H
+#define WSAP_APP_TABS_TABBAR_H
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -9,14 +9,25 @@
 #include "ui/widget.h"
 #include "util/geom.h"
 
-#define UI_TABBAR_HEIGHT_DP      28
-#define UI_TABBAR_PAD_DP         10
 #define UI_TABBAR_ANIM_DURATION_MS 150
 #define UI_TABBAR_RESIZE_ANIM_MS   200
 #define UI_TABBAR_SLIDE_ANIM_MS    250
+/* The width of the right edge fade. It has no CSS property. */
 #define UI_TABBAR_FADE_DP          32
 
 #define UI_TABBAR_NEW_TAB (-2)
+
+/* The action kinds that the tab bar sends. They start at UI_ACTION_USER so
+ * that they stay out of the core enum. */
+enum ui_tab_action_kind {
+    UI_TAB_ACTION_MOVE = UI_ACTION_USER,
+    UI_TAB_ACTION_DRAG,
+    UI_TAB_ACTION_TEAR_OFF,
+};
+
+/* A core kind must stay below the tab kinds. */
+_Static_assert((int)UI_TAB_ACTION_MOVE >= (int)UI_ACTION_USER,
+               "a tab action kind collides with a core action kind");
 
 enum ui_tab_drag_state : uint8_t {
     UI_TAB_DRAG_NONE = 0,
@@ -68,7 +79,7 @@ struct ui_tabbar {
         enum ui_tab_drag_state drag_state;
         bool hover_new;
         bool external_drag;
-    } impl;
+    } state;
 };
 
 /* Initializes tab bar widget `tb`. */

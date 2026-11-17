@@ -143,8 +143,25 @@ bool ui_widget_is_hidden(const struct ui_widget *widget);
 /* Sets the placement descriptor of `widget`. */
 void ui_widget_set_placement(struct ui_widget *widget,
                              struct ui_placement placement);
+/* Returns the placement descriptor of `widget`. */
+struct ui_placement ui_widget_placement(const struct ui_widget *widget);
 /* Sets an explicit fixed layout size for `widget`. */
 void ui_widget_set_fixed_size(struct ui_widget *widget, struct vector2i size);
+
+/* Sets whether `widget` modal mode restricts input outside its subtree. */
+void ui_widget_set_modal(struct ui_widget *widget, bool modal);
+/* Sets whether `widget` passes pointer events through to the widgets
+ * underneath it. */
+void ui_widget_set_pointer_transparent(struct ui_widget *widget,
+                                       bool transparent);
+/* Returns true when `widget` or a descendant of it needs a measure or a
+ * layout pass. */
+bool ui_widget_needs_layout(const struct ui_widget *widget);
+/* Returns true when the style of `widget` is resolved and still matches the
+ * current sheet of its surface. A widget outside a surface needs no sheet
+ * match, so it is current once resolved. A false result means that the
+ * surface resolves the style again. */
+bool ui_widget_is_style_current(const struct ui_widget *widget);
 
 /* Registers action callback `fn` and `userdata` for `widget`. */
 void ui_widget_set_action_handler(struct ui_widget *widget, ui_action_fn fn,

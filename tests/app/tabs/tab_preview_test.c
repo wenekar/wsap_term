@@ -6,6 +6,7 @@
 #include "paint/scene.h"
 #include "ui/ui.h"
 #include "ui/widget_impl.h"
+#include "app/tabs/tab_preview.h"
 #include "util/json.h"
 
 static uint32_t pixels[400 * 300];

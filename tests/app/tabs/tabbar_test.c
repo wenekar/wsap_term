@@ -9,6 +9,7 @@
 #include "paint/scene.h"
 #include "ui/ui.h"
 #include "ui/widget_impl.h"
+#include "app/tabs/tabbar.h"
 #include <wsap_vtcore/unicode/utf8.h>
 
 #ifdef __APPLE__
@@ -73,7 +74,7 @@ static bool on_action(struct ui_widget *source, const struct ui_action *action,
     struct fixture *f = userdata;
     if (f->n_log < MAX_ACTIONS)
         f->log[f->n_log++] = *action;
-    if (action->kind == UI_ACTION_TEAR_OFF)
+    if ((int)action->kind == (int)UI_TAB_ACTION_TEAR_OFF)
         return f->take_tear_off;
     return true;
 }
@@ -183,20 +184,19 @@ static void clear_log(struct fixture *f)
     f->n_log = 0;
 }
 
-static int count(const struct fixture *f, enum ui_action_kind kind)
+static int count(const struct fixture *f, int kind)
 {
     int n = 0;
     for (int i = 0; i < f->n_log; i++)
-        if (f->log[i].kind == kind)
+        if ((int)f->log[i].kind == kind)
             n++;
     return n;
 }
 
-static const struct ui_action *last(const struct fixture *f,
-                                    enum ui_action_kind kind)
+static const struct ui_action *last(const struct fixture *f, int kind)
 {
     for (int i = f->n_log - 1; i >= 0; i--)
-        if (f->log[i].kind == kind)
+        if ((int)f->log[i].kind == kind)
             return &f->log[i];
     return NULL;
 }
@@ -619,7 +619,7 @@ static void restyled_bar_repaints_test(void)
 
     struct css_sheet sheet = {0};
     assert(css_parse(&sheet,
-        ".tab-bar { background: #204060; }"
+        ".tab-bar { height: 24px; background: #204060; }"
         ".tab { background: #304050; }"));
     ui_surface_set_sheet(&f.surface, &sheet);
     ui_surface_prepare(&f.surface);
@@ -650,8 +650,10 @@ static void bg_color_requests_frame_test(void)
 static void sheet_swap_relayouts_bar_test(void)
 {
     struct css_sheet tall = {0}, high = {0};
-    assert(css_parse(&tall, ".tab-bar { height: 24px; } .tab { height: 100px; }"));
-    assert(css_parse(&high, ".tab-bar { height: 40px; } .tab { height: 100px; }"));
+    assert(css_parse(&tall,
+        ".tab-bar { height: 24px; padding: 4px; } .tab { height: 100px; }"));
+    assert(css_parse(&high,
+        ".tab-bar { height: 40px; padding: 4px; } .tab { height: 100px; }"));
     struct fixture f;
     setup_with(&f, &tall, (struct vector2i){ .x = 400, .y = 300 },
                (struct vector2i){0});
@@ -790,13 +792,13 @@ static void tabbar_drag_sort_detach_attach_test(void)
     assert(count(&f, UI_ACTION_ACTIVATE) == 1);
     motion(&f, at(r0, 12, 6), 60);
     assert(!ui_tabbar_is_dragging(&f.tb));
-    assert(count(&f, UI_ACTION_DRAG) == 0);
+    assert(count(&f, UI_TAB_ACTION_DRAG) == 0);
 
     motion(&f, at(r1, 10, 5), 70);
     assert(ui_tabbar_is_dragging(&f.tb));
-    const struct ui_action *drag = last(&f, UI_ACTION_DRAG);
+    const struct ui_action *drag = last(&f, UI_TAB_ACTION_DRAG);
     assert(drag && drag->id == UI_TAB_DRAG_REORDER && drag->index == 0);
-    assert(count(&f, UI_ACTION_TEAR_OFF) == 0);
+    assert(count(&f, UI_TAB_ACTION_TEAR_OFF) == 0);
 
     assert(tick(&f, 100));
     const struct ui_scene *scene = build(&f);
@@ -811,8 +813,8 @@ static void tabbar_drag_sort_detach_attach_test(void)
     assert(displaced);
 
     release(&f, at(r1, 10, 5), 120);
-    const struct ui_action *move = last(&f, UI_ACTION_MOVE);
-    assert(move && move->index == 0 && move->to == 1);
+    const struct ui_action *move = last(&f, UI_TAB_ACTION_MOVE);
+    assert(move && move->index == 0 && move->arg == 1);
     assert(!ui_tabbar_is_dragging(&f.tb));
     assert(ui_surface_captured(&f.surface) == NULL);
 
@@ -820,11 +822,11 @@ static void tabbar_drag_sort_detach_attach_test(void)
     press(&f, at(r1, 10, 5), 0, 200);
     motion(&f, (struct vector2i){ .x = r1.x + 10, .y = 100 }, 210);
     assert(ui_tabbar_is_dragging(&f.tb));
-    assert(last(&f, UI_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
-    assert(last(&f, UI_ACTION_TEAR_OFF)->index == 1);
+    assert(last(&f, UI_TAB_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
+    assert(last(&f, UI_TAB_ACTION_TEAR_OFF)->index == 1);
     release(&f, (struct vector2i){ .x = r1.x + 10, .y = 100 }, 220);
-    move = last(&f, UI_ACTION_MOVE);
-    assert(move && move->index == 1 && move->to == -1);
+    move = last(&f, UI_TAB_ACTION_MOVE);
+    assert(move && move->index == 1 && move->arg == -1);
 
     ui_tabbar_set_external_drag(&f.tb, true,
         (struct vector2i){ .x = r1.x + 10, .y = 10 });
@@ -840,6 +842,35 @@ static void tabbar_drag_sort_detach_attach_test(void)
     teardown(&f);
 }
 
+/* A tab drag reports kinds that the core action enum does not define, so no
+ * core handler can take them for its own. */
+static void tab_actions_stay_out_of_the_core_kinds(void)
+{
+    struct fixture f;
+    setup(&f, 3, 400);
+    show(&f, 3, 1);
+    struct rect2i r0 = tab_rect(&f, 0), r1 = tab_rect(&f, 1);
+
+    press(&f, at(r0, 10, 5), 0, 50);
+    motion(&f, at(r1, 10, 5), 60);
+    motion(&f, (struct vector2i){ .x = r1.x + 10, .y = 100 }, 70);
+    assert(count(&f, UI_TAB_ACTION_DRAG) > 0);
+    assert(count(&f, UI_TAB_ACTION_TEAR_OFF) > 0);
+
+    for (int i = 0; i < f.n_log; i++) {
+        int kind = (int)f.log[i].kind;
+        assert(kind < UI_ACTION_USER || kind >= UI_TAB_ACTION_MOVE);
+        if (kind < UI_ACTION_USER) {
+            assert(kind == UI_ACTION_ACTIVATE || kind == UI_ACTION_CHANGE ||
+                   kind == UI_ACTION_HIGHLIGHT || kind == UI_ACTION_CLOSE ||
+                   kind == UI_ACTION_MENU || kind == UI_ACTION_NONE);
+        }
+    }
+    assert((int)UI_TAB_ACTION_DRAG != (int)UI_ACTION_MENU);
+    release(&f, (struct vector2i){ .x = r1.x + 10, .y = 100 }, 80);
+    teardown(&f);
+}
+
 static void sideways_exit_detaches_test(void)
 {
     struct fixture f;
@@ -850,13 +881,13 @@ static void sideways_exit_detaches_test(void)
     press(&f, grab, 0, 1000);
 
     motion(&f, (struct vector2i){ .x = 595, .y = grab.y }, 1010);
-    assert(last(&f, UI_ACTION_DRAG)->id == UI_TAB_DRAG_REORDER);
+    assert(last(&f, UI_TAB_ACTION_DRAG)->id == UI_TAB_DRAG_REORDER);
     motion(&f, (struct vector2i){ .x = 640, .y = grab.y }, 1020);
-    assert(last(&f, UI_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
+    assert(last(&f, UI_TAB_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
     motion(&f, (struct vector2i){ .x = 595, .y = grab.y }, 1030);
-    assert(last(&f, UI_ACTION_DRAG)->id == UI_TAB_DRAG_REORDER);
+    assert(last(&f, UI_TAB_ACTION_DRAG)->id == UI_TAB_DRAG_REORDER);
     motion(&f, (struct vector2i){ .x = -40, .y = grab.y }, 1040);
-    assert(last(&f, UI_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
+    assert(last(&f, UI_TAB_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
     ui_surface_cancel_capture(&f.surface);
     teardown(&f);
 }
@@ -1003,6 +1034,7 @@ static void drag_image_card_follows_the_sheet_test(void)
 {
     struct css_sheet sheet = {0};
     assert(css_parse(&sheet,
+        ".tab-bar { height: 24px; padding: 4px; }"
         ".tab-preview { background: #7f849c; border-radius: 3px; "
         "padding: 2px; gap: 3px; box-shadow: 0 1px 2px #000000ff; }"));
     struct fixture f;
@@ -1046,7 +1078,7 @@ static void detaching_tab_still_has_drag_image_test(void)
     struct rect2i r1 = tab_rect(&f, 1);
     press(&f, at(r1, 5, 5), 0, 1000);
     motion(&f, (struct vector2i){ .x = 500, .y = 400 }, 1010);
-    assert(last(&f, UI_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
+    assert(last(&f, UI_TAB_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
 
     struct ui_scene scene = {0};
     struct vector2i image, hotspot;
@@ -1074,7 +1106,7 @@ static void detach_drag_chip_bounds_test(void)
 
     press(&f, at(r1, 10, 5), 0, 50);
     motion(&f, (struct vector2i){ .x = 500, .y = 400 }, 60);
-    assert(last(&f, UI_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
+    assert(last(&f, UI_TAB_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
     tick(&f, 100);
 
     const struct ui_scene *scene = build(&f);
@@ -1394,7 +1426,9 @@ static void separators_hide_next_to_hot_tabs(void)
 {
     const uint32_t sep = 0xFF123456u;
     struct css_sheet sheet = {0};
-    assert(css_parse(&sheet, ".tab-separator { color: #123456; }"));
+    assert(css_parse(&sheet,
+        ".tab-bar { height: 24px; padding: 4px; gap: 4px; }"
+        ".tab-separator { color: #123456; }"));
     struct fixture f;
     setup_with(&f, &sheet, (struct vector2i){ .x = 600, .y = 100 },
                (struct vector2i){0});
@@ -1424,7 +1458,7 @@ static void neighbor_slide_eases_on_drag(void)
 
     press(&f, at(r0, 10, 5), 0, 1000);
     motion(&f, at(r2, 10, 5), 1001);
-    assert(last(&f, UI_ACTION_DRAG)->id == UI_TAB_DRAG_REORDER);
+    assert(last(&f, UI_TAB_ACTION_DRAG)->id == UI_TAB_DRAG_REORDER);
 
     assert(tick(&f, 1050));
     struct rect2i mid = tab_rect(&f, 1);
@@ -1441,8 +1475,8 @@ static void neighbor_slide_eases_on_drag(void)
     assert(near(tab_rect(&f, 1).x, r0.x));
 
     release(&f, at(r2, 10, 5), 2200);
-    const struct ui_action *move = last(&f, UI_ACTION_MOVE);
-    assert(move && move->index == 0 && move->to == 2);
+    const struct ui_action *move = last(&f, UI_TAB_ACTION_MOVE);
+    assert(move && move->index == 0 && move->arg == 2);
     teardown(&f);
 }
 
@@ -1606,7 +1640,7 @@ static void removal_cancels_active_drag_test(void)
     assert(!ui_tabbar_is_dragging(&f.tb));
     assert(ui_surface_captured(&f.surface) == NULL);
     release(&f, at(tab_rect(&f, 0), 5, 5), 1016);
-    assert(count(&f, UI_ACTION_MOVE) == 0);
+    assert(count(&f, UI_TAB_ACTION_MOVE) == 0);
     teardown(&f);
 }
 
@@ -1621,9 +1655,9 @@ static void motion_while_captured_reports_detach_test(void)
     struct vector2i far = { .x = 500, .y = 900 };
     motion(&f, far, 1010);
     assert(ui_tabbar_is_dragging(&f.tb));
-    const struct ui_action *tear = last(&f, UI_ACTION_TEAR_OFF);
+    const struct ui_action *tear = last(&f, UI_TAB_ACTION_TEAR_OFF);
     assert(tear && tear->index == 1);
-    const struct ui_action *drag = last(&f, UI_ACTION_DRAG);
+    const struct ui_action *drag = last(&f, UI_TAB_ACTION_DRAG);
     assert(drag && drag->index == 1 && drag->id == UI_TAB_DRAG_DETACH);
     assert(vector2i_eq(drag->pos, far));
     assert(ui_surface_captured(&f.surface) == bar(&f));
@@ -1637,10 +1671,10 @@ static void motion_reorder_reports_drag_test(void)
     press(&f, at(tab_rect(&f, 0), 5, 5), 0, 1000);
     struct vector2i to = at(tab_rect(&f, 1), 5, 5);
     motion(&f, to, 1010);
-    const struct ui_action *drag = last(&f, UI_ACTION_DRAG);
+    const struct ui_action *drag = last(&f, UI_TAB_ACTION_DRAG);
     assert(drag && drag->index == 0 && drag->id == UI_TAB_DRAG_REORDER);
     assert(vector2i_eq(drag->pos, to));
-    assert(count(&f, UI_ACTION_TEAR_OFF) == 0);
+    assert(count(&f, UI_TAB_ACTION_TEAR_OFF) == 0);
     teardown(&f);
 }
 
@@ -1652,9 +1686,9 @@ static void release_reorder_commits_and_releases_test(void)
     struct vector2i to = at(tab_rect(&f, 1), 5, 5);
     motion(&f, to, 1010);
     release(&f, to, 1020);
-    assert(count(&f, UI_ACTION_MOVE) == 1);
-    const struct ui_action *move = last(&f, UI_ACTION_MOVE);
-    assert(move->index == 0 && move->to == 1);
+    assert(count(&f, UI_TAB_ACTION_MOVE) == 1);
+    const struct ui_action *move = last(&f, UI_TAB_ACTION_MOVE);
+    assert(move->index == 0 && move->arg == 1);
     assert(ui_surface_captured(&f.surface) == NULL);
     assert(!ui_tabbar_is_dragging(&f.tb));
     teardown(&f);
@@ -1669,9 +1703,9 @@ static void release_detach_commits_and_releases_test(void)
     struct vector2i far = { .x = 500, .y = 900 };
     motion(&f, far, 1010);
     release(&f, far, 1020);
-    assert(count(&f, UI_ACTION_MOVE) == 1);
-    const struct ui_action *move = last(&f, UI_ACTION_MOVE);
-    assert(move->index == 1 && move->to == -1);
+    assert(count(&f, UI_TAB_ACTION_MOVE) == 1);
+    const struct ui_action *move = last(&f, UI_TAB_ACTION_MOVE);
+    assert(move->index == 1 && move->arg == -1);
     assert(move->pos.x == 5);
     assert(ui_surface_captured(&f.surface) == NULL);
     teardown(&f);
@@ -1718,7 +1752,7 @@ static void release_without_movement_cancels_and_releases_test(void)
     press(&f, p, 0, 1000);
     assert(ui_surface_captured(&f.surface) == bar(&f));
     release(&f, p, 1016);
-    assert(count(&f, UI_ACTION_MOVE) == 0 && count(&f, UI_ACTION_DRAG) == 0);
+    assert(count(&f, UI_TAB_ACTION_MOVE) == 0 && count(&f, UI_TAB_ACTION_DRAG) == 0);
     assert(ui_surface_captured(&f.surface) == NULL);
     teardown(&f);
 }
@@ -1734,16 +1768,16 @@ static void taken_tear_off_ends_the_gesture_test(void)
 
     struct vector2i far = { .x = 200, .y = 250 };
     motion(&f, far, 1010);
-    assert(count(&f, UI_ACTION_TEAR_OFF) == 1);
-    assert(count(&f, UI_ACTION_DRAG) == 0);
+    assert(count(&f, UI_TAB_ACTION_TEAR_OFF) == 1);
+    assert(count(&f, UI_TAB_ACTION_DRAG) == 0);
     assert(!ui_tabbar_is_dragging(&f.tb));
     assert(ui_surface_captured(&f.surface) == NULL);
 
     motion(&f, (struct vector2i){ .x = 210, .y = 260 }, 1020);
     release(&f, far, 1030);
-    assert(count(&f, UI_ACTION_MOVE) == 0);
-    assert(count(&f, UI_ACTION_DRAG) == 0);
-    assert(count(&f, UI_ACTION_TEAR_OFF) == 1);
+    assert(count(&f, UI_TAB_ACTION_MOVE) == 0);
+    assert(count(&f, UI_TAB_ACTION_DRAG) == 0);
+    assert(count(&f, UI_TAB_ACTION_TEAR_OFF) == 1);
 
     clear_log(&f);
     press(&f, at(r0, 5, 5), 0, 1100);
@@ -1751,7 +1785,7 @@ static void taken_tear_off_ends_the_gesture_test(void)
            f.log[0].index == 0);
     assert(ui_surface_captured(&f.surface) == bar(&f));
     release(&f, at(r0, 5, 5), 1116);
-    assert(count(&f, UI_ACTION_MOVE) == 0);
+    assert(count(&f, UI_TAB_ACTION_MOVE) == 0);
     teardown(&f);
 }
 
@@ -1765,7 +1799,7 @@ static void capture_lost_cancels_the_drag_once_test(void)
     clear_log(&f);
 
     ui_surface_cancel_capture(&f.surface);
-    assert(f.n_log == 1 && f.log[0].kind == UI_ACTION_DRAG &&
+    assert(f.n_log == 1 && (int)f.log[0].kind == (int)UI_TAB_ACTION_DRAG &&
            f.log[0].id == UI_TAB_DRAG_NONE && f.log[0].index == 0);
     assert(!ui_tabbar_is_dragging(&f.tb));
     ui_surface_cancel_capture(&f.surface);
@@ -1869,6 +1903,7 @@ static void press_ripple_ticks_until_done_and_uses_css(void)
 {
     struct css_sheet sheet = {0};
     assert(css_parse(&sheet,
+        ".tab-bar { height: 24px; padding: 4px; gap: 4px; }"
         ".tab { ripple-color: #11223344; transition-duration: 200ms; }"));
     struct fixture f;
     setup_with(&f, &sheet, (struct vector2i){ .x = 400, .y = 100 },
@@ -1895,7 +1930,9 @@ static void press_ripple_ticks_until_done_and_uses_css(void)
 static void transparent_ripple_color_disables_ripple(void)
 {
     struct css_sheet sheet = {0};
-    assert(css_parse(&sheet, ".tab { ripple-color: #00000000; }"));
+    assert(css_parse(&sheet,
+        ".tab-bar { height: 24px; padding: 4px; gap: 4px; }"
+        ".tab { ripple-color: #00000000; }"));
     struct fixture f;
     setup_with(&f, &sheet, (struct vector2i){ .x = 400, .y = 100 },
                (struct vector2i){0});
@@ -2066,6 +2103,7 @@ int main(void)
     last_tab_claims_trailing_space();
     text_runs_stay_on_codepoint_boundaries();
     tabbar_drag_sort_detach_attach_test();
+    tab_actions_stay_out_of_the_core_kinds();
     sideways_exit_detaches_test();
     external_drag_reveals_single_tab_target_test();
     incoming_tab_has_translucent_drop_preview();

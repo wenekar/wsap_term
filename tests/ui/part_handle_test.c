@@ -13,7 +13,6 @@
 #include "ui/widgets/label.h"
 #include "ui/widgets/list.h"
 #include "ui/widgets/scrollview.h"
-#include "ui/widgets/tabbar.h"
 
 static const char SHEET_A[] =
     ".tab { background: #111111; color: #222222; }"
@@ -130,14 +129,14 @@ static void cache_matches_string_api_test(void)
     ui_surface_set_sheet(&surface, &sheet_a);
 
     struct ui_box root = {0};
-    struct ui_tabbar tabbar = {0};
+    struct ui_box tabbar = {0};
     struct ui_list list = {0};
     struct ui_label label = {0};
     struct ui_input input = {0};
     struct ui_scrollview scrollview = {0};
     ui_box_init(&root);
     ui_widget_set_style_identity(&root.widget, "panel", NULL, "panel");
-    ui_tabbar_init(&tabbar);
+    ui_box_init(&tabbar);
     ui_widget_set_style_identity(&tabbar.widget, "tab-bar", NULL, "tab-bar");
     ui_list_init(&list);
     ui_label_init(&label);

@@ -7,7 +7,7 @@
 #include "terminal/terminal.h"
 #include "ui/surface.h"
 #include "ui/ui_util.h"
-#include "ui/widgets/tab_preview.h"
+#include "app/tabs/tab_preview.h"
 
 enum { THUMB_MIN_DP = 24 };
 

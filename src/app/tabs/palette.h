@@ -1,5 +1,5 @@
-#ifndef WSAP_UI_WIDGETS_PALETTE_H
-#define WSAP_UI_WIDGETS_PALETTE_H
+#ifndef WSAP_APP_TABS_PALETTE_H
+#define WSAP_APP_TABS_PALETTE_H
 
 #include <stdbool.h>
 
@@ -26,7 +26,7 @@ struct ui_palette {
         int n_cmds;
         int max_rows;
         bool stale;
-    } impl;
+    } state;
 };
 
 /* Initializes command palette widget `p`. */
