@@ -52,12 +52,45 @@ const struct window_debug_hooks *dbg_hooks(void)
     return &hooks;
 }
 
+static void client_ready(void *ud, int fd, short revents);
+
+/* Returns the number of reply bytes that wait to be sent. */
+static size_t client_unsent(const struct dbg_client *c)
+{
+    return c->out_len - c->out_off;
+}
+
+/* Sets the poll events of a client from its state. The client wants input
+ * until its input ends. It wants output while bytes wait. A client that wants
+ * neither has no watch. Poll would keep reporting its hangup. */
+static void client_watch_sync(struct dbg_client *c)
+{
+    if (c->fd < 0 || c->dead)
+        return;
+    short events = (c->read_closed ? 0 : POLLIN) | (client_unsent(c) ? POLLOUT : 0);
+    if (!events) {
+        if (c->watch > 0)
+            yasl_loop_del_fd(srv.loop, c->watch);
+        c->watch = 0;
+    } else if (c->watch > 0) {
+        yasl_loop_set_fd_events(srv.loop, c->watch, events);
+    } else {
+        c->watch = yasl_loop_add_fd(srv.loop, c->fd, events, client_ready, c);
+        if (c->watch < 0) {
+            c->watch = 0;
+            c->dead = true;
+        }
+    }
+}
+
+/* Sends queued output until the socket is full or the client dies. Call it
+ * after queuing output and on POLLOUT. */
 static void client_flush(struct dbg_client *c)
 {
     if (c->fd < 0)
         return;
-    while (c->out_len && !c->dead) {
-        ssize_t n = send(c->fd, c->out, c->out_len, MSG_NOSIGNAL);
+    while (client_unsent(c) && !c->dead) {
+        ssize_t n = send(c->fd, c->out + c->out_off, client_unsent(c), MSG_NOSIGNAL);
         if (n < 0) {
             if (errno == EINTR)
                 continue;
@@ -65,17 +98,25 @@ static void client_flush(struct dbg_client *c)
                 c->dead = true;
             break;
         }
-        memmove(c->out, c->out + n, c->out_len - (size_t)n);
-        c->out_len -= (size_t)n;
+        c->out_off += (size_t)n;
     }
-    if (!c->dead && c->watch >= 0)
-        yasl_loop_set_fd_events(srv.loop, c->watch, POLLIN | (c->out_len ? POLLOUT : 0));
+    if (!client_unsent(c))
+        c->out_off = c->out_len = 0;
+    client_watch_sync(c);
 }
 
 static void client_send(struct dbg_client *c, const char *data, size_t len)
 {
     if (!c || c->dead)
         return;
+    /* Moves the waiting bytes to the front when the sent prefix fills half
+     * the buffer. A move copies no more bytes than it frees, so the copies
+     * stay linear in the size of the reply. */
+    if (c->out_off && c->out_off >= c->out_cap / 2) {
+        memmove(c->out, c->out + c->out_off, client_unsent(c));
+        c->out_len -= c->out_off;
+        c->out_off = 0;
+    }
     if (c->out_len + len + 1 > c->out_cap) {
         size_t cap = c->out_cap ? c->out_cap : 4096;
         while (cap < c->out_len + len + 1)
@@ -132,13 +173,21 @@ void dbg_reply_err(struct dbg_client *c, const char *msg)
 }
 
 static void client_process(struct dbg_client *c);
+static void client_update(struct dbg_client *c);
 
+/* Runs the buffered commands of each client, then closes or syncs it. It
+ * saves the next pointer first, because a close frees the client. */
 static uint64_t resume_clients(void *ud, uint64_t id, uint64_t interval_ns)
 {
     (void)ud; (void)id; (void)interval_ns;
     srv.resume_timer = 0;
-    for (struct dbg_client *c = srv.clients; c; c = c->next)
+    struct dbg_client *c = srv.clients;
+    while (c) {
+        struct dbg_client *next = c->next;
         client_process(c);
+        client_update(c);
+        c = next;
+    }
     return 0;
 }
 
@@ -278,12 +327,29 @@ static void client_close(struct dbg_client *c)
             break;
         }
     }
-    if (c->watch >= 0)
+    if (c->watch > 0)
         yasl_loop_del_fd(srv.loop, c->watch);
     close(c->fd);
     free(c->out);
     free(c->in);
     free(c);
+}
+
+/* Tells whether a client can close. That is so when it is dead, or when its
+ * input ended and it owes no reply. */
+static bool client_done(const struct dbg_client *c)
+{
+    return c->dead || (c->read_closed && !c->waiting && client_unsent(c) == 0);
+}
+
+/* Closes a client that is done. Otherwise it syncs the poll events. Call it
+ * after each step that can change what the client needs. */
+static void client_update(struct dbg_client *c)
+{
+    if (client_done(c))
+        client_close(c);
+    else
+        client_watch_sync(c);
 }
 
 static void client_process(struct dbg_client *c)
@@ -312,6 +378,9 @@ static void client_process(struct dbg_client *c)
     }
 }
 
+/* Reads the input that the socket holds now and runs each complete line.
+ * Returns false on a read error. EOF sets read_closed and returns true, so
+ * the client keeps its replies. */
 static bool client_read(struct dbg_client *c)
 {
     for (;;) {
@@ -329,22 +398,29 @@ static bool client_read(struct dbg_client *c)
             client_process(c);
             continue;
         }
-        if (n < 0 && errno == EINTR)
+        if (n == 0) {
+            c->read_closed = true;
+            return true;
+        }
+        if (errno == EINTR)
             continue;
-        return n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK);
+        return errno == EAGAIN || errno == EWOULDBLOCK;
     }
 }
 
+/* Handles poll events. Output goes out on POLLOUT. Input is read until EOF.
+ * A poll error or a read error closes the client at once. */
 static void client_ready(void *ud, int fd, short revents)
 {
     (void)fd;
     struct dbg_client *c = ud;
+    if (revents & (POLLERR | POLLNVAL))
+        c->dead = true;
     if (revents & POLLOUT)
         client_flush(c);
-    if ((revents & (POLLIN | POLLHUP | POLLERR)) && !client_read(c))
+    if (!c->dead && !c->read_closed && (revents & (POLLIN | POLLHUP)) && !client_read(c))
         c->dead = true;
-    if (c->dead)
-        client_close(c);
+    client_update(c);
 }
 
 static bool peer_is_owner(int fd)
