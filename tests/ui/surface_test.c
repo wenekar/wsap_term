@@ -265,6 +265,8 @@ static void zero_size_retains_layout_test(void)
 
     struct ui_scene scene = {0};
     assert(ui_surface_build_scene(&surface, &scene));
+    /* A zero viewport keeps the layout pending. ui_widget_needs_layout() also
+     * covers measure, but the count above pins that measure already ran. */
     assert(ui_widget_needs_layout(&box.widget));
     assert(probe.measures == 1);
 
