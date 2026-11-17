@@ -48,6 +48,16 @@ static void queued_action_free(struct queued_action *action)
     free(action);
 }
 
+static void wake_owner_locked(struct window_accessibility *accessibility)
+{
+    if (accessibility->event_wr < 0)
+        return;
+    uint64_t wake = 1;
+    /* The owner closes this fd under the same mutex, so the write never reaches a closed fd. */
+    ssize_t ignored = write(accessibility->event_wr, &wake, sizeof(wake));
+    (void)ignored;
+}
+
 static void action_sink(void *userdata,
                         const struct ui_accessibility_action_request *request)
 {
@@ -55,18 +65,12 @@ static void action_sink(void *userdata,
     if (!accessibility || !request)
         return;
     if (!request->node_id && !request->action) {
-        int event_wr = -1;
         pthread_mutex_lock(&accessibility->mutex);
         if (accessibility->active) {
             accessibility->refresh = true;
-            event_wr = accessibility->event_wr;
+            wake_owner_locked(accessibility);
         }
         pthread_mutex_unlock(&accessibility->mutex);
-        if (event_wr >= 0) {
-            uint64_t wake = 1;
-            ssize_t ignored = write(event_wr, &wake, sizeof(wake));
-            (void)ignored;
-        }
         return;
     }
     if (!request->node_id || !request->action)
@@ -85,7 +89,6 @@ static void action_sink(void *userdata,
         action->request.value = action->value;
     }
 
-    int event_wr = -1;
     pthread_mutex_lock(&accessibility->mutex);
     if (!accessibility->active) {
         pthread_mutex_unlock(&accessibility->mutex);
@@ -97,14 +100,8 @@ static void action_sink(void *userdata,
     else
         accessibility->head = action;
     accessibility->tail = action;
-    event_wr = accessibility->event_wr;
+    wake_owner_locked(accessibility);
     pthread_mutex_unlock(&accessibility->mutex);
-
-    if (event_wr >= 0) {
-        uint64_t wake = 1;
-        ssize_t ignored = write(event_wr, &wake, sizeof(wake));
-        (void)ignored;
-    }
 }
 
 static void actions_ready(void *userdata, int fd, short revents)
@@ -164,17 +161,24 @@ static void accessibility_stop_instance(
         ui_accessibility_tree_clear(&accessibility->popups[i].tree);
     }
 
+    int event_watch = accessibility->event_watch;
+    accessibility->event_watch = -1;
+    if (event_watch >= 0)
+        yasl_loop_del_fd(window_host(accessibility->window)->loop, event_watch);
+
     pthread_mutex_lock(&accessibility->mutex);
     accessibility->active = false;
     struct queued_action *actions = accessibility->head;
     accessibility->head = NULL;
     accessibility->tail = NULL;
-    int event_watch = accessibility->event_watch;
     int event_fd = accessibility->event_fd;
     int event_wr = accessibility->event_wr;
-    accessibility->event_watch = -1;
     accessibility->event_fd = -1;
     accessibility->event_wr = -1;
+    if (event_fd >= 0)
+        close(event_fd);
+    if (event_wr >= 0 && event_wr != event_fd)
+        close(event_wr);
     pthread_mutex_unlock(&accessibility->mutex);
 
     while (actions) {
@@ -182,12 +186,6 @@ static void accessibility_stop_instance(
         queued_action_free(actions);
         actions = next;
     }
-    if (event_watch >= 0)
-        yasl_loop_del_fd(window_host(accessibility->window)->loop, event_watch);
-    if (event_fd >= 0)
-        close(event_fd);
-    if (event_wr >= 0 && event_wr != event_fd)
-        close(event_wr);
 }
 
 void window_accessibility_stop(struct window *window)
