@@ -325,7 +325,8 @@ struct yasl_event {
     unsigned action, mods; /**< mods: YASL_MOD_* for KEY, POINTER and SCROLL. */
     double x, y;
     const char *text; /**< NUL-terminated UTF-8 until the next wait or until
-                       * on_event returns, or NULL. */
+                       * on_event returns, or NULL. A DROP RELEASE can hold
+                       * binary bytes of drop.mime; use length. */
     size_t length;
     union {
         struct yasl_surface_info window;
