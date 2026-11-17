@@ -7,6 +7,8 @@
 #include "ui/accessibility.h"
 #include "ui/ui.h"
 
+#define FAMILY_EMOJI "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7"
+
 struct fixture {
     struct ui_surface surface;
     struct ui_input in;
@@ -81,6 +83,15 @@ static bool pointer(struct fixture *f, enum ui_pointer_kind kind, int x,
     struct ui_event e = ui_event_pointer((struct ui_pointer_event){
         .kind = kind, .pos = { .x = x, .y = 12 }, .button = button,
     }, 0);
+    return ui_surface_dispatch(&f->surface, &e);
+}
+
+static bool pointer_at_time(struct fixture *f, enum ui_pointer_kind kind, int x,
+                            uint64_t time)
+{
+    struct ui_event e = ui_event_pointer((struct ui_pointer_event){
+        .kind = kind, .pos = { .x = x, .y = 12 },
+    }, time);
     return ui_surface_dispatch(&f->surface, &e);
 }
 
@@ -493,6 +504,29 @@ static void pointer_test(void)
     pointer(&f, UI_POINTER_PRESS, inset + 10, 2);
     assert(ui_input_caret(&f.in) == caret);
     assert(f.menus == 1 && f.menu_at.x == inset + 10);
+    teardown(&f);
+}
+
+static void wide_cluster_click_test(void)
+{
+    struct fixture f;
+    setup_scaled(&f, FAMILY_EMOJI, (struct css_scale_context){
+        .dpi_scale = 1, .cell_w = 10, .cell_h = 20,
+    });
+    int inset = ui_input_text_inset(&f.in);
+    int end = (int)strlen(FAMILY_EMOJI);
+    bool saw_start = false, saw_end = false;
+    uint64_t time = 0;
+    for (int x = inset; x < inset + 100; x++) {
+        time += 1000;
+        assert(pointer_at_time(&f, UI_POINTER_PRESS, x, time));
+        assert(pointer_at_time(&f, UI_POINTER_RELEASE, x, time + 1));
+        int caret = ui_input_caret(&f.in);
+        assert(caret == 0 || caret == end);
+        saw_start |= caret == 0;
+        saw_end |= caret == end;
+    }
+    assert(saw_start && saw_end);
     teardown(&f);
 }
 
@@ -986,6 +1020,7 @@ int main(void)
     caret_shows_only_with_focus_test();
     part_colors_test();
     pointer_test();
+    wide_cluster_click_test();
     keys_for_the_parent_pass_through_test();
     attached_layout_is_stable_test();
     puts("PASS: input tests");

@@ -1,10 +1,27 @@
 #include "ui/text_break.h"
-#include "ui/text_edit.h"
+#include "paint/text_run.h"
 
 #include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
+
+static size_t gnext(const char *s, size_t len, size_t pos)
+{
+    return ui_text_move(s, len, pos, UI_EDIT_CHARACTER, false);
+}
+
+static size_t gprev(const char *s, size_t len, size_t pos)
+{
+    return ui_text_move(s, len, pos, UI_EDIT_CHARACTER, true);
+}
+
+/* Family ZWJ sequence: Man + ZWJ + Woman + ZWJ + Girl (18 bytes) */
+static const char family[] =
+    "\xF0\x9F\x91\xA8\xE2\x80\x8D"
+    "\xF0\x9F\x91\xA9\xE2\x80\x8D"
+    "\xF0\x9F\x91\xA7";
 
 struct span {
     size_t start;
@@ -49,20 +66,19 @@ static void check_graphemes(const char *s, const size_t *bounds, size_t n_bounds
     for (size_t i = 0; i < n_bounds; i++) {
         assert(list.items[i].start == prev_end);
         assert(list.items[i].end == bounds[i]);
-        assert(ui_text_break_grapheme_next(s, len, prev_end) == bounds[i]);
-        assert(ui_text_break_grapheme_prev(s, len, bounds[i]) == prev_end);
+        assert(gnext(s, len, prev_end) == bounds[i]);
+        assert(gprev(s, len, bounds[i]) == prev_end);
         for (size_t mid = prev_end + 1; mid < bounds[i]; mid++) {
-            assert(ui_text_break_grapheme_next(s, len, mid) == bounds[i]);
-            assert(ui_text_break_grapheme_prev(s, len, mid) == prev_end);
+            assert(gnext(s, len, mid) == bounds[i]);
+            assert(gprev(s, len, mid) == prev_end);
         }
         prev_end = bounds[i];
     }
     assert(prev_end == len);
-    assert(ui_text_break_grapheme_next(s, len, len) == len);
-    assert(ui_text_break_grapheme_next(s, len, len + 5) == len);
-    assert(ui_text_break_grapheme_prev(s, len, 0) == 0);
-    assert(ui_text_break_grapheme_prev(s, len, len + 5) ==
-           list.items[n_bounds - 1].start);
+    assert(gnext(s, len, len) == len);
+    assert(gnext(s, len, len + 5) == len);
+    assert(gprev(s, len, 0) == 0);
+    assert(gprev(s, len, len + 5) == list.items[n_bounds - 1].start);
 }
 
 static void check_words(const char *s, const struct span *expected, size_t n)
@@ -87,12 +103,12 @@ static void test_empty_and_null(void)
     ui_text_each_word("abc", 0, collect_word, &list);
     assert(list.count == 0);
 
-    assert(ui_text_break_grapheme_next(NULL, 0, 0) == 0);
-    assert(ui_text_break_grapheme_next("abc", 0, 2) == 0);
-    assert(ui_text_break_grapheme_prev(NULL, 0, 0) == 0);
-    assert(ui_text_break_grapheme_prev("abc", 0, 2) == 0);
-    assert(ui_text_edit_move(NULL, 0, 0, UI_EDIT_CHARACTER, false) == 0);
-    assert(ui_text_edit_move("abc", 0, 0, UI_EDIT_WORD, true) == 0);
+    assert(gnext(NULL, 0, 0) == 0);
+    assert(gnext("abc", 0, 2) == 0);
+    assert(gprev(NULL, 0, 0) == 0);
+    assert(gprev("abc", 0, 2) == 0);
+    assert(ui_text_move(NULL, 0, 0, UI_EDIT_CHARACTER, false) == 0);
+    assert(ui_text_move("abc", 0, 0, UI_EDIT_WORD, true) == 0);
 }
 
 static void test_grapheme_ascii_and_crlf(void)
@@ -126,11 +142,6 @@ static void test_grapheme_emoji_zwj_and_flags(void)
     check_graphemes("\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD!",
                     (const size_t[]){ 8, 9 }, 2);
 
-    /* Family ZWJ sequence: Man + ZWJ + Woman + ZWJ + Girl */
-    const char *family =
-        "\xF0\x9F\x91\xA8\xE2\x80\x8D"
-        "\xF0\x9F\x91\xA9\xE2\x80\x8D"
-        "\xF0\x9F\x91\xA7";
     check_graphemes(family, (const size_t[]){ 18 }, 1);
 
     /* ExtPict + Extend + ZWJ + ExtPict stays together */
@@ -239,8 +250,8 @@ static void test_invalid_utf8_and_early_stop(void)
     struct span_list g = {0};
     ui_text_each_grapheme(bad, sizeof(bad), collect_grapheme, &g);
     assert(g.count == 5);
-    assert(ui_text_break_grapheme_next(bad, sizeof(bad), 0) == 1);
-    assert(ui_text_break_grapheme_prev(bad, sizeof(bad), 5) == 4);
+    assert(gnext(bad, sizeof(bad), 0) == 1);
+    assert(gprev(bad, sizeof(bad), 5) == 4);
 
     struct span_list w = { .limit = 1 };
     ui_text_each_word("one two three", 13, collect_word, &w);
@@ -251,39 +262,145 @@ static void test_invalid_utf8_and_early_stop(void)
     assert(gl.count == 2 && gl.items[1].end == 2);
 }
 
-static void test_text_edit_move(void)
+static void test_cluster_next_and_fit(void)
+{
+    int cells = -1;
+
+    size_t next = ui_text_cluster_next("ab", 2, 0, &cells);
+    assert(next == 1 && cells == 1);
+
+    /* A combining mark stays with its base letter */
+    next = ui_text_cluster_next("e\xCC\x81x", 4, 0, &cells);
+    assert(next == 3 && cells == 1);
+
+    /* A ZWJ sequence is one cluster, with the width of its painted run */
+    next = ui_text_cluster_next(family, 18, 0, &cells);
+    assert(next == 18);
+    assert(cells == ui_text_run_cells(family, 18));
+
+    const char flag[] = "\xF0\x9F\x87\xAF\xF0\x9F\x87\xB5";
+    next = ui_text_cluster_next(flag, 8, 0, &cells);
+    assert(next == 8);
+
+    /* At or past the end, the result is len with zero cells */
+    next = ui_text_cluster_next("ab", 2, 2, &cells);
+    assert(next == 2 && cells == 0);
+    next = ui_text_cluster_next("ab", 2, 9, &cells);
+    assert(next == 2 && cells == 0);
+
+    assert(ui_text_fit("hello", 5, 3) == 3);
+    assert(ui_text_fit("hello", 5, 0) == 0);
+    assert(ui_text_fit("e\xCC\x81x", 4, 1) == 3);
+
+    /* A flag pair is kept whole: it fits at its width, not one cell less */
+    const char flag_a[] = "\xF0\x9F\x87\xAF\xF0\x9F\x87\xB5" "a";
+    int flag_w = ui_text_run_cells(flag, 8);
+    assert(ui_text_fit(flag_a, 9, flag_w - 1) == 0);
+    assert(ui_text_fit(flag_a, 9, flag_w) == 8);
+
+    /* A ZWJ sequence is never split */
+    assert(ui_text_fit(family, 18, ui_text_run_cells(family, 18) - 1) == 0);
+}
+
+static void test_offset_at_x(void)
+{
+    assert(ui_text_offset_at_x(NULL, 0, 0, 10) == 0);
+    assert(ui_text_offset_at_x("abc", 3, -5, 10) == 0);
+    assert(ui_text_offset_at_x("abc", 3, 4, 10) == 0);
+    assert(ui_text_offset_at_x("abc", 3, 5, 10) == 1);
+    assert(ui_text_offset_at_x("abc", 3, 14, 10) == 1);
+    assert(ui_text_offset_at_x("abc", 3, 15, 10) == 2);
+    assert(ui_text_offset_at_x("abc", 3, 1000, 10) == 3);
+
+    /* A wide cluster is never split: the result is its start or its end */
+    int w = ui_text_run_cells(family, 18);
+    int64_t half = ((int64_t)w * 10 + 1) / 2;
+    assert(ui_text_offset_at_x(family, 18, half - 1, 10) == 0);
+    assert(ui_text_offset_at_x(family, 18, half, 10) == 18);
+    for (int64_t x = -10; x <= (int64_t)w * 10 + 10; x++) {
+        size_t off = ui_text_offset_at_x(family, 18, x, 10);
+        assert(off == 0 || off == 18);
+    }
+}
+
+static void test_unit_range(void)
+{
+    const char *text = "Hello caf\xC3\xA9 world\nSecond";
+    size_t len = strlen(text);
+    size_t s = 0;
+    size_t e = 0;
+
+    /* A word holds the whole accented word */
+    ui_text_unit_range(text, len, 8, UI_EDIT_WORD, &s, &e);
+    assert(s == 6 && e == 11);
+    ui_text_unit_range(text, len, 8, UI_EDIT_WORD_END, &s, &e);
+    assert(s == 6 && e == 11);
+
+    /* A space run is its own word segment */
+    ui_text_unit_range(text, len, 11, UI_EDIT_WORD, &s, &e);
+    assert(s == 11 && e == 12);
+
+    /* A line includes its trailing newline */
+    ui_text_unit_range(text, len, 2, UI_EDIT_LINE, &s, &e);
+    assert(s == 0 && e == 18);
+    ui_text_unit_range(text, len, 18, UI_EDIT_LINE, &s, &e);
+    assert(s == 18 && e == len);
+
+    /* At len, the last line is used */
+    ui_text_unit_range(text, len, len, UI_EDIT_LINE, &s, &e);
+    assert(s == 18 && e == len);
+
+    /* A character holds a base letter with its combining mark */
+    ui_text_unit_range("e\xCC\x81x", 4, 1, UI_EDIT_CHARACTER, &s, &e);
+    assert(s == 0 && e == 3);
+
+    /* A character inside a ZWJ sequence holds the whole sequence */
+    ui_text_unit_range(family, 18, 5, UI_EDIT_CHARACTER, &s, &e);
+    assert(s == 0 && e == 18);
+
+    /* Punctuation inside a word stays with the word */
+    ui_text_unit_range("foo.bar baz", 11, 1, UI_EDIT_WORD, &s, &e);
+    assert(s == 0 && e == 7);
+
+    ui_text_unit_range(NULL, 0, 0, UI_EDIT_WORD, &s, &e);
+    assert(s == 0 && e == 0);
+    ui_text_unit_range("abc", 0, 0, UI_EDIT_LINE, &s, &e);
+    assert(s == 0 && e == 0);
+}
+
+static void test_move(void)
 {
     const char *line = "don't 3.14 \xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9 end";
-    int len = (int)strlen(line);
+    size_t len = strlen(line);
 
-    assert(ui_text_edit_move(line, len, 0, UI_EDIT_LINE, false) == len);
-    assert(ui_text_edit_move(line, len, len, UI_EDIT_LINE, true) == 0);
+    assert(ui_text_move(line, len, 0, UI_EDIT_LINE, false) == len);
+    assert(ui_text_move(line, len, len, UI_EDIT_LINE, true) == 0);
 
     /* Word forward jumps to next word start */
-    int p = ui_text_edit_move(line, len, 0, UI_EDIT_WORD, false);
+    size_t p = ui_text_move(line, len, 0, UI_EDIT_WORD, false);
     assert(p == 6);
-    p = ui_text_edit_move(line, len, p, UI_EDIT_WORD, false);
+    p = ui_text_move(line, len, p, UI_EDIT_WORD, false);
     assert(p == len - 3);
-    p = ui_text_edit_move(line, len, p, UI_EDIT_WORD, false);
+    p = ui_text_move(line, len, p, UI_EDIT_WORD, false);
     assert(p == len);
 
     /* Word end forward jumps to end of word */
-    assert(ui_text_edit_move(line, len, 0, UI_EDIT_WORD_END, false) == 5);
-    assert(ui_text_edit_move(line, len, 5, UI_EDIT_WORD_END, false) == 10);
+    assert(ui_text_move(line, len, 0, UI_EDIT_WORD_END, false) == 5);
+    assert(ui_text_move(line, len, 5, UI_EDIT_WORD_END, false) == 10);
 
     /* Word backward jumps to previous word start */
-    p = ui_text_edit_move(line, len, len, UI_EDIT_WORD, true);
+    p = ui_text_move(line, len, len, UI_EDIT_WORD, true);
     assert(p == len - 3);
-    p = ui_text_edit_move(line, len, p, UI_EDIT_WORD, true);
+    p = ui_text_move(line, len, p, UI_EDIT_WORD, true);
     assert(p == 6);
-    p = ui_text_edit_move(line, len, p, UI_EDIT_WORD, true);
+    p = ui_text_move(line, len, p, UI_EDIT_WORD, true);
     assert(p == 0);
 
     /* Character move treats ZWJ emoji sequence as one grapheme cluster */
-    int emoji_start = 11;
-    int emoji_end = 11 + 11;
-    assert(ui_text_edit_move(line, len, emoji_start, UI_EDIT_CHARACTER, false) == emoji_end);
-    assert(ui_text_edit_move(line, len, emoji_end, UI_EDIT_CHARACTER, true) == emoji_start);
+    size_t emoji_start = 11;
+    size_t emoji_end = 11 + 11;
+    assert(ui_text_move(line, len, emoji_start, UI_EDIT_CHARACTER, false) == emoji_end);
+    assert(ui_text_move(line, len, emoji_end, UI_EDIT_CHARACTER, true) == emoji_start);
 }
 
 int main(void)
@@ -295,6 +412,9 @@ int main(void)
     test_grapheme_indic_conjuncts();
     test_word_breaks();
     test_invalid_utf8_and_early_stop();
-    test_text_edit_move();
+    test_cluster_next_and_fit();
+    test_offset_at_x();
+    test_unit_range();
+    test_move();
     return 0;
 }

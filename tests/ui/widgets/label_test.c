@@ -6,6 +6,8 @@
 #include "ui/debug.h"
 #include "ui/ui.h"
 
+#define FAMILY_EMOJI "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7"
+
 struct fixture {
     struct ui_surface surface;
     struct ui_label label, second;
@@ -143,6 +145,7 @@ static bool key(struct fixture *f, enum ui_key k, uint32_t text, unsigned mods)
 {
     struct ui_event event = ui_event_key((struct ui_key_event){
         .key = k, .text = text, .mods = mods,
+        .edit_unit = ui_edit_unit_for_mods(mods, UI_EDIT_BINDINGS_DEFAULT),
     }, 1000);
     return ui_surface_dispatch(&f->surface, &event);
 }
@@ -283,6 +286,38 @@ static void word_line_and_keyboard_selection_test(void)
     expect_selection(&f, "a\xCC\x81é");
     assert(key(&f, UI_KEY_LEFT, 0, UI_MOD_SHIFT));
     expect_selection(&f, "a\xCC\x81");
+    destroy(&f);
+}
+
+static void cluster_and_word_keyboard_test(void)
+{
+    struct fixture f;
+    init(&f, FAMILY_EMOJI "x", (struct vector2i){ .x = 240, .y = 48 });
+    ui_label_set_selectable(&f.label, true);
+    click(&f, (struct vector2i){ .x = 0, .y = 8 }, 100);
+    assert(key(&f, UI_KEY_RIGHT, 0, UI_MOD_SHIFT));
+    expect_selection(&f, FAMILY_EMOJI);
+    assert(key(&f, UI_KEY_RIGHT, 0, UI_MOD_SHIFT));
+    expect_selection(&f, FAMILY_EMOJI "x");
+    destroy(&f);
+
+    init(&f, "one two three", (struct vector2i){ .x = 240, .y = 48 });
+    ui_label_set_selectable(&f.label, true);
+    click(&f, (struct vector2i){ .x = 0, .y = 8 }, 100);
+    assert(key(&f, UI_KEY_RIGHT, 0, UI_MOD_CTRL | UI_MOD_SHIFT));
+    expect_selection(&f, "one ");
+    destroy(&f);
+}
+
+static void double_click_punctuated_word_test(void)
+{
+    struct fixture f;
+    init(&f, "foo.bar baz", (struct vector2i){ .x = 240, .y = 48 });
+    ui_label_set_selectable(&f.label, true);
+    struct vector2i over_foo = { .x = 8, .y = 8 };
+    click(&f, over_foo, 100);
+    click(&f, over_foo, 200);
+    expect_selection(&f, "foo.bar");
     destroy(&f);
 }
 
@@ -586,6 +621,8 @@ int main(void)
     wrapping_and_blank_lines_test();
     alignment_ellipsis_and_theme_test();
     word_line_and_keyboard_selection_test();
+    cluster_and_word_keyboard_test();
+    double_click_punctuated_word_test();
     drag_across_wrapped_unicode_test();
     links_and_lifetime_test();
     clip_mode_preserves_explicit_lines_test();

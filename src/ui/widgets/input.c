@@ -2,7 +2,7 @@
 
 #include "ui/paint.h"
 #include "paint/text_run.h"
-#include "ui/text_edit.h"
+#include "ui/text_break.h"
 #include "ui/surface.h"
 #include "ui/ui_util.h"
 #include "ui/widget_impl.h"
@@ -414,8 +414,8 @@ static char *dup_slice(const struct ui_input *in, int lo, int hi)
 static int edit_move(const struct ui_input *in, enum ui_edit_unit unit,
                      bool backward)
 {
-    return ui_text_edit_move(ui_input_text(in), in->impl.len, in->impl.caret,
-                             unit, backward);
+    return (int)ui_text_move(ui_input_text(in), (size_t)in->impl.len,
+                             (size_t)in->impl.caret, unit, backward);
 }
 
 static void edit_range(const struct ui_input *in, enum ui_edit_unit unit,
@@ -555,10 +555,10 @@ static bool cmd_transpose(struct ui_input *in, const struct input_cmd *cmd)
     int end = in->impl.caret == in->impl.len
         ? in->impl.len
         : edit_move(in, UI_EDIT_CHARACTER, false);
-    int middle = ui_text_edit_move(in->impl.buf, in->impl.len, end,
-                                   UI_EDIT_CHARACTER, true);
-    int start = ui_text_edit_move(in->impl.buf, in->impl.len, middle,
-                                  UI_EDIT_CHARACTER, true);
+    int middle = (int)ui_text_move(in->impl.buf, (size_t)in->impl.len,
+                                   (size_t)end, UI_EDIT_CHARACTER, true);
+    int start = (int)ui_text_move(in->impl.buf, (size_t)in->impl.len,
+                                  (size_t)middle, UI_EDIT_CHARACTER, true);
     if (start == middle)
         return true;
     int first = middle - start;
@@ -676,20 +676,9 @@ static bool handle_key(struct ui_input *in, const struct ui_key_event *ev)
 static int offset_at_x(const struct ui_input *in, int x)
 {
     int cw = ui_widget_cell_w(&in->widget);
-    int target = geom_sat_i((int64_t)in->impl.scroll_cells +
-                 ((int64_t)x - ui_input_text_inset(in) + cw / 2) / cw);
-    int cells = 0, pos = 0;
-    while (pos < in->impl.len) {
-        uint32_t cp;
-        int w;
-        int n = ui_text_run_next(in->impl.buf + pos,
-                                 (size_t)(in->impl.len - pos), &cp, &w);
-        if (cells + w > target)
-            break;
-        cells += w;
-        pos += n;
-    }
-    return pos;
+    int64_t rel = (int64_t)x - ui_input_text_inset(in) +
+                  (int64_t)in->impl.scroll_cells * cw;
+    return (int)ui_text_offset_at_x(ui_input_text(in), (size_t)in->impl.len, rel, cw);
 }
 
 static bool handle_pointer(struct ui_input *in, const struct ui_pointer_event *p,
@@ -813,8 +802,8 @@ static bool input_event(struct ui_widget *widget, const struct ui_event *event)
 
 static int input_clamp_offset(const struct ui_input *in, size_t offset)
 {
-    return (int)ui_text_edit_clamp_offset(ui_input_text(in), (size_t)in->impl.len,
-                                         offset);
+    return (int)ui_text_clamp_offset(ui_input_text(in), (size_t)in->impl.len,
+                                     offset);
 }
 
 static bool input_accessibility(const struct ui_widget *widget,

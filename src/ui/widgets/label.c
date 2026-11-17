@@ -3,7 +3,7 @@
 #include "ui/debug.h"
 #include "ui/paint.h"
 #include "ui/surface.h"
-#include "ui/text_edit.h"
+#include "ui/text_break.h"
 #include "paint/text_run.h"
 #include "ui/ui_util.h"
 #include "ui/widget_impl.h"
@@ -49,41 +49,6 @@ struct label_iter {
     bool segment, done;
 };
 
-static size_t next_offset(const char *text, size_t len, size_t off, int *cells)
-{
-    if (off >= len) {
-        *cells = 0;
-        return len;
-    }
-    uint32_t cp;
-    off += (size_t)ui_text_run_next(text + off, len - off, &cp, cells);
-    while (off < len && text[off] != '\n' && text[off] != '\r') {
-        int width;
-        int n = ui_text_run_next(text + off, len - off, &cp, &width);
-        if (width != 0)
-            break;
-        off += (size_t)n;
-    }
-    return off;
-}
-
-static size_t previous_offset(const struct ui_label *label, size_t off)
-{
-    const char *text = ui_label_text(label);
-    while (off > 0) {
-        size_t prev = off - 1;
-        while (prev > 0 && ((unsigned char)text[prev] & 0xC0) == 0x80)
-            prev--;
-        uint32_t cp;
-        int cells;
-        ui_text_run_next(text + prev, label->impl.len - prev, &cp, &cells);
-        off = prev;
-        if (cells != 0)
-            break;
-    }
-    return off;
-}
-
 static bool next_line(struct label_iter *it, struct label_line *line)
 {
     if (it->done)
@@ -103,7 +68,7 @@ static bool next_line(struct label_iter *it, struct label_line *line)
     int used = 0, word_cells = 0;
     while (pos < it->end) {
         int cells;
-        size_t next = next_offset(text, it->end, pos, &cells);
+        size_t next = ui_text_cluster_next(text, it->end, pos, &cells);
         if (cells > it->cap - used)
             break;
         used += cells;
@@ -123,7 +88,7 @@ static bool next_line(struct label_iter *it, struct label_line *line)
         used = 0;
         while (pos < it->end) {
             int cells;
-            size_t next = next_offset(text, it->end, pos, &cells);
+            size_t next = ui_text_cluster_next(text, it->end, pos, &cells);
             if (cells > it->cap - 1 - used)
                 break;
             used += cells;
@@ -131,7 +96,7 @@ static bool next_line(struct label_iter *it, struct label_line *line)
         }
         line->ellipsis = true;
     } else if (pos == it->off && pos < it->end && wrap <= UI_LABEL_WRAP_CHAR) {
-        pos = next_offset(text, it->end, pos, &used);
+        pos = ui_text_cluster_next(text, it->end, pos, &used);
     }
     line->len = pos - it->off;
     line->cells = used;
@@ -364,18 +329,9 @@ static size_t offset_at(const struct ui_label *label, struct vector2i pos)
         struct rect2i rect = line_rect(label, content, &line, row++);
         if (pos.y >= (int64_t)rect.y + rect.height)
             continue;
-        size_t off = line.start, end = off + line.len;
-        int64_t x = rect.x;
-        while (off < end) {
-            int cells;
-            size_t next = next_offset(ui_label_text(label), end, off, &cells);
-            int64_t width = (int64_t)cells * style.advance;
-            if ((int64_t)pos.x < x + (width + 1) / 2)
-                break;
-            x += width;
-            off = next;
-        }
-        return off;
+        const char *text = ui_label_text(label) + line.start;
+        return line.start + ui_text_offset_at_x(text, line.len,
+                                                (int64_t)pos.x - rect.x, style.advance);
     }
     return label->impl.len;
 }
@@ -404,41 +360,11 @@ static bool label_hit_test(const struct ui_widget *widget, struct vector2i pos)
         ? text_hit(label, pos) : rect2i_contains(widget->bounds, pos);
 }
 
-static int word_class(const char *text, size_t len, size_t off)
-{
-    if (off >= len) return -1;
-    uint32_t cp;
-    int cells;
-    ui_text_run_next(text + off, len - off, &cp, &cells);
-    if (cp == ' ' || cp == '\t' || cp == '\n' || cp == '\r') return 0;
-    return cp >= 0x80 || (cp >= 'a' && cp <= 'z') ||
-           (cp >= 'A' && cp <= 'Z') || (cp >= '0' && cp <= '9') || cp == '_' ? 1 : 2;
-}
-
 static void selection_unit(const struct ui_label *label, size_t at, unsigned clicks,
-                             size_t *lo, size_t *hi)
+                           size_t *lo, size_t *hi)
 {
-    const char *text = ui_label_text(label);
-    size_t len = label->impl.len;
-    if (at == len && at > 0)
-        at = previous_offset(label, at);
-    *lo = at;
-    int cells;
-    *hi = next_offset(text, len, at, &cells);
-    if (clicks == 3) {
-        while (*lo > 0 && text[*lo - 1] != '\n') (*lo)--;
-        while (*hi < len && text[*hi] != '\n') (*hi)++;
-        if (*hi < len) (*hi)++;
-    } else {
-        int kind = word_class(text, len, at);
-        while (*lo > 0) {
-            size_t prev = previous_offset(label, *lo);
-            if (word_class(text, len, prev) != kind) break;
-            *lo = prev;
-        }
-        while (*hi < len && word_class(text, len, *hi) == kind)
-            *hi = next_offset(text, len, *hi, &cells);
-    }
+    ui_text_unit_range(ui_label_text(label), label->impl.len, at,
+                       clicks == 3 ? UI_EDIT_LINE : UI_EDIT_WORD, lo, hi);
 }
 
 static void update_pseudo(struct ui_label *label)
@@ -488,8 +414,8 @@ static bool label_accessibility(const struct ui_widget *widget,
 
 static size_t label_clamp_offset(const struct ui_label *label, size_t offset)
 {
-    return ui_text_edit_clamp_offset(ui_label_text(label), label->impl.len,
-                                     offset);
+    return ui_text_clamp_offset(ui_label_text(label), label->impl.len,
+                                offset);
 }
 
 static bool label_accessibility_action(
@@ -565,18 +491,17 @@ static bool label_event(struct ui_widget *widget, const struct ui_event *event)
             if (ctrl && key->key == UI_KEY_CHAR && (key->text == 'c' || key->text == 'C'))
                 return ui_label_copy_selection(label);
             size_t at = label->impl.caret;
-            int cells;
             switch (key->key) {
             case UI_KEY_LEFT:
             case UI_KEY_RIGHT: {
+                bool back = key->key == UI_KEY_LEFT;
                 size_t lo, hi;
-                if (!shift && ui_label_selection(label, &lo, &hi)) {
-                    at = key->key == UI_KEY_LEFT ? lo : hi;
-                } else if (key->key == UI_KEY_LEFT) {
-                    at = previous_offset(label, at);
-                } else {
-                    at = next_offset(ui_label_text(label), label->impl.len, at, &cells);
-                }
+                if (!shift && key->edit_unit == UI_EDIT_CHARACTER &&
+                    ui_label_selection(label, &lo, &hi))
+                    at = back ? lo : hi;
+                else
+                    at = ui_text_move(ui_label_text(label), label->impl.len, at,
+                                      key->edit_unit, back);
                 break;
             }
             case UI_KEY_HOME: at = 0; break;

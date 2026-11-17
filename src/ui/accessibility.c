@@ -1,6 +1,6 @@
 #include "ui/accessibility.h"
 
-#include "ui/text_edit.h"
+#include "ui/text_break.h"
 #include "ui/widget.h"
 #include "ui/widget_impl.h"
 #include "wsap_vtcore/unicode/utf8.h"
@@ -139,12 +139,12 @@ static bool tree_add(struct ui_accessibility_tree *tree,
         size_t length = strlen(old->value);
         node.value = old->value;
         old->value = NULL;
-        node.caret_offset = ui_text_edit_clamp_offset(node.value, length,
-                                                      spec->caret_offset);
-        node.selection_start = ui_text_edit_clamp_offset(node.value, length,
-                                                         spec->selection_start);
-        node.selection_end = ui_text_edit_clamp_offset(node.value, length,
-                                                       spec->selection_end);
+        node.caret_offset = ui_text_clamp_offset(node.value, length,
+                                                 spec->caret_offset);
+        node.selection_start = ui_text_clamp_offset(node.value, length,
+                                                    spec->selection_start);
+        node.selection_end = ui_text_clamp_offset(node.value, length,
+                                                  spec->selection_end);
     } else if (!password) {
         node.caret_offset = sanitized_offset(spec->value, spec->caret_offset);
         node.selection_start = sanitized_offset(spec->value,

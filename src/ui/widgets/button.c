@@ -3,6 +3,7 @@
 #include "ui/widget_impl.h"
 #include "ui/paint.h"
 #include "paint/text_run.h"
+#include "ui/text_break.h"
 #include "ui/ui_util.h"
 
 #include <limits.h>
@@ -77,7 +78,7 @@ static void button_paint(const struct ui_widget *widget,
     struct rect2i content = rect2i_apply_insets(fill, pad);
     int cap = style.advance > 0 && content.width > 0
         ? content.width / style.advance : 0;
-    size_t len = ui_text_run_fit(text, strlen(text), cap);
+    size_t len = ui_text_fit(text, strlen(text), cap);
     if (!len)
         return;
     int cells = ui_text_run_cells(text, len);

@@ -1,4 +1,5 @@
 #include "ui/text_break.h"
+#include "paint/text_run.h"
 #include "wsap_vtcore/unicode/utf8.h"
 
 #include <stdint.h>
@@ -1330,7 +1331,7 @@ static bool grapheme_seek_cb(size_t start, size_t end, void *userdata)
     return true;
 }
 
-size_t ui_text_break_grapheme_next(const char *text, size_t len, size_t pos)
+static size_t grapheme_next(const char *text, size_t len, size_t pos)
 {
     if (!text || !len)
         return 0;
@@ -1342,7 +1343,7 @@ size_t ui_text_break_grapheme_next(const char *text, size_t len, size_t pos)
     return seek.result;
 }
 
-size_t ui_text_break_grapheme_prev(const char *text, size_t len, size_t pos)
+static size_t grapheme_prev(const char *text, size_t len, size_t pos)
 {
     if (!text || !len || pos == 0)
         return 0;
@@ -1509,4 +1510,180 @@ void ui_text_each_word(const char *text, size_t len,
         pos += step;
     }
     fn(seg_start, len, st.has_word, userdata);
+}
+
+struct word_move_ctx {
+    size_t pos;
+    size_t result;
+    enum ui_edit_unit unit;
+    bool backward;
+};
+
+static bool word_move_cb(size_t start, size_t end, bool is_word, void *userdata)
+{
+    struct word_move_ctx *ctx = userdata;
+    if (!is_word)
+        return true;
+    if (ctx->backward) {
+        if (start < ctx->pos) {
+            ctx->result = start;
+            return true;
+        }
+        return false;
+    }
+    size_t target = ctx->unit == UI_EDIT_WORD_END ? end : start;
+    if (target > ctx->pos) {
+        ctx->result = target;
+        return false;
+    }
+    return true;
+}
+
+size_t ui_text_move(const char *text, size_t len, size_t pos,
+                    enum ui_edit_unit unit, bool backward)
+{
+    if (!text || len == 0)
+        return 0;
+    if (pos > len)
+        pos = len;
+    if (unit == UI_EDIT_LINE)
+        return backward ? 0 : len;
+    if (unit == UI_EDIT_CHARACTER)
+        return backward ? grapheme_prev(text, len, pos)
+                        : grapheme_next(text, len, pos);
+    struct word_move_ctx ctx = {
+        .pos = pos,
+        .result = backward ? 0 : len,
+        .unit = unit,
+        .backward = backward,
+    };
+    ui_text_each_word(text, len, word_move_cb, &ctx);
+    return ctx.result;
+}
+
+struct word_range_ctx {
+    size_t pos;
+    size_t start;
+    size_t end;
+};
+
+static bool word_range_cb(size_t start, size_t end, bool is_word,
+                          void *userdata)
+{
+    (void)is_word;
+    struct word_range_ctx *ctx = userdata;
+    if (ctx->pos < start || ctx->pos >= end)
+        return true;
+    ctx->start = start;
+    ctx->end = end;
+    return false;
+}
+
+void ui_text_unit_range(const char *text, size_t len, size_t pos,
+                        enum ui_edit_unit unit, size_t *start, size_t *end)
+{
+    if (!text || len == 0) {
+        *start = 0;
+        *end = 0;
+        return;
+    }
+    if (pos > len)
+        pos = len;
+    if (pos == len)
+        pos = grapheme_prev(text, len, len);
+
+    if (unit == UI_EDIT_CHARACTER) {
+        *end = grapheme_next(text, len, pos);
+        *start = grapheme_prev(text, len, *end);
+        return;
+    }
+    if (unit == UI_EDIT_WORD || unit == UI_EDIT_WORD_END) {
+        struct word_range_ctx ctx = { .pos = pos };
+        ui_text_each_word(text, len, word_range_cb, &ctx);
+        *start = ctx.start;
+        *end = ctx.end;
+        return;
+    }
+
+    /* Line: from after the previous '\n' through the next '\n'. */
+    *start = 0;
+    for (size_t i = pos; i > 0; i--) {
+        if (text[i - 1] == '\n') {
+            *start = i;
+            break;
+        }
+    }
+    *end = len;
+    for (size_t i = pos; i < len; i++) {
+        if (text[i] == '\n') {
+            *end = i + 1;
+            break;
+        }
+    }
+}
+
+size_t ui_text_cluster_next(const char *text, size_t len, size_t pos,
+                            int *cells)
+{
+    if (pos >= len) {
+        *cells = 0;
+        return len;
+    }
+
+    /* Fast path: a printable ASCII byte before an ASCII byte is one cluster of one cell. */
+    unsigned char b0 = (unsigned char)text[pos];
+    if (b0 >= 0x20 && b0 <= 0x7E &&
+        (pos + 1 == len || (unsigned char)text[pos + 1] < 0x80)) {
+        *cells = 1;
+        return pos + 1;
+    }
+
+    size_t end = grapheme_next(text, len, pos);
+    *cells = ui_text_run_cells(text + pos, end - pos);
+    return end;
+}
+
+size_t ui_text_offset_at_x(const char *text, size_t len, int64_t x,
+                           int advance)
+{
+    if (!text)
+        return 0;
+    size_t off = 0;
+    int64_t left = 0;
+    while (off < len) {
+        int cells;
+        size_t next = ui_text_cluster_next(text, len, off, &cells);
+        int64_t width = (int64_t)cells * advance;
+        if (x < left + (width + 1) / 2)
+            break;
+        left += width;
+        off = next;
+    }
+    return off;
+}
+
+size_t ui_text_fit(const char *text, size_t len, int cap)
+{
+    if (!text || cap <= 0)
+        return 0;
+    size_t off = 0;
+    int used = 0;
+    while (off < len) {
+        int cells;
+        size_t next = ui_text_cluster_next(text, len, off, &cells);
+        if (used + cells > cap)
+            break;
+        used += cells;
+        off = next;
+    }
+    return off;
+}
+
+size_t ui_text_clamp_offset(const char *text, size_t len, size_t offset)
+{
+    if (offset >= len)
+        return len;
+    while (offset > 0 && ((unsigned char)text[offset] & 0xc0) == 0x80)
+        offset--;
+    return offset;
 }

@@ -1,6 +1,7 @@
 #include "ui/widgets/tabbar/internal.h"
 
 #include "paint/text_run.h"
+#include "ui/text_break.h"
 #include "ui/ui_util.h"
 #include "ui/widget_impl.h"
 
@@ -32,10 +33,10 @@ static bool tb_title(struct ui_scene *scene, struct vector2i at, int advance,
     if (cap <= 0 || advance <= 0)
         return true;
     size_t total = strlen(label);
-    size_t len = ui_text_run_fit(label, total, cap);
+    size_t len = ui_text_fit(label, total, cap);
     bool cut = len < total;
     if (cut)
-        len = cap > 1 ? ui_text_run_fit(label, total, cap - 1) : 0;
+        len = cap > 1 ? ui_text_fit(label, total, cap - 1) : 0;
     struct ui_text_style style = {
         .advance = advance, .cell_h = text_h,
         .flags = bold ? UI_TEXT_BOLD : UI_TEXT_PLAIN,

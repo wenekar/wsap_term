@@ -54,31 +54,4 @@ static inline int ui_text_run_cells(const char *text, size_t len)
     return cells;
 }
 
-static inline size_t ui_text_run_fit(const char *text, size_t len, int cap)
-{
-    size_t off = 0;
-    int used = 0;
-    while (off < len) {
-        size_t rem = (size_t)(cap - used);
-        if (rem == 0)
-            break;
-        size_t limit = len - off < rem ? len - off : rem;
-        size_t span = wsap_vtcore_scan_printable_span(text + off, limit, 0x7f);
-        if (span > 0) {
-            used += (int)span;
-            off += span;
-            if (used >= cap || off >= len)
-                break;
-        }
-        uint32_t cp;
-        int cells;
-        int n = ui_text_run_next(text + off, len - off, &cp, &cells);
-        if (used + cells > cap)
-            break;
-        used += cells;
-        off += (size_t)n;
-    }
-    return off;
-}
-
 #endif

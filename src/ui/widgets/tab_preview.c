@@ -3,6 +3,7 @@
 #include "ui/debug.h"
 #include "ui/paint.h"
 #include "paint/text_run.h"
+#include "ui/text_break.h"
 #include "ui/surface.h"
 #include "ui/ui_util.h"
 #include "ui/widget_impl.h"
@@ -550,8 +551,8 @@ static void preview_paint(const struct ui_widget *widget,
         s.opacity * css_style_effective_opacity(&title_style));
     const char *title = p->impl.title;
     if (title && *title && !rect2i_is_empty(r.title) && text.advance > 0) {
-        size_t len = ui_text_run_fit(title, strlen(title),
-                                     r.title.width / text.advance);
+        size_t len = ui_text_fit(title, strlen(title),
+                                 r.title.width / text.advance);
         ui_paint_text(paint, r.title, text, title_color, title, len);
     }
     if (p->impl.image.pixels && !rect2i_is_empty(r.image))

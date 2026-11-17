@@ -5,6 +5,7 @@
 #include "paint/shadow.h"
 #include "ui/surface.h"
 #include "paint/text_run.h"
+#include "ui/text_break.h"
 #include "ui/ui_util.h"
 #include "ui/widget_impl.h"
 #include "wsap_vtcore/unicode/utf8.h"
@@ -301,10 +302,10 @@ static void row_paint(const struct ui_widget *widget,
     int avail = box.width - m->item_pad.l - m->item_pad.r - shortcut_w;
     int cap = m->cell_w > 0 && avail > 0 ? avail / m->cell_w : 0;
     size_t total = strlen(it->label);
-    size_t label_len = cap > 0 ? ui_text_run_fit(it->label, total, cap) : 0;
+    size_t label_len = cap > 0 ? ui_text_fit(it->label, total, cap) : 0;
     bool ellipsis = label_len < total && cap > 0;
     if (ellipsis)
-        label_len = cap > 1 ? ui_text_run_fit(it->label, total, cap - 1) : 0;
+        label_len = cap > 1 ? ui_text_fit(it->label, total, cap - 1) : 0;
     int label_w = ui_text_run_cells(it->label, label_len) * m->cell_w;
     struct rect2i label_box = {
         .pos = { .x = box.x + m->item_pad.l, .y = text_y },
