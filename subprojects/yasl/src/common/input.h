@@ -5,24 +5,26 @@
 
 /* Each queued string and the last successfully polled string are owned here. */
 struct input_queue {
-    struct yasl_private_event *events;
-    size_t head, count, capacity;
-    char *last_text;
-    /* Last pointer position, for computing absolute-mode motion deltas. */
-    struct yasl_private_vector2i last_pos;
-    bool has_last_pos;
-    /* Set by backends while YASL_PRIVATE_POINTER_RELATIVE is active: keep pushed deltas. */
-    bool relative;
-    struct yasl_surface *reset_surface;
-    bool reset_pending;
-    /* YASL_PRIVATE_BUTTON_BIT() mask from pushed DOWN/UP events. */
-    uint32_t buttons;
-    /* Set by backends whose pointer leave ends any press: no release follows. */
-    bool leave_ends_press;
+    /* CL 0: hot publish fields and ring buffer indices. */
     /* Installed by common code for display-wide publication. Standalone queues
      * retain their normal storage/pop semantics when publish is NULL. */
     bool (*publish)(const struct yasl_private_event *ev, void *ud);
     void *publish_ud;
+    struct yasl_private_event *events;
+    size_t head, count, capacity;
+    /* Last pointer position, for computing absolute-mode motion deltas. */
+    struct yasl_private_vector2i last_pos;
+    /* YASL_PRIVATE_BUTTON_BIT() mask from pushed DOWN/UP events. */
+    uint32_t buttons;
+    bool has_last_pos;
+    /* Set by backends while YASL_PRIVATE_POINTER_RELATIVE is active: keep pushed deltas. */
+    bool relative;
+    /* Set by backends whose pointer leave ends any press: no release follows. */
+    bool leave_ends_press;
+    bool reset_pending;
+    /* CL 1: cold pop and reset state. */
+    char *last_text;
+    struct yasl_surface *reset_surface;
 };
 
 /* Copies text payloads and stamps time_ns when zero. Unless q->relative is set,

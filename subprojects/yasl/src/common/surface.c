@@ -1006,7 +1006,7 @@ static bool convert_event(const struct yasl_private_event *p, yasl_event *e)
         return true;
     case YASL_PRIVATE_EVENT_TEXT:
         e->type = YASL_EVENT_TEXT;
-        e->ime.key_id = p->text_key_id;
+        e->ime.key_id = p->text.text_key_id;
         return with_text(e, p->text.data, p->text.len);
     case YASL_PRIVATE_EVENT_DROP:
         e->type = YASL_EVENT_DROP;
@@ -1029,7 +1029,7 @@ static bool convert_event(const struct yasl_private_event *p, yasl_event *e)
         e->type = YASL_EVENT_TEXT_EDIT;
         e->ime = (struct yasl_ime_event){
             .begin = p->text_edit.begin, .end = p->text_edit.end,
-            .revision = p->text_edit.revision, .key_id = p->text_key_id,
+            .revision = p->text_edit.revision, .key_id = p->text_edit.text_key_id,
         };
         return with_text(e, p->text_edit.data, p->text_edit.len);
     case YASL_PRIVATE_EVENT_PEN:

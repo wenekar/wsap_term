@@ -130,7 +130,7 @@ int main(void)
         event = next(surface, YASL_PRIVATE_EVENT_TEXT_EDIT);
         assert(event.text_edit.len == 1 && event.text_edit.data[0] == 'a');
         assert(event.text_edit.begin == 1 && event.text_edit.end == 5);
-        assert(event.text_key_id == key_id);
+        assert(event.text_edit.text_key_id == key_id);
         empty(surface);
 
         NSString *symbols[] = {@"|", @"[", @"]", @"ä😀"};
@@ -148,7 +148,7 @@ int main(void)
             assert(event.key.consumed_mods == (i < 3 ? YASL_PRIVATE_MOD_ALT : 0));
             key_id = event.key.text_id;
             event = next(surface, YASL_PRIVATE_EVENT_TEXT_EDIT);
-            assert(event.text_key_id == key_id);
+            assert(event.text_edit.text_key_id == key_id);
             assert(!strcmp(event.text_edit.data, symbols[i].UTF8String));
             empty(surface);
             [view keyUp:press];
@@ -167,7 +167,7 @@ int main(void)
         bool committed = false, ended = false;
         while (yasl_private_display_poll_event(display, &event)) {
             if (event.type == YASL_PRIVATE_EVENT_TEXT_EDIT) {
-                assert(!event.text_key_id);
+                assert(!event.text_edit.text_key_id);
                 committed = true;
             } else {
                 assert(event.type == YASL_PRIVATE_EVENT_COMPOSITION && !event.composition.active);
@@ -184,7 +184,7 @@ int main(void)
         assert(event.key.text_input == YASL_KEY_TEXT_COMMIT && event.key.text_id);
         key_id = event.key.text_id;
         event = next(surface, YASL_PRIVATE_EVENT_TEXT);
-        assert(event.text_key_id == key_id && !strcmp(event.text.data, "ä😀"));
+        assert(event.text.text_key_id == key_id && !strcmp(event.text.data, "ä😀"));
         empty(surface);
         surface->text_input_active = true;
         assert(display->ops->surface_update_text_input(surface));

@@ -55,30 +55,29 @@ struct signal_watch {
 struct yasl_loop {
     struct fd_source *fds;
     struct pollfd *pollfds;
-    int count;
-    int capacity;
-    int next_id;
-    pthread_t owner;
-    /* Set by yasl_loop_quit; run clears it when it returns. */
-    bool quit;
-    bool stepping;
-    int wake_rfd;
-    int wake_wfd;
-    int wake_watch;
-
     struct timer_source *timers;
-    int timer_count;
-    int timer_capacity;
     uint64_t next_timer_id;
-    int timer_firing_depth;
-
-    yasl_private_mutex post_mutex;
+    pthread_t owner;
+    struct signal_watch *signals;
     struct post *post_head;
     struct post *post_tail;
 
-    struct signal_watch *signals;
-
+    yasl_private_mutex post_mutex;
     struct yasl_private_loop_driver driver;
+
+    int count;
+    int capacity;
+    int next_id;
+    int wake_rfd;
+    int wake_wfd;
+    int wake_watch;
+    int timer_count;
+    int timer_capacity;
+    int timer_firing_depth;
+
+    /* Set by yasl_loop_quit; run clears it when it returns. */
+    bool quit;
+    bool stepping;
     bool has_driver;
 };
 

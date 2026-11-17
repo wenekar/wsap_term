@@ -65,11 +65,16 @@ struct text_row {
     uint16_t cells;
     uint16_t wide;
     uint16_t fill_to;
-    uint8_t flags;
     struct pen_attr start;
-    struct pen_attr fill;
+    uint32_t fill_fg;
+    uint32_t fill_bg;
+    uint8_t flags;
     struct hist_runs runs;
 };
+
+_Static_assert(sizeof(struct text_row) == 96, "struct text_row must stay 96 bytes");
+_Static_assert(offsetof(struct text_row, start) + 16 <= offsetof(struct text_row, runs),
+               "the 16-byte SIMD store at start must stay before runs");
 
 #define TEXT_ROW_BYTES(cols) ((size_t)(cols) * 4 + 16)
 #define TEXT_ROW_RUNS(cols) (((size_t)(cols) + 2) * 22)
@@ -160,6 +165,14 @@ struct hist {
     struct hist_block *blocks;
     uint64_t tail, head;
     uint64_t base_id;
+    uint64_t index_epoch;
+    uint32_t ring_mask;
+    uint32_t lines;
+    uint32_t line_limit;
+    uint16_t wrap_cols;
+    bool all_blank;
+    bool walk_on;
+
     uint64_t *cont;
     uint8_t **pages;
     uint32_t *page_used;
@@ -169,27 +182,20 @@ struct hist {
     uint16_t *free_pages;
     uint32_t *exact_rows;
     void **page_chunks;
-    struct hist_runs runs;
-    struct hist_dec_cache dec;
 
     uint64_t rows_id;
     uint64_t counted_rows;
     uint64_t walk_seq;
-
-    uint64_t index_epoch;
     uint64_t base_cell_id, base_cell;
     uint64_t last_id, last_cells, last_wide;
 
-    uint32_t ring_mask;
-    uint32_t lines;
-    uint32_t line_limit;
     uint32_t cont_first, cont_count, cont_mask;
     uint32_t npages, max_pages, nfree, cur_page;
     uint32_t nchunks, max_chunks;
     uint32_t walk_off, walk_col, walk_rows;
-    uint16_t wrap_cols;
-    bool all_blank;
-    bool walk_on;
+
+    struct hist_runs runs;
+    struct hist_dec_cache dec;
 };
 
 static inline uint32_t rows_narrow(uint64_t cells, int cols)

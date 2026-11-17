@@ -7,11 +7,11 @@
 struct ui_layout;
 
 struct ui_box_params {
+    struct insets2i padding;
+    int gap;
     enum ui_box_direction direction;
     enum ui_box_align align;
     enum ui_box_justify justify;
-    struct insets2i padding;
-    int gap;
 };
 
 struct ui_box_params ui_box_params(const struct ui_box *box,

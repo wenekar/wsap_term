@@ -30,6 +30,7 @@
  */
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "paint/blend.h"
@@ -47,20 +48,19 @@ struct pair_lut_tag {
     bool used;
 };
 
-struct pair_lut_alpha_slot {
-    struct pair_lut_tag tag, pending;
-    uint32_t lut[256];
-};
-
-struct pair_lut_subpx_slot {
-    struct pair_lut_tag tag, pending;
-    struct subpx_lut lut;
-};
-
 struct pair_lut {
-    struct pair_lut_alpha_slot alpha[PAIR_LUT_SLOTS];
-    struct pair_lut_subpx_slot subpx[PAIR_LUT_SLOTS];
+    uint32_t alpha[PAIR_LUT_SLOTS][256];
+    struct subpx_lut subpx[PAIR_LUT_SLOTS];
+    struct pair_lut_tag alpha_tags[PAIR_LUT_SLOTS];
+    struct pair_lut_tag alpha_pending[PAIR_LUT_SLOTS];
+    struct pair_lut_tag subpx_tags[PAIR_LUT_SLOTS];
+    struct pair_lut_tag subpx_pending[PAIR_LUT_SLOTS];
 };
+
+_Static_assert(offsetof(struct pair_lut, subpx) % 64 == 0,
+               "pair LUT tables stay 64-byte aligned");
+_Static_assert(sizeof(struct pair_lut) % 64 == 0,
+               "pair_lut size stays a multiple of 64 bytes");
 
 /* The alpha table of a pair, or NULL on the first request. */
 const uint32_t *pair_lut_alpha(struct pair_lut *c, uint32_t fg, uint32_t bg, bool faint);

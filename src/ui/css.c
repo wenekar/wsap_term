@@ -253,13 +253,28 @@ static bool parse_box_shadow(const char *s, struct css_style *out)
 
 enum prop_kind { P_VAL, P_INSETS, P_COLOR, P_FLOAT, P_FLEX_DIR, P_ALIGN, P_JUSTIFY, P_CURSOR, P_DURATION, P_SHADOW };
 
+enum style_has_bit {
+    HAS_NONE = 0,
+    HAS_has_bg_color,
+    HAS_has_text_color,
+    HAS_has_border_color,
+    HAS_has_shadow,
+    HAS_has_opacity,
+    HAS_has_transition_duration,
+    HAS_has_cursor,
+    HAS_has_ripple_color,
+    HAS_has_flex_direction,
+    HAS_has_align_items,
+    HAS_has_justify_content,
+};
+
 struct prop_info {
     const char *name;
     uint16_t offset;
-    uint16_t has_offset;
     uint8_t kind;
     uint8_t size;
-    uint8_t pad_[2];
+    uint8_t has_bit;
+    uint8_t pad_[3];
 };
 
 #define PROP_FIELD_SIZE(m) ((uint8_t)sizeof(((struct css_style *)0)->m))
@@ -275,15 +290,18 @@ struct prop_info {
 }
 #define PROP_HAS(n, k, m, has_m) { \
     .name = (n), .offset = offsetof(struct css_style, m), \
-    .has_offset = offsetof(struct css_style, has_m), \
     .kind = (uint8_t)(k), .size = PROP_FIELD_SIZE(m), \
+    .has_bit = HAS_##has_m, \
+}
+#define PROP_ENUM(n, k, has_m) { \
+    .name = (n), .kind = (uint8_t)(k), .has_bit = HAS_##has_m, \
 }
 #define PROP_COLOR(n, m, has_m) PROP_HAS(n, P_COLOR, m, has_m)
 #define PROP_FLOAT(n, m, has_m) PROP_HAS(n, P_FLOAT, m, has_m)
 #define PROP_SHADOW(n, m, has_m) { \
     .name = (n), .offset = offsetof(struct css_style, m), \
-    .has_offset = offsetof(struct css_style, has_m), \
     .kind = P_SHADOW, .size = (uint8_t)CSS_SHADOW_SIZE, \
+    .has_bit = HAS_##has_m, \
 }
 
 static const struct prop_info props[] = {
@@ -304,10 +322,10 @@ static const struct prop_info props[] = {
     PROP_COLOR("color",            text_color, has_text_color),
     PROP_COLOR("border-color",     border_color, has_border_color),
     PROP_FLOAT("opacity",    opacity,    has_opacity),
-    PROP_HAS("flex-direction",      P_FLEX_DIR, flex_direction,      has_flex_direction),
-    PROP_HAS("align-items",         P_ALIGN,    align_items,         has_align_items),
-    PROP_HAS("justify-content",     P_JUSTIFY,  justify_content,     has_justify_content),
-    PROP_HAS("cursor",              P_CURSOR,   cursor,              has_cursor),
+    PROP_ENUM("flex-direction",     P_FLEX_DIR, has_flex_direction),
+    PROP_ENUM("align-items",        P_ALIGN,    has_align_items),
+    PROP_ENUM("justify-content",    P_JUSTIFY,  has_justify_content),
+    PROP_ENUM("cursor",             P_CURSOR,   has_cursor),
     PROP_HAS("transition-duration", P_DURATION, transition_duration, has_transition_duration),
     PROP_HAS("animation-duration",  P_DURATION, transition_duration, has_transition_duration),
     PROP_HAS("transition",          P_DURATION, transition_duration, has_transition_duration),
@@ -319,11 +337,49 @@ static const struct prop_info props[] = {
 static const size_t prop_count = sizeof(props) / sizeof(props[0]);
 static_assert(sizeof(props) / sizeof(props[0]) <= 64,
               "The rule set mask holds one bit per property");
+static_assert(sizeof(props) / sizeof(props[0]) <= UINT16_MAX,
+              "Property indices must fit in uint16_t");
 static_assert(CSS_SHADOW_SIZE <= UINT8_MAX,
               "Shadow fields must fit in prop_info.size");
-static_assert(offsetof(struct css_style, has_bg_color) > 0 &&
-              offsetof(struct css_style, has_shadow) > 0,
-              "Zero has_offset must mean no presence flag");
+static_assert(HAS_NONE == 0 && HAS_has_justify_content <= UINT8_MAX,
+              "Zero has_bit must mean no presence flag");
+
+static void set_style_has_bit(struct css_style *s, uint8_t bit, bool v)
+{
+    switch ((enum style_has_bit)bit) {
+    case HAS_NONE:                    break;
+    case HAS_has_bg_color:            s->has_bg_color = v; break;
+    case HAS_has_text_color:          s->has_text_color = v; break;
+    case HAS_has_border_color:        s->has_border_color = v; break;
+    case HAS_has_shadow:              s->has_shadow = v; break;
+    case HAS_has_opacity:             s->has_opacity = v; break;
+    case HAS_has_transition_duration: s->has_transition_duration = v; break;
+    case HAS_has_cursor:              s->has_cursor = v; break;
+    case HAS_has_ripple_color:        s->has_ripple_color = v; break;
+    case HAS_has_flex_direction:      s->has_flex_direction = v; break;
+    case HAS_has_align_items:         s->has_align_items = v; break;
+    case HAS_has_justify_content:     s->has_justify_content = v; break;
+    }
+}
+
+static bool get_style_has_bit(const struct css_style *s, uint8_t bit)
+{
+    switch ((enum style_has_bit)bit) {
+    case HAS_NONE:                    return false;
+    case HAS_has_bg_color:            return s->has_bg_color;
+    case HAS_has_text_color:          return s->has_text_color;
+    case HAS_has_border_color:        return s->has_border_color;
+    case HAS_has_shadow:              return s->has_shadow;
+    case HAS_has_opacity:             return s->has_opacity;
+    case HAS_has_transition_duration: return s->has_transition_duration;
+    case HAS_has_cursor:              return s->has_cursor;
+    case HAS_has_ripple_color:        return s->has_ripple_color;
+    case HAS_has_flex_direction:      return s->has_flex_direction;
+    case HAS_has_align_items:         return s->has_align_items;
+    case HAS_has_justify_content:     return s->has_justify_content;
+    }
+    return false;
+}
 
 enum css_declaration_result {
     CSS_DECLARATION_OK,
@@ -383,9 +439,9 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
         }
         case P_FLEX_DIR:
             if (!strcmp(val, "column"))
-                *(enum css_flex_direction *)dst = CSS_FLEX_COLUMN;
+                r->style.flex_direction = CSS_FLEX_COLUMN;
             else if (!strcmp(val, "row"))
-                *(enum css_flex_direction *)dst = CSS_FLEX_ROW;
+                r->style.flex_direction = CSS_FLEX_ROW;
             else
                 return CSS_DECLARATION_INVALID;
             break;
@@ -408,7 +464,7 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
                 }
             }
             if (!found) return CSS_DECLARATION_INVALID;
-            *(enum css_align *)dst = align;
+            r->style.align_items = align;
             break;
         }
         case P_JUSTIFY: {
@@ -429,7 +485,7 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
                 }
             }
             if (!found) return CSS_DECLARATION_INVALID;
-            *(enum css_justify *)dst = just;
+            r->style.justify_content = just;
             break;
         }
         case P_CURSOR: {
@@ -455,7 +511,7 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
                 }
             }
             if (!found) return CSS_DECLARATION_INVALID;
-            *(enum ui_cursor *)dst = cur;
+            r->style.cursor = cur;
             break;
         }
         case P_SHADOW:
@@ -478,8 +534,8 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
             break;
         }
     }
-    if (p->has_offset && p->kind != P_SHADOW)
-        *(bool *)((char *)&r->style + p->has_offset) = true;
+    if (p->has_bit && p->kind != P_SHADOW)
+        set_style_has_bit(&r->style, p->has_bit, true);
     r->set_mask |= (1ULL << idx);
     return CSS_DECLARATION_OK;
 }
@@ -731,7 +787,7 @@ static bool rule_set_var_prop(struct css_rule *r, size_t prop_idx, const char *v
     if (!pending)
         rule_drop_matching_var_props(r, r->var_prop_count, prop_idx);
     r->var_props[r->var_prop_count++] = (struct css_var_prop){
-        .prop_idx = prop_idx,
+        .prop_idx = (uint16_t)prop_idx,
         .value = copy,
         .line = line,
         .column = col,
@@ -1948,11 +2004,15 @@ static void apply_rule_props(const struct css_rule *r, struct css_style *out)
                     dstv[e] = srcv[e];
             continue;
         }
-        memcpy(dst, src, p->size);
-        if (p->has_offset) {
-            const bool *has = (const bool *)((const char *)&r->style + p->has_offset);
-            *(bool *)((char *)out + p->has_offset) = *has;
+        switch ((enum prop_kind)p->kind) {
+        case P_FLEX_DIR: out->flex_direction = r->style.flex_direction; break;
+        case P_ALIGN:    out->align_items = r->style.align_items; break;
+        case P_JUSTIFY:  out->justify_content = r->style.justify_content; break;
+        case P_CURSOR:   out->cursor = r->style.cursor; break;
+        default:         memcpy(dst, src, p->size); break;
         }
+        if (p->has_bit)
+            set_style_has_bit(out, p->has_bit, get_style_has_bit(&r->style, p->has_bit));
     }
 }
 

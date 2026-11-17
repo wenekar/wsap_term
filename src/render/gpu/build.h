@@ -105,7 +105,7 @@ _Static_assert(sizeof(struct gpu_shape_inst) == 48, "the shaders read 48 byte sh
  * An instance stream is a list of instances of one type. The grid fills the
  * first four. The UI fills the last two, in the order of the scene.
  */
-enum gpu_stream_id {
+enum gpu_stream_id : uint8_t {
     GPU_ST_BG,
     GPU_ST_INK,
     GPU_ST_SUBPX,
@@ -127,7 +127,7 @@ static inline size_t gpu_stream_stride(enum gpu_stream_id id)
     return id == GPU_ST_SHAPE ? sizeof(struct gpu_shape_inst) : sizeof(struct gpu_glyph_inst);
 }
 
-enum gpu_cmd_kind {
+enum gpu_cmd_kind : uint8_t {
     GPU_CMD_GLYPH,
     /* Subpixel glyphs. They draw in three passes, one for each color channel. */
     GPU_CMD_SUBPX,
@@ -140,13 +140,15 @@ enum gpu_cmd_kind {
  * images[n - 1].
  */
 struct gpu_cmd {
-    enum gpu_cmd_kind kind;
-    enum gpu_stream_id stream;
     struct rect2i scissor;
     uint32_t start;
     uint32_t count;
-    int image;
+    enum gpu_cmd_kind kind;
+    enum gpu_stream_id stream;
+    int16_t image;
 };
+
+_Static_assert(sizeof(struct gpu_cmd) == 28, "struct gpu_cmd packs to 28 bytes");
 
 /* A staged rect: where it goes in the atlas, and where its texels wait. */
 struct gpu_upload {
@@ -159,7 +161,6 @@ struct gpu_upload {
 
 /* The backend reads `size`, `stage`, `stage_used`, `uploads`, and `n_uploads`. */
 struct gpu_atlas {
-    int size;
     uint8_t *stage;
     size_t stage_used;
     size_t stage_cap;
@@ -172,6 +173,7 @@ struct gpu_atlas {
     uint32_t count;
     int n_shelves;
     int next_y;
+    int size;
     /* The build of the frame ran out of room. */
     bool full;
 };
@@ -199,8 +201,8 @@ struct gpu_build {
     /* The rest is private to build.c. */
     struct decor_cache *decor;
     struct rect2i *clips;
-    int cap_clips;
     uint64_t image_clock;
+    int cap_clips;
     /* The build ran out of memory, or out of image slots. */
     bool failed;
 };

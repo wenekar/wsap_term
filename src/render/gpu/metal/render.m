@@ -64,12 +64,12 @@ struct render_gpu {
     id<MTLRenderPipelineState> copy_pipeline;
 
     struct frame_slot slots[FRAME_SLOTS];
-    unsigned next_slot;
 
     struct gpu_build build;
     /* The atlas texture, and the texture of each image slot of the builder. */
     id<MTLTexture> atlas;
     id<MTLTexture> images[GPU_IMAGES];
+    unsigned next_slot;
 };
 
 /* The state of one render surface: the CPU pixels, on the GPU. */

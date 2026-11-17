@@ -1,18 +1,20 @@
 #ifndef WSAP_UI_WIDGETS_LABEL_H
 #define WSAP_UI_WIDGETS_LABEL_H
 
+#include <stdint.h>
+
 #include "ui/widget.h"
 
 #define UI_LABEL_TEXT_CAP 256
 
-enum ui_label_wrap {
+enum ui_label_wrap : uint8_t {
     UI_LABEL_WRAP_WORD = 0,
     UI_LABEL_WRAP_CHAR,
     UI_LABEL_CLIP,
     UI_LABEL_ELLIPSIS,
 };
 
-enum ui_label_align {
+enum ui_label_align : uint8_t {
     UI_LABEL_ALIGN_LEFT = 0,
     UI_LABEL_ALIGN_CENTER,
     UI_LABEL_ALIGN_RIGHT,
@@ -26,10 +28,10 @@ struct ui_label {
         size_t gesture_start, gesture_end;
         uint64_t click_time;
         struct vector2i click_pos, press_pos;
-        enum ui_label_wrap wrap;
-        enum ui_label_align align;
         int action_id;
         unsigned clicks;
+        enum ui_label_wrap wrap;
+        enum ui_label_align align;
         bool selectable, disabled, pressed, dragged;
     } impl;
 };

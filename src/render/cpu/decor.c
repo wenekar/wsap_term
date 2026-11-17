@@ -165,8 +165,8 @@ static void mask_scan(struct decor_mask *m, const uint8_t *cov, int cw, int ch)
     for (int y = y0; y < y1; y++)
         for (int x = 0; x < cw; x++)
             solid &= cov[(size_t)y * cw + x] == 255;
-    m->y0 = y0;
-    m->y1 = y1;
+    m->y0 = (int16_t)y0;
+    m->y1 = (int16_t)y1;
     m->solid = solid;
 }
 
@@ -249,7 +249,7 @@ struct decor_cache *decor_cache_create(void)
 const struct decor_set *decor_get(struct decor_cache *c, const struct font_metrics *m)
 {
     struct decor_key key = decor_key_of(m);
-    if (!c || key.cw <= 0 || key.ch <= 0)
+    if (!c || key.cw <= 0 || key.ch <= 0 || key.ch > INT16_MAX)
         return NULL;
     struct decor_entry *victim = NULL;
     for (int i = 0; i < DECOR_SETS; i++) {

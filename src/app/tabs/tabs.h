@@ -38,9 +38,6 @@ struct app_tabs_spec {
     /* The tab table of the app. It owns every terminal. The window holds
      * tab IDs only. */
     struct app_tab_model *model;
-    /* A tab of the model that no window holds. The window holds it only on
-     * success. */
-    app_tab_id tab;
     app_tabs_open_window_fn open_window;
     app_tabs_preview_capture_fn preview_capture;
     app_tabs_preview_release_fn preview_release;
@@ -48,6 +45,9 @@ struct app_tabs_spec {
     app_tabs_scene_paint_fn scene_paint;
     void *scene_paint_ud;
     void *ud;
+    /* A tab of the model that no window holds. The window holds it only on
+     * success. */
+    app_tab_id tab;
     /* When true, initializes tab model without creating an initial tab. */
     bool empty;
 };

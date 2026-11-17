@@ -66,12 +66,21 @@ void render_gpu_surface_free(void *gpu_surface)
     free(gs);
 }
 
+/* Clears cached surface query results for `gs`. */
+static void traits_reset(struct gpu_surface *gs)
+{
+    memset(&gs->traits, 0, sizeof(gs->traits));
+    gs->trait_immediate = false;
+    gs->trait_mailbox = false;
+    gs->trait_fifo_relaxed = false;
+}
+
 /* Queries and caches surface formats and present modes supported by physical device. */
 static bool traits_ensure(struct render_gpu *g, struct gpu_surface *gs, VkSurfaceKHR surface)
 {
     if (gs->traits.surface == surface)
         return true;
-    memset(&gs->traits, 0, sizeof(gs->traits));
+    traits_reset(gs);
     VkPhysicalDevice pd = g->dev.physical_device;
 
     VkBool32 supported = VK_FALSE;
@@ -87,9 +96,9 @@ static bool traits_ensure(struct render_gpu *g, struct gpu_surface *gs, VkSurfac
     if (vr != VK_SUCCESS && vr != VK_INCOMPLETE)
         mode_count = 0;
     for (uint32_t i = 0; i < mode_count; i++) {
-        gs->traits.immediate |= modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR;
-        gs->traits.mailbox |= modes[i] == VK_PRESENT_MODE_MAILBOX_KHR;
-        gs->traits.fifo_relaxed |= modes[i] == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+        gs->trait_immediate |= modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR;
+        gs->trait_mailbox |= modes[i] == VK_PRESENT_MODE_MAILBOX_KHR;
+        gs->trait_fifo_relaxed |= modes[i] == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
     }
 
     uint32_t format_count = 0;
@@ -141,11 +150,11 @@ static bool chain_images(struct render_gpu *g, struct vulkan_swapchain *c, VkFor
 
 static VkPresentModeKHR present_mode_of(const struct gpu_surface *gs, bool tearing)
 {
-    if (tearing && gs->traits.immediate)
+    if (tearing && gs->trait_immediate)
         return VK_PRESENT_MODE_IMMEDIATE_KHR;
-    if (gs->traits.mailbox)
+    if (gs->trait_mailbox)
         return VK_PRESENT_MODE_MAILBOX_KHR;
-    if (tearing && gs->traits.fifo_relaxed)
+    if (tearing && gs->trait_fifo_relaxed)
         return VK_PRESENT_MODE_FIFO_RELAXED_KHR;
     return VK_PRESENT_MODE_FIFO_KHR;
 }
@@ -237,7 +246,7 @@ bool vulkan_swapchain_ensure(struct render_gpu *g, struct gpu_surface *gs, VkSur
     }
     if (vr != VK_SUCCESS) {
         /* The surface can have changed. Query it again for the next frame. */
-        memset(&gs->traits, 0, sizeof(gs->traits));
+        traits_reset(gs);
         return false;
     }
     if (!chain_images(g, &next, info.imageFormat) ||

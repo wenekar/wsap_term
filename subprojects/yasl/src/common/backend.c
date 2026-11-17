@@ -621,7 +621,7 @@ bool yasl_private_frame_present(struct yasl_private_frame *frame, const struct y
     struct yasl_private_damage_list damage = {0};
     if (!rects || count > YASL_PRIVATE_DAMAGE_MAX) damage.n = -1;
     else {
-        damage.n = (int)count;
+        damage.n = (int16_t)count;
         for (size_t i = 0; i < count; i++) damage.rects[i] = rects[i];
     }
     errno = 0;

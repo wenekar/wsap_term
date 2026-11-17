@@ -304,7 +304,8 @@ static inline uint32_t hash_chord(uint32_t chord)
 
 static void rebuild_hash(struct input_keymap *km)
 {
-    memset(km->hash, 0, sizeof(km->hash));
+    memset(km->hash_chord, 0, sizeof(km->hash_chord));
+    memset(km->hash_action, 0, sizeof(km->hash_action));
     uint32_t mask = INPUT_KEYMAP_HASH_CAP - 1;
     for (int i = 0; i < km->n; i++) {
         const struct input_keybind *b = &km->binds[i];
@@ -316,13 +317,12 @@ static void rebuild_hash(struct input_keymap *km)
             continue;
         uint32_t idx = hash_chord(chord);
         for (uint32_t probe = 0; probe <= mask; probe++) {
-            struct input_keymap_slot *slot = &km->hash[idx];
-            if (slot->chord == 0) {
-                slot->chord = chord;
-                slot->action = b->action;
+            if (km->hash_chord[idx] == 0) {
+                km->hash_chord[idx] = chord;
+                km->hash_action[idx] = b->action;
                 break;
             }
-            if (slot->chord == chord) {
+            if (km->hash_chord[idx] == chord) {
                 break;
             }
             idx = (idx + 1) & mask;
@@ -331,22 +331,24 @@ static void rebuild_hash(struct input_keymap *km)
     km->hash_valid = true;
 }
 
-static inline const struct input_keymap_slot *hash_lookup(const struct input_keymap *km,
-                                                          uint32_t chord)
+static inline bool hash_lookup(const struct input_keymap *km, uint32_t chord,
+                               enum input_shortcut *out)
 {
     if (!chord)
-        return NULL;
+        return false;
     uint32_t mask = INPUT_KEYMAP_HASH_CAP - 1;
     uint32_t idx = hash_chord(chord);
     for (uint32_t probe = 0; probe <= mask; probe++) {
-        const struct input_keymap_slot *slot = &km->hash[idx];
-        if (slot->chord == 0)
-            return NULL;
-        if (slot->chord == chord)
-            return slot;
+        uint32_t slot_chord = km->hash_chord[idx];
+        if (slot_chord == 0)
+            return false;
+        if (slot_chord == chord) {
+            *out = (enum input_shortcut)km->hash_action[idx];
+            return true;
+        }
         idx = (idx + 1) & mask;
     }
-    return NULL;
+    return false;
 }
 
 static bool keymap_set(struct input_keymap *km, unsigned mods,
@@ -430,38 +432,22 @@ enum input_shortcut input_keymap_lookup(const struct input_keymap *km,
     if (!km->hash_valid)
         rebuild_hash((struct input_keymap *)km);
 
-    if (ev->key != INPUT_KEY_NONE) {
-        const struct input_keymap_slot *s =
-            hash_lookup(km, make_chord(mods, chord_token(0, (uint16_t)ev->key)));
-        if (s)
-            return (enum input_shortcut)s->action;
-    }
-    if (ev->keypad != INPUT_KEY_NONE) {
-        const struct input_keymap_slot *s =
-            hash_lookup(km, make_chord(mods, chord_token(0, (uint16_t)ev->keypad)));
-        if (s)
-            return (enum input_shortcut)s->action;
-    }
-    if (ev->codepoint) {
-        const struct input_keymap_slot *s =
-            hash_lookup(km, make_chord(mods, chord_token(ev->codepoint, INPUT_KEY_NONE)));
-        if (s)
-            return (enum input_shortcut)s->action;
-    }
-
-    if (ev->shifted && lower(ev->shifted) != lower(ev->codepoint)) {
-        const struct input_keymap_slot *s =
-            hash_lookup(km, make_chord(mods, chord_token(ev->shifted, INPUT_KEY_NONE)));
-        if (s)
-            return (enum input_shortcut)s->action;
-    }
-
-    if (ev->base && lower(ev->base) != lower(ev->codepoint)) {
-        const struct input_keymap_slot *s =
-            hash_lookup(km, make_chord(mods, chord_token(ev->base, INPUT_KEY_NONE)));
-        if (s)
-            return (enum input_shortcut)s->action;
-    }
+    enum input_shortcut sc;
+    if (ev->key != INPUT_KEY_NONE &&
+        hash_lookup(km, make_chord(mods, chord_token(0, (uint16_t)ev->key)), &sc))
+        return sc;
+    if (ev->keypad != INPUT_KEY_NONE &&
+        hash_lookup(km, make_chord(mods, chord_token(0, (uint16_t)ev->keypad)), &sc))
+        return sc;
+    if (ev->codepoint &&
+        hash_lookup(km, make_chord(mods, chord_token(ev->codepoint, INPUT_KEY_NONE)), &sc))
+        return sc;
+    if (ev->shifted && lower(ev->shifted) != lower(ev->codepoint) &&
+        hash_lookup(km, make_chord(mods, chord_token(ev->shifted, INPUT_KEY_NONE)), &sc))
+        return sc;
+    if (ev->base && lower(ev->base) != lower(ev->codepoint) &&
+        hash_lookup(km, make_chord(mods, chord_token(ev->base, INPUT_KEY_NONE)), &sc))
+        return sc;
 
     return INPUT_SHORTCUT_NONE;
 }

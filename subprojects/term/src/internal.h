@@ -98,19 +98,19 @@ struct srow {
 
 _Static_assert(offsetof(struct srow, text) == 32,
                "hot srow metadata must occupy exactly 32 bytes");
-_Static_assert(sizeof(struct srow) == 136,
-               "struct srow must stay 136 bytes");
+_Static_assert(sizeof(struct srow) == 128,
+               "struct srow must stay 128 bytes");
 
 struct screen {
     struct srow *slot;
+    uint64_t top_id;
+    int rows, cols, top;
+    uint32_t top_seg;
+    int stride;
+    int slot_cap;
     struct cell *cells_slab;
     uint8_t *text_slab;
     size_t cells_cap, text_cap;
-    uint64_t top_id;
-    int rows, cols, top;
-    int stride;
-    int slot_cap;
-    uint32_t top_seg;
 };
 
 struct wsap_vtcore_sel_point {
@@ -128,34 +128,35 @@ struct resize_scratch {
 };
 
 struct wsap_vtcore {
+    /* CL 0 (64 B): locking and screen dimensions. */
     wsap_vtcore_mutex write_lock;
     _Atomic uint64_t writer_tid;
     uint32_t write_depth;
     int cols;
     int rows;
+    int sb_capacity;
+
+    /* CL 1 (64 B): hot cursor, pen, parser state, and mode flags. */
     int cursor_x;
     int cursor_y;
     int scroll_top, scroll_bottom;
-
     uint32_t cur_fg;
     uint32_t cur_bg;
-    uint32_t cur_ul;
     uint32_t last_char;
-
     uint32_t utf8_state;
     uint32_t utf8_codep;
-    struct width_cache text_width;
-
     enum { ST_GROUND, ST_ESC, ST_CSI, ST_OSC, ST_DCS, ST_STR_ESC, ST_CHARSET,
            ST_DCS_ESC, ST_IGNORE, ST_IGNORE_ESC, ST_DOCS, ST_DECALN } state;
-    struct csi_parser csi_parser;
-
+    int prompt_y;
+    int left_margin, right_margin;
     /* The pad field of new cells: the style id of cur_link and cur_ul, and
      * the CELL_EXT_FLAGS of the pen. */
     uint16_t cur_pad;
     /* cur_pad after SGR 0: the style id of cur_link alone and the
      * protection. A reset then needs no table lookup. */
     uint16_t base_pad;
+    /* The link id of the pen. */
+    uint16_t cur_link;
     uint8_t underline;
 
     bool bold : 1;
@@ -197,57 +198,32 @@ struct wsap_vtcore {
     bool alternate_scroll : 1; /* mode 1007 */
     bool nrcs : 1;             /* DECNRCM, mode 42 */
 
+    /* CL 2..3 (128 B): active screen ring and ASCII stream buffers. */
+    uint64_t next_row_uid;
+    uint64_t full_gen;
     struct screen scr;
+    struct grow_buf ascii_ends;
+    struct grow_buf ascii_tail;
+    uint32_t cur_ul;
+    int mouse_mode;
+
+    /* CL 4..5 (128 B): width cache, CSI parser, and snapshot serial. */
+    struct width_cache text_width;
+    int osc_len;
+    struct csi_parser csi_parser;
+    uint64_t serial;
+
+    /* Cold 8-byte aligned sub-structs and pointers. */
     struct screen alt_scr;
     struct screen spare;
     struct resize_scratch resize;
-    struct grow_buf ascii_ends;
-    struct grow_buf ascii_tail;
-    struct wsap_vtcore_saved_cursor normal_saved_cursor;
-    struct wsap_vtcore_saved_cursor normal_saved_decsc;
-    int normal_cols, normal_rows;
-    bool alt_allocated;
-    bool normal_cursor_visible;
-    uint8_t normal_cursor_style;
-    bool normal_cursor_blink;
-
     struct hist hist;
     struct hist_view view;
-    uint64_t next_row_uid;
-    uint64_t full_gen;
-    int prompt_y;
-    int left_margin, right_margin;
     struct wsap_vtcore_sel_point sel_start, sel_end;
     struct wsap_vtcore_sel_point sel_anchor_first, sel_anchor_last;
-    enum wsap_vtcore_select_unit select_unit;
-
-    int mouse_mode, mouse_encoding;
-    enum wsap_vtcore_cursor_style cursor_style;
-    enum wsap_vtcore_cursor_style default_cursor_style;
-    /* The intermediate byte of the designator that ST_CHARSET reads. */
-    char charset_inter;
-    int osc_len;
-    int dcs_len;
-    int sb_capacity;
-
-    struct keyboard_mode keyboard[2];
-    struct wsap_vtcore_saved_cursor saved;
 
     uint64_t *tabs;
     struct cell *view_row_scratch;
-    int tabs_cap;
-    int view_scratch_cap;
-    bool custom_tabs;
-
-    /* The link id of the pen. */
-    uint16_t cur_link;
-    uint8_t decsace;
-    char charset_designation;
-
-    char osc_buf[256];
-    char name[64];
-    char tcap_name[64];
-
     char *osc_heap;
     size_t osc_heap_cap;
     char *dcs_buf;
@@ -258,27 +234,51 @@ struct wsap_vtcore {
     char *pointer_shape;
     /* Shell integration marks (marks.c). NULL until the first mark. */
     struct wsap_vtcore_marks *marks;
-
     /* The current title and the saved titles (CSI 22 t, CSI 23 t). */
     char *title;
     char *title_stack[TITLE_STACK_SIZE];
+    struct wsap_vtcore_callbacks cb;
+    struct palette palette;
+    struct gstore *gstore;
+
+    /* Cold 4-byte aligned sub-structs and scalars. */
+    struct wsap_vtcore_saved_cursor normal_saved_cursor;
+    struct wsap_vtcore_saved_cursor normal_saved_decsc;
+    struct wsap_vtcore_saved_cursor saved;
+    struct keyboard_mode keyboard[2];
+    struct wsap_vtcore_vector2i cell_pixels;
+    int normal_cols, normal_rows;
+    enum wsap_vtcore_select_unit select_unit;
+    int mouse_encoding;
+    enum wsap_vtcore_cursor_style cursor_style;
+    enum wsap_vtcore_cursor_style default_cursor_style;
+    int dcs_len;
+    int tabs_cap;
+    int view_scratch_cap;
+
+    /* Cold 2-byte aligned array: mode values that XTSAVE (CSI ? Pm s) saved. */
+    struct saved_mode saved_modes[SAVED_MODES_MAX];
+
+    /* Cold 1-byte fields and string buffers. */
+    bool alt_allocated;
+    bool normal_cursor_visible;
+    uint8_t normal_cursor_style;
+    bool normal_cursor_blink;
+    bool custom_tabs;
+    uint8_t decsace;
+    /* The intermediate byte of the designator that ST_CHARSET reads. */
+    char charset_inter;
+    char charset_designation;
     uint8_t title_depth;
     /* Host data for reports. Zero means unknown. */
     uint8_t color_scheme;
     bool color_scheme_reports; /* mode 2031 */
     bool resize_reports;       /* mode 2048 */
-    struct wsap_vtcore_vector2i cell_pixels;
-
-    struct wsap_vtcore_callbacks cb;
-    struct palette palette;
-    struct gstore *gstore;
-    uint64_t serial;
-
-    /* Mode values that XTSAVE (CSI ? Pm s) saved. */
-    struct saved_mode saved_modes[SAVED_MODES_MAX];
     uint8_t saved_modes_len;
-    /* Only the slow print path reads the character sets. The fields
-     * above keep their offsets. */
+    char osc_buf[256];
+    char name[64];
+    char tcap_name[64];
+    /* Only the slow print path reads the character sets. */
     struct charset_state charsets;
 };
 

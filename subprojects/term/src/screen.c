@@ -100,7 +100,7 @@ static void screen_push_row_inner(struct wsap_vtcore *t, struct srow *row)
         if (fill > 0) {
             text_row_unshare(tr);
             memset(tr->text + tr->text_len, ' ', (size_t)fill);
-            text_commit(row, fill, fill, fill, HLINE_NARROW, (struct text_pen){ tr->fill.fg, tr->fill.bg, 0 });
+            text_commit(row, fill, fill, fill, HLINE_NARROW, (struct text_pen){ tr->fill_fg, tr->fill_bg, 0 });
         }
         wsap_vtcore_hist_push_text(&t->hist, tr, wrapped);
         return;
@@ -1251,31 +1251,42 @@ void wsap_vtcore_free(struct wsap_vtcore *t)
     free(t);
 }
 
+struct reflow_out {
+    int len;
+    int32_t mark_status;
+    bool wrapped;
+    uint8_t size;
+    uint8_t mark_flags;
+    uint8_t mark_state;
+};
+
+static inline struct mark_info reflow_out_mark(const struct reflow_out *o)
+{
+    return (struct mark_info){
+        .status = o->mark_status,
+        .flags = o->mark_flags,
+        .state = o->mark_state,
+    };
+}
+
 struct reflow_target {
-    int cols, rows;
     struct cell *cells;
+    struct reflow_out *out;
+    struct cell *out_cells;
+    struct grow_buf *out_buf, *cells_buf;
+    int cols, rows;
     int x;
     int count;
+    int out_cap;
     int cursor_x, cursor_y, saved_x, saved_y, prompt_y;
-    bool cursor_set, saved_set, prompt_set, pending_wrap;
     /* The marks of the row in progress, and the marks of the next cell that
      * the reflow places. A mark stays on the row of the first cell of its
      * source row. */
     struct mark_info mark, mark_next;
-
+    bool cursor_set, saved_set, prompt_set, pending_wrap;
     /* The line size (RF_LINE_SIZE bits) of the row that the next end
      * finishes. */
     uint8_t size;
-
-    struct reflow_out {
-        int len;
-        bool wrapped;
-        uint8_t size;
-        struct mark_info mark;
-    } *out;
-    struct cell *out_cells;
-    int out_cap;
-    struct grow_buf *out_buf, *cells_buf;
 };
 
 static inline struct cell *reflow_out_row_cells(const struct reflow_target *r, int i)
@@ -1308,7 +1319,9 @@ static bool reflow_target_end_row(struct reflow_target *r, bool wrapped)
     dst->wrapped = wrapped;
     dst->size = r->size;
     r->size = 0;
-    dst->mark = r->mark;
+    dst->mark_status = r->mark.status;
+    dst->mark_flags = r->mark.flags;
+    dst->mark_state = r->mark.state;
     r->mark = (struct mark_info){0};
     r->x = 0;
     return true;
@@ -1568,7 +1581,8 @@ static void copy_srow_resized(struct srow *dst, struct srow *src, int old_cols, 
         d->cells = s->cells;
         d->wide = s->wide;
         d->fill_to = s->fill_to < cols ? s->fill_to : (uint16_t)cols;
-        d->fill = s->fill;
+        d->fill_fg = s->fill_fg;
+        d->fill_bg = s->fill_bg;
         d->flags = s->flags;
         d->start = s->start;
         d->runs.len = s->runs.len;
@@ -1822,7 +1836,7 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
             int push_len = (r.out[i].wrapped && len < cols && !r.out[i].size) ? cols : len;
             struct mark_at at = wsap_vtcore_marks_hist_at(&t->hist);
             wsap_vtcore_hist_push_row(&t->hist, out, push_len, r.out[i].wrapped, t->gstore);
-            wsap_vtcore_marks_hist_add(t, at, r.out[i].mark);
+            wsap_vtcore_marks_hist_add(t, at, reflow_out_mark(&r.out[i]));
         }
     } else if (r.count < visible && t->hist.lines > 0) {
         int want = visible - r.count;
@@ -1843,7 +1857,7 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
         dst->flags = (uint8_t)((r.out[i].wrapped ? RF_WRAPPED : 0) | RF_TAIL_PADDED | r.out[i].size);
         dst->version = 1;
         dst->uid = ++t->next_row_uid;
-        wsap_vtcore_marks_row_put(t, dst, r.out[i].mark);
+        wsap_vtcore_marks_row_put(t, dst, reflow_out_mark(&r.out[i]));
     }
 
     t->spare = t->scr;

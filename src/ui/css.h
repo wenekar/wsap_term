@@ -6,19 +6,19 @@
 #include <stdint.h>
 #include <stdio.h>
 
-enum css_flex_direction {
+enum css_flex_direction : uint8_t {
     CSS_FLEX_ROW = 0,
     CSS_FLEX_COLUMN,
 };
 
-enum css_align {
+enum css_align : uint8_t {
     CSS_ALIGN_STRETCH = 0,
     CSS_ALIGN_START,
     CSS_ALIGN_CENTER,
     CSS_ALIGN_END,
 };
 
-enum css_justify {
+enum css_justify : uint8_t {
     CSS_JUSTIFY_START = 0,
     CSS_JUSTIFY_CENTER,
     CSS_JUSTIFY_END,
@@ -47,7 +47,7 @@ struct css_box {
     };
 };
 
-enum css_pseudo {
+enum css_pseudo : uint8_t {
     CSS_PSEUDO_NONE     = 0,
     CSS_PSEUDO_HOVER    = 1 << 0,
     CSS_PSEUDO_ACTIVE   = 1 << 1,
@@ -66,7 +66,7 @@ struct css_scale_context {
 float css_value_resolve(struct css_value v, float parent_dim, float auto_val,
                         const struct css_scale_context *ctx);
 
-enum ui_cursor {
+enum ui_cursor : uint8_t {
     UI_CURSOR_AUTO = 0,
     UI_CURSOR_DEFAULT,
     UI_CURSOR_ARROW = UI_CURSOR_DEFAULT,
@@ -78,7 +78,6 @@ enum ui_cursor {
 };
 
 struct css_style {
-
     union {
         struct { struct css_value width, height; };
         struct css_value size[2];
@@ -87,7 +86,6 @@ struct css_style {
         struct { struct css_value min_width, min_height; };
         struct css_value min_size[2];
     };
-
     union {
         struct { struct css_value max_width, max_height; };
         struct css_value max_size[2];
@@ -96,10 +94,6 @@ struct css_style {
     struct css_box padding;
     struct css_box margin;
 
-    enum css_flex_direction flex_direction;
-    enum css_align align_items;
-    enum css_justify justify_content;
-    enum ui_cursor cursor;
     struct css_value gap;
 
     uint32_t bg_color;
@@ -117,19 +111,26 @@ struct css_style {
     uint32_t shadow_color;
     uint32_t ripple_color;
 
-    bool has_bg_color;
-    bool has_text_color;
-    bool has_border_color;
-    bool has_shadow;
-    bool has_opacity;
-    bool has_transition_duration;
-    bool has_cursor;
-    bool has_ripple_color;
-    bool has_flex_direction;
-    bool has_align_items;
-    bool has_justify_content;
-
+    /* Pack enum values and presence flags into one 32-bit word. */
+    uint32_t flex_direction : 2;
+    uint32_t align_items : 3;
+    uint32_t justify_content : 2;
+    uint32_t cursor : 4;
+    uint32_t has_bg_color : 1;
+    uint32_t has_text_color : 1;
+    uint32_t has_border_color : 1;
+    uint32_t has_shadow : 1;
+    uint32_t has_opacity : 1;
+    uint32_t has_transition_duration : 1;
+    uint32_t has_cursor : 1;
+    uint32_t has_ripple_color : 1;
+    uint32_t has_flex_direction : 1;
+    uint32_t has_align_items : 1;
+    uint32_t has_justify_content : 1;
+    uint32_t pad_bits : 10;
 };
+
+_Static_assert(sizeof(struct css_style) == 192, "css_style must stay 192 bytes");
 
 /* Returns the effective opacity of `s`, or 1.0 when unset. */
 static inline float css_style_effective_opacity(const struct css_style *s)
@@ -145,25 +146,25 @@ struct css_var {
 };
 
 struct css_var_prop {
-    size_t prop_idx;
     char *value;
     int line;
     int column;
+    uint16_t prop_idx;
     bool pending;
 };
 
 struct css_rule {
     char *selector;
-    uint64_t set_mask;
     size_t last_off;
-    struct css_style style;
+    uint64_t set_mask;
+    int class_rank;
+    enum css_pseudo pseudo;
+    bool is_class;
+    bool is_id;
     struct css_var_prop *var_props; /* Unexpanded declarations referencing var(). */
     int var_prop_count;
     int var_prop_cap;
-    enum css_pseudo pseudo;
-    int class_rank;
-    bool is_class;
-    bool is_id;
+    struct css_style style;
 };
 
 struct css_sheet {

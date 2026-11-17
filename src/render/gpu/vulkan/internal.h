@@ -192,10 +192,10 @@ struct render_gpu {
     VkSampler sampler;
     /* The color format that the pipelines draw to. */
     VkFormat pipeline_format;
+    unsigned next_slot;
     VkPipeline pipelines[PIPE_COUNT];
 
     struct frame_slot slots[FRAME_SLOTS];
-    unsigned next_slot;
 
     struct gpu_build build;
     struct vulkan_texture atlas;
@@ -203,11 +203,11 @@ struct render_gpu {
     /* Scratch of one frame: the copy regions of the atlas, and where the
      * pixels of each image wait in the upload buffer. */
     VkBufferImageCopy *copies;
-    uint32_t cap_copies;
     size_t image_offsets[GPU_IMAGES];
 
     /* Every surface that holds Vulkan objects of this device. */
     struct gpu_surface *surfaces;
+    uint32_t cap_copies;
 };
 
 /* The swapchain of a surface with the objects of its images. */
@@ -231,21 +231,23 @@ struct gpu_surface {
     /* The swapchain before `chain`. Submitted frames can still use it. */
     struct vulkan_swapchain retired;
     VkFormat format;
-    VkExtent2D extent;
     VkPresentModeKHR present_mode;
+    VkExtent2D extent;
     /* The size and the pacing that the swapchain was last made or checked for. */
     struct vector2i request_size;
+    /* The answers of the surface queries. They are valid for `surface` only. */
+    struct {
+        VkSurfaceKHR surface;
+        VkSurfaceFormatKHR format;
+    } traits;
+    bool trait_immediate;
+    bool trait_mailbox;
+    bool trait_fifo_relaxed;
     bool request_tearing;
     /* The driver reported that the swapchain no longer matches the surface. */
     bool recheck;
     /* The swapchain cannot be used anymore and must be replaced. */
     bool out_of_date;
-    /* The answers of the surface queries. They are valid for `surface` only. */
-    struct {
-        VkSurfaceKHR surface;
-        VkSurfaceFormatKHR format;
-        bool immediate, mailbox, fifo_relaxed;
-    } traits;
 
     /* The CPU pixels of the surface, for render_gpu_present(). */
     struct vulkan_texture pixels;

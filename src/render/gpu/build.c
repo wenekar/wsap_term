@@ -134,8 +134,8 @@ static struct gpu_cmd *cmd_open(struct gpu_build *b, enum gpu_cmd_kind kind,
     }
     struct gpu_cmd *c = &b->cmds[b->n_cmds++];
     *c = (struct gpu_cmd){
-        .kind = kind, .stream = stream, .scissor = scissor, .start = next,
-        .image = image,
+        .scissor = scissor, .start = next, .kind = kind, .stream = stream,
+        .image = (int16_t)image,
     };
     return c;
 }

@@ -12,15 +12,15 @@
 
 struct ui_view_node {
     const struct ui_node_desc *desc;
-    size_t parent;
-    size_t overlay;
-    enum ui_node_kind kind;
+    uint32_t parent;
+    uint32_t overlay;
     char *key;
     char *class_name;
     char *id_name;
     char *tag_name;
     void *storage;
     struct ui_widget *widget;
+    enum ui_node_kind kind;
 };
 
 struct ui_view {
@@ -153,9 +153,7 @@ static bool node_props_valid(const struct ui_node_desc *desc,
     case UI_NODE_ROW:
     case UI_NODE_COLUMN:
     case UI_NODE_STACK:
-        if (desc->props.layout.align < UI_BOX_ALIGN_START ||
-            desc->props.layout.align > UI_BOX_ALIGN_STRETCH ||
-            desc->props.layout.justify < UI_BOX_JUSTIFY_START ||
+        if (desc->props.layout.align > UI_BOX_ALIGN_STRETCH ||
             desc->props.layout.justify > UI_BOX_JUSTIFY_END) {
             *error = UI_VIEW_ERROR_INVALID_ARGUMENT;
             *detail = "Invalid box alignment or justification";
@@ -163,9 +161,7 @@ static bool node_props_valid(const struct ui_node_desc *desc,
         }
         return true;
     case UI_NODE_LABEL:
-        if (desc->props.label.wrap < UI_LABEL_WRAP_WORD ||
-            desc->props.label.wrap > UI_LABEL_ELLIPSIS ||
-            desc->props.label.align < UI_LABEL_ALIGN_LEFT ||
+        if (desc->props.label.wrap > UI_LABEL_ELLIPSIS ||
             desc->props.label.align > UI_LABEL_ALIGN_RIGHT) {
             *error = UI_VIEW_ERROR_INVALID_ARGUMENT;
             *detail = "Invalid label wrap or alignment";
@@ -214,9 +210,11 @@ static bool node_props_valid(const struct ui_node_desc *desc,
 }
 
 static bool append_node(struct ui_view *view,
-                        const struct ui_node_desc *desc, size_t parent,
-                        size_t *index)
+                        const struct ui_node_desc *desc, uint32_t parent,
+                        uint32_t *index)
 {
+    if (view->count >= UINT32_MAX)
+        return false;
     if (view->count == view->capacity) {
         size_t capacity = view->capacity ? view->capacity * 2 : 16;
         if (capacity < view->capacity ||
@@ -229,18 +227,18 @@ static bool append_node(struct ui_view *view,
         view->nodes = nodes;
         view->capacity = capacity;
     }
-    *index = view->count++;
+    *index = (uint32_t)view->count++;
     view->nodes[*index] = (struct ui_view_node){
         .desc = desc,
         .parent = parent,
-        .overlay = SIZE_MAX,
+        .overlay = UINT32_MAX,
         .kind = desc->kind,
     };
     return true;
 }
 
 static bool validate_node(struct validate_context *context,
-                          const struct ui_node_desc *desc, size_t parent,
+                          const struct ui_node_desc *desc, uint32_t parent,
                           size_t depth)
 {
     context->failed_node = desc;
@@ -312,7 +310,7 @@ static bool validate_node(struct validate_context *context,
         }
     }
 
-    size_t index;
+    uint32_t index;
     if (!append_node(context->view, desc, parent, &index)) {
         context->error = UI_VIEW_ERROR_OUT_OF_MEMORY;
         context->detail = "Cannot allocate descriptor list";
@@ -544,8 +542,8 @@ static bool validate_overlays(struct ui_view *view, enum ui_view_error *error,
             *detail = "Dropdown overlay must be a stack";
             return false;
         }
-        size_t ancestor = (size_t)(overlay - view->nodes);
-        while (ancestor != SIZE_MAX) {
+        uint32_t ancestor = (uint32_t)(overlay - view->nodes);
+        while (ancestor != UINT32_MAX) {
             if (ancestor == i) {
                 *error = UI_VIEW_ERROR_INVALID_OVERLAY;
                 *detail = "Dropdown overlay cannot be a descendant";
@@ -553,7 +551,7 @@ static bool validate_overlays(struct ui_view *view, enum ui_view_error *error,
             }
             ancestor = view->nodes[ancestor].parent;
         }
-        node->overlay = (size_t)(overlay - view->nodes);
+        node->overlay = (uint32_t)(overlay - view->nodes);
     }
     return true;
 }
@@ -634,7 +632,7 @@ struct ui_view *ui_view_mount_ex(const struct ui_node_desc *root,
     }
 
     struct validate_context context = { .view = view };
-    if (!validate_node(&context, root, SIZE_MAX, 0)) {
+    if (!validate_node(&context, root, UINT32_MAX, 0)) {
         if (diagnostic) {
             diagnostic->error = context.error;
             diagnostic->node = context.failed_node;
@@ -701,7 +699,7 @@ struct ui_view *ui_view_mount_ex(const struct ui_node_desc *root,
     for (size_t i = 0; i < view->count; i++) {
         struct ui_view_node *node = &view->nodes[i];
         if (node->kind == UI_NODE_DROPDOWN) {
-            struct ui_widget *overlay = node->overlay == SIZE_MAX
+            struct ui_widget *overlay = node->overlay == UINT32_MAX
                 ? &view->overlay_root : view->nodes[node->overlay].widget;
             ui_dropdown_set_overlay(node->storage, overlay);
         }

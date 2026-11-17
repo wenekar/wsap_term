@@ -22,15 +22,11 @@ struct input_keybind {
     uint16_t action;
 };
 
-struct input_keymap_slot {
-    uint32_t chord;
-    uint16_t action;
-};
-
 struct input_keymap {
+    uint32_t hash_chord[INPUT_KEYMAP_HASH_CAP];
+    uint16_t hash_action[INPUT_KEYMAP_HASH_CAP];
     struct input_keybind binds[INPUT_MAX_KEYBINDS];
     int n;
-    struct input_keymap_slot hash[INPUT_KEYMAP_HASH_CAP];
     bool hash_valid;
 };
 

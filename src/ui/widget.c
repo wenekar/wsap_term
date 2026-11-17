@@ -143,7 +143,7 @@ void ui_widget_set_style_pseudo(struct ui_widget *widget, unsigned pseudo_flags)
 {
     if (!widget || widget->impl.style_pseudo == pseudo_flags)
         return;
-    widget->impl.style_pseudo = pseudo_flags;
+    widget->impl.style_pseudo = (uint16_t)pseudo_flags;
     widget->impl.style_valid = false;
     ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
 }
@@ -237,11 +237,18 @@ bool ui_widget_is_hidden(const struct ui_widget *widget)
     return widget && widget->impl.hidden;
 }
 
+static bool ui_placement_eq(struct ui_placement a, struct ui_placement b)
+{
+    return rect2i_eq(a.anchor, b.anchor) &&
+           a.gap == b.gap &&
+           a.y_fraction == b.y_fraction &&
+           a.kind == b.kind;
+}
+
 void ui_widget_set_placement(struct ui_widget *widget,
                              struct ui_placement placement)
 {
-    if (!widget || memcmp(&widget->impl.placement, &placement,
-                          sizeof(placement)) == 0)
+    if (!widget || ui_placement_eq(widget->impl.placement, placement))
         return;
     widget->impl.placement = placement;
     ui_widget_invalidate(widget->parent ? widget->parent : widget,

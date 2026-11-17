@@ -15,91 +15,99 @@ struct yasl_private_backend_ops;
 struct yasl_private_event_state;
 
 struct yasl_private_display {
+    /* CL 0: hot dispatch pointers. */
     const struct yasl_private_backend_ops *ops;
     void *native_handle;
-    /* Connection lost; native handles are unusable until it is restored. Read by GL
-     * rendering threads, so it is atomic. */
-    atomic_bool offline;
-    /* Set by the backend while a native modal loop (macOS live resize) blocks the
-     * event loop; refresh callbacks run only then. */
-    bool modal;
     struct yasl_loop *loop;
     /* Backend's copy of yasl_private_display_spec.app_id, or NULL; for desktop services. */
     const char *app_id;
     struct yasl_private_event_state *events;
     struct yasl_surface *surfaces;
-    /* Set by the backend: a lost connection comes back (Wayland). */
-    bool reconnects;
-    /* The drag in progress dropped on one of the display's surfaces. */
-    bool drag_dropped;
     /* Set by the public layer, or NULL. pending: an event is ready that the
      * queue does not hold, such as an owed REFRESH. deliver: hand queued events
      * to the application during the loop step. */
     bool (*pending)(struct yasl_private_display *d);
     void (*deliver)(struct yasl_private_display *d);
+    /* CL 1: flags and atomic offline marker. */
+    /* Set by the backend while a native modal loop (macOS live resize) blocks the
+     * event loop; refresh callbacks run only then. */
+    bool modal;
+    /* Set by the backend: a lost connection comes back (Wayland). */
+    bool reconnects;
+    /* The drag in progress dropped on one of the display's surfaces. */
+    bool drag_dropped;
+    /* Connection lost; native handles are unusable until it is restored. Read by GL
+     * rendering threads, so it is atomic. */
+    atomic_bool offline;
 };
 
 struct yasl_surface {
-    struct yasl_vulkan_binding *vulkan;
-    unsigned creation_flags;
-    enum yasl_private_presenter presenter;
+    /* CL 0: hot surface identity, geometry, state, and flags. */
+    struct yasl_private_display *display;
+    uint64_t id;
+    struct yasl_surface *event_next;
     struct yasl_surface *parent;
-    /* CPU canvas returned by yasl_cpu_pixels and copied into each drawn frame. */
-    uint32_t *canvas;
-    size_t canvas_capacity; /* In pixels. It can be more than the canvas uses. */
-    int canvas_width, canvas_height;
-    struct yasl_private_damage_list cpu_damage;
-    /* Window values last reported through public WINDOW events. */
-    struct yasl_private_vector2i reported_size;
-    uint32_t reported_scale_120, reported_state;
+    struct yasl_private_vector2i size;
+    uint32_t scale_120;
+    uint32_t state; /* Authoritative YASL_PRIVATE_STATE_* bitmask, maintained by the backend. */
+    enum yasl_private_presenter presenter;
+    uint32_t reported_scale;
     bool refresh_owed;
     /* yasl_surface_request_frame waits for the next frame shown. Each loop
      * step resolves it after the callbacks that present; see backend.c. */
     bool frame_requested;
+    bool popup;
+    bool drawing;
+    bool frame_presented;
+    bool text_input_active;
+    bool cpu_direct;
+    bool cpu_acquired;
+
+    /* CL 1: draw callbacks and frame pacing state. */
+    struct yasl_private_window_cbs callbacks;
+    void *ud;
+    struct yasl_private_frame *active_frame;
+    uint64_t frame_generation;
+    uint64_t draw_index;
+    uint64_t frames_skipped;
     /* Written by GL presents on a rendering thread. */
     _Atomic uint64_t presented_ns;
     /* When the last frame request was answered. */
     uint64_t frame_answered_ns;
+
+    /* CL 2+: handles, queues, and cold state. */
     yasl_private_timer_id frame_timer;
+    yasl_private_timer_id pacing_timer;
     void (*refresh)(struct yasl_surface *);
-    bool text_input_active;
-    unsigned text_purpose;
+    void *native_handle;
+    void *userdata;
+    struct yasl_vulkan_binding *vulkan;
+    struct input_queue input;
+    struct yasl_private_frame_clock clock;
+    struct yasl_private_framebuffer cpu_frame;
+    /* CPU canvas returned by yasl_cpu_pixels and copied into each drawn frame. */
+    uint32_t *canvas;
+    size_t canvas_capacity; /* In pixels. It can be more than the canvas uses. */
     char *text_surrounding;
     size_t text_length, text_begin, text_end;
     uint64_t text_revision, text_generation;
-    struct yasl_private_display *display;
-    void *native_handle;
-    struct yasl_private_vector2i size;
-    uint32_t scale_120;
-    uint32_t state; /* Authoritative YASL_PRIVATE_STATE_* bitmask, maintained by the backend. */
-    uint32_t bg_color;
-    struct yasl_private_window_cbs callbacks;
-    void *ud;
-    uint64_t frame_generation;
-    struct input_queue input;
-    enum yasl_private_pointer_mode pointer_mode;
-    struct yasl_private_frame_clock clock;
-    uint64_t frames_skipped;
     yasl_private_timer_id *timers;
-    int timer_count;
-    int timer_capacity;
-    struct yasl_surface *event_next;
-    uint64_t id;
-    void *userdata;
-    bool popup;
-    bool drawing;
-    bool frame_presented;
-    bool cpu_direct;
-    bool cpu_acquired;
-    struct yasl_private_framebuffer cpu_frame;
-    uint32_t reported_scale;
-    uint64_t draw_index;
-    struct yasl_private_frame *active_frame;
-    yasl_private_pacing_mode pacing;
-    yasl_private_timer_id pacing_timer;
     /* yasl_surface_set_drop_types, best first. NULL means "text/uri-list" only. */
     char **drop_types;
     size_t drop_type_count;
+
+    /* Window values last reported through public WINDOW events. */
+    struct yasl_private_vector2i reported_size;
+    uint32_t reported_scale_120, reported_state;
+    uint32_t bg_color;
+    unsigned creation_flags;
+    enum yasl_private_pointer_mode pointer_mode;
+    yasl_private_pacing_mode pacing;
+    unsigned text_purpose;
+    int timer_count;
+    int timer_capacity;
+    int canvas_width, canvas_height;
+    struct yasl_private_damage_list cpu_damage;
 };
 
 /* Returns the entry of `offered` that the drop types of `s` take first, or NULL

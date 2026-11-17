@@ -31,6 +31,15 @@ struct terminal_preedit {
 
 struct terminal_view {
     struct ui_widget widget;
+    /* The snapshot view version of the scan that set blink_cells. */
+    uint64_t blink_version;
+    uint64_t visual_bell_until_ms;
+    float scroll_remainder;
+    bool hover_link;
+    bool drop_hover;
+    bool opening_link;
+    bool blink_cells;
+
     char *accessibility_text;
     size_t accessibility_caret_offset;
     size_t accessibility_selection_start;
@@ -41,18 +50,9 @@ struct terminal_view {
      * that a burst of output left behind. */
     uint64_t accessibility_built_ms;
     uint64_t accessibility_timer;
-    /* The snapshot view version of the scan that set blink_cells. */
-    uint64_t blink_version;
-    uint64_t visual_bell_until_ms;
 
     struct terminal_preedit preedit;
-    float scroll_remainder;
-
     bool accessibility_text_valid;
-    bool hover_link;
-    bool drop_hover;
-    bool opening_link;
-    bool blink_cells;
 };
 
 enum ctx_action {
@@ -75,19 +75,22 @@ struct terminal {
     struct yasl_loop *loop;
     const struct terminal_config *config;
     struct terminal_host host;
+    struct font_instance *font;
+
     struct wsap_vtcore_theme theme;
     struct terminal_theme_picker theme_picker;
     char *applied_font_family;
+    struct ui_list_item *menu_theme_items;
+    struct vector2i ctx_click;
+    enum wsap_vtcore_color_scheme host_scheme;
+    int applied_font_size;
+    enum wsap_vtcore_cursor_style applied_cursor_style;
+    int font_size;
 
     struct session session;
-    struct font_instance *font;
     struct text_selection selection;
     /* The last grid that the content widget gave the session. */
     struct vector2i grid;
-
-    struct ui_scrollview scrollview;
-    struct terminal_view view;
-
     struct wsap_vtcore_snapshot *snapshot;
     /* terminal_prepare() updates the snapshot once for each frame. It hands
      * that update to terminal_frame_source() in the same frame. These fields
@@ -97,13 +100,9 @@ struct terminal {
     uint64_t snapshot_frame;
     const struct wsap_vtcore *snapshot_term;
     struct rect2i ime_caret;
-    struct vector2i ctx_click;
-    struct ui_list_item *menu_theme_items;
 
-    enum wsap_vtcore_color_scheme host_scheme;
-    int applied_font_size;
-    enum wsap_vtcore_cursor_style applied_cursor_style;
-    int font_size;
+    struct ui_scrollview scrollview;
+    struct terminal_view view;
 
     bool applied_cursor_blink;
     bool exited;

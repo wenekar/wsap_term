@@ -2,25 +2,26 @@
 #define WSAP_UI_BOX_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "ui/widget.h"
 
 struct ui_box;
 
-enum ui_box_direction {
+enum ui_box_direction : uint8_t {
     UI_BOX_ROW = 0,
     UI_BOX_COLUMN,
     UI_BOX_STACK,
 };
 
-enum ui_box_align {
+enum ui_box_align : uint8_t {
     UI_BOX_ALIGN_START = 0,
     UI_BOX_ALIGN_CENTER,
     UI_BOX_ALIGN_END,
     UI_BOX_ALIGN_STRETCH,
 };
 
-enum ui_box_justify {
+enum ui_box_justify : uint8_t {
     UI_BOX_JUSTIFY_START = 0,
     UI_BOX_JUSTIFY_CENTER,
     UI_BOX_JUSTIFY_END,
@@ -29,11 +30,11 @@ enum ui_box_justify {
 struct ui_box {
     struct ui_widget widget;
     struct {
+        struct insets2i padding;
+        int gap;
         enum ui_box_direction direction;
         enum ui_box_align align;
         enum ui_box_justify justify;
-        struct insets2i padding;
-        int gap;
     } impl;
 };
 

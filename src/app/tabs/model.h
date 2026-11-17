@@ -32,16 +32,16 @@ typedef struct window *(*app_tabs_open_window_fn)(void *ud, app_tab_id tab,
 
 /* The tab that a native drag moves. A zero value means no drag. */
 struct app_tab_flight {
-    bool running;
-    /* The dragged tab, or 0. A carry window can hold it during the drag. */
-    app_tab_id tab;
-    bool taken;
     struct window *over;
-    struct vector2i size;
     struct window_logical_point grab;
     struct window_host *host;
     app_tabs_open_window_fn open_window;
     void *ud;
+    struct vector2i size;
+    /* The dragged tab, or 0. A carry window can hold it during the drag. */
+    app_tab_id tab;
+    bool running;
+    bool taken;
 };
 
 /* The tab table of the app. It owns each terminal for its whole life.
@@ -52,8 +52,8 @@ struct app_tab_model {
     struct app_tab *tabs;
     int count;
     int cap;
-    app_tab_id last_id;
     struct app_tab_flight flight;
+    app_tab_id last_id;
 };
 
 /*

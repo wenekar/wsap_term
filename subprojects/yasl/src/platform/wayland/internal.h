@@ -133,16 +133,17 @@ struct touch_point {
 
 #define IME_SNAPSHOT_COUNT 64
 struct ime_snapshot {
-    uint32_t serial;
     struct wayland_surface *surface;
-    bool valid, surrounding;
-    size_t offset, length, cursor, begin, end;
     uint64_t revision, generation;
-    char text[4001];
+    uint32_t serial;
+    uint32_t offset, begin, end;
+    uint16_t length, cursor;
+    bool valid, surrounding;
+    char text[4000];
 };
 
 struct seat {
-    /* 8-byte aligned pointers and 64-bit values */
+    /* Hot pointers and 64-bit state */
     struct wayland_display *conn;
     struct seat *next;
     struct wl_seat *proxy;
@@ -159,16 +160,11 @@ struct seat {
     struct tablet_pad *tablet_pads;
     struct zwp_text_input_v3 *text_input;
     struct ime_snapshot *ime_snapshots;
-    uint32_t ime_serial;
-    unsigned ime_history_count;
-    uint32_t ime_barrier_serial;
     struct wl_callback *ime_barrier;
-    bool ime_deferred, ime_wait_matching;
     struct clipboard *clipboard;
     struct xkb_keymap *xkb_keymap;
     struct xkb_state *xkb_state;
     struct xkb_compose_state *compose;
-    bool compose_attempted;
     uint64_t repeat_started_ns;
     struct wayland_surface *pointer_focus;
     struct wayland_surface *keyboard_focus;
@@ -184,25 +180,23 @@ struct seat {
     double axis[2], axis_value120[2];
     double axis_pixels[2];
     int64_t axis_discrete[2];
-    uint32_t axis_source;
-    bool scroll_gesture, axis_stop_pending;
-    unsigned axis_phase;
-    bool ime_enabled, ime_no_surrounding;
-    bool axis_has_value120[2], axis_has_discrete[2];
     double touch_scroll_y;
 
-    /* Embedded structs */
+    /* Unrounded device-pixel positions and press queues */
+    struct yasl_private_vector2d pointer_precise, ptr_left_precise, tool_precise;
+    struct press_queue ptr_presses;
+    struct press_queue tool_presses;
+
+    /* 4-byte integers and 4-byte aligned arrays */
     xkb_mod_mask_t input_mod_masks[8];
     struct yasl_private_vector2i pointer_pos;
     struct yasl_private_vector2i ptr_left_pos;
     struct yasl_private_vector2i tool_pos;
-    /* Unrounded device-pixel positions behind the rounded ones above. */
-    struct yasl_private_vector2d pointer_precise, ptr_left_precise, tool_precise;
-    struct touch_point touch_points[SEAT_TOUCH_POINTS];
-    struct press_queue ptr_presses;
-    struct press_queue tool_presses;
-
-    /* 4-byte integers */
+    uint32_t ime_serial;
+    unsigned ime_history_count;
+    uint32_t ime_barrier_serial;
+    uint32_t axis_source;
+    unsigned axis_phase;
     uint32_t name;
     xkb_mod_index_t mod_alt;
     int repeat_fd, repeat_watch;
@@ -215,7 +209,15 @@ struct seat {
     struct yasl_private_pointer_pen pen;
     int tool_wheel;
 
+    /* Multi-touch state after hot pointer and keyboard state */
+    struct touch_point touch_points[SEAT_TOUCH_POINTS];
+
     /* 1-byte booleans grouped tightly */
+    bool ime_deferred, ime_wait_matching;
+    bool compose_attempted;
+    bool scroll_gesture, axis_stop_pending;
+    bool ime_enabled, ime_no_surrounding;
+    bool axis_has_value120[2], axis_has_discrete[2];
     bool input_mods_ready;
     bool repeat_held;
     bool motion_pending;
@@ -235,8 +237,6 @@ struct wayland_display {
     pthread_mutex_t native_mutex;
 #if YASL_HAS_EGL
     EGLDisplay egl_display;
-    EGLint egl_api;
-    bool egl_initialized;
 #endif
     struct wl_registry *registry;
     struct wl_compositor *compositor;
@@ -273,17 +273,23 @@ struct wayland_display {
     /* While lost: retries a connection; stale marks objects of the dead one. */
     yasl_private_timer_id reconnect_timer;
     uint64_t reconnect_delay_ns;
-    bool stale;
+    uint64_t next_tool_id;
 
     /* 4-byte integers */
+#if YASL_HAS_EGL
+    EGLint egl_api;
+#endif
     int cursor_size;
     int cursor_theme_scale;
     clockid_t pres_clock;
     int watch;
     int depth;
-    uint64_t next_tool_id;
 
     /* 1-byte booleans */
+#if YASL_HAS_EGL
+    bool egl_initialized;
+#endif
+    bool stale;
     bool owns_loop;
     bool pres_clock_known;
     bool has_dmabuf;
@@ -311,12 +317,9 @@ struct wayland_surface {
     EGLSurface egl_surface;
     EGLContext egl_context;
     EGLConfig egl_config;
-    struct yasl_private_gl_options gl_options;
     struct wayland_surface *gl_share;
-    bool gl_built;
 #endif
     char *title;
-    bool tearing;
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *toplevel;
     struct xdg_popup *popup;
@@ -328,10 +331,8 @@ struct wayland_surface {
     char *ime_shown;
     uint64_t ime_shown_revision, ime_shown_generation;
     struct seat *ime_seat;
-    uint32_t ime_delete_before, ime_delete_after;
     struct wp_tearing_control_v1 *tearing_control;
     struct latency_feedback *latency_feedbacks;
-    struct latency_feedback latency_pool[8];
     struct wp_fifo_v1 *fifo;
     struct wp_commit_timer_v1 *commit_timer;
     struct wl_callback *frame_cb;
@@ -344,18 +345,22 @@ struct wayland_surface {
     uint64_t outputs;
     double scale_factor;
 
-    /* Sub-structures */
-    struct yasl_private_rect2i ime_caret;
-    struct yasl_private_rect2i content;
-    struct yasl_private_popup_spec popup_pending_spec;
+    /* 8-byte aligned sub-structures */
+    struct input_queue input;
+    struct yasl_private_frame frame;
     struct yasl_private_frame_clock clock;
     struct buffer buffers[NBUF];
-    struct yasl_private_frame frame;
-    struct yasl_private_damage_list damage;
-    int ime_cursor_begin;
-    struct input_queue input;
+    struct latency_feedback latency_pool[8];
 
-    /* 4-byte integers */
+    /* 4-byte aligned sub-structures and integers */
+#if YASL_HAS_EGL
+    struct yasl_private_gl_options gl_options;
+#endif
+    struct yasl_private_rect2i content;
+    struct yasl_private_rect2i ime_caret;
+    struct yasl_private_popup_spec popup_pending_spec;
+    uint32_t ime_delete_before, ime_delete_after;
+    int ime_cursor_begin;
     enum yasl_private_cursor cursor;
     int ime_cursor_end;
     int ime_shown_begin, ime_shown_end;
@@ -371,8 +376,13 @@ struct wayland_surface {
     uint32_t pending_scale_120;
     uint32_t pending_serial;
     uint32_t popup_pending_token;
+    struct yasl_private_damage_list damage;
 
     /* 1-byte booleans packed tightly */
+#if YASL_HAS_EGL
+    bool gl_built;
+#endif
+    bool tearing;
     bool frame_active;
     bool frame_presented;
     bool has_shown;
@@ -391,7 +401,6 @@ struct wayland_surface {
     bool pointer_locked;
     bool ime_delete_pending;
     bool direct_acquired;
-    /* Set by a swap on a rendering thread; the owner arms the frame request at its next flush. */
 };
 
 

@@ -187,11 +187,11 @@ enum yasl_private_resize_edge : uint32_t {
 /** Damage hints for one presentation; every target still needs complete valid pixels. */
 struct yasl_private_damage_list {
     /** -1: full target; 0: no damaged rectangles; otherwise number of rects. */
-    int n;
-    /** Reserved hint; callers may leave zero. Core presentation uses rects. */
-    struct yasl_private_rect2i bounds;
+    int16_t n;
     /** Set when pending rects were merged into one; later rects keep merging into it. */
     bool merged;
+    /** Reserved hint; callers may leave zero. Core presentation uses rects. */
+    struct yasl_private_rect2i bounds;
     /** First n rectangles, in device pixels; ignored for n == -1. */
     struct yasl_private_rect2i rects[YASL_PRIVATE_DAMAGE_MAX];
 };
@@ -406,32 +406,34 @@ enum yasl_private_scroll_valid { YASL_PRIVATE_SCROLL_LINES = 1u, YASL_PRIVATE_SC
  * mouse input. Track contact with DOWN/UP of the primary button, not pressure.
  * This is not a multi-contact touch API. */
 struct yasl_private_pointer_event {
-    struct yasl_private_vector2d pixel_scroll;
-    unsigned scroll_valid, scroll_source, scroll_phase;
-    bool scroll_momentum;
-    double precise_x, precise_y;
-    bool precise_position;
-    /** Surface-relative device-pixel position. Frozen while YASL_PRIVATE_POINTER_RELATIVE is locked. */
-    struct yasl_private_vector2i pos;
+    /* CL 0: hot motion and button fields. */
     /** MOTION: device-pixel movement since the previous sample on this surface.
      * Unbounded under YASL_PRIVATE_POINTER_RELATIVE; zero after enter, leave, or reset. */
     struct yasl_private_vector2d delta;
-    /** SCROLL: fractional line offsets after system preferences; positive right/down. */
-    struct yasl_private_vector2d scroll;
-    /** DOWN/UP: which button changed. */
-    enum yasl_private_pointer_button button;
+    double precise_x, precise_y;
+    /** Surface-relative device-pixel position. Frozen while YASL_PRIVATE_POINTER_RELATIVE is locked. */
+    struct yasl_private_vector2i pos;
     /** YASL_PRIVATE_BUTTON_BIT() mask of buttons held after this event, on every
      * POINTER_* type. Tracked from this queue's DOWN and UP events for all
      * devices; INPUT_RESET clears it. On Wayland LEAVE clears it too, since the
      * compositor sends leave during a press only when it takes the pointer.
      * X11 and Cocoa keep sending motion and the release after LEAVE. */
     uint32_t buttons;
-    /** Mouse, touch, pen, or eraser. */
-    enum yasl_private_pointer_device device;
     /** yasl_private_mod bitmask at this event. */
     uint32_t mods;
+    /** DOWN/UP: which button changed. */
+    enum yasl_private_pointer_button button;
     /** Current tablet axes, including on pressure-only motion; missing axes are zero. */
     struct yasl_private_pointer_pen pen;
+    bool precise_position;
+    /** Mouse, touch, pen, or eraser (enum yasl_private_pointer_device). */
+    uint8_t device;
+    uint8_t scroll_valid, scroll_source, scroll_phase;
+    bool scroll_momentum;
+    /* CL 1: scroll payloads. */
+    struct yasl_private_vector2d pixel_scroll;
+    /** SCROLL: fractional line offsets after system preferences; positive right/down. */
+    struct yasl_private_vector2d scroll;
 };
 
 /** Size of a drop MIME buffer, NUL included. Equals YASL_DROP_MIME_MAX. */
@@ -445,6 +447,8 @@ struct yasl_private_text_event {
     size_t len;
     /** DROP only: the type of data, from yasl_private_surface_pick_drop_type. */
     char mime[YASL_PRIVATE_DROP_MIME_MAX];
+    /** Physical key that produced TEXT. Zero means no key. */
+    uint64_t text_key_id;
 };
 
 /** Clipboard transfer outcome. */
@@ -519,9 +523,10 @@ enum yasl_private_presenter { YASL_PRIVATE_PRESENTER_NONE, YASL_PRIVATE_PRESENTE
 struct yasl_private_pen_sample {
     uint64_t device_id, tool_id;
     double x, y, pressure, tilt_x, tilt_y, rotation, distance, tangential, wheel_degrees;
-    uint32_t axes_valid, axes_changed, buttons, changed_button;
+    uint32_t buttons, changed_button;
+    uint16_t axes_valid, axes_changed;
+    uint8_t tool, action;
     bool in_contact;
-    unsigned tool, action;
 };
 struct yasl_private_event {
     /** Selects the valid union member. */
@@ -535,11 +540,9 @@ struct yasl_private_event {
     uint64_t sequence;
     /** Stable recipient identity; zero for display-wide events. */
     uint64_t surface_id;
-    /** Physical key that produced TEXT or TEXT_EDIT. Zero means no key. */
-    uint64_t text_key_id;
     union {
         struct yasl_private_pen_sample pen;
-        struct { const char *data; size_t len; uint64_t revision, generation; size_t begin, end; } text_edit;
+        struct { const char *data; size_t len; uint64_t revision, generation; size_t begin, end; uint64_t text_key_id; } text_edit;
         struct yasl_private_key_event key; /**< KEY */
         struct yasl_private_pointer_event pointer; /**< POINTER_* */
         struct yasl_private_text_event text; /**< TEXT, DROP */
@@ -677,22 +680,22 @@ void yasl_private_display_drag_cancel(struct yasl_private_display *d);
 /* Surface Lifecycle */
 /** Toplevel options. Zero-initialize, then supply a positive logical-pixel size. */
 struct yasl_private_window_spec {
-    unsigned flags;
-    bool external_gpu;
     /** Copied UTF-8 title; NULL uses backend defaults. */
     const char *title;
-    /** Requested logical-pixel width and height; both must be positive. */
-    struct yasl_private_vector2i size;
-    /** Request initial fullscreen; actual state is reported asynchronously. */
-    bool fullscreen;
-    /** Permit unpaced presentation where supported; a hint, not a guarantee. */
-    bool tearing;
     /** Copied optional window callbacks; NULL disables them. */
     const struct yasl_private_window_cbs *cbs;
     /** Borrowed CPU presenter userdata. */
     void *ud;
     /** Borrowed application data, independent of the CPU presenter. */
     void *userdata;
+    /** Requested logical-pixel width and height; both must be positive. */
+    struct yasl_private_vector2i size;
+    unsigned flags;
+    bool external_gpu;
+    /** Request initial fullscreen; actual state is reported asynchronously. */
+    bool fullscreen;
+    /** Permit unpaced presentation where supported; a hint, not a guarantee. */
+    bool tearing;
 };
 
 /** Popup options, entirely in device pixels, including size.

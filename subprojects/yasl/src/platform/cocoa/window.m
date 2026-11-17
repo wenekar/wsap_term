@@ -1050,8 +1050,12 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
         });
         struct yasl_private_event edit;
         while (input_queue_pop(&w->text_events, &edit)) {
-            if (!key.text_id)
-                edit.text_key_id = 0;
+            if (!key.text_id) {
+                if (edit.type == YASL_PRIVATE_EVENT_TEXT)
+                    edit.text.text_key_id = 0;
+                else if (edit.type == YASL_PRIVATE_EVENT_TEXT_EDIT)
+                    edit.text_edit.text_key_id = 0;
+            }
             input_queue_push(&w->input, &edit);
         }
     }
@@ -1224,12 +1228,12 @@ static void push_text_edit(struct cocoa_surface *w, const char *text, size_t len
     struct yasl_private_event ev = {
         .type = YASL_PRIVATE_EVENT_TEXT_EDIT,
         .surface = &w->base,
-        .text_key_id = w->interpreting_key && insertion ? w->text_key_id : 0,
         .text_edit = {
             .data = text ?: "", .len = len,
             .revision = w->base.text_revision,
             .generation = w->base.text_generation,
             .begin = begin, .end = end,
+            .text_key_id = w->interpreting_key && insertion ? w->text_key_id : 0,
         },
     };
     input_queue_push(w->interpreting_key ? &w->text_events : &w->input, &ev);
@@ -1263,7 +1267,7 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
         w->key_insertions++;
         input_queue_push(&w->text_events, &(struct yasl_private_event){
             .type = YASL_PRIVATE_EVENT_TEXT, .surface = &w->base,
-            .text_key_id = w->text_key_id, .text = { .data = utf8, .len = len },
+            .text = { .data = utf8, .len = len, .text_key_id = w->text_key_id },
         });
         return;
     }

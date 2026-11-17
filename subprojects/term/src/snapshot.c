@@ -10,8 +10,6 @@
 
 struct wsap_vtcore_snapshot {
     struct wsap_vtcore_view view;
-    uint32_t palette[WSAP_VTCORE_PALETTE_SIZE];
-    uint64_t source;
 
     // The row store is a ring. Logical row y is physical row (top + y) % view.size.y.
     // A scroll moves top. The kept rows do not move.
@@ -20,18 +18,18 @@ struct wsap_vtcore_snapshot {
     uint32_t *row_clusters;
     // For each physical row: the arena offset of its underline colors, or ROW_NO_UL.
     uint32_t *row_ul;
-    int top;
-    // Scratch rows for the staged path. NULL, or cell_cap cells.
-    struct wsap_vtcore_cell *stage;
     // One span for each logical row.
     struct wsap_vtcore_span *selection;
     // The line size of each logical row (enum wsap_vtcore_line_size).
     uint8_t *row_size;
-    size_t cell_cap;
-    int row_cap;
-    bool has_selection;
-    bool has_sizes;
+    uint32_t *arena;
+    int top;
+    uint32_t arena_len;
 
+    uint64_t source;
+    // Scratch rows for the staged path. NULL, or cell_cap cells.
+    struct wsap_vtcore_cell *stage;
+    size_t cell_cap;
     // Scratch buffers for plan setup to avoid stack pressure and heap allocation.
     void *plan_buf;
     uint64_t *plan_keys;
@@ -40,11 +38,15 @@ struct wsap_vtcore_snapshot {
     int *plan_c0;
     int *plan_c1;
     uint8_t *plan_sizes;
-
-    uint32_t *arena;
-    uint32_t arena_len, arena_cap, arena_dead;
     uint32_t *spare;
+
+    int row_cap;
+    uint32_t arena_cap, arena_dead;
     uint32_t spare_cap;
+
+    uint32_t palette[WSAP_VTCORE_PALETTE_SIZE];
+    bool has_selection;
+    bool has_sizes;
 };
 
 struct wsap_vtcore_snapshot *wsap_vtcore_snapshot_new(void)
@@ -140,9 +142,9 @@ struct arena_out {
     uint32_t **buf;
     uint32_t *cap;
     uint32_t len;
-    struct cluster_cache_entry cache[CLUSTER_CACHE_SIZE];
     uint32_t last_handle;
     uint32_t last_text;
+    struct cluster_cache_entry cache[CLUSTER_CACHE_SIZE];
 };
 
 static inline struct arena_out make_arena_out(uint32_t **buf, uint32_t *cap, uint32_t len)
@@ -453,19 +455,19 @@ _Static_assert(RF_LINE_DOUBLE_WIDTH >> RF_LINE_SHIFT == WSAP_VTCORE_LINE_DOUBLE_
 #define DIRECT_MAX_WORDS (1u << 22)
 
 struct plan {
-    bool all;
-    int scrolled;
-    uint32_t arena_len;
     const uint64_t *keys;
     // For each logical row: ROW_KEPT, or the arena words of a new row.
     uint32_t *words;
     // For each new staged row: the arena offset of its underline colors.
     uint32_t *ul;
-    int staged;
-    bool direct;
     const int *c0, *c1;
     // For each logical row: the RF_LINE_SIZE bits of the row.
     const uint8_t *sizes;
+    int scrolled;
+    uint32_t arena_len;
+    int staged;
+    bool all;
+    bool direct;
 };
 
 /* Write the plan to the snapshot. This step cannot fail. The direct path

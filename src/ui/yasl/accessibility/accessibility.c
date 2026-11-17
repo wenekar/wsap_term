@@ -30,7 +30,7 @@ struct text_run {
     size_t ordinal, offset, length;
     uint8_t lengths[RUN_CHARACTERS];
     uint8_t words[RUN_CHARACTERS];
-    size_t characters, word_count;
+    uint8_t characters, word_count;
 };
 
 struct text_model {

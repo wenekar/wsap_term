@@ -22,9 +22,9 @@ struct present_watch;
 struct window_metal_frame {
     void *drawable;
     struct vector2i size;
-    bool transaction;
     void *(*acquire)(void *ud);
     void *acquire_ud;
+    bool transaction;
 };
 
 typedef void (*window_metal_draw_fn)(const struct window_metal_frame *frame,

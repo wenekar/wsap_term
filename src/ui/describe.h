@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "ui/box.h"
 #include "ui/event.h"
@@ -14,7 +15,7 @@
 
 struct ui_view;
 
-enum ui_node_kind {
+enum ui_node_kind : uint8_t {
     UI_NODE_ROW = 0,
     UI_NODE_COLUMN,
     UI_NODE_STACK,
@@ -27,10 +28,10 @@ enum ui_node_kind {
 };
 
 struct ui_node_layout {
+    struct insets2i padding;
+    int gap;
     enum ui_box_align align;
     enum ui_box_justify justify;
-    int gap;
-    struct insets2i padding;
 };
 
 /* Use the field that matches the node kind.

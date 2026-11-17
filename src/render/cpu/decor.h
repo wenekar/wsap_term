@@ -68,9 +68,11 @@ struct decor_key {
 struct decor_mask {
     const uint8_t *cov;
     const uint8_t *faint;
-    int y0, y1;
+    int16_t y0, y1;
     bool solid;
 };
+
+_Static_assert(sizeof(struct decor_mask) == 24, "struct decor_mask packs to 24 bytes");
 
 /*
  * All masks for one key. Read only after decor_get() returns it. Valid until

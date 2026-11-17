@@ -9,6 +9,7 @@
 #include "wsap_vtcore/unicode/utf8.h"
 
 #include <limits.h>
+#include <stddef.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -71,7 +72,8 @@ static void history_free(struct ui_input_history **stack)
 
 static struct ui_input_history *history_snapshot(const struct ui_input *in)
 {
-    struct ui_input_history *entry = malloc(sizeof(*entry) + (size_t)in->impl.len + 1);
+    struct ui_input_history *entry =
+        malloc(sizeof(*entry) + (size_t)in->impl.len + 1);
     if (!entry) return NULL;
     *entry = (struct ui_input_history){ .len = in->impl.len,
         .caret = in->impl.caret, .anchor = in->impl.anchor };
@@ -481,8 +483,8 @@ enum input_cmd_flag {
 
 /* Maps an edit command to its handler and range behavior. */
 struct input_cmd {
-    enum ui_edit_command command;
     bool (*run)(struct ui_input *in, const struct input_cmd *cmd);
+    enum ui_edit_command command;
     enum ui_edit_unit unit;
     uint8_t flags;
 };

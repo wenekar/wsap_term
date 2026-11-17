@@ -19,8 +19,9 @@ struct window_vulkan {
     struct yasl_surface *surface;
     VkSurfaceKHR vk_surface;
     struct vulkan_drawable drawable;
-    struct window_metal_watch watch;
+    struct present_watch *presents;
     struct vector2i last_size;
+    bool watch_sample;
     bool has_size;
 };
 
@@ -122,7 +123,8 @@ bool window_metal_draw(void *layer, struct yasl_surface *s,
     bool transaction = wv->has_size && !vector2i_eq(wv->last_size, size);
     wv->last_size = size;
     wv->has_size = true;
-    wv->watch = watch;
+    wv->presents = watch.presents;
+    wv->watch_sample = watch.sample;
     struct window_metal_frame frame = {
         .drawable = &wv->drawable,
         .size = size,

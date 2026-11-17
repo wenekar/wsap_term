@@ -97,10 +97,9 @@ struct glyph {
     uint8_t **subpx;
     uint32_t *color;
     void *raster;
-    void *subpx_mem;
-    size_t raster_capacity;
-    size_t color_capacity;
-    size_t subpx_capacity;
+    uint32_t raster_capacity;
+    uint32_t color_capacity;
+    uint32_t subpx_capacity;
     uint16_t width;
     uint16_t height;
     uint16_t mask_words;
@@ -108,6 +107,8 @@ struct glyph {
     bool has_color;
     bool has_subpx_ink;
 };
+
+_Static_assert(sizeof(struct glyph) == 64, "struct glyph fits in one cacheline");
 
 /* Returns the ink mask word pointer for row `y` of glyph `g`. */
 static inline uint64_t *glyph_mask(const struct glyph *g, int y)

@@ -10,13 +10,13 @@
 
 struct link_entry {
     uint32_t offset;
+    uint32_t hash;
     uint16_t len;
     bool allocated;
-    uint64_t hash;
 };
 
 struct link_hash_slot {
-    uint64_t hash;
+    uint32_t hash;
     uint16_t id;
 };
 
@@ -33,21 +33,24 @@ struct wsap_vtcore_links {
     uint16_t next;
 };
 
-static inline uint64_t hash_uri(const char *s)
+static inline uint32_t hash_uri(const char *s)
 {
     uint64_t h = HASH64_BASIS;
     while (*s)
         h = hash64_step(h, (uint8_t)*s++);
     h = hash64_finish(h);
-    return h ? h : 1;
+    uint32_t folded = (uint32_t)(h ^ (h >> 32));
+    if (!folded)
+        folded = 1;
+    return folded;
 }
 
-static void links_insert_hash(struct wsap_vtcore_links *l, uint64_t h, uint16_t id)
+static void links_insert_hash(struct wsap_vtcore_links *l, uint32_t h, uint16_t id)
 {
     if (!l->hash_table || !l->hash_cap)
         return;
     uint32_t mask = l->hash_cap - 1;
-    uint32_t idx = (uint32_t)h & mask;
+    uint32_t idx = h & mask;
     for (uint32_t probe = 0; probe <= mask; probe++) {
         struct link_hash_slot *slot = &l->hash_table[idx];
         if (slot->hash == 0) {
@@ -175,12 +178,12 @@ static void links_gc(struct wsap_vtcore *t, struct wsap_vtcore_links *l)
     }
 }
 
-static uint16_t links_find(const struct wsap_vtcore_links *l, const char *uri, size_t len, uint64_t h)
+static uint16_t links_find(const struct wsap_vtcore_links *l, const char *uri, size_t len, uint32_t h)
 {
     if (!l->hash_table || !l->hash_cap)
         return 0;
     uint32_t mask = l->hash_cap - 1;
-    uint32_t idx = (uint32_t)h & mask;
+    uint32_t idx = h & mask;
     for (uint32_t probe = 0; probe <= mask; probe++) {
         const struct link_hash_slot *slot = &l->hash_table[idx];
         if (slot->hash == 0)
@@ -224,7 +227,7 @@ static uint16_t links_intern(struct wsap_vtcore *t, const char *uri)
         l->next = 1;
         t->links = l;
     }
-    uint64_t h = hash_uri(uri);
+    uint32_t h = hash_uri(uri);
     uint16_t id = links_find(l, uri, len, h);
     if (!id) {
         id = links_alloc(t, l);

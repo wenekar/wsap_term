@@ -11,7 +11,7 @@ enum ui_modifiers {
     UI_MOD_SUPER = 8,
 };
 
-enum ui_key {
+enum ui_key : uint8_t {
     UI_KEY_NONE = 0,
     UI_KEY_ENTER, UI_KEY_ESCAPE, UI_KEY_TAB, UI_KEY_BACKSPACE, UI_KEY_DELETE,
     UI_KEY_UP, UI_KEY_DOWN, UI_KEY_LEFT, UI_KEY_RIGHT,
@@ -19,7 +19,7 @@ enum ui_key {
     UI_KEY_CHAR,
 };
 
-enum ui_edit_unit {
+enum ui_edit_unit : uint8_t {
     UI_EDIT_CHARACTER,
     UI_EDIT_WORD,
     UI_EDIT_WORD_END,
@@ -45,7 +45,7 @@ static inline enum ui_edit_unit ui_edit_unit_for_mods(unsigned mods,
     return UI_EDIT_CHARACTER;
 }
 
-enum ui_edit_command {
+enum ui_edit_command : uint8_t {
     UI_EDIT_NONE,
     UI_EDIT_START, UI_EDIT_END,
     UI_EDIT_LEFT, UI_EDIT_RIGHT,
@@ -100,9 +100,9 @@ enum ui_key_action : uint8_t {
 
 struct ui_key_event {
     const void *native;
-    enum ui_key key;
     unsigned mods;
     uint32_t text;
+    enum ui_key key;
     enum ui_edit_unit edit_unit;
     enum ui_edit_command edit_command;
     enum ui_key_action action;

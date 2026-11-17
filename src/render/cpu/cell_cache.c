@@ -140,7 +140,6 @@ struct cell_cache_worker {
     int asked;
     int n_hits;
     int n_pending;
-    bool hit_overflow;
     uint32_t hits[CELL_CACHE_HIT_LOG];
     /* Slot + 1 of recent hits. A repeat hit is logged once. */
     uint32_t hit_filter[HIT_FILTER];
@@ -148,6 +147,7 @@ struct cell_cache_worker {
     /* Pending entry + 1. 0 is empty. */
     uint16_t pending_index[PENDING_INDEX];
     uint32_t seen[CELL_CACHE_SEEN / SEEN_WAYS][SEEN_WAYS];
+    bool hit_overflow;
 };
 
 static const struct cell_l0 empty_l0;

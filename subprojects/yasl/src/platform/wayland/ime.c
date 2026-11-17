@@ -83,13 +83,13 @@ static void ime_record_commit(struct seat *seat, struct wayland_surface *w,
     snapshot->surface = w;
     snapshot->revision = w->base.text_revision;
     snapshot->generation = w->base.text_generation;
-    snapshot->begin = w->base.text_begin;
-    snapshot->end = w->base.text_end;
+    snapshot->begin = (uint32_t)w->base.text_begin;
+    snapshot->end = (uint32_t)w->base.text_end;
     if (text) {
         snapshot->surrounding = true;
-        snapshot->offset = start;
-        snapshot->length = length;
-        snapshot->cursor = w->base.text_end - start;
+        snapshot->offset = (uint32_t)start;
+        snapshot->length = (uint16_t)length;
+        snapshot->cursor = (uint16_t)(w->base.text_end - start);
         memcpy(snapshot->text, text, length);
     }
 }

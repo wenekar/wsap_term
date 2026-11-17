@@ -8,11 +8,12 @@
 #include <string.h>
 
 struct event_node {
-    struct yasl_private_event event;
+    /* CL 0: hot unregister and queue walk fields, plus event header. */
+    struct event_node *next;
     uint64_t queue_id;
+    struct yasl_private_event event;
     char *text;
     void (*release)(void *);
-    struct event_node *next;
 };
 
 enum { event_pool_capacity = 32 };
@@ -22,8 +23,8 @@ struct yasl_private_event_state {
     struct event_node *head, *tail, *last;
     /* Nodes kept for reuse, so a motion burst does not allocate one node per event. */
     struct event_node *pool;
-    unsigned pool_count;
     uint64_t sequence, identity, request;
+    unsigned pool_count;
     int error;
 };
 

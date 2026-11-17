@@ -130,6 +130,9 @@ struct raster_worker {
     size_t scratch_px;
 };
 
+_Static_assert(sizeof(struct raster_worker) % 64 == 0,
+               "raster_worker stride stays a multiple of 64 bytes");
+
 /*
  * Prepares a zeroed worker. With `cache` non-NULL it creates the cell cache
  * state. Returns false when the memory is missing. Main thread.

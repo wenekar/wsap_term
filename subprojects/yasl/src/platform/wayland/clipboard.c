@@ -17,11 +17,11 @@ struct offer {
     struct wl_data_offer *proxy;
     /* Text type that a paste from the selection receives. */
     char *mime;
-    /* Every type that the offer lists, in offer order. */
-    char *mimes[OFFER_MIME_MAX];
-    size_t mime_count;
     /* Drag type that the enter accepted. NULL refuses the drag. Points into mimes. */
     const char *picked;
+    /* Every type that the offer lists, in offer order. */
+    char *mimes[OFFER_MIME_MAX];
+    uint8_t mime_count;
     bool tab;
 };
 struct primary_offer {

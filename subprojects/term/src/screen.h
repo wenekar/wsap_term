@@ -269,7 +269,7 @@ static inline int text_row_decode(const struct srow *row, struct cell *out, int 
     int n = wsap_vtcore_hist_text_decode(tr, out, cols, NULL);
     int fill = tr->fill_to < cols ? tr->fill_to : cols;
     if (n < fill) {
-        fill_cells(out + n, fill - n, tr->fill.fg, tr->fill.bg);
+        fill_cells(out + n, fill - n, tr->fill_fg, tr->fill_bg);
         n = fill;
     }
     return n;
@@ -556,7 +556,8 @@ static inline void screen_new_row(struct wsap_vtcore *t, struct srow *row)
         row->kind = ROW_TEXT;
         text_row_start(&row->text, &(struct pen_attr){ .fg = WSAP_VTCORE_COLOR_FG, .bg = WSAP_VTCORE_COLOR_BG });
         row->text.fill_to = (uint16_t)t->scr.cols;
-        row->text.fill = (struct pen_attr){ .fg = t->cur_fg, .bg = t->cur_bg };
+        row->text.fill_fg = t->cur_fg;
+        row->text.fill_bg = t->cur_bg;
         row->len = (uint16_t)t->scr.cols;
     }
 }

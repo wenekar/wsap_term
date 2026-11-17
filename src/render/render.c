@@ -127,7 +127,10 @@ static bool cpu_ensure(struct renderer *r)
         r->cache = cell_cache_create((size_t)r->cache_bytes);
 
     r->n_workers = 1 + pool_workers(r->pool);
-    r->workers = calloc((size_t)r->n_workers, sizeof(*r->workers));
+    size_t workers_bytes = (size_t)r->n_workers * sizeof(*r->workers);
+    r->workers = aligned_alloc(64, (workers_bytes + 63) & ~(size_t)63);
+    if (r->workers)
+        memset(r->workers, 0, workers_bytes);
     r->decor = decor_cache_create();
     if (!r->workers || !r->decor)
         goto fail;

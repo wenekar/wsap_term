@@ -3,6 +3,7 @@
 
 #include <hb.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 enum layout_role {
@@ -18,14 +19,17 @@ enum layout_role {
 
 struct font_layout {
     uint64_t trigger[LAYOUT_PAIR_CPS / 64];
-    uint64_t pairs[LAYOUT_PAIR_CPS][LAYOUT_PAIR_CPS / 64];
-    uint64_t chain_pairs[LAYOUT_PAIR_CPS][LAYOUT_PAIR_CPS / 64];
     uint32_t *keys, *values;
-    uint32_t ascii[128];
     uint32_t mask;
     bool opaque;
     uint8_t reach_back, reach_ahead;
+    _Alignas(64) uint32_t ascii[128];
+    uint64_t pairs[LAYOUT_PAIR_CPS][LAYOUT_PAIR_CPS / 64];
+    uint64_t chain_pairs[LAYOUT_PAIR_CPS][LAYOUT_PAIR_CPS / 64];
 };
+
+_Static_assert(offsetof(struct font_layout, ascii) == 64,
+               "metadata and trigger fit in the first cacheline");
 
 struct font_layout *font_layout_build(hb_face_t *face);
 void font_layout_free(struct font_layout *l);

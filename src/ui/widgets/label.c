@@ -675,7 +675,7 @@ const char *ui_label_text(const struct ui_label *label)
 
 void ui_label_set_wrap(struct ui_label *label, enum ui_label_wrap wrap)
 {
-    if (!label || wrap < UI_LABEL_WRAP_WORD || wrap > UI_LABEL_ELLIPSIS) return;
+    if (!label || wrap > UI_LABEL_ELLIPSIS) return;
     label_ensure_init(label);
     if (label->impl.wrap == wrap) return;
     label->impl.wrap = wrap;
@@ -684,7 +684,7 @@ void ui_label_set_wrap(struct ui_label *label, enum ui_label_wrap wrap)
 
 void ui_label_set_align(struct ui_label *label, enum ui_label_align align)
 {
-    if (!label || align < UI_LABEL_ALIGN_LEFT || align > UI_LABEL_ALIGN_RIGHT) return;
+    if (!label || align > UI_LABEL_ALIGN_RIGHT) return;
     label_ensure_init(label);
     if (label->impl.align == align) return;
     label->impl.align = align;

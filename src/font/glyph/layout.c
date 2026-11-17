@@ -893,9 +893,10 @@ static bool fill_map(struct font_layout *l, hb_face_t *face, const struct analys
 
 struct font_layout *font_layout_build(hb_face_t *face)
 {
-    struct font_layout *l = calloc(1, sizeof(*l));
+    struct font_layout *l = aligned_alloc(64, (sizeof(*l) + 63) & ~(size_t)63);
     if (!l)
         return NULL;
+    memset(l, 0, sizeof(*l));
     for (uint32_t cp = 0; cp < 128; cp++)
         l->ascii[cp] = entry(LAYOUT_COMPLEX, cp);
     if (!face || hb_aat_layout_has_substitution(face) ||

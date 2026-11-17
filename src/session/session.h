@@ -38,12 +38,30 @@ struct session_spec {
 
 struct session {
     alignas(64) struct pty_ring ring;
-    char *title;
+    /* The newline mode of the bytes that the worker reads, and the stream that
+     * they came from. */
+    int newline_fd;
+    bool onlcr;
+    bool newline_synced;
+    bool reaped;
+    bool host_lock_ready;
     struct yasl_loop *loop;
-    struct wsap_vtcore *term;
+
     struct session_write_queue input_writer;
+    struct wsap_vtcore *term;
     const struct session_host *host;
+
+    /* The host events that the worker thread queues for the loop thread: the
+     * title, the clipboard, a notification, and the bell. The loop thread
+     * applies them, so the host and the window see one thread only. */
+    pthread_mutex_t host_lock;
+    struct session_host_event *host_head;
+    struct session_host_event *host_tail;
     void *host_ud;
+
+    /* Spawn and destroy write the descriptors. The worker only reads them. */
+    struct pty pty;
+    char *title;
     struct session *next_live;
     uint64_t last_keystroke_ms;
     /* The last winsize sent to the pty, the size that waits for the timer, and
@@ -51,22 +69,6 @@ struct session {
     uint64_t pty_resize_ns;
     uint64_t pty_resize_timer;
     struct vector2i pty_pending;
-    /* The host events that the worker thread queues for the loop thread: the
-     * title, the clipboard, a notification, and the bell. The loop thread
-     * applies them, so the host and the window see one thread only. */
-    pthread_mutex_t host_lock;
-    struct session_host_event *host_head;
-    struct session_host_event *host_tail;
-
-    /* The newline mode of the bytes that the worker reads, and the stream that
-     * they came from. */
-    int newline_fd;
-    bool onlcr;
-    bool newline_synced;
-
-    bool reaped;
-    bool host_lock_ready;
-    alignas(64) struct pty pty;
 };
 
 /*

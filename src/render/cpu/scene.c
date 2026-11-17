@@ -74,9 +74,10 @@ static struct pair_lut *scene_luts_get(void)
     pthread_once(&scene_luts_once, scene_luts_key_init);
     if (!scene_luts_key_ok)
         return NULL;
-    struct pair_lut *luts = calloc(1, sizeof(*luts));
+    struct pair_lut *luts = aligned_alloc(64, (sizeof(*luts) + 63) & ~(size_t)63);
     if (!luts)
         return NULL;
+    memset(luts, 0, sizeof(*luts));
     if (pthread_setspecific(scene_luts_key, luts) != 0) {
         free(luts);
         return NULL;

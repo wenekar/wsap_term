@@ -18,7 +18,7 @@
 
 #define UI_TABBAR_NEW_TAB (-2)
 
-enum ui_tab_drag_state {
+enum ui_tab_drag_state : uint8_t {
     UI_TAB_DRAG_NONE = 0,
     UI_TAB_DRAG_PENDING,
     UI_TAB_DRAG_REORDER,
@@ -59,13 +59,13 @@ struct ui_tabbar {
         int hover_close;
         int keyboard_index;
         int external_slot;
-        enum ui_tab_drag_state drag_state;
         int drag_tab;
         int drag_target_slot;
         int drag_grab_x;
         int pressed_tab;
         int n_tabs;
         int labels_cap;
+        enum ui_tab_drag_state drag_state;
         bool hover_new;
         bool external_drag;
     } impl;

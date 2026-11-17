@@ -38,11 +38,14 @@ static inline uint16_t glyph_style(uint16_t style)
 
 struct bufhead {
     alignas(max_align_t) struct bufhead *next;
-    uint32_t cap;
     uint32_t key;
-    uint8_t kind;
+    uint32_t cap : 29;
+    uint32_t kind : 3;
 };
 enum { BK_GLYPH_ARR, BK_PIX, BK_RUN_DATA };
+
+_Static_assert(sizeof(struct bufhead) == 16, "struct bufhead fits in one 16-byte block");
+_Static_assert(BK_RUN_DATA <= 7, "buffer kinds fit in 3 bits");
 
 extern _Atomic bool cache_parallel;
 
@@ -94,23 +97,27 @@ struct font_instance {
     uint32_t scale_120;
     uint32_t id;
     int refs;
+    _Atomic uint32_t built_fg;
     struct font_instance *next;
     font_handle_t *face;
     _Atomic uint64_t built_gen;
     _Atomic(struct cache_slot *) cjk;
     _Atomic uint64_t run_stamp;
     _Atomic(struct font_layout *) layouts[FONT_VARIANT_COUNT];
+    _Atomic uint32_t built_bg;
 
-    struct cache_slot ascii[128];
+    _Alignas(64) struct cache_slot ascii[128];
     struct cache_slot ascii_italic[128];
     struct cache_slot latin[LATIN_CACHE_SIZE];
     uint32_t *ascii_tiles[128];
     struct run_slot runs[RUN_CACHE_SIZE];
     struct cache_slot tiles[TILE_CACHE_SIZE];
-
-    _Atomic uint32_t built_fg, built_bg;
 };
 
+_Static_assert(offsetof(struct font_instance, ascii) % 64 == 0,
+               "cache arrays start on a 64-byte boundary");
+_Static_assert(offsetof(struct font_instance, runs) % 64 == 0,
+               "run cache sets align on 64-byte boundaries");
 _Static_assert(sizeof(struct run_slot) * RUN_CACHE_SIZE <= 16u * 1024u,
                "run cache stays within 16 KiB per font instance");
 

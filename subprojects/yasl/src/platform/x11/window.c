@@ -622,39 +622,41 @@ struct x11_surface {
     struct yasl_surface base;
     struct x11_surface *next;
     struct x11_surface *dead_next;
+    struct x11_surface *parent;
     Window window;
     GC gc;
     Colormap colormap;
     Visual *visual;
-    int visual_depth;
     XIC ic;
 #if YASL_HAS_EGL
     EGLContext gl_context;
     EGLSurface gl_surface;
     EGLConfig gl_config;
-    int swap_interval; /* Applied whenever this surface becomes current. */
 #endif
     XImage *image;
     uint32_t *pixels;
-    bool shm_active;
-    XShmSegmentInfo shm_info;
-    struct yasl_private_vector2i size;
     const struct yasl_private_window_cbs *cbs;
     void *ud;
+    char *ime_preedit;
     struct input_queue input;
     struct yasl_private_frame frame;
-    struct yasl_private_damage_list damage;
     struct yasl_private_frame_clock clock;
+    XShmSegmentInfo shm_info;
+    struct yasl_private_vector2i size;
+    struct yasl_private_vector2i content_offset;
+    struct yasl_private_rect2i ime_caret;
+    int visual_depth;
+#if YASL_HAS_EGL
+    int swap_interval; /* Applied whenever this surface becomes current. */
+#endif
+    int ime_cursor_begin;
+    int ime_cursor_end;
+    struct yasl_private_damage_list damage;
+    bool shm_active;
     bool want_draw, drawing, presented, destroyed;
     bool direct_acquired, direct_stale;
     bool focused;
-    struct x11_surface *parent;
     bool is_popup;
-    struct yasl_private_vector2i content_offset;
-    char *ime_preedit;
-    int ime_cursor_begin;
-    int ime_cursor_end;
-    struct yasl_private_rect2i ime_caret;
 };
 
 /* A selection receive: a clipboard paste, or the data of an XDND drop. Both
@@ -667,16 +669,16 @@ struct paste_request {
     Atom selection;
     uint64_t id;
     yasl_private_timer_id timeout;
-    /* INCR receive: chunks accumulate in buf until a zero-length chunk arrives. */
-    bool incr;
     Atom incr_type;
     char *buf;
     size_t buf_len;
+    Window source;
+    char mime[YASL_PRIVATE_DROP_MIME_MAX];
+    /* INCR receive: chunks accumulate in buf until a zero-length chunk arrives. */
+    bool incr;
     /* XDND drop: the data goes out as a DROP event of type mime, and the
      * source gets XdndFinished. */
     bool drop;
-    Window source;
-    char mime[YASL_PRIVATE_DROP_MIME_MAX];
 };
 
 /* An INCR transfer this backend sends to a requestor. data is a private copy, so
@@ -693,16 +695,16 @@ struct incr_send {
 };
 
 struct tablet_axis {
-    int number;
     double min, max, value;
+    int number;
     bool valid;
 };
 
 struct x11_scroll_axis {
-    int number;
     double increment, value;
-    bool valid, initialized;
+    int number;
     int type;
+    bool valid, initialized;
 };
 
 struct x11_pointer {
@@ -710,9 +712,9 @@ struct x11_pointer {
     int id;
     enum yasl_private_pointer_device device;
     unsigned tool;
+    uint32_t buttons;
     struct tablet_axis pressure, tilt_x, tilt_y, rotation, distance, tangential, wheel;
     struct x11_scroll_axis scroll_x, scroll_y;
-    uint32_t buttons;
     bool finger_scroll;
 };
 
@@ -720,16 +722,10 @@ struct x11_display {
     struct yasl_private_display base;
     struct x11_display *next_open;
     Display *native;
-    int screen;
     struct yasl_loop *loop;
-    int watch;
     struct x11_surface *surfaces, *dead;
-    int depth;
     /* 32-bit TrueColor visual for CPU windows, when the server has one. */
     Visual *argb_visual;
-    int argb_depth;
-    /* Device scale numerator from Xft.dpi, with 120 representing 1x. */
-    uint32_t scale_120;
     XIM im;
     Window selection_window;
     /* Server time of the latest key or button event, and the time each selection was taken. */
@@ -742,29 +738,16 @@ struct x11_display {
     Atom xdnd_selection, xdnd_action_copy, xdnd_type_list;
     char *selection[2];
     struct paste_request *pastes;
-    uint32_t mods;
     char *app_id;
-    bool owns_loop;
-    int xi_opcode;
-    bool xi2;
-    bool has_shm;
-    bool has_xkb;
-    bool lost;
-    bool popup_grab; /* The pointer is grabbed for the topmost popup. */
-    int popup_device; /* XI2 device holding that grab. */
-    int xkb_event;
-    enum yasl_key keys[256];
-    Cursor cursors[16];
     Atom abs_pressure, abs_tilt_x, abs_tilt_y, abs_rotation, abs_distance, abs_tangential, abs_wheel;
     Atom tool_type, eraser;
     Atom brush, airbrush, pencil;
     struct x11_pointer *pointers;
 #if YASL_HAS_EGL
     EGLDisplay egl;
-    bool egl_ready;
 #endif
+    Cursor cursors[16];
     struct {
-        bool active;
         struct x11_surface *origin;
         struct x11_surface *carried;
         struct yasl_private_vector2i carry_offset;
@@ -775,18 +758,39 @@ struct x11_display {
         Window icon_window;
         Pixmap icon_pixmap;
         struct yasl_private_vector2i hotspot;
+        bool active;
     } drag;
     /* One external drag. XdndEnter picks the type; accepts is true only with a pick. */
     struct {
         Window source;
+        Atom picked; /* The same type, by atom. */
+        struct x11_surface *surface;
+        Time time;
+        struct yasl_private_vector2i pos;
         int version;
         bool accepts;
         char mime[YASL_PRIVATE_DROP_MIME_MAX]; /* The picked type, by name. */
-        Atom picked; /* The same type, by atom. */
-        struct x11_surface *surface;
-        struct yasl_private_vector2i pos;
-        Time time;
     } xdnd;
+    uint16_t keys[256];
+    int screen;
+    int watch;
+    int depth;
+    int argb_depth;
+    /* Device scale numerator from Xft.dpi, with 120 representing 1x. */
+    uint32_t scale_120;
+    uint32_t mods;
+    int xi_opcode;
+    int popup_device; /* XI2 device holding that grab. */
+    int xkb_event;
+    bool owns_loop;
+    bool xi2;
+    bool has_shm;
+    bool has_xkb;
+    bool lost;
+    bool popup_grab; /* The pointer is grabbed for the topmost popup. */
+#if YASL_HAS_EGL
+    bool egl_ready;
+#endif
 };
 
 static bool place(struct yasl_surface *base, struct yasl_private_vector2i at);
@@ -1114,7 +1118,8 @@ static void pointer_info(struct x11_display *d, struct x11_pointer *p,
             v->label == d->abs_distance ? &p->distance :
             v->label == d->abs_tangential ? &p->tangential :
             v->label == d->abs_wheel ? &p->wheel : NULL;
-        if (axis) *axis = (struct tablet_axis){v->number, v->min, v->max, v->value, true};
+        if (axis) *axis = (struct tablet_axis){
+            .number = v->number, .min = v->min, .max = v->max, .value = v->value, .valid = true};
     }
     for (int i = 0; i < info->num_classes; i++) {
         XIAnyClassInfo *c = info->classes[i];
@@ -3082,7 +3087,7 @@ static void refresh_keyboard(struct x11_display *d)
     if (!keyboard) return;
     if (keyboard->names && keyboard->names->keys) {
         for (unsigned code = keyboard->min_key_code; code <= keyboard->max_key_code; code++)
-            d->keys[code] = yasl_private_key_from_xkb_name(keyboard->names->keys[code].name);
+            d->keys[code] = (uint16_t)yasl_private_key_from_xkb_name(keyboard->names->keys[code].name);
     }
     XkbFreeKeyboard(keyboard, XkbAllComponentsMask, True);
 }
@@ -3131,7 +3136,7 @@ static void key_event(struct x11_surface *s, XKeyEvent *key, bool repeat)
     uint32_t cp = xkb_keysym_to_utf32((xkb_keysym_t)base);
     push(s, (struct yasl_private_event){
         .type = YASL_PRIVATE_EVENT_KEY,
-        .key = {.key = key->keycode < 256 ? d->keys[key->keycode] : YASL_KEY_UNKNOWN,
+        .key = {.key = key->keycode < 256 ? (enum yasl_key)d->keys[key->keycode] : YASL_KEY_UNKNOWN,
                 .codepoint = yasl_private_key_label(cp), .native_code = key->keycode,
                 .shifted = yasl_private_key_label(xkb_keysym_to_utf32((xkb_keysym_t)shifted)),
                 .mods = d->mods,

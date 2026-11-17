@@ -389,9 +389,9 @@ int main(void)
            ev.pointer.scroll_source == 2u && ev.pointer.scroll.y == -0.5);
     input_queue_clear(&surface.input);
     assert(pointer_button(2) == 1 && pointer_button(8) == 3);
-    pointer.pressure = (struct tablet_axis){2, 1, 1, 50, true};
+    pointer.pressure = (struct tablet_axis){.number = 2, .min = 1, .max = 1, .value = 50, .valid = true};
     assert(pressure_value(&pointer.pressure) == 0);
-    pointer.tilt_x = (struct tablet_axis){4, -90, 90, -200, true};
+    pointer.tilt_x = (struct tablet_axis){.number = 4, .min = -90, .max = 90, .value = -200, .valid = true};
     assert(tilt_value(&pointer.tilt_x) == -90);
     pointer.tilt_x.value = 200;
     assert(tilt_value(&pointer.tilt_x) == 90);

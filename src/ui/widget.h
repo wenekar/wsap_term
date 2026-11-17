@@ -45,28 +45,38 @@ struct ui_placement {
 
 struct ui_part_slot {
     struct ui_part_slot *next;
-    struct css_style style;
     uint64_t context_generation;
     uint64_t style_generation;
     ui_part_id part;
-    unsigned pseudo;
-    bool valid;
+    uint32_t pseudo : 31;
+    uint32_t valid : 1;
+    struct css_style style;
 };
 
 struct ui_widget {
     const struct ui_widget_ops *ops;
-    void *userdata;
-    struct ui_widget *parent;
     struct ui_widget *first_child;
     struct ui_widget *last_child;
     struct ui_widget *prev_sibling;
     struct ui_widget *next_sibling;
+    struct ui_widget *parent;
     struct rect2i bounds;
+    void *userdata;
     struct rect2f layout_bounds;
     struct vector2i measured_size;
-    struct css_style style;
-    struct css_scale_context style_scale;
     struct {
+        uint16_t style_pseudo;
+        uint8_t invalidation;
+        bool accessibility_ignored : 1;
+        bool accessibility_invalid : 1;
+        bool style_valid : 1;
+        bool destroyed : 1;
+        bool hidden : 1;
+        bool focusable : 1;
+        bool modal : 1;
+        bool pointer_transparent : 1;
+        struct vector2i fixed_size;
+        struct ui_placement placement;
         struct ui_surface *surface;
         struct ui_action_handler actions;
         ui_event_fn event_fn;
@@ -76,8 +86,6 @@ struct ui_widget {
         uint64_t accessibility_id;
         char *accessible_name;
         char *accessible_description;
-        struct ui_placement placement;
-        struct vector2i fixed_size;
         const char *style_class;
         const char *style_id;
         const char *style_tag;
@@ -86,17 +94,9 @@ struct ui_widget {
         struct ui_part_slot *part_slots;
         uint64_t deadline;
         size_t child_count;
-        unsigned style_pseudo;
-        unsigned invalidation;
-        bool accessibility_ignored;
-        bool accessibility_invalid;
-        bool style_valid;
-        bool destroyed;
-        bool hidden;
-        bool focusable;
-        bool modal;
-        bool pointer_transparent;
     } impl;
+    struct css_style style;
+    struct css_scale_context style_scale;
 };
 
 /* Initializes `widget` with operations table `ops` and user data `userdata`. */

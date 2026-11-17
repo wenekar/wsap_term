@@ -19,6 +19,8 @@ static __thread struct bufhead *tls_defer;
 
 void *buf_new(uint8_t kind, uint32_t cap, size_t size)
 {
+    if (kind > 7 || cap > ((1u << 29) - 1))
+        return NULL;
     for (struct bufhead **pp = &tls_pool; *pp; pp = &(*pp)->next) {
         if ((*pp)->kind == kind && (*pp)->cap >= cap) {
             struct bufhead *h = *pp;
@@ -29,8 +31,8 @@ void *buf_new(uint8_t kind, uint32_t cap, size_t size)
     struct bufhead *h = malloc(sizeof(*h) + size);
     if (!h)
         return NULL;
-    h->kind = kind;
-    h->cap = cap;
+    h->kind = kind & 7u;
+    h->cap = cap & ((1u << 29) - 1);
     return h + 1;
 }
 
@@ -331,9 +333,10 @@ struct font_instance *font_instance_acquire(int size_pt, uint32_t scale_120)
             return fi;
         }
     }
-    struct font_instance *fi = calloc(1, sizeof(*fi));
+    struct font_instance *fi = aligned_alloc(64, (sizeof(*fi) + 63) & ~(size_t)63);
     if (!fi)
         return NULL;
+    memset(fi, 0, sizeof(*fi));
     struct font_size size = { .pt = size_pt, .scale_120 = scale_120 };
     const struct font_backend *be = FONT_BACKEND;
     font_handle_t *face = be->open ? be->open(font_get_family(), size) : NULL;

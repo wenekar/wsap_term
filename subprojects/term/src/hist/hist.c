@@ -2510,7 +2510,6 @@ void wsap_vtcore_hist_push_blank(struct hist *h, size_t n)
 
 struct runs_iter {
     const uint8_t *p, *end;
-    bool pending;
     struct pen_attr pending_pen;
     uint32_t pending_count;
     struct pen_attr pen;
@@ -2521,7 +2520,7 @@ static void runs_iter_runs(struct runs_iter *it, const struct hist_runs *r, cons
 {
     *it = (struct runs_iter){
         .p = r->data, .end = r->data ? r->data + r->len : NULL,
-        .pending = r->count > 0, .pending_pen = r->pen, .pending_count = r->count,
+        .pending_pen = r->pen, .pending_count = r->count,
         .pen = *start,
     };
 }
@@ -2534,7 +2533,6 @@ static void runs_iter_init(struct runs_iter *it, const struct hist *h, const str
             it->p = h->runs.data;
             it->end = h->runs.data + h->runs.len;
         }
-        it->pending = h->runs.count > 0;
         it->pending_pen = h->runs.pen;
         it->pending_count = h->runs.count;
     } else if (p->attr_len) {
@@ -2548,10 +2546,10 @@ static inline uint32_t runs_take(struct runs_iter *it, uint32_t n)
     while (WSAP_VTCORE_EXPECT(it->left == 0, 0)) {
         if (it->p < it->end) {
             it->p = read_run(it->p, &it->pen, &it->left);
-        } else if (it->pending) {
-            it->pending = false;
+        } else if (it->pending_count) {
             it->pen = it->pending_pen;
             it->left = it->pending_count;
+            it->pending_count = 0;
         } else {
             it->pen = pen_attr_default();
             it->left = UINT32_MAX;
@@ -2568,7 +2566,7 @@ static inline void runs_iter_save(const struct runs_iter *it, struct hist_dec_ca
 {
     d->p = it->p;
     d->end = it->end;
-    d->pending = it->pending;
+    d->pending = it->pending_count > 0;
     d->pending_pen = it->pending_pen;
     d->pending_count = it->pending_count;
     d->pen = it->pen;
@@ -2579,9 +2577,8 @@ static inline void runs_iter_restore(struct runs_iter *it, const struct hist_dec
 {
     it->p = d->p;
     it->end = d->end;
-    it->pending = d->pending;
     it->pending_pen = d->pending_pen;
-    it->pending_count = d->pending_count;
+    it->pending_count = d->pending ? d->pending_count : 0;
     it->pen = d->pen;
     it->left = d->left;
 }
@@ -3043,7 +3040,7 @@ void wsap_vtcore_hist_text_mark_links(const struct text_row *row, void (*mark)(v
         if (pen.link)
             mark(ud, pen.link);
     }
-    if (it.pending && it.pending_pen.link)
+    if (it.pending_count && it.pending_pen.link)
         mark(ud, it.pending_pen.link);
 }
 
@@ -3062,7 +3059,7 @@ void wsap_vtcore_hist_mark_links(const struct hist *h, void (*mark)(void *ud, ui
             if (pen.link)
                 mark(ud, pen.link);
         }
-        if (it.pending && it.pending_pen.link)
+        if (it.pending_count && it.pending_pen.link)
             mark(ud, it.pending_pen.link);
     }
 }

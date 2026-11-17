@@ -7,12 +7,13 @@
 
 bool glyph_reset(struct glyph *g, unsigned width)
 {
-    void *r = g->raster, *c = g->color, *s = g->subpx_mem;
-    size_t rc = g->raster_capacity, cc = g->color_capacity, sc = g->subpx_capacity;
+    void *r = g->raster, *c = g->color;
+    uint8_t **s = g->subpx;
+    uint32_t rc = g->raster_capacity, cc = g->color_capacity, sc = g->subpx_capacity;
     *g = (struct glyph){
         .raster = r, .raster_capacity = rc,
         .color = c, .color_capacity = cc,
-        .subpx_mem = s, .subpx_capacity = sc
+        .subpx = s, .subpx_capacity = sc
     };
     return glyph_prepare(g, width);
 }
@@ -21,11 +22,13 @@ bool glyph_color_plane(struct glyph *g)
 {
     size_t needed = (size_t)glyph_rows(g) * g->width * sizeof(*g->color);
     if (needed > g->color_capacity) {
+        if (needed > UINT32_MAX)
+            return false;
         void *p = realloc(g->color, needed);
         if (!p)
             return false;
         g->color = p;
-        g->color_capacity = needed;
+        g->color_capacity = (uint32_t)needed;
     }
     memset(g->color, 0, needed);
     return true;
@@ -40,14 +43,15 @@ bool glyph_subpx_plane(struct glyph *g)
     size_t data_bytes = rows * (size_t)g->width * 3;
     size_t needed = ptr_bytes + data_bytes;
     if (needed > g->subpx_capacity) {
-        void *p = realloc(g->subpx_mem, needed);
+        if (needed > UINT32_MAX)
+            return false;
+        void *p = realloc(g->subpx, needed);
         if (!p)
             return false;
-        g->subpx_mem = p;
-        g->subpx_capacity = needed;
+        g->subpx = p;
+        g->subpx_capacity = (uint32_t)needed;
     }
-    memset(g->subpx_mem, 0, needed);
-    g->subpx = (uint8_t **)g->subpx_mem;
+    memset(g->subpx, 0, needed);
     uint8_t *pixels = (uint8_t *)(g->subpx + rows);
     for (size_t y = 0; y < rows; y++)
         g->subpx[y] = pixels + y * (size_t)g->width * 3;
@@ -66,13 +70,17 @@ bool glyph_prepare(struct glyph *g, unsigned width)
     size_t mask_bytes = rows * g->mask_words * sizeof(*g->row_masks);
     size_t needed = mask_bytes + rows * sizeof(*g->alpha) + rows * g->width;
     if (needed > g->raster_capacity) {
+        if (needed > UINT32_MAX) {
+            g->width = 0;
+            return false;
+        }
         void *p = realloc(g->raster, needed);
         if (!p) {
             g->width = 0;
             return false;
         }
         g->raster = p;
-        g->raster_capacity = needed;
+        g->raster_capacity = (uint32_t)needed;
     }
     memset(g->raster, 0, needed);
     g->row_masks = g->raster;
@@ -81,10 +89,16 @@ bool glyph_prepare(struct glyph *g, unsigned width)
     for (size_t y = 0; y < rows; y++)
         g->alpha[y] = pixels + y * g->width;
     g->has_subpx_ink = false;
-    if (g->subpx_mem && !glyph_subpx_plane(g))
+    if (g->subpx && !glyph_subpx_plane(g)) {
+        g->width = 0;
         return false;
+    }
     g->has_subpx_ink = false;
-    return !g->color || glyph_color_plane(g);
+    if (g->color && !glyph_color_plane(g)) {
+        g->width = 0;
+        return false;
+    }
+    return true;
 }
 
 void glyph_release(struct glyph *g)
@@ -92,6 +106,6 @@ void glyph_release(struct glyph *g)
     if (!g) return;
     free(g->raster);
     free(g->color);
-    free(g->subpx_mem);
+    free(g->subpx);
     *g = (struct glyph){0};
 }

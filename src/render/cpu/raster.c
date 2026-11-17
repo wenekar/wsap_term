@@ -1,6 +1,7 @@
 #include "render/cpu/raster.h"
 
 #include <limits.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -71,11 +72,14 @@ struct row_ctx {
     uint32_t margin;
     uint32_t cursor;
 
-    bool double_w;
     /* Faint coverage of one chunk. It lives here, not on the stack of the
      * cell callback, so that the callback needs no large frame. */
     uint8_t tmp[3 * COV_CHUNK];
+    bool double_w;
 };
+
+_Static_assert(offsetof(struct row_ctx, tmp) % 64 == 0,
+               "row_ctx tmp buffer aligns on a 64-byte boundary");
 
 /* The rows of a glyph that the cell shows. */
 static inline int glyph_rows(const struct glyph *g, int ch)
