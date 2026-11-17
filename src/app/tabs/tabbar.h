@@ -25,6 +25,10 @@ enum ui_tab_action_kind {
     UI_TAB_ACTION_TEAR_OFF,
 };
 
+/* A core kind must stay below the tab kinds. */
+_Static_assert((int)UI_TAB_ACTION_MOVE >= (int)UI_ACTION_USER,
+               "a tab action kind collides with a core action kind");
+
 enum ui_tab_drag_state : uint8_t {
     UI_TAB_DRAG_NONE = 0,
     UI_TAB_DRAG_PENDING,

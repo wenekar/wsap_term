@@ -60,8 +60,6 @@ struct tb_layout tb_layout_for(const struct ui_tabbar *tb, int n_tabs,
         .focus_w = ui_css_border_width(&focus, ctx),
         .stroke_w = ui_ctx_size(ctx, drop.border_width, 0),
         .fade_w = ui_ctx_px(ctx, UI_TABBAR_FADE_DP),
-        .cell_w = text.advance,
-        .cell_h = text.cell_h,
         .n_tabs = n_tabs,
     };
     if (l.pad.l + l.pad.r > size.x) {
@@ -94,7 +92,6 @@ struct tb_layout tb_layout_for(const struct ui_tabbar *tb, int n_tabs,
     float n_eff = tb->state.external_drag ? 1.0f : 0.0f;
     for (int i = 0; i < n_tabs; i++)
         n_eff += tb_open_progress(tb, i);
-    l.n_eff = n_eff;
 
     float share = 0.0f;
     if (n_eff > 0.0001f)

@@ -74,7 +74,7 @@ static bool on_action(struct ui_widget *source, const struct ui_action *action,
     struct fixture *f = userdata;
     if (f->n_log < MAX_ACTIONS)
         f->log[f->n_log++] = *action;
-    if (action->kind == UI_TAB_ACTION_TEAR_OFF)
+    if ((int)action->kind == (int)UI_TAB_ACTION_TEAR_OFF)
         return f->take_tear_off;
     return true;
 }
@@ -184,20 +184,19 @@ static void clear_log(struct fixture *f)
     f->n_log = 0;
 }
 
-static int count(const struct fixture *f, enum ui_action_kind kind)
+static int count(const struct fixture *f, int kind)
 {
     int n = 0;
     for (int i = 0; i < f->n_log; i++)
-        if (f->log[i].kind == kind)
+        if ((int)f->log[i].kind == kind)
             n++;
     return n;
 }
 
-static const struct ui_action *last(const struct fixture *f,
-                                    enum ui_action_kind kind)
+static const struct ui_action *last(const struct fixture *f, int kind)
 {
     for (int i = f->n_log - 1; i >= 0; i--)
-        if (f->log[i].kind == kind)
+        if ((int)f->log[i].kind == kind)
             return &f->log[i];
     return NULL;
 }
@@ -840,6 +839,35 @@ static void tabbar_drag_sort_detach_attach_test(void)
     assert(ui_tabbar_external_slot(&f.tb) == -1);
     ui_tabbar_set_external_drag(&f.tb, false, (struct vector2i){0});
     assert(ui_tabbar_external_slot(&f.tb) == -1);
+    teardown(&f);
+}
+
+/* A tab drag reports kinds that the core action enum does not define, so no
+ * core handler can take them for its own. */
+static void tab_actions_stay_out_of_the_core_kinds(void)
+{
+    struct fixture f;
+    setup(&f, 3, 400);
+    show(&f, 3, 1);
+    struct rect2i r0 = tab_rect(&f, 0), r1 = tab_rect(&f, 1);
+
+    press(&f, at(r0, 10, 5), 0, 50);
+    motion(&f, at(r1, 10, 5), 60);
+    motion(&f, (struct vector2i){ .x = r1.x + 10, .y = 100 }, 70);
+    assert(count(&f, UI_TAB_ACTION_DRAG) > 0);
+    assert(count(&f, UI_TAB_ACTION_TEAR_OFF) > 0);
+
+    for (int i = 0; i < f.n_log; i++) {
+        int kind = (int)f.log[i].kind;
+        assert(kind < UI_ACTION_USER || kind >= UI_TAB_ACTION_MOVE);
+        if (kind < UI_ACTION_USER) {
+            assert(kind == UI_ACTION_ACTIVATE || kind == UI_ACTION_CHANGE ||
+                   kind == UI_ACTION_HIGHLIGHT || kind == UI_ACTION_CLOSE ||
+                   kind == UI_ACTION_MENU || kind == UI_ACTION_NONE);
+        }
+    }
+    assert((int)UI_TAB_ACTION_DRAG != (int)UI_ACTION_MENU);
+    release(&f, (struct vector2i){ .x = r1.x + 10, .y = 100 }, 80);
     teardown(&f);
 }
 
@@ -1771,7 +1799,7 @@ static void capture_lost_cancels_the_drag_once_test(void)
     clear_log(&f);
 
     ui_surface_cancel_capture(&f.surface);
-    assert(f.n_log == 1 && f.log[0].kind == UI_TAB_ACTION_DRAG &&
+    assert(f.n_log == 1 && (int)f.log[0].kind == (int)UI_TAB_ACTION_DRAG &&
            f.log[0].id == UI_TAB_DRAG_NONE && f.log[0].index == 0);
     assert(!ui_tabbar_is_dragging(&f.tb));
     ui_surface_cancel_capture(&f.surface);
@@ -2075,6 +2103,7 @@ int main(void)
     last_tab_claims_trailing_space();
     text_runs_stay_on_codepoint_boundaries();
     tabbar_drag_sort_detach_attach_test();
+    tab_actions_stay_out_of_the_core_kinds();
     sideways_exit_detaches_test();
     external_drag_reveals_single_tab_target_test();
     incoming_tab_has_translucent_drop_preview();

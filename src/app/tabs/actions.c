@@ -172,7 +172,9 @@ static void tab_moved(struct app_tabs *tabs, const struct ui_action *action)
 static void handle_action(struct app_tabs *tabs, const struct ui_action *action)
 {
     struct window *w = tabs->window;
-    switch (action->kind) {
+    /* The switch holds core kinds and the tab kinds, which start at
+     * UI_ACTION_USER. */
+    switch ((int)action->kind) {
     case UI_ACTION_ACTIVATE:
         ui_tab_preview_suppress(&tabs->preview);
         if (action->id == UI_TABBAR_NEW_TAB)

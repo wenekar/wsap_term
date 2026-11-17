@@ -41,9 +41,6 @@ struct tb_layout {
     int focus_w;
     int stroke_w;
     int fade_w;
-    int cell_w;
-    int cell_h;
-    float n_eff;
     float share;
     int n_tabs;
 };
