@@ -4,6 +4,7 @@ ui_yasl_src = files(
     'debug.c',
     'debug_cmd.c',
     'debug_server.c',
+    'drop.c',
     'host.c',
     'input.c',
     'native_input.c',

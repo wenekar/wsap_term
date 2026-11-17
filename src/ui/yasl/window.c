@@ -17,6 +17,26 @@
 static struct window_native *native_find(struct window *w, const struct yasl_surface *s);
 static void stats_collect_presented(struct window *w);
 
+/* The data types that a window takes from external drops, best first. */
+static const char *const window_drop_types[] = {
+    "image/png", "image/jpeg", "image/webp", "image/gif", "image/*",
+    "text/uri-list", "text/plain;charset=utf-8", "UTF8_STRING", "text/plain",
+};
+
+/* Creates a window surface that takes `window_drop_types`. Returns NULL when
+ * the surface cannot be created. */
+static struct yasl_surface *window_surface_create(const struct yasl_surface_options *options)
+{
+    struct yasl_surface *s = yasl_surface_create(options);
+    if (!s)
+        return NULL;
+    int status = yasl_surface_set_drop_types(s, window_drop_types,
+                                             sizeof window_drop_types / sizeof window_drop_types[0]);
+    if (status < 0)
+        fprintf(stderr, "window: cannot set drop types: %s\n", strerror(-status));
+    return s;
+}
+
 struct vector2i window_default_size(const struct window_config *config)
 {
     const struct font_metrics *m = font_instance_metrics(font_instance_default());
@@ -504,7 +524,7 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
          * permits unpaced presentation only when this is set. */
         .tearing = config->tearing,
     };
-    w->surface = yasl_surface_create(&options);
+    w->surface = window_surface_create(&options);
     w->unpaced = config->tearing;
     void *layer = NULL;
     if (w->surface && options.type == YASL_SURFACE_NATIVE &&
@@ -513,7 +533,7 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
                 strerror(errno));
         yasl_surface_destroy(w->surface);
         options.type = YASL_SURFACE_CPU;
-        w->surface = yasl_surface_create(&options);
+        w->surface = window_surface_create(&options);
     }
     if (!w->surface || !window_native_add(w, w->surface))
         goto fail;

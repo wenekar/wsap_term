@@ -5,9 +5,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "input/keybind.h"
 #include "loop/latency_probe.h"
+#include "ui/yasl/drop.h"
 #include "ui/yasl/internal.h"
 
 static enum input_key native_key(enum yasl_key key)
@@ -336,6 +338,128 @@ static void queue_scroll(struct window *w, const struct yasl_event *in)
         queue_wheel(w, in, wheel_lines(right), right > 0 ? POINTER_WHEEL_RIGHT : POINTER_WHEEL_LEFT);
 }
 
+/* Returns true when `mime` names an image type with a subtype. */
+static bool mime_is_image(const char *mime)
+{
+    return !strncasecmp(mime, "image/", 6) && mime[6];
+}
+
+/* Returns true when `mime` names a plain text type. */
+static bool mime_is_text(const char *mime)
+{
+    return !strcasecmp(mime, "text/plain;charset=utf-8") ||
+           !strcasecmp(mime, "UTF8_STRING") || !strcasecmp(mime, "text/plain");
+}
+
+/* An empty type counts as a uri list. The yasl API reports it that way. */
+static bool mime_is_uri_list(const char *mime)
+{
+    return !mime[0] || !strcasecmp(mime, "text/uri-list");
+}
+
+/* Returns true for a byte that a file URI keeps without escaping. */
+static bool uri_keeps(unsigned char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+           c == '-' || c == '.' || c == '_' || c == '~' || c == '/';
+}
+
+/* Returns a new file URI for the absolute `path`. Other bytes are percent
+ * escaped, so the URI decodes to the same path. Returns NULL when memory runs
+ * out. The caller frees the string. */
+static char *file_uri(const char *path)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    static const char scheme[] = "file://";
+    size_t len = strlen(path);
+    char *out = malloc(sizeof scheme - 1 + len * 3 + 1);
+    if (!out)
+        return NULL;
+    size_t n = sizeof scheme - 1;
+    memcpy(out, scheme, n);
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)path[i];
+        if (uri_keeps(c)) {
+            out[n++] = (char)c;
+        } else {
+            out[n++] = '%';
+            out[n++] = hex[c >> 4];
+            out[n++] = hex[c & 15];
+        }
+    }
+    out[n] = '\0';
+    return out;
+}
+
+/* Saves a dropped image and queues its file path as a file drop. The path
+ * then takes the same route as a dropped file. */
+static void queue_image_drop(struct window *w, const struct yasl_event *in)
+{
+    const char *path = drop_save_image(in->drop.mime, in->text, in->length);
+    if (!path)
+        return;
+    char *uri = file_uri(path);
+    if (uri) {
+        input_queue_push_drop_files(&w->input, uri, strlen(uri));
+        free(uri);
+    }
+}
+
+/* Returns true when the uri list of `in` names at least one local file. */
+static bool uri_list_has_file(const struct yasl_event *in)
+{
+    const char *cursor = in->text;
+    return yasl_drop_next_path(&cursor, NULL, 0) != 0;
+}
+
+/* Pastes the lines of a uri list as text. It skips comment lines, and it
+ * joins the other lines with a space. */
+static void paste_uri_lines(struct window *w, const struct yasl_event *in)
+{
+    char *out = malloc(in->length);
+    if (!out)
+        return;
+    size_t n = 0;
+    const char *p = in->text;
+    const char *end = in->text + in->length;
+    while (p < end) {
+        const char *line = p;
+        while (p < end && *p != '\r' && *p != '\n')
+            p++;
+        const char *line_end = p;
+        while (p < end && (*p == '\r' || *p == '\n'))
+            p++;
+        while (line_end > line && (line_end[-1] == ' ' || line_end[-1] == '\t'))
+            line_end--;
+        if (line_end == line || *line == '#')
+            continue;
+        if (n)
+            out[n++] = ' ';
+        size_t size = (size_t)(line_end - line);
+        memcpy(out + n, line, size);
+        n += size;
+    }
+    input_queue_push_paste(&w->input, out, n);
+    free(out);
+}
+
+/* Queues the payload of a DROP RELEASE by its data type. Other types are
+ * ignored. */
+static void queue_drop_release(struct window *w, const struct yasl_event *in)
+{
+    const char *mime = in->drop.mime;
+    if (mime_is_image(mime)) {
+        queue_image_drop(w, in);
+    } else if (mime_is_text(mime)) {
+        input_queue_push_paste(&w->input, in->text, in->length);
+    } else if (mime_is_uri_list(mime)) {
+        if (uri_list_has_file(in))
+            input_queue_push_drop_files(&w->input, in->text, in->length);
+        else
+            paste_uri_lines(w, in);
+    }
+}
+
 void window_native_input(struct window *w, const struct yasl_event *in)
 {
     bool key_text = w->key_text_pending;
@@ -384,7 +508,7 @@ void window_native_input(struct window *w, const struct yasl_event *in)
         break;
     case YASL_EVENT_DROP:
         if (in->action == YASL_DROP_RELEASE && in->text) {
-            input_queue_push_drop_files(&w->input, in->text, in->length);
+            queue_drop_release(w, in);
         } else if (w->drag_target && w->drag_target->drop_hover) {
             w->drag_target->drop_hover(w, in->action == YASL_DROP_OVER, w->drag_ud);
         }
