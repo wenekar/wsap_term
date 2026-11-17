@@ -298,8 +298,7 @@ static void layer_prepare(struct ui_widget *widget)
 {
     struct ui_dropdown *d = widget->userdata;
     if (d->impl.open &&
-        (!ui_widget_visible(&d->widget) ||
-         ui_widget_surface(&d->widget) != ui_widget_surface(widget)))
+        ui_widget_stale(ui_widget_surface(widget), &d->widget))
         ui_dropdown_close(d);
     else if (d->impl.open) {
         struct ui_widget *root = ui_surface_root(ui_widget_surface(widget));
@@ -404,15 +403,6 @@ bool ui_dropdown_set_items(struct ui_dropdown *d,
     return true;
 }
 
-void ui_dropdown_set_overlay(struct ui_dropdown *d, struct ui_widget *parent)
-{
-    if (!d)
-        return;
-    ui_dropdown_widget(d);
-    ui_dropdown_close(d);
-    d->impl.overlay = parent;
-}
-
 bool ui_dropdown_set_value(struct ui_dropdown *d, const char *value)
 {
     if (!d)
@@ -448,19 +438,21 @@ bool ui_dropdown_open(struct ui_dropdown *d)
     ui_dropdown_widget(d);
     if (d->impl.open)
         return true;
-    if (!d->impl.overlay || !d->impl.count ||
-        ui_widget_surface(d->impl.overlay) != ui_widget_surface(&d->widget) ||
-        !ui_widget_surface(&d->widget))
+    struct ui_surface *surface = ui_widget_surface(&d->widget);
+    if (!surface || !d->impl.count)
         return false;
     ui_input_clear(&d->search);
-    if (!filter(d) || !ui_widget_add_child(d->impl.overlay, &d->layer))
+    if (!filter(d))
         return false;
     ui_widget_set_placement(&d->panel.widget, (struct ui_placement){
         .kind = UI_PLACE_BELOW, .anchor = d->widget.bounds,
     });
-    d->impl.open = true;
     ui_widget_set_hidden(&d->layer, false);
-    struct ui_surface *surface = ui_widget_surface(&d->widget);
+    if (!ui_surface_add_overlay(surface, &d->layer)) {
+        ui_widget_set_hidden(&d->layer, true);
+        return false;
+    }
+    d->impl.open = true;
     ui_surface_prepare(surface);
     ui_widget_focus(ui_input_widget(&d->search));
     reveal_selection(d);
@@ -473,10 +465,12 @@ void ui_dropdown_close(struct ui_dropdown *d)
         return;
     d->impl.open = false;
     ui_widget_set_hidden(&d->layer, true);
-    if (d->layer.parent)
-        ui_widget_remove_child(d->layer.parent, &d->layer);
-    struct ui_surface *surface = ui_widget_surface(&d->widget);
-    if (surface) ui_surface_prepare(surface);
+    struct ui_surface *surface = ui_widget_surface(&d->layer);
+    if (surface)
+        ui_surface_remove_overlay(surface, &d->layer);
+    surface = ui_widget_surface(&d->widget);
+    if (surface)
+        ui_surface_prepare(surface);
 }
 
 bool ui_dropdown_is_open(const struct ui_dropdown *d)

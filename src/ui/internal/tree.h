@@ -10,11 +10,15 @@ void ui_widget_layout(struct ui_widget *widget, struct rect2i bounds);
 void ui_widget_attach(struct ui_widget *widget, struct ui_surface *surface);
 void ui_widget_detach(struct ui_widget *widget);
 bool ui_widget_bubble(struct ui_widget *target, const struct ui_event *event);
-struct ui_widget *ui_widget_event_target(struct ui_widget *widget);
+bool ui_widget_deliver(struct ui_widget *widget, const struct ui_event *event);
 struct ui_widget *ui_widget_hit_test(struct ui_widget *root,
                                      struct vector2i pos);
 struct ui_widget *ui_widget_modal(struct ui_widget *root);
 bool ui_widget_visible(const struct ui_widget *widget);
+/* True when `widget` left `surface`, or is destroyed or hidden. A handler can
+ * do that during dispatch, so a stored target is tested before each use. */
+bool ui_widget_stale(const struct ui_surface *surface,
+                     const struct ui_widget *widget);
 bool ui_widget_is_ancestor(const struct ui_widget *ancestor,
                            const struct ui_widget *widget);
 uint64_t ui_widget_tick(struct ui_widget *widget, uint64_t now_ms);
@@ -31,6 +35,10 @@ bool ui_widget_append_scene(const struct ui_widget *root,
                             struct ui_scene *scene);
 
 void ui_surface_forget(struct ui_surface *surface, struct ui_widget *subtree);
+/* Removes `overlay` from the overlay list of `surface`. It does not detach
+ * the widget, and it keeps its storage. */
+bool ui_surface_drop_overlay(struct ui_surface *surface,
+                             struct ui_widget *overlay);
 void ui_surface_sync_modal(struct ui_surface *surface);
 
 #endif

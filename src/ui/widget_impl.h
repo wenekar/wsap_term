@@ -32,22 +32,15 @@ struct ui_widget_ops {
                                struct ui_constraints constraints);
     void (*layout)(struct ui_widget *widget, struct rect2i bounds);
     bool (*event)(struct ui_widget *widget, const struct ui_event *event);
-    /* Redirect keyboard and explicit focus to a visible descendant. */
-    struct ui_widget *(*event_target)(struct ui_widget *widget);
     bool (*hit_test)(const struct ui_widget *widget, struct vector2i pos);
-    bool (*hit_front)(const struct ui_widget *widget, struct vector2i pos);
     uint64_t (*tick)(struct ui_widget *widget, uint64_t now_ms);
     void (*destroy)(struct ui_widget *widget);
     void (*paint)(const struct ui_widget *widget,
                   struct ui_paint_context *paint);
-    void (*paint_front)(const struct ui_widget *widget,
-                        struct ui_paint_context *paint);
     void (*style_changed)(struct ui_widget *widget);
     void (*reveal)(struct ui_widget *widget, struct ui_widget *descendant);
     enum ui_cursor (*cursor)(const struct ui_widget *widget,
                              struct vector2i pos);
-    bool (*keeps_press_focus)(const struct ui_widget *widget,
-                              struct vector2i pos);
     void (*debug_parts)(const struct ui_widget *widget,
                         struct ui_debug_parts *out);
     bool (*accessibility)(const struct ui_widget *widget,
@@ -63,13 +56,16 @@ struct ui_widget_ops {
     bool width_sensitive;
 };
 
-/* Marks layout, measure, or paint caches of `widget` as invalid. */
+/* Marks the layout or measure state of `widget` and its ancestors as invalid.
+ * The paint flag asks for a frame; paint is not a stored state. */
 void ui_widget_invalidate(struct ui_widget *widget, unsigned flags);
 
 /* Sets whether `widget` can receive keyboard focus. */
 void ui_widget_set_focusable(struct ui_widget *widget, bool focusable);
 /* Returns true when `widget` can receive keyboard focus. */
 bool ui_widget_is_focusable(const struct ui_widget *widget);
+/* Sets whether a press on `widget` keeps the current focus. */
+void ui_widget_set_keeps_press_focus(struct ui_widget *widget, bool keeps);
 /* Sets whether `widget` modal mode restricts input outside its subtree. */
 void ui_widget_set_modal(struct ui_widget *widget, bool modal);
 /* Sets whether `widget` passes pointer events through to widgets underneath. */

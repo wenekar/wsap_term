@@ -83,6 +83,7 @@ Commands that take a widget accept these selectors:
 | --- | --- |
 | `/` | The root of the surface |
 | `/1/0` | The path of child indexes from the root |
+| `~1/0` | The path below overlay `1`, counted from the bottom up |
 | `tabbar` | The first widget, in paint order, with this type name |
 | `.class`, `#id` | The first widget with this style class or id |
 | `@key` | The first widget with this inspector key. View nodes use their descriptor key. |
@@ -91,6 +92,8 @@ Commands that take a widget accept these selectors:
 Type names come from `ui_widget_ops.name`.
 Paths follow paint order.
 For sibling widgets, the last child paints on top.
+An overlay widget is not a child of the root, so its path starts with `~<index>`.
+Overlay 0 is the bottom one.
 
 ### The window tree
 
@@ -101,17 +104,29 @@ This tree shows a terminal window:
 ```text
 /            window-root
 /0           app-tabs-root
-/0/0         scrollview     (of the active content; its bar is the track)
+/0/0         scrollview     (of the active content)
 /0/0/0       terminal-view
+/0/0/1       scrollbar      (the track; its parts are the track and the thumb)
 /0/1         tabbar
-/0/2         tab-preview    (while shown)
-/0/3         palette
 /1 …         menu-level     (inline levels only)
+```
+
+The tree of the window also lists the overlays, in an `overlays` array.
+An overlay floats above the root, and the surface places, paints, and
+hit-tests it there.
+An overlay stays listed while it is hidden: a hidden overlay shows the
+`hidden` flag, and `~N` still names it. It is visible while its widget is not
+hidden.
+This window has two overlays:
+
+```text
+overlays[0]  tab-preview    (~0, hidden while no tab is hovered)
+overlays[1]  palette        (~1, hidden while the palette is closed)
 ```
 
 The content paints first.
 The tab bar paints after the content.
-The bar covers the content when the bar collapses as an overlay.
+The overlays paint after the tree, from the bottom up.
 
 The framework paints child widgets in tree order.
 It targets pointer input in reverse order.
@@ -303,6 +318,8 @@ The server therefore rejects input injection, `frame`, and `screenshot`.
 `ui-tree` and `ui-widget` only read memory.
 They also work on core dump files.
 They start from `window_ui_host_last`.
+They walk `first_child` only, so they do not show the surface overlays.
+Use `ui-cmd tree` or `scripts/wsap-debug tree` for the overlay list.
 
 A release build lacks debug information.
 Configure a separate build directory with `--buildtype=debug` or `debugoptimized` for GDB.

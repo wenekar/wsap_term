@@ -3,6 +3,7 @@
 
 #include "ui/ui.h"
 #include "ui/widget_impl.h"
+#include "ui/widgets/scrollview.h"
 
 static void click(struct ui_surface *surface, struct vector2i pos)
 {
@@ -160,9 +161,11 @@ static void container_child_limit_test(void)
     ui_scrollview_init(&scroll);
     ui_label_init(&first);
     ui_label_init(&second);
+    /* The scroll view keeps one content child and the scroll bar. */
     assert(ui_widget_add_child(&scroll.widget, &first.widget));
+    assert(ui_scrollview_child(&scroll) == &first.widget);
     assert(!ui_widget_add_child(&scroll.widget, &second.widget));
-    assert(ui_widget_child_count(&scroll.widget) == 1);
+    assert(ui_widget_child_count(&scroll.widget) == 2);
     ui_widget_destroy(&scroll.widget);
     ui_widget_destroy(&second.widget);
 }

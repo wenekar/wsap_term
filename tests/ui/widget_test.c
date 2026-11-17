@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "ui/box.h"
 #include "ui/surface.h"
 #include "ui/internal/tree.h"
 #include "ui/widget.h"
@@ -106,8 +107,7 @@ static void widget_lifecycle_test(void)
     ui_widget_init(&widget, &OPS, &probe);
     assert(widget_invalidation(&widget) ==
            (UI_WIDGET_INVALIDATE_MEASURE |
-            UI_WIDGET_INVALIDATE_LAYOUT |
-            UI_WIDGET_INVALIDATE_PAINT));
+            UI_WIDGET_INVALIDATE_LAYOUT));
 
     struct vector2i size = ui_widget_measure(&widget, (struct ui_constraints){
         .min = { .x = 10, .y = 5 },
@@ -125,7 +125,6 @@ static void widget_lifecycle_test(void)
     assert(widget.bounds.x == 3 && widget.bounds.height == 60);
     assert(!(widget_invalidation(&widget) &
              (UI_WIDGET_INVALIDATE_MEASURE | UI_WIDGET_INVALIDATE_LAYOUT)));
-    assert(widget_invalidation(&widget) & UI_WIDGET_INVALIDATE_PAINT);
 
     struct ui_event key = ui_event_key((struct ui_key_event){
         .key = UI_KEY_ENTER,
@@ -172,6 +171,28 @@ static void context_clock_test(void)
     assert(ui_surface_take_frame_request(&context));
     assert(!ui_surface_take_frame_request(&context));
     ui_surface_destroy(&context);
+}
+
+static void paint_invalidation_asks_for_a_frame_test(void)
+{
+    struct ui_box box = {0};
+    struct probe probe = {0};
+    struct ui_widget child = {0};
+    ui_box_init(&box);
+    ui_widget_init(&child, &OPS, &probe);
+    assert(ui_widget_add_child(&box.widget, &child));
+
+    struct ui_surface context = {0};
+    ui_surface_set_root(&context, &box.widget);
+    ui_surface_resize(&context, (struct vector2i){ .x = 640, .y = 480 });
+    ui_surface_prepare(&context);
+    assert(ui_surface_take_frame_request(&context));
+
+    ui_widget_invalidate(&child, UI_WIDGET_INVALIDATE_PAINT);
+    assert(ui_surface_frame_pending(&context));
+
+    ui_surface_destroy(&context);
+    ui_widget_destroy(&box.widget);
 }
 
 static void hierarchy_test(void)
@@ -226,8 +247,8 @@ static void hierarchy_test(void)
     assert(first_probe.ticks == 1 && second_probe.ticks == 1);
 
     ui_widget_invalidate(&second, UI_WIDGET_INVALIDATE_PAINT);
-    assert(widget_invalidation(&second) & UI_WIDGET_INVALIDATE_PAINT);
-    assert(widget_invalidation(&parent) & UI_WIDGET_INVALIDATE_PAINT);
+    assert(widget_invalidation(&second) == UI_WIDGET_INVALIDATE_NONE);
+    assert(widget_invalidation(&parent) == UI_WIDGET_INVALIDATE_NONE);
 
     assert(ui_widget_remove_child(&parent, &first));
     assert(first.parent == NULL && ui_widget_child_count(&parent) == 1);
@@ -495,6 +516,7 @@ int main(void)
     detach_mutation_robust_test();
     tick_destroyed_parent_test();
     zero_init_test();
+    paint_invalidation_asks_for_a_frame_test();
     add_children_test();
     return 0;
 }

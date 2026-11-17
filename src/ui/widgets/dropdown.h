@@ -24,7 +24,6 @@ struct ui_dropdown {
     struct ui_label empty;
     struct {
         struct ui_dropdown_item *items;
-        struct ui_widget *overlay;
         size_t count;
         int selected;
         int action_id;
@@ -35,8 +34,6 @@ struct ui_dropdown {
 void ui_dropdown_init(struct ui_dropdown *dropdown);
 bool ui_dropdown_set_items(struct ui_dropdown *dropdown,
                             const struct ui_dropdown_item *items, size_t count);
-void ui_dropdown_set_overlay(struct ui_dropdown *dropdown,
-                              struct ui_widget *parent);
 /* Select the item with this value. Show its label.
  * A failed label update keeps the previous selection. */
 bool ui_dropdown_set_value(struct ui_dropdown *dropdown, const char *value);

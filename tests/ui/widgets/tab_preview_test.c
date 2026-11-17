@@ -303,11 +303,10 @@ static void restyled_sheet_updates_card_and_title_test(void)
 
 enum card_dirty {
     CARD_CLEAN = 0,
-    CARD_PAINT,
     CARD_MEASURE,
 };
 
-/* The dirty flags of the card, as the inspector reports them. */
+/* The layout state of the card, as the inspector reports it. */
 static enum card_dirty card_dirty(struct fixture *f)
 {
     struct json_writer j = {0};
@@ -322,12 +321,9 @@ static enum card_dirty card_dirty(struct fixture *f)
     const char *end = strchr(flags, ']');
     assert(end);
     enum card_dirty dirty = CARD_CLEAN;
-    for (const char *p = flags; p + 5 < end; p++) {
+    for (const char *p = flags; p + 7 < end; p++)
         if (!strncmp(p, "measure", 7))
             dirty = CARD_MEASURE;
-        else if (dirty == CARD_CLEAN && !strncmp(p, "paint", 5))
-            dirty = CARD_PAINT;
-    }
     free(dump);
     return dirty;
 }
@@ -342,19 +338,24 @@ static void unchanged_refresh_requests_no_redraw_test(void)
     assert(ui_tab_preview_is_visible(&f.card));
     assert(ui_surface_build_scene(&f.surface, &f.scene));
 
-    /* A poll that finds the same picture and the same title must not ask for
-     * a relayout or a repaint. */
+    /* A poll that finds the same picture and the same title keeps the same
+     * scene. */
     f.unchanged = true;
     int captures = f.captures;
-    ui_surface_tick(&f.surface, ui_surface_next_deadline(&f.surface));
+    uint64_t gen = f.image.gen;
+    tick(&f, ui_surface_next_deadline(&f.surface));
     assert(f.captures == captures + 1);
     assert(card_dirty(&f) == CARD_CLEAN);
+    assert(f.image.gen == gen);
 
     /* A new picture of the same size repaints the card, and only that. */
     f.unchanged = false;
-    ui_surface_tick(&f.surface, ui_surface_next_deadline(&f.surface));
+    tick(&f, ui_surface_next_deadline(&f.surface));
     assert(f.captures == captures + 2);
-    assert(card_dirty(&f) == CARD_PAINT);
+    assert(card_dirty(&f) == CARD_CLEAN);
+    assert(ui_surface_build_scene(&f.surface, &f.scene));
+    const struct ui_scene_op *image = find_op(&f.scene, UI_SCENE_OP_IMAGE);
+    assert(image && image->image->gen == (uint64_t)f.captures);
 
     /* A taller picture relayouts the card. */
     assert(ui_surface_build_scene(&f.surface, &f.scene));

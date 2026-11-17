@@ -443,6 +443,16 @@ if get_option('integration_tests')
             timeout: 60,
         )
         test(
+            'popup-key-test',
+            python,
+            args: files('ui/yasl/popup_key_test.py'),
+            depends: [program, vptr],
+            env: {'BIN': program.full_path(), 'VPOINTER': vptr.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 120,
+        )
+        test(
             'popup-nested-close-test',
             python,
             args: files('ui/yasl/popup_nested_close_test.py'),

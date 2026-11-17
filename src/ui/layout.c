@@ -547,7 +547,6 @@ static void place_node(struct layout_pass *pass, size_t index,
             .size = { .x = size[0], .y = size[1] },
         };
         widget->impl.invalidation &= ~UI_WIDGET_INVALIDATE_LAYOUT;
-        widget->impl.invalidation |= UI_WIDGET_INVALIDATE_PAINT;
     }
     if (node->child_count == 0)
         return;

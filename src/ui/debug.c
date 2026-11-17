@@ -61,17 +61,62 @@ const char *ui_debug_type_name(const struct ui_widget *widget)
         ? widget->ops->name : "widget";
 }
 
-static bool in_tree(const struct ui_widget *root,
-                    const struct ui_widget *candidate)
+static bool in_subtree(const struct ui_widget *root,
+                       const struct ui_widget *candidate)
 {
     if (!root || !candidate)
         return false;
     if (root == candidate)
         return true;
     for (const struct ui_widget *c = root->first_child; c; c = c->next_sibling)
-        if (in_tree(c, candidate))
+        if (in_subtree(c, candidate))
             return true;
     return false;
+}
+
+static const struct ui_surface *root_surface(const struct ui_widget *root)
+{
+    return root ? ui_widget_surface(root) : NULL;
+}
+
+/* The top-level widgets of a root: the root itself, then each overlay above
+ * it, from the top down. */
+static const struct ui_widget *top_at(const struct ui_widget *root, size_t i)
+{
+    const struct ui_surface *surface = root_surface(root);
+    size_t n = ui_surface_overlay_count(surface);
+    if (i == 0)
+        return root;
+    return i <= n ? ui_surface_overlay_at(surface, n - i) : NULL;
+}
+
+/* True for every widget that the inspector shows: the root tree and the
+ * overlays above it. */
+static bool in_tree(const struct ui_widget *root,
+                    const struct ui_widget *candidate)
+{
+    for (size_t i = 0;; i++) {
+        const struct ui_widget *top = top_at(root, i);
+        if (!top)
+            return false;
+        if (in_subtree(top, candidate))
+            return true;
+    }
+}
+
+/* The overlay that holds `widget`, or NULL when the root tree holds it. */
+static const struct ui_widget *overlay_of(const struct ui_widget *root,
+                                          const struct ui_widget *widget)
+{
+    const struct ui_surface *surface = root_surface(root);
+    size_t n = ui_surface_overlay_count(surface);
+    for (size_t i = 0; i < n; i++) {
+        const struct ui_widget *overlay = ui_surface_overlay_at(surface, i);
+        if (overlay != widget && !in_subtree(overlay, widget))
+            continue;
+        return overlay;
+    }
+    return NULL;
 }
 
 static int child_index(const struct ui_widget *widget)
@@ -82,14 +127,13 @@ static int child_index(const struct ui_widget *widget)
     return i;
 }
 
-bool ui_debug_path(const struct ui_widget *root,
-                   const struct ui_widget *widget, char *buf, size_t cap)
+/* Writes the child path of `widget` below `top`. */
+static bool path_below(const struct ui_widget *top,
+                       const struct ui_widget *widget, char *buf, size_t cap)
 {
-    if (!buf || cap < 2 || !in_tree(root, widget))
-        return false;
     int idx[64];
     int n = 0;
-    for (const struct ui_widget *w = widget; w && w != root; w = w->parent) {
+    for (const struct ui_widget *w = widget; w && w != top; w = w->parent) {
         if (n >= (int)(sizeof(idx) / sizeof(idx[0])))
             return false;
         idx[n++] = child_index(w);
@@ -106,6 +150,36 @@ bool ui_debug_path(const struct ui_widget *root,
             return false;
         used += (size_t)k;
     }
+    return true;
+}
+
+bool ui_debug_path(const struct ui_widget *root,
+                   const struct ui_widget *widget, char *buf, size_t cap)
+{
+    if (!buf || cap < 2 || !in_tree(root, widget))
+        return false;
+    const struct ui_widget *overlay = overlay_of(root, widget);
+    if (!overlay)
+        return path_below(root, widget, buf, cap);
+    /* An overlay path names the overlay first: "~<index>" plus the path
+     * below it. */
+    const struct ui_surface *surface = root_surface(root);
+    size_t index = 0;
+    for (size_t i = 0; i < ui_surface_overlay_count(surface); i++)
+        if (ui_surface_overlay_at(surface, i) == overlay)
+            index = i;
+    int k = snprintf(buf, cap, "~%zu", index);
+    if (k < 0 || (size_t)k >= cap)
+        return false;
+    char rest[200];
+    if (!path_below(overlay, widget, rest, sizeof(rest)))
+        return false;
+    if (!strcmp(rest, "/"))
+        return true;
+    size_t used = (size_t)k;
+    if (used + strlen(rest) >= cap)
+        return false;
+    snprintf(buf + used, cap - used, "%s", rest);
     return true;
 }
 
@@ -128,13 +202,12 @@ static const struct ui_widget *find_by(const struct ui_widget *w,
     return NULL;
 }
 
-const struct ui_widget *ui_debug_find(const struct ui_widget *root,
-                                      const char *selector)
+/* Walks the child path of `w` from `selector`, which starts at "/" or is
+ * empty. */
+static const struct ui_widget *find_by_path(const struct ui_widget *w,
+                                            const char *selector)
 {
-    if (!root || !selector || !*selector)
-        return NULL;
     if (selector[0] == '/') {
-        const struct ui_widget *w = root;
         const char *p = selector + 1;
         while (*p) {
             char *end;
@@ -153,6 +226,30 @@ const struct ui_widget *ui_debug_find(const struct ui_widget *root,
         }
         return w;
     }
+    return w;
+}
+
+const struct ui_widget *ui_debug_find(const struct ui_widget *root,
+                                      const char *selector)
+{
+    if (!root || !selector || !*selector)
+        return NULL;
+    if (selector[0] == '/')
+        return find_by_path(root, selector);
+    if (selector[0] == '~') {
+        /* "~<index>" names an overlay of the surface of `root`, and the path
+         * below it follows, as ui_debug_path writes it. */
+        char *end;
+        unsigned long index = strtoul(selector + 1, &end, 10);
+        if (end == selector + 1 || (*end && *end != '/'))
+            return NULL;
+        /* The index counts from the bottom of the overlay list. */
+        const struct ui_widget *overlay =
+            ui_surface_overlay_at(root_surface(root), index);
+        if (!overlay)
+            return NULL;
+        return find_by_path(overlay, *end ? end : "/");
+    }
     if (selector[0] == '0' && (selector[1] == 'x' || selector[1] == 'X')) {
         char *end;
         unsigned long long addr = strtoull(selector, &end, 16);
@@ -162,9 +259,17 @@ const struct ui_widget *ui_debug_find(const struct ui_widget *root,
             (const struct ui_widget *)(uintptr_t)addr;
         return in_tree(root, w) ? w : NULL;
     }
-    if (selector[0] == '.' || selector[0] == '#' || selector[0] == '@')
-        return find_by(root, selector[0], selector + 1);
-    return find_by(root, 0, selector);
+    char kind = (selector[0] == '.' || selector[0] == '#' ||
+                 selector[0] == '@') ? selector[0] : 0;
+    const char *name = kind ? selector + 1 : selector;
+    for (size_t i = 0;; i++) {
+        const struct ui_widget *top = top_at(root, i);
+        if (!top)
+            return NULL;
+        const struct ui_widget *hit = find_by(top, kind, name);
+        if (hit)
+            return hit;
+    }
 }
 
 static bool part_is_region(const struct ui_debug_part *part)
@@ -199,6 +304,15 @@ static bool occupies(const struct ui_widget *w, struct vector2i p)
 const struct ui_widget *ui_debug_widget_at(const struct ui_widget *root,
                                           struct vector2i p)
 {
+    struct ui_surface *surface = root ? (struct ui_surface *)root_surface(root)
+                                      : NULL;
+    if (surface && ui_surface_root(surface) == root) {
+        /* Ask the surface, so that the answer matches the real pointer
+         * dispatch: overlays first, then the root tree. */
+        struct ui_widget *hit = ui_surface_hit_test(surface, p);
+        if (hit)
+            return hit;
+    }
     if (!root || root->impl.destroyed || root->impl.hidden ||
         root->impl.pointer_transparent)
         return NULL;
@@ -355,7 +469,6 @@ static void write_widget_head(struct json_writer *j,
     json_arr_begin(j);
     if (w->impl.invalidation & UI_WIDGET_INVALIDATE_MEASURE) json_str(j, "measure");
     if (w->impl.invalidation & UI_WIDGET_INVALIDATE_LAYOUT) json_str(j, "layout");
-    if (w->impl.invalidation & UI_WIDGET_INVALIDATE_PAINT) json_str(j, "paint");
     json_arr_end(j);
 
     int first, end;
@@ -385,6 +498,19 @@ static void write_tree_node(struct json_writer *j,
             for (const struct ui_widget *c = w->first_child; c;
                  c = c->next_sibling)
                 write_tree_node(j, view, c, depth + 1, max_depth);
+            json_arr_end(j);
+        }
+    }
+    /* The overlays float above the root, so they follow its children. */
+    if (view && w == view->root) {
+        const struct ui_surface *surface = root_surface(w);
+        size_t count = ui_surface_overlay_count(surface);
+        if (count && !(max_depth >= 0 && depth >= max_depth)) {
+            json_key(j, "overlays");
+            json_arr_begin(j);
+            for (size_t i = 0; i < count; i++)
+                write_tree_node(j, view, ui_surface_overlay_at(surface, i),
+                                depth + 1, max_depth);
             json_arr_end(j);
         }
     }

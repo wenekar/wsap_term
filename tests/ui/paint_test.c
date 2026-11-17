@@ -59,8 +59,6 @@ static void paint_order_translation_test(void)
     assert(scene.ops[0].color == parent_probe.color);
     assert(scene.ops[1].rect.x == 31 && scene.ops[1].rect.y == 52);
     assert(scene.ops[1].color == child_probe.color);
-    assert(!((&parent)->impl.invalidation & UI_WIDGET_INVALIDATE_PAINT));
-    assert(!((&child)->impl.invalidation & UI_WIDGET_INVALIDATE_PAINT));
 
     ui_widget_destroy(&parent);
 }
@@ -85,9 +83,7 @@ static void clipping_and_zero_test(void)
     assert(scene.ops[2].kind == UI_SCENE_OP_POP_CLIP);
 
     probe.unbalanced = true;
-    ui_widget_invalidate(&widget, UI_WIDGET_INVALIDATE_PAINT);
     assert(!ui_widget_build_scene(&widget, &scene));
-    assert((&widget)->impl.invalidation & UI_WIDGET_INVALIDATE_PAINT);
     ui_widget_destroy(&widget);
 }
 

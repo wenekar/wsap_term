@@ -454,6 +454,47 @@ static void zero_surface_test(void)
     ui_scene_destroy(&scene);
 }
 
+/* A widget that fills its placement, takes the pointer, and records events. */
+struct layer_probe {
+    struct ui_widget widget;
+    int presses;
+    uint32_t color;
+    bool small;
+};
+
+static void layer_paint(const struct ui_widget *widget,
+                        struct ui_paint_context *paint)
+{
+    const struct layer_probe *probe = widget->userdata;
+    ui_paint_rect(paint, ui_paint_bounds(paint), probe->color);
+}
+
+static bool layer_event(struct ui_widget *widget, const struct ui_event *event)
+{
+    struct layer_probe *probe = (struct layer_probe *)widget->userdata;
+    if (event->kind != UI_EVENT_POINTER ||
+        event->data.pointer.kind != UI_POINTER_PRESS)
+        return false;
+    probe->presses++;
+    return true;
+}
+
+static struct vector2i overlay_measure(const struct ui_widget *widget,
+                                       struct ui_constraints constraints)
+{
+    const struct layer_probe *probe = widget->userdata;
+    return probe->small ? (struct vector2i){ .x = 20, .y = 20 }
+                        : constraints.max;
+}
+
+static const struct ui_widget_ops LAYER_OPS = {
+    .name = "overlay-probe",
+    .measure = overlay_measure,
+    .event = layer_event,
+    .paint = layer_paint,
+};
+
+
 struct changing_measure {
     int width;
     bool change_during_measure;
@@ -504,8 +545,204 @@ static void measurement_change_requests_another_frame_test(void)
     ui_scene_destroy(&scene);
 }
 
+static void overlay_layer_test(void)
+{
+    struct ui_surface surface = {0};
+    struct ui_box root = {0};
+    struct layer_probe first = { .color = 0xFF000001 };
+    struct layer_probe second = { .color = 0xFF000002 };
+    struct ui_widget child = {0};
+    ui_box_init(&root);
+    ui_widget_init(&first.widget, &LAYER_OPS, &first);
+    ui_widget_init(&second.widget, &LAYER_OPS, &second);
+    ui_widget_init(&child, NULL, NULL);
+    assert(ui_widget_add_child(&root.widget, &child));
+
+    struct host_probe host = {0};
+    const struct ui_surface_host surface_host = { .request_frame = request_frame };
+    ui_surface_init(&surface, &surface_host, &host);
+    ui_surface_set_root(&surface, &root.widget);
+    ui_surface_set_scale(&surface, (struct css_scale_context){
+        .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
+    });
+    ui_surface_resize(&surface, (struct vector2i){ .x = 100, .y = 80 });
+
+    /* A widget that another widget holds is not an overlay. */
+    assert(!ui_surface_add_overlay(&surface, &child));
+    assert(ui_surface_add_overlay(&surface, &first.widget));
+    assert(ui_surface_add_overlay(&surface, &second.widget));
+    assert(ui_surface_overlay_count(&surface) == 2);
+    assert(ui_surface_overlay_at(&surface, 0) == &first.widget);
+    assert(ui_surface_overlay_at(&surface, 1) == &second.widget);
+
+    struct ui_scene scene = {0};
+    assert(ui_surface_build_scene(&surface, &scene));
+    /* The overlays are placed against the viewport and painted last. */
+    assert(rect2i_eq(first.widget.bounds,
+                     (struct rect2i){ .size = { .x = 100, .y = 80 } }));
+    assert(rect2i_eq(second.widget.bounds, first.widget.bounds));
+    assert(scene.n_ops == 2);
+    assert(scene.ops[0].color == 0xFF000001);
+    assert(scene.ops[1].color == 0xFF000002);
+
+    /* The topmost overlay takes the press. */
+    struct ui_event press = ui_event_pointer((struct ui_pointer_event){
+        .kind = UI_POINTER_PRESS, .pos = { .x = 10, .y = 10 },
+    }, 0);
+    assert(ui_surface_dispatch(&surface, &press));
+    assert(second.presses == 1 && first.presses == 0);
+
+    assert(ui_surface_remove_overlay(&surface, &second.widget));
+    assert(ui_surface_overlay_count(&surface) == 1);
+    assert(!ui_surface_remove_overlay(&surface, &second.widget));
+    assert(ui_widget_surface(&second.widget) == NULL);
+    press.data.pointer.pos = (struct vector2i){ .x = 20, .y = 20 };
+    assert(ui_surface_dispatch(&surface, &press));
+    assert(first.presses == 1);
+
+    ui_surface_destroy(&surface);
+    assert(ui_surface_overlay_count(&surface) == 0);
+    ui_widget_destroy(&root.widget);
+    ui_widget_destroy(&first.widget);
+    ui_widget_destroy(&second.widget);
+    ui_scene_destroy(&scene);
+}
+
+static void overlay_modal_focus_test(void)
+{
+    struct layer_probe root_button = { .color = 0xFF000003 };
+    struct layer_probe layer = { .color = 0xFF000004, .small = true };
+    struct layer_probe row = { .color = 0xFF000005, .small = true };
+    struct ui_box root = {0};
+    ui_box_init(&root);
+    ui_widget_init(&root_button.widget, &LAYER_OPS, &root_button);
+    ui_widget_set_focusable(&root_button.widget, true);
+    ui_widget_init(&layer.widget, &LAYER_OPS, &layer);
+    ui_widget_init(&row.widget, &LAYER_OPS, &row);
+    ui_widget_set_focusable(&row.widget, true);
+    assert(ui_widget_add_child(&layer.widget, &row.widget));
+    assert(ui_widget_add_child(&root.widget, &root_button.widget));
+    ui_widget_set_modal(&layer.widget, true);
+
+    struct ui_surface surface = {0};
+    ui_surface_init(&surface, NULL, NULL);
+    ui_surface_set_root(&surface, &root.widget);
+    ui_surface_set_scale(&surface, (struct css_scale_context){
+        .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
+    });
+    ui_surface_resize(&surface, (struct vector2i){ .x = 100, .y = 80 });
+    ui_surface_prepare(&surface);
+    ui_surface_focus(&surface, &root_button.widget);
+    assert(ui_surface_focused(&surface) == &root_button.widget);
+    assert(!ui_surface_has_modal(&surface));
+
+    /* A modal overlay takes the focus and masks the root. */
+    ui_widget_set_placement(&layer.widget, (struct ui_placement){
+        .kind = UI_PLACE_CENTER,
+    });
+    assert(ui_surface_add_overlay(&surface, &layer.widget));
+    assert(ui_surface_has_modal(&surface));
+    assert(rect2i_eq(layer.widget.bounds, (struct rect2i){
+        .pos = { .x = 40, .y = 0 }, .size = { .x = 20, .y = 20 },
+    }));
+    assert(ui_surface_focused(&surface) == &row.widget);
+    assert(ui_surface_hit_test(&surface, (struct vector2i){ .x = 45, .y = 5 })
+           == &row.widget);
+
+    struct ui_event press = ui_event_pointer((struct ui_pointer_event){
+        .kind = UI_POINTER_PRESS, .pos = { .x = 90, .y = 70 },
+    }, 0);
+    assert(ui_surface_hit_test(&surface, press.data.pointer.pos) == &layer.widget);
+    assert(ui_surface_dispatch(&surface, &press));
+    assert(layer.presses == 1 && root_button.presses == 0);
+    assert(ui_surface_focused(&surface) == &root_button.widget ||
+           ui_surface_focused(&surface) == &row.widget);
+
+    /* The focus goes back to the widget that held it before. */
+    assert(ui_surface_remove_overlay(&surface, &layer.widget));
+    assert(!ui_surface_has_modal(&surface));
+    ui_surface_prepare(&surface);
+    assert(ui_surface_focused(&surface) == &root_button.widget);
+
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&root.widget);
+    ui_widget_destroy(&layer.widget);
+}
+
+struct post_probe {
+    int runs;
+    bool ran_busy;
+    struct ui_widget widget;
+};
+
+static void post_run(struct ui_surface *surface, void *userdata)
+{
+    struct post_probe *probe = userdata;
+    probe->runs++;
+    probe->ran_busy = ui_surface_busy(surface);
+}
+
+static bool post_press(struct ui_widget *widget, const struct ui_event *event)
+{
+    struct post_probe *probe = widget->userdata;
+    if (event->kind != UI_EVENT_KEY)
+        return false;
+    /* A handler frees nothing while the surface is busy; it posts. */
+    assert(ui_surface_busy(ui_widget_surface(widget)));
+    assert(ui_surface_post(ui_widget_surface(widget), post_run, probe));
+    return true;
+}
+
+static bool post_handler(struct ui_widget *widget, const struct ui_event *event,
+                         void *userdata)
+{
+    (void)userdata;
+    return post_press(widget, event);
+}
+
+static const struct ui_widget_ops POST_OPS = {
+    .name = "post-probe",
+    .event = post_press,
+};
+
+static void surface_post_runs_after_dispatch_test(void)
+{
+    struct post_probe probe = {0};
+    ui_widget_init(&probe.widget, &POST_OPS, &probe);
+    ui_widget_set_focusable(&probe.widget, true);
+
+    struct ui_surface surface = {0};
+    ui_surface_init(&surface, NULL, NULL);
+    ui_surface_set_root(&surface, &probe.widget);
+    ui_surface_resize(&surface, (struct vector2i){ .x = 100, .y = 80 });
+    ui_surface_prepare(&surface);
+
+    struct ui_event key = ui_event_key((struct ui_key_event){
+        .key = UI_KEY_CHAR, .text = 'k',
+    }, 0);
+    assert(ui_surface_dispatch(&surface, &key));
+    assert(probe.runs == 1 && !probe.ran_busy);
+
+    /* An idle surface runs the function at once. */
+    assert(ui_surface_post(&surface, post_run, &probe));
+    assert(probe.runs == 2);
+
+    /* A handler that runs during dispatch posts its free. */
+    ui_widget_set_event_handler(&probe.widget, post_handler, &probe);
+    assert(ui_surface_dispatch(&surface, &key));
+    assert(ui_surface_busy(&surface) == false);
+    assert(ui_surface_destroy(&surface));
+    /* A destroyed surface holds no root and no overlay. */
+    assert(ui_surface_root(&surface) == NULL);
+    assert(ui_surface_overlay_count(&surface) == 0);
+    ui_widget_destroy(&probe.widget);
+}
+
 int main(void)
 {
+    surface_post_runs_after_dispatch_test();
+    overlay_layer_test();
+    overlay_modal_focus_test();
     measurement_change_requests_another_frame_test();
     independent_surfaces_test();
     style_application_grow_test();

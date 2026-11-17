@@ -186,7 +186,6 @@ static void long_list_bar_test(void)
     ui_widget_set_fixed_size(ui_dropdown_widget(&dropdown), (struct vector2i){ .x = 200, .y = 32 });
     ui_widget_set_placement(&dropdown.widget, (struct ui_placement){ .kind = UI_PLACE_AT });
     assert(ui_widget_add_child(&root, ui_dropdown_widget(&dropdown)));
-    ui_dropdown_set_overlay(&dropdown, &root);
     ui_surface_set_root(&surface, &root);
     ui_surface_resize(&surface, (struct vector2i){ .x = 480, .y = 360 });
     ui_surface_prepare(&surface);
@@ -284,7 +283,6 @@ int main(void)
     ui_widget_set_placement(&dropdown.widget, (struct ui_placement){ .kind = UI_PLACE_AT });
     ui_widget_set_action_handler(&root, changed, &changes);
     assert(ui_widget_add_child(&root, ui_dropdown_widget(&dropdown)));
-    ui_dropdown_set_overlay(&dropdown, &root);
     ui_surface_set_root(&surface, &root);
     ui_surface_resize(&surface, (struct vector2i){ .x = 480, .y = 360 });
     ui_surface_prepare(&surface);

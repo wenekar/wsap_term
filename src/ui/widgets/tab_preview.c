@@ -752,7 +752,7 @@ bool ui_tab_preview_sync_anchor(struct ui_tab_preview *p, int index,
         if (res == CAPTURE_FAILED)
             return clear_in_layout(p, was_shown);
         if (change != CAPTURE_CHANGE_NONE)
-            p->widget.impl.invalidation |= UI_WIDGET_INVALIDATE_PAINT;
+            ui_widget_invalidate(&p->widget, UI_WIDGET_INVALIDATE_PAINT);
     }
     p->widget.impl.placement = cur_placement(p);
     struct vector2i want = p->impl.shown

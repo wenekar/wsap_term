@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include <assert.h>
 #include <math.h>
 #include <stdlib.h>
 
@@ -31,13 +32,17 @@ static const struct ui_widget_ops POPUP_ROOT_OPS = {
     .child_limit = 1,
 };
 
+/* Frees the popup array when it holds no popup. A busy popup is inside a
+ * dispatch, whose caller still reads its surface, so it keeps the array. */
 static void menu_popup_maybe_free(struct window_ui *ui)
 {
     if (!ui->menu_popup || ui->menu_popups > 0)
         return;
-    for (int d = 0; d < UI_MENU_MAX_LEVELS; d++)
+    for (int d = 0; d < UI_MENU_MAX_LEVELS; d++) {
         if (ui->menu_popup[d].closing)
             return;
+        assert(!ui_surface_busy(&ui->menu_popup[d].ui));
+    }
     free(ui->menu_popup);
     ui->menu_popup = NULL;
 }
@@ -57,8 +62,30 @@ static bool descendant_open(const struct window_ui *ui, int depth)
     return false;
 }
 
-/* Closes the popup at depth. A busy popup, or a popup with an open
- * descendant, stays until window_menu_reap destroys it. */
+static void close_popup_now(struct window *w, int depth);
+
+/* Closes the popup that `surface` belongs to, after its dispatch ends.
+ *
+ * The popup only gets the closing mark here. window_menu_reap destroys it
+ * after the caller of ui_surface_dispatch returns, because that caller still
+ * reads the surface it dispatched to. */
+static void close_popup_post(struct ui_surface *surface, void *userdata)
+{
+    struct window *w = userdata;
+    struct window_ui *ui = ui_of(w);
+    if (!ui->menu_popup)
+        return;
+    for (int d = 0; d < UI_MENU_MAX_LEVELS; d++)
+        if (&ui->menu_popup[d].ui == surface) {
+            if (popup_open(&ui->menu_popup[d]))
+                ui->menu_popup[d].closing = true;
+            return;
+        }
+}
+
+/* Closes the popup at depth. A popup that closes from its own dispatch is
+ * marked and destroyed by window_menu_reap. A popup with an open descendant
+ * waits for it in the same way. */
 static void close_popup(struct window *w, int depth)
 {
     struct window_ui *ui = ui_of(w);
@@ -67,13 +94,28 @@ static void close_popup(struct window *w, int depth)
     struct window_ui_menu_popup *p = &ui->menu_popup[depth];
     if (!popup_open(p))
         return;
-    if (ui_surface_busy(&p->ui) || descendant_open(ui, depth)) {
-        /* The popup closes from inside its own dispatch. Destroying the
-         * surface now would drop its sheet and layout. A parent also waits
-         * for its children, because destroying it would free them. */
+    if (ui_surface_busy(&p->ui)) {
+        /* The dispatch still reads this surface, and the caller of the
+         * dispatch still reads it after the busy section. A queued close
+         * marks the popup; a full queue marks it here. */
+        if (!ui_surface_post(&p->ui, close_popup_post, w))
+            p->closing = true;
+        return;
+    }
+    if (descendant_open(ui, depth)) {
+        /* A parent waits for its children, because destroying it would free
+         * them. The deepest popup then closes first, in window_menu_reap. */
         p->closing = true;
         return;
     }
+    close_popup_now(w, depth);
+}
+
+/* Closes the popup at depth and frees its storage. */
+static void close_popup_now(struct window *w, int depth)
+{
+    struct window_ui *ui = ui_of(w);
+    struct window_ui_menu_popup *p = &ui->menu_popup[depth];
     window_accessibility_menu_popup_close(w, depth);
     ui_surface_destroy(&p->ui);
     while (p->root.first_child)
@@ -161,8 +203,9 @@ static struct yasl_popup_options popup_options(struct window *w, int depth,
 
 static bool open_popup(struct window *w, int depth, struct rect2i anchor)
 {
-    if (!(yasl_get_features() & YASL_FEATURE_POPUPS))
+    if (!(yasl_get_features() & YASL_FEATURE_POPUPS)) {
         return false;
+    }
     struct window_ui *ui = ui_of(w);
     if (!ui->menu_popup) {
         ui->menu_popup = calloc(UI_MENU_MAX_LEVELS, sizeof(*ui->menu_popup));

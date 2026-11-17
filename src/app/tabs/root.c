@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -145,9 +146,24 @@ static void widgets_init(struct app_tabs *tabs)
     ui_tab_preview_set_managed_anchor(&tabs->preview, true);
     ui_palette_init(&tabs->palette);
     ui_widget_add_child(&tabs->root, ui_tabbar_widget(&tabs->tabbar));
-    ui_widget_add_child(&tabs->root, ui_tab_preview_widget(&tabs->preview));
-    ui_widget_add_child(&tabs->root, ui_palette_widget(&tabs->palette));
     app_tabs_actions_init(tabs);
+}
+
+/* The tab preview and the palette float in the window. The surface places and
+ * paints them above the root. A widget that the surface refuses stays out of
+ * the window; the window keeps working without it. */
+static void overlay_init(struct app_tabs *tabs)
+{
+    struct ui_surface *surface = window_ui_surface(tabs->window);
+    if (!surface) {
+        fprintf(stderr, "tabs: the window has no surface for its overlays\n");
+        return;
+    }
+    if (!ui_surface_add_overlay(surface,
+                                ui_tab_preview_widget(&tabs->preview)))
+        fprintf(stderr, "tabs: cannot add the tab preview overlay\n");
+    if (!ui_surface_add_overlay(surface, ui_palette_widget(&tabs->palette)))
+        fprintf(stderr, "tabs: cannot add the palette overlay\n");
 }
 
 static void op_restyle(struct window *w)
@@ -210,6 +226,8 @@ static void op_destroy(struct window *w)
     free(tabs->labels);
     if (tabs->spec.preview_release && tabs->preview_state)
         tabs->spec.preview_release(tabs->preview_state);
+    ui_widget_destroy(ui_tab_preview_widget(&tabs->preview));
+    ui_widget_destroy(ui_palette_widget(&tabs->palette));
     ui_widget_destroy(&tabs->root);
     free(tabs);
 }
@@ -240,10 +258,13 @@ bool app_tabs_mount(struct window *w, const struct app_tabs_spec *spec)
         .content = tabs,
     };
     if (!window_ui_mount(w, &ui)) {
+        ui_widget_destroy(ui_tab_preview_widget(&tabs->preview));
+        ui_widget_destroy(ui_palette_widget(&tabs->palette));
         ui_widget_destroy(&tabs->root);
         free(tabs);
         return false;
     }
+    overlay_init(tabs);
     /* Drag events reach every window. The model owns the drag, so it is the
      * user data. */
     window_set_drag_target(w, &APP_TABS_DRAG_TARGET, spec->model);

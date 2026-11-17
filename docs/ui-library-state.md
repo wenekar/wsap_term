@@ -248,18 +248,16 @@ The inspector reports content bounds and each visible text line.
 ## Composition
 
 All controls use the same child attachment functions.
-A scrollview accepts one child widget.
-A second attachment fails.
+A scrollview accepts one content child and its own scroll bar.
+A second content widget fails.
 The existing child widget remains unchanged.
 Updating list items preserves list attachments and handlers.
 Dropdowns copy their items.
 They show a searchable popup.
-A dropdown descriptor gets a popup host from the view.
+A dropdown adds its popup to the surface overlay layer.
 The popup can extend outside scrollviews.
 The popup follows the anchor when the layout changes.
 It closes when a clipping ancestor scrolls the anchor out of sight.
-Set `overlay_key` to select a stack in the view instead.
-For manual composition, set the overlay parent to a container with stack layout.
 `ui_dropdown_set_value()` returns false when it cannot update the label.
 A failed call keeps the previous selection.
 Scrollviews can show an optional draggable scroll track.
@@ -300,7 +298,8 @@ Use `prepare` to update content and child links before style and layout passes.
 Do not modify content or layout inside paint callbacks.
 
 A setter marks dirty state with `ui_widget_invalidate()`.
-Invalidating measurement also invalidates layout and paint.
+Invalidating measurement also invalidates layout.
+Any invalidation asks for a frame, and the frame paints the tree.
 The surface resolves content, style, measurement, and layout before handling input and building scenes.
 
 Report internal hit regions through `debug_parts`.
@@ -315,10 +314,13 @@ The caller owns widget memory.
 It destroys all descendant widgets.
 It does not free the enclosing struct.
 Destroy the surface before you free its root widget storage.
+The surface also owns its overlay widgets, which float above the root.
 
 Detaching a widget cancels focus, capture, hover, and context subscriptions.
-An action or event callback can destroy a widget.
-Keep memory used by dispatch valid until dispatch returns.
+A handler can detach or destroy any widget, itself included.
+It must not free the storage of a widget or a surface while the surface is busy.
+Call `ui_surface_post()` to free storage after the busy section ends.
+`ui_surface_destroy()` returns false for a busy surface.
 Do not copy a widget struct after initialization or attachment.
 
 ## Accessibility

@@ -31,6 +31,13 @@ bool ui_widget_is_ancestor(const struct ui_widget *ancestor,
     return false;
 }
 
+bool ui_widget_stale(const struct ui_surface *surface,
+                     const struct ui_widget *widget)
+{
+    return !widget || widget->impl.destroyed || widget->impl.surface != surface ||
+           !ui_widget_visible(widget);
+}
+
 bool ui_widget_visible(const struct ui_widget *widget)
 {
     for (const struct ui_widget *p = widget; p; p = p->parent)
@@ -48,8 +55,7 @@ void ui_widget_init(struct ui_widget *widget,
         .ops = ops,
         .userdata = userdata,
         .impl.invalidation = UI_WIDGET_INVALIDATE_MEASURE |
-                             UI_WIDGET_INVALIDATE_LAYOUT |
-                             UI_WIDGET_INVALIDATE_PAINT,
+                             UI_WIDGET_INVALIDATE_LAYOUT,
         .impl.accessibility_id = ui_widget_accessibility_id_allocate(),
     };
 }
@@ -215,6 +221,12 @@ void ui_widget_set_pointer_transparent(struct ui_widget *widget,
 {
     if (widget)
         widget->impl.pointer_transparent = transparent;
+}
+
+void ui_widget_set_keeps_press_focus(struct ui_widget *widget, bool keeps)
+{
+    if (widget)
+        widget->impl.keeps_press_focus = keeps;
 }
 
 void ui_widget_set_hidden(struct ui_widget *widget, bool hidden)
@@ -480,6 +492,9 @@ void ui_widget_detach(struct ui_widget *widget)
     if (surface) {
         if (surface->impl.root == widget)
             surface->impl.root = NULL;
+        /* A detached overlay leaves the list. A hidden one stays in it, so
+         * that showing it again works. */
+        ui_surface_drop_overlay(surface, widget);
         ui_surface_forget(surface, widget);
     }
     clear_surface(widget, surface);
@@ -631,7 +646,6 @@ void ui_widget_layout(struct ui_widget *widget, struct rect2i bounds)
         .size = { .x = bounds.width, .y = bounds.height },
     };
     widget->impl.invalidation &= ~UI_WIDGET_INVALIDATE_LAYOUT;
-    widget->impl.invalidation |= UI_WIDGET_INVALIDATE_PAINT;
     if (widget->ops && widget->ops->layout) {
         widget->ops->layout(widget, bounds);
         return;
@@ -681,9 +695,6 @@ static struct ui_widget *hit_tree(struct ui_widget *widget,
         widget->impl.pointer_transparent)
         return NULL;
     bool inside = rect2i_contains(widget->bounds, pos);
-    if (widget->ops && widget->ops->hit_front && takes_pointer(widget) &&
-        widget->ops->hit_front(widget, pos))
-        return widget;
     if (!widget->ops || !widget->ops->clip_children || inside) {
         for (struct ui_widget *c = widget->last_child; c; c = c->prev_sibling) {
             struct ui_widget *hit = hit_tree(c, pos);
@@ -716,18 +727,21 @@ static bool wants(const struct ui_widget *widget, const struct ui_event *event)
            (widget->ops && widget->ops->key_release);
 }
 
-struct ui_widget *ui_widget_event_target(struct ui_widget *widget)
+/* Gives `event` to the event op of `widget`, and then to the handler that
+ * ui_widget_set_event_handler set when the op does not handle it. */
+bool ui_widget_deliver(struct ui_widget *widget, const struct ui_event *event)
 {
-    while (widget && !widget->impl.destroyed && widget->ops &&
-           widget->ops->event_target) {
-        struct ui_widget *next = widget->ops->event_target(widget);
-        if (!next || next == widget || next->impl.destroyed ||
-            next->impl.surface != widget->impl.surface ||
-            !ui_widget_is_ancestor(widget, next) || !ui_widget_visible(next))
-            break;
-        widget = next;
-    }
-    return widget;
+    if (!widget || !event || widget->impl.destroyed || !wants(widget, event))
+        return false;
+    bool key_release = event->kind == UI_EVENT_KEY &&
+                       event->data.key.action == UI_KEY_RELEASE;
+    bool handled = widget->ops && widget->ops->event &&
+                   (!key_release || widget->ops->key_release) &&
+                   widget->ops->event(widget, event);
+    if (!handled && !widget->impl.destroyed && widget->impl.event_fn)
+        handled = widget->impl.event_fn(widget, event,
+                                        widget->impl.event_userdata);
+    return handled;
 }
 
 bool ui_widget_bubble(struct ui_widget *target, const struct ui_event *event)
@@ -737,19 +751,8 @@ bool ui_widget_bubble(struct ui_widget *target, const struct ui_event *event)
     struct ui_surface *surface = target->impl.surface;
     for (struct ui_widget *w = target; w;) {
         struct ui_widget *parent = w->parent;
-        if (!w->impl.destroyed && w->impl.surface == surface &&
-            wants(w, event)) {
-            bool key_release = event->kind == UI_EVENT_KEY &&
-                               event->data.key.action == UI_KEY_RELEASE;
-            bool handled = w->ops && w->ops->event &&
-                           (!key_release || w->ops->key_release) &&
-                           w->ops->event(w, event);
-            if (!handled && !w->impl.destroyed && w->impl.surface == surface &&
-                w->impl.event_fn)
-                handled = w->impl.event_fn(w, event, w->impl.event_userdata);
-            if (handled)
-                return true;
-        }
+        if (w->impl.surface == surface && ui_widget_deliver(w, event))
+            return true;
         if (target->impl.destroyed || target->impl.surface != surface)
             break;
         w = parent;
@@ -766,7 +769,7 @@ bool ui_widget_event(struct ui_widget *widget, const struct ui_event *event)
                                                    event->data.pointer.pos),
                                 event);
     struct ui_widget *modal = ui_widget_modal(widget);
-    return ui_widget_bubble(ui_widget_event_target(modal ? modal : widget), event);
+    return ui_widget_bubble(modal ? modal : widget, event);
 }
 
 uint64_t ui_widget_tick(struct ui_widget *widget, uint64_t now_ms)
@@ -792,10 +795,11 @@ void ui_widget_invalidate(struct ui_widget *widget, unsigned flags)
     if (!widget || widget->impl.destroyed ||
         flags == UI_WIDGET_INVALIDATE_NONE)
         return;
+    /* Paint is not a stored state. Any invalidation asks for a frame, and the
+     * frame paints the tree. */
     if (flags & UI_WIDGET_INVALIDATE_MEASURE)
-        flags |= UI_WIDGET_INVALIDATE_LAYOUT | UI_WIDGET_INVALIDATE_PAINT;
-    else if (flags & UI_WIDGET_INVALIDATE_LAYOUT)
-        flags |= UI_WIDGET_INVALIDATE_PAINT;
+        flags |= UI_WIDGET_INVALIDATE_LAYOUT;
+    flags &= UI_WIDGET_INVALIDATE_MEASURE | UI_WIDGET_INVALIDATE_LAYOUT;
 
     for (struct ui_widget *p = widget; p; p = p->parent)
         p->impl.invalidation |= flags;

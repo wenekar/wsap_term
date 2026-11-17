@@ -202,7 +202,6 @@ static void context_requests_state_redraw_test(void)
     assert(!ui_surface_dispatch(&context, &motion));
     assert(button.widget.impl.style_pseudo & CSS_PSEUDO_HOVER);
     assert(ui_surface_frame_pending(&context));
-    assert(button.widget.impl.invalidation & UI_WIDGET_INVALIDATE_PAINT);
     ui_surface_destroy(&context);
 }
 
