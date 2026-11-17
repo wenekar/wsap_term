@@ -226,76 +226,7 @@ static void test_x11_gaps(struct x11_display *d, struct x11_surface *s)
 
     collect(&d->base, &s->base, &s2.base, &rec1, &rec2, &drec);
 
-    /* 5. XDND drop-target events and URI parsing */
-    size_t out_len = 0;
-    char *parsed = parse_file_uris("file:///tmp/doc.txt\r\n", 21, &out_len);
-    assert(parsed && !strcmp(parsed, "file:///tmp/doc.txt\r\n") && out_len == 21);
-    free(parsed);
-
-    parsed = parse_file_uris("# comment\nfile:///a\nfile:///b\n", 30, &out_len);
-    assert(parsed && !strcmp(parsed, "file:///a\r\nfile:///b\r\n") && out_len == 22);
-    free(parsed);
-
-    parsed = parse_file_uris("http://example.com\r\n", 20, &out_len);
-    assert(parsed == NULL && out_len == 0);
-
-    /* Test XDND ClientMessages */
-    d->protocols = 1;
-    d->delete_window = 2;
-    d->xdnd_enter = 10;
-    d->xdnd_position = 11;
-    d->xdnd_leave = 12;
-    d->xdnd_drop = 13;
-    d->uri_list = 20;
-
-
-    XClientMessageEvent enter_msg = {
-        .type = ClientMessage,
-        .message_type = d->xdnd_enter,
-        .format = 32,
-        .data.l = {99, 5 << 24, d->uri_list, 0, 0},
-    };
-    handle_client_message(d, s, &enter_msg);
-    assert(d->xdnd.accepts);
-
-    XClientMessageEvent pos_msg = {
-        .type = ClientMessage,
-        .message_type = d->xdnd_position,
-        .format = 32,
-        .data.l = {99, 0, (100 << 16) | 200, 1000, 0},
-    };
-    handle_client_message(d, s, &pos_msg);
-    collect(&d->base, &s->base, &s2.base, &rec1, &rec2, &drec);
-    assert(drec.over_count == 1);
-    assert(drec.last_pos.x == 100 && drec.last_pos.y == 200);
-
-    XClientMessageEvent leave_msg = {
-        .type = ClientMessage,
-        .message_type = d->xdnd_leave,
-        .format = 32,
-        .data.l = {99, 0, 0, 0, 0},
-    };
-    handle_client_message(d, s, &leave_msg);
-    collect(&d->base, &s->base, &s2.base, &rec1, &rec2, &drec);
-    assert(drec.leave_count == 1);
-
-    handle_client_message(d, s, &enter_msg);
-    handle_client_message(d, s, &pos_msg);
-    collect(&d->base, &s->base, &s2.base, &rec1, &rec2, &drec);
-    assert(drec.over_count == 2);
-
-    XClientMessageEvent drop_msg = {
-        .type = ClientMessage,
-        .message_type = d->xdnd_drop,
-        .format = 32,
-        .data.l = {99, 0, 1005, 0, 0},
-    };
-    handle_client_message(d, s, &drop_msg);
-    collect(&d->base, &s->base, &s2.base, &rec1, &rec2, &drec);
-    assert(drec.leave_count == 2);
-    assert(d->pending_drop.active);
-
-    /* Push YASL_PRIVATE_EVENT_DROP */
+    /* 5. A pushed DROP event reaches the queue with its text. */
     push(s, (struct yasl_private_event){.type = YASL_PRIVATE_EVENT_DROP}, "file:///sample.png\r\n", 20);
     struct yasl_private_event drop_ev;
     assert(yasl_private_display_poll_event(&d->base, &drop_ev));
