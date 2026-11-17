@@ -18,6 +18,14 @@
 
 #define UI_TABBAR_NEW_TAB (-2)
 
+/* The action kinds that the tab bar sends. They start at UI_ACTION_USER so
+ * that they stay out of the core enum. */
+enum ui_tab_action_kind {
+    UI_TAB_ACTION_MOVE = UI_ACTION_USER,
+    UI_TAB_ACTION_DRAG,
+    UI_TAB_ACTION_TEAR_OFF,
+};
+
 enum ui_tab_drag_state : uint8_t {
     UI_TAB_DRAG_NONE = 0,
     UI_TAB_DRAG_PENDING,

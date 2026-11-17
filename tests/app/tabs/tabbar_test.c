@@ -74,7 +74,7 @@ static bool on_action(struct ui_widget *source, const struct ui_action *action,
     struct fixture *f = userdata;
     if (f->n_log < MAX_ACTIONS)
         f->log[f->n_log++] = *action;
-    if (action->kind == UI_ACTION_TEAR_OFF)
+    if (action->kind == UI_TAB_ACTION_TEAR_OFF)
         return f->take_tear_off;
     return true;
 }
@@ -791,13 +791,13 @@ static void tabbar_drag_sort_detach_attach_test(void)
     assert(count(&f, UI_ACTION_ACTIVATE) == 1);
     motion(&f, at(r0, 12, 6), 60);
     assert(!ui_tabbar_is_dragging(&f.tb));
-    assert(count(&f, UI_ACTION_DRAG) == 0);
+    assert(count(&f, UI_TAB_ACTION_DRAG) == 0);
 
     motion(&f, at(r1, 10, 5), 70);
     assert(ui_tabbar_is_dragging(&f.tb));
-    const struct ui_action *drag = last(&f, UI_ACTION_DRAG);
+    const struct ui_action *drag = last(&f, UI_TAB_ACTION_DRAG);
     assert(drag && drag->id == UI_TAB_DRAG_REORDER && drag->index == 0);
-    assert(count(&f, UI_ACTION_TEAR_OFF) == 0);
+    assert(count(&f, UI_TAB_ACTION_TEAR_OFF) == 0);
 
     assert(tick(&f, 100));
     const struct ui_scene *scene = build(&f);
@@ -812,8 +812,8 @@ static void tabbar_drag_sort_detach_attach_test(void)
     assert(displaced);
 
     release(&f, at(r1, 10, 5), 120);
-    const struct ui_action *move = last(&f, UI_ACTION_MOVE);
-    assert(move && move->index == 0 && move->to == 1);
+    const struct ui_action *move = last(&f, UI_TAB_ACTION_MOVE);
+    assert(move && move->index == 0 && move->arg == 1);
     assert(!ui_tabbar_is_dragging(&f.tb));
     assert(ui_surface_captured(&f.surface) == NULL);
 
@@ -821,11 +821,11 @@ static void tabbar_drag_sort_detach_attach_test(void)
     press(&f, at(r1, 10, 5), 0, 200);
     motion(&f, (struct vector2i){ .x = r1.x + 10, .y = 100 }, 210);
     assert(ui_tabbar_is_dragging(&f.tb));
-    assert(last(&f, UI_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
-    assert(last(&f, UI_ACTION_TEAR_OFF)->index == 1);
+    assert(last(&f, UI_TAB_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
+    assert(last(&f, UI_TAB_ACTION_TEAR_OFF)->index == 1);
     release(&f, (struct vector2i){ .x = r1.x + 10, .y = 100 }, 220);
-    move = last(&f, UI_ACTION_MOVE);
-    assert(move && move->index == 1 && move->to == -1);
+    move = last(&f, UI_TAB_ACTION_MOVE);
+    assert(move && move->index == 1 && move->arg == -1);
 
     ui_tabbar_set_external_drag(&f.tb, true,
         (struct vector2i){ .x = r1.x + 10, .y = 10 });
@@ -851,13 +851,13 @@ static void sideways_exit_detaches_test(void)
     press(&f, grab, 0, 1000);
 
     motion(&f, (struct vector2i){ .x = 595, .y = grab.y }, 1010);
-    assert(last(&f, UI_ACTION_DRAG)->id == UI_TAB_DRAG_REORDER);
+    assert(last(&f, UI_TAB_ACTION_DRAG)->id == UI_TAB_DRAG_REORDER);
     motion(&f, (struct vector2i){ .x = 640, .y = grab.y }, 1020);
-    assert(last(&f, UI_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
+    assert(last(&f, UI_TAB_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
     motion(&f, (struct vector2i){ .x = 595, .y = grab.y }, 1030);
-    assert(last(&f, UI_ACTION_DRAG)->id == UI_TAB_DRAG_REORDER);
+    assert(last(&f, UI_TAB_ACTION_DRAG)->id == UI_TAB_DRAG_REORDER);
     motion(&f, (struct vector2i){ .x = -40, .y = grab.y }, 1040);
-    assert(last(&f, UI_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
+    assert(last(&f, UI_TAB_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
     ui_surface_cancel_capture(&f.surface);
     teardown(&f);
 }
@@ -1047,7 +1047,7 @@ static void detaching_tab_still_has_drag_image_test(void)
     struct rect2i r1 = tab_rect(&f, 1);
     press(&f, at(r1, 5, 5), 0, 1000);
     motion(&f, (struct vector2i){ .x = 500, .y = 400 }, 1010);
-    assert(last(&f, UI_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
+    assert(last(&f, UI_TAB_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
 
     struct ui_scene scene = {0};
     struct vector2i image, hotspot;
@@ -1075,7 +1075,7 @@ static void detach_drag_chip_bounds_test(void)
 
     press(&f, at(r1, 10, 5), 0, 50);
     motion(&f, (struct vector2i){ .x = 500, .y = 400 }, 60);
-    assert(last(&f, UI_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
+    assert(last(&f, UI_TAB_ACTION_DRAG)->id == UI_TAB_DRAG_DETACH);
     tick(&f, 100);
 
     const struct ui_scene *scene = build(&f);
@@ -1425,7 +1425,7 @@ static void neighbor_slide_eases_on_drag(void)
 
     press(&f, at(r0, 10, 5), 0, 1000);
     motion(&f, at(r2, 10, 5), 1001);
-    assert(last(&f, UI_ACTION_DRAG)->id == UI_TAB_DRAG_REORDER);
+    assert(last(&f, UI_TAB_ACTION_DRAG)->id == UI_TAB_DRAG_REORDER);
 
     assert(tick(&f, 1050));
     struct rect2i mid = tab_rect(&f, 1);
@@ -1442,8 +1442,8 @@ static void neighbor_slide_eases_on_drag(void)
     assert(near(tab_rect(&f, 1).x, r0.x));
 
     release(&f, at(r2, 10, 5), 2200);
-    const struct ui_action *move = last(&f, UI_ACTION_MOVE);
-    assert(move && move->index == 0 && move->to == 2);
+    const struct ui_action *move = last(&f, UI_TAB_ACTION_MOVE);
+    assert(move && move->index == 0 && move->arg == 2);
     teardown(&f);
 }
 
@@ -1607,7 +1607,7 @@ static void removal_cancels_active_drag_test(void)
     assert(!ui_tabbar_is_dragging(&f.tb));
     assert(ui_surface_captured(&f.surface) == NULL);
     release(&f, at(tab_rect(&f, 0), 5, 5), 1016);
-    assert(count(&f, UI_ACTION_MOVE) == 0);
+    assert(count(&f, UI_TAB_ACTION_MOVE) == 0);
     teardown(&f);
 }
 
@@ -1622,9 +1622,9 @@ static void motion_while_captured_reports_detach_test(void)
     struct vector2i far = { .x = 500, .y = 900 };
     motion(&f, far, 1010);
     assert(ui_tabbar_is_dragging(&f.tb));
-    const struct ui_action *tear = last(&f, UI_ACTION_TEAR_OFF);
+    const struct ui_action *tear = last(&f, UI_TAB_ACTION_TEAR_OFF);
     assert(tear && tear->index == 1);
-    const struct ui_action *drag = last(&f, UI_ACTION_DRAG);
+    const struct ui_action *drag = last(&f, UI_TAB_ACTION_DRAG);
     assert(drag && drag->index == 1 && drag->id == UI_TAB_DRAG_DETACH);
     assert(vector2i_eq(drag->pos, far));
     assert(ui_surface_captured(&f.surface) == bar(&f));
@@ -1638,10 +1638,10 @@ static void motion_reorder_reports_drag_test(void)
     press(&f, at(tab_rect(&f, 0), 5, 5), 0, 1000);
     struct vector2i to = at(tab_rect(&f, 1), 5, 5);
     motion(&f, to, 1010);
-    const struct ui_action *drag = last(&f, UI_ACTION_DRAG);
+    const struct ui_action *drag = last(&f, UI_TAB_ACTION_DRAG);
     assert(drag && drag->index == 0 && drag->id == UI_TAB_DRAG_REORDER);
     assert(vector2i_eq(drag->pos, to));
-    assert(count(&f, UI_ACTION_TEAR_OFF) == 0);
+    assert(count(&f, UI_TAB_ACTION_TEAR_OFF) == 0);
     teardown(&f);
 }
 
@@ -1653,9 +1653,9 @@ static void release_reorder_commits_and_releases_test(void)
     struct vector2i to = at(tab_rect(&f, 1), 5, 5);
     motion(&f, to, 1010);
     release(&f, to, 1020);
-    assert(count(&f, UI_ACTION_MOVE) == 1);
-    const struct ui_action *move = last(&f, UI_ACTION_MOVE);
-    assert(move->index == 0 && move->to == 1);
+    assert(count(&f, UI_TAB_ACTION_MOVE) == 1);
+    const struct ui_action *move = last(&f, UI_TAB_ACTION_MOVE);
+    assert(move->index == 0 && move->arg == 1);
     assert(ui_surface_captured(&f.surface) == NULL);
     assert(!ui_tabbar_is_dragging(&f.tb));
     teardown(&f);
@@ -1670,9 +1670,9 @@ static void release_detach_commits_and_releases_test(void)
     struct vector2i far = { .x = 500, .y = 900 };
     motion(&f, far, 1010);
     release(&f, far, 1020);
-    assert(count(&f, UI_ACTION_MOVE) == 1);
-    const struct ui_action *move = last(&f, UI_ACTION_MOVE);
-    assert(move->index == 1 && move->to == -1);
+    assert(count(&f, UI_TAB_ACTION_MOVE) == 1);
+    const struct ui_action *move = last(&f, UI_TAB_ACTION_MOVE);
+    assert(move->index == 1 && move->arg == -1);
     assert(move->pos.x == 5);
     assert(ui_surface_captured(&f.surface) == NULL);
     teardown(&f);
@@ -1719,7 +1719,7 @@ static void release_without_movement_cancels_and_releases_test(void)
     press(&f, p, 0, 1000);
     assert(ui_surface_captured(&f.surface) == bar(&f));
     release(&f, p, 1016);
-    assert(count(&f, UI_ACTION_MOVE) == 0 && count(&f, UI_ACTION_DRAG) == 0);
+    assert(count(&f, UI_TAB_ACTION_MOVE) == 0 && count(&f, UI_TAB_ACTION_DRAG) == 0);
     assert(ui_surface_captured(&f.surface) == NULL);
     teardown(&f);
 }
@@ -1735,16 +1735,16 @@ static void taken_tear_off_ends_the_gesture_test(void)
 
     struct vector2i far = { .x = 200, .y = 250 };
     motion(&f, far, 1010);
-    assert(count(&f, UI_ACTION_TEAR_OFF) == 1);
-    assert(count(&f, UI_ACTION_DRAG) == 0);
+    assert(count(&f, UI_TAB_ACTION_TEAR_OFF) == 1);
+    assert(count(&f, UI_TAB_ACTION_DRAG) == 0);
     assert(!ui_tabbar_is_dragging(&f.tb));
     assert(ui_surface_captured(&f.surface) == NULL);
 
     motion(&f, (struct vector2i){ .x = 210, .y = 260 }, 1020);
     release(&f, far, 1030);
-    assert(count(&f, UI_ACTION_MOVE) == 0);
-    assert(count(&f, UI_ACTION_DRAG) == 0);
-    assert(count(&f, UI_ACTION_TEAR_OFF) == 1);
+    assert(count(&f, UI_TAB_ACTION_MOVE) == 0);
+    assert(count(&f, UI_TAB_ACTION_DRAG) == 0);
+    assert(count(&f, UI_TAB_ACTION_TEAR_OFF) == 1);
 
     clear_log(&f);
     press(&f, at(r0, 5, 5), 0, 1100);
@@ -1752,7 +1752,7 @@ static void taken_tear_off_ends_the_gesture_test(void)
            f.log[0].index == 0);
     assert(ui_surface_captured(&f.surface) == bar(&f));
     release(&f, at(r0, 5, 5), 1116);
-    assert(count(&f, UI_ACTION_MOVE) == 0);
+    assert(count(&f, UI_TAB_ACTION_MOVE) == 0);
     teardown(&f);
 }
 
@@ -1766,7 +1766,7 @@ static void capture_lost_cancels_the_drag_once_test(void)
     clear_log(&f);
 
     ui_surface_cancel_capture(&f.surface);
-    assert(f.n_log == 1 && f.log[0].kind == UI_ACTION_DRAG &&
+    assert(f.n_log == 1 && f.log[0].kind == UI_TAB_ACTION_DRAG &&
            f.log[0].id == UI_TAB_DRAG_NONE && f.log[0].index == 0);
     assert(!ui_tabbar_is_dragging(&f.tb));
     ui_surface_cancel_capture(&f.surface);

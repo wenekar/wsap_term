@@ -13,17 +13,16 @@ enum ui_action_kind {
     UI_ACTION_CHANGE,
     UI_ACTION_HIGHLIGHT,
     UI_ACTION_CLOSE,
-    UI_ACTION_MOVE,
-    UI_ACTION_DRAG,
-    UI_ACTION_TEAR_OFF,
     UI_ACTION_MENU,
+    /* The first kind that a widget can define for itself. */
+    UI_ACTION_USER = 64,
 };
 
 struct ui_action {
     enum ui_action_kind kind;
     int id;
     int index;
-    int to;
+    int arg;
     struct vector2i pos;
 };
 

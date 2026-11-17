@@ -159,8 +159,8 @@ static void tab_moved(struct app_tabs *tabs, const struct ui_action *action)
 {
     struct window *w = tabs->window;
     ui_tab_preview_suppress(&tabs->preview);
-    if (action->to >= 0) {
-        app_tabs_reorder(w, action->index, action->to);
+    if (action->arg >= 0) {
+        app_tabs_reorder(w, action->index, action->arg);
         return;
     }
     struct window *next = app_tabs_detach(w, action->index);
@@ -187,13 +187,13 @@ static void handle_action(struct app_tabs *tabs, const struct ui_action *action)
     case UI_ACTION_HIGHLIGHT:
         app_tabs_preview_hover(tabs, action->index);
         break;
-    case UI_ACTION_DRAG:
+    case UI_TAB_ACTION_DRAG:
         app_tabs_preview_drag(tabs, action);
         break;
-    case UI_ACTION_TEAR_OFF:
+    case UI_TAB_ACTION_TEAR_OFF:
         (void)app_tabs_drag_begin(w, action->index, action->pos);
         break;
-    case UI_ACTION_MOVE:
+    case UI_TAB_ACTION_MOVE:
         tab_moved(tabs, action);
         break;
     default:

@@ -422,10 +422,10 @@ static struct ui_tabbar *tb_of(const struct ui_widget *widget)
 }
 
 static void notify(struct ui_tabbar *tb, enum ui_action_kind kind, int id,
-                   int index, int to, struct vector2i pos)
+                   int index, int arg, struct vector2i pos)
 {
     ui_widget_notify(&tb->widget, (struct ui_action){
-        .kind = kind, .id = id, .index = index, .to = to, .pos = pos,
+        .kind = kind, .id = id, .index = index, .arg = arg, .pos = pos,
     });
 }
 
@@ -551,7 +551,8 @@ static void cancel_drag(struct ui_tabbar *tb)
     drag_cancel(tb);
     ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
     if (reported)
-        notify(tb, UI_ACTION_DRAG, UI_TAB_DRAG_NONE, tab, 0, (struct vector2i){0});
+        notify(tb, UI_TAB_ACTION_DRAG, UI_TAB_DRAG_NONE, tab, 0,
+               (struct vector2i){0});
 }
 
 static bool drag_moved(struct ui_tabbar *tb, const struct tb_theme *t,
@@ -566,7 +567,8 @@ static bool drag_moved(struct ui_tabbar *tb, const struct tb_theme *t,
         return true;
     if (state == UI_TAB_DRAG_DETACH) {
         struct ui_action tear = {
-            .kind = UI_ACTION_TEAR_OFF, .index = tab, .pos = grab_point(tb, t),
+            .kind = UI_TAB_ACTION_TEAR_OFF, .index = tab,
+            .pos = grab_point(tb, t),
         };
         if (ui_widget_notify(&tb->widget, tear)) {
             drag_cancel(tb);
@@ -574,7 +576,7 @@ static bool drag_moved(struct ui_tabbar *tb, const struct tb_theme *t,
             return true;
         }
     }
-    notify(tb, UI_ACTION_DRAG, state, tab, 0, pos);
+    notify(tb, UI_TAB_ACTION_DRAG, state, tab, 0, pos);
     return true;
 }
 
@@ -587,9 +589,9 @@ static bool drag_released(struct ui_tabbar *tb, const struct tb_theme *t)
     ui_widget_release_pointer(&tb->widget);
     ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
     if (finish == FINISH_REORDER)
-        notify(tb, UI_ACTION_MOVE, 0, tab, slot, (struct vector2i){0});
+        notify(tb, UI_TAB_ACTION_MOVE, 0, tab, slot, (struct vector2i){0});
     else if (finish == FINISH_DETACH)
-        notify(tb, UI_ACTION_MOVE, 0, tab, -1, grab);
+        notify(tb, UI_TAB_ACTION_MOVE, 0, tab, -1, grab);
     return true;
 }
 
