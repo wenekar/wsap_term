@@ -32,7 +32,7 @@ enum css_justify : uint8_t {
      mean the same size.
    - ch: cell widths.
    - grow: the free space of the parent.
-   - auto: the size of the content.
+   - auto, fit: the size of the content. fit is an alias of auto.
    - none: the property is not set. */
 enum css_unit_type {
     CSS_UNIT_AUTO = 0,
