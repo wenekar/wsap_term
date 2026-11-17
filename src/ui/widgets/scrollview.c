@@ -55,7 +55,12 @@ static struct ui_scrollview *sv_of(const struct ui_widget *widget)
 
 static struct ui_widget *sv_child(const struct ui_scrollview *sv)
 {
-    return sv ? sv->widget.first_child : NULL;
+    if (!sv)
+        return NULL;
+    for (struct ui_widget *c = sv->widget.first_child; c; c = c->next_sibling)
+        if (c != &sv->bar)
+            return c;
+    return NULL;
 }
 
 static bool is_overlay(const struct ui_scrollview *sv)
@@ -197,7 +202,7 @@ static void set_bar_state(struct ui_scrollview *sv, int state)
         sv->impl.hide_at = 0;
     else
         sv->impl.shown = true;
-    ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_PAINT);
+    ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_LAYOUT);
 }
 
 static void set_scroll(struct ui_scrollview *sv, int y)
@@ -351,13 +356,6 @@ static bool scrollview_event(struct ui_widget *widget,
     }
 }
 
-static bool scrollview_hit_front(const struct ui_widget *widget,
-                                 struct vector2i pos)
-{
-    const struct ui_scrollview *sv = ui_container_of_const(widget, struct ui_scrollview, widget);
-    return over_track(sv, ui_widget_to_local(widget, pos), hit_state(sv));
-}
-
 static enum ui_cursor scrollview_cursor(const struct ui_widget *widget,
                                         struct vector2i pos)
 {
@@ -373,25 +371,41 @@ static enum ui_cursor scrollview_cursor(const struct ui_widget *widget,
     return child->ops->cursor(child, pos);
 }
 
-static bool scrollview_keeps_press_focus(const struct ui_widget *widget,
-                                         struct vector2i pos)
+/* The scroll bar takes the pointer and paints. Every event still bubbles to
+ * the scroll view, which owns the drag. A hover leave goes to the bar alone,
+ * so the bar drops its hover state here. */
+static bool bar_event(struct ui_widget *widget, const struct ui_event *event)
 {
-    const struct ui_scrollview *sv = ui_container_of_const(widget, struct ui_scrollview, widget);
-    return over_track(sv, ui_widget_to_local(widget, pos), hit_state(sv));
+    struct ui_scrollview *sv = widget->userdata;
+    if (event->kind == UI_EVENT_POINTER &&
+        event->data.pointer.kind == UI_POINTER_LEAVE &&
+        !ui_widget_is_captured(&sv->widget))
+        set_bar_state(sv, BAR_IDLE);
+    return false;
 }
 
-static void scrollview_paint_front(const struct ui_widget *widget,
-                                   struct ui_paint_context *paint)
+static void bar_paint(const struct ui_widget *widget,
+                      struct ui_paint_context *paint)
 {
-    const struct ui_scrollview *sv = ui_container_of_const(widget, struct ui_scrollview, widget);
+    struct ui_scrollview *sv = widget->userdata;
     struct bar g = {0};
     if (!bar_visible(sv) || !bar_geometry(sv, sv->impl.bar_state, &g))
         return;
     struct bar_skin s = bar_skin(sv, sv->impl.bar_state);
-    if (!ui_paint_box(paint, g.track, &s.track_box, NULL))
+    struct rect2i track = { .size = widget->bounds.size };
+    if (!ui_paint_box(paint, track, &s.track_box, NULL))
         return;
-    ui_paint_box(paint, g.thumb, &s.thumb_box, NULL);
+    struct rect2i thumb = rect2i_translate(g.thumb, (struct vector2i){
+        .x = -g.track.pos.x, .y = -g.track.pos.y,
+    });
+    ui_paint_box(paint, thumb, &s.thumb_box, NULL);
 }
+
+static const struct ui_widget_ops BAR_OPS = {
+    .name = "scrollbar",
+    .event = bar_event,
+    .paint = bar_paint,
+};
 
 static uint64_t scrollview_tick(struct ui_widget *widget, uint64_t now_ms)
 {
@@ -403,7 +417,7 @@ static uint64_t scrollview_tick(struct ui_widget *widget, uint64_t now_ms)
     if (now_ms < sv->impl.hide_at)
         return sv->impl.hide_at;
     sv->impl.shown = false;
-    ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
+    ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_LAYOUT);
     return 0;
 }
 
@@ -424,6 +438,29 @@ static struct vector2i scrollview_measure(
         content.x = geom_sat_i((int64_t)content.x + tw);
     }
     return ui_constraints_clamp(constraints, content);
+}
+
+/* Keeps the bar as the last child, hides it when it has no geometry, and
+ * gives it the track rectangle. */
+static void sync_bar(struct ui_scrollview *sv)
+{
+    if (sv->widget.last_child != &sv->bar)
+        ui_widget_insert_child(&sv->widget, &sv->bar, NULL);
+    struct bar g = {0};
+    /* The bar takes the pointer where the track is, also when it hides. A
+     * hover over the track then shows it again. */
+    bool placed = bar_geometry(sv, sv->impl.bar_state, &g);
+    ui_widget_set_hidden(&sv->bar, !placed);
+    if (placed)
+        ui_widget_place(&sv->bar,
+                        rect2i_translate(g.track, sv->widget.bounds.pos));
+}
+
+static void scrollview_prepare(struct ui_widget *widget)
+{
+    struct ui_scrollview *sv = sv_of(widget);
+    if (sv)
+        sync_bar(sv);
 }
 
 static void scrollview_layout(struct ui_widget *widget, struct rect2i bounds)
@@ -454,6 +491,7 @@ static void scrollview_layout(struct ui_widget *widget, struct rect2i bounds)
                  .y = geom_sat_i((int64_t)bounds.pos.y - sv->impl.scroll_y) },
         .size = { .x = child_w, .y = child_h },
     });
+    sync_bar(sv);
 }
 
 static void scrollview_parts(const struct ui_widget *widget, struct ui_debug_parts *out)
@@ -481,18 +519,17 @@ static void scrollview_reveal(struct ui_widget *widget, struct ui_widget *descen
 
 static const struct ui_widget_ops SCROLLVIEW_OPS = {
     .name = "scrollview",
+    .prepare = scrollview_prepare,
     .measure = scrollview_measure,
     .layout = scrollview_layout,
     .event = scrollview_event,
-    .hit_front = scrollview_hit_front,
-    .paint_front = scrollview_paint_front,
     .tick = scrollview_tick,
     .reveal = scrollview_reveal,
     .cursor = scrollview_cursor,
-    .keeps_press_focus = scrollview_keeps_press_focus,
     .debug_parts = scrollview_parts,
     .clip_children = true,
-    .child_limit = 1,
+    /* The content child and the bar. */
+    .child_limit = 2,
 };
 
 static void scrollview_ensure_init(struct ui_scrollview *sv)
@@ -501,7 +538,13 @@ static void scrollview_ensure_init(struct ui_scrollview *sv)
         return;
     sv_parts_init();
     ui_widget_init(&sv->widget, &SCROLLVIEW_OPS, NULL);
+    ui_widget_init(&sv->bar, &BAR_OPS, sv);
+    ui_widget_set_keeps_press_focus(&sv->bar, true);
+    ui_widget_set_accessibility_ignored(&sv->bar, true);
+    ui_widget_set_hidden(&sv->bar, true);
     ui_widget_set_style_identity(&sv->widget, "scrollview", NULL, "scrollview");
+    /* The bar holds one child slot. The content takes the other. */
+    ui_widget_add_child(&sv->widget, &sv->bar);
 }
 
 void ui_scrollview_init(struct ui_scrollview *sv)
@@ -595,7 +638,7 @@ void ui_scrollview_set_metrics(struct ui_scrollview *sv,
         sv->impl.scroll_remainder = 0.0f;
         ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_LAYOUT);
     } else if (bar_visible(sv)) {
-        ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_PAINT);
+        ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_LAYOUT);
     }
 }
 
@@ -634,7 +677,7 @@ void ui_scrollview_flash(struct ui_scrollview *sv)
     scrollview_ensure_init(sv);
     sv->impl.shown = true;
     sv->impl.hide_at = 0;
-    ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_PAINT);
+    ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_LAYOUT);
 }
 
 void ui_scrollview_hide(struct ui_scrollview *sv)
@@ -648,7 +691,7 @@ void ui_scrollview_hide(struct ui_scrollview *sv)
     sv->impl.bar_state = BAR_IDLE;
     sv->impl.hide_at = 0;
     ui_widget_release_pointer(&sv->widget);
-    ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_PAINT);
+    ui_widget_invalidate(&sv->widget, UI_WIDGET_INVALIDATE_LAYOUT);
 }
 
 bool ui_scrollview_is_shown(const struct ui_scrollview *sv)

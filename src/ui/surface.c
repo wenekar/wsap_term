@@ -352,13 +352,11 @@ static void drop_retired(struct ui_surface *surface)
         surface->impl.hovered = NULL;
 }
 
-static bool is_interactive_widget(const struct ui_widget *widget,
-                                  struct vector2i pos)
+static bool is_interactive_widget(const struct ui_widget *widget)
 {
-    if (widget && widget->ops && widget->ops->keeps_press_focus &&
-        widget->ops->keeps_press_focus(widget, pos))
-        return true;
     for (const struct ui_widget *w = widget; w; w = w->parent) {
+        if (w->impl.keeps_press_focus)
+            return true;
         if (w->impl.focusable)
             return true;
     }
@@ -377,7 +375,7 @@ static bool dispatch_pointer(struct ui_surface *surface,
     if (pe->kind == UI_POINTER_LEAVE)
         target = NULL;
     if (pe->kind == UI_POINTER_PRESS && pe->button == 0 &&
-        !surface->impl.modal && !is_interactive_widget(target, pe->pos)) {
+        !surface->impl.modal && !is_interactive_widget(target)) {
         ui_surface_focus(surface, NULL);
         ui_surface_sync_modal(surface);
         target = surface->impl.captured

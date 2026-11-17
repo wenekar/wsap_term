@@ -938,12 +938,37 @@ static void bar_press_keeps_focus_test(void)
     struct vector2i on_track = center(part(&f, "scroll-track"));
     assert(pointer(&f, UI_POINTER_PRESS, on_track, 0, 0));
     assert(ui_surface_focused(&f.surface) == &other.widget);
-    pointer(&f, UI_POINTER_RELEASE, on_track, 0, 0);
+    int before = ui_scrollview_offset(&f.sv);
+    pointer(&f, UI_POINTER_MOTION, (struct vector2i){ .x = on_track.x, .y = 190 }, 0, 0);
+    assert(ui_surface_focused(&f.surface) == &other.widget);
+    assert(ui_scrollview_offset(&f.sv) != before);
+    pointer(&f, UI_POINTER_RELEASE, (struct vector2i){ .x = on_track.x, .y = 190 }, 0, 0);
+    assert(ui_surface_focused(&f.surface) == &other.widget);
 
     assert(pointer(&f, UI_POINTER_PRESS, (struct vector2i){ .x = 10, .y = 10 }, 0, 0));
     assert(f.content.presses == 1);
     assert(ui_surface_focused(&f.surface) == NULL);
     pointer(&f, UI_POINTER_RELEASE, (struct vector2i){ .x = 10, .y = 10 }, 0, 0);
+    teardown(&f);
+}
+
+static void bar_paints_after_content_test(void)
+{
+    struct fixture f;
+    setup(&f, ".scrollbar-thumb { background: #445566; }",
+          (struct vector2i){0}, (struct vector2i){ .x = 100, .y = 200 }, 300);
+    ui_scrollview_set_overlay(&f.sv, true);
+    set_metrics(&f, 300, 30, 100);
+    ui_scrollview_flash(&f.sv);
+    const struct ui_scene *s = paint(&f);
+    int content = fill_index(s, PROBE_COLOR);
+    int thumb = fill_index(s, 0xFF445566);
+    assert(content >= 0 && thumb >= 0 && thumb > content);
+
+    /* The bar is the last child, so a press on the track is the bar's. */
+    assert(pointer(&f, UI_POINTER_PRESS, center(part(&f, "scroll-track")), 0, 0));
+    pointer(&f, UI_POINTER_RELEASE, center(part(&f, "scroll-track")), 0, 0);
+    assert(f.content.presses == 0);
     teardown(&f);
 }
 
@@ -1426,6 +1451,7 @@ int main(void)
     hidden_bar_takes_no_press_test();
     idle_bar_leaves_child_columns_test();
     bar_press_keeps_focus_test();
+    bar_paints_after_content_test();
     blank_press_clears_focus_test();
     hover_shows_bar_when_child_consumes_motion_test();
     debug_track_reports_drawn_bar_test();

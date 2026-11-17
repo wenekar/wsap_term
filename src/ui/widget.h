@@ -75,6 +75,7 @@ struct ui_widget {
         bool focusable : 1;
         bool modal : 1;
         bool pointer_transparent : 1;
+        bool keeps_press_focus : 1;
         struct vector2i fixed_size;
         struct ui_placement placement;
         struct ui_surface *surface;

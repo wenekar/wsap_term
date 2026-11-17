@@ -216,6 +216,17 @@ void ui_widget_set_pointer_transparent(struct ui_widget *widget,
         widget->impl.pointer_transparent = transparent;
 }
 
+void ui_widget_set_keeps_press_focus(struct ui_widget *widget, bool keeps)
+{
+    if (widget)
+        widget->impl.keeps_press_focus = keeps;
+}
+
+bool ui_widget_keeps_press_focus(const struct ui_widget *widget)
+{
+    return widget && widget->impl.keeps_press_focus;
+}
+
 void ui_widget_set_hidden(struct ui_widget *widget, bool hidden)
 {
     if (!widget || widget->impl.destroyed || widget->impl.hidden == hidden)
@@ -679,9 +690,6 @@ static struct ui_widget *hit_tree(struct ui_widget *widget,
         widget->impl.pointer_transparent)
         return NULL;
     bool inside = rect2i_contains(widget->bounds, pos);
-    if (widget->ops && widget->ops->hit_front && takes_pointer(widget) &&
-        widget->ops->hit_front(widget, pos))
-        return widget;
     if (!widget->ops || !widget->ops->clip_children || inside) {
         for (struct ui_widget *c = widget->last_child; c; c = c->prev_sibling) {
             struct ui_widget *hit = hit_tree(c, pos);

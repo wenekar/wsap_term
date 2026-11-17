@@ -106,6 +106,15 @@ bool ui_paint_text(struct ui_paint_context *paint, struct rect2i local,
                                       text, len);
 }
 
+static bool visible_children(const struct ui_widget *widget)
+{
+    for (const struct ui_widget *c = widget->first_child; c;
+         c = c->next_sibling)
+        if (!c->impl.destroyed && !c->impl.hidden)
+            return true;
+    return false;
+}
+
 static void paint_tree(const struct ui_widget *widget, struct ui_scene *scene)
 {
     if (!widget || widget->impl.destroyed || widget->impl.hidden || !scene ||
@@ -117,7 +126,8 @@ static void paint_tree(const struct ui_widget *widget, struct ui_scene *scene)
     };
     if (widget->ops && widget->ops->paint)
         widget->ops->paint(widget, &paint);
-    bool clip = widget->ops && widget->ops->clip_children && widget->first_child;
+    bool clip = widget->ops && widget->ops->clip_children &&
+                visible_children(widget);
     if (clip && !ui_paint_push_clip(&paint, ui_paint_bounds(&paint)))
         return;
     for (struct ui_widget *c = widget->first_child;
@@ -125,8 +135,6 @@ static void paint_tree(const struct ui_widget *widget, struct ui_scene *scene)
         paint_tree(c, scene);
     if (clip)
         ui_paint_pop_clip(&paint);
-    if (widget->ops && widget->ops->paint_front)
-        widget->ops->paint_front(widget, &paint);
     ui_scene_end_scope(scene);
 }
 

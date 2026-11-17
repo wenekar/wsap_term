@@ -14,6 +14,8 @@ struct ui_scroll_metrics {
 
 struct ui_scrollview {
     struct ui_widget widget;
+    /* The scroll bar. The scroll view adds it as its last child. */
+    struct ui_widget bar;
     struct {
         uint64_t hide_at;
         struct ui_scroll_metrics metrics;
