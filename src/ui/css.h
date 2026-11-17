@@ -24,6 +24,16 @@ enum css_justify : uint8_t {
     CSS_JUSTIFY_END,
 };
 
+/* The units of a CSS length:
+   - px: logical pixels. The value is scaled by the dpi scale.
+   - %: a share of the parent dimension.
+   - em: cell heights.
+   - rem: cell heights. This code base has no root font size, so em and rem
+     mean the same size.
+   - ch: cell widths.
+   - grow: the free space of the parent.
+   - auto: the size of the content.
+   - none: the property is not set. */
 enum css_unit_type {
     CSS_UNIT_AUTO = 0,
     CSS_UNIT_PX,

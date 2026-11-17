@@ -688,6 +688,44 @@ static void test_variable_defined_after_its_use(void)
     css_sheet_clear(&sheet);
 }
 
+/* `border` sets a width and a color, ignores the style keyword, and `none`
+ * clears the width. */
+static void test_border_shorthand(void)
+{
+    struct css_sheet sheet = {0};
+    assert(css_parse(&sheet,
+        ".a { border: 1px solid #ff0000; }"
+        ".b { border: 2px dashed blue; }"
+        ".c { border: 3px dotted; }"
+        ".d { border: none; }"
+        ".e { border-width: 4px; border: 5px solid #00ff00; }"));
+
+    struct css_style a;
+    css_style_resolve(&sheet, "a", NULL, NULL, CSS_PSEUDO_NONE, &a);
+    assert(a.border_width.unit == CSS_UNIT_PX && a.border_width.val == 1.0f);
+    assert(a.has_border_color && a.border_color == 0xFFFF0000u);
+
+    struct css_style b;
+    css_style_resolve(&sheet, "b", NULL, NULL, CSS_PSEUDO_NONE, &b);
+    assert(b.border_width.val == 2.0f);
+    assert(b.has_border_color && b.border_color == 0xFF0000FFu);
+
+    struct css_style c;
+    css_style_resolve(&sheet, "c", NULL, NULL, CSS_PSEUDO_NONE, &c);
+    assert(c.border_width.val == 3.0f);
+
+    struct css_style d;
+    css_style_resolve(&sheet, "d", NULL, NULL, CSS_PSEUDO_NONE, &d);
+    assert(d.border_width.unit == CSS_UNIT_PX && d.border_width.val == 0.0f);
+    assert(!d.has_border_color);
+
+    struct css_style e;
+    css_style_resolve(&sheet, "e", NULL, NULL, CSS_PSEUDO_NONE, &e);
+    assert(e.border_width.val == 5.0f);
+    assert(e.has_border_color && e.border_color == 0xFF00FF00u);
+    css_sheet_clear(&sheet);
+}
+
 int main(void)
 {
     test_declaration_diagnostics();
@@ -707,6 +745,7 @@ int main(void)
     test_var_edge_cases();
     test_cyclic_variable_diagnostic();
     test_variable_defined_after_its_use();
+    test_border_shorthand();
     printf("PASS: CSS parser tests\n");
     return 0;
 }

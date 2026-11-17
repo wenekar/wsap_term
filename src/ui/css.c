@@ -1,4 +1,6 @@
 #include "css.h"
+#include "ui/metrics.h"
+
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
@@ -143,9 +145,9 @@ float css_value_resolve(struct css_value v, float parent_dim, float auto_val,
     float dpi = (ctx && isfinite(ctx->dpi_scale) && ctx->dpi_scale > 0.0f)
         ? ctx->dpi_scale : 1.0f;
     float ch = (ctx && isfinite(ctx->cell_h) && ctx->cell_h > 0.0f)
-        ? ctx->cell_h : 16.0f * dpi;
+        ? ctx->cell_h : (float)UI_DEFAULT_CELL_H * dpi;
     float cw = (ctx && isfinite(ctx->cell_w) && ctx->cell_w > 0.0f)
-        ? ctx->cell_w : 8.0f * dpi;
+        ? ctx->cell_w : (float)UI_DEFAULT_CELL_W * dpi;
     float result;
     switch (v.unit) {
     case CSS_UNIT_PX:      result = v.val * dpi; break;
@@ -253,7 +255,72 @@ static bool parse_box_shadow(const char *s, struct css_style *out)
     return true;
 }
 
-enum prop_kind { P_VAL, P_INSETS, P_COLOR, P_FLOAT, P_FLEX_DIR, P_ALIGN, P_JUSTIFY, P_CURSOR, P_DURATION, P_SHADOW };
+/* The style keywords that `border` accepts and ignores. */
+static bool is_border_style_keyword(const char *tok)
+{
+    static const char *const keywords[] = {
+        "solid", "dashed", "dotted", "double",
+        "groove", "ridge", "inset", "outset", "hidden",
+    };
+    for (size_t i = 0; i < sizeof(keywords) / sizeof(keywords[0]); i++)
+        if (!strcmp(tok, keywords[i]))
+            return true;
+    return false;
+}
+
+/* Parses `border`. The value holds a width and a color in any order. A style
+   keyword is accepted and ignored, and `none` sets the width to zero. */
+static bool parse_border(const char *s, struct css_style *out)
+{
+    bool width_set = false, color_set = false;
+    while (*s) {
+        s = skip_ws_and_comments(s);
+        if (!*s) break;
+        const char *start = s;
+        while (*s && !isspace((unsigned char)*s)) s++;
+        char tok[32];
+        size_t len = (size_t)(s - start);
+        if (len >= sizeof(tok)) return false;
+        memcpy(tok, start, len);
+        tok[len] = '\0';
+        if (!strcmp(tok, "none")) {
+            out->border_width = (struct css_value){ .unit = CSS_UNIT_PX };
+            width_set = true;
+            continue;
+        }
+        if (is_border_style_keyword(tok))
+            continue;
+        uint32_t color;
+        if (!color_set && parse_color(tok, &color)) {
+            out->border_color = color;
+            out->has_border_color = true;
+            color_set = true;
+            continue;
+        }
+        if (width_set)
+            return false;
+        struct css_value v = parse_value(tok);
+        if (v.unit == CSS_UNIT_NONE)
+            return false;
+        out->border_width = v;
+        width_set = true;
+    }
+    return width_set || color_set;
+}
+
+enum prop_kind {
+    P_VAL,
+    P_INSETS,
+    P_COLOR,
+    P_FLOAT,
+    P_FLEX_DIR,
+    P_ALIGN,
+    P_JUSTIFY,
+    P_CURSOR,
+    P_DURATION,
+    P_SHADOW,
+    P_BORDER, /* A width and an optional color. */
+};
 
 enum style_has_bit {
     HAS_NONE = 0,
@@ -305,6 +372,10 @@ struct prop_info {
     .kind = P_SHADOW, .size = (uint8_t)CSS_SHADOW_SIZE, \
     .has_bit = HAS_##has_m, \
 }
+#define PROP_BORDER(n, m) { \
+    .name = (n), .offset = offsetof(struct css_style, m), \
+    .kind = P_BORDER, .size = PROP_FIELD_SIZE(m), \
+}
 
 static const struct prop_info props[] = {
     PROP("width",            P_VAL,      width),
@@ -316,7 +387,7 @@ static const struct prop_info props[] = {
     PROP("gap",              P_VAL,      gap),
     PROP("border-radius",    P_VAL,      border_radius),
     PROP("border-width",     P_VAL,      border_width),
-    PROP("border",           P_VAL,      border_width),
+    PROP_BORDER("border",    border_width),
     PROP("padding",          P_INSETS,   padding),
     PROP("margin",           P_INSETS,   margin),
     PROP_COLOR("background-color", bg_color, has_bg_color),
@@ -519,6 +590,19 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
         case P_SHADOW:
             if (!parse_box_shadow(val, &r->style)) return CSS_DECLARATION_INVALID;
             break;
+        case P_BORDER: {
+            struct css_style border = {0};
+            if (!parse_border(val, &border)) return CSS_DECLARATION_INVALID;
+            r->style.border_width = border.border_width;
+            if (border.has_border_color) {
+                int color = find_prop_idx("border-color");
+                r->style.border_color = border.border_color;
+                r->style.has_border_color = true;
+                if (color >= 0)
+                    r->set_mask |= (1ULL << (size_t)color);
+            }
+            break;
+        }
         case P_DURATION: {
             const char *s = val;
             while (*s && !isdigit((unsigned char)*s) && *s != '.')
@@ -806,15 +890,17 @@ static void rule_remove_var_prop(struct css_rule *r, int idx)
     r->var_prop_count--;
 }
 
+/* Drops the declarations before `limit_idx` that set the same field. Two
+   spellings of one field, such as `border` and `border-width`, share the
+   offset, so the offset names the field. */
 static int rule_drop_matching_var_props(struct css_rule *r, int limit_idx,
                                         size_t prop_idx)
 {
     uint16_t off = props[prop_idx].offset;
-    uint8_t kind = props[prop_idx].kind;
     int dropped = 0;
     for (int i = limit_idx - 1; i >= 0; i--) {
         size_t cur = r->var_props[i].prop_idx;
-        if (props[cur].offset == off && props[cur].kind == kind) {
+        if (props[cur].offset == off) {
             rule_remove_var_prop(r, i);
             dropped++;
         }
