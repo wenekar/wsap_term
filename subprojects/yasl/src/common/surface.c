@@ -487,30 +487,45 @@ int yasl_surface_set_title(yasl_surface *s, const char *title)
     s->display->ops->surface_set_title(s, title);
     return 0;
 }
-int yasl_surface_set_drop_types(yasl_surface *s, const char *const *types, size_t count)
+bool yasl_private_surface_set_drop_types(struct yasl_surface *s, const char *const *types,
+                                         size_t count)
 {
-    if (!yasl_public_surface(s, false))
-        return -errno;
-    if (count && !types)
-        return yasl_public_error(EINVAL);
-    for (size_t i = 0; i < count; i++)
-        if (!types[i] || !types[i][0] || strlen(types[i]) >= YASL_DROP_MIME_MAX)
-            return yasl_public_error(EINVAL);
+    if (count && !types) {
+        errno = EINVAL;
+        return false;
+    }
+    for (size_t i = 0; i < count; i++) {
+        if (!types[i] || !types[i][0] || strlen(types[i]) >= YASL_DROP_MIME_MAX) {
+            errno = EINVAL;
+            return false;
+        }
+    }
     char **copy = count ? calloc(count, sizeof(*copy)) : NULL;
-    if (count && !copy)
-        return yasl_public_error(ENOMEM);
+    if (count && !copy) {
+        errno = ENOMEM;
+        return false;
+    }
     for (size_t i = 0; i < count; i++) {
         copy[i] = strdup(types[i]);
         if (!copy[i]) {
             while (i--)
                 free(copy[i]);
             free(copy);
-            return yasl_public_error(ENOMEM);
+            errno = ENOMEM;
+            return false;
         }
     }
     drop_types_clear(s);
     s->drop_types = copy;
     s->drop_type_count = count;
+    return true;
+}
+int yasl_surface_set_drop_types(yasl_surface *s, const char *const *types, size_t count)
+{
+    if (!yasl_public_surface(s, false))
+        return -errno;
+    if (!yasl_private_surface_set_drop_types(s, types, count))
+        return yasl_public_error(errno);
     return 0;
 }
 /* True when `offered` is the type that `entry` names. An entry such as
