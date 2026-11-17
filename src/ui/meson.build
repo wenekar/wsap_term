@@ -14,5 +14,6 @@ ui_src = files(
     'style_context.c',
     'surface.c',
     'text_break.c',
+    'text_select.c',
     'widget.c',
 ) + ui_widgets_src

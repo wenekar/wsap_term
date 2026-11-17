@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+#include "ui/text_select.h"
 #include "ui/widget.h"
 
 #define UI_LABEL_TEXT_CAP 256
@@ -24,15 +25,12 @@ struct ui_label {
     struct ui_widget widget;
     struct {
         char *text, *link;
-        size_t len, anchor, caret;
-        size_t gesture_start, gesture_end;
-        uint64_t click_time;
-        struct vector2i click_pos, press_pos;
+        size_t len;
+        struct ui_text_select select;
         int action_id;
-        unsigned clicks;
         enum ui_label_wrap wrap;
         enum ui_label_align align;
-        bool selectable, disabled, pressed, dragged;
+        bool selectable, disabled;
     } impl;
 };
 

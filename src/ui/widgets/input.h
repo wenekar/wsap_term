@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "ui/css.h"
+#include "ui/text_select.h"
 #include "ui/widget.h"
 
 #define UI_INPUT_BLINK_MS        500
@@ -19,21 +20,15 @@ struct ui_input {
         char *kill;
         size_t capacity;
         struct ui_input_history *undo, *redo;
+        struct ui_text_select select;
         uint64_t blink_at;
-        uint64_t click_at;
-        struct vector2i click_pos;
-        struct vector2i press_pos;
         int len;
-        int caret;
-        int anchor;
         int scroll_cells;
         int undo_count;
         int edit_group;
         int edit_caret;
-        int clicks;
         int action_id;
         bool blink_on;
-        bool dragging;
     } impl;
 };
 
