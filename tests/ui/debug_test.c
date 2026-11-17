@@ -103,23 +103,29 @@ static void selectors_resolve_test(void)
 static void overlay_paths_and_selectors_test(void)
 {
     struct ui_surface surface = {0};
-    struct probe root, overlay, child;
+    struct probe root, overlay, child, top;
     probe_init(&root, R(0, 0, 200, 100), 0xFF000000);
     probe_init(&overlay, R(0, 0, 100, 100), 0xFF111111);
     probe_init(&child, R(0, 0, 50, 50), 0xFF222222);
+    probe_init(&top, R(0, 0, 160, 80), 0xFF333333);
     ui_widget_set_debug_key(&child.widget, "float");
+    ui_widget_set_debug_key(&top.widget, "upper");
     assert(ui_widget_add_child(&overlay.widget, &child.widget));
     ui_surface_set_root(&surface, &root.widget);
     ui_surface_resize(&surface, (struct vector2i){ .x = 200, .y = 100 });
     assert(ui_surface_add_overlay(&surface, &overlay.widget));
+    assert(ui_surface_add_overlay(&surface, &top.widget));
 
     char path[32];
     assert(ui_debug_path(&root.widget, &child.widget, path, sizeof(path)));
     assert(!strcmp(path, "~0/0"));
-    assert(ui_debug_find(&root.widget, path) == &child.widget);
-    assert(ui_debug_find(&root.widget, "~0") == &overlay.widget);
+    assert(ui_debug_path(&root.widget, &top.widget, path, sizeof(path)));
+    assert(!strcmp(path, "~1"));
     assert(ui_debug_find(&root.widget, "~0/0") == &child.widget);
-    assert(ui_debug_find(&root.widget, "~1") == NULL);
+    assert(ui_debug_find(&root.widget, "~0") == &overlay.widget);
+    assert(ui_debug_find(&root.widget, "~1") == &top.widget);
+    assert(ui_debug_find(&root.widget, "@upper") == &top.widget);
+    assert(ui_debug_find(&root.widget, "~2") == NULL);
     assert(ui_debug_find(&root.widget, "~") == NULL);
     assert(ui_debug_find(&root.widget, "~x") == NULL);
     assert(ui_debug_find(&root.widget, "@float") == &child.widget);
@@ -128,15 +134,17 @@ static void overlay_paths_and_selectors_test(void)
     assert(ui_debug_widget_at(&root.widget, (struct vector2i){ .x = 10, .y = 10 })
            == &root.widget);
 
-    /* A removed overlay is no longer in the tree. */
+    /* A removed overlay leaves the list, and the one above it moves down. */
     assert(ui_surface_remove_overlay(&surface, &overlay.widget));
     snprintf(path, sizeof(path), "%p", (void *)&child.widget);
     assert(ui_debug_find(&root.widget, path) == NULL);
-    assert(ui_debug_find(&root.widget, "~0") == NULL);
+    assert(ui_debug_find(&root.widget, "~0") == &top.widget);
+    assert(ui_debug_find(&root.widget, "~1") == NULL);
 
     ui_surface_destroy(&surface);
     ui_widget_destroy(&root.widget);
     ui_widget_destroy(&overlay.widget);
+    ui_widget_destroy(&top.widget);
 }
 
 static void widget_at_matches_what_is_visible_test(void)

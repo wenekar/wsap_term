@@ -243,8 +243,9 @@ const struct ui_widget *ui_debug_find(const struct ui_widget *root,
         unsigned long index = strtoul(selector + 1, &end, 10);
         if (end == selector + 1 || (*end && *end != '/'))
             return NULL;
-        /* Top 0 is the root. The overlays follow, from the top down. */
-        const struct ui_widget *overlay = top_at(root, index + 1);
+        /* The index counts from the bottom of the overlay list. */
+        const struct ui_widget *overlay =
+            ui_surface_overlay_at(root_surface(root), index);
         if (!overlay)
             return NULL;
         return find_by_path(overlay, *end ? end : "/");
