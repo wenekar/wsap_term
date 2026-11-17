@@ -1,21 +1,15 @@
 #include "input.h"
+#include "common/event_text.h"
 #include "common/private_loop.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-static bool has_text(const struct yasl_private_event *ev)
-{
-    return ev->type == YASL_PRIVATE_EVENT_TEXT || ev->type == YASL_PRIVATE_EVENT_PASTE ||
-           ev->type == YASL_PRIVATE_EVENT_DROP || ev->type == YASL_PRIVATE_EVENT_TEXT_EDIT ||
-           ev->type == YASL_PRIVATE_EVENT_COMPOSITION;
-}
-
 static void discard_pending(struct input_queue *q)
 {
     for (size_t i = 0; i < q->count; i++) {
         struct yasl_private_event *ev = &q->events[(q->head + i) & (q->capacity - 1)];
-        if (has_text(ev)) free((void *)ev->text.data);
+        if (yasl_private_event_has_text(ev->type)) free((void *)ev->text.data);
     }
     q->head = q->count = 0;
 }
@@ -25,17 +19,10 @@ bool input_queue_push(struct input_queue *q, const struct yasl_private_event *ev
     struct yasl_private_event copy = *ev;
     char *owned = NULL;
     if (!copy.time_ns) copy.time_ns = yasl_private_loop_now_ns();
-    if (has_text(ev) && !q->publish) {
-        size_t len = ev->text.len;
-        if ((!ev->text.data && len) || len == SIZE_MAX) goto failed;
-        owned = malloc(len + 1);
+    /* A publishing queue passes the borrowed text on. The display copies it. */
+    if (yasl_private_event_has_text(ev->type) && !q->publish) {
+        owned = yasl_private_event_copy_text(&copy);
         if (!owned) goto failed;
-        if (len) memcpy(owned, ev->text.data, len);
-        owned[len] = '\0';
-        if (ev->type == YASL_PRIVATE_EVENT_PASTE) copy.paste.data = owned;
-        else if (ev->type == YASL_PRIVATE_EVENT_TEXT_EDIT) copy.text_edit.data = owned;
-        else if (ev->type == YASL_PRIVATE_EVENT_COMPOSITION) copy.composition.data = owned;
-        else copy.text.data = owned;
     }
     uint32_t buttons = q->buttons;
     switch (ev->type) {
@@ -126,7 +113,7 @@ bool input_queue_pop(struct input_queue *q, struct yasl_private_event *ev)
         return true;
     }
     *ev = q->events[q->head];
-    if (has_text(ev))
+    if (yasl_private_event_has_text(ev->type))
         q->last_text = (char *)ev->text.data;
     q->head = (q->head + 1) & (q->capacity - 1);
     q->count--;
