@@ -56,7 +56,8 @@ struct ui_widget_ops {
     bool width_sensitive;
 };
 
-/* Marks layout, measure, or paint caches of `widget` as invalid. */
+/* Marks the layout or measure state of `widget` and its ancestors as invalid.
+ * The paint flag asks for a frame; paint is not a stored state. */
 void ui_widget_invalidate(struct ui_widget *widget, unsigned flags);
 
 /* Sets whether `widget` can receive keyboard focus. */

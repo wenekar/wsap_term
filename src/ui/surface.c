@@ -6,6 +6,7 @@
 
 #include <assert.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* The double-click interval, in ms, of a surface whose host reports none. */
@@ -80,6 +81,24 @@ bool ui_surface_frame_pending(const struct ui_surface *surface)
     return surface && surface->impl.frame_requested;
 }
 
+/* Appends `fn` to the queue. The queue grows, so a poster never has to free
+ * storage inside a dispatch. */
+static bool post_push(struct ui_surface *surface, ui_post_fn fn, void *userdata)
+{
+    if (surface->impl.post_count == surface->impl.post_cap) {
+        size_t cap = surface->impl.post_cap ? surface->impl.post_cap * 2 : 4;
+        struct ui_surface_post *grown =
+            realloc(surface->impl.post, cap * sizeof(*grown));
+        if (!grown)
+            return false;
+        surface->impl.post = grown;
+        surface->impl.post_cap = cap;
+    }
+    surface->impl.post[surface->impl.post_count++] =
+        (struct ui_surface_post){ .fn = fn, .userdata = userdata };
+    return true;
+}
+
 bool ui_surface_post(struct ui_surface *surface, ui_post_fn fn, void *userdata)
 {
     if (!fn)
@@ -92,30 +111,32 @@ bool ui_surface_post(struct ui_surface *surface, ui_post_fn fn, void *userdata)
         fn(surface, userdata);
         return true;
     }
-    assert(surface->impl.post_count < UI_SURFACE_POST_MAX);
-    if (surface->impl.post_count >= UI_SURFACE_POST_MAX)
-        return false;
-    surface->impl.post[surface->impl.post_count++] =
-        (struct ui_surface_post){ .fn = fn, .userdata = userdata };
-    return true;
+    return post_push(surface, fn, userdata);
 }
 
 /* Runs the posted functions. Call it last in each entry point, after the busy
  * section ends, so that no widget in use is freed.
  *
- * The queue is copied before the functions run, because one of them can free
- * the storage of the surface. A function that posts again waits for the next
- * entry point. */
+ * The queue is taken before the functions run, because one of them can
+ * destroy the surface and post again. The caller of the entry point can still
+ * read the surface, so a posted function never frees its storage. A function
+ * that posts again runs at once: the surface is not busy here. */
 static void flush_posts(struct ui_surface *surface)
 {
     size_t count = surface->impl.post_count;
     if (!count)
         return;
-    struct ui_surface_post posts[UI_SURFACE_POST_MAX];
-    memcpy(posts, surface->impl.post, count * sizeof(*posts));
+    struct ui_surface_post *posts = surface->impl.post;
+    surface->impl.post = NULL;
     surface->impl.post_count = 0;
-    for (size_t i = 0; i < count; i++)
+    surface->impl.post_cap = 0;
+    uint64_t generation = surface->impl.generation;
+    for (size_t i = 0; i < count; i++) {
         posts[i].fn(surface, posts[i].userdata);
+        if (surface->impl.generation != generation)
+            break;
+    }
+    free(posts);
 }
 
 bool ui_surface_take_frame_request(struct ui_surface *surface)
@@ -215,8 +236,10 @@ struct ui_widget *ui_surface_overlay_at(const struct ui_surface *surface,
 static void measure_overlays(struct ui_surface *surface)
 {
     struct rect2i viewport = { .size = surface->impl.viewport };
-    for (size_t i = 0; i < surface->impl.overlay_count; i++) {
-        struct ui_widget *overlay = surface->impl.overlays[i];
+    /* Downwards: a measure or a place can close an overlay, which shifts the
+     * rest of the list down. The overlays below the entry are unaffected. */
+    for (size_t i = surface->impl.overlay_count; i > 0; i--) {
+        struct ui_widget *overlay = surface->impl.overlays[i - 1];
         if (!overlay_live(overlay))
             continue;
         if (overlay->impl.invalidation & UI_WIDGET_INVALIDATE_MEASURE)
@@ -249,8 +272,9 @@ static void measure_and_layout(struct ui_surface *surface)
 
 static void prepare_overlays(struct ui_surface *surface)
 {
-    for (size_t i = 0; i < surface->impl.overlay_count; i++) {
-        struct ui_widget *overlay = surface->impl.overlays[i];
+    /* Downwards: a prepare can close an overlay and shift the list. */
+    for (size_t i = surface->impl.overlay_count; i > 0; i--) {
+        struct ui_widget *overlay = surface->impl.overlays[i - 1];
         ui_widget_prepare(overlay);
         ui_style_context_apply(&surface->impl.style, overlay);
     }
@@ -605,12 +629,12 @@ static bool capture_keyboard(struct ui_surface *surface,
                              const struct ui_event *event)
 {
     /* The path stops at the modal, or else at the top of the target's tree:
-     * the root, or an overlay. */
-    struct ui_widget *start = surface->impl.root;
+     * the root, or the overlay that holds it. */
+    struct ui_widget *start = target;
     if (surface->impl.modal && ui_widget_is_ancestor(surface->impl.modal, target))
         start = surface->impl.modal;
     else
-        while (start && !ui_widget_is_ancestor(start, target))
+        while (start && start->parent)
             start = start->parent;
     struct ui_widget *path[UI_CAPTURE_PATH_MAX];
     size_t depth = 0;
@@ -852,9 +876,11 @@ bool ui_surface_tick(struct ui_surface *surface, uint64_t now_ms)
     surface->impl.busy = true;
     uint64_t deadline = surface->impl.root
         ? ui_widget_tick(surface->impl.root, now_ms) : 0;
-    for (size_t i = 0; i < surface->impl.overlay_count; i++)
-        deadline = sooner(deadline,
-                          ui_widget_tick(surface->impl.overlays[i], now_ms));
+    /* Downwards: a tick can close an overlay and shift the list. */
+    for (size_t i = surface->impl.overlay_count; i > 0; i--) {
+        struct ui_widget *overlay = surface->impl.overlays[i - 1];
+        deadline = sooner(deadline, ui_widget_tick(overlay, now_ms));
+    }
     surface->impl.deadline = deadline;
     surface->impl.busy = false;
     bool next_frame = surface->impl.deadline &&
@@ -912,18 +938,18 @@ bool ui_surface_destroy(struct ui_surface *surface)
     while (surface->impl.root)
         ui_widget_detach(surface->impl.root);
     /* A queued free still runs, so that no owner leaks its storage. */
-    for (int round = 0; round < UI_SURFACE_POST_MAX; round++) {
-        if (!surface->impl.post_count)
-            break;
+    while (surface->impl.post_count) {
         struct ui_surface_post post = surface->impl.post[0];
         surface->impl.post_count--;
         memmove(&surface->impl.post[0], &surface->impl.post[1],
                 surface->impl.post_count * sizeof(surface->impl.post[0]));
         post.fn(surface, post.userdata);
     }
-    surface->impl.post_count = 0;
+    free(surface->impl.post);
+    uint64_t generation = surface->impl.generation;
     ui_style_context_destroy(&surface->impl.style);
     *surface = (struct ui_surface){0};
+    surface->impl.generation = generation + 1;
     return true;
 }
 

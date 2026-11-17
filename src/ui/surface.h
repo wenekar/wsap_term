@@ -23,8 +23,6 @@ struct ui_surface_host {
 
 /* The most overlay widgets that a surface holds. */
 #define UI_SURFACE_OVERLAY_MAX 4
-/* The most functions that a surface holds for the end of its busy section. */
-#define UI_SURFACE_POST_MAX 8
 
 /* A function that ui_surface_post queues. The surface passes itself and the
  * user data that the poster gave. */
@@ -46,6 +44,10 @@ struct ui_surface_post {
  * after the outermost busy section ends, so no code uses the storage then.
  * ui_surface_destroy returns false for a busy surface, and asserts in a debug
  * build. A busy owner posts its own free instead.
+ *
+ * The caller of an entry point can still read the surface after it returns, so
+ * a posted function must not free the storage of the surface it runs on. It
+ * may destroy that surface, and it may free any other storage.
  *
  * State that a handler can change stays readable while the surface is busy.
  * A stored target is thus safe to test, but not to use: any use follows a
@@ -71,8 +73,10 @@ struct ui_surface {
         struct vector2i viewport;
         struct ui_style_context style;
         uint64_t deadline;
-        struct ui_surface_post post[UI_SURFACE_POST_MAX];
+        uint64_t generation;
+        struct ui_surface_post *post;
         size_t post_count;
+        size_t post_cap;
         bool key_text_kept;
         bool frame_requested;
         bool busy;
@@ -85,7 +89,8 @@ void ui_surface_init(struct ui_surface *surface,
  * when the surface is busy, and asserts in a debug build. */
 bool ui_surface_destroy(struct ui_surface *surface);
 /* Queues `fn` to run after the outermost busy section of `surface` ends, or
- * runs it now when the surface is idle. Returns false when the queue is full. */
+ * runs it now when the surface is idle. A function that runs then may post
+ * again. Returns false only when memory is short. */
 bool ui_surface_post(struct ui_surface *surface, ui_post_fn fn, void *userdata);
 
 /* Releases global UI caches including the default stylesheet and interned parts. */
@@ -132,8 +137,9 @@ void ui_surface_set_default_focus(struct ui_surface *surface,
 void ui_surface_keep_key_text(struct ui_surface *surface);
 bool ui_surface_key_text_kept(const struct ui_surface *surface);
 
-/* Focus a widget. A view overlay host and a focused view redirect to the
- * described root before the call stores the focus. */
+/* Gives the keyboard focus to `widget`, or to no widget when it is NULL.
+ * The previous widget gets FOCUS_OUT first. A widget that no longer belongs
+ * to `surface` is ignored. */
 void ui_surface_focus(struct ui_surface *surface, struct ui_widget *widget);
 struct ui_widget *ui_surface_focused(const struct ui_surface *surface);
 struct ui_widget *ui_surface_captured(const struct ui_surface *surface);

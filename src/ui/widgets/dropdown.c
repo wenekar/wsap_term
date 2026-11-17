@@ -298,8 +298,7 @@ static void layer_prepare(struct ui_widget *widget)
 {
     struct ui_dropdown *d = widget->userdata;
     if (d->impl.open &&
-        (!ui_widget_visible(&d->widget) ||
-         ui_widget_surface(&d->widget) != ui_widget_surface(widget)))
+        ui_widget_stale(ui_widget_surface(widget), &d->widget))
         ui_dropdown_close(d);
     else if (d->impl.open) {
         struct ui_widget *root = ui_surface_root(ui_widget_surface(widget));

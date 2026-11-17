@@ -376,10 +376,13 @@ static void close_window_post(struct ui_surface *surface, void *userdata)
 static void close_window_later(struct window *window)
 {
     struct ui_surface *surface = window_ui_surface(window);
-    if (surface && ui_surface_busy(surface) &&
-        ui_surface_post(surface, close_window_post, window))
+    if (!surface || !ui_surface_busy(surface)) {
+        window_close(window);
         return;
-    window_close(window);
+    }
+    /* The window surface frees its storage, so the close must not run inside
+     * the dispatch. Without memory for the queue the window stays open. */
+    (void)ui_surface_post(surface, close_window_post, window);
 }
 
 void app_tabs_close(struct window *window, int index)

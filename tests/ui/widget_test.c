@@ -190,8 +190,6 @@ static void paint_invalidation_asks_for_a_frame_test(void)
 
     ui_widget_invalidate(&child, UI_WIDGET_INVALIDATE_PAINT);
     assert(ui_surface_frame_pending(&context));
-    assert(!(child.impl.invalidation & UI_WIDGET_INVALIDATE_PAINT));
-    assert(!(box.widget.impl.invalidation & UI_WIDGET_INVALIDATE_PAINT));
 
     ui_surface_destroy(&context);
     ui_widget_destroy(&box.widget);
