@@ -137,13 +137,16 @@ static bool pass_start(struct layout_pass *pass)
     return true;
 }
 
-static bool is_layout_container(const struct ui_widget *widget)
+/* Returns true when `widget` lays out its children. The layout root also
+ * counts when it has a measure callback but no layout callback, because
+ * ui_widget_layout falls back to the stack layout for it. */
+static bool is_layout_container(const struct ui_widget *widget, bool is_root)
 {
     if (ui_widget_is_box(widget))
         return true;
     if (!widget->ops)
         return true;
-    return !widget->ops->layout && !widget->ops->measure;
+    return !widget->ops->layout && (!widget->ops->measure || is_root);
 }
 
 static struct ui_box_params node_params(const struct ui_widget *widget,
@@ -663,7 +666,7 @@ static void collect_node(struct layout_pass *pass, size_t index,
             fmaxf(0, inner[1] -
                        (float)(entry->margin.top + entry->margin.bottom)),
         };
-        bool child_container = !stack && is_layout_container(child);
+        bool child_container = !stack && is_layout_container(child, false);
         collect_node(pass, slot, child, child_available, child_container);
         if (pass->failed)
             return;
@@ -732,7 +735,7 @@ struct vector2i ui_layout_measure(struct ui_widget *root,
         pass_destroy(&pass);
         return (struct vector2i){0};
     }
-    collect_node(&pass, 0, root, available, is_layout_container(root));
+    collect_node(&pass, 0, root, available, is_layout_container(root, true));
     for (int attempt = 0; !pass.failed && attempt < 4; attempt++) {
         compute_naturals(&pass);
         for (int axis = 0; axis < 2; axis++) {
@@ -772,7 +775,7 @@ void ui_layout_place(struct ui_widget *root, struct rect2i bounds)
         pass_destroy(&pass);
         return;
     }
-    collect_node(&pass, 0, root, size, is_layout_container(root));
+    collect_node(&pass, 0, root, size, is_layout_container(root, true));
     for (int attempt = 0; !pass.failed && attempt < 4; attempt++) {
         compute_naturals(&pass);
         place_node(&pass, 0, pos, size);

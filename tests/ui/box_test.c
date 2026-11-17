@@ -388,6 +388,23 @@ static void indefinite_percent_test(void)
     css_sheet_clear(&sheet);
 }
 
+static void root_measure_only_test(void)
+{
+    struct ui_surface surface = {0};
+    struct probe root = {0}, child = {0};
+    probe_init(&root, "root", (struct vector2i){ .x = 40, .y = 20 });
+    probe_init(&child, "child", (struct vector2i){ .x = 10, .y = 10 });
+    assert(ui_widget_add_child(&root.widget, &child.widget));
+
+    show(&surface, &root.widget, NULL, (struct vector2i){ .x = 100, .y = 50 });
+    assert(rect2i_eq(child.widget.bounds, (struct rect2i){
+        .size = { .x = 100, .y = 50 },
+    }));
+
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&root.widget);
+}
+
 int main(void)
 {
     wrapped_label_test();
@@ -400,5 +417,6 @@ int main(void)
     margin_moves_child_test();
     wide_sibling_test();
     indefinite_percent_test();
+    root_measure_only_test();
     return 0;
 }
