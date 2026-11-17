@@ -16,13 +16,13 @@ struct received {
     char text[32];
 };
 
-static void receive(const char *text, size_t len, bool uri_list,
+static void receive(const char *text, size_t len, const char *drop_mime,
                     struct wl_surface *surface, uint64_t request_id,
                     enum yasl_private_transfer_status status, void *ud)
 {
     (void)surface;
     struct received *r = ud;
-    assert(!uri_list && len < sizeof(r->text));
+    assert(!drop_mime && len < sizeof(r->text));
     if (status == YASL_PRIVATE_TRANSFER_OK) {
         assert(text);
         memcpy(r->text, text, len);
@@ -260,7 +260,7 @@ int main(void)
         received.clipboard = &c;
         int fds[2];
         assert(pipe(fds) == 0);
-        struct transfer *transfer = start_transfer_text(&c, fds[0], false, false, c.text);
+        struct transfer *transfer = start_transfer_text(&c, fds[0], false, c.text);
         assert(transfer);
         yasl_private_timer_id timeout_id = transfer->timeout;
         assert(timeout_id && yasl_private_loop_timer_armed(c.loop, timeout_id));
@@ -284,7 +284,7 @@ int main(void)
     received.clipboard = &c;
     int cancel_fds[2];
     assert(pipe(cancel_fds) == 0);
-    struct transfer *pending = start_transfer_text(&c, cancel_fds[0], false, false, NULL);
+    struct transfer *pending = start_transfer_text(&c, cancel_fds[0], false, NULL);
     assert(pending);
     yasl_private_timer_id cancel_timeout_id = pending->timeout;
     assert(cancel_timeout_id && yasl_private_loop_timer_armed(c.loop, cancel_timeout_id));
@@ -300,7 +300,7 @@ int main(void)
     received.forget_on_receive = true;
     int timeout_fds[2];
     assert(pipe(timeout_fds) == 0);
-    struct transfer *timed = start_transfer_text(&c, timeout_fds[0], false, false, NULL);
+    struct transfer *timed = start_transfer_text(&c, timeout_fds[0], false, NULL);
     assert(timed && timed->timeout);
     timed->paste = true;
     timed->request_id = 100;

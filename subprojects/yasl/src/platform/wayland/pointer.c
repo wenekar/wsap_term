@@ -1312,28 +1312,31 @@ static const struct zwp_tablet_seat_v2_listener tablet_seat_listener = {
     .pad_added = tablet_seat_pad_added,
 };
 
-static void clipboard_received(const char *text, size_t len, bool uri_list,
+/* Ends a transfer. A paste completes its request. A drop becomes one DROP event
+ * on the root surface, and the event carries the type that was received. */
+static void clipboard_received(const char *text, size_t len, const char *drop_mime,
                              struct wl_surface *on, uint64_t request_id,
                              enum yasl_private_transfer_status status, void *ud)
 {
     (void)ud;
     struct wayland_surface *w = on ?
         (struct wayland_surface *)wl_surface_get_user_data(on) : NULL;
-    if (uri_list) w = surface_root(w);
+    if (drop_mime) w = surface_root(w);
     if (!w || w->closed || w->destroyed) return;
-    if (!uri_list) {
+    if (!drop_mime) {
         yasl_private_surface_complete_paste(&w->base, request_id, status, text, len);
         return;
     }
     if (status != YASL_PRIVATE_TRANSFER_OK) return;
     struct yasl_private_event ev = {
         .surface = &w->base,
-        .type = uri_list ? YASL_PRIVATE_EVENT_DROP : YASL_PRIVATE_EVENT_PASTE,
+        .type = YASL_PRIVATE_EVENT_DROP,
         .text = {
             .data = text,
             .len = len,
         },
     };
+    snprintf(ev.text.mime, sizeof(ev.text.mime), "%s", drop_mime);
     input_queue_push(&w->input, &ev);
 }
 
@@ -1345,10 +1348,10 @@ static void clipboard_drag(enum yasl_private_drag_event ev, struct wl_surface *o
 }
 
 static void clipboard_drop_hover(enum yasl_private_drop_event ev, struct wl_surface *on,
-                                 double x, double y, void *ud)
+                                 double x, double y, const char *mime, void *ud)
 {
     struct seat *s = ud;
-    conn_drop_target(s->conn, ev, on, x, y);
+    conn_drop_target(s->conn, ev, on, x, y, mime);
 }
 
 void seat_clipboard_ensure(struct seat *s)
