@@ -154,6 +154,8 @@ static void capture_before_label_test(void)
 
     struct ui_event select_all = ui_event_key((struct ui_key_event){
         .key = UI_KEY_CHAR, .text = 'a', .mods = UI_MOD_CTRL,
+        .edit_command = ui_edit_command_for_key(UI_KEY_CHAR, 'a', UI_MOD_CTRL,
+                                                UI_EDIT_BINDINGS_DEFAULT),
     }, 0);
     ui_widget_set_key_capture(&root.widget, probe_capture, &root);
     root.handle_capture = true;

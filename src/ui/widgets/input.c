@@ -621,23 +621,34 @@ bool ui_input_command(struct ui_input *in, enum ui_edit_command command)
     return false;
 }
 
+/* Runs one edit command. Both event fields of a key call it.
+ * `extend` keeps the selection on a caret move. */
+static bool input_edit(struct ui_input *in, enum ui_edit_command command,
+                       bool extend)
+{
+    switch (command) {
+    case UI_EDIT_NONE:
+        return false;
+    case UI_EDIT_START:
+        caret_move_to(in, 0, extend);
+        return true;
+    case UI_EDIT_END:
+        caret_move_to(in, in->impl.len, extend);
+        return true;
+    case UI_EDIT_LEFT:
+    case UI_EDIT_RIGHT:
+        caret_move(in, UI_EDIT_CHARACTER, command == UI_EDIT_LEFT, extend);
+        return true;
+    default:
+        return ui_input_command(in, command);
+    }
+}
+
 static bool handle_key(struct ui_input *in, const struct ui_key_event *ev)
 {
     bool shift = (ev->mods & UI_MOD_SHIFT) != 0;
-    if (ev->edit_command != UI_EDIT_NONE) {
-        switch (ev->edit_command) {
-        case UI_EDIT_START: caret_move_to(in, 0, shift); return true;
-        case UI_EDIT_END: caret_move_to(in, in->impl.len, shift); return true;
-        case UI_EDIT_LEFT:
-        case UI_EDIT_RIGHT:
-            caret_move_to(in, edit_move(in, UI_EDIT_CHARACTER,
-                                        ev->edit_command == UI_EDIT_LEFT),
-                          shift);
-            return true;
-        default: return ui_input_command(in, ev->edit_command);
-        }
-    }
-    bool ctrl = (ev->mods & (UI_MOD_CTRL | UI_MOD_SUPER)) != 0;
+    if (input_edit(in, ev->edit_command, shift))
+        return true;
     int lo, hi;
     switch (ev->key) {
     case UI_KEY_LEFT:
@@ -655,15 +666,9 @@ static bool handle_key(struct ui_input *in, const struct ui_key_event *ev)
         delete_range(in, lo, hi);
         return true;
     case UI_KEY_CHAR: {
-        if (ctrl) {
-            if (ev->text != 'a' && ev->text != 'A')
-                return false;
-            ui_input_select_all(in);
-            return true;
-        }
-        if (ev->text_deferred || (ev->mods & UI_MOD_ALT))
+        if (ev->mods & (UI_MOD_CTRL | UI_MOD_ALT | UI_MOD_SUPER))
             return false;
-        if (ev->text < 0x20 || ev->text == 0x7f)
+        if (ev->text_deferred || ev->text < 0x20 || ev->text == 0x7f)
             return false;
         char enc[WSAP_VTCORE_UTF8_MAX_BYTES + 1];
         int n = wsap_vtcore_utf8_encode(ev->text, enc);
@@ -777,14 +782,7 @@ static bool input_event(struct ui_widget *widget, const struct ui_event *event)
     case UI_EVENT_POINTER:
         return handle_pointer(in, &event->data.pointer, event->time_ms);
     case UI_EVENT_SHORTCUT:
-        switch (event->data.shortcut.edit) {
-        case UI_EDIT_COPY:
-        case UI_EDIT_PASTE:
-        case UI_EDIT_SELECT_ALL:
-            return ui_input_command(in, event->data.shortcut.edit);
-        default:
-            return false;
-        }
+        return input_edit(in, event->data.shortcut.edit, false);
     default:
         return false;
     }

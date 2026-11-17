@@ -146,6 +146,8 @@ static bool key(struct fixture *f, enum ui_key k, uint32_t text, unsigned mods)
     struct ui_event event = ui_event_key((struct ui_key_event){
         .key = k, .text = text, .mods = mods,
         .edit_unit = ui_edit_unit_for_mods(mods, UI_EDIT_BINDINGS_DEFAULT),
+        .edit_command = ui_edit_command_for_key(k, text, mods,
+                                                UI_EDIT_BINDINGS_DEFAULT),
     }, 1000);
     return ui_surface_dispatch(&f->surface, &event);
 }
@@ -265,7 +267,7 @@ static void word_line_and_keyboard_selection_test(void)
     build(&f);
     click(&f, pos, 300);
     expect_selection(&f, "Hello café world\n");
-    assert(key(&f, UI_KEY_CHAR, 'a', UI_MOD_SUPER));
+    assert(key(&f, UI_KEY_CHAR, 'a', UI_MOD_CTRL));
     expect_selection(&f, ui_label_text(&f.label));
     assert(key(&f, UI_KEY_CHAR, 'c', UI_MOD_CTRL));
     assert(key(&f, UI_KEY_LEFT, 0, 0));

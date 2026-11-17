@@ -421,81 +421,71 @@ static bool label_accessibility_action(
     }
     return false;
 }
-
-/* Runs the edit commands that a label supports. */
-static bool label_edit(struct ui_label *label, enum ui_edit_command command)
+/* Runs one edit command. Both event fields of a key call it.
+ * `extend` keeps the selection on a caret move. */
+static bool label_edit(struct ui_label *label, enum ui_edit_command command,
+                       bool extend)
 {
+    if (command == UI_EDIT_NONE)
+        return false;
     switch (command) {
     case UI_EDIT_COPY:
         return label->impl.selectable && ui_label_copy_selection(label);
     case UI_EDIT_SELECT_ALL:
+        if (!label->impl.selectable)
+            return false;
         ui_label_select_all(label);
-        return label->impl.selectable;
-    default:
-        return false;
-    }
-}
-
-/* Runs one caret move. Returns false for a command that the label does not
- * use. */
-static bool label_move(struct ui_label *label, enum ui_edit_unit unit,
-                       bool backward, bool extend)
-{
-    size_t from = label->impl.select.caret;
-    ui_text_select_move(&label->impl.select, ui_label_text(label),
-                        label->impl.len, unit, backward, extend);
-    if (label->impl.select.caret == from && unit != UI_EDIT_CHARACTER)
-        return false;
-    ui_widget_invalidate(&label->widget, UI_WIDGET_INVALIDATE_PAINT);
-    return true;
-}
-
-static bool label_caret_to(struct ui_label *label, size_t offset, bool extend)
-{
-    ui_text_select_to(&label->impl.select, offset, extend);
-    ui_widget_invalidate(&label->widget, UI_WIDGET_INVALIDATE_PAINT);
-    return true;
-}
-
-/* Runs one edit command. Both event fields of a key call it. */
-static bool label_command(struct ui_label *label, enum ui_edit_command command,
-                          bool extend)
-{
-    switch (command) {
+        return true;
+    case UI_EDIT_START:
+    case UI_EDIT_END:
     case UI_EDIT_LEFT:
     case UI_EDIT_RIGHT:
-        return label_move(label, UI_EDIT_CHARACTER, command == UI_EDIT_LEFT,
-                          extend);
-    case UI_EDIT_START:
-        return label_caret_to(label, 0, extend);
-    case UI_EDIT_END:
-        return label_caret_to(label, label->impl.len, extend);
+        if (!label->impl.selectable)
+            return false;
+        break;
     default:
-        return label_edit(label, command);
+        return false;
     }
+    switch (command) {
+    case UI_EDIT_START:
+    case UI_EDIT_END:
+        ui_text_select_to(&label->impl.select,
+                          command == UI_EDIT_START ? 0 : label->impl.len,
+                          extend);
+        break;
+    default:
+        ui_text_select_move(&label->impl.select, ui_label_text(label),
+                            label->impl.len, UI_EDIT_CHARACTER,
+                            command == UI_EDIT_LEFT, extend);
+        break;
+    }
+    ui_widget_invalidate(&label->widget, UI_WIDGET_INVALIDATE_PAINT);
+    return true;
 }
 
 static bool label_key(struct ui_label *label, const struct ui_key_event *key)
 {
-    bool ctrl = (key->mods & (UI_MOD_CTRL | UI_MOD_SUPER)) != 0;
     bool shift = (key->mods & UI_MOD_SHIFT) != 0;
     bool key_only = (key->mods & (UI_MOD_ALT | UI_MOD_CTRL | UI_MOD_SUPER)) == 0;
-    if (ctrl && key->key == UI_KEY_CHAR && (key->text == 'a' || key->text == 'A'))
-        return label_edit(label, UI_EDIT_SELECT_ALL);
-    if (ctrl && key->key == UI_KEY_CHAR && (key->text == 'c' || key->text == 'C'))
-        return label_edit(label, UI_EDIT_COPY);
+    if (label_edit(label, key->edit_command, shift))
+        return true;
     if (label->impl.selectable) {
-        if (label_command(label, key->edit_command, shift))
-            return true;
         switch (key->key) {
         case UI_KEY_LEFT:
         case UI_KEY_RIGHT:
-            label_move(label, key->edit_unit, key->key == UI_KEY_LEFT, shift);
+            ui_text_select_move(&label->impl.select, ui_label_text(label),
+                                label->impl.len, key->edit_unit,
+                                key->key == UI_KEY_LEFT, shift);
+            ui_widget_invalidate(&label->widget, UI_WIDGET_INVALIDATE_PAINT);
             return true;
         case UI_KEY_HOME:
-            return label_caret_to(label, 0, shift);
+            ui_text_select_to(&label->impl.select, 0, shift);
+            ui_widget_invalidate(&label->widget, UI_WIDGET_INVALIDATE_PAINT);
+            return true;
         case UI_KEY_END:
-            return label_caret_to(label, label->impl.len, shift);
+            ui_text_select_to(&label->impl.select, label->impl.len, shift);
+            ui_widget_invalidate(&label->widget, UI_WIDGET_INVALIDATE_PAINT);
+            return true;
         case UI_KEY_ESCAPE:
             ui_label_clear_selection(label);
             return true;
@@ -530,7 +520,7 @@ static bool label_event(struct ui_widget *widget, const struct ui_event *event)
     if (label->impl.disabled)
         return false;
     if (event->kind == UI_EVENT_SHORTCUT)
-        return label_edit(label, event->data.shortcut.edit);
+        return label_edit(label, event->data.shortcut.edit, false);
     if (event->kind == UI_EVENT_KEY)
         return label_key(label, &event->data.key);
     if (event->kind != UI_EVENT_POINTER)

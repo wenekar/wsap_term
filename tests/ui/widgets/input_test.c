@@ -65,6 +65,8 @@ static bool key(struct fixture *f, enum ui_key k, unsigned mods)
     struct ui_event e = ui_event_key((struct ui_key_event){
         .key = k, .mods = mods,
         .edit_unit = ui_edit_unit_for_mods(mods, UI_EDIT_BINDINGS_DEFAULT),
+        .edit_command = ui_edit_command_for_key(k, 0, mods,
+                                                UI_EDIT_BINDINGS_DEFAULT),
     }, 0);
     return ui_surface_dispatch(&f->surface, &e);
 }
@@ -73,6 +75,8 @@ static bool ch(struct fixture *f, uint32_t cp, unsigned mods)
 {
     struct ui_event e = ui_event_key((struct ui_key_event){
         .key = UI_KEY_CHAR, .text = cp, .mods = mods,
+        .edit_command = ui_edit_command_for_key(UI_KEY_CHAR, cp, mods,
+                                                UI_EDIT_BINDINGS_DEFAULT),
     }, 0);
     return ui_surface_dispatch(&f->surface, &e);
 }
@@ -538,7 +542,7 @@ static void keys_for_the_parent_pass_through_test(void)
     assert(!key(&f, UI_KEY_ESCAPE, 0));
     assert(!key(&f, UI_KEY_UP, 0));
     assert(!key(&f, UI_KEY_PAGE_DOWN, 0));
-    assert(!ch(&f, 'c', UI_MOD_CTRL));
+    assert(!ch(&f, 'q', UI_MOD_ALT));
     assert(!strcmp(text(&f), "x"));
     teardown(&f);
 }
@@ -635,6 +639,8 @@ static bool mac_key(struct fixture *f, enum ui_key key, unsigned mods)
     struct ui_event event = ui_event_key((struct ui_key_event){
         .key = key, .mods = mods,
         .edit_unit = ui_edit_unit_for_mods(mods, UI_EDIT_BINDINGS_MACOS),
+        .edit_command = ui_edit_command_for_key(key, 0, mods,
+                                                UI_EDIT_BINDINGS_MACOS),
     }, 0);
     return ui_surface_dispatch(&f->surface, &event);
 }
