@@ -632,9 +632,12 @@ static struct rect2i named_part(const struct ui_widget *widget, const char *name
     return r;
 }
 
+/* The scroll view reports "content". The bar, as its last child, reports the
+ * track and the thumb. */
 static struct rect2i part(struct fixture *f, const char *name)
 {
-    return named_part(&f->sv.widget, name);
+    struct rect2i r = named_part(&f->sv.bar, name);
+    return rect2i_is_empty(r) ? named_part(&f->sv.widget, name) : r;
 }
 
 static const struct ui_scene *paint(struct fixture *f)
@@ -1093,7 +1096,7 @@ static void track_cursor_is_not_child_cursor_test(void)
 
     ui_scrollview_flash(&sv);
     ui_surface_prepare(&surface);
-    struct rect2i track = named_part(&sv.widget, "scroll-track");
+    struct rect2i track = named_part(&sv.bar, "scroll-track");
     assert(!rect2i_is_empty(track));
     assert(cursor_after_motion(&surface, center(track)) == UI_CURSOR_DEFAULT);
 

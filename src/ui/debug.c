@@ -202,13 +202,12 @@ static const struct ui_widget *find_by(const struct ui_widget *w,
     return NULL;
 }
 
-const struct ui_widget *ui_debug_find(const struct ui_widget *root,
-                                      const char *selector)
+/* Walks the child path of `w` from `selector`, which starts at "/" or is
+ * empty. */
+static const struct ui_widget *find_by_path(const struct ui_widget *w,
+                                            const char *selector)
 {
-    if (!root || !selector || !*selector)
-        return NULL;
     if (selector[0] == '/') {
-        const struct ui_widget *w = root;
         const char *p = selector + 1;
         while (*p) {
             char *end;
@@ -226,6 +225,29 @@ const struct ui_widget *ui_debug_find(const struct ui_widget *root,
                 return NULL;
         }
         return w;
+    }
+    return w;
+}
+
+const struct ui_widget *ui_debug_find(const struct ui_widget *root,
+                                      const char *selector)
+{
+    if (!root || !selector || !*selector)
+        return NULL;
+    if (selector[0] == '/')
+        return find_by_path(root, selector);
+    if (selector[0] == '~') {
+        /* "~<index>" names an overlay of the surface of `root`, and the path
+         * below it follows, as ui_debug_path writes it. */
+        char *end;
+        unsigned long index = strtoul(selector + 1, &end, 10);
+        if (end == selector + 1 || (*end && *end != '/'))
+            return NULL;
+        /* Top 0 is the root. The overlays follow, from the top down. */
+        const struct ui_widget *overlay = top_at(root, index + 1);
+        if (!overlay)
+            return NULL;
+        return find_by_path(overlay, *end ? end : "/");
     }
     if (selector[0] == '0' && (selector[1] == 'x' || selector[1] == 'X')) {
         char *end;

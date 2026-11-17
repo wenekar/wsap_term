@@ -401,10 +401,26 @@ static void bar_paint(const struct ui_widget *widget,
     ui_paint_box(paint, thumb, &s.thumb_box, NULL);
 }
 
+/* The bar owns the track and the thumb, so the parts have one owner. */
+static void bar_parts(const struct ui_widget *widget, struct ui_debug_parts *out)
+{
+    struct ui_scrollview *sv = widget->userdata;
+    struct bar g = {0};
+    if (!bar_visible(sv) || !bar_geometry(sv, sv->impl.bar_state, &g))
+        return;
+    ui_debug_part(out, "scroll-track", -1, widget->bounds);
+    struct rect2i thumb = rect2i_translate(g.thumb, (struct vector2i){
+        .x = widget->bounds.pos.x - g.track.pos.x,
+        .y = widget->bounds.pos.y - g.track.pos.y,
+    });
+    ui_debug_part(out, "scroll-thumb", -1, thumb);
+}
+
 static const struct ui_widget_ops BAR_OPS = {
     .name = "scrollbar",
     .event = bar_event,
     .paint = bar_paint,
+    .debug_parts = bar_parts,
 };
 
 static uint64_t scrollview_tick(struct ui_widget *widget, uint64_t now_ms)
@@ -496,13 +512,7 @@ static void scrollview_layout(struct ui_widget *widget, struct rect2i bounds)
 
 static void scrollview_parts(const struct ui_widget *widget, struct ui_debug_parts *out)
 {
-    const struct ui_scrollview *sv = ui_container_of_const(widget, struct ui_scrollview, widget);
     ui_debug_part(out, "content", -1, widget->bounds);
-    struct bar g = {0};
-    if (!bar_visible(sv) || !bar_geometry(sv, sv->impl.bar_state, &g))
-        return;
-    ui_debug_part(out, "scroll-track", -1, ui_widget_rect_to_surface(widget, g.track));
-    ui_debug_part(out, "scroll-thumb", -1, ui_widget_rect_to_surface(widget, g.thumb));
 }
 
 static void scrollview_reveal(struct ui_widget *widget, struct ui_widget *descendant)

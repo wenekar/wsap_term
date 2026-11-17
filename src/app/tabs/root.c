@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -149,14 +150,20 @@ static void widgets_init(struct app_tabs *tabs)
 }
 
 /* The tab preview and the palette float in the window. The surface places and
- * paints them above the root. */
+ * paints them above the root. A widget that the surface refuses stays out of
+ * the window; the window keeps working without it. */
 static void overlay_init(struct app_tabs *tabs)
 {
     struct ui_surface *surface = window_ui_surface(tabs->window);
-    if (!surface)
+    if (!surface) {
+        fprintf(stderr, "tabs: the window has no surface for its overlays\n");
         return;
-    ui_surface_add_overlay(surface, ui_tab_preview_widget(&tabs->preview));
-    ui_surface_add_overlay(surface, ui_palette_widget(&tabs->palette));
+    }
+    if (!ui_surface_add_overlay(surface,
+                                ui_tab_preview_widget(&tabs->preview)))
+        fprintf(stderr, "tabs: cannot add the tab preview overlay\n");
+    if (!ui_surface_add_overlay(surface, ui_palette_widget(&tabs->palette)))
+        fprintf(stderr, "tabs: cannot add the palette overlay\n");
 }
 
 static void op_restyle(struct window *w)

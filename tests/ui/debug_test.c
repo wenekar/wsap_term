@@ -6,6 +6,7 @@
 #include "ui/debug.h"
 #include "ui/internal/tree.h"
 #include "ui/paint.h"
+#include "ui/surface.h"
 #include "paint/scene.h"
 #include "ui/widget.h"
 #include "util/json.h"
@@ -97,6 +98,45 @@ static void selectors_resolve_test(void)
     assert(ui_debug_path(&root.widget, &b.widget, path, sizeof(path)));
     assert(!strcmp(path, "/1"));
     assert(!ui_debug_path(&root.widget, &stray.widget, path, sizeof(path)));
+}
+
+static void overlay_paths_and_selectors_test(void)
+{
+    struct ui_surface surface = {0};
+    struct probe root, overlay, child;
+    probe_init(&root, R(0, 0, 200, 100), 0xFF000000);
+    probe_init(&overlay, R(0, 0, 100, 100), 0xFF111111);
+    probe_init(&child, R(0, 0, 50, 50), 0xFF222222);
+    ui_widget_set_debug_key(&child.widget, "float");
+    assert(ui_widget_add_child(&overlay.widget, &child.widget));
+    ui_surface_set_root(&surface, &root.widget);
+    ui_surface_resize(&surface, (struct vector2i){ .x = 200, .y = 100 });
+    assert(ui_surface_add_overlay(&surface, &overlay.widget));
+
+    char path[32];
+    assert(ui_debug_path(&root.widget, &child.widget, path, sizeof(path)));
+    assert(!strcmp(path, "~0/0"));
+    assert(ui_debug_find(&root.widget, path) == &child.widget);
+    assert(ui_debug_find(&root.widget, "~0") == &overlay.widget);
+    assert(ui_debug_find(&root.widget, "~0/0") == &child.widget);
+    assert(ui_debug_find(&root.widget, "~1") == NULL);
+    assert(ui_debug_find(&root.widget, "~") == NULL);
+    assert(ui_debug_find(&root.widget, "~x") == NULL);
+    assert(ui_debug_find(&root.widget, "@float") == &child.widget);
+    /* The probe takes no pointer, so the surface hit test finds the overlay
+     * but no widget inside it. The debug walk then reports the overlay. */
+    assert(ui_debug_widget_at(&root.widget, (struct vector2i){ .x = 10, .y = 10 })
+           == &root.widget);
+
+    /* A removed overlay is no longer in the tree. */
+    assert(ui_surface_remove_overlay(&surface, &overlay.widget));
+    snprintf(path, sizeof(path), "%p", (void *)&child.widget);
+    assert(ui_debug_find(&root.widget, path) == NULL);
+    assert(ui_debug_find(&root.widget, "~0") == NULL);
+
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&root.widget);
+    ui_widget_destroy(&overlay.widget);
 }
 
 static void widget_at_matches_what_is_visible_test(void)
@@ -256,6 +296,7 @@ static void json_writer_escapes_and_nests_test(void)
 int main(void)
 {
     selectors_resolve_test();
+    overlay_paths_and_selectors_test();
     widget_at_matches_what_is_visible_test();
     ops_are_attributed_to_their_widget_test();
     lint_flags_off_center_text_test();
