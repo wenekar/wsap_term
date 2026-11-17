@@ -279,7 +279,7 @@ bool ui_widget_needs_layout(const struct ui_widget *widget)
     return widget && (widget->impl.invalidation & dirty);
 }
 
-bool ui_widget_style_current(const struct ui_widget *widget)
+bool ui_widget_is_style_current(const struct ui_widget *widget)
 {
     if (!widget || !widget->impl.style_valid)
         return false;

@@ -439,7 +439,7 @@ static void preview_prepare(struct ui_widget *widget)
 {
     struct ui_tab_preview *p = preview_of(widget);
     struct ui_surface *surface = ui_widget_surface(widget);
-    if (surface && !ui_widget_style_current(widget))
+    if (surface && !ui_widget_is_style_current(widget))
         return;
     if (defer_budget_to_layout(p))
         return;

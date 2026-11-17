@@ -157,9 +157,11 @@ void ui_widget_set_pointer_transparent(struct ui_widget *widget,
 /* Returns true when `widget` or a descendant of it needs a measure or a
  * layout pass. */
 bool ui_widget_needs_layout(const struct ui_widget *widget);
-/* Returns true when the style of `widget` matches the current sheet of its
- * surface. A false result means that the surface prepares the widget again. */
-bool ui_widget_style_current(const struct ui_widget *widget);
+/* Returns true when the style of `widget` is resolved and still matches the
+ * current sheet of its surface. A widget outside a surface needs no sheet
+ * match, so it is current once resolved. A false result means that the
+ * surface resolves the style again. */
+bool ui_widget_is_style_current(const struct ui_widget *widget);
 
 /* Registers action callback `fn` and `userdata` for `widget`. */
 void ui_widget_set_action_handler(struct ui_widget *widget, ui_action_fn fn,

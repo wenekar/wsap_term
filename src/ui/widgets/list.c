@@ -190,13 +190,12 @@ static struct vector2i row_size(const struct ui_list *l, int i)
             .x = m->sep_margin.l + m->sep_margin.r,
             .y = m->sep_margin.t + m->sep_thickness + m->sep_margin.b,
         };
-    int h = m->cell_h + m->item_pad.t + m->item_pad.b;
     int w = m->item_pad.l + m->item_pad.r +
             ui_text_run_cells(it->label, strlen(it->label)) * m->cell_w;
     if (it->shortcut)
         w += m->gap + ui_text_run_cells(it->shortcut, strlen(it->shortcut)) *
                       m->cell_w;
-    return (struct vector2i){ .x = w, .y = h > m->min_h ? h : m->min_h };
+    return (struct vector2i){ .x = w, .y = ui_list_row_height(l) };
 }
 
 static struct vector2i list_measure(const struct ui_widget *widget,
