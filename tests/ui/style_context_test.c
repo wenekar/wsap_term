@@ -173,8 +173,8 @@ static void host_sheet_with_defaults_is_not_duplicated_test(void)
     const struct css_sheet *sheet = ui_style_context_sheet(&context);
     assert(sheet->rule_count == css_default_sheet()->rule_count + 1);
 
-    struct css_style tab = ui_style_context_style(&context, "tab", 0);
-    assert(tab.has_bg_color && tab.bg_color == 0xFF1E1E2E);
+    struct css_style menu = ui_style_context_style(&context, "context-menu", 0);
+    assert(menu.has_bg_color && menu.bg_color == 0xFF1E1E2E);
     struct css_style panel = ui_style_context_style(&context, "panel", 0);
     assert(panel.has_bg_color && panel.bg_color == 0xFF112233);
 
@@ -194,8 +194,8 @@ static void plain_host_sheet_gets_defaults_test(void)
     const struct css_sheet *sheet = ui_style_context_sheet(&context);
     assert(sheet->rule_count == css_default_sheet()->rule_count + host.rule_count);
 
-    struct css_style tab = ui_style_context_style(&context, "tab", 0);
-    assert(tab.has_bg_color && tab.bg_color == 0xFF1E1E2E);
+    struct css_style menu = ui_style_context_style(&context, "context-menu", 0);
+    assert(menu.has_bg_color && menu.bg_color == 0xFF1E1E2E);
     struct css_style panel = ui_style_context_style(&context, "panel", 0);
     assert(panel.has_bg_color && panel.bg_color == 0xFF112233);
 
@@ -212,8 +212,8 @@ static void host_root_variables_override_defaults_test(void)
     ui_style_context_init(&context);
     ui_style_context_set_sheet(&context, &host);
 
-    struct css_style bar = ui_style_context_style(&context, "tab-bar", 0);
-    assert(!bar.has_bg_color);
+    struct css_style bar = ui_style_context_style(&context, "scrollbar", 0);
+    assert(!bar.has_bg_color && bar.width.unit == CSS_UNIT_PX);
 
     struct css_style link = ui_style_context_style(&context, "label-link", 0);
     assert(link.has_text_color && link.text_color == 0xFFFF00AAu);
@@ -221,12 +221,11 @@ static void host_root_variables_override_defaults_test(void)
     struct css_style focus = ui_style_context_style(&context, "label-focus", 0);
     assert(focus.has_border_color && focus.border_color == 0xFFFF00AAu);
 
-    struct css_style tab = ui_style_context_style(&context, "tab", 0);
-    assert(tab.has_bg_color && tab.bg_color == 0xFF121314u);
+    struct css_style menu = ui_style_context_style(&context, "context-menu", 0);
+    assert(menu.has_bg_color && menu.bg_color == 0xFF121314u);
 
-    struct css_style palette =
-        ui_style_context_style(&context, "command-palette", 0);
-    assert(palette.has_bg_color && palette.bg_color == 0xFF121314u);
+    struct css_style input = ui_style_context_style(&context, "text-input", 0);
+    assert(input.has_bg_color && input.bg_color == 0xFF121314u);
 
     ui_style_context_destroy(&context);
     css_sheet_clear(&host);

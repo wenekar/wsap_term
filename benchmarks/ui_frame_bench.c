@@ -4,6 +4,7 @@
 #include "font/glyph_cache.h"
 #include "paint/scene.h"
 #include "render/scene_paint.h"
+#include "ui/css.h"
 #include "ui/damage.h"
 #include "ui/surface.h"
 #include "ui/ui.h"
@@ -34,12 +35,29 @@ struct fixture {
     uint64_t now_ms;
 };
 
+/* The app gives every window the sheet of its theme store: the UI core rules
+   and the app rules. The surface of this benchmark gets the same sheet, once
+   per process, so its scenes match the scenes of the app. */
+static const struct css_sheet *app_sheet(void)
+{
+    static struct css_sheet sheet;
+    static bool ready;
+    if (!ready) {
+        css_init_default(&sheet);
+        if (!css_parse_app(&sheet))
+            fprintf(stderr, "ui-frame-bench: cannot build the app sheet\n");
+        ready = true;
+    }
+    return &sheet;
+}
+
 static bool setup(struct fixture *f, int scenario)
 {
     f->size = (struct vector2i){ .x = scenario == MENU ? 400 : 1920, .y = 600 };
     f->pixels = malloc((size_t)f->size.x * f->size.y * sizeof(*f->pixels));
     if (!f->pixels) return false;
     ui_surface_init(&f->surface, NULL, NULL);
+    ui_surface_set_sheet(&f->surface, app_sheet());
     ui_surface_set_scale(&f->surface, (struct css_scale_context){
         .dpi_scale = 1, .cell_w = 8, .cell_h = 16,
     });

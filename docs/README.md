@@ -25,7 +25,7 @@ The [benchmarks](../benchmarks/README.md) directory contains performance reports
 | Path | Contents |
 | --- | --- |
 | `src/` | Application code and libraries. |
-| `assets/` | Runtime assets: scripts, themes, fonts, icons, and terminfo. |
+| `assets/` | Runtime assets: scripts, themes, stylesheets, fonts, icons, and terminfo. |
 | `tests/` | Tests grouped by source subsystem. |
 | `subprojects/term/` | Standalone terminal core and core tests. |
 | `subprojects/yasl/` | Native platform library. |

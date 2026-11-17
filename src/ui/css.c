@@ -1,9 +1,15 @@
 #include "css.h"
+#include "ui/metrics.h"
+#include "ui_app_css.h"
+#include "ui_core_css.h"
+
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static bool sheet_build_index(struct css_sheet *sheet);
 
 static const char *skip_ws_and_comments(const char *p)
 {
@@ -141,9 +147,9 @@ float css_value_resolve(struct css_value v, float parent_dim, float auto_val,
     float dpi = (ctx && isfinite(ctx->dpi_scale) && ctx->dpi_scale > 0.0f)
         ? ctx->dpi_scale : 1.0f;
     float ch = (ctx && isfinite(ctx->cell_h) && ctx->cell_h > 0.0f)
-        ? ctx->cell_h : 16.0f * dpi;
+        ? ctx->cell_h : (float)UI_DEFAULT_CELL_H * dpi;
     float cw = (ctx && isfinite(ctx->cell_w) && ctx->cell_w > 0.0f)
-        ? ctx->cell_w : 8.0f * dpi;
+        ? ctx->cell_w : (float)UI_DEFAULT_CELL_W * dpi;
     float result;
     switch (v.unit) {
     case CSS_UNIT_PX:      result = v.val * dpi; break;
@@ -251,7 +257,74 @@ static bool parse_box_shadow(const char *s, struct css_style *out)
     return true;
 }
 
-enum prop_kind { P_VAL, P_INSETS, P_COLOR, P_FLOAT, P_FLEX_DIR, P_ALIGN, P_JUSTIFY, P_CURSOR, P_DURATION, P_SHADOW };
+/* The style keywords that `border` accepts and ignores. */
+static bool is_border_style_keyword(const char *tok)
+{
+    static const char *const keywords[] = {
+        "solid", "dashed", "dotted", "double",
+        "groove", "ridge", "inset", "outset", "hidden",
+    };
+    for (size_t i = 0; i < sizeof(keywords) / sizeof(keywords[0]); i++)
+        if (!strcmp(tok, keywords[i]))
+            return true;
+    return false;
+}
+
+/* Parses `border`. The value holds a width and a color in any order. A style
+   keyword is accepted and ignored, and `none` sets the width to zero.
+   `out_has_width` reports whether the value named a width at all. */
+static bool parse_border(const char *s, struct css_style *out, bool *out_has_width)
+{
+    bool width_set = false, color_set = false;
+    while (*s) {
+        s = skip_ws_and_comments(s);
+        if (!*s) break;
+        const char *start = s;
+        while (*s && !isspace((unsigned char)*s)) s++;
+        char tok[32];
+        size_t len = (size_t)(s - start);
+        if (len >= sizeof(tok)) return false;
+        memcpy(tok, start, len);
+        tok[len] = '\0';
+        if (!strcmp(tok, "none")) {
+            out->border_width = (struct css_value){ .unit = CSS_UNIT_PX };
+            width_set = true;
+            continue;
+        }
+        if (is_border_style_keyword(tok))
+            continue;
+        uint32_t color;
+        if (!color_set && parse_color(tok, &color)) {
+            out->border_color = color;
+            out->has_border_color = true;
+            color_set = true;
+            continue;
+        }
+        if (width_set)
+            return false;
+        struct css_value v = parse_value(tok);
+        if (v.unit == CSS_UNIT_NONE)
+            return false;
+        out->border_width = v;
+        width_set = true;
+    }
+    *out_has_width = width_set;
+    return width_set || color_set;
+}
+
+enum prop_kind {
+    P_VAL,
+    P_INSETS,
+    P_COLOR,
+    P_FLOAT,
+    P_FLEX_DIR,
+    P_ALIGN,
+    P_JUSTIFY,
+    P_CURSOR,
+    P_DURATION,
+    P_SHADOW,
+    P_BORDER, /* A width and an optional color. */
+};
 
 enum style_has_bit {
     HAS_NONE = 0,
@@ -303,6 +376,10 @@ struct prop_info {
     .kind = P_SHADOW, .size = (uint8_t)CSS_SHADOW_SIZE, \
     .has_bit = HAS_##has_m, \
 }
+#define PROP_BORDER(n, m) { \
+    .name = (n), .offset = offsetof(struct css_style, m), \
+    .kind = P_BORDER, .size = PROP_FIELD_SIZE(m), \
+}
 
 static const struct prop_info props[] = {
     PROP("width",            P_VAL,      width),
@@ -314,7 +391,7 @@ static const struct prop_info props[] = {
     PROP("gap",              P_VAL,      gap),
     PROP("border-radius",    P_VAL,      border_radius),
     PROP("border-width",     P_VAL,      border_width),
-    PROP("border",           P_VAL,      border_width),
+    PROP_BORDER("border",    border_width),
     PROP("padding",          P_INSETS,   padding),
     PROP("margin",           P_INSETS,   margin),
     PROP_COLOR("background-color", bg_color, has_bg_color),
@@ -405,6 +482,9 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
     while (isspace((unsigned char)*val)) val++;
     const struct prop_info *p = &props[idx];
     char *dst = (char *)&r->style + p->offset;
+    /* A `border` value that holds no width must not declare the width, or it
+       would clear the width of a rule below it. */
+    bool sets_field = true;
     switch (p->kind) {
         case P_VAL: {
             struct css_value v = parse_value(val);
@@ -517,6 +597,24 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
         case P_SHADOW:
             if (!parse_box_shadow(val, &r->style)) return CSS_DECLARATION_INVALID;
             break;
+        case P_BORDER: {
+            struct css_style border = {0};
+            bool has_width = false;
+            if (!parse_border(val, &border, &has_width))
+                return CSS_DECLARATION_INVALID;
+            if (has_width)
+                r->style.border_width = border.border_width;
+            else
+                sets_field = false;
+            if (border.has_border_color) {
+                int color = find_prop_idx("border-color");
+                r->style.border_color = border.border_color;
+                r->style.has_border_color = true;
+                if (color >= 0)
+                    r->set_mask |= (1ULL << (size_t)color);
+            }
+            break;
+        }
         case P_DURATION: {
             const char *s = val;
             while (*s && !isdigit((unsigned char)*s) && *s != '.')
@@ -536,7 +634,8 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
     }
     if (p->has_bit && p->kind != P_SHADOW)
         set_style_has_bit(&r->style, p->has_bit, true);
-    r->set_mask |= (1ULL << idx);
+    if (sets_field)
+        r->set_mask |= (1ULL << idx);
     return CSS_DECLARATION_OK;
 }
 
@@ -550,51 +649,163 @@ static char *dup_range(const char *s, size_t len)
     return out;
 }
 
+static bool rule_add_part(struct css_rule *r, uint32_t offset, uint16_t length)
+{
+    if (r->part_count == r->part_cap) {
+        uint16_t cap = r->part_cap ? (uint16_t)(r->part_cap * 2) : 4;
+        struct css_selector_part *next =
+            realloc(r->parts, (size_t)cap * sizeof(*next));
+        if (!next)
+            return false;
+        r->parts = next;
+        r->part_cap = cap;
+    }
+    r->parts[r->part_count++] = (struct css_selector_part){ .offset = offset,
+                                                            .length = length };
+    return true;
+}
+
+static bool rule_add_class(struct css_rule *r, uint32_t offset, uint16_t length)
+{
+    if (r->class_count == r->class_cap) {
+        uint16_t cap = r->class_cap ? (uint16_t)(r->class_cap * 2) : 4;
+        struct css_class_token *next =
+            realloc(r->classes, (size_t)cap * sizeof(*next));
+        if (!next)
+            return false;
+        r->classes = next;
+        r->class_cap = cap;
+    }
+    r->classes[r->class_count++] =
+        (struct css_class_token){ .offset = offset, .length = length };
+    return true;
+}
+
+static bool parse_pseudo_name(const char *s, enum css_pseudo *out)
+{
+    if (!strcmp(s, "hover"))         *out = CSS_PSEUDO_HOVER;
+    else if (!strcmp(s, "active"))   *out = CSS_PSEUDO_ACTIVE;
+    else if (!strcmp(s, "focus"))    *out = CSS_PSEUDO_FOCUS;
+    else if (!strcmp(s, "disabled")) *out = CSS_PSEUDO_DISABLED;
+    else if (!strcmp(s, "checked"))  *out = CSS_PSEUDO_CHECKED;
+    else return false;
+    return true;
+}
+
+/* Splits the compound `part` into its class names and its key kind. A part
+   that names no class name, or an empty one, matches no element. */
+static bool rule_compile_part(struct css_rule *r, struct css_selector_part *part)
+{
+    const char *text = r->selector + part->offset;
+    part->class_first = r->class_count;
+    part->class_count = 0;
+    if (part->length == 0) {
+        part->kind = CSS_KEY_NONE;
+        return true;
+    }
+    if (text[0] == '#') {
+        part->kind = CSS_KEY_ID;
+        return true;
+    }
+    if (text[0] != '.') {
+        part->kind = CSS_KEY_TAG;
+        return true;
+    }
+    for (uint16_t i = 0; i < part->length;) {
+        if (text[i] != '.')
+            break;
+        uint16_t start = (uint16_t)(i + 1);
+        i = start;
+        while (i < part->length && text[i] != '.')
+            i++;
+        if (i == start) {
+            /* A lone point names no class and matches any class list. A
+               point after a class name names an empty class name, which no
+               element has. */
+            if (!(part->class_count == 0 && start == part->length)) {
+                part->kind = CSS_KEY_NONE;
+                part->class_count = 0;
+            }
+            return true;
+        }
+        if (!rule_add_class(r, part->offset + start, (uint16_t)(i - start)))
+            return false;
+        part->class_count++;
+    }
+    return true;
+}
+
+/* Compiles `selector` into the compound parts that a match walks. The parts
+   are the compounds that white space separates, from the leftmost to the
+   element itself. Only the last part can carry a pseudo-class. */
+static bool rule_compile_selector(struct css_rule *r, bool *supported)
+{
+    *supported = true;
+    r->part_count = 0;
+    r->class_count = 0;
+    r->pseudo = CSS_PSEUDO_NONE;
+    const char *s = r->selector;
+    size_t n = strlen(s);
+    size_t i = 0;
+    while (i < n) {
+        while (i < n && isspace((unsigned char)s[i])) i++;
+        if (i == n) break;
+        size_t start = i;
+        while (i < n && !isspace((unsigned char)s[i])) i++;
+        if (!rule_add_part(r, (uint32_t)start, (uint16_t)(i - start)))
+            return false;
+    }
+    for (uint16_t p = 0; p < r->part_count; p++) {
+        struct css_selector_part *part = &r->parts[p];
+        const char *text = r->selector + part->offset;
+        const char *colon = memchr(text, ':', part->length);
+        if (!colon)
+            continue;
+        if (p + 1 != r->part_count) {
+            *supported = false;
+            part->length = (uint16_t)(colon - text);
+            continue;
+        }
+        enum css_pseudo pseudo;
+        part->length = (uint16_t)(colon - text);
+        if (parse_pseudo_name(colon + 1, &pseudo))
+            r->pseudo = pseudo;
+        else
+            *supported = false;
+    }
+    for (uint16_t p = 0; p < r->part_count; p++)
+        if (!rule_compile_part(r, &r->parts[p]))
+            return false;
+    return true;
+}
+
+static void rule_clear_selector(struct css_rule *r)
+{
+    free(r->selector);
+    free(r->parts);
+    free(r->classes);
+    r->selector = NULL;
+    r->parts = NULL;
+    r->classes = NULL;
+    r->part_count = 0;
+    r->part_cap = 0;
+    r->class_count = 0;
+    r->class_cap = 0;
+}
+
 static bool parse_single_selector(struct css_rule *r, const char *s, size_t len,
                                   bool *supported)
 {
-    *supported = true;
     while (len && isspace((unsigned char)*s)) { s++; len--; }
     while (len && isspace((unsigned char)s[len - 1])) len--;
     r->selector = dup_range(s, len);
     if (!r->selector)
         return false;
-
-    const char *comp = r->selector;
-    for (const char *p = r->selector; *p; p++)
-        if (isspace((unsigned char)*p)) comp = p + 1;
-    r->last_off = (size_t)(comp - r->selector);
-
-    const char *pseudo = strchr(comp, ':');
-    if (pseudo) {
-        pseudo++;
-        if (!strcmp(pseudo, "hover"))         r->pseudo = CSS_PSEUDO_HOVER;
-        else if (!strcmp(pseudo, "active"))   r->pseudo = CSS_PSEUDO_ACTIVE;
-        else if (!strcmp(pseudo, "focus"))    r->pseudo = CSS_PSEUDO_FOCUS;
-        else if (!strcmp(pseudo, "disabled")) r->pseudo = CSS_PSEUDO_DISABLED;
-        else if (!strcmp(pseudo, "checked"))  r->pseudo = CSS_PSEUDO_CHECKED;
-        else *supported = false;
-    }
-    if (memchr(r->selector, ':', r->last_off))
-        *supported = false;
-    if (*comp == '.') {
-        r->is_class = true;
-        const char *stop = pseudo ? pseudo - 1 : comp + strlen(comp);
-        int n = 0;
-        for (const char *c = comp; c < stop; c++)
-            if (*c == '.') n++;
-        r->class_rank = n;
-    } else if (*comp == '#') {
-        r->is_id = true;
-    }
-    return true;
+    return rule_compile_selector(r, supported);
 }
 
 #define CSS_VAR_MAX_DEPTH 32
 #define CSS_VAR_MAX_BYTES (64 * 1024)
-
-static const char css_var_absent_sentinel;
-#define VAR_OVERRIDE_ABSENT (&css_var_absent_sentinel)
 
 enum css_var_status {
     CSS_VAR_OK = 0,
@@ -611,28 +822,9 @@ struct css_buf {
     size_t cap;
 };
 
-struct css_var_change {
-    int var_idx;
-    char *old_value; /* NULL when this pass adds the variable. */
-};
-
-struct css_var_tracker {
-    struct css_var_change *changes;
-    int count;
-    int cap;
-};
-
 struct css_expand_ctx {
     size_t bytes;
     size_t calls;
-    const int *dirty_map; /* sheet->vars[i] -> tracker change index, or -1 */
-    const char *const *overrides;
-    const struct css_var *blame;
-    const struct css_var *first_dirty;
-    bool blame_dirty;
-    bool touched_dirty;
-    bool touched_untouched;
-    bool saw_dirty;
 };
 
 static enum css_var_status css_buf_append(struct css_buf *b, const char *s,
@@ -666,45 +858,6 @@ static enum css_var_status css_buf_append(struct css_buf *b, const char *s,
     b->len += n;
     b->data[b->len] = '\0';
     return CSS_VAR_OK;
-}
-
-static void var_tracker_clear(struct css_var_tracker *t)
-{
-    for (int i = 0; i < t->count; i++)
-        free(t->changes[i].old_value);
-    free(t->changes);
-    *t = (struct css_var_tracker){0};
-}
-
-static bool var_tracker_record(struct css_var_tracker *t, int var_idx,
-                               const char *old_value)
-{
-    for (int i = 0; i < t->count; i++) {
-        if (t->changes[i].var_idx == var_idx)
-            return true;
-    }
-    char *old_copy = NULL;
-    if (old_value) {
-        old_copy = strdup(old_value);
-        if (!old_copy)
-            return false;
-    }
-    if (t->count == t->cap) {
-        int cap = t->cap ? t->cap * 2 : 16;
-        struct css_var_change *next = realloc(t->changes,
-                                              (size_t)cap * sizeof(*next));
-        if (!next) {
-            free(old_copy);
-            return false;
-        }
-        t->changes = next;
-        t->cap = cap;
-    }
-    t->changes[t->count++] = (struct css_var_change){
-        .var_idx = var_idx,
-        .old_value = old_copy,
-    };
-    return true;
 }
 
 static void rule_clear_vars(struct css_rule *r)
@@ -750,15 +903,17 @@ static void rule_remove_var_prop(struct css_rule *r, int idx)
     r->var_prop_count--;
 }
 
+/* Drops the declarations before `limit_idx` that set the same field. Two
+   spellings of one field, such as `border` and `border-width`, share the
+   offset, so the offset names the field. */
 static int rule_drop_matching_var_props(struct css_rule *r, int limit_idx,
                                         size_t prop_idx)
 {
     uint16_t off = props[prop_idx].offset;
-    uint8_t kind = props[prop_idx].kind;
     int dropped = 0;
     for (int i = limit_idx - 1; i >= 0; i--) {
         size_t cur = r->var_props[i].prop_idx;
-        if (props[cur].offset == off && props[cur].kind == kind) {
+        if (props[cur].offset == off) {
             rule_remove_var_prop(r, i);
             dropped++;
         }
@@ -766,8 +921,11 @@ static int rule_drop_matching_var_props(struct css_rule *r, int limit_idx,
     return limit_idx - dropped;
 }
 
+/* Keeps the raw text of a declaration that holds var(), so the sheet can
+   expand it again after the variables change. When `replace` is false, an
+   earlier declaration of the same property stays until this one resolves. */
 static bool rule_set_var_prop(struct css_rule *r, size_t prop_idx, const char *val,
-                              int line, int col, bool pending)
+                              int line, int col, bool replace)
 {
     char *copy = strdup(val);
     if (!copy)
@@ -783,15 +941,13 @@ static bool rule_set_var_prop(struct css_rule *r, size_t prop_idx, const char *v
         r->var_props = next;
         r->var_prop_cap = cap;
     }
-    /* Preserve earlier live bindings while a later var() awaits :root definitions. */
-    if (!pending)
+    if (replace)
         rule_drop_matching_var_props(r, r->var_prop_count, prop_idx);
     r->var_props[r->var_prop_count++] = (struct css_var_prop){
         .prop_idx = (uint16_t)prop_idx,
         .value = copy,
         .line = line,
         .column = col,
-        .pending = pending,
     };
     return true;
 }
@@ -819,18 +975,14 @@ static const struct css_var *sheet_find_var(const struct css_sheet *sheet,
     return NULL;
 }
 
-static bool sheet_set_var(struct css_sheet *sheet, struct css_var_tracker *tracker,
-                          const char *name, const char *val, int line, int col)
+static bool sheet_set_var(struct css_sheet *sheet, const char *name,
+                          const char *val, int line, int col)
 {
     char *vcopy = strdup(val);
     if (!vcopy)
         return false;
     for (int i = 0; i < sheet->var_count; i++) {
         if (strcmp(sheet->vars[i].name, name) == 0) {
-            if (tracker && !var_tracker_record(tracker, i, sheet->vars[i].value)) {
-                free(vcopy);
-                return false;
-            }
             free(sheet->vars[i].value);
             sheet->vars[i].value = vcopy;
             sheet->vars[i].line = line;
@@ -853,12 +1005,6 @@ static bool sheet_set_var(struct css_sheet *sheet, struct css_var_tracker *track
         }
         sheet->vars = vars;
         sheet->var_cap = cap;
-    }
-    int idx = sheet->var_count;
-    if (tracker && !var_tracker_record(tracker, idx, NULL)) {
-        free(ncopy);
-        free(vcopy);
-        return false;
     }
     sheet->vars[sheet->var_count++] = (struct css_var){
         .name = ncopy,
@@ -957,49 +1103,8 @@ static bool parse_var_call(const char *start, const char **out_end,
     return true;
 }
 
-static const struct css_var *lookup_var_value(const struct css_sheet *sheet,
-                                              const char *name, size_t nlen,
-                                              struct css_expand_ctx *ctx,
-                                              const char **out_val,
-                                              bool *out_dirty)
-{
-    const struct css_var *v = sheet_find_var(sheet, name, nlen);
-    if (!v) {
-        *out_val = NULL;
-        *out_dirty = false;
-        return NULL;
-    }
-    int c = ctx->dirty_map ? ctx->dirty_map[v - sheet->vars] : -1;
-    if (c >= 0 && ctx->overrides && ctx->overrides[c] == VAR_OVERRIDE_ABSENT) {
-        *out_val = NULL;
-        *out_dirty = false;
-        return NULL;
-    }
-    *out_dirty = (c >= 0);
-    if (*out_dirty) {
-        ctx->touched_dirty = true;
-        if (!ctx->first_dirty)
-            ctx->first_dirty = v;
-    } else if (ctx->dirty_map) {
-        ctx->touched_untouched = true;
-    }
-    *out_val = (c >= 0 && ctx->overrides && ctx->overrides[c])
-        ? ctx->overrides[c]
-        : v->value;
-    return v;
-}
-
-static void record_var_blame(struct css_expand_ctx *ctx, const struct css_var *v,
-                             bool v_dirty, bool prefer_dirty)
-{
-    if (!ctx->blame || (prefer_dirty && v_dirty && !ctx->blame_dirty)) {
-        ctx->blame = v;
-        ctx->blame_dirty = v_dirty;
-    }
-    if (v_dirty)
-        ctx->saw_dirty = true;
-}
-
+/* Expands one declaration value. `stack` holds the variable names that the
+   expansion already entered, so a name that appears twice is a cycle. */
 static enum css_var_status expand_var_text(const struct css_sheet *sheet,
                                            const char *text,
                                            const char *stack[], int stack_len,
@@ -1021,42 +1126,28 @@ static enum css_var_status expand_var_text(const struct css_sheet *sheet,
         bool has_fb;
         if (!parse_var_call(call, &call_end, &name, &nlen, &fb, &flen, &has_fb))
             return CSS_VAR_SYNTAX;
-        const char *val = NULL;
-        bool v_dirty = false;
-        const struct css_var *v = lookup_var_value(sheet, name, nlen, ctx,
-                                                   &val, &v_dirty);
+        const struct css_var *v = sheet_find_var(sheet, name, nlen);
         if (v) {
-            for (int k = 0; k < stack_len; k++) {
-                if (strcmp(stack[k], v->name) == 0) {
-                    record_var_blame(ctx, v, v_dirty, true);
+            for (int k = 0; k < stack_len; k++)
+                if (strcmp(stack[k], v->name) == 0)
                     return CSS_VAR_CYCLE;
-                }
-            }
             stack[stack_len] = v->name;
             struct css_buf sub = {0};
-            enum css_var_status st = expand_var_text(sheet, val, stack,
+            enum css_var_status st = expand_var_text(sheet, v->value, stack,
                                                      stack_len + 1, depth + 1,
                                                      &sub, ctx);
             if (st == CSS_VAR_OK) {
                 enum css_var_status cp = css_buf_append(
                     out, sub.data ? sub.data : "", sub.len, NULL);
                 free(sub.data);
-                if (cp != CSS_VAR_OK) {
-                    record_var_blame(ctx, v, v_dirty, false);
+                if (cp != CSS_VAR_OK)
                     return cp;
-                }
                 p = call_end;
                 continue;
             }
             free(sub.data);
-            if (st != CSS_VAR_MISSING || !has_fb) {
-                record_var_blame(ctx, v, v_dirty, st == CSS_VAR_CYCLE);
+            if (st != CSS_VAR_MISSING || !has_fb)
                 return st;
-            }
-            if (v_dirty)
-                ctx->saw_dirty = true;
-            ctx->blame = NULL;
-            ctx->blame_dirty = false;
         } else if (!has_fb) {
             return CSS_VAR_MISSING;
         }
@@ -1098,25 +1189,36 @@ static bool sheet_append_rule(struct css_sheet *sheet,
         return false;
     struct css_rule *r = &sheet->rules[sheet->rule_count];
     *r = *src;
+    r->selector = NULL;
+    r->parts = NULL;
+    r->part_cap = 0;
+    r->classes = NULL;
+    r->class_cap = 0;
     r->var_props = NULL;
     r->var_prop_count = 0;
     r->var_prop_cap = 0;
     if (out_supported) {
-        if (!parse_single_selector(r, sel, sel_len, out_supported))
+        bool supported = true;
+        *out_supported = true;
+        if (!parse_single_selector(r, sel, sel_len, &supported)) {
+            rule_clear_selector(r);
             return false;
-        if (!*out_supported) {
-            free(r->selector);
-            r->selector = NULL;
+        }
+        *out_supported = supported;
+        if (!supported) {
+            rule_clear_selector(r);
             return true;
         }
     } else {
-        r->selector = strdup(src->selector);
-        if (!r->selector)
+        bool supported = true;
+        if (!parse_single_selector(r, src->selector, strlen(src->selector),
+                                   &supported)) {
+            rule_clear_selector(r);
             return false;
+        }
     }
     if (!rule_copy_var_props(r, src)) {
-        free(r->selector);
-        r->selector = NULL;
+        rule_clear_selector(r);
         return false;
     }
     sheet->rule_count++;
@@ -1127,12 +1229,23 @@ static bool sheet_append_rule(struct css_sheet *sheet,
    class selector beats a tag selector. More classes beat fewer classes. */
 static uint32_t rule_tier(const struct css_rule *r)
 {
-    return r->is_id ? 2 : r->is_class ? 1 : 0;
+    if (r->part_count == 0)
+        return 0;
+    switch (r->parts[r->part_count - 1].kind) {
+    case CSS_KEY_ID:    return 2;
+    case CSS_KEY_CLASS: return 1;
+    default:            return 0;
+    }
 }
 
 static uint32_t rule_rank(const struct css_rule *r)
 {
-    return r->is_class ? (uint32_t)r->class_rank : 1;
+    if (r->part_count == 0)
+        return 1;
+    const struct css_selector_part *last = &r->parts[r->part_count - 1];
+    return last->kind == CSS_KEY_CLASS && last->class_count
+               ? (uint32_t)last->class_count
+               : 1;
 }
 
 static int cmp_u32(uint32_t a, uint32_t b)
@@ -1244,22 +1357,18 @@ const char *css_diagnostic_message(enum css_diagnostic_kind kind)
     return "CSS error";
 }
 
+/* Expands `val` and applies it to `rule`. Returns false when the expansion or
+   the value fails, and `out_st` says which. */
 static bool try_expand_and_apply(const struct css_sheet *sheet,
                                  struct css_rule *rule, size_t prop_idx,
-                                 const char *val, const int *dirty_map,
-                                 const char *const *overrides,
+                                 const char *val,
                                  enum css_var_status *out_st,
-                                 enum css_declaration_result *out_res,
-                                 struct css_expand_ctx *out_ctx)
+                                 enum css_declaration_result *out_res)
 {
     const char *stack[CSS_VAR_MAX_DEPTH];
     struct css_buf buf = {0};
-    struct css_expand_ctx ctx = {
-        .dirty_map = dirty_map,
-        .overrides = overrides,
-    };
+    struct css_expand_ctx ctx = {0};
     *out_st = expand_var_text(sheet, val, stack, 0, 0, &buf, &ctx);
-    *out_ctx = ctx;
     if (*out_st != CSS_VAR_OK) {
         free(buf.data);
         *out_res = CSS_DECLARATION_INVALID;
@@ -1278,198 +1387,38 @@ static bool try_expand_and_apply(const struct css_sheet *sheet,
     return true;
 }
 
-static bool probe_var_prop(const struct css_sheet *sheet,
-                           const struct css_rule *rule,
-                           const struct css_var_prop *vp,
-                           const int *dirty_map,
-                           const char *const *overrides,
-                           enum css_var_status *out_st)
-{
-    struct css_rule tmp = {
-        .style = rule->style,
-        .set_mask = rule->set_mask,
-    };
-    enum css_declaration_result res = CSS_DECLARATION_OK;
-    struct css_expand_ctx ctx = {0};
-    return try_expand_and_apply(sheet, &tmp, vp->prop_idx, vp->value,
-                                dirty_map, overrides, out_st, &res, &ctx);
-}
-
-static bool isolate_failing_var(const struct css_sheet *sheet,
-                                const struct css_rule *rule,
-                                const struct css_var_prop *vp,
-                                const struct css_var_tracker *tracker,
-                                const int *dirty_map,
-                                const struct css_expand_ctx *fail_ctx,
-                                const struct css_var **out_blame,
-                                bool *out_skip_report)
-{
-    *out_blame = NULL;
-    *out_skip_report = false;
-    if (!tracker || tracker->count <= 0 || !dirty_map)
-        return true;
-
-    const char **overrides = calloc((size_t)tracker->count, sizeof(*overrides));
-    if (!overrides)
-        return false;
-    for (int c = 0; c < tracker->count; c++) {
-        overrides[c] = tracker->changes[c].old_value
-            ? tracker->changes[c].old_value
-            : VAR_OVERRIDE_ABSENT;
-    }
-
-    enum css_var_status st = CSS_VAR_OK;
-    bool base_ok = probe_var_prop(sheet, rule, vp, dirty_map, overrides, &st);
-    if (st == CSS_VAR_OOM) {
-        free(overrides);
-        return false;
-    }
-    if (!base_ok) {
-        if (fail_ctx->touched_untouched)
-            *out_skip_report = true;
-        else
-            *out_blame = fail_ctx->first_dirty;
-        free(overrides);
-        return true;
-    }
-
-    for (int c = 0; c < tracker->count; c++) {
-        const char *saved = overrides[c];
-        overrides[c] = NULL;
-        bool ok = probe_var_prop(sheet, rule, vp, dirty_map, overrides, &st);
-        overrides[c] = saved;
-        if (st == CSS_VAR_OOM) {
-            free(overrides);
-            return false;
-        }
-        if (!ok) {
-            *out_blame = &sheet->vars[tracker->changes[c].var_idx];
-            free(overrides);
-            return true;
-        }
-    }
-
-    *out_blame = fail_ctx->first_dirty;
-    free(overrides);
-    return true;
-}
-
-static bool build_dirty_map(const struct css_sheet *sheet,
-                            const struct css_var_tracker *tracker,
-                            int **out_map)
-{
-    *out_map = NULL;
-    if (!tracker || tracker->count <= 0 || sheet->var_count <= 0)
-        return true;
-    int *map = malloc((size_t)sheet->var_count * sizeof(*map));
-    if (!map)
-        return false;
-    for (int i = 0; i < sheet->var_count; i++)
-        map[i] = -1;
-    for (int c = 0; c < tracker->count; c++)
-        map[tracker->changes[c].var_idx] = c;
-    *out_map = map;
-    return true;
-}
-
-static bool report_refresh_failure(const struct css_sheet *sheet,
-                                   const struct css_rule *rule,
-                                   const struct css_var_prop *vp,
-                                   const struct css_var_tracker *tracker,
-                                   const int *dirty_map,
-                                   enum css_var_status st,
-                                   const struct css_expand_ctx *ctx,
-                                   css_diagnostic_fn report, void *userdata)
-{
-    if (!report)
-        return true;
-    if (vp->pending) {
-        report_at(report, userdata, CSS_DECLARATION_INVALID,
-                  (size_t)vp->line, (size_t)vp->column,
-                  props[vp->prop_idx].name, vp->value);
-        return true;
-    }
-    const struct css_var *blame = NULL;
-    if (st != CSS_VAR_OK) {
-        if (!ctx->saw_dirty)
-            return true;
-        blame = ctx->blame;
-    } else {
-        if (!ctx->touched_dirty)
-            return true;
-        bool skip = false;
-        if (!isolate_failing_var(sheet, rule, vp, tracker, dirty_map, ctx,
-                                 &blame, &skip))
-            return false;
-        if (skip)
-            return true;
-    }
-    if (blame) {
-        report_at(report, userdata, CSS_DECLARATION_INVALID,
-                  (size_t)blame->line, (size_t)blame->column,
-                  blame->name, blame->value);
-    } else {
-        report_at(report, userdata, CSS_DECLARATION_INVALID,
-                  (size_t)vp->line, (size_t)vp->column,
-                  props[vp->prop_idx].name, vp->value);
-    }
-    return true;
-}
-
-static bool sheet_refresh_vars(struct css_sheet *sheet,
-                               const struct css_var_tracker *tracker,
-                               int refresh_limit, int force_from,
+/* Resolves every declaration that holds var() against the current variables.
+   The declarations are independent of each other, in the order they appear in
+   the rule. A failure reports the declaration line and the text that failed,
+   and only once for as long as the failure stays. */
+static bool sheet_resolve_vars(struct css_sheet *sheet,
                                css_diagnostic_fn report, void *userdata)
 {
-    int *dirty_map = NULL;
-    if (!build_dirty_map(sheet, tracker, &dirty_map))
-        return false;
-    bool vars_updated = dirty_map != NULL;
-
     for (int i = 0; i < sheet->rule_count; i++) {
         struct css_rule *r = &sheet->rules[i];
-        for (int j = 0; j < r->var_prop_count;) {
+        for (int j = 0; j < r->var_prop_count; j++) {
             struct css_var_prop *vp = &r->var_props[j];
-            bool force_eval = vp->pending || i >= force_from;
-            if (!force_eval && (!vars_updated || i >= refresh_limit)) {
-                j++;
-                continue;
-            }
-            const int *prop_dirty = force_eval ? NULL : dirty_map;
             enum css_var_status st = CSS_VAR_OK;
             enum css_declaration_result res = CSS_DECLARATION_OK;
-            struct css_expand_ctx ctx = {0};
-            if (try_expand_and_apply(sheet, r, vp->prop_idx, vp->value,
-                                     prop_dirty, NULL, &st, &res, &ctx)) {
-                if (vp->pending) {
-                    vp->pending = false;
-                    j = rule_drop_matching_var_props(r, j, vp->prop_idx);
-                }
-                j++;
+            if (try_expand_and_apply(sheet, r, vp->prop_idx, vp->value, &st,
+                                     &res)) {
+                vp->reported = false;
                 continue;
             }
-            if (st == CSS_VAR_OOM) {
-                free(dirty_map);
+            if (st == CSS_VAR_OOM)
                 return false;
-            }
-            if (!report_refresh_failure(sheet, r, vp, tracker, dirty_map, st,
-                                        &ctx, report, userdata)) {
-                free(dirty_map);
-                return false;
-            }
-            if (vp->pending) {
-                rule_remove_var_prop(r, j);
+            if (vp->reported)
                 continue;
-            }
-            j++;
+            vp->reported = true;
+            report_at(report, userdata, CSS_DECLARATION_INVALID,
+                      (size_t)vp->line, (size_t)vp->column,
+                      props[vp->prop_idx].name, vp->value);
         }
     }
-    free(dirty_map);
     return true;
 }
 
 static bool handle_root_decl(struct css_sheet *sheet,
-                             struct css_var_tracker *tracker,
                              const char *source, const char *k_start,
                              const char *key, const char *val,
                              css_diagnostic_fn report, void *userdata)
@@ -1486,14 +1435,13 @@ static bool handle_root_decl(struct css_sheet *sheet,
     }
     size_t line, col;
     source_line_col(source, k_start, &line, &col);
-    return sheet_set_var(sheet, tracker, key, val, (int)line, (int)col);
+    return sheet_set_var(sheet, key, val, (int)line, (int)col);
 }
 
 static bool handle_rule_decl(const struct css_sheet *sheet, struct css_rule *proto,
                              const char *source, const char *k_start,
                              const char *key, const char *val,
-                             bool *any_pending, css_diagnostic_fn report,
-                             void *userdata)
+                             css_diagnostic_fn report, void *userdata)
 {
     int idx = find_prop_idx(key);
     if (idx < 0) {
@@ -1503,7 +1451,10 @@ static bool handle_rule_decl(const struct css_sheet *sheet, struct css_rule *pro
     }
     if (!find_var_call(val, val)) {
         enum css_declaration_result result = apply_prop_at(proto, (size_t)idx, val);
-        if (result == CSS_DECLARATION_OK)
+        /* A declaration that sets the field replaces the earlier one that
+           holds var(). One that leaves the field alone keeps it. */
+        if (result == CSS_DECLARATION_OK &&
+            (proto->set_mask & (1ULL << (size_t)idx)))
             rule_drop_matching_var_props(proto, proto->var_prop_count, (size_t)idx);
         report_declaration(report, userdata, result, source, k_start, key, val);
         return true;
@@ -1512,29 +1463,19 @@ static bool handle_rule_decl(const struct css_sheet *sheet, struct css_rule *pro
     source_line_col(source, k_start, &line, &col);
     enum css_var_status st = CSS_VAR_OK;
     enum css_declaration_result res = CSS_DECLARATION_OK;
-    struct css_expand_ctx ctx = {0};
-    if (try_expand_and_apply(sheet, proto, (size_t)idx, val, NULL, NULL,
-                             &st, &res, &ctx)) {
-        return rule_set_var_prop(proto, (size_t)idx, val, (int)line, (int)col,
-                                 false);
-    }
+    bool resolved = try_expand_and_apply(sheet, proto, (size_t)idx, val, &st, &res);
     if (st == CSS_VAR_OOM)
         return false;
-    if (st == CSS_VAR_MISSING) {
-        *any_pending = true;
-        return rule_set_var_prop(proto, (size_t)idx, val, (int)line, (int)col,
-                                 true);
-    }
-    report_declaration(report, userdata, res, source, k_start, key, val);
-    return true;
+    /* A value that resolves now replaces an earlier declaration of the same
+       property. A value that waits for a later :root block keeps the earlier
+       one until the pass at the end of the parse resolves it. */
+    return rule_set_var_prop(proto, (size_t)idx, val, (int)line, (int)col,
+                             resolved);
 }
 
 static bool parse_rules(struct css_sheet *sheet, const char *source,
                         css_diagnostic_fn report, void *userdata)
 {
-    int refresh_limit = sheet->rule_count;
-    struct css_var_tracker tracker = {0};
-    bool any_pending = false;
     bool ok = true;
     struct css_rule proto = {0};
     const char *p = source;
@@ -1593,10 +1534,10 @@ static bool parse_rules(struct css_sheet *sheet, const char *source,
                 goto done;
             }
             bool decl_ok = is_root
-                ? handle_root_decl(sheet, &tracker, source, k_start, key, val,
-                                   report, userdata)
+                ? handle_root_decl(sheet, source, k_start, key, val, report,
+                                   userdata)
                 : handle_rule_decl(sheet, &proto, source, k_start, key, val,
-                                   &any_pending, report, userdata);
+                                   report, userdata);
             free(key);
             free(val);
             if (!decl_ok) {
@@ -1612,7 +1553,6 @@ static bool parse_rules(struct css_sheet *sheet, const char *source,
         }
 
         if (is_root) {
-            refresh_limit = sheet->rule_count;
             rule_clear_vars(&proto);
             continue;
         }
@@ -1658,14 +1598,8 @@ static bool parse_rules(struct css_sheet *sheet, const char *source,
         }
         rule_clear_vars(&proto);
     }
-    if (tracker.count > 0 || any_pending) {
-        if (!sheet_refresh_vars(sheet, &tracker, refresh_limit,
-                                sheet->rule_count, report, userdata))
-            ok = false;
-    }
 done:
     rule_clear_vars(&proto);
-    var_tracker_clear(&tracker);
     return ok;
 }
 
@@ -1674,7 +1608,11 @@ bool css_parse_with_diagnostics(struct css_sheet *sheet, const char *p,
 {
     if (!sheet || !p) return false;
     bool ok = parse_rules(sheet, p, report, userdata);
-    return sheet_sort_rules(sheet) && ok;
+    if (!sheet_sort_rules(sheet))
+        return false;
+    if (!sheet_resolve_vars(sheet, report, userdata))
+        ok = false;
+    return sheet_build_index(sheet) && ok;
 }
 
 static void css_report_stderr(const struct css_diagnostic *diagnostic, void *userdata)
@@ -1696,10 +1634,11 @@ void css_sheet_clear(struct css_sheet *sheet)
     if (!sheet)
         return;
     for (int i = 0; i < sheet->rule_count; i++) {
-        free(sheet->rules[i].selector);
+        rule_clear_selector(&sheet->rules[i]);
         rule_clear_vars(&sheet->rules[i]);
     }
     free(sheet->rules);
+    free(sheet->index);
     for (int i = 0; i < sheet->var_count; i++) {
         free(sheet->vars[i].name);
         free(sheet->vars[i].value);
@@ -1708,12 +1647,11 @@ void css_sheet_clear(struct css_sheet *sheet)
     *sheet = (struct css_sheet){0};
 }
 
-static bool append_vars(struct css_sheet *dst, const struct css_sheet *src,
-                        struct css_var_tracker *tracker)
+static bool append_vars(struct css_sheet *dst, const struct css_sheet *src)
 {
     for (int i = 0; i < src->var_count; i++) {
         const struct css_var *v = &src->vars[i];
-        if (!sheet_set_var(dst, tracker, v->name, v->value, v->line, v->column))
+        if (!sheet_set_var(dst, v->name, v->value, v->line, v->column))
             return false;
     }
     return true;
@@ -1734,156 +1672,22 @@ bool css_sheet_append(struct css_sheet *dst, const struct css_sheet *src)
 {
     if (!dst || !src || dst == src)
         return false;
-    int old_rule_count = dst->rule_count;
-    int old_var_count = dst->var_count;
-    struct css_var_tracker tracker = {0};
-    bool ok = append_vars(dst, src, &tracker) && append_rules(dst, src);
+    bool ok = append_vars(dst, src) && append_rules(dst, src);
     dst->has_defaults = dst->has_defaults || src->has_defaults;
-    int force_from = old_var_count > 0 ? old_rule_count : dst->rule_count;
-    if (ok && (tracker.count > 0 || force_from < dst->rule_count)) {
-        ok = sheet_refresh_vars(dst, &tracker, old_rule_count, force_from,
-                                NULL, NULL);
-    }
-    var_tracker_clear(&tracker);
-    return sheet_sort_rules(dst) && ok;
+    if (!sheet_sort_rules(dst))
+        return false;
+    /* A variable of the appended sheet can change a rule of the sheet it
+       lands on, so every declaration resolves again. */
+    if (!sheet_resolve_vars(dst, NULL, NULL))
+        ok = false;
+    return sheet_build_index(dst) && ok;
 }
 
 void css_init_default(struct css_sheet *sheet)
 {
     if (!sheet) return;
     css_sheet_clear(sheet);
-    bool ok = css_parse(sheet,
-        ":root {"
-        " --surface: #1e1e2e;"
-        " --border: #45475a;"
-        " --fg: #cdd6f4;"
-        " --muted: #7f849c;"
-        " --disabled-fg: #585b70;"
-        " --dim-fg: var(--muted);"
-        " --accent: #89b4fa;"
-        " --accent-hover: #b4befe;"
-        " --accent-fg: #11111b;"
-        " --danger: #f38ba8;"
-        " --danger-fg: var(--accent-fg);"
-        " --drop-bg: #89b4fa33;"
-        " --section-fg: var(--accent);"
-        " --control-bg: #313244;"
-        " --control-hover-bg: #45475a;"
-        " --control-hover-fg: var(--fg);"
-        " --control-disabled-bg: var(--control-bg);"
-        " --control-disabled-fg: var(--disabled-fg);"
-        " --button-focus-fg: #ffffff;"
-        " --menu-hover-bg: #313244;"
-        " --menu-hover-fg: var(--fg);"
-        " --shortcut-hover-fg: var(--muted);"
-        " --settings-row-bg: #181825;"
-        " --settings-help-fg: #a6adc8;"
-        " --settings-active-fg: var(--accent);"
-        " --selection-bg: #45475a;"
-        " --selection-fg: #ffffff;"
-        " --caret-color: #f5e0dc;"
-        " --tab-bg: var(--surface);"
-        " --tab-fg: #a6adc8;"
-        " --tab-hover-bg: #313244;"
-        " --tab-hover-fg: var(--fg);"
-        " --tab-active-bg: #45475a;"
-        " --tab-active-fg: #ffffff;"
-        " --tab-close-fg: #a6adc8;"
-        " --tab-radius: 4px;"
-        " --tab-close-radius: 0.5em;"
-        " --scrollbar-track-hover: #bac2de26;"
-        " --scrollbar-thumb: #a6adc8;"
-        " --scrollbar-thumb-hover: #bac2de;"
-        " --scrollbar-thumb-active: var(--accent);"
-        " --scrollbar-radius: 0px;"
-        " --menu-radius: 6px;"
-        " --menu-shadow: 0 8px 24px #00000073;"
-        " }"
-        ".label-selection { background: var(--selection-bg); color: var(--selection-fg); }"
-        ".label-link { color: var(--accent); border-width: 1px; }"
-        ".label-link:hover, .label-link:focus { color: var(--accent-hover); }"
-        ".label-link:disabled { color: var(--disabled-fg); }"
-        ".label-focus { border-color: var(--accent); border-width: 1px; }"
-        ".tab-bar { height: 2.2em; flex-direction: row; align-items: center; padding: 0.25em 0.5em; gap: 0.4em; }"
-        ".tab { height: 1.6em; background: var(--tab-bg); color: var(--tab-fg); border-radius: var(--tab-radius); padding: 0 0.8em; flex-direction: row; align-items: center; gap: 0.5em; cursor: pointer; }"
-        ".tab:hover { background: var(--tab-hover-bg); color: var(--tab-hover-fg); }"
-        ".tab:focus { border-color: var(--accent); border-width: 2px; }"
-        ".tab.active { background: var(--tab-active-bg); color: var(--tab-active-fg); }"
-        ".tab.drop-preview { background: var(--accent); opacity: 0.45; box-shadow: 0 2px 5px #00000066; }"
-        ".tab-title { cursor: pointer; }"
-        ".tab-close { width: 1em; height: 1em; color: var(--tab-close-fg); border-radius: var(--tab-close-radius); cursor: pointer; }"
-        ".tab-close:hover { background: var(--danger); color: var(--danger-fg); }"
-        ".tab-new { color: var(--tab-fg); border-radius: var(--tab-radius); padding: 0 0.4em; cursor: pointer; }"
-        ".tab-new:hover { background: var(--tab-hover-bg); color: var(--tab-hover-fg); }"
-        ".scrollbar { width: 8px; padding: 0 1px; }"
-        ".scrollbar:hover, .scrollbar:active { width: 12px; background: var(--scrollbar-track-hover); }"
-        ".scrollbar-thumb { width: 3px; min-height: 24px; background: var(--scrollbar-thumb); border-radius: var(--scrollbar-radius); }"
-        ".scrollbar-thumb:hover { width: 8px; background: var(--scrollbar-thumb-hover); }"
-        ".scrollbar-thumb:active { width: 8px; background: var(--scrollbar-thumb-active); }"
-        ".context-menu { background: var(--surface); border-color: var(--border); border-radius: var(--menu-radius); box-shadow: var(--menu-shadow); }"
-        ".menu-item { color: var(--fg); cursor: pointer; }"
-        ".menu-item:hover { background: var(--menu-hover-bg); color: var(--menu-hover-fg); }"
-        ".menu-item.disabled { color: var(--disabled-fg); cursor: default; }"
-        ".menu-item:disabled { color: var(--disabled-fg); cursor: default; }"
-        ".menu-item:checked { color: var(--fg); }"
-        ".menu-item.submenu { color: var(--fg); }"
-        ".menu-label { cursor: pointer; }"
-        ".menu-label:disabled { cursor: default; }"
-        ".menu-shortcut { color: var(--muted); }"
-        ".menu-shortcut:hover, .menu-shortcut:focus { color: var(--shortcut-hover-fg); }"
-        ".menu-separator { background: var(--border); }"
-        ".menu-list { flex-direction: column; padding: 4px; }"
-        ".menu-list .menu-item { min-height: 1.25em; padding: 0.15em 0.8em; gap: 2ch; border-radius: 4px; cursor: pointer; }"
-        ".menu-list .menu-item:focus { background: var(--menu-hover-bg); color: var(--control-hover-fg); }"
-        ".menu-list .menu-item:disabled { color: var(--disabled-fg); cursor: default; }"
-        ".menu-list .menu-shortcut { color: var(--muted); }"
-        ".menu-list .menu-separator { height: 1px; margin: 4px 6px; background: var(--border); }"
-        ".text-input { background: var(--surface); border-color: var(--border); border-width: 1px; border-radius: 4px; padding: 2px 1ch; min-width: 20ch; cursor: text; }"
-        ".text-input:focus { border-color: var(--accent); }"
-        ".text-input-text { color: var(--fg); }"
-        ".text-input-text.empty { color: var(--dim-fg); }"
-        ".text-input-selection { background: var(--selection-bg); }"
-        ".text-input-caret { background: var(--caret-color); }"
-        ".button:focus { background: var(--control-hover-bg); color: var(--button-focus-fg); }"
-        ".command-palette { background: var(--surface); border-color: var(--border); border-width: 1px; border-radius: 6px; }"
-        ".command-palette .text-input { background: transparent; border-width: 0; border-radius: 0; min-width: 0; padding: 6px 0; }"
-        ".palette-empty { color: var(--dim-fg); }"
-        ".tab-preview { width: 400px; padding: 8px; gap: 6px; background: var(--surface); border-color: var(--border); border-width: 1px; border-radius: 8px; box-shadow: 0 6px 18px #00000073; }"
-        ".tab-preview.dragging { width: 280px; }"
-        ".tab-preview-title { color: var(--fg); }"
-        ".dropdown-button { padding: 0.4em 1ch; background: var(--control-bg); color: var(--fg); border-radius: 4px; cursor: pointer; }"
-        ".dropdown-button:hover, .dropdown-button:focus { background: var(--control-hover-bg); color: var(--control-hover-fg); }"
-        ".dropdown-popup { width: 46ch; height: 17em; padding: 0.6em 1ch; gap: 0.5em; align-items: stretch; background: var(--surface); color: var(--fg); border-radius: 6px; }"
-        ".dropdown-scroll { height: grow; }"
-        ".terminal-drop-target { background: var(--drop-bg); border-color: var(--accent); border-width: 2px; }"
-        ".settings-root { align-items: stretch; }"
-        ".settings-form { flex-direction: column; padding: 1.2em 2ch; gap: 0.8em; align-items: stretch; color: var(--fg); }"
-        ".settings-header { align-items: center; gap: 2ch; }"
-        ".settings-title { width: grow; }"
-        ".settings-search { padding: 0.45em 1ch; }"
-        ".settings-body { height: grow; gap: 2ch; align-items: stretch; }"
-        ".settings-sidebar { width: 17ch; gap: 0.4em; align-items: stretch; }"
-        ".settings-scroll { width: grow; }"
-        ".settings-fields { gap: 0.55em; align-items: stretch; }"
-        ".settings-section { padding: 0.4em 0; color: var(--section-fg); }"
-        ".settings-row { padding: 0.65em 1ch; gap: 2ch; align-items: center; background: var(--settings-row-bg); border-radius: 6px; }"
-        ".settings-description { width: grow; min-width: 0; gap: 0.25em; align-items: stretch; }"
-        ".settings-help { color: var(--settings-help-fg); }"
-        ".settings-editor { width: grow; min-width: 0; align-items: stretch; gap: 0.4em; }"
-        ".settings-editor .text-input { min-width: 0; padding: 0.4em 1ch; }"
-        ".settings-error { color: var(--danger); }"
-        ".settings-footer { align-items: center; gap: 1ch; }"
-        ".settings-status { width: grow; }"
-        ".settings-button { padding: 0.4em 1ch; background: var(--control-bg); border-radius: 4px; cursor: pointer; }"
-        ".settings-button:hover, .settings-button:focus { background: var(--control-hover-bg); color: var(--button-focus-fg); }"
-        ".settings-button:disabled { background: var(--control-disabled-bg); color: var(--control-disabled-fg); cursor: default; }"
-        ".settings-primary { background: var(--accent); color: var(--accent-fg); }"
-        ".settings-primary:hover, .settings-primary:focus { background: var(--accent-hover); color: var(--accent-fg); }"
-        ".settings-primary:disabled { background: var(--control-disabled-bg); color: var(--control-disabled-fg); }"
-        ".settings-nav.active { background: var(--tab-active-bg); color: var(--settings-active-fg); }"
-        ".settings-link { color: var(--section-fg); background: transparent; cursor: pointer; }"
-    );
-    sheet->has_defaults = ok;
+    sheet->has_defaults = css_parse(sheet, kUiCoreCss);
 }
 
 static struct css_sheet default_sheet;
@@ -1896,6 +1700,13 @@ const struct css_sheet *css_default_sheet(void)
         default_sheet_ready = true;
     }
     return &default_sheet;
+}
+
+bool css_parse_app(struct css_sheet *sheet)
+{
+    if (!sheet)
+        return false;
+    return css_parse(sheet, kUiAppCss);
 }
 
 void css_shutdown(void)
@@ -1925,62 +1736,59 @@ static bool range_equals(const char *a, size_t alen, const char *b)
     return b && strlen(b) == alen && !memcmp(a, b, alen);
 }
 
-static bool compound_selector_matches(const char *comp, size_t len,
-                                      const char *class_name, size_t class_len,
-                                      const char *id_name, const char *tag_name)
+static bool part_matches(const struct css_rule *r,
+                         const struct css_selector_part *part,
+                         const struct css_element *element)
 {
-    const char *pc = memchr(comp, ':', len);
-    if (pc) len = (size_t)(pc - comp);
-    if (!len) return false;
-    if (comp[0] == '.') {
-        if (!class_name) return false;
-        const char *end = comp + len;
-        for (const char *sub = comp + 1; sub < end;) {
-            const char *dot = memchr(sub, '.', (size_t)(end - sub));
-            const char *stop = dot ? dot : end;
-            if (!class_list_has(class_name, class_len, sub, (size_t)(stop - sub)))
+    const char *text = r->selector + part->offset;
+    switch (part->kind) {
+    case CSS_KEY_CLASS:
+        if (!element->class_name)
+            return false;
+        for (uint16_t i = 0; i < part->class_count; i++) {
+            const struct css_class_token *token = &r->classes[part->class_first + i];
+            if (!class_list_has(element->class_name,
+                                strlen(element->class_name),
+                                r->selector + token->offset, token->length))
                 return false;
-            sub = stop + 1;
         }
         return true;
+    case CSS_KEY_ID:
+        return range_equals(text + 1, part->length - 1, element->id_name);
+    case CSS_KEY_TAG:
+        return range_equals(text, part->length, element->tag_name);
+    case CSS_KEY_NONE:
+        break;
     }
-    if (comp[0] == '#') return range_equals(comp + 1, len - 1, id_name);
-    return range_equals(comp, len, tag_name);
+    return false;
 }
 
-static bool selector_matches(const struct css_rule *r, const char *class_name,
-                             const char *id_name, const char *tag_name,
-                             unsigned pseudo_flags, const char *ancestor_path)
+/* A selector applies when its last part matches `element` and each part to its
+   left matches an ancestor above the match of the part to its right. */
+static bool rule_matches(const struct css_rule *r,
+                         const struct css_element *element,
+                         unsigned pseudo_flags,
+                         const struct css_element *ancestors,
+                         size_t ancestor_count)
 {
-    if (r->pseudo != CSS_PSEUDO_NONE && !(pseudo_flags & r->pseudo)) return false;
-    const char *last = r->selector + r->last_off;
-    if (!compound_selector_matches(last, strlen(last), class_name,
-                                   class_name ? strlen(class_name) : 0,
-                                   id_name, tag_name))
+    if (r->pseudo != CSS_PSEUDO_NONE && !(pseudo_flags & r->pseudo))
         return false;
-    if (r->last_off == 0) return true;
-    if (!ancestor_path) return false;
-    const char *cursor = ancestor_path;
-    const char *p = r->selector;
-    while (p < last) {
-        while (p < last && isspace((unsigned char)*p)) p++;
-        if (p >= last) break;
-        const char *e = p;
-        while (e < last && !isspace((unsigned char)*e)) e++;
+    if (r->part_count == 0)
+        return false;
+    if (!part_matches(r, &r->parts[r->part_count - 1], element))
+        return false;
+    size_t cursor = ancestor_count;
+    for (int i = (int)r->part_count - 2; i >= 0; i--) {
         bool found = false;
-        for (const char *a = cursor; *a;) {
-            const char *nl = strchr(a, '\n');
-            size_t alen = nl ? (size_t)(nl - a) : strlen(a);
-            if (compound_selector_matches(p, (size_t)(e - p), a, alen, NULL, NULL)) {
-                cursor = nl ? nl + 1 : a + alen;
+        while (cursor > 0) {
+            cursor--;
+            if (part_matches(r, &r->parts[i], &ancestors[cursor])) {
                 found = true;
                 break;
             }
-            if (!nl) break;
-            a = nl + 1;
         }
-        if (!found) return false;
-        p = e;
+        if (!found)
+            return false;
     }
     return true;
 }
@@ -2017,22 +1825,227 @@ static void apply_rule_props(const struct css_rule *r, struct css_style *out)
     }
 }
 
-void css_style_resolve_ex(const struct css_sheet *sheet, const char *class_name,
-                          const char *id_name, const char *tag_name,
-                          unsigned pseudo_flags, const char *ancestor_path,
-                          struct css_style *out)
+static int index_cmp_key(enum css_key_kind kind, const char *key, size_t len,
+                         const struct css_index_entry *entry)
+{
+    if (kind != entry->kind)
+        return kind < entry->kind ? -1 : 1;
+    size_t n = entry->key_len < len ? entry->key_len : len;
+    int c = memcmp(key, entry->key, n);
+    if (c)
+        return c < 0 ? -1 : 1;
+    if (len == entry->key_len)
+        return 0;
+    return len < entry->key_len ? -1 : 1;
+}
+
+static int cmp_index_entry(const void *pa, const void *pb)
+{
+    const struct css_index_entry *a = pa, *b = pb;
+    if (a->kind != b->kind)
+        return a->kind < b->kind ? -1 : 1;
+    size_t n = a->key_len < b->key_len ? a->key_len : b->key_len;
+    int c = memcmp(a->key, b->key, n);
+    if (c)
+        return c;
+    if (a->key_len != b->key_len)
+        return a->key_len < b->key_len ? -1 : 1;
+    return (a->rule > b->rule) - (a->rule < b->rule);
+}
+
+/* Indexes every rule under the key of its last compound. A lookup then reads
+   only the rules that the key of one element can select. */
+static bool sheet_build_index(struct css_sheet *sheet)
+{
+    free(sheet->index);
+    sheet->index = NULL;
+    sheet->index_count = 0;
+    sheet->index_ready = false;
+    int count = 0;
+    for (int i = 0; i < sheet->rule_count; i++) {
+        const struct css_rule *r = &sheet->rules[i];
+        if (r->part_count == 0)
+            continue;
+        if (r->parts[r->part_count - 1].kind != CSS_KEY_NONE)
+            count++;
+    }
+    if (count == 0) {
+        sheet->index_ready = true;
+        return true;
+    }
+    struct css_index_entry *index = malloc((size_t)count * sizeof(*index));
+    if (!index)
+        return false;
+    int at = 0;
+    for (int i = 0; i < sheet->rule_count; i++) {
+        const struct css_rule *r = &sheet->rules[i];
+        if (r->part_count == 0)
+            continue;
+        const struct css_selector_part *last = &r->parts[r->part_count - 1];
+        if (last->kind == CSS_KEY_NONE)
+            continue;
+        const char *text = r->selector + last->offset;
+        struct css_index_entry *entry = &index[at++];
+        entry->kind = last->kind;
+        entry->rule = (uint32_t)i;
+        if (last->kind == CSS_KEY_CLASS) {
+            if (last->class_count == 0) {
+                /* A lone point matches any class list, so its key is empty. */
+                entry->key = "";
+                entry->key_len = 0;
+            } else {
+                const struct css_class_token *token = &r->classes[last->class_first];
+                entry->key = r->selector + token->offset;
+                entry->key_len = token->length;
+            }
+        } else if (last->kind == CSS_KEY_ID) {
+            entry->key = text + 1;
+            entry->key_len = (uint16_t)(last->length - 1);
+        } else {
+            entry->key = text;
+            entry->key_len = last->length;
+        }
+    }
+    qsort(index, (size_t)count, sizeof(*index), cmp_index_entry);
+    sheet->index = index;
+    sheet->index_count = count;
+    sheet->index_ready = true;
+    return true;
+}
+
+/* Finds the first entry whose key is not less than the query key. */
+static int index_lower_bound(const struct css_sheet *sheet, enum css_key_kind kind,
+                             const char *key, size_t len)
+{
+    int lo = 0, hi = sheet->index_count;
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        if (index_cmp_key(kind, key, len, &sheet->index[mid]) > 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
+#define CANDIDATE_INLINE 128
+
+/* Adds the rules that the key selects to `candidates`, keeping them in apply
+   order. Returns false when a candidate does not fit. */
+static bool candidates_add_key(const struct css_sheet *sheet, enum css_key_kind kind,
+                               const char *key, size_t len, uint32_t *candidates,
+                               size_t *count, size_t cap)
+{
+    for (int i = index_lower_bound(sheet, kind, key, len);
+         i < sheet->index_count &&
+         index_cmp_key(kind, key, len, &sheet->index[i]) == 0; i++) {
+        uint32_t rule = sheet->index[i].rule;
+        if (*count == cap)
+            return false;
+        size_t at = *count;
+        while (at > 0 && candidates[at - 1] > rule) {
+            candidates[at] = candidates[at - 1];
+            at--;
+        }
+        candidates[at] = rule;
+        (*count)++;
+    }
+    return true;
+}
+
+static bool candidates_add_classes(const struct css_sheet *sheet, const char *list,
+                                   uint32_t *candidates, size_t *count, size_t cap)
+{
+    if (!list)
+        return true;
+    for (const char *p = list; *p;) {
+        while (*p && isspace((unsigned char)*p)) p++;
+        const char *start = p;
+        while (*p && !isspace((unsigned char)*p)) p++;
+        if (p == start)
+            break;
+        if (!candidates_add_key(sheet, CSS_KEY_CLASS, start, (size_t)(p - start),
+                                candidates, count, cap))
+            return false;
+    }
+    return true;
+}
+
+/* Collects the rules that can match `element` and applies them in apply order. */
+static void apply_candidates(const struct css_sheet *sheet,
+                             const struct css_element *element,
+                             unsigned pseudo_flags,
+                             const struct css_element *ancestors,
+                             size_t ancestor_count, const uint32_t *candidates,
+                             size_t count, struct css_style *out)
+{
+    uint32_t previous = UINT32_MAX;
+    for (size_t i = 0; i < count; i++) {
+        uint32_t rule = candidates[i];
+        if (rule == previous)
+            continue;
+        previous = rule;
+        const struct css_rule *r = &sheet->rules[rule];
+        if (rule_matches(r, element, pseudo_flags, ancestors, ancestor_count))
+            apply_rule_props(r, out);
+    }
+}
+
+/* Applies the rules that the rule index selects for `element`. Returns false
+   when the candidate list needs heap storage. */
+static bool apply_indexed(const struct css_sheet *sheet,
+                          const struct css_element *element, unsigned pseudo_flags,
+                          const struct css_element *ancestors,
+                          size_t ancestor_count, struct css_style *out)
+{
+    uint32_t stack_candidates[CANDIDATE_INLINE];
+    size_t count = 0;
+    bool fits = true;
+    if (element->class_name) {
+        fits = candidates_add_key(sheet, CSS_KEY_CLASS, "", 0, stack_candidates,
+                                  &count, CANDIDATE_INLINE);
+        if (fits)
+            fits = candidates_add_classes(sheet, element->class_name,
+                                          stack_candidates, &count,
+                                          CANDIDATE_INLINE);
+    }
+    if (fits && element->id_name)
+        fits = candidates_add_key(sheet, CSS_KEY_ID, element->id_name,
+                                  strlen(element->id_name), stack_candidates,
+                                  &count, CANDIDATE_INLINE);
+    if (fits && element->tag_name)
+        fits = candidates_add_key(sheet, CSS_KEY_TAG, element->tag_name,
+                                  strlen(element->tag_name), stack_candidates,
+                                  &count, CANDIDATE_INLINE);
+    if (!fits)
+        return false;
+    apply_candidates(sheet, element, pseudo_flags, ancestors, ancestor_count,
+                     stack_candidates, count, out);
+    return true;
+}
+
+void css_style_resolve_node(const struct css_sheet *sheet,
+                            const struct css_element *element,
+                            unsigned pseudo_flags,
+                            const struct css_element *ancestors,
+                            size_t ancestor_count,
+                            struct css_style *out)
 {
     if (!out) return;
     memset(out, 0, sizeof(*out));
     out->opacity = 1.0f;
-    if (!sheet) return;
+    if (!sheet || !element) return;
 
     /* The table is in apply order. A rule that matches replaces the props of
        the rules before it. */
+    if (sheet->index_ready && apply_indexed(sheet, element, pseudo_flags,
+                                            ancestors, ancestor_count, out))
+        return;
+    memset(out, 0, sizeof(*out));
+    out->opacity = 1.0f;
     for (int i = 0; i < sheet->rule_count; i++) {
         const struct css_rule *r = &sheet->rules[i];
-        if (selector_matches(r, class_name, id_name, tag_name, pseudo_flags,
-                             ancestor_path))
+        if (rule_matches(r, element, pseudo_flags, ancestors, ancestor_count))
             apply_rule_props(r, out);
     }
 }
@@ -2041,8 +2054,12 @@ void css_style_resolve(const struct css_sheet *sheet, const char *class_name,
                        const char *id_name, const char *tag_name, unsigned pseudo_flags,
                        struct css_style *out)
 {
-    css_style_resolve_ex(sheet, class_name, id_name, tag_name, pseudo_flags,
-                         NULL, out);
+    const struct css_element element = {
+        .class_name = class_name,
+        .id_name = id_name,
+        .tag_name = tag_name,
+    };
+    css_style_resolve_node(sheet, &element, pseudo_flags, NULL, 0, out);
 }
 
 static bool value_eq(struct css_value a, struct css_value b)

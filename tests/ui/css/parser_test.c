@@ -450,7 +450,7 @@ static void test_root_variables_and_var_expansion(void)
     assert(messages.count == 0);
     css_style_resolve(&sheet, "label-link", NULL, NULL, CSS_PSEUDO_NONE, &st);
     assert(st.has_text_color && st.text_color == 0xFF224466u);
-    css_style_resolve(&sheet, "tab", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    css_style_resolve(&sheet, "context-menu", NULL, NULL, CSS_PSEUDO_NONE, &st);
     assert(st.has_bg_color && st.bg_color == 0xFF102030u);
     css_sheet_clear(&sheet);
 }
@@ -500,13 +500,16 @@ static void test_var_diagnostics_and_guards(void)
         ":root { --c: bogus; }",
         record_css_message, &messages));
     assert(messages.count == 1 && messages.kind[0] == CSS_DIAGNOSTIC_INVALID_VALUE);
-    assert(!strcmp(messages.property[0], "--c"));
+    /* The diagnostic names the declaration line and the variable that failed. */
+    assert(!strcmp(messages.property[0], "color"));
+    assert(!strcmp(messages.value[0], "var(--c)"));
     css_style_resolve(&sheet, "ok", NULL, NULL, CSS_PSEUDO_NONE, &st);
     assert(st.has_text_color && st.text_color == 0xFF112233u);
     css_sheet_clear(&sheet);
 }
 
-/* Verify pending preservation, blame accuracy, dirty-only refresh, and caps. */
+/* Verify that a value waits for a later :root block, that a broken variable
+ * reports once, and that the caps hold. */
 static void test_var_edge_cases(void)
 {
     struct css_sheet sheet = {0};
@@ -536,7 +539,7 @@ static void test_var_edge_cases(void)
     assert(st.has_text_color && st.text_color == 0xFF778899u);
     css_sheet_clear(&sheet);
 
-    /* Multi-var errors blame the broken variable, and unrelated edits stay quiet. */
+    /* A broken variable reports the declaration once; a later edit stays quiet. */
     messages = (struct css_messages){0};
     assert(css_parse_with_diagnostics(&sheet,
         ":root { --a: 4px; --b: 8px; --c: #112233; }\n"
@@ -547,8 +550,8 @@ static void test_var_edge_cases(void)
 
     assert(css_parse_with_diagnostics(&sheet, ":root { --b: bogus; }",
         record_css_message, &messages));
-    assert(messages.count == 1 && !strcmp(messages.property[0], "--b"));
-    assert(!strcmp(messages.value[0], "bogus"));
+    assert(messages.count == 1 && !strcmp(messages.property[0], "padding"));
+    assert(!strcmp(messages.value[0], "var(--a) var(--b)"));
     css_style_resolve(&sheet, "pad", NULL, NULL, CSS_PSEUDO_NONE, &st);
     assert(st.padding.top.val == 4.0f && st.padding.right.val == 8.0f);
 
@@ -571,7 +574,7 @@ static void test_var_edge_cases(void)
 
     assert(css_parse_with_diagnostics(&sheet, ":root { --a: 14px; --b: nope; }",
         record_css_message, &messages));
-    assert(messages.count == 1 && !strcmp(messages.property[0], "--b"));
+    assert(messages.count == 1 && !strcmp(messages.property[0], "padding"));
     css_sheet_clear(&sheet);
 
     /* Fallback expansion pops v->name, while self-fallback cycles still fail. */
@@ -649,6 +652,138 @@ static void test_var_edge_cases(void)
     css_sheet_clear(&dst);
 }
 
+/* A cycle reports the declaration line and the variable that closes it. */
+static void test_cyclic_variable_diagnostic(void)
+{
+    struct css_sheet sheet = {0};
+    struct css_messages messages = {0};
+    assert(css_parse_with_diagnostics(&sheet,
+        ":root { --a: var(--b); }\n"
+        ":root { --b: var(--a); }\n"
+        ".x {\n  color: var(--a);\n}\n",
+        record_css_message, &messages));
+    assert(messages.count == 1 && messages.kind[0] == CSS_DIAGNOSTIC_INVALID_VALUE);
+    assert(messages.line[0] == 4 && messages.column[0] == 3);
+    assert(!strcmp(messages.property[0], "color"));
+    assert(!strcmp(messages.value[0], "var(--a)"));
+    struct css_style st;
+    css_style_resolve(&sheet, "x", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(!st.has_text_color);
+    css_sheet_clear(&sheet);
+}
+
+/* A declaration before the :root block that defines its variable resolves. */
+static void test_variable_defined_after_its_use(void)
+{
+    struct css_sheet sheet = {0};
+    struct css_messages messages = {0};
+    assert(css_parse_with_diagnostics(&sheet,
+        ".a { width: var(--late); }\n"
+        ":root { --late: 12px; }\n",
+        record_css_message, &messages));
+    assert(messages.count == 0);
+    struct css_style st;
+    css_style_resolve(&sheet, "a", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.width.unit == CSS_UNIT_PX && st.width.val == 12.0f);
+    css_sheet_clear(&sheet);
+}
+
+/* `border` sets a width and a color, ignores the style keyword, and `none`
+ * clears the width. A value with no width leaves the width alone. */
+static void test_border_shorthand(void)
+{
+    struct css_sheet sheet = {0};
+    assert(css_parse(&sheet,
+        ".a { border: 1px solid #ff0000; }"
+        ".b { border: 2px dashed blue; }"
+        ".c { border: 3px dotted; }"
+        ".d { border: none; }"
+        ".e { border-width: 4px; border: 5px solid #00ff00; }"
+        ".f { border-width: 6px; border: solid #112233; }"
+        ":root { --bw: 7px; }"
+        ".g { border-width: var(--bw); border: solid #445566; }"
+        ".h { border-width: 8px; }"
+        ".i { border: solid #778899; }"));
+
+    struct css_style a;
+    css_style_resolve(&sheet, "a", NULL, NULL, CSS_PSEUDO_NONE, &a);
+    assert(a.border_width.unit == CSS_UNIT_PX && a.border_width.val == 1.0f);
+    assert(a.has_border_color && a.border_color == 0xFFFF0000u);
+
+    struct css_style b;
+    css_style_resolve(&sheet, "b", NULL, NULL, CSS_PSEUDO_NONE, &b);
+    assert(b.border_width.val == 2.0f);
+    assert(b.has_border_color && b.border_color == 0xFF0000FFu);
+
+    struct css_style c;
+    css_style_resolve(&sheet, "c", NULL, NULL, CSS_PSEUDO_NONE, &c);
+    assert(c.border_width.val == 3.0f);
+
+    struct css_style d;
+    css_style_resolve(&sheet, "d", NULL, NULL, CSS_PSEUDO_NONE, &d);
+    assert(d.border_width.unit == CSS_UNIT_PX && d.border_width.val == 0.0f);
+    assert(!d.has_border_color);
+
+    struct css_style e;
+    css_style_resolve(&sheet, "e", NULL, NULL, CSS_PSEUDO_NONE, &e);
+    assert(e.border_width.val == 5.0f);
+    assert(e.has_border_color && e.border_color == 0xFF00FF00u);
+
+    /* A color-only shorthand keeps an earlier width, in the same rule, in a
+       rule below it, and in a declaration that holds var(). */
+    struct css_style f;
+    css_style_resolve(&sheet, "f", NULL, NULL, CSS_PSEUDO_NONE, &f);
+    assert(f.border_width.unit == CSS_UNIT_PX && f.border_width.val == 6.0f);
+    assert(f.has_border_color && f.border_color == 0xFF112233u);
+
+    struct css_style g;
+    css_style_resolve(&sheet, "g", NULL, NULL, CSS_PSEUDO_NONE, &g);
+    assert(g.border_width.unit == CSS_UNIT_PX && g.border_width.val == 7.0f);
+    assert(g.has_border_color && g.border_color == 0xFF445566u);
+
+    struct css_style hi;
+    css_style_resolve(&sheet, "h i", NULL, NULL, CSS_PSEUDO_NONE, &hi);
+    assert(hi.border_width.unit == CSS_UNIT_PX && hi.border_width.val == 8.0f);
+    assert(hi.has_border_color && hi.border_color == 0xFF778899u);
+    css_sheet_clear(&sheet);
+}
+
+/* The UI core sheet holds no app rule. The app sheet adds the app rules to it.
+ * The variables of the core sheet reach the app rules. */
+static void test_app_rules_come_from_the_app_sheet(void)
+{
+    static const char *const app_classes[] = {
+        "tab", "tab-bar", "tab-close", "tab-new", "tab-preview",
+        "command-palette", "settings-form", "settings-row",
+        "terminal-drop-target",
+    };
+    const size_t count = sizeof(app_classes) / sizeof(app_classes[0]);
+
+    struct css_sheet sheet = {0};
+    css_init_default(&sheet);
+    for (size_t i = 0; i < count; i++) {
+        struct css_style st;
+        css_style_resolve(&sheet, app_classes[i], NULL, NULL, CSS_PSEUDO_NONE, &st);
+        assert(!st.has_bg_color && !st.has_text_color && !st.has_border_color);
+        assert(!st.has_cursor && st.width.unit == CSS_UNIT_AUTO);
+    }
+
+    assert(css_parse_app(&sheet));
+    for (size_t i = 0; i < count; i++) {
+        struct css_style st;
+        css_style_resolve(&sheet, app_classes[i], NULL, NULL, CSS_PSEUDO_NONE, &st);
+        assert(st.has_bg_color || st.has_text_color || st.has_border_color ||
+               st.width.unit != CSS_UNIT_AUTO || st.height.unit != CSS_UNIT_AUTO);
+    }
+
+    /* A variable of the core sheet reaches a rule of the app sheet. */
+    struct css_style tab;
+    css_style_resolve(&sheet, "tab", NULL, NULL, CSS_PSEUDO_NONE, &tab);
+    assert(tab.has_bg_color && tab.bg_color == 0xFF1E1E2Eu);
+    assert(tab.has_cursor && tab.cursor == UI_CURSOR_POINTER);
+    css_sheet_clear(&sheet);
+}
+
 int main(void)
 {
     test_declaration_diagnostics();
@@ -666,6 +801,10 @@ int main(void)
     test_root_variables_and_var_expansion();
     test_var_diagnostics_and_guards();
     test_var_edge_cases();
+    test_cyclic_variable_diagnostic();
+    test_variable_defined_after_its_use();
+    test_border_shorthand();
+    test_app_rules_come_from_the_app_sheet();
     printf("PASS: CSS parser tests\n");
     return 0;
 }

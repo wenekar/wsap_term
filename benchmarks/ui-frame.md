@@ -149,14 +149,14 @@ three runs.
 ### After the sorted rule table
 
 A sheet now sorts its rule table once, when parsing ends. The sort order is
-tier, then class rank, then source order. A style lookup walks the table and
-applies each match. The key groups, the candidate buffer, and the merge walk
-are gone. `tests/ui/css/lookup_test.c` covers the order.
+tier, then class rank, then source order. That pass walked the table and
+applied each match. Commit 2024af3 added an index over the sorted table
+again; the section below describes it.
 
-Per-lookup cost went up, because a lookup scans every rule. Both
-`ui_style_context` and `ui_widget_part()` cache resolved styles by widget
-and context generation, so unchanged frames do not scan again. When a rule
-matches, `apply_rule_props()` copies each property from the property table
+Per-lookup cost went up in that pass, because a lookup scanned every rule.
+Both `ui_style_context` and `ui_widget_part()` cache resolved styles by
+widget and context generation, so unchanged frames did not scan again. When a
+rule matches, `apply_rule_props()` copies each property from the property table
 by its offset, size, and presence flag. The four scenario medians did not
 move outside noise, and the `render-bench` sum over all cases improved by
 0.7%:
@@ -173,3 +173,38 @@ move outside noise, and the `render-bench` sum over all cases improved by
 Every `pixels=` hash was identical before and after. A differential dump of
 `struct css_style` over 60 generated sheets and the default sheet, 11 200
 queries in all, matched byte for byte.
+
+### After the selector index and the app sheet (wave 1)
+
+Commit 2024af3 parses each selector into compound parts when the sheet is
+built. It indexes each rule by the key of the last compound. A lookup finds
+the range of each key of the element and merges the ranges into apply order.
+The part slot cache stays.
+
+`css/resolve` in `ui-bench` fell from 711 ns/op to 65 ns/op. The probe
+classes are app classes, and the app rules add 43 rules to the 39 core
+rules, so the benchmark builds both sheets and reads the same 82 rules on
+both sides. Medians of five interleaved runs.
+
+Commit bd2b6f7 moved the app rules to `assets/ui/app.css`. The shared
+default sheet no longer holds them, and the app gives each window the sheet
+of its theme store. `ui-frame-bench` now builds that sheet, the core rules
+and the app rules, once per process, and installs it in `setup`. A surface
+without a sheet painted a tab bar with no CSS, which is not a scene of the
+app. `ui-bench` builds the same sheet in `bench_css`; before that change its
+context resolved the 39 core rules only.
+
+Release build, base `ddd85e0` and the branch interleaved, medians of eight
+runs of 2000 frames:
+
+| Scenario | Base (us) | Branch (us) | Delta |
+| --- | --- | --- | --- |
+| idle | 23.36 | 23.22 | -0.6% |
+| hover | 27.57 | 27.41 | -0.6% |
+| tab-open | 41.85 | 42.07 | +0.5% |
+| menu-20 | 109.19 | 109.56 | +0.3% |
+
+A phase timing of one idle frame separates the two steps. The scene build
+costs 1.53 us with the core sheet and 1.58 us with the app sheet, so the
+style and layout code did not get slower. The paint step moved, because the
+two sheets give the tab bar a different size.

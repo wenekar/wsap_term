@@ -24,6 +24,16 @@ enum css_justify : uint8_t {
     CSS_JUSTIFY_END,
 };
 
+/* The units of a CSS length:
+   - px: logical pixels. The value is scaled by the dpi scale.
+   - %: a share of the parent dimension.
+   - em: cell heights.
+   - rem: cell heights. This code base has no root font size, so em and rem
+     mean the same size.
+   - ch: cell widths.
+   - grow: the free space of the parent.
+   - auto, fit: the size of the content. fit is an alias of auto.
+   - none: the property is not set. */
 enum css_unit_type {
     CSS_UNIT_AUTO = 0,
     CSS_UNIT_PX,
@@ -145,35 +155,75 @@ struct css_var {
     int column;
 };
 
+/* A declaration that holds var(). The sheet keeps the raw text and resolves it
+   again when the variables change. */
 struct css_var_prop {
     char *value;
     int line;
     int column;
     uint16_t prop_idx;
-    bool pending;
+    bool reported; /* A diagnostic already named this declaration. */
+};
+
+enum css_key_kind : uint8_t {
+    CSS_KEY_CLASS = 0,
+    CSS_KEY_ID,
+    CSS_KEY_TAG,
+    CSS_KEY_NONE, /* The compound matches no element. */
+};
+
+/* One class name of a compound selector. The offsets index the selector
+   string of the rule. */
+struct css_class_token {
+    uint32_t offset;
+    uint16_t length;
+};
+
+/* One compound of a selector: the part that matches one element. */
+struct css_selector_part {
+    uint32_t offset;      /* Start of the compound in the selector string. */
+    uint32_t class_first; /* Index of its first entry in the class tokens. */
+    uint16_t length;
+    uint16_t class_count;
+    enum css_key_kind kind;
 };
 
 struct css_rule {
     char *selector;
-    size_t last_off;
     uint64_t set_mask;
-    int class_rank;
     enum css_pseudo pseudo;
-    bool is_class;
-    bool is_id;
+    struct css_selector_part *parts; /* Compiled when the sheet is built. */
+    uint16_t part_count;
+    uint16_t part_cap;
+    struct css_class_token *classes;
+    uint16_t class_count;
+    uint16_t class_cap;
     struct css_var_prop *var_props; /* Unexpanded declarations referencing var(). */
     int var_prop_count;
     int var_prop_cap;
     struct css_style style;
 };
 
+/* One entry of the rule index. Every rule whose last compound names a class,
+   an id, or a tag appears here under that key, so a lookup reads only the
+   rules that can match. */
+struct css_index_entry {
+    const char *key; /* Borrowed from the selector string of the rule. */
+    uint32_t rule;
+    uint16_t key_len;
+    enum css_key_kind kind;
+};
+
 struct css_sheet {
     struct css_rule *rules; /* Sorted in apply order. */
     int rule_count;
     int rule_cap;
+    struct css_index_entry *index; /* Sorted by key, then by apply order. */
+    int index_count;
     struct css_var *vars;   /* Custom properties declared in :root blocks. */
     int var_count;
     int var_cap;
+    bool index_ready;
     bool has_defaults; /* The sheet is built on the css_init_default rules. */
 };
 
@@ -210,13 +260,18 @@ bool css_sheet_append(struct css_sheet *dst, const struct css_sheet *src);
 /* Releases all rules from `sheet`. */
 void css_sheet_clear(struct css_sheet *sheet);
 
-/* Populates `sheet` with default built-in CSS rules. */
+/* Populates `sheet` with the UI core rules of assets/ui/core.css. */
 void css_init_default(struct css_sheet *sheet);
 
-/* Returns the shared default stylesheet instance. */
+/* Returns the shared sheet of the UI core rules, which assets/ui/core.css
+   holds. */
 const struct css_sheet *css_default_sheet(void);
 
-/* Clears the shared default stylesheet instance. */
+/* Adds the app rules of assets/ui/app.css to `sheet`, which must already hold
+   the UI core rules. A theme store calls this on each sheet that it builds. */
+bool css_parse_app(struct css_sheet *sheet);
+
+/* Clears the shared default sheet. */
 void css_shutdown(void);
 
 /* Resolves styling properties matching selector names and pseudo-class flags. */
@@ -227,14 +282,23 @@ void css_style_resolve(const struct css_sheet *sheet,
                        unsigned pseudo_flags,
                        struct css_style *out_style);
 
-/* Resolves styling properties matching selector names, flags, and ancestor path. */
-void css_style_resolve_ex(const struct css_sheet *sheet,
-                          const char *class_name,
-                          const char *id_name,
-                          const char *tag_name,
-                          unsigned pseudo_flags,
-                          const char *ancestor_path,
-                          struct css_style *out_style);
+/* The identity of one element: the class list, the id, and the tag that a
+   selector tests. A NULL field means that the element has no value for it. */
+struct css_element {
+    const char *class_name;
+    const char *id_name;
+    const char *tag_name;
+};
+
+/* Resolves styling properties matching `element` and the pseudo-class flags.
+   `ancestors` holds the ancestors from the root down to the parent, and
+   `ancestor_count` is their number. */
+void css_style_resolve_node(const struct css_sheet *sheet,
+                            const struct css_element *element,
+                            unsigned pseudo_flags,
+                            const struct css_element *ancestors,
+                            size_t ancestor_count,
+                            struct css_style *out_style);
 
 /* Returns true when two styles have identical layout properties. */
 bool css_style_layout_eq(const struct css_style *a, const struct css_style *b);
