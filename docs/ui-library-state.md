@@ -422,8 +422,11 @@ The layout shrinks the largest items first.
 Percent sizes calculate space after subtracting parent padding and gaps.
 Use `min-width`, `min-height`, `max-width`, and `max-height` to define limits.
 Use padding and gaps to space widgets.
-Box layout ignores child margins.
-Individual widget parts can still use margins, such as menu separators.
+Use `margin` to space one child from its siblings and from the parent bounds.
+The layout places the margin box of each child.
+The surface ignores the margin of the root widget.
+An anchored popup ignores its margin and follows its placement rules.
+Individual widget parts can also use margins, such as menu separators.
 The layout engine does not support weighted `flex-grow` or `justify-content: space-between`.
 
 The layout computes floating-point bounds.

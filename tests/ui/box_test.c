@@ -283,6 +283,60 @@ static void min_over_max_test(void)
     css_sheet_clear(&sheet);
 }
 
+static void margin_moves_child_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_surface row_surface = {0}, column_surface = {0},
+                      stack_surface = {0};
+    struct ui_box row = {0}, column = {0}, stack = {0};
+    struct probe margined[3] = {0}, next[2] = {0};
+    assert(css_parse(&sheet,
+        ".row { flex-direction: row; padding: 4px; }"
+        ".column { flex-direction: column; padding: 4px; }"
+        ".stack { padding: 4px; }"
+        ".margined { width: 20px; height: 10px; margin: 6px 2px 4px 3px; }"
+        ".next { width: 10px; height: 10px; }"));
+
+    ui_box_init(&row);
+    ui_widget_set_style_identity(&row.widget, "row", NULL, NULL);
+    probe_init(&margined[0], "margined", (struct vector2i){ .x = 20, .y = 10 });
+    probe_init(&next[0], "next", (struct vector2i){ .x = 10, .y = 10 });
+    assert(ui_widget_add_children(&row.widget, (struct ui_widget *[]){
+        &margined[0].widget, &next[0].widget }, 2));
+    show(&row_surface, &row.widget, &sheet, (struct vector2i){ .x = 100, .y = 40 });
+    assert(margined[0].widget.bounds.x == 7 && margined[0].widget.bounds.y == 10);
+    assert(next[0].widget.bounds.x == 29);
+
+    ui_box_init(&column);
+    ui_box_set_direction(&column, UI_BOX_COLUMN);
+    ui_widget_set_style_identity(&column.widget, "column", NULL, NULL);
+    probe_init(&margined[1], "margined", (struct vector2i){ .x = 20, .y = 10 });
+    probe_init(&next[1], "next", (struct vector2i){ .x = 10, .y = 10 });
+    assert(ui_widget_add_children(&column.widget, (struct ui_widget *[]){
+        &margined[1].widget, &next[1].widget }, 2));
+    show(&column_surface, &column.widget, &sheet,
+         (struct vector2i){ .x = 100, .y = 40 });
+    assert(margined[1].widget.bounds.x == 7 && margined[1].widget.bounds.y == 10);
+    assert(next[1].widget.bounds.y == 24);
+
+    ui_box_init(&stack);
+    ui_box_set_direction(&stack, UI_BOX_STACK);
+    ui_widget_set_style_identity(&stack.widget, "stack", NULL, NULL);
+    probe_init(&margined[2], "margined", (struct vector2i){ .x = 20, .y = 10 });
+    assert(ui_widget_add_child(&stack.widget, &margined[2].widget));
+    show(&stack_surface, &stack.widget, &sheet,
+         (struct vector2i){ .x = 100, .y = 40 });
+    assert(margined[2].widget.bounds.x == 7 && margined[2].widget.bounds.y == 10);
+
+    ui_surface_destroy(&row_surface);
+    ui_surface_destroy(&column_surface);
+    ui_surface_destroy(&stack_surface);
+    ui_widget_destroy(&row.widget);
+    ui_widget_destroy(&column.widget);
+    ui_widget_destroy(&stack.widget);
+    css_sheet_clear(&sheet);
+}
+
 int main(void)
 {
     wrapped_label_test();
@@ -292,5 +346,6 @@ int main(void)
     fixed_and_fit_overflow_test();
     box_border_and_paint_test();
     min_over_max_test();
+    margin_moves_child_test();
     return 0;
 }

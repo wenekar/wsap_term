@@ -1,7 +1,7 @@
 #include "ui/internal/layout.h"
 
 #include "ui/internal/tree.h"
-#include "ui/surface.h"
+#include "ui/ui_util.h"
 
 #include <float.h>
 #include <limits.h>
@@ -30,6 +30,7 @@ struct layout_node {
     struct ui_widget *widget;
     struct ui_box_params params;
     struct flex_axis axis[2];
+    struct insets2i margin;
     float natural[2];
     float inner[2];
     float pos[2];
@@ -213,6 +214,27 @@ static float axis_stretch(const struct flex_axis *axis, float content)
     return fmaxf(axis->min, fminf(size, content));
 }
 
+/* Returns the margins of a child in CSS order top, right, bottom, left. */
+static struct insets2i child_margin(const struct ui_widget *widget,
+                                    const float basis[2])
+{
+    struct vector2i parent = { .x = round_edge(basis[0]),
+                               .y = round_edge(basis[1]) };
+    return ui_css_resolve_insets(widget->style.margin, parent,
+                                 &widget->style_scale, true);
+}
+
+/* Returns the margins along one axis as a start and an end size. */
+static float margin_start(const struct insets2i *margin, int axis)
+{
+    return (float)(axis == 0 ? margin->left : margin->top);
+}
+
+static float margin_end(const struct insets2i *margin, int axis)
+{
+    return (float)(axis == 0 ? margin->right : margin->bottom);
+}
+
 static bool axis_resizable(const struct flex_axis *axis)
 {
     return axis->kind != FLEX_FIXED && axis->kind != FLEX_PERCENT;
@@ -367,7 +389,8 @@ static void place_flow_children(struct layout_pass *pass, struct layout_node *no
                 child->size[axis] =
                     axis_clamp(&child->axis[axis], child->natural[axis]);
         }
-        total += child->size[main];
+        total += child->size[main] + margin_start(&child->margin, main) +
+                 margin_end(&child->margin, main);
     }
 
     float remaining = inner[main] - total - gaps;
@@ -385,7 +408,8 @@ static void place_flow_children(struct layout_pass *pass, struct layout_node *no
     for (size_t i = 0; i < count; i++) {
         struct layout_node *child = &pass->nodes[node->first_child + i];
         struct flex_axis *axis = &child->axis[cross];
-        float content_cross = inner[cross];
+        float content_cross = inner[cross] - margin_start(&child->margin, cross) -
+                              margin_end(&child->margin, cross);
         float size = child->size[cross];
         if (axis_resizable(axis)) {
             if (axis->kind == FLEX_GROW)
@@ -393,7 +417,8 @@ static void place_flow_children(struct layout_pass *pass, struct layout_node *no
             size = fmaxf(axis->min, fminf(size, content_cross));
             child->size[cross] = size;
         }
-        total += child->size[main];
+        total += child->size[main] + margin_start(&child->margin, main) +
+                 margin_end(&child->margin, main);
     }
 
     float extra = inner[main] - total - gaps;
@@ -407,37 +432,42 @@ static void place_flow_children(struct layout_pass *pass, struct layout_node *no
     for (size_t i = 0; i < count; i++) {
         size_t index = node->first_child + i;
         struct layout_node *child = &pass->nodes[index];
-        float free = inner[cross] - child->size[cross];
+        float free = inner[cross] - margin_start(&child->margin, cross) -
+                     margin_end(&child->margin, cross) - child->size[cross];
         float pos[2] = { content[0], content[1] };
-        pos[main] = cursor;
+        pos[main] = cursor + margin_start(&child->margin, main);
+        pos[cross] += margin_start(&child->margin, cross);
         if (p.align == CSS_ALIGN_CENTER)
             pos[cross] += free / 2;
         else if (p.align == CSS_ALIGN_END)
             pos[cross] += free;
         place_node(pass, index, pos, child->size);
-        cursor += child->size[main] + (float)p.gap;
+        cursor += margin_start(&child->margin, main) + child->size[main] +
+                  margin_end(&child->margin, main) + (float)p.gap;
     }
 }
 
 /* Returns the size of a stack child on one axis. A plain stack stretches every
- * child. A box stack stretches a child only on stretch alignment. */
-static float stack_child_size(const struct flex_axis *axis, float content,
-                              float natural, bool plain, bool stretch)
+ * child. A box stack stretches a child only on stretch alignment. `basis` is
+ * the parent content size and `fill` is the space inside the margins. */
+static float stack_child_size(const struct flex_axis *axis, float basis,
+                              float fill, float natural, bool plain,
+                              bool stretch)
 {
     if (plain)
-        return content;
+        return fill;
     switch (axis->kind) {
     case FLEX_FIXED:
         return axis->value;
     case FLEX_PERCENT:
-        return axis->value * content;
+        return axis->value * basis;
     case FLEX_GROW:
-        return axis_stretch(axis, content);
+        return axis_stretch(axis, fill);
     case FLEX_FIT:
         break;
     }
     float size = axis_clamp(axis, natural);
-    return stretch ? axis_stretch(axis, content) : size;
+    return stretch ? axis_stretch(axis, fill) : size;
 }
 
 static void place_stack_children(struct layout_pass *pass, struct layout_node *node)
@@ -460,11 +490,15 @@ static void place_stack_children(struct layout_pass *pass, struct layout_node *n
         }
         float size[2], pos[2] = { content[0], content[1] };
         for (int axis = 0; axis < 2; axis++) {
+            float start = margin_start(&child->margin, axis);
+            float end = margin_end(&child->margin, axis);
+            float fill = fmaxf(0, inner[axis] - start - end);
             struct flex_axis rule = axis_sizing(child->widget, axis,
                                                 inner[axis], stretch, true);
-            size[axis] = stack_child_size(&rule, inner[axis],
+            size[axis] = stack_child_size(&rule, inner[axis], fill,
                                           child->natural[axis], plain, stretch);
-            float free = inner[axis] - size[axis];
+            float free = inner[axis] - start - end - size[axis];
+            pos[axis] += start;
             if (p.align == CSS_ALIGN_CENTER)
                 pos[axis] += free / 2;
             else if (p.align == CSS_ALIGN_END)
@@ -528,8 +562,11 @@ static struct vector2f flow_natural(struct layout_pass *pass,
         }
         if (child->container)
             child->widget->measured_size = raster_size(child->size);
-        main_sum += child->size[main];
-        cross_max = fmaxf(cross_max, child->size[cross]);
+        main_sum += child->size[main] + margin_start(&child->margin, main) +
+                    margin_end(&child->margin, main);
+        cross_max = fmaxf(cross_max, child->size[cross] +
+                                     margin_start(&child->margin, cross) +
+                                     margin_end(&child->margin, cross));
     }
     float gaps = child_gap(&p, node->child_count);
     struct vector2f natural;
@@ -554,8 +591,12 @@ static struct vector2f stack_natural(struct layout_pass *pass,
         struct layout_node *child = &pass->nodes[node->first_child + i];
         if (child->out_of_flow)
             continue;
-        extent.x = fmaxf(extent.x, child->natural[0]);
-        extent.y = fmaxf(extent.y, child->natural[1]);
+        extent.x = fmaxf(extent.x, child->natural[0] +
+                                    (float)(child->margin.left +
+                                            child->margin.right));
+        extent.y = fmaxf(extent.y, child->natural[1] +
+                                    (float)(child->margin.top +
+                                            child->margin.bottom));
     }
     return (struct vector2f){
         .x = extent.x + (float)(p.padding.left + p.padding.right),
@@ -611,11 +652,19 @@ static void collect_node(struct layout_pass *pass, size_t index,
          child = child->next_sibling) {
         if (child->impl.hidden)
             continue;
+        struct layout_node *entry = &pass->nodes[slot];
+        entry->margin = child_margin(child, node->inner);
+        float child_available[2] = {
+            fmaxf(0, node->inner[0] -
+                       (float)(entry->margin.left + entry->margin.right)),
+            fmaxf(0, node->inner[1] -
+                       (float)(entry->margin.top + entry->margin.bottom)),
+        };
         bool child_container = !stack && is_layout_container(child);
-        collect_node(pass, slot, child, node->inner, child_container);
+        collect_node(pass, slot, child, child_available, child_container);
         if (pass->failed)
             return;
-        struct layout_node *entry = &pass->nodes[slot];
+        entry = &pass->nodes[slot];
         entry->out_of_flow =
             stack && child->impl.placement.kind != UI_PLACE_FILL;
         slot++;
