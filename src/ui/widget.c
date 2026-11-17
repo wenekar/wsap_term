@@ -522,7 +522,10 @@ static void measure_axis_limits(const struct ui_widget *widget, int axis,
 
     int fixed = widget->impl.fixed_size.v[axis];
     struct css_value value = style->size[axis];
-    bool definite = fixed > 0 || value.unit == CSS_UNIT_PERCENT ||
+    /* A percent needs a definite basis. css_value_resolve returns the
+     * fallback for a basis of 1e9 or more, so the size is not definite. */
+    bool percent = value.unit == CSS_UNIT_PERCENT && basis < 1e9f;
+    bool definite = fixed > 0 || percent ||
                     value.unit == CSS_UNIT_PX || value.unit == CSS_UNIT_EM ||
                     value.unit == CSS_UNIT_REM || value.unit == CSS_UNIT_CH;
     int lo, hi;

@@ -370,6 +370,24 @@ static void wide_sibling_test(void)
     css_sheet_clear(&sheet);
 }
 
+static void indefinite_percent_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_surface surface = {0};
+    struct probe half = {0};
+    assert(css_parse(&sheet, ".half { width: 50%; height: 50%; }"));
+
+    probe_init(&half, "half", (struct vector2i){ .x = 40, .y = 10 });
+    show(&surface, &half.widget, &sheet, (struct vector2i){ .x = 100, .y = 100 });
+    struct vector2i natural = ui_widget_measure(&half.widget,
+        (struct ui_constraints){ .max = { .x = INT_MAX, .y = INT_MAX } });
+    assert(vector2i_eq(natural, (struct vector2i){ .x = 40, .y = 10 }));
+
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&half.widget);
+    css_sheet_clear(&sheet);
+}
+
 int main(void)
 {
     wrapped_label_test();
@@ -381,5 +399,6 @@ int main(void)
     min_over_max_test();
     margin_moves_child_test();
     wide_sibling_test();
+    indefinite_percent_test();
     return 0;
 }
