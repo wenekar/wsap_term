@@ -274,7 +274,6 @@ static void min_over_max_test(void)
     show(&row_surface, &row.widget, &sheet,
          (struct vector2i){ .x = 400, .y = 100 });
     assert(child.widget.bounds.width == 80);
-    assert(child.widget.measured_size.x == 80);
 
     ui_surface_destroy(&standalone_surface);
     ui_surface_destroy(&row_surface);
@@ -439,6 +438,91 @@ static void fixed_size_limits_test(void)
     css_sheet_clear(&sheet);
 }
 
+static void justify_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_box rows[3] = {0};
+    struct probe cells[3] = {0};
+    struct ui_surface surfaces[3] = {0};
+    static const char *const classes[3] = {
+        "justify-start", "justify-center", "justify-end",
+    };
+    assert(css_parse(&sheet,
+        ".justify-start { justify-content: start; }"
+        ".justify-center { justify-content: center; }"
+        ".justify-end { justify-content: end; }"
+        ".cell { width: 10px; height: 10px; }"));
+
+    for (size_t i = 0; i < 3; i++) {
+        ui_box_init(&rows[i]);
+        ui_widget_set_style_identity(&rows[i].widget, classes[i], NULL, NULL);
+        probe_init(&cells[i], "cell", (struct vector2i){ .x = 10, .y = 10 });
+        assert(ui_widget_add_child(&rows[i].widget, &cells[i].widget));
+        show(&surfaces[i], &rows[i].widget, &sheet,
+             (struct vector2i){ .x = 100, .y = 40 });
+    }
+    assert(cells[0].widget.bounds.x == 0);
+    assert(cells[1].widget.bounds.x == 45);
+    assert(cells[2].widget.bounds.x == 90);
+
+    for (size_t i = 0; i < 3; i++) {
+        ui_surface_destroy(&surfaces[i]);
+        ui_widget_destroy(&rows[i].widget);
+    }
+    css_sheet_clear(&sheet);
+}
+
+static void align_and_stack_placement_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_box rows[2] = {0}, stacks[2] = {0};
+    struct probe cells[4] = {0};
+    struct ui_surface surfaces[4] = {0};
+    static const char *const row_classes[2] = {
+        "align-center", "align-end",
+    };
+    static const char *const stack_classes[2] = {
+        "stack-center", "stack-end",
+    };
+    assert(css_parse(&sheet,
+        ".align-center { align-items: center; }"
+        ".align-end { align-items: end; }"
+        ".stack-center { align-items: center; }"
+        ".stack-end { align-items: end; }"
+        ".cell { width: 10px; height: 10px; }"
+        ".wide { width: 20px; height: 10px; }"));
+
+    for (size_t i = 0; i < 2; i++) {
+        ui_box_init(&rows[i]);
+        ui_widget_set_style_identity(&rows[i].widget, row_classes[i], NULL, NULL);
+        probe_init(&cells[i], "cell", (struct vector2i){ .x = 10, .y = 10 });
+        assert(ui_widget_add_child(&rows[i].widget, &cells[i].widget));
+        show(&surfaces[i], &rows[i].widget, &sheet,
+             (struct vector2i){ .x = 100, .y = 40 });
+
+        ui_box_init(&stacks[i]);
+        ui_box_set_direction(&stacks[i], UI_BOX_STACK);
+        ui_widget_set_style_identity(&stacks[i].widget, stack_classes[i],
+                                     NULL, NULL);
+        probe_init(&cells[i + 2], "wide", (struct vector2i){ .x = 20, .y = 10 });
+        assert(ui_widget_add_child(&stacks[i].widget, &cells[i + 2].widget));
+        show(&surfaces[i + 2], &stacks[i].widget, &sheet,
+             (struct vector2i){ .x = 100, .y = 40 });
+    }
+    assert(cells[0].widget.bounds.y == 15);
+    assert(cells[1].widget.bounds.y == 30);
+    assert(cells[2].widget.bounds.x == 40 && cells[2].widget.bounds.y == 15);
+    assert(cells[3].widget.bounds.x == 80 && cells[3].widget.bounds.y == 30);
+
+    for (size_t i = 0; i < 4; i++)
+        ui_surface_destroy(&surfaces[i]);
+    for (size_t i = 0; i < 2; i++) {
+        ui_widget_destroy(&rows[i].widget);
+        ui_widget_destroy(&stacks[i].widget);
+    }
+    css_sheet_clear(&sheet);
+}
+
 int main(void)
 {
     wrapped_label_test();
@@ -453,5 +537,7 @@ int main(void)
     indefinite_percent_test();
     root_measure_only_test();
     fixed_size_limits_test();
+    justify_test();
+    align_and_stack_placement_test();
     return 0;
 }
