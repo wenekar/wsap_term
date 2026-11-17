@@ -1,4 +1,5 @@
 #include "backend.h"
+#include "common/event_text.h"
 #include "platform/sync.h"
 
 #include <errno.h>
@@ -221,12 +222,6 @@ static bool append(struct yasl_private_display *d, struct event_node *node)
     return true;
 }
 
-static bool string_event(enum yasl_private_event_type type)
-{
-    return type == YASL_PRIVATE_EVENT_TEXT || type == YASL_PRIVATE_EVENT_PASTE ||
-        type == YASL_PRIVATE_EVENT_DROP || type == YASL_PRIVATE_EVENT_COMPOSITION || type == YASL_PRIVATE_EVENT_TEXT_EDIT;
-}
-
 bool yasl_private_events_push(struct yasl_private_display *d, struct yasl_surface *queue_owner,
                       const struct yasl_private_event *event)
 {
@@ -237,19 +232,10 @@ bool yasl_private_events_push(struct yasl_private_display *d, struct yasl_surfac
     node->event = *event;
     node->event.surface_id = event->surface ? event->surface->id : 0;
     node->queue_id = queue_owner ? queue_owner->id : node->event.surface_id;
-    if (string_event(event->type)) {
-        if (event->text.len == SIZE_MAX || (!event->text.data && event->text.len)) {
-            dispose(state, node);
-            goto failed;
-        }
-        node->text = malloc(event->text.len + 1);
+    if (yasl_private_event_has_text(event->type)) {
+        /* The node owns the copy. A failed copy disposes the node, so no event is queued. */
+        node->text = yasl_private_event_copy_text(&node->event);
         if (!node->text) { dispose(state, node); goto failed; }
-        if (event->text.len) memcpy(node->text, event->text.data, event->text.len);
-        node->text[event->text.len] = '\0';
-        if (event->type == YASL_PRIVATE_EVENT_PASTE) node->event.paste.data = node->text;
-        else if (event->type == YASL_PRIVATE_EVENT_TEXT_EDIT) node->event.text_edit.data = node->text;
-        else if (event->type == YASL_PRIVATE_EVENT_COMPOSITION) node->event.composition.data = node->text;
-        else node->event.text.data = node->text;
     }
     yasl_private_mutex_lock(&state->mutex);
     if ((node->event.surface_id && !yasl_private_events_find(d, node->event.surface_id)) ||

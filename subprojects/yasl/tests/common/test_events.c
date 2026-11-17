@@ -200,6 +200,38 @@ static void test_fifo_preserves_notifications(void)
     teardown(&d, &a, &b);
 }
 
+/* DROP and TEXT_EDIT carry text too. A queued copy must outlive the caller's
+ * buffer, on the display FIFO and on a standalone input queue. */
+static void test_drop_and_edit_text_owned(void)
+{
+    struct yasl_private_display d;
+    struct yasl_surface a, b;
+    setup(&d, &a, &b);
+    struct input_queue standalone = {0};
+    char drop[] = "drop", edit[] = "edit";
+    assert(yasl_private_events_push(&d, &a, &(struct yasl_private_event){
+        .type = YASL_PRIVATE_EVENT_DROP, .surface = &a, .text = {drop, 4}}));
+    assert(yasl_private_events_push(&d, &a, &(struct yasl_private_event){
+        .type = YASL_PRIVATE_EVENT_TEXT_EDIT, .surface = &a, .text_edit = {edit, 4}}));
+    assert(input_queue_push(&standalone, &(struct yasl_private_event){
+        .type = YASL_PRIVATE_EVENT_TEXT_EDIT, .text_edit = {edit, 4}}));
+    assert(input_queue_push(&standalone, &(struct yasl_private_event){
+        .type = YASL_PRIVATE_EVENT_DROP, .text = {drop, 4}}));
+    memset(drop, 'x', 4);
+    memset(edit, 'x', 4);
+    struct yasl_private_event ev;
+    assert(yasl_private_display_poll_event(&d, &ev) && ev.type == YASL_PRIVATE_EVENT_DROP);
+    assert(!strcmp(ev.text.data, "drop"));
+    assert(yasl_private_display_poll_event(&d, &ev) && ev.type == YASL_PRIVATE_EVENT_TEXT_EDIT);
+    assert(!strcmp(ev.text_edit.data, "edit"));
+    assert(input_queue_pop(&standalone, &ev) && ev.type == YASL_PRIVATE_EVENT_TEXT_EDIT);
+    assert(!strcmp(ev.text_edit.data, "edit"));
+    assert(input_queue_pop(&standalone, &ev) && ev.type == YASL_PRIVATE_EVENT_DROP);
+    assert(!strcmp(ev.text.data, "drop"));
+    input_queue_clear(&standalone);
+    teardown(&d, &a, &b);
+}
+
 /* A reused node must not run the release callback of its previous message. */
 static void test_reuse_clears_release(void)
 {
@@ -237,5 +269,6 @@ int main(void)
     test_damage();
     test_failures();
     test_fifo_preserves_notifications();
+    test_drop_and_edit_text_owned();
     return 0;
 }
