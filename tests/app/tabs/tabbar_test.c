@@ -620,7 +620,7 @@ static void restyled_bar_repaints_test(void)
 
     struct css_sheet sheet = {0};
     assert(css_parse(&sheet,
-        ".tab-bar { background: #204060; }"
+        ".tab-bar { height: 24px; background: #204060; }"
         ".tab { background: #304050; }"));
     ui_surface_set_sheet(&f.surface, &sheet);
     ui_surface_prepare(&f.surface);
@@ -651,8 +651,10 @@ static void bg_color_requests_frame_test(void)
 static void sheet_swap_relayouts_bar_test(void)
 {
     struct css_sheet tall = {0}, high = {0};
-    assert(css_parse(&tall, ".tab-bar { height: 24px; } .tab { height: 100px; }"));
-    assert(css_parse(&high, ".tab-bar { height: 40px; } .tab { height: 100px; }"));
+    assert(css_parse(&tall,
+        ".tab-bar { height: 24px; padding: 4px; } .tab { height: 100px; }"));
+    assert(css_parse(&high,
+        ".tab-bar { height: 40px; padding: 4px; } .tab { height: 100px; }"));
     struct fixture f;
     setup_with(&f, &tall, (struct vector2i){ .x = 400, .y = 300 },
                (struct vector2i){0});
@@ -1004,6 +1006,7 @@ static void drag_image_card_follows_the_sheet_test(void)
 {
     struct css_sheet sheet = {0};
     assert(css_parse(&sheet,
+        ".tab-bar { height: 24px; padding: 4px; }"
         ".tab-preview { background: #7f849c; border-radius: 3px; "
         "padding: 2px; gap: 3px; box-shadow: 0 1px 2px #000000ff; }"));
     struct fixture f;
@@ -1395,7 +1398,9 @@ static void separators_hide_next_to_hot_tabs(void)
 {
     const uint32_t sep = 0xFF123456u;
     struct css_sheet sheet = {0};
-    assert(css_parse(&sheet, ".tab-separator { color: #123456; }"));
+    assert(css_parse(&sheet,
+        ".tab-bar { height: 24px; padding: 4px; gap: 4px; }"
+        ".tab-separator { color: #123456; }"));
     struct fixture f;
     setup_with(&f, &sheet, (struct vector2i){ .x = 600, .y = 100 },
                (struct vector2i){0});
@@ -1870,6 +1875,7 @@ static void press_ripple_ticks_until_done_and_uses_css(void)
 {
     struct css_sheet sheet = {0};
     assert(css_parse(&sheet,
+        ".tab-bar { height: 24px; padding: 4px; gap: 4px; }"
         ".tab { ripple-color: #11223344; transition-duration: 200ms; }"));
     struct fixture f;
     setup_with(&f, &sheet, (struct vector2i){ .x = 400, .y = 100 },
@@ -1896,7 +1902,9 @@ static void press_ripple_ticks_until_done_and_uses_css(void)
 static void transparent_ripple_color_disables_ripple(void)
 {
     struct css_sheet sheet = {0};
-    assert(css_parse(&sheet, ".tab { ripple-color: #00000000; }"));
+    assert(css_parse(&sheet,
+        ".tab-bar { height: 24px; padding: 4px; gap: 4px; }"
+        ".tab { ripple-color: #00000000; }"));
     struct fixture f;
     setup_with(&f, &sheet, (struct vector2i){ .x = 400, .y = 100 },
                (struct vector2i){0});

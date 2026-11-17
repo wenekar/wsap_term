@@ -264,10 +264,9 @@ static void palette_paint(const struct ui_widget *widget,
 {
     const struct ui_palette *p = palette_of(widget);
     const struct css_style *s = &widget->style;
-    float opacity = css_style_effective_opacity(s);
+    /* The default sheet supplies the colors. A palette with no background
+     * color is transparent. */
     struct ui_paint_box_style box_style = ui_paint_box_style_of(s, scale_of(p));
-    if (!s->has_bg_color)
-        box_style.bg_color = ui_color_opacity(0xFF1E1E2Eu, opacity);
     struct rect2i fill;
     if (!ui_paint_box(paint, ui_paint_bounds(paint), &box_style, &fill) ||
         rect2i_is_empty(fill))
@@ -276,9 +275,7 @@ static void palette_paint(const struct ui_widget *widget,
     int sep_h = geom_min_i(separator_height(p), rect2i_end(fill).y - sep_y);
     if (sep_h <= 0)
         return;
-    uint32_t sep_color = s->has_border_color
-        ? box_style.border_color
-        : ui_color_opacity(0xFF45475Au, opacity);
+    uint32_t sep_color = s->has_border_color ? box_style.border_color : 0;
     ui_paint_rect(paint, (struct rect2i){
         .pos = { .x = fill.x, .y = sep_y },
         .size = { .x = fill.width, .y = sep_h },

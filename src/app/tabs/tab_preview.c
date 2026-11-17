@@ -542,8 +542,12 @@ static void preview_paint(const struct ui_widget *widget,
     struct ui_text_style text = ui_widget_text_style(&widget->style_scale);
     text.flags = UI_TEXT_BOLD;
     struct css_style title_style = ui_widget_part(widget, parts.title, 0);
+    /* The default sheet supplies the color. A title with no color falls back
+     * to the text color of the preview widget. */
+    uint32_t title_fallback = widget->style.has_text_color
+        ? widget->style.text_color : 0;
     uint32_t title_color = ui_color_opacity(
-        title_style.has_text_color ? title_style.text_color : 0xFFFFFFFFu,
+        title_style.has_text_color ? title_style.text_color : title_fallback,
         s.opacity * css_style_effective_opacity(&title_style));
     const char *title = p->state.title;
     if (title && *title && !rect2i_is_empty(r.title) && text.advance > 0) {

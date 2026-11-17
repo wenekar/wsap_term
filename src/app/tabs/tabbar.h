@@ -9,11 +9,10 @@
 #include "ui/widget.h"
 #include "util/geom.h"
 
-#define UI_TABBAR_HEIGHT_DP      28
-#define UI_TABBAR_PAD_DP         10
 #define UI_TABBAR_ANIM_DURATION_MS 150
 #define UI_TABBAR_RESIZE_ANIM_MS   200
 #define UI_TABBAR_SLIDE_ANIM_MS    250
+/* The width of the right edge fade. It has no CSS property. */
 #define UI_TABBAR_FADE_DP          32
 
 #define UI_TABBAR_NEW_TAB (-2)

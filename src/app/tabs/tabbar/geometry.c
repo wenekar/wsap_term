@@ -1,5 +1,7 @@
 #include "app/tabs/tabbar/internal.h"
 
+#include "ui/ui_util.h"
+
 #include <math.h>
 
 float tb_open_progress(const struct ui_tabbar *tb, int index)
@@ -25,34 +27,67 @@ float tb_tab_offset(const struct ui_tabbar *tb, int index)
     return t->slide.value;
 }
 
-struct tb_layout tb_layout_for(const struct ui_tabbar *tb,
-                               const struct tb_theme *t, int n_tabs,
+struct tb_layout tb_layout_for(const struct ui_tabbar *tb, int n_tabs,
                                struct vector2i size)
 {
     if (!tb || n_tabs < 1 || size.x <= 0)
         return (struct tb_layout){0};
 
+    const struct css_scale_context *ctx = tb_ctx(tb);
+    const struct tb_parts *p = tb_part();
+    struct ui_text_style text = ui_widget_text_style(ctx);
+    struct css_style bar = tb_style(tb, p->bar, CSS_PSEUDO_NONE);
+    struct css_style idle = tb_style(tb, p->tab, CSS_PSEUDO_NONE);
+    struct css_style close = tb_style(tb, p->tab_close, CSS_PSEUDO_NONE);
+    struct css_style fresh = tb_style(tb, p->tab_new, CSS_PSEUDO_NONE);
+
+    struct css_style card = tb_style(tb, p->tab_preview, CSS_PSEUDO_NONE);
+    struct css_style focus = tb_style(tb, p->tab, CSS_PSEUDO_FOCUS);
+    struct css_style drop = tb_style(tb, p->tab_drop, CSS_PSEUDO_NONE);
+
+    int css_height = ui_ctx_size(ctx, bar.height, 0);
     struct tb_layout l = {
-        .height = tb_bar_height(tb, t->height, n_tabs),
-        .pad = { .l = t->pad_l, .r = t->pad_r, .t = t->pad_t, .b = t->pad_b },
-        .gap = t->gap,
-        .tab_height = t->tab_height,
-        .new_tab_width = t->new_tab_w,
-        .new_tab_height = t->new_tab_h,
+        .height = tb_bar_height(tb, css_height, n_tabs),
+        .pad = ui_ctx_insets(ctx, bar.padding, 0),
+        .gap = ui_ctx_inset(ctx, bar.gap, 0),
+        .radius = ui_ctx_size(ctx, idle.border_radius, 0),
+        .preview_radius = ui_ctx_size(ctx, card.border_radius, 0),
+        .tab_pad = ui_ctx_inset(ctx, idle.padding.left, 0),
+        .close_w = ui_ctx_size(ctx, close.width, 0),
+        .close_h = ui_ctx_size(ctx, close.height, 0),
+        .close_pad = ui_ctx_inset(ctx, close.padding.right, 0),
+        .close_gap = ui_ctx_inset(ctx, close.margin.left, 0),
+        .focus_w = ui_css_border_width(&focus, ctx),
+        .stroke_w = ui_ctx_size(ctx, drop.border_width, 0),
+        .fade_w = ui_ctx_px(ctx, UI_TABBAR_FADE_DP),
+        .cell_w = text.advance,
+        .cell_h = text.cell_h,
         .n_tabs = n_tabs,
     };
     if (l.pad.l + l.pad.r > size.x) {
         l.pad.l = size.x / 2;
         l.pad.r = size.x - l.pad.l;
     }
-    if (l.pad.t + l.pad.b > t->height) {
-        l.pad.t = t->height / 2;
-        l.pad.b = t->height - l.pad.t;
+    if (l.pad.t + l.pad.b > css_height) {
+        l.pad.t = css_height / 2;
+        l.pad.b = css_height - l.pad.t;
     }
-    int inner_h = t->height - l.pad.t - l.pad.b;
-    if (inner_h < 1) inner_h = t->height;
-    if (l.tab_height > inner_h || l.tab_height < 1)
-        l.tab_height = inner_h;
+    int inner_h = css_height - l.pad.t - l.pad.b;
+    if (inner_h < 1)
+        inner_h = css_height;
+
+    int tab_height = ui_ctx_size(ctx, idle.height, (float)inner_h);
+    if (tab_height > inner_h || tab_height < 1)
+        tab_height = inner_h;
+    l.tab_height = tab_height;
+
+    int new_pad_l = ui_ctx_inset(ctx, fresh.padding.left, 0);
+    int new_pad_r = ui_ctx_inset(ctx, fresh.padding.right, 0);
+    l.new_tab_width = text.advance + new_pad_l + new_pad_r;
+    int new_tab_height = ui_ctx_size(ctx, fresh.height, (float)tab_height);
+    if (new_tab_height > inner_h || new_tab_height < 1)
+        new_tab_height = tab_height;
+    l.new_tab_height = new_tab_height;
 
     int avail_full = size.x - l.pad.l - l.pad.r - l.new_tab_width;
 
@@ -230,29 +265,26 @@ int tb_bar_height(const struct ui_tabbar *tb, int css_height, int n_tabs)
     return (int)roundf((float)css_height * v);
 }
 
-int tb_steady_height(const struct ui_tabbar *tb, const struct tb_theme *t,
-                     int n_tabs)
+int tb_steady_height(const struct ui_tabbar *tb, int n_tabs)
 {
     if (!tb || tb_live_tabs(tb, n_tabs) <= 1)
         return 0;
-    return t->height;
+    return tb_css_height(tb);
 }
 
-int tb_drop_height(const struct ui_tabbar *tb, const struct tb_theme *t,
-                   int n_tabs)
+int tb_drop_height(const struct ui_tabbar *tb, int n_tabs)
 {
     if (!tb || n_tabs < 1)
         return 0;
-    return t->height;
+    return tb_css_height(tb);
 }
 
-bool tb_tab_rect_at(const struct ui_tabbar *tb, const struct tb_theme *t,
-                    int n_tabs, struct vector2i size,
-                    int index, struct rect2i *out)
+bool tb_tab_rect_at(const struct ui_tabbar *tb, int n_tabs,
+                    struct vector2i size, int index, struct rect2i *out)
 {
     if (!tb || !out || n_tabs < 1 || index < 0 || index >= n_tabs || size.x <= 0)
         return false;
-    struct tb_layout l = tb_layout_for(tb, t, n_tabs, size);
+    struct tb_layout l = tb_layout_for(tb, n_tabs, size);
     if (l.height <= 0)
         return false;
     int x, w;
@@ -266,42 +298,39 @@ bool tb_tab_rect_at(const struct ui_tabbar *tb, const struct tb_theme *t,
     return true;
 }
 
-bool tb_close_rect_at(const struct ui_tabbar *tb, const struct tb_theme *t,
-                      int n_tabs, struct vector2i size,
-                      int index, struct rect2i *out)
+bool tb_close_rect_at(const struct ui_tabbar *tb, int n_tabs,
+                      struct vector2i size, int index, struct rect2i *out)
 {
     if (!tb || !out || n_tabs < 1 || index < 0 || index >= n_tabs || size.x <= 0)
         return false;
     struct rect2i tab_r;
-    if (!tb_tab_rect_at(tb, t, n_tabs, size, index, &tab_r))
+    if (!tb_tab_rect_at(tb, n_tabs, size, index, &tab_r))
         return false;
-    int close_side = t->close_side;
-    int close_side_h = t->close_side_h;
-    int close_pad = t->close_pad;
-    if (tab_r.width < close_side + close_pad * 2)
+    struct tb_layout l = tb_layout_for(tb, n_tabs, size);
+    if (tab_r.width < l.close_w + l.close_pad * 2)
         return false;
-    *out = tb_close_box(tab_r, close_side, close_side_h, close_pad);
+    *out = tb_close_box(tab_r, l.close_w, l.close_h, l.close_pad);
     return true;
 }
 
-bool tb_new_tab_rect_at(const struct ui_tabbar *tb, const struct tb_theme *t,
-                        int n_tabs, struct vector2i size, struct rect2i *out)
+bool tb_new_tab_rect_at(const struct ui_tabbar *tb, int n_tabs,
+                        struct vector2i size, struct rect2i *out)
 {
     if (!out || n_tabs < 1 || size.x <= 0)
         return false;
-    struct tb_layout l = tb_layout_for(tb, t, n_tabs, size);
+    struct tb_layout l = tb_layout_for(tb, n_tabs, size);
     if (l.height <= 0)
         return false;
     return tb_new_tab_rect(tb, &l, n_tabs, size.x, out);
 }
 
-struct tb_hit tb_hit_at(const struct ui_tabbar *tb, const struct tb_theme *t,
-                        int n_tabs, struct vector2i size, struct vector2i p)
+struct tb_hit tb_hit_at(const struct ui_tabbar *tb, int n_tabs,
+                        struct vector2i size, struct vector2i p)
 {
     struct tb_hit hit = { .index = -1 };
     if (!tb || n_tabs <= 1 || size.x <= 0 || p.x < 0 || p.x >= size.x || p.y < 0)
         return hit;
-    struct tb_layout l = tb_layout_for(tb, t, n_tabs, size);
+    struct tb_layout l = tb_layout_for(tb, n_tabs, size);
     if (l.height <= 0 || p.y >= l.height)
         return hit;
 
@@ -331,8 +360,9 @@ struct tb_hit tb_hit_at(const struct ui_tabbar *tb, const struct tb_theme *t,
             .size = { .x = w, .y = l.tab_height },
         };
 
-        if (w >= t->close_side + t->close_pad * 2) {
-            struct rect2i close = tb_close_box(r, t->close_side, t->close_side_h, t->close_pad);
+        if (w >= l.close_w + l.close_pad * 2) {
+            struct rect2i close = tb_close_box(r, l.close_w, l.close_h,
+                                               l.close_pad);
             if (rect2i_contains(close, p) && close_hit < 0)
                 close_hit = i;
         }
