@@ -272,8 +272,10 @@ static void paint_line(const struct ui_label *label, struct ui_paint_context *pa
         selection.width = width;
         struct css_style sel = label_part(label, parts.selection);
         float sel_opacity = opacity * css_style_effective_opacity(&sel);
-        uint32_t bg = ui_color_opacity(
-            sel.has_bg_color ? sel.bg_color : 0xFF45475A, sel_opacity);
+        /* A selection with no color is transparent. The default sheet
+         * supplies the color. */
+        uint32_t bg = ui_color_opacity(sel.has_bg_color ? sel.bg_color : 0,
+                                       sel_opacity);
         uint32_t fg = sel.has_text_color
             ? ui_color_opacity(sel.text_color, sel_opacity) : color;
         ui_paint_rect(paint, selection, bg);
@@ -317,7 +319,7 @@ static void label_paint(const struct ui_widget *widget, struct ui_paint_context 
     if (content.width <= 0 || content.height < style.cell_h || !label->impl.len)
         return;
     float opacity = css_style_effective_opacity(&widget->style);
-    uint32_t color = widget->style.has_text_color ? widget->style.text_color : 0xFFFFFFFF;
+    uint32_t color = widget->style.has_text_color ? widget->style.text_color : 0;
     if (label->impl.link) {
         struct css_style link = label_part(label, parts.link);
         if (link.has_text_color)
@@ -340,7 +342,7 @@ static void label_paint(const struct ui_widget *widget, struct ui_paint_context 
     if (ui_widget_has_focus(widget) && !label->impl.disabled) {
         struct css_style fs = label_part(label, parts.focus);
         uint32_t focus = ui_color_opacity(
-            fs.has_border_color ? fs.border_color : 0xFF89B4FA,
+            fs.has_border_color ? fs.border_color : 0,
             css_style_effective_opacity(&widget->style) *
                 css_style_effective_opacity(&fs));
         int edge = ui_css_resolve_int(fs.border_width, 0, 1,

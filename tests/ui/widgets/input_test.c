@@ -987,6 +987,8 @@ static void accessibility_selection_actions_test(void)
     teardown(&f);
 }
 
+/* A part with no CSS color falls back to the widget text color for a
+ * foreground and to transparent for a background. */
 static void fallback_part_colors_test(void)
 {
     struct css_sheet widget_only = { .has_defaults = true };
@@ -1002,22 +1004,20 @@ static void fallback_part_colors_test(void)
     ui_input_select_all(&f.in);
     assert(ui_surface_build_scene(&f.surface, &f.scene));
     assert(scene_has_text_color(&f.scene, "text", 0xFF224466u));
-    assert(scene_has_rect_color(&f.scene, 0xFF45475Au));
-    assert(scene_has_rect_color(&f.scene, 0xFFF5E0DCu));
+    assert(scene_has_rect_color(&f.scene, 0));
 
     ui_surface_set_sheet(&f.surface, &empty_sheet);
     assert(ui_surface_build_scene(&f.surface, &f.scene));
-    assert(scene_has_text_color(&f.scene, "text", 0xFFCDD6F4u));
+    assert(scene_has_text_color(&f.scene, "text", 0));
 
     ui_surface_set_sheet(&f.surface, &half_opacity);
     assert(ui_surface_build_scene(&f.surface, &f.scene));
-    assert(scene_has_text_color(&f.scene, "text", 0x80CDD6F4u));
-    assert(scene_has_rect_color(&f.scene, 0x8045475Au));
-    assert(scene_has_rect_color(&f.scene, 0x80F5E0DCu));
+    assert(scene_has_text_color(&f.scene, "text", 0));
+    assert(scene_has_rect_color(&f.scene, 0));
 
     ui_input_clear(&f.in);
     assert(ui_surface_build_scene(&f.surface, &f.scene));
-    assert(scene_has_text_color(&f.scene, "Hint", 0x807F849Cu));
+    assert(scene_has_text_color(&f.scene, "Hint", 0));
     teardown(&f);
     css_sheet_clear(&widget_only);
     css_sheet_clear(&empty_sheet);

@@ -13,11 +13,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-#define INPUT_FG_FALLBACK    0xFFCDD6F4u
-#define INPUT_DIM_FALLBACK   0xFF7F849Cu
-#define INPUT_SEL_FALLBACK   0xFF45475Au
-#define INPUT_CARET_FALLBACK 0xFFF5E0DCu
-
 static struct ui_input *input_of(const struct ui_widget *widget)
 {
     return ui_container_of((struct ui_widget *)widget, struct ui_input, widget);
@@ -858,6 +853,8 @@ static void input_layout(struct ui_widget *widget, struct rect2i bounds)
     update_scroll(input_of(widget));
 }
 
+/* Returns the color of a part. A part with no color falls back to
+ * `fallback`. */
 static uint32_t part_color(const struct ui_widget *widget, ui_part_id part,
                            bool bg, uint32_t fallback)
 {
@@ -889,8 +886,9 @@ static void input_paint(const struct ui_widget *widget,
     size_t lo, hi;
     sel_range(in, &lo, &hi);
     if (lo != hi) {
-        uint32_t color = part_color(widget, input_parts.selection, true,
-                                    INPUT_SEL_FALLBACK);
+        /* A selection with no color is transparent. The default sheet
+         * supplies the color. */
+        uint32_t color = part_color(widget, input_parts.selection, true, 0);
         ui_paint_rect(paint, (struct rect2i){
             .pos = { .x = geom_sat_i((int64_t)content.x +
                           ((int64_t)cells_to(in, lo) - in->impl.scroll_cells) * cw),
@@ -906,10 +904,11 @@ static void input_paint(const struct ui_widget *widget,
     if (!len && in->impl.placeholder && in->impl.placeholder[0]) {
         text = in->impl.placeholder;
         len = strlen(text);
-        fg = part_color(widget, input_parts.empty, false, INPUT_DIM_FALLBACK);
+        fg = part_color(widget, input_parts.empty, false,
+                        rs->has_text_color ? rs->text_color : 0);
     } else {
         fg = part_color(widget, input_parts.text, false,
-                        rs->has_text_color ? rs->text_color : INPUT_FG_FALLBACK);
+                        rs->has_text_color ? rs->text_color : 0);
     }
     if (len > 0) {
         int64_t offset = (int64_t)in->impl.scroll_cells * cw;
@@ -923,8 +922,7 @@ static void input_paint(const struct ui_widget *widget,
 
     if (in->impl.blink_on && ui_widget_has_focus(widget)) {
         int caret_w = ui_ctx_px(scale, 2);
-        uint32_t color = part_color(widget, input_parts.caret, true,
-                                    INPUT_CARET_FALLBACK);
+        uint32_t color = part_color(widget, input_parts.caret, true, 0);
         ui_paint_rect(paint, (struct rect2i){
             .pos = { .x = geom_sat_i((int64_t)content.x +
                           ((int64_t)cells_to(in, in->impl.select.caret) - in->impl.scroll_cells) * cw),
