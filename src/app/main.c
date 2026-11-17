@@ -4,6 +4,7 @@
 #include "input/keybind.h"
 #include "platform/platform.h"
 #include "ui/ui.h"
+#include "ui/yasl/drop.h"
 
 int main(int argc, char **argv)
 {
@@ -20,6 +21,8 @@ int main(int argc, char **argv)
 
     int result = app_run(app);
     app_destroy(app);
+    /* Remove the image files that drops wrote. */
+    drop_cleanup();
     /* The process owns the UI tables. Free them once, after the last app. */
     ui_shutdown();
     return result;
