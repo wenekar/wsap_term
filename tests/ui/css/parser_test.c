@@ -689,7 +689,7 @@ static void test_variable_defined_after_its_use(void)
 }
 
 /* `border` sets a width and a color, ignores the style keyword, and `none`
- * clears the width. */
+ * clears the width. A value with no width leaves the width alone. */
 static void test_border_shorthand(void)
 {
     struct css_sheet sheet = {0};
@@ -698,7 +698,12 @@ static void test_border_shorthand(void)
         ".b { border: 2px dashed blue; }"
         ".c { border: 3px dotted; }"
         ".d { border: none; }"
-        ".e { border-width: 4px; border: 5px solid #00ff00; }"));
+        ".e { border-width: 4px; border: 5px solid #00ff00; }"
+        ".f { border-width: 6px; border: solid #112233; }"
+        ":root { --bw: 7px; }"
+        ".g { border-width: var(--bw); border: solid #445566; }"
+        ".h { border-width: 8px; }"
+        ".i { border: solid #778899; }"));
 
     struct css_style a;
     css_style_resolve(&sheet, "a", NULL, NULL, CSS_PSEUDO_NONE, &a);
@@ -723,6 +728,23 @@ static void test_border_shorthand(void)
     css_style_resolve(&sheet, "e", NULL, NULL, CSS_PSEUDO_NONE, &e);
     assert(e.border_width.val == 5.0f);
     assert(e.has_border_color && e.border_color == 0xFF00FF00u);
+
+    /* A color-only shorthand keeps an earlier width, in the same rule, in a
+       rule below it, and in a declaration that holds var(). */
+    struct css_style f;
+    css_style_resolve(&sheet, "f", NULL, NULL, CSS_PSEUDO_NONE, &f);
+    assert(f.border_width.unit == CSS_UNIT_PX && f.border_width.val == 6.0f);
+    assert(f.has_border_color && f.border_color == 0xFF112233u);
+
+    struct css_style g;
+    css_style_resolve(&sheet, "g", NULL, NULL, CSS_PSEUDO_NONE, &g);
+    assert(g.border_width.unit == CSS_UNIT_PX && g.border_width.val == 7.0f);
+    assert(g.has_border_color && g.border_color == 0xFF445566u);
+
+    struct css_style hi;
+    css_style_resolve(&sheet, "h i", NULL, NULL, CSS_PSEUDO_NONE, &hi);
+    assert(hi.border_width.unit == CSS_UNIT_PX && hi.border_width.val == 8.0f);
+    assert(hi.has_border_color && hi.border_color == 0xFF778899u);
     css_sheet_clear(&sheet);
 }
 

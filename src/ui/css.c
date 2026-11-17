@@ -271,8 +271,9 @@ static bool is_border_style_keyword(const char *tok)
 }
 
 /* Parses `border`. The value holds a width and a color in any order. A style
-   keyword is accepted and ignored, and `none` sets the width to zero. */
-static bool parse_border(const char *s, struct css_style *out)
+   keyword is accepted and ignored, and `none` sets the width to zero.
+   `out_has_width` reports whether the value named a width at all. */
+static bool parse_border(const char *s, struct css_style *out, bool *out_has_width)
 {
     bool width_set = false, color_set = false;
     while (*s) {
@@ -307,6 +308,7 @@ static bool parse_border(const char *s, struct css_style *out)
         out->border_width = v;
         width_set = true;
     }
+    *out_has_width = width_set;
     return width_set || color_set;
 }
 
@@ -480,6 +482,9 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
     while (isspace((unsigned char)*val)) val++;
     const struct prop_info *p = &props[idx];
     char *dst = (char *)&r->style + p->offset;
+    /* A `border` value that holds no width must not declare the width, or it
+       would clear the width of a rule below it. */
+    bool sets_field = true;
     switch (p->kind) {
         case P_VAL: {
             struct css_value v = parse_value(val);
@@ -594,8 +599,13 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
             break;
         case P_BORDER: {
             struct css_style border = {0};
-            if (!parse_border(val, &border)) return CSS_DECLARATION_INVALID;
-            r->style.border_width = border.border_width;
+            bool has_width = false;
+            if (!parse_border(val, &border, &has_width))
+                return CSS_DECLARATION_INVALID;
+            if (has_width)
+                r->style.border_width = border.border_width;
+            else
+                sets_field = false;
             if (border.has_border_color) {
                 int color = find_prop_idx("border-color");
                 r->style.border_color = border.border_color;
@@ -624,7 +634,8 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
     }
     if (p->has_bit && p->kind != P_SHADOW)
         set_style_has_bit(&r->style, p->has_bit, true);
-    r->set_mask |= (1ULL << idx);
+    if (sets_field)
+        r->set_mask |= (1ULL << idx);
     return CSS_DECLARATION_OK;
 }
 
@@ -1440,7 +1451,10 @@ static bool handle_rule_decl(const struct css_sheet *sheet, struct css_rule *pro
     }
     if (!find_var_call(val, val)) {
         enum css_declaration_result result = apply_prop_at(proto, (size_t)idx, val);
-        if (result == CSS_DECLARATION_OK)
+        /* A declaration that sets the field replaces the earlier one that
+           holds var(). One that leaves the field alone keeps it. */
+        if (result == CSS_DECLARATION_OK &&
+            (proto->set_mask & (1ULL << (size_t)idx)))
             rule_drop_matching_var_props(proto, proto->var_prop_count, (size_t)idx);
         report_declaration(report, userdata, result, source, k_start, key, val);
         return true;
