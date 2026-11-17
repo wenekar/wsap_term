@@ -182,7 +182,7 @@ A theme can set `:root` variables to change default chrome styles.
 .panel { background: var(--surface, #1e1e2e); border-color: var(--accent); }
 ```
 
-See [Clay layout](ui-library-state.md#clay-layout) for sizing and layout rules.
+See [Flex layout](ui-library-state.md#flex-layout) for sizing and layout rules.
 Unknown properties produce a diagnostic on standard error.
 The inspector shows the resolved style.
 

@@ -3,301 +3,58 @@
 #include "ui/internal/tree.h"
 #include "ui/surface.h"
 
+#include <float.h>
+#include <limits.h>
 #include <math.h>
-#include <stdio.h>
 #include <stdlib.h>
 
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunused-parameter"
-#pragma clang diagnostic ignored "-Wunused-variable"
-#pragma clang diagnostic ignored "-Wmissing-field-initializers"
-#pragma clang diagnostic ignored "-Wmissing-braces"
-#pragma clang diagnostic ignored "-Wsign-compare"
-#endif
-#define CLAY_IMPLEMENTATION
-#include "ui/extern/clay/clay.h"
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
+/* Sizes closer than this count as equal during space distribution. */
+#define LAYOUT_EPSILON 0.01f
 
-struct ui_layout {
-    Clay_Context *context;
-    void *arena;
-    int capacity;
-    bool failed;
+enum flex_kind {
+    FLEX_FIXED,
+    FLEX_PERCENT,
+    FLEX_GROW,
+    FLEX_FIT,
+};
+
+/* The size rule of one child along one axis. */
+struct flex_axis {
+    enum flex_kind kind;
+    float value;
+    float min;
+    float max;
 };
 
 struct layout_node {
     struct ui_widget *widget;
     struct ui_box_params params;
-    struct vector2i natural;
-    struct vector2i offer;
-    struct rect2i bounds;
-    struct rect2f float_bounds;
-    size_t end;
+    struct flex_axis axis[2];
+    float natural[2];
+    float inner[2];
+    float pos[2];
+    float size[2];
+    size_t first_child;
+    size_t child_count;
     bool container;
-    bool anchored;
+    bool out_of_flow;
 };
 
 struct layout_pass {
     struct layout_node *nodes;
-    size_t count, capacity;
-    bool measuring, failed;
+    size_t count;
+    size_t capacity;
+    size_t *scratch;
+    size_t scratch_capacity;
+    bool measuring;
+    bool applying;
+    bool failed;
 };
 
-static void clay_error(Clay_ErrorData error)
+static bool float_equal(float a, float b)
 {
-    struct ui_layout *layout = error.userData;
-    layout->failed = true;
-    fprintf(stderr, "ui layout: %.*s\n", error.errorText.length,
-            error.errorText.chars);
-}
-
-void ui_layout_destroy(struct ui_layout *layout)
-{
-    if (!layout)
-        return;
-    if (Clay_GetCurrentContext() == layout->context)
-        Clay_SetCurrentContext(NULL);
-    free(layout->arena);
-    free(layout);
-}
-
-static struct ui_layout *layout_context(struct ui_widget *root, size_t count)
-{
-    struct ui_surface *surface = ui_widget_surface(root);
-    struct ui_layout *layout = surface ? surface->impl.layout : NULL;
-    if (!layout) {
-        layout = calloc(1, sizeof(*layout));
-        if (!layout)
-            return NULL;
-        if (surface)
-            surface->impl.layout = layout;
-    }
-    if (count > (size_t)((INT_MAX - 64) / 6))
-        goto failed;
-    int needed = (int)count * 6 + 64;
-    if (needed > layout->capacity) {
-        int capacity = needed < 256 ? 256 : needed;
-        Clay_Context *previous = Clay_GetCurrentContext();
-        Clay_SetCurrentContext(NULL);
-        Clay_SetMaxElementCount(capacity);
-        Clay_SetMaxMeasureTextCacheWordCount(64);
-        size_t bytes = Clay_MinMemorySize();
-        void *arena = calloc(1, bytes);
-        if (!arena) {
-            Clay_SetCurrentContext(previous);
-            goto failed;
-        }
-        layout->failed = false;
-        Clay_Context *context = Clay_Initialize(
-            Clay_CreateArenaWithCapacityAndMemory(bytes, arena),
-            (Clay_Dimensions){0},
-            (Clay_ErrorHandler){ .errorHandlerFunction = clay_error,
-                                 .userData = layout });
-        if (layout->failed) {
-            Clay_SetCurrentContext(previous);
-            free(arena);
-            goto failed;
-        }
-        free(layout->arena);
-        layout->arena = arena;
-        layout->capacity = capacity;
-        layout->context = context;
-    }
-    Clay_SetCurrentContext(layout->context);
-    layout->failed = false;
-    return layout;
-failed:
-    if (!surface)
-        ui_layout_destroy(layout);
-    return NULL;
-}
-
-static size_t collect(struct layout_pass *pass, struct ui_widget *widget,
-                       struct ui_constraints constraints, bool island)
-{
-    if (pass->count == pass->capacity) {
-        size_t cap = pass->capacity ? pass->capacity * 2 : 32;
-        void *nodes = realloc(pass->nodes, cap * sizeof(*pass->nodes));
-        if (!nodes) {
-            pass->failed = true;
-            return 0;
-        }
-        pass->nodes = nodes;
-        pass->capacity = cap;
-    }
-    size_t index = pass->count++;
-    struct layout_node *node = &pass->nodes[index];
-    *node = (struct layout_node){ .widget = widget, .offer = constraints.max,
-                                 .container = !island && (ui_widget_is_box(widget) ||
-                                     !widget->ops || (!widget->ops->layout &&
-                                         (!widget->ops->measure || index == 0))),
-                                 .anchored = island && widget->impl.placement.kind != UI_PLACE_FILL };
-    if (node->container) {
-        if (ui_widget_is_box(widget))
-            node->params = ui_box_params((struct ui_box *)widget, constraints.max);
-        else
-            node->params = (struct ui_box_params){ .direction = UI_BOX_STACK,
-                                                   .align = UI_BOX_ALIGN_STRETCH };
-        if (pass->measuring)
-            widget->impl.invalidation &= ~UI_WIDGET_INVALIDATE_MEASURE;
-        bool stack = node->params.direction == UI_BOX_STACK;
-        struct vector2i padding = insets2i_extent(node->params.padding);
-        constraints.max = vector2i_max(vector2i_sub(constraints.max, padding),
-                                       (struct vector2i){0});
-        constraints.min = (struct vector2i){0};
-        for (struct ui_widget *child = widget->first_child; child;
-             child = child->next_sibling) {
-            if (!child->impl.hidden) {
-                size_t child_index = collect(pass, child, constraints, stack);
-                if (!pass->failed && stack && child->impl.placement.kind == UI_PLACE_FILL)
-                    pass->nodes[index].natural = vector2i_max(
-                        pass->nodes[index].natural, pass->nodes[child_index].natural);
-            }
-            if (pass->failed)
-                break;
-        }
-    } else {
-        node->natural = pass->measuring
-            ? ui_widget_measure(widget, constraints) : widget->measured_size;
-    }
-    pass->nodes[index].end = pass->count;
-    return index;
-}
-
-static uint16_t spacing(int value)
-{
-    return (uint16_t)geom_clamp_i(value, 0, UINT16_MAX);
-}
-
-static Clay_Padding padding(struct insets2i p)
-{
-    return (Clay_Padding){ .left = spacing(p.left), .right = spacing(p.right),
-                           .top = spacing(p.top), .bottom = spacing(p.bottom) };
-}
-
-static Clay_ElementId node_id(size_t index)
-{
-    return CLAY_IDI("widget", (uint32_t)index);
-}
-
-static Clay_SizingAxis sizing(const struct layout_node *node, int axis,
-                              bool grow, bool measuring, float offer)
-{
-    const struct ui_widget *widget = node->widget;
-    struct css_value value = widget->style.size[axis];
-    float min = css_value_resolve(widget->style.min_size[axis], offer, 0,
-                                  &widget->style_scale);
-    float max = css_value_resolve(widget->style.max_size[axis], offer,
-                                  (float)INT_MAX, &widget->style_scale);
-    min = fmaxf(0, min);
-    max = fmaxf(min, max);
-    if (widget->impl.fixed_size.v[axis])
-        return CLAY_SIZING_FIXED(widget->impl.fixed_size.v[axis]);
-    if (max == 0)
-        return CLAY_SIZING_FIXED(0);
-    if (value.unit == CSS_UNIT_PERCENT && !measuring)
-        return CLAY_SIZING_PERCENT(fminf(1, fmaxf(0, value.val / 100)));
-    if (value.unit != CSS_UNIT_AUTO && value.unit != CSS_UNIT_NONE &&
-        value.unit != CSS_UNIT_GROW) {
-        float size = css_value_resolve(value, offer, 0, &widget->style_scale);
-        return CLAY_SIZING_FIXED(fminf(max, fmaxf(min, size)));
-    }
-    if ((grow || value.unit == CSS_UNIT_GROW) && !measuring)
-        return CLAY_SIZING_GROW(min, max);
-    return CLAY_SIZING_FIT(min, max);
-}
-
-static Clay_ChildAlignment alignment(struct ui_box_params p)
-{
-    Clay_ChildAlignment result = {0};
-    bool column = p.direction == UI_BOX_COLUMN;
-    int cross = p.align == UI_BOX_ALIGN_CENTER ? 2 :
-                p.align == UI_BOX_ALIGN_END ? 1 : 0;
-    int main = p.justify == UI_BOX_JUSTIFY_CENTER ? 2 :
-               p.justify == UI_BOX_JUSTIFY_END ? 1 : 0;
-    result.x = (Clay_LayoutAlignmentX)(column ? cross : main);
-    result.y = (Clay_LayoutAlignmentY)(column ? main : cross);
-    return result;
-}
-
-static void emit(struct layout_pass *pass, size_t index,
-                  Clay_Sizing size, Clay_FloatingElementConfig floating);
-
-static void emit_children(struct layout_pass *pass, size_t index)
-{
-    struct layout_node *node = &pass->nodes[index];
-    struct ui_box_params p = node->params;
-    for (size_t child = index + 1; child < node->end;
-         child = pass->nodes[child].end) {
-        struct layout_node *c = &pass->nodes[child];
-        bool column = p.direction == UI_BOX_COLUMN;
-        bool stack = p.direction == UI_BOX_STACK;
-        Clay_Sizing child_size = {
-            .width = sizing(c, 0, ((column || stack) && p.align == UI_BOX_ALIGN_STRETCH),
-                pass->measuring, c->offer.x),
-            .height = sizing(c, 1, ((!column || stack) && p.align == UI_BOX_ALIGN_STRETCH),
-                pass->measuring, c->offer.y),
-        };
-        if (stack && !ui_widget_is_box(node->widget) && !c->anchored &&
-            !pass->measuring)
-            child_size = (Clay_Sizing){ .width = CLAY_SIZING_GROW(),
-                                       .height = CLAY_SIZING_GROW() };
-        if (stack) {
-            Clay_FloatingAttachPointType point = p.align == UI_BOX_ALIGN_CENTER
-                ? CLAY_ATTACH_POINT_CENTER_CENTER : p.align == UI_BOX_ALIGN_END
-                ? CLAY_ATTACH_POINT_RIGHT_BOTTOM : CLAY_ATTACH_POINT_LEFT_TOP;
-            emit(pass, child, child_size,
-                (Clay_FloatingElementConfig){ .attachTo = CLAY_ATTACH_TO_PARENT,
-                    .attachPoints = { .parent = point, .element = point } });
-        } else {
-            emit(pass, child, child_size, (Clay_FloatingElementConfig){0});
-        }
-    }
-}
-
-static void emit(struct layout_pass *pass, size_t index,
-                  Clay_Sizing size, Clay_FloatingElementConfig floating)
-{
-    struct layout_node *node = &pass->nodes[index];
-    struct ui_box_params p = node->params;
-    bool padded_stack = node->container && p.direction == UI_BOX_STACK &&
-                        !insets2i_eq(p.padding, (struct insets2i){0});
-    Clay_ElementDeclaration config = {
-        .floating = floating,
-        .layout = { .sizing = size,
-                    .intrinsicSize = padded_stack ? (Clay_Dimensions){0} :
-                        (Clay_Dimensions){ .width = node->natural.x,
-                                           .height = node->natural.y },
-                    .padding = padding(p.padding),
-                    .childGap = spacing(p.gap),
-                    .childAlignment = alignment(p),
-                    .layoutDirection = p.direction == UI_BOX_COLUMN
-                        ? CLAY_TOP_TO_BOTTOM : CLAY_LEFT_TO_RIGHT },
-    };
-    CLAY(node_id(index), config) {
-        if (padded_stack) {
-            Clay_ElementDeclaration inner = {
-                .layout = {
-                    .sizing = {
-                        .width = pass->measuring ? CLAY_SIZING_FIT(0, CLAY__MAXFLOAT)
-                                                 : CLAY_SIZING_GROW(),
-                        .height = pass->measuring ? CLAY_SIZING_FIT(0, CLAY__MAXFLOAT)
-                                                  : CLAY_SIZING_GROW(),
-                    },
-                    .intrinsicSize = { .width = node->natural.x,
-                                       .height = node->natural.y },
-                },
-            };
-            CLAY(CLAY_IDI("stack", (uint32_t)index), inner) {
-                emit_children(pass, index);
-            }
-        } else if (node->container) {
-            emit_children(pass, index);
-        }
-    }
+    float diff = a - b;
+    return diff < LAYOUT_EPSILON && diff > -LAYOUT_EPSILON;
 }
 
 static int round_edge(float value)
@@ -311,122 +68,670 @@ static int round_edge(float value)
     return (int)lroundf(value);
 }
 
-static struct rect2i raster_bounds(Clay_BoundingBox b, struct vector2i origin)
+static struct vector2i raster_size(const float size[2])
 {
-    int left = round_edge(b.x);
-    int top = round_edge(b.y);
-    int right = round_edge(b.x + b.width);
-    int bottom = round_edge(b.y + b.height);
+    return (struct vector2i){ .x = round_edge(size[0]),
+                              .y = round_edge(size[1]) };
+}
+
+static struct rect2i raster_rect(const float pos[2], const float size[2])
+{
+    int left = round_edge(pos[0]);
+    int top = round_edge(pos[1]);
+    int right = round_edge(pos[0] + size[0]);
+    int bottom = round_edge(pos[1] + size[1]);
     return (struct rect2i){
-        .pos = vector2i_add(origin, (struct vector2i){ .x = left, .y = top }),
-        .size = vector2i_sub((struct vector2i){ .x = right, .y = bottom },
-                             (struct vector2i){ .x = left, .y = top }),
+        .pos = { .x = left, .y = top },
+        .size = { .x = right - left, .y = bottom - top },
     };
 }
 
-static struct vector2i solve(struct ui_widget *root,
-                              struct ui_constraints constraints,
-                              struct rect2i bounds, bool measuring)
+static bool pass_reserve(struct layout_pass *pass, size_t count)
 {
-    struct layout_pass pass = { .measuring = measuring };
-    collect(&pass, root, constraints, false);
-    struct vector2i result = {0};
-    if (pass.failed)
-        goto done;
-    Clay_Context *previous = Clay_GetCurrentContext();
-    struct ui_surface *surface = ui_widget_surface(root);
-    bool own_previous = surface && surface->impl.layout &&
-                         previous == surface->impl.layout->context;
-    struct ui_layout *layout = layout_context(root, pass.count);
-    if (!layout)
-        goto done;
-    Clay_Sizing size = {
-        .width = measuring ? CLAY_SIZING_FIT(0, constraints.max.x)
-                           : CLAY_SIZING_FIXED(bounds.width),
-        .height = measuring ? CLAY_SIZING_FIT(0, constraints.max.y)
-                            : CLAY_SIZING_FIXED(bounds.height),
-    };
-    for (int attempt = 0; attempt < 4; attempt++) {
-        Clay_SetCurrentContext(layout->context);
-        Clay_SetLayoutDimensions((Clay_Dimensions){ constraints.max.x, constraints.max.y });
-        Clay_SetCullingEnabled(false);
-        Clay_BeginLayout();
-        emit(&pass, 0, size, (Clay_FloatingElementConfig){0});
-        Clay_EndLayout(0);
-        for (size_t i = 0; i < pass.count; i++) {
-            Clay_ElementData data = Clay_GetElementData(node_id(i));
-            if (!data.found) {
-                layout->failed = true;
-                break;
+    if (pass->count + count <= pass->capacity)
+        return true;
+    size_t capacity = pass->capacity ? pass->capacity : 32;
+    while (capacity < pass->count + count)
+        capacity *= 2;
+    struct layout_node *nodes =
+        realloc(pass->nodes, capacity * sizeof(*pass->nodes));
+    if (!nodes) {
+        pass->failed = true;
+        return false;
+    }
+    pass->nodes = nodes;
+    pass->capacity = capacity;
+    return true;
+}
+
+static bool pass_reserve_scratch(struct layout_pass *pass, size_t count)
+{
+    if (count <= pass->scratch_capacity)
+        return true;
+    size_t capacity = pass->scratch_capacity ? pass->scratch_capacity : 32;
+    while (capacity < count)
+        capacity *= 2;
+    size_t *scratch = realloc(pass->scratch, capacity * sizeof(*scratch));
+    if (!scratch) {
+        pass->failed = true;
+        return false;
+    }
+    pass->scratch = scratch;
+    pass->scratch_capacity = capacity;
+    return true;
+}
+
+static void pass_destroy(struct layout_pass *pass)
+{
+    free(pass->nodes);
+    free(pass->scratch);
+}
+
+static bool pass_start(struct layout_pass *pass)
+{
+    if (!pass_reserve(pass, 1))
+        return false;
+    pass->count = 1;
+    pass->nodes[0] = (struct layout_node){0};
+    return true;
+}
+
+static bool is_layout_container(const struct ui_widget *widget)
+{
+    if (ui_widget_is_box(widget))
+        return true;
+    if (!widget->ops)
+        return true;
+    return !widget->ops->layout && !widget->ops->measure;
+}
+
+static struct ui_box_params node_params(const struct ui_widget *widget,
+                                        struct vector2i basis)
+{
+    if (ui_widget_is_box(widget))
+        return ui_box_params((const struct ui_box *)widget, basis);
+    return (struct ui_box_params){ .direction = UI_BOX_STACK,
+                                   .align = UI_BOX_ALIGN_STRETCH };
+}
+
+static struct flex_axis axis_fixed(float value)
+{
+    return (struct flex_axis){ .kind = FLEX_FIXED, .value = value };
+}
+
+/* Returns the size rule of `widget` on `axis` against a parent content size
+ * `basis`. `grow` says that a stretch alignment can grow this axis. */
+static struct flex_axis axis_sizing(const struct ui_widget *widget, int axis,
+                                    float basis, bool grow, bool placing)
+{
+    const struct css_style *style = &widget->style;
+    const struct css_scale_context *scale = &widget->style_scale;
+    int fixed = widget->impl.fixed_size.v[axis];
+    if (fixed > 0)
+        return axis_fixed((float)fixed);
+
+    struct flex_axis out;
+    out.min = css_value_resolve(style->min_size[axis], basis, 0, scale);
+    float max = css_value_resolve(style->max_size[axis], basis,
+                                  (float)INT_MAX, scale);
+    out.min = fmaxf(0, out.min);
+    out.max = fmaxf(out.min, max);
+    if (out.max == 0)
+        return axis_fixed(0);
+
+    struct css_value value = style->size[axis];
+    if (value.unit == CSS_UNIT_PERCENT && placing) {
+        out.kind = FLEX_PERCENT;
+        out.value = fminf(1, fmaxf(0, value.val / 100));
+        return out;
+    }
+    if (value.unit != CSS_UNIT_AUTO && value.unit != CSS_UNIT_NONE &&
+        value.unit != CSS_UNIT_GROW) {
+        float size = css_value_resolve(value, basis, 0, scale);
+        out.kind = FLEX_FIXED;
+        out.value = fminf(out.max, fmaxf(out.min, size));
+        return out;
+    }
+    out.kind = (grow || value.unit == CSS_UNIT_GROW) && placing
+        ? FLEX_GROW : FLEX_FIT;
+    return out;
+}
+
+/* Clamps the natural size of a child to its size rule. */
+static float axis_clamp(const struct flex_axis *axis, float natural)
+{
+    if (axis->kind == FLEX_FIXED)
+        return axis->value;
+    return fminf(axis->max, fmaxf(axis->min, natural));
+}
+
+/* Returns the size of a stretched child on one axis for a parent content size
+ * `content`. */
+static float axis_stretch(const struct flex_axis *axis, float content)
+{
+    float size = fminf(content, axis->max);
+    return fmaxf(axis->min, fminf(size, content));
+}
+
+static bool axis_resizable(const struct flex_axis *axis)
+{
+    return axis->kind != FLEX_FIXED && axis->kind != FLEX_PERCENT;
+}
+
+static bool axis_grows(const struct flex_axis *axis)
+{
+    return axis->kind == FLEX_GROW;
+}
+
+/* Removes the entry at `index` from the scratch list of `count` entries. */
+static void scratch_remove(struct layout_pass *pass, size_t *count, size_t index)
+{
+    pass->scratch[index] = pass->scratch[*count - 1];
+    (*count)--;
+}
+
+/* Compresses the resizable children until `remaining` is zero or all children
+ * reach their min size. */
+static void distribute_compress(struct layout_pass *pass, size_t first,
+                                size_t count, int axis, float *remaining)
+{
+    size_t resizable = 0;
+    for (size_t i = 0; i < count; i++) {
+        struct layout_node *child = &pass->nodes[first + i];
+        if (axis_resizable(&child->axis[axis]))
+            pass->scratch[resizable++] = first + i;
+    }
+    while (*remaining < -LAYOUT_EPSILON && resizable > 0) {
+        float largest = 0, second = 0, delta = *remaining;
+        for (size_t i = 0; i < resizable; i++) {
+            float size = pass->nodes[pass->scratch[i]].size[axis];
+            if (float_equal(size, largest))
+                continue;
+            if (size > largest) {
+                second = largest;
+                largest = size;
             }
-            Clay_BoundingBox b = data.boundingBox;
-            pass.nodes[i].bounds = raster_bounds(b, bounds.pos);
-            pass.nodes[i].float_bounds = (struct rect2f){
-                .pos = { .x = b.x + bounds.x, .y = b.y + bounds.y },
-                .size = { .x = b.width, .y = b.height },
+            if (size < largest) {
+                second = fmaxf(second, size);
+                delta = second - largest;
+            }
+        }
+        delta = fmaxf(delta, *remaining / (float)resizable);
+        for (size_t i = 0; i < resizable; i++) {
+            struct layout_node *child = &pass->nodes[pass->scratch[i]];
+            float *size = &child->size[axis];
+            if (!float_equal(*size, largest))
+                continue;
+            float before = *size;
+            *size += delta;
+            if (*size <= child->axis[axis].min) {
+                *size = child->axis[axis].min;
+                scratch_remove(pass, &resizable, i--);
+            }
+            *remaining -= *size - before;
+        }
+    }
+}
+
+/* Grows the growing children until `remaining` is zero or all children reach
+ * their max size. */
+static void distribute_grow(struct layout_pass *pass, size_t first,
+                            size_t count, int axis, float *remaining)
+{
+    size_t growing = 0;
+    for (size_t i = 0; i < count; i++) {
+        struct layout_node *child = &pass->nodes[first + i];
+        if (axis_grows(&child->axis[axis]))
+            pass->scratch[growing++] = first + i;
+    }
+    while (*remaining > LAYOUT_EPSILON && growing > 0) {
+        float smallest = FLT_MAX, second = FLT_MAX, delta = *remaining;
+        for (size_t i = 0; i < growing; i++) {
+            float size = pass->nodes[pass->scratch[i]].size[axis];
+            if (float_equal(size, smallest))
+                continue;
+            if (size < smallest) {
+                second = smallest;
+                smallest = size;
+            }
+            if (size > smallest) {
+                second = fminf(second, size);
+                delta = second - smallest;
+            }
+        }
+        delta = fminf(delta, *remaining / (float)growing);
+        for (size_t i = 0; i < growing; i++) {
+            struct layout_node *child = &pass->nodes[pass->scratch[i]];
+            float *size = &child->size[axis];
+            if (!float_equal(*size, smallest))
+                continue;
+            float before = *size;
+            *size += delta;
+            if (*size >= child->axis[axis].max) {
+                *size = child->axis[axis].max;
+                scratch_remove(pass, &growing, i--);
+            }
+            *remaining -= *size - before;
+        }
+    }
+}
+
+static void place_node(struct layout_pass *pass, size_t index,
+                       const float pos[2], const float size[2]);
+
+static float child_gap(const struct ui_box_params *params, size_t count)
+{
+    return count > 1 ? (float)params->gap * (float)(count - 1) : 0.0f;
+}
+
+/* Returns the max size inside the padding of `params`. */
+static void content_extent(const struct ui_box_params *params,
+                           const float available[2], float out[2])
+{
+    out[0] = fmaxf(0, available[0] -
+                      (float)(params->padding.left + params->padding.right));
+    out[1] = fmaxf(0, available[1] -
+                      (float)(params->padding.top + params->padding.bottom));
+}
+
+static void place_flow_children(struct layout_pass *pass, struct layout_node *node)
+{
+    struct ui_box_params p = node->params;
+    int main = p.direction == UI_BOX_COLUMN ? 1 : 0;
+    int cross = 1 - main;
+    float content[2] = { node->pos[0] + (float)p.padding.left,
+                         node->pos[1] + (float)p.padding.top };
+    float inner[2] = {
+        node->size[0] - (float)(p.padding.left + p.padding.right),
+        node->size[1] - (float)(p.padding.top + p.padding.bottom),
+    };
+    size_t count = node->child_count;
+    float gaps = child_gap(&p, count);
+    float percent_basis[2];
+    percent_basis[main] = inner[main] - gaps;
+    percent_basis[cross] = inner[cross];
+    bool stretch[2];
+    stretch[0] = p.direction == UI_BOX_COLUMN && p.align == UI_BOX_ALIGN_STRETCH;
+    stretch[1] = p.direction != UI_BOX_COLUMN && p.align == UI_BOX_ALIGN_STRETCH;
+
+    float total = 0;
+    for (size_t i = 0; i < count; i++) {
+        struct layout_node *child = &pass->nodes[node->first_child + i];
+        for (int axis = 0; axis < 2; axis++) {
+            child->axis[axis] = axis_sizing(child->widget, axis, inner[axis],
+                                            stretch[axis], true);
+            if (child->axis[axis].kind == FLEX_PERCENT)
+                child->size[axis] =
+                    child->axis[axis].value * percent_basis[axis];
+            else
+                child->size[axis] =
+                    axis_clamp(&child->axis[axis], child->natural[axis]);
+        }
+        total += child->size[main];
+    }
+
+    float remaining = inner[main] - total - gaps;
+    if (remaining < 0) {
+        if (!pass_reserve_scratch(pass, count))
+            return;
+        distribute_compress(pass, node->first_child, count, main, &remaining);
+    } else if (remaining > 0) {
+        if (!pass_reserve_scratch(pass, count))
+            return;
+        distribute_grow(pass, node->first_child, count, main, &remaining);
+    }
+
+    total = 0;
+    for (size_t i = 0; i < count; i++) {
+        struct layout_node *child = &pass->nodes[node->first_child + i];
+        struct flex_axis *axis = &child->axis[cross];
+        float content_cross = inner[cross];
+        float size = child->size[cross];
+        if (axis_resizable(axis)) {
+            if (axis->kind == FLEX_GROW)
+                size = fminf(content_cross, axis->max);
+            size = fmaxf(axis->min, fminf(size, content_cross));
+            child->size[cross] = size;
+        }
+        total += child->size[main];
+    }
+
+    float extra = inner[main] - total - gaps;
+    if (extra < 0)
+        extra = 0;
+    float cursor = content[main];
+    if (p.justify == UI_BOX_JUSTIFY_CENTER)
+        cursor += extra / 2;
+    else if (p.justify == UI_BOX_JUSTIFY_END)
+        cursor += extra;
+    for (size_t i = 0; i < count; i++) {
+        size_t index = node->first_child + i;
+        struct layout_node *child = &pass->nodes[index];
+        float free = inner[cross] - child->size[cross];
+        float pos[2] = { content[0], content[1] };
+        pos[main] = cursor;
+        if (p.align == UI_BOX_ALIGN_CENTER)
+            pos[cross] += free / 2;
+        else if (p.align == UI_BOX_ALIGN_END)
+            pos[cross] += free;
+        place_node(pass, index, pos, child->size);
+        cursor += child->size[main] + (float)p.gap;
+    }
+}
+
+/* Returns the size of a stack child on one axis. A plain stack stretches every
+ * child. A box stack stretches a child only on stretch alignment. */
+static float stack_child_size(const struct flex_axis *axis, float content,
+                              float natural, bool plain, bool stretch)
+{
+    if (plain)
+        return content;
+    switch (axis->kind) {
+    case FLEX_FIXED:
+        return axis->value;
+    case FLEX_PERCENT:
+        return axis->value * content;
+    case FLEX_GROW:
+        return axis_stretch(axis, content);
+    case FLEX_FIT:
+        break;
+    }
+    float size = axis_clamp(axis, natural);
+    return stretch ? axis_stretch(axis, content) : size;
+}
+
+static void place_stack_children(struct layout_pass *pass, struct layout_node *node)
+{
+    struct ui_box_params p = node->params;
+    float content[2] = { node->pos[0] + (float)p.padding.left,
+                         node->pos[1] + (float)p.padding.top };
+    float inner[2] = {
+        node->size[0] - (float)(p.padding.left + p.padding.right),
+        node->size[1] - (float)(p.padding.top + p.padding.bottom),
+    };
+    bool plain = !ui_widget_is_box(node->widget);
+    bool stretch = p.align == UI_BOX_ALIGN_STRETCH;
+    for (size_t i = 0; i < node->child_count; i++) {
+        size_t index = node->first_child + i;
+        struct layout_node *child = &pass->nodes[index];
+        if (child->out_of_flow) {
+            ui_widget_place_child(child->widget, node->widget->bounds);
+            continue;
+        }
+        float size[2], pos[2] = { content[0], content[1] };
+        for (int axis = 0; axis < 2; axis++) {
+            struct flex_axis rule = axis_sizing(child->widget, axis,
+                                                inner[axis], stretch, true);
+            size[axis] = stack_child_size(&rule, inner[axis],
+                                          child->natural[axis], plain, stretch);
+            float free = inner[axis] - size[axis];
+            if (p.align == UI_BOX_ALIGN_CENTER)
+                pos[axis] += free / 2;
+            else if (p.align == UI_BOX_ALIGN_END)
+                pos[axis] += free;
+        }
+        place_node(pass, index, pos, size);
+    }
+}
+
+static void place_node(struct layout_pass *pass, size_t index,
+                       const float pos[2], const float size[2])
+{
+    struct layout_node *node = &pass->nodes[index];
+    node->pos[0] = pos[0];
+    node->pos[1] = pos[1];
+    node->size[0] = size[0];
+    node->size[1] = size[1];
+    struct ui_widget *widget = node->widget;
+    if (!node->container) {
+        if (pass->applying) {
+            ui_widget_place(widget, raster_rect(pos, size));
+            widget->layout_bounds = (struct rect2f){
+                .pos = { .x = pos[0], .y = pos[1] },
+                .size = { .x = size[0], .y = size[1] },
             };
         }
-        if (layout->failed)
-            break;
-        bool changed = false;
-        for (size_t i = 0; i < pass.count; i++) {
-            struct layout_node *node = &pass.nodes[i];
-            if (node->container || !node->widget->ops ||
-                !node->widget->ops->width_sensitive)
-                continue;
-            int width = node->bounds.width;
-            struct vector2i natural = ui_widget_measure(node->widget,
-                (struct ui_constraints){ .min = { .x = width },
-                                         .max = { .x = width, .y = INT_MAX } });
-            if (!vector2i_eq(natural, node->natural)) {
-                node->natural = natural;
-                changed = true;
-            }
-        }
-        if (!changed)
-            break;
-        if (attempt == 3)
-            ui_widget_invalidate(root, UI_WIDGET_INVALIDATE_MEASURE);
+        return;
     }
-    bool failed = layout->failed;
-    Clay_SetCurrentContext(own_previous ? layout->context : previous);
-    if (!ui_widget_surface(root))
-        ui_layout_destroy(layout);
-    if (failed)
-        goto done;
-    result = ui_constraints_clamp(constraints, pass.nodes[0].bounds.size);
-    for (size_t i = 0; i < pass.count; i++) {
-        struct layout_node *node = &pass.nodes[i];
-        if (measuring) {
-            if (node->container) {
-                node->widget->measured_size = node->bounds.size;
-            }
-        } else if (node->container) {
-            node->widget->bounds = node->bounds;
-            node->widget->layout_bounds = node->float_bounds;
-            node->widget->impl.invalidation &= ~UI_WIDGET_INVALIDATE_LAYOUT;
-            node->widget->impl.invalidation |= UI_WIDGET_INVALIDATE_PAINT;
-        } else {
-            if (node->anchored)
-                ui_widget_place_child(node->widget, node->widget->parent->bounds);
-            else {
-                ui_widget_place(node->widget, node->bounds);
-                node->widget->layout_bounds = node->float_bounds;
-            }
-        }
+    if (pass->applying) {
+        widget->bounds = raster_rect(pos, size);
+        widget->layout_bounds = (struct rect2f){
+            .pos = { .x = pos[0], .y = pos[1] },
+            .size = { .x = size[0], .y = size[1] },
+        };
+        widget->impl.invalidation &= ~UI_WIDGET_INVALIDATE_LAYOUT;
+        widget->impl.invalidation |= UI_WIDGET_INVALIDATE_PAINT;
     }
-done:
-    free(pass.nodes);
-    return result;
+    if (node->child_count == 0)
+        return;
+    if (node->params.direction == UI_BOX_STACK)
+        place_stack_children(pass, node);
+    else
+        place_flow_children(pass, node);
 }
+
+static struct vector2f flow_natural(struct layout_pass *pass,
+                                    struct layout_node *node)
+{
+    const float *inner = node->inner;
+    struct ui_box_params p = node->params;
+    int main = p.direction == UI_BOX_COLUMN ? 1 : 0;
+    int cross = 1 - main;
+    float main_sum = 0, cross_max = 0;
+    for (size_t i = 0; i < node->child_count; i++) {
+        struct layout_node *child = &pass->nodes[node->first_child + i];
+        for (int axis = 0; axis < 2; axis++) {
+            child->axis[axis] = axis_sizing(child->widget, axis,
+                                            inner[axis], false, false);
+            child->size[axis] =
+                axis_clamp(&child->axis[axis], child->natural[axis]);
+        }
+        if (child->container)
+            child->widget->measured_size = raster_size(child->size);
+        main_sum += child->size[main];
+        cross_max = fmaxf(cross_max, child->size[cross]);
+    }
+    float gaps = child_gap(&p, node->child_count);
+    struct vector2f natural;
+    if (main == 0) {
+        natural.x = main_sum + gaps +
+                    (float)(p.padding.left + p.padding.right);
+        natural.y = cross_max + (float)(p.padding.top + p.padding.bottom);
+    } else {
+        natural.x = cross_max + (float)(p.padding.left + p.padding.right);
+        natural.y = main_sum + gaps +
+                    (float)(p.padding.top + p.padding.bottom);
+    }
+    return natural;
+}
+
+static struct vector2f stack_natural(struct layout_pass *pass,
+                                     struct layout_node *node)
+{
+    struct ui_box_params p = node->params;
+    struct vector2f extent = {0};
+    for (size_t i = 0; i < node->child_count; i++) {
+        struct layout_node *child = &pass->nodes[node->first_child + i];
+        if (child->out_of_flow)
+            continue;
+        extent.x = fmaxf(extent.x, child->natural[0]);
+        extent.y = fmaxf(extent.y, child->natural[1]);
+    }
+    return (struct vector2f){
+        .x = extent.x + (float)(p.padding.left + p.padding.right),
+        .y = extent.y + (float)(p.padding.top + p.padding.bottom),
+    };
+}
+
+static void collect_node(struct layout_pass *pass, size_t index,
+                         struct ui_widget *widget, const float available[2],
+                         bool is_container)
+{
+    struct layout_node *node = &pass->nodes[index];
+    node->widget = widget;
+    node->container = is_container;
+    if (!is_container) {
+        struct vector2i measured;
+        if (pass->measuring) {
+            struct ui_constraints constraints = {
+                .max = { .x = round_edge(available[0]),
+                         .y = round_edge(available[1]) },
+            };
+            measured = ui_widget_measure(widget, constraints);
+        } else {
+            measured = widget->measured_size;
+        }
+        node->natural[0] = (float)measured.x;
+        node->natural[1] = (float)measured.y;
+        return;
+    }
+
+    if (pass->measuring)
+        widget->impl.invalidation &= ~UI_WIDGET_INVALIDATE_MEASURE;
+    struct vector2i basis = { .x = round_edge(available[0]),
+                              .y = round_edge(available[1]) };
+    node->params = node_params(widget, basis);
+    content_extent(&node->params, available, node->inner);
+    bool stack = node->params.direction == UI_BOX_STACK;
+    size_t count = 0;
+    for (struct ui_widget *child = widget->first_child; child;
+         child = child->next_sibling) {
+        if (!child->impl.hidden)
+            count++;
+    }
+    size_t first = pass->count;
+    if (!pass_reserve(pass, count))
+        return;
+    pass->count += count;
+    node = &pass->nodes[index];
+    node->first_child = first;
+    node->child_count = count;
+    size_t slot = first;
+    for (struct ui_widget *child = widget->first_child; child;
+         child = child->next_sibling) {
+        if (child->impl.hidden)
+            continue;
+        bool child_container = !stack && is_layout_container(child);
+        collect_node(pass, slot, child, node->inner, child_container);
+        if (pass->failed)
+            return;
+        struct layout_node *entry = &pass->nodes[slot];
+        entry->out_of_flow =
+            stack && child->impl.placement.kind != UI_PLACE_FILL;
+        slot++;
+    }
+    node = &pass->nodes[index];
+    struct vector2f natural = stack
+        ? stack_natural(pass, node)
+        : flow_natural(pass, node);
+    node->natural[0] = natural.x;
+    node->natural[1] = natural.y;
+}
+
+/* Recomputes the natural size of each container from its children. Nodes are
+ * stored parent first, so a reverse scan visits children before parents. */
+static void compute_naturals(struct layout_pass *pass)
+{
+    for (size_t i = pass->count; i-- > 0;) {
+        struct layout_node *node = &pass->nodes[i];
+        if (!node->container)
+            continue;
+        struct vector2f natural =
+            node->params.direction == UI_BOX_STACK
+            ? stack_natural(pass, node) : flow_natural(pass, node);
+        node->natural[0] = natural.x;
+        node->natural[1] = natural.y;
+    }
+}
+
+/* Re-measures the width-sensitive children at their placed width. Returns true
+ * when a natural size changed. */
+static bool remeasure_width_sensitive(struct layout_pass *pass);
 
 struct vector2i ui_layout_measure(struct ui_widget *root,
                                    struct ui_constraints constraints)
 {
-    return solve(root, constraints, (struct rect2i){0}, true);
+    if (!root)
+        return (struct vector2i){0};
+    struct layout_pass pass = { .measuring = true };
+    float available[2] = { (float)constraints.max.x,
+                           (float)constraints.max.y };
+    float size[2] = { 0, 0 };
+    if (!pass_start(&pass)) {
+        pass_destroy(&pass);
+        return (struct vector2i){0};
+    }
+    collect_node(&pass, 0, root, available, is_layout_container(root));
+    for (int attempt = 0; !pass.failed && attempt < 4; attempt++) {
+        compute_naturals(&pass);
+        for (int axis = 0; axis < 2; axis++) {
+            size[axis] = fminf(fmaxf(pass.nodes[0].natural[axis], 0),
+                               available[axis]);
+        }
+        float origin[2] = { 0, 0 };
+        place_node(&pass, 0, origin, size);
+        if (!remeasure_width_sensitive(&pass))
+            break;
+        if (attempt == 3)
+            ui_widget_invalidate(root, UI_WIDGET_INVALIDATE_MEASURE);
+    }
+    for (size_t i = 0; !pass.failed && i < pass.count; i++) {
+        struct layout_node *node = &pass.nodes[i];
+        if (node->container)
+            node->widget->measured_size = raster_size(node->size);
+    }
+    bool failed = pass.failed;
+    pass_destroy(&pass);
+    if (failed)
+        return (struct vector2i){0};
+    struct vector2i natural = { .x = round_edge(size[0]),
+                                .y = round_edge(size[1]) };
+    struct vector2i hi = vector2i_max(constraints.max, constraints.min);
+    return vector2i_clamp(natural, constraints.min, hi);
+}
+
+static bool remeasure_width_sensitive(struct layout_pass *pass)
+{
+    bool changed = false;
+    for (size_t i = 0; i < pass->count; i++) {
+        struct layout_node *node = &pass->nodes[i];
+        struct ui_widget *widget = node->widget;
+        if (node->container || !widget->ops || !widget->ops->width_sensitive)
+            continue;
+        int width = raster_rect(node->pos, node->size).width;
+        struct ui_constraints constraints = {
+            .min = { .x = width },
+            .max = { .x = width, .y = INT_MAX },
+        };
+        struct vector2i natural = ui_widget_measure(widget, constraints);
+        if (vector2i_eq(natural, raster_size(node->natural)))
+            continue;
+        node->natural[0] = (float)natural.x;
+        node->natural[1] = (float)natural.y;
+        changed = true;
+    }
+    return changed;
 }
 
 void ui_layout_place(struct ui_widget *root, struct rect2i bounds)
 {
-    solve(root, (struct ui_constraints){ .max = bounds.size }, bounds, false);
+    if (!root)
+        return;
+    struct layout_pass pass = { .applying = true };
+    float size[2] = { (float)bounds.width, (float)bounds.height };
+    float pos[2] = { (float)bounds.x, (float)bounds.y };
+    if (!pass_start(&pass)) {
+        pass_destroy(&pass);
+        return;
+    }
+    collect_node(&pass, 0, root, size, is_layout_container(root));
+    for (int attempt = 0; !pass.failed && attempt < 4; attempt++) {
+        compute_naturals(&pass);
+        place_node(&pass, 0, pos, size);
+        if (!remeasure_width_sensitive(&pass))
+            break;
+        if (attempt == 3)
+            ui_widget_invalidate(root, UI_WIDGET_INVALIDATE_MEASURE);
+    }
+    pass_destroy(&pass);
 }

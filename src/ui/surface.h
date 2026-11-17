@@ -11,7 +11,6 @@
 #include "util/geom.h"
 
 struct ui_scene;
-struct ui_layout;
 
 struct ui_surface_host {
     void (*request_frame)(void *userdata);
@@ -36,7 +35,6 @@ struct ui_surface {
         struct ui_widget *paste_target, *context_target;
         struct vector2i viewport;
         struct ui_style_context style;
-        struct ui_layout *layout;
         uint64_t deadline;
         bool key_text_kept;
         bool frame_requested;

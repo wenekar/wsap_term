@@ -4,7 +4,7 @@ Use `ui/ui.h` to build a screen.
 The surface manages updates.
 The widget tree manages composition.
 Controls use one action callback type.
-Rows, columns, and stacks use Clay for layout.
+Rows, columns, and stacks use the UI flex layout.
 For a complete window example, see [Build a window screen](ui-screen-guide.md).
 
 ## Build a screen
@@ -395,12 +395,12 @@ Core contracts have behavioral tests in `tests/ui/`.
 The integrated screen test resides in `tests/ui/acceptance_test.c`.
 Window and UI binding tests reside in `tests/ui/yasl/`.
 
-## Clay layout
+## Flex layout
 
-Clay calculates the bounds of boxes and default containers.
-Each UI surface owns one Clay context and arena.
-The build uses the pinned source in `src/ui/extern/clay/`.
+The UI flex layout calculates the bounds of boxes and default containers.
+The code lives in `src/ui/layout.c`.
 The build does not download external code.
+Each layout pass allocates one node array and frees it when the pass ends.
 
 Set sizes with CSS:
 
@@ -416,7 +416,7 @@ Set sizes with CSS:
 `grow` distributes available space among growing items on that axis.
 A fixed size does not shrink.
 A fit or grow item can shrink down to its minimum size.
-Clay shrinks the largest items first.
+The layout shrinks the largest items first.
 Percent sizes calculate space after subtracting parent padding and gaps.
 Use `min-width`, `min-height`, `max-width`, and `max-height` to define limits.
 Use padding and gaps to space widgets.
@@ -424,25 +424,25 @@ Box layout ignores child margins.
 Individual widget parts can still use margins, such as menu separators.
 The layout engine does not support weighted `flex-grow` or `justify-content: space-between`.
 
-Clay computes floating-point bounds.
+The layout computes floating-point bounds.
 `widget.layout_bounds` stores these bounds in surface space.
 `widget.bounds` rounds outer edges to integers for painting and pointer input.
 The inspector reports both sets of bounds.
 
 A nested row or column shares the layout pass of its parent.
-A stack uses Clay floating elements.
+A stack places each child on the parent content box.
 A default container expands each child to fill container bounds.
 Anchored child widgets follow popup placement rules.
 These rules preserve automatic flip and clamp behaviors.
 
 A custom widget can retain its own measure and layout callbacks.
-Clay treats that widget as a single element.
+The layout treats that widget as a single element.
 Set `width_sensitive` in widget ops when content height depends on width.
-The layout pass measures this content using the width assigned by Clay.
+The layout pass measures this content using the assigned width.
 The label widget uses this flag for wrapped text.
 Measurement changes can request a subsequent frame.
 
-Clay manages layout geometry.
+The flex layout manages layout geometry.
 The UI library manages focus, input, actions, clipping, and scene construction.
 The text painter uses cell metrics from the UI font.
 Layout sizes can use pixels without cell units.
