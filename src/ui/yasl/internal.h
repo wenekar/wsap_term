@@ -58,8 +58,8 @@ struct window_ui_menu_popup {
     struct ui_surface ui;
     struct ui_widget root;
     struct rect2i anchor;
-    /* Set when the popup closed while its surface was busy. The popup
-     * is destroyed as soon as the surface is idle. */
+    /* Set when the popup closed while its surface was busy or while a
+     * child popup was still open. window_menu_reap destroys it later. */
     bool closing;
 };
 

@@ -440,6 +440,16 @@ if get_option('integration_tests')
             timeout: 60,
         )
         test(
+            'popup-nested-close-test',
+            python,
+            args: files('ui/yasl/popup_nested_close_test.py'),
+            depends: [program, vptr],
+            env: {'BIN': program.full_path(), 'VPOINTER': vptr.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 120,
+        )
+        test(
             'tab-rows-test',
             python,
             args: files('ui/yasl/tab_rows_test.py'),
