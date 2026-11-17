@@ -181,17 +181,18 @@ built. It indexes each rule by the key of the last compound. A lookup finds
 the range of each key of the element and merges the ranges into apply order.
 The part slot cache stays.
 
-`css/resolve` in `ui-bench` fell from 705 ns/op to 44.6 ns/op. A sheet
-without a host sheet holds the 39 rules of `assets/ui/core.css`. With the
-app rules added, which is 82 rules and the count that the base build
-measured, the cost is 64.6 ns/op.
+`css/resolve` in `ui-bench` fell from 711 ns/op to 65 ns/op. The probe
+classes are app classes, and the app rules add 43 rules to the 39 core
+rules, so the benchmark builds both sheets and reads the same 82 rules on
+both sides. Medians of five interleaved runs.
 
 Commit bd2b6f7 moved the app rules to `assets/ui/app.css`. The shared
 default sheet no longer holds them, and the app gives each window the sheet
 of its theme store. `ui-frame-bench` now builds that sheet, the core rules
 and the app rules, once per process, and installs it in `setup`. A surface
 without a sheet painted a tab bar with no CSS, which is not a scene of the
-app.
+app. `ui-bench` builds the same sheet in `bench_css`; before that change its
+context resolved the 39 core rules only.
 
 Release build, base `ddd85e0` and the branch interleaved, medians of eight
 runs of 2000 frames:
