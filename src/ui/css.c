@@ -550,44 +550,159 @@ static char *dup_range(const char *s, size_t len)
     return out;
 }
 
+static bool rule_add_part(struct css_rule *r, uint32_t offset, uint16_t length)
+{
+    if (r->part_count == r->part_cap) {
+        uint16_t cap = r->part_cap ? (uint16_t)(r->part_cap * 2) : 4;
+        struct css_selector_part *next =
+            realloc(r->parts, (size_t)cap * sizeof(*next));
+        if (!next)
+            return false;
+        r->parts = next;
+        r->part_cap = cap;
+    }
+    r->parts[r->part_count++] = (struct css_selector_part){ .offset = offset,
+                                                            .length = length };
+    return true;
+}
+
+static bool rule_add_class(struct css_rule *r, uint32_t offset, uint16_t length)
+{
+    if (r->class_count == r->class_cap) {
+        uint16_t cap = r->class_cap ? (uint16_t)(r->class_cap * 2) : 4;
+        struct css_class_token *next =
+            realloc(r->classes, (size_t)cap * sizeof(*next));
+        if (!next)
+            return false;
+        r->classes = next;
+        r->class_cap = cap;
+    }
+    r->classes[r->class_count++] =
+        (struct css_class_token){ .offset = offset, .length = length };
+    return true;
+}
+
+static bool parse_pseudo_name(const char *s, enum css_pseudo *out)
+{
+    if (!strcmp(s, "hover"))         *out = CSS_PSEUDO_HOVER;
+    else if (!strcmp(s, "active"))   *out = CSS_PSEUDO_ACTIVE;
+    else if (!strcmp(s, "focus"))    *out = CSS_PSEUDO_FOCUS;
+    else if (!strcmp(s, "disabled")) *out = CSS_PSEUDO_DISABLED;
+    else if (!strcmp(s, "checked"))  *out = CSS_PSEUDO_CHECKED;
+    else return false;
+    return true;
+}
+
+/* Splits the compound `part` into its class names and its key kind. A part
+   that names no class name, or an empty one, matches no element. */
+static bool rule_compile_part(struct css_rule *r, struct css_selector_part *part)
+{
+    const char *text = r->selector + part->offset;
+    part->class_first = r->class_count;
+    part->class_count = 0;
+    if (part->length == 0) {
+        part->kind = CSS_KEY_NONE;
+        return true;
+    }
+    if (text[0] == '#') {
+        part->kind = CSS_KEY_ID;
+        return true;
+    }
+    if (text[0] != '.') {
+        part->kind = CSS_KEY_TAG;
+        return true;
+    }
+    for (uint16_t i = 0; i < part->length;) {
+        if (text[i] != '.')
+            break;
+        uint16_t start = (uint16_t)(i + 1);
+        i = start;
+        while (i < part->length && text[i] != '.')
+            i++;
+        if (i == start) {
+            /* A lone point names no class and matches any class list. A
+               point after a class name names an empty class name, which no
+               element has. */
+            if (!(part->class_count == 0 && start == part->length)) {
+                part->kind = CSS_KEY_NONE;
+                part->class_count = 0;
+            }
+            return true;
+        }
+        if (!rule_add_class(r, part->offset + start, (uint16_t)(i - start)))
+            return false;
+        part->class_count++;
+    }
+    return true;
+}
+
+/* Compiles `selector` into the compound parts that a match walks. The parts
+   are the compounds that white space separates, from the leftmost to the
+   element itself. Only the last part can carry a pseudo-class. */
+static bool rule_compile_selector(struct css_rule *r, bool *supported)
+{
+    *supported = true;
+    r->part_count = 0;
+    r->class_count = 0;
+    r->pseudo = CSS_PSEUDO_NONE;
+    const char *s = r->selector;
+    size_t n = strlen(s);
+    size_t i = 0;
+    while (i < n) {
+        while (i < n && isspace((unsigned char)s[i])) i++;
+        if (i == n) break;
+        size_t start = i;
+        while (i < n && !isspace((unsigned char)s[i])) i++;
+        if (!rule_add_part(r, (uint32_t)start, (uint16_t)(i - start)))
+            return false;
+    }
+    for (uint16_t p = 0; p < r->part_count; p++) {
+        struct css_selector_part *part = &r->parts[p];
+        const char *text = r->selector + part->offset;
+        const char *colon = memchr(text, ':', part->length);
+        if (!colon)
+            continue;
+        if (p + 1 != r->part_count) {
+            *supported = false;
+            part->length = (uint16_t)(colon - text);
+            continue;
+        }
+        enum css_pseudo pseudo;
+        part->length = (uint16_t)(colon - text);
+        if (parse_pseudo_name(colon + 1, &pseudo))
+            r->pseudo = pseudo;
+        else
+            *supported = false;
+    }
+    for (uint16_t p = 0; p < r->part_count; p++)
+        if (!rule_compile_part(r, &r->parts[p]))
+            return false;
+    return true;
+}
+
+static void rule_clear_selector(struct css_rule *r)
+{
+    free(r->selector);
+    free(r->parts);
+    free(r->classes);
+    r->selector = NULL;
+    r->parts = NULL;
+    r->classes = NULL;
+    r->part_count = 0;
+    r->part_cap = 0;
+    r->class_count = 0;
+    r->class_cap = 0;
+}
+
 static bool parse_single_selector(struct css_rule *r, const char *s, size_t len,
                                   bool *supported)
 {
-    *supported = true;
     while (len && isspace((unsigned char)*s)) { s++; len--; }
     while (len && isspace((unsigned char)s[len - 1])) len--;
     r->selector = dup_range(s, len);
     if (!r->selector)
         return false;
-
-    const char *comp = r->selector;
-    for (const char *p = r->selector; *p; p++)
-        if (isspace((unsigned char)*p)) comp = p + 1;
-    r->last_off = (size_t)(comp - r->selector);
-
-    const char *pseudo = strchr(comp, ':');
-    if (pseudo) {
-        pseudo++;
-        if (!strcmp(pseudo, "hover"))         r->pseudo = CSS_PSEUDO_HOVER;
-        else if (!strcmp(pseudo, "active"))   r->pseudo = CSS_PSEUDO_ACTIVE;
-        else if (!strcmp(pseudo, "focus"))    r->pseudo = CSS_PSEUDO_FOCUS;
-        else if (!strcmp(pseudo, "disabled")) r->pseudo = CSS_PSEUDO_DISABLED;
-        else if (!strcmp(pseudo, "checked"))  r->pseudo = CSS_PSEUDO_CHECKED;
-        else *supported = false;
-    }
-    if (memchr(r->selector, ':', r->last_off))
-        *supported = false;
-    if (*comp == '.') {
-        r->is_class = true;
-        const char *stop = pseudo ? pseudo - 1 : comp + strlen(comp);
-        int n = 0;
-        for (const char *c = comp; c < stop; c++)
-            if (*c == '.') n++;
-        r->class_rank = n;
-    } else if (*comp == '#') {
-        r->is_id = true;
-    }
-    return true;
+    return rule_compile_selector(r, supported);
 }
 
 #define CSS_VAR_MAX_DEPTH 32
@@ -1098,25 +1213,36 @@ static bool sheet_append_rule(struct css_sheet *sheet,
         return false;
     struct css_rule *r = &sheet->rules[sheet->rule_count];
     *r = *src;
+    r->selector = NULL;
+    r->parts = NULL;
+    r->part_cap = 0;
+    r->classes = NULL;
+    r->class_cap = 0;
     r->var_props = NULL;
     r->var_prop_count = 0;
     r->var_prop_cap = 0;
     if (out_supported) {
-        if (!parse_single_selector(r, sel, sel_len, out_supported))
+        bool supported = true;
+        *out_supported = true;
+        if (!parse_single_selector(r, sel, sel_len, &supported)) {
+            rule_clear_selector(r);
             return false;
-        if (!*out_supported) {
-            free(r->selector);
-            r->selector = NULL;
+        }
+        *out_supported = supported;
+        if (!supported) {
+            rule_clear_selector(r);
             return true;
         }
     } else {
-        r->selector = strdup(src->selector);
-        if (!r->selector)
+        bool supported = true;
+        if (!parse_single_selector(r, src->selector, strlen(src->selector),
+                                   &supported)) {
+            rule_clear_selector(r);
             return false;
+        }
     }
     if (!rule_copy_var_props(r, src)) {
-        free(r->selector);
-        r->selector = NULL;
+        rule_clear_selector(r);
         return false;
     }
     sheet->rule_count++;
@@ -1127,12 +1253,23 @@ static bool sheet_append_rule(struct css_sheet *sheet,
    class selector beats a tag selector. More classes beat fewer classes. */
 static uint32_t rule_tier(const struct css_rule *r)
 {
-    return r->is_id ? 2 : r->is_class ? 1 : 0;
+    if (r->part_count == 0)
+        return 0;
+    switch (r->parts[r->part_count - 1].kind) {
+    case CSS_KEY_ID:    return 2;
+    case CSS_KEY_CLASS: return 1;
+    default:            return 0;
+    }
 }
 
 static uint32_t rule_rank(const struct css_rule *r)
 {
-    return r->is_class ? (uint32_t)r->class_rank : 1;
+    if (r->part_count == 0)
+        return 1;
+    const struct css_selector_part *last = &r->parts[r->part_count - 1];
+    return last->kind == CSS_KEY_CLASS && last->class_count
+               ? (uint32_t)last->class_count
+               : 1;
 }
 
 static int cmp_u32(uint32_t a, uint32_t b)
@@ -1696,7 +1833,7 @@ void css_sheet_clear(struct css_sheet *sheet)
     if (!sheet)
         return;
     for (int i = 0; i < sheet->rule_count; i++) {
-        free(sheet->rules[i].selector);
+        rule_clear_selector(&sheet->rules[i]);
         rule_clear_vars(&sheet->rules[i]);
     }
     free(sheet->rules);
@@ -1924,62 +2061,59 @@ static bool range_equals(const char *a, size_t alen, const char *b)
     return b && strlen(b) == alen && !memcmp(a, b, alen);
 }
 
-static bool compound_selector_matches(const char *comp, size_t len,
-                                      const char *class_name, size_t class_len,
-                                      const char *id_name, const char *tag_name)
+static bool part_matches(const struct css_rule *r,
+                         const struct css_selector_part *part,
+                         const struct css_element *element)
 {
-    const char *pc = memchr(comp, ':', len);
-    if (pc) len = (size_t)(pc - comp);
-    if (!len) return false;
-    if (comp[0] == '.') {
-        if (!class_name) return false;
-        const char *end = comp + len;
-        for (const char *sub = comp + 1; sub < end;) {
-            const char *dot = memchr(sub, '.', (size_t)(end - sub));
-            const char *stop = dot ? dot : end;
-            if (!class_list_has(class_name, class_len, sub, (size_t)(stop - sub)))
+    const char *text = r->selector + part->offset;
+    switch (part->kind) {
+    case CSS_KEY_CLASS:
+        if (!element->class_name)
+            return false;
+        for (uint16_t i = 0; i < part->class_count; i++) {
+            const struct css_class_token *token = &r->classes[part->class_first + i];
+            if (!class_list_has(element->class_name,
+                                strlen(element->class_name),
+                                r->selector + token->offset, token->length))
                 return false;
-            sub = stop + 1;
         }
         return true;
+    case CSS_KEY_ID:
+        return range_equals(text + 1, part->length - 1, element->id_name);
+    case CSS_KEY_TAG:
+        return range_equals(text, part->length, element->tag_name);
+    case CSS_KEY_NONE:
+        break;
     }
-    if (comp[0] == '#') return range_equals(comp + 1, len - 1, id_name);
-    return range_equals(comp, len, tag_name);
+    return false;
 }
 
-static bool selector_matches(const struct css_rule *r, const char *class_name,
-                             const char *id_name, const char *tag_name,
-                             unsigned pseudo_flags, const char *ancestor_path)
+/* A selector applies when its last part matches `element` and each part to its
+   left matches an ancestor above the match of the part to its right. */
+static bool rule_matches(const struct css_rule *r,
+                         const struct css_element *element,
+                         unsigned pseudo_flags,
+                         const struct css_element *ancestors,
+                         size_t ancestor_count)
 {
-    if (r->pseudo != CSS_PSEUDO_NONE && !(pseudo_flags & r->pseudo)) return false;
-    const char *last = r->selector + r->last_off;
-    if (!compound_selector_matches(last, strlen(last), class_name,
-                                   class_name ? strlen(class_name) : 0,
-                                   id_name, tag_name))
+    if (r->pseudo != CSS_PSEUDO_NONE && !(pseudo_flags & r->pseudo))
         return false;
-    if (r->last_off == 0) return true;
-    if (!ancestor_path) return false;
-    const char *cursor = ancestor_path;
-    const char *p = r->selector;
-    while (p < last) {
-        while (p < last && isspace((unsigned char)*p)) p++;
-        if (p >= last) break;
-        const char *e = p;
-        while (e < last && !isspace((unsigned char)*e)) e++;
+    if (r->part_count == 0)
+        return false;
+    if (!part_matches(r, &r->parts[r->part_count - 1], element))
+        return false;
+    size_t cursor = ancestor_count;
+    for (int i = (int)r->part_count - 2; i >= 0; i--) {
         bool found = false;
-        for (const char *a = cursor; *a;) {
-            const char *nl = strchr(a, '\n');
-            size_t alen = nl ? (size_t)(nl - a) : strlen(a);
-            if (compound_selector_matches(p, (size_t)(e - p), a, alen, NULL, NULL)) {
-                cursor = nl ? nl + 1 : a + alen;
+        while (cursor > 0) {
+            cursor--;
+            if (part_matches(r, &r->parts[i], &ancestors[cursor])) {
                 found = true;
                 break;
             }
-            if (!nl) break;
-            a = nl + 1;
         }
-        if (!found) return false;
-        p = e;
+        if (!found)
+            return false;
     }
     return true;
 }
@@ -2016,22 +2150,23 @@ static void apply_rule_props(const struct css_rule *r, struct css_style *out)
     }
 }
 
-void css_style_resolve_ex(const struct css_sheet *sheet, const char *class_name,
-                          const char *id_name, const char *tag_name,
-                          unsigned pseudo_flags, const char *ancestor_path,
-                          struct css_style *out)
+void css_style_resolve_node(const struct css_sheet *sheet,
+                            const struct css_element *element,
+                            unsigned pseudo_flags,
+                            const struct css_element *ancestors,
+                            size_t ancestor_count,
+                            struct css_style *out)
 {
     if (!out) return;
     memset(out, 0, sizeof(*out));
     out->opacity = 1.0f;
-    if (!sheet) return;
+    if (!sheet || !element) return;
 
     /* The table is in apply order. A rule that matches replaces the props of
        the rules before it. */
     for (int i = 0; i < sheet->rule_count; i++) {
         const struct css_rule *r = &sheet->rules[i];
-        if (selector_matches(r, class_name, id_name, tag_name, pseudo_flags,
-                             ancestor_path))
+        if (rule_matches(r, element, pseudo_flags, ancestors, ancestor_count))
             apply_rule_props(r, out);
     }
 }
@@ -2040,8 +2175,12 @@ void css_style_resolve(const struct css_sheet *sheet, const char *class_name,
                        const char *id_name, const char *tag_name, unsigned pseudo_flags,
                        struct css_style *out)
 {
-    css_style_resolve_ex(sheet, class_name, id_name, tag_name, pseudo_flags,
-                         NULL, out);
+    const struct css_element element = {
+        .class_name = class_name,
+        .id_name = id_name,
+        .tag_name = tag_name,
+    };
+    css_style_resolve_node(sheet, &element, pseudo_flags, NULL, 0, out);
 }
 
 static bool value_eq(struct css_value a, struct css_value b)

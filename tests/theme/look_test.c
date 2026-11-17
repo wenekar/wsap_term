@@ -168,8 +168,10 @@ static void test_theme_apply(void)
         assert(palette.has_bg_color && palette.has_border_color);
 
         struct css_style palette_input = {0};
-        css_style_resolve_ex(sheet, "text-input", NULL, NULL, CSS_PSEUDO_NONE,
-                             "command-palette", &palette_input);
+        const struct css_element input_element = { .class_name = "text-input" };
+        const struct css_element palette_parent = { .class_name = "command-palette" };
+        css_style_resolve_node(sheet, &input_element, CSS_PSEUDO_NONE,
+                               &palette_parent, 1, &palette_input);
         assert(palette_input.has_bg_color && palette_input.bg_color == 0u);
 
         assert(resolve_class(sheet, "label-link", CSS_PSEUDO_NONE)

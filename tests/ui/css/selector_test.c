@@ -45,6 +45,22 @@ static void test_disabled_checked_pseudo(void)
     css_sheet_clear(&s);
 }
 
+static struct css_style resolve_with_ancestors(const struct css_sheet *sheet,
+                                               const char *cls, const char *id,
+                                               const char *tag, unsigned pseudo,
+                                               const char *const *ancestor_classes,
+                                               size_t ancestor_count)
+{
+    struct css_element element = { .class_name = cls, .id_name = id, .tag_name = tag };
+    struct css_element ancestors[8] = {0};
+    assert(ancestor_count <= 8);
+    for (size_t i = 0; i < ancestor_count; i++)
+        ancestors[i].class_name = ancestor_classes[i];
+    struct css_style st;
+    css_style_resolve_node(sheet, &element, pseudo, ancestors, ancestor_count, &st);
+    return st;
+}
+
 static void test_descendant_selectors(void)
 {
     struct css_sheet s = {0};
@@ -54,22 +70,84 @@ static void test_descendant_selectors(void)
     struct css_style st;
     css_style_resolve(&s, "menu-item", NULL, NULL, CSS_PSEUDO_NONE, &st);
     assert(st.text_color == 0xFFAAAAAA);
-    css_style_resolve_ex(&s, "menu-item", NULL, NULL, CSS_PSEUDO_NONE,
-                         "context-menu", &st);
+    const char *const menu[] = { "context-menu" };
+    st = resolve_with_ancestors(&s, "menu-item", NULL, NULL, CSS_PSEUDO_NONE,
+                                menu, 1);
     assert(st.text_color == 0xFFBBBBBB);
-    css_style_resolve_ex(&s, "menu-item", NULL, NULL, CSS_PSEUDO_NONE,
-                         "other-root", &st);
+    const char *const other[] = { "other-root" };
+    st = resolve_with_ancestors(&s, "menu-item", NULL, NULL, CSS_PSEUDO_NONE,
+                                other, 1);
     assert(st.text_color == 0xFFAAAAAA);
 
     struct css_sheet s2 = {0};
     assert(css_parse(&s2, ".c { width: 1px; } .a .b .c { width: 9px; }"));
-    css_style_resolve_ex(&s2, "c", NULL, NULL, CSS_PSEUDO_NONE, "a\nb", &st);
+    const char *const near_nested[] = { "a", "b" };
+    st = resolve_with_ancestors(&s2, "c", NULL, NULL, CSS_PSEUDO_NONE,
+                                near_nested, 2);
     assert(st.width.val == 9.0f);
-    css_style_resolve_ex(&s2, "c", NULL, NULL, CSS_PSEUDO_NONE, "b\na", &st);
+    const char *const wrong_order[] = { "b", "a" };
+    st = resolve_with_ancestors(&s2, "c", NULL, NULL, CSS_PSEUDO_NONE,
+                                wrong_order, 2);
     assert(st.width.val == 1.0f);
-    css_style_resolve_ex(&s2, "c", NULL, NULL, CSS_PSEUDO_NONE, "a\nx\nb", &st);
+    const char *const spaced[] = { "a", "x", "b" };
+    st = resolve_with_ancestors(&s2, "c", NULL, NULL, CSS_PSEUDO_NONE,
+                                spaced, 3);
     assert(st.width.val == 9.0f);
     css_sheet_clear(&s2);
+    css_sheet_clear(&s);
+}
+
+static void test_ancestor_id_and_tag_match(void)
+{
+    struct css_sheet s = {0};
+    assert(css_parse(&s,
+        ".x { color: #111111; }"
+        "#panel .x { color: #222222; }"
+        "row .x { color: #333333; }"
+        "#panel row .x { color: #444444; }"));
+
+    struct css_element element = { .class_name = "x" };
+    struct css_style st;
+    const struct css_element panel = { .id_name = "panel" };
+    const struct css_element row = { .tag_name = "row" };
+    const struct css_element both[] = { panel, row };
+    css_style_resolve_node(&s, &element, CSS_PSEUDO_NONE, both, 2, &st);
+    assert(st.text_color == 0xFF444444);
+    css_style_resolve_node(&s, &element, CSS_PSEUDO_NONE, &panel, 1, &st);
+    assert(st.text_color == 0xFF222222);
+    css_style_resolve_node(&s, &element, CSS_PSEUDO_NONE, &row, 1, &st);
+    assert(st.text_color == 0xFF333333);
+    const struct css_element column = { .tag_name = "column" };
+    css_style_resolve_node(&s, &element, CSS_PSEUDO_NONE, &column, 1, &st);
+    assert(st.text_color == 0xFF111111);
+    css_style_resolve_node(&s, &element, CSS_PSEUDO_NONE, NULL, 0, &st);
+    assert(st.text_color == 0xFF111111);
+    css_sheet_clear(&s);
+}
+
+/* A deep tree still matches a selector at its root. */
+static void test_deep_tree_matches_root_selector(void)
+{
+    struct css_sheet s = {0};
+    assert(css_parse(&s, "#root .leaf { width: 7px; } .mid .leaf { height: 3px; }"));
+
+    enum { DEPTH = 200 };
+    static struct css_element ancestors[DEPTH];
+    for (int i = 0; i < DEPTH; i++)
+        ancestors[i].class_name = "mid";
+    ancestors[DEPTH - 1].class_name = NULL;
+    ancestors[0].id_name = "root";
+
+    struct css_element leaf = { .class_name = "leaf" };
+    struct css_style st;
+    css_style_resolve_node(&s, &leaf, CSS_PSEUDO_NONE, ancestors, DEPTH, &st);
+    assert(st.width.unit == CSS_UNIT_PX && st.width.val == 7.0f);
+    assert(st.height.unit == CSS_UNIT_PX && st.height.val == 3.0f);
+
+    ancestors[0].id_name = NULL;
+    css_style_resolve_node(&s, &leaf, CSS_PSEUDO_NONE, ancestors, DEPTH, &st);
+    assert(st.width.unit != CSS_UNIT_PX);
+    assert(st.height.unit == CSS_UNIT_PX && st.height.val == 3.0f);
     css_sheet_clear(&s);
 }
 
@@ -130,6 +208,8 @@ int main(void)
     test_compound_beats_single_both_orders();
     test_disabled_checked_pseudo();
     test_descendant_selectors();
+    test_ancestor_id_and_tag_match();
+    test_deep_tree_matches_root_selector();
     test_named_colors();
     test_truncation_and_overflow_warn_but_survive();
     printf("PASS: CSS selector tests\n");

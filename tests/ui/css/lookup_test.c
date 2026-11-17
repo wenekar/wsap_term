@@ -11,10 +11,15 @@ static char wide_css[1 << 16];
 
 static struct css_style resolve(const struct css_sheet *sheet, const char *cls,
                                 const char *id, const char *tag,
-                                unsigned pseudo, const char *path)
+                                unsigned pseudo, const char *ancestor)
 {
+    const struct css_element element = {
+        .class_name = cls, .id_name = id, .tag_name = tag,
+    };
+    const struct css_element ancestors = { .class_name = ancestor };
     struct css_style st;
-    css_style_resolve_ex(sheet, cls, id, tag, pseudo, path, &st);
+    css_style_resolve_node(sheet, &element, pseudo, ancestor ? &ancestors : NULL,
+                           ancestor ? 1 : 0, &st);
     return st;
 }
 
@@ -156,7 +161,7 @@ static void wide_sheet_mixed_selectors_test(void)
     assert(px(st.gap, 1000.0f));
     assert((st.text_color & 0xFFFFFFu) == (uint32_t)last_hover + 1);
 
-    st = resolve(&s, "k", NULL, NULL, 0, "menu\n");
+    st = resolve(&s, "k", NULL, NULL, 0, "menu");
     assert(px(st.border_radius, 6.0f));
 
     st = resolve(&s, "j", NULL, NULL, 0, NULL);

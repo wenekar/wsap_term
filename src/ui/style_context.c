@@ -58,7 +58,11 @@ void ui_style_context_destroy(struct ui_style_context *context)
         return;
     css_sheet_clear(context->owned_sheet);
     free(context->owned_sheet);
+    free(context->path);
     context->owned_sheet = NULL;
+    context->path = NULL;
+    context->path_count = 0;
+    context->path_cap = 0;
     context->sheet = NULL;
     context->host_sheet = NULL;
 }
@@ -107,37 +111,33 @@ uint64_t ui_style_context_generation(const struct ui_style_context *context)
     return context ? context->generation : 0;
 }
 
-static void append_ancestor_path(const struct ui_widget *widget,
-                                 char *path, size_t cap)
+static void element_from_widget(const struct ui_widget *widget,
+                                struct css_element *element)
 {
-    const struct ui_widget *ancestors[64];
-    size_t n = 0;
-    for (const struct ui_widget *p = widget ? widget->parent : NULL;
-         p && n < sizeof(ancestors) / sizeof(ancestors[0]); p = p->parent)
-        ancestors[n++] = p;
+    element->class_name = widget->impl.style_class;
+    element->id_name = widget->impl.style_id;
+    element->tag_name = widget->impl.style_tag;
+}
 
-    size_t used = 0;
-    while (n) {
-        const char *name = ancestors[--n]->impl.style_class;
-        if (!name || !*name)
-            continue;
-        if (used && used + 1 < cap)
-            path[used++] = '\n';
-        size_t len = strlen(name);
-        if (len > cap - used - 1)
-            len = cap - used - 1;
-        memcpy(path + used, name, len);
-        used += len;
-        if (used + 1 >= cap)
-            break;
-    }
-    if (cap)
-        path[used < cap ? used : cap - 1] = '\0';
+/* Makes room for `count` ancestors in the scratch path of `context`. */
+static bool reserve_path(struct ui_style_context *context, size_t count)
+{
+    if (count <= context->path_cap)
+        return true;
+    size_t cap = context->path_cap ? context->path_cap * 2 : 16;
+    while (cap < count)
+        cap *= 2;
+    struct css_element *next = realloc(context->path, cap * sizeof(*next));
+    if (!next)
+        return false;
+    context->path = next;
+    context->path_cap = cap;
+    return true;
 }
 
 static void apply_widget_subtree(struct ui_style_context *context,
                                  struct ui_widget *widget,
-                                 bool parent_changed)
+                                 bool parent_changed, size_t depth)
 {
     if (!widget)
         return;
@@ -147,12 +147,17 @@ static void apply_widget_subtree(struct ui_style_context *context,
     bool changed = parent_changed || !widget->impl.style_valid || !same_sheet;
     struct css_style before = widget->style;
     if (changed) {
-        char ancestors[1024] = {0};
-        append_ancestor_path(widget, ancestors, sizeof(ancestors));
-        css_style_resolve_ex(ui_style_context_sheet(context),
-                             widget->impl.style_class, widget->impl.style_id,
-                             widget->impl.style_tag, widget->impl.style_pseudo,
-                             ancestors[0] ? ancestors : NULL, &widget->style);
+        struct css_element element;
+        element_from_widget(widget, &element);
+        const struct css_element *ancestors = NULL;
+        size_t ancestor_count = 0;
+        if (context && depth > 0 && depth <= context->path_count) {
+            ancestors = context->path;
+            ancestor_count = depth;
+        }
+        css_style_resolve_node(ui_style_context_sheet(context), &element,
+                               widget->impl.style_pseudo, ancestors,
+                               ancestor_count, &widget->style);
 
         if (!widget->style.has_text_color && widget->parent &&
             widget->parent->impl.style_valid &&
@@ -181,35 +186,75 @@ static void apply_widget_subtree(struct ui_style_context *context,
             widget->ops->style_changed(widget);
     }
 
+    /* The children of this widget see it as their nearest ancestor. */
+    if (context && reserve_path(context, depth + 1)) {
+        element_from_widget(widget, &context->path[depth]);
+        context->path_count = depth + 1;
+    }
+
     for (struct ui_widget *c = widget->first_child; c; c = c->next_sibling)
         if (!c->impl.hidden)
-            apply_widget_subtree(context, c, changed);
+            apply_widget_subtree(context, c, changed, depth + 1);
 }
 
 void ui_style_context_apply(struct ui_style_context *context,
                             struct ui_widget *root)
 {
+    if (context)
+        context->path_count = 0;
     if (root)
-        apply_widget_subtree(context, root, false);
+        apply_widget_subtree(context, root, false, 0);
+}
+
+#define PART_ANCESTOR_STACK 32
+
+struct css_element_list {
+    struct css_element stack[PART_ANCESTOR_STACK];
+    struct css_element *heap;
+    size_t count;
+};
+
+static struct css_element *element_list_items(struct css_element_list *list)
+{
+    return list->heap ? list->heap : list->stack;
+}
+
+/* Collects `widget` and its ancestors, root first. Returns false when the
+   tree is deeper than the list can hold. */
+static bool element_list_fill(struct css_element_list *list,
+                              const struct ui_widget *widget)
+{
+    size_t count = 0;
+    for (const struct ui_widget *p = widget; p; p = p->parent)
+        count++;
+    if (count > PART_ANCESTOR_STACK) {
+        list->heap = malloc(count * sizeof(*list->heap));
+        if (!list->heap)
+            return false;
+    }
+    struct css_element *items = element_list_items(list);
+    size_t i = count;
+    for (const struct ui_widget *p = widget; p; p = p->parent)
+        element_from_widget(p, &items[--i]);
+    list->count = count;
+    return true;
 }
 
 static void resolve_part_style(const struct ui_widget *widget,
                                const char *class_name, unsigned pseudo_flags,
                                struct css_style *out)
 {
-    char path[1024] = {0};
-    if (widget) {
-        append_ancestor_path(widget, path, sizeof(path));
-        const char *own = widget->impl.style_class;
-        size_t used = strlen(path);
-        if (own && *own && used + 1 < sizeof(path)) {
-            if (used)
-                path[used++] = '\n';
-            snprintf(path + used, sizeof(path) - used, "%s", own);
-        }
+    const struct css_element element = { .class_name = class_name };
+    struct css_element_list list = {0};
+    const struct css_element *ancestors = NULL;
+    size_t ancestor_count = 0;
+    if (widget && element_list_fill(&list, widget)) {
+        ancestors = element_list_items(&list);
+        ancestor_count = list.count;
     }
-    css_style_resolve_ex(ui_widget_sheet(widget), class_name, NULL, NULL,
-                         pseudo_flags, path[0] ? path : NULL, out);
+    css_style_resolve_node(ui_widget_sheet(widget), &element, pseudo_flags,
+                           ancestors, ancestor_count, out);
+    free(list.heap);
 }
 
 struct css_style ui_widget_part_style(const struct ui_widget *widget,

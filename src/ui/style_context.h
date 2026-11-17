@@ -13,7 +13,9 @@ struct ui_style_context {
     struct css_sheet *owned_sheet;
     uint64_t generation;
     struct css_scale_context scale;
-    uint32_t pad;
+    struct css_element *path; /* Scratch: the ancestors of the widget at hand. */
+    size_t path_count;
+    size_t path_cap;
 };
 
 void ui_style_context_init(struct ui_style_context *context);
