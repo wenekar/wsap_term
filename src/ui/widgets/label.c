@@ -103,12 +103,10 @@ static bool scan_line(struct label_scan *it, struct label_line *line)
     line->len = pos - it->off;
     line->cells = used;
     if (pos == it->end || wrap >= UI_LABEL_CLIP) {
-        line->next = it->next;
         it->done = it->next == len && (it->end == len || text[len - 1] != '\n');
         it->off = it->next;
         it->segment = false;
     } else {
-        line->next = pos;
         it->off = pos;
     }
     return true;
@@ -611,11 +609,12 @@ static bool label_event(struct ui_widget *widget, const struct ui_event *event)
         return true;
     }
     if (p->kind == UI_POINTER_MOTION && label->impl.select.pressed) {
-        bool dragged = ui_text_select_drag(&label->impl.select,
-            ui_label_text(label), label->impl.len,
-            offset_at(label, ui_widget_to_local(widget, p->pos)), p->pos,
-            ui_px(widget->style_scale.dpi_scale, UI_TEXT_SELECT_DRAG_PX));
-        if (dragged && label->impl.selectable)
+        if (ui_text_select_drag(&label->impl.select, ui_label_text(label),
+                                label->impl.len,
+                                offset_at(label, ui_widget_to_local(widget, p->pos)),
+                                p->pos,
+                                ui_px(widget->style_scale.dpi_scale,
+                                      UI_TEXT_SELECT_DRAG_PX)))
             ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
         return true;
     }

@@ -499,6 +499,25 @@ static void link_hover_and_focus_styles_test(void)
     destroy(&f);
 }
 
+/* A drag on a link that cannot be selected shows no selection and does not
+ * activate the link. */
+static void link_drag_shows_no_selection_test(void)
+{
+    struct fixture f;
+    init(&f, "Read docs", (struct vector2i){ .x = 160, .y = 16 });
+    assert(ui_label_set_link(&f.label, "https://example.org/docs"));
+    build(&f);
+    struct vector2i start = { .x = 12, .y = 8 };
+    struct vector2i end = { .x = 60, .y = 8 };
+    assert(pointer(&f, UI_POINTER_PRESS, start, 0, 100));
+    assert(pointer(&f, UI_POINTER_MOTION, end, 0, 101));
+    assert(pointer(&f, UI_POINTER_RELEASE, end, 0, 102));
+    assert(!ui_label_selection(&f.label, NULL, NULL));
+    assert(f.opens == 0);
+    build(&f);
+    destroy(&f);
+}
+
 static void select_word(struct fixture *f, uint64_t time)
 {
     struct vector2i word = { .x = 60, .y = 8 };
@@ -677,6 +696,7 @@ int main(void)
     clip_mode_preserves_explicit_lines_test();
     narrow_box_keeps_utf8_whole_test();
     link_hover_and_focus_styles_test();
+    link_drag_shows_no_selection_test();
     focus_move_clears_selection_test();
     blank_press_clears_selection_test();
     focus_in_keeps_selection_test();

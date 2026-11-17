@@ -101,6 +101,7 @@ void ui_text_select_press(struct ui_text_select *sel, const char *text,
     sel->click_pos = sel->press_pos = click->pos;
     sel->pressed = true;
     sel->dragged = false;
+    sel->selects = click->selects;
     size_t at = click->offset <= len ? click->offset : len;
     if (click->selects && sel->clicks > 1) {
         select_unit(sel, text, len, at, sel->clicks);
@@ -124,6 +125,8 @@ bool ui_text_select_drag(struct ui_text_select *sel, const char *text,
         llabs((long long)delta.y) > threshold_px)
         sel->dragged = true;
     if (!sel->dragged)
+        return false;
+    if (!sel->selects)
         return false;
     size_t at = offset <= len ? offset : len;
     if (sel->clicks > 1) {

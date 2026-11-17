@@ -22,6 +22,8 @@ struct ui_text_select {
     uint64_t click_at;
     unsigned clicks;
     bool pressed, dragged;
+    /* The press selects text. A link that cannot be selected passes false. */
+    bool selects;
 };
 
 /* One primary-button press on the text of a widget. */
@@ -58,7 +60,7 @@ void ui_text_select_apply(struct ui_text_select *sel, const char *text,
 void ui_text_select_press(struct ui_text_select *sel, const char *text,
                           size_t len, const struct ui_text_select_click *click);
 /* Extends the selection to `offset` while the button stays down.
- * Returns true when the pointer moved past the drag threshold. */
+ * Returns true when the drag changed the selection. */
 bool ui_text_select_drag(struct ui_text_select *sel, const char *text,
                          size_t len, size_t offset, struct vector2i pos,
                          int threshold_px);
