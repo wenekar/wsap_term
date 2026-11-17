@@ -65,8 +65,6 @@ void ui_widget_set_focusable(struct ui_widget *widget, bool focusable);
 bool ui_widget_is_focusable(const struct ui_widget *widget);
 /* Sets whether a press on `widget` keeps the current focus. */
 void ui_widget_set_keeps_press_focus(struct ui_widget *widget, bool keeps);
-/* Returns true when a press on `widget` keeps the current focus. */
-bool ui_widget_keeps_press_focus(const struct ui_widget *widget);
 /* Sets whether `widget` modal mode restricts input outside its subtree. */
 void ui_widget_set_modal(struct ui_widget *widget, bool modal);
 /* Sets whether `widget` passes pointer events through to widgets underneath. */

@@ -229,11 +229,6 @@ void ui_widget_set_keeps_press_focus(struct ui_widget *widget, bool keeps)
         widget->impl.keeps_press_focus = keeps;
 }
 
-bool ui_widget_keeps_press_focus(const struct ui_widget *widget)
-{
-    return widget && widget->impl.keeps_press_focus;
-}
-
 void ui_widget_set_hidden(struct ui_widget *widget, bool hidden)
 {
     if (!widget || widget->impl.destroyed || widget->impl.hidden == hidden)
