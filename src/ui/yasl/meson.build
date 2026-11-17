@@ -24,5 +24,5 @@ if system == 'darwin'
 elif has_vulkan
     ui_yasl_src += files('vulkan.c')
 else
-    ui_yasl_src += files('metal.c')
+    ui_yasl_src += files('gpu_none.c')
 endif

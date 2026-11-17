@@ -24,12 +24,14 @@ struct window_native {
     struct yasl_surface *surface;
     struct framebuffer_history history;
     uint64_t generation;
-    void *metal_layer;
+    /* The GPU surface of this native surface, or NULL when it draws on the
+     * CPU. */
+    void *gpu_layer;
     uint32_t *pixels;
     /* The allocated words of `pixels`. A resize reuses them while they fit. */
     size_t pixels_cap;
     /* The presentations of this surface, as the display reports them. It is
-     * NULL for a surface without a Metal layer, which reports no feedback. */
+     * NULL for a surface without a GPU layer, which reports no feedback. */
     struct present_watch *watch;
     /* A draw of this surface is due in the next host pass. Each native surface
      * has its own intent, so a popup refresh draws only that popup. */

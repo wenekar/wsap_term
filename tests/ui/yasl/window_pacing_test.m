@@ -16,7 +16,7 @@
 #include <stdio.h>
 
 #include "ui/yasl/internal.h"
-#include "ui/yasl/metal.h"
+#include "ui/yasl/gpu_surface.h"
 #include "ui/yasl/stats.h"
 #include "ui/yasl/window.h"
 #include "util/damage.h"
@@ -327,7 +327,7 @@ struct drawn_frame {
     bool usable_after_pool;
 };
 
-static void dropping_compose(const struct window_metal_frame *frame, void *ud)
+static void dropping_compose(const struct window_gpu_frame *frame, void *ud)
 {
     struct drawn_frame *f = ud;
     @autoreleasepool {
@@ -357,8 +357,8 @@ static void test_drawable_lifetime(void *device)
     CAMetalLayer *layer = (CAMetalLayer *)yasl_metal_get_layer(window_surface(p.w));
     assert(layer);
     struct drawn_frame f = {0};
-    if (!window_metal_draw(layer, window_surface(p.w),
-                           (struct window_metal_watch){0}, dropping_compose, &f)) {
+    if (!window_gpu_draw(layer, window_surface(p.w),
+                         (struct window_gpu_watch){0}, dropping_compose, &f)) {
         printf("window: no drawable in this session; the drawable check is skipped\n");
         close_window(&p);
         return;

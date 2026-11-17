@@ -14,7 +14,7 @@
 #include "render/render.h"
 #include "render/surface.h"
 #include "render/term_frame.h"
-#include "ui/yasl/metal.h"
+#include "ui/yasl/gpu_surface.h"
 #include "util/damage.h"
 #include "yasl/yasl.h"
 #include <wsap_vtcore/wsap_vtcore.h>
@@ -59,7 +59,7 @@ static bool fixture_open(struct fixture *f, const char *title)
         render_gpu_free(f->g);
         return false;
     }
-    f->layer = window_metal_attach(f->ys, render_gpu_native_device(f->g));
+    f->layer = window_gpu_attach(f->ys, render_gpu_native_device(f->g));
     assert(f->layer);
     return true;
 }
@@ -74,7 +74,7 @@ static void pump_events(int timeout_ms)
 static void fixture_close(struct fixture *f)
 {
     render_gpu_surface_free(f->rs.gpu);
-    window_metal_detach(f->layer, f->ys);
+    window_gpu_detach(f->layer, f->ys);
     render_gpu_free(f->g);
     /* Dispatch queued events while wl_surface is live; Mesa roundtrip reads them. */
     pump_events(0);
@@ -101,7 +101,7 @@ static void *no_drawable(void *ud)
     return NULL;
 }
 
-static void draw_cb(const struct window_metal_frame *wf, void *ud)
+static void draw_cb(const struct window_gpu_frame *wf, void *ud)
 {
     struct draw_call *call = ud;
     struct framebuffer fb = {
@@ -135,8 +135,8 @@ static enum render_gpu_status draw(struct fixture *f, const struct render_frame 
 {
     struct draw_call call = { .f = f, .frame = frame, .unpaced = unpaced };
     for (int attempt = 0; attempt < 200; attempt++) {
-        bool drawn = window_metal_draw(f->layer, f->ys, (struct window_metal_watch){0}, draw_cb,
-                                       &call);
+        bool drawn = window_gpu_draw(f->layer, f->ys, (struct window_gpu_watch){0}, draw_cb,
+                                     &call);
         assert(drawn);
         if (call.status != RENDER_GPU_DROPPED)
             break;
@@ -277,8 +277,8 @@ static void test_cpu_pixels(void)
     for (size_t i = 0; i < sizeof(damages) / sizeof(damages[0]); i++) {
         struct draw_call call = { .f = &f, .pixels = pixels, .damage = damages[i] };
         for (int attempt = 0; attempt < 200 && !call.presented; attempt++) {
-            assert(window_metal_draw(f.layer, f.ys, (struct window_metal_watch){0}, draw_cb,
-                                     &call));
+            assert(window_gpu_draw(f.layer, f.ys, (struct window_gpu_watch){0}, draw_cb,
+                                   &call));
             assert(vector2i_eq(call.size, size));
             if (!call.presented)
                 pump_events(5);
@@ -415,7 +415,7 @@ static void test_dropped_frame_image(void)
     rf.ui = &scene;
 
     struct draw_call dropped = { .f = &f, .frame = &rf, .no_drawable = true };
-    assert(window_metal_draw(f.layer, f.ys, (struct window_metal_watch){0}, draw_cb, &dropped));
+    assert(window_gpu_draw(f.layer, f.ys, (struct window_gpu_watch){0}, draw_cb, &dropped));
     assert(dropped.status == RENDER_GPU_DROPPED);
 
     free(image_pixels);

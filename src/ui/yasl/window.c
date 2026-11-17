@@ -10,7 +10,7 @@
 #include "loop/latency_probe.h"
 #include "yasl/yasl.h"
 #include "ui/yasl/internal.h"
-#include "ui/yasl/metal.h"
+#include "ui/yasl/gpu_surface.h"
 #include "ui/yasl/native_input.h"
 #include "util/name.h"
 
@@ -193,9 +193,9 @@ void window_native_remove(struct window *w, struct yasl_surface *s)
     if (!n)
         return;
     framebuffer_history_release(&n->history);
-    if (n->metal_layer) {
-        window_metal_detach(n->metal_layer, n->surface);
-        n->metal_layer = NULL;
+    if (n->gpu_layer) {
+        window_gpu_detach(n->gpu_layer, n->surface);
+        n->gpu_layer = NULL;
     }
     present_watch_unref(n->watch);
     free(n->pixels);
@@ -237,7 +237,7 @@ static void native_compose(struct window *w, struct window_native *n,
  * would otherwise free and allocate a whole canvas.
  *
  * The renderer asks for these pixels only when the CPU paints the frame.
- * A frame that the GPU takes needs no canvas, so a Metal window keeps no
+ * A frame that the GPU takes needs no canvas, so a GPU window keeps no
  * canvas in the heap while the GPU draws its frames.
  */
 static uint32_t *native_pixels(struct window_native *n, struct vector2i size)
@@ -257,7 +257,7 @@ static uint32_t *native_pixels(struct window_native *n, struct vector2i size)
     return n->pixels;
 }
 
-struct metal_draw {
+struct gpu_draw {
     struct window *w;
     struct window_native *n;
 };
@@ -270,20 +270,20 @@ static void window_retry(struct window *w, struct yasl_surface *s)
         yasl_surface_request_frame(s);
 }
 
-/* The CPU canvas of one Metal frame, when the renderer paints it there. The
+/* The CPU canvas of one GPU frame, when the renderer paints it there. The
  * allocation happens on this call, so a frame that the GPU takes makes no
  * allocation. */
-static uint32_t *metal_cpu_pixels(void *ud, struct vector2i size)
+static uint32_t *gpu_cpu_pixels(void *ud, struct vector2i size)
 {
     struct window_native *n = ud;
     uint32_t *pixels = native_pixels(n, size);
-    (void)native_report(n, pixels != NULL, "metal frame pixels", ENOMEM);
+    (void)native_report(n, pixels != NULL, "gpu frame pixels", ENOMEM);
     return pixels;
 }
 
-static void metal_compose(const struct window_metal_frame *f, void *ud)
+static void gpu_compose(const struct window_gpu_frame *f, void *ud)
 {
-    struct metal_draw *d = ud;
+    struct gpu_draw *d = ud;
     /* The frame carries no canvas. render_draw() asks for one only when the
      * CPU paints the frame, so a GPU frame keeps no pixels in the heap. */
     native_compose(d->w, d->n, (struct framebuffer){
@@ -292,7 +292,7 @@ static void metal_compose(const struct window_metal_frame *f, void *ud)
         .acquire = f->acquire,
         .acquire_ud = f->acquire_ud,
         .transaction = f->transaction,
-        .acquire_pixels = metal_cpu_pixels,
+        .acquire_pixels = gpu_cpu_pixels,
         .acquire_pixels_ud = d->n,
     });
 }
@@ -312,17 +312,17 @@ void window_native_draw(struct window *w, struct yasl_surface *s)
     n->frame_drawable = false;
     n->frame_submitted = false;
     bool attempted = true;
-    if (n->metal_layer) {
+    if (n->gpu_layer) {
         if (!n->watch)
             n->watch = present_watch_new();
-        struct metal_draw d = { .w = w, .n = n };
-        if (!window_metal_draw(n->metal_layer, s,
-                               (struct window_metal_watch){
-                                   .presents = n->watch,
-                                   .sample = main,
-                               },
-                               metal_compose, &d)) {
-            native_report(n, false, "metal drawable", 0);
+        struct gpu_draw d = { .w = w, .n = n };
+        if (!window_gpu_draw(n->gpu_layer, s,
+                             (struct window_gpu_watch){
+                                 .presents = n->watch,
+                                 .sample = main,
+                             },
+                             gpu_compose, &d)) {
+            native_report(n, false, "gpu drawable", 0);
             attempted = false;
         }
     } else {
@@ -528,7 +528,7 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
     w->unpaced = config->tearing;
     void *layer = NULL;
     if (w->surface && options.type == YASL_SURFACE_NATIVE &&
-        !(layer = window_metal_attach(w->surface, device))) {
+        !(layer = window_gpu_attach(w->surface, device))) {
         fprintf(stderr, "window: no GPU surface, drawing on the CPU: %s\n",
                 strerror(errno));
         yasl_surface_destroy(w->surface);
@@ -537,7 +537,7 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
     }
     if (!w->surface || !window_native_add(w, w->surface))
         goto fail;
-    w->natives[w->native_count - 1].metal_layer = layer;
+    w->natives[w->native_count - 1].gpu_layer = layer;
     if (w->has_bg)
         yasl_surface_set_background_color(w->surface, w->bg);
 
@@ -564,7 +564,7 @@ fail:
 bool window_has_gpu(const struct window *w)
 {
     for (int i = 0; w && i < w->native_count; i++)
-        if (w->natives[i].metal_layer)
+        if (w->natives[i].gpu_layer)
             return true;
     return false;
 }
