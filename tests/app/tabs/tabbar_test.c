@@ -9,6 +9,7 @@
 #include "paint/scene.h"
 #include "ui/ui.h"
 #include "ui/widget_impl.h"
+#include "app/tabs/tabbar.h"
 #include <wsap_vtcore/unicode/utf8.h>
 
 #ifdef __APPLE__

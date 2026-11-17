@@ -14,10 +14,7 @@
 #include "ui/widgets/label.h"
 #include "ui/widgets/list.h"
 #include "ui/widgets/menu.h"
-#include "ui/widgets/palette.h"
 #include "ui/widgets/scrollview.h"
-#include "ui/widgets/tab_preview.h"
-#include "ui/widgets/tabbar.h"
 
 /* Releases global UI caches including the default stylesheet and interned parts. */
 void ui_shutdown(void);

@@ -2,7 +2,7 @@ bench_cases = [
     ['font-lookup-bench', files('font_lookup_bench.c'), font_lib, font_deps + [m_dep] + platform_deps],
     ['input-queue-bench', files('input_queue_bench.c'), app_lib, deps],
     ['ui-bench', files('ui_bench.c'), [ui_yasl_lib, ui_lib, font_lib, render_lib], deps + [m_dep]],
-    ['ui-frame-bench', files('ui_frame_bench.c'), [ui_yasl_lib, ui_lib, font_lib, render_lib], deps + [m_dep]],
+    ['ui-frame-bench', files('ui_frame_bench.c'), [app_lib, ui_yasl_lib, ui_lib, font_lib, render_lib], deps + [m_dep]],
 ]
 
 if font_backend != 'coretext'

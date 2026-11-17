@@ -1,4 +1,4 @@
-#include "ui/widgets/tabbar/internal.h"
+#include "app/tabs/tabbar/internal.h"
 
 #include <math.h>
 

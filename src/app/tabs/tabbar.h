@@ -1,5 +1,5 @@
-#ifndef WSAP_UI_WIDGETS_TABBAR_H
-#define WSAP_UI_WIDGETS_TABBAR_H
+#ifndef WSAP_APP_TABS_TABBAR_H
+#define WSAP_APP_TABS_TABBAR_H
 
 #include <stdbool.h>
 #include <stdint.h>

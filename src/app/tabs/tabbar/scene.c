@@ -1,4 +1,4 @@
-#include "ui/widgets/tabbar/internal.h"
+#include "app/tabs/tabbar/internal.h"
 
 #include "paint/text_run.h"
 #include "ui/text_break.h"

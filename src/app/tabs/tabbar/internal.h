@@ -1,11 +1,11 @@
-#ifndef UI_WIDGETS_TABBAR_INTERNAL_H
-#define UI_WIDGETS_TABBAR_INTERNAL_H
+#ifndef APP_TABS_TABBAR_INTERNAL_H
+#define APP_TABS_TABBAR_INTERNAL_H
 
 #include <stdbool.h>
 #include <stdint.h>
 
 #include "ui/widget.h"
-#include "ui/widgets/tabbar.h"
+#include "app/tabs/tabbar.h"
 
 /* The colors, metrics, and glyph offsets of the bar in one CSS state.
  * style.c fills the record. geometry.c, scene.c, and tabbar.c read it. */

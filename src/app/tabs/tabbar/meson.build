@@ -1,4 +1,4 @@
-ui_tabbar_src = files(
+app_tabs_tabbar_src = files(
     'geometry.c',
     'scene.c',
     'style.c',

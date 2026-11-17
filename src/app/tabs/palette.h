@@ -1,5 +1,5 @@
-#ifndef WSAP_UI_WIDGETS_PALETTE_H
-#define WSAP_UI_WIDGETS_PALETTE_H
+#ifndef WSAP_APP_TABS_PALETTE_H
+#define WSAP_APP_TABS_PALETTE_H
 
 #include <stdbool.h>
 
