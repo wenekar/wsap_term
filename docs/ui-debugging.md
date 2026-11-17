@@ -114,11 +114,14 @@ This tree shows a terminal window:
 The tree of the window also lists the overlays, in an `overlays` array.
 An overlay floats above the root, and the surface places, paints, and
 hit-tests it there.
+An overlay stays listed while it is hidden: a hidden overlay shows the
+`hidden` flag, and `~N` still names it. It is visible while its widget is not
+hidden.
 This window has two overlays:
 
 ```text
-overlays[0]  tab-preview    (~0, while shown)
-overlays[1]  palette        (~1, while open)
+overlays[0]  tab-preview    (~0, hidden while no tab is hovered)
+overlays[1]  palette        (~1, hidden while the palette is closed)
 ```
 
 The content paints first.

@@ -5,6 +5,7 @@
 
 #include <limits.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -512,9 +513,14 @@ void ui_view_destroy(struct ui_view *view)
             ui_widget_destroy(view->nodes[i].widget);
     /* The widgets are gone. The storage waits when the surface still reads
      * its tree, because a widget handler can call this function. */
-    if (surface && ui_surface_busy(surface) &&
-        ui_surface_post(surface, free_view, view))
+    if (surface && ui_surface_busy(surface)) {
+        if (ui_surface_post(surface, free_view, view))
+            return;
+        /* No memory for the queue. Freeing now would break the rule that no
+         * storage is freed while the surface is busy, so it stays. */
+        fprintf(stderr, "wsap: view storage stays: out of memory\n");
         return;
+    }
     free_view(surface, view);
 }
 
