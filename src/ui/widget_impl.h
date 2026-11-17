@@ -66,11 +66,6 @@ void ui_widget_set_focusable(struct ui_widget *widget, bool focusable);
 bool ui_widget_is_focusable(const struct ui_widget *widget);
 /* Sets whether a press on `widget` keeps the current focus. */
 void ui_widget_set_keeps_press_focus(struct ui_widget *widget, bool keeps);
-/* Sets whether `widget` modal mode restricts input outside its subtree. */
-void ui_widget_set_modal(struct ui_widget *widget, bool modal);
-/* Sets whether `widget` passes pointer events through to widgets underneath. */
-void ui_widget_set_pointer_transparent(struct ui_widget *widget,
-                                       bool transparent);
 /* Updates the CSS pseudo-class state flags of `widget`. */
 void ui_widget_set_style_pseudo(struct ui_widget *widget, unsigned pseudo_flags);
 

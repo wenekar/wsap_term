@@ -70,7 +70,7 @@ void tb_theme_read(const struct ui_tabbar *tb, struct tb_theme *t)
     struct css_style sep = ui_widget_part(&tb->widget, tb_parts.tab_sep, CSS_PSEUDO_NONE);
     struct css_style card = ui_widget_part(&tb->widget, tb_parts.tab_preview, CSS_PSEUDO_NONE);
 
-    uint32_t def_bg = tb->impl.bg_color ? tb->impl.bg_color : UI_TABBAR_BG;
+    uint32_t def_bg = tb->state.bg_color ? tb->state.bg_color : UI_TABBAR_BG;
     t->bar_bg = bar.has_bg_color ? bar.bg_color : def_bg;
     t->bar_opacity = bar.opacity;
     t->has_border_color = bar.has_border_color;

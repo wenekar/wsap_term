@@ -69,14 +69,14 @@ bool ui_tabbar_build_drag_scene(struct ui_tabbar *tb, int index,
                                 struct vector2i *hotspot)
 {
     if (!tb || !scene || !image_size || !hotspot ||
-        index < 0 || index >= tb->impl.n_tabs)
+        index < 0 || index >= tb->state.n_tabs)
         return false;
-    const struct ui_tab_label *tabs = tb->impl.labels;
+    const struct ui_tab_label *tabs = tb->state.labels;
     struct tb_theme snapshot;
     tb_theme_read(tb, &snapshot);
     const struct tb_theme *t = &snapshot;
     struct rect2i tab_rect;
-    if (!tb_tab_rect_at(tb, t, tb->impl.n_tabs, tb->impl.size, index, &tab_rect))
+    if (!tb_tab_rect_at(tb, t, tb->state.n_tabs, tb->state.size, index, &tab_rect))
         return false;
     ui_scene_init(scene);
 
@@ -156,8 +156,8 @@ bool ui_tabbar_build_drag_scene(struct ui_tabbar *tb, int index,
     }
 
     *image_size = (struct vector2i){ .x = total_w, .y = total_h };
-    hotspot->x = tb->impl.drag_grab_x;
-    hotspot->y = tb->impl.drag_origin.y - tab_rect.y;
+    hotspot->x = tb->state.drag_grab_x;
+    hotspot->y = tb->state.drag_origin.y - tab_rect.y;
     if (hotspot->x < 0) hotspot->x = 0;
     if (hotspot->x >= total_w) hotspot->x = total_w - 1;
     if (hotspot->y < 0) hotspot->y = 0;
@@ -186,8 +186,8 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
     if (!ui_scene_rect(scene, (struct rect2i){ .size = { .x = size.x, .y = l.height } }, bar_bg))
         return false;
 
-    bool bar_clip = tb && tb->impl.reveal.start_ms != 0 &&
-        tb->impl.reveal.value < 1.0f;
+    bool bar_clip = tb && tb->state.reveal.start_ms != 0 &&
+        tb->state.reveal.value < 1.0f;
     if (bar_clip &&
         !ui_scene_push_clip(scene, (struct rect2i){
             .size = { .x = size.x, .y = l.height } }))
@@ -196,9 +196,9 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
     int advance = ui_cell_dim(tb ? tb->widget.style_scale.cell_w : 0, ui_ctx_px(tb_ctx(tb), 8));
     int text_h = ui_cell_dim(tb ? tb->widget.style_scale.cell_h : 0, ui_ctx_px(tb_ctx(tb), 16));
 
-    bool dragging = tb && (tb->impl.drag_state == UI_TAB_DRAG_REORDER ||
-                           tb->impl.drag_state == UI_TAB_DRAG_DETACH);
-    int drag_idx = dragging ? tb->impl.drag_tab : -1;
+    bool dragging = tb && (tb->state.drag_state == UI_TAB_DRAG_REORDER ||
+                           tb->state.drag_state == UI_TAB_DRAG_DETACH);
+    int drag_idx = dragging ? tb->state.drag_tab : -1;
 
     float base_x = (float)l.pad.l;
     int tab_y = l.pad.t + (l.height - l.pad.t - l.pad.b - l.tab_height) / 2;
@@ -225,8 +225,8 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
 
     #define TB_TAB_HOT(idx)                                                 \
         (tabs[idx].active || (idx) == drag_idx ||                           \
-         (tb && ((tb->impl.hover_tab == (idx) || tb->impl.hover_close == (idx) ||     \
-                 tb->impl.pressed_tab == (idx)))))
+         (tb && ((tb->state.hover_tab == (idx) || tb->state.hover_close == (idx) ||     \
+                 tb->state.pressed_tab == (idx)))))
 
     for (int i = 0; i < n_tabs; i++) {
         float open = tb_open_progress(tb, i);
@@ -276,7 +276,7 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
         uint32_t bg_c;
         if (tabs[i].active)
             bg_c = t->tab_active_bg;
-        else if (tb && tb->impl.hover_tab == i)
+        else if (tb && tb->state.hover_tab == i)
             bg_c = t->tab_hover_bg;
         else
             bg_c = t->tab_idle_bg;
@@ -284,8 +284,8 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
         if (!ui_scene_rounded_rect(scene, r, t->tab_radius, bg_c))
             return false;
 
-        if (tb && i < tb->impl.tab_cap &&
-            !ui_scene_ripple(scene, r, &tb->impl.tabs[i].ripple, now_ms))
+        if (tb && i < tb->state.tab_cap &&
+            !ui_scene_ripple(scene, r, &tb->state.tabs[i].ripple, now_ms))
             return false;
 
         bool content_clip = open < 1.0f;
@@ -314,8 +314,8 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
             return false;
 
         if (has_close) {
-            float progress = (tb && i < tb->impl.tab_cap)
-                ? ui_hover_anim_value(&tb->impl.tabs[i].close_hover) : 0.0f;
+            float progress = (tb && i < tb->state.tab_cap)
+                ? ui_hover_anim_value(&tb->state.tabs[i].close_hover) : 0.0f;
             if (progress < 0.0f) progress = 0.0f;
             if (progress > 1.0f) progress = 1.0f;
 
@@ -381,7 +381,7 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
         if (content_clip && !ui_scene_pop_clip(scene))
             return false;
         if (tb && ui_widget_has_focus(&tb->widget) &&
-            i == tb->impl.keyboard_index &&
+            i == tb->state.keyboard_index &&
             !ui_scene_rect_stroke(scene, r, t->focus_width,
                                   ui_color_opacity(t->focus_color, fade)))
             return false;
@@ -418,7 +418,7 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
     bool has_new = false;
     if (l.new_tab_width > 0) {
         int nx = (int)roundf(base_x);
-        if (tb && tb->impl.external_drag)
+        if (tb && tb->state.external_drag)
             nx += (int)roundf(l.share) + l.gap;
         int max_x = size.x - l.pad.r - l.new_tab_width;
         if (nx > max_x)
@@ -435,7 +435,7 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
     if (has_new) {
         if (!ui_scene_begin_part(scene, TB_PART_NEW))
             return false;
-        float progress = tb ? ui_hover_anim_value(&tb->impl.new_hover) : 0.0f;
+        float progress = tb ? ui_hover_anim_value(&tb->state.new_hover) : 0.0f;
         if (progress > 0.001f) {
             float alpha = t->new_tab_has_hover_bg
                 ? progress * t->new_tab_hover_opacity : progress;
@@ -460,7 +460,7 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
                                sizeof(TB_NEW_MARK) - 1))
             return false;
         if (tb && ui_widget_has_focus(&tb->widget) &&
-            tb->impl.keyboard_index == n_tabs &&
+            tb->state.keyboard_index == n_tabs &&
             !ui_scene_rect_stroke(scene, nr, t->focus_width, t->focus_color))
             return false;
         if (!ui_scene_end_scope(scene))
@@ -480,7 +480,7 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct tb_theme *t,
 
         uint32_t bg = ui_color_opacity(
             t->tab_active_bg,
-            tb->impl.drag_state == UI_TAB_DRAG_DETACH ? 0.85f : 0.95f);
+            tb->state.drag_state == UI_TAB_DRAG_DETACH ? 0.85f : 0.95f);
         uint32_t bcol = ui_color_opacity(t->drop_preview_bg, 0.8f);
         if (!ui_scene_rounded_rect(scene, r, radius, bg) ||
             !ui_scene_rect_stroke(scene, r, ui_ctx_px(tb_ctx(tb), 1), bcol))

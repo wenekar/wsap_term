@@ -26,7 +26,7 @@ struct ui_palette {
         int n_cmds;
         int max_rows;
         bool stale;
-    } impl;
+    } state;
 };
 
 /* Initializes command palette widget `p`. */

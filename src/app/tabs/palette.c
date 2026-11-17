@@ -31,13 +31,13 @@ static int separator_height(const struct ui_palette *p)
 
 static void free_cmds(struct ui_palette *p)
 {
-    for (int i = 0; i < p->impl.n_cmds; i++) {
-        free((char *)p->impl.cmds[i].label);
-        free((char *)p->impl.cmds[i].shortcut);
+    for (int i = 0; i < p->state.n_cmds; i++) {
+        free((char *)p->state.cmds[i].label);
+        free((char *)p->state.cmds[i].shortcut);
     }
-    free(p->impl.cmds);
-    p->impl.cmds = NULL;
-    p->impl.n_cmds = 0;
+    free(p->state.cmds);
+    p->state.cmds = NULL;
+    p->state.n_cmds = 0;
 }
 
 static bool matches(const char *query, const char *label)
@@ -54,28 +54,26 @@ static bool matches(const char *query, const char *label)
 
 static int fitting_rows(const struct ui_palette *p, int parent_height)
 {
-    const struct ui_list_metrics *m = &p->list.impl.metrics;
-    if (!m->valid)
+    int row = ui_list_row_height(&p->list);
+    if (row <= 0)
         return UI_PALETTE_MAX_ROWS;
-    int row = m->cell_h + m->item_pad.t + m->item_pad.b;
-    if (row < m->min_h)
-        row = m->min_h;
-    int rows = (parent_height / 2 - 2 * m->edge_pad) / (row > 0 ? row : 1);
+    int edge = ui_list_edge_pad(&p->list);
+    int rows = (parent_height / 2 - 2 * edge) / row;
     return rows < 1 ? 1 : rows > UI_PALETTE_MAX_ROWS ? UI_PALETTE_MAX_ROWS : rows;
 }
 
 static void refilter(struct ui_palette *p)
 {
     struct ui_list_item items[UI_PALETTE_MAX_ROWS];
-    int cap = p->impl.max_rows > 0 ? p->impl.max_rows : UI_PALETTE_MAX_ROWS;
+    int cap = p->state.max_rows > 0 ? p->state.max_rows : UI_PALETTE_MAX_ROWS;
     const char *query = ui_input_text(&p->input);
     int n = 0;
-    for (int i = 0; i < p->impl.n_cmds && n < cap; i++)
-        if (matches(query, p->impl.cmds[i].label))
+    for (int i = 0; i < p->state.n_cmds && n < cap; i++)
+        if (matches(query, p->state.cmds[i].label))
             items[n++] = (struct ui_list_item){
-                .label = p->impl.cmds[i].label,
-                .shortcut = p->impl.cmds[i].shortcut,
-                .action = p->impl.cmds[i].action,
+                .label = p->state.cmds[i].label,
+                .shortcut = p->state.cmds[i].shortcut,
+                .action = p->state.cmds[i].action,
             };
     ui_list_set_items(&p->list, items, n);
     ui_list_step(&p->list, 1);
@@ -86,8 +84,8 @@ static void refilter(struct ui_palette *p)
 static void palette_prepare(struct ui_widget *widget)
 {
     struct ui_palette *p = palette_of(widget);
-    if (p->impl.stale) {
-        p->impl.stale = false;
+    if (p->state.stale) {
+        p->state.stale = false;
         refilter(p);
     }
 }
@@ -109,7 +107,7 @@ static bool input_action(struct ui_widget *source, const struct ui_action *actio
     (void)source;
     struct ui_palette *p = userdata;
     if (action->kind == UI_ACTION_CHANGE) {
-        p->impl.stale = true;
+        p->state.stale = true;
         ui_widget_invalidate(&p->widget, UI_WIDGET_INVALIDATE_MEASURE);
     }
     return true;
@@ -254,9 +252,9 @@ static void palette_layout(struct ui_widget *widget, struct rect2i bounds)
     struct ui_surface *surface = ui_widget_surface(widget);
     int rows = fitting_rows(p, surface ? ui_surface_viewport(surface).y
                                        : bounds.height * 2);
-    if (rows != p->impl.max_rows) {
-        p->impl.max_rows = rows;
-        p->impl.stale = true;
+    if (rows != p->state.max_rows) {
+        p->state.max_rows = rows;
+        p->state.stale = true;
         ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_MEASURE);
     }
 }
@@ -341,13 +339,13 @@ bool ui_palette_open(struct ui_palette *p, const struct ui_palette_cmd *cmds,
     if (!p || !cmds || n <= 0)
         return false;
     free_cmds(p);
-    p->impl.cmds = calloc((size_t)n, sizeof(*p->impl.cmds));
-    if (!p->impl.cmds)
+    p->state.cmds = calloc((size_t)n, sizeof(*p->state.cmds));
+    if (!p->state.cmds)
         return false;
     for (int i = 0; i < n; i++) {
         if (!cmds[i].label)
             continue;
-        struct ui_palette_cmd *c = &p->impl.cmds[p->impl.n_cmds++];
+        struct ui_palette_cmd *c = &p->state.cmds[p->state.n_cmds++];
         c->action = cmds[i].action;
         c->label = wsap_vtcore_utf8_sanitize_dup(cmds[i].label);
         if (cmds[i].shortcut && cmds[i].shortcut[0])
@@ -358,7 +356,7 @@ bool ui_palette_open(struct ui_palette *p, const struct ui_palette_cmd *cmds,
         }
     }
     ui_input_clear(&p->input);
-    p->impl.stale = true;
+    p->state.stale = true;
     ui_widget_set_hidden(&p->widget, false);
     return true;
 }

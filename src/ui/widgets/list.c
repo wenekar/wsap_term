@@ -734,3 +734,17 @@ struct insets2i ui_list_shadow(const struct ui_list *l)
 {
     return l ? l->impl.metrics.shadow : (struct insets2i){0};
 }
+
+int ui_list_row_height(const struct ui_list *l)
+{
+    if (!l || !l->impl.metrics.valid)
+        return 0;
+    const struct ui_list_metrics *m = &l->impl.metrics;
+    int row = m->cell_h + m->item_pad.t + m->item_pad.b;
+    return row < m->min_h ? m->min_h : row;
+}
+
+int ui_list_edge_pad(const struct ui_list *l)
+{
+    return l && l->impl.metrics.valid ? l->impl.metrics.edge_pad : 0;
+}

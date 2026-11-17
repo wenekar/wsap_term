@@ -38,7 +38,7 @@ struct ui_tab_preview {
         bool suppressed;
         bool hidden_for_size;
         bool managed_anchor;
-    } impl;
+    } state;
 };
 
 /* Initializes tab preview popup `p`. */

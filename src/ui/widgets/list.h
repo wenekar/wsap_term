@@ -77,6 +77,11 @@ int ui_list_step(struct ui_list *l, int dir);
 struct rect2i ui_list_item_rect(const struct ui_list *l, int index);
 int ui_list_label_inset(const struct ui_list *l);
 struct insets2i ui_list_shadow(const struct ui_list *l);
+/* Returns the height of one row of `l`, or 0 before `l` has its metrics. */
+int ui_list_row_height(const struct ui_list *l);
+/* Returns the padding between the edge of `l` and its rows, or 0 before `l`
+ * has its metrics. */
+int ui_list_edge_pad(const struct ui_list *l);
 
 static inline struct ui_widget *ui_list_widget(struct ui_list *l)
 {

@@ -68,7 +68,7 @@ struct ui_tabbar {
         enum ui_tab_drag_state drag_state;
         bool hover_new;
         bool external_drag;
-    } impl;
+    } state;
 };
 
 /* Initializes tab bar widget `tb`. */

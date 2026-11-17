@@ -4,9 +4,9 @@
 
 float tb_open_progress(const struct ui_tabbar *tb, int index)
 {
-    if (!tb || index < 0 || index >= tb->impl.tab_cap)
+    if (!tb || index < 0 || index >= tb->state.tab_cap)
         return 1.0f;
-    const struct ui_tab_state *t = &tb->impl.tabs[index];
+    const struct ui_tab_state *t = &tb->state.tabs[index];
     if (t->closing)
         return t->open.value > 0.0f ? t->open.value : 0.0f;
     if (t->open.value <= 0.0f && t->open.to <= 0.0f)
@@ -19,9 +19,9 @@ float tb_open_progress(const struct ui_tabbar *tb, int index)
 
 float tb_tab_offset(const struct ui_tabbar *tb, int index)
 {
-    if (!tb || index < 0 || index >= tb->impl.tab_cap)
+    if (!tb || index < 0 || index >= tb->state.tab_cap)
         return 0.0f;
-    const struct ui_tab_state *t = &tb->impl.tabs[index];
+    const struct ui_tab_state *t = &tb->state.tabs[index];
     return t->slide.value;
 }
 
@@ -56,7 +56,7 @@ struct tb_layout tb_layout_for(const struct ui_tabbar *tb,
 
     int avail_full = size.x - l.pad.l - l.pad.r - l.new_tab_width;
 
-    float n_eff = tb->impl.external_drag ? 1.0f : 0.0f;
+    float n_eff = tb->state.external_drag ? 1.0f : 0.0f;
     for (int i = 0; i < n_tabs; i++)
         n_eff += tb_open_progress(tb, i);
     l.n_eff = n_eff;
@@ -68,7 +68,7 @@ struct tb_layout tb_layout_for(const struct ui_tabbar *tb,
         share = 1.0f;
     l.share = share;
 
-    int slots = n_tabs + (tb->impl.external_drag ? 1 : 0);
+    int slots = n_tabs + (tb->state.external_drag ? 1 : 0);
     int available = avail_full - l.gap * slots;
     l.tab_width = slots > 0 ? available / slots : 0;
     if (l.tab_width < 1)
@@ -120,7 +120,7 @@ static bool tb_new_tab_rect(const struct ui_tabbar *tb,
     if (l->new_tab_width <= 0)
         return false;
     int x = tb_tab_x(tb, l, n_tabs);
-    if (tb->impl.external_drag)
+    if (tb->state.external_drag)
         x += (int)roundf(l->share) + l->gap;
     int max_x = width - l->pad.r - l->new_tab_width;
     if (x > max_x)
@@ -141,15 +141,15 @@ bool tb_drag_rect(const struct ui_tabbar *tb, const struct tb_layout *l,
 {
     if (!tb || !ui_tabbar_is_dragging(tb))
         return false;
-    int index = tb->impl.drag_tab;
+    int index = tb->state.drag_tab;
     int x, w;
     if (index < 0 || index >= n_tabs || size.x <= 0 ||
         !tb_tab_span(tb, l, n_tabs, size.x, index, &x, &w))
         return false;
     int y = l->pad.t + (l->height - l->pad.t - l->pad.b - l->tab_height) / 2;
-    int drag_x = tb->impl.drag_pos.x - tb->impl.drag_grab_x;
-    if (tb->impl.drag_state == UI_TAB_DRAG_DETACH)
-        y = tb->impl.drag_pos.y - l->tab_height / 2;
+    int drag_x = tb->state.drag_pos.x - tb->state.drag_grab_x;
+    if (tb->state.drag_state == UI_TAB_DRAG_DETACH)
+        y = tb->state.drag_pos.y - l->tab_height / 2;
     else {
         if (drag_x < l->pad.l)
             drag_x = l->pad.l;
@@ -167,10 +167,10 @@ bool tb_drop_rect(const struct ui_tabbar *tb,
                   const struct tb_layout *l, struct vector2i size,
                   struct rect2i *out)
 {
-    if (!tb->impl.external_drag || tb->impl.external_slot < 0 ||
-        tb->impl.external_slot > l->n_tabs)
+    if (!tb->state.external_drag || tb->state.external_slot < 0 ||
+        tb->state.external_slot > l->n_tabs)
         return false;
-    int x = tb_tab_x(tb, l, tb->impl.external_slot);
+    int x = tb_tab_x(tb, l, tb->state.external_slot);
     int max_right = size.x - l->pad.r - l->new_tab_width - l->gap;
     int width = (int)roundf(l->share);
     if (width > max_right - x)
@@ -208,8 +208,8 @@ bool tb_tab_span(const struct ui_tabbar *tb,
 int tb_live_tabs(const struct ui_tabbar *tb, int n_tabs)
 {
     int live = n_tabs;
-    for (int i = 0; tb && i < n_tabs && i < tb->impl.tab_cap; i++)
-        if (tb->impl.tabs[i].closing)
+    for (int i = 0; tb && i < n_tabs && i < tb->state.tab_cap; i++)
+        if (tb->state.tabs[i].closing)
             live--;
     return live;
 }
@@ -219,10 +219,10 @@ int tb_bar_height(const struct ui_tabbar *tb, int css_height, int n_tabs)
     if (!tb || n_tabs < 1)
         return 0;
 
-    bool armed = tb->impl.reveal.start_ms != 0;
-    if (tb_live_tabs(tb, n_tabs) <= 1 && !armed && !tb->impl.external_drag)
+    bool armed = tb->state.reveal.start_ms != 0;
+    if (tb_live_tabs(tb, n_tabs) <= 1 && !armed && !tb->state.external_drag)
         return 0;
-    float v = armed ? tb->impl.reveal.value : 1.0f;
+    float v = armed ? tb->state.reveal.value : 1.0f;
     if (v <= 0.0f)
         return 0;
     if (v > 1.0f)
