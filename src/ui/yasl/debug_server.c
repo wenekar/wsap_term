@@ -54,6 +54,12 @@ const struct window_debug_hooks *dbg_hooks(void)
 
 static void client_ready(void *ud, int fd, short revents);
 
+/* Returns the number of reply bytes that wait to be sent. */
+static size_t client_unsent(const struct dbg_client *c)
+{
+    return c->out_len - c->out_off;
+}
+
 /* Sets the poll events of a client from its state. The client wants input
  * until its input ends. It wants output while bytes wait. A client that wants
  * neither has no watch. Poll would keep reporting its hangup. */
@@ -61,7 +67,7 @@ static void client_watch_sync(struct dbg_client *c)
 {
     if (c->fd < 0 || c->dead)
         return;
-    short events = (c->read_closed ? 0 : POLLIN) | (c->out_len ? POLLOUT : 0);
+    short events = (c->read_closed ? 0 : POLLIN) | (client_unsent(c) ? POLLOUT : 0);
     if (!events) {
         if (c->watch > 0)
             yasl_loop_del_fd(srv.loop, c->watch);
@@ -83,8 +89,8 @@ static void client_flush(struct dbg_client *c)
 {
     if (c->fd < 0)
         return;
-    while (c->out_len && !c->dead) {
-        ssize_t n = send(c->fd, c->out, c->out_len, MSG_NOSIGNAL);
+    while (client_unsent(c) && !c->dead) {
+        ssize_t n = send(c->fd, c->out + c->out_off, client_unsent(c), MSG_NOSIGNAL);
         if (n < 0) {
             if (errno == EINTR)
                 continue;
@@ -92,9 +98,10 @@ static void client_flush(struct dbg_client *c)
                 c->dead = true;
             break;
         }
-        memmove(c->out, c->out + n, c->out_len - (size_t)n);
-        c->out_len -= (size_t)n;
+        c->out_off += (size_t)n;
     }
+    if (!client_unsent(c))
+        c->out_off = c->out_len = 0;
     client_watch_sync(c);
 }
 
@@ -102,6 +109,14 @@ static void client_send(struct dbg_client *c, const char *data, size_t len)
 {
     if (!c || c->dead)
         return;
+    /* Moves the waiting bytes to the front when the sent prefix fills half
+     * the buffer. A move copies no more bytes than it frees, so the copies
+     * stay linear in the size of the reply. */
+    if (c->out_off && c->out_off >= c->out_cap / 2) {
+        memmove(c->out, c->out + c->out_off, client_unsent(c));
+        c->out_len -= c->out_off;
+        c->out_off = 0;
+    }
     if (c->out_len + len + 1 > c->out_cap) {
         size_t cap = c->out_cap ? c->out_cap : 4096;
         while (cap < c->out_len + len + 1)
@@ -324,7 +339,7 @@ static void client_close(struct dbg_client *c)
  * input ended and it owes no reply. */
 static bool client_done(const struct dbg_client *c)
 {
-    return c->dead || (c->read_closed && !c->waiting && c->out_len == 0);
+    return c->dead || (c->read_closed && !c->waiting && client_unsent(c) == 0);
 }
 
 /* Closes a client that is done. Otherwise it syncs the poll events. Call it

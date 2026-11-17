@@ -27,6 +27,7 @@ struct dbg_client {
     size_t in_len, in_cap;
     char *out;
     size_t out_len, out_cap;
+    size_t out_off;         /* out[out_off..out_len) waits to be sent */
     bool waiting;           /* a command awaits a frame */
     bool read_closed;       /* the client sent EOF and sends no more input */
     bool dead;
