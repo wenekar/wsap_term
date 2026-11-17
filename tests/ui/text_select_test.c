@@ -6,6 +6,10 @@
 /* The gestures of label and input come from one controller. These tests run
  * the same pointer sequence on both widgets and compare the selection. */
 
+/* The middle of the word "café" in "Hello café world" at the test cell
+ * width. An input adds its text inset to the same offset. */
+#define WORD_X 60
+
 struct fixture {
     struct ui_surface surface;
     struct ui_label label;
@@ -22,9 +26,10 @@ struct gestures {
     struct selected one, two, three;
 };
 
-static void init(struct fixture *f, struct ui_widget *root)
+static void init(struct fixture *f, struct ui_widget *root,
+                 const struct ui_surface_host *host)
 {
-    ui_surface_init(&f->surface, NULL, NULL);
+    ui_surface_init(&f->surface, host, NULL);
     ui_surface_set_scale(&f->surface, (struct css_scale_context){
         .dpi_scale = 1, .cell_w = 8, .cell_h = 16,
     });
@@ -79,10 +84,10 @@ static void click(struct fixture *f, struct vector2i pos, uint64_t time)
     assert(pointer(f, UI_POINTER_RELEASE, pos, time + 1));
 }
 
-static struct gestures run_clicks(struct fixture *f,
+static struct gestures run_clicks(struct fixture *f, int x,
                                   struct selected (*selected)(struct fixture *))
 {
-    struct vector2i word = { .x = 60, .y = 8 };
+    struct vector2i word = { .x = x, .y = 8 };
     struct gestures g;
     click(f, word, 100);
     g.one = selected(f);
@@ -112,14 +117,14 @@ static void click_gestures_match_test(void)
     ui_label_init(&f.label);
     assert(ui_label_set_text(&f.label, "Hello caf\xC3\xA9 world"));
     ui_label_set_selectable(&f.label, true);
-    init(&f, ui_label_widget(&f.label));
-    label = run_clicks(&f, label_of);
+    init(&f, ui_label_widget(&f.label), NULL);
+    label = run_clicks(&f, WORD_X, label_of);
     destroy(&f);
 
     ui_input_init(&f.input);
     assert(ui_input_set_text(&f.input, "Hello caf\xC3\xA9 world"));
-    init(&f, ui_input_widget(&f.input));
-    input = run_clicks(&f, input_of);
+    init(&f, ui_input_widget(&f.input), NULL);
+    input = run_clicks(&f, ui_input_text_inset(&f.input) + WORD_X, input_of);
     destroy(&f);
 
     assert(label.one.empty && input.one.empty);
@@ -138,7 +143,7 @@ static void drag_selects_a_range_test(void)
     ui_label_init(&f.label);
     assert(ui_label_set_text(&f.label, "Hello caf\xC3\xA9 world"));
     ui_label_set_selectable(&f.label, true);
-    init(&f, ui_label_widget(&f.label));
+    init(&f, ui_label_widget(&f.label), NULL);
     assert(pointer(&f, UI_POINTER_PRESS, start, 0));
     assert(pointer(&f, UI_POINTER_MOTION, end, 1));
     assert(pointer(&f, UI_POINTER_RELEASE, end, 2));
@@ -148,7 +153,7 @@ static void drag_selects_a_range_test(void)
 
     ui_input_init(&f.input);
     assert(ui_input_set_text(&f.input, "Hello caf\xC3\xA9 world"));
-    init(&f, ui_input_widget(&f.input));
+    init(&f, ui_input_widget(&f.input), NULL);
     assert(pointer(&f, UI_POINTER_PRESS, start, 0));
     assert(pointer(&f, UI_POINTER_MOTION, end, 1));
     assert(pointer(&f, UI_POINTER_RELEASE, end, 2));
@@ -157,18 +162,40 @@ static void drag_selects_a_range_test(void)
     destroy(&f);
 }
 
-/* A press that repeats after the interval of the surface is a single click. */
+static uint32_t short_interval(void *userdata)
+{
+    (void)userdata;
+    return 100;
+}
+
+/* The double-click interval comes from the host of the surface. */
 static void click_interval_comes_from_the_surface_test(void)
 {
     struct fixture f = {0};
-    struct vector2i word = { .x = 60, .y = 8 };
+    struct vector2i word = { .x = WORD_X, .y = 8 };
+    const struct ui_surface_host host = {
+        .double_click_interval_ms = short_interval,
+    };
     ui_label_init(&f.label);
     assert(ui_label_set_text(&f.label, "Hello caf\xC3\xA9 world"));
     ui_label_set_selectable(&f.label, true);
-    init(&f, ui_label_widget(&f.label));
+    init(&f, ui_label_widget(&f.label), &host);
     click(&f, word, 100);
-    click(&f, word, 800);
+    click(&f, word, 250);
     assert(label_selected(&f.label).empty);
+    click(&f, word, 300);
+    assert(!strcmp(label_selected(&f.label).text, "caf\xC3\xA9"));
+    destroy(&f);
+
+    /* Without a host the interval falls back to 400 ms, so a gap of 200 ms
+     * repeats the click. */
+    ui_label_init(&f.label);
+    assert(ui_label_set_text(&f.label, "Hello caf\xC3\xA9 world"));
+    ui_label_set_selectable(&f.label, true);
+    init(&f, ui_label_widget(&f.label), NULL);
+    click(&f, word, 100);
+    click(&f, word, 300);
+    assert(!strcmp(label_selected(&f.label).text, "caf\xC3\xA9"));
     destroy(&f);
 }
 

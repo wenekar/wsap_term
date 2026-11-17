@@ -21,10 +21,9 @@ enum ui_label_align : uint8_t {
     UI_LABEL_ALIGN_RIGHT,
 };
 
-/* One line of label text. `next` is the offset where the line after it
- * starts. */
+/* One line of label text. */
 struct label_line {
-    size_t start, len, next;
+    size_t start, len;
     int cells;
     bool ellipsis;
 };
