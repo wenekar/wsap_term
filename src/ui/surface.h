@@ -93,8 +93,6 @@ bool ui_surface_destroy(struct ui_surface *surface);
  * again. Returns false only when memory is short. */
 bool ui_surface_post(struct ui_surface *surface, ui_post_fn fn, void *userdata);
 
-/* Releases global UI caches including the default stylesheet and interned parts. */
-void ui_shutdown(void);
 /* True while the surface dispatches, ticks, or builds, and reads its stored
  * targets. Use ui_surface_post to free storage then. */
 bool ui_surface_busy(const struct ui_surface *surface);
