@@ -221,6 +221,51 @@ static void wrapping_and_blank_lines_test(void)
     destroy(&f);
 }
 
+/* The lines follow the width, the wrap mode, the text, and the cell size. */
+static void lines_follow_their_inputs_test(void)
+{
+    struct fixture f;
+    init(&f, "one two three", (struct vector2i){ .x = 40, .y = 64 });
+    build(&f);
+    expect_text(&f, 0, "one ");
+    ui_label_set_wrap(&f.label, UI_LABEL_WRAP_CHAR);
+    build(&f);
+    expect_text(&f, 0, "one t");
+    ui_label_set_wrap(&f.label, UI_LABEL_WRAP_WORD);
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 80, .y = 64 });
+    build(&f);
+    expect_text(&f, 0, "one two ");
+    ui_surface_set_scale(&f.surface, (struct css_scale_context){
+        .dpi_scale = 1, .cell_w = 16, .cell_h = 32,
+    });
+    ui_surface_resize(&f.surface, (struct vector2i){ .x = 40, .y = 64 });
+    build(&f);
+    expect_text(&f, 0, "on");
+    assert(ui_label_set_text(&f.label, "ab"));
+    build(&f);
+    assert(text_count(&f) == 1);
+    expect_text(&f, 0, "ab");
+    destroy(&f);
+}
+
+/* A word wrap breaks after a Unicode space, and it does not break at a
+ * no-break space. */
+static void word_wrap_at_unicode_spaces_test(void)
+{
+    struct fixture f;
+    init(&f, "ab\xE3\x80\x80" "cdef", (struct vector2i){ .x = 40, .y = 64 });
+    build(&f);
+    expect_text(&f, 0, "ab\xE3\x80\x80");
+    expect_text(&f, 1, "cdef");
+    destroy(&f);
+
+    init(&f, "ab\xC2\xA0" "cdef", (struct vector2i){ .x = 40, .y = 64 });
+    build(&f);
+    expect_text(&f, 0, "ab\xC2\xA0" "cd");
+    expect_text(&f, 1, "ef");
+    destroy(&f);
+}
+
 static void alignment_ellipsis_and_theme_test(void)
 {
     struct fixture f;
@@ -621,6 +666,8 @@ int main(void)
 {
     dynamic_storage_test();
     wrapping_and_blank_lines_test();
+    word_wrap_at_unicode_spaces_test();
+    lines_follow_their_inputs_test();
     alignment_ellipsis_and_theme_test();
     word_line_and_keyboard_selection_test();
     cluster_and_word_keyboard_test();

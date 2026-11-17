@@ -1622,6 +1622,32 @@ void ui_text_unit_range(const char *text, size_t len, size_t pos,
     }
 }
 
+/* True for a code point that a word wrap may follow. */
+static bool is_wrap_space(uint32_t cp)
+{
+    return cp == '\t' || cp == '-' || cp == 0x2010 ||
+           prop_for(cp).wb == WB_WSEGSPACE;
+}
+
+size_t ui_text_break_before(const char *text, size_t len, size_t start,
+                            size_t limit)
+{
+    if (!text || start >= limit)
+        return start;
+    if (limit > len)
+        limit = len;
+    size_t result = start;
+    size_t pos = start;
+    while (pos < limit) {
+        uint32_t cp = 0;
+        size_t step = decode_next(text, limit, pos, &cp);
+        if (is_wrap_space(cp))
+            result = pos + step;
+        pos += step;
+    }
+    return result;
+}
+
 size_t ui_text_cluster_next(const char *text, size_t len, size_t pos,
                             int *cells)
 {

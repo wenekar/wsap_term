@@ -36,25 +36,45 @@ static struct css_style label_part(const struct ui_label *label, ui_part_id part
     return ui_widget_part(&label->widget, part, label->widget.impl.style_pseudo);
 }
 
-struct label_line {
-    size_t start, len, next;
-    int cells;
-    bool ellipsis;
-};
-
-struct label_iter {
-    const struct ui_label *label;
-    size_t off, end, next;
+/* Walks the text of one label and looks for the end of each line. */
+struct label_scan {
+    const char *text;
+    size_t len, off, end, next;
     int cap;
+    enum ui_label_wrap wrap;
     bool segment, done;
 };
 
-static bool next_line(struct label_iter *it, struct label_line *line)
+/* The lines of one label, walked in order. */
+struct label_iter {
+    const struct label_lines *lines;
+    size_t index;
+};
+
+/* Returns the end of the text that fits `cap` cells from `start`. */
+static size_t fit_end(const char *text, size_t start, size_t end, int cap,
+                      int *cells)
+{
+    size_t pos = start;
+    int used = 0;
+    while (pos < end) {
+        int width;
+        size_t next = ui_text_cluster_next(text, end, pos, &width);
+        if (width > cap - used)
+            break;
+        used += width;
+        pos = next;
+    }
+    *cells = used;
+    return pos;
+}
+
+static bool scan_line(struct label_scan *it, struct label_line *line)
 {
     if (it->done)
         return false;
-    const char *text = ui_label_text(it->label);
-    size_t len = it->label->impl.len;
+    const char *text = it->text;
+    size_t len = it->len;
     if (!it->segment) {
         const char *nl = memchr(text + it->off, '\n', len - it->off);
         it->end = nl ? (size_t)(nl - text) : len;
@@ -64,36 +84,18 @@ static bool next_line(struct label_iter *it, struct label_line *line)
         it->segment = true;
     }
     *line = (struct label_line){ .start = it->off };
-    size_t pos = it->off, word_end = pos;
-    int used = 0, word_cells = 0;
-    while (pos < it->end) {
-        int cells;
-        size_t next = ui_text_cluster_next(text, it->end, pos, &cells);
-        if (cells > it->cap - used)
-            break;
-        used += cells;
-        if (text[pos] == ' ' || text[pos] == '-' || text[pos] == '\t') {
-            word_end = next;
-            word_cells = used;
+    int used = 0;
+    size_t pos = fit_end(text, it->off, it->end, it->cap, &used);
+    enum ui_label_wrap wrap = it->wrap;
+    if (pos < it->end && wrap == UI_LABEL_WRAP_WORD) {
+        size_t wrap_at = ui_text_break_before(text, it->end, it->off, pos);
+        if (wrap_at > it->off) {
+            pos = wrap_at;
+            used = ui_text_run_cells(text + it->off, pos - it->off);
         }
-        pos = next;
-    }
-    enum ui_label_wrap wrap = it->label->impl.wrap;
-    if (pos < it->end && wrap == UI_LABEL_WRAP_WORD && word_end > it->off) {
-        pos = word_end;
-        used = word_cells;
     }
     if (pos < it->end && wrap == UI_LABEL_ELLIPSIS && it->cap > 0) {
-        pos = it->off;
-        used = 0;
-        while (pos < it->end) {
-            int cells;
-            size_t next = ui_text_cluster_next(text, it->end, pos, &cells);
-            if (cells > it->cap - 1 - used)
-                break;
-            used += cells;
-            pos = next;
-        }
+        pos = fit_end(text, it->off, it->end, it->cap - 1, &used);
         line->ellipsis = true;
     } else if (pos == it->off && pos < it->end && wrap <= UI_LABEL_WRAP_CHAR) {
         pos = ui_text_cluster_next(text, it->end, pos, &used);
@@ -120,13 +122,67 @@ static struct rect2i content_rect(const struct ui_label *label, struct vector2i 
         ui_ctx_insets(&label->widget.style_scale, label->widget.style.padding, 0));
 }
 
+static bool lines_reserve(struct label_lines *lines, size_t count)
+{
+    if (count <= lines->capacity)
+        return true;
+    size_t capacity = lines->capacity ? lines->capacity : 8;
+    while (capacity < count)
+        capacity *= 2;
+    struct label_line *items = realloc(lines->items, capacity * sizeof(*items));
+    if (!items)
+        return false;
+    lines->items = items;
+    lines->capacity = capacity;
+    return true;
+}
+
+/* Returns the lines of `label` for `width` pixels. Builds them again when the
+ * text, the width, the wrap mode, or the cell size changed. The cache belongs
+ * to the label, so a caller with a const label only reads it. */
+static const struct label_lines *lines_for(const struct ui_label *label, int width)
+{
+    struct label_lines *lines = &((struct ui_label *)label)->impl.lines;
+    struct ui_text_style style = ui_widget_text_style(&label->widget.style_scale);
+    if (lines->items && lines->text_gen == label->impl.text_gen &&
+        lines->width == width && lines->advance == style.advance &&
+        lines->cell_h == style.cell_h && lines->wrap == label->impl.wrap)
+        return lines;
+    lines->count = 0;
+    struct label_scan scan = {
+        .text = ui_label_text(label),
+        .len = label->impl.len,
+        .cap = style.advance > 0 && width > 0 ? width / style.advance : 0,
+        .wrap = label->impl.wrap,
+    };
+    struct label_line line;
+    while (scan_line(&scan, &line)) {
+        if (!lines_reserve(lines, lines->count + 1)) {
+            free(lines->items);
+            *lines = (struct label_lines){0};
+            return lines;
+        }
+        lines->items[lines->count++] = line;
+    }
+    lines->text_gen = label->impl.text_gen;
+    lines->width = width;
+    lines->advance = style.advance;
+    lines->cell_h = style.cell_h;
+    lines->wrap = label->impl.wrap;
+    return lines;
+}
+
 static struct label_iter line_iter(const struct ui_label *label, int width)
 {
-    struct ui_text_style style = ui_widget_text_style(&label->widget.style_scale);
-    return (struct label_iter){
-        .label = label,
-        .cap = style.advance > 0 && width > 0 ? width / style.advance : 0,
-    };
+    return (struct label_iter){ .lines = lines_for(label, width) };
+}
+
+static bool next_line(struct label_iter *it, struct label_line *line)
+{
+    if (!it->lines || it->index >= it->lines->count)
+        return false;
+    *line = it->lines->items[it->index++];
+    return true;
 }
 
 static struct vector2i label_measure(const struct ui_widget *widget,
@@ -171,9 +227,7 @@ static struct rect2i line_rect(const struct ui_label *label, struct rect2i conte
     int dx = label->impl.align == UI_LABEL_ALIGN_CENTER ? free / 2
            : label->impl.align == UI_LABEL_ALIGN_RIGHT ? free : 0;
     int dy = 0;
-    struct label_iter it = line_iter(label, content.width);
-    struct label_line first, second;
-    if (row == 0 && next_line(&it, &first) && !next_line(&it, &second))
+    if (row == 0 && lines_for(label, content.width)->count == 1)
         dy = geom_sat_i(geom_half_up((int64_t)content.height - style.cell_h));
     return (struct rect2i){
         .pos = { .x = content.x + dx,
@@ -589,6 +643,8 @@ static enum ui_cursor label_cursor(const struct ui_widget *widget, struct vector
 static void label_destroy(struct ui_widget *widget)
 {
     struct ui_label *label = label_of(widget);
+    free(label->impl.lines.items);
+    label->impl.lines = (struct label_lines){0};
     free(label->impl.text);
     free(label->impl.link);
     label->impl.text = label->impl.link = NULL;
@@ -639,6 +695,7 @@ bool ui_label_set_text(struct ui_label *label, const char *text)
     free(label->impl.text);
     label->impl.text = copy;
     label->impl.len = len;
+    label->impl.text_gen++;
     ui_text_select_clear(&label->impl.select);
     ui_widget_release_pointer(&label->widget);
     update_pseudo(label);

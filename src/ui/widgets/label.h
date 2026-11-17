@@ -21,13 +21,32 @@ enum ui_label_align : uint8_t {
     UI_LABEL_ALIGN_RIGHT,
 };
 
+/* One line of label text. `next` is the offset where the line after it
+ * starts. */
+struct label_line {
+    size_t start, len, next;
+    int cells;
+    bool ellipsis;
+};
+
+/* The lines of one label text for one width, wrap mode, and cell size. */
+struct label_lines {
+    struct label_line *items;
+    size_t count, capacity;
+    unsigned text_gen;
+    int width, advance, cell_h;
+    enum ui_label_wrap wrap;
+};
+
 struct ui_label {
     struct ui_widget widget;
     struct {
         char *text, *link;
         size_t len;
         struct ui_text_select select;
+        struct label_lines lines;
         int action_id;
+        unsigned text_gen;
         enum ui_label_wrap wrap;
         enum ui_label_align align;
         bool selectable, disabled;
