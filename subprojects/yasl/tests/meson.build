@@ -79,6 +79,9 @@ if has_x11
             include_directories: inc, dependencies: yasl_dep)
         test(unit + '-x11', exe)
     endforeach
+    drop_x11 = executable('yasl-drop-x11-test', 'x11/test_drop.c',
+        include_directories: inc, dependencies: [yasl_dep, x11])
+    test('drop-x11', python, args: [files('helpers/run_x11_drop.py'), drop_x11], timeout: 300)
     if get_option('x11_tablet_tests')
         xorg = find_program('/usr/lib/Xorg', '/usr/lib/xorg/Xorg', 'Xorg')
         native_tablet = executable('yasl-tablet-x11-native-test', 'x11/test_tablet_native.c',

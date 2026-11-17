@@ -93,6 +93,7 @@ static bool dl_load_table(const char *soname, void **handle_out, void *base,
     X(XFreeEventData) \
     X(XFreeGC) \
     X(XFreePixmap) \
+    X(XGetAtomName) \
     X(XGetDefault) \
     X(XGetEventData) \
     X(XGetSelectionOwner) \
@@ -326,6 +327,9 @@ static inline const struct x11_dl_table *x11_syms(void)
 #endif
 #ifndef XFreePixmap
 #define XFreePixmap (x11_syms()->fn_XFreePixmap)
+#endif
+#ifndef XGetAtomName
+#define XGetAtomName (x11_syms()->fn_XGetAtomName)
 #endif
 #ifndef XGetDefault
 #define XGetDefault (x11_syms()->fn_XGetDefault)
@@ -608,6 +612,10 @@ static bool x11_egl_load(void)
 #endif
 
 #define TEXT_LIMIT (16 * 1024 * 1024)
+/* Largest drop payload, of any type. */
+#define DROP_LIMIT (64 * 1024 * 1024)
+/* Most offered types that one XdndEnter keeps. */
+#define XDND_MAX_TYPES 32
 #define PASTE_TIMEOUT_NS YASL_PRIVATE_MS_TO_NS(30000)
 
 struct x11_surface {
@@ -649,6 +657,8 @@ struct x11_surface {
     struct yasl_private_rect2i ime_caret;
 };
 
+/* A selection receive: a clipboard paste, or the data of an XDND drop. Both
+ * accept INCR chunks and share one timeout. */
 struct paste_request {
     struct paste_request *next;
     struct x11_display *display;
@@ -662,6 +672,11 @@ struct paste_request {
     Atom incr_type;
     char *buf;
     size_t buf_len;
+    /* XDND drop: the data goes out as a DROP event of type mime, and the
+     * source gets XdndFinished. */
+    bool drop;
+    Window source;
+    char mime[YASL_PRIVATE_DROP_MIME_MAX];
 };
 
 /* An INCR transfer this backend sends to a requestor. data is a private copy, so
@@ -724,7 +739,7 @@ struct x11_display {
     Atom timestamp, multiple, pair;
     Atom net_name, net_state, fullscreen, maximized_h, maximized_v, motif_hints;
     Atom xdnd_aware, xdnd_enter, xdnd_position, xdnd_status, xdnd_leave, xdnd_drop, xdnd_finished;
-    Atom xdnd_selection, xdnd_action_copy, xdnd_type_list, uri_list;
+    Atom xdnd_selection, xdnd_action_copy, xdnd_type_list;
     char *selection[2];
     struct paste_request *pastes;
     uint32_t mods;
@@ -761,21 +776,17 @@ struct x11_display {
         Pixmap icon_pixmap;
         struct yasl_private_vector2i hotspot;
     } drag;
+    /* One external drag. XdndEnter picks the type; accepts is true only with a pick. */
     struct {
         Window source;
         int version;
         bool accepts;
-        bool has_uri_list;
+        char mime[YASL_PRIVATE_DROP_MIME_MAX]; /* The picked type, by name. */
+        Atom picked; /* The same type, by atom. */
         struct x11_surface *surface;
         struct yasl_private_vector2i pos;
         Time time;
     } xdnd;
-    struct {
-        bool active;
-        Window source;
-        struct x11_surface *surface;
-        Time time;
-    } pending_drop;
 };
 
 static bool place(struct yasl_surface *base, struct yasl_private_vector2i at);
@@ -1581,6 +1592,72 @@ static bool resize(struct x11_surface *s, struct yasl_private_vector2i size)
     return true;
 }
 
+/* Tells an XDND source how its drop ended. Call it once for each XdndDrop.
+ * target is the window that took the data, or None. */
+static void xdnd_finish(struct x11_display *d, Window source, Window target, bool success)
+{
+    if (!source || d->lost) return;
+    XEvent finished = {0};
+    finished.xclient = (XClientMessageEvent){
+        .type = ClientMessage,
+        .display = d->native,
+        .window = source,
+        .message_type = d->xdnd_finished,
+        .format = 32,
+        .data.l = {
+            target,
+            success ? 1 : 0,
+            success ? d->xdnd_action_copy : None,
+        },
+    };
+    XSendEvent(d->native, source, False, NoEventMask, &finished);
+    XFlush(d->native);
+}
+
+/* True when a drop type carries text. Its data must be valid UTF-8. Other
+ * drop types are delivered as bytes, unchecked. */
+static bool drop_is_text(const char *mime)
+{
+    return !strcasecmp(mime, "UTF8_STRING") || !strncasecmp(mime, "text/", 5);
+}
+
+/* The most bytes that one receive may hold. */
+static size_t receive_limit(const struct paste_request *r)
+{
+    return r->drop ? DROP_LIMIT : TEXT_LIMIT;
+}
+
+/* True when a property type and format fit this receive. A paste takes UTF-8 or
+ * Latin-1 text. A drop takes any 8-bit data. */
+static bool receive_format_ok(const struct paste_request *r, Atom actual, int format)
+{
+    if (format != 8) return false;
+    return r->drop || actual == r->display->utf8 || actual == XA_STRING;
+}
+
+/* True when a complete payload may be delivered. Clipboard text and text drops
+ * must be valid UTF-8. */
+static bool receive_payload_ok(const struct paste_request *r, const char *data, size_t len)
+{
+    if (r->drop && !drop_is_text(r->mime)) return true;
+    return !data || yasl_private_utf8_validate(data, len);
+}
+
+/* Ends an XDND drop. It delivers the data as a DROP event when the surface is
+ * alive and the transfer worked. Then it answers the source. */
+static void drop_complete(struct x11_display *d, struct paste_request *r,
+        enum yasl_private_transfer_status status, const char *data, size_t len)
+{
+    struct x11_surface *s = r->target && !r->target->destroyed ? r->target : NULL;
+    bool ok = s && status == YASL_PRIVATE_TRANSFER_OK && len > 0;
+    if (ok) {
+        struct yasl_private_event event = {.type = YASL_PRIVATE_EVENT_DROP};
+        snprintf(event.text.mime, sizeof(event.text.mime), "%s", r->mime);
+        push(s, event, data, len);
+    }
+    xdnd_finish(d, r->source, s ? s->window : None, ok);
+}
+
 static void cancel_pastes(struct x11_display *d, struct x11_surface *target)
 {
     for (struct paste_request **p = &d->pastes; *p;) {
@@ -1592,9 +1669,11 @@ static void cancel_pastes(struct x11_display *d, struct x11_surface *target)
             r->id = 0;
             p = &r->next;
         } else if (!target || r->target == target) {
-            /* An INCR transfer in progress is abandoned; its owner times out. */
+            /* An INCR transfer in progress is abandoned; its owner times out.
+             * An abandoned drop still tells its source that it failed. */
             *p = r->next;
             if (r->timeout) yasl_loop_del_timer(d->loop, r->timeout);
+            if (r->drop && target) xdnd_finish(d, r->source, None, false);
             if (!d->lost) XDestroyWindow(d->native, r->window);
             free(r->buf);
             free(r);
@@ -1604,22 +1683,33 @@ static void cancel_pastes(struct x11_display *d, struct x11_surface *target)
     }
 }
 
+/* Unlink a receive at *link and report its outcome. A paste completes its
+ * request id on a live surface. A drop delivers its DROP event, then answers
+ * its source. */
+static void paste_complete(struct x11_display *d, struct paste_request **link,
+        enum yasl_private_transfer_status status, const char *text, size_t len)
+{
+    struct paste_request *r = *link;
+    *link = r->next;
+    if (r->timeout) yasl_loop_del_timer(d->loop, r->timeout);
+    XDestroyWindow(d->native, r->window);
+    if (r->drop) drop_complete(d, r, status, text, len);
+    else if (r->target && !r->target->destroyed)
+        yasl_private_surface_complete_paste(&r->target->base, r->id, status, text, len);
+    free(r->buf);
+    free(r);
+}
+
 static uint64_t paste_timeout(void *ud, yasl_private_timer_id id, uint64_t interval_ns)
 {
     (void)id;
     (void)interval_ns;
     struct paste_request *r = ud;
-    struct x11_surface *s = r->target;
     struct x11_display *d = r->display;
     struct paste_request **p = &d->pastes;
     while (*p && *p != r) p = &(*p)->next;
-    if (*p) *p = r->next;
     r->timeout = 0; /* The loop retires this one-shot timer after the callback. */
-    XDestroyWindow(d->native, r->window);
-    if (s && !s->destroyed)
-        yasl_private_surface_complete_paste(&s->base, r->id, YASL_PRIVATE_TRANSFER_FAILED, NULL, 0);
-    free(r->buf);
-    free(r);
+    if (*p) paste_complete(d, p, YASL_PRIVATE_TRANSFER_FAILED, NULL, 0);
     return 0;
 }
 
@@ -1631,18 +1721,33 @@ static void paste_rearm(struct paste_request *r)
     r->timeout = yasl_loop_add_timer(d->loop, PASTE_TIMEOUT_NS, paste_timeout, r);
 }
 
-/* Unlink a paste request at *link and report its outcome to the surface, if alive. */
-static void paste_complete(struct x11_display *d, struct paste_request **link,
-        enum yasl_private_transfer_status status, const char *text, size_t len)
+/* Starts a receive on a new window that takes the data of a selection. The
+ * window takes INCR chunks as PropertyNotify events. The request joins
+ * d->pastes with a stall timeout. Returns NULL with errno set on failure. */
+static struct paste_request *receive_new(struct x11_display *d, Atom selection,
+        struct x11_surface *target, uint64_t id)
 {
-    struct paste_request *r = *link;
-    *link = r->next;
-    if (r->timeout) yasl_loop_del_timer(d->loop, r->timeout);
-    XDestroyWindow(d->native, r->window);
-    if (r->target && !r->target->destroyed)
-        yasl_private_surface_complete_paste(&r->target->base, r->id, status, text, len);
-    free(r->buf);
-    free(r);
+    struct paste_request *r = calloc(1, sizeof(*r));
+    if (!r) { errno = ENOMEM; return NULL; }
+    r->window = XCreateSimpleWindow(d->native, RootWindow(d->native, d->screen),
+                                    0, 0, 1, 1, 0, 0, 0);
+    if (!r->window) { free(r); errno = EIO; return NULL; }
+    XSelectInput(d->native, r->window, PropertyChangeMask);
+    r->display = d;
+    r->target = target;
+    r->selection = selection;
+    r->id = id;
+    errno = 0;
+    r->timeout = yasl_loop_add_timer(d->loop, PASTE_TIMEOUT_NS, paste_timeout, r);
+    if (!r->timeout) {
+        XDestroyWindow(d->native, r->window);
+        free(r);
+        if (!errno) errno = ENOMEM;
+        return NULL;
+    }
+    r->next = d->pastes;
+    d->pastes = r;
+    return r;
 }
 
 static void surface_destroy(struct yasl_surface *base)
@@ -1658,7 +1763,6 @@ static void surface_destroy(struct yasl_surface *base)
     }
     if (d->xdnd.surface == s)
         d->xdnd.surface = NULL;
-    if (d->pending_drop.surface == s) d->pending_drop.surface = NULL;
     for (struct x11_surface *p = d->surfaces; p; p = p->next) {
         if (p->parent == s) p->parent = NULL;
     }
@@ -2807,130 +2911,46 @@ static void selection_clear(struct x11_display *d, const XSelectionClearEvent *e
     d->selection[slot] = NULL;
 }
 
-static char *parse_file_uris(const char *data, size_t len, size_t *out_len)
-{
-    if (!data || !len) {
-        if (out_len) *out_len = 0;
-        return NULL;
-    }
-    char *out = malloc(len * 2 + 2);
-    if (!out) {
-        if (out_len) *out_len = 0;
-        return NULL;
-    }
-    size_t out_pos = 0;
-    size_t i = 0;
-    while (i < len) {
-        while (i < len && (data[i] == '\r' || data[i] == '\n')) i++;
-        if (i >= len) break;
-        size_t start = i;
-        while (i < len && data[i] != '\r' && data[i] != '\n') i++;
-        size_t end = i;
-        while (end > start && (data[end - 1] == ' ' || data[end - 1] == '\t' || data[end - 1] == '\r'))
-            end--;
-        size_t line_len = end - start;
-        if (line_len >= 7 && !strncmp(data + start, "file://", 7)) {
-            memcpy(out + out_pos, data + start, line_len);
-            out_pos += line_len;
-            out[out_pos++] = '\r';
-            out[out_pos++] = '\n';
-        }
-    }
-    if (!out_pos) {
-        free(out);
-        if (out_len) *out_len = 0;
-        return NULL;
-    }
-    out[out_pos] = '\0';
-    if (out_len) *out_len = out_pos;
-    return out;
-}
-
-static void xdnd_selection_notify(struct x11_display *d, XSelectionEvent *event)
-{
-    if (!d->pending_drop.active) return;
-    Window source = d->pending_drop.source;
-    struct x11_surface *s = d->pending_drop.surface;
-    d->pending_drop.active = false;
-    d->pending_drop.source = None;
-    d->pending_drop.surface = NULL;
-
-    bool success = false;
-    if (s && !s->destroyed && event->property != None) {
-        Atom actual;
-        int format;
-        unsigned long count, left;
-        unsigned char *data = NULL;
-        if (XGetWindowProperty(d->native, s->window, event->property,
-                0, TEXT_LIMIT / 4, True, AnyPropertyType,
-                &actual, &format, &count, &left, &data) == Success && data && count > 0) {
-            size_t out_len = 0;
-            char *parsed = parse_file_uris((const char *)data, count, &out_len);
-            if (parsed && out_len > 0) {
-                push(s, (struct yasl_private_event){.type = YASL_PRIVATE_EVENT_DROP}, parsed, out_len);
-                free(parsed);
-                success = true;
-            }
-        }
-        if (data) XFree(data);
-    }
-    if (source) {
-        XEvent finished = {0};
-        finished.xclient = (XClientMessageEvent){
-            .type = ClientMessage,
-            .display = d->native,
-            .window = source,
-            .message_type = d->xdnd_finished,
-            .format = 32,
-            .data.l = {
-                s ? s->window : None,
-                success ? 1 : 0,
-                success ? d->xdnd_action_copy : None,
-            },
-        };
-        XSendEvent(d->native, source, False, NoEventMask, &finished);
-        XFlush(d->native);
-    }
-}
-
+/* Finishes a selection receive from the owner's reply. It runs the INCR probe
+ * first, then reads the whole property, up to the limit of the receive. */
 static void selection_notify(struct x11_display *d, XSelectionEvent *event)
 {
     struct paste_request **p = &d->pastes;
     while (*p && (*p)->window != event->requestor) p = &(*p)->next;
     if (!*p) return;
     struct paste_request *r = *p;
-    struct x11_surface *s = r->target;
-    if (!s) {
+    if (!r->target) {
         /* Surface destruction detached this accepted request. The reply means
          * the owner has finished writing the initial property; retire safely. */
-        *p = r->next;
-        if (r->timeout) yasl_loop_del_timer(d->loop, r->timeout);
-        XDestroyWindow(d->native, r->window);
-        free(r);
+        paste_complete(d, p, YASL_PRIVATE_TRANSFER_FAILED, NULL, 0);
         return;
     }
     if (event->property == None) {
-        *p = r->next;
-        if (r->timeout) yasl_loop_del_timer(d->loop, r->timeout);
         enum yasl_private_transfer_status status =
             XGetSelectionOwner(d->native, r->selection) == None
                 ? YASL_PRIVATE_TRANSFER_UNAVAILABLE : YASL_PRIVATE_TRANSFER_FAILED;
-        XDestroyWindow(d->native, r->window);
-        if (s && !s->destroyed)
-            yasl_private_surface_complete_paste(&s->base, r->id, status, NULL, 0);
-        free(r);
+        paste_complete(d, p, status, NULL, 0);
         return;
     }
-    /* Probe without deleting first; the type tells an INCR marker apart. */
+    /* Probe without deleting first. The type tells an INCR marker apart, and
+     * the marker's one value is the total size that the owner announces. */
     Atom probe_type = None;
     int probe_format = 0;
     unsigned long probe_count = 0, probe_left = 0;
     unsigned char *probe_data = NULL;
     int probe_result = XGetWindowProperty(d->native, r->window, event->property,
-            0, 0, False, AnyPropertyType, &probe_type, &probe_format,
+            0, 1, False, AnyPropertyType, &probe_type, &probe_format,
             &probe_count, &probe_left, &probe_data);
-    if (probe_data) XFree(probe_data);
     if (probe_result == Success && probe_type == d->incr) {
+        unsigned long announced = probe_format == 32 && probe_count && probe_data ?
+            *(unsigned long *)probe_data : 0;
+        if (probe_data) XFree(probe_data);
+        /* Too big: fail now, and leave the marker in place. The owner waits for
+         * a deletion that never comes, so it sends no chunk to a closed window. */
+        if (announced > receive_limit(r)) {
+            paste_complete(d, p, YASL_PRIVATE_TRANSFER_FAILED, NULL, 0);
+            return;
+        }
         /* Deleting the marker tells the owner to send the first chunk. The
          * request stays queued until a zero-length chunk ends the transfer. */
         XDeleteProperty(d->native, r->window, event->property);
@@ -2939,8 +2959,7 @@ static void selection_notify(struct x11_display *d, XSelectionEvent *event)
         XFlush(d->native);
         return;
     }
-    *p = r->next;
-    if (r->timeout) yasl_loop_del_timer(d->loop, r->timeout);
+    if (probe_data) XFree(probe_data);
     Atom actual = None;
     int format = 0;
     unsigned long count = 0, left = 0;
@@ -2949,9 +2968,10 @@ static void selection_notify(struct x11_display *d, XSelectionEvent *event)
     size_t total = 0;
     unsigned long offset = 0;
     bool complete = false;
+    size_t limit = receive_limit(r);
 
-    /* Read up to TEXT_LIMIT bytes in 64KB chunks to avoid huge single-request limits */
-    while (total < TEXT_LIMIT) {
+    /* Read up to the limit in 64KB chunks to avoid huge single-request limits */
+    while (total < limit) {
         unsigned long chunk = 16384; /* 64 KB (in 32-bit multiples) */
         if (XGetWindowProperty(d->native, r->window, event->property,
                 (long)offset, (long)chunk, True, AnyPropertyType,
@@ -2959,11 +2979,11 @@ static void selection_notify(struct x11_display *d, XSelectionEvent *event)
             if (data) { XFree(data); data = NULL; }
             break;
         }
-        if ((actual != d->utf8 && actual != XA_STRING) || format != 8) {
+        if (!receive_format_ok(r, actual, format)) {
             if (data) { XFree(data); data = NULL; }
             break;
         }
-        if (count > TEXT_LIMIT - total) {
+        if (count > limit - total) {
             XFree(data);
             data = NULL;
             break;
@@ -2982,25 +3002,21 @@ static void selection_notify(struct x11_display *d, XSelectionEvent *event)
         data = NULL;
         if (left == 0) { complete = true; break; }
     }
-    if (complete && actual == XA_STRING) {
+    /* Only a paste converts Latin-1. A drop keeps the bytes that the owner sent. */
+    if (complete && !r->drop && actual == XA_STRING) {
         size_t utf8_len;
         char *utf8 = yasl_private_utf8_from_latin1(buf, total, &utf8_len);
         free(buf);
         buf = utf8;
         if (buf) total = utf8_len;
     }
-    enum yasl_private_transfer_status status = YASL_PRIVATE_TRANSFER_FAILED;
-    if (complete && buf && yasl_private_utf8_validate(buf, total))
-        status = YASL_PRIVATE_TRANSFER_OK;
-    yasl_private_surface_complete_paste(&s->base, r->id, status,
-            status == YASL_PRIVATE_TRANSFER_OK ? buf : NULL,
-            status == YASL_PRIVATE_TRANSFER_OK ? total : 0);
+    bool ok = complete && buf && receive_payload_ok(r, buf, total);
+    paste_complete(d, p, ok ? YASL_PRIVATE_TRANSFER_OK : YASL_PRIVATE_TRANSFER_FAILED,
+            ok ? buf : NULL, ok ? total : 0);
     free(buf);
-    XDestroyWindow(d->native, r->window);
-    free(r);
 }
 
-/* Consume a PropertyNotify on an INCR paste window. Returns false for other windows. */
+/* Consume a PropertyNotify on an INCR receive window. Returns false for other windows. */
 static bool paste_incr_property(struct x11_display *d, const XPropertyEvent *ev)
 {
     struct paste_request **link = &d->pastes;
@@ -3008,15 +3024,16 @@ static bool paste_incr_property(struct x11_display *d, const XPropertyEvent *ev)
     if (!*link) return false;
     if (ev->state != PropertyNewValue || ev->atom != d->paste_property) return true;
     struct paste_request *r = *link;
+    size_t limit = receive_limit(r);
     Atom actual = None;
     int format = 0;
     unsigned long count = 0, left = 0;
     unsigned char *data = NULL;
     /* Reading and deleting the chunk lets the owner write the next one. */
-    int result = XGetWindowProperty(d->native, r->window, ev->atom, 0, TEXT_LIMIT / 4, True,
+    int result = XGetWindowProperty(d->native, r->window, ev->atom, 0, (long)(limit / 4), True,
             AnyPropertyType, &actual, &format, &count, &left, &data);
-    bool valid = result == Success && actual != None && format == 8 && left == 0 &&
-            (actual == d->utf8 || actual == XA_STRING) && count <= TEXT_LIMIT - r->buf_len;
+    bool valid = result == Success && actual != None && left == 0 &&
+            receive_format_ok(r, actual, format) && count <= limit - r->buf_len;
     if (!valid) {
         if (data) XFree(data);
         paste_complete(d, link, YASL_PRIVATE_TRANSFER_FAILED, NULL, 0);
@@ -3025,7 +3042,7 @@ static bool paste_incr_property(struct x11_display *d, const XPropertyEvent *ev)
     if (count == 0) {
         /* A zero-length chunk ends the transfer. */
         if (data) XFree(data);
-        if (r->buf && r->incr_type == XA_STRING) {
+        if (r->buf && !r->drop && r->incr_type == XA_STRING) {
             size_t utf8_len = 0;
             char *utf8 = yasl_private_utf8_from_latin1(r->buf, r->buf_len, &utf8_len);
             free(r->buf);
@@ -3036,8 +3053,8 @@ static bool paste_incr_property(struct x11_display *d, const XPropertyEvent *ev)
                 return true;
             }
         }
-        bool text_ok = !r->buf || yasl_private_utf8_validate(r->buf, r->buf_len);
-        if (text_ok) paste_complete(d, link, YASL_PRIVATE_TRANSFER_OK, r->buf ? r->buf : "", r->buf_len);
+        if (receive_payload_ok(r, r->buf, r->buf_len))
+            paste_complete(d, link, YASL_PRIVATE_TRANSFER_OK, r->buf ? r->buf : "", r->buf_len);
         else paste_complete(d, link, YASL_PRIVATE_TRANSFER_FAILED, NULL, 0);
         return true;
     }
@@ -3127,6 +3144,76 @@ static void key_event(struct x11_surface *s, XKeyEvent *key, bool repeat)
     if (text != local) free(text);
 }
 
+/* Reads the types that an XdndEnter offers, then picks one for the root surface
+ * of s. The inline atoms hold the types, unless more_types says that the
+ * source's XdndTypeList property holds them. A drag without a fitting type is
+ * refused. Call it once for each XdndEnter. */
+static void xdnd_enter_pick(struct x11_display *d, struct x11_surface *s, Window source,
+        const XClientMessageEvent *ev, bool more_types)
+{
+    d->xdnd.accepts = false;
+    d->xdnd.mime[0] = '\0';
+    d->xdnd.picked = None;
+    if (!d->native) return;
+    Atom listed[XDND_MAX_TYPES];
+    size_t listed_count = 0;
+    if (more_types) {
+        Atom actual = None;
+        int format = 0;
+        unsigned long count = 0, left = 0;
+        unsigned char *prop_data = NULL;
+        if (XGetWindowProperty(d->native, source, d->xdnd_type_list, 0, XDND_MAX_TYPES, False,
+                XA_ATOM, &actual, &format, &count, &left, &prop_data) == Success &&
+                actual == XA_ATOM && format == 32 && prop_data) {
+            Atom *types = (Atom *)prop_data;
+            for (unsigned long i = 0; i < count && listed_count < XDND_MAX_TYPES; i++)
+                listed[listed_count++] = types[i];
+        }
+        if (prop_data) XFree(prop_data);
+    } else {
+        for (int i = 2; i <= 4; i++) listed[listed_count++] = (Atom)ev->data.l[i];
+    }
+    Atom atoms[XDND_MAX_TYPES];
+    const char *offered[XDND_MAX_TYPES];
+    size_t count = 0;
+    for (size_t i = 0; i < listed_count; i++) {
+        if (!listed[i]) continue; /* None fills the unused inline slots. */
+        char *name = XGetAtomName(d->native, listed[i]);
+        if (!name) continue;
+        atoms[count] = listed[i];
+        offered[count++] = name;
+    }
+    struct x11_surface *root = s;
+    while (root->parent) root = root->parent;
+    const char *picked = yasl_private_surface_pick_drop_type(&root->base, offered, count);
+    if (picked) {
+        d->xdnd.accepts = true;
+        snprintf(d->xdnd.mime, sizeof(d->xdnd.mime), "%s", picked);
+        for (size_t i = 0; i < count; i++) {
+            if (offered[i] != picked) continue;
+            d->xdnd.picked = atoms[i];
+            break;
+        }
+    }
+    for (size_t i = 0; i < count; i++) XFree((void *)offered[i]);
+}
+
+/* Starts the transfer of an accepted XDND drop. The source's data arrives as a
+ * DROP event on s, and the source gets XdndFinished. Returns false when the
+ * transfer cannot start. Call it after xdnd_enter_pick accepted the drag. */
+static bool drop_start(struct x11_display *d, struct x11_surface *s, Window source, Time time)
+{
+    struct paste_request *r = receive_new(d, d->xdnd_selection, s, 0);
+    if (!r) return false;
+    r->drop = true;
+    r->source = source;
+    snprintf(r->mime, sizeof(r->mime), "%s", d->xdnd.mime);
+    XConvertSelection(d->native, d->xdnd_selection, d->xdnd.picked, d->paste_property,
+                      r->window, time);
+    XFlush(d->native);
+    return true;
+}
+
 static void handle_client_message(struct x11_display *d, struct x11_surface *s,
                                   const XClientMessageEvent *ev)
 {
@@ -3137,30 +3224,9 @@ static void handle_client_message(struct x11_display *d, struct x11_surface *s,
         Window source = (Window)ev->data.l[0];
         int version = (int)((unsigned long)ev->data.l[1] >> 24);
         bool more_types = (ev->data.l[1] & 1) != 0;
-        bool has_uri = false;
-        if (more_types && d->native) {
-            Atom actual;
-            int format;
-            unsigned long count, left;
-            unsigned char *prop_data = NULL;
-            if (XGetWindowProperty(d->native, source, d->xdnd_type_list,
-                    0, 64, False, XA_ATOM, &actual, &format, &count, &left, &prop_data) == Success &&
-                    actual == XA_ATOM && format == 32 && prop_data) {
-                Atom *types = (Atom *)prop_data;
-                for (unsigned long i = 0; i < count; i++) {
-                    if (types[i] == d->uri_list) { has_uri = true; break; }
-                }
-            }
-            if (prop_data) XFree(prop_data);
-        } else {
-            for (int i = 2; i <= 4; i++) {
-                if ((Atom)ev->data.l[i] == d->uri_list) { has_uri = true; break; }
-            }
-        }
         d->xdnd.source = source;
         d->xdnd.version = version;
-        d->xdnd.has_uri_list = has_uri;
-        d->xdnd.accepts = has_uri;
+        xdnd_enter_pick(d, s, source, ev, more_types);
     } else if (ev->message_type == d->xdnd_position) {
         Window source = (Window)ev->data.l[0];
         Window target = s->window;
@@ -3185,7 +3251,7 @@ static void handle_client_message(struct x11_display *d, struct x11_surface *s,
         d->xdnd.pos = pos;
         d->xdnd.time = t;
         if (d->xdnd.accepts && !s->destroyed)
-            yasl_private_surface_notify_drop(&s->base, YASL_PRIVATE_DROP_OVER, pos);
+            yasl_private_surface_notify_drop_mime(&s->base, YASL_PRIVATE_DROP_OVER, pos, d->xdnd.mime);
 
         if (d->native) {
             XEvent reply = {0};
@@ -3215,32 +3281,12 @@ static void handle_client_message(struct x11_display *d, struct x11_surface *s,
         Window source = (Window)ev->data.l[0];
         Window target = s->window;
         Time drop_time = (Time)ev->data.l[2];
-        bool was_accepting = d->xdnd.accepts && d->xdnd.has_uri_list && (d->xdnd.source == source);
-        if (d->xdnd.surface == s) {
-            if (was_accepting && !s->destroyed)
-                yasl_private_surface_notify_drop(&s->base, YASL_PRIVATE_DROP_LEAVE, d->xdnd.pos);
-        }
-        if (was_accepting && !s->destroyed) {
-            d->pending_drop.active = true;
-            d->pending_drop.source = source;
-            d->pending_drop.surface = s;
-            d->pending_drop.time = drop_time;
-            if (d->native) {
-                XConvertSelection(d->native, d->xdnd_selection, d->uri_list,
-                                  d->paste_property, target, drop_time);
-            }
-        } else if (d->native) {
-            XEvent reply = {0};
-            reply.xclient = (XClientMessageEvent){
-                .type = ClientMessage,
-                .display = d->native,
-                .window = source,
-                .message_type = d->xdnd_finished,
-                .format = 32,
-                .data.l = { target, 0, None },
-            };
-            XSendEvent(d->native, source, False, NoEventMask, &reply);
-        }
+        bool accepting = d->xdnd.accepts && d->xdnd.source == source && !s->destroyed;
+        if (accepting && d->xdnd.surface == s)
+            yasl_private_surface_notify_drop(&s->base, YASL_PRIVATE_DROP_LEAVE, d->xdnd.pos);
+        /* A drop that cannot start is refused; its source gets XdndFinished now. */
+        if (!accepting || !drop_start(d, s, source, drop_time))
+            xdnd_finish(d, source, target, false);
         d->xdnd = (typeof(d->xdnd)){0};
     }
 }
@@ -3289,10 +3335,6 @@ static void dispatch(struct yasl_private_display *base)
             if (paste_incr_property(d, &event.xproperty)) continue;
         }
         if (event.type == SelectionNotify) {
-            if (event.xselection.selection == d->xdnd_selection) {
-                xdnd_selection_notify(d, &event.xselection);
-                continue;
-            }
             selection_notify(d, &event.xselection);
             continue;
         }
@@ -3743,7 +3785,6 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
     ATOM(xdnd_selection, "XdndSelection");
     ATOM(xdnd_action_copy, "XdndActionCopy");
     ATOM(xdnd_type_list, "XdndTypeList");
-    ATOM(uri_list, "text/uri-list");
 #undef ATOM
     if (d->loop) {
         d->watch = yasl_loop_add_fd(d->loop, ConnectionNumber(d->native), POLLIN, ready, &d->base);
@@ -3768,7 +3809,6 @@ static void display_close(struct yasl_private_display *base)
     drag_cancel(base);
     cancel_pastes(d, NULL);
     incr_cancel_all(d);
-    d->pending_drop.active = false;
     if (d->loop && d->watch > 0) yasl_loop_del_fd(d->loop, d->watch);
     if (d->owns_loop && d->loop) {
         yasl_loop_destroy(d->loop);
@@ -3847,28 +3887,8 @@ static bool request_paste(struct yasl_private_display *base, enum yasl_private_s
             yasl_private_surface_complete_paste(target, id, YASL_PRIVATE_TRANSFER_UNAVAILABLE, NULL, 0);
         return true;
     } else {
-        struct paste_request *r = calloc(1, sizeof(*r));
-        if (!r) { errno = ENOMEM; return false; }
-        r->window = XCreateSimpleWindow(d->native, RootWindow(d->native, d->screen),
-                                        0, 0, 1, 1, 0, 0, 0);
-        if (!r->window) { free(r); errno = EIO; return false; }
-        /* INCR chunks arrive as PropertyNotify events on this window. */
-        XSelectInput(d->native, r->window, PropertyChangeMask);
-        r->display = d;
-        r->target = s;
-        r->selection = selection;
-        r->id = id;
-        errno = 0;
-        r->timeout = yasl_loop_add_timer(d->loop, PASTE_TIMEOUT_NS,
-                paste_timeout, r);
-        if (!r->timeout) {
-            XDestroyWindow(d->native, r->window);
-            free(r);
-            if (!errno) errno = ENOMEM;
-            return false;
-        }
-        r->next = d->pastes;
-        d->pastes = r;
+        struct paste_request *r = receive_new(d, selection, s, id);
+        if (!r) return false;
         XConvertSelection(d->native, selection, d->utf8, d->paste_property,
                             r->window, CurrentTime);
         XFlush(d->native);
