@@ -405,6 +405,40 @@ static void root_measure_only_test(void)
     ui_widget_destroy(&root.widget);
 }
 
+static void fixed_size_limits_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_surface standalone_surface = {0}, row_surface = {0};
+    struct ui_box row = {0};
+    struct probe standalone = {0}, child = {0};
+    assert(css_parse(&sheet,
+        ".bounded { max-width: 10px; min-height: 30px; }"));
+
+    probe_init(&standalone, "bounded", (struct vector2i){ .x = 5, .y = 5 });
+    ui_widget_set_fixed_size(&standalone.widget,
+                             (struct vector2i){ .x = 20, .y = 10 });
+    show(&standalone_surface, &standalone.widget, &sheet,
+         (struct vector2i){ .x = 400, .y = 400 });
+    struct vector2i natural = ui_widget_measure(&standalone.widget,
+        (struct ui_constraints){ .max = { .x = 400, .y = 400 } });
+    assert(vector2i_eq(natural, (struct vector2i){ .x = 10, .y = 30 }));
+
+    ui_box_init(&row);
+    probe_init(&child, "bounded", (struct vector2i){ .x = 5, .y = 5 });
+    ui_widget_set_fixed_size(&child.widget,
+                             (struct vector2i){ .x = 20, .y = 10 });
+    assert(ui_widget_add_child(&row.widget, &child.widget));
+    show(&row_surface, &row.widget, &sheet,
+         (struct vector2i){ .x = 400, .y = 400 });
+    assert(child.widget.bounds.width == 10 && child.widget.bounds.height == 30);
+
+    ui_surface_destroy(&standalone_surface);
+    ui_surface_destroy(&row_surface);
+    ui_widget_destroy(&row.widget);
+    ui_widget_destroy(&standalone.widget);
+    css_sheet_clear(&sheet);
+}
+
 int main(void)
 {
     wrapped_label_test();
@@ -418,5 +452,6 @@ int main(void)
     wide_sibling_test();
     indefinite_percent_test();
     root_measure_only_test();
+    fixed_size_limits_test();
     return 0;
 }
