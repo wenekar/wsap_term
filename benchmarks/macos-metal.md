@@ -50,7 +50,7 @@ frame slot the frame is dropped at once. The main thread never waits for
 a slot or for a drawable, but `[CAMetalLayer nextDrawable]` itself blocks
 when the pool is empty.
 
-`window_metal_draw` attaches one presented handler to the drawable of
+`window_gpu_draw` attaches one presented handler to the drawable of
 each frame. It captures the sample of the latency probe at that moment,
 on the thread that submits the frame. The handler runs on a thread of
 the display, and it reads `presentedTime` and the time it runs. It writes

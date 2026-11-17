@@ -229,7 +229,7 @@ static struct window *window_of_surface(struct window_host *host,
 
 static void window_geometry_event(struct window *w, const struct yasl_event *ev)
 {
-    uint32_t scale_120 = (uint32_t)(ev->window.scale * 120.0 + 0.5);
+    uint32_t scale_120 = window_scale_120_of(ev->window.scale);
     w->scale_120 = scale_120;
     struct window_geometry g = {
         .size = { .x = ev->window.pixel_width, .y = ev->window.pixel_height },

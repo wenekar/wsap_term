@@ -1,3 +1,10 @@
+/*
+ * Step 1 of the input path.
+ *
+ * It turns yasl events into input events, and it queues them. Step 2 is
+ * `ui_input.c`. Step 3 is `ui_route.c`.
+ */
+
 #define _GNU_SOURCE
 #include "ui/yasl/native_input.h"
 
@@ -233,7 +240,7 @@ static enum input_key_route queue_key(struct window *w, const struct yasl_event 
 
 static struct vector2i device_pos(const struct window *w, const struct yasl_event *in)
 {
-    double scale = window_scale_120(w) / 120.0;
+    double scale = window_scale_120(w) / (double)YASL_SCALE_UNIT;
     return (struct vector2i){ .x = (int)lround(in->x * scale), .y = (int)lround(in->y * scale) };
 }
 

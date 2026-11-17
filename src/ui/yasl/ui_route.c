@@ -1,3 +1,10 @@
+/*
+ * Step 3 of the input path.
+ *
+ * It drains the queued input events, and it sends each UI event to the surface
+ * that owns it. Step 1 is `native_input.c`. Step 2 is `ui_input.c`.
+ */
+
 #include "ui/yasl/inspector.h"
 #include "ui/yasl/ui_input.h"
 #include "ui/yasl/internal.h"
@@ -153,3 +160,48 @@ void window_ui_route(struct window *w, struct input_event *ev)
         window_ui_update_cursor(w);
 }
 
+/* Takes the pointer state of one input event into the window. */
+static void track_pointer(struct window *w, struct input_mouse_event *m)
+{
+    if (m->kind == PTR_LEAVE) {
+        w->pointer.inside = false;
+        return;
+    }
+    if ((m->scroll_lines || m->scroll_delta != 0.0f) && m->kind != PTR_SCROLL)
+        m->kind = PTR_SCROLL;
+    w->pointer.pos = m->pos;
+    w->pointer.inside = true;
+}
+
+/* Takes the held keys and the pointer of one input event into the window, so
+ * the UI reads the state before the event. */
+static void track_native(struct window *w, struct input_event *ev)
+{
+    switch (ev->kind) {
+    case INPUT_MOUSE:
+        track_pointer(w, &ev->mouse);
+        break;
+    case INPUT_KEY:
+        input_keyboard_update(&w->keyboard, &ev->key);
+        break;
+    case INPUT_FOCUS:
+        if (!ev->focus.focused)
+            input_keyboard_reset(&w->keyboard);
+        break;
+    default:
+        break;
+    }
+}
+
+void window_drain_input(struct window *w)
+{
+    if (!w->surface || w->closed)
+        return;
+    struct input_event ev;
+    while (!w->closed && (window_inject_pop(w, &ev) || input_queue_take(&w->input, &ev))) {
+        track_native(w, &ev);
+        if (window_mounted(w))
+            window_ui_route(w, &ev);
+        input_event_release(&ev);
+    }
+}

@@ -1,3 +1,10 @@
+/*
+ * Step 2 of the input path.
+ *
+ * It turns an input event into a UI event. Step 1 is `native_input.c`. Step 3
+ * is `ui_route.c`.
+ */
+
 #include "ui/yasl/ui_input.h"
 #include "ui/yasl/native_input.h"
 

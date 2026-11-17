@@ -1,5 +1,5 @@
 #define VK_NO_PROTOTYPES
-#include "ui/yasl/metal.h"
+#include "ui/yasl/gpu_surface.h"
 
 #include <errno.h>
 #include <stdlib.h>
@@ -53,7 +53,7 @@ static bool surface_presentable(const struct vulkan_device *dev, VkSurfaceKHR su
            formats > 0;
 }
 
-void *window_metal_attach(struct yasl_surface *s, void *device)
+void *window_gpu_attach(struct yasl_surface *s, void *device)
 {
     if (!s || !device)
         return NULL;
@@ -84,7 +84,7 @@ void *window_metal_attach(struct yasl_surface *s, void *device)
     return wv;
 }
 
-void window_metal_detach(void *layer, struct yasl_surface *s)
+void window_gpu_detach(void *layer, struct yasl_surface *s)
 {
     struct window_vulkan *wv = layer;
     if (s)
@@ -105,9 +105,9 @@ static void *acquire_vulkan_drawable(void *ud)
     return &wv->drawable;
 }
 
-bool window_metal_draw(void *layer, struct yasl_surface *s,
-                       struct window_metal_watch watch,
-                       window_metal_draw_fn draw, void *ud)
+bool window_gpu_draw(void *layer, struct yasl_surface *s,
+                     struct window_gpu_watch watch,
+                     window_gpu_draw_fn draw, void *ud)
 {
     struct window_vulkan *wv = layer;
     if (!wv || !s || !draw)
@@ -125,7 +125,7 @@ bool window_metal_draw(void *layer, struct yasl_surface *s,
     wv->has_size = true;
     wv->presents = watch.presents;
     wv->watch_sample = watch.sample;
-    struct window_metal_frame frame = {
+    struct window_gpu_frame frame = {
         .drawable = &wv->drawable,
         .size = size,
         .transaction = transaction,

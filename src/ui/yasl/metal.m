@@ -4,13 +4,13 @@
 #import <QuartzCore/CATransaction.h>
 #import <QuartzCore/QuartzCore.h>
 
-#include "ui/yasl/metal.h"
+#include "ui/yasl/gpu_surface.h"
 
 #include "ui/yasl/stats.h"
 #include "loop/latency_probe.h"
 #include "yasl/yasl.h"
 
-void *window_metal_attach(struct yasl_surface *s, void *device)
+void *window_gpu_attach(struct yasl_surface *s, void *device)
 {
     if (!device)
         return NULL;
@@ -22,7 +22,7 @@ void *window_metal_attach(struct yasl_surface *s, void *device)
     return layer;
 }
 
-void window_metal_detach(void *layer, struct yasl_surface *s)
+void window_gpu_detach(void *layer, struct yasl_surface *s)
 {
     (void)layer;
     (void)s;
@@ -112,7 +112,7 @@ static void report_presented(struct present_watch *presents, struct present_repo
 struct acquire_state {
     CAMetalLayer *layer;
     struct yasl_surface *surface;
-    struct window_metal_watch watch;
+    struct window_gpu_watch watch;
     /* The layer paces its presentation at a display refresh. */
     bool paced;
     id<CAMetalDrawable> drawable;
@@ -148,9 +148,9 @@ static void *acquire_drawable(void *ud)
     return state->drawable;
 }
 
-bool window_metal_draw(void *layer, struct yasl_surface *s,
-                       struct window_metal_watch watch,
-                       window_metal_draw_fn draw, void *ud)
+bool window_gpu_draw(void *layer, struct yasl_surface *s,
+                       struct window_gpu_watch watch,
+                       window_gpu_draw_fn draw, void *ud)
 {
     CAMetalLayer *metal = (CAMetalLayer *)layer;
     CGSize size = metal.drawableSize;
@@ -172,7 +172,7 @@ bool window_metal_draw(void *layer, struct yasl_surface *s,
              * waits for no refresh. */
             .paced = metal.displaySyncEnabled && !transaction,
         };
-        struct window_metal_frame frame = {
+        struct window_gpu_frame frame = {
             .drawable = NULL,
             .size = canvas,
             .transaction = transaction,
