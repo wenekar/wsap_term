@@ -40,7 +40,7 @@ static bool settings_init(struct settings_screen *screen,
     const struct ui_node_desc root = {
         .kind = UI_NODE_COLUMN,
         .key = "settings",
-        .props.layout = { .align = UI_BOX_ALIGN_STRETCH, .gap = 8 },
+        .class_name = "settings",
         .children = UI_NODES(
             { .kind = UI_NODE_INPUT, .key = "search",
               .props.input = { .placeholder = "Search",
@@ -83,7 +83,9 @@ Initialize the surface before you mount the view.
 Set the viewport size with `ui_surface_resize()`.
 Set the surface scale with `ui_surface_set_scale()`.
 Set the surface theme with `ui_surface_set_sheet()`.
-Use CSS for gaps, padding, colors, and control sizes.
+Use CSS for gaps, padding, alignment, colors, and control sizes.
+A row, a column, and a stack take `flex-direction`, `align-items`,
+`justify-content`, `gap`, and `padding` from CSS.
 
 Send keys and pointer input through `ui_surface_dispatch()`.
 The host sets `ui_key_event.edit_unit` for editing keys.

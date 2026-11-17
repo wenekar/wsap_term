@@ -162,13 +162,13 @@ static void wrapped_label_test(void)
     ui_box_init(&root);
     ui_box_init(&column);
     ui_box_set_direction(&column, UI_BOX_COLUMN);
-    ui_box_set_align(&column, UI_BOX_ALIGN_STRETCH);
     ui_widget_set_style_identity(&column.widget, "column", NULL, NULL);
     ui_label_init(&label);
     assert(ui_label_set_text(&label, "aaaaa bbbbb ccccc"));
     ui_button_init(&button);
     ui_button_set_text(&button, "OK");
-    assert(css_parse(&sheet, ".column { width: 50%; }"));
+    assert(css_parse(&sheet,
+        ".column { width: 50%; align-items: stretch; }"));
     assert(ui_widget_add_child(&root.widget, &column.widget));
     assert(ui_widget_add_children(&column.widget, (struct ui_widget *[]){
         &label.widget, &button.widget }, 2));
@@ -201,14 +201,13 @@ static void box_border_and_paint_test(void)
     struct ui_debug_parts parts = {0};
 
     ui_box_init(&box);
-    ui_box_set_align(&box, UI_BOX_ALIGN_STRETCH);
     ui_widget_set_style_identity(&box.widget, "card", NULL, NULL);
     probe_init(&child, "child", (struct vector2i){ .x = 20, .y = 10 });
     assert(ui_widget_add_child(&box.widget, &child.widget));
 
     assert(css_parse(&sheet,
         ".card { padding: 4px; border-color: #112233; border-width: 2px; "
-        "border-radius: 5px; background: #445566; }"));
+        "border-radius: 5px; background: #445566; align-items: stretch; }"));
     show(&surface, &box.widget, &sheet, (struct vector2i){ .x = 100, .y = 40 });
     struct vector2i natural = ui_widget_measure(&box.widget,
         (struct ui_constraints){ .max = { .x = 200, .y = 200 } });
@@ -233,7 +232,6 @@ static void box_border_and_paint_test(void)
 
     ui_box_init(&stack);
     ui_box_set_direction(&stack, UI_BOX_STACK);
-    ui_box_set_align(&stack, UI_BOX_ALIGN_STRETCH);
     ui_widget_set_style_identity(&stack.widget, "card", NULL, NULL);
     probe_init(&stack_child, "child", (struct vector2i){ .x = 20, .y = 10 });
     assert(ui_widget_add_child(&stack.widget, &stack_child.widget));

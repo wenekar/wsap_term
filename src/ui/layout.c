@@ -151,7 +151,7 @@ static struct ui_box_params node_params(const struct ui_widget *widget,
     if (ui_widget_is_box(widget))
         return ui_box_params((const struct ui_box *)widget, basis);
     return (struct ui_box_params){ .direction = UI_BOX_STACK,
-                                   .align = UI_BOX_ALIGN_STRETCH };
+                                   .align = CSS_ALIGN_STRETCH };
 }
 
 static struct flex_axis axis_fixed(float value)
@@ -351,8 +351,8 @@ static void place_flow_children(struct layout_pass *pass, struct layout_node *no
     percent_basis[main] = inner[main] - gaps;
     percent_basis[cross] = inner[cross];
     bool stretch[2];
-    stretch[0] = p.direction == UI_BOX_COLUMN && p.align == UI_BOX_ALIGN_STRETCH;
-    stretch[1] = p.direction != UI_BOX_COLUMN && p.align == UI_BOX_ALIGN_STRETCH;
+    stretch[0] = p.direction == UI_BOX_COLUMN && p.align == CSS_ALIGN_STRETCH;
+    stretch[1] = p.direction != UI_BOX_COLUMN && p.align == CSS_ALIGN_STRETCH;
 
     float total = 0;
     for (size_t i = 0; i < count; i++) {
@@ -400,9 +400,9 @@ static void place_flow_children(struct layout_pass *pass, struct layout_node *no
     if (extra < 0)
         extra = 0;
     float cursor = content[main];
-    if (p.justify == UI_BOX_JUSTIFY_CENTER)
+    if (p.justify == CSS_JUSTIFY_CENTER)
         cursor += extra / 2;
-    else if (p.justify == UI_BOX_JUSTIFY_END)
+    else if (p.justify == CSS_JUSTIFY_END)
         cursor += extra;
     for (size_t i = 0; i < count; i++) {
         size_t index = node->first_child + i;
@@ -410,9 +410,9 @@ static void place_flow_children(struct layout_pass *pass, struct layout_node *no
         float free = inner[cross] - child->size[cross];
         float pos[2] = { content[0], content[1] };
         pos[main] = cursor;
-        if (p.align == UI_BOX_ALIGN_CENTER)
+        if (p.align == CSS_ALIGN_CENTER)
             pos[cross] += free / 2;
-        else if (p.align == UI_BOX_ALIGN_END)
+        else if (p.align == CSS_ALIGN_END)
             pos[cross] += free;
         place_node(pass, index, pos, child->size);
         cursor += child->size[main] + (float)p.gap;
@@ -450,7 +450,7 @@ static void place_stack_children(struct layout_pass *pass, struct layout_node *n
         node->size[1] - (float)(p.padding.top + p.padding.bottom),
     };
     bool plain = !ui_widget_is_box(node->widget);
-    bool stretch = p.align == UI_BOX_ALIGN_STRETCH;
+    bool stretch = p.align == CSS_ALIGN_STRETCH;
     for (size_t i = 0; i < node->child_count; i++) {
         size_t index = node->first_child + i;
         struct layout_node *child = &pass->nodes[index];
@@ -465,9 +465,9 @@ static void place_stack_children(struct layout_pass *pass, struct layout_node *n
             size[axis] = stack_child_size(&rule, inner[axis],
                                           child->natural[axis], plain, stretch);
             float free = inner[axis] - size[axis];
-            if (p.align == UI_BOX_ALIGN_CENTER)
+            if (p.align == CSS_ALIGN_CENTER)
                 pos[axis] += free / 2;
-            else if (p.align == UI_BOX_ALIGN_END)
+            else if (p.align == CSS_ALIGN_END)
                 pos[axis] += free;
         }
         place_node(pass, index, pos, size);

@@ -42,10 +42,9 @@ static void screen_init(struct screen *s, struct ui_surface *surface)
     memset(s, 0, sizeof(*s));
 
     ui_box_set_direction(&s->root, UI_BOX_COLUMN);
-    ui_box_set_gap(&s->root, 2);
-
+    ui_widget_set_style_identity(UI_WIDGET(&s->root), "acceptance-root", NULL, "box");
     ui_box_set_direction(&s->buttons, UI_BOX_ROW);
-    ui_box_set_gap(&s->buttons, 4);
+    ui_widget_set_style_identity(UI_WIDGET(&s->buttons), "acceptance-buttons", NULL, "box");
     ui_button_set_text(&s->ok, "OK");
     ui_button_set_text(&s->cancel, "Cancel");
     struct ui_widget *button_children[] = {
@@ -83,7 +82,10 @@ static void screen_init(struct screen *s, struct ui_surface *surface)
     static struct css_sheet sheet;
     if (!sheet.rules) {
         css_init_default(&sheet);
-        assert(css_parse(&sheet, ".acceptance-scroll { height: grow; min-height: 1px; }"));
+        assert(css_parse(&sheet,
+            ".acceptance-scroll { height: grow; min-height: 1px; }"
+            ".acceptance-root { gap: 2px; }"
+            ".acceptance-buttons { gap: 4px; }"));
     }
     ui_surface_set_sheet(surface, &sheet);
     ui_surface_set_scale(surface, (struct css_scale_context){

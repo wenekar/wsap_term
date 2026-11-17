@@ -355,7 +355,6 @@ void ui_dropdown_init(struct ui_dropdown *d)
     ui_widget_set_action_handler(&d->layer, popup_action, d);
     ui_box_init(&d->panel);
     ui_box_set_direction(&d->panel, UI_BOX_COLUMN);
-    ui_box_set_align(&d->panel, UI_BOX_ALIGN_STRETCH);
     ui_widget_set_style_identity(&d->panel.widget, "dropdown-popup", NULL, "box");
     ui_input_init(&d->search);
     ui_input_set_placeholder(&d->search, "Search choices...");

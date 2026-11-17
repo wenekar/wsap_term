@@ -624,7 +624,6 @@ static struct ui_node_desc box_node(enum ui_node_kind kind, const char *key,
         .bind.box = bind,
         .children = children,
         .child_count = child_count,
-        .props.layout = { .align = UI_BOX_ALIGN_STRETCH },
     };
 }
 
@@ -815,8 +814,9 @@ static bool mount_form(struct settings_form *form)
         box_node(UI_NODE_COLUMN, "layout", "settings-form", NULL, &form->layout,
             layout_nodes, sizeof(layout_nodes) / sizeof(layout_nodes[0])),
     };
-    struct ui_node_desc root = box_node(UI_NODE_STACK, "root", NULL, NULL, NULL,
-        root_children, sizeof(root_children) / sizeof(root_children[0]));
+    struct ui_node_desc root = box_node(UI_NODE_STACK, "root", "settings-root",
+        NULL, NULL, root_children,
+        sizeof(root_children) / sizeof(root_children[0]));
     root.on_action = form_action;
     root.action_userdata = form;
     root.on_event = root_event;

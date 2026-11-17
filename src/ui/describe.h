@@ -27,13 +27,6 @@ enum ui_node_kind : uint8_t {
     UI_NODE_WIDGET,
 };
 
-struct ui_node_layout {
-    struct insets2i padding;
-    int gap;
-    enum ui_box_align align;
-    enum ui_box_justify justify;
-};
-
 /* Use the field that matches the node kind.
  * The slots are borrowed through mount and written only on success.
  * The view owns each returned widget until view destruction. */
@@ -62,7 +55,6 @@ struct ui_node_desc {
     struct ui_node_bindings bind;
 
     union {
-        struct ui_node_layout layout;
         struct {
             const char *text;
             const char *link;
