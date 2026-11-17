@@ -22,10 +22,14 @@ The rules that constrain new code:
   subsystem.
 - yasl (`subprojects/yasl`) is the platform layer. `src/ui/` is the UI core.
   The UI core includes no yasl header and has no yasl dependency.
-  `src/ui/yasl/` is the binding library, `wsap-ui-yasl`. It joins the UI to
-  yasl: the window and its host, native input, menu popups, accessibility,
-  and the inspector server. Only base, pty, session, ui_yasl, terminal, and
-  app can include `yasl/` headers. `dirgraph.py` checks this rule.
+  `src/ui/yasl/` is the binding library, `wsap-ui-yasl`. The library holds
+  the window system: pacing, presentation, input, clipboard, drag, and IME.
+  It also holds the UI binding: the window and its host, menu popups,
+  accessibility, and the inspector server. These parts stay one library. A
+  window hosts a UI in every app window, so a split must invert that
+  dependency. That costs more than the better names give.
+  Only base, pty, session, ui_yasl, terminal, and app can include `yasl/`
+  headers. `dirgraph.py` checks this rule.
 - Window content lives in its own directory, such as `src/terminal/`.
   Content provides its root widget to the app. Only `src/app/` mounts window
   widgets with `window_ui_mount` and opens app windows. Producers send frame
