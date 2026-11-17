@@ -22,12 +22,13 @@ struct window_debug {
 struct dbg_client {
     struct dbg_client *next;
     int fd;
-    int watch;
+    int watch;              /* yasl watch ID; 0 when the client has no watch */
     char *in;
     size_t in_len, in_cap;
     char *out;
     size_t out_len, out_cap;
-    bool waiting;
+    bool waiting;           /* a command awaits a frame */
+    bool read_closed;       /* the client sent EOF and sends no more input */
     bool dead;
 };
 

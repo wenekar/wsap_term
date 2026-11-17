@@ -460,6 +460,16 @@ if get_option('integration_tests')
             timeout: 60,
         )
         test(
+            'debug-half-close-test',
+            python,
+            args: files('ui/yasl/debug_half_close_test.py'),
+            depends: [program],
+            env: {'BIN': program.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 60,
+        )
+        test(
             'display-lost-test',
             python,
             args: files('ui/yasl/display_lost_test.py'),
