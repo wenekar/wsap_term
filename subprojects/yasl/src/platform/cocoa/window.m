@@ -1407,6 +1407,19 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
 {
     darwin_ctx.depth++;
     @try {
+        /* AppKit keeps Control+Tab and Control+Shift+Tab for window tabbing and
+         * key view navigation. It drops the press before the first responder
+         * sees it. Send the press to the first responder so the application can
+         * bind the key. AppKit tests menu key equivalents before this call, so
+         * a menu item still wins. */
+        if (event.type == NSEventTypeKeyDown && event.keyCode == kVK_Tab &&
+            (event.modifierFlags & NSEventModifierFlagControl)) {
+            NSResponder *responder = self.firstResponder;
+            if ([responder respondsToSelector:@selector(keyDown:)]) {
+                [responder keyDown:event];
+                return;
+            }
+        }
         [super sendEvent:event];
     } @finally {
         darwin_ctx.depth--;
