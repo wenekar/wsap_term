@@ -254,6 +254,37 @@ static void box_border_and_paint_test(void)
     ui_scene_destroy(&scene);
 }
 
+static void min_over_max_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_surface standalone_surface = {0};
+    struct ui_surface row_surface = {0};
+    struct ui_box row = {0};
+    struct probe standalone = {0}, child = {0};
+    assert(css_parse(&sheet, ".overlap { min-width: 80px; max-width: 20px; }"));
+
+    probe_init(&standalone, "overlap", (struct vector2i){ .x = 10, .y = 10 });
+    show(&standalone_surface, &standalone.widget, &sheet,
+         (struct vector2i){ .x = 400, .y = 100 });
+    struct vector2i natural = ui_widget_measure(&standalone.widget,
+        (struct ui_constraints){ .max = { .x = 400, .y = 100 } });
+    assert(natural.x == 80);
+
+    ui_box_init(&row);
+    probe_init(&child, "overlap", (struct vector2i){ .x = 10, .y = 10 });
+    assert(ui_widget_add_child(&row.widget, &child.widget));
+    show(&row_surface, &row.widget, &sheet,
+         (struct vector2i){ .x = 400, .y = 100 });
+    assert(child.widget.bounds.width == 80);
+    assert(child.widget.measured_size.x == 80);
+
+    ui_surface_destroy(&standalone_surface);
+    ui_surface_destroy(&row_surface);
+    ui_widget_destroy(&row.widget);
+    ui_widget_destroy(&standalone.widget);
+    css_sheet_clear(&sheet);
+}
+
 int main(void)
 {
     wrapped_label_test();
@@ -262,5 +293,6 @@ int main(void)
     float_edges_test();
     fixed_and_fit_overflow_test();
     box_border_and_paint_test();
+    min_over_max_test();
     return 0;
 }

@@ -141,12 +141,7 @@ static struct vector2i label_measure(const struct ui_widget *widget,
         .x = geom_sat_i((int64_t)pad.x + 2 * (int64_t)border),
         .y = geom_sat_i((int64_t)pad.y + 2 * (int64_t)border),
     };
-    int width = constraints.min.x == constraints.max.x ? constraints.max.x :
-        ui_css_resolve_int(widget->style.width, (float)constraints.max.x,
-            (float)constraints.max.x, &widget->style_scale, true);
-    if (widget->impl.fixed_size.x)
-        width = widget->impl.fixed_size.x;
-    int content_w = geom_sat_i((int64_t)width - chrome.x);
+    int content_w = geom_sat_i((int64_t)constraints.max.x - chrome.x);
     struct label_iter it = line_iter(label, content_w);
     struct label_line line;
     int widest = 0;
