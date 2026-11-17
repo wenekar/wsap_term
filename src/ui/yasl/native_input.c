@@ -95,10 +95,11 @@ static uint32_t us_base(enum yasl_key key)
 
 static uint32_t fallback_key_text(const struct yasl_event *in)
 {
-    bool letter = in->key.key >= YASL_KEY_A && in->key.key <= YASL_KEY_Z;
-    bool caps = letter && (in->mods & YASL_MOD_CAPS);
+    bool letter = input_key_is_letter(in->key.codepoint, in->key.shifted);
     bool shift = (in->mods & YASL_MOD_SHIFT) != 0;
-    return (shift != caps) && in->key.shifted ? in->key.shifted : in->key.codepoint;
+    bool caps = (in->mods & YASL_MOD_CAPS) != 0;
+    bool shifted = input_key_selects_shifted(letter, shift, caps);
+    return shifted && in->key.shifted ? in->key.shifted : in->key.codepoint;
 }
 
 static enum input_action action_of(unsigned action)
@@ -142,20 +143,42 @@ static enum pointer_button button_of(unsigned button)
     return POINTER_BUTTON_NONE;
 }
 
+/* Returns the yasl mask bit of a pointer button, or 0 for a button that
+ * yasl does not report. */
+static uint32_t held_bit(enum pointer_button button)
+{
+    for (unsigned b = YASL_BUTTON_PRIMARY; b <= YASL_BUTTON_FORWARD; b++)
+        if (button_of(b) == button)
+            return YASL_BUTTON_BIT(b);
+    return 0;
+}
+
+/* Keeps the drag button on a button that yasl still reports held. `down`
+ * is the yasl mask after the event. The drag keeps its button while that
+ * button stays down. Otherwise the primary button takes over, then the
+ * lowest held button. Returns POINTER_BUTTON_NONE when no button is down. */
+static enum pointer_button update_drag_button(struct window *w, uint32_t down)
+{
+    if (held_bit(w->held_button) & down)
+        return w->held_button;
+    w->held_button = POINTER_BUTTON_NONE;
+    for (unsigned b = YASL_BUTTON_PRIMARY; b <= YASL_BUTTON_FORWARD; b++) {
+        if (down & YASL_BUTTON_BIT(b)) {
+            w->held_button = button_of(b);
+            break;
+        }
+    }
+    return w->held_button;
+}
+
+/* Returns the button that a pointer event reports. DOWN and UP report the
+ * button that changed. Other events report the drag button. */
 static enum pointer_button event_button(struct window *w, const struct yasl_event *in)
 {
-    if (in->action == YASL_POINTER_DOWN) {
-        w->button_held = true;
-        w->held_button = button_of(in->pointer.button);
-        return w->held_button;
-    }
-    if (in->action == YASL_POINTER_UP) {
-        enum pointer_button released = button_of(in->pointer.button);
-        if (w->button_held && w->held_button == released)
-            w->button_held = false;
-        return released;
-    }
-    return w->button_held ? w->held_button : POINTER_BUTTON_NONE;
+    enum pointer_button held = update_drag_button(w, in->pointer.buttons);
+    if (in->action == YASL_POINTER_DOWN || in->action == YASL_POINTER_UP)
+        return button_of(in->pointer.button);
+    return held;
 }
 
 static enum input_key_route queue_key(struct window *w, const struct yasl_event *in,
@@ -243,18 +266,16 @@ static void queue_pen(struct window *w, const struct yasl_event *in)
     if (in->action == YASL_PEN_DOWN) {
         kind = PTR_PRESS;
         btn = POINTER_BUTTON_PRIMARY;
-        w->button_held = true;
-        w->held_button = btn;
+        w->pen_contact = true;
     } else if (in->action == YASL_PEN_UP) {
         kind = PTR_RELEASE;
         btn = POINTER_BUTTON_PRIMARY;
-        if (w->button_held && w->held_button == btn)
-            w->button_held = false;
+        w->pen_contact = false;
     } else if (in->action == YASL_PEN_LEAVE) {
         kind = PTR_LEAVE;
     } else {
         kind = PTR_MOTION;
-        btn = w->button_held ? w->held_button : POINTER_BUTTON_NONE;
+        btn = w->pen_contact ? POINTER_BUTTON_PRIMARY : POINTER_BUTTON_NONE;
     }
 
     struct input_event ev = {
@@ -390,7 +411,8 @@ void window_native_input(struct window *w, const struct yasl_event *in)
         break;
     case YASL_EVENT_INPUT_RESET:
         input_keyboard_reset(&w->keyboard);
-        w->button_held = false;
+        w->held_button = POINTER_BUTTON_NONE;
+        w->pen_contact = false;
         w->key_text_pending = false;
         w->native_key = (struct yasl_event){0};
         break;

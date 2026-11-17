@@ -116,6 +116,8 @@ struct window {
     uint32_t bg;
 
     int native_count;
+    /* The button that owns the mouse drag. It counts only while yasl
+     * reports that button held. */
     enum pointer_button held_button;
     uint32_t double_click_ms;
     uint32_t frame;
@@ -125,7 +127,8 @@ struct window {
     int modifiers;
 
     bool key_text_pending;
-    bool button_held;
+    /* The pen tip touches the surface. Pen events carry no button mask. */
+    bool pen_contact;
     bool closed;
     bool suspended;
     bool repaint;
