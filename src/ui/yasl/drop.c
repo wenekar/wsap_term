@@ -16,6 +16,8 @@
 #define DROP_IMAGE_MAX ((size_t)64 * 1024 * 1024)
 /* The number of names to try when a name is already taken. */
 #define DROP_NAME_TRIES 8
+/* Room for a file name: "drop-", a pid, a counter, an extension, and NUL. */
+#define DROP_NAME_MAX 80
 
 /* The paths that this process wrote. drop_cleanup removes them. */
 static char **saved;
@@ -58,74 +60,82 @@ static char *path_join(const char *a, const char *b)
     return out;
 }
 
-/* Returns true when `path` is a real directory. Only the current user can use it. */
-static bool private_dir(const char *path)
+/* Opens the entry `name` of the open directory `parent` as a directory. It
+ * creates the directory with mode 0700 when it is missing. Returns the new
+ * descriptor. Returns -1 with errno set when the entry is not a directory
+ * that only the current user can use. A symbolic link is refused. */
+static int open_private_dir(int parent, const char *name)
 {
+    if (mkdirat(parent, name, 0700) != 0 && errno != EEXIST)
+        return -1;
+    int fd = openat(parent, name, O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0)
+        return -1;
     struct stat st;
-    return lstat(path, &st) == 0 && S_ISDIR(st.st_mode) &&
-           st.st_uid == getuid() && (st.st_mode & 077) == 0;
+    if (fstat(fd, &st) != 0) {
+        int err = errno;
+        close(fd);
+        errno = err;
+        return -1;
+    }
+    if (!S_ISDIR(st.st_mode) || st.st_uid != getuid() || (st.st_mode & 077) != 0) {
+        close(fd);
+        errno = EACCES;
+        return -1;
+    }
+    return fd;
 }
 
-/* Creates `path` with mode 0700 when it is missing. Returns true when `path`
- * is then a private directory. */
-static bool ensure_private_dir(const char *path)
-{
-    if (mkdir(path, 0700) != 0 && errno != EEXIST)
-        return false;
-    return private_dir(path);
-}
-
-/* Returns true when `dir` is an absolute path to a directory. */
-static bool runtime_usable(const char *dir)
-{
-    struct stat st;
-    return dir && dir[0] == '/' && stat(dir, &st) == 0 && S_ISDIR(st.st_mode);
-}
-
-/* Returns the drops directory, created when it is missing. Returns NULL when
- * a directory on the way is not private. The caller frees the string. */
-static char *drops_dir(void)
+/* Opens the drops directory and returns its descriptor. The directory lies
+ * under the runtime directory, or under /tmp when the runtime directory is
+ * unset or unusable. Each level is opened from the level above it, so no
+ * step follows a path that a later step could swap. Stores the directory
+ * path in *prefix. The caller frees the path. Returns -1 on failure. */
+static int open_drops_dir(char **prefix)
 {
     const char *runtime = getenv("XDG_RUNTIME_DIR");
-    char *base = NULL;
-    if (runtime_usable(runtime)) {
-        base = path_join(runtime, "wsap_term");
-    } else {
-        char fallback[64];
-        snprintf(fallback, sizeof fallback, "/tmp/wsap_term-%lu", (unsigned long)getuid());
-        base = strdup(fallback);
+    const char *root = runtime;
+    const char *level = "wsap_term";
+    char fallback[64];
+    int parent = runtime && runtime[0] == '/' ? open(runtime, O_DIRECTORY | O_CLOEXEC) : -1;
+    if (parent < 0) {
+        root = "/tmp";
+        snprintf(fallback, sizeof fallback, "wsap_term-%lu", (unsigned long)getuid());
+        level = fallback;
+        parent = open(root, O_DIRECTORY | O_CLOEXEC);
     }
-    char *drops = base ? path_join(base, "drops") : NULL;
-    bool ok = drops && ensure_private_dir(base) && ensure_private_dir(drops);
-    free(base);
-    if (!ok) {
-        free(drops);
-        return NULL;
+    if (parent < 0)
+        return -1;
+    int base = open_private_dir(parent, level);
+    close(parent);
+    if (base < 0)
+        return -1;
+    int drops = open_private_dir(base, "drops");
+    close(base);
+    if (drops < 0)
+        return -1;
+    char *dir = path_join(root, level);
+    *prefix = dir ? path_join(dir, "drops") : NULL;
+    free(dir);
+    if (!*prefix) {
+        close(drops);
+        return -1;
     }
     return drops;
 }
 
-/* Creates a new file in `dir` that ends in `ext`. Stores its path in *path.
- * Returns the open file descriptor, or -1 with errno set. */
-static int create_file(const char *dir, const char *ext, char **path)
+/* Creates a new file in the open directory `dir`. Its name ends in `ext`,
+ * and the name is written to `name`. Returns the open descriptor, or -1 with
+ * errno set. */
+static int create_file(int dir, const char *ext, char name[DROP_NAME_MAX])
 {
-    size_t room = strlen(dir) + strlen(ext) + 64;
     for (unsigned i = 0; i < DROP_NAME_TRIES; i++) {
-        char *name = malloc(room);
-        if (!name)
-            return -1;
-        snprintf(name, room, "%s/drop-%ld-%lu.%s", dir, (long)getpid(), next_name++, ext);
-        int fd = open(name, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC | O_NOFOLLOW, 0600);
-        if (fd >= 0) {
-            *path = name;
+        snprintf(name, DROP_NAME_MAX, "drop-%ld-%lu.%s", (long)getpid(), next_name++, ext);
+        int fd = openat(dir, name, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC | O_NOFOLLOW, 0600);
+        if (fd >= 0)
             return fd;
-        }
-        int err = errno;
-        free(name);
-        if (err != EEXIST) {
-            errno = err;
+        if (errno != EEXIST)
             return -1;
-        }
     }
     errno = EEXIST;
     return -1;
@@ -144,6 +154,27 @@ static bool write_all(int fd, const char *data, size_t len)
         len -= (size_t)n;
     }
     return true;
+}
+
+/* Writes an image to a new file in the open directory `dir`. Stores the file
+ * name in `name`. Removes the file when the write fails. Returns true on
+ * success. */
+static bool write_new_file(int dir, const char *mime, const char *data, size_t len,
+                           char name[DROP_NAME_MAX])
+{
+    int fd = create_file(dir, extension_of(mime), name);
+    if (fd < 0) {
+        fprintf(stderr, "drop: cannot create a file: %s\n", strerror(errno));
+        return false;
+    }
+    bool ok = write_all(fd, data, len);
+    if (close(fd) != 0)
+        ok = false;
+    if (!ok) {
+        fprintf(stderr, "drop: cannot write %s: %s\n", name, strerror(errno));
+        unlinkat(dir, name, 0);
+    }
+    return ok;
 }
 
 /* Adds `path` to the list that drop_cleanup removes. The list takes ownership
@@ -170,29 +201,25 @@ const char *drop_save_image(const char *mime, const char *data, size_t len)
         fprintf(stderr, "drop: refused an image of %zu bytes\n", len);
         return NULL;
     }
-    char *dir = drops_dir();
-    if (!dir) {
+    char *prefix = NULL;
+    int dir = open_drops_dir(&prefix);
+    if (dir < 0) {
         fprintf(stderr, "drop: no private directory for dropped files\n");
         return NULL;
     }
+    char name[DROP_NAME_MAX];
     char *path = NULL;
-    int fd = create_file(dir, extension_of(mime), &path);
-    free(dir);
-    if (fd < 0) {
-        fprintf(stderr, "drop: cannot create a file: %s\n", strerror(errno));
-        return NULL;
+    if (write_new_file(dir, mime, data, len, name)) {
+        path = path_join(prefix, name);
+        if (!path || !remember(path)) {
+            fprintf(stderr, "drop: out of memory for a file path\n");
+            free(path);
+            path = NULL;
+            unlinkat(dir, name, 0);
+        }
     }
-    bool ok = write_all(fd, data, len);
-    if (close(fd) != 0)
-        ok = false;
-    if (ok && !remember(path))
-        ok = false;
-    if (!ok) {
-        fprintf(stderr, "drop: cannot write %s: %s\n", path, strerror(errno));
-        unlink(path);
-        free(path);
-        return NULL;
-    }
+    close(dir);
+    free(prefix);
     return path;
 }
 
