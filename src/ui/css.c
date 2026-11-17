@@ -710,9 +710,6 @@ static bool parse_single_selector(struct css_rule *r, const char *s, size_t len,
 #define CSS_VAR_MAX_DEPTH 32
 #define CSS_VAR_MAX_BYTES (64 * 1024)
 
-static const char css_var_absent_sentinel;
-#define VAR_OVERRIDE_ABSENT (&css_var_absent_sentinel)
-
 enum css_var_status {
     CSS_VAR_OK = 0,
     CSS_VAR_SYNTAX,
@@ -728,28 +725,9 @@ struct css_buf {
     size_t cap;
 };
 
-struct css_var_change {
-    int var_idx;
-    char *old_value; /* NULL when this pass adds the variable. */
-};
-
-struct css_var_tracker {
-    struct css_var_change *changes;
-    int count;
-    int cap;
-};
-
 struct css_expand_ctx {
     size_t bytes;
     size_t calls;
-    const int *dirty_map; /* sheet->vars[i] -> tracker change index, or -1 */
-    const char *const *overrides;
-    const struct css_var *blame;
-    const struct css_var *first_dirty;
-    bool blame_dirty;
-    bool touched_dirty;
-    bool touched_untouched;
-    bool saw_dirty;
 };
 
 static enum css_var_status css_buf_append(struct css_buf *b, const char *s,
@@ -783,45 +761,6 @@ static enum css_var_status css_buf_append(struct css_buf *b, const char *s,
     b->len += n;
     b->data[b->len] = '\0';
     return CSS_VAR_OK;
-}
-
-static void var_tracker_clear(struct css_var_tracker *t)
-{
-    for (int i = 0; i < t->count; i++)
-        free(t->changes[i].old_value);
-    free(t->changes);
-    *t = (struct css_var_tracker){0};
-}
-
-static bool var_tracker_record(struct css_var_tracker *t, int var_idx,
-                               const char *old_value)
-{
-    for (int i = 0; i < t->count; i++) {
-        if (t->changes[i].var_idx == var_idx)
-            return true;
-    }
-    char *old_copy = NULL;
-    if (old_value) {
-        old_copy = strdup(old_value);
-        if (!old_copy)
-            return false;
-    }
-    if (t->count == t->cap) {
-        int cap = t->cap ? t->cap * 2 : 16;
-        struct css_var_change *next = realloc(t->changes,
-                                              (size_t)cap * sizeof(*next));
-        if (!next) {
-            free(old_copy);
-            return false;
-        }
-        t->changes = next;
-        t->cap = cap;
-    }
-    t->changes[t->count++] = (struct css_var_change){
-        .var_idx = var_idx,
-        .old_value = old_copy,
-    };
-    return true;
 }
 
 static void rule_clear_vars(struct css_rule *r)
@@ -883,8 +822,11 @@ static int rule_drop_matching_var_props(struct css_rule *r, int limit_idx,
     return limit_idx - dropped;
 }
 
+/* Keeps the raw text of a declaration that holds var(), so the sheet can
+   expand it again after the variables change. When `replace` is false, an
+   earlier declaration of the same property stays until this one resolves. */
 static bool rule_set_var_prop(struct css_rule *r, size_t prop_idx, const char *val,
-                              int line, int col, bool pending)
+                              int line, int col, bool replace)
 {
     char *copy = strdup(val);
     if (!copy)
@@ -900,15 +842,13 @@ static bool rule_set_var_prop(struct css_rule *r, size_t prop_idx, const char *v
         r->var_props = next;
         r->var_prop_cap = cap;
     }
-    /* Preserve earlier live bindings while a later var() awaits :root definitions. */
-    if (!pending)
+    if (replace)
         rule_drop_matching_var_props(r, r->var_prop_count, prop_idx);
     r->var_props[r->var_prop_count++] = (struct css_var_prop){
         .prop_idx = (uint16_t)prop_idx,
         .value = copy,
         .line = line,
         .column = col,
-        .pending = pending,
     };
     return true;
 }
@@ -936,18 +876,14 @@ static const struct css_var *sheet_find_var(const struct css_sheet *sheet,
     return NULL;
 }
 
-static bool sheet_set_var(struct css_sheet *sheet, struct css_var_tracker *tracker,
-                          const char *name, const char *val, int line, int col)
+static bool sheet_set_var(struct css_sheet *sheet, const char *name,
+                          const char *val, int line, int col)
 {
     char *vcopy = strdup(val);
     if (!vcopy)
         return false;
     for (int i = 0; i < sheet->var_count; i++) {
         if (strcmp(sheet->vars[i].name, name) == 0) {
-            if (tracker && !var_tracker_record(tracker, i, sheet->vars[i].value)) {
-                free(vcopy);
-                return false;
-            }
             free(sheet->vars[i].value);
             sheet->vars[i].value = vcopy;
             sheet->vars[i].line = line;
@@ -970,12 +906,6 @@ static bool sheet_set_var(struct css_sheet *sheet, struct css_var_tracker *track
         }
         sheet->vars = vars;
         sheet->var_cap = cap;
-    }
-    int idx = sheet->var_count;
-    if (tracker && !var_tracker_record(tracker, idx, NULL)) {
-        free(ncopy);
-        free(vcopy);
-        return false;
     }
     sheet->vars[sheet->var_count++] = (struct css_var){
         .name = ncopy,
@@ -1074,49 +1004,8 @@ static bool parse_var_call(const char *start, const char **out_end,
     return true;
 }
 
-static const struct css_var *lookup_var_value(const struct css_sheet *sheet,
-                                              const char *name, size_t nlen,
-                                              struct css_expand_ctx *ctx,
-                                              const char **out_val,
-                                              bool *out_dirty)
-{
-    const struct css_var *v = sheet_find_var(sheet, name, nlen);
-    if (!v) {
-        *out_val = NULL;
-        *out_dirty = false;
-        return NULL;
-    }
-    int c = ctx->dirty_map ? ctx->dirty_map[v - sheet->vars] : -1;
-    if (c >= 0 && ctx->overrides && ctx->overrides[c] == VAR_OVERRIDE_ABSENT) {
-        *out_val = NULL;
-        *out_dirty = false;
-        return NULL;
-    }
-    *out_dirty = (c >= 0);
-    if (*out_dirty) {
-        ctx->touched_dirty = true;
-        if (!ctx->first_dirty)
-            ctx->first_dirty = v;
-    } else if (ctx->dirty_map) {
-        ctx->touched_untouched = true;
-    }
-    *out_val = (c >= 0 && ctx->overrides && ctx->overrides[c])
-        ? ctx->overrides[c]
-        : v->value;
-    return v;
-}
-
-static void record_var_blame(struct css_expand_ctx *ctx, const struct css_var *v,
-                             bool v_dirty, bool prefer_dirty)
-{
-    if (!ctx->blame || (prefer_dirty && v_dirty && !ctx->blame_dirty)) {
-        ctx->blame = v;
-        ctx->blame_dirty = v_dirty;
-    }
-    if (v_dirty)
-        ctx->saw_dirty = true;
-}
-
+/* Expands one declaration value. `stack` holds the variable names that the
+   expansion already entered, so a name that appears twice is a cycle. */
 static enum css_var_status expand_var_text(const struct css_sheet *sheet,
                                            const char *text,
                                            const char *stack[], int stack_len,
@@ -1138,42 +1027,28 @@ static enum css_var_status expand_var_text(const struct css_sheet *sheet,
         bool has_fb;
         if (!parse_var_call(call, &call_end, &name, &nlen, &fb, &flen, &has_fb))
             return CSS_VAR_SYNTAX;
-        const char *val = NULL;
-        bool v_dirty = false;
-        const struct css_var *v = lookup_var_value(sheet, name, nlen, ctx,
-                                                   &val, &v_dirty);
+        const struct css_var *v = sheet_find_var(sheet, name, nlen);
         if (v) {
-            for (int k = 0; k < stack_len; k++) {
-                if (strcmp(stack[k], v->name) == 0) {
-                    record_var_blame(ctx, v, v_dirty, true);
+            for (int k = 0; k < stack_len; k++)
+                if (strcmp(stack[k], v->name) == 0)
                     return CSS_VAR_CYCLE;
-                }
-            }
             stack[stack_len] = v->name;
             struct css_buf sub = {0};
-            enum css_var_status st = expand_var_text(sheet, val, stack,
+            enum css_var_status st = expand_var_text(sheet, v->value, stack,
                                                      stack_len + 1, depth + 1,
                                                      &sub, ctx);
             if (st == CSS_VAR_OK) {
                 enum css_var_status cp = css_buf_append(
                     out, sub.data ? sub.data : "", sub.len, NULL);
                 free(sub.data);
-                if (cp != CSS_VAR_OK) {
-                    record_var_blame(ctx, v, v_dirty, false);
+                if (cp != CSS_VAR_OK)
                     return cp;
-                }
                 p = call_end;
                 continue;
             }
             free(sub.data);
-            if (st != CSS_VAR_MISSING || !has_fb) {
-                record_var_blame(ctx, v, v_dirty, st == CSS_VAR_CYCLE);
+            if (st != CSS_VAR_MISSING || !has_fb)
                 return st;
-            }
-            if (v_dirty)
-                ctx->saw_dirty = true;
-            ctx->blame = NULL;
-            ctx->blame_dirty = false;
         } else if (!has_fb) {
             return CSS_VAR_MISSING;
         }
@@ -1383,22 +1258,18 @@ const char *css_diagnostic_message(enum css_diagnostic_kind kind)
     return "CSS error";
 }
 
+/* Expands `val` and applies it to `rule`. Returns false when the expansion or
+   the value fails, and `out_st` says which. */
 static bool try_expand_and_apply(const struct css_sheet *sheet,
                                  struct css_rule *rule, size_t prop_idx,
-                                 const char *val, const int *dirty_map,
-                                 const char *const *overrides,
+                                 const char *val,
                                  enum css_var_status *out_st,
-                                 enum css_declaration_result *out_res,
-                                 struct css_expand_ctx *out_ctx)
+                                 enum css_declaration_result *out_res)
 {
     const char *stack[CSS_VAR_MAX_DEPTH];
     struct css_buf buf = {0};
-    struct css_expand_ctx ctx = {
-        .dirty_map = dirty_map,
-        .overrides = overrides,
-    };
+    struct css_expand_ctx ctx = {0};
     *out_st = expand_var_text(sheet, val, stack, 0, 0, &buf, &ctx);
-    *out_ctx = ctx;
     if (*out_st != CSS_VAR_OK) {
         free(buf.data);
         *out_res = CSS_DECLARATION_INVALID;
@@ -1417,198 +1288,38 @@ static bool try_expand_and_apply(const struct css_sheet *sheet,
     return true;
 }
 
-static bool probe_var_prop(const struct css_sheet *sheet,
-                           const struct css_rule *rule,
-                           const struct css_var_prop *vp,
-                           const int *dirty_map,
-                           const char *const *overrides,
-                           enum css_var_status *out_st)
-{
-    struct css_rule tmp = {
-        .style = rule->style,
-        .set_mask = rule->set_mask,
-    };
-    enum css_declaration_result res = CSS_DECLARATION_OK;
-    struct css_expand_ctx ctx = {0};
-    return try_expand_and_apply(sheet, &tmp, vp->prop_idx, vp->value,
-                                dirty_map, overrides, out_st, &res, &ctx);
-}
-
-static bool isolate_failing_var(const struct css_sheet *sheet,
-                                const struct css_rule *rule,
-                                const struct css_var_prop *vp,
-                                const struct css_var_tracker *tracker,
-                                const int *dirty_map,
-                                const struct css_expand_ctx *fail_ctx,
-                                const struct css_var **out_blame,
-                                bool *out_skip_report)
-{
-    *out_blame = NULL;
-    *out_skip_report = false;
-    if (!tracker || tracker->count <= 0 || !dirty_map)
-        return true;
-
-    const char **overrides = calloc((size_t)tracker->count, sizeof(*overrides));
-    if (!overrides)
-        return false;
-    for (int c = 0; c < tracker->count; c++) {
-        overrides[c] = tracker->changes[c].old_value
-            ? tracker->changes[c].old_value
-            : VAR_OVERRIDE_ABSENT;
-    }
-
-    enum css_var_status st = CSS_VAR_OK;
-    bool base_ok = probe_var_prop(sheet, rule, vp, dirty_map, overrides, &st);
-    if (st == CSS_VAR_OOM) {
-        free(overrides);
-        return false;
-    }
-    if (!base_ok) {
-        if (fail_ctx->touched_untouched)
-            *out_skip_report = true;
-        else
-            *out_blame = fail_ctx->first_dirty;
-        free(overrides);
-        return true;
-    }
-
-    for (int c = 0; c < tracker->count; c++) {
-        const char *saved = overrides[c];
-        overrides[c] = NULL;
-        bool ok = probe_var_prop(sheet, rule, vp, dirty_map, overrides, &st);
-        overrides[c] = saved;
-        if (st == CSS_VAR_OOM) {
-            free(overrides);
-            return false;
-        }
-        if (!ok) {
-            *out_blame = &sheet->vars[tracker->changes[c].var_idx];
-            free(overrides);
-            return true;
-        }
-    }
-
-    *out_blame = fail_ctx->first_dirty;
-    free(overrides);
-    return true;
-}
-
-static bool build_dirty_map(const struct css_sheet *sheet,
-                            const struct css_var_tracker *tracker,
-                            int **out_map)
-{
-    *out_map = NULL;
-    if (!tracker || tracker->count <= 0 || sheet->var_count <= 0)
-        return true;
-    int *map = malloc((size_t)sheet->var_count * sizeof(*map));
-    if (!map)
-        return false;
-    for (int i = 0; i < sheet->var_count; i++)
-        map[i] = -1;
-    for (int c = 0; c < tracker->count; c++)
-        map[tracker->changes[c].var_idx] = c;
-    *out_map = map;
-    return true;
-}
-
-static bool report_refresh_failure(const struct css_sheet *sheet,
-                                   const struct css_rule *rule,
-                                   const struct css_var_prop *vp,
-                                   const struct css_var_tracker *tracker,
-                                   const int *dirty_map,
-                                   enum css_var_status st,
-                                   const struct css_expand_ctx *ctx,
-                                   css_diagnostic_fn report, void *userdata)
-{
-    if (!report)
-        return true;
-    if (vp->pending) {
-        report_at(report, userdata, CSS_DECLARATION_INVALID,
-                  (size_t)vp->line, (size_t)vp->column,
-                  props[vp->prop_idx].name, vp->value);
-        return true;
-    }
-    const struct css_var *blame = NULL;
-    if (st != CSS_VAR_OK) {
-        if (!ctx->saw_dirty)
-            return true;
-        blame = ctx->blame;
-    } else {
-        if (!ctx->touched_dirty)
-            return true;
-        bool skip = false;
-        if (!isolate_failing_var(sheet, rule, vp, tracker, dirty_map, ctx,
-                                 &blame, &skip))
-            return false;
-        if (skip)
-            return true;
-    }
-    if (blame) {
-        report_at(report, userdata, CSS_DECLARATION_INVALID,
-                  (size_t)blame->line, (size_t)blame->column,
-                  blame->name, blame->value);
-    } else {
-        report_at(report, userdata, CSS_DECLARATION_INVALID,
-                  (size_t)vp->line, (size_t)vp->column,
-                  props[vp->prop_idx].name, vp->value);
-    }
-    return true;
-}
-
-static bool sheet_refresh_vars(struct css_sheet *sheet,
-                               const struct css_var_tracker *tracker,
-                               int refresh_limit, int force_from,
+/* Resolves every declaration that holds var() against the current variables.
+   The declarations are independent of each other, in the order they appear in
+   the rule. A failure reports the declaration line and the text that failed,
+   and only once for as long as the failure stays. */
+static bool sheet_resolve_vars(struct css_sheet *sheet,
                                css_diagnostic_fn report, void *userdata)
 {
-    int *dirty_map = NULL;
-    if (!build_dirty_map(sheet, tracker, &dirty_map))
-        return false;
-    bool vars_updated = dirty_map != NULL;
-
     for (int i = 0; i < sheet->rule_count; i++) {
         struct css_rule *r = &sheet->rules[i];
-        for (int j = 0; j < r->var_prop_count;) {
+        for (int j = 0; j < r->var_prop_count; j++) {
             struct css_var_prop *vp = &r->var_props[j];
-            bool force_eval = vp->pending || i >= force_from;
-            if (!force_eval && (!vars_updated || i >= refresh_limit)) {
-                j++;
-                continue;
-            }
-            const int *prop_dirty = force_eval ? NULL : dirty_map;
             enum css_var_status st = CSS_VAR_OK;
             enum css_declaration_result res = CSS_DECLARATION_OK;
-            struct css_expand_ctx ctx = {0};
-            if (try_expand_and_apply(sheet, r, vp->prop_idx, vp->value,
-                                     prop_dirty, NULL, &st, &res, &ctx)) {
-                if (vp->pending) {
-                    vp->pending = false;
-                    j = rule_drop_matching_var_props(r, j, vp->prop_idx);
-                }
-                j++;
+            if (try_expand_and_apply(sheet, r, vp->prop_idx, vp->value, &st,
+                                     &res)) {
+                vp->reported = false;
                 continue;
             }
-            if (st == CSS_VAR_OOM) {
-                free(dirty_map);
+            if (st == CSS_VAR_OOM)
                 return false;
-            }
-            if (!report_refresh_failure(sheet, r, vp, tracker, dirty_map, st,
-                                        &ctx, report, userdata)) {
-                free(dirty_map);
-                return false;
-            }
-            if (vp->pending) {
-                rule_remove_var_prop(r, j);
+            if (vp->reported)
                 continue;
-            }
-            j++;
+            vp->reported = true;
+            report_at(report, userdata, CSS_DECLARATION_INVALID,
+                      (size_t)vp->line, (size_t)vp->column,
+                      props[vp->prop_idx].name, vp->value);
         }
     }
-    free(dirty_map);
     return true;
 }
 
 static bool handle_root_decl(struct css_sheet *sheet,
-                             struct css_var_tracker *tracker,
                              const char *source, const char *k_start,
                              const char *key, const char *val,
                              css_diagnostic_fn report, void *userdata)
@@ -1625,14 +1336,13 @@ static bool handle_root_decl(struct css_sheet *sheet,
     }
     size_t line, col;
     source_line_col(source, k_start, &line, &col);
-    return sheet_set_var(sheet, tracker, key, val, (int)line, (int)col);
+    return sheet_set_var(sheet, key, val, (int)line, (int)col);
 }
 
 static bool handle_rule_decl(const struct css_sheet *sheet, struct css_rule *proto,
                              const char *source, const char *k_start,
                              const char *key, const char *val,
-                             bool *any_pending, css_diagnostic_fn report,
-                             void *userdata)
+                             css_diagnostic_fn report, void *userdata)
 {
     int idx = find_prop_idx(key);
     if (idx < 0) {
@@ -1651,29 +1361,19 @@ static bool handle_rule_decl(const struct css_sheet *sheet, struct css_rule *pro
     source_line_col(source, k_start, &line, &col);
     enum css_var_status st = CSS_VAR_OK;
     enum css_declaration_result res = CSS_DECLARATION_OK;
-    struct css_expand_ctx ctx = {0};
-    if (try_expand_and_apply(sheet, proto, (size_t)idx, val, NULL, NULL,
-                             &st, &res, &ctx)) {
-        return rule_set_var_prop(proto, (size_t)idx, val, (int)line, (int)col,
-                                 false);
-    }
+    bool resolved = try_expand_and_apply(sheet, proto, (size_t)idx, val, &st, &res);
     if (st == CSS_VAR_OOM)
         return false;
-    if (st == CSS_VAR_MISSING) {
-        *any_pending = true;
-        return rule_set_var_prop(proto, (size_t)idx, val, (int)line, (int)col,
-                                 true);
-    }
-    report_declaration(report, userdata, res, source, k_start, key, val);
-    return true;
+    /* A value that resolves now replaces an earlier declaration of the same
+       property. A value that waits for a later :root block keeps the earlier
+       one until the pass at the end of the parse resolves it. */
+    return rule_set_var_prop(proto, (size_t)idx, val, (int)line, (int)col,
+                             resolved);
 }
 
 static bool parse_rules(struct css_sheet *sheet, const char *source,
                         css_diagnostic_fn report, void *userdata)
 {
-    int refresh_limit = sheet->rule_count;
-    struct css_var_tracker tracker = {0};
-    bool any_pending = false;
     bool ok = true;
     struct css_rule proto = {0};
     const char *p = source;
@@ -1732,10 +1432,10 @@ static bool parse_rules(struct css_sheet *sheet, const char *source,
                 goto done;
             }
             bool decl_ok = is_root
-                ? handle_root_decl(sheet, &tracker, source, k_start, key, val,
-                                   report, userdata)
+                ? handle_root_decl(sheet, source, k_start, key, val, report,
+                                   userdata)
                 : handle_rule_decl(sheet, &proto, source, k_start, key, val,
-                                   &any_pending, report, userdata);
+                                   report, userdata);
             free(key);
             free(val);
             if (!decl_ok) {
@@ -1751,7 +1451,6 @@ static bool parse_rules(struct css_sheet *sheet, const char *source,
         }
 
         if (is_root) {
-            refresh_limit = sheet->rule_count;
             rule_clear_vars(&proto);
             continue;
         }
@@ -1797,14 +1496,8 @@ static bool parse_rules(struct css_sheet *sheet, const char *source,
         }
         rule_clear_vars(&proto);
     }
-    if (tracker.count > 0 || any_pending) {
-        if (!sheet_refresh_vars(sheet, &tracker, refresh_limit,
-                                sheet->rule_count, report, userdata))
-            ok = false;
-    }
 done:
     rule_clear_vars(&proto);
-    var_tracker_clear(&tracker);
     return ok;
 }
 
@@ -1815,6 +1508,8 @@ bool css_parse_with_diagnostics(struct css_sheet *sheet, const char *p,
     bool ok = parse_rules(sheet, p, report, userdata);
     if (!sheet_sort_rules(sheet))
         return false;
+    if (!sheet_resolve_vars(sheet, report, userdata))
+        ok = false;
     return sheet_build_index(sheet) && ok;
 }
 
@@ -1850,12 +1545,11 @@ void css_sheet_clear(struct css_sheet *sheet)
     *sheet = (struct css_sheet){0};
 }
 
-static bool append_vars(struct css_sheet *dst, const struct css_sheet *src,
-                        struct css_var_tracker *tracker)
+static bool append_vars(struct css_sheet *dst, const struct css_sheet *src)
 {
     for (int i = 0; i < src->var_count; i++) {
         const struct css_var *v = &src->vars[i];
-        if (!sheet_set_var(dst, tracker, v->name, v->value, v->line, v->column))
+        if (!sheet_set_var(dst, v->name, v->value, v->line, v->column))
             return false;
     }
     return true;
@@ -1876,19 +1570,14 @@ bool css_sheet_append(struct css_sheet *dst, const struct css_sheet *src)
 {
     if (!dst || !src || dst == src)
         return false;
-    int old_rule_count = dst->rule_count;
-    int old_var_count = dst->var_count;
-    struct css_var_tracker tracker = {0};
-    bool ok = append_vars(dst, src, &tracker) && append_rules(dst, src);
+    bool ok = append_vars(dst, src) && append_rules(dst, src);
     dst->has_defaults = dst->has_defaults || src->has_defaults;
-    int force_from = old_var_count > 0 ? old_rule_count : dst->rule_count;
-    if (ok && (tracker.count > 0 || force_from < dst->rule_count)) {
-        ok = sheet_refresh_vars(dst, &tracker, old_rule_count, force_from,
-                                NULL, NULL);
-    }
-    var_tracker_clear(&tracker);
     if (!sheet_sort_rules(dst))
         return false;
+    /* A variable of the appended sheet can change a rule of the sheet it
+       lands on, so every declaration resolves again. */
+    if (!sheet_resolve_vars(dst, NULL, NULL))
+        ok = false;
     return sheet_build_index(dst) && ok;
 }
 

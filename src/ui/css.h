@@ -145,12 +145,14 @@ struct css_var {
     int column;
 };
 
+/* A declaration that holds var(). The sheet keeps the raw text and resolves it
+   again when the variables change. */
 struct css_var_prop {
     char *value;
     int line;
     int column;
     uint16_t prop_idx;
-    bool pending;
+    bool reported; /* A diagnostic already named this declaration. */
 };
 
 enum css_key_kind : uint8_t {

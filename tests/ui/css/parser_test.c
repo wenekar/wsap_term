@@ -500,13 +500,16 @@ static void test_var_diagnostics_and_guards(void)
         ":root { --c: bogus; }",
         record_css_message, &messages));
     assert(messages.count == 1 && messages.kind[0] == CSS_DIAGNOSTIC_INVALID_VALUE);
-    assert(!strcmp(messages.property[0], "--c"));
+    /* The diagnostic names the declaration line and the variable that failed. */
+    assert(!strcmp(messages.property[0], "color"));
+    assert(!strcmp(messages.value[0], "var(--c)"));
     css_style_resolve(&sheet, "ok", NULL, NULL, CSS_PSEUDO_NONE, &st);
     assert(st.has_text_color && st.text_color == 0xFF112233u);
     css_sheet_clear(&sheet);
 }
 
-/* Verify pending preservation, blame accuracy, dirty-only refresh, and caps. */
+/* Verify that a value waits for a later :root block, that a broken variable
+ * reports once, and that the caps hold. */
 static void test_var_edge_cases(void)
 {
     struct css_sheet sheet = {0};
@@ -536,7 +539,7 @@ static void test_var_edge_cases(void)
     assert(st.has_text_color && st.text_color == 0xFF778899u);
     css_sheet_clear(&sheet);
 
-    /* Multi-var errors blame the broken variable, and unrelated edits stay quiet. */
+    /* A broken variable reports the declaration once; a later edit stays quiet. */
     messages = (struct css_messages){0};
     assert(css_parse_with_diagnostics(&sheet,
         ":root { --a: 4px; --b: 8px; --c: #112233; }\n"
@@ -547,8 +550,8 @@ static void test_var_edge_cases(void)
 
     assert(css_parse_with_diagnostics(&sheet, ":root { --b: bogus; }",
         record_css_message, &messages));
-    assert(messages.count == 1 && !strcmp(messages.property[0], "--b"));
-    assert(!strcmp(messages.value[0], "bogus"));
+    assert(messages.count == 1 && !strcmp(messages.property[0], "padding"));
+    assert(!strcmp(messages.value[0], "var(--a) var(--b)"));
     css_style_resolve(&sheet, "pad", NULL, NULL, CSS_PSEUDO_NONE, &st);
     assert(st.padding.top.val == 4.0f && st.padding.right.val == 8.0f);
 
@@ -571,7 +574,7 @@ static void test_var_edge_cases(void)
 
     assert(css_parse_with_diagnostics(&sheet, ":root { --a: 14px; --b: nope; }",
         record_css_message, &messages));
-    assert(messages.count == 1 && !strcmp(messages.property[0], "--b"));
+    assert(messages.count == 1 && !strcmp(messages.property[0], "padding"));
     css_sheet_clear(&sheet);
 
     /* Fallback expansion pops v->name, while self-fallback cycles still fail. */
@@ -649,6 +652,42 @@ static void test_var_edge_cases(void)
     css_sheet_clear(&dst);
 }
 
+/* A cycle reports the declaration line and the variable that closes it. */
+static void test_cyclic_variable_diagnostic(void)
+{
+    struct css_sheet sheet = {0};
+    struct css_messages messages = {0};
+    assert(css_parse_with_diagnostics(&sheet,
+        ":root { --a: var(--b); }\n"
+        ":root { --b: var(--a); }\n"
+        ".x {\n  color: var(--a);\n}\n",
+        record_css_message, &messages));
+    assert(messages.count == 1 && messages.kind[0] == CSS_DIAGNOSTIC_INVALID_VALUE);
+    assert(messages.line[0] == 4 && messages.column[0] == 3);
+    assert(!strcmp(messages.property[0], "color"));
+    assert(!strcmp(messages.value[0], "var(--a)"));
+    struct css_style st;
+    css_style_resolve(&sheet, "x", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(!st.has_text_color);
+    css_sheet_clear(&sheet);
+}
+
+/* A declaration before the :root block that defines its variable resolves. */
+static void test_variable_defined_after_its_use(void)
+{
+    struct css_sheet sheet = {0};
+    struct css_messages messages = {0};
+    assert(css_parse_with_diagnostics(&sheet,
+        ".a { width: var(--late); }\n"
+        ":root { --late: 12px; }\n",
+        record_css_message, &messages));
+    assert(messages.count == 0);
+    struct css_style st;
+    css_style_resolve(&sheet, "a", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.width.unit == CSS_UNIT_PX && st.width.val == 12.0f);
+    css_sheet_clear(&sheet);
+}
+
 int main(void)
 {
     test_declaration_diagnostics();
@@ -666,6 +705,8 @@ int main(void)
     test_root_variables_and_var_expansion();
     test_var_diagnostics_and_guards();
     test_var_edge_cases();
+    test_cyclic_variable_diagnostic();
+    test_variable_defined_after_its_use();
     printf("PASS: CSS parser tests\n");
     return 0;
 }
