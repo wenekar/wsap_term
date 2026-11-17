@@ -8,9 +8,13 @@ simple words, active voice, one instruction or fact per sentence.
 The rules that constrain new code:
 
 - Everything shipped as data rather than compiled lives in `assets/` — themes,
-  terminfo, shell integration, icons, and the `.desktop` entry. Do not add data
-  files at the repository root. Source paths there are independent of install
-  paths; changing one does not change the other.
+  the UI stylesheets, terminfo, shell integration, icons, and the `.desktop`
+  entry. Do not add data files at the repository root. Source paths there are
+  independent of install paths; changing one does not change the other.
+- The default stylesheets are `assets/ui/core.css` with the UI core rules and
+  the `:root` variables, and `assets/ui/app.css` with the app rules. A build
+  target embeds each file in a generated header, as the shader targets do. Do
+  not check a generated header in.
 - `tests/` mirrors the `src/` subsystem layout (`tests/pty/`, `tests/ui/`,
   …), with `tests/helpers/` as the non-subsystem exception.
   Test *names* in `tests/meson.build` stay flat and carry no directory
