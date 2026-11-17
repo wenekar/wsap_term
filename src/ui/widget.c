@@ -492,6 +492,9 @@ void ui_widget_detach(struct ui_widget *widget)
     if (surface) {
         if (surface->impl.root == widget)
             surface->impl.root = NULL;
+        /* A detached overlay leaves the list. A hidden one stays in it, so
+         * that showing it again works. */
+        ui_surface_drop_overlay(surface, widget);
         ui_surface_forget(surface, widget);
     }
     clear_surface(widget, surface);

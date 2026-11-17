@@ -35,6 +35,10 @@ bool ui_widget_append_scene(const struct ui_widget *root,
                             struct ui_scene *scene);
 
 void ui_surface_forget(struct ui_surface *surface, struct ui_widget *subtree);
+/* Removes `overlay` from the overlay list of `surface`. It does not detach
+ * the widget, and it keeps its storage. */
+bool ui_surface_drop_overlay(struct ui_surface *surface,
+                             struct ui_widget *overlay);
 void ui_surface_sync_modal(struct ui_surface *surface);
 
 #endif

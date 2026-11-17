@@ -148,12 +148,28 @@ static void drop_overlay_at(struct ui_surface *surface, size_t index)
     surface->impl.overlays[surface->impl.overlay_count] = NULL;
 }
 
-/* Removes each overlay that `subtree` holds, without detaching it. */
+/* Removes each overlay below `subtree`, without detaching it. A subtree that
+ * is itself an overlay stays registered: a hide only hides it. */
 static void drop_overlays_in(struct ui_surface *surface, struct ui_widget *subtree)
 {
-    for (size_t i = surface->impl.overlay_count; i > 0; i--)
-        if (ui_widget_is_ancestor(subtree, surface->impl.overlays[i - 1]))
+    for (size_t i = surface->impl.overlay_count; i > 0; i--) {
+        struct ui_widget *overlay = surface->impl.overlays[i - 1];
+        if (overlay != subtree && ui_widget_is_ancestor(subtree, overlay))
             drop_overlay_at(surface, i - 1);
+    }
+}
+
+bool ui_surface_drop_overlay(struct ui_surface *surface,
+                             struct ui_widget *overlay)
+{
+    if (!surface || !overlay)
+        return false;
+    for (size_t i = 0; i < surface->impl.overlay_count; i++)
+        if (surface->impl.overlays[i] == overlay) {
+            drop_overlay_at(surface, i);
+            return true;
+        }
+    return false;
 }
 
 bool ui_surface_add_overlay(struct ui_surface *surface,
@@ -175,19 +191,13 @@ bool ui_surface_add_overlay(struct ui_surface *surface,
 bool ui_surface_remove_overlay(struct ui_surface *surface,
                                struct ui_widget *overlay)
 {
-    if (!surface || !overlay)
+    if (!ui_surface_drop_overlay(surface, overlay))
         return false;
-    for (size_t i = 0; i < surface->impl.overlay_count; i++) {
-        if (surface->impl.overlays[i] != overlay)
-            continue;
-        drop_overlay_at(surface, i);
-        ui_widget_detach(overlay);
-        ui_surface_sync_modal(surface);
-        ui_surface_prepare(surface);
-        ui_surface_request_frame(surface);
-        return true;
-    }
-    return false;
+    ui_widget_detach(overlay);
+    ui_surface_sync_modal(surface);
+    ui_surface_prepare(surface);
+    ui_surface_request_frame(surface);
+    return true;
 }
 
 size_t ui_surface_overlay_count(const struct ui_surface *surface)

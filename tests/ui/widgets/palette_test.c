@@ -67,6 +67,9 @@ static void open_palette(struct fixture *f)
 static void teardown(struct fixture *f)
 {
     ui_surface_destroy(&f->surface);
+    /* A palette that the surface held as an overlay is not a child. The
+     * destroy is idempotent for a palette that was a child. */
+    ui_widget_destroy(ui_palette_widget(&f->palette));
     ui_widget_destroy(&f->root);
     ui_scene_destroy(&f->scene);
 }
@@ -341,8 +344,99 @@ static void fallback_opacity_test(void)
     css_sheet_clear(&sheet);
 }
 
+
+/* The app mounts the palette as a surface overlay, so the surface places,
+ * paints, and hit-tests it. A close only hides it. */
+static void setup_overlay(struct fixture *f)
+{
+    *f = (struct fixture){ .activated = -1 };
+    ui_widget_init(&f->root, NULL, NULL);
+    ui_button_init(&f->behind);
+    ui_palette_init(&f->palette);
+    ui_widget_set_action_handler(ui_palette_widget(&f->palette), on_action, f);
+    assert(ui_widget_add_child(&f->root, ui_button_widget(&f->behind)));
+    ui_surface_set_scale(&f->surface, (struct css_scale_context){
+        .dpi_scale = 1, .cell_w = 8, .cell_h = 16,
+    });
+    ui_surface_set_root(&f->surface, &f->root);
+    ui_surface_resize(&f->surface, (struct vector2i){ .x = 800, .y = 600 });
+    assert(ui_surface_add_overlay(&f->surface, ui_palette_widget(&f->palette)));
+    ui_surface_focus(&f->surface, ui_button_widget(&f->behind));
+}
+
+static bool scene_paints_panel(struct fixture *f)
+{
+    assert(ui_surface_build_scene(&f->surface, &f->scene));
+    struct rect2i panel = ui_palette_widget(&f->palette)->bounds;
+    for (int i = 0; i < f->scene.n_ops; i++) {
+        const struct ui_scene_op *op = &f->scene.ops[i];
+        if ((op->kind == UI_SCENE_OP_RECT ||
+             op->kind == UI_SCENE_OP_ROUNDED_RECT) &&
+            rect2i_eq(op->rect, panel))
+            return !rect2i_is_empty(panel);
+    }
+    return false;
+}
+
+static void overlay_open_close_open_test(void)
+{
+    struct fixture f;
+    setup_overlay(&f);
+    assert(ui_surface_overlay_count(&f.surface) == 1);
+
+    assert(ui_palette_open(&f.palette, CMDS, N_CMDS));
+    ui_surface_prepare(&f.surface);
+    assert(ui_surface_overlay_count(&f.surface) == 1);
+    assert(ui_surface_focused(&f.surface) == ui_input_widget(&f.palette.input));
+    assert(ui_list_count(&f.palette.list) == N_CMDS);
+    assert(scene_paints_panel(&f));
+
+    /* A close hides the palette. It stays registered. */
+    ui_palette_close(&f.palette);
+    ui_surface_prepare(&f.surface);
+    assert(!ui_palette_is_open(&f.palette));
+    assert(ui_surface_overlay_count(&f.surface) == 1);
+    assert(!scene_paints_panel(&f));
+
+    /* The next open shows the same widget again. */
+    assert(ui_palette_open(&f.palette, CMDS, N_CMDS));
+    ui_surface_prepare(&f.surface);
+    assert(ui_palette_is_open(&f.palette));
+    assert(ui_surface_overlay_count(&f.surface) == 1);
+    assert(ui_surface_focused(&f.surface) == ui_input_widget(&f.palette.input));
+    assert(ui_list_count(&f.palette.list) == N_CMDS);
+    assert(scene_paints_panel(&f));
+
+    /* A press outside the panel reaches the surface root again. */
+    struct ui_event press = ui_event_pointer((struct ui_pointer_event){
+        .kind = UI_POINTER_PRESS, .pos = { .x = 10, .y = 560 } }, 0);
+    ui_surface_dispatch(&f.surface, &press);
+    ui_surface_prepare(&f.surface);
+    assert(!ui_palette_is_open(&f.palette));
+    assert(ui_surface_overlay_count(&f.surface) == 1);
+
+    teardown(&f);
+}
+
+static void overlay_removed_on_detach_test(void)
+{
+    struct fixture f;
+    setup_overlay(&f);
+    assert(ui_palette_open(&f.palette, CMDS, N_CMDS));
+    ui_surface_prepare(&f.surface);
+    assert(ui_surface_overlay_count(&f.surface) == 1);
+
+    /* A destroy detaches the widget and drops it from the overlay list. */
+    ui_widget_destroy(ui_palette_widget(&f.palette));
+    assert(ui_surface_overlay_count(&f.surface) == 0);
+    ui_surface_prepare(&f.surface);
+    teardown(&f);
+}
+
 int main(void)
 {
+    overlay_open_close_open_test();
+    overlay_removed_on_detach_test();
     filter_and_activate_test();
     backspace_widens_the_filter_test();
     paste_goes_into_the_query_test();
