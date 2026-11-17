@@ -40,6 +40,10 @@ struct appearance *appearance_load(const char *name, const char *css_path,
     else
         wsap_vtcore_theme_default(&ap->palette);
     css_init_default(&ap->chrome);
+    /* The app rules extend the core rules. The theme file then overrides
+       both. */
+    if (!css_parse_app(&ap->chrome))
+        fprintf(stderr, "[%s] cannot add the app stylesheet\n", app_name());
     if (name && !(ap->name = strdup(name))) {
         appearance_unref(ap);
         return NULL;

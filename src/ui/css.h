@@ -260,13 +260,18 @@ bool css_sheet_append(struct css_sheet *dst, const struct css_sheet *src);
 /* Releases all rules from `sheet`. */
 void css_sheet_clear(struct css_sheet *sheet);
 
-/* Populates `sheet` with default built-in CSS rules. */
+/* Populates `sheet` with the UI core rules of assets/ui/core.css. */
 void css_init_default(struct css_sheet *sheet);
 
-/* Returns the shared default stylesheet instance. */
+/* Returns the shared sheet of the UI core rules, which assets/ui/core.css
+   holds. */
 const struct css_sheet *css_default_sheet(void);
 
-/* Clears the shared default stylesheet instance. */
+/* Adds the app rules of assets/ui/app.css to `sheet`, which must already hold
+   the UI core rules. A theme store calls this on each sheet that it builds. */
+bool css_parse_app(struct css_sheet *sheet);
+
+/* Clears the shared default sheet. */
 void css_shutdown(void);
 
 /* Resolves styling properties matching selector names and pseudo-class flags. */

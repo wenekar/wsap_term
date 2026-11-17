@@ -339,11 +339,15 @@ static void test_theme_root_overrides_and_defaults(void)
     assert(pop_short.has_text_color && pop_short.text_color == 0xFF4D4D4Du);
     look_destroy(pop);
 
-    const struct css_sheet *def = css_default_sheet();
+    /* The theme store applies the core rules and then the app rules. */
+    struct look *plain = open_look(NULL);
+    const struct css_sheet *def = look_sheet(plain);
     struct css_style def_bar = resolve_class(def, "tab-bar", CSS_PSEUDO_NONE);
     assert(!def_bar.has_bg_color);
+    assert(def_bar.height.unit == CSS_UNIT_EM && def_bar.height.val == 2.2f);
     struct css_style def_tab = resolve_class(def, "tab", CSS_PSEUDO_NONE);
     assert(def_tab.has_bg_color && def_tab.bg_color == 0xFF1E1E2Eu);
+    look_destroy(plain);
 }
 
 int main(void)

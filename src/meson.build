@@ -71,7 +71,7 @@ ui_lib = static_library(
     'wsap-ui',
     ui_src,
     link_with: [base_lib, paint_lib],
-    include_directories: inc,
+    include_directories: [inc, ui_inc],
     dependencies: [m_dep, yyjson_dep] + [term_dep],
     install: false,
 )

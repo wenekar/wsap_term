@@ -12,6 +12,8 @@
 #include "ui/surface.h"
 #include "ui/widget.h"
 #include "ui/yasl/client.h"
+#include "theme/look.h"
+#include "ui/yasl/client.h"
 #include "ui/yasl/window.h"
 
 struct preview_fixture {
@@ -41,6 +43,10 @@ static void setup_fixture(struct preview_fixture *f, struct vector2i size,
     *f = (struct preview_fixture){0};
     test_app_init(&f->app, "/bin/cat", size);
     f->w = create_preview_window(f->app.app);
+    /* The tab preview is an app screen, so its rules come from the theme
+       sheet, as in app.c. */
+    window_ui_set_style(f->w, look_sheet(f->app.app->look),
+                        look_palette(f->app.app->look)->bg);
     ui_surface_set_scale(window_ui_surface(f->w), (struct css_scale_context){
         .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
     });
