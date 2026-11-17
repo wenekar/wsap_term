@@ -18,6 +18,12 @@
 
 #define YASL_SCALE_UNIT 120
 
+/* Converts a platform scale factor into the 120ths of a UI scale. */
+static inline uint32_t window_scale_120_of(double scale)
+{
+    return (uint32_t)(scale * YASL_SCALE_UNIT + 0.5);
+}
+
 #define WINDOW_NATIVE_MAX 16
 
 struct window_native {

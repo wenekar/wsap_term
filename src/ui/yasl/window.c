@@ -49,11 +49,10 @@ struct vector2i window_default_size(const struct window_config *config)
 uint32_t window_scale_120(const struct window *w)
 {
     if (!w || !w->surface)
-        return 120;
+        return YASL_SCALE_UNIT;
     if (w->scale_120)
         return w->scale_120;
-    double scale = yasl_surface_get_info(w->surface).scale;
-    return (uint32_t)(scale * 120.0 + 0.5);
+    return window_scale_120_of(yasl_surface_get_info(w->surface).scale);
 }
 
 /* Marks one native surface as due in the next host pass. A redraw asked for
@@ -406,7 +405,7 @@ static void on_refresh(yasl_surface *s)
         struct yasl_surface_info info = yasl_surface_get_info(s);
         struct window_geometry g = {
             .size = { .x = info.pixel_width, .y = info.pixel_height },
-            .scale_120 = (uint32_t)(info.scale * 120.0 + 0.5),
+            .scale_120 = window_scale_120_of(info.scale),
         };
         if (!vector2i_eq(g.size, ui_surface_viewport(&w->ui.screen)) ||
             g.scale_120 != w->scale_120) {
@@ -545,7 +544,7 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
         yasl_surface_request(w->surface, YASL_REQUEST_FULLSCREEN);
 
     struct yasl_surface_info info = yasl_surface_get_info(w->surface);
-    w->scale_120 = (uint32_t)(info.scale * 120.0 + 0.5);
+    w->scale_120 = window_scale_120_of(info.scale);
 
     w->suspended = (info.state & YASL_STATE_SUSPENDED) != 0;
     w->focused = (info.state & YASL_STATE_ACTIVATED) != 0;
@@ -734,7 +733,7 @@ int window_modifiers(const struct window *w)
 struct window_logical_point window_logical(const struct window *w,
                                            struct vector2i device)
 {
-    double scale = window_scale_120(w) / 120.0;
+    double scale = window_scale_120(w) / (double)YASL_SCALE_UNIT;
     return (struct window_logical_point){ .x = device.x / scale, .y = device.y / scale };
 }
 

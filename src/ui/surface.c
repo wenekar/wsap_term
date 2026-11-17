@@ -7,6 +7,9 @@
 
 #include <stddef.h>
 
+/* The double-click interval, in ms, of a surface whose host reports none. */
+#define UI_DOUBLE_CLICK_FALLBACK_MS 400
+
 void ui_surface_init(struct ui_surface *surface,
                      const struct ui_surface_host *host, void *host_userdata)
 {
@@ -47,7 +50,7 @@ bool ui_surface_open_url(struct ui_surface *surface, const char *target)
 uint32_t ui_surface_double_click_interval_ms(const struct ui_surface *surface)
 {
     if (!surface || !surface->impl.host.double_click_interval_ms)
-        return 400;
+        return UI_DOUBLE_CLICK_FALLBACK_MS;
     return surface->impl.host.double_click_interval_ms(
         surface->impl.host_userdata);
 }
