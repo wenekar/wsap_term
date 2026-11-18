@@ -150,7 +150,6 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
          * closes a window or changes the tab model. */
         /* Settle pending stylesheet or root invalidations before taking UI
          * frame requests so initial styling does not schedule a second pass. */
-        ui_surface_prepare(window_ui_surface(w));
         window_ui_prepare_frame(w, now_ms);
         ui_surface_prepare(window_ui_surface(w));
         content = app_tabs_active(w);
@@ -164,13 +163,17 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
     struct window_ui_frame ui = {0};
     if (!window_ui_build_frame(w, frame->surface, now_ms, &ui))
         ui.repaint = true;
-    /* Scene preparation can finish a deferred layout pass. Retry instead
-     * of showing a snapshot at a different content rectangle. */
-    if (content && !rect2i_eq(content_bounds,
-                             terminal_input_widget(content)->bounds)) {
-        window_repaint_all(w);
-        window_redraw(w);
-        return;
+    /* Scene preparation can finish a deferred layout pass. Apply the new
+     * content rectangle in this frame, so the snapshot matches the scene. */
+    if (content) {
+        struct rect2i settled = terminal_input_widget(content)->bounds;
+        if (!rect2i_eq(content_bounds, settled)) {
+            content_bounds = settled;
+            terminal_commit_geometry(content);
+            terminal_prepare(content, now_ms);
+            if (!window_ui_build_frame(w, frame->surface, now_ms, &ui))
+                ui.repaint = true;
+        }
     }
 
     struct render_frame render = {
