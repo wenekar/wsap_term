@@ -4,7 +4,9 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static void tree_ids_and_reuse(void)
 {
@@ -211,12 +213,165 @@ static void live_actions_and_modal_scope(void)
     ui_widget_destroy(root_widget);
 }
 
+/* A synthetic document of many lines. The provider counts each read, so a
+ * test sees how much text a publish builds. */
+struct synthetic_document {
+    char *bytes;
+    size_t length;
+    size_t line_length;
+    size_t reads;
+    size_t bytes_read;
+};
+
+static size_t document_length(void *instance)
+{
+    return ((struct synthetic_document *)instance)->length;
+}
+
+static size_t document_read(void *instance, size_t offset, char *out,
+                            size_t capacity)
+{
+    struct synthetic_document *document = instance;
+    if (offset >= document->length)
+        return 0;
+    size_t count = document->length - offset;
+    if (count > capacity)
+        count = capacity;
+    memcpy(out, document->bytes + offset, count);
+    document->reads++;
+    document->bytes_read += count;
+    return count;
+}
+
+static void document_make(struct synthetic_document *document, size_t lines)
+{
+    char line[64];
+    int width = snprintf(line, sizeof(line), "%08zu abcdefghijklmnopqrstuv\n",
+                         (size_t)0);
+    assert(width > 0);
+    document->line_length = (size_t)width;
+    document->length = (size_t)width * lines;
+    document->bytes = malloc(document->length + 1);
+    assert(document->bytes);
+    for (size_t i = 0; i < lines; i++)
+        snprintf(document->bytes + i * (size_t)width, (size_t)width + 1,
+                 "%08zu abcdefghijklmnopqrstuv\n", i);
+    document->bytes[document->length] = '\0';
+}
+
+static double elapsed_ms(struct timespec *start)
+{
+    struct timespec end;
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    return (double)(end.tv_sec - start->tv_sec) * 1000.0 +
+           (double)(end.tv_nsec - start->tv_nsec) / 1000000.0;
+}
+
+/* A 100k-line document stays in the provider. A publish of a one-line change
+ * reads one viewport of text, not the document. The test also measures the
+ * cost of a whole-value copy for the same document. */
+static void large_document_ranges(void)
+{
+    struct synthetic_document document = {0};
+    document_make(&document, 100000);
+    size_t viewport = document.line_length * 50;
+    assert(viewport * 100 < document.length);
+    struct ui_accessibility_text_provider provider = {
+        .instance = &document,
+        .length = document_length,
+        .read = document_read,
+    };
+
+    struct ui_accessibility_tree before = {0};
+    struct timespec start;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (int i = 0; i < 20; i++) {
+        struct ui_accessibility_node_spec whole = {
+            .id = 1,
+            .role = UI_ACCESSIBILITY_ROLE_TERMINAL,
+            .value = document.bytes,
+        };
+        struct ui_accessibility_tree tree = {0};
+        assert(ui_accessibility_tree_add(&tree, &whole));
+        assert(ui_accessibility_tree_find(&tree, 1)->value);
+        ui_accessibility_tree_destroy(&tree);
+    }
+    double whole_ms = elapsed_ms(&start);
+
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    struct ui_accessibility_node_spec spec = {
+        .id = 1,
+        .role = UI_ACCESSIBILITY_ROLE_TERMINAL,
+        .text = &provider,
+        .text_offset = 0,
+        .text_length = viewport,
+        .text_direction = UI_ACCESSIBILITY_TEXT_DIRECTION_RIGHT_TO_LEFT,
+    };
+    assert(ui_accessibility_tree_add(&before, &spec));
+    const struct ui_accessibility_node *node =
+        ui_accessibility_tree_find(&before, 1);
+    assert(node->text == &provider && !node->value);
+    assert(node->text_direction == UI_ACCESSIBILITY_TEXT_DIRECTION_RIGHT_TO_LEFT);
+    assert(ui_accessibility_node_text_length(node) == viewport);
+    assert(document.reads == 0);
+    double add_ms = elapsed_ms(&start);
+
+    /* One new line at the top moves the range and keeps the document. */
+    struct ui_accessibility_tree after = {0};
+    spec.text_offset = document.line_length;
+    assert(ui_accessibility_tree_add(&after, &spec));
+    assert(document.reads == 0);
+
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    struct ui_accessibility_publish_set published = {0};
+    for (int i = 0; i < 20; i++) {
+        assert(ui_accessibility_publish_set_build(&before, &after, &published));
+        assert(published.count == 1);
+        assert(ui_accessibility_publish_set_has(&published, 1));
+    }
+    double publish_ms = elapsed_ms(&start) / 20.0;
+    assert(document.reads == 0);
+
+    /* The text build reads the node range only. */
+    node = ui_accessibility_tree_find(&after, 1);
+    char *text = malloc(viewport + 1);
+    assert(text);
+    size_t read = ui_accessibility_node_text_read(node, 0, text, viewport);
+    text[read] = '\0';
+    assert(read == viewport);
+    assert(document.reads == 1 && document.bytes_read == viewport);
+    assert(document.bytes_read * 100 < document.length);
+    assert(text[0] >= '0' && text[0] <= '9');
+
+    /* The tree keeps the whole copy when a node has a value. */
+    struct ui_accessibility_tree copy = {0};
+    struct ui_accessibility_node_spec whole = {
+        .id = 1, .role = UI_ACCESSIBILITY_ROLE_TERMINAL, .value = document.bytes,
+    };
+    assert(ui_accessibility_tree_add(&copy, &whole));
+    assert(strlen(ui_accessibility_tree_find(&copy, 1)->value) == document.length);
+
+    printf("large document: 100000 lines, %zu bytes, viewport %zu bytes, "
+           "range add %.3f ms, publish set %.3f ms, whole value copy %.3f ms, "
+           "text read %zu bytes\n",
+           document.length, viewport, add_ms, publish_ms, whole_ms / 20.0,
+           document.bytes_read);
+
+    free(text);
+    ui_accessibility_tree_destroy(&copy);
+    ui_accessibility_publish_set_destroy(&published);
+    ui_accessibility_tree_destroy(&after);
+    ui_accessibility_tree_destroy(&before);
+    free(document.bytes);
+}
+
 int main(void)
 {
     tree_ids_and_reuse();
     text_copy_and_password();
     rebuild_keeps_text();
     live_actions_and_modal_scope();
+    large_document_ranges();
     puts("PASS: accessibility tree and actions");
     return 0;
 }
