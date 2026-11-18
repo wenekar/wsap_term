@@ -123,6 +123,7 @@ static inline bool ui_scene_ok(const struct ui_scene *s)
     return s && !s->overflow;
 }
 struct rect2i ui_scene_bounds(const struct ui_scene *s);
+bool ui_scene_intersects_rect(const struct ui_scene *s, struct rect2i r);
 
 const char *ui_scene_op_text(const struct ui_scene *s,
                              const struct ui_scene_op *op);

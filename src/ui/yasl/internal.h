@@ -144,6 +144,7 @@ struct window {
     /* The configuration permits unpaced presentation: draw at once. */
     bool unpaced;
     bool has_bg;
+    bool cursor_overlay_active;
 };
 
 bool window_host_add(struct window_host *host, struct window *w);

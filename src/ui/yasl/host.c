@@ -153,7 +153,8 @@ static uint64_t host_wake(void *ud, uint64_t id, uint64_t interval_ns)
         struct window *w = host->windows[i];
         if (w->wake_ms && w->wake_ms <= now_ms) {
             w->wake_ms = 0;
-            window_redraw(w);
+            if (!host->hooks.wake || !host->hooks.wake(host->hooks.ud, w, now_ms))
+                window_redraw(w);
         }
     }
     arm_wake(host);

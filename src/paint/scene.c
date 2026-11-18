@@ -493,3 +493,52 @@ struct rect2i ui_scene_text_ink(const struct ui_scene *s,
     box.width = geom_sat_i((int64_t)box.width + 2 * (int64_t)adv);
     return box;
 }
+
+static bool op_visible(const struct ui_scene_op *op)
+{
+    switch (op->kind) {
+    case UI_SCENE_OP_PUSH_CLIP:
+    case UI_SCENE_OP_POP_CLIP:
+        return false;
+    case UI_SCENE_OP_BLEND_RECT:
+    case UI_SCENE_OP_CIRCLE:
+        return op->alpha > 0;
+    case UI_SCENE_OP_IMAGE:
+        return op->image != NULL;
+    default:
+        return (op->color >> 24) > 0;
+    }
+}
+
+bool ui_scene_intersects_rect(const struct ui_scene *s, struct rect2i r)
+{
+    if (!ui_scene_is_valid(s) || rect2i_is_empty(r))
+        return false;
+    struct rect2i clips[32];
+    int depth = 0;
+    for (int i = 0; i < s->n_ops; i++) {
+        const struct ui_scene_op *op = &s->ops[i];
+        if (op->kind == UI_SCENE_OP_PUSH_CLIP) {
+            if (depth >= 32)
+                return true;
+            struct rect2i c = op->rect;
+            if (depth > 0)
+                c = rect2i_intersect(c, clips[depth - 1]);
+            clips[depth++] = c;
+            continue;
+        }
+        if (op->kind == UI_SCENE_OP_POP_CLIP) {
+            if (depth > 0)
+                depth--;
+            continue;
+        }
+        if (!op_visible(op))
+            continue;
+        struct rect2i ink = op_ink(s, op);
+        if (depth > 0)
+            ink = rect2i_intersect(ink, clips[depth - 1]);
+        if (!rect2i_is_empty(rect2i_intersect(ink, r)))
+            return true;
+    }
+    return false;
+}

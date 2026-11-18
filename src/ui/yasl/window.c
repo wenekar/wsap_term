@@ -196,6 +196,9 @@ void window_native_remove(struct window *w, struct yasl_surface *s)
     struct window_native *n = native_find(w, s);
     if (!n)
         return;
+    window_gpu_clear_cursor(s);
+    if (s == w->surface)
+        w->cursor_overlay_active = false;
     framebuffer_history_release(&n->history);
     if (n->gpu_layer) {
         window_gpu_detach(n->gpu_layer, n->surface);
@@ -773,4 +776,36 @@ int window_ime_preedit_begin(const struct window *w)
 int window_ime_preedit_end(const struct window *w)
 {
     return w ? w->ime_end : 0;
+}
+
+bool window_cursor_overlay_supported(const struct window *w)
+{
+    return w && w->surface && window_gpu_cursor_supported(w->surface);
+}
+
+bool window_set_cursor_overlay(struct window *w, const struct window_cursor_overlay *ov)
+{
+    if (!w || !w->surface || !ov)
+        return false;
+    bool ok = window_gpu_set_cursor(w->surface, ov->active, ov->visible, ov->rect,
+                                    ov->color, ov->pixels, ov->key);
+    w->cursor_overlay_active = ov->active && ok;
+    return w->cursor_overlay_active;
+}
+
+bool window_cursor_overlay_visible(struct window *w, bool visible)
+{
+    if (!w || !w->surface || !w->cursor_overlay_active)
+        return false;
+    return window_gpu_set_cursor_visible(w->surface, visible);
+}
+
+bool window_cursor_overlay_active(const struct window *w)
+{
+    return w && w->cursor_overlay_active;
+}
+
+bool window_has_popup(const struct window *w)
+{
+    return w && w->ui.menu_popups > 0;
 }

@@ -61,4 +61,12 @@ bool window_gpu_draw(void *layer, struct yasl_surface *s,
                      struct window_gpu_watch watch,
                      window_gpu_draw_fn draw, void *ud);
 
+/* Platform overlay sublayer for idle cursor blinking without frame redraws. */
+bool window_gpu_cursor_supported(struct yasl_surface *s);
+bool window_gpu_set_cursor(struct yasl_surface *s, bool active, bool visible,
+                           struct rect2i rect, uint32_t color,
+                           const uint32_t *pixels, uint64_t key);
+bool window_gpu_set_cursor_visible(struct yasl_surface *s, bool visible);
+void window_gpu_clear_cursor(struct yasl_surface *s);
+
 #endif

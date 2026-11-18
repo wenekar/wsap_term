@@ -40,6 +40,9 @@ struct window_host_hooks {
      * surface. A modal step must not open or close a window.
      */
     void (*service)(void *ud, uint64_t now_ms, bool modal);
+    /* Called when a window wake deadline fires. Returning true skips a full
+     * window redraw (e.g. when only an overlay cursor toggled visibility). */
+    bool (*wake)(void *ud, struct window *w, uint64_t now_ms);
     void *ud;
 };
 
@@ -178,5 +181,32 @@ bool window_drag_carry(struct window *w, struct window_logical_point at);
 const char *window_ime_preedit(const struct window *w);
 int window_ime_preedit_begin(const struct window *w);
 int window_ime_preedit_end(const struct window *w);
+
+/*
+ * The cursor as a native layer above the window content. The window shows
+ * and hides it at each blink, and draws no frame for that. Only some
+ * platforms have it: see window_cursor_overlay_supported().
+ *
+ * - `rect` is in canvas pixels. `pixels` holds rect.width * rect.height
+ *   0xAARRGGBB values, or it is NULL for a rect of `color`.
+ * - `key` names `pixels`. The window keeps the last pixels when the key is
+ *   the same. Key 0 never matches: the window takes the pixels again.
+ * - window_set_cursor_overlay() returns true when the layer shows the
+ *   cursor. The frame must then draw no cursor of its own.
+ */
+struct window_cursor_overlay {
+    bool active;
+    bool visible;
+    struct rect2i rect;
+    uint32_t color;
+    const uint32_t *pixels;
+    uint64_t key;
+};
+bool window_cursor_overlay_supported(const struct window *w);
+bool window_set_cursor_overlay(struct window *w, const struct window_cursor_overlay *ov);
+bool window_cursor_overlay_visible(struct window *w, bool visible);
+bool window_cursor_overlay_active(const struct window *w);
+bool window_has_popup(const struct window *w);
+void window_wake_at(struct window *w, uint64_t at_ms);
 
 #endif

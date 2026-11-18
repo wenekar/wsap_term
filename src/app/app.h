@@ -23,6 +23,10 @@ struct app {
     struct app_tab_model tabs;
     struct app_stats stats;
     char **argv;
+    uint32_t *cursor_px;
+    size_t cursor_px_cap;
+    uint64_t gpu_idle_timer;
+    uint64_t last_gpu_draw_ms;
     int argc;
     bool render_started;
 };

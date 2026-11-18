@@ -121,4 +121,37 @@ void terminal_paste(struct terminal *terminal, const char *text, size_t len);
  * and leaves the rest to this function. */
 void terminal_handle_shortcut(struct terminal *terminal, enum input_shortcut sc);
 
+/*
+ * The cursor as a window overlay. The window then shows and hides the
+ * cursor at each blink, and the app draws no frame for it.
+ *
+ * - `rect` is the cursor in canvas pixels. `color` is the cursor color.
+ * - `solid_only` means: the overlay is `rect` filled with `color`. If it is
+ *   false, the overlay is the pixels of the cells
+ *   [span_begin, span_begin + span_cols) with a block cursor on them.
+ * - `cell_key` names those pixels. Two frames with the same key have the
+ *   same pixels. 0 means: not known. Make the pixels again.
+ */
+struct terminal_cursor_overlay {
+    bool visible;
+    bool solid_only;
+    struct rect2i rect;
+    uint32_t color;
+    int span_begin;
+    int span_cols;
+    uint64_t cell_key;
+};
+/* Fills `out` for the frame of `source`. Returns false when the frame must
+ * draw the cursor in the grid: no focus, no blink, a preedit, a bell, or a
+ * cursor that is not fully inside the grid. */
+bool terminal_cursor_overlay_prepare(const struct terminal *terminal,
+                                     const struct terminal_frame_source *source,
+                                     struct vector2i canvas_size, uint64_t now_ms,
+                                     struct terminal_cursor_overlay *out);
+/* Tells if the cursor blink is the only change that is due at `now_ms`.
+ * If true, it gives the cursor state and the time of the next wake. If
+ * false, the window needs a frame. */
+bool terminal_cursor_blink_only(struct terminal *terminal, uint64_t now_ms,
+                                bool *out_visible, uint64_t *out_next_ms);
+
 #endif

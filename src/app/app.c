@@ -7,7 +7,18 @@
 #include <strings.h>
 #ifdef __GLIBC__
 #include <malloc.h>
+#elif defined(__APPLE__)
+#include <malloc/malloc.h>
 #endif
+
+static void app_trim_heap(void)
+{
+#ifdef __GLIBC__
+    malloc_trim(0);
+#elif defined(__APPLE__)
+    malloc_zone_pressure_relief(NULL, 0);
+#endif
+}
 
 #include "app/app.h"
 #include "app/config/settings.h"
@@ -16,6 +27,7 @@
 #include "yasl/yasl.h"
 #include "loop/signals.h"
 #include "theme/look.h"
+#include "paint/scene.h"
 #include "render/render.h"
 #include "render/term_frame.h"
 #include "util/damage.h"
@@ -28,8 +40,98 @@
 #include "ui/yasl/inspector.h"
 #include "ui/yasl/client.h"
 
+#define GPU_IDLE_RELEASE_MS 500u
+
 static void app_stop(struct app *a);
 static int run_loop(struct app *a);
+
+static uint64_t gpu_idle_fire(void *ud, uint64_t id, uint64_t interval_ns)
+{
+    (void)id; (void)interval_ns;
+    struct app *a = ud;
+    uint64_t now_ms = yasl_time_ns() / 1000000;
+    uint64_t elapsed = now_ms >= a->last_gpu_draw_ms ? now_ms - a->last_gpu_draw_ms : 0;
+    if (elapsed < GPU_IDLE_RELEASE_MS)
+        return (uint64_t)(GPU_IDLE_RELEASE_MS - elapsed) * 1000000ull;
+    if (!renderer_idle_gpu(a->renderer))
+        return 100ull * 1000000ull;
+    a->gpu_idle_timer = 0;
+    app_trim_heap();
+    return 0;
+}
+
+static void schedule_gpu_idle_release(struct app *a, uint64_t now_ms)
+{
+    a->last_gpu_draw_ms = now_ms;
+    if (!a->loop || a->gpu_idle_timer)
+        return;
+    a->gpu_idle_timer = yasl_loop_add_timer(a->loop,
+                                            (uint64_t)GPU_IDLE_RELEASE_MS * 1000000ull,
+                                            gpu_idle_fire, a);
+}
+
+static bool cursor_pixels_fit(struct app *a, size_t need_px)
+{
+    if (need_px <= a->cursor_px_cap)
+        return true;
+    uint32_t *next = realloc(a->cursor_px, need_px * sizeof(*next));
+    if (!next)
+        return false;
+    a->cursor_px = next;
+    a->cursor_px_cap = need_px;
+    return true;
+}
+
+static void update_cursor_overlay(struct app *a, struct window *w,
+                                  struct terminal *content,
+                                  const struct terminal_frame_source *source,
+                                  const struct window_ui_frame *ui,
+                                  struct vector2i canvas_size, uint64_t now_ms,
+                                  struct terminal_frame *grid)
+{
+    struct terminal_cursor_overlay co = {0};
+    bool ok = !ui->gpu_off && !ui->suspended && content &&
+              window_cursor_overlay_supported(w) &&
+              terminal_cursor_overlay_prepare(content, source, canvas_size, now_ms, &co) &&
+              !ui_scene_intersects_rect(ui->scene, co.rect);
+    if (!ok) {
+        window_set_cursor_overlay(w, &(struct window_cursor_overlay){ .active = false });
+        terminal_frame_init(grid, source->snapshot, source->cursor_visible);
+        return;
+    }
+
+    const uint32_t *pixels = NULL;
+    struct terminal_frame cursor_grid = {0};
+    if (!co.solid_only) {
+        size_t need = (size_t)co.rect.width * (size_t)co.rect.height;
+        int bw = 0, bh = 0;
+        terminal_frame_init(&cursor_grid, source->snapshot, true);
+        if (!cursor_pixels_fit(a, need) ||
+            !render_cursor_cell(a->renderer, source->font, &cursor_grid,
+                                co.span_begin, co.span_cols,
+                                a->cursor_px, a->cursor_px_cap, &bw, &bh) ||
+            bw != co.rect.width || bh != co.rect.height) {
+            window_set_cursor_overlay(w, &(struct window_cursor_overlay){ .active = false });
+            terminal_frame_init(grid, source->snapshot, source->cursor_visible);
+            return;
+        }
+        pixels = a->cursor_px;
+    }
+
+    if (window_set_cursor_overlay(w, &(struct window_cursor_overlay){
+            .active = true,
+            .visible = co.visible,
+            .rect = co.rect,
+            .color = co.color,
+            .pixels = pixels,
+            .key = co.cell_key,
+        })) {
+        terminal_frame_init(grid, source->snapshot, false);
+        return;
+    }
+
+    terminal_frame_init(grid, source->snapshot, source->cursor_visible);
+}
 
 static void app_compose_frame(struct window *w, struct window_frame *frame,
                               void *ud)
@@ -45,6 +147,9 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
          * with the time of this frame. The UI layout comes first, then the
          * content geometry, and only then the snapshot. Nothing in a frame
          * closes a window or changes the tab model. */
+        /* Settle pending stylesheet or root invalidations before taking UI
+         * frame requests so initial styling does not schedule a second pass. */
+        ui_surface_prepare(window_ui_surface(w));
         window_ui_prepare_frame(w, now_ms);
         ui_surface_prepare(window_ui_surface(w));
         content = app_tabs_active(w);
@@ -75,6 +180,8 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
     struct terminal_frame grid;
     if (ui.suspended) {
         render.cpu_only = true;
+        if (main)
+            window_set_cursor_overlay(w, &(struct window_cursor_overlay){ .active = false });
     } else {
         render.ui = ui.scene;
         render.ui_damage = main ? &ui.damage : NULL;
@@ -83,16 +190,25 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
         if (content && terminal_frame_source(content, now_ms, &source)) {
             /* The theme has no selection colors. The zero selection colors
              * of the frame give the built-in ones. */
-            terminal_frame_init(&grid, source.snapshot, source.cursor_visible);
+            if (main) {
+                update_cursor_overlay(a, w, content, &source, &ui,
+                                      frame->target.size, now_ms, &grid);
+            } else {
+                terminal_frame_init(&grid, source.snapshot, source.cursor_visible);
+            }
             grid.blink_on = source.text_blink_on;
             render.grid = (struct render_grid){
                 .frame = &grid,
                 .font = source.font,
                 .rect = source.rect,
             };
+        } else if (main) {
+            window_set_cursor_overlay(w, &(struct window_cursor_overlay){ .active = false });
         }
     }
     struct render_result result = render_draw(a->renderer, &frame->target, &render);
+    if (result.presented && !render.cpu_only)
+        schedule_gpu_idle_release(a, now_ms);
     if (window_present(w, frame, &result.damage, result.presented) && main)
         latency_probe_complete();
     window_ui_frame_done(w, frame, now_ms);
@@ -100,9 +216,7 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
     static bool trimmed_first_frame;
     if (!trimmed_first_frame && main) {
         trimmed_first_frame = true;
-#ifdef __GLIBC__
-        malloc_trim(0);
-#endif
+        app_trim_heap();
     }
 }
 
@@ -335,6 +449,23 @@ static void host_service(void *ud, uint64_t now_ms, bool modal)
     app_tabs_service(&a->tabs, now_ms);
 }
 
+static bool host_wake_window(void *ud, struct window *w, uint64_t now_ms)
+{
+    (void)ud;
+    if (!window_cursor_overlay_active(w) || window_has_popup(w) ||
+        ui_surface_has_modal(window_ui_surface(w)))
+        return false;
+    struct terminal *content = app_tabs_active(w);
+    bool visible = false;
+    uint64_t next_ms = 0;
+    if (!terminal_cursor_blink_only(content, now_ms, &visible, &next_ms))
+        return false;
+    if (!window_cursor_overlay_visible(w, visible))
+        return false;
+    window_wake_at(w, next_ms);
+    return true;
+}
+
 static void host_reopen(void *ud)
 {
     struct app *a = ud;
@@ -446,8 +577,14 @@ static void app_free(struct app *a)
         look_set_listener(a->look, NULL, NULL);
         look_destroy(a->look);
     }
-    if (a->loop)
+    if (a->loop) {
+        if (a->gpu_idle_timer) {
+            yasl_loop_del_timer(a->loop, a->gpu_idle_timer);
+            a->gpu_idle_timer = 0;
+        }
         yasl_loop_destroy(a->loop);
+    }
+    free(a->cursor_px);
     free(a->config_path);
     opts_destroy(&app_config_spec, &a->config);
     free_args(a->argv);
@@ -526,6 +663,7 @@ static struct app *app_new(int argc, char **argv, bool gpu_first, int *status)
                          .reopen = host_reopen,
                          .command = host_command,
                          .service = host_service,
+                         .wake = host_wake_window,
                          .ud = a,
                      });
     look_set_listener(a->look, look_changed, a);
@@ -574,9 +712,7 @@ int app_run(struct app *a)
     const char *sock = a->config.debug_socket;
     if (sock)
         window_debug_server_start(a->loop, &a->host, sock);
-#ifdef __GLIBC__
-    malloc_trim(0);
-#endif
+    app_trim_heap();
     int result = run_loop(a);
     if (sock)
         window_debug_server_stop();

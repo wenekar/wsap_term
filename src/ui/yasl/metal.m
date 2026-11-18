@@ -3,6 +3,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <QuartzCore/CATransaction.h>
 #import <QuartzCore/QuartzCore.h>
+#import <objc/runtime.h>
 
 #include "ui/yasl/gpu_surface.h"
 
@@ -19,6 +20,12 @@ void *window_gpu_attach(struct yasl_surface *s, void *device)
         return NULL;
     layer.device = (id<MTLDevice>)device;
     layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+    /* Two drawables, not the default of three. With three, a window that
+     * draws at each refresh showed its frames one refresh later: about 8 ms
+     * more from a key press to the screen on a 120 Hz panel. Flood
+     * throughput was the same with two and with three. Two drawables also
+     * need one drawable less memory while the window draws. */
+    layer.maximumDrawableCount = 2;
     return layer;
 }
 
@@ -189,4 +196,169 @@ bool window_gpu_draw(void *layer, struct yasl_surface *s,
         frame.drawable = NULL;
     }
     return true;
+}
+
+static const char kCursorOverlayKey;
+
+@interface YaslCursorOverlay : NSObject
+@property (nonatomic, assign) CALayer *layer;
+@property (nonatomic, assign) BOOL hasContent;
+@property (nonatomic, assign) BOOL isBitmap;
+@property (nonatomic, assign) uint64_t contentKey;
+@property (nonatomic, assign) uint32_t solidColor;
+@end
+
+@implementation YaslCursorOverlay
+- (void)dealloc
+{
+    [_layer removeFromSuperlayer];
+    [_layer release];
+    _layer = nil;
+    [super dealloc];
+}
+@end
+
+static NSView *surface_ns_view(struct yasl_surface *s)
+{
+    if (!s)
+        return nil;
+    struct yasl_native native = {0};
+    if (yasl_surface_get_native(s, &native) != 0 || !native.ns_view)
+        return nil;
+    return (NSView *)native.ns_view;
+}
+
+static YaslCursorOverlay *cursor_overlay_get(NSView *view, bool create)
+{
+    YaslCursorOverlay *ov = objc_getAssociatedObject(view, &kCursorOverlayKey);
+    if (ov || !create)
+        return ov;
+    CALayer *root = view.layer;
+    if (!root)
+        return nil;
+    ov = [[YaslCursorOverlay alloc] init];
+    CALayer *layer = [[CALayer layer] retain];
+    layer.actions = @{
+        @"hidden": [NSNull null],
+        @"frame": [NSNull null],
+        @"bounds": [NSNull null],
+        @"position": [NSNull null],
+        @"contents": [NSNull null],
+        @"backgroundColor": [NSNull null],
+    };
+    layer.autoresizingMask = kCALayerMaxXMargin | kCALayerMinYMargin;
+    layer.hidden = YES;
+    ov.layer = layer;
+    [root addSublayer:layer];
+    objc_setAssociatedObject(view, &kCursorOverlayKey, ov, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [ov release];
+    return ov;
+}
+
+bool window_gpu_cursor_supported(struct yasl_surface *s)
+{
+    NSView *view = surface_ns_view(s);
+    return view != nil && view.layer != nil;
+}
+
+bool window_gpu_set_cursor(struct yasl_surface *s, bool active, bool visible,
+                           struct rect2i rect, uint32_t color,
+                           const uint32_t *pixels, uint64_t key)
+{
+    NSView *view = surface_ns_view(s);
+    CALayer *root = view ? view.layer : nil;
+    if (!root)
+        return false;
+    YaslCursorOverlay *ov = cursor_overlay_get(view, active);
+    if (!ov)
+        return false;
+
+    @autoreleasepool {
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        if (!active || rect.width <= 0 || rect.height <= 0) {
+            ov.layer.hidden = YES;
+            [CATransaction commit];
+            return active == false;
+        }
+        if (ov.layer.superlayer != root)
+            [root addSublayer:ov.layer];
+
+        CGFloat scale = root.contentsScale > 0.0 ? root.contentsScale
+            : (view.window ? view.window.backingScaleFactor : 1.0);
+        if (scale < 1.0)
+            scale = 1.0;
+        CGFloat x = (CGFloat)rect.x / scale;
+        CGFloat w = (CGFloat)rect.width / scale;
+        CGFloat h = (CGFloat)rect.height / scale;
+        CGFloat y = root.bounds.size.height - ((CGFloat)rect.y + (CGFloat)rect.height) / scale;
+        ov.layer.contentsScale = scale;
+        ov.layer.frame = CGRectMake(x, y, w, h);
+
+        if (pixels) {
+            /* Key 0 names no pixels, so it never matches the last upload. */
+            if (!key || !ov.hasContent || !ov.isBitmap || ov.contentKey != key) {
+                NSData *data = [NSData dataWithBytes:pixels
+                                              length:(NSUInteger)rect.width * (NSUInteger)rect.height * 4];
+                CGDataProviderRef prov = CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
+                CGColorSpaceRef srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+                CGImageRef img = prov && srgb
+                    ? CGImageCreate((size_t)rect.width, (size_t)rect.height, 8, 32,
+                                    (size_t)rect.width * 4, srgb,
+                                    kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst,
+                                    prov, NULL, false, kCGRenderingIntentDefault)
+                    : NULL;
+                ov.layer.backgroundColor = NULL;
+                ov.layer.contents = img ? (__bridge id)img : nil;
+                ov.layer.opaque = YES;
+                if (img) CGImageRelease(img);
+                if (srgb) CGColorSpaceRelease(srgb);
+                if (prov) CGDataProviderRelease(prov);
+                ov.hasContent = img != NULL;
+                ov.isBitmap = YES;
+                ov.contentKey = key;
+            }
+        } else if (!ov.hasContent || ov.isBitmap || ov.solidColor != color) {
+            CGColorSpaceRef srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+            CGFloat rgba[4] = {
+                (CGFloat)((color >> 16) & 0xff) / 255.0,
+                (CGFloat)((color >> 8) & 0xff) / 255.0,
+                (CGFloat)(color & 0xff) / 255.0,
+                (CGFloat)((color >> 24) & 0xff) / 255.0,
+            };
+            CGColorRef cg = srgb ? CGColorCreate(srgb, rgba) : NULL;
+            ov.layer.contents = nil;
+            ov.layer.backgroundColor = cg;
+            ov.layer.opaque = (color >> 24) == 0xff;
+            if (cg) CGColorRelease(cg);
+            if (srgb) CGColorSpaceRelease(srgb);
+            ov.hasContent = cg != NULL;
+            ov.isBitmap = NO;
+            ov.solidColor = color;
+        }
+        ov.layer.hidden = !visible;
+        [CATransaction commit];
+    }
+    return true;
+}
+
+bool window_gpu_set_cursor_visible(struct yasl_surface *s, bool visible)
+{
+    NSView *view = surface_ns_view(s);
+    YaslCursorOverlay *ov = view ? cursor_overlay_get(view, false) : nil;
+    if (!ov || !ov.layer || !ov.hasContent)
+        return false;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    ov.layer.hidden = !visible;
+    [CATransaction commit];
+    return true;
+}
+
+void window_gpu_clear_cursor(struct yasl_surface *s)
+{
+    NSView *view = surface_ns_view(s);
+    if (!view)
+        return;
+    objc_setAssociatedObject(view, &kCursorOverlayKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }

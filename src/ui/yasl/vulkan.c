@@ -135,3 +135,29 @@ bool window_gpu_draw(void *layer, struct yasl_surface *s,
     draw(&frame, ud);
     return true;
 }
+
+bool window_gpu_cursor_supported(struct yasl_surface *s)
+{
+    (void)s;
+    return false;
+}
+
+bool window_gpu_set_cursor(struct yasl_surface *s, bool active, bool visible,
+                           struct rect2i rect, uint32_t color,
+                           const uint32_t *pixels, uint64_t key)
+{
+    (void)s; (void)active; (void)visible; (void)rect;
+    (void)color; (void)pixels; (void)key;
+    return false;
+}
+
+bool window_gpu_set_cursor_visible(struct yasl_surface *s, bool visible)
+{
+    (void)s; (void)visible;
+    return false;
+}
+
+void window_gpu_clear_cursor(struct yasl_surface *s)
+{
+    (void)s;
+}

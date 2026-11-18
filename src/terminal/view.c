@@ -659,7 +659,7 @@ static uint64_t view_tick(struct ui_widget *widget, uint64_t now_ms)
     struct terminal *t = view_terminal(widget);
     uint64_t next = view->visual_bell_until_ms > now_ms
         ? view->visual_bell_until_ms : 0;
-    uint64_t flip = terminal_next_blink_ms(t, now_ms);
+    uint64_t flip = view->blink_suppressed ? 0 : terminal_next_blink_ms(t, now_ms);
     if (flip && (!next || flip < next))
         next = flip;
     uint64_t text_flip = terminal_next_text_blink_ms(t, now_ms);

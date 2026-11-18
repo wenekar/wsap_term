@@ -53,6 +53,7 @@ struct terminal_view {
 
     struct terminal_preedit preedit;
     bool accessibility_text_valid;
+    bool blink_suppressed;
 };
 
 enum ctx_action {
