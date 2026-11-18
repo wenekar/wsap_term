@@ -6,7 +6,7 @@
 
 /* Session-bus helpers. The first call opens a private connection that later
  * calls reuse. Each returns false when YASL is built without libdbus-1 or no
- * session bus is reachable. Call from one thread at a time. */
+ * session bus is reachable. Thread-safe: a mutex serializes the shared bus. */
 
 /* Send org.freedesktop.Notifications.Notify without waiting for a reply. */
 bool bus_notify(const char *app, const char *title, const char *body);
