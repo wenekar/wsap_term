@@ -195,6 +195,8 @@ static void keyboard_reset_keys(struct seat *s, struct wayland_surface *w)
     (void)w;
     keyboard_repeat_stop(s);
     keyboard_text_reset(s);
+    memset(s->key_text_input, 0, sizeof(s->key_text_input));
+    memset(s->key_consumed_mods, 0, sizeof(s->key_consumed_mods));
 }
 
 bool conn_keyboard_on(const struct wayland_display *c, const struct wayland_surface *w,
@@ -289,18 +291,49 @@ static struct yasl_private_key_event xkb_key_event(struct seat *s, uint32_t key,
         .codepoint = yasl_private_key_label(key_codepoint_at_level(s, key, layout, 0)),
         .shifted = yasl_private_key_label(key_codepoint_at_level(s, key, layout, 1)),
         .native_code = key,
+        .text_input = YASL_KEY_TEXT_NONE,
     };
     return k;
 }
 
-static void keyboard_text(struct seat *s, struct wayland_surface *w, uint32_t key)
+/* The text that one key press produces. `input` names what the application
+ * must do with the key: insert the text, wait for composition, or treat the
+ * key as a shortcut. */
+struct keyboard_text {
+    enum yasl_key_text input;
+    uint32_t consumed_mods;
+    uint64_t key_id;
+    bool text_reset;
+    bool input_reset;
+    int len;
+    char *heap;
+    char local[128];
+};
+
+static void keyboard_text_free(struct keyboard_text *t)
 {
+    free(t->heap);
+    t->heap = NULL;
+}
+
+static int key_text_utf8(struct seat *s, uint32_t key, bool composed, char *out, size_t cap)
+{
+    uint32_t code = key + XKB_EVDEV_OFFSET;
+    return composed ? xkb_compose_state_get_utf8(s->compose, out, cap)
+                    : xkb_state_key_get_utf8(s->xkb_state, code, out, cap);
+}
+
+/* Classifies one key press before its KEY event goes out. */
+static void keyboard_text_begin(struct seat *s, struct wayland_surface *w, uint32_t key,
+                                struct keyboard_text *t)
+{
+    *t = (struct keyboard_text){.input = YASL_KEY_TEXT_NONE};
     uint32_t code = key + XKB_EVDEV_OFFSET;
     unsigned mods = (unsigned)seat_modifiers(s);
     if ((mods & (YASL_PRIVATE_MOD_CTRL | YASL_PRIVATE_MOD_SUPER)) ||
         ((mods & YASL_PRIVATE_MOD_ALT) &&
          !xkb_state_mod_index_is_consumed(s->xkb_state, code, s->mod_alt))) {
-        keyboard_text_reset(s);
+        t->text_reset = true;
         return;
     }
     if (!s->compose_attempted) {
@@ -320,33 +353,64 @@ static void keyboard_text(struct seat *s, struct wayland_surface *w, uint32_t ke
     if (s->compose) {
         xkb_compose_state_feed(s->compose, xkb_state_key_get_one_sym(s->xkb_state, code));
         switch (xkb_compose_state_get_status(s->compose)) {
-        case XKB_COMPOSE_COMPOSING: keyboard_compose_show(s, w, key); return;
-        case XKB_COMPOSE_CANCELLED: keyboard_text_reset(s); return;
-        case XKB_COMPOSE_COMPOSED: composed = true; break;
-        default: break;
+        case XKB_COMPOSE_COMPOSING:
+            t->input = YASL_KEY_TEXT_COMPOSITION;
+            return;
+        case XKB_COMPOSE_CANCELLED:
+            t->text_reset = true;
+            return;
+        case XKB_COMPOSE_COMPOSED:
+            composed = true;
+            t->text_reset = true;
+            break;
+        default:
+            break;
         }
     }
-    int len = composed ? xkb_compose_state_get_utf8(s->compose, NULL, 0) :
-        xkb_state_key_get_utf8(s->xkb_state, code, NULL, 0);
-    if (len > 0) {
-        char local[128];
-        char *text = (size_t)len < sizeof(local) ? local : malloc((size_t)len + 1);
-        if (text) {
-            if (composed) xkb_compose_state_get_utf8(s->compose, text, (size_t)len + 1);
-            else xkb_state_key_get_utf8(s->xkb_state, code, text, (size_t)len + 1);
-            /* Editing commands belong to key events, not text insertion. */
-            if ((unsigned char)text[0] >= 0x20 && text[0] != 0x7f) {
-                struct yasl_private_event ev = {.type = YASL_PRIVATE_EVENT_TEXT,
-                    .surface = &w->base, .text = {.data = text, .len = (size_t)len}};
-                input_queue_push(&w->input, &ev);
-            }
-            if (text != local) free(text);
-        } else {
-            struct yasl_private_event ev = {.type = YASL_PRIVATE_EVENT_INPUT_RESET, .surface = &w->base};
-            input_queue_push(&w->input, &ev);
-        }
+    int len = key_text_utf8(s, key, composed, NULL, 0);
+    if (len <= 0) return;
+    char *text = (size_t)len < sizeof(t->local) ? t->local : malloc((size_t)len + 1);
+    if (!text) {
+        t->input_reset = true;
+        return;
     }
-    if (composed) keyboard_text_reset(s);
+    if (text != t->local) t->heap = text;
+    if (key_text_utf8(s, key, composed, text, (size_t)len + 1) < 0)
+        return;
+    /* Editing commands belong to key events, not text insertion. */
+    if ((unsigned char)text[0] < 0x20 || text[0] == 0x7f)
+        return;
+    t->input = YASL_KEY_TEXT_COMMIT;
+    t->len = len;
+    t->consumed_mods = mods & (YASL_PRIVATE_MOD_ALT | YASL_PRIVATE_MOD_CTRL |
+                               YASL_PRIVATE_MOD_SUPER);
+    if (++w->text_key_id == 0) ++w->text_key_id;
+    t->key_id = w->text_key_id;
+}
+
+/* Emits the text or preedit of a classified key press, after its KEY event. */
+static void keyboard_text_emit(struct seat *s, struct wayland_surface *w,
+                               uint32_t key, struct keyboard_text *t)
+{
+    if (t->input_reset) {
+        struct yasl_private_event ev = {.type = YASL_PRIVATE_EVENT_INPUT_RESET, .surface = &w->base};
+        input_queue_push(&w->input, &ev);
+        return;
+    }
+    if (t->input == YASL_KEY_TEXT_COMPOSITION) {
+        keyboard_compose_show(s, w, key);
+        return;
+    }
+    if (t->input == YASL_KEY_TEXT_COMMIT) {
+        const char *text = t->heap ? t->heap : t->local;
+        struct yasl_private_event ev = {
+            .type = YASL_PRIVATE_EVENT_TEXT,
+            .surface = &w->base,
+            .text = {.data = text, .len = (size_t)t->len, .text_key_id = t->key_id},
+        };
+        input_queue_push(&w->input, &ev);
+    }
+    if (t->text_reset) keyboard_text_reset(s);
 }
 
 static bool keyboard_dispatch_key(struct seat *s, struct wayland_surface *w, uint32_t key,
@@ -355,16 +419,35 @@ static bool keyboard_dispatch_key(struct seat *s, struct wayland_surface *w, uin
     if (!s->xkb_state || !w->cbs) return false;
 
     struct yasl_private_key_event k = xkb_key_event(s, key, action);
+    struct keyboard_text text = {0};
+    if (key < KEY_CNT) {
+        if (action == YASL_KEY_RELEASE) {
+            if (s->key_text_input[key] != YASL_KEY_TEXT_UNSPECIFIED)
+                k.text_input = s->key_text_input[key];
+            k.consumed_mods = s->key_consumed_mods[key];
+            s->key_text_input[key] = YASL_KEY_TEXT_UNSPECIFIED;
+            s->key_consumed_mods[key] = 0;
+        } else {
+            keyboard_text_begin(s, w, key, &text);
+            k.text_input = text.input;
+            k.consumed_mods = text.consumed_mods;
+            k.text_id = text.key_id;
+            s->key_text_input[key] = k.text_input;
+            s->key_consumed_mods[key] = k.consumed_mods;
+        }
+    }
     struct yasl_private_event ev = {
         .type = YASL_PRIVATE_EVENT_KEY,
         .surface = &w->base,
         .key = k,
     };
     if (!input_queue_push(&w->input, &ev)) {
+        keyboard_text_free(&text);
         keyboard_text_reset(s);
         return false;
     }
-    if (action != YASL_KEY_RELEASE) keyboard_text(s, w, key);
+    if (action != YASL_KEY_RELEASE) keyboard_text_emit(s, w, key, &text);
+    keyboard_text_free(&text);
     return action != YASL_KEY_RELEASE;
 }
 
