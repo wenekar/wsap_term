@@ -63,6 +63,19 @@ static void put_name(struct blob *b, unsigned type, const char *name)
     put(b, 7, 4); /* Last-change serial. */
 }
 
+static void test_refresh(void)
+{
+    XRRModeInfo modes[] = {
+        {.id = 1, .dotClock = 148500000, .hTotal = 2200, .vTotal = 1125},
+        {.id = 2, .dotClock = 0, .hTotal = 1, .vTotal = 1},
+    };
+    XRRScreenResources resources = {.nmode = 2, .modes = modes};
+    double ns = mode_refresh_ns(&resources, 1);
+    assert(ns > 16.6e6 && ns < 16.7e6);
+    assert(mode_refresh_ns(&resources, 2) == 0);
+    assert(mode_refresh_ns(&resources, 3) == 0);
+}
+
 static void test_xsettings(void)
 {
     for (int order = 0; order < 2; order++) {
@@ -95,6 +108,7 @@ static void test_xsettings(void)
 
 int main(void)
 {
+    test_refresh();
     test_xsettings();
     struct x11_display display = {.base.ops = &yasl_private_x11_backend,
         .net_state = 10, .fullscreen = 20, .maximized_h = 21, .maximized_v = 22};

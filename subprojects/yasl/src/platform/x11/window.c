@@ -172,8 +172,15 @@ static bool dl_load_table(const char *soname, void **handle_out, void *base,
 
 #if YASL_HAS_XRANDR
 #define XRANDR_LIB_SYMS(X) \
+    X(XRRFreeCrtcInfo) \
     X(XRRFreeMonitors) \
-    X(XRRGetMonitors)
+    X(XRRFreeOutputInfo) \
+    X(XRRFreeScreenResources) \
+    X(XRRGetCrtcInfo) \
+    X(XRRGetMonitors) \
+    X(XRRGetOutputInfo) \
+    X(XRRGetOutputPrimary) \
+    X(XRRGetScreenResourcesCurrent)
 #endif
 
 struct x11_dl_table {
@@ -538,11 +545,32 @@ static inline const struct x11_dl_table *x11_syms(void)
 #endif
 
 #if YASL_HAS_XRANDR
+#ifndef XRRFreeCrtcInfo
+#define XRRFreeCrtcInfo (x11_syms()->fn_XRRFreeCrtcInfo)
+#endif
 #ifndef XRRFreeMonitors
 #define XRRFreeMonitors (x11_syms()->fn_XRRFreeMonitors)
 #endif
+#ifndef XRRFreeOutputInfo
+#define XRRFreeOutputInfo (x11_syms()->fn_XRRFreeOutputInfo)
+#endif
+#ifndef XRRFreeScreenResources
+#define XRRFreeScreenResources (x11_syms()->fn_XRRFreeScreenResources)
+#endif
+#ifndef XRRGetCrtcInfo
+#define XRRGetCrtcInfo (x11_syms()->fn_XRRGetCrtcInfo)
+#endif
 #ifndef XRRGetMonitors
 #define XRRGetMonitors (x11_syms()->fn_XRRGetMonitors)
+#endif
+#ifndef XRRGetOutputInfo
+#define XRRGetOutputInfo (x11_syms()->fn_XRRGetOutputInfo)
+#endif
+#ifndef XRRGetOutputPrimary
+#define XRRGetOutputPrimary (x11_syms()->fn_XRRGetOutputPrimary)
+#endif
+#ifndef XRRGetScreenResourcesCurrent
+#define XRRGetScreenResourcesCurrent (x11_syms()->fn_XRRGetScreenResourcesCurrent)
 #endif
 #endif
 
@@ -802,6 +830,8 @@ struct x11_display {
     int argb_depth;
     /* Device scale numerator from Xft.dpi, with 120 representing 1x. */
     uint32_t scale_120;
+    /* Frame interval of the display that shows the windows. */
+    double refresh_ns;
     uint32_t mods;
     int xi_opcode;
     int popup_device; /* XI2 device holding that grab. */
@@ -2163,7 +2193,7 @@ static struct yasl_surface *create_toplevel_visual(struct yasl_private_display *
     s->base.display = base;
     s->base.creation_flags = spec->flags | (spec->external_gpu ? 0u : YASL_PRIVATE_SURFACE_CPU);
     s->base.presenter = presenter;
-    s->clock.refresh_ns = YASL_PRIVATE_REFRESH_DEFAULT_NS;
+    s->clock.refresh_ns = d->refresh_ns;
     /* Logical creation sizes become device pixels. */
     struct yasl_private_vector2i px = {yasl_private_scale_to_device(spec->size.x, d->scale_120),
                                        yasl_private_scale_to_device(spec->size.y, d->scale_120)};
@@ -3940,6 +3970,61 @@ static void check(struct yasl_private_display *base)
     if (revents & POLLIN) dispatch(base);
 }
 
+#if YASL_HAS_XRANDR
+/* The frame interval of a mode: dotClock / (hTotal * vTotal) Hz. */
+static double mode_refresh_ns(const XRRScreenResources *resources, RRMode mode)
+{
+    for (int i = 0; i < resources->nmode; i++) {
+        const XRRModeInfo *info = &resources->modes[i];
+        if (info->id != mode || info->dotClock == 0 || !info->hTotal || !info->vTotal)
+            continue;
+        double total = (double)info->hTotal * (double)info->vTotal;
+        double ns = 1e9 * total / (double)info->dotClock;
+        return ns >= 2e6 && ns <= 100e6 ? ns : 0;
+    }
+    return 0;
+}
+
+/* Frame interval of the active mode of the primary output, or of the first
+ * active output. Zero when RandR gives no usable mode. */
+static double randr_refresh_ns(struct x11_display *d)
+{
+    if (!x11_syms()->xrandr_ready) return 0;
+    Window root = RootWindow(d->native, d->screen);
+    XRRScreenResources *resources = XRRGetScreenResourcesCurrent(d->native, root);
+    if (!resources) return 0;
+    RROutput primary = XRRGetOutputPrimary(d->native, root);
+    double first = 0;
+    for (int i = 0; i < resources->noutput; i++) {
+        XRROutputInfo *output = XRRGetOutputInfo(d->native, resources, resources->outputs[i]);
+        if (!output) continue;
+        double ns = 0;
+        if (output->crtc) {
+            XRRCrtcInfo *crtc = XRRGetCrtcInfo(d->native, resources, output->crtc);
+            if (crtc) {
+                if (crtc->mode) ns = mode_refresh_ns(resources, crtc->mode);
+                XRRFreeCrtcInfo(crtc);
+            }
+        }
+        bool is_primary = !primary || resources->outputs[i] == primary;
+        XRRFreeOutputInfo(output);
+        if (ns && is_primary) { first = ns; break; }
+        if (ns && !first) first = ns;
+    }
+    XRRFreeScreenResources(resources);
+    return first;
+}
+#endif
+
+static double display_refresh_ns(struct x11_display *d)
+{
+#if YASL_HAS_XRANDR
+    double ns = randr_refresh_ns(d);
+    if (ns > 0) return ns;
+#endif
+    return YASL_PRIVATE_REFRESH_DEFAULT_NS;
+}
+
 static struct yasl_private_display *display_open(struct yasl_loop *loop,
         const struct yasl_private_display_spec *spec)
 {
@@ -3960,6 +4045,7 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
     d->base.native_handle = d->native;
     d->screen = DefaultScreen(d->native);
     d->scale_120 = scale_from_xft_dpi(d->native);
+    d->refresh_ns = display_refresh_ns(d);
     XVisualInfo argb;
     if (XMatchVisualInfo(d->native, d->screen, 32, TrueColor, &argb)) {
         d->argb_visual = argb.visual;
