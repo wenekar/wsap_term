@@ -15,8 +15,29 @@ static enum input_shortcut shortcut(struct input_key_event ev,
 }
 #define SC(p, ...) shortcut((struct input_key_event){ __VA_ARGS__ }, p)
 
+/* A bound key matches without the queue. The widget path uses the test to
+ * tell an app command from terminal input. */
+static void keymap_match_test(void)
+{
+    static const struct input_shortcut_policy lin = {
+        .accel = INPUT_MOD_CTRL, .zoom = INPUT_MOD_CTRL,
+        .accel_alt = INPUT_MOD_CTRL | INPUT_MOD_SHIFT, .tab_accel = INPUT_MOD_CTRL,
+    };
+    struct input_keymap km;
+    input_keymap_defaults(&km, &lin, INPUT_KEYBIND_MODERN);
+    struct input_key_event ev = {0};
+    ev.key = INPUT_KEY_NONE;
+    ev.codepoint = 'c';
+    ev.mods = INPUT_MOD_CTRL;
+    assert(input_keymap_match(&km, &ev));
+    ev.mods = INPUT_MOD_ALT;
+    assert(!input_keymap_match(&km, &ev));
+    assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_NONE);
+}
+
 int main(void)
 {
+    keymap_match_test();
     static const struct input_shortcut_policy lin = {
         .accel = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,
         .zoom = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,

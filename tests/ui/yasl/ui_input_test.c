@@ -44,7 +44,19 @@ static void key_test(void)
 
     ev.key = INPUT_KEY_F5;
     ev.codepoint = 0;
-    assert(ui_key_from_input(&ev).key == UI_KEY_NONE);
+    assert(ui_key_from_input(&ev).key == UI_KEY_F5);
+    ev.key = INPUT_KEY_F35;
+    assert(ui_key_from_input(&ev).key == UI_KEY_F35);
+    ev.key = INPUT_KEY_INSERT;
+    assert(ui_key_from_input(&ev).key == UI_KEY_INSERT);
+    ev.key = INPUT_KEY_KP_BEGIN;
+    assert(ui_key_from_input(&ev).key == UI_KEY_KP_BEGIN);
+    ev.key = INPUT_KEY_MEDIA_PLAY;
+    assert(ui_key_from_input(&ev).key == UI_KEY_MEDIA_PLAY);
+    ev.key = INPUT_KEY_LSUPER;
+    assert(ui_key_from_input(&ev).key == UI_KEY_LSUPER);
+    ev.key = INPUT_KEY_RALT;
+    assert(ui_key_from_input(&ev).key == UI_KEY_RALT);
 
     ev.action = INPUT_RELEASE;
     uk = ui_key_from_input(&ev);

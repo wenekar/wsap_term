@@ -165,6 +165,36 @@ static struct input_key_event feed_key(enum yasl_key key, uint32_t codepoint,
     return out.key;
 }
 
+/* A key that the global map binds still reaches the focused widget. Step 1
+ * queues the key only, so the widget sees the key before the app command. */
+static void bound_key_reaches_widget_test(void)
+{
+    fresh_window();
+    struct yasl_event e = { .type = YASL_EVENT_KEY, .action = YASL_KEY_PRESS,
+                            .mods = YASL_MOD_CTRL | YASL_MOD_SHIFT };
+    e.key.key = YASL_KEY_T;
+    e.key.codepoint = 't';
+    e.key.text_input = YASL_KEY_TEXT_UNSPECIFIED;
+    window_native_input(&w, &e);
+
+    struct input_event out;
+    assert(input_queue_take(&w.input, &out));
+    assert(out.kind == INPUT_KEY);
+    assert(out.key.key == INPUT_KEY_NONE && out.key.codepoint == 't');
+    assert(out.key.mods == (INPUT_MOD_CTRL | INPUT_MOD_SHIFT));
+    assert(!input_queue_take(&w.input, &out));
+}
+
+/* Keypad Clear keeps its identity. */
+static void keypad_clear_test(void)
+{
+    fresh_window();
+    struct input_key_event k = feed_key(YASL_KEY_KP_CLEAR, 0, 0, 0);
+    assert(k.key == INPUT_KEY_KP_BEGIN);
+    assert(k.keypad == INPUT_KEY_KP_BEGIN);
+}
+
+
 /* Caps Lock changes letter keys only. Shift cancels it on letters. */
 static void caps_lock_key_text_test(void)
 {
@@ -413,6 +443,8 @@ int main(void)
     drag_keeps_starting_button_test();
     pen_contact_test();
     caps_lock_key_text_test();
+    bound_key_reaches_widget_test();
+    keypad_clear_test();
     image_drop_saves_file_test();
     text_drop_pastes_test();
     web_uri_list_pastes_test();

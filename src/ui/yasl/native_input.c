@@ -50,6 +50,7 @@ static enum input_key native_key(enum yasl_key key)
     case YASL_KEY_KP_ENTER:      return INPUT_KEY_KP_ENTER;
     case YASL_KEY_KP_EQUAL:      return INPUT_KEY_KP_EQUAL;
     case YASL_KEY_KP_COMMA:      return INPUT_KEY_KP_SEPARATOR;
+    case YASL_KEY_KP_CLEAR:      return INPUT_KEY_KP_BEGIN;
 
     case YASL_KEY_CAPS_LOCK:     return INPUT_KEY_CAPS_LOCK;
     case YASL_KEY_SCROLL_LOCK:   return INPUT_KEY_SCROLL_LOCK;
@@ -209,21 +210,8 @@ static enum input_key_route queue_key(struct window *w, const struct yasl_event 
         .ime_handled = in->key.text_input == YASL_KEY_TEXT_COMPOSITION,
     };
 
-    unsigned key_id = ev.key != INPUT_KEY_NONE ? (unsigned)ev.key
-                                               : 512u + (ev.base < 256 ? ev.base : 0);
-    enum input_shortcut sc;
-    enum input_key_route route = ev.ime_handled ? INPUT_KEY_PASSTHROUGH :
-        input_shortcut_route_key(input_keymap_active(), &w->input, &w->sc_state,
-                                 &ev, key_id, &sc);
-    switch (route) {
-    case INPUT_KEY_PASSTHROUGH:
-        break;
-    case INPUT_KEY_DROPPED:
-        fprintf(stderr, "shortcut queue is full\n");
-        return route;
-    default:
-        return route;
-    }
+    /* The key goes to the focused widget first. Step 3 (`ui_route.c`) runs
+     * the global keymap only when no widget handles the key. */
     if (len) {
         if (len > INPUT_TEXT_MAX || !(ev.text_utf8 = malloc(len)))
             return INPUT_KEY_DROPPED;
@@ -501,8 +489,19 @@ void window_native_input(struct window *w, const struct yasl_event *in)
             ? INPUT_TEXT_KEY : INPUT_TEXT_COMMIT;
         if (in->ime.key_id && in->ime.key_id == w->native_key.key.text_id &&
             in->surface == w->native_key.surface) {
-            enum input_key_route route = queue_key(w, &w->native_key, in->text, in->length);
-            source = route == INPUT_KEY_PASSTHROUGH ? INPUT_TEXT_KEY : INPUT_TEXT_SHORTCUT;
+            /* The text belongs to the key. A key that the global map binds
+             * runs an app command, so its text must not also reach the
+             * widget. Other key text replaces what the key produced. */
+            bool bound = input_keymap_match(input_keymap_active(),
+                                            &(struct input_key_event){
+                .key = native_key(w->native_key.key.key),
+                .codepoint = w->native_key.key.codepoint,
+                .shifted = w->native_key.key.shifted,
+                .base = us_base(w->native_key.key.key),
+                .mods = (unsigned)input_modifiers_from_yasl(w->native_key.mods),
+            });
+            queue_key(w, &w->native_key, in->text, in->length);
+            source = bound ? INPUT_TEXT_SHORTCUT : INPUT_TEXT_KEY;
             w->native_key = (struct yasl_event){0};
         }
         input_queue_push_text(&w->input, in->text, in->length, source);

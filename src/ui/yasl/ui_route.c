@@ -5,6 +5,9 @@
  * that owns it. Step 1 is `native_input.c`. Step 2 is `ui_input.c`.
  */
 
+#include <stdio.h>
+
+#include "input/keybind.h"
 #include "ui/yasl/inspector.h"
 #include "ui/yasl/ui_input.h"
 #include "ui/yasl/internal.h"
@@ -161,6 +164,16 @@ void window_ui_route(struct window *w, struct input_event *ev)
     enum window_input_result result = menu_input(w, ev);
     if (result == WINDOW_INPUT_UNHANDLED)
         result = ui_input(w, ev);
+    /* The focused widget sees the key first. The global keymap runs only for
+     * a key that no widget handles. */
+    if (result == WINDOW_INPUT_UNHANDLED && ev->kind == INPUT_KEY &&
+        !ev->key.ime_handled) {
+        enum input_key_route route = input_shortcut_route_key(
+            input_keymap_active(), &w->input, &w->sc_state, &ev->key,
+            input_key_id(&ev->key), NULL);
+        if (route == INPUT_KEY_DROPPED)
+            fprintf(stderr, "shortcut queue is full\n");
+    }
     if (ev->kind == INPUT_KEY && ev->key.action != INPUT_RELEASE)
         ui_of(w)->replace_key_text = result == WINDOW_INPUT_REPLACE_TEXT;
     window_menu_sync(w);
