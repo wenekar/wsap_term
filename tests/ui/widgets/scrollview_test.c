@@ -166,6 +166,7 @@ static void test_zero(void)
     assert(build_scene(&sv.widget, &scene));
     assert(scene.n_ops == 0);
     ui_scene_destroy(&scene);
+    ui_widget_destroy(&sv.widget);
 }
 
 static void test_measure_layout(void)

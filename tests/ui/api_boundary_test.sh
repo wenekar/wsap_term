@@ -57,6 +57,15 @@ while IFS= read -r file; do
     fi
 done < <(find src/ui -name '*.[chm]' -not -path 'src/ui/yasl/*' | sort)
 
+# A widget uses the widget author API in ui/widget_ops.h, as a widget outside
+# the UI core does.
+while IFS= read -r file; do
+    if grep -n '#include "ui/internal/' "$file"; then
+        echo "$file: a widget includes a UI core internal header" >&2
+        status=1
+    fi
+done < <(find src/ui/widgets -name '*.[chm]' | sort)
+
 for file in "${allowed[@]}"; do
     if ! grep -qE '(\.|->)impl\b|#include "ui/internal/' "$file"; then
         echo "$file: uses only public UI headers; remove it from the list" >&2
