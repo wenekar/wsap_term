@@ -231,7 +231,9 @@ static uint64_t hash_op(uint64_t h, const struct ui_scene *s,
 {
     h = hash_bytes(h, &op->kind, sizeof(op->kind));
     h = hash_bytes(h, &op->alpha, sizeof(op->alpha));
-    h = hash_bytes(h, &op->blend, sizeof(op->blend));
+    /* Keep the hash of a scene that uses no blend mode as it was. */
+    if (op->blend != UI_SCENE_BLEND_PREMUL)
+        h = hash_bytes(h, &op->blend, sizeof(op->blend));
     h = hash_bytes(h, &op->flags, sizeof(op->flags));
     h = hash_bytes(h, &op->rect, sizeof(op->rect));
     h = hash_bytes(h, &op->color, sizeof(op->color));
