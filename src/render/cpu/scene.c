@@ -16,6 +16,7 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 /*
  * The scene painter of the new renderer.
@@ -248,6 +249,252 @@ static void paint_shadow(const struct render_kernels *k, uint32_t *px,
             s += n;
         }
     }
+}
+
+/* ---- Blend modes ------------------------------------------------------ */
+
+static inline unsigned blend_mul255(unsigned a, unsigned b)
+{
+    return (a * b + 127u) / 255u;
+}
+
+static inline unsigned blend_chan(uint32_t c, int shift)
+{
+    return (c >> shift) & 0xffu;
+}
+
+static inline unsigned blend_min255(unsigned v)
+{
+    return v > 255u ? 255u : v;
+}
+
+/*
+ * The CPU half of the parity rule in paint/scene.h. `src` is a straight
+ * ARGB word, `dst` is the canvas word, and the result is the new canvas
+ * word. The operations are the 8-bit sRGB operations that the GPU blend
+ * states give.
+ */
+static uint32_t blend_mode_px(enum ui_scene_blend mode, uint32_t src, uint32_t dst)
+{
+    unsigned sa = src >> 24;
+    if (mode == UI_SCENE_BLEND_NONE)
+        return src;
+    unsigned sr = blend_chan(src, 16), sg = blend_chan(src, 8), sb = blend_chan(src, 0);
+    unsigned da = dst >> 24, dr = blend_chan(dst, 16), dg = blend_chan(dst, 8),
+             db = blend_chan(dst, 0);
+    unsigned pr = sr, pg = sg, pb = sb;
+    if (mode == UI_SCENE_BLEND_ALPHA || mode == UI_SCENE_BLEND_ADDITIVE ||
+        mode == UI_SCENE_BLEND_MULTIPLY) {
+        pr = blend_mul255(sr, sa);
+        pg = blend_mul255(sg, sa);
+        pb = blend_mul255(sb, sa);
+    }
+    unsigned r, g, b, a;
+    switch (mode) {
+    case UI_SCENE_BLEND_ADDITIVE:
+        r = blend_min255(pr + dr);
+        g = blend_min255(pg + dg);
+        b = blend_min255(pb + db);
+        a = blend_min255(sa + da);
+        break;
+    case UI_SCENE_BLEND_MULTIPLY:
+        r = blend_mul255(pr, dr);
+        g = blend_mul255(pg, dg);
+        b = blend_mul255(pb, db);
+        a = sa + blend_mul255(da, 255u - sa);
+        break;
+    case UI_SCENE_BLEND_PREMUL:
+    case UI_SCENE_BLEND_ALPHA:
+    default: {
+        unsigned inv = 255u - sa;
+        r = blend_min255(pr + blend_mul255(dr, inv));
+        g = blend_min255(pg + blend_mul255(dg, inv));
+        b = blend_min255(pb + blend_mul255(db, inv));
+        a = sa + blend_mul255(da, inv);
+        break;
+    }
+    }
+    return (a << 24) | (r << 16) | (g << 8) | b;
+}
+
+static inline struct ui_scene_point geom_point(const struct ui_scene_geom *g,
+                                               struct ui_scene_point p)
+{
+    struct ui_scene_xform t = g->xform;
+    return (struct ui_scene_point){
+        .x = p.x + t.xx * p.x + t.xy * p.y + t.dx,
+        .y = p.y + t.yx * p.x + t.yy * p.y + t.dy,
+    };
+}
+
+/* True if the pixel center (x + 0.5, y + 0.5) is inside the polygon. */
+static bool polygon_inside(const struct ui_scene_point *p, int n, float x, float y)
+{
+    bool inside = false;
+    for (int i = 0, j = n - 1; i < n; j = i++) {
+        if ((p[i].y > y) != (p[j].y > y)) {
+            float cross = (p[j].x - p[i].x) * (y - p[i].y) /
+                              (p[j].y - p[i].y) + p[i].x;
+            if (x < cross)
+                inside = !inside;
+        }
+    }
+    return inside;
+}
+
+/* The squared distance from the pixel center to the segment a-b. */
+static float segment_distance2(struct ui_scene_point a, struct ui_scene_point b,
+                               float x, float y)
+{
+    float vx = b.x - a.x, vy = b.y - a.y;
+    float wx = x - a.x, wy = y - a.y;
+    float len = vx * vx + vy * vy;
+    float t = len > 0.0f ? (wx * vx + wy * vy) / len : 0.0f;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    float dx = wx - t * vx, dy = wy - t * vy;
+    return dx * dx + dy * dy;
+}
+
+static uint32_t gradient_color(const struct ui_scene *s,
+                               const struct ui_scene_op *op, float x, float y)
+{
+    const struct ui_scene_geom *g = ui_scene_op_geom(s, op);
+    if (!g)
+        return 0;
+    float t;
+    if (g->flags & UI_GEOM_RADIAL) {
+        float dx = x - g->from.x, dy = y - g->from.y;
+        t = g->radius > 0.0f ? sqrtf(dx * dx + dy * dy) / g->radius : 1.0f;
+    } else {
+        float vx = g->to.x - g->from.x, vy = g->to.y - g->from.y;
+        float len = vx * vx + vy * vy;
+        t = len > 0.0f ? ((x - g->from.x) * vx + (y - g->from.y) * vy) / len : 0.0f;
+    }
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    uint32_t c0 = g->color0, c1 = g->color1;
+    unsigned q = (unsigned)(t * 255.0f + 0.5f);
+    unsigned r = (blend_chan(c0, 16) * (255u - q) + blend_chan(c1, 16) * q + 127u) / 255u;
+    unsigned gg = (blend_chan(c0, 8) * (255u - q) + blend_chan(c1, 8) * q + 127u) / 255u;
+    unsigned b = (blend_chan(c0, 0) * (255u - q) + blend_chan(c1, 0) * q + 127u) / 255u;
+    unsigned a = ((c0 >> 24) * (255u - q) + (c1 >> 24) * q + 127u) / 255u;
+    return (a << 24) | (r << 16) | (gg << 8) | b;
+}
+
+/* Paints an integer rect with a blend mode other than PREMUL. */
+static void paint_rect_mode(uint32_t *px, int width, int height, struct rect2i r,
+                            struct rect2i clip, uint32_t color, uint8_t alpha,
+                            enum ui_scene_blend mode)
+{
+    r = rect2i_intersect(r, clip);
+    if (!rect2i_clip(&r, (struct vector2i){ .x = width, .y = height }))
+        return;
+    if (!alpha)
+        return;
+    if (alpha != 255)
+        color = (color & 0x00FFFFFFu) | ((uint32_t)alpha << 24);
+    for (int y = r.y; y < r.y + r.height; y++) {
+        uint32_t *row = px + (size_t)y * width;
+        for (int x = r.x; x < r.x + r.width; x++)
+            row[x] = blend_mode_px(mode, color, row[x]);
+    }
+}
+
+/* Paints the transformed polygon of a float op. */
+static void paint_float_op(const struct render_kernels *k, uint32_t *px,
+                           int width, int height, const struct ui_scene *s,
+                           const struct ui_scene_op *op, struct rect2i clip)
+{
+    (void)k;
+    const struct ui_scene_geom *g = ui_scene_op_geom(s, op);
+    if (!g)
+        return;
+    if ((g->flags & UI_GEOM_PATH) &&
+        (!g->point_len || g->point_off + g->point_len > (uint32_t)s->n_points))
+        return;
+    struct ui_scene_point pts[64], corners[4];
+    struct ui_scene_point *p = pts;
+    bool heap = false;
+    if (g->point_len > (uint32_t)(sizeof(pts) / sizeof(pts[0]))) {
+        p = malloc((size_t)g->point_len * sizeof(*p));
+        if (!p)
+            return;
+        heap = true;
+    }
+    int n = (int)g->point_len;
+    for (int i = 0; i < n; i++)
+        p[i] = geom_point(g, s->points[g->point_off + i]);
+    bool filled = (g->flags & UI_PATH_FILLED) != 0 ||
+                  (g->flags & (UI_GEOM_RECT_F | UI_GEOM_LINEAR | UI_GEOM_RADIAL)) != 0;
+    float half = g->width > 0.0f ? g->width * 0.5f : 0.5f;
+    bool closed = (g->flags & UI_PATH_CLOSED) != 0 || filled;
+    struct rect2i r = rect2i_intersect(op->rect, clip);
+    if (!rect2i_clip(&r, (struct vector2i){ .x = width, .y = height })) {
+        if (heap)
+            free(p);
+        return;
+    }
+    bool gradient = (g->flags & (UI_GEOM_LINEAR | UI_GEOM_RADIAL)) != 0;
+    if (g->flags & (UI_GEOM_RECT_F | UI_GEOM_LINEAR | UI_GEOM_RADIAL)) {
+        /* The rect is the polygon, not the point list. */
+        struct rect2f br = g->rect;
+        struct ui_scene_point quad[4] = {
+            { br.pos.x, br.pos.y },
+            { br.pos.x + br.size.x, br.pos.y },
+            { br.pos.x + br.size.x, br.pos.y + br.size.y },
+            { br.pos.x, br.pos.y + br.size.y },
+        };
+        for (int i = 0; i < 4; i++)
+            corners[i] = geom_point(g, quad[i]);
+        if (heap) {
+            free(p);
+            heap = false;
+        }
+        p = corners;
+        n = 4;
+        filled = true;
+        closed = true;
+    }
+    uint8_t *cov = malloc((size_t)r.width);
+    if (!cov) {
+        if (heap)
+            free(p);
+        return;
+    }
+    for (int y = r.y; y < r.y + r.height; y++) {
+        float fy = (float)y + 0.5f;
+        for (int x = 0; x < r.width; x++) {
+            float fx = (float)(r.x + x) + 0.5f;
+            bool in = false;
+            if (filled) {
+                in = polygon_inside(p, n, fx, fy);
+            } else {
+                int segments = closed ? n : n - 1;
+                for (int i = 0; i < segments; i++) {
+                    struct ui_scene_point a = p[i];
+                    struct ui_scene_point b = p[(i + 1) % n];
+                    if (segment_distance2(a, b, fx, fy) <= half * half) {
+                        in = true;
+                        break;
+                    }
+                }
+            }
+            cov[x] = in ? 255 : 0;
+        }
+        uint32_t *row = px + (size_t)y * width + r.x;
+        for (int x = 0; x < r.width; x++) {
+            if (!cov[x])
+                continue;
+            uint32_t color = gradient
+                ? gradient_color(s, op, (float)(r.x + x) + 0.5f, fy)
+                : op->color;
+            row[x] = blend_mode_px(op->blend, color, row[x]);
+        }
+    }
+    free(cov);
+    if (heap)
+        free(p);
 }
 
 /* ---- Text ------------------------------------------------------------ */
@@ -589,6 +836,15 @@ bool ui_scene_paint_clipped(struct font_instance *fi, uint32_t *px, int width, i
         case UI_SCENE_OP_RECT:
         case UI_SCENE_OP_BLEND_RECT:
             if (op_outside_clip(scene, op, clip)) break;
+            if (op->kind == UI_SCENE_OP_RECT && op->geom >= 0) {
+                paint_float_op(k, px, width, height, scene, op, clip);
+                break;
+            }
+            if (op->blend != UI_SCENE_BLEND_PREMUL) {
+                paint_rect_mode(px, width, height, op->rect, clip, op->color,
+                                op->alpha, op->blend);
+                break;
+            }
             paint_rect(k, px, width, height, op->rect, clip, op->color,
                        op->kind == UI_SCENE_OP_RECT ? -1 : op->alpha);
             break;
