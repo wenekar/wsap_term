@@ -135,13 +135,15 @@ static void run_signals(struct yasl_loop *l)
 {
     struct signal_watch *w = l->signals;
     if (!w) return;
-    /* A callback may unwatch, so re-check the watch before each delivery. */
-    for (int i = 0; i < w->count; i++) {
+    /* A callback may unwatch and free the watch, so keep the count local and
+     * copy each entry before the callback. */
+    int count = w->count;
+    for (int i = 0; i < count; i++) {
         if (l->signals != w) return;
-        struct signal_entry *entry = &w->entries[i];
-        if (atomic_exchange_explicit(&signal_slots[entry->signo][entry->slot].pending,
+        struct signal_entry entry = w->entries[i];
+        if (atomic_exchange_explicit(&signal_slots[entry.signo][entry.slot].pending,
                                      false, memory_order_acquire))
-            w->cb(w->ud, entry->signo);
+            w->cb(w->ud, entry.signo);
     }
 }
 
