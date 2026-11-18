@@ -798,6 +798,18 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
                 { "link",      UI_CURSOR_LINK },
                 { "hand",      UI_CURSOR_POINTER },
                 { "none",      UI_CURSOR_NONE },
+                { "crosshair", UI_CURSOR_CROSSHAIR },
+                { "move",      UI_CURSOR_MOVE },
+                { "grab",      UI_CURSOR_GRAB },
+                { "grabbing",  UI_CURSOR_GRAB },
+                { "ew-resize", UI_CURSOR_RESIZE_EW },
+                { "col-resize", UI_CURSOR_RESIZE_EW },
+                { "ns-resize", UI_CURSOR_RESIZE_NS },
+                { "row-resize", UI_CURSOR_RESIZE_NS },
+                { "nwse-resize", UI_CURSOR_RESIZE_NWSE },
+                { "se-resize", UI_CURSOR_RESIZE_NWSE },
+                { "nesw-resize", UI_CURSOR_RESIZE_NESW },
+                { "sw-resize", UI_CURSOR_RESIZE_NESW },
             };
             enum ui_cursor cur = UI_CURSOR_AUTO;
             bool found = false;

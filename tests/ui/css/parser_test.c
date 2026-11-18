@@ -165,7 +165,9 @@ static void test_every_cursor_keyword(void)
 {
     struct css_sheet sheet = {0};
     const char *names[] = { "auto", "default", "arrow", "text", "ibeam",
-                            "pointer", "clickable", "link", "hand", "none" };
+                            "pointer", "clickable", "link", "hand", "none",
+                            "crosshair", "move", "grab", "ew-resize",
+                            "ns-resize", "nwse-resize", "nesw-resize" };
     size_t count = sizeof(names) / sizeof(names[0]);
     char css[512];
     int off = 0;
@@ -184,6 +186,15 @@ static void test_every_cursor_keyword(void)
     struct css_style none_style;
     css_style_resolve(&sheet, "k9", NULL, NULL, CSS_PSEUDO_NONE, &none_style);
     assert(none_style.cursor == UI_CURSOR_NONE);
+    struct css_style resize_style;
+    css_style_resolve(&sheet, "k13", NULL, NULL, CSS_PSEUDO_NONE, &resize_style);
+    assert(resize_style.cursor == UI_CURSOR_RESIZE_EW);
+    css_style_resolve(&sheet, "k14", NULL, NULL, CSS_PSEUDO_NONE, &resize_style);
+    assert(resize_style.cursor == UI_CURSOR_RESIZE_NS);
+    css_style_resolve(&sheet, "k15", NULL, NULL, CSS_PSEUDO_NONE, &resize_style);
+    assert(resize_style.cursor == UI_CURSOR_RESIZE_NWSE);
+    css_style_resolve(&sheet, "k16", NULL, NULL, CSS_PSEUDO_NONE, &resize_style);
+    assert(resize_style.cursor == UI_CURSOR_RESIZE_NESW);
     css_sheet_clear(&sheet);
 }
 
