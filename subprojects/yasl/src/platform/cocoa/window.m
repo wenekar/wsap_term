@@ -1154,6 +1154,117 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
     };
 }
 
+/* A drag names its data with a pasteboard type, which is a UTI, and the drop
+ * types of a surface name MIME types. This table gives the MIME name of the
+ * pasteboard types that a window takes. A type that is absent has no MIME name,
+ * so a drop can never select it. The names are constants. */
+static NSString *drop_mime_of_type(NSString *type)
+{
+    static const struct {
+        NSPasteboardType pasteboard;
+        NSString *mime;
+    } map[] = {
+        {NSPasteboardTypeFileURL, @"text/uri-list"},
+        {NSPasteboardTypeURL, @"text/uri-list"},
+        {NSPasteboardTypeString, @"text/plain"},
+        {NSPasteboardTypeHTML, @"text/html"},
+        {NSPasteboardTypeRTF, @"text/rtf"},
+        {NSPasteboardTypePNG, @"image/png"},
+        {NSPasteboardTypeTIFF, @"image/tiff"},
+        {NSPasteboardTypePDF, @"application/pdf"},
+    };
+    for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++)
+        if ([type isEqualToString:map[i].pasteboard])
+            return map[i].mime;
+    return nil;
+}
+
+/* The pasteboard types that a drop can offer. A surface only takes the ones
+ * that its drop types select. */
+static NSArray<NSPasteboardType> *drop_pasteboard_types(void)
+{
+    return @[NSPasteboardTypeFileURL, NSPasteboardTypeURL, NSPasteboardTypeString,
+             NSPasteboardTypeHTML, NSPasteboardTypeRTF, NSPasteboardTypePNG,
+             NSPasteboardTypeTIFF, NSPasteboardTypePDF];
+}
+
+/* The pasteboard type that a drop on the view reads and its MIME name. Returns
+ * false when the drop types of the surface refuse the drag. */
+static bool drop_pick(struct cocoa_surface *w, NSPasteboard *pb, NSString **type_out,
+                      char mime_out[YASL_PRIVATE_DROP_MIME_MAX])
+{
+    enum { DROP_TYPES_MAX = 32 };
+    NSArray<NSPasteboardType> *types = pb.types;
+    const char *offered[DROP_TYPES_MAX];
+    size_t count = 0;
+    NSString *uri_list = nil;
+    for (NSUInteger i = 0; i < types.count && count < DROP_TYPES_MAX; i++) {
+        NSString *mime = drop_mime_of_type(types[i]);
+        if (!mime)
+            continue;
+        if (!uri_list && [mime isEqualToString:@"text/uri-list"])
+            uri_list = types[i];
+        /* The table holds constant names, so the bytes outlive this call. */
+        offered[count++] = mime.UTF8String;
+    }
+    /* A source can offer file URLs through a type that has no MIME name. */
+    if (!uri_list && [pb canReadItemWithDataConformingToTypes:@[NSPasteboardTypeFileURL]]) {
+        uri_list = NSPasteboardTypeFileURL;
+        if (count < DROP_TYPES_MAX)
+            offered[count++] = "text/uri-list";
+    }
+    if (!count)
+        return false;
+    struct cocoa_surface *root = w;
+    while (root->parent)
+        root = root->parent;
+    const char *picked = yasl_private_surface_pick_drop_type(&root->base, offered, count);
+    if (!picked)
+        return false;
+    NSString *type = uri_list && !strcmp(picked, "text/uri-list") ? uri_list : nil;
+    for (NSUInteger i = 0; !type && i < types.count; i++) {
+        NSString *mime = drop_mime_of_type(types[i]);
+        if (mime && !strcmp(mime.UTF8String, picked))
+            type = types[i];
+    }
+    if (!type)
+        return false;
+    *type_out = type;
+    snprintf(mime_out, YASL_PRIVATE_DROP_MIME_MAX, "%s", picked);
+    return true;
+}
+
+/* Delivers the data of a picked drop type as a DROP event. A URI list arrives
+ * as CRLF-separated file URLs; any other type arrives as its bytes. */
+static bool push_drop(struct cocoa_surface *w, NSPasteboard *pb, NSString *type, const char *mime)
+{
+    NSData *data = nil;
+    if (!strcmp(mime, "text/uri-list")) {
+        NSArray<NSURL *> *urls = [pb readObjectsForClasses:@[[NSURL class]]
+            options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+        NSMutableString *list = [NSMutableString string];
+        for (NSURL *url in urls) {
+            [list appendString:url.absoluteString];
+            [list appendString:@"\r\n"];
+        }
+        data = [list dataUsingEncoding:NSUTF8StringEncoding];
+    } else {
+        data = [pb dataForType:type];
+    }
+    if (!data.length)
+        return false;
+    struct yasl_private_event ev = {
+        .type = YASL_PRIVATE_EVENT_DROP,
+        .surface = &w->base,
+        .text = { .data = data.bytes, .len = data.length },
+    };
+    snprintf(ev.text.mime, sizeof(ev.text.mime), "%s", mime);
+    bool pushed = input_queue_push(&w->input, &ev);
+    if (pushed)
+        cocoa_surface_schedule_redraw(w);
+    return pushed;
+}
+
 @implementation YaslView
 
 - (instancetype)initWithFrame:(NSRect)frameRect cpuLayer:(BOOL)cpuLayer
@@ -1164,7 +1275,7 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
         self.wantsLayer = YES;
         self.layerContentsRedrawPolicy = NSViewLayerContentsRedrawNever;
         self.layerContentsPlacement = NSViewLayerContentsPlacementTopLeft;
-        [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+        [self registerForDraggedTypes:drop_pasteboard_types()];
     }
     return self;
 }
@@ -1176,18 +1287,16 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
 
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender
 {
-    NSPasteboard *pb = [sender draggingPasteboard];
-    if ([pb canReadItemWithDataConformingToTypes:@[NSPasteboardTypeFileURL]]) {
-        struct cocoa_surface *w = self.surface;
-        if (w && !w->closed) {
-            struct yasl_private_vector2i pos = dragging_pos(self, sender);
-            darwin_ctx.depth++;
-            yasl_private_surface_notify_drop(&w->base, YASL_PRIVATE_DROP_OVER, pos);
-            darwin_ctx.depth--;
-        }
-        return NSDragOperationCopy;
-    }
-    return NSDragOperationNone;
+    struct cocoa_surface *w = self.surface;
+    NSString *type = nil;
+    char mime[YASL_PRIVATE_DROP_MIME_MAX];
+    if (!w || w->closed || !drop_pick(w, [sender draggingPasteboard], &type, mime))
+        return NSDragOperationNone;
+    struct yasl_private_vector2i pos = dragging_pos(self, sender);
+    darwin_ctx.depth++;
+    yasl_private_surface_notify_drop_mime(&w->base, YASL_PRIVATE_DROP_OVER, pos, mime);
+    darwin_ctx.depth--;
+    return NSDragOperationCopy;
 }
 
 - (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender
@@ -1197,16 +1306,15 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
 
 - (void)draggingExited:(id<NSDraggingInfo>)sender
 {
-    NSPasteboard *pb = [sender draggingPasteboard];
-    if ([pb canReadItemWithDataConformingToTypes:@[NSPasteboardTypeFileURL]]) {
-        struct cocoa_surface *w = self.surface;
-        if (w && !w->closed) {
-            struct yasl_private_vector2i pos = dragging_pos(self, sender);
-            darwin_ctx.depth++;
-            yasl_private_surface_notify_drop(&w->base, YASL_PRIVATE_DROP_LEAVE, pos);
-            darwin_ctx.depth--;
-        }
-    }
+    struct cocoa_surface *w = self.surface;
+    NSString *type = nil;
+    char mime[YASL_PRIVATE_DROP_MIME_MAX];
+    if (!w || w->closed || !drop_pick(w, [sender draggingPasteboard], &type, mime))
+        return;
+    struct yasl_private_vector2i pos = dragging_pos(self, sender);
+    darwin_ctx.depth++;
+    yasl_private_surface_notify_drop(&w->base, YASL_PRIVATE_DROP_LEAVE, pos);
+    darwin_ctx.depth--;
 }
 
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender
@@ -1214,29 +1322,10 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
     struct cocoa_surface *w = self.surface;
     if (!w) return NO;
     struct yasl_private_vector2i pos = dragging_pos(self, sender);
-    BOOL ok = NO;
-
     NSPasteboard *pb = [sender draggingPasteboard];
-    NSArray<NSURL *> *urls = [pb readObjectsForClasses:@[[NSURL class]]
-        options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
-    if (urls.count) {
-        NSMutableString *result = [NSMutableString string];
-        for (NSURL *url in urls) {
-            [result appendString:url.absoluteString];
-            [result appendString:@"\r\n"];
-        }
-        const char *utf8 = result.UTF8String;
-        if (utf8 && strlen(utf8)) {
-            struct yasl_private_event ev = {
-                .type = YASL_PRIVATE_EVENT_DROP,
-                .surface = &w->base,
-                .text = { .data = utf8, .len = strlen(utf8) },
-            };
-            input_queue_push(&w->input, &ev);
-            cocoa_surface_schedule_redraw(w);
-            ok = YES;
-        }
-    }
+    NSString *type = nil;
+    char mime[YASL_PRIVATE_DROP_MIME_MAX];
+    BOOL ok = drop_pick(w, pb, &type, mime) && push_drop(w, pb, type, mime);
     if (!w->destroyed) {
         darwin_ctx.depth++;
         yasl_private_surface_notify_drop(&w->base, YASL_PRIVATE_DROP_LEAVE, pos);
