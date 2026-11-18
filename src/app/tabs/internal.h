@@ -9,6 +9,14 @@
 #include "ui/yasl/client.h"
 #include "ui/yasl/window.h"
 
+/* A report that a content sends to the tab code. The tab code finds the
+ * tab by the content identity, so no index goes stale. */
+enum app_tab_content_report {
+    APP_TAB_CONTENT_OUTPUT,
+    APP_TAB_CONTENT_TITLE,
+    APP_TAB_CONTENT_EXIT,
+};
+
 /* The view of the tab model in one window. The model owns the tabs and
  * their content. The view holds the tab IDs in bar order and borrows the
  * content widgets. */
@@ -26,7 +34,7 @@ struct app_tabs {
     app_tab_id *ids;
     struct ui_tab_label *labels;
     /* The content that the root holds, and its widget. */
-    struct terminal *mounted_content;
+    void *mounted_content;
     struct ui_widget *mounted;
     struct ui_image preview_image;
     void *preview_state;
@@ -52,8 +60,8 @@ static inline bool app_tab_is_live(const struct app_tab *entry)
  * next model add or destroy. */
 struct app_tab *app_tabs_entry(const struct app_tabs *tabs, int index);
 /* The content at a bar index, or NULL. */
-struct terminal *app_tabs_content(const struct app_tabs *tabs, int index);
-struct terminal *app_tabs_active_entry(const struct app_tabs *tabs);
+void *app_tabs_content(const struct app_tabs *tabs, int index);
+void *app_tabs_active_entry(const struct app_tabs *tabs);
 int app_tabs_live_count(const struct app_tabs *tabs);
 /* The bar index of a tab, or -1. */
 int app_tabs_index_of(const struct app_tabs *tabs, app_tab_id id);
@@ -71,6 +79,12 @@ bool app_tabs_bind(struct window *window, app_tab_id id, int slot);
 /* Unbinds all tabs from `tabs` and marks non-dragged entries for destruction. */
 void app_tabs_release(struct app_tabs *tabs);
 
+/*
+ * Sends a report of `content` to the view of the window that holds its tab.
+ * A tab that no window holds gets no report.
+ */
+void app_tabs_content_report(struct app_tab_model *model, void *content,
+                             enum app_tab_content_report report);
 /* Sends the labels and the selection of the entry array to the bar. */
 void app_tabs_publish(struct app_tabs *tabs);
 /* Shows the active content in the root widget. */

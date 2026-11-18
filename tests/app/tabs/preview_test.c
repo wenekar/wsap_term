@@ -6,6 +6,7 @@
 
 #include "app/style.h"
 #include "app/tabs/tabs.h"
+#include "app/tabs/terminal_content.h"
 #include "app/thumbnail.h"
 #include "helpers/app_fixture.h"
 #include "paint/scene.h"
@@ -23,14 +24,29 @@ struct preview_fixture {
     struct ui_scene scene;
 };
 
+static void *create_preview_content(void *ud, struct window *window,
+                                    const char *cwd,
+                                    struct vector2i content_size, int font_size)
+{
+    struct app *app = ud;
+    return app_terminal_content_create(window, &app->tabs, cwd, content_size,
+        font_size, &(struct app_terminal_content_spec){
+            .config = &app->config.terminal,
+            .theme = &app->palette,
+            .preview_capture = app_thumbnail_capture,
+            .preview_ud = app,
+        });
+}
+
 static struct window *create_preview_window(struct app *app)
 {
     struct window *w = window_create(&app->host, &(struct window_spec){0});
     assert(w);
     assert(app_tabs_mount(w, &(struct app_tabs_spec){
-        .config = &app->config.terminal,
         .model = &app->tabs,
-        .preview_capture = app_thumbnail_capture,
+        .create_content = create_preview_content,
+        .create_ud = app,
+        .content_ops = &app_terminal_content_ops,
         .preview_release = app_thumbnail_release,
         .preview_ud = app,
         .empty = true,

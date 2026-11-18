@@ -2,7 +2,6 @@
 #include <string.h>
 
 #include "app/tabs/internal.h"
-#include "session/session.h"
 #include "ui/surface.h"
 
 struct app_tabs *app_tabs_of(const struct window *w)
@@ -18,13 +17,13 @@ struct app_tab *app_tabs_entry(const struct app_tabs *tabs, int index)
     return app_tab_model_get(tabs->spec.model, tabs->ids[index]);
 }
 
-struct terminal *app_tabs_content(const struct app_tabs *tabs, int index)
+void *app_tabs_content(const struct app_tabs *tabs, int index)
 {
     struct app_tab *entry = app_tabs_entry(tabs, index);
     return entry ? entry->content : NULL;
 }
 
-struct terminal *app_tabs_active_entry(const struct app_tabs *tabs)
+void *app_tabs_active_entry(const struct app_tabs *tabs)
 {
     return tabs ? app_tabs_content(tabs, tabs->active) : NULL;
 }
@@ -46,7 +45,7 @@ int app_tabs_index_of(const struct app_tabs *tabs, app_tab_id id)
     return -1;
 }
 
-struct terminal *app_tabs_active(const struct window *w)
+void *app_tabs_active(const struct window *w)
 {
     return app_tabs_active_entry(app_tabs_of(w));
 }
@@ -84,8 +83,8 @@ void app_tabs_update_title(struct app_tabs *tabs)
 {
     if (!tabs || !tabs->window)
         return;
-    struct terminal *content = app_tabs_active_entry(tabs);
-    window_set_title(tabs->window, content ? terminal_title(content) : NULL);
+    struct app_tab *entry = app_tabs_entry(tabs, tabs->active);
+    window_set_title(tabs->window, app_tab_title(entry));
 }
 
 void app_tabs_publish(struct app_tabs *tabs)
@@ -105,7 +104,7 @@ void app_tabs_publish(struct app_tabs *tabs)
     for (int i = 0; i < n; i++) {
         const struct app_tab *entry = app_tabs_entry(tabs, i);
         const char *text = !entry ? NULL
-            : entry->content ? terminal_title(entry->content) : entry->label;
+            : entry->content ? app_tab_title(entry) : entry->label;
         tabs->labels[i] = (struct ui_tab_label){
             .text = text && text[0] ? text : "",
             .active = i == tabs->active && app_tab_is_live(entry),
@@ -118,19 +117,23 @@ void app_tabs_mount_content(struct app_tabs *tabs)
 {
     if (!tabs)
         return;
-    struct terminal *content = app_tabs_active_entry(tabs);
+    struct app_tab *entry = app_tabs_entry(tabs, tabs->active);
+    void *content = entry ? entry->content : NULL;
+    const struct app_tab_content_ops *ops = entry ? entry->ops : NULL;
     struct ui_surface *surface = tabs->window ? window_ui_surface(tabs->window) : NULL;
     /* The keyboard falls back to the input widget of the active content. */
     if (surface)
         ui_surface_set_default_focus(surface,
-            content ? terminal_input_widget(content) : NULL);
-    struct ui_widget *want = content ? terminal_widget(content) : NULL;
+            ops && ops->input ? ops->input(content) : NULL);
+    struct ui_widget *want = ops && ops->widget ? ops->widget(content) : NULL;
     if (want == tabs->mounted)
         return;
     if (tabs->mounted) {
-        /* The content that leaves the UI keeps no scrollbar flash. */
-        if (tabs->mounted_content && tabs->mounted_content != content)
-            terminal_hide_scrollbar(tabs->mounted_content);
+        /* The content that leaves the UI gets an unmount report. */
+        struct app_tab *gone =
+            app_tab_model_find(tabs->spec.model, tabs->mounted_content);
+        if (gone && gone->content != content && gone->ops->unmount)
+            gone->ops->unmount(gone->content);
         ui_widget_remove_child(&tabs->root, tabs->mounted);
     }
     tabs->mounted = NULL;
@@ -144,20 +147,27 @@ void app_tabs_mount_content(struct app_tabs *tabs)
     ui_widget_invalidate(&tabs->root, UI_WIDGET_INVALIDATE_MEASURE);
 }
 
+/* Runs an optional content call. The content kinds give no such call when
+ * it has no meaning for them. */
+static void content_call(const struct app_tab *entry,
+                         void (*fn)(void *content))
+{
+    if (entry && entry->content && fn)
+        fn(entry->content);
+}
+
 void app_tabs_restyle_contents(struct app_tabs *tabs)
 {
     for (int i = 0; tabs && i < tabs->count; i++) {
-        struct terminal *content = app_tabs_content(tabs, i);
-        if (content)
-            terminal_restyle(content);
+        const struct app_tab *entry = app_tabs_entry(tabs, i);
+        content_call(entry, entry ? entry->ops->restyle : NULL);
     }
 }
 
 void app_tabs_commit_geometry(struct app_tabs *tabs)
 {
-    struct terminal *content = app_tabs_active_entry(tabs);
-    if (content)
-        terminal_commit_geometry(content);
+    const struct app_tab *entry = app_tabs_entry(tabs, tabs ? tabs->active : -1);
+    content_call(entry, entry ? entry->ops->resize : NULL);
 }
 
 /* Puts a tab ID in the bar at `slot`, and records the window in the tab.
@@ -243,11 +253,9 @@ static struct vector2i new_content_size(const struct app_tabs *tabs)
     return size;
 }
 
-/* The host reports go to the model. The content passes its handle, so the
- * model finds the tab by identity. The tab names the window that holds it.
- * A tab that no window holds gets no report. */
-static struct app_tabs *holder_of(struct app_tab_model *model,
-                                  const struct terminal *content,
+/* The model finds the tab of a content and the view of its window. A tab
+ * that no window holds gets no view. */
+static struct app_tabs *holder_of(struct app_tab_model *model, void *content,
                                   struct app_tab **out)
 {
     struct app_tab *entry = app_tab_model_find(model, content);
@@ -255,72 +263,55 @@ static struct app_tabs *holder_of(struct app_tab_model *model,
     return entry ? app_tabs_of(entry->window) : NULL;
 }
 
-static void content_output(void *ud, struct terminal *content)
+void app_tabs_content_report(struct app_tab_model *model, void *content,
+                             enum app_tab_content_report report)
 {
     struct app_tab *entry;
-    struct app_tabs *tabs = holder_of(ud, content, &entry);
+    struct app_tabs *tabs = holder_of(model, content, &entry);
     if (!tabs || !tabs->window)
         return;
-    if (app_tabs_active_entry(tabs) != content)
+    switch (report) {
+    case APP_TAB_CONTENT_OUTPUT:
+        if (app_tabs_active_entry(tabs) != content)
+            return;
+        if (window_surface(tabs->window))
+            window_redraw(tabs->window);
         return;
-    if (window_surface(tabs->window))
-        window_redraw(tabs->window);
+    case APP_TAB_CONTENT_TITLE:
+        if (app_tabs_active_entry(tabs) == content)
+            app_tabs_update_title(tabs);
+        app_tabs_publish(tabs);
+        if (window_surface(tabs->window))
+            window_redraw(tabs->window);
+        return;
+    case APP_TAB_CONTENT_EXIT:
+        if (!app_tab_is_live(entry))
+            return;
+        app_tabs_close(tabs->window, app_tabs_index_of(tabs, entry->id));
+        return;
+    }
 }
 
-static void content_title_changed(void *ud, struct terminal *content)
+/* The font size that a new tab takes from the active tab, or 0. */
+static int active_font_size(const struct app_tabs *tabs)
 {
-    struct app_tab *entry;
-    struct app_tabs *tabs = holder_of(ud, content, &entry);
-    if (!tabs || !tabs->window)
-        return;
-    if (app_tabs_active_entry(tabs) == content)
-        app_tabs_update_title(tabs);
-    app_tabs_publish(tabs);
-    if (window_surface(tabs->window))
-        window_redraw(tabs->window);
-}
-
-static void content_exited(void *ud, struct terminal *content)
-{
-    struct app_tab *entry;
-    struct app_tabs *tabs = holder_of(ud, content, &entry);
-    if (!tabs || !app_tab_is_live(entry))
-        return;
-    app_tabs_close(tabs->window, app_tabs_index_of(tabs, entry->id));
-}
-
-/* The model is the one host of every content. The content gets it once, at
- * creation. */
-static struct terminal_host model_host(struct app_tab_model *model)
-{
-    return (struct terminal_host){
-        .output = content_output,
-        .title_changed = content_title_changed,
-        .exited = content_exited,
-        .ud = model,
-    };
+    const struct app_tab *entry = app_tabs_entry(tabs, tabs->active);
+    return entry && entry->content && entry->ops->font_size
+        ? entry->ops->font_size(entry->content) : 0;
 }
 
 bool app_tabs_new_in(struct window *window, const char *cwd)
 {
     struct app_tabs *tabs = app_tabs_of(window);
-    if (!tabs)
+    if (!tabs || !tabs->spec.create_content || !tabs->spec.content_ops)
         return false;
     struct app_tab_model *model = tabs->spec.model;
-    struct terminal *current = app_tabs_active_entry(tabs);
-    int font_size = current ? terminal_font_size(current) : 0;
-    struct terminal *content = terminal_create(window, &(struct terminal_spec){
-        .config = tabs->spec.config,
-        .theme = tabs->spec.theme,
-        .theme_picker = tabs->spec.theme_picker,
-        .host = model_host(model),
-        .cwd = cwd,
-        .content_size = new_content_size(tabs),
-        .font_size = font_size,
-    });
+    void *content = tabs->spec.create_content(tabs->spec.create_ud, window, cwd,
+                                              new_content_size(tabs),
+                                              active_font_size(tabs));
     if (!content)
         return false;
-    app_tab_id id = app_tab_model_add(model, content);
+    app_tab_id id = app_tab_model_add(model, content, tabs->spec.content_ops);
     if (!id)
         return false;
     int slot = insert_entry(tabs, id, -1);
@@ -339,13 +330,21 @@ bool app_tabs_new_in(struct window *window, const char *cwd)
     return true;
 }
 
+/* The working directory of the active content, or NULL. */
+static const char *app_tabs_active_cwd(const struct app_tabs *tabs, char *out,
+                                       size_t size)
+{
+    const struct app_tab *entry = app_tabs_entry(tabs, tabs ? tabs->active : -1);
+    if (!entry || !entry->content || !entry->ops->cwd)
+        return NULL;
+    return entry->ops->cwd(entry->content, out, size) ? out : NULL;
+}
+
 bool app_tabs_new(struct window *window)
 {
-    struct terminal *current = app_tabs_active(window);
-    struct session *session = terminal_session(current);
+    struct app_tabs *tabs = app_tabs_of(window);
     char cwd[4096];
-    return app_tabs_new_in(window,
-        session && session_cwd(session, cwd, sizeof(cwd)) ? cwd : NULL);
+    return app_tabs_new_in(window, app_tabs_active_cwd(tabs, cwd, sizeof(cwd)));
 }
 
 bool app_tabs_new_window(struct window *window)
@@ -353,14 +352,8 @@ bool app_tabs_new_window(struct window *window)
     struct app_tabs *tabs = app_tabs_of(window);
     if (!tabs || !tabs->spec.open_window)
         return false;
-    struct terminal *current = app_tabs_active_entry(tabs);
     char cwd_buf[4096];
-    const char *cwd = NULL;
-    if (current) {
-        struct session *session = terminal_session(current);
-        if (session && session_cwd(session, cwd_buf, sizeof(cwd_buf)))
-            cwd = cwd_buf;
-    }
+    const char *cwd = app_tabs_active_cwd(tabs, cwd_buf, sizeof(cwd_buf));
     return tabs->spec.open_window(tabs->spec.ud, 0, cwd,
                                   window_size(window)) != NULL;
 }
@@ -391,12 +384,11 @@ void app_tabs_close(struct window *window, int index)
     struct app_tab *entry = app_tabs_entry(tabs, index);
     if (!app_tab_is_live(entry))
         return;
-    struct terminal *content = entry->content;
     uint64_t now = window_frame_time_ms(window);
     bool active = index == tabs->active;
     /* The entry becomes a closing display entry. It keeps the content until
      * the app retires it, so no callback frees the content. */
-    const char *title = terminal_title(content);
+    const char *title = app_tab_title(entry);
     entry->label = title ? strdup(title) : NULL;
     entry->retire_at_ms = now + APP_TABS_CLOSE_MS;
     if (active)
@@ -471,10 +463,11 @@ app_tab_id app_tabs_unbind(struct window *window, int index)
     struct app_tab *entry = app_tabs_entry(tabs, index);
     if (!app_tab_is_live(entry))
         return 0;
-    struct terminal *content = entry->content;
+    void *content = entry->content;
     /* Unmount the widget first. The window can then close without a child
      * of the destroyed UI. */
-    if (tabs->mounted && tabs->mounted == terminal_widget(content)) {
+    if (tabs->mounted && tabs->mounted ==
+            (entry->ops->widget ? entry->ops->widget(content) : NULL)) {
         ui_widget_remove_child(&tabs->root, tabs->mounted);
         tabs->mounted = NULL;
         tabs->mounted_content = NULL;
@@ -482,7 +475,8 @@ app_tab_id app_tabs_unbind(struct window *window, int index)
     }
     /* The content now holds no window. Its reports find no window, so they
      * reach no view. */
-    terminal_set_window(content, NULL);
+    if (entry->ops->set_window)
+        entry->ops->set_window(content, NULL);
     app_tab_id id = detach_entry(tabs, index);
     if (!id)
         return 0;
@@ -509,15 +503,16 @@ bool app_tabs_bind(struct window *window, app_tab_id id, int slot)
     if (!entry || entry->window)
         return false;
     /* Rejects binding if the tab is closing or if its child process exited. */
-    if (!app_tab_is_live(entry) || terminal_exited(entry->content))
+    if (!app_tab_is_live(entry) || app_tab_exited(entry))
         return false;
-    struct terminal *content = entry->content;
+    void *content = entry->content;
     int at = insert_entry(tabs, id, slot);
     if (at < 0)
         return false;
     /* Set the destination native targets before input resumes. The host
      * stays the model, so the reports follow the tab. */
-    terminal_set_window(content, window);
+    if (entry->ops->set_window)
+        entry->ops->set_window(content, window);
     tabs->active = at;
     app_tabs_publish(tabs);
     if (app_tabs_live_count(tabs) > 1)
@@ -537,7 +532,7 @@ bool app_tabs_move(struct window *from, int index, struct window *to, int slot)
         source->spec.model != target->spec.model)
         return false;
     struct app_tab *entry = app_tabs_entry(source, index);
-    if (!app_tab_is_live(entry) || terminal_exited(entry->content))
+    if (!app_tab_is_live(entry) || app_tab_exited(entry))
         return false;
     struct app_tab_model *model = source->spec.model;
     app_tab_id id = app_tabs_unbind(from, index);
@@ -592,7 +587,8 @@ void app_tabs_release(struct app_tabs *tabs)
         entry->window = NULL;
         if (id == model->flight.tab) {
             /* The drag still moves this tab. It outlives the window. */
-            terminal_set_window(entry->content, NULL);
+            if (entry->ops->set_window)
+                entry->ops->set_window(entry->content, NULL);
             continue;
         }
         app_tab_model_destroy(model, id);
@@ -610,9 +606,9 @@ void app_tabs_set_theme(struct window *window,
     tabs->spec.theme = theme;
     ui_tabbar_set_bg_color(&tabs->tabbar, theme->bg);
     for (int i = 0; i < tabs->count; i++) {
-        struct terminal *content = app_tabs_content(tabs, i);
-        if (content)
-            terminal_set_theme(content, theme);
+        const struct app_tab *entry = app_tabs_entry(tabs, i);
+        if (entry && entry->content && entry->ops->set_theme)
+            entry->ops->set_theme(entry->content, theme);
     }
     window_set_background(window, theme->bg);
     window_redraw(window);

@@ -78,6 +78,10 @@ struct terminal {
     struct terminal_host host;
     struct font_instance *font;
 
+    /* The state of the tab content adapter of the app. A terminal that no
+     * tab owns leaves it NULL. */
+    void *content_state;
+
     struct wsap_vtcore_theme theme;
     struct terminal_theme_picker theme_picker;
     char *applied_font_family;

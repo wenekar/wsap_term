@@ -21,6 +21,7 @@
 #include "util/damage.h"
 #include "session/session.h"
 #include "app/tabs/tabs.h"
+#include "app/tabs/terminal_content.h"
 #include "terminal/terminal.h"
 #include "util/app_identity.h"
 #include "app/identity.h"
@@ -333,6 +334,24 @@ static void app_drop_unused_gpu(struct app *a, const struct window *w)
     renderer_drop_gpu(a->renderer);
 }
 
+/* Creates the terminal content of a new tab. The adapter owns the terminal
+ * and the tab model owns the adapter. */
+static void *app_create_terminal_content(void *ud, struct window *window,
+                                         const char *cwd,
+                                         struct vector2i content_size,
+                                         int font_size)
+{
+    struct app *a = ud;
+    return app_terminal_content_create(window, &a->tabs, cwd, content_size,
+        font_size, &(struct app_terminal_content_spec){
+            .config = &a->config.terminal,
+            .theme = &a->palette,
+            .theme_picker = app_theme_picker(a),
+            .preview_capture = app_thumbnail_capture,
+            .preview_ud = a,
+        });
+}
+
 struct window *app_open_terminal(struct app *a, app_tab_id tab,
                                  const char *cwd, struct vector2i size)
 {
@@ -346,11 +365,11 @@ struct window *app_open_terminal(struct app *a, app_tab_id tab,
         return NULL;
     app_drop_unused_gpu(a, w);
     if (!app_tabs_mount(w, &(struct app_tabs_spec){
-            .config = &a->config.terminal, .cwd = cwd,
+            .cwd = cwd,
             .model = &a->tabs, .tab = tab,
             .theme = &a->palette,
-            .theme_picker = app_theme_picker(a),
-            .preview_capture = app_thumbnail_capture,
+            .create_content = app_create_terminal_content, .create_ud = a,
+            .content_ops = &app_terminal_content_ops,
             .preview_release = app_thumbnail_release, .preview_ud = a,
             .scene_paint = app_runtime_paint_scene, .scene_paint_ud = a->runtime,
             .open_window = open_window, .ud = a })) {

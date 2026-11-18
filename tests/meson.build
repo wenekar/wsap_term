@@ -27,6 +27,7 @@ test_cases = [
     ['app-tabs-rows-test', files('app/tabs/rows_test.c'), app_lib, deps],
     ['app-tabs-cwd-test', files('app/tabs/cwd_test.c'), app_lib, deps],
     ['app-tabs-transfer-test', files('app/tabs/transfer_test.c'), app_lib, deps],
+    ['app-tabs-content-model-test', files('app/tabs/content_model_test.c'), app_lib, deps],
     ['app-tabs-service-test', files('app/tabs/service_test.c'), app_lib, deps],
     ['app-tabs-preview-test', files('app/tabs/preview_test.c'), app_lib, deps],
     ['stats-test', files('ui/yasl/stats_test.c'), ui_yasl_lib, deps],

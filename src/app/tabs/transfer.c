@@ -31,7 +31,7 @@ static app_tab_id flight_take(struct app_tab_model *m)
 /* A tab whose process ended, or a closing tab, goes instead of a landing. */
 static bool spent(const struct app_tab *entry)
 {
-    return !app_tab_is_live(entry) || terminal_exited(entry->content);
+    return !app_tab_is_live(entry) || app_tab_exited(entry);
 }
 
 static bool land(struct app_tab_model *m, struct window *w, app_tab_id id,
@@ -258,9 +258,10 @@ void app_tabs_drag(struct window *w, enum yasl_drop_action event,
 void app_tabs_drop_hover(struct window *w, bool over, void *ud)
 {
     (void)ud;
-    struct terminal *content = app_tabs_active(w);
-    if (content)
-        terminal_set_drop_hover(content, over);
+    struct app_tabs *tabs = app_tabs_of(w);
+    const struct app_tab *entry = app_tabs_entry(tabs, tabs ? tabs->active : -1);
+    if (entry && entry->content && entry->ops->drop_hover)
+        entry->ops->drop_hover(entry->content, over);
 }
 
 void app_tabs_drag_forget(struct app_tab_model *m, struct window *w)

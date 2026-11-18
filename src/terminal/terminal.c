@@ -240,6 +240,17 @@ void terminal_destroy(struct terminal *t)
     free(t);
 }
 
+void *terminal_content_state(const struct terminal *t)
+{
+    return t ? t->content_state : NULL;
+}
+
+void terminal_set_content_state(struct terminal *t, void *state)
+{
+    if (t)
+        t->content_state = state;
+}
+
 void terminal_set_window(struct terminal *t, struct window *window)
 {
     if (!t)

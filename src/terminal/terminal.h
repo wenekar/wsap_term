@@ -79,6 +79,14 @@ void terminal_destroy(struct terminal *terminal);
  * targets before input resumes. */
 void terminal_set_window(struct terminal *terminal, struct window *window);
 
+/*
+ * The tab content adapter state of the terminal. The terminal keeps the
+ * pointer and frees nothing. A tab content adapter stores its state here,
+ * so the content of the tab is the terminal itself.
+ */
+void *terminal_content_state(const struct terminal *terminal);
+void terminal_set_content_state(struct terminal *terminal, void *state);
+
 /* The widget that shows the content. The owner places it in its UI. Its laid
  * out size is the one source of the terminal geometry. */
 struct ui_widget *terminal_widget(struct terminal *terminal);

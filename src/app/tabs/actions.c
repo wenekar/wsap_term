@@ -4,7 +4,6 @@
 
 #include "app/tabs/internal.h"
 #include "input/keybind.h"
-#include "session/session.h"
 #include "ui/surface.h"
 
 enum palette_action {
@@ -65,11 +64,11 @@ static void palette_toggle(struct app_tabs *tabs)
 
     int listed = 0;
     for (int i = 0; i < tabs->count && listed < TAB_CMDS; i++) {
-        struct terminal *content = app_tabs_content(tabs, i);
-        if (!content)
+        const struct app_tab *entry = app_tabs_entry(tabs, i);
+        if (!entry || !entry->content)
             continue;
         if (asprintf(&tab_labels[listed], "Switch to Tab %d: %s", listed + 1,
-                     terminal_title(content)) < 0) {
+                     app_tab_title(entry)) < 0) {
             tab_labels[listed] = NULL;
             continue;
         }
@@ -121,10 +120,9 @@ static bool palette_action(struct ui_widget *source,
     }
     switch (id) {
     case PALETTE_ACT_SCROLL_BOTTOM: {
-        struct session *session =
-            terminal_session(app_tabs_active_entry(tabs));
-        if (session && session->term) {
-            wsap_vtcore_scroll_to(session->term, 0);
+        const struct app_tab *entry = app_tabs_entry(tabs, tabs->active);
+        if (entry && entry->content && entry->ops->scroll_bottom) {
+            entry->ops->scroll_bottom(entry->content);
             if (window_surface(w))
                 window_redraw(w);
         }
@@ -299,10 +297,8 @@ void app_tabs_shortcut(struct window *w, enum input_shortcut sc)
     default:
         break;
     }
-    struct terminal *content = app_tabs_active_entry(tabs);
-    if (content) {
-        terminal_handle_shortcut(content, sc);
-        if (sc == INPUT_SHORTCUT_FONT_LARGER || sc == INPUT_SHORTCUT_FONT_SMALLER)
-            app_tabs_relayout(w);
-    }
+    const struct app_tab *entry = app_tabs_entry(tabs, tabs->active);
+    if (entry && entry->content && entry->ops->shortcut &&
+        entry->ops->shortcut(entry->content, sc))
+        app_tabs_relayout(w);
 }

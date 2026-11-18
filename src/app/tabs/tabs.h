@@ -7,12 +7,10 @@
 #include <wsap_vtcore/wsap_vtcore.h>
 #include "app/tabs/model.h"
 #include "input/input.h"
-#include "terminal/terminal.h"
 #include "util/geom.h"
 
 struct app_tabs;
 struct window;
-struct font_instance;
 struct ui_image;
 struct ui_scene;
 
@@ -20,26 +18,34 @@ struct ui_scene;
  * entry and its content after this time. */
 #define APP_TABS_CLOSE_MS 200
 
-typedef bool (*app_tabs_preview_capture_fn)(void *ud, void **state,
-                                            struct font_instance *font,
-                                            struct wsap_vtcore *term, int width,
-                                            struct ui_image *image);
 typedef void (*app_tabs_preview_release_fn)(void *state);
 typedef bool (*app_tabs_scene_paint_fn)(void *ud, struct font_instance *font,
                                         uint32_t *pixels,
                                         struct vector2i size,
                                         const struct ui_scene *scene);
 
+/*
+ * Creates the content of a new tab. The model owns the result. `font_size`
+ * is the size of the active tab, or 0. Returns NULL on failure.
+ */
+typedef void *(*app_tabs_create_content_fn)(void *ud, struct window *window,
+                                            const char *cwd,
+                                            struct vector2i content_size,
+                                            int font_size);
+
 struct app_tabs_spec {
-    const struct terminal_config *config;
     const struct wsap_vtcore_theme *theme;
-    struct terminal_theme_picker theme_picker;
+    /* The initial directory of the first tab of the mount. */
     const char *cwd;
-    /* The tab table of the app. It owns every terminal. The window holds
-     * tab IDs only. */
+    /* The tab table of the app. It owns every content. The window holds tab
+     * IDs only. */
     struct app_tab_model *model;
+    /* Creates the content of each new tab of the window. */
+    app_tabs_create_content_fn create_content;
+    void *create_ud;
+    /* The calls into the content of each new tab. */
+    const struct app_tab_content_ops *content_ops;
     app_tabs_open_window_fn open_window;
-    app_tabs_preview_capture_fn preview_capture;
     app_tabs_preview_release_fn preview_release;
     void *preview_ud;
     app_tabs_scene_paint_fn scene_paint;
@@ -55,7 +61,8 @@ struct app_tabs_spec {
 bool app_tabs_mount(struct window *window, const struct app_tabs_spec *spec);
 bool app_tabs_is(const struct window *window);
 
-struct terminal *app_tabs_active(const struct window *window);
+/* The active content, or NULL. The model owns it. */
+void *app_tabs_active(const struct window *window);
 /* Returns the count of live active tabs. */
 int app_tabs_count(const struct window *window);
 int app_tabs_active_index(const struct window *window);
@@ -86,7 +93,7 @@ void app_tabs_set_theme(struct window *window,
 void app_tabs_shortcut(struct window *window, enum input_shortcut sc);
 /*
  * Retires expired closing tabs in `model` relative to `now_ms`.
- * Destroys associated terminal content and releases bar entries.
+ * Destroys associated content and releases bar entries.
  */
 void app_tabs_service(struct app_tab_model *model, uint64_t now_ms);
 /* Updates UI layout and content mount geometry for the active tab in `window`. */
