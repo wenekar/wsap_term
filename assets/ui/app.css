@@ -37,3 +37,14 @@
 .settings-primary:disabled { background: var(--control-disabled-bg); color: var(--control-disabled-fg); }
 .settings-nav.active { background: var(--tab-active-bg); color: var(--settings-active-fg); }
 .settings-link { color: var(--section-fg); background: transparent; cursor: pointer; }
+
+/* Standard controls. Each rule has a C fallback in its widget. */
+.checkbox, .radio, .switch { padding: 0.15em 0; }
+.checkbox:disabled, .radio:disabled, .switch:disabled { color: var(--control-disabled-fg); }
+.checkbox:focus, .radio:focus, .switch:focus { color: var(--button-focus-fg); }
+.checkbox:checked, .radio:checked, .switch:checked { border-color: var(--accent); }
+.slider { border-color: var(--accent); min-width: 8ch; }
+.slider:disabled { border-color: var(--control-disabled-bg); color: var(--control-disabled-fg); }
+.progress { background: var(--control-bg); border-color: var(--accent); }
+.spinner { color: var(--section-fg); }
+.icon { color: var(--fg); }
