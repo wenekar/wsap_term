@@ -52,6 +52,14 @@ def child(report):
     Path(report).write_text('PASS: 8000 cursor replies remain ordered during fastpipe traffic\n')
     return 0
 
+def links_asan(binary):
+    """Returns True when binary links the ASan runtime."""
+    try:
+        out = subprocess.run(['ldd', binary], capture_output=True, text=True).stdout
+    except OSError:
+        return False
+    return any('libasan' in line.partition('=>')[0] for line in out.splitlines())
+
 def run():
     if not shutil.which('sway'):
         raise SystemExit('sway is required for the PTY ordering test')
@@ -82,12 +90,19 @@ def run():
                     sway_log.seek(0)
                     raise RuntimeError('headless Sway failed: ' + sway_log.read())
                 env['WAYLAND_DISPLAY'] = sockets[0].name
+                binary = os.environ.get('BIN', str(root / 'build/bin/wsap_term'))
                 env['LD_PRELOAD'] = str(delay)
+                if links_asan(binary):
+                    # The read-delay shim loads before the ASan runtime. It
+                    # defines only read and calls the next definition, so the
+                    # order is safe. The child does not load the runtime.
+                    env['ASAN_OPTIONS'] = ':'.join(filter(None, [
+                        env.get('ASAN_OPTIONS'), 'verify_asan_link_order=0']))
                 report = work / 'result'
                 config = work / 'term.conf'
                 config.write_text(f'command = {sys.executable} {Path(__file__).resolve()} --child {report}\n'
                                   'width = 800\nheight = 600\n')
-                terminal = subprocess.Popen([os.environ.get('BIN', str(root / 'build/bin/wsap_term')), '--config', str(config)],
+                terminal = subprocess.Popen([binary, '--config', str(config)],
                                             env=env, stdout=term_log, stderr=term_log)
                 processes.append(terminal)
                 terminal.wait(timeout=25)
