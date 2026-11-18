@@ -20,6 +20,9 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #endif
+#if YASL_HAS_VULKAN
+#include <vulkan/vulkan.h>
+#endif
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #if YASL_HAS_XRANDR
@@ -795,6 +798,7 @@ struct x11_display {
     bool lost;
     bool popup_grab; /* The pointer is grabbed for the topmost popup. */
     bool egl_ready;
+    bool vulkan_probed, vulkan_ready;
 };
 
 /* EGL calls on one display are not safe from two threads at once. A render
@@ -3945,11 +3949,60 @@ static void display_close(struct yasl_private_display *base)
     free(d);
 }
 
+#if YASL_HAS_VULKAN
+/* The loader is not linked here, so load it to read the instance extensions of
+ * the installed ICDs. The Xlib WSI needs both surface extensions. */
+static bool vulkan_icd_ready(void)
+{
+    void *lib = dlopen("libvulkan.so.1", RTLD_LAZY | RTLD_LOCAL);
+    if (!lib) return false;
+    PFN_vkEnumerateInstanceExtensionProperties enumerate = NULL;
+    void *symbol = dlsym(lib, "vkEnumerateInstanceExtensionProperties");
+    if (symbol) memcpy(&enumerate, &symbol, sizeof(enumerate));
+    bool surface = false, xlib = false;
+    uint32_t count = 0;
+    if (enumerate && enumerate(NULL, &count, NULL) == VK_SUCCESS && count) {
+        VkExtensionProperties *extensions = calloc(count, sizeof(*extensions));
+        if (extensions) {
+            if (enumerate(NULL, &count, extensions) == VK_SUCCESS)
+                for (uint32_t i = 0; i < count; i++) {
+                    if (!strcmp(extensions[i].extensionName, "VK_KHR_surface")) surface = true;
+                    if (!strcmp(extensions[i].extensionName, "VK_KHR_xlib_surface")) xlib = true;
+                }
+            free(extensions);
+        }
+    }
+    dlclose(lib);
+    return surface && xlib;
+}
+#endif
+
+/* A Vulkan surface needs a driver with the X11 WSI and a server path to show
+ * it: DRI3 or MIT-SHM. A missing path reports no feature instead of failing at
+ * the first swapchain. The result is cached per display. */
+static bool vulkan_ready(struct x11_display *d)
+{
+    if (!d->vulkan_probed) {
+        d->vulkan_probed = true;
+#if YASL_HAS_VULKAN
+        int opcode, event, error;
+        d->vulkan_ready = vulkan_icd_ready() &&
+            (d->has_shm || XQueryExtension(d->native, "DRI3", &opcode, &event, &error));
+#endif
+    }
+    return d->vulkan_ready;
+}
+
 static uint32_t caps(const struct yasl_private_display *d)
 {
-    return YASL_PRIVATE_CAP_POPUPS | YASL_PRIVATE_CAP_DRAG | YASL_PRIVATE_CAP_DRAG_CARRY | YASL_PRIVATE_CAP_PLACE_WINDOW |
-        YASL_PRIVATE_CAP_PRIMARY_SELECTION | YASL_PRIVATE_CAP_CSD | YASL_PRIVATE_CAP_NATIVE_GRAPHICS |
-        YASL_PRIVATE_CAP_VULKAN | (((const struct x11_display *)d)->xi2 ? YASL_PRIVATE_CAP_TABLET : 0);
+    struct x11_display *display = (struct x11_display *)d;
+    uint32_t result = YASL_PRIVATE_CAP_POPUPS | YASL_PRIVATE_CAP_DRAG |
+        YASL_PRIVATE_CAP_DRAG_CARRY | YASL_PRIVATE_CAP_PLACE_WINDOW |
+        YASL_PRIVATE_CAP_PRIMARY_SELECTION | YASL_PRIVATE_CAP_CSD |
+        YASL_PRIVATE_CAP_NATIVE_GRAPHICS | YASL_PRIVATE_CAP_TEXT_INPUT;
+    if (vulkan_ready(display)) result |= YASL_PRIVATE_CAP_VULKAN;
+    if (display->xi2) result |= YASL_PRIVATE_CAP_TABLET;
+    return result;
 }
 
 static bool copy_text(struct yasl_private_display *base, enum yasl_private_selection sel, const char *text)
