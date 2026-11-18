@@ -509,10 +509,12 @@ static void commands_record(struct render_gpu *g, struct frame_slot *slot,
             bound_offset = offset;
         }
         int passes = c->kind == GPU_CMD_SUBPX ? 3 : 1;
+        /* The first instance of the command names its blend mode. */
+        int blend_pipe = (int)gpu_stream_blend(b, c->stream, c->start);
         for (int pass = 0; pass < passes; pass++) {
             VkPipeline pipeline = g->pipelines[c->kind == GPU_CMD_SHAPE ? PIPE_SHAPE
                                                : c->kind == GPU_CMD_SUBPX ? PIPE_SUBPX + pass
-                                               : PIPE_GLYPH];
+                                               : PIPE_GLYPH + blend_pipe];
             if (pipeline != bound_pipeline) {
                 g->vk.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
                 bound_pipeline = pipeline;

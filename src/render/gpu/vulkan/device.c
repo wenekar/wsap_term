@@ -300,25 +300,65 @@ static const struct pipeline_spec {
     enum shader_id vert, frag;
     /* The instances are gpu_shape_inst, not gpu_glyph_inst. */
     bool shape;
-    bool blend;
+    /* -1: no blending. Else one of enum gpu_blend. */
+    int blend;
     VkColorComponentFlags mask;
 } PIPELINES[PIPE_COUNT] = {
-    [PIPE_GLYPH] = { SHADER_GLYPH_VERT, SHADER_GLYPH_FRAG, false, true, ALL_CHANNELS },
-    [PIPE_SUBPX + 0] = { SHADER_GLYPH_VERT, SHADER_GLYPH_FRAG, false, true,
+    [PIPE_GLYPH + GPU_BLEND_PREMUL] = { SHADER_GLYPH_VERT, SHADER_GLYPH_FRAG, false,
+                                        GPU_BLEND_PREMUL, ALL_CHANNELS },
+    [PIPE_GLYPH + GPU_BLEND_ALPHA] = { SHADER_GLYPH_VERT, SHADER_GLYPH_FRAG, false,
+                                       GPU_BLEND_ALPHA, ALL_CHANNELS },
+    [PIPE_GLYPH + GPU_BLEND_ADDITIVE] = { SHADER_GLYPH_VERT, SHADER_GLYPH_FRAG, false,
+                                          GPU_BLEND_ADDITIVE, ALL_CHANNELS },
+    [PIPE_GLYPH + GPU_BLEND_MULTIPLY] = { SHADER_GLYPH_VERT, SHADER_GLYPH_FRAG, false,
+                                          GPU_BLEND_MULTIPLY, ALL_CHANNELS },
+    [PIPE_GLYPH + GPU_BLEND_NONE] = { SHADER_GLYPH_VERT, SHADER_GLYPH_FRAG, false,
+                                      GPU_BLEND_NONE, ALL_CHANNELS },
+    [PIPE_SUBPX + 0] = { SHADER_GLYPH_VERT, SHADER_GLYPH_FRAG, false, GPU_BLEND_PREMUL,
                          VK_COLOR_COMPONENT_R_BIT },
-    [PIPE_SUBPX + 1] = { SHADER_GLYPH_VERT, SHADER_GLYPH_FRAG, false, true,
+    [PIPE_SUBPX + 1] = { SHADER_GLYPH_VERT, SHADER_GLYPH_FRAG, false, GPU_BLEND_PREMUL,
                          VK_COLOR_COMPONENT_G_BIT },
-    [PIPE_SUBPX + 2] = { SHADER_GLYPH_VERT, SHADER_GLYPH_FRAG, false, true,
+    [PIPE_SUBPX + 2] = { SHADER_GLYPH_VERT, SHADER_GLYPH_FRAG, false, GPU_BLEND_PREMUL,
                          VK_COLOR_COMPONENT_B_BIT },
-    [PIPE_SHAPE] = { SHADER_SHAPE_VERT, SHADER_SHAPE_FRAG, true, true, ALL_CHANNELS },
-    [PIPE_COPY] = { SHADER_GLYPH_VERT, SHADER_COPY_FRAG, false, false, ALL_CHANNELS },
+    [PIPE_SHAPE] = { SHADER_SHAPE_VERT, SHADER_SHAPE_FRAG, true, GPU_BLEND_PREMUL, ALL_CHANNELS },
+    [PIPE_COPY] = { SHADER_GLYPH_VERT, SHADER_COPY_FRAG, false, -1, ALL_CHANNELS },
 };
+
+/*
+ * The color blend state of `blend`. It gives the same 8-bit sRGB expression
+ * as blend_mode_px() in render/cpu/scene.c. A fixed-point attachment clamps
+ * the result, so ADDITIVE needs no clamp in the shader.
+ */
+static VkPipelineColorBlendAttachmentState blend_attachment(int blend)
+{
+    VkPipelineColorBlendAttachmentState a = {
+        .blendEnable = blend >= 0 && blend != GPU_BLEND_NONE ? VK_TRUE : VK_FALSE,
+        .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .colorBlendOp = VK_BLEND_OP_ADD,
+        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .alphaBlendOp = VK_BLEND_OP_ADD,
+    };
+    if (blend == GPU_BLEND_ADDITIVE) {
+        /* src + dst, for the alpha channel too. */
+        a.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        a.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        a.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    } else if (blend == GPU_BLEND_MULTIPLY) {
+        /* src * dst. The alpha blends as PREMUL. */
+        a.srcColorBlendFactor = VK_BLEND_FACTOR_DST_COLOR;
+        a.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    }
+    return a;
+}
 
 static const VkVertexInputAttributeDescription GLYPH_ATTRIBS[] = {
     { 0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(struct gpu_glyph_inst, rect) },
     { 1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(struct gpu_glyph_inst, uv) },
     { 2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(struct gpu_glyph_inst, color) },
     { 3, 0, VK_FORMAT_R32_UINT, offsetof(struct gpu_glyph_inst, mode) },
+    { 4, 0, VK_FORMAT_R32_UINT, offsetof(struct gpu_glyph_inst, blend) },
 };
 
 static const VkVertexInputAttributeDescription SHAPE_ATTRIBS[] = {
@@ -327,6 +367,7 @@ static const VkVertexInputAttributeDescription SHAPE_ATTRIBS[] = {
     { 2, 0, VK_FORMAT_R32_SFLOAT, offsetof(struct gpu_shape_inst, radius) },
     { 3, 0, VK_FORMAT_R32_UINT, offsetof(struct gpu_shape_inst, mode) },
     { 4, 0, VK_FORMAT_R32_UINT, offsetof(struct gpu_shape_inst, blur) },
+    { 5, 0, VK_FORMAT_R32_UINT, offsetof(struct gpu_shape_inst, blend) },
 };
 
 static VkPipeline pipeline_make(struct render_gpu *g, const struct pipeline_spec *spec,
@@ -381,17 +422,9 @@ static VkPipeline pipeline_make(struct render_gpu *g, const struct pipeline_spec
         .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
     };
-    /* Premultiplied source over destination. */
-    VkPipelineColorBlendAttachmentState attachment = {
-        .blendEnable = spec->blend ? VK_TRUE : VK_FALSE,
-        .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
-        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-        .colorBlendOp = VK_BLEND_OP_ADD,
-        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-        .alphaBlendOp = VK_BLEND_OP_ADD,
-        .colorWriteMask = spec->mask,
-    };
+    /* The blend state of the instance blend mode. */
+    VkPipelineColorBlendAttachmentState attachment = blend_attachment(spec->blend);
+    attachment.colorWriteMask = spec->mask;
     VkPipelineColorBlendStateCreateInfo blend = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
         .attachmentCount = 1,

@@ -14,10 +14,12 @@ layout(location = 0) in vec4 in_rect;
 layout(location = 1) in vec4 in_uv;
 layout(location = 2) in vec4 in_color;
 layout(location = 3) in uint in_mode;
+layout(location = 4) in uint in_blend;
 
 layout(location = 0) out vec2 out_uv;
 layout(location = 1) flat out vec4 out_color;
 layout(location = 2) flat out uint out_mode;
+layout(location = 3) flat out uint out_blend;
 
 void main()
 {
@@ -28,4 +30,5 @@ void main()
     out_uv = mix(in_uv.xy, in_uv.zw, corner);
     out_color = in_color;
     out_mode = in_mode;
+    out_blend = in_blend;
 }

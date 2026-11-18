@@ -31,7 +31,10 @@
  *
  * Blending. All pipelines write premultiplied color and blend in the space
  * of the swapchain format. Subpixel glyphs draw in three passes, one for
- * each color write mask.
+ * each color write mask. One glyph pipeline exists for each blend mode,
+ * and its color blend state gives the same expression as blend_mode_px()
+ * in render/cpu/scene.c. A frame with a blend mode other than PREMUL uses
+ * these pipelines.
  */
 
 #ifndef VK_NO_PROTOTYPES
@@ -83,9 +86,11 @@ struct frame_slot {
 };
 
 enum pipeline_id {
+    /* One for each blend mode. */
     PIPE_GLYPH,
-    /* The three subpixel passes: red, green, blue. */
-    PIPE_SUBPX,
+    /* The three subpixel passes: red, green, blue. They draw PREMUL only,
+     * because a text op ignores its blend mode. */
+    PIPE_SUBPX = PIPE_GLYPH + GPU_BLEND_COUNT,
     PIPE_SHAPE = PIPE_SUBPX + 3,
     /* Copies the CPU pixels of a surface. No blending. */
     PIPE_COPY,

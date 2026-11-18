@@ -58,7 +58,8 @@ struct frame_slot {
 struct render_gpu {
     id<MTLDevice> device;
     id<MTLCommandQueue> queue;
-    id<MTLRenderPipelineState> glyph_pipeline;
+    /* One for each blend mode. */
+    id<MTLRenderPipelineState> glyph_pipeline[GPU_BLEND_COUNT];
     id<MTLRenderPipelineState> subpx_pipeline[3];
     id<MTLRenderPipelineState> shape_pipeline;
     id<MTLRenderPipelineState> copy_pipeline;
@@ -324,9 +325,12 @@ static bool encode_frame(struct render_gpu *g, struct frame_slot *slot, struct f
                       offset:offsets[c->stream] + (size_t)c->start * gpu_stream_stride(c->stream)
                      atIndex:0];
         int passes = c->kind == GPU_CMD_SUBPX ? 3 : 1;
+        /* The first instance of the command names its blend mode. */
+        uint32_t blend = gpu_stream_blend(b, c->stream, c->start);
         for (int ch = 0; ch < passes; ch++) {
             id<MTLRenderPipelineState> pipeline = c->kind == GPU_CMD_SHAPE ? g->shape_pipeline
-                : c->kind == GPU_CMD_SUBPX ? g->subpx_pipeline[ch] : g->glyph_pipeline;
+                : c->kind == GPU_CMD_SUBPX ? g->subpx_pipeline[ch]
+                : g->glyph_pipeline[blend < GPU_BLEND_COUNT ? blend : GPU_BLEND_PREMUL];
             if (pipeline != bound) {
                 [enc setRenderPipelineState:pipeline];
                 bound = pipeline;
@@ -506,19 +510,33 @@ void render_gpu_surface_free(void *gpu_surface)
 
 /* ---- Creation and teardown ---------------------------------------------- */
 
+/*
+ * The blend state of `blend` (-1 for no blend). It gives the same 8-bit sRGB
+ * expression as blend_mode_px() in render/cpu/scene.c. An 8-bit attachment
+ * clamps the result, so ADDITIVE needs no clamp in the shader.
+ */
 static id<MTLRenderPipelineState> make_pipeline(id<MTLDevice> device, id<MTLLibrary> lib,
                                                 NSString *vertex_name, NSString *fragment_name,
-                                                bool blend, MTLColorWriteMask mask)
+                                                int blend, MTLColorWriteMask mask)
 {
     MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
     MTLRenderPipelineColorAttachmentDescriptor *color = pd.colorAttachments[0];
     color.pixelFormat = MTLPixelFormatBGRA8Unorm;
     color.writeMask = mask;
-    color.blendingEnabled = blend;
+    color.blendingEnabled = blend >= 0 && blend != GPU_BLEND_NONE;
     color.sourceRGBBlendFactor = MTLBlendFactorOne;
     color.destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
     color.sourceAlphaBlendFactor = MTLBlendFactorOne;
     color.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+    if (blend == GPU_BLEND_ADDITIVE) {
+        /* src + dst, for the alpha channel too. */
+        color.destinationRGBBlendFactor = MTLBlendFactorOne;
+        color.destinationAlphaBlendFactor = MTLBlendFactorOne;
+    } else if (blend == GPU_BLEND_MULTIPLY) {
+        /* src * dst. The alpha blends as PREMUL. */
+        color.sourceRGBBlendFactor = MTLBlendFactorDestinationColor;
+        color.destinationRGBBlendFactor = MTLBlendFactorZero;
+    }
     id<MTLFunction> vertex = [lib newFunctionWithName:vertex_name];
     id<MTLFunction> fragment = [lib newFunctionWithName:fragment_name];
     pd.vertexFunction = vertex;
@@ -545,16 +563,22 @@ static bool pipelines_create(struct render_gpu *g)
         return false;
     }
     const MTLColorWriteMask all = MTLColorWriteMaskAll;
-    g->glyph_pipeline = make_pipeline(g->device, lib, @"glyph_vertex", @"glyph_fragment", true, all);
-    g->shape_pipeline = make_pipeline(g->device, lib, @"shape_vertex", @"shape_fragment", true, all);
-    g->copy_pipeline = make_pipeline(g->device, lib, @"glyph_vertex", @"copy_fragment", false, all);
+    bool ok = true;
+    for (int i = 0; i < GPU_BLEND_COUNT; i++) {
+        g->glyph_pipeline[i] =
+            make_pipeline(g->device, lib, @"glyph_vertex", @"glyph_fragment", i, all);
+        ok = ok && g->glyph_pipeline[i];
+    }
+    g->shape_pipeline = make_pipeline(g->device, lib, @"shape_vertex", @"shape_fragment",
+                                      GPU_BLEND_PREMUL, all);
+    g->copy_pipeline = make_pipeline(g->device, lib, @"glyph_vertex", @"copy_fragment", -1, all);
     const MTLColorWriteMask masks[3] = {
         MTLColorWriteMaskRed, MTLColorWriteMaskGreen, MTLColorWriteMaskBlue,
     };
-    bool ok = g->glyph_pipeline && g->shape_pipeline && g->copy_pipeline;
+    ok = ok && g->shape_pipeline && g->copy_pipeline;
     for (int i = 0; i < 3; i++) {
-        g->subpx_pipeline[i] =
-            make_pipeline(g->device, lib, @"glyph_vertex", @"glyph_fragment", true, masks[i]);
+        g->subpx_pipeline[i] = make_pipeline(g->device, lib, @"glyph_vertex", @"glyph_fragment",
+                                             GPU_BLEND_PREMUL, masks[i]);
         ok = ok && g->subpx_pipeline[i];
     }
     [lib release];
@@ -612,7 +636,8 @@ void render_gpu_free(struct render_gpu *g)
     for (int i = 0; i < GPU_IMAGES; i++)
         [g->images[i] release];
     [g->atlas release];
-    [g->glyph_pipeline release];
+    for (int i = 0; i < GPU_BLEND_COUNT; i++)
+        [g->glyph_pipeline[i] release];
     for (int i = 0; i < 3; i++)
         [g->subpx_pipeline[i] release];
     [g->shape_pipeline release];

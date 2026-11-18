@@ -62,6 +62,21 @@ struct render_frame;
 /* Each stream starts at a multiple of this in the instance buffer. */
 #define GPU_STREAM_ALIGN 256
 
+/*
+ * The blend modes of an instance. They are enum ui_scene_blend of
+ * paint/scene.h. The shaders and the blend state of each backend use these
+ * numbers. An instance that starts a command decides the blend state of the
+ * command, so a command never mixes two modes.
+ */
+enum gpu_blend {
+    GPU_BLEND_PREMUL = 0,
+    GPU_BLEND_ALPHA = 1,
+    GPU_BLEND_ADDITIVE = 2,
+    GPU_BLEND_MULTIPLY = 3,
+    GPU_BLEND_NONE = 4,
+    GPU_BLEND_COUNT = 5,
+};
+
 /* The instance modes. The shaders of each backend use the same numbers. */
 enum gpu_glyph_mode {
     GPU_MODE_SOLID = 0,
@@ -83,24 +98,28 @@ enum gpu_shape_mode {
  * One textured or solid quad. `rect` is x, y, width, height in pixels.
  * `uv` is the texel rect x0, y0, x1, y1. `color` is a straight color, and
  * its alpha is the opacity. An image mode multiplies its premultiplied
- * texels by `color`.
+ * texels by `color`. `blend` is one of enum gpu_blend.
  */
 struct gpu_glyph_inst {
     float rect[4];
     float uv[4];
     float color[4];
     uint32_t mode;
-    uint32_t pad[3];
+    uint32_t blend;
+    uint32_t pad[2];
 };
 
-/* One shape. `rect` is the shape and the quad. `blur` is in pixels. */
+/*
+ * One shape. `rect` is the shape and the quad. `blur` is in pixels.
+ * `blend` is one of enum gpu_blend.
+ */
 struct gpu_shape_inst {
     float rect[4];
     float color[4];
     float radius;
     uint32_t mode;
     uint32_t blur;
-    uint32_t pad;
+    uint32_t blend;
 };
 
 _Static_assert(sizeof(struct gpu_glyph_inst) == 64, "the shaders read 64 byte glyph instances");
@@ -249,6 +268,13 @@ size_t gpu_build_instance_layout(const struct gpu_build *b, size_t offsets[GPU_S
 /* Copies instance data from all streams into contiguous buffer `dst` using `offsets`. */
 void gpu_build_copy_instances(const struct gpu_build *b, const size_t offsets[GPU_ST_COUNT],
                               void *dst);
+
+/*
+ * Returns the blend mode of instance `index` in `stream`, one of enum
+ * gpu_blend. A backend reads the mode of the first instance of a command,
+ * because a command holds one mode.
+ */
+uint32_t gpu_stream_blend(const struct gpu_build *b, enum gpu_stream_id stream, uint32_t index);
 
 /* Converts an ARGB8888 color integer and opacity value to normalized RGBA floats. */
 static inline void gpu_color(uint32_t argb, float opacity, float out[4])

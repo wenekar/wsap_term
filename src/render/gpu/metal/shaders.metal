@@ -5,7 +5,8 @@ using namespace metal;
  * The shaders of the Metal backend. render.m builds this source at run time.
  * tools/embed_metal.py puts the file, with its quoted includes, in a string.
  *
- * Every pipeline writes premultiplied color. The blend is
+ * Every pipeline writes premultiplied color, except for BLEND_NONE, which
+ * writes the straight color. The blend is
  * out = src + dst * (1 - src.a).
  *
  * The structs below must match the structs of render.m. Each draw is one
@@ -25,6 +26,9 @@ using namespace metal;
 #define MODE_SUBPX 4u
 /* An image that samples four texels. */
 #define MODE_IMAGE_LINEAR 5u
+
+/* The blend mode of a draw. It matches enum gpu_blend. */
+#define BLEND_NONE 4u
 
 /* The shape instance modes. */
 #define SHAPE_ROUNDED 1u
@@ -57,6 +61,8 @@ struct GlyphInstance {
     float4 uv;      /* The texel rect: x0, y0, x1, y1. */
     float4 color;   /* Straight color. The alpha is the opacity. */
     uint mode;
+    uint blend;     /* One of enum gpu_blend. */
+    uint pad0, pad1;
 };
 
 struct GlyphVertexOut {
@@ -64,6 +70,7 @@ struct GlyphVertexOut {
     float2 uv;
     float4 color [[flat]];
     uint mode [[flat]];
+    uint blend [[flat]];
 };
 
 vertex GlyphVertexOut glyph_vertex(uint vertex_id [[vertex_id]],
@@ -78,6 +85,7 @@ vertex GlyphVertexOut glyph_vertex(uint vertex_id [[vertex_id]],
     out.uv = mix(in.uv.xy, in.uv.zw, corner);
     out.color = in.color;
     out.mode = in.mode;
+    out.blend = in.blend;
     return out;
 }
 
@@ -122,18 +130,20 @@ fragment float4 glyph_fragment(GlyphVertexOut in [[stage_in]],
                                constant uint &channel [[buffer(0)]])
 {
     float4 c = in.color;
+    /* A NONE draw replaces the pixel, so it writes a straight color. */
+    float dim = in.blend == BLEND_NONE ? 1.0f : c.a;
     if (in.mode == MODE_SOLID)
-        return float4(c.rgb * c.a, c.a);
+        return float4(c.rgb * dim, c.a);
     if (in.mode == MODE_ALPHA) {
         float a = c.a * atlas.read(uint2(in.uv)).a;
         return float4(c.rgb * a, a);
     }
     if (in.mode == MODE_COLOR)
-        return atlas.read(uint2(in.uv)) * c.a;
+        return atlas.read(uint2(in.uv)) * dim;
     if (in.mode == MODE_IMAGE || in.mode == MODE_IMAGE_LINEAR) {
         float4 t = image_sample(image, in.uv, in.mode == MODE_IMAGE_LINEAR);
         float a = t.a * c.a;
-        return float4(t.rgb * c.rgb * c.a, a);
+        return float4(t.rgb * c.rgb * dim, a);
     }
     float3 cov = atlas.read(uint2(in.uv)).rgb;
     float a = c.a * cov[channel];
@@ -155,6 +165,7 @@ struct ShapeInstance {
     float radius;
     uint mode;
     uint blur;      /* The shadow blur in pixels. */
+    uint blend;     /* One of enum gpu_blend. A shape draws PREMUL only. */
 };
 
 struct ShapeVertexOut {

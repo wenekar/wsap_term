@@ -114,13 +114,15 @@ static struct gpu_glyph_inst *push_glyph(struct gpu_build *b, enum gpu_stream_id
 
 /* Adds a command for the instances that the stream holds now, or extends the last. */
 static struct gpu_cmd *cmd_open(struct gpu_build *b, enum gpu_cmd_kind kind,
-                                enum gpu_stream_id stream, struct rect2i scissor, int image)
+                                enum gpu_stream_id stream, struct rect2i scissor, int image,
+                                uint32_t blend)
 {
     uint32_t next = b->streams[stream].n;
     if (b->n_cmds) {
         struct gpu_cmd *last = &b->cmds[b->n_cmds - 1];
         if (last->kind == kind && last->stream == stream && last->image == image &&
-            rect2i_eq(last->scissor, scissor) && last->start + last->count == next)
+            rect2i_eq(last->scissor, scissor) && last->start + last->count == next &&
+            gpu_stream_blend(b, stream, next - 1) == blend)
             return last;
     }
     if (b->n_cmds == b->cap_cmds) {
@@ -148,7 +150,7 @@ static void cmd_whole_stream(struct gpu_build *b, enum gpu_cmd_kind kind,
     uint32_t n = b->streams[stream].n;
     if (!n)
         return;
-    struct gpu_cmd *c = cmd_open(b, kind, stream, scissor, 0);
+    struct gpu_cmd *c = cmd_open(b, kind, stream, scissor, 0, GPU_BLEND_PREMUL);
     if (!c)
         return;
     c->start = 0;
@@ -703,9 +705,9 @@ static bool build_grid(struct gpu_build *b, const struct grid_geometry *geo)
 /* ---- The UI scene ------------------------------------------------------- */
 
 static void emit_solid(struct gpu_build *b, struct rect2i r, const float color[4],
-                       struct rect2i canvas_rect)
+                       uint32_t blend, struct rect2i canvas_rect)
 {
-    struct gpu_cmd *c = cmd_open(b, GPU_CMD_GLYPH, GPU_ST_UI, canvas_rect, 0);
+    struct gpu_cmd *c = cmd_open(b, GPU_CMD_GLYPH, GPU_ST_UI, canvas_rect, 0, blend);
     struct gpu_glyph_inst *in = push_glyph(b, GPU_ST_UI);
     if (!c || !in)
         return;
@@ -713,12 +715,13 @@ static void emit_solid(struct gpu_build *b, struct rect2i r, const float color[4
     rect2i_to_vec4(r, in->rect);
     memcpy(in->color, color, sizeof(in->color));
     in->mode = GPU_MODE_SOLID;
+    in->blend = blend;
 }
 
 static void emit_shape(struct gpu_build *b, struct rect2i scissor, struct rect2i shape,
                        const float color[4], float radius, enum gpu_shape_mode mode, uint32_t blur)
 {
-    struct gpu_cmd *c = cmd_open(b, GPU_CMD_SHAPE, GPU_ST_SHAPE, scissor, 0);
+    struct gpu_cmd *c = cmd_open(b, GPU_CMD_SHAPE, GPU_ST_SHAPE, scissor, 0, GPU_BLEND_PREMUL);
     struct gpu_shape_inst *in = stream_push(b, GPU_ST_SHAPE);
     if (!c || !in)
         return;
@@ -787,7 +790,8 @@ static void scene_image(struct gpu_build *b, const struct ui_scene_op *op, struc
         b->failed = true;
         return;
     }
-    struct gpu_cmd *c = cmd_open(b, GPU_CMD_GLYPH, GPU_ST_UI, canvas_rect, slot + 1);
+    struct gpu_cmd *c = cmd_open(b, GPU_CMD_GLYPH, GPU_ST_UI, canvas_rect, slot + 1,
+                                 GPU_BLEND_PREMUL);
     struct gpu_glyph_inst *in = push_glyph(b, GPU_ST_UI);
     if (!c || !in)
         return;
@@ -836,7 +840,7 @@ static void scene_text(struct gpu_build *b, struct font_instance *fi, const stru
             if (e.kind != KIND_NONE && rows > 0) {
                 bool subpx = e.kind == KIND_SUBPX;
                 enum gpu_cmd_kind kind = subpx ? GPU_CMD_SUBPX : GPU_CMD_GLYPH;
-                struct gpu_cmd *c = cmd_open(b, kind, GPU_ST_UI, clip, 0);
+                struct gpu_cmd *c = cmd_open(b, kind, GPU_ST_UI, clip, 0, GPU_BLEND_PREMUL);
                 struct gpu_glyph_inst *in = push_glyph(b, GPU_ST_UI);
                 if (!c || !in)
                     return;
@@ -867,8 +871,10 @@ static bool op_outside_clip(const struct ui_scene *s, const struct ui_scene_op *
     return rect2i_is_empty(rect2i_intersect(ink, clip));
 }
 
+/* The quad of a solid UI rect. `blend` is one of enum gpu_blend. */
 static void scene_rect(struct gpu_build *b, struct rect2i rect, struct rect2i clip,
-                       uint32_t color, float opacity_mult, struct rect2i canvas_rect)
+                       uint32_t color, float opacity_mult, uint32_t blend,
+                       struct rect2i canvas_rect)
 {
     struct rect2i r = rect2i_intersect(rect, clip);
     if (!rect2i_clip(&r, canvas_rect.size))
@@ -876,7 +882,7 @@ static void scene_rect(struct gpu_build *b, struct rect2i rect, struct rect2i cl
     float c[4];
     gpu_color(color, opacity_mult, c);
     if (c[3] > 0.0f)
-        emit_solid(b, r, c, canvas_rect);
+        emit_solid(b, r, c, blend, canvas_rect);
 }
 
 static bool build_scene(struct gpu_build *b, struct font_instance *ufont,
@@ -904,11 +910,10 @@ static bool build_scene(struct gpu_build *b, struct font_instance *ufont,
     for (int i = 0; i < scene->n_ops && !b->failed && !b->atlas.full; i++) {
         const struct ui_scene_op *op = &scene->ops[i];
         /*
-         * The float geometry and the other blend modes wait for their GPU
-         * instances and pipelines. The CPU painter draws such a frame, so
-         * the pixels stay correct.
+         * The float geometry waits for its GPU instances. The CPU painter
+         * draws such a frame, so the pixels stay correct.
          */
-        if (op->geom >= 0 || op->blend != UI_SCENE_BLEND_PREMUL) {
+        if (op->geom >= 0) {
             b->failed = true;
             break;
         }
@@ -924,18 +929,19 @@ static bool build_scene(struct gpu_build *b, struct font_instance *ufont,
             break;
         case UI_SCENE_OP_RECT:
             if (!op_outside_clip(scene, op, clip))
-                scene_rect(b, op->rect, clip, op->color, 1.0f, canvas_rect);
+                scene_rect(b, op->rect, clip, op->color, 1.0f,
+                           (uint32_t)op->blend, canvas_rect);
             break;
         case UI_SCENE_OP_BLEND_RECT:
             if (!op_outside_clip(scene, op, clip))
                 scene_rect(b, op->rect, clip, op->color | 0xFF000000u, op->alpha / 255.0f,
-                           canvas_rect);
+                           (uint32_t)op->blend, canvas_rect);
             break;
         case UI_SCENE_OP_ROUNDED_RECT: {
             if (op_outside_clip(scene, op, clip))
                 break;
             if (op->radius <= 0) {
-                scene_rect(b, op->rect, clip, op->color, 1.0f, canvas_rect);
+                scene_rect(b, op->rect, clip, op->color, 1.0f, GPU_BLEND_PREMUL, canvas_rect);
                 break;
             }
             struct rect2i visible = rect2i_intersect(op->rect, clip);
@@ -1094,6 +1100,17 @@ void gpu_build_copy_instances(const struct gpu_build *b, const size_t offsets[GP
         if (b->streams[i].n)
             memcpy((uint8_t *)dst + offsets[i], b->streams[i].data,
                    (size_t)b->streams[i].n * gpu_stream_stride(i));
+}
+
+uint32_t gpu_stream_blend(const struct gpu_build *b, enum gpu_stream_id stream, uint32_t index)
+{
+    const struct gpu_stream *s = &b->streams[stream];
+    if (index >= s->n)
+        return GPU_BLEND_PREMUL;
+    const uint8_t *e = s->data + (size_t)index * gpu_stream_stride(stream);
+    if (stream == GPU_ST_SHAPE)
+        return ((const struct gpu_shape_inst *)e)->blend;
+    return ((const struct gpu_glyph_inst *)e)->blend;
 }
 
 /* ---- Presenting CPU pixels ---------------------------------------------- */
