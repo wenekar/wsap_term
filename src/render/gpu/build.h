@@ -18,7 +18,7 @@
  *
  * The atlas. Glyph pixels live in one square texture of `atlas.size` texels.
  * A glyph enters the atlas once, under its glyph id and font version
- * (render/frame/walk.h). The builder decides where each glyph goes, and it
+ * (render/cell.h). The builder decides where each glyph goes, and it
  * stages the pixels in `atlas.stage`. The backend copies each
  * `atlas.uploads` rect into its texture before it draws. The builder also
  * decides the size: when the atlas is full, it forgets every glyph and
@@ -48,6 +48,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "render/grid.h"
 #include "util/geom.h"
 
 struct damage_list;
@@ -228,7 +229,7 @@ void gpu_build_release(struct gpu_build *b);
  * Returns true on success, or false on allocation failure.
  */
 bool gpu_build_frame(struct gpu_build *b, const struct render_frame *frame,
-                     struct vector2i canvas);
+                     const struct render_grid_view *grid, struct vector2i canvas);
 /* Commits staged atlas glyphs and advances the builder frame counter. */
 void gpu_build_commit(struct gpu_build *b);
 /* Clears staged atlas glyphs and resets atlas state after an unsubmitted frame. */

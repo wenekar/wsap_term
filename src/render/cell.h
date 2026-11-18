@@ -1,10 +1,10 @@
-#ifndef RENDER_FRAME_WALK_H
-#define RENDER_FRAME_WALK_H
+#ifndef RENDER_CELL_H
+#define RENDER_CELL_H
 
 /*
- * The row walk. It resolves each cell of a row to the final values that a
- * rasterizer draws: colors, glyph, decorations, and cursor. All cell policy
- * is here. The CPU raster and the GPU grid builder read only this output.
+ * One resolved cell for the raster and the GPU grid builder, and the sink
+ * that a row walk fills. This header is generic: it names no terminal type.
+ * The terminal layer turns its cells into these values.
  *
  * The walk streams. It calls a function for each column. A glyph pointer is
  * valid only inside that call. No consumer keeps one.
@@ -15,7 +15,6 @@
 
 #include "font/font.h"
 #include "font/glyph_cache.h"
-#include "render/term_frame.h"
 #include "util/hash.h"
 
 /*
@@ -23,7 +22,7 @@
  *
  *   bit  0      BLANK: no glyph. The cell draws its bg and its marks only.
  *   bit  1      FAINT: halve the coverage of the glyph and the decorations.
- *   bits 2..4   UNDERLINE: an enum wsap_vtcore_underline value, 0..5.
+ *   bits 2..4   UNDERLINE: an enum render_underline value, 0..5.
  *   bit  5      STRIKE
  *   bit  6      OVERLINE
  *   bit  7      LINK: the cell is a hyperlink. It adds no pixels itself.
@@ -62,29 +61,50 @@
 #define RENDER_CELL_PIXEL_MASK \
     (RENDER_CELL_FAINT | RENDER_CELL_DECOR_MASK | RENDER_CELL_CURSOR_MASK)
 
-_Static_assert(WSAP_VTCORE_UNDERLINE_DASHED < 8, "the underline kind fits in three bits");
+/*
+ * The decoration kinds of a cell. The values fit in the three underline bits
+ * of render_cell.flags. The terminal layer maps its own kinds to these.
+ */
+enum render_underline {
+    RENDER_UNDERLINE_NONE,
+    RENDER_UNDERLINE_SINGLE,
+    RENDER_UNDERLINE_DOUBLE,
+    RENDER_UNDERLINE_CURLY,
+    RENDER_UNDERLINE_DOTTED,
+    RENDER_UNDERLINE_DASHED,
+};
 
-static inline enum wsap_vtcore_underline render_cell_underline(uint16_t flags)
+_Static_assert(RENDER_UNDERLINE_DASHED < 8, "the underline kind fits in three bits");
+
+static inline enum render_underline render_cell_underline(uint16_t flags)
 {
-    return (enum wsap_vtcore_underline)((flags & RENDER_CELL_UNDERLINE_MASK) >>
-                                        RENDER_CELL_UNDERLINE_SHIFT);
+    return (enum render_underline)((flags & RENDER_CELL_UNDERLINE_MASK) >>
+                                   RENDER_CELL_UNDERLINE_SHIFT);
 }
+
+/*
+ * The shape of one row. A row that a terminal shows at double size is one of
+ * the last three values. The raster and the GPU builder draw it the same way.
+ */
+enum render_line_size {
+    RENDER_LINE_SINGLE,
+    RENDER_LINE_DOUBLE_WIDTH,
+    RENDER_LINE_DOUBLE_TOP,
+    RENDER_LINE_DOUBLE_BOTTOM,
+};
 
 /*
  * One resolved cell. 20 bytes.
  *
- * - `fg`, `bg`: the final colors, as the cell draws them. The walk
- *   applies, in this order:
- *   1. the palette (terminal_frame_color());
+ * - `fg`, `bg`: the final colors, as the cell draws them. The walk applies,
+ *   in this order:
+ *   1. the palette;
  *   2. reverse video (DECSCNM): swap fg and bg;
- *   3. the selection: fg = terminal_frame_selection_fg(),
- *      bg = terminal_frame_selection_bg();
+ *   3. the selection;
  *   4. a block cursor: fg = (bg == cursor_color) ? default_bg : bg, then
  *      bg = cursor_color.
- *   A never-written cell (text 0, width 1) starts from the default colors
- *   and has no attributes. Steps 2 to 4 still apply to it.
- *   This is the policy of the old cell.h, resolve_cell_bg(), and
- *   paint_cell(), in one place.
+ *   A never-written cell starts from the default colors and has no
+ *   attributes. Steps 2 to 4 still apply to it.
  * - `text`: the glyph text. It is a code point, or a glyph_intern() handle
  *   (above U+10FFFF) for a cluster. A BLANK cell has ' '.
  * - `ul`: the underline color when flags has UL_COLOR. Zero otherwise.
@@ -108,10 +128,10 @@ _Static_assert(sizeof(struct render_cell) == 20, "a render_cell is 20 bytes");
  * flags have the same pixels. The cell cache and the GPU atlas use it.
  *
  * - 0 means: do not cache this cell. For a cluster, the walk reads the
- *   epoch before and after terminal_frame_glyph(). When the two differ,
- *   handles were reused during the intern, and the id is 0. The id uses the
- *   epoch read after the intern. So a later reuse makes the old key stale
- *   instead of wrong.
+ *   epoch before and after the glyph intern. When the two differ, handles
+ *   were reused during the intern, and the id is 0. The id uses the epoch
+ *   read after the intern. So a later reuse makes the old key stale instead
+ *   of wrong.
  * - Unshaped cell: text | style << 32 | epoch << 48. The epoch is
  *   glyph_intern_epoch() & 0x7FFF for a cluster handle, and 0 for a code
  *   point. Bit 63 is 0. A code point keeps its id when handles are reused.
@@ -198,8 +218,8 @@ typedef void (*render_run_fn)(void *ctx, int c0, int c1, uint32_t bg);
  * `fg`, bg `bg`, text text[(c - c0) * stride], style `style`, and flags 0.
  * Its text is in ('!', '~'), its style has only FONT_STYLE_VARIANT_MASK
  * bits, and no shaped span covers it. So its glyph id is the unshaped id of
- * its text and style. The text points into the snapshot. It is valid only
- * inside the call.
+ * its text and style. The text points into the terminal snapshot. It is
+ * valid only inside the call.
  *
  * Returns the first column that the call did not draw, in [c0, c1]. The
  * walk sends that column to render_cell_fn, and it can call again for the
@@ -242,60 +262,5 @@ enum render_walk_flags {
      * cache miss. */
     RENDER_WALK_PEEK = 1u << 0,
 };
-
-/*
- * Walks row `y` of `f`, columns [c0, c1), and calls the sink for each
- * column: `cell` for one column, or `run`, `text`, and `span` for runs
- * (see render_run_fn, render_text_fn, and render_span_fn). The calls
- * together cover each column once, in increasing column order.
- *
- * - The walk clamps [c0, c1) to [0, f->cols). A row outside the snapshot
- *   gives blank cells in the default colors, after reverse video.
- * - The output for a column does not depend on c0 and c1. The walk shapes
- *   each whole segment that touches [c0, c1), also the part outside the
- *   range. It calls the sink only for the columns inside the range.
- * - A segment is a run of shapeable cells (text above ' ', no cluster,
- *   width 1, no cell-aligned symbol) with the same raw fg, raw bg, and
- *   font variant. This is the rule of the old renderer.
- * - Inside a shaped span, `cell` runs inside the glyph_span emit callback.
- *   For other cells, `cell` runs right after the glyph fetch, or with no
- *   fetch in a peek walk.
- * - A WIDE_TAIL cell takes text, style, and decoration bits from the cell
- *   to its left. Its colors resolve at its own column. A width-0 cell with
- *   no wide cell to its left is a BLANK cell.
- * - A tail at c0 still gets its glyph: the walk reads column c0 - 1.
- * - LINK with no underline kind sets the SINGLE kind.
- * - A cell with the conceal attribute, or with the blink attribute and a
- *   false f->blink_on, is BLANK. It draws only its bg and the row policy
- *   marks (selection and cursor).
- * - An underline uses the SGR 58 color of its column when the snapshot has
- *   one. Then UL_COLOR is set and `ul` holds the resolved color.
- * - FAINT is set only on a cell that has a glyph or a decoration.
- * - The cursor exists when f->cursor_y == y and 0 <= f->cursor_x < cols.
- *   The cells that it covers are the cell at cursor_x, plus the other half
- *   when that cell is half of a two-column glyph. A block cursor changes
- *   the colors of each covered cell. CURSOR_UNDERLINE goes on each covered
- *   cell. CURSOR_BAR goes only on the left covered cell.
- * - Rows without selection, cursor, or reverse video take a fast path.
- *
- * Threads: any thread, with glyph_cache_set_parallel(true) on. Each thread
- * keeps its own scratch for the segment code points. The renderer calls the
- * walk in parallel mode also with 0 workers, so 0 and N workers take the
- * same font path.
- *
- * A segment has at most f->cols cells. After render_walk_thread_reserve()
- * with f->cols or more, a walk of `f` allocates no scratch on that thread.
- */
-void render_row_walk(struct font_instance *fi, const struct terminal_frame *f, int y,
-                     int c0, int c1, unsigned flags, const struct render_walk_sink *sink);
-
-/*
- * Reserves thread-local scratch storage for a segment of `cols` cells.
- * Returns true on success, or false on allocation failure.
- */
-bool render_walk_thread_reserve(int cols);
-
-/* Frees thread-local scratch memory allocated for frame walks. */
-void render_walk_thread_release(void);
 
 #endif

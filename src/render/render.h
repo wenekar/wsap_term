@@ -14,12 +14,12 @@
 #include <stdint.h>
 
 #include "paint/framebuffer.h"
-#include "render/term_frame.h"
 #include "util/damage.h"
 #include "util/geom.h"
 
 struct font_instance;
 struct renderer;
+struct terminal_frame;
 struct ui_damage;
 struct ui_scene;
 

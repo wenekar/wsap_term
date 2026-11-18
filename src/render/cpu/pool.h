@@ -27,7 +27,7 @@
  * - calls font_thread_attach() when it starts;
  * - calls glyph_cache_flush_deferred() and font_thread_attach() at the start
  *   of each job that it takes part in;
- * - calls render_walk_thread_release(), glyph_cache_thread_detach(), and
+ * - calls render_thread_scratch_release(), glyph_cache_thread_detach(), and
  *   font_thread_detach() before it exits.
  * The main thread turns on glyph_cache_set_parallel(true) before pool_run()
  * and turns it off after. It calls glyph_cache_flush_frame() after the UI

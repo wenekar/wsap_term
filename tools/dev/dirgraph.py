@@ -22,9 +22,11 @@ RANKS = {
     "ui": 9,
     "theme": 10,
     "render": 11,
-    "ui/yasl": 12,
-    "terminal": 13,
-    "app": 14,
+    "terminal/render": 12,
+    "render/term_frame.h": 12,
+    "ui/yasl": 13,
+    "terminal": 14,
+    "app": 15,
 }
 
 PRIVATE_OWNERS = {
@@ -48,6 +50,7 @@ LIBRARY_PATHS = {
     "ui": ("ui",),
     "theme": ("theme",),
     "render": ("render",),
+    "render_term": ("terminal/render", "render/term_frame.h"),
     "ui_yasl": ("ui/yasl",),
     "terminal": ("terminal",),
     "app": ("app",),
@@ -63,9 +66,10 @@ ALLOWED_DEPENDENCIES = {
     "ui": {"paint", "input", "base"},
     "theme": {"ui", "base"},
     "render": {"paint", "font", "base"},
+    "render_term": {"render", "paint", "font", "base"},
     "ui_yasl": {"paint", "input", "ui", "font", "base"},
-    "terminal": {"ui_yasl", "session", "ui", "input", "font", "paint", "base"},
-    "app": {"base", "pty", "session", "input", "paint", "font", "ui", "theme", "render", "ui_yasl", "terminal"},
+    "terminal": {"ui_yasl", "session", "ui", "input", "font", "paint", "base", "render_term"},
+    "app": {"base", "pty", "session", "input", "paint", "font", "ui", "theme", "render", "render_term", "ui_yasl", "terminal"},
 }
 # Libraries that may include yasl headers. The editor is not one of them: it
 # has no window system dependency.
@@ -256,6 +260,17 @@ def self_test() -> int:
         errors = scan_private_owner(src, "ui")
         if len(errors) != 2 or any("own.c" in error for error in errors):
             print("self-test failed: ui_yasl private owners were not enforced", file=sys.stderr)
+            return 1
+        (src / "render").mkdir()
+        (src / "render" / "cell.h").write_text("\n")
+        (src / "terminal" / "render").mkdir(parents=True)
+        (src / "terminal" / "render" / "term_frame.h").write_text("\n")
+        (src / "render" / "bad.c").write_text('#include "terminal/render/term_frame.h"\n')
+        errors = scan(src)
+        if not any("rank 11 (render) includes rank 12 (terminal/render)" in error
+                   for error in errors):
+            print("self-test failed: render may not use the terminal grid renderer",
+                  file=sys.stderr)
             return 1
     print("self-test passed: private headers, rank violations, and yasl includes are rejected")
     return 0

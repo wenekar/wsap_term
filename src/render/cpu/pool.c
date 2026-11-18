@@ -3,7 +3,7 @@
 
 #include "font/font.h"
 #include "font/glyph_cache.h"
-#include "render/frame/walk.h"
+#include "render/scratch.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -311,7 +311,7 @@ static void *worker_main(void *arg)
         if (ran && atomic_fetch_add_explicit(&p->done, ran, memory_order_seq_cst) + ran == n)
             wake_main(p);
     }
-    render_walk_thread_release();
+    render_thread_scratch_release();
     glyph_cache_thread_detach();
     font_thread_detach();
     return NULL;

@@ -346,8 +346,9 @@ static bool encode_frame(struct render_gpu *g, struct frame_slot *slot, struct f
     return true;
 }
 
-enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surface *s,
-                                       struct framebuffer *fb, const struct render_frame *frame)
+enum render_gpu_status render_gpu_draw_view(struct render_gpu *g, struct render_surface *s,
+                                       struct framebuffer *fb, const struct render_frame *frame,
+                                       const struct render_grid_view *grid)
 {
     (void)s;
     if (!g || !fb || !frame || (!fb->drawable && !fb->acquire) || fb->size.x <= 0 ||
@@ -358,7 +359,7 @@ enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surfa
         return RENDER_GPU_DROPPED;
     enum render_gpu_status status = RENDER_GPU_UNUSED;
     @autoreleasepool {
-        if (gpu_build_frame(&g->build, frame, fb->size)) {
+        if (gpu_build_frame(&g->build, frame, grid, fb->size)) {
             size_t offsets[GPU_ST_COUNT];
             if (frame_stage(g, slot, offsets)) {
                 id<CAMetalDrawable> drawable = frame_drawable(fb);

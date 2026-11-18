@@ -1,4 +1,4 @@
-#include "render/term_frame.h"
+#include "terminal/render/term_frame.h"
 
 #include "font/glyph/intern.h"
 

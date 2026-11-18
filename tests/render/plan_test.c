@@ -6,7 +6,9 @@
 #include "paint/scene.h"
 #include "render/plan.h"
 #include "render/surface.h"
+#include "render/term_frame.h"
 #include "term_api.h"
+#include "terminal/render/view.h"
 
 /*
  * Tests of the frame planner (render/plan.h) and of the surface state
@@ -1342,52 +1344,52 @@ static void row_key_test(void)
 
     uint64_t plain[ROWS];
     for (int r = 0; r < ROWS; r++) {
-        plain[r] = render_surface_row_key(&f, r);
+        plain[r] = render_term_row_key(&f, r);
         assert(plain[r] != 0);
-        assert(render_surface_row_key(&f, r) == plain[r]);
+        assert(render_term_row_key(&f, r) == plain[r]);
         for (int q = 0; q < r; q++)
             assert(plain[q] != plain[r] || plain[r] == 0);
     }
 
     /* A row with an unknown content key keeps key 0. */
-    assert(render_surface_row_key(&f, ROWS) == 0);
+    assert(render_term_row_key(&f, ROWS) == 0);
 
     /* The selection span of a row is part of its key. */
     tt_select(t, 1, 2, 2, 2);
     assert(wsap_vtcore_snapshot_update(snap, t));
-    assert(render_surface_row_key(&f, 2) == plain[2]); /* has_selection is false */
+    assert(render_term_row_key(&f, 2) == plain[2]); /* has_selection is false */
     terminal_frame_init(&f, snap, false);
-    uint64_t sel = render_surface_row_key(&f, 2);
+    uint64_t sel = render_term_row_key(&f, 2);
     assert(sel != plain[2] && sel != 0);
-    assert(render_surface_row_key(&f, 1) == plain[1]);
+    assert(render_term_row_key(&f, 1) == plain[1]);
     tt_select(t, 1, 2, 3, 2);
     assert(wsap_vtcore_snapshot_update(snap, t));
-    assert(render_surface_row_key(&f, 2) != sel);
+    assert(render_term_row_key(&f, 2) != sel);
     wsap_vtcore_select_clear(t);
     assert(wsap_vtcore_snapshot_update(snap, t));
-    assert(render_surface_row_key(&f, 2) == plain[2]);
+    assert(render_term_row_key(&f, 2) == plain[2]);
 
     /* The cursor x and style are part of the key of the cursor row only. */
     f.cursor_y = 4;
     f.cursor_x = 7;
-    uint64_t cur = render_surface_row_key(&f, 4);
+    uint64_t cur = render_term_row_key(&f, 4);
     assert(cur != plain[4] && cur != 0);
     f.cursor_y = ROWS;
-    assert(render_surface_row_key(&f, ROWS) == 0); /* The cursor does not make it known. */
+    assert(render_term_row_key(&f, ROWS) == 0); /* The cursor does not make it known. */
     f.cursor_y = 4;
-    assert(render_surface_row_key(&f, 3) == plain[3]);
+    assert(render_term_row_key(&f, 3) == plain[3]);
     f.cursor_x = 8;
-    assert(render_surface_row_key(&f, 4) != cur);
+    assert(render_term_row_key(&f, 4) != cur);
     f.cursor_x = 7;
     f.cursor_style = WSAP_VTCORE_CURSOR_BAR;
-    assert(render_surface_row_key(&f, 4) != cur);
+    assert(render_term_row_key(&f, 4) != cur);
     f.cursor_y = -1;
-    assert(render_surface_row_key(&f, 4) == plain[4]);
+    assert(render_term_row_key(&f, 4) == plain[4]);
 
     /* The key follows the content when the content moves. */
     tt_puts(t, "\033[5S");
     assert(wsap_vtcore_snapshot_update(snap, t));
-    assert(render_surface_row_key(&f, 1) == plain[6]);
+    assert(render_term_row_key(&f, 1) == plain[6]);
 
     wsap_vtcore_snapshot_free(snap);
     wsap_vtcore_free(t);

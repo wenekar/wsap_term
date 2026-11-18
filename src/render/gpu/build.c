@@ -10,7 +10,7 @@
 #include "paint/shadow.h"
 #include "paint/text_run.h"
 #include "render/cpu/decor.h"
-#include "render/frame/walk.h"
+#include "render/grid.h"
 #include "render/render.h"
 #include "util/damage.h"
 #include "util/geom.h"
@@ -401,9 +401,9 @@ static bool atlas_add_mask(struct gpu_build *b, uint64_t id, uint64_t version,
 
 /* ---- The grid ----------------------------------------------------------- */
 
-/* The part of a render_frame that the grid draws. */
+/* The part of a frame that the grid draws. */
 struct grid_geometry {
-    const struct terminal_frame *tf;
+    const struct render_grid_view *grid;
     struct font_instance *font;
     struct rect2i rect;
     int cw;
@@ -413,22 +413,21 @@ struct grid_geometry {
 };
 
 /* The same rules as render_draw(): clip, cell size, and visible cells. */
-static bool grid_geometry_of(const struct render_frame *frame, struct vector2i canvas,
+static bool grid_geometry_of(const struct render_frame *frame,
+                             const struct render_grid_view *grid, struct vector2i canvas,
                              struct grid_geometry *out)
 {
-    const struct terminal_frame *tf = frame->grid.frame;
     struct font_instance *font = frame->grid.font ? frame->grid.font : font_instance_default();
     struct rect2i rect = frame->grid.rect;
-    if (!tf || !terminal_frame_valid(tf) || !font || rect.x < 0 || rect.y < 0 ||
-        !rect2i_clip(&rect, canvas))
+    if (!grid || !font || rect.x < 0 || rect.y < 0 || !rect2i_clip(&rect, canvas))
         return false;
     const struct font_metrics *m = font_instance_metrics(font);
     if (m->cell_w <= 0 || m->cell_h <= 0)
         return false;
     *out = (struct grid_geometry){
-        .tf = tf, .font = font, .rect = rect, .cw = m->cell_w, .ch = m->cell_h,
-        .cols = geom_min_i(rect.width / m->cell_w, tf->cols),
-        .rows = geom_min_i(rect.height / m->cell_h, tf->rows),
+        .grid = grid, .font = font, .rect = rect, .cw = m->cell_w, .ch = m->cell_h,
+        .cols = geom_min_i(rect.width / m->cell_w, grid->cells.x),
+        .rows = geom_min_i(rect.height / m->cell_h, grid->cells.y),
     };
     return true;
 }
@@ -443,7 +442,7 @@ struct grid_walk {
     uint32_t default_bg;
     uint32_t cursor_color;
     int row;
-    enum wsap_vtcore_line_size line_size;
+    enum render_line_size line_size;
     /* The open run of equal backgrounds: columns [run_x0, run_x1). */
     bool run_open;
     int run_x0;
@@ -460,7 +459,7 @@ static void bg_flush(struct grid_walk *w)
     if (!in)
         return;
     const struct grid_geometry *geo = w->geo;
-    int cell_w = (w->line_size != WSAP_VTCORE_LINE_SINGLE) ? 2 * geo->cw : geo->cw;
+    int cell_w = (w->line_size != RENDER_LINE_SINGLE) ? 2 * geo->cw : geo->cw;
     rect_to_vec4((float)(geo->rect.x + w->run_x0 * cell_w),
                  (float)(geo->rect.y + w->row * geo->ch),
                  (float)((w->run_x1 - w->run_x0) * cell_w), (float)geo->ch, in->rect);
@@ -504,9 +503,9 @@ static void emit_glyph_part(struct grid_walk *w, const struct gpu_atlas_entry *e
     struct gpu_glyph_inst *in = push_glyph(w->b, subpx ? GPU_ST_SUBPX : GPU_ST_INK);
     if (!in)
         return;
-    bool double_w = (w->line_size != WSAP_VTCORE_LINE_SINGLE);
-    bool double_h = (w->line_size == WSAP_VTCORE_LINE_DOUBLE_TOP ||
-                     w->line_size == WSAP_VTCORE_LINE_DOUBLE_BOTTOM);
+    bool double_w = (w->line_size != RENDER_LINE_SINGLE);
+    bool double_h = (w->line_size == RENDER_LINE_DOUBLE_TOP ||
+                     w->line_size == RENDER_LINE_DOUBLE_BOTTOM);
     float width = (float)(c1 - c0);
     float height = (float)rows;
     float v0 = (float)e->y;
@@ -515,7 +514,7 @@ static void emit_glyph_part(struct grid_walk *w, const struct gpu_atlas_entry *e
         width *= 2.0f;
     if (double_h) {
         int half_h = geo->ch / 2;
-        if (w->line_size == WSAP_VTCORE_LINE_DOUBLE_TOP) {
+        if (w->line_size == RENDER_LINE_DOUBLE_TOP) {
             int sub_rows = geom_min_i(rows, half_h);
             v1 = (float)(e->y + sub_rows);
             height = (float)(sub_rows * 2);
@@ -545,9 +544,9 @@ static void emit_mask(struct grid_walk *w, int col, const struct decor_mask *m, 
     if (!m || m->y0 >= m->y1)
         return;
     const struct grid_geometry *geo = w->geo;
-    bool double_w = (w->line_size != WSAP_VTCORE_LINE_SINGLE);
-    bool double_h = (w->line_size == WSAP_VTCORE_LINE_DOUBLE_TOP ||
-                     w->line_size == WSAP_VTCORE_LINE_DOUBLE_BOTTOM);
+    bool double_w = (w->line_size != RENDER_LINE_SINGLE);
+    bool double_h = (w->line_size == RENDER_LINE_DOUBLE_TOP ||
+                     w->line_size == RENDER_LINE_DOUBLE_BOTTOM);
     int cell_w = double_w ? 2 * geo->cw : geo->cw;
     int rows = m->y1 - m->y0;
     int y0 = m->y0;
@@ -555,7 +554,7 @@ static void emit_mask(struct grid_walk *w, int col, const struct decor_mask *m, 
     float height = (float)rows;
     if (double_h) {
         int half_h = geo->ch / 2;
-        if (w->line_size == WSAP_VTCORE_LINE_DOUBLE_TOP) {
+        if (w->line_size == RENDER_LINE_DOUBLE_TOP) {
             if (y0 >= half_h) return;
             rows = geom_min_i(m->y1, half_h) - y0;
             height = (float)(rows * 2);
@@ -641,7 +640,7 @@ static void grid_cell(void *ctx, int col, const struct render_cell *cell,
             return;
         }
         if (e.kind != KIND_NONE) {
-            bool double_w = (w->line_size != WSAP_VTCORE_LINE_SINGLE);
+            bool double_w = (w->line_size != RENDER_LINE_SINGLE);
             int cell_w = double_w ? 2 * geo->cw : geo->cw;
             int cell_x = geo->rect.x + col * cell_w;
             int x_off = double_w ? 2 * e.x_offset : e.x_offset;
@@ -664,14 +663,14 @@ static void grid_cell(void *ctx, int col, const struct render_cell *cell,
 
 static bool build_grid(struct gpu_build *b, const struct grid_geometry *geo)
 {
-    const struct terminal_frame *tf = geo->tf;
+    const struct render_grid_view *grid = geo->grid;
     struct grid_walk w = {
         .b = b,
         .geo = geo,
         .decor = decor_get(b->decor, font_instance_metrics(geo->font)),
         .font_version = font_instance_version(geo->font),
-        .default_bg = tf->default_bg | 0xFF000000u,
-        .cursor_color = tf->cursor_color,
+        .default_bg = grid->default_bg | 0xFF000000u,
+        .cursor_color = grid->cursor_color,
     };
     struct decor_key dk = decor_key_of(font_instance_metrics(geo->font));
     w.decor_version = hash64_finish(((uint64_t)(uint32_t)dk.cw << 32) | (uint32_t)dk.ch) ^
@@ -687,14 +686,14 @@ static bool build_grid(struct gpu_build *b, const struct grid_geometry *geo)
     fill->mode = GPU_MODE_SOLID;
 
     const struct render_walk_sink sink = { .cell = grid_cell, .run = grid_run, .ctx = &w };
-    (void)render_walk_thread_reserve(tf->cols);
+    (void)grid->ops->reserve_walk(grid->cells.x);
     glyph_cache_set_parallel(true);
     for (int row = 0; row < geo->rows && !b->failed && !b->atlas.full; row++) {
         w.row = row;
-        w.line_size = terminal_frame_row_size(tf, row);
-        int cols = (w.line_size != WSAP_VTCORE_LINE_SINGLE)
+        w.line_size = grid->ops->line_size(grid->source, row);
+        int cols = (w.line_size != RENDER_LINE_SINGLE)
             ? (geo->cols / 2 > 0 ? geo->cols / 2 : 1) : geo->cols;
-        render_row_walk(geo->font, tf, row, 0, cols, RENDER_WALK_PEEK, &sink);
+        grid->ops->walk(geo->font, grid->source, row, 0, cols, RENDER_WALK_PEEK, &sink);
         bg_flush(&w);
     }
     glyph_cache_set_parallel(false);
@@ -981,13 +980,13 @@ static bool build_scene(struct gpu_build *b, struct font_instance *ufont,
 
 /* One try to build the frame. False with atlas.full set means: no room. */
 static bool build_frame(struct gpu_build *b, const struct render_frame *frame,
-                        struct vector2i canvas)
+                        const struct render_grid_view *grid, struct vector2i canvas)
 {
     begin_build(b);
     const struct rect2i canvas_rect = { .size = canvas };
 
     struct grid_geometry geo;
-    if (grid_geometry_of(frame, canvas, &geo)) {
+    if (grid_geometry_of(frame, grid, canvas, &geo)) {
         if (!build_grid(b, &geo))
             return false;
         cmd_whole_stream(b, GPU_CMD_GLYPH, GPU_ST_BG, canvas_rect);
@@ -1036,17 +1035,17 @@ void gpu_build_release(struct gpu_build *b)
 }
 
 bool gpu_build_frame(struct gpu_build *b, const struct render_frame *frame,
-                     struct vector2i canvas)
+                     const struct render_grid_view *grid, struct vector2i canvas)
 {
     b->frame++;
-    bool built = build_frame(b, frame, canvas);
+    bool built = build_frame(b, frame, grid, canvas);
     if (!built && b->atlas.full) {
         /* A full atlas gets one retry: it forgets every glyph and doubles
          * its size, up to the maximum. */
         if (b->atlas.size < GPU_ATLAS_MAX_SIZE)
             b->atlas.size *= 2;
         atlas_clear(&b->atlas);
-        built = build_frame(b, frame, canvas);
+        built = build_frame(b, frame, grid, canvas);
     }
     glyph_cache_flush_frame();
     if (!built)

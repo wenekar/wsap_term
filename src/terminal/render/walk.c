@@ -1,45 +1,17 @@
-#include "render/frame/walk.h"
+#include "terminal/render/walk.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 #include "font/cell_draw.h"
 #include "font/glyph/intern.h"
-
-/*
- * The segment code points of the calling thread. Only the thread that owns
- * them reads or writes them, so a walk on one thread never sees the walk of
- * another thread.
- */
-static _Thread_local uint32_t *walk_cps;
-static _Thread_local int walk_cps_cap;
-
-void render_walk_thread_release(void)
-{
-    free(walk_cps);
-    walk_cps = NULL;
-    walk_cps_cap = 0;
-}
-
-static uint32_t *walk_scratch(int n)
-{
-    if (n <= walk_cps_cap)
-        return walk_cps;
-    int cap = walk_cps_cap ? walk_cps_cap : 256;
-    while (cap < n)
-        cap *= 2;
-    uint32_t *p = realloc(walk_cps, (size_t)cap * sizeof(*p));
-    if (!p)
-        return NULL;
-    walk_cps = p;
-    walk_cps_cap = cap;
-    return p;
-}
+#include "render/scratch.h"
 
 /* A segment has at least two cells. A shorter row has no scratch to reserve. */
 bool render_walk_thread_reserve(int cols)
 {
-    return cols < 2 || (walk_scratch(cols) && glyph_cache_reserve_segment(cols));
+    return cols < 2 ||
+           (render_thread_scratch_reserve(cols) && glyph_cache_reserve_segment(cols));
 }
 
 /* The glyph half of a resolved cell: everything except the colors. */
@@ -91,17 +63,37 @@ static inline uint16_t cell_style(const struct wsap_vtcore_cell *c)
                       (c->width == 2 ? FONT_STYLE_WIDE : 0));
 }
 
+/* The decoration kind of the attributes, as a RENDER_UNDERLINE_* value. */
+static inline enum render_underline underline_kind(uint16_t attrs)
+{
+    switch (wsap_vtcore_attr_underline(attrs)) {
+    case WSAP_VTCORE_UNDERLINE_SINGLE:
+        return RENDER_UNDERLINE_SINGLE;
+    case WSAP_VTCORE_UNDERLINE_DOUBLE:
+        return RENDER_UNDERLINE_DOUBLE;
+    case WSAP_VTCORE_UNDERLINE_CURLY:
+        return RENDER_UNDERLINE_CURLY;
+    case WSAP_VTCORE_UNDERLINE_DOTTED:
+        return RENDER_UNDERLINE_DOTTED;
+    case WSAP_VTCORE_UNDERLINE_DASHED:
+        return RENDER_UNDERLINE_DASHED;
+    case WSAP_VTCORE_UNDERLINE_NONE:
+    default:
+        return RENDER_UNDERLINE_NONE;
+    }
+}
+
 /* The decoration and link bits of the attributes. */
 static inline uint16_t decor_flags(uint16_t attrs)
 {
     if (!(attrs & ATTR_DECOR_BITS))
         return 0;
-    unsigned ul = wsap_vtcore_attr_underline(attrs);
+    enum render_underline ul = underline_kind(attrs);
     uint16_t fl = 0;
     if (attrs & WSAP_VTCORE_ATTR_LINK) {
         fl |= RENDER_CELL_LINK;
-        if (ul == WSAP_VTCORE_UNDERLINE_NONE)
-            ul = WSAP_VTCORE_UNDERLINE_SINGLE;
+        if (ul == RENDER_UNDERLINE_NONE)
+            ul = RENDER_UNDERLINE_SINGLE;
     }
     fl |= (uint16_t)(ul << RENDER_CELL_UNDERLINE_SHIFT);
     if (attrs & WSAP_VTCORE_ATTR_STRIKE)
@@ -664,7 +656,7 @@ static inline __attribute__((always_inline)) void walk_row(struct walk *w, bool 
             continue;
         }
         int end = segment_end(cells, c, w->cols);
-        uint32_t *cps = end - c > 1 ? walk_scratch(end - c) : NULL;
+        uint32_t *cps = end - c > 1 ? render_thread_scratch(end - c) : NULL;
         if (cps) {
             for (int i = c; i < end; i++)
                 cps[i - c] = cells[i].text;

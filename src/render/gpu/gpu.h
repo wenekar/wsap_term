@@ -65,6 +65,7 @@ struct damage_list;
 struct framebuffer;
 struct render_frame;
 struct render_gpu;
+struct render_grid_view;
 struct render_surface;
 
 enum render_gpu_status {
@@ -84,9 +85,19 @@ bool render_gpu_idle(struct render_gpu *g);
 void *render_gpu_native_device(struct render_gpu *g);
 
 /*
- * Builds, uploads, and draws `frame` to the target surface of `fb`.
+ * Builds, uploads, and draws `frame` to the target surface of `fb`. `grid`
+ * is the terminal grid view of the frame, or NULL for no grid.
  * Returns RENDER_GPU_PRESENTED on successful submission,
  * RENDER_GPU_DROPPED when slots are busy, or RENDER_GPU_UNUSED on fallback.
+ */
+enum render_gpu_status render_gpu_draw_view(struct render_gpu *g, struct render_surface *s,
+                                            struct framebuffer *fb,
+                                            const struct render_frame *frame,
+                                            const struct render_grid_view *grid);
+
+/*
+ * The test entry point. It is render_gpu_draw_view() with the grid resolved
+ * from the terminal frame of `frame`. The terminal layer implements it.
  */
 enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surface *s,
                                        struct framebuffer *fb, const struct render_frame *frame);

@@ -118,7 +118,7 @@
  * - `glyph`: render_glyph_ref.id. Never 0: an id of 0 is not cached.
  * - `font_version`: font_instance_version() of the grid font.
  * - `fg`, `bg`: render_cell.fg and render_cell.bg.
- * - `cursor`: terminal_frame.cursor_color when `flags` has a CURSOR bit,
+ * - `cursor`: render_grid_view.cursor_color when `flags` has a CURSOR bit,
  *   else 0. The design key had no cursor color. Without it, two terminals
  *   with different cursor colors would share a cursor tile.
  * - `flags`: render_cell.flags & RENDER_CELL_PIXEL_MASK.

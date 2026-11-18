@@ -5,9 +5,9 @@ render_inc = []
 render_src = files(
     'plan.c',
     'render.c',
+    'scratch.c',
     'surface.c',
 )
 
-subdir('frame')
 subdir('cpu')
 subdir('gpu')

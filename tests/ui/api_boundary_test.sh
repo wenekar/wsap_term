@@ -75,6 +75,16 @@ while IFS= read -r file; do
     fi
 done < <(find src/editor -name '*.[chm]' | sort)
 
+# The render library draws a grid through render/grid.h. The terminal grid
+# renderer sits above it and owns the terminal frame and the VT cells. The
+# forwarder at src/render/term_frame.h is part of the terminal grid renderer.
+while IFS= read -r file; do
+    if grep -nE '#include [<"](wsap_vtcore|terminal/)' "$file"; then
+        echo "$file: the render library uses the terminal" >&2
+        status=1
+    fi
+done < <(find src/render -name '*.[chm]' ! -path 'src/render/term_frame.h' | sort)
+
 for file in "${allowed[@]}"; do
     if ! grep -qE '(\.|->)impl\b|#include "ui/internal/' "$file"; then
         echo "$file: uses only public UI headers; remove it from the list" >&2

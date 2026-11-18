@@ -4,7 +4,7 @@
 /*
  * The row raster. It paints one grid row of the canvas through a clip
  * window [x0, x1), in two passes. It consumes the output of
- * render_row_walk() and nothing else of the terminal.
+ * its walk (render/grid.h) and nothing else of the terminal.
  *
  * Coordinates: x is a grid-local pixel column. 0 is grid.rect.x. The cell
  * area is [0, cols * cw). The right margin is [cols * cw, width).
@@ -64,7 +64,7 @@
 #include <stdint.h>
 
 #include "render/cpu/pair_lut.h"
-#include "render/term_frame.h"
+#include "render/grid.h"
 
 struct cell_cache;
 struct cell_cache_worker;
@@ -161,11 +161,11 @@ void raster_workers_balance(struct raster_worker *w, int n);
  * - `decor` NULL means: no decorations. Then no decorated or cursor cell is
  *   cached.
  * - `cache` NULL means: no cell cache this frame.
- * - The default pair and the cursor color come from `frame`.
+ * - The default pair and the cursor color come from `grid`.
  */
 struct raster_frame {
     struct font_instance *font;
-    const struct terminal_frame *frame;
+    const struct render_grid_view *grid;
     const struct decor_set *decor;
     struct cell_class *cache;
     uint64_t font_version;
