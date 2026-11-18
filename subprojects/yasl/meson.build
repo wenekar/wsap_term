@@ -82,7 +82,7 @@ elif system == 'darwin'
         error('Cocoa requires macOS 14 or newer. Set MACOSX_DEPLOYMENT_TARGET=14.0 or a newer target before configuring.')
     endif
     deps += [
-        dependency('appleframeworks', modules: ['AppKit', 'Metal', 'QuartzCore', 'UserNotifications']),
+        dependency('appleframeworks', modules: ['AppKit', 'IOSurface', 'Metal', 'QuartzCore', 'UserNotifications']),
     ]
 else
     error('YASL supports Linux and macOS.')

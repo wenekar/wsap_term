@@ -1,4 +1,5 @@
 #import <AppKit/AppKit.h>
+#import <IOSurface/IOSurface.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
 
@@ -14,6 +15,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <limits.h>
 #include <math.h>
 #include <poll.h>
 #include <stdio.h>
@@ -51,6 +53,8 @@ enum {
 
 @interface YaslView : NSView <NSTextInputClient>
 @property (nonatomic, assign) struct cocoa_surface *surface;
+@property (nonatomic, assign) BOOL cpuLayer;
+- (instancetype)initWithFrame:(NSRect)frameRect cpuLayer:(BOOL)cpuLayer;
 @end
 
 @interface YaslAppDelegate : NSObject <NSApplicationDelegate>
@@ -67,15 +71,34 @@ enum {
 
 #include "common/input.h"
 
+enum { COCOA_CPU_SLOTS = 3 };
+/* The time without a commit after which a CPU surface frees its spare slots. */
+#define CPU_TRIM_IDLE_NS (150ull * 1000000ull)
+
+struct cocoa_cpu_slot {
+    IOSurfaceRef surface;
+    struct yasl_private_vector2i size;
+    bool locked;
+};
+
 struct cocoa_surface {
     struct yasl_surface base;
     YaslWindow *window;
     YaslWindowController *controller;
     YaslView *view;
-    CAMetalLayer *layer;
+    CALayer *layer;
+    CAMetalLayer *metal_layer;
     id<MTLCommandQueue> software_queue;
     /* The staging buffers of the CPU pixels. See software_stage.h. */
     struct software_stages *software_stages;
+    struct cocoa_cpu_slot cpu_slots[COCOA_CPU_SLOTS];
+    bool use_iosurface;
+    bool has_shown;
+    bool direct_acquired;
+    bool present_acquired;
+    int shown_slot;
+    int direct_slot;
+    int present_slot;
     CADisplayLink *link;
 
     struct cocoa_surface *parent;
@@ -110,6 +133,9 @@ struct cocoa_surface {
      * next display tick. A fallback timer answers it when no tick comes. */
     bool want_draw;
     yasl_private_timer_id tick_timer;
+    yasl_private_timer_id trim_timer;
+    /* The loop time of the last IOSurface commit. */
+    uint64_t cpu_commit_ns;
     bool frame_due;
     bool unpaced;
     bool rendering;
@@ -312,6 +338,219 @@ static void push_focus(struct cocoa_surface *w, bool focused)
     darwin_ctx.depth--;
 }
 
+static void cpu_unlock_slot(struct cocoa_cpu_slot *slot)
+{
+    if (slot->locked && slot->surface) {
+        IOSurfaceUnlock(slot->surface, 0, NULL);
+        slot->locked = false;
+    }
+}
+
+static void cpu_release_slot(struct cocoa_cpu_slot *slot)
+{
+    cpu_unlock_slot(slot);
+    if (slot->surface) {
+        CFRelease(slot->surface);
+        slot->surface = NULL;
+    }
+    slot->size = (struct yasl_private_vector2i){0};
+}
+
+static void cpu_release_all_slots(struct cocoa_surface *w)
+{
+    for (int i = 0; i < COCOA_CPU_SLOTS; i++)
+        cpu_release_slot(&w->cpu_slots[i]);
+    w->has_shown = false;
+    w->direct_acquired = false;
+    w->present_acquired = false;
+}
+
+static bool cpu_trim_idle_slots(struct cocoa_surface *w)
+{
+    if (!w || !w->use_iosurface)
+        return true;
+    bool spare_busy = false;
+    for (int i = 0; i < COCOA_CPU_SLOTS; i++) {
+        struct cocoa_cpu_slot *slot = &w->cpu_slots[i];
+        if ((w->has_shown && i == w->shown_slot) ||
+            (w->direct_acquired && i == w->direct_slot) ||
+            (w->present_acquired && i == w->present_slot))
+            continue;
+        if (slot->surface) {
+            if (!IOSurfaceIsInUse(slot->surface))
+                cpu_release_slot(slot);
+            else
+                spare_busy = true;
+        }
+    }
+    return !spare_busy;
+}
+
+static void cancel_trim_timer(struct cocoa_surface *w)
+{
+    if (!w->trim_timer)
+        return;
+    yasl_private_surface_del_timer(&w->base, w->trim_timer);
+    w->trim_timer = 0;
+}
+
+static uint64_t cpu_trim_timer_cb(void *ud, yasl_private_timer_id id, uint64_t interval_ns)
+{
+    (void)id; (void)interval_ns;
+    struct cocoa_surface *w = ud;
+    if (!w || w->closed || w->destroyed) {
+        if (w) w->trim_timer = 0;
+        return 0;
+    }
+    /* A commit came after the timer started. Wait for the rest of the idle time. */
+    uint64_t idle_ns = yasl_private_loop_now_ns() - w->cpu_commit_ns;
+    if (idle_ns < CPU_TRIM_IDLE_NS)
+        return CPU_TRIM_IDLE_NS - idle_ns;
+    if (cpu_trim_idle_slots(w)) {
+        w->trim_timer = 0;
+        return 0;
+    }
+    return CPU_TRIM_IDLE_NS;
+}
+
+/* Frees the spare slots after the surface shows no new frame for
+ * CPU_TRIM_IDLE_NS. A surface that draws keeps its spare slots, because the
+ * window server holds the last frames for some time and the next frame needs
+ * a free slot. A trim at each commit makes a surface for almost every frame. */
+static void schedule_cpu_trim(struct cocoa_surface *w)
+{
+    if (!w || !w->use_iosurface || w->closed || w->destroyed || w->trim_timer)
+        return;
+    w->trim_timer = yasl_private_surface_add_timer(&w->base, CPU_TRIM_IDLE_NS,
+                                                   cpu_trim_timer_cb, w);
+}
+
+static void cpu_trim_stale_slots(struct cocoa_surface *w)
+{
+    if (!w->use_iosurface)
+        return;
+    for (int i = 0; i < COCOA_CPU_SLOTS; i++) {
+        struct cocoa_cpu_slot *slot = &w->cpu_slots[i];
+        if ((w->has_shown && i == w->shown_slot) ||
+            (w->direct_acquired && i == w->direct_slot) ||
+            (w->present_acquired && i == w->present_slot))
+            continue;
+        if (slot->surface &&
+            (slot->size.x != w->size.x || slot->size.y != w->size.y) &&
+            !IOSurfaceIsInUse(slot->surface))
+            cpu_release_slot(slot);
+    }
+}
+
+/* Tags a CPU surface as sRGB. The Metal layer of a GPU surface is sRGB too.
+ * A surface with no tag can show its values with no color match, and the
+ * same pixel then has a different color on a wide-gamut display. */
+static void cpu_tag_srgb(IOSurfaceRef surface)
+{
+    static CFPropertyListRef srgb_plist;
+    if (!srgb_plist) {
+        CGColorSpaceRef srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+        if (srgb) {
+            srgb_plist = CGColorSpaceCopyPropertyList(srgb);
+            CGColorSpaceRelease(srgb);
+        }
+    }
+    if (srgb_plist)
+        IOSurfaceSetValue(surface, kIOSurfaceColorSpace, srgb_plist);
+}
+
+static int cpu_acquire_slot(struct cocoa_surface *w, uint32_t **out_pixels, int *out_stride_bytes)
+{
+    if (!w || !w->use_iosurface || w->size.x <= 0 || w->size.y <= 0 ||
+        (size_t)w->size.x > (size_t)INT_MAX / sizeof(uint32_t)) {
+        errno = EINVAL;
+        return -1;
+    }
+    int idx = -1;
+    for (int i = 0; i < COCOA_CPU_SLOTS; i++) {
+        if ((w->has_shown && i == w->shown_slot) ||
+            (w->direct_acquired && i == w->direct_slot) ||
+            (w->present_acquired && i == w->present_slot))
+            continue;
+        struct cocoa_cpu_slot *slot = &w->cpu_slots[i];
+        if (slot->surface && !IOSurfaceIsInUse(slot->surface)) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx < 0) {
+        for (int i = 0; i < COCOA_CPU_SLOTS; i++) {
+            if ((w->has_shown && i == w->shown_slot) ||
+                (w->direct_acquired && i == w->direct_slot) ||
+                (w->present_acquired && i == w->present_slot))
+                continue;
+            if (!w->cpu_slots[i].surface) {
+                idx = i;
+                break;
+            }
+        }
+    }
+    if (idx < 0) {
+        errno = EAGAIN;
+        return -1;
+    }
+    struct cocoa_cpu_slot *slot = &w->cpu_slots[idx];
+    if (slot->surface && (slot->size.x != w->size.x || slot->size.y != w->size.y))
+        cpu_release_slot(slot);
+    size_t bpr = (size_t)w->size.x * sizeof(uint32_t);
+    if (!slot->surface) {
+        NSDictionary *props = @{
+            (id)kIOSurfaceWidth: @(w->size.x),
+            (id)kIOSurfaceHeight: @(w->size.y),
+            (id)kIOSurfaceBytesPerElement: @4,
+            (id)kIOSurfaceBytesPerRow: @(bpr),
+            (id)kIOSurfacePixelFormat: @((uint32_t)'BGRA'),
+        };
+        slot->surface = IOSurfaceCreate((__bridge CFDictionaryRef)props);
+        if (!slot->surface) {
+            errno = ENOMEM;
+            return -1;
+        }
+        cpu_tag_srgb(slot->surface);
+    }
+    if (IOSurfaceLock(slot->surface, 0, NULL) != kIOReturnSuccess) {
+        cpu_release_slot(slot);
+        errno = EIO;
+        return -1;
+    }
+    size_t actual_bpr = IOSurfaceGetBytesPerRow(slot->surface);
+    void *addr = IOSurfaceGetBaseAddress(slot->surface);
+    if (!addr || actual_bpr != bpr) {
+        IOSurfaceUnlock(slot->surface, 0, NULL);
+        cpu_release_slot(slot);
+        errno = actual_bpr != bpr ? ENOTSUP : ENOMEM;
+        return -1;
+    }
+    slot->locked = true;
+    slot->size = w->size;
+    *out_pixels = (uint32_t *)addr;
+    *out_stride_bytes = (int)bpr;
+    return idx;
+}
+
+static void cpu_commit_slot(struct cocoa_surface *w, int idx)
+{
+    struct cocoa_cpu_slot *slot = &w->cpu_slots[idx];
+    cpu_unlock_slot(slot);
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    w->layer.contents = (__bridge id)slot->surface;
+    [CATransaction commit];
+    if (w->view && w->view.inLiveResize)
+        [CATransaction flush];
+    w->shown_slot = idx;
+    w->has_shown = true;
+    w->shown_size = w->size;
+    w->cpu_commit_ns = yasl_private_loop_now_ns();
+    yasl_private_clock_presented(&w->clock, w->cpu_commit_ns, false);
+    schedule_cpu_trim(w);
+}
+
 static void sync_size(struct cocoa_surface *w, bool force)
 {
     if (!w || w->destroyed || w->closed || !w->view || !w->window)
@@ -333,10 +572,11 @@ static void sync_size(struct cocoa_surface *w, bool force)
     darwin_ctx.depth++;
     w->size = size;
     w->scale_120 = scale_120;
-    if (w->layer) {
+    if (w->layer)
         w->layer.contentsScale = scale;
-        w->layer.drawableSize = CGSizeMake(size.x, size.y);
-    }
+    if (w->metal_layer)
+        w->metal_layer.drawableSize = CGSizeMake(size.x, size.y);
+    cpu_trim_stale_slots(w);
     /* Finish local bookkeeping before publishing geometry and requesting a frame. */
     yasl_private_clock_note_resize(&w->clock, yasl_private_loop_now_ns() - start);
     yasl_private_surface_notify_configure(&w->base, (struct yasl_private_geometry){
@@ -816,16 +1056,22 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
 
 @implementation YaslView
 
-- (instancetype)initWithFrame:(NSRect)frameRect
+- (instancetype)initWithFrame:(NSRect)frameRect cpuLayer:(BOOL)cpuLayer
 {
     self = [super initWithFrame:frameRect];
     if (self) {
+        self.cpuLayer = cpuLayer;
         self.wantsLayer = YES;
         self.layerContentsRedrawPolicy = NSViewLayerContentsRedrawNever;
         self.layerContentsPlacement = NSViewLayerContentsPlacementTopLeft;
         [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
     }
     return self;
+}
+
+- (instancetype)initWithFrame:(NSRect)frameRect
+{
+    return [self initWithFrame:frameRect cpuLayer:NO];
 }
 
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender
@@ -901,6 +1147,12 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
 
 - (CALayer *)makeBackingLayer
 {
+    if (self.cpuLayer) {
+        CALayer *layer = [CALayer layer];
+        layer.opaque = YES;
+        layer.contentsGravity = kCAGravityTopLeft;
+        return layer;
+    }
     CAMetalLayer *layer = [CAMetalLayer layer];
     layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
     layer.framebufferOnly = YES;
@@ -943,8 +1195,8 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
     [super viewWillStartLiveResize];
     struct cocoa_surface *w = self.surface;
     /* Layers that the app owns through Metal or Vulkan keep their own setting. */
-    if (w && w->base.presenter == YASL_PRIVATE_PRESENTER_CPU)
-        w->layer.presentsWithTransaction = YES;
+    if (w && w->base.presenter == YASL_PRIVATE_PRESENTER_CPU && w->metal_layer)
+        w->metal_layer.presentsWithTransaction = YES;
 }
 
 - (void)viewDidEndLiveResize
@@ -953,8 +1205,8 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
     struct cocoa_surface *w = self.surface;
     if (!w)
         return;
-    if (w->base.presenter == YASL_PRIVATE_PRESENTER_CPU)
-        w->layer.presentsWithTransaction = NO;
+    if (w->base.presenter == YASL_PRIVATE_PRESENTER_CPU && w->metal_layer)
+        w->metal_layer.presentsWithTransaction = NO;
     cocoa_surface_schedule_redraw(w);
 }
 
@@ -986,8 +1238,10 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
         return;
     }
     if (!w->want_draw || (w->base.state & YASL_PRIVATE_STATE_SUSPENDED)) {
-        if (++w->idle_frames >= LINK_IDLE_FRAMES)
+        if (++w->idle_frames >= LINK_IDLE_FRAMES) {
             link.paused = YES;
+            schedule_cpu_trim(w);
+        }
         return;
     }
     w->idle_frames = 0;
@@ -1464,13 +1718,16 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
     struct cocoa_surface *w = self.surface;
     if (!w) return;
     bool visible = (self.window.occlusionState & NSWindowOcclusionStateVisible) != 0;
+    bool was_suspended = (w->base.state & YASL_PRIVATE_STATE_SUSPENDED) != 0;
     darwin_ctx.depth++;
     set_state(w, YASL_PRIVATE_STATE_SUSPENDED, !visible);
     if (!w->destroyed && !w->closed) {
-        if (visible)
+        if (visible && was_suspended) {
             cocoa_surface_schedule_redraw(w);
-        else
+        } else if (!visible) {
             w->link.paused = YES;
+            schedule_cpu_trim(w);
+        }
     }
     darwin_ctx.depth--;
 }
@@ -1572,8 +1829,17 @@ bool cocoa_surface_present(struct cocoa_surface *w, const struct yasl_private_fr
                           const struct yasl_private_damage_list *damage)
 {
     if (!w || w->base.presenter != YASL_PRIVATE_PRESENTER_CPU || w->closed || !w->rendering || w->did_present || !fb || !damage ||
-        fb->pixels != w->frame.target.pixels || fb->size.x != w->size.x ||
-        fb->size.y != w->size.y || !w->drawable)
+        fb->pixels != w->frame.target.pixels || fb->size.x != w->size.x || fb->size.y != w->size.y)
+        return false;
+    if (w->use_iosurface) {
+        if (!w->present_acquired)
+            return false;
+        cpu_commit_slot(w, w->present_slot);
+        w->present_acquired = false;
+        w->did_present = true;
+        return true;
+    }
+    if (!w->drawable)
         return false;
     if (w->software_queue) {
         if (fb->pixels != w->pixels || fb->size.x != w->size.x || fb->size.y != w->size.y)
@@ -1581,7 +1847,7 @@ bool cocoa_surface_present(struct cocoa_surface *w, const struct yasl_private_fr
         NSUInteger row_bytes = ((NSUInteger)w->size.x * 4 + 255) & ~(NSUInteger)255;
         NSUInteger length = row_bytes * (NSUInteger)w->size.y;
         if (!w->software_stages)
-            w->software_stages = software_stages_new(w->layer.device);
+            w->software_stages = software_stages_new(w->metal_layer.device);
         /* The blit of the last frame can still read its buffer, so the frame
          * takes a buffer that no started command reads. Every buffer is in use:
          * the frame draws nothing and comes back at the next display frame. */
@@ -1641,6 +1907,47 @@ static void render_and_commit(struct cocoa_surface *w)
     if (!draw_possible(w))
         return;
 
+    if (w->use_iosurface) {
+        uint32_t *px = NULL;
+        int stride = 0;
+        int slot = cpu_acquire_slot(w, &px, &stride);
+        if (slot < 0) {
+            w->want_draw = true;
+            w->frames_skipped++;
+            return;
+        }
+        darwin_ctx.depth++;
+        w->rendering = true;
+        w->want_draw = false;
+        w->frame_due = false;
+        w->did_present = false;
+        w->present_slot = slot;
+        w->present_acquired = true;
+        w->transaction = w->view.inLiveResize;
+        w->damage = (struct yasl_private_damage_list){0};
+        w->frame = (struct yasl_private_frame){
+            .surface = &w->base,
+            .target = {
+                .generation = yasl_private_frame_begin(&w->base),
+                .pixels = px,
+                .size = w->size,
+                .stride_bytes = stride,
+            },
+        };
+        yasl_private_surface_draw(&w->base, &w->frame);
+        if (w->present_acquired) {
+            cpu_unlock_slot(&w->cpu_slots[w->present_slot]);
+            w->present_acquired = false;
+        }
+        if (!w->destroyed && !w->closed && !w->did_present) {
+            w->want_draw = true;
+            w->frames_skipped++;
+        }
+        w->rendering = false;
+        darwin_ctx.depth--;
+        return;
+    }
+
     size_t count = (size_t)w->size.x * (size_t)w->size.y;
     if (w->software_queue && count > w->pixel_capacity) {
         size_t capacity = grown_capacity(w->pixel_capacity, count);
@@ -1654,9 +1961,9 @@ static void render_and_commit(struct cocoa_surface *w)
     w->want_draw = false;
     w->frame_due = false;
     w->did_present = false;
-    id<CAMetalDrawable> drawable = [w->layer nextDrawable];
+    id<CAMetalDrawable> drawable = w->metal_layer ? [w->metal_layer nextDrawable] : nil;
     w->drawable = drawable;
-    w->transaction = w->layer.presentsWithTransaction;
+    w->transaction = w->metal_layer ? w->metal_layer.presentsWithTransaction : false;
     w->damage = (struct yasl_private_damage_list){0};
     w->frame = (struct yasl_private_frame){
         .surface = &w->base,
@@ -2029,6 +2336,7 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
          * selects Metal or Vulkan. Both bridges request the layer while the
          * presenter is still NONE. */
         w->base.presenter = external_gpu ? YASL_PRIVATE_PRESENTER_NONE : YASL_PRIVATE_PRESENTER_CPU;
+        w->use_iosurface = (spec->flags & YASL_PRIVATE_SURFACE_CPU) && !external_gpu;
         cocoa_surface_set_callbacks(w, NULL, NULL);
         w->clock.refresh_ns = YASL_PRIVATE_REFRESH_DEFAULT_NS;
         const char *t = spec->title ? spec->title : "YASL";
@@ -2062,27 +2370,30 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
         w->window.title = [NSString stringWithUTF8String:t] ?: @"YASL";
         w->window.colorSpace = [NSColorSpace sRGBColorSpace];
 
-        w->view = [[YaslView alloc] initWithFrame:w->window.contentView.bounds];
+        w->view = [[YaslView alloc] initWithFrame:w->window.contentView.bounds cpuLayer:w->use_iosurface];
         w->window.contentView = w->view;
-        w->layer = (CAMetalLayer *)w->view.layer;
-        if (graphics_device) {
-            w->layer.device = (id<MTLDevice>)graphics_device;
-        } else if (!external_gpu) {
-            id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-            w->layer.device = device;
-            w->software_queue = [device newCommandQueue];
-            [device release];
-            if (!w->software_queue) {
-                w->window.delegate = nil;
-                w->controller.surface = NULL;
-                [w->window close];
-                [w->view release];
-                [w->controller release];
-                [w->window release];
-                free(w);
-                return NULL;
+        w->layer = w->view.layer;
+        w->metal_layer = w->use_iosurface ? nil : (CAMetalLayer *)w->view.layer;
+        if (w->metal_layer) {
+            if (graphics_device) {
+                w->metal_layer.device = (id<MTLDevice>)graphics_device;
+            } else if (!external_gpu) {
+                id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+                w->metal_layer.device = device;
+                w->software_queue = [device newCommandQueue];
+                [device release];
+                if (!w->software_queue) {
+                    w->window.delegate = nil;
+                    w->controller.surface = NULL;
+                    [w->window close];
+                    [w->view release];
+                    [w->controller release];
+                    [w->window release];
+                    free(w);
+                    return NULL;
+                }
+                w->metal_layer.framebufferOnly = NO;
             }
-            w->layer.framebufferOnly = NO;
         }
 
         w->link = [[w->view displayLinkWithTarget:w->view
@@ -2101,7 +2412,7 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
 
         sync_size(w, true);
         if (spec->tearing) {
-            if (w->layer) w->layer.displaySyncEnabled = NO;
+            if (w->metal_layer) w->metal_layer.displaySyncEnabled = NO;
             w->unpaced = true;
         }
         if (spec->fullscreen)
@@ -2112,6 +2423,9 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
 
 static void surface_free(struct cocoa_surface *w)
 {
+    cancel_tick_timer(w);
+    cancel_trim_timer(w);
+    cpu_release_all_slots(w);
     [w->mouse_down release];
     [w->link release];
     software_stages_free(w->software_stages);
@@ -2175,6 +2489,9 @@ void cocoa_surface_destroy(struct cocoa_surface *w)
     w->view.surface = NULL;
     if (!native_closed)
         [w->window close];
+    if (w->layer)
+        w->layer.contents = nil;
+    cpu_release_all_slots(w);
     input_queue_clear(&w->input);
     input_queue_clear(&w->text_events);
     w->dead_next = darwin_ctx.dead;
@@ -2564,6 +2881,7 @@ struct cocoa_surface *cocoa_surface_create_popup(struct cocoa_surface *parent,
         w->base.display = parent->base.display;
         w->base.presenter = YASL_PRIVATE_PRESENTER_CPU;
         w->base.creation_flags = parent->base.creation_flags | YASL_PRIVATE_SURFACE_CPU;
+        w->use_iosurface = true;
         cocoa_surface_set_callbacks(w, NULL, NULL);
         w->clock.refresh_ns = parent->clock.refresh_ns ? parent->clock.refresh_ns : YASL_PRIVATE_REFRESH_DEFAULT_NS;
         w->parent = parent;
@@ -2589,24 +2907,10 @@ struct cocoa_surface *cocoa_surface_create_popup(struct cocoa_surface *parent,
         w->window.acceptsMouseMovedEvents = YES;
         w->window.colorSpace = [NSColorSpace sRGBColorSpace];
 
-        w->view = [[YaslView alloc] initWithFrame:w->window.contentView.bounds];
+        w->view = [[YaslView alloc] initWithFrame:w->window.contentView.bounds cpuLayer:YES];
         w->window.contentView = w->view;
-        w->layer = (CAMetalLayer *)w->view.layer;
+        w->layer = w->view.layer;
         w->layer.opaque = NO;
-        w->layer.device = parent->layer.device;
-        /* A CPU popup needs the same software queue as a CPU toplevel, even when
-         * the parent presents through Metal. */
-        w->software_queue = [w->layer.device newCommandQueue];
-        if (!w->software_queue) {
-            w->window.delegate = nil;
-            w->controller.surface = NULL;
-            [w->view release];
-            [w->controller release];
-            [w->window release];
-            free(w);
-            return NULL;
-        }
-        w->layer.framebufferOnly = NO;
 
         w->link = [[w->view displayLinkWithTarget:w->view
                                          selector:@selector(displayLinkFired:)] retain];
@@ -3012,8 +3316,86 @@ static bool impl_surface_place_under_pointer(struct yasl_surface *s, struct yasl
 static void *impl_surface_get_metal_layer(struct yasl_surface *surface)
 {
     struct cocoa_surface *w = (struct cocoa_surface *)surface;
-    return w && (w->base.presenter == YASL_PRIVATE_PRESENTER_NONE ||
-                 w->base.presenter == YASL_PRIVATE_PRESENTER_METAL) ? (void *)w->layer : NULL;
+    return w && w->metal_layer && (w->base.presenter == YASL_PRIVATE_PRESENTER_NONE ||
+                 w->base.presenter == YASL_PRIVATE_PRESENTER_METAL) ? (void *)w->metal_layer : NULL;
+}
+
+static bool impl_surface_cpu_acquire(struct yasl_surface *s, struct yasl_private_framebuffer *out)
+{
+    struct cocoa_surface *w = (struct cocoa_surface *)s;
+    if (!w || !out || w->destroyed || w->closed || !w->use_iosurface ||
+        w->base.presenter != YASL_PRIVATE_PRESENTER_CPU) {
+        errno = (!w || !out || w->destroyed || w->closed ||
+                 w->base.presenter != YASL_PRIVATE_PRESENTER_CPU) ? EINVAL : ENOTSUP;
+        return false;
+    }
+    if (w->rendering || w->direct_acquired) {
+        errno = EBUSY;
+        return false;
+    }
+    if (w->size.x <= 0 || w->size.y <= 0) {
+        errno = EAGAIN;
+        return false;
+    }
+    @autoreleasepool {
+        uint32_t *px = NULL;
+        int stride = 0;
+        int idx = cpu_acquire_slot(w, &px, &stride);
+        if (idx < 0)
+            return false;
+        w->direct_slot = idx;
+        w->direct_acquired = true;
+        w->want_draw = false;
+        *out = (struct yasl_private_framebuffer){
+            .generation = yasl_private_frame_begin(&w->base),
+            .pixels = px,
+            .size = w->size,
+            .stride_bytes = stride,
+        };
+        return true;
+    }
+}
+
+static bool impl_surface_cpu_commit(struct yasl_surface *s, const struct yasl_private_framebuffer *fb,
+                                    const struct yasl_private_damage_list *damage)
+{
+    struct cocoa_surface *w = (struct cocoa_surface *)s;
+    if (!w) {
+        errno = EINVAL;
+        return false;
+    }
+    bool was_acquired = w->direct_acquired;
+    int idx = w->direct_slot;
+    w->direct_acquired = false;
+    if (!was_acquired || w->destroyed || w->closed || !w->use_iosurface ||
+        w->base.presenter != YASL_PRIVATE_PRESENTER_CPU) {
+        if (was_acquired)
+            cpu_unlock_slot(&w->cpu_slots[idx]);
+        errno = EINVAL;
+        return false;
+    }
+    struct cocoa_cpu_slot *slot = &w->cpu_slots[idx];
+    void *addr = slot->surface ? IOSurfaceGetBaseAddress(slot->surface) : NULL;
+    if (!fb || !damage || fb->pixels != addr ||
+        fb->size.x != w->size.x || fb->size.y != w->size.y ||
+        slot->size.x != w->size.x || slot->size.y != w->size.y) {
+        cpu_unlock_slot(slot);
+        errno = EINVAL;
+        return false;
+    }
+    @autoreleasepool {
+        cpu_commit_slot(w, idx);
+    }
+    return true;
+}
+
+static void impl_surface_cpu_discard(struct yasl_surface *s)
+{
+    struct cocoa_surface *w = (struct cocoa_surface *)s;
+    if (!w || !w->direct_acquired)
+        return;
+    cpu_unlock_slot(&w->cpu_slots[w->direct_slot]);
+    w->direct_acquired = false;
 }
 
 static bool impl_surface_update_text_input(struct yasl_surface *surface)
@@ -3033,6 +3415,22 @@ static bool impl_surface_read_pixels(struct yasl_surface *s, uint32_t *out, size
                                      struct yasl_private_vector2i *size)
 {
     struct cocoa_surface *w = (struct cocoa_surface *)s;
+    if (w->use_iosurface) {
+        if (w->closed || w->destroyed || w->rendering || w->direct_acquired || !w->has_shown)
+            return false;
+        struct cocoa_cpu_slot *slot = &w->cpu_slots[w->shown_slot];
+        if (!slot->surface ||
+            slot->size.x != w->shown_size.x || slot->size.y != w->shown_size.y)
+            return false;
+        if (IOSurfaceLock(slot->surface, kIOSurfaceLockReadOnly, NULL) != kIOReturnSuccess)
+            return false;
+        const uint32_t *px = (const uint32_t *)IOSurfaceGetBaseAddress(slot->surface);
+        bool ok = px &&
+                  IOSurfaceGetBytesPerRow(slot->surface) == (size_t)w->shown_size.x * sizeof(uint32_t) &&
+                  yasl_private_copy_frame(px, w->shown_size, out, cap, size);
+        IOSurfaceUnlock(slot->surface, kIOSurfaceLockReadOnly, NULL);
+        return ok;
+    }
     /* did_present stays set from the last draw until the next one starts, and
      * pixels are reallocated only when a draw starts. */
     if (w->closed || w->rendering || !w->did_present || !w->software_queue || !w->pixels)
@@ -3104,6 +3502,9 @@ const struct yasl_private_backend_ops yasl_private_cocoa_backend = {
     .surface_wake_frame_request = impl_surface_wake_frame_request,
     .surface_frame_in_flight = impl_surface_frame_in_flight,
     .surface_present = impl_surface_present,
+    .surface_cpu_acquire = impl_surface_cpu_acquire,
+    .surface_cpu_commit = impl_surface_cpu_commit,
+    .surface_cpu_discard = impl_surface_cpu_discard,
     .surface_geometry = impl_surface_geometry,
     .surface_timing = impl_surface_timing,
     .surface_frame_time_ns = impl_surface_frame_time_ns,
