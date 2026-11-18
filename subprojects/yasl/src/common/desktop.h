@@ -17,6 +17,6 @@ uint32_t desktop_appearance(void);
 size_t desktop_executable_path(char *buf, size_t cap);
 size_t desktop_resource_dir(char *buf, size_t cap);
 size_t desktop_default_locale(char *buf, size_t cap);
-size_t desktop_user_dir(enum yasl_user_dir which, char *buf, size_t cap);
+size_t desktop_user_dir(enum yasl_user_dir which, const char *app_id, char *buf, size_t cap);
 
 #endif

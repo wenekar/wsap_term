@@ -26,6 +26,18 @@ int main(void)
     assert(yasl_private_key_from_cocoa(kVK_ISO_Section) == YASL_KEY_ISO_BACKSLASH);
     assert(yasl_private_key_from_evdev(0) == YASL_KEY_UNKNOWN);
     assert(yasl_private_key_from_evdev(UINT32_MAX) == YASL_KEY_UNKNOWN);
+    /* Function keys above F24 and the transport media keys exist on each
+     * table that can name them. */
+    assert(yasl_private_key_from_evdev(195) == YASL_KEY_F25);
+    assert(yasl_private_key_from_evdev(196) == YASL_KEY_F26);
+    assert(yasl_private_key_from_evdev(205) == YASL_KEY_F35);
+    assert(yasl_private_key_from_evdev(164) == YASL_KEY_MEDIA_PLAY_PAUSE);
+    assert(yasl_private_key_from_evdev(208) == YASL_KEY_MEDIA_FAST_FORWARD);
+    assert(yasl_private_key_from_evdev(206) == YASL_KEY_UNKNOWN);
+    assert(yasl_private_key_from_xkb_name("FK25") == YASL_KEY_F25);
+    assert(yasl_private_key_from_xkb_name("FK26") == YASL_KEY_F26);
+    assert(yasl_private_key_from_xkb_name("FK35") == YASL_KEY_F35);
+    assert(yasl_private_key_from_xkb_name("I164") == YASL_KEY_MEDIA_PLAY_PAUSE);
     assert(yasl_private_key_from_cocoa(UINT32_MAX) == YASL_KEY_UNKNOWN);
     assert(yasl_private_key_from_xkb_name("ZZZZ") == YASL_KEY_UNKNOWN);
     assert(yasl_private_key_label(0x1f600) == 0x1f600);

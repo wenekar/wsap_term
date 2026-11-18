@@ -200,7 +200,7 @@ struct seat {
     struct press_queue tool_presses;
 
     /* 4-byte integers and 4-byte aligned arrays */
-    xkb_mod_mask_t input_mod_masks[8];
+    xkb_mod_mask_t input_mod_masks[9];
     struct yasl_private_vector2i pointer_pos;
     struct yasl_private_vector2i ptr_left_pos;
     struct yasl_private_vector2i tool_pos;

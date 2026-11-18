@@ -1178,6 +1178,8 @@ static NSString *drop_mime_of_type(NSString *type)
         {NSPasteboardTypeFileURL, @"text/uri-list"},
         {NSPasteboardTypeURL, @"text/uri-list"},
         {NSPasteboardTypeString, @"text/plain"},
+        /* Some sources name UTF-8 text with its MIME type. */
+        {@"text/plain;charset=utf-8", @"text/plain"},
         {NSPasteboardTypeHTML, @"text/html"},
         {NSPasteboardTypeRTF, @"text/rtf"},
         {NSPasteboardTypePNG, @"image/png"},
@@ -1195,6 +1197,7 @@ static NSString *drop_mime_of_type(NSString *type)
 static NSArray<NSPasteboardType> *drop_pasteboard_types(void)
 {
     return @[NSPasteboardTypeFileURL, NSPasteboardTypeURL, NSPasteboardTypeString,
+             @"text/plain;charset=utf-8",
              NSPasteboardTypeHTML, NSPasteboardTypeRTF, NSPasteboardTypePNG,
              NSPasteboardTypeTIFF, NSPasteboardTypePDF];
 }
@@ -1263,6 +1266,12 @@ static bool push_drop(struct cocoa_surface *w, NSPasteboard *pb, NSString *type,
         data = [list dataUsingEncoding:NSUTF8StringEncoding];
     } else {
         data = [pb dataForType:type];
+        /* A source can hold text only as a string value, not as data. */
+        if (!data.length) {
+            NSString *text = [pb stringForType:type];
+            if (text)
+                data = [text dataUsingEncoding:NSUTF8StringEncoding];
+        }
     }
     if (!data.length)
         return false;
@@ -1804,6 +1813,8 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
     if (!w || w->destroyed || w->closed) return;
     NSString *str = plain_string(string);
     if (w->interpreting_key) w->key_composing = true;
+    /* A new preedit starts at no marked location until a text field gives one. */
+    w->marked_utf16_location = 0;
     /* A dead key composes before the surface has a text field, so the preedit
      * feedback does not depend on one. Only the range in the text does. */
     if (w->base.text_input_active) {
@@ -2599,6 +2610,8 @@ static bool cocoa_vulkan_available(void)
     if (!lib)
         lib = dlopen("libvulkan.dylib", RTLD_LAZY | RTLD_LOCAL);
     if (!lib)
+        lib = dlopen("libMoltenVK.dylib", RTLD_LAZY | RTLD_LOCAL);
+    if (!lib)
         return false;
     PFN_vkEnumerateInstanceExtensionProperties enumerate =
         (PFN_vkEnumerateInstanceExtensionProperties)dlsym(lib,
@@ -2752,6 +2765,8 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
         }
         if (spec->fullscreen)
             [w->window toggleFullScreen:nil];
+        if (spec->maximized)
+            [w->window zoom:nil];
         return w;
     }
 }

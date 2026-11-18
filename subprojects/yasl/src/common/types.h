@@ -301,6 +301,10 @@ enum yasl_private_mod : uint32_t {
     YASL_PRIVATE_MOD_CTRL  = 1 << 2, /**< Control modifier. */
     YASL_PRIVATE_MOD_SUPER = 1 << 3, /**< Super/Command modifier. */
     YASL_PRIVATE_MOD_CAPS  = 1 << 4, /**< Caps Lock modifier. */
+    YASL_PRIVATE_MOD_HYPER = 1 << 5, /**< Hyper modifier. */
+    YASL_PRIVATE_MOD_META  = 1 << 6, /**< Meta modifier. */
+    YASL_PRIVATE_MOD_NUM_LOCK = 1 << 7, /**< Num Lock modifier. */
+    YASL_PRIVATE_MOD_SCROLL_LOCK = 1 << 8, /**< Scroll Lock modifier. */
 };
 
 /** Pointer source class; capability support does not imply an attached device. */
@@ -863,9 +867,9 @@ bool yasl_private_surface_read_pixels(struct yasl_surface *s, uint32_t *out, siz
  * @return true if the mode is supported; false leaves the current mode.
  * RELATIVE hides the cursor and locks it while the surface is focused;
  * POINTER_MOTION then carries unbounded delta. Returning to NORMAL restores
- * the cursor selected with yasl_private_surface_set_cursor(). RELATIVE is supported on
- * Wayland compositors with the relative-pointer and pointer-constraints
- * protocols; X11 and Cocoa return false.
+ * the cursor selected with yasl_private_surface_set_cursor(). RELATIVE needs
+ * the Wayland relative-pointer and pointer-constraints protocols. X11 needs
+ * XInput2. Cocoa returns false.
  */
 bool yasl_private_surface_set_pointer_mode(struct yasl_surface *s, enum yasl_private_pointer_mode mode);
 
@@ -951,8 +955,8 @@ struct yasl_private_geometry yasl_private_surface_geometry(const struct yasl_sur
  * @param s Surface, or NULL.
  * @return A bitmask of yasl_private_surface_state values, or zero for NULL.
  * Flags are reported state, not requests; unsupported states are absent.
- * Flags may coexist. Windowed and floating have no separate flags. Suspension
- * does not imply minimization, and no minimized flag is reported.
+ * Flags may coexist. Windowed and floating have no separate flags. X11 also
+ * reports suspension for a minimized window.
  */
 uint32_t yasl_private_surface_state(const struct yasl_surface *s);
 /* Timing uses monotonic nanoseconds. Check source before treating timestamps
@@ -1008,7 +1012,7 @@ const char *yasl_private_surface_ime_preedit(const struct yasl_surface *s);
  * @param begin Required output UTF-8 byte offset for the range start.
  * @param end Required output UTF-8 byte offset for the range end.
  * @return true if available; false without changing outputs otherwise.
- * Currently available on Wayland; Cocoa preedit text has no range result.
+ * Available on Wayland, X11, and Cocoa.
  */
 bool yasl_private_surface_ime_preedit_cursor(const struct yasl_surface *s, int *begin, int *end);
 /**

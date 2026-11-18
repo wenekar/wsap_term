@@ -205,8 +205,9 @@ size_t yasl_get_user_dir(enum yasl_user_dir which, char *out, size_t cap)
     if ((!out && cap) || (unsigned)which > YASL_DIR_DESKTOP)
         return yasl_public_fail(EINVAL), 0;
     char buf[CONTROLS_STR_MAX];
+    struct yasl_private_display *d = yasl_public_display();
     errno = 0;
-    size_t len = desktop_user_dir(which, buf, sizeof(buf));
+    size_t len = desktop_user_dir(which, d ? d->app_id : NULL, buf, sizeof(buf));
     if (!len)
         return yasl_public_fail(errno ? errno : ENOENT), 0;
     return copy_out(out, cap, buf, len);

@@ -1134,7 +1134,12 @@ static bool convert_event(const struct yasl_private_event *p, yasl_event *e)
         e->mods = p->pointer.mods;
         e->x = (p->pointer.precise_position ? p->pointer.precise_x : p->pointer.pos.x) / scale;
         e->y = (p->pointer.precise_position ? p->pointer.precise_y : p->pointer.pos.y) / scale;
-        e->pointer = (struct yasl_pointer_event){p->pointer.delta.x / scale, p->pointer.delta.y / scale,
+        /* A device that reports raw motion gives the same movement without
+         * acceleration. Prefer it, also when the pointer is not locked. */
+        struct yasl_private_vector2d delta = p->pointer.delta;
+        if (p->pointer.unaccel.x != 0 || p->pointer.unaccel.y != 0)
+            delta = p->pointer.unaccel;
+        e->pointer = (struct yasl_pointer_event){delta.x / scale, delta.y / scale,
                                                  p->pointer.button, p->pointer.buttons};
         return true;
     case YASL_PRIVATE_EVENT_DRAG:

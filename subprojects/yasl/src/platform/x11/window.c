@@ -707,11 +707,16 @@ struct x11_surface {
     int ime_cursor_begin;
     int ime_cursor_end;
     struct yasl_private_damage_list damage;
+    /* Cursor shape selected by the app, so leaving relative mode restores it. */
+    enum yasl_private_cursor cursor_shape;
+    /* Frozen surface position during YASL_PRIVATE_POINTER_RELATIVE. */
+    struct yasl_private_vector2i relative_pos;
     bool shm_active;
     bool want_draw, drawing, presented, destroyed;
     bool direct_acquired, direct_stale;
     bool focused;
     bool is_popup;
+    bool relative;
 };
 
 /* A selection receive: a clipboard paste, or the data of an XDND drop. Both
@@ -1443,8 +1448,11 @@ static void xi_pointer_event(struct x11_surface *s, const XIDeviceEvent *ev)
     if (p) update_scroll(p, &ev->valuators, &event.pointer);
     if (ev->evtype == XI_Motion) {
         event.type = YASL_PRIVATE_EVENT_POINTER_MOTION;
+        /* A locked pointer keeps its position; the app reads the raw delta. */
+        if (s->relative) event.pointer.pos = s->relative_pos;
         if (d->raw_valid) {
             event.pointer.unaccel = d->raw_delta;
+            if (s->relative) event.pointer.delta = d->raw_delta;
             d->raw_valid = false;
         }
     }
@@ -1507,13 +1515,21 @@ static void xi_event(struct x11_display *d, XGenericEventCookie *cookie)
     if (cookie->evtype == XI_RawMotion) {
         const XIRawEvent *raw = cookie->data;
         double axes[2] = {0, 0};
-        int found = 0;
-        for (int i = 0; i < raw->valuators.mask_len * 8 && found < 2; i++) {
+        int axis_count = 0;
+        /* A device may report one axis alone. raw_values holds only the set
+         * bits, so count every set bit but keep only the two motion axes. */
+        for (int i = 0, index = 0; i < raw->valuators.mask_len * 8; i++) {
             if (!XIMaskIsSet(raw->valuators.mask, i)) continue;
-            if (isfinite(raw->raw_values[found])) axes[found] = raw->raw_values[found];
-            found++;
+            if (i < 2) {
+                double value = raw->raw_values[index];
+                if (isfinite(value)) {
+                    axes[i] = value;
+                    axis_count++;
+                }
+            }
+            index++;
         }
-        if (found == 2) {
+        if (axis_count) {
             d->raw_delta = (struct yasl_private_vector2d){axes[0], axes[1]};
             d->raw_valid = true;
         }
@@ -2092,7 +2108,10 @@ static bool surface_get_position(const struct yasl_surface *base, struct yasl_pr
     return true;
 }
 
-/* A zero limit on an axis removes the limit of that axis. */
+/* A zero limit on an axis removes the limit of that axis. XSizeHints has one
+ * flag for both axes, so a free axis gets the largest usable value instead of
+ * zero, which some window managers read as a hard zero limit. */
+#define X11_SIZE_LIMIT_MAX 32767
 static bool surface_set_size_limits(struct yasl_surface *base,
         struct yasl_private_vector2i min, struct yasl_private_vector2i max)
 {
@@ -2112,8 +2131,10 @@ static bool surface_set_size_limits(struct yasl_surface *base,
     }
     if (max.x > 0 || max.y > 0) {
         hints.flags |= PMaxSize;
-        hints.max_width = max.x > 0 ? yasl_private_scale_to_device(max.x, s->base.scale_120) : 0;
-        hints.max_height = max.y > 0 ? yasl_private_scale_to_device(max.y, s->base.scale_120) : 0;
+        hints.max_width = max.x > 0 ? yasl_private_scale_to_device(max.x, s->base.scale_120)
+                                    : X11_SIZE_LIMIT_MAX;
+        hints.max_height = max.y > 0 ? yasl_private_scale_to_device(max.y, s->base.scale_120)
+                                     : X11_SIZE_LIMIT_MAX;
     } else {
         hints.max_width = hints.max_height = 0;
     }
@@ -2163,14 +2184,18 @@ static bool surface_set_visible(struct yasl_surface *base, bool visible)
     struct x11_surface *s;
     struct x11_display *d;
     if (!movable_toplevel(base, &s, &d)) return false;
+    uint32_t state = visible ? s->base.state & ~YASL_PRIVATE_STATE_SUSPENDED
+                             : s->base.state | YASL_PRIVATE_STATE_SUSPENDED;
     if (visible) {
-        s->base.state &= ~YASL_PRIVATE_STATE_SUSPENDED;
         XMapWindow(d->native, s->window);
     } else {
-        s->base.state |= YASL_PRIVATE_STATE_SUSPENDED;
         XUnmapWindow(d->native, s->window);
     }
     XFlush(d->native);
+    if (state != s->base.state) {
+        s->base.state = state;
+        yasl_private_surface_notify_state(&s->base, state);
+    }
     return true;
 }
 
@@ -2523,24 +2548,25 @@ static EGLint renderable_bit(const struct yasl_private_gl_options *options)
     return bit;
 }
 
-static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
+/* The caller holds d->egl_mutex, so no other thread can use EGL until the
+ * surface is complete. Release it before surface_destroy(), which takes it. */
+static struct yasl_surface *create_gl_surface_locked(struct yasl_private_display *base,
         const struct yasl_private_window_spec *spec, const int *attrs,
         struct yasl_surface *share)
 {
-    if (!spec) { errno = EINVAL; return NULL; }
     struct x11_display *d = (struct x11_display *)base;
     struct yasl_private_gl_options options;
-    if (!yasl_private_gl_parse_options(attrs, &options)) { errno = EINVAL; return NULL; }
-    if (!egl_open(d)) return NULL;
+    struct yasl_surface *base_surface = NULL;
+    if (!yasl_private_gl_parse_options(attrs, &options)) { errno = EINVAL; goto fail; }
     const char *extensions = eglQueryString(d->egl, EGL_EXTENSIONS);
     bool colorspace = extensions && strstr(extensions, "EGL_KHR_gl_colorspace");
     if (options.srgb && !colorspace) {
         errno = ENOTSUP;
-        return NULL;
+        goto fail;
     }
     /* One display cannot mix a desktop GL context with a GLES context. */
     EGLint api = options.api == YASL_PRIVATE_GL_OPENGL_ES ? EGL_OPENGL_ES_API : EGL_OPENGL_API;
-    if (d->egl_api && d->egl_api != api) { errno = ENOTSUP; return NULL; }
+    if (d->egl_api && d->egl_api != api) { errno = ENOTSUP; goto fail; }
 
     EGLint config_attrs[] = {
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
@@ -2559,15 +2585,15 @@ static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
     EGLint count = 0;
     if (!eglChooseConfig(d->egl, config_attrs, &config, 1, &count) || !count) {
         errno = ENOTSUP;
-        return NULL;
+        goto fail;
     }
-    if (!eglBindAPI(api)) { errno = ENOTSUP; return NULL; }
+    if (!eglBindAPI(api)) { errno = ENOTSUP; goto fail; }
     d->egl_api = api;
     EGLint visual_id = 0, depth = 0;
     if (!eglGetConfigAttrib(d->egl, config, EGL_NATIVE_VISUAL_ID, &visual_id) ||
         !eglGetConfigAttrib(d->egl, config, EGL_BUFFER_SIZE, &depth)) {
         errno = ENODEV;
-        return NULL;
+        goto fail;
     }
     XVisualInfo visual_query = {.visualid = (VisualID)visual_id};
     int visual_count = 0;
@@ -2575,21 +2601,25 @@ static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
     if (!visual_info || !visual_count) {
         if (visual_info) XFree(visual_info);
         errno = ENODEV;
-        return NULL;
+        goto fail;
     }
     Visual *visual = visual_info[0].visual;
     depth = visual_info[0].depth;
     struct yasl_private_window_spec gl_spec = *spec;
     gl_spec.external_gpu = true;
     gl_spec.flags &= ~YASL_PRIVATE_SURFACE_CPU;
-    struct yasl_surface *base_surface = create_toplevel_visual(base, &gl_spec, visual, depth,
-                                                YASL_PRIVATE_PRESENTER_GL);
+    base_surface = create_toplevel_visual(base, &gl_spec, visual, depth,
+                                          YASL_PRIVATE_PRESENTER_GL);
     XFree(visual_info);
-    if (!base_surface) return NULL;
+    if (!base_surface) {
+        errno = ENODEV;
+        goto fail;
+    }
     struct x11_surface *s = (struct x11_surface *)base_surface;
     s->gl_config = config;
     s->gl_api = api;
-    s->swap_interval = 1; /* EGL's default for window surfaces. */
+    /* Tearing bypasses the refresh, so it asks EGL for immediate swaps. */
+    s->swap_interval = spec->tearing ? 0 : 1;
     EGLint surface_attrs[3] = {EGL_GL_COLORSPACE_KHR,
         options.srgb ? EGL_GL_COLORSPACE_SRGB_KHR : EGL_GL_COLORSPACE_LINEAR_KHR, EGL_NONE};
     s->gl_surface = eglCreateWindowSurface(d->egl, config,
@@ -2601,16 +2631,16 @@ static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
                         (EGLNativeWindowType)s->window, surface_attrs);
     }
     if (s->gl_surface == EGL_NO_SURFACE) {
-        surface_destroy(base_surface);
         errno = ENODEV;
-        return NULL;
+        goto fail;
     }
     EGLContext share_context = EGL_NO_CONTEXT;
     if (share) {
         struct x11_surface *shared = (struct x11_surface *)share;
         if (share->display != base || shared->base.presenter != YASL_PRIVATE_PRESENTER_GL ||
             shared->gl_context == EGL_NO_CONTEXT) {
-            surface_destroy(base_surface); errno = EINVAL; return NULL;
+            errno = EINVAL;
+            goto fail;
         }
         share_context = shared->gl_context;
     }
@@ -2639,11 +2669,32 @@ static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
     context_attrs[n] = EGL_NONE;
     s->gl_context = eglCreateContext(d->egl, config, share_context, context_attrs);
     if (s->gl_context == EGL_NO_CONTEXT) {
-        surface_destroy(base_surface);
+        errno = ENOTSUP;
+        goto fail;
+    }
+    pthread_mutex_unlock(&d->egl_mutex);
+    return base_surface;
+
+fail:
+    pthread_mutex_unlock(&d->egl_mutex);
+    if (base_surface) surface_destroy(base_surface);
+    return NULL;
+}
+
+static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
+        const struct yasl_private_window_spec *spec, const int *attrs,
+        struct yasl_surface *share)
+{
+    if (!spec) { errno = EINVAL; return NULL; }
+    struct x11_display *d = (struct x11_display *)base;
+    if (!egl_open(d)) return NULL;
+    pthread_mutex_lock(&d->egl_mutex);
+    if (!d->egl_ready) {
+        pthread_mutex_unlock(&d->egl_mutex);
         errno = ENOTSUP;
         return NULL;
     }
-    return base_surface;
+    return create_gl_surface_locked(base, spec, attrs, share);
 }
 
 static bool gl_make_current(struct yasl_private_display *base, struct yasl_surface *surface)
@@ -4270,6 +4321,22 @@ static bool net_workarea(struct x11_display *d, struct yasl_monitor_screen_area 
     return valid;
 }
 
+/* RandR reports device pixels. Monitor geometry is reported in logical units,
+ * like every other backend. */
+static void monitor_extent(struct yasl_monitor_info *m, const XRRMonitorInfo *mi,
+                           uint32_t scale_120)
+{
+    if (!scale_120) scale_120 = YASL_PRIVATE_SCALE_UNIT;
+    m->x = yasl_private_scale_to_logical(mi->x, scale_120);
+    m->y = yasl_private_scale_to_logical(mi->y, scale_120);
+    m->width = yasl_private_scale_to_logical(mi->width, scale_120);
+    m->height = yasl_private_scale_to_logical(mi->height, scale_120);
+    m->work_x = m->x;
+    m->work_y = m->y;
+    m->work_width = m->width;
+    m->work_height = m->height;
+}
+
 /* RandR gives the logical bounds, the physical size, and the primary flag of
  * each monitor. The CRTC of an output gives its refresh rate and rotation. */
 static int display_monitors(struct yasl_private_display *base,
@@ -4290,14 +4357,7 @@ static int display_monitors(struct yasl_private_display *base,
         if (!out || count >= capacity) { count++; continue; }
         struct yasl_monitor_info *m = &out[count++];
         *m = (struct yasl_monitor_info){0};
-        m->x = mi->x;
-        m->y = mi->y;
-        m->width = mi->width;
-        m->height = mi->height;
-        m->work_x = m->x;
-        m->work_y = m->y;
-        m->work_width = m->width;
-        m->work_height = m->height;
+        monitor_extent(m, mi, d->scale_120);
         m->physical_width_mm = mi->mwidth;
         m->physical_height_mm = mi->mheight;
         m->primary = mi->primary != 0;
@@ -4305,12 +4365,14 @@ static int display_monitors(struct yasl_private_display *base,
         if (mi->mwidth > 0)
             m->dpi = (double)mi->width * 25.4 / (double)mi->mwidth;
         if (has_area) {
-            int left = mi->x > area.x ? mi->x : area.x;
-            int top = mi->y > area.y ? mi->y : area.y;
-            int right = (mi->x + mi->width < area.x + area.width)
-                      ? mi->x + mi->width : area.x + area.width;
-            int bottom = (mi->y + mi->height < area.y + area.height)
-                       ? mi->y + mi->height : area.y + area.height;
+            int left = m->x > yasl_private_scale_to_logical(area.x, d->scale_120) ?
+                       m->x : yasl_private_scale_to_logical(area.x, d->scale_120);
+            int top = m->y > yasl_private_scale_to_logical(area.y, d->scale_120) ?
+                      m->y : yasl_private_scale_to_logical(area.y, d->scale_120);
+            int area_right = yasl_private_scale_to_logical(area.x + area.width, d->scale_120);
+            int area_bottom = yasl_private_scale_to_logical(area.y + area.height, d->scale_120);
+            int right = (m->x + m->width < area_right) ? m->x + m->width : area_right;
+            int bottom = (m->y + m->height < area_bottom) ? m->y + m->height : area_bottom;
             if (right > left && bottom > top) {
                 m->work_x = left;
                 m->work_y = top;
@@ -4389,7 +4451,8 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
             XRRQueryExtension(d->native, &event_base, &error_base)) {
             d->randr_event_base = event_base;
             XRRSelectInput(d->native, RootWindow(d->native, d->screen),
-                           RRScreenChangeNotifyMask);
+                           RRScreenChangeNotifyMask | RROutputChangeNotifyMask |
+                           RRCrtcChangeNotifyMask);
         }
     }
 #endif
@@ -4619,7 +4682,8 @@ static uint32_t caps(const struct yasl_private_display *d)
         YASL_PRIVATE_CAP_PRIMARY_SELECTION | YASL_PRIVATE_CAP_CSD |
         YASL_PRIVATE_CAP_NATIVE_GRAPHICS | YASL_PRIVATE_CAP_TEXT_INPUT;
     if (vulkan_ready(display)) result |= YASL_PRIVATE_CAP_VULKAN;
-    if (display->xi2) result |= YASL_PRIVATE_CAP_TABLET;
+    if (display->xi2)
+        result |= YASL_PRIVATE_CAP_TABLET | YASL_PRIVATE_CAP_RELATIVE_POINTER;
     return result;
 }
 
@@ -4740,6 +4804,51 @@ static void cursor(struct yasl_surface *base, enum yasl_private_cursor cursor)
     }
     if (d->cursors[cursor])
         XDefineCursor(d->native, s->window, d->cursors[cursor]);
+    s->cursor_shape = cursor;
+}
+
+/* X11 has no pointer-lock protocol. A grab confines the pointer to the window,
+ * the hidden cursor removes the arrow, and the position stays frozen while the
+ * app reads the raw XI2 deltas. */
+static bool surface_set_pointer_mode(struct yasl_surface *base,
+                                    enum yasl_private_pointer_mode mode)
+{
+    struct x11_surface *s;
+    struct x11_display *d;
+    if (!movable_toplevel(base, &s, &d)) return false;
+    bool relative = mode == YASL_PRIVATE_POINTER_RELATIVE;
+    if (relative == s->relative) return true;
+    if (!d->native) { errno = ENODEV; return false; }
+    if (relative) {
+        if (!d->xi2) { errno = ENOTSUP; return false; }
+        cursor(base, YASL_PRIVATE_CURSOR_HIDDEN);
+        if (XGrabPointer(d->native, s->window, False,
+                PointerMotionMask | ButtonPressMask | ButtonReleaseMask,
+                GrabModeAsync, GrabModeAsync, s->window,
+                d->cursors[YASL_PRIVATE_CURSOR_HIDDEN], CurrentTime) != GrabSuccess) {
+            errno = EBUSY;
+            return false;
+        }
+        Window root = None, child = None;
+        int root_x = 0, root_y = 0, win_x = 0, win_y = 0;
+        unsigned buttons = 0;
+        if (XQueryPointer(d->native, s->window, &root, &child, &root_x, &root_y,
+                &win_x, &win_y, &buttons))
+            s->relative_pos = (struct yasl_private_vector2i){
+                yasl_private_scale_to_device(win_x, s->base.scale_120),
+                yasl_private_scale_to_device(win_y, s->base.scale_120)};
+        else
+            s->relative_pos = (struct yasl_private_vector2i){s->size.x / 2, s->size.y / 2};
+        s->relative = true;
+        s->input.relative = true;
+    } else {
+        XUngrabPointer(d->native, CurrentTime);
+        s->relative = false;
+        s->input.relative = false;
+        cursor(base, s->cursor_shape);
+    }
+    XFlush(d->native);
+    return true;
 }
 
 static bool place(struct yasl_surface *base, struct yasl_private_vector2i at)
@@ -5147,6 +5256,7 @@ const struct yasl_private_backend_ops yasl_private_x11_backend = {
     .surface_timing = timing,
     .surface_frame_time_ns = frame_time,
     .surface_set_cursor = cursor,
+    .surface_set_pointer_mode = surface_set_pointer_mode,
     .surface_drag_carry = drag_carry,
     .surface_place_under_pointer = place_under_pointer,
     .surface_bell = bell,

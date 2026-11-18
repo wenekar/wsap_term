@@ -5,10 +5,8 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
-#include <spawn.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,65 +44,43 @@ static bool find_program(const char *name, char *out, size_t cap)
     return false;
 }
 
-/* The opener can outlive the call by seconds. Reap it on a detached thread, so
- * the caller never waits and no child becomes a zombie. */
-static void *reap_child(void *ud)
-{
-    pid_t pid = (pid_t)(intptr_t)ud;
-    int status;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-    return NULL;
-}
-
 /* Start the program in a new session with the state a helper needs: default
  * signal dispositions, an empty signal mask, stdin on /dev/null, and no
- * descriptors above stderr. */
-static bool spawn_detached(char *const argv[], const char *program, pid_t *pid_out)
+ * descriptors above stderr. A double fork lets init collect the program, so the
+ * library needs no reap thread and no SIGCHLD handler. Only async-signal-safe
+ * calls run in the child. */
+static bool spawn_detached(char *const argv[], const char *program)
 {
-    posix_spawn_file_actions_t actions;
-    posix_spawnattr_t attr;
-    if (posix_spawn_file_actions_init(&actions) != 0) return false;
-    if (posix_spawnattr_init(&attr) != 0) {
-        posix_spawn_file_actions_destroy(&actions);
-        return false;
-    }
-    int error = posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null",
-                                                 O_RDONLY, 0);
-    if (!error) {
-#if defined(__GLIBC__) && defined(__GLIBC_PREREQ) && __GLIBC_PREREQ(2, 34)
-        error = posix_spawn_file_actions_addclosefrom_np(&actions, 3);
-#else
-        long max_fd = sysconf(_SC_OPEN_MAX);
-        if (max_fd < 0 || max_fd > 65536) max_fd = 65536;
-        for (int fd = 3; !error && fd < max_fd; fd++)
-            error = posix_spawn_file_actions_addclose(&actions, fd);
-#endif
-    }
-    if (!error) {
-        sigset_t defaults, none;
-        sigfillset(&defaults);
-        sigdelset(&defaults, SIGKILL);
-        sigdelset(&defaults, SIGSTOP);
+    long open_max = sysconf(_SC_OPEN_MAX);
+    if (open_max < 0 || open_max > 65536) open_max = 65536;
+    pid_t pid = fork();
+    if (pid < 0) return false;
+    if (pid == 0) {
+        if (setsid() < 0) _exit(127);
+        pid_t grandchild = fork();
+        if (grandchild < 0) _exit(127);
+        if (grandchild > 0) _exit(0);
+        sigset_t none;
         sigemptyset(&none);
-        error = posix_spawnattr_setsigdefault(&attr, &defaults);
-        if (!error) error = posix_spawnattr_setsigmask(&attr, &none);
-        short flags = POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK;
-#if defined(POSIX_SPAWN_SETSID)
-        if (!error) error = posix_spawnattr_setflags(&attr, flags | POSIX_SPAWN_SETSID);
-#else
-        if (!error) error = posix_spawnattr_setpgroup(&attr, 0);
-        if (!error) error = posix_spawnattr_setflags(&attr, flags | POSIX_SPAWN_SETPGROUP);
+        sigprocmask(SIG_SETMASK, &none, NULL);
+#ifdef NSIG
+        for (int sig = 1; sig < NSIG; sig++)
+            if (sig != SIGKILL && sig != SIGSTOP) signal(sig, SIG_DFL);
 #endif
+        int null = open("/dev/null", O_RDONLY);
+        if (null >= 0) {
+            dup2(null, STDIN_FILENO);
+            if (null != STDIN_FILENO) close(null);
+        }
+        for (int fd = 3; fd < open_max; fd++) close(fd);
+        execv(program, argv);
+        _exit(127);
     }
-    bool ok = false;
-    if (!error) {
-        error = posix_spawn(pid_out, program, &actions, &attr, argv, environ);
-        ok = error == 0;
-    }
-    posix_spawnattr_destroy(&attr);
-    posix_spawn_file_actions_destroy(&actions);
-    if (!ok) errno = error ? error : EIO;
-    return ok;
+    /* Collect the intermediate child, which exits at once. An app that
+     * reaps its own children can win the race; the program is still started. */
+    int status;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    return true;
 }
 
 bool desktop_open_uri(const char *uri)
@@ -112,20 +88,7 @@ bool desktop_open_uri(const char *uri)
     char program[4096];
     if (!find_program("xdg-open", program, sizeof(program))) return false;
     char *argv[] = {"xdg-open", (char *)uri, NULL};
-    pid_t pid;
-    if (!spawn_detached(argv, program, &pid)) return false;
-    pthread_t thread;
-    int error = pthread_create(&thread, NULL, reap_child, (void *)(intptr_t)pid);
-    if (error == 0) {
-        pthread_detach(thread);
-        return true;
-    }
-    /* No thread to reap it: kill the opener and collect it here. */
-    kill(pid, SIGKILL);
-    int status;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-    errno = error;
-    return false;
+    return spawn_detached(argv, program);
 }
 
 bool desktop_notify(const char *app_id, const char *title, const char *body)
@@ -198,15 +161,35 @@ static size_t xdg_dir(const char *variable, const char *fallback, char *buf, siz
     return copy_str(buf, cap, path);
 }
 
-size_t desktop_user_dir(enum yasl_user_dir which, char *buf, size_t cap)
+/* The app folders sit under the app ID. An ID with a separator could escape
+ * them, so it adds no folder. */
+static bool app_id_valid(const char *app_id)
+{
+    if (!app_id || !*app_id || app_id[0] == '.') return false;
+    return !strchr(app_id, '/');
+}
+
+static size_t app_dir(const char *variable, const char *fallback, const char *app_id,
+                      char *buf, size_t cap)
+{
+    char base[4096];
+    if (!xdg_dir(variable, fallback, base, sizeof(base))) return 0;
+    if (!app_id_valid(app_id)) return copy_str(buf, cap, base);
+    char path[4096];
+    int len = snprintf(path, sizeof(path), "%s/%s", base, app_id);
+    if (len <= 0 || (size_t)len >= sizeof(path)) { errno = ENAMETOOLONG; return 0; }
+    return copy_str(buf, cap, path);
+}
+
+size_t desktop_user_dir(enum yasl_user_dir which, const char *app_id, char *buf, size_t cap)
 {
     switch (which) {
     case YASL_DIR_PREFERENCE:
-        return xdg_dir("XDG_CONFIG_HOME", ".config", buf, cap);
+        return app_dir("XDG_CONFIG_HOME", ".config", app_id, buf, cap);
     case YASL_DIR_DATA:
-        return xdg_dir("XDG_DATA_HOME", ".local/share", buf, cap);
+        return app_dir("XDG_DATA_HOME", ".local/share", app_id, buf, cap);
     case YASL_DIR_CACHE:
-        return xdg_dir("XDG_CACHE_HOME", ".cache", buf, cap);
+        return app_dir("XDG_CACHE_HOME", ".cache", app_id, buf, cap);
     case YASL_DIR_HOME: {
         const char *home = getenv("HOME");
         if (!home || home[0] != '/') { errno = ENOENT; return 0; }
