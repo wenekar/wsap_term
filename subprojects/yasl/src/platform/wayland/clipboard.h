@@ -14,10 +14,12 @@ struct wl_data_device;
 struct clipboard;
 struct zwp_primary_selection_device_manager_v1;
 
-/* Called when a transfer ends. A paste passes drop_mime NULL and its request id.
- * A drop passes the type it received, and its bytes can include NULs. */
+/* Called when a transfer ends. A paste passes drop_mime NULL, a zero position,
+ * and its request id. A drop passes the type it received, its position in
+ * logical surface pixels, and bytes that can include NULs. */
 typedef void (*clipboard_receive_fn)(const char *, size_t, const char *drop_mime,
-                                     struct wl_surface *on, uint64_t request_id,
+                                     struct wl_surface *on, struct yasl_private_vector2d pos,
+                                     uint64_t request_id,
                                      enum yasl_private_transfer_status, void *);
 
 struct clipboard *clipboard_create(struct wl_display *, struct wl_data_device_manager *,

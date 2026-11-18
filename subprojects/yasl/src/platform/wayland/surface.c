@@ -430,6 +430,11 @@ int surface_build_toplevel(struct wayland_surface *w, bool fullscreen)
 
 void surface_release_native(struct wayland_surface *w)
 {
+#if YASL_HAS_VULKAN
+    /* A VkSurfaceKHR built on this wl_surface cannot outlive it. Release it
+     * before the wl_surface goes, so a reconnect can build a new one. */
+    yasl_private_vulkan_surface_release(&w->base);
+#endif
     if (w->conn)
         for (struct seat *s = w->conn->seats; s; s = s->next)
             seat_forget_surface(s, w);
@@ -460,9 +465,6 @@ void surface_release_native(struct wayland_surface *w)
     }
 #undef DROP
     w->base.native_handle = NULL;
-    /* A Vulkan surface built on the old wl_surface is gone; allow a new one. */
-    if (w->base.presenter == YASL_PRIVATE_PRESENTER_VULKAN)
-        w->base.presenter = YASL_PRIVATE_PRESENTER_NONE;
     w->configured = w->has_pending_serial = w->has_shown = false;
     w->frame_active = w->want_draw = w->direct_acquired = false;
     w->outputs = 0;
@@ -488,7 +490,7 @@ struct wayland_surface *wayland_surface_create_toplevel(struct wayland_display *
         ? YASL_PRIVATE_PRESENTER_NONE : YASL_PRIVATE_PRESENTER_CPU;
     wayland_surface_set_callbacks(w, NULL, NULL);
     wayland_surface_set_title(w, spec->title ? spec->title : "YASL");
-    w->cursor = YASL_PRIVATE_CURSOR_TEXT;
+    w->cursor = YASL_PRIVATE_CURSOR_ARROW;
     w->floating_width = width;
     w->floating_height = height;
     w->logical_width = width;

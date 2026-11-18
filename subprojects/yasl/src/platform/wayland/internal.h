@@ -171,6 +171,7 @@ struct seat {
     struct wayland_surface *tablet_focus;
     struct wayland_surface *ime_focus;
     struct wayland_surface *focus_leaving;
+    struct wayland_surface *compose_surface;
     struct wayland_surface *press_surface;
     struct wayland_surface *ptr_left;
     struct tablet_tool *tool;
@@ -203,6 +204,9 @@ struct seat {
     int32_t repeat_rate, repeat_delay;
     uint32_t repeat_key;
     uint32_t input_serial;
+    /* Text ownership of the last press of each key, reported on its release. */
+    enum yasl_key_text key_text_input[KEY_CNT];
+    uint32_t key_consumed_mods[KEY_CNT];
     uint32_t press_serial;
     uint32_t pointer_serial;
     int cursor_shape;
@@ -343,6 +347,7 @@ struct wayland_surface {
     void *ud;
     uint64_t frames_skipped;
     uint64_t outputs;
+    uint64_t text_key_id;
     double scale_factor;
 
     /* 8-byte aligned sub-structures */

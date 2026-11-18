@@ -84,18 +84,26 @@ int yasl_vulkan_init(PFN_vkGetInstanceProcAddr loader, struct yasl_vulkan_requir
     portability = next_portability;
     return backend_requirements(out) ? 0 : -errno;
 }
-int yasl_vulkan_destroy_surface(yasl_surface *s)
+/* Releases the binding and its VkSurfaceKHR. It needs no valid public display,
+ * because a backend calls it when the native window that the surface uses is
+ * gone. A missing binding is a no-op. */
+void yasl_private_vulkan_surface_release(yasl_surface *s)
 {
-    if (!yasl_public_surface(s, true))
-        return -errno;
     struct yasl_vulkan_binding *binding = s->vulkan;
     if (!binding)
-        return 0;
+        return;
     binding->destroy(binding->instance, binding->surface,
                      binding->has_allocator ? &binding->allocator : NULL);
     free(binding);
     s->vulkan = NULL;
     s->presenter = YASL_PRIVATE_PRESENTER_NONE;
+}
+
+int yasl_vulkan_destroy_surface(yasl_surface *s)
+{
+    if (!yasl_public_surface(s, true))
+        return -errno;
+    yasl_private_vulkan_surface_release(s);
     return 0;
 }
 VkResult yasl_vulkan_create_surface(yasl_surface *s, VkInstance instance,

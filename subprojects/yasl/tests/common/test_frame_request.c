@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /*
  * Tests of a frame request (common/backend.c).
@@ -97,6 +98,28 @@ int main(void)
 
     /* No surface is not an error. */
     yasl_private_surface_request_frame(NULL);
+
+    /* Continuous pacing asks for frames without an application request; on
+     * demand stops. */
+    struct yasl_loop *loop = yasl_loop_create();
+    assert(loop);
+    fixture_init(&f, &gated, YASL_PRIVATE_PRESENTER_METAL);
+    f.display.loop = loop;
+    assert(yasl_private_surface_set_pacing(&f.surface, YASL_PRIVATE_PACING_CONTINUOUS));
+    assert(f.gate.wakes == 1);
+    f.gate.wakes = 0;
+    uint64_t deadline = yasl_private_loop_now_ns() + 100000000ull;
+    while (!f.gate.wakes && yasl_private_loop_now_ns() < deadline)
+        assert(yasl_loop_step(loop, 5) >= 0);
+    assert(f.gate.wakes > 0);
+    assert(yasl_private_surface_set_pacing(&f.surface, YASL_PRIVATE_PACING_ON_DEMAND));
+    int wakes = f.gate.wakes;
+    deadline = yasl_private_loop_now_ns() + 30000000ull;
+    while (yasl_private_loop_now_ns() < deadline)
+        assert(yasl_loop_step(loop, 5) >= 0);
+    assert(f.gate.wakes == wakes);
+    free(f.surface.timers);
+    yasl_loop_destroy(loop);
 
     puts("frame request: gate wake only, no raw redraw");
     return 0;

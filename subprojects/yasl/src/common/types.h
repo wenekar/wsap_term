@@ -326,8 +326,8 @@ enum yasl_private_pointer_button {
 enum yasl_private_pointer_mode {
     YASL_PRIVATE_POINTER_NORMAL = 0, /**< Absolute positions; cursor per yasl_private_surface_set_cursor(). */
     /** Cursor hidden and locked in place while the surface has focus. POINTER_MOTION
-     * reports unbounded relative motion in delta; pos stays at the lock position.
-     * The lock is released on focus loss and re-acquired on focus gain. */
+     * reports unbounded unaccelerated relative motion in delta; pos stays at the
+     * lock position. The lock is released on focus loss and re-acquired on focus gain. */
     YASL_PRIVATE_POINTER_RELATIVE,
 };
 
@@ -447,6 +447,9 @@ struct yasl_private_text_event {
     size_t len;
     /** DROP only: the type of data, from yasl_private_surface_pick_drop_type. */
     char mime[YASL_PRIVATE_DROP_MIME_MAX];
+    /** DROP only: surface-relative device-pixel position. Zero when the
+     * backend does not report one. */
+    struct yasl_private_vector2i pos;
     /** Physical key that produced TEXT. Zero means no key. */
     uint64_t text_key_id;
 };

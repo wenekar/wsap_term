@@ -130,12 +130,22 @@ YASL_API int yasl_surface_request_frame(yasl_surface *surface);
  * platform has no estimate. Zero for a surface that is not valid. */
 YASL_API uint64_t yasl_surface_frame_interval_ns(const yasl_surface *surface);
 
+enum yasl_pacing {
+    YASL_PACING_ON_DEMAND,  /**< Draw after an invalidation or an exposure. The default. */
+    YASL_PACING_CONTINUOUS, /**< Draw at the display interval without a request. */
+};
+/** Sets how often the surface draws. YASL_PACING_CONTINUOUS asks for a frame
+ * each display interval, for a continuous render loop. YASL_PACING_ON_DEMAND
+ * restores the default. Call it on the loop thread. Returns 0, or a negative
+ * errno value. */
+YASL_API int yasl_surface_set_pacing(yasl_surface *surface, enum yasl_pacing pacing);
+
 enum yasl_cursor {
     YASL_CURSOR_ARROW, YASL_CURSOR_TEXT, YASL_CURSOR_LINK, YASL_CURSOR_CROSSHAIR, YASL_CURSOR_MOVE,
     YASL_CURSOR_RESIZE_NWSE, YASL_CURSOR_RESIZE_NESW, YASL_CURSOR_RESIZE_EW, YASL_CURSOR_RESIZE_NS,
     YASL_CURSOR_HIDDEN,
     /** Hidden and held in place while focused; POINTER events then report
-     * motion only in dx/dy (FEATURE_LOCKED_CURSOR). */
+     * unaccelerated motion only in dx/dy (FEATURE_LOCKED_CURSOR). */
     YASL_CURSOR_LOCKED
 };
 YASL_API int yasl_surface_set_cursor(yasl_surface *surface, enum yasl_cursor cursor);

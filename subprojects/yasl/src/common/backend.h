@@ -260,6 +260,12 @@ struct yasl_private_backend_ops {
             const struct yasl_private_framebuffer *target, struct yasl_private_native_frame *out);
 };
 
+#if YASL_HAS_VULKAN
+/* Releases the VkSurfaceKHR of a surface whose native window is gone. A missing
+ * binding is a no-op. It needs no valid public display. */
+void yasl_private_vulkan_surface_release(struct yasl_surface *s);
+#endif
+
 #if YASL_HAS_WAYLAND
 extern const struct yasl_private_backend_ops yasl_private_wayland_backend;
 #endif

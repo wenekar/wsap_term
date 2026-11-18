@@ -78,9 +78,10 @@ static void move_to(struct seat *s, int x, int y)
     pointer_frame(s, s->pointer);
 }
 
-static void relative_move(struct seat *s, double dx, double dy)
+static void relative_move(struct seat *s, double dx, double dy, double ux, double uy)
 {
-    relative_motion(s, NULL, 0, 0, wl_fixed_from_double(dx), wl_fixed_from_double(dy), 0, 0);
+    relative_motion(s, NULL, 0, 0, wl_fixed_from_double(dx), wl_fixed_from_double(dy),
+                    wl_fixed_from_double(ux), wl_fixed_from_double(uy));
 }
 
 int main(void)
@@ -116,7 +117,7 @@ int main(void)
     assert(pointer_hides == 1 && surface.lock_seat == &seat);
 
     /* Until the compositor activates the lock, motion is absolute with a queue delta. */
-    relative_move(&seat, 3, 3);
+    relative_move(&seat, 3, 3, 3, 3);
     move_to(&seat, 7, 5);
     event = next_event(&surface);
     assert(event.pointer.pos.x == 14 && event.pointer.pos.y == 10);
@@ -125,8 +126,8 @@ int main(void)
 
     /* Locked: relative samples in device pixels, position frozen at the lock. */
     pointer_locked(&surface, surface.pointer_lock);
-    relative_move(&seat, 3.5, -2);
-    relative_move(&seat, 1000, 0);
+    relative_move(&seat, 3.5, -2, 3.5, -2);
+    relative_move(&seat, 1000, 0, 1000, 0);
     event = next_event(&surface);
     assert(event.type == YASL_PRIVATE_EVENT_POINTER_MOTION);
     assert(event.pointer.pos.x == 14 && event.pointer.pos.y == 10);
@@ -134,9 +135,15 @@ int main(void)
     event = next_event(&surface);
     assert(event.pointer.delta.x == 2000 && event.pointer.pos.x == 14);
 
+    /* The delta is the unaccelerated sample, which needs no compositor
+     * acceleration that the frozen position cannot show. */
+    relative_move(&seat, 9, 4, 1.5, -2.5);
+    event = next_event(&surface);
+    assert(event.pointer.delta.x == 3 && event.pointer.delta.y == -5);
+
     /* Deactivation (e.g. focus loss) returns to absolute motion without unlocking. */
     pointer_unlocked(&surface, surface.pointer_lock);
-    relative_move(&seat, 5, 5);
+    relative_move(&seat, 5, 5, 5, 5);
     assert(!input_queue_pop(&surface.input, &event));
     move_to(&seat, 8, 5);
     event = next_event(&surface);

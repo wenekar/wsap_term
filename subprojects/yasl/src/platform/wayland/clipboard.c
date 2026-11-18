@@ -5,7 +5,8 @@
 #include <errno.h>
 #include <signal.h>
 
-#define CLIPBOARD_TEXT_MAX (256u * 1024)
+/* A large code paste is common. Match the X11 text limit. */
+#define CLIPBOARD_TEXT_MAX (16u * 1024 * 1024)
 /* Drops can carry images, so they allow more bytes than a paste. */
 #define CLIPBOARD_DROP_MAX (64u * 1024 * 1024)
 #define CLIPBOARD_TRANSFER_TIMEOUT_NS (30ull * 1000000000ull)
@@ -41,6 +42,8 @@ struct transfer {
     /* Most bytes that a receiving transfer accepts. A transfer that gets more fails. */
     size_t limit;
     uint64_t request_id;
+    /* Drop position in logical surface pixels. Zero for a paste. */
+    struct yasl_private_vector2d drop_pos;
     /* Drop type that this transfer receives. Empty for a paste. */
     char drop_mime[YASL_PRIVATE_DROP_MIME_MAX];
     bool sending;
@@ -139,6 +142,7 @@ static void transfer_end(struct transfer *t, bool complete)
     clipboard_receive_fn receive = owner->receive;
     void *receive_ud = owner->ud;
     struct wl_surface *surface = t->drop_surface;
+    struct yasl_private_vector2d drop_pos = t->drop_pos;
     uint64_t request_id = t->request_id;
     /* The offer is freed, but t still holds the type until the callback returns. */
     const char *drop_mime = t->drop_mime[0] ? t->drop_mime : NULL;
@@ -146,7 +150,7 @@ static void transfer_end(struct transfer *t, bool complete)
     const char *text = complete ? (t->text ? t->text : "") : NULL;
     size_t len = complete ? t->len : 0;
     if (notify)
-        receive(text, len, drop_mime, surface, request_id, status, receive_ud);
+        receive(text, len, drop_mime, surface, drop_pos, request_id, status, receive_ud);
     free(t->text);
     free(t);
 }
@@ -454,6 +458,10 @@ static void drag_drop(void *ud, struct wl_data_device *device)
                 snprintf(t->drop_mime, sizeof(t->drop_mime), "%s", o->picked);
                 t->drop = o;
                 t->drop_surface = c->drag_surface;
+                t->drop_pos = (struct yasl_private_vector2d){
+                    .x = wl_fixed_to_double(c->drag_x),
+                    .y = wl_fixed_to_double(c->drag_y),
+                };
                 o = NULL;
             }
             wl_display_flush(c->display);
@@ -758,13 +766,13 @@ bool clipboard_request_paste(struct clipboard *c, enum yasl_private_selection se
     int fds[2];
     if (selection == YASL_PRIVATE_PRIMARY) {
         if (!c->primary_device || !c->primary_selection || !c->primary_selection->mime) {
-            c->receive(NULL, 0, NULL, target, request_id,
-                       YASL_PRIVATE_TRANSFER_UNAVAILABLE, c->ud);
+            c->receive(NULL, 0, NULL, target, (struct yasl_private_vector2d){0},
+                       request_id, YASL_PRIVATE_TRANSFER_UNAVAILABLE, c->ud);
             return true;
         }
         if (pipe2(fds, O_CLOEXEC) < 0) {
-            c->receive(NULL, 0, NULL, target, request_id,
-                       YASL_PRIVATE_TRANSFER_FAILED, c->ud);
+            c->receive(NULL, 0, NULL, target, (struct yasl_private_vector2d){0},
+                       request_id, YASL_PRIVATE_TRANSFER_FAILED, c->ud);
             return true;
         }
         zwp_primary_selection_offer_v1_receive(c->primary_selection->proxy,
@@ -772,13 +780,13 @@ bool clipboard_request_paste(struct clipboard *c, enum yasl_private_selection se
         close(fds[1]);
     } else {
         if (!c->device || !c->selection || !c->selection->mime) {
-            c->receive(NULL, 0, NULL, target, request_id,
-                       YASL_PRIVATE_TRANSFER_UNAVAILABLE, c->ud);
+            c->receive(NULL, 0, NULL, target, (struct yasl_private_vector2d){0},
+                       request_id, YASL_PRIVATE_TRANSFER_UNAVAILABLE, c->ud);
             return true;
         }
         if (pipe2(fds, O_CLOEXEC) < 0) {
-            c->receive(NULL, 0, NULL, target, request_id,
-                       YASL_PRIVATE_TRANSFER_FAILED, c->ud);
+            c->receive(NULL, 0, NULL, target, (struct yasl_private_vector2d){0},
+                       request_id, YASL_PRIVATE_TRANSFER_FAILED, c->ud);
             return true;
         }
         wl_data_offer_receive(c->selection->proxy, c->selection->mime, fds[1]);
@@ -786,8 +794,8 @@ bool clipboard_request_paste(struct clipboard *c, enum yasl_private_selection se
     }
     struct transfer *transfer = start_transfer_paste(c, fds[0], target, request_id);
     if (!transfer) {
-        c->receive(NULL, 0, NULL, target, request_id,
-                   YASL_PRIVATE_TRANSFER_FAILED, c->ud);
+        c->receive(NULL, 0, NULL, target, (struct yasl_private_vector2d){0},
+                   request_id, YASL_PRIVATE_TRANSFER_FAILED, c->ud);
         return true;
     }
     if (wl_display_flush(c->display) < 0 && errno != EAGAIN)

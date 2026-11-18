@@ -566,19 +566,21 @@ static void relative_motion(void *data, struct zwp_relative_pointer_v1 *pointer,
         uint32_t utime_hi, uint32_t utime_lo, wl_fixed_t dx, wl_fixed_t dy,
         wl_fixed_t dx_unaccel, wl_fixed_t dy_unaccel)
 {
-    (void)pointer; (void)utime_hi; (void)utime_lo; (void)dx_unaccel; (void)dy_unaccel;
+    (void)pointer; (void)utime_hi; (void)utime_lo; (void)dx; (void)dy;
     struct seat *s = data;
     struct wayland_surface *w = s->pointer_focus;
     /* Unlocked movement arrives as wl_pointer.motion; the queue derives its delta. */
     if (!w || !w->pointer_locked || w->lock_seat != s) return;
     flush_pending_motion(s, w);
+    /* A locked cursor reports raw input, as X11 and Cocoa do. The compositor
+     * pointer acceleration applies to the absolute position, which stays fixed. */
     push_pointer(s, w, YASL_PRIVATE_EVENT_POINTER_MOTION, (struct yasl_private_pointer_event){
         .pos = s->pointer_pos,
         .precise_x = s->pointer_precise.x,
         .precise_y = s->pointer_precise.y,
         .precise_position = true,
-        .delta = {wl_fixed_to_double(dx) * w->scale_factor,
-                  wl_fixed_to_double(dy) * w->scale_factor},
+        .delta = {wl_fixed_to_double(dx_unaccel) * w->scale_factor,
+                  wl_fixed_to_double(dy_unaccel) * w->scale_factor},
     });
 }
 
@@ -1314,9 +1316,11 @@ static const struct zwp_tablet_seat_v2_listener tablet_seat_listener = {
 };
 
 /* Ends a transfer. A paste completes its request. A drop becomes one DROP event
- * on the root surface, and the event carries the type that was received. */
+ * on the root surface, and the event carries the type and position that were
+ * received. */
 static void clipboard_received(const char *text, size_t len, const char *drop_mime,
-                             struct wl_surface *on, uint64_t request_id,
+                             struct wl_surface *on, struct yasl_private_vector2d drop_pos,
+                             uint64_t request_id,
                              enum yasl_private_transfer_status status, void *ud)
 {
     (void)ud;
@@ -1335,6 +1339,10 @@ static void clipboard_received(const char *text, size_t len, const char *drop_mi
         .text = {
             .data = text,
             .len = len,
+            .pos = {
+                .x = (int)lround(drop_pos.x * w->scale_factor),
+                .y = (int)lround(drop_pos.y * w->scale_factor),
+            },
         },
     };
     snprintf(ev.text.mime, sizeof(ev.text.mime), "%s", drop_mime);
@@ -1555,8 +1563,8 @@ void seat_forget_surface(struct seat *s, struct wayland_surface *w)
     }
     struct wayland_surface **refs[] = {
         &s->pointer_focus, &s->keyboard_focus,
-        &s->tablet_focus, &s->ime_focus, &s->focus_leaving, &s->ptr_left,
-        &s->press_surface,
+        &s->tablet_focus, &s->ime_focus, &s->focus_leaving, &s->compose_surface,
+        &s->ptr_left, &s->press_surface,
     };
     for (size_t i = 0; i < sizeof(refs) / sizeof(refs[0]); i++)
         if (*refs[i] == w)

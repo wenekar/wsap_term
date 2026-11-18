@@ -15,6 +15,7 @@
 /* Compositor events and client requests, by opcode from wayland.xml. */
 #define DEVICE_DATA_OFFER 0
 #define DEVICE_ENTER 1
+#define DEVICE_MOTION 3
 #define DEVICE_DROP 4
 #define OFFER_OFFER 0
 #define OFFER_ACCEPT 0
@@ -113,6 +114,16 @@ static void enter(struct drag *t, uint32_t serial)
     wire_event(t->server, t->device, DEVICE_ENTER, args, sizeof(args), -1);
 }
 
+/* The drag moves to (x, y) on the surface. */
+static void motion(struct drag *t, int x, int y)
+{
+    uint8_t args[12];
+    wire_put_u32(args, 0); /* time */
+    wire_put_u32(args + 4, (uint32_t)wl_fixed_from_int(x));
+    wire_put_u32(args + 8, (uint32_t)wl_fixed_from_int(y));
+    wire_event(t->server, t->device, DEVICE_MOTION, args, sizeof(args), -1);
+}
+
 static void drop(struct drag *t)
 {
     wire_event(t->server, t->device, DEVICE_DROP, NULL, 0, -1);
@@ -150,15 +161,16 @@ static bool received(const struct wire_inbox *in, const char **mime)
     return found;
 }
 
-/* Reads the next event, which must be a hover of `action` at (3, 4). An OVER
+/* Reads the next event, which must be a hover of `action` at (x, y). An OVER
  * hover carries `mime`. A LEAVE hover carries no type. */
-static void expect_hover(struct drag *t, enum yasl_private_drop_event action, const char *mime)
+static void expect_hover(struct drag *t, enum yasl_private_drop_event action,
+                         const char *mime, int x, int y)
 {
     struct yasl_private_event ev;
     assert(yasl_private_display_poll_event(&t->d.base, &ev));
     assert(ev.type == YASL_PRIVATE_EVENT_DROP_HOVER && ev.surface == &t->w.base);
     assert(ev.drop.action == action);
-    assert(ev.drop.pos.x == 3 && ev.drop.pos.y == 4);
+    assert(ev.drop.pos.x == x && ev.drop.pos.y == y);
     assert(strcmp(ev.drop.mime, mime ? mime : "") == 0);
 }
 
@@ -238,10 +250,10 @@ static void test_image_drop_keeps_bytes(void)
     offer(&t, mimes, 2);
     enter(&t, 9);
     wire_pump(t.display);
-    expect_hover(&t, YASL_PRIVATE_DROP_OVER, "image/png");
+    expect_hover(&t, YASL_PRIVATE_DROP_OVER, "image/png", 3, 4);
     drop(&t);
     wire_pump(t.display);
-    expect_hover(&t, YASL_PRIVATE_DROP_LEAVE, NULL);
+    expect_hover(&t, YASL_PRIVATE_DROP_LEAVE, NULL, 3, 4);
     wire_read(t.server, &t.in);
     const char *mime = NULL;
     assert(accepted(&t.in, &mime) && strcmp(mime, "image/png") == 0);
@@ -251,6 +263,7 @@ static void test_image_drop_keeps_bytes(void)
     struct yasl_private_event ev;
     assert(wait_event(&t, &ev));
     assert(ev.type == YASL_PRIVATE_EVENT_DROP && ev.surface == &t.w.base);
+    assert(ev.text.pos.x == 3 && ev.text.pos.y == 4);
     assert(strcmp(ev.text.mime, "image/png") == 0);
     assert(ev.text.len == sizeof(image));
     assert(memcmp(ev.text.data, image, sizeof(image)) == 0);
@@ -268,10 +281,13 @@ static void test_text_drop_delivers_text(void)
     offer(&t, mimes, 1);
     enter(&t, 10);
     wire_pump(t.display);
-    expect_hover(&t, YASL_PRIVATE_DROP_OVER, "text/plain;charset=utf-8");
+    expect_hover(&t, YASL_PRIVATE_DROP_OVER, "text/plain;charset=utf-8", 3, 4);
+    motion(&t, 7, 9);
+    wire_pump(t.display);
+    expect_hover(&t, YASL_PRIVATE_DROP_OVER, "text/plain;charset=utf-8", 7, 9);
     drop(&t);
     wire_pump(t.display);
-    expect_hover(&t, YASL_PRIVATE_DROP_LEAVE, NULL);
+    expect_hover(&t, YASL_PRIVATE_DROP_LEAVE, NULL, 7, 9);
     wire_read(t.server, &t.in);
     const char *mime = NULL;
     assert(accepted(&t.in, &mime) && strcmp(mime, "text/plain;charset=utf-8") == 0);
@@ -282,6 +298,7 @@ static void test_text_drop_delivers_text(void)
     struct yasl_private_event ev;
     assert(wait_event(&t, &ev));
     assert(ev.type == YASL_PRIVATE_EVENT_DROP && ev.surface == &t.w.base);
+    assert(ev.text.pos.x == 7 && ev.text.pos.y == 9);
     assert(strcmp(ev.text.mime, "text/plain;charset=utf-8") == 0);
     assert(ev.text.len == sizeof(text) - 1);
     assert(memcmp(ev.text.data, text, ev.text.len) == 0);
@@ -298,10 +315,10 @@ static void test_uri_list_drop_uses_default(void)
     offer(&t, mimes, 1);
     enter(&t, 8);
     wire_pump(t.display);
-    expect_hover(&t, YASL_PRIVATE_DROP_OVER, "text/uri-list");
+    expect_hover(&t, YASL_PRIVATE_DROP_OVER, "text/uri-list", 3, 4);
     drop(&t);
     wire_pump(t.display);
-    expect_hover(&t, YASL_PRIVATE_DROP_LEAVE, NULL);
+    expect_hover(&t, YASL_PRIVATE_DROP_LEAVE, NULL, 3, 4);
     wire_read(t.server, &t.in);
     const char *mime = NULL;
     assert(accepted(&t.in, &mime) && strcmp(mime, "text/uri-list") == 0);
@@ -312,6 +329,7 @@ static void test_uri_list_drop_uses_default(void)
     struct yasl_private_event ev;
     assert(wait_event(&t, &ev));
     assert(ev.type == YASL_PRIVATE_EVENT_DROP && ev.surface == &t.w.base);
+    assert(ev.text.pos.x == 3 && ev.text.pos.y == 4);
     assert(strcmp(ev.text.mime, "text/uri-list") == 0);
     assert(ev.text.len == sizeof(list) - 1);
     assert(memcmp(ev.text.data, list, ev.text.len) == 0);
