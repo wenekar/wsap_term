@@ -5,7 +5,8 @@
 #include <errno.h>
 #include <signal.h>
 
-#define CLIPBOARD_TEXT_MAX (256u * 1024)
+/* A large code paste is common. Match the X11 text limit. */
+#define CLIPBOARD_TEXT_MAX (16u * 1024 * 1024)
 /* Drops can carry images, so they allow more bytes than a paste. */
 #define CLIPBOARD_DROP_MAX (64u * 1024 * 1024)
 #define CLIPBOARD_TRANSFER_TIMEOUT_NS (30ull * 1000000000ull)

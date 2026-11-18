@@ -41,6 +41,31 @@ static void receive(const char *text, size_t len, const char *drop_mime,
     }
 }
 
+/* Records a payload without a copy, so the test can send more than one buffer. */
+struct large_received {
+    size_t len;
+    uint64_t request_id;
+    char first, last;
+    enum yasl_private_transfer_status status;
+    int count;
+};
+
+static void receive_large(const char *text, size_t len, const char *drop_mime,
+                          struct wl_surface *surface, struct yasl_private_vector2d pos,
+                          uint64_t request_id,
+                          enum yasl_private_transfer_status status, void *ud)
+{
+    (void)surface; (void)pos;
+    struct large_received *r = ud;
+    assert(!drop_mime && status == YASL_PRIVATE_TRANSFER_OK && text && len);
+    r->len = len;
+    r->request_id = request_id;
+    r->first = text[0];
+    r->last = text[len - 1];
+    r->status = status;
+    r->count++;
+}
+
 struct closing_receiver {
     struct yasl_loop *loop;
     int fd, watch;
@@ -241,11 +266,48 @@ static void test_text_targets(void)
     close(sockets[1]);
 }
 
+/* A paste larger than the old 256 KiB limit reaches the application whole. */
+static void test_large_paste(void)
+{
+    struct large_received got = {0};
+    struct clipboard c = {.loop = yasl_loop_create(), .receive = receive_large, .ud = &got};
+    assert(c.loop);
+    int fds[2];
+    assert(pipe(fds) == 0);
+    int flags = fcntl(fds[1], F_GETFL);
+    assert(flags >= 0 && fcntl(fds[1], F_SETFL, flags | O_NONBLOCK) == 0);
+    struct transfer *transfer = start_transfer_text(&c, fds[0], false, NULL);
+    assert(transfer);
+    transfer->paste = true;
+    transfer->request_id = 77;
+    static char chunk[4096];
+    memset(chunk, 'x', sizeof(chunk));
+    size_t total = 1024 * 1024, sent = 0;
+    for (int spins = 0; sent < total; spins++) {
+        assert(spins < 10000);
+        ssize_t n = write(fds[1], chunk, sizeof(chunk));
+        if (n > 0) {
+            sent += (size_t)n;
+            continue;
+        }
+        assert(n < 0 && (errno == EAGAIN || errno == EINTR));
+        assert(yasl_loop_step(c.loop, 0) >= 0);
+    }
+    close(fds[1]);
+    for (int steps = 0; c.transfers && steps < 10000; steps++)
+        assert(yasl_loop_step(c.loop, 0) >= 0);
+    assert(!c.transfers);
+    assert(got.count == 1 && got.len == total && got.request_id == 77);
+    assert(got.first == 'x' && got.last == 'x');
+    yasl_loop_destroy(c.loop);
+}
+
 int main(void)
 {
     test_closed_receiver(false);
     test_closed_receiver(true);
     test_text_targets();
+    test_large_paste();
     struct received received = {0};
     struct clipboard c = {.loop = yasl_loop_create(), .receive = receive, .ud = &received};
     received.clipboard = &c;
