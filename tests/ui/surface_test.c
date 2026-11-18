@@ -608,6 +608,70 @@ static void overlay_layer_test(void)
     ui_scene_destroy(&scene);
 }
 
+static void overlay_growth_test(void)
+{
+    enum { OVERLAYS = 6 };
+    struct ui_box root = {0};
+    struct layer_probe layers[OVERLAYS] = {0};
+    ui_box_init(&root);
+    for (int i = 0; i < OVERLAYS; i++) {
+        layers[i].color = 0xFF000100u + (uint32_t)i;
+        ui_widget_init(&layers[i].widget, &LAYER_OPS, &layers[i]);
+    }
+
+    struct host_probe host = {0};
+    const struct ui_surface_host surface_host = { .request_frame = request_frame };
+    struct ui_surface surface = {0};
+    ui_surface_init(&surface, &surface_host, &host);
+    ui_surface_set_root(&surface, &root.widget);
+    ui_surface_set_scale(&surface, (struct css_scale_context){
+        .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
+    });
+    ui_surface_resize(&surface, (struct vector2i){ .x = 100, .y = 80 });
+
+    /* The surface grows its list, so it takes more than the first four. */
+    for (int i = 0; i < OVERLAYS; i++)
+        assert(ui_surface_add_overlay(&surface, &layers[i].widget));
+    assert(ui_surface_overlay_count(&surface) == OVERLAYS);
+    for (int i = 0; i < OVERLAYS; i++)
+        assert(ui_surface_overlay_at(&surface, (size_t)i) ==
+               &layers[i].widget);
+
+    struct ui_scene scene = {0};
+    assert(ui_surface_build_scene(&surface, &scene));
+    assert(scene.n_ops == OVERLAYS);
+    for (int i = 0; i < OVERLAYS; i++) {
+        assert(rect2i_eq(layers[i].widget.bounds,
+                         (struct rect2i){ .size = { .x = 100, .y = 80 } }));
+        assert(scene.ops[i].color == layers[i].color);
+    }
+
+    /* The last overlay in the list takes the press. */
+    struct ui_event press = ui_event_pointer((struct ui_pointer_event){
+        .kind = UI_POINTER_PRESS, .pos = { .x = 10, .y = 10 },
+    }, 0);
+    assert(ui_surface_dispatch(&surface, &press));
+    assert(layers[OVERLAYS - 1].presses == 1);
+    for (int i = 0; i < OVERLAYS - 1; i++)
+        assert(layers[i].presses == 0);
+
+    /* A remove in the middle keeps the order of the rest. */
+    assert(ui_surface_remove_overlay(&surface, &layers[2].widget));
+    assert(ui_widget_surface(&layers[2].widget) == NULL);
+    assert(ui_surface_overlay_count(&surface) == OVERLAYS - 1);
+    const int order[] = { 0, 1, 3, 4, 5 };
+    for (size_t i = 0; i < sizeof(order) / sizeof(order[0]); i++)
+        assert(ui_surface_overlay_at(&surface, i) ==
+               &layers[order[i]].widget);
+
+    ui_surface_destroy(&surface);
+    assert(ui_surface_overlay_count(&surface) == 0);
+    ui_widget_destroy(&root.widget);
+    for (int i = 0; i < OVERLAYS; i++)
+        ui_widget_destroy(&layers[i].widget);
+    ui_scene_destroy(&scene);
+}
+
 static void overlay_modal_focus_test(void)
 {
     struct layer_probe root_button = { .color = 0xFF000003 };
@@ -742,6 +806,7 @@ int main(void)
 {
     surface_post_runs_after_dispatch_test();
     overlay_layer_test();
+    overlay_growth_test();
     overlay_modal_focus_test();
     measurement_change_requests_another_frame_test();
     independent_surfaces_test();

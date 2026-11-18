@@ -190,14 +190,30 @@ bool ui_surface_drop_overlay(struct ui_surface *surface,
     return false;
 }
 
+/* Makes room for one more overlay. The list grows, so an owner never reaches a
+ * fixed limit. Returns false only when memory is short. */
+static bool overlay_push(struct ui_surface *surface, struct ui_widget *overlay)
+{
+    if (surface->impl.overlay_count == surface->impl.overlay_cap) {
+        size_t cap = surface->impl.overlay_cap ? surface->impl.overlay_cap * 2 : 4;
+        struct ui_widget **grown =
+            realloc(surface->impl.overlays, cap * sizeof(*grown));
+        if (!grown)
+            return false;
+        surface->impl.overlays = grown;
+        surface->impl.overlay_cap = cap;
+    }
+    surface->impl.overlays[surface->impl.overlay_count++] = overlay;
+    return true;
+}
+
 bool ui_surface_add_overlay(struct ui_surface *surface,
                             struct ui_widget *overlay)
 {
     if (!surface || !overlay || overlay->impl.destroyed || overlay->parent ||
         (overlay->impl.surface && overlay->impl.surface != surface) ||
-        surface->impl.overlay_count >= UI_SURFACE_OVERLAY_MAX)
+        !overlay_push(surface, overlay))
         return false;
-    surface->impl.overlays[surface->impl.overlay_count++] = overlay;
     ui_widget_attach(overlay, surface);
     ui_widget_invalidate(overlay, UI_WIDGET_INVALIDATE_MEASURE);
     ui_surface_sync_modal(surface);
@@ -943,6 +959,7 @@ bool ui_surface_destroy(struct ui_surface *surface)
         post.fn(surface, post.userdata);
     }
     free(surface->impl.post);
+    free(surface->impl.overlays);
     uint64_t generation = surface->impl.generation;
     ui_style_context_destroy(&surface->impl.style);
     *surface = (struct ui_surface){0};

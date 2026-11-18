@@ -21,9 +21,6 @@ struct ui_surface_host {
     uint32_t (*double_click_interval_ms)(void *userdata);
 };
 
-/* The most overlay widgets that a surface holds. */
-#define UI_SURFACE_OVERLAY_MAX 4
-
 /* A function that ui_surface_post queues. The surface passes itself and the
  * user data that the poster gave. */
 typedef void (*ui_post_fn)(struct ui_surface *surface, void *userdata);
@@ -59,9 +56,11 @@ struct ui_surface {
         struct ui_surface_host host;
         void *host_userdata;
         struct ui_widget *root;
-        /* Ordered from the bottom up. Each overlay sits above the root. */
-        struct ui_widget *overlays[UI_SURFACE_OVERLAY_MAX];
+        /* Ordered from the bottom up. Each overlay sits above the root. The
+         * list grows as the surface takes overlays. */
+        struct ui_widget **overlays;
         size_t overlay_count;
+        size_t overlay_cap;
         struct ui_widget *focused;
         struct ui_widget *captured;
         struct ui_widget *hovered;
@@ -103,7 +102,8 @@ struct ui_widget *ui_surface_root(const struct ui_surface *surface);
 /* Adds `overlay` above the root, or above the overlays already there. The
  * surface places it with its ui_placement against the viewport, tests hits on
  * it before the root, and paints it after the root. The widget must be
- * detached. Returns false when the list is full. */
+ * detached. The list grows, so the surface takes any number of overlays.
+ * Returns false only when memory is short. */
 bool ui_surface_add_overlay(struct ui_surface *surface,
                             struct ui_widget *overlay);
 /* Removes `overlay` from the list and detaches it from the surface. */
