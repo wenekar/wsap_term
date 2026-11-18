@@ -96,6 +96,7 @@ static void output_done(void *data, struct wl_output *output)
     bool changed = o->geometry_changed || o->pending_scale != o->scale ||
                    o->pending_refresh_ns != o->refresh_ns;
     o->geometry_changed = false;
+    o->ready = true;
     o->scale = o->pending_scale;
     o->refresh_ns = o->pending_refresh_ns;
     if (!changed) return;
@@ -215,10 +216,12 @@ int conn_display_monitors(struct yasl_private_display *base, struct yasl_monitor
 {
     struct wayland_display *c = (struct wayland_display *)base;
     int count = 0;
-    for (struct wl_conn_output *o = c->outputs; o; o = o->next, count++) {
-        if (!out || count >= capacity) continue;
+    for (struct wl_conn_output *o = c->outputs; o; o = o->next) {
+        /* The compositor has not reported the output yet. */
+        if (!o->ready) continue;
+        if (!out || count >= capacity) { count++; continue; }
         int32_t scale = o->scale > 0 ? o->scale : 1;
-        struct yasl_monitor_info *m = &out[count];
+        struct yasl_monitor_info *m = &out[count++];
         *m = (struct yasl_monitor_info){0};
         snprintf(m->name, sizeof(m->name), "%s", o->label);
         m->x = o->x;

@@ -80,6 +80,8 @@ struct wl_conn_output {
     int32_t width, height, transform;
     /* A done event commits the fields above; this marks them as changed. */
     bool geometry_changed;
+    /* The compositor sent the state of the output, so the queries list it. */
+    bool ready;
     char label[YASL_MONITOR_NAME_MAX];
 };
 
