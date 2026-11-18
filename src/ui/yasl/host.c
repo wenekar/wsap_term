@@ -14,7 +14,7 @@
 struct window_host *window_host_registry[WINDOW_HOST_REGISTRY_MAX];
 int window_host_registry_count;
 
-static void host_registry_add(struct window_host *host)
+void window_host_registry_add(struct window_host *host)
 {
     for (int i = 0; i < window_host_registry_count; i++)
         if (window_host_registry[i] == host)
@@ -24,7 +24,7 @@ static void host_registry_add(struct window_host *host)
     window_host_registry[window_host_registry_count++] = host;
 }
 
-static void host_registry_remove(struct window_host *host)
+void window_host_registry_remove(struct window_host *host)
 {
     for (int i = 0; i < window_host_registry_count; i++) {
         if (window_host_registry[i] != host)
@@ -51,7 +51,7 @@ void window_host_init(struct window_host *host, struct yasl_loop *loop,
         .config = config,
         .hooks = hooks ? *hooks : (struct window_host_hooks){0},
     };
-    host_registry_add(host);
+    window_host_registry_add(host);
 }
 
 void window_host_destroy(struct window_host *host)
@@ -65,7 +65,7 @@ void window_host_destroy(struct window_host *host)
     int status = yasl_shutdown();
     if (status < 0)
         fprintf(stderr, "window host: yasl_shutdown: %s\n", strerror(-status));
-    host_registry_remove(host);
+    window_host_registry_remove(host);
     free(host->windows);
     *host = (struct window_host){0};
 }

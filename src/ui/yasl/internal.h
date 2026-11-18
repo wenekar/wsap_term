@@ -159,9 +159,12 @@ void window_host_report_empty(struct window_host *host, struct window *last);
 void window_host_run_service(struct window_host *host, uint64_t now_ms,
                              bool modal);
 
-/* The live hosts in start order. The debugger reads this registry. */
+/* The live hosts in start order. The debugger reads this registry. A host
+ * enters on init and leaves on destroy, so the array holds no stale pointer. */
 extern struct window_host *window_host_registry[];
 extern int window_host_registry_count;
+void window_host_registry_add(struct window_host *host);
+void window_host_registry_remove(struct window_host *host);
 struct window_host *window_host_registry_first(void);
 
 static inline struct window_ui *ui_of(const struct window *w)
