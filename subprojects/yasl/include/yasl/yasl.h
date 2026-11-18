@@ -135,7 +135,7 @@ enum yasl_cursor {
     YASL_CURSOR_RESIZE_NWSE, YASL_CURSOR_RESIZE_NESW, YASL_CURSOR_RESIZE_EW, YASL_CURSOR_RESIZE_NS,
     YASL_CURSOR_HIDDEN,
     /** Hidden and held in place while focused; POINTER events then report
-     * motion only in dx/dy (FEATURE_LOCKED_CURSOR). */
+     * unaccelerated motion only in dx/dy (FEATURE_LOCKED_CURSOR). */
     YASL_CURSOR_LOCKED
 };
 YASL_API int yasl_surface_set_cursor(yasl_surface *surface, enum yasl_cursor cursor);

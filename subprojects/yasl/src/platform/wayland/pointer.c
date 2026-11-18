@@ -566,19 +566,21 @@ static void relative_motion(void *data, struct zwp_relative_pointer_v1 *pointer,
         uint32_t utime_hi, uint32_t utime_lo, wl_fixed_t dx, wl_fixed_t dy,
         wl_fixed_t dx_unaccel, wl_fixed_t dy_unaccel)
 {
-    (void)pointer; (void)utime_hi; (void)utime_lo; (void)dx_unaccel; (void)dy_unaccel;
+    (void)pointer; (void)utime_hi; (void)utime_lo; (void)dx; (void)dy;
     struct seat *s = data;
     struct wayland_surface *w = s->pointer_focus;
     /* Unlocked movement arrives as wl_pointer.motion; the queue derives its delta. */
     if (!w || !w->pointer_locked || w->lock_seat != s) return;
     flush_pending_motion(s, w);
+    /* A locked cursor reports raw input, as X11 and Cocoa do. The compositor
+     * pointer acceleration applies to the absolute position, which stays fixed. */
     push_pointer(s, w, YASL_PRIVATE_EVENT_POINTER_MOTION, (struct yasl_private_pointer_event){
         .pos = s->pointer_pos,
         .precise_x = s->pointer_precise.x,
         .precise_y = s->pointer_precise.y,
         .precise_position = true,
-        .delta = {wl_fixed_to_double(dx) * w->scale_factor,
-                  wl_fixed_to_double(dy) * w->scale_factor},
+        .delta = {wl_fixed_to_double(dx_unaccel) * w->scale_factor,
+                  wl_fixed_to_double(dy_unaccel) * w->scale_factor},
     });
 }
 
