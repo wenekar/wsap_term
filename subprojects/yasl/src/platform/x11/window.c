@@ -632,6 +632,7 @@ struct x11_surface {
     EGLContext gl_context;
     EGLSurface gl_surface;
     EGLConfig gl_config;
+    EGLint gl_api;
 #endif
     XImage *image;
     uint32_t *pixels;
@@ -745,7 +746,12 @@ struct x11_display {
     struct x11_pointer *pointers;
 #if YASL_HAS_EGL
     EGLDisplay egl;
+    /* The client API of the display's EGL contexts; zero before the first one. */
+    EGLint egl_api;
 #endif
+    /* Serializes EGL use: a render thread swaps while the display thread
+     * resizes, destroys a surface, or closes the display. */
+    pthread_mutex_t egl_mutex;
     Cursor cursors[16];
     struct {
         struct x11_surface *origin;
@@ -788,10 +794,23 @@ struct x11_display {
     bool has_xkb;
     bool lost;
     bool popup_grab; /* The pointer is grabbed for the topmost popup. */
-#if YASL_HAS_EGL
     bool egl_ready;
-#endif
 };
+
+/* EGL calls on one display are not safe from two threads at once. A render
+ * thread may swap buffers while the display thread resizes or destroys a
+ * surface. Returns true when the caller holds the lock. */
+static bool egl_enter(struct x11_display *d, const struct yasl_surface *s)
+{
+    if (!d->egl_ready || !s || s->presenter != YASL_PRIVATE_PRESENTER_GL) return false;
+    pthread_mutex_lock(&d->egl_mutex);
+    return true;
+}
+
+static void egl_leave(struct x11_display *d, bool entered)
+{
+    if (entered) pthread_mutex_unlock(&d->egl_mutex);
+}
 
 static bool place(struct yasl_surface *base, struct yasl_private_vector2i at);
 static void drag_end(struct x11_display *d, enum yasl_private_drag_end how);
@@ -1781,8 +1800,16 @@ static void surface_destroy(struct yasl_surface *base)
     s->ime_preedit = NULL;
     if (s->ic) XDestroyIC(s->ic);
 #if YASL_HAS_EGL
-    if (s->gl_context && d->egl_ready) eglDestroyContext(d->egl, s->gl_context);
-    if (s->gl_surface && d->egl_ready) eglDestroySurface(d->egl, s->gl_surface);
+    if (s->gl_context || s->gl_surface) {
+        pthread_mutex_lock(&d->egl_mutex);
+        if (d->egl_ready) {
+            if (s->gl_context) eglDestroyContext(d->egl, s->gl_context);
+            if (s->gl_surface) eglDestroySurface(d->egl, s->gl_surface);
+        }
+        s->gl_context = EGL_NO_CONTEXT;
+        s->gl_surface = EGL_NO_SURFACE;
+        pthread_mutex_unlock(&d->egl_mutex);
+    }
 #endif
     if (s->shm_active) {
         if (!d->lost) XShmDetach(d->native, &s->shm_info);
@@ -1865,10 +1892,14 @@ static bool surface_set_size(struct yasl_surface *base, struct yasl_private_vect
         return false;
     }
     if (!d->native || !s->window) { errno = ENODEV; return false; }
+    /* Wait for an in-flight swap: an EGL window surface must not change size
+     * while another thread draws into it. */
+    bool locked = egl_enter(d, base);
     XResizeWindow(d->native, s->window, (unsigned)px.x, (unsigned)px.y);
     if (s->base.creation_flags & YASL_PRIVATE_SURFACE_FIXED_SIZE)
         set_fixed_size_hints(d, s->window, px);
     XFlush(d->native);
+    egl_leave(d, locked);
     return true;
 }
 
@@ -2190,19 +2221,40 @@ static struct yasl_surface *create_toplevel(struct yasl_private_display *base,
 #if YASL_HAS_EGL
 static bool egl_open(struct x11_display *d)
 {
-    if (d->egl_ready) return true;
-    if (!x11_egl_load()) {
-        errno = ENOTSUP;
-        return false;
+    pthread_mutex_lock(&d->egl_mutex);
+    bool ok = true;
+    if (!d->egl_ready) {
+        if (!x11_egl_load()) {
+            errno = ENOTSUP;
+            ok = false;
+        } else {
+            d->egl = eglGetDisplay((EGLNativeDisplayType)d->native);
+            EGLint major = 0, minor = 0;
+            if (d->egl == EGL_NO_DISPLAY || !eglInitialize(d->egl, &major, &minor)) {
+                errno = ENOTSUP;
+                ok = false;
+            } else {
+                d->egl_ready = true;
+            }
+        }
     }
-    d->egl = eglGetDisplay((EGLNativeDisplayType)d->native);
-    EGLint major = 0, minor = 0;
-    if (d->egl == EGL_NO_DISPLAY || !eglInitialize(d->egl, &major, &minor)) {
-        errno = ENOTSUP;
-        return false;
-    }
-    d->egl_ready = true;
-    return true;
+    pthread_mutex_unlock(&d->egl_mutex);
+    return ok;
+}
+
+/* ES 1 needs EGL_OPENGL_ES_BIT, ES 2 EGL_OPENGL_ES2_BIT, and ES 3 or later
+ * EGL_OPENGL_ES3_BIT_KHR. Desktop GL keeps EGL_OPENGL_BIT. */
+static EGLint renderable_bit(const struct yasl_private_gl_options *options)
+{
+    if (options->api != YASL_PRIVATE_GL_OPENGL_ES) return EGL_OPENGL_BIT;
+    EGLint bit = EGL_OPENGL_ES2_BIT;
+#ifdef EGL_OPENGL_ES_BIT
+    if (options->major < 2) bit = EGL_OPENGL_ES_BIT;
+#endif
+#ifdef EGL_OPENGL_ES3_BIT_KHR
+    if (options->major >= 3) bit = EGL_OPENGL_ES3_BIT_KHR;
+#endif
+    return bit;
 }
 
 static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
@@ -2214,18 +2266,19 @@ static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
     struct yasl_private_gl_options options;
     if (!yasl_private_gl_parse_options(attrs, &options)) { errno = EINVAL; return NULL; }
     if (!egl_open(d)) return NULL;
-    if (options.srgb) {
-        const char *extensions = eglQueryString(d->egl, EGL_EXTENSIONS);
-        if (!extensions || !strstr(extensions, "EGL_KHR_gl_colorspace")) {
-            errno = ENOTSUP;
-            return NULL;
-        }
+    const char *extensions = eglQueryString(d->egl, EGL_EXTENSIONS);
+    bool colorspace = extensions && strstr(extensions, "EGL_KHR_gl_colorspace");
+    if (options.srgb && !colorspace) {
+        errno = ENOTSUP;
+        return NULL;
     }
+    /* One display cannot mix a desktop GL context with a GLES context. */
+    EGLint api = options.api == YASL_PRIVATE_GL_OPENGL_ES ? EGL_OPENGL_ES_API : EGL_OPENGL_API;
+    if (d->egl_api && d->egl_api != api) { errno = ENOTSUP; return NULL; }
 
-    EGLint renderable = options.api == YASL_PRIVATE_GL_OPENGL_ES ? EGL_OPENGL_ES2_BIT : EGL_OPENGL_BIT;
     EGLint config_attrs[] = {
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-        EGL_RENDERABLE_TYPE, renderable,
+        EGL_RENDERABLE_TYPE, renderable_bit(&options),
         EGL_RED_SIZE, options.red_bits,
         EGL_GREEN_SIZE, options.green_bits,
         EGL_BLUE_SIZE, options.blue_bits,
@@ -2242,6 +2295,8 @@ static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
         errno = ENOTSUP;
         return NULL;
     }
+    if (!eglBindAPI(api)) { errno = ENOTSUP; return NULL; }
+    d->egl_api = api;
     EGLint visual_id = 0, depth = 0;
     if (!eglGetConfigAttrib(d->egl, config, EGL_NATIVE_VISUAL_ID, &visual_id) ||
         !eglGetConfigAttrib(d->egl, config, EGL_BUFFER_SIZE, &depth)) {
@@ -2267,19 +2322,22 @@ static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
     if (!base_surface) return NULL;
     struct x11_surface *s = (struct x11_surface *)base_surface;
     s->gl_config = config;
+    s->gl_api = api;
     s->swap_interval = 1; /* EGL's default for window surfaces. */
-    EGLint surface_attrs[] = {EGL_GL_COLORSPACE_KHR, EGL_GL_COLORSPACE_SRGB_KHR, EGL_NONE};
+    EGLint surface_attrs[3] = {EGL_GL_COLORSPACE_KHR,
+        options.srgb ? EGL_GL_COLORSPACE_SRGB_KHR : EGL_GL_COLORSPACE_LINEAR_KHR, EGL_NONE};
     s->gl_surface = eglCreateWindowSurface(d->egl, config,
-                    (EGLNativeWindowType)s->window, options.srgb ? surface_attrs : NULL);
+                    (EGLNativeWindowType)s->window, colorspace ? surface_attrs : NULL);
+    if (s->gl_surface == EGL_NO_SURFACE && options.srgb && colorspace) {
+        /* Some drivers refuse an sRGB window surface; linear is the fallback. */
+        surface_attrs[1] = EGL_GL_COLORSPACE_LINEAR_KHR;
+        s->gl_surface = eglCreateWindowSurface(d->egl, config,
+                        (EGLNativeWindowType)s->window, surface_attrs);
+    }
     if (s->gl_surface == EGL_NO_SURFACE) {
         surface_destroy(base_surface);
         errno = ENODEV;
         return NULL;
-    }
-    if (options.api == YASL_PRIVATE_GL_OPENGL) {
-        if (!eglBindAPI(EGL_OPENGL_API)) { surface_destroy(base_surface); errno = ENOTSUP; return NULL; }
-    } else if (!eglBindAPI(EGL_OPENGL_ES_API)) {
-        surface_destroy(base_surface); errno = ENOTSUP; return NULL;
     }
     EGLContext share_context = EGL_NO_CONTEXT;
     if (share) {
@@ -2292,20 +2350,25 @@ static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
     }
     EGLint context_attrs[12];
     EGLint n = 0;
-    context_attrs[n++] = EGL_CONTEXT_MAJOR_VERSION;
-    context_attrs[n++] = options.major;
-    context_attrs[n++] = EGL_CONTEXT_MINOR_VERSION;
-    context_attrs[n++] = options.minor;
-    if (options.api == YASL_PRIVATE_GL_OPENGL && options.profile != YASL_PRIVATE_GL_ANY) {
-        context_attrs[n++] = EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR;
-        context_attrs[n++] = options.profile == YASL_PRIVATE_GL_CORE ?
-            EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR : EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT_KHR;
-    }
-    EGLint context_flags = (options.debug ? EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR : 0) |
-        (options.forward_compat ? EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE_BIT_KHR : 0);
-    if (context_flags) {
-        context_attrs[n++] = EGL_CONTEXT_FLAGS_KHR;
-        context_attrs[n++] = context_flags;
+    if (options.api == YASL_PRIVATE_GL_OPENGL_ES) {
+        context_attrs[n++] = EGL_CONTEXT_CLIENT_VERSION;
+        context_attrs[n++] = options.major;
+    } else {
+        context_attrs[n++] = EGL_CONTEXT_MAJOR_VERSION;
+        context_attrs[n++] = options.major;
+        context_attrs[n++] = EGL_CONTEXT_MINOR_VERSION;
+        context_attrs[n++] = options.minor;
+        if (options.profile != YASL_PRIVATE_GL_ANY) {
+            context_attrs[n++] = EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR;
+            context_attrs[n++] = options.profile == YASL_PRIVATE_GL_CORE ?
+                EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR : EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT_KHR;
+        }
+        EGLint context_flags = (options.debug ? EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR : 0) |
+            (options.forward_compat ? EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE_BIT_KHR : 0);
+        if (context_flags) {
+            context_attrs[n++] = EGL_CONTEXT_FLAGS_KHR;
+            context_attrs[n++] = context_flags;
+        }
     }
     context_attrs[n] = EGL_NONE;
     s->gl_context = eglCreateContext(d->egl, config, share_context, context_attrs);
@@ -2320,31 +2383,44 @@ static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
 static bool gl_make_current(struct yasl_private_display *base, struct yasl_surface *surface)
 {
     struct x11_display *d = (struct x11_display *)base;
-    if (!surface) /* Without EGL there is no context to detach. */
-        return !d->egl_ready || eglMakeCurrent(d->egl, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT) == EGL_TRUE;
-    if (!d->egl_ready) { errno = ENOTSUP; return false; }
-    struct x11_surface *s = (struct x11_surface *)surface;
-    if (surface->display != base || s->base.presenter != YASL_PRIVATE_PRESENTER_GL || !s->gl_context) {
-        errno = EINVAL;
-        return false;
+    pthread_mutex_lock(&d->egl_mutex);
+    bool ok = false;
+    if (!surface) {
+        /* Without EGL there is no context to detach. */
+        ok = !d->egl_ready || eglMakeCurrent(d->egl, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT) == EGL_TRUE;
+    } else {
+        struct x11_surface *s = (struct x11_surface *)surface;
+        if (!d->egl_ready) {
+            errno = ENOTSUP;
+        } else if (surface->display != base || s->base.presenter != YASL_PRIVATE_PRESENTER_GL ||
+                   !s->gl_context) {
+            errno = EINVAL;
+        } else if (eglBindAPI(s->gl_api) &&
+                   eglMakeCurrent(d->egl, s->gl_surface, s->gl_surface, s->gl_context) == EGL_TRUE) {
+            eglSwapInterval(d->egl, s->swap_interval);
+            ok = true;
+        }
     }
-    if (eglMakeCurrent(d->egl, s->gl_surface, s->gl_surface, s->gl_context) != EGL_TRUE) return false;
-    eglSwapInterval(d->egl, s->swap_interval);
-    return true;
+    pthread_mutex_unlock(&d->egl_mutex);
+    return ok;
 }
 
 static yasl_private_gl_proc gl_get_proc_address(struct yasl_private_display *base, const char *name)
 {
     struct x11_display *d = (struct x11_display *)base;
-    if (!name || !d || !d->egl_ready || !__atomic_load_n(&x11_egl_dl.ready, __ATOMIC_ACQUIRE))
-        return NULL;
+    if (!name || !d) return NULL;
+    pthread_mutex_lock(&d->egl_mutex);
+    bool ready = d->egl_ready;
+    pthread_mutex_unlock(&d->egl_mutex);
+    if (!ready || !__atomic_load_n(&x11_egl_dl.ready, __ATOMIC_ACQUIRE)) return NULL;
     return (yasl_private_gl_proc)eglGetProcAddress(name);
 }
 
 static bool gl_swap_interval(struct yasl_private_display *base, struct yasl_surface *surface, int interval)
 {
     struct x11_display *d = (struct x11_display *)base;
-    if (!surface || surface->display != base || ((struct x11_surface *)surface)->base.presenter != YASL_PRIVATE_PRESENTER_GL) {
+    struct x11_surface *s = (struct x11_surface *)surface;
+    if (!surface || surface->display != base || s->base.presenter != YASL_PRIVATE_PRESENTER_GL) {
         errno = EINVAL;
         return false;
     }
@@ -2352,23 +2428,31 @@ static bool gl_swap_interval(struct yasl_private_display *base, struct yasl_surf
         errno = ENOTSUP;
         return false;
     }
-    struct x11_surface *s = (struct x11_surface *)surface;
+    pthread_mutex_lock(&d->egl_mutex);
     s->swap_interval = interval;
     /* EGL applies the interval to the calling thread's draw surface, so apply it now
      * only when this surface is current here; otherwise gl_make_current applies it. */
-    if (eglGetCurrentSurface(EGL_DRAW) != s->gl_surface) return true;
-    return eglSwapInterval(d->egl, interval) == EGL_TRUE;
+    bool ok = eglGetCurrentSurface(EGL_DRAW) != s->gl_surface ||
+              eglSwapInterval(d->egl, interval) == EGL_TRUE;
+    pthread_mutex_unlock(&d->egl_mutex);
+    return ok;
 }
 
 static bool gl_swap_buffers(struct yasl_private_display *base, struct yasl_surface *surface)
 {
     struct x11_display *d = (struct x11_display *)base;
     struct x11_surface *s = (struct x11_surface *)surface;
-    if (!surface || surface->display != base || s->base.presenter != YASL_PRIVATE_PRESENTER_GL || !d->egl_ready) {
+    if (!surface || surface->display != base || s->base.presenter != YASL_PRIVATE_PRESENTER_GL) {
         errno = EINVAL;
         return false;
     }
-    if (!eglSwapBuffers(d->egl, s->gl_surface)) return false;
+    pthread_mutex_lock(&d->egl_mutex);
+    bool ok = d->egl_ready && eglSwapBuffers(d->egl, s->gl_surface);
+    pthread_mutex_unlock(&d->egl_mutex);
+    if (!ok) {
+        if (!d->egl_ready) errno = ENOTSUP;
+        return false;
+    }
     s->presented = true;
     yasl_private_clock_presented(&s->clock, yasl_private_loop_now_ns(), false);
     return true;
@@ -3804,6 +3888,19 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
             return NULL;
         }
     }
+    int mutex_error = pthread_mutex_init(&d->egl_mutex, NULL);
+    if (mutex_error) {
+        if (d->watch > 0) yasl_loop_del_fd(d->loop, d->watch);
+        if (d->im) XCloseIM(d->im);
+        XDestroyWindow(d->native, d->selection_window);
+        XCloseDisplay(d->native);
+        display_unregister(d);
+        free(d->app_id);
+        if (d->owns_loop) yasl_loop_destroy(d->loop);
+        free(d);
+        errno = mutex_error;
+        return NULL;
+    }
     return &d->base;
 }
 
@@ -3823,8 +3920,14 @@ static void display_close(struct yasl_private_display *base)
     if (d->im) XCloseIM(d->im);
     clear_pointers(d);
 #if YASL_HAS_EGL
-    if (d->egl_ready) eglTerminate(d->egl);
+    if (d->egl_ready) {
+        pthread_mutex_lock(&d->egl_mutex);
+        eglTerminate(d->egl);
+        d->egl_ready = false;
+        pthread_mutex_unlock(&d->egl_mutex);
+    }
 #endif
+    pthread_mutex_destroy(&d->egl_mutex);
     for (size_t i = 0; i < sizeof(d->cursors) / sizeof(d->cursors[0]); i++) {
         if (d->cursors[i]) {
             if (!d->lost) XFreeCursor(d->native, d->cursors[i]);

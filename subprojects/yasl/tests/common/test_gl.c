@@ -222,8 +222,7 @@ int main(int argc, char **argv)
     fprintf(stderr, "%d REFRESH events in 1 s of GL animation\n", frames);
     REQUIRE(frames >= 20 && frames <= 75, "one REFRESH per frame shown");
 
-    if (!strcmp(argv[1], "wayland"))
-        test_render_thread(clear);
+    test_render_thread(clear);
 
     REQUIRE(yasl_surface_create(&(struct yasl_surface_options){.title="invalid attrs", .width=100, .height=100, .type=YASL_SURFACE_GL, .gl = {.major = -1}}) == NULL && errno == EINVAL,
             "reject invalid GL context options");
