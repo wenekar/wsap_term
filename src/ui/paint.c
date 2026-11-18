@@ -126,8 +126,13 @@ static void paint_tree(const struct ui_widget *widget, struct ui_scene *scene)
     };
     if (widget->ops && widget->ops->paint)
         widget->ops->paint(widget, &paint);
-    bool clip = widget->ops && widget->ops->clip_children &&
-                visible_children(widget);
+    enum css_overflow overflow = ui_css_overflow(&widget->style,
+                                                CSS_OVERFLOW_VISIBLE);
+    bool clip = ((widget->ops && widget->ops->clip_children) ||
+                 overflow == CSS_OVERFLOW_HIDDEN ||
+                 overflow == CSS_OVERFLOW_CLIP ||
+                 overflow == CSS_OVERFLOW_SCROLL ||
+                 overflow == CSS_OVERFLOW_AUTO) && visible_children(widget);
     if (clip && !ui_paint_push_clip(&paint, ui_paint_bounds(&paint)))
         return;
     for (struct ui_widget *c = widget->first_child;

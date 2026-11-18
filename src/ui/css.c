@@ -80,9 +80,46 @@ static bool parse_named_color(const char *s, uint32_t *out)
     return false;
 }
 
+/* Parses rgb(r, g, b) and rgba(r, g, b, a). Each part is a whole number from
+   0 to 255. The alpha of rgb() is opaque. */
+static bool parse_rgb_color(const char *s, uint32_t *out)
+{
+    bool alpha = !strncmp(s, "rgba(", 5);
+    if (!alpha && strncmp(s, "rgb(", 4) != 0)
+        return false;
+    const char *p = s + (alpha ? 5 : 4);
+    int part[4] = { 0, 0, 0, 255 };
+    int count = alpha ? 4 : 3;
+    for (int i = 0; i < count; i++) {
+        while (isspace((unsigned char)*p)) p++;
+        char *end = NULL;
+        long v = strtol(p, &end, 10);
+        if (end == p || v < 0 || v > 255)
+            return false;
+        part[i] = (int)v;
+        p = end;
+        while (isspace((unsigned char)*p)) p++;
+        if (i + 1 < count) {
+            if (*p != ',')
+                return false;
+            p++;
+        }
+    }
+    if (*p != ')')
+        return false;
+    p++;
+    while (isspace((unsigned char)*p)) p++;
+    if (*p != '\0')
+        return false;
+    *out = ((uint32_t)part[3] << 24) | ((uint32_t)part[0] << 16) |
+           ((uint32_t)part[1] << 8) | (uint32_t)part[2];
+    return true;
+}
+
 static bool parse_color(const char *s, uint32_t *out)
 {
-    return parse_hex_color(s, out) || parse_named_color(s, out);
+    return parse_hex_color(s, out) || parse_named_color(s, out) ||
+           parse_rgb_color(s, out);
 }
 
 static struct css_value parse_value(const char *s)
@@ -326,6 +363,17 @@ enum prop_kind {
     P_BORDER, /* A width and an optional color. */
     P_WRAP,
     P_ALIGN_SELF,
+    P_FAMILY,
+    P_FONT_WEIGHT,
+    P_FONT_STYLE,
+    P_LINE_HEIGHT,
+    P_OVERFLOW,
+    P_POSITION,
+    P_INT,
+    P_PAD_EDGE,    /* `size` is the edge. */
+    P_MARGIN_EDGE,
+    P_BORDER_EDGE,
+    P_INSET,       /* `size` is top, right, bottom, or left. */
 };
 
 enum style_has_bit {
@@ -345,6 +393,14 @@ enum style_has_bit {
     HAS_has_flex_grow,
     HAS_has_flex_shrink,
     HAS_has_align_self,
+    HAS_has_font_family,
+    HAS_has_font_size,
+    HAS_has_font_weight,
+    HAS_has_font_style,
+    HAS_has_line_height,
+    HAS_has_overflow,
+    HAS_has_position,
+    HAS_has_z_index,
 };
 
 struct prop_info {
@@ -386,6 +442,11 @@ struct prop_info {
     .name = (n), .offset = offsetof(struct css_style, m), \
     .kind = P_BORDER, .size = PROP_FIELD_SIZE(m), \
 }
+/* A per-edge property. `edge` is its index in the box. */
+#define PROP_EDGE(n, k, m, edge) { \
+    .name = (n), .offset = offsetof(struct css_style, m), \
+    .kind = (uint8_t)(k), .size = (uint8_t)(edge), \
+}
 
 static const struct prop_info props[] = {
     PROP("width",            P_VAL,      width),
@@ -419,17 +480,95 @@ static const struct prop_info props[] = {
     PROP_SHADOW("box-shadow",       shadow_x,                        has_shadow),
     PROP_COLOR("ripple-color", ripple_color, has_ripple_color),
     PROP_COLOR("ripple",       ripple_color, has_ripple_color),
+    PROP_HAS("font-family",  P_FAMILY,      font_family, has_font_family),
+    PROP_HAS("font-size",    P_VAL,         font_size,   has_font_size),
+    PROP_HAS("font-weight",  P_FONT_WEIGHT, font_weight, has_font_weight),
+    PROP_ENUM("font-style",  P_FONT_STYLE,  has_font_style),
+    PROP_HAS("line-height",  P_LINE_HEIGHT, line_height, has_line_height),
+    PROP_ENUM("overflow",    P_OVERFLOW,    has_overflow),
+    PROP_ENUM("position",    P_POSITION,    has_position),
+    PROP_HAS("z-index",      P_INT,         z_index,     has_z_index),
+    PROP_EDGE("padding-top", P_PAD_EDGE, padding, 0),
+    PROP_EDGE("padding-right", P_PAD_EDGE, padding, 1),
+    PROP_EDGE("padding-bottom", P_PAD_EDGE, padding, 2),
+    PROP_EDGE("padding-left", P_PAD_EDGE, padding, 3),
+    PROP_EDGE("margin-top", P_MARGIN_EDGE, margin, 0),
+    PROP_EDGE("margin-right", P_MARGIN_EDGE, margin, 1),
+    PROP_EDGE("margin-bottom", P_MARGIN_EDGE, margin, 2),
+    PROP_EDGE("margin-left", P_MARGIN_EDGE, margin, 3),
+    PROP_EDGE("border-top-width", P_BORDER_EDGE, border_edges, 0),
+    PROP_EDGE("border-right-width", P_BORDER_EDGE, border_edges, 1),
+    PROP_EDGE("border-bottom-width", P_BORDER_EDGE, border_edges, 2),
+    PROP_EDGE("border-left-width", P_BORDER_EDGE, border_edges, 3),
+    PROP_EDGE("top", P_INSET, inset, 0),
+    PROP_EDGE("right", P_INSET, inset, 1),
+    PROP_EDGE("bottom", P_INSET, inset, 2),
+    PROP_EDGE("left", P_INSET, inset, 3),
 };
 
 static const size_t prop_count = sizeof(props) / sizeof(props[0]);
-static_assert(sizeof(props) / sizeof(props[0]) <= 64,
-              "The rule set mask holds one bit per property");
 static_assert(sizeof(props) / sizeof(props[0]) <= UINT16_MAX,
               "Property indices must fit in uint16_t");
 static_assert(CSS_SHADOW_SIZE <= UINT8_MAX,
               "Shadow fields must fit in prop_info.size");
-static_assert(HAS_NONE == 0 && HAS_has_justify_content <= UINT8_MAX,
+static_assert(HAS_NONE == 0 && HAS_has_z_index <= UINT8_MAX,
               "Zero has_bit must mean no presence flag");
+
+/* The rule mask has one bit per property. It grows with the property table,
+   so a new property cannot overflow it. */
+
+static uint32_t prop_mask_words(void)
+{
+    return (uint32_t)((prop_count + 63) / 64);
+}
+
+static bool prop_mask_init(struct css_prop_mask *mask)
+{
+    if (mask->bits)
+        return true;
+    uint32_t words = prop_mask_words();
+    mask->bits = calloc(words, sizeof(*mask->bits));
+    if (!mask->bits)
+        return false;
+    mask->words = words;
+    return true;
+}
+
+static bool prop_mask_add(struct css_prop_mask *mask, size_t index)
+{
+    if (index >= prop_count || !prop_mask_init(mask))
+        return false;
+    mask->bits[index / 64] |= 1ULL << (index % 64);
+    return true;
+}
+
+static bool prop_mask_has(const struct css_prop_mask *mask, size_t index)
+{
+    return index < prop_count && index / 64 < mask->words &&
+           (mask->bits[index / 64] >> (index % 64)) & 1ULL;
+}
+
+static void prop_mask_clear(struct css_prop_mask *mask)
+{
+    free(mask->bits);
+    mask->bits = NULL;
+    mask->words = 0;
+}
+
+static bool prop_mask_copy(struct css_prop_mask *dst,
+                           const struct css_prop_mask *src)
+{
+    dst->bits = NULL;
+    dst->words = 0;
+    if (!src->words)
+        return true;
+    dst->bits = malloc((size_t)src->words * sizeof(*dst->bits));
+    if (!dst->bits)
+        return false;
+    memcpy(dst->bits, src->bits, (size_t)src->words * sizeof(*dst->bits));
+    dst->words = src->words;
+    return true;
+}
 
 static void set_style_has_bit(struct css_style *s, uint8_t bit, bool v)
 {
@@ -450,6 +589,14 @@ static void set_style_has_bit(struct css_style *s, uint8_t bit, bool v)
     case HAS_has_flex_grow:           s->has_flex_grow = v; break;
     case HAS_has_flex_shrink:         s->has_flex_shrink = v; break;
     case HAS_has_align_self:          s->has_align_self = v; break;
+    case HAS_has_font_family:         s->has_font_family = v; break;
+    case HAS_has_font_size:           s->has_font_size = v; break;
+    case HAS_has_font_weight:         s->has_font_weight = v; break;
+    case HAS_has_font_style:          s->has_font_style = v; break;
+    case HAS_has_line_height:         s->has_line_height = v; break;
+    case HAS_has_overflow:            s->has_overflow = v; break;
+    case HAS_has_position:            s->has_position = v; break;
+    case HAS_has_z_index:             s->has_z_index = v; break;
     }
 }
 
@@ -472,6 +619,14 @@ static bool get_style_has_bit(const struct css_style *s, uint8_t bit)
     case HAS_has_flex_grow:           return s->has_flex_grow;
     case HAS_has_flex_shrink:         return s->has_flex_shrink;
     case HAS_has_align_self:          return s->has_align_self;
+    case HAS_has_font_family:         return s->has_font_family;
+    case HAS_has_font_size:           return s->has_font_size;
+    case HAS_has_font_weight:         return s->has_font_weight;
+    case HAS_has_font_style:          return s->has_font_style;
+    case HAS_has_line_height:         return s->has_line_height;
+    case HAS_has_overflow:            return s->has_overflow;
+    case HAS_has_position:            return s->has_position;
+    case HAS_has_z_index:             return s->has_z_index;
     }
     return false;
 }
@@ -657,6 +812,103 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
             r->style.cursor = cur;
             break;
         }
+        case P_FAMILY: {
+            char *family = (char *)dst;
+            size_t len = strlen(val);
+            if (len == 0 || len >= 48)
+                return CSS_DECLARATION_INVALID;
+            memcpy(family, val, len + 1);
+            break;
+        }
+        case P_FONT_WEIGHT: {
+            int weight;
+            if (!strcmp(val, "normal"))
+                weight = 400;
+            else if (!strcmp(val, "bold"))
+                weight = 700;
+            else {
+                char *end = NULL;
+                long v = strtol(val, &end, 10);
+                if (!end || end == val || *end || v < 1 || v > 1000)
+                    return CSS_DECLARATION_INVALID;
+                weight = (int)v;
+            }
+            *(int *)dst = weight;
+            break;
+        }
+        case P_FONT_STYLE:
+            if (!strcmp(val, "normal"))
+                r->style.font_style = CSS_FONT_NORMAL;
+            else if (!strcmp(val, "italic"))
+                r->style.font_style = CSS_FONT_ITALIC;
+            else if (!strcmp(val, "oblique"))
+                r->style.font_style = CSS_FONT_OBLIQUE;
+            else
+                return CSS_DECLARATION_INVALID;
+            break;
+        case P_LINE_HEIGHT: {
+            struct css_style *style = &r->style;
+            if (!strcmp(val, "normal")) {
+                style->line_height = (struct css_value){ .unit = CSS_UNIT_AUTO };
+                break;
+            }
+            char *end = NULL;
+            float f = strtof(val, &end);
+            while (end && isspace((unsigned char)*end)) end++;
+            if (end && end != val && *end == '\0') {
+                if (!isfinite(f) || f < 0.0f) return CSS_DECLARATION_INVALID;
+                style->line_height =
+                    (struct css_value){ .val = f * 100.0f,
+                                        .unit = CSS_UNIT_PERCENT };
+                break;
+            }
+            struct css_value v = parse_value(val);
+            if (v.unit == CSS_UNIT_NONE) return CSS_DECLARATION_INVALID;
+            style->line_height = v;
+            break;
+        }
+        case P_OVERFLOW:
+            if (!strcmp(val, "visible"))
+                r->style.overflow = CSS_OVERFLOW_VISIBLE;
+            else if (!strcmp(val, "hidden"))
+                r->style.overflow = CSS_OVERFLOW_HIDDEN;
+            else if (!strcmp(val, "clip"))
+                r->style.overflow = CSS_OVERFLOW_CLIP;
+            else if (!strcmp(val, "scroll"))
+                r->style.overflow = CSS_OVERFLOW_SCROLL;
+            else if (!strcmp(val, "auto"))
+                r->style.overflow = CSS_OVERFLOW_AUTO;
+            else
+                return CSS_DECLARATION_INVALID;
+            break;
+        case P_POSITION:
+            if (!strcmp(val, "static"))
+                r->style.position = CSS_POSITION_STATIC;
+            else if (!strcmp(val, "relative"))
+                r->style.position = CSS_POSITION_RELATIVE;
+            else if (!strcmp(val, "absolute"))
+                r->style.position = CSS_POSITION_ABSOLUTE;
+            else
+                return CSS_DECLARATION_INVALID;
+            break;
+        case P_INT: {
+            char *end = NULL;
+            long v = strtol(val, &end, 10);
+            if (!end || end == val || *end || v < INT_MIN || v > INT_MAX)
+                return CSS_DECLARATION_INVALID;
+            *(int *)dst = (int)v;
+            break;
+        }
+        case P_PAD_EDGE:
+        case P_MARGIN_EDGE:
+        case P_BORDER_EDGE:
+        case P_INSET: {
+            struct css_value v = parse_value(val);
+            if (v.unit == CSS_UNIT_NONE) return CSS_DECLARATION_INVALID;
+            struct css_value *edges = (struct css_value *)dst;
+            edges[p->size] = v;
+            break;
+        }
         case P_SHADOW:
             if (!parse_box_shadow(val, &r->style)) return CSS_DECLARATION_INVALID;
             break;
@@ -673,8 +925,8 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
                 int color = find_prop_idx("border-color");
                 r->style.border_color = border.border_color;
                 r->style.has_border_color = true;
-                if (color >= 0)
-                    r->set_mask |= (1ULL << (size_t)color);
+                if (color >= 0 && !prop_mask_add(&r->set_mask, (size_t)color))
+                    return CSS_DECLARATION_INVALID;
             }
             break;
         }
@@ -697,8 +949,8 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
     }
     if (p->has_bit && p->kind != P_SHADOW && sets_has)
         set_style_has_bit(&r->style, p->has_bit, true);
-    if (sets_field)
-        r->set_mask |= (1ULL << idx);
+    if (sets_field && !prop_mask_add(&r->set_mask, idx))
+        return CSS_DECLARATION_INVALID;
     return CSS_DECLARATION_OK;
 }
 
@@ -847,6 +1099,7 @@ static void rule_clear_selector(struct css_rule *r)
     free(r->selector);
     free(r->parts);
     free(r->classes);
+    prop_mask_clear(&r->set_mask);
     r->selector = NULL;
     r->parts = NULL;
     r->classes = NULL;
@@ -1252,6 +1505,7 @@ static bool sheet_append_rule(struct css_sheet *sheet,
         return false;
     struct css_rule *r = &sheet->rules[sheet->rule_count];
     *r = *src;
+    r->set_mask = (struct css_prop_mask){0};
     r->selector = NULL;
     r->parts = NULL;
     r->part_cap = 0;
@@ -1280,7 +1534,7 @@ static bool sheet_append_rule(struct css_sheet *sheet,
             return false;
         }
     }
-    if (!rule_copy_var_props(r, src)) {
+    if (!rule_copy_var_props(r, src) || !prop_mask_copy(&r->set_mask, &src->set_mask)) {
         rule_clear_selector(r);
         return false;
     }
@@ -1437,15 +1691,21 @@ static bool try_expand_and_apply(const struct css_sheet *sheet,
         *out_res = CSS_DECLARATION_INVALID;
         return false;
     }
-    struct css_rule tmp = {
-        .style = rule->style,
-        .set_mask = rule->set_mask,
-    };
+    struct css_rule tmp = { .style = rule->style };
+    if (!prop_mask_copy(&tmp.set_mask, &rule->set_mask)) {
+        free(buf.data);
+        *out_st = CSS_VAR_OOM;
+        *out_res = CSS_DECLARATION_INVALID;
+        return false;
+    }
     *out_res = apply_prop_at(&tmp, prop_idx, buf.data ? buf.data : "");
     free(buf.data);
-    if (*out_res != CSS_DECLARATION_OK)
+    if (*out_res != CSS_DECLARATION_OK) {
+        prop_mask_clear(&tmp.set_mask);
         return false;
+    }
     rule->style = tmp.style;
+    prop_mask_clear(&rule->set_mask);
     rule->set_mask = tmp.set_mask;
     return true;
 }
@@ -1517,7 +1777,7 @@ static bool handle_rule_decl(const struct css_sheet *sheet, struct css_rule *pro
         /* A declaration that sets the field replaces the earlier one that
            holds var(). One that leaves the field alone keeps it. */
         if (result == CSS_DECLARATION_OK &&
-            (proto->set_mask & (1ULL << (size_t)idx)))
+            prop_mask_has(&proto->set_mask, (size_t)idx))
             rule_drop_matching_var_props(proto, proto->var_prop_count, (size_t)idx);
         report_declaration(report, userdata, result, source, k_start, key, val);
         return true;
@@ -1617,6 +1877,7 @@ static bool parse_rules(struct css_sheet *sheet, const char *source,
 
         if (is_root) {
             rule_clear_vars(&proto);
+            prop_mask_clear(&proto.set_mask);
             continue;
         }
 
@@ -1660,9 +1921,11 @@ static bool parse_rules(struct css_sheet *sheet, const char *source,
             sel_ptr = comma + 1;
         }
         rule_clear_vars(&proto);
+        prop_mask_clear(&proto.set_mask);
     }
 done:
     rule_clear_vars(&proto);
+    prop_mask_clear(&proto.set_mask);
     return ok;
 }
 
@@ -1858,35 +2121,52 @@ static bool rule_matches(const struct css_rule *r,
 
 static void apply_rule_props(const struct css_rule *r, struct css_style *out)
 {
-    uint64_t mask = r->set_mask;
-    while (mask) {
-        int bit = __builtin_ctzll(mask);
-        mask &= ~(1ULL << bit);
-
-        if ((size_t)bit >= prop_count)
-            continue;
-        const struct prop_info *p = &props[bit];
-        char *dst = (char *)out + p->offset;
-        const char *src = (const char *)&r->style + p->offset;
-        if (p->kind == P_INSETS) {
-            const struct css_value *srcv = (const struct css_value *)src;
-            struct css_value *dstv = (struct css_value *)dst;
-            for (int e = 0; e < 4; e++)
-                if (srcv[e].unit != CSS_UNIT_NONE)
-                    dstv[e] = srcv[e];
-            continue;
+    for (uint32_t word = 0; word < r->set_mask.words; word++) {
+        uint64_t mask = r->set_mask.bits[word];
+        while (mask) {
+            int bit = __builtin_ctzll(mask);
+            mask &= ~(1ULL << bit);
+            size_t index = (size_t)word * 64 + (size_t)bit;
+            if (index >= prop_count)
+                continue;
+            const struct prop_info *p = &props[index];
+            char *dst = (char *)out + p->offset;
+            const char *src = (const char *)&r->style + p->offset;
+            switch ((enum prop_kind)p->kind) {
+            case P_INSETS: {
+                const struct css_value *srcv = (const struct css_value *)src;
+                struct css_value *dstv = (struct css_value *)dst;
+                for (int e = 0; e < 4; e++)
+                    if (srcv[e].unit != CSS_UNIT_NONE)
+                        dstv[e] = srcv[e];
+                break;
+            }
+            case P_PAD_EDGE:
+            case P_MARGIN_EDGE:
+            case P_BORDER_EDGE:
+            case P_INSET: {
+                struct css_value *dstv = (struct css_value *)dst;
+                const struct css_value *srcv = (const struct css_value *)src;
+                dstv[p->size] = srcv[p->size];
+                break;
+            }
+            case P_FLEX_DIR: out->flex_direction = r->style.flex_direction; break;
+            case P_ALIGN:    out->align_items = r->style.align_items; break;
+            case P_JUSTIFY:  out->justify_content = r->style.justify_content; break;
+            case P_CURSOR:   out->cursor = r->style.cursor; break;
+            case P_WRAP:     out->flex_wrap = r->style.flex_wrap; break;
+            case P_ALIGN_SELF: out->align_self = r->style.align_self; break;
+            case P_FONT_STYLE: out->font_style = r->style.font_style; break;
+            case P_OVERFLOW: out->overflow = r->style.overflow; break;
+            case P_POSITION: out->position = r->style.position; break;
+            case P_FONT_WEIGHT: out->font_weight = r->style.font_weight; break;
+            case P_INT:      out->z_index = r->style.z_index; break;
+            default:         memcpy(dst, src, p->size); break;
+            }
+            if (p->has_bit)
+                set_style_has_bit(out, p->has_bit,
+                                  get_style_has_bit(&r->style, p->has_bit));
         }
-        switch ((enum prop_kind)p->kind) {
-        case P_FLEX_DIR: out->flex_direction = r->style.flex_direction; break;
-        case P_ALIGN:    out->align_items = r->style.align_items; break;
-        case P_JUSTIFY:  out->justify_content = r->style.justify_content; break;
-        case P_CURSOR:   out->cursor = r->style.cursor; break;
-        case P_WRAP:     out->flex_wrap = r->style.flex_wrap; break;
-        case P_ALIGN_SELF: out->align_self = r->style.align_self; break;
-        default:         memcpy(dst, src, p->size); break;
-        }
-        if (p->has_bit)
-            set_style_has_bit(out, p->has_bit, get_style_has_bit(&r->style, p->has_bit));
     }
 }
 
@@ -2149,6 +2429,7 @@ bool css_style_layout_eq(const struct css_style *a, const struct css_style *b)
             return false;
     return box_eq(&a->padding, &b->padding) &&
            box_eq(&a->margin, &b->margin) &&
+           box_eq(&a->border_edges, &b->border_edges) &&
            value_eq(a->gap, b->gap) &&
            value_eq(a->border_width, b->border_width) &&
            a->has_flex_direction == b->has_flex_direction &&

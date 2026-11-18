@@ -32,6 +32,26 @@ enum css_justify : uint8_t {
     CSS_JUSTIFY_SPACE_EVENLY,
 };
 
+enum css_position : uint8_t {
+    CSS_POSITION_STATIC = 0,
+    CSS_POSITION_RELATIVE,
+    CSS_POSITION_ABSOLUTE,
+};
+
+enum css_overflow : uint8_t {
+    CSS_OVERFLOW_VISIBLE = 0,
+    CSS_OVERFLOW_HIDDEN,
+    CSS_OVERFLOW_CLIP,
+    CSS_OVERFLOW_SCROLL,
+    CSS_OVERFLOW_AUTO,
+};
+
+enum css_font_style : uint8_t {
+    CSS_FONT_NORMAL = 0,
+    CSS_FONT_ITALIC,
+    CSS_FONT_OBLIQUE,
+};
+
 enum css_flex_wrap : uint8_t {
     CSS_WRAP_NONE = 0,
     CSS_WRAP_WRAP,
@@ -117,8 +137,12 @@ struct css_style {
 
     struct css_box padding;
     struct css_box margin;
+    /* Per-edge border widths. A unit of NONE uses `border_width`. */
+    struct css_box border_edges;
 
     struct css_value gap;
+    /* top, right, bottom, left */
+    struct css_value inset[4];
 
     uint32_t bg_color;
     uint32_t text_color;
@@ -130,6 +154,11 @@ struct css_style {
     float transition_duration;
     float flex_grow;
     float flex_shrink;
+    struct css_value font_size;
+    struct css_value line_height;
+    int font_weight;
+    int z_index;
+    char font_family[48];
 
     struct css_value shadow_x;
     struct css_value shadow_y;
@@ -159,9 +188,20 @@ struct css_style {
     uint32_t has_flex_grow : 1;
     uint32_t has_flex_shrink : 1;
     uint32_t has_align_self : 1;
+    uint32_t has_font_family : 1;
+    uint32_t has_font_size : 1;
+    uint32_t has_font_weight : 1;
+    uint32_t has_font_style : 1;
+    uint32_t has_line_height : 1;
+    uint32_t has_overflow : 1;
+    uint32_t has_position : 1;
+    uint32_t has_z_index : 1;
+    uint32_t overflow : 3;
+    uint32_t position : 2;
+    uint32_t font_style : 2;
 };
 
-_Static_assert(sizeof(struct css_style) == 200, "css_style must stay 200 bytes");
+_Static_assert(sizeof(struct css_style) == 340, "css_style must stay 340 bytes");
 
 /* Returns the effective opacity of `s`, or 1.0 when unset. */
 static inline float css_style_effective_opacity(const struct css_style *s)
@@ -209,9 +249,17 @@ struct css_selector_part {
     enum css_key_kind kind;
 };
 
+/* The properties that a rule sets. Bit `i` belongs to entry `i` of the
+   property table, so a set bit names its own entry. The mask grows with the
+   table. */
+struct css_prop_mask {
+    uint64_t *bits;
+    uint32_t words;
+};
+
 struct css_rule {
     char *selector;
-    uint64_t set_mask;
+    struct css_prop_mask set_mask;
     enum css_pseudo pseudo;
     struct css_selector_part *parts; /* Compiled when the sheet is built. */
     uint16_t part_count;
@@ -465,13 +513,110 @@ static inline struct insets2i ui_ctx_insets(const struct css_scale_context *ctx,
     return out;
 }
 
-/* Border width of `style`, in pixels. Zero without a border color. */
+/* Border width of `style` on `edge` (top, right, bottom, left), in pixels.
+   A per-edge value wins over `border-width`. */
+static inline int ui_css_border_edge(const struct css_style *style,
+                                     const struct css_scale_context *scale,
+                                     int edge)
+{
+    if (!style || !style->has_border_color)
+        return 0;
+    if (edge >= 0 && edge < 4 &&
+        style->border_edges.v[edge].unit != CSS_UNIT_NONE &&
+        style->border_edges.v[edge].unit != CSS_UNIT_AUTO)
+        return ui_css_resolve_int(style->border_edges.v[edge], 0, 0, scale,
+                                  true);
+    return ui_css_resolve_int(style->border_width, 0, 0, scale, true);
+}
+
+/* Border width of `style`, in pixels. Zero without a border color. The paint
+   uses the widest edge. */
 static inline int ui_css_border_width(const struct css_style *style,
                                       const struct css_scale_context *scale)
 {
-    return style && style->has_border_color
-        ? ui_css_resolve_int(style->border_width, 0, 0, scale, true)
-        : 0;
+    int width = 0;
+    for (int edge = 0; edge < 4; edge++)
+        width = width > ui_css_border_edge(style, scale, edge)
+            ? width : ui_css_border_edge(style, scale, edge);
+    return width;
+}
+
+/* Resolves the four border widths in CSS order top, right, bottom, left. */
+static inline struct insets2i ui_css_border_insets(
+    const struct css_style *style, const struct css_scale_context *scale)
+{
+    struct insets2i out = {0};
+    for (int edge = 0; edge < 4; edge++)
+        out.v[edge] = ui_css_border_edge(style, scale, edge);
+    return out;
+}
+
+/* The C-side fallbacks of the properties that a widget reads. Each one takes
+   the value that the widget uses when CSS leaves the property unset. */
+static inline float ui_css_font_size(const struct css_style *style,
+                                     const struct css_scale_context *scale,
+                                     float fallback)
+{
+    return style && style->has_font_size
+        ? css_value_resolve(style->font_size, 0, fallback, scale) : fallback;
+}
+
+/* The line height in pixels. `normal` and a unitless value use the font
+   size. `fallback` is the cell height of the widget. */
+static inline float ui_css_line_height(const struct css_style *style,
+                                       const struct css_scale_context *scale,
+                                       float fallback)
+{
+    if (!style || !style->has_line_height)
+        return fallback;
+    if (style->line_height.unit == CSS_UNIT_PERCENT)
+        return ui_css_font_size(style, scale, fallback) *
+               style->line_height.val / 100.0f;
+    return css_value_resolve(style->line_height, 0, fallback, scale);
+}
+
+static inline int ui_css_font_weight(const struct css_style *style,
+                                     int fallback)
+{
+    return style && style->has_font_weight ? style->font_weight : fallback;
+}
+
+static inline enum css_font_style ui_css_font_style(
+    const struct css_style *style, enum css_font_style fallback)
+{
+    return style && style->has_font_style
+        ? (enum css_font_style)style->font_style : fallback;
+}
+
+static inline enum css_overflow ui_css_overflow(const struct css_style *style,
+                                                enum css_overflow fallback)
+{
+    return style && style->has_overflow
+        ? (enum css_overflow)style->overflow : fallback;
+}
+
+static inline enum css_position ui_css_position(const struct css_style *style,
+                                                enum css_position fallback)
+{
+    return style && style->has_position
+        ? (enum css_position)style->position : fallback;
+}
+
+/* Resolves one `top`, `right`, `bottom`, or `left` value. */
+static inline int ui_css_inset(const struct css_style *style, int edge,
+                               const struct css_scale_context *scale,
+                               int fallback)
+{
+    if (!style || edge < 0 || edge > 3 ||
+        style->inset[edge].unit == CSS_UNIT_NONE ||
+        style->inset[edge].unit == CSS_UNIT_AUTO)
+        return fallback;
+    return ui_css_resolve_int(style->inset[edge], 0, 0, scale, false);
+}
+
+static inline int ui_css_z_index(const struct css_style *style, int fallback)
+{
+    return style && style->has_z_index ? style->z_index : fallback;
 }
 
 #endif
