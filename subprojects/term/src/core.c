@@ -303,19 +303,19 @@ static void linefeed_slow(struct wsap_vtcore *t, size_t n)
     wsap_vtcore_row(t, t->cursor_y)->version++;
 
     if (t->cursor_y > t->scroll_bottom) {
-        if (t->cursor_y + (int)n < t->rows)
-            t->cursor_y += (int)n;
-        else
-            t->cursor_y = t->rows - 1;
+        size_t room = (size_t)(t->rows - 1 - t->cursor_y);
+        size_t down = n <= room ? n : room;
+        t->cursor_y += (int)down;
         return;
     }
 
-    if (t->cursor_y + (int)n <= t->scroll_bottom) {
+    size_t down = (size_t)(t->scroll_bottom - t->cursor_y);
+    if (n <= down) {
         t->cursor_y += (int)n;
         return;
     }
 
-    size_t scroll = (size_t)(t->cursor_y + (int)n - t->scroll_bottom);
+    size_t scroll = n - down;
     t->cursor_y = t->scroll_bottom;
 
     if (WSAP_VTCORE_EXPECT(t->lr_margin_mode, 0)) {
@@ -1642,7 +1642,7 @@ narrow_done:
                 uint64_t mask = line_masks_avx512(buf + i, &nl);
 
                 if (mask == 0) {
-                    int total_avail = (int)(len - i);
+                    int total_avail = len - i > INT32_MAX ? INT32_MAX : (int)(len - i);
                     int run = scan_ascii_run(buf + i, total_avail);
 
                     int bulk_lines = run / cols - (run % cols == 0);
@@ -1728,8 +1728,8 @@ narrow_done:
                        next_byte_wraps(buf, len, i + (size_t)run,
                                        (unsigned char)buf[i + run - 1]);
         if (!wrapped) break;
-        int full = cols + (int)scan_ascii_run(buf + i + cols,
-                                              (int)(len - i) - cols);
+        int avail = len - i > INT32_MAX ? INT32_MAX : (int)(len - i);
+        int full = cols + (int)scan_ascii_run(buf + i + cols, avail - cols);
         int bulk_lines = full / cols - (full % cols == 0);
         if (bulk_lines > 0 &&
             (i + (size_t)full == len ||
