@@ -42,11 +42,11 @@ backend = get_option('window_backend')
 if backend == 'auto'
     backend = system == 'linux' ? 'wayland' : 'metal'
 endif
-if backend == 'wayland' and system != 'linux'
-    error('The Wayland backend requires Linux')
+if backend != 'metal' and system != 'linux'
+    error('The @0@ backend requires Linux'.format(backend))
 endif
 if backend == 'metal' and system != 'darwin'
-    error('The Metal backend is macOS-only; Linux builds use Wayland')
+    error('The Metal backend is macOS-only; Linux builds use Wayland or X11')
 endif
 if get_option('integration_tests') and (backend != 'wayland' or not get_option('tests'))
     error('Integration tests require tests=true and the Wayland backend')
@@ -79,17 +79,21 @@ if isa != ''
     endif
 endif
 
-add_project_arguments(
-    '-DWSAP_DEV_THEMES_DIR="' + (meson.project_source_root() / 'assets' / 'themes') + '"',
-    '-DWSAP_DEV_FONTS_DIR="' + (meson.project_source_root() / 'assets' / 'fonts') + '"',
+dev_args = [
     '-DWSAP_DATADIR="' + (get_option('prefix') / get_option('datadir')) + '"',
-    language: project_languages,
-)
+]
+if get_option('dev_paths')
+    dev_args += [
+        '-DWSAP_DEV_THEMES_DIR="' + (meson.project_source_root() / 'assets' / 'themes') + '"',
+        '-DWSAP_DEV_FONTS_DIR="' + (meson.project_source_root() / 'assets' / 'fonts') + '"',
+    ]
+endif
+add_project_arguments(dev_args, language: project_languages)
 
 dev_terminfo_dir = meson.project_build_root() / 'terminfo'
 dev_terminfo_targets = []
 tic = find_program('tic', native: true, required: false)
-if tic.found()
+if get_option('dev_paths') and tic.found()
     dev_terminfo_targets += custom_target(
         'dev-terminfo',
         input: files('assets/terminfo/wsap_term.terminfo'),
@@ -199,10 +203,14 @@ if system == 'darwin'
     platform_deps += [dependency('appleframeworks', modules: ['AppKit', 'CoreFoundation', 'Foundation', 'QuartzCore', 'Metal', 'UserNotifications', 'CoreText', 'CoreGraphics'])]
 endif
 base_deps = [thread_dep, m_dep, yyjson_dep] + platform_deps
+yasl_options = ['default_library=static']
+if backend == 'x11'
+    yasl_options += ['wayland=disabled', 'x11=enabled']
+endif
 yasl_dep = dependency(
     'yasl',
     fallback: 'yasl',
-    default_options: ['default_library=static'],
+    default_options: yasl_options,
 )
 term_dep = dependency(
     'wsap_vtcore',
@@ -331,15 +339,21 @@ if system == 'darwin'
     exe_install_dir = app_contents / 'MacOS'
 endif
 
+if not get_option('app') and (get_option('tests') or get_option('benchmarks'))
+    error('A framework-only build needs -Dtests=false and -Dbenchmarks=false')
+endif
+
 subdir('src')
-subdir('bin')
+if get_option('app')
+    subdir('bin')
+endif
 if get_option('benchmarks')
     subdir('benchmarks')
 endif
 if get_option('tests')
     subdir('tests')
 endif
-if system == 'linux'
+if get_option('app') and system == 'linux' and get_option('install_desktop')
     install_data(
         'assets/icons/wsap-term.svg',
         install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps',
@@ -348,7 +362,8 @@ if system == 'linux'
         'assets/wsap_term.desktop',
         install_dir: get_option('datadir') / 'applications',
     )
-elif system == 'darwin'
+endif
+if get_option('app') and system == 'darwin'
     configure_file(
         input: 'assets/macos/Info.plist.in',
         output: 'Info.plist',
@@ -382,17 +397,24 @@ install_data(
     'assets/terminfo/wsap_term.terminfo',
     install_dir: get_option('datadir') / 'wsap_term' / 'terminfo',
 )
-install_data(
-    'assets/shell/wsap-ssh',
-    'assets/terminfo/install-terminfo.sh',
-    install_dir: get_option('bindir'),
-    install_mode: 'rwxr-xr-x',
+install_subdir(
+    'assets/fonts',
+    install_dir: get_option('datadir') / 'wsap_term' / 'fonts',
+    strip_directory: true,
 )
-install_data(
-    'assets/shell/wsap-ssh.fish',
-    'assets/shell/wsap-ssh.sh',
-    install_dir: get_option('datadir') / 'wsap_term' / 'shell',
-)
+if get_option('install_shell')
+    install_data(
+        'assets/shell/wsap-ssh',
+        'assets/terminfo/install-terminfo.sh',
+        install_dir: get_option('bindir'),
+        install_mode: 'rwxr-xr-x',
+    )
+    install_data(
+        'assets/shell/wsap-ssh.fish',
+        'assets/shell/wsap-ssh.sh',
+        install_dir: get_option('datadir') / 'wsap_term' / 'shell',
+    )
+endif
 install_subdir(
     'assets/themes',
     install_dir: get_option('datadir') / 'wsap_term' / 'themes',
@@ -442,12 +464,15 @@ summary(
     {
         'Platform': system,
         'Backend': backend,
+        'App': get_option('app'),
+        'Framework': get_option('framework'),
         'ISA': isa,
         'Hardening': get_option('hardening'),
         'Tests': get_option('tests'),
         'Benchmarks': get_option('benchmarks'),
         'Integration tests': get_option('integration_tests'),
         'Kitty tests': subproject('term').get_variable('term_kitty_tests', false),
+        'Dev paths': get_option('dev_paths'),
         'Package format': pkg_format,
     },
     section: 'wsap_term',

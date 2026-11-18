@@ -124,11 +124,18 @@ jobs:
           sudo ldconfig
       - name: Build and test
         run: bash tools/ci/build.sh
+      - name: Build the framework SDK and the configure matrix
+        run: bash tools/ci/matrix.sh
       - name: Upload build and test logs
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: linux-logs
-          path: build/ci/meson-logs/
+          path: |
+            build/ci/meson-logs/
+            build/ci-framework/meson-logs/
+            build/ci-x11/meson-logs/
+            build/ci-cpu/meson-logs/
+            build/ci-bench/meson-logs/
           if-no-files-found: ignore
           retention-days: 7
