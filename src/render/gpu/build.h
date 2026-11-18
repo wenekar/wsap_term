@@ -48,6 +48,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "render/grid.h"
 #include "util/geom.h"
 
 struct damage_list;
@@ -228,7 +229,7 @@ void gpu_build_release(struct gpu_build *b);
  * Returns true on success, or false on allocation failure.
  */
 bool gpu_build_frame(struct gpu_build *b, const struct render_frame *frame,
-                     struct vector2i canvas);
+                     const struct render_grid_view *grid, struct vector2i canvas);
 /* Commits staged atlas glyphs and advances the builder frame counter. */
 void gpu_build_commit(struct gpu_build *b);
 /* Clears staged atlas glyphs and resets atlas state after an unsubmitted frame. */

@@ -17,12 +17,15 @@
 #include "render/cpu/isa.h"
 #include "render/cpu/kernels.h"
 #include "render/cpu/pool.h"
+#include "render/core.h"
 #include "render/cpu/raster.h"
+#include "render/frame/term_view.h"
 #include "render/frame/walk.h"
 #include "render/gpu/gpu.h"
 #include "render/plan.h"
 #include "render/scene_paint.h"
 #include "render/scratch.h"
+#include "render/term_frame.h"
 #include "render/surface.h"
 
 /*
@@ -274,17 +277,16 @@ bool renderer_idle_gpu(struct renderer *r)
  * block of (x1 - x0) * ch pixels that starts at origin + x0, and a buffer
  * with x0 more pixels holds it.
  */
-bool render_cursor_cell(struct renderer *r, struct font_instance *font,
-                        const struct terminal_frame *tf,
-                        int span_begin, int span_cols,
-                        uint32_t *out, size_t max_px,
-                        int *out_w, int *out_h)
+bool renderer_cursor_band(struct renderer *r, struct font_instance *font,
+                          const struct render_grid_view *grid, int row,
+                          int span_begin, int span_cols,
+                          uint32_t *out, size_t max_px,
+                          int *out_w, int *out_h)
 {
-    if (!r || !tf || !terminal_frame_valid(tf) || !out || !out_w || !out_h ||
+    if (!r || !grid || !out || !out_w || !out_h ||
         span_cols < 1 || span_cols > 2 || span_begin < 0 ||
-        span_begin + span_cols > tf->cols ||
-        tf->cursor_y < 0 || tf->cursor_y >= tf->rows ||
-        terminal_frame_row_size(tf, tf->cursor_y) != WSAP_VTCORE_LINE_SINGLE)
+        span_begin + span_cols > grid->cells.x || row < 0 || row >= grid->cells.y ||
+        grid->ops->line_size(grid->source, row) != RENDER_LINE_SINGLE)
         return false;
     struct font_instance *gfont = font ? font : font_instance_default();
     if (!gfont)
@@ -320,25 +322,25 @@ bool render_cursor_cell(struct renderer *r, struct font_instance *font,
 
     struct raster_frame rf = {
         .font = gfont,
-        .frame = tf,
+        .grid = grid,
         .decor = decor_get(r->decor, m),
         .font_version = font_instance_version(gfont),
         .origin = r->cursor_band,
         .stride = width,
         .cw = cw,
         .ch = ch,
-        .cols = tf->cols,
-        .width = tf->cols * cw,
-        .row0 = tf->cursor_y,
+        .cols = grid->cells.x,
+        .width = grid->cells.x * cw,
+        .row0 = row,
     };
     /* The reach of the row is not known here. The full width is always
      * enough: the raster then reads the spill of each cell of the row. */
     struct raster_job job = {
-        .row = tf->cursor_y, .x0 = x0, .x1 = x0 + width, .reach = rf.width,
+        .row = row, .x0 = x0, .x1 = x0 + width, .reach = rf.width,
     };
-    (void)render_walk_thread_reserve(tf->cols);
-    /* The raster runs in parallel mode, as in render_draw(). No worker runs
-     * here, so the flush is safe. */
+    (void)grid->ops->reserve_walk(grid->cells.x);
+    /* The raster runs in parallel mode, as in render_draw_view(). No worker
+     * runs here, so the flush is safe. */
     glyph_cache_set_parallel(true);
     (void)r->row(&rf, r->cursor_worker, &job);
     glyph_cache_set_parallel(false);
@@ -348,6 +350,22 @@ bool render_cursor_cell(struct renderer *r, struct font_instance *font,
     *out_w = width;
     *out_h = ch;
     return true;
+}
+
+bool render_cursor_cell(struct renderer *r, struct font_instance *font,
+                        const struct terminal_frame *tf,
+                        int span_begin, int span_cols,
+                        uint32_t *out, size_t max_px,
+                        int *out_w, int *out_h)
+{
+    if (!tf || tf->cursor_y < 0 || tf->cursor_y >= tf->rows ||
+        terminal_frame_row_size(tf, tf->cursor_y) != WSAP_VTCORE_LINE_SINGLE)
+        return false;
+    struct render_grid_view grid;
+    if (!render_term_grid_view(tf, &grid))
+        return false;
+    return renderer_cursor_band(r, font, &grid, tf->cursor_y, span_begin, span_cols,
+                                out, max_px, out_w, out_h);
 }
 
 int renderer_isa(const struct renderer *r)
@@ -584,6 +602,26 @@ static bool pixels_ensure(struct framebuffer *fb)
 struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
                                  const struct render_frame *frame)
 {
+    struct render_grid_view grid;
+    const struct render_grid_view *view = NULL;
+    if (frame && render_term_grid_view(frame->grid.frame, &grid))
+        view = &grid;
+    return render_draw_view(r, fb, frame, view);
+}
+
+enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surface *s,
+                                       struct framebuffer *fb, const struct render_frame *frame)
+{
+    struct render_grid_view grid;
+    const struct render_grid_view *view =
+        frame && render_term_grid_view(frame->grid.frame, &grid) ? &grid : NULL;
+    return render_gpu_draw_view(g, s, fb, frame, view);
+}
+
+struct render_result render_draw_view(struct renderer *r, struct framebuffer *fb,
+                                      const struct render_frame *frame,
+                                      const struct render_grid_view *grid_view)
+{
     if (!r || !fb || !frame)
         return (struct render_result){0};
 
@@ -611,10 +649,9 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         glyph_cache_refresh(ufont);
 
     /* 2. The grid, the surface key, the row keys, and the UI ink. */
-    const struct terminal_frame *tf = frame->grid.frame;
     struct rect2i grid = frame->grid.rect;
     int cw = 0, ch = 0, cols = 0, rows = 0;
-    bool has_grid = tf && terminal_frame_valid(tf) && gfont && grid.x >= 0 && grid.y >= 0 &&
+    bool has_grid = grid_view && gfont && grid.x >= 0 && grid.y >= 0 &&
                     rect2i_clip(&grid, canvas);
     if (has_grid) {
         const struct font_metrics *m = font_instance_metrics(gfont);
@@ -623,11 +660,11 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         has_grid = cw > 0 && ch > 0;
     }
     if (has_grid) {
-        cols = grid.width / cw < tf->cols ? grid.width / cw : tf->cols;
-        rows = grid.height / ch < tf->rows ? grid.height / ch : tf->rows;
+        cols = grid.width / cw < grid_view->cells.x ? grid.width / cw : grid_view->cells.x;
+        rows = grid.height / ch < grid_view->cells.y ? grid.height / ch : grid_view->cells.y;
     } else {
         grid = (struct rect2i){0};
-        tf = NULL;
+        grid_view = NULL;
     }
 
     struct render_surface_key key = { .canvas = canvas, .base = frame->base };
@@ -635,17 +672,17 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         key.grid = grid;
         /* The terminal size, not the visible size: a reflow keeps the row
          * keys of rows that it rewraps. */
-        key.cells = (struct vector2i){ .x = tf->cols, .y = tf->rows };
+        key.cells = grid_view->cells;
         key.cell = (struct vector2i){ .x = cw, .y = ch };
         key.font_version = font_instance_version(gfont);
-        key.palette_gen = tf->palette_gen;
-        key.default_fg = tf->default_fg;
-        key.default_bg = tf->default_bg;
-        key.cursor_color = tf->cursor_color;
-        key.selection_fg = terminal_frame_selection_fg(tf);
-        key.selection_bg = terminal_frame_selection_bg(tf);
-        key.reverse_video = tf->reverse_video;
-        key.blink_on = tf->blink_on;
+        key.palette_gen = grid_view->palette_gen;
+        key.default_fg = grid_view->default_fg;
+        key.default_bg = grid_view->default_bg;
+        key.cursor_color = grid_view->cursor_color;
+        key.selection_fg = grid_view->selection_fg;
+        key.selection_bg = grid_view->selection_bg;
+        key.reverse_video = grid_view->reverse_video;
+        key.blink_on = grid_view->blink_on;
     }
 
     if (!frame_reserve(r, rows) || !render_surface_reserve(s, rows)) {
@@ -655,7 +692,7 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
     const struct ui_scene *scene = frame->ui;
     bool scene_ok = scene && ui_scene_is_valid(scene);
     for (int i = 0; i < rows; i++)
-        r->keys[i] = render_surface_row_key(tf, i);
+        r->keys[i] = grid_view->ops->row_key(grid_view->source, i);
     plan_ui_ink(scene_ok ? scene : NULL, grid, ch, rows, r->ui);
 
     uint64_t ufont_version = ufont ? font_instance_version(ufont) : 0;
@@ -687,7 +724,7 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
     /* 4. The GPU draws a whole frame or nothing. A frame with no drawable yet
      * asks for one inside the backend, after it builds the frame data. */
     if (gpu_first) {
-        switch (render_gpu_draw(renderer_gpu_ensure(r), s, fb, frame)) {
+        switch (render_gpu_draw_view(renderer_gpu_ensure(r), s, fb, frame, grid_view)) {
         case RENDER_GPU_PRESENTED: {
             render_surface_invalidate(s);
             struct render_result res = result_all();
@@ -735,14 +772,14 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         .size = { .x = grid.width, .y = grid.height - rows * ch },
     };
     if (out.all)
-        fill_rect(r, px, stride, margin, has_grid ? tf->default_bg : frame->base);
+        fill_rect(r, px, stride, margin, has_grid ? grid_view->default_bg : frame->base);
     for (int i = 0; i < out.n_windows; i++) {
         const struct plan_window *win = &out.windows[i];
         if (win->row >= rows) {
             struct rect2i q = margin;
             q.x = grid.x + win->x.x0;
             q.width = win->x.x1 - win->x.x0;
-            fill_rect(r, px, stride, q, has_grid ? tf->default_bg : frame->base);
+            fill_rect(r, px, stride, q, has_grid ? grid_view->default_bg : frame->base);
             continue;
         }
         int src = out.rows[win->row].op == PLAN_MOVE ? out.rows[win->row].src : win->row;
@@ -755,8 +792,8 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         if (cells >= POOL_SERIAL_CELLS)
             cpu_pool_ensure(r);
         const struct decor_set *decor = decor_get(r->decor, font_instance_metrics(gfont));
-        uint32_t l0_fg = tf->reverse_video ? tf->default_bg : tf->default_fg;
-        uint32_t l0_bg = tf->reverse_video ? tf->default_fg : tf->default_bg;
+        uint32_t l0_fg = grid_view->reverse_video ? grid_view->default_bg : grid_view->default_fg;
+        uint32_t l0_bg = grid_view->reverse_video ? grid_view->default_fg : grid_view->default_bg;
         bool serial = cells < POOL_SERIAL_CELLS || !r->pool;
         int n_cache = serial ? 1 : r->n_workers;
         struct cell_class *klass =
@@ -765,7 +802,7 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
                              n_cache);
         struct raster_frame rf = {
             .font = gfont,
-            .frame = tf,
+            .grid = grid_view,
             .decor = decor,
             .cache = klass,
             .font_version = key.font_version,
@@ -779,7 +816,7 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         struct phase ph = {
             .r = r, .rf = &rf, .jobs = r->jobs, .n_full = n_full, .reach = r->reach,
         };
-        reserve_walk(r, tf->cols);
+        reserve_walk(r, grid_view->cells.x);
         int64_t t0 = clock_ps();
         glyph_cache_set_parallel(true);
         pool_run(r->pool, n_jobs, serial ? n_jobs : 1, phase_run, &ph);

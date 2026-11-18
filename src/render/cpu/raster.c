@@ -11,7 +11,6 @@
 #include "render/cpu/decor.h"
 #include "render/cpu/isa.h"
 #include "render/cpu/kernels.h"
-#include "render/frame/walk.h"
 #include "util/geom.h"
 
 /*
@@ -60,7 +59,7 @@ struct row_ctx {
 
     int cw, ch;
     int cell_w;
-    enum wsap_vtcore_line_size line_size;
+    enum render_line_size line_size;
     int x0, x1;
     int area, width;
     int reach;
@@ -410,9 +409,9 @@ static inline RENDER_ALWAYS_INLINE void compose(int isa, struct row_ctx *c, uint
         return;
     }
 
-    bool double_h = (c->line_size == WSAP_VTCORE_LINE_DOUBLE_TOP ||
-                     c->line_size == WSAP_VTCORE_LINE_DOUBLE_BOTTOM);
-    int y_off = (c->line_size == WSAP_VTCORE_LINE_DOUBLE_BOTTOM) ? ch : 0;
+    bool double_h = (c->line_size == RENDER_LINE_DOUBLE_TOP ||
+                     c->line_size == RENDER_LINE_DOUBLE_BOTTOM);
+    int y_off = (c->line_size == RENDER_LINE_DOUBLE_BOTTOM) ? ch : 0;
     int g_rows = glyph_rows(g, ch);
 
     if (ink->lo < ink->hi) {
@@ -852,12 +851,12 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
                                                 const struct render_walk_sink *sink,
                                                 run_fill_fn fill)
 {
-    const struct terminal_frame *tf = f->frame;
+    const struct render_grid_view *grid = f->grid;
     const int cw = f->cw;
-    if (!tf || cw <= 0 || f->ch <= 0 || f->width <= 0)
+    if (!grid || cw <= 0 || f->ch <= 0 || f->width <= 0)
         return 0;
-    enum wsap_vtcore_line_size line = terminal_frame_row_size(tf, job->row);
-    bool double_w = (line != WSAP_VTCORE_LINE_SINGLE);
+    enum render_line_size line = grid->ops->line_size(grid->source, job->row);
+    bool double_w = (line != RENDER_LINE_SINGLE);
     int cell_w = double_w ? 2 * cw : cw;
     int row_cols = double_w ? (f->cols / 2 > 0 ? f->cols / 2 : (f->cols > 0 ? 1 : 0)) : f->cols;
     struct row_ctx c = {
@@ -875,10 +874,10 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
         .width = f->width,
         .run_x0 = -1,
         .run_x1 = -1,
-        .l0_fg = tf->reverse_video ? tf->default_bg : tf->default_fg,
-        .l0_bg = tf->reverse_video ? tf->default_fg : tf->default_bg,
-        .margin = tf->default_bg,
-        .cursor = tf->cursor_color,
+        .l0_fg = grid->reverse_video ? grid->default_bg : grid->default_fg,
+        .l0_bg = grid->reverse_video ? grid->default_fg : grid->default_bg,
+        .margin = grid->default_bg,
+        .cursor = grid->cursor_color,
         .font_version = f->font_version,
         .klass = f->cache,
         .cache = f->cache ? w->cache : NULL,
@@ -907,7 +906,7 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
     if (c0 < c1) {
         struct render_walk_sink k = *sink;
         k.ctx = &c;
-        render_row_walk(f->font, tf, job->row, c0, c1, RENDER_WALK_PEEK, &k);
+        grid->ops->walk(f->font, grid->source, job->row, c0, c1, RENDER_WALK_PEEK, &k);
     }
 
     if (c.width > c.area)
