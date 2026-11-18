@@ -8,6 +8,40 @@
 #include "util/time.h"
 #include "yasl/yasl.h"
 
+/* The live hosts of the process. The debugger reads this array, so it must
+ * stay a plain static. A host enters on init and leaves on destroy. */
+#define WINDOW_HOST_REGISTRY_MAX 8
+struct window_host *window_host_registry[WINDOW_HOST_REGISTRY_MAX];
+int window_host_registry_count;
+
+static void host_registry_add(struct window_host *host)
+{
+    for (int i = 0; i < window_host_registry_count; i++)
+        if (window_host_registry[i] == host)
+            return;
+    if (window_host_registry_count == WINDOW_HOST_REGISTRY_MAX)
+        return;
+    window_host_registry[window_host_registry_count++] = host;
+}
+
+static void host_registry_remove(struct window_host *host)
+{
+    for (int i = 0; i < window_host_registry_count; i++) {
+        if (window_host_registry[i] != host)
+            continue;
+        memmove(&window_host_registry[i], &window_host_registry[i + 1],
+                (size_t)(window_host_registry_count - i - 1) *
+                    sizeof(*window_host_registry));
+        window_host_registry[--window_host_registry_count] = NULL;
+        return;
+    }
+}
+
+struct window_host *window_host_registry_first(void)
+{
+    return window_host_registry_count > 0 ? window_host_registry[0] : NULL;
+}
+
 void window_host_init(struct window_host *host, struct yasl_loop *loop,
                       const struct window_config *config,
                       const struct window_host_hooks *hooks)
@@ -17,6 +51,7 @@ void window_host_init(struct window_host *host, struct yasl_loop *loop,
         .config = config,
         .hooks = hooks ? *hooks : (struct window_host_hooks){0},
     };
+    host_registry_add(host);
 }
 
 void window_host_destroy(struct window_host *host)
@@ -30,6 +65,7 @@ void window_host_destroy(struct window_host *host)
     int status = yasl_shutdown();
     if (status < 0)
         fprintf(stderr, "window host: yasl_shutdown: %s\n", strerror(-status));
+    host_registry_remove(host);
     free(host->windows);
     *host = (struct window_host){0};
 }

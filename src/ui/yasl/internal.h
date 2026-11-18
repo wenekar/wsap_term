@@ -159,7 +159,10 @@ void window_host_report_empty(struct window_host *host, struct window *last);
 void window_host_run_service(struct window_host *host, uint64_t now_ms,
                              bool modal);
 
-extern struct window_host *window_ui_host_last;
+/* The live hosts in start order. The debugger reads this registry. */
+extern struct window_host *window_host_registry[];
+extern int window_host_registry_count;
+struct window_host *window_host_registry_first(void);
 
 static inline struct window_ui *ui_of(const struct window *w)
 {
