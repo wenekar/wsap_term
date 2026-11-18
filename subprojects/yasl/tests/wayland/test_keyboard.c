@@ -127,7 +127,7 @@ int main(void)
     assert(text.text.text_key_id == key_id && strcmp(text.text.data, "é") == 0);
     ev = next(&w, YASL_PRIVATE_EVENT_COMPOSITION);
     assert(!ev.composition.active && ev.composition.len == 0);
-    assert(keyboard_dispatch_key(&s, &w, KEY_E, YASL_KEY_REPEAT));
+    assert(keyboard_dispatch_key(&s, &w, KEY_E, YASL_KEY_REPEAT, 0));
     ev = next(&w, YASL_PRIVATE_EVENT_KEY);
     assert(ev.key.action == YASL_KEY_REPEAT && ev.key.text_input == YASL_KEY_TEXT_COMMIT);
     assert(ev.key.text_id && ev.key.text_id != key_id);

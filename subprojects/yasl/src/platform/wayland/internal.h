@@ -81,6 +81,7 @@ struct pending_press {
     struct wayland_surface *surface;
     struct yasl_private_vector2i pos;
     struct yasl_private_vector2d precise;
+    uint64_t time_ns;
     int button;
     bool release;
 };
@@ -166,6 +167,8 @@ struct seat {
     struct xkb_state *xkb_state;
     struct xkb_compose_state *compose;
     uint64_t repeat_started_ns;
+    /* Time of the last compositor input event. Zero means no source time. */
+    uint64_t event_time_ns;
     struct wayland_surface *pointer_focus;
     struct wayland_surface *keyboard_focus;
     struct wayland_surface *tablet_focus;

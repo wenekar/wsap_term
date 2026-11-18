@@ -1246,8 +1246,10 @@ static bool drop_pick(struct cocoa_surface *w, NSPasteboard *pb, NSString **type
 }
 
 /* Delivers the data of a picked drop type as a DROP event. A URI list arrives
- * as CRLF-separated file URLs; any other type arrives as its bytes. */
-static bool push_drop(struct cocoa_surface *w, NSPasteboard *pb, NSString *type, const char *mime)
+ * as CRLF-separated file URLs; any other type arrives as its bytes. The event
+ * carries the surface-relative device-pixel position of the release. */
+static bool push_drop(struct cocoa_surface *w, NSPasteboard *pb, NSString *type,
+                      const char *mime, struct yasl_private_vector2i pos)
 {
     NSData *data = nil;
     if (!strcmp(mime, "text/uri-list")) {
@@ -1267,7 +1269,7 @@ static bool push_drop(struct cocoa_surface *w, NSPasteboard *pb, NSString *type,
     struct yasl_private_event ev = {
         .type = YASL_PRIVATE_EVENT_DROP,
         .surface = &w->base,
-        .text = { .data = data.bytes, .len = data.length },
+        .text = { .data = data.bytes, .len = data.length, .pos = pos },
     };
     snprintf(ev.text.mime, sizeof(ev.text.mime), "%s", mime);
     bool pushed = input_queue_push(&w->input, &ev);
@@ -1336,7 +1338,7 @@ static bool push_drop(struct cocoa_surface *w, NSPasteboard *pb, NSString *type,
     NSPasteboard *pb = [sender draggingPasteboard];
     NSString *type = nil;
     char mime[YASL_PRIVATE_DROP_MIME_MAX];
-    BOOL ok = drop_pick(w, pb, &type, mime) && push_drop(w, pb, type, mime);
+    BOOL ok = drop_pick(w, pb, &type, mime) && push_drop(w, pb, type, mime, pos);
     if (!w->destroyed) {
         darwin_ctx.depth++;
         yasl_private_surface_notify_drop(&w->base, YASL_PRIVATE_DROP_LEAVE, pos);
@@ -1943,6 +1945,18 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
 {
     (void)notification;
     if (self.surface) push_focus(self.surface, true);
+}
+
+- (void)windowDidMiniaturize:(NSNotification *)notification
+{
+    (void)notification;
+    if (self.surface) set_state(self.surface, YASL_PRIVATE_STATE_MINIMIZED, true);
+}
+
+- (void)windowDidDeminiaturize:(NSNotification *)notification
+{
+    (void)notification;
+    if (self.surface) set_state(self.surface, YASL_PRIVATE_STATE_MINIMIZED, false);
 }
 
 - (void)windowDidResignKey:(NSNotification *)notification

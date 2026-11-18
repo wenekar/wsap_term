@@ -1,6 +1,7 @@
 #import <AppKit/AppKit.h>
 #include <common/private_native.h>
 #include <assert.h>
+#include <math.h>
 #include <string.h>
 
 /* A drag that carries one pasteboard. The view reads only these methods. */
@@ -86,12 +87,16 @@ int main(void)
         assert(!strcmp(event.drop.mime, "text/plain"));
         empty(surface);
 
-        /* The drop delivers the bytes of the picked type. */
+        /* The drop delivers the bytes of the picked type, with the release
+         * position in surface-relative device pixels. */
         assert([view performDragOperation:sample]);
         event = next(surface, YASL_PRIVATE_EVENT_DROP);
         assert(event.text.len == strlen("dropped"));
         assert(!strcmp(event.text.data, "dropped"));
         assert(!strcmp(event.text.mime, "text/plain"));
+        CGFloat scale = window.backingScaleFactor < 1.0 ? 1.0 : window.backingScaleFactor;
+        assert(event.text.pos.x == (int)floor(10 * scale));
+        assert(event.text.pos.y == (int)floor((view.bounds.size.height - 10) * scale));
         event = next(surface, YASL_PRIVATE_EVENT_DROP_HOVER);
         assert(event.drop.action == YASL_PRIVATE_DROP_LEAVE);
         empty(surface);

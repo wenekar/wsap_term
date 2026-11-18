@@ -217,6 +217,8 @@ static bool append(struct yasl_private_display *d, struct event_node *node)
     struct yasl_private_event_state *state = d->events;
     if (state->sequence == UINT64_MAX) { errno = EOVERFLOW; return false; }
     node->event.sequence = ++state->sequence;
+    /* A backend that has a source timestamp keeps it. Synthesized events get
+     * the queue time, here or in input_queue_push(). */
     if (!node->event.time_ns) node->event.time_ns = yasl_private_loop_now_ns();
     if (state->tail) state->tail->next = node;
     else state->head = node;
