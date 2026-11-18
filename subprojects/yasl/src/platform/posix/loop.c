@@ -15,6 +15,9 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/epoll.h>
+#endif
 
 #define YASL_PRIVATE_LOOP_INIT_CAP 32
 
@@ -43,13 +46,18 @@ struct post {
     struct post *next;
 };
 
-/* Signals this loop watches; the previous actions are restored on unwatch. */
+/* Signals this loop watches. Each entry owns one slot in the process-wide
+ * router below. */
+struct signal_entry {
+    int signo;
+    int slot;
+};
+
 struct signal_watch {
     void (*cb)(void *ud, int signo);
     void *ud;
     int count;
-    int signals[NSIG];
-    struct sigaction old[NSIG];
+    struct signal_entry entries[NSIG];
 };
 
 struct yasl_loop {
@@ -74,6 +82,11 @@ struct yasl_loop {
     int timer_count;
     int timer_capacity;
     int timer_firing_depth;
+#if defined(__linux__)
+    /* -1 while the loop uses poll(2), as it does for few descriptors. */
+    int epoll_fd;
+    struct epoll_event *epoll_events;
+#endif
 
     /* Set by yasl_loop_quit; run clears it when it returns. */
     bool quit;
@@ -81,12 +94,21 @@ struct yasl_loop {
     bool has_driver;
 };
 
-/* Handlers run on any thread, so they only touch lock-free atomics: they mark
- * the signal pending and write to the owning loop's wake pipe. The pipe is
- * stored as fd + 1 so that the zero initializer means no pipe. */
-static atomic_int signal_wake_fd[NSIG];
-static atomic_bool signal_pending[NSIG];
-static struct yasl_loop *signal_owner[NSIG];
+/* A signal can wake several loops. The handler walks a fixed slot table
+ * without a lock, so every field is atomic. The mutex serializes the
+ * process-wide sigaction and slot changes. */
+#define SIGNAL_SLOTS 16
+
+struct signal_slot {
+    _Atomic bool active;
+    _Atomic bool pending;
+    _Atomic int wake_fd;
+};
+
+static struct signal_slot signal_slots[NSIG][SIGNAL_SLOTS];
+static pthread_mutex_t signal_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int signal_users[NSIG];
+static struct sigaction signal_old[NSIG];
 
 uint64_t yasl_private_loop_now_ns(void)
 {
@@ -111,13 +133,15 @@ static void run_posts(struct yasl_loop *l)
 
 static void run_signals(struct yasl_loop *l)
 {
+    struct signal_watch *w = l->signals;
+    if (!w) return;
     /* A callback may unwatch, so re-check the watch before each delivery. */
-    for (int signo = 1; signo < NSIG; signo++) {
-        struct signal_watch *w = l->signals;
-        if (!w) return;
-        if (signal_owner[signo] != l || !atomic_exchange(&signal_pending[signo], false))
-            continue;
-        w->cb(w->ud, signo);
+    for (int i = 0; i < w->count; i++) {
+        if (l->signals != w) return;
+        struct signal_entry *entry = &w->entries[i];
+        if (atomic_exchange_explicit(&signal_slots[entry->signo][entry->slot].pending,
+                                     false, memory_order_acquire))
+            w->cb(w->ud, entry->signo);
     }
 }
 
@@ -176,6 +200,9 @@ yasl_loop *yasl_loop_create(void)
     l->owner = pthread_self();
     l->next_id = 1;
     l->next_timer_id = 1;
+#if defined(__linux__)
+    l->epoll_fd = -1;
+#endif
     l->wake_rfd = p[0];
     l->wake_wfd = p[1];
     /* The first watch fits the initial capacity, so it cannot fail. */
@@ -196,6 +223,11 @@ int yasl_loop_destroy(yasl_loop *l)
     yasl_private_mutex_destroy(&l->post_mutex);
     close(l->wake_rfd);
     close(l->wake_wfd);
+#if defined(__linux__)
+    if (l->epoll_fd >= 0)
+        close(l->epoll_fd);
+    free(l->epoll_events);
+#endif
     free(l->fds);
     free(l->pollfds);
     free(l->timers);
@@ -203,18 +235,115 @@ int yasl_loop_destroy(yasl_loop *l)
     return 0;
 }
 
+#if defined(__linux__)
+/* Keep poll(2) for a small set: one readiness array copy costs less than the
+ * epoll bookkeeping. Above this count, epoll(7) avoids scanning every fd. */
+#define YASL_PRIVATE_LOOP_EPOLL_MIN 64
+
+static uint32_t epoll_mask(short events)
+{
+    uint32_t mask = EPOLLERR | EPOLLHUP;
+    if (events & POLLIN) mask |= EPOLLIN;
+    if (events & POLLOUT) mask |= EPOLLOUT;
+    if (events & POLLPRI) mask |= EPOLLPRI;
+#ifdef POLLRDHUP
+    if (events & POLLRDHUP) mask |= EPOLLRDHUP;
+#endif
+    return mask;
+}
+
+static short poll_mask(uint32_t events)
+{
+    short mask = 0;
+    if (events & EPOLLIN) mask |= POLLIN;
+    if (events & EPOLLOUT) mask |= POLLOUT;
+    if (events & EPOLLPRI) mask |= POLLPRI;
+    if (events & EPOLLERR) mask |= POLLERR;
+    if (events & EPOLLHUP) mask |= POLLHUP;
+#ifdef POLLRDHUP
+    if (events & EPOLLRDHUP) mask |= POLLRDHUP;
+#endif
+    return mask;
+}
+
+static bool epoll_track(struct yasl_loop *l, const struct fd_source *source)
+{
+    struct epoll_event event = {
+        .events = epoll_mask(source->events),
+        .data.u64 = (uint64_t)source->id,
+    };
+    return epoll_ctl(l->epoll_fd, EPOLL_CTL_ADD, source->fd, &event) == 0;
+}
+
+static void epoll_disable(struct yasl_loop *l)
+{
+    close(l->epoll_fd);
+    l->epoll_fd = -1;
+    free(l->epoll_events);
+    l->epoll_events = NULL;
+}
+
+/* A descriptor that epoll rejects (a regular file, or a duplicate) falls back
+ * to poll for the whole loop, so behavior stays the same. */
+static bool epoll_enable(struct yasl_loop *l)
+{
+    int fd = epoll_create1(EPOLL_CLOEXEC);
+    if (fd < 0) return false;
+    struct epoll_event *events = malloc((size_t)l->capacity * sizeof(*events));
+    if (!events) {
+        close(fd);
+        return false;
+    }
+    for (int i = 0; i < l->count; i++) {
+        struct epoll_event event = {
+            .events = epoll_mask(l->fds[i].events),
+            .data.u64 = (uint64_t)l->fds[i].id,
+        };
+        if (epoll_ctl(fd, EPOLL_CTL_ADD, l->fds[i].fd, &event) != 0) {
+            close(fd);
+            free(events);
+            return false;
+        }
+    }
+    l->epoll_fd = fd;
+    l->epoll_events = events;
+    return true;
+}
+#endif
+
 int yasl_loop_add_fd(yasl_loop *l, int fd, short events,
                      void (*fn)(void *ud, int fd, short revents), void *ud)
 {
     if (!l || fd < 0 || !fn) return -EINVAL;
     if (l->count >= l->capacity) {
         int new_cap = l->capacity * 2;
-        struct fd_source *new_fds = realloc(l->fds, (size_t)new_cap * sizeof(*new_fds));
-        if (!new_fds) return -ENOMEM;
+        if (new_cap <= l->capacity) return -ENOMEM;
+        struct fd_source *new_fds = malloc((size_t)new_cap * sizeof(*new_fds));
+        struct pollfd *new_pollfds = malloc((size_t)new_cap * sizeof(*new_pollfds));
+#if defined(__linux__)
+        struct epoll_event *new_events = l->epoll_fd >= 0
+            ? malloc((size_t)new_cap * sizeof(*new_events)) : NULL;
+        if (!new_fds || !new_pollfds || (l->epoll_fd >= 0 && !new_events)) {
+#else
+        if (!new_fds || !new_pollfds) {
+#endif
+            free(new_fds);
+            free(new_pollfds);
+#if defined(__linux__)
+            free(new_events);
+#endif
+            return -ENOMEM;
+        }
+        memcpy(new_fds, l->fds, (size_t)l->count * sizeof(*new_fds));
+        memcpy(new_pollfds, l->pollfds, (size_t)l->count * sizeof(*new_pollfds));
+        free(l->fds);
+        free(l->pollfds);
         l->fds = new_fds;
-        struct pollfd *new_pollfds = realloc(l->pollfds, (size_t)new_cap * sizeof(*new_pollfds));
-        if (!new_pollfds) return -ENOMEM;
         l->pollfds = new_pollfds;
+#if defined(__linux__)
+        free(l->epoll_events);
+        l->epoll_events = new_events;
+#endif
         l->capacity = new_cap;
     }
     int id = l->next_id++;
@@ -222,6 +351,14 @@ int yasl_loop_add_fd(yasl_loop *l, int fd, short events,
     l->fds[l->count] = (struct fd_source){.fn = fn, .ud = ud, .id = id, .fd = fd, .events = events};
     l->pollfds[l->count] = (struct pollfd){.fd = fd, .events = events};
     l->count++;
+#if defined(__linux__)
+    if (l->epoll_fd >= 0) {
+        if (!epoll_track(l, &l->fds[l->count - 1]))
+            epoll_disable(l);
+    } else if (l->count >= YASL_PRIVATE_LOOP_EPOLL_MIN) {
+        (void)epoll_enable(l);
+    }
+#endif
     return id;
 }
 
@@ -237,6 +374,10 @@ int yasl_loop_del_fd(yasl_loop *l, int id)
 {
     int i = fd_index(l, id);
     if (i < 0) return -ENOENT;
+#if defined(__linux__)
+    if (l->epoll_fd >= 0)
+        epoll_ctl(l->epoll_fd, EPOLL_CTL_DEL, l->fds[i].fd, NULL);
+#endif
     l->count--;
     l->fds[i] = l->fds[l->count];
     l->pollfds[i] = l->pollfds[l->count];
@@ -249,6 +390,16 @@ int yasl_loop_set_fd_events(yasl_loop *l, int id, short events)
     if (i < 0) return -ENOENT;
     l->fds[i].events = events;
     l->pollfds[i].events = events;
+#if defined(__linux__)
+    if (l->epoll_fd >= 0) {
+        struct epoll_event event = {
+            .events = epoll_mask(events),
+            .data.u64 = (uint64_t)id,
+        };
+        if (epoll_ctl(l->epoll_fd, EPOLL_CTL_MOD, l->fds[i].fd, &event) != 0)
+            epoll_disable(l);
+    }
+#endif
     return 0;
 }
 
@@ -300,14 +451,27 @@ bool yasl_private_loop_post(yasl_loop *l, void (*fn)(void *ud), void *ud)
 
 static void signal_handler(int signo)
 {
-    atomic_store(&signal_pending[signo], true);
-    int fd = atomic_load(&signal_wake_fd[signo]) - 1;
-    if (fd >= 0) wake_write(fd);
+    for (int i = 0; i < SIGNAL_SLOTS; i++) {
+        struct signal_slot *slot = &signal_slots[signo][i];
+        if (!atomic_load_explicit(&slot->active, memory_order_acquire))
+            continue;
+        atomic_store_explicit(&slot->pending, true, memory_order_release);
+        wake_write(atomic_load_explicit(&slot->wake_fd, memory_order_relaxed));
+    }
 }
 
 static bool signal_valid(int signo)
 {
     return signo > 0 && signo < NSIG && signo != SIGKILL && signo != SIGSTOP;
+}
+
+/* Call with signal_mutex held. */
+static void release_signal_slot(int signo, int slot)
+{
+    atomic_store_explicit(&signal_slots[signo][slot].active, false, memory_order_release);
+    atomic_store_explicit(&signal_slots[signo][slot].pending, false, memory_order_relaxed);
+    if (--signal_users[signo] == 0)
+        sigaction(signo, &signal_old[signo], NULL);
 }
 
 int yasl_loop_watch_signals(yasl_loop *l, const int *signals, int n,
@@ -318,33 +482,52 @@ int yasl_loop_watch_signals(yasl_loop *l, const int *signals, int n,
     bool wanted[NSIG] = {0};
     for (int i = 0; i < n; i++) {
         if (!signal_valid(signals[i])) return -EINVAL;
-        if (signal_owner[signals[i]]) return -EBUSY;
         wanted[signals[i]] = true;
     }
     struct signal_watch *w = calloc(1, sizeof(*w));
     if (!w) return -ENOMEM;
     w->cb = cb;
     w->ud = ud;
+    pthread_mutex_lock(&signal_mutex);
     struct sigaction sa = {.sa_handler = signal_handler, .sa_flags = SA_RESTART};
     sigemptyset(&sa.sa_mask);
-    for (int signo = 1; signo < NSIG; signo++) {
+    int err = 0;
+    for (int signo = 1; signo < NSIG && !err; signo++) {
         if (!wanted[signo]) continue;
-        atomic_store(&signal_pending[signo], false);
-        atomic_store(&signal_wake_fd[signo], l->wake_wfd + 1);
-        if (sigaction(signo, &sa, &w->old[w->count]) != 0) {
-            int err = errno;
-            atomic_store(&signal_wake_fd[signo], 0);
-            for (int i = 0; i < w->count; i++) {
-                sigaction(w->signals[i], &w->old[i], NULL);
-                atomic_store(&signal_wake_fd[w->signals[i]], 0);
+        int slot = -1;
+        for (int i = 0; i < SIGNAL_SLOTS; i++)
+            if (!atomic_load_explicit(&signal_slots[signo][i].active, memory_order_relaxed)) {
+                slot = i;
+                break;
             }
-            free(w);
-            return -err;
+        if (slot < 0) {
+            err = ENOMEM;
+            break;
         }
-        w->signals[w->count++] = signo;
+        if (signal_users[signo] == 0) {
+            for (int i = 0; i < SIGNAL_SLOTS; i++)
+                atomic_store_explicit(&signal_slots[signo][i].pending, false,
+                                      memory_order_relaxed);
+            if (sigaction(signo, &sa, &signal_old[signo]) != 0) {
+                err = errno;
+                break;
+            }
+        }
+        signal_users[signo]++;
+        struct signal_slot *s = &signal_slots[signo][slot];
+        atomic_store_explicit(&s->wake_fd, l->wake_wfd, memory_order_relaxed);
+        atomic_store_explicit(&s->pending, false, memory_order_relaxed);
+        atomic_store_explicit(&s->active, true, memory_order_release);
+        w->entries[w->count++] = (struct signal_entry){.signo = signo, .slot = slot};
     }
-    for (int i = 0; i < w->count; i++)
-        signal_owner[w->signals[i]] = l;
+    if (err) {
+        for (int i = 0; i < w->count; i++)
+            release_signal_slot(w->entries[i].signo, w->entries[i].slot);
+        pthread_mutex_unlock(&signal_mutex);
+        free(w);
+        return -err;
+    }
+    pthread_mutex_unlock(&signal_mutex);
     l->signals = w;
     return 0;
 }
@@ -354,13 +537,10 @@ void yasl_loop_unwatch_signals(yasl_loop *l)
     if (!l || !l->signals) return;
     struct signal_watch *w = l->signals;
     l->signals = NULL;
-    for (int i = 0; i < w->count; i++) {
-        int signo = w->signals[i];
-        sigaction(signo, &w->old[i], NULL);
-        atomic_store(&signal_wake_fd[signo], 0);
-        atomic_store(&signal_pending[signo], false);
-        signal_owner[signo] = NULL;
-    }
+    pthread_mutex_lock(&signal_mutex);
+    for (int i = 0; i < w->count; i++)
+        release_signal_slot(w->entries[i].signo, w->entries[i].slot);
+    pthread_mutex_unlock(&signal_mutex);
     free(w);
 }
 
@@ -475,9 +655,39 @@ bool yasl_private_loop_stepping(const yasl_loop *l)
     return l && l->stepping;
 }
 
+#if defined(__linux__)
+/* Fill pollfds[].revents from epoll before dispatch_fds reads them. */
+static int epoll_all(struct yasl_loop *l, int timeout_ms)
+{
+    uint64_t deadline = timeout_ms > 0
+        ? yasl_private_loop_now_ns() + YASL_PRIVATE_MS_TO_NS(timeout_ms) : 0;
+    for (;;) {
+        int n = epoll_wait(l->epoll_fd, l->epoll_events, l->count, timeout_ms);
+        if (n >= 0) {
+            for (int i = 0; i < n; i++) {
+                int index = fd_index(l, (int)l->epoll_events[i].data.u64);
+                if (index >= 0)
+                    l->pollfds[index].revents = poll_mask(l->epoll_events[i].events);
+            }
+            return 0;
+        }
+        if (errno != EINTR) return -errno;
+        if (timeout_ms > 0) {
+            uint64_t now = yasl_private_loop_now_ns();
+            timeout_ms = now >= deadline ? 0
+                : (int)((deadline - now + 999999ull) / 1000000ull);
+        }
+    }
+}
+#endif
+
 /* poll with an EINTR retry that keeps the deadline. */
 static int poll_all(struct yasl_loop *l, int timeout_ms)
 {
+#if defined(__linux__)
+    if (l->epoll_fd >= 0)
+        return epoll_all(l, timeout_ms);
+#endif
     uint64_t deadline = timeout_ms > 0 ? yasl_private_loop_now_ns() + YASL_PRIVATE_MS_TO_NS(timeout_ms) : 0;
     for (;;) {
         if (poll(l->pollfds, (nfds_t)l->count, timeout_ms) >= 0) return 0;
