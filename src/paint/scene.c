@@ -18,6 +18,8 @@ void ui_scene_init(struct ui_scene *s)
     s->scope_depth = 0;
     s->clip_depth = 0;
     s->text_len = 0;
+    s->n_geoms = 0;
+    s->n_points = 0;
     s->origin = (struct vector2i){0};
     s->overflow = false;
 }
@@ -31,6 +33,8 @@ void ui_scene_destroy(struct ui_scene *s)
     free(s->clips);
     free(s->stack);
     free(s->text);
+    free(s->geoms);
+    free(s->points);
     *s = (struct ui_scene){0};
 }
 
@@ -59,7 +63,11 @@ bool ui_scene_copy(struct ui_scene *dst, const struct ui_scene *src)
         !copy_into(&dst->clips, &dst->clips_cap, src->clips,
                    src->clip_depth, sizeof(*src->clips)) ||
         !copy_into(&dst->text, &dst->text_cap, src->text,
-                   (int)src->text_len, 1)) {
+                   (int)src->text_len, 1) ||
+        !copy_into(&dst->geoms, &dst->geoms_cap, src->geoms,
+                   src->n_geoms, sizeof(*src->geoms)) ||
+        !copy_into(&dst->points, &dst->points_cap, src->points,
+                   src->n_points, sizeof(*src->points))) {
         ui_scene_init(dst);
         dst->overflow = true;
         return false;
@@ -68,6 +76,8 @@ bool ui_scene_copy(struct ui_scene *dst, const struct ui_scene *src)
     dst->n_scopes = src->n_scopes;
     dst->clip_depth = src->clip_depth;
     dst->text_len = src->text_len;
+    dst->n_geoms = src->n_geoms;
+    dst->n_points = src->n_points;
     dst->origin = src->origin;
     dst->overflow = src->overflow;
     return true;
@@ -197,6 +207,7 @@ static struct ui_scene_op *scene_alloc(struct ui_scene *s,
     *op = (struct ui_scene_op){
         .kind = kind,
         .rect = translate_sat(local, s->origin),
+        .geom = -1,
     };
     return op;
 }
@@ -220,6 +231,7 @@ static uint64_t hash_op(uint64_t h, const struct ui_scene *s,
 {
     h = hash_bytes(h, &op->kind, sizeof(op->kind));
     h = hash_bytes(h, &op->alpha, sizeof(op->alpha));
+    h = hash_bytes(h, &op->blend, sizeof(op->blend));
     h = hash_bytes(h, &op->flags, sizeof(op->flags));
     h = hash_bytes(h, &op->rect, sizeof(op->rect));
     h = hash_bytes(h, &op->color, sizeof(op->color));
@@ -232,6 +244,13 @@ static uint64_t hash_op(uint64_t h, const struct ui_scene *s,
         h = hash_bytes(h, &op->image.uv, sizeof(op->image.uv));
         if (image)
             h = hash_bytes(h, &image->gen, sizeof(image->gen));
+    }
+    if (op->geom >= 0 && op->geom < s->n_geoms) {
+        const struct ui_scene_geom *g = &s->geoms[op->geom];
+        h = hash_bytes(h, g, sizeof(*g));
+        if (g->point_len && g->point_off + g->point_len <= (uint32_t)s->n_points)
+            h = hash_bytes(h, s->points + g->point_off,
+                           (size_t)g->point_len * sizeof(*s->points));
     }
     if (op->kind == UI_SCENE_OP_TEXT) {
         h = hash_bytes(h, &op->style.advance, sizeof(op->style.advance));
@@ -416,6 +435,257 @@ bool ui_scene_wavy_underline(struct ui_scene *s, struct rect2i run,
         px = next > px ? next : px + 1;
     }
     return ok;
+}
+
+/* ---- Float geometry --------------------------------------------------- */
+
+static int floor_to_i(float v)
+{
+    int i = (int)v;
+    return v < (float)i ? i - 1 : i;
+}
+
+static int ceil_to_i(float v)
+{
+    int i = (int)v;
+    return v > (float)i ? i + 1 : i;
+}
+
+static struct ui_scene_point xform_point(struct ui_scene_xform t,
+                                         struct ui_scene_point p)
+{
+    return (struct ui_scene_point){
+        .x = p.x + t.xx * p.x + t.xy * p.y + t.dx,
+        .y = p.y + t.yx * p.x + t.yy * p.y + t.dy,
+    };
+}
+
+static struct rect2i point_ink(const struct ui_scene_point *p, int n,
+                               float pad)
+{
+    if (!p || n <= 0)
+        return (struct rect2i){0};
+    float x0 = p[0].x, x1 = p[0].x, y0 = p[0].y, y1 = p[0].y;
+    for (int i = 1; i < n; i++) {
+        if (p[i].x < x0) x0 = p[i].x;
+        if (p[i].x > x1) x1 = p[i].x;
+        if (p[i].y < y0) y0 = p[i].y;
+        if (p[i].y > y1) y1 = p[i].y;
+    }
+    x0 -= pad;
+    y0 -= pad;
+    x1 += pad;
+    y1 += pad;
+    struct vector2i pos = { .x = floor_to_i(x0), .y = floor_to_i(y0) };
+    struct vector2i end = { .x = ceil_to_i(x1), .y = ceil_to_i(y1) };
+    return (struct rect2i){ .pos = pos,
+                            .size = { .x = end.x - pos.x, .y = end.y - pos.y } };
+}
+
+static struct ui_scene_geom *geom_add(struct ui_scene *s,
+                                      const struct ui_scene_style *style)
+{
+    if (!s || s->overflow ||
+        !UTIL_GROW(s->geoms, s->geoms_cap, s->n_geoms + 1)) {
+        if (s)
+            s->overflow = true;
+        return NULL;
+    }
+    struct ui_scene_geom *g = &s->geoms[s->n_geoms++];
+    *g = (struct ui_scene_geom){0};
+    if (style)
+        g->xform = style->xform;
+    return g;
+}
+
+static bool points_add(struct ui_scene *s, const struct ui_scene_point *pts,
+                       int n, uint32_t *off)
+{
+    if (!n)
+        return true;
+    if (!pts || !s || s->overflow ||
+        !UTIL_GROW(s->points, s->points_cap, s->n_points + n)) {
+        if (s)
+            s->overflow = true;
+        return false;
+    }
+    *off = (uint32_t)s->n_points;
+    for (int i = 0; i < n; i++)
+        s->points[s->n_points++] = pts[i];
+    return true;
+}
+
+static struct ui_scene_op *op_add_geom(struct ui_scene *s,
+                                       enum ui_scene_op_kind kind,
+                                       const struct ui_scene_style *style,
+                                       struct rect2i ink)
+{
+    struct ui_scene_op *op = scene_alloc(s, kind, ink);
+    if (!op)
+        return NULL;
+    struct ui_scene_geom *g = geom_add(s, style);
+    if (!g)
+        return NULL;
+    op->geom = s->n_geoms - 1;
+    op->blend = style ? style->blend : UI_SCENE_BLEND_PREMUL;
+    op->color = style ? style->color : 0;
+    op->alpha = (uint8_t)(op->color >> 24);
+    return op;
+}
+
+const struct ui_scene_geom *ui_scene_op_geom(const struct ui_scene *s,
+                                             const struct ui_scene_op *op)
+{
+    if (!s || !op || op->geom < 0 || op->geom >= s->n_geoms)
+        return NULL;
+    return &s->geoms[op->geom];
+}
+
+bool ui_scene_rect_f(struct ui_scene *s, struct rect2f r,
+                     const struct ui_scene_style *style)
+{
+    if (!s)
+        return false;
+    if (r.size.x <= 0.0f || r.size.y <= 0.0f)
+        return true;
+    struct ui_scene_point corners[4] = {
+        { r.pos.x, r.pos.y },
+        { r.pos.x + r.size.x, r.pos.y },
+        { r.pos.x + r.size.x, r.pos.y + r.size.y },
+        { r.pos.x, r.pos.y + r.size.y },
+    };
+    struct ui_scene_xform xf = style ? style->xform : (struct ui_scene_xform){0};
+    for (int i = 0; i < 4; i++)
+        corners[i] = xform_point(xf, corners[i]);
+    struct rect2i ink = point_ink(corners, 4, 0.0f);
+    struct ui_scene_op *op = op_add_geom(s, UI_SCENE_OP_RECT, style, ink);
+    if (!op)
+        return false;
+    struct ui_scene_geom *g = &s->geoms[op->geom];
+    g->rect = r;
+    g->flags = UI_GEOM_RECT_F;
+    return scene_commit(s, op);
+}
+
+static bool path_emit(struct ui_scene *s, const struct ui_scene_point *pts,
+                      int count, uint16_t flags, float width,
+                      const struct ui_scene_style *style)
+{
+    if (!s)
+        return false;
+    if (count < 2)
+        return true;
+    struct ui_scene_xform xf = style ? style->xform : (struct ui_scene_xform){0};
+    struct ui_scene_point local[64];
+    struct ui_scene_point *tmp = local;
+    if (count > (int)(sizeof(local) / sizeof(local[0]))) {
+        tmp = malloc((size_t)count * sizeof(*tmp));
+        if (!tmp) {
+            s->overflow = true;
+            return false;
+        }
+    }
+    for (int i = 0; i < count; i++)
+        tmp[i] = xform_point(xf, pts[i]);
+    bool filled = (flags & UI_PATH_FILLED) != 0;
+    struct rect2i ink = point_ink(tmp, count,
+                                  filled ? 1.0f : (width > 0.0f ? width * 0.5f : 0.5f));
+    free(tmp == local ? NULL : tmp);
+    struct ui_scene_op *op = op_add_geom(s, UI_SCENE_OP_RECT, style, ink);
+    if (!op)
+        return false;
+    struct ui_scene_geom *g = &s->geoms[op->geom];
+    g->width = width > 0.0f ? width : 1.0f;
+    g->flags = UI_GEOM_PATH | flags;
+    if (!points_add(s, pts, count, &g->point_off))
+        return false;
+    g->point_len = (uint32_t)count;
+    return scene_commit(s, op);
+}
+
+bool ui_scene_line(struct ui_scene *s, struct ui_scene_point a,
+                   struct ui_scene_point b, float width,
+                   const struct ui_scene_style *style)
+{
+    struct ui_scene_point pts[2] = { a, b };
+    return path_emit(s, pts, 2, 0, width, style);
+}
+
+bool ui_scene_polyline(struct ui_scene *s, const struct ui_scene_point *points,
+                       int count, bool closed, float width,
+                       const struct ui_scene_style *style)
+{
+    return path_emit(s, points, count, closed ? UI_PATH_CLOSED : 0, width, style);
+}
+
+bool ui_scene_triangle(struct ui_scene *s, struct ui_scene_point a,
+                       struct ui_scene_point b, struct ui_scene_point c,
+                       const struct ui_scene_style *style)
+{
+    struct ui_scene_point pts[3] = { a, b, c };
+    return path_emit(s, pts, 3, UI_PATH_CLOSED | UI_PATH_FILLED, 0.0f, style);
+}
+
+bool ui_scene_path(struct ui_scene *s, const struct ui_scene_point *points,
+                   int count, bool closed, bool filled, float width,
+                   const struct ui_scene_style *style)
+{
+    uint16_t flags = (uint16_t)((closed ? UI_PATH_CLOSED : 0) |
+                                (filled ? UI_PATH_FILLED : 0));
+    return path_emit(s, points, count, flags, width, style);
+}
+
+static bool gradient_emit(struct ui_scene *s, bool radial, struct rect2f r,
+                          struct ui_scene_point from,
+                          struct ui_scene_point to, float radius,
+                          uint32_t color0, uint32_t color1,
+                          const struct ui_scene_style *style)
+{
+    if (!s)
+        return false;
+    if (r.size.x <= 0.0f || r.size.y <= 0.0f)
+        return true;
+    struct ui_scene_xform xf = style ? style->xform : (struct ui_scene_xform){0};
+    struct ui_scene_point corners[4] = {
+        { r.pos.x, r.pos.y },
+        { r.pos.x + r.size.x, r.pos.y },
+        { r.pos.x + r.size.x, r.pos.y + r.size.y },
+        { r.pos.x, r.pos.y + r.size.y },
+    };
+    for (int i = 0; i < 4; i++)
+        corners[i] = xform_point(xf, corners[i]);
+    struct rect2i ink = point_ink(corners, 4, 0.0f);
+    struct ui_scene_op *op = op_add_geom(s, UI_SCENE_OP_RECT, style, ink);
+    if (!op)
+        return false;
+    struct ui_scene_geom *g = &s->geoms[op->geom];
+    g->rect = r;
+    g->flags = radial ? UI_GEOM_RADIAL : UI_GEOM_LINEAR;
+    g->from = from;
+    g->to = to;
+    g->radius = radius;
+    g->color0 = color0;
+    g->color1 = color1;
+    op->alpha = (uint8_t)(color0 >> 24);
+    return scene_commit(s, op);
+}
+
+bool ui_scene_linear_gradient(struct ui_scene *s, struct rect2f r,
+                              struct ui_scene_point from,
+                              struct ui_scene_point to, uint32_t color0,
+                              uint32_t color1,
+                              const struct ui_scene_style *style)
+{
+    return gradient_emit(s, false, r, from, to, 0.0f, color0, color1, style);
+}
+
+bool ui_scene_radial_gradient(struct ui_scene *s, struct rect2f r,
+                              struct ui_scene_point center, float radius,
+                              uint32_t color0, uint32_t color1,
+                              const struct ui_scene_style *style)
+{
+    return gradient_emit(s, true, r, center, center, radius, color0, color1,
+                         style);
 }
 
 bool ui_scene_blend_rect(struct ui_scene *s, struct rect2i r,
@@ -604,6 +874,8 @@ static bool op_visible(const struct ui_scene_op *op)
     case UI_SCENE_OP_BLEND_RECT:
     case UI_SCENE_OP_CIRCLE:
         return op->alpha > 0;
+    case UI_SCENE_OP_RECT:
+        return op->geom >= 0 || (op->color >> 24) > 0;
     case UI_SCENE_OP_IMAGE:
         return op->image.src != NULL && op->alpha > 0;
     default:

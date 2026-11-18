@@ -732,6 +732,140 @@ static void test_wavy_underline(void)
         }
 }
 
+/* ---- Float ops and blend modes --------------------------------------- */
+
+static struct ui_scene_style style_of(uint32_t color, enum ui_scene_blend blend)
+{
+    return (struct ui_scene_style){ .color = color, .blend = blend };
+}
+
+static void test_blend_modes(void)
+{
+    enum { W = 4, H = 4 };
+    /* A straight red with alpha 128 over an opaque blue. */
+    static const struct { enum ui_scene_blend mode; uint32_t want; } cases[] = {
+        { UI_SCENE_BLEND_PREMUL, 0xFFFF007Fu },
+        { UI_SCENE_BLEND_ALPHA, 0xFF80007Fu },
+        { UI_SCENE_BLEND_ADDITIVE, 0xFF8000FFu },
+        { UI_SCENE_BLEND_MULTIPLY, 0xFF000000u },
+        { UI_SCENE_BLEND_NONE, 0x80FF0000u },
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        struct ui_scene s = {0};
+        ui_scene_init(&s);
+        struct ui_scene_style st = style_of(0x80FF0000u, cases[i].mode);
+        CHECK(ui_scene_rect_f(&s, (struct rect2f){
+            .pos = {0}, .size = { W, H } }, &st));
+        uint32_t out[W * H];
+        fill(out, W * H, 0xFF0000FFu);
+        CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+        ui_scene_destroy(&s);
+        for (int p = 0; p < W * H; p++)
+            CHECK(out[p] == cases[i].want);
+    }
+}
+
+static void test_float_rect_transform(void)
+{
+    enum { W = 8, H = 4 };
+    struct ui_scene s = {0};
+    ui_scene_init(&s);
+    struct ui_scene_style st = style_of(0xFFFF0000u, UI_SCENE_BLEND_NONE);
+    st.xform.dx = 2.0f;
+    CHECK(ui_scene_rect_f(&s, (struct rect2f){
+        .pos = { .x = 1.0f, .y = 1.0f }, .size = { .x = 2.0f, .y = 2.0f } }, &st));
+    CHECK(s.ops[0].rect.x == 3 && s.ops[0].rect.y == 1);
+    uint32_t out[W * H];
+    fill(out, W * H, 0);
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    ui_scene_destroy(&s);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            bool in = x >= 3 && x < 5 && y >= 1 && y < 3;
+            CHECK(out[y * W + x] == (in ? 0xFFFF0000u : 0u));
+        }
+}
+
+static void test_lines_and_polygons(void)
+{
+    enum { W = 8, H = 8 };
+    struct ui_scene_style st = style_of(0xFF00FF00u, UI_SCENE_BLEND_NONE);
+
+    struct ui_scene s = {0};
+    ui_scene_init(&s);
+    CHECK(ui_scene_line(&s, (struct ui_scene_point){ .x = 0, .y = 2 },
+                        (struct ui_scene_point){ .x = 4, .y = 2 }, 1.0f, &st));
+    uint32_t out[W * H];
+    fill(out, W * H, 0);
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    ui_scene_destroy(&s);
+    for (int x = 0; x <= 3; x++)
+        CHECK(out[2 * W + x] == 0xFF00FF00u);
+
+    ui_scene_init(&s);
+    struct ui_scene_point poly[3] = {
+        { .x = 1, .y = 1 }, { .x = 6, .y = 1 }, { .x = 1, .y = 6 },
+    };
+    CHECK(ui_scene_polyline(&s, poly, 3, false, 1.0f, &st));
+    fill(out, W * H, 0);
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    ui_scene_destroy(&s);
+    CHECK(out[1 * W + 3] == 0xFF00FF00u);
+    CHECK(out[5 * W + 5] == 0x00000000u);
+
+    ui_scene_init(&s);
+    CHECK(ui_scene_triangle(&s, poly[0], poly[1], poly[2], &st));
+    fill(out, W * H, 0);
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    ui_scene_destroy(&s);
+    CHECK(out[1 * W + 2] == 0xFF00FF00u);
+    CHECK(out[4 * W + 1] == 0xFF00FF00u);
+    CHECK(out[5 * W + 5] == 0x00000000u);
+
+    ui_scene_init(&s);
+    CHECK(ui_scene_path(&s, poly, 3, true, true, 0.0f, &st));
+    fill(out, W * H, 0);
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    ui_scene_destroy(&s);
+    CHECK(out[1 * W + 2] == 0xFF00FF00u);
+    CHECK(out[4 * W + 1] == 0xFF00FF00u);
+    CHECK(out[5 * W + 5] == 0x00000000u);
+}
+
+static void test_gradients(void)
+{
+    enum { W = 4, H = 4 };
+    struct ui_scene s = {0};
+    ui_scene_init(&s);
+    CHECK(ui_scene_linear_gradient(&s, (struct rect2f){
+        .pos = {0}, .size = { W, H } },
+        (struct ui_scene_point){ .x = 0, .y = 0 },
+        (struct ui_scene_point){ .x = W, .y = 0 },
+        0xFFFF0000u, 0xFF0000FFu, NULL));
+    uint32_t out[W * H];
+    fill(out, W * H, 0);
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    ui_scene_destroy(&s);
+    /* The sample point of pixel x is x + 0.5, so t is (x + 0.5) / 4. */
+    CHECK(out[0] == 0xFFDF0020u);
+    CHECK(out[3] == 0xFF2000DFu);
+    CHECK((out[0] >> 16 & 0xff) > (out[3] >> 16 & 0xff));
+    CHECK((out[0] & 0xff) < (out[3] & 0xff));
+
+    ui_scene_init(&s);
+    CHECK(ui_scene_radial_gradient(&s, (struct rect2f){
+        .pos = {0}, .size = { W, H } },
+        (struct ui_scene_point){ .x = 0.5f, .y = 0.5f }, 0.25f,
+        0xFFFF0000u, 0xFF0000FFu, NULL));
+    fill(out, W * H, 0);
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    ui_scene_destroy(&s);
+    /* The center pixel is at the center, so it is red. The rest are blue. */
+    CHECK(out[0] == 0xFFFF0000u);
+    for (int p = 1; p < W * H; p++)
+        CHECK(out[p] == 0xFF0000FFu);
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1 && !strcmp(argv[1], "--hash")) {
@@ -758,6 +892,10 @@ int main(int argc, char **argv)
     test_node_draws_under_clip();
     test_border();
     test_wavy_underline();
+    test_blend_modes();
+    test_float_rect_transform();
+    test_lines_and_polygons();
+    test_gradients();
     (void)parity_hash();
     test_cross_isa(argv[0]);
     puts("PASS: scene painter (new renderer)");

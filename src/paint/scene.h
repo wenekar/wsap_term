@@ -19,6 +19,82 @@ enum ui_scene_op_kind : uint8_t {
 };
 
 /*
+ * The blend mode of an op. All source colors are straight ARGB words.
+ *
+ * The modes are defined on 8-bit sRGB channels. They are the reference for
+ * the GPU backends: the CPU rule is one integer expression, and the GPU
+ * blend state and the shader give the same expression. So a scene gives the
+ * same pixels on the CPU and the GPU, up to one unit of rounding.
+ *
+ *   PREMUL   The source channels are premultiplied. The result is
+ *            src + dst * (1 - src.a). A straight color with alpha must use
+ *            ALPHA, not PREMUL.
+ *   ALPHA    The source channels are straight. Scale them by src.a, then
+ *            blend as PREMUL. For an opaque color PREMUL and ALPHA agree.
+ *   ADDITIVE The result is min (255, src + dst). The alpha adds too.
+ *   MULTIPLY The result is src * dst / 255. The alpha blends as PREMUL.
+ *   NONE     The source replaces the destination. The alpha replaces too.
+ */
+enum ui_scene_blend : uint8_t {
+    UI_SCENE_BLEND_PREMUL = 0,
+    UI_SCENE_BLEND_ALPHA,
+    UI_SCENE_BLEND_ADDITIVE,
+    UI_SCENE_BLEND_MULTIPLY,
+    UI_SCENE_BLEND_NONE,
+};
+
+/*
+ * A 2D affine transform. The all-zero value is the identity:
+ *   x' = x + xx * x + xy * y + dx
+ *   y' = y + yx * x + yy * y + dy
+ */
+struct ui_scene_xform {
+    float xx, xy, yx, yy, dx, dy;
+};
+
+struct ui_scene_point {
+    float x, y;
+};
+
+/* The style of a float op: its color, its blend mode, and its transform. */
+struct ui_scene_style {
+    uint32_t color;
+    enum ui_scene_blend blend;
+    struct ui_scene_xform xform;
+};
+
+/*
+ * The kinds of an op that has a geom entry. Such an op has the kind
+ * UI_SCENE_OP_RECT: its geom holds the real geometry, and its rect is the
+ * covering box. The UI planner and the debug tool thus need no new case.
+ */
+#define UI_GEOM_RECT_F 1u
+#define UI_GEOM_PATH 2u
+#define UI_GEOM_LINEAR 4u
+#define UI_GEOM_RADIAL 8u
+
+/* The geom flags of a path op. */
+#define UI_PATH_CLOSED 16u
+#define UI_PATH_FILLED 32u
+
+/*
+ * The float geometry of an op. The op holds its index in `geom`.
+ * `rect` is the float bounds before the transform. `width` is the stroke
+ * width of a path. `point_off` and `point_len` name the points in
+ * `ui_scene.points`. A gradient holds its two colors and its axis.
+ */
+struct ui_scene_geom {
+    struct rect2f rect;
+    struct ui_scene_xform xform;
+    struct ui_scene_point from, to;
+    float width;
+    float radius;
+    uint32_t point_off, point_len;
+    uint32_t color0, color1;
+    uint16_t flags;
+};
+
+/*
  * A picture for a scene. `pixels` holds `size.x * size.y` words of
  * premultiplied ARGB: each color channel is already multiplied by the
  * alpha channel. The words match the BGRA texels of the GPU backends.
@@ -79,21 +155,27 @@ struct ui_text_style {
 struct ui_scene_op {
     enum ui_scene_op_kind kind;
     uint8_t alpha;
+    /* The blend mode of the op. See enum ui_scene_blend. */
+    enum ui_scene_blend blend;
     /* The image flags of an image op. Zero for every other kind. */
     uint16_t flags;
     uint32_t color;
+    /* The integer bounds of the op. A float op keeps its real bounds in
+     * its geom entry; this rect is the covering box. */
     struct rect2i rect;
     union {
         struct { uint32_t text_off, text_len; };
         struct { int32_t blur; };
         struct ui_image_draw image;
+        /* The index in ui_scene.geoms, or -1. */
+        int32_t geom;
     };
     int radius;
     struct ui_text_style style;
 };
 
-_Static_assert(sizeof(struct ui_scene_op) == 64,
-               "ui_scene_op should occupy exactly 64 bytes");
+_Static_assert(sizeof(struct ui_scene_op) == 72,
+               "ui_scene_op should occupy exactly 72 bytes");
 
 struct ui_scene_scope {
     uint64_t key;
@@ -118,11 +200,15 @@ struct ui_scene {
     struct rect2i *clips;
     struct ui_scene_frame *stack;
     char *text;
+    struct ui_scene_geom *geoms;
+    struct ui_scene_point *points;
     struct vector2i origin;
     int n_ops, ops_cap;
     int n_scopes, scopes_cap;
     int scope_depth, stack_cap;
     int clip_depth, clips_cap;
+    int n_geoms, geoms_cap;
+    int n_points, points_cap;
     uint32_t text_len;
     int text_cap;
     bool overflow;
@@ -158,6 +244,38 @@ bool ui_scene_rect_border(struct ui_scene *s, struct rect2i box,
 bool ui_scene_wavy_underline(struct ui_scene *s, struct rect2i run,
                              int amplitude, int period, int thickness,
                              uint32_t color);
+/*
+ * The float ops. `ui_scene_rect_f` fills the transformed rect with its
+ * center inside the rect. The path ops stroke lines of `width` pixels, and
+ * a closed filled path covers the polygon of its points. A gradient paints
+ * the rect of the last argument. A zero `style` gives the identity
+ * transform and UI_SCENE_BLEND_PREMUL.
+ */
+bool ui_scene_rect_f(struct ui_scene *s, struct rect2f r,
+                     const struct ui_scene_style *style);
+bool ui_scene_line(struct ui_scene *s, struct ui_scene_point a,
+                   struct ui_scene_point b, float width,
+                   const struct ui_scene_style *style);
+bool ui_scene_polyline(struct ui_scene *s, const struct ui_scene_point *points,
+                       int count, bool closed, float width,
+                       const struct ui_scene_style *style);
+bool ui_scene_triangle(struct ui_scene *s, struct ui_scene_point a,
+                       struct ui_scene_point b, struct ui_scene_point c,
+                       const struct ui_scene_style *style);
+bool ui_scene_path(struct ui_scene *s, const struct ui_scene_point *points,
+                   int count, bool closed, bool filled, float width,
+                   const struct ui_scene_style *style);
+bool ui_scene_linear_gradient(struct ui_scene *s, struct rect2f r,
+                              struct ui_scene_point from,
+                              struct ui_scene_point to, uint32_t color0,
+                              uint32_t color1,
+                              const struct ui_scene_style *style);
+bool ui_scene_radial_gradient(struct ui_scene *s, struct rect2f r,
+                              struct ui_scene_point center, float radius,
+                              uint32_t color0, uint32_t color1,
+                              const struct ui_scene_style *style);
+const struct ui_scene_geom *ui_scene_op_geom(const struct ui_scene *s,
+                                             const struct ui_scene_op *op);
 bool ui_scene_blend_rect(struct ui_scene *s, struct rect2i r,
                          uint32_t color, uint8_t alpha);
 bool ui_scene_rounded_rect(struct ui_scene *s, struct rect2i r,

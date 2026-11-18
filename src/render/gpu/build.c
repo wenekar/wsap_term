@@ -903,6 +903,15 @@ static bool build_scene(struct gpu_build *b, struct font_instance *ufont,
 
     for (int i = 0; i < scene->n_ops && !b->failed && !b->atlas.full; i++) {
         const struct ui_scene_op *op = &scene->ops[i];
+        /*
+         * The float geometry and the other blend modes wait for their GPU
+         * instances and pipelines. The CPU painter draws such a frame, so
+         * the pixels stay correct.
+         */
+        if (op->geom >= 0 || op->blend != UI_SCENE_BLEND_PREMUL) {
+            b->failed = true;
+            break;
+        }
         switch (op->kind) {
         case UI_SCENE_OP_PUSH_CLIP:
             if (depth < stack_cap)
