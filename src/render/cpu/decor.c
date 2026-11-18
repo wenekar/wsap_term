@@ -183,11 +183,11 @@ static void set_build(struct decor_set *s, uint8_t *mem, struct decor_key key)
     /* Plane 0 is zero. Mask i uses planes 1 + 2i (full) and 2 + 2i (faint). */
     struct decor_mask *masks[DECOR_MASKS];
     int n = 0;
-    masks[n++] = &s->underline[WSAP_VTCORE_UNDERLINE_SINGLE];
-    masks[n++] = &s->underline[WSAP_VTCORE_UNDERLINE_DOUBLE];
-    masks[n++] = &s->underline[WSAP_VTCORE_UNDERLINE_CURLY];
-    masks[n++] = &s->underline[WSAP_VTCORE_UNDERLINE_DOTTED];
-    masks[n++] = &s->underline[WSAP_VTCORE_UNDERLINE_DASHED];
+    masks[n++] = &s->underline[RENDER_UNDERLINE_SINGLE];
+    masks[n++] = &s->underline[RENDER_UNDERLINE_DOUBLE];
+    masks[n++] = &s->underline[RENDER_UNDERLINE_CURLY];
+    masks[n++] = &s->underline[RENDER_UNDERLINE_DOTTED];
+    masks[n++] = &s->underline[RENDER_UNDERLINE_DASHED];
     masks[n++] = &s->strike;
     masks[n++] = &s->overline;
     masks[n++] = &s->cursor_bar;

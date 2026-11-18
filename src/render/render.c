@@ -22,6 +22,7 @@
 #include "render/gpu/gpu.h"
 #include "render/plan.h"
 #include "render/scene_paint.h"
+#include "render/scratch.h"
 #include "render/surface.h"
 
 /*
@@ -96,7 +97,7 @@ void render_shutdown(void)
         return;
     font_system_shutdown();
     ui_shadow_cache_destroy();
-    render_walk_thread_release();
+    render_thread_scratch_release();
 }
 
 static void cpu_release(struct renderer *r)

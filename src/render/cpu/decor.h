@@ -34,7 +34,7 @@
  *
  * Draw order inside a cell: glyph, then underline, strike, overline, then
  * the cursor marks. The decorations use the cell fg. The cursor marks use
- * terminal_frame.cursor_color and are never faint.
+ * render_grid_view.cursor_color and are never faint.
  *
  * Math: integer or fixed point. Build each set once. Do not use the FPU in
  * a way that can change between ISA levels.
@@ -43,11 +43,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <wsap_vtcore/wsap_vtcore.h>
-
 #include "font/font.h"
+#include "render/cell.h"
 
-#define DECOR_UNDERLINE_KINDS (WSAP_VTCORE_UNDERLINE_DASHED + 1)
+#define DECOR_UNDERLINE_KINDS (RENDER_UNDERLINE_DASHED + 1)
 
 struct decor_key {
     int cw, ch;
@@ -62,7 +61,7 @@ struct decor_key {
  * - `faint` is the same mask with each value c replaced by (c + 1) / 2.
  * - `solid` means: every value in rows [y0, y1) is 255. A raster can then
  *   fill those rows, or blend them at 128 when faint.
- * - y0 == y1 means an empty mask. underline[WSAP_VTCORE_UNDERLINE_NONE] is
+ * - y0 == y1 means an empty mask. underline[RENDER_UNDERLINE_NONE] is
  *   empty.
  */
 struct decor_mask {
