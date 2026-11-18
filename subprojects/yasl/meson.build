@@ -3,6 +3,8 @@ project(
     'c',
     meson_version: '>=1.6.0',
     version: '0.2.0',
+    license: 'MIT',
+    license_files: 'LICENSE',
     default_options: [
         'c_std=c17',
         'warning_level=2',
@@ -68,6 +70,7 @@ if system == 'linux'
     endif
     vulkan_dep = dependency('vulkan', required: false)
     has_vulkan = vulkan_dep.found()
+    vulkan_headers = has_vulkan ? [vulkan_dep.partial_dependency(compile_args: true, includes: true)] : []
     m_dep = cc.find_library('m', required: false)
     rt_dep = cc.find_library('rt', required: false)
     dl_dep = cc.find_library('dl', required: false)
@@ -95,6 +98,7 @@ endif
 if has_cocoa
     vulkan_dep = dependency('vulkan', required: false)
     has_vulkan = vulkan_dep.found()
+    vulkan_headers = has_vulkan ? [vulkan_dep.partial_dependency(compile_args: true, includes: true)] : []
 endif
 
 if not has_wayland and not has_x11 and not has_cocoa
@@ -133,6 +137,11 @@ yasl_lib = both_libraries(
     install: true,
 )
 
+# An uninstalled subproject consumer gets the Vulkan headers too. A
+# pkg-config consumer gets them from the private requirement below.
+if has_vulkan
+    deps += [vulkan_headers]
+endif
 yasl_dep = declare_dependency(
     link_with: yasl_lib.get_static_lib(),
     include_directories: include_directories('include'),
