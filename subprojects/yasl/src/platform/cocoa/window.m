@@ -123,6 +123,8 @@ struct cocoa_surface {
 
     char *preedit;
     size_t preedit_begin, preedit_end;
+    /* The selected range of the preedit, in UTF-8 bytes; -1 if unknown. */
+    int preedit_cursor_begin, preedit_cursor_end;
     NSUInteger marked_utf16_location;
     uint64_t preedit_revision, preedit_generation;
     struct yasl_private_rect2i ime_caret;
@@ -1750,6 +1752,7 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
     free(w->preedit);
     w->preedit = NULL;
     w->preedit_begin = w->preedit_end = 0;
+    w->preedit_cursor_begin = w->preedit_cursor_end = -1;
     if (had_preedit)
         push_composition(w, NULL, -1, -1);
     if (!w->destroyed && !w->closed)
@@ -1813,6 +1816,8 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
     }
     darwin_ctx.depth++;
     push_composition(w, w->preedit, begin, end);
+    w->preedit_cursor_begin = begin;
+    w->preedit_cursor_end = end;
     if (!w->destroyed && !w->closed)
         cocoa_surface_schedule_redraw(w);
     darwin_ctx.depth--;
@@ -1824,6 +1829,7 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
     if (!w || w->destroyed || w->closed || !w->preedit) return;
     free(w->preedit);
     w->preedit = NULL;
+    w->preedit_cursor_begin = w->preedit_cursor_end = -1;
     darwin_ctx.depth++;
     push_composition(w, NULL, -1, -1);
     if (!w->destroyed && !w->closed)
@@ -2880,8 +2886,11 @@ void cocoa_surface_set_ime_caret(struct cocoa_surface *w, struct yasl_private_re
 
 bool cocoa_surface_ime_preedit_cursor(const struct cocoa_surface *w, int *begin, int *end)
 {
-    (void)w; (void)begin; (void)end;
-    return false;
+    if (!w || !w->preedit || w->preedit_cursor_begin < 0)
+        return false;
+    if (begin) *begin = w->preedit_cursor_begin;
+    if (end) *end = w->preedit_cursor_end;
+    return true;
 }
 
 static NSPasteboard *pasteboard_for_selection(enum yasl_private_selection sel)

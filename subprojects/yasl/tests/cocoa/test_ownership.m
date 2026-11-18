@@ -111,8 +111,12 @@ int main(void)
     [text_input setMarkedText:@"é漢" selectedRange:NSMakeRange(1, 1)
               replacementRange:NSMakeRange(NSNotFound, 0)];
     assert(strcmp(yasl_private_surface_ime_preedit(s), "é漢") == 0);
+    int cursor_begin = 0, cursor_end = 0;
+    assert(yasl_private_surface_ime_preedit_cursor(s, &cursor_begin, &cursor_end));
+    assert(cursor_begin == 2 && cursor_end == 5);
     [text_input unmarkText];
     assert(yasl_private_surface_ime_preedit(s) == NULL);
+    assert(!yasl_private_surface_ime_preedit_cursor(s, &cursor_begin, &cursor_end));
     assert(yasl_private_display_poll_event(d, &event));
     assert(event.type == YASL_PRIVATE_EVENT_COMPOSITION && event.composition.active);
     assert(strcmp(event.composition.data, "é漢") == 0);
