@@ -34,7 +34,7 @@ endif
 
 SAN_SETUP_FLAGS ?= --buildtype=debugoptimized -Db_lto=false -Disa=native
 
-.PHONY: all release test test-fuzz install dist dist-local clean test-asan test-tsan test-msan test-sanitizers analyze analyze-deep
+.PHONY: all release framework test test-fuzz install dist dist-local clean test-asan test-tsan test-msan test-sanitizers analyze analyze-deep
 
 all: $(BUILD_DIR)/build.ninja
 	meson compile -C $(BUILD_DIR)
@@ -53,6 +53,14 @@ test-fuzz: $(TEST_BUILD_DIR)/build.ninja
 $(TEST_BUILD_DIR)/build.ninja:
 	$(TOOLCHAIN_CHECK)
 	$(MESON_SETUP) "$(TEST_BUILD_DIR)" $(TEST_SETUP_FLAGS)
+
+FRAMEWORK_BUILD_DIR ?= build-framework
+framework:
+	$(TOOLCHAIN_CHECK)
+	$(MESON_SETUP) "$(FRAMEWORK_BUILD_DIR)" $(MESON_SETUP_FLAGS) \
+		-Dapp=false -Dframework=true -Dtests=false -Dbenchmarks=false
+	meson compile -C "$(FRAMEWORK_BUILD_DIR)"
+	meson install -C "$(FRAMEWORK_BUILD_DIR)" --no-rebuild --skip-subprojects
 
 release: $(BUILD_DIR)/build.ninja
 	meson compile -C $(BUILD_DIR) install-targets
