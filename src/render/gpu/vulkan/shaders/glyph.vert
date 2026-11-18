@@ -17,9 +17,10 @@ layout(location = 3) in uint in_mode;
 layout(location = 4) in uint in_blend;
 
 layout(location = 0) out vec2 out_uv;
-layout(location = 1) flat out vec4 out_color;
-layout(location = 2) flat out uint out_mode;
-layout(location = 3) flat out uint out_blend;
+layout(location = 1) flat out vec4 out_uv_rect;
+layout(location = 2) flat out vec4 out_color;
+layout(location = 3) flat out uint out_mode;
+layout(location = 4) flat out uint out_blend;
 
 void main()
 {
@@ -28,6 +29,7 @@ void main()
     vec2 pos = in_rect.xy + corner * in_rect.zw;
     gl_Position = vec4(pos * (2.0 / push.viewport_size) - vec2(1.0), 0.0, 1.0);
     out_uv = mix(in_uv.xy, in_uv.zw, corner);
+    out_uv_rect = in_uv;
     out_color = in_color;
     out_mode = in_mode;
     out_blend = in_blend;

@@ -48,6 +48,7 @@ struct gpu_atlas_entry {
     uint16_t w;
     uint16_t rows;
     int16_t x_offset;
+    int16_t y_offset;
     uint8_t kind;
     bool used;
 };
@@ -355,6 +356,7 @@ static bool atlas_add_glyph(struct gpu_build *b, uint64_t id, uint64_t version,
         e.w = (uint16_t)w;
         e.rows = (uint16_t)rows;
         e.x_offset = gl->x_offset;
+        e.y_offset = gl->y_offset;
         for (int y = 0; y < rows; y++, dst += w) {
             switch (kind) {
             case KIND_ALPHA: {
@@ -845,8 +847,9 @@ static void scene_text(struct gpu_build *b, struct font_instance *fi, const stru
                 if (!c || !in)
                     return;
                 c->count++;
-                rect_to_vec4((float)(tx + e.x_offset), (float)op->rect.y, (float)e.w, (float)rows,
-                             in->rect);
+                rect_to_vec4((float)(tx + e.x_offset),
+                             (float)op->rect.y + (float)e.y_offset, (float)e.w,
+                             (float)rows, in->rect);
                 rect_to_vec4((float)e.x, (float)e.y, (float)(e.x + e.w), (float)(e.y + rows),
                              in->uv);
                 if (e.kind == KIND_COLOR) {
@@ -881,8 +884,9 @@ static void scene_rect(struct gpu_build *b, struct rect2i rect, struct rect2i cl
         return;
     float c[4];
     gpu_color(color, opacity_mult, c);
-    if (c[3] > 0.0f)
-        emit_solid(b, r, c, blend, canvas_rect);
+    /* Alpha 0 still draws: MULTIPLY zeroes the color, and NONE replaces
+     * the pixel. The other modes give no change at alpha 0. */
+    emit_solid(b, r, c, blend, canvas_rect);
 }
 
 static bool build_scene(struct gpu_build *b, struct font_instance *ufont,

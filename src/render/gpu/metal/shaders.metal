@@ -68,6 +68,7 @@ struct GlyphInstance {
 struct GlyphVertexOut {
     float4 position [[position]];
     float2 uv;
+    float4 uv_rect [[flat]];
     float4 color [[flat]];
     uint mode [[flat]];
     uint blend [[flat]];
@@ -83,6 +84,7 @@ vertex GlyphVertexOut glyph_vertex(uint vertex_id [[vertex_id]],
     GlyphVertexOut out;
     out.position = pixel_to_ndc(in.rect.xy + corner * in.rect.zw, uniforms.viewport_size);
     out.uv = mix(in.uv.xy, in.uv.zw, corner);
+    out.uv_rect = in.uv;
     out.color = in.color;
     out.mode = in.mode;
     out.blend = in.blend;
@@ -93,24 +95,27 @@ vertex GlyphVertexOut glyph_vertex(uint vertex_id [[vertex_id]],
  * The sample rule of an image op: destination pixel i of n samples the
  * source coordinate (i + 0.5) * src / n. A nearest sample takes the texel
  * that holds the coordinate. A linear sample mixes four texels by the rest
- * of the way. The CPU painter uses the same rule.
+ * of the way. The CPU painter uses the same rule. Every tap stays inside
+ * the uv sub-rect, so a texel next to the sub-rect cannot bleed in.
  */
-static inline float4 image_texel(texture2d<float, access::read> image, int2 uv)
+static inline float4 image_texel(texture2d<float, access::read> image, int2 uv, int2 lo, int2 hi)
 {
-    int2 last = int2((int)image.get_width() - 1, (int)image.get_height() - 1);
-    return image.read(uint2(max(min(uv, last), int2(0))));
+    return image.read(uint2(max(min(uv, hi), lo)));
 }
 
-static inline float4 image_sample(texture2d<float, access::read> image, float2 uv, bool linear)
+static inline float4 image_sample(texture2d<float, access::read> image, float2 uv, bool linear,
+                                  float4 uv_rect)
 {
+    int2 lo = int2(uv_rect.xy);
+    int2 hi = int2(uv_rect.zw) - int2(1);
     if (!linear)
-        return image_texel(image, int2(floor(uv)));
-    float2 last = float2((float)((int)image.get_width() - 1), (float)((int)image.get_height() - 1));
-    float2 p = max(min(uv - 0.5f, last), float2(0.0f));
+        return image_texel(image, int2(floor(uv)), lo, hi);
+    float2 p = max(min(uv - 0.5f, float2(hi)), float2(lo));
     float2 f = p - floor(p);
     int2 i = int2(floor(p));
-    float4 top = mix(image_texel(image, i), image_texel(image, i + int2(1, 0)), f.x);
-    float4 bottom = mix(image_texel(image, i + int2(0, 1)), image_texel(image, i + int2(1, 1)), f.x);
+    float4 top = mix(image_texel(image, i, lo, hi), image_texel(image, i + int2(1, 0), lo, hi), f.x);
+    float4 bottom = mix(image_texel(image, i + int2(0, 1), lo, hi),
+                        image_texel(image, i + int2(1, 1), lo, hi), f.x);
     return mix(top, bottom, f.y);
 }
 
@@ -141,7 +146,7 @@ fragment float4 glyph_fragment(GlyphVertexOut in [[stage_in]],
     if (in.mode == MODE_COLOR)
         return atlas.read(uint2(in.uv)) * dim;
     if (in.mode == MODE_IMAGE || in.mode == MODE_IMAGE_LINEAR) {
-        float4 t = image_sample(image, in.uv, in.mode == MODE_IMAGE_LINEAR);
+        float4 t = image_sample(image, in.uv, in.mode == MODE_IMAGE_LINEAR, in.uv_rect);
         float a = t.a * c.a;
         return float4(t.rgb * c.rgb * dim, a);
     }

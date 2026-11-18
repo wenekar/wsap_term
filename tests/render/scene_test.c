@@ -765,6 +765,110 @@ static void test_blend_modes(void)
     }
 }
 
+/* The reference of the blend modes: 8-bit sRGB channel values, no linear
+ * conversion. It mirrors the rule of paint/scene.h and blend_mode_px(). */
+static uint32_t blend_ref(enum ui_scene_blend mode, uint32_t src, uint32_t dst)
+{
+    unsigned sa = src >> 24;
+    if (mode == UI_SCENE_BLEND_NONE)
+        return src;
+    unsigned sr = (src >> 16) & 0xff, sg = (src >> 8) & 0xff, sb = src & 0xff;
+    unsigned da = dst >> 24, dr = (dst >> 16) & 0xff, dg = (dst >> 8) & 0xff,
+             db = dst & 0xff;
+    unsigned pr = sr, pg = sg, pb = sb;
+    if (mode == UI_SCENE_BLEND_ALPHA || mode == UI_SCENE_BLEND_ADDITIVE ||
+        mode == UI_SCENE_BLEND_MULTIPLY) {
+        pr = (sr * sa + 127) / 255;
+        pg = (sg * sa + 127) / 255;
+        pb = (sb * sa + 127) / 255;
+    }
+    unsigned r, g, b, a;
+    if (mode == UI_SCENE_BLEND_ADDITIVE) {
+        unsigned vr = pr + dr, vg = pg + dg, vb = pb + db, va = sa + da;
+        r = vr > 255 ? 255 : vr;
+        g = vg > 255 ? 255 : vg;
+        b = vb > 255 ? 255 : vb;
+        a = va > 255 ? 255 : va;
+    } else if (mode == UI_SCENE_BLEND_MULTIPLY) {
+        r = (pr * dr + 127) / 255;
+        g = (pg * dg + 127) / 255;
+        b = (pb * db + 127) / 255;
+        a = sa + (da * (255 - sa) + 127) / 255;
+    } else {
+        unsigned inv = 255 - sa;
+        r = pr + (dr * inv + 127) / 255;
+        g = pg + (dg * inv + 127) / 255;
+        b = pb + (db * inv + 127) / 255;
+        a = sa + (da * inv + 127) / 255;
+    }
+    if (r > 255) r = 255;
+    if (g > 255) g = 255;
+    if (b > 255) b = 255;
+    return (a << 24) | (r << 16) | (g << 8) | b;
+}
+
+/* A plain RECT with a blend mode. Its alpha field is 0, and the color
+ * alpha is the opacity. The op must draw. */
+static void test_rect_op_blend(void)
+{
+    enum { W = 6, H = 6 };
+    static const enum ui_scene_blend modes[] = {
+        UI_SCENE_BLEND_ALPHA, UI_SCENE_BLEND_ADDITIVE,
+        UI_SCENE_BLEND_MULTIPLY, UI_SCENE_BLEND_NONE,
+    };
+    for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
+        struct ui_scene s = {0};
+        ui_scene_init(&s);
+        CHECK(ui_scene_rect(&s, R(2, 2, 2, 2), 0x80FF0000u));
+        CHECK(s.ops[0].alpha == 0);
+        s.ops[0].blend = modes[i];
+        uint32_t out[W * H];
+        fill(out, W * H, 0xFF0000FFu);
+        CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+        ui_scene_destroy(&s);
+        for (int p = 0; p < W * H; p++) {
+            int x = p % W, y = p / W;
+            bool in = x >= 2 && x < 4 && y >= 2 && y < 4;
+            uint32_t want = in ? blend_ref(modes[i], 0x80FF0000u, 0xFF0000FFu)
+                               : 0xFF0000FFu;
+            CHECK(out[p] == want);
+        }
+    }
+}
+
+/* A BLEND_RECT at alpha 0 and at alpha 255. The color word is translucent,
+ * so the test tells apart the separate alpha of the op and the color. */
+static void test_blend_rect_alpha_edges(void)
+{
+    enum { W = 4, H = 4 };
+    static const struct { enum ui_scene_blend mode; uint32_t a255, a0; } cases[] = {
+        { UI_SCENE_BLEND_PREMUL,   0xFFFF0000u, 0xFF0000FFu },
+        { UI_SCENE_BLEND_ALPHA,    0xFFFF0000u, 0xFF0000FFu },
+        { UI_SCENE_BLEND_ADDITIVE, 0xFFFF00FFu, 0xFF0000FFu },
+        { UI_SCENE_BLEND_MULTIPLY, 0xFF000000u, 0xFF000000u },
+        { UI_SCENE_BLEND_NONE,     0xFFFF0000u, 0x00FF0000u },
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        uint8_t alphas[2] = { 255, 0 };
+        uint32_t wants[2] = { cases[i].a255, cases[i].a0 };
+        for (int k = 0; k < 2; k++) {
+            struct ui_scene s = {0};
+            ui_scene_init(&s);
+            CHECK(ui_scene_blend_rect(&s, R(1, 1, 2, 2), 0x40FF0000u, alphas[k]));
+            s.ops[0].blend = cases[i].mode;
+            uint32_t out[W * H];
+            fill(out, W * H, 0xFF0000FFu);
+            CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+            ui_scene_destroy(&s);
+            for (int p = 0; p < W * H; p++) {
+                int x = p % W, y = p / W;
+                bool in = x >= 1 && x < 3 && y >= 1 && y < 3;
+                CHECK(out[p] == (in ? wants[k] : 0xFF0000FFu));
+            }
+        }
+    }
+}
+
 static void test_float_rect_transform(void)
 {
     enum { W = 8, H = 4 };
@@ -893,6 +997,8 @@ int main(int argc, char **argv)
     test_border();
     test_wavy_underline();
     test_blend_modes();
+    test_rect_op_blend();
+    test_blend_rect_alpha_edges();
     test_float_rect_transform();
     test_lines_and_polygons();
     test_gradients();
