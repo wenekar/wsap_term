@@ -132,7 +132,7 @@ static void adopt_cache(struct theme_entry *e, struct theme_catalog *old)
 void theme_catalog_scan(struct theme_catalog *c)
 {
     struct theme_catalog old = *c;
-    *c = (struct theme_catalog){ .scanned = true };
+    *c = (struct theme_catalog){ .scanned = true, .identity = old.identity };
 
     const char *tag = c->identity && c->identity->id[0] ? c->identity->id : "";
     char user_dir[APP_IDENTITY_PATH_MAX];
