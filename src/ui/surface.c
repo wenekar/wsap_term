@@ -283,6 +283,61 @@ static void measure_and_layout(struct ui_surface *surface)
     measure_overlays(surface);
 }
 
+/* Adds the hover and focus flags of the surface to each widget of the tree.
+ * A widget keeps the flags that its own handlers set. */
+static void sync_state_pseudo(struct ui_surface *surface, struct ui_widget *widget)
+{
+    if (!widget || widget->impl.destroyed)
+        return;
+    unsigned bits = 0;
+    if (surface->impl.hovered &&
+        ui_widget_is_ancestor(widget, surface->impl.hovered))
+        bits |= CSS_PSEUDO_HOVER;
+    if (surface->impl.focused &&
+        ui_widget_is_ancestor(widget, surface->impl.focused))
+        bits |= CSS_PSEUDO_FOCUS;
+    unsigned current = ui_widget_style_pseudo(widget);
+    unsigned next = (current & ~(unsigned)widget->impl.style_pseudo_auto) | bits;
+    widget->impl.style_pseudo_auto = (uint16_t)bits;
+    if (next != current)
+        ui_widget_set_style_pseudo(widget, next);
+    for (struct ui_widget *c = widget->first_child; c; c = c->next_sibling)
+        sync_state_pseudo(surface, c);
+}
+
+/* Moves each widget toward its resolved CSS colors. The CSS
+ * transition-duration sets the time. */
+static void animate_styles(struct ui_surface *surface)
+{
+    uint64_t previous = surface->impl.anim_deadline;
+    uint64_t next = 0;
+    if (surface->impl.root) {
+        sync_state_pseudo(surface, surface->impl.root);
+        ui_style_context_apply(&surface->impl.style, surface->impl.root);
+        next = ui_widget_animate_style(surface->impl.root,
+                                       surface->impl.now_ms);
+    }
+    for (size_t i = 0; i < surface->impl.overlay_count; i++) {
+        struct ui_widget *overlay = surface->impl.overlays[i];
+        if (!overlay || overlay->impl.destroyed)
+            continue;
+        sync_state_pseudo(surface, overlay);
+        ui_style_context_apply(&surface->impl.style, overlay);
+        uint64_t child = ui_widget_animate_style(overlay, surface->impl.now_ms);
+        if (child && (!next || child < next))
+            next = child;
+    }
+    /* A deadline that this pass published last time gives way to the new
+     * one. The caller reads the next deadline after this pass. */
+    if (previous && surface->impl.deadline == previous)
+        surface->impl.deadline = 0;
+    surface->impl.anim_deadline = next;
+    if (next && (!surface->impl.deadline ||
+                 surface->impl.deadline <= surface->impl.now_ms ||
+                 next < surface->impl.deadline))
+        surface->impl.deadline = next;
+}
+
 static void prepare_overlays(struct ui_surface *surface)
 {
     /* Downwards: a prepare can close an overlay and shift the list. */
@@ -299,6 +354,7 @@ static void prepare(struct ui_surface *surface)
     if (!root) {
         prepare_overlays(surface);
         measure_and_layout(surface);
+        animate_styles(surface);
         ui_surface_sync_modal(surface);
         return;
     }
@@ -308,9 +364,11 @@ static void prepare(struct ui_surface *surface)
     root = surface->impl.root;
     if (!root) {
         measure_and_layout(surface);
+        animate_styles(surface);
         return;
     }
     measure_and_layout(surface);
+    animate_styles(surface);
     ui_surface_sync_modal(surface);
 }
 
@@ -966,6 +1024,7 @@ bool ui_surface_tick(struct ui_surface *surface, uint64_t now_ms)
     if (!surface || surface->impl.busy)
         return false;
     surface->impl.busy = true;
+    surface->impl.now_ms = now_ms;
     uint64_t deadline = surface->impl.root
         ? ui_widget_tick(surface->impl.root, now_ms) : 0;
     /* Downwards: a tick can close an overlay and shift the list. */
@@ -973,6 +1032,9 @@ bool ui_surface_tick(struct ui_surface *surface, uint64_t now_ms)
         struct ui_widget *overlay = surface->impl.overlays[i - 1];
         deadline = sooner(deadline, ui_widget_tick(overlay, now_ms));
     }
+    if (surface->impl.anim_deadline &&
+        (!deadline || surface->impl.anim_deadline < deadline))
+        deadline = surface->impl.anim_deadline;
     surface->impl.deadline = deadline;
     surface->impl.busy = false;
     bool next_frame = surface->impl.deadline &&

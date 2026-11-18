@@ -1,5 +1,6 @@
 #include "ui/internal/tree.h"
 
+#include "ui/anim.h"
 #include "ui/anchor.h"
 #include "ui/internal/layout.h"
 #include "ui/surface.h"
@@ -863,6 +864,94 @@ uint64_t ui_widget_tick(struct ui_widget *widget, uint64_t now_ms)
         if (child && (!next || child < next))
             next = child;
         c = following;
+    }
+    return next;
+}
+
+/* The color of one channel of the resolved style of `widget`. */
+static uint32_t style_channel(const struct css_style *style, enum ui_style_channel ch)
+{
+    switch (ch) {
+    case UI_STYLE_CHANNEL_BORDER: return style->border_color;
+    case UI_STYLE_CHANNEL_TEXT: return style->text_color;
+    case UI_STYLE_CHANNEL_BG:
+    default: return style->bg_color;
+    }
+}
+
+static void style_channel_set(struct css_style *style, enum ui_style_channel ch,
+                              uint32_t color)
+{
+    switch (ch) {
+    case UI_STYLE_CHANNEL_BORDER: style->border_color = color; break;
+    case UI_STYLE_CHANNEL_TEXT: style->text_color = color; break;
+    case UI_STYLE_CHANNEL_BG:
+    default: style->bg_color = color; break;
+    }
+}
+
+uint64_t ui_widget_animate_style(struct ui_widget *widget, uint64_t now_ms)
+{
+    if (!widget || widget->impl.destroyed)
+        return 0;
+    uint64_t next = 0;
+    struct css_style *style = &widget->style;
+    struct ui_widget_style_anim *a = &widget->impl.style_anim;
+    uint32_t duration = style->has_transition_duration &&
+                        style->transition_duration >= 1.0f
+        ? (uint32_t)style->transition_duration : 0;
+    if (!duration) {
+        /* No transition: the widget paints its resolved style as it is. */
+        a->valid = false;
+        return 0;
+    }
+    float opacity = css_style_effective_opacity(style);
+    bool changed = false;
+    if (!a->valid) {
+        for (int i = 0; i < UI_STYLE_CHANNEL_COUNT; i++)
+            a->from[i] = a->to[i] = a->current[i] = style_channel(style, i);
+        a->opacity_from = a->opacity_to = a->opacity_current = opacity;
+        a->start_ms = now_ms;
+        a->valid = true;
+    } else {
+        /* The style holds the value that the last pass wrote. A resolved
+         * color that differs from it is a new target. */
+        for (int i = 0; i < UI_STYLE_CHANNEL_COUNT; i++)
+            if (a->current[i] != style_channel(style, i))
+                changed = true;
+        if (style->has_opacity && a->opacity_current != style->opacity)
+            changed = true;
+        if (changed) {
+            for (int i = 0; i < UI_STYLE_CHANNEL_COUNT; i++) {
+                a->from[i] = a->current[i];
+                a->to[i] = style_channel(style, i);
+            }
+            a->opacity_from = a->opacity_current;
+            a->opacity_to = opacity;
+            a->start_ms = now_ms;
+        }
+    }
+    a->duration_ms = duration;
+    float progress = 1.0f;
+    if (now_ms < a->start_ms)
+        progress = 0.0f;
+    else if (now_ms - a->start_ms < a->duration_ms)
+        progress = (float)(now_ms - a->start_ms) / (float)a->duration_ms;
+    float eased = ui_ease_eval(UI_EASE_OUT_CUBIC, progress);
+    for (int i = 0; i < UI_STYLE_CHANNEL_COUNT; i++) {
+        a->current[i] = ui_color_lerp(a->from[i], a->to[i], eased);
+        style_channel_set(style, i, a->current[i]);
+    }
+    a->opacity_current =
+        a->opacity_from + (a->opacity_to - a->opacity_from) * eased;
+    if (style->has_opacity)
+        style->opacity = a->opacity_current;
+    if (progress < 1.0f)
+        next = a->start_ms + a->duration_ms;
+    for (struct ui_widget *c = widget->first_child; c; c = c->next_sibling) {
+        uint64_t child = ui_widget_animate_style(c, now_ms);
+        if (child && (!next || child < next))
+            next = child;
     }
     return next;
 }

@@ -84,6 +84,10 @@ struct ui_surface {
         struct vector2i viewport;
         struct ui_style_context style;
         uint64_t deadline;
+        /* The next step of a CSS transition, or 0. */
+        uint64_t anim_deadline;
+        /* The time of the last tick. A transition starts at this time. */
+        uint64_t now_ms;
         uint64_t generation;
         struct ui_surface_post *post;
         size_t post_count;
