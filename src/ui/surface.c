@@ -338,7 +338,7 @@ bool ui_surface_set_root(struct ui_surface *surface, struct ui_widget *root)
         surface->impl.captured = NULL;
         surface->impl.hovered = NULL;
         surface->impl.modal = NULL;
-        surface->impl.restore_focus = NULL;
+        surface->impl.focus_count = 0;
         surface->impl.default_focus = NULL;
     }
     surface->impl.root = root;
@@ -457,12 +457,17 @@ void ui_surface_forget(struct ui_surface *surface, struct ui_widget *subtree)
     struct ui_widget **refs[] = {
         &surface->impl.focused, &surface->impl.captured,
         &surface->impl.hovered, &surface->impl.modal,
-        &surface->impl.restore_focus, &surface->impl.default_focus,
+        &surface->impl.default_focus,
         &surface->impl.paste_target, &surface->impl.context_target,
     };
     for (size_t i = 0; i < sizeof(refs) / sizeof(refs[0]); i++)
         if (*refs[i] && ui_widget_is_ancestor(subtree, *refs[i]))
             *refs[i] = NULL;
+    for (size_t i = 0; i < surface->impl.focus_count; i++) {
+        struct ui_surface_focus_frame *frame = &surface->impl.focus_stack[i];
+        if (frame->focus && ui_widget_is_ancestor(subtree, frame->focus))
+            frame->focus = NULL;
+    }
 }
 
 static struct ui_widget *first_focusable(struct ui_widget *root)
@@ -491,20 +496,92 @@ static struct ui_widget *surface_modal(struct ui_surface *surface)
     return ui_widget_modal(surface->impl.root);
 }
 
+/* True when `widget` still hangs from the root or from an overlay. */
+static bool surface_holds(const struct ui_surface *surface,
+                          const struct ui_widget *widget)
+{
+    if (!widget)
+        return false;
+    if (widget == surface->impl.root)
+        return true;
+    for (size_t i = 0; i < surface->impl.overlay_count; i++)
+        if (surface->impl.overlays[i] == widget)
+            return true;
+    return false;
+}
+
+/* True while `widget` is a modal of `surface` that holds its focus. */
+static bool modal_live(const struct ui_surface *surface,
+                       const struct ui_widget *widget)
+{
+    if (!widget || widget->impl.destroyed || !widget->impl.modal ||
+        widget->impl.surface != surface || !ui_widget_visible(widget))
+        return false;
+    for (const struct ui_widget *w = widget; w; w = w->parent)
+        if (surface_holds(surface, w))
+            return true;
+    return false;
+}
+
+/* The modal of the top frame, or NULL when the stack is empty. */
+static struct ui_widget *focus_top(const struct ui_surface *surface)
+{
+    return surface->impl.focus_count
+        ? surface->impl.focus_stack[surface->impl.focus_count - 1].modal : NULL;
+}
+
+static bool focus_push(struct ui_surface *surface, struct ui_widget *modal,
+                       struct ui_widget *focus)
+{
+    if (surface->impl.focus_count == surface->impl.focus_cap) {
+        size_t cap = surface->impl.focus_cap ? surface->impl.focus_cap * 2 : 4;
+        struct ui_surface_focus_frame *grown =
+            realloc(surface->impl.focus_stack, cap * sizeof(*grown));
+        if (!grown)
+            return false;
+        surface->impl.focus_stack = grown;
+        surface->impl.focus_cap = cap;
+    }
+    surface->impl.focus_stack[surface->impl.focus_count++] =
+        (struct ui_surface_focus_frame){ .modal = modal, .focus = focus };
+    return true;
+}
+
+/* Pops each frame whose modal left the surface, and returns the oldest focus
+ * that is still valid. A modal that closes below another one keeps its frame
+ * until the modal above it closes too. */
+static struct ui_widget *pop_retired_frames(struct ui_surface *surface)
+{
+    struct ui_widget *restore = NULL;
+    while (surface->impl.focus_count) {
+        const struct ui_surface_focus_frame *frame =
+            &surface->impl.focus_stack[surface->impl.focus_count - 1];
+        if (modal_live(surface, frame->modal))
+            break;
+        struct ui_widget *focus = frame->focus;
+        surface->impl.focus_count--;
+        if (focus && !ui_widget_stale(surface, focus))
+            restore = focus;
+    }
+    return restore;
+}
+
 void ui_surface_sync_modal(struct ui_surface *surface)
 {
     struct ui_widget *modal = surface_modal(surface);
-    if (modal == surface->impl.modal &&
-        (modal || !surface->impl.restore_focus)) {
+    if (modal == focus_top(surface)) {
+        surface->impl.modal = modal;
         if (modal && !ui_widget_is_ancestor(modal, surface->impl.focused))
             ui_surface_focus(surface, first_focusable(modal));
         return;
     }
+    /* Each modal that takes the focus pushes a frame, and each frame pops when
+     * its modal leaves. The stack thus follows the modals in any order. */
+    struct ui_widget *restore = pop_retired_frames(surface);
+    struct ui_widget *focused = surface->impl.focused;
     if (modal) {
-        struct ui_widget *focused = surface->impl.focused;
-        if (!surface->impl.modal && !surface->impl.restore_focus &&
-            focused && !ui_widget_is_ancestor(modal, focused))
-            surface->impl.restore_focus = focused;
+        bool inside = focused && ui_widget_is_ancestor(modal, focused);
+        focus_push(surface, modal, inside ? NULL : focused);
         surface->impl.modal = modal;
         if (surface->impl.captured &&
             !ui_widget_is_ancestor(modal, surface->impl.captured))
@@ -515,15 +592,17 @@ void ui_surface_sync_modal(struct ui_surface *surface)
             send(hovered, ui_event_pointer(
                 (struct ui_pointer_event){ .kind = UI_POINTER_LEAVE }, 0));
         }
-        if (!ui_widget_is_ancestor(modal, surface->impl.focused))
-            ui_surface_focus(surface, first_focusable(modal));
     } else {
         surface->impl.modal = NULL;
-        struct ui_widget *restore = surface->impl.restore_focus;
-        surface->impl.restore_focus = NULL;
-        if (restore && !ui_widget_stale(surface, restore))
-            ui_surface_focus(surface, restore);
     }
+    /* The restore gives way to the modal that is still open. */
+    if (restore && (!modal || ui_widget_is_ancestor(modal, restore)) &&
+        !ui_widget_stale(surface, restore)) {
+        ui_surface_focus(surface, restore);
+        return;
+    }
+    if (modal && !ui_widget_is_ancestor(modal, surface->impl.focused))
+        ui_surface_focus(surface, first_focusable(modal));
 }
 
 enum ui_cursor ui_surface_cursor(const struct ui_surface *surface)
@@ -960,6 +1039,7 @@ bool ui_surface_destroy(struct ui_surface *surface)
     }
     free(surface->impl.post);
     free(surface->impl.overlays);
+    free(surface->impl.focus_stack);
     uint64_t generation = surface->impl.generation;
     ui_style_context_destroy(&surface->impl.style);
     *surface = (struct ui_surface){0};

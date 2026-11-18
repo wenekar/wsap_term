@@ -51,6 +51,13 @@ struct ui_surface_post {
  * ui_widget_stale test.
  */
 
+/* One level of the modal focus stack. `modal` took the keyboard focus, and
+ * `focus` held it before, or is NULL when nothing had it. */
+struct ui_surface_focus_frame {
+    struct ui_widget *modal;
+    struct ui_widget *focus;
+};
+
 struct ui_surface {
     struct {
         struct ui_surface_host host;
@@ -65,8 +72,13 @@ struct ui_surface {
         struct ui_widget *captured;
         struct ui_widget *hovered;
         struct vector2i pointer;
+        /* The topmost modal widget. It masks the widgets below it. */
         struct ui_widget *modal;
-        struct ui_widget *restore_focus;
+        /* The modals that took the focus, from the bottom up. A modal closes
+         * out of order, so this stack is not a property of one widget. */
+        struct ui_surface_focus_frame *focus_stack;
+        size_t focus_count;
+        size_t focus_cap;
         struct ui_widget *default_focus;
         struct ui_widget *paste_target, *context_target;
         struct vector2i viewport;

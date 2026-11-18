@@ -733,6 +733,118 @@ static void overlay_modal_focus_test(void)
     ui_widget_destroy(&layer.widget);
 }
 
+struct modal_probe {
+    struct ui_widget widget;
+    int focus_in;
+    int focus_out;
+};
+
+static bool modal_event(struct ui_widget *widget, const struct ui_event *event)
+{
+    struct modal_probe *probe = widget->userdata;
+    if (event->kind == UI_EVENT_FOCUS_IN) {
+        probe->focus_in++;
+        return true;
+    }
+    if (event->kind == UI_EVENT_FOCUS_OUT) {
+        probe->focus_out++;
+        return true;
+    }
+    return false;
+}
+
+static const struct ui_widget_ops MODAL_OPS = {
+    .name = "modal-probe",
+    .event = modal_event,
+};
+
+static void nested_modal_focus_test(void)
+{
+    struct modal_probe button = {0}, first_row = {0}, last_row = {0};
+    struct modal_probe second_row = {0};
+    struct ui_box root = {0};
+    struct ui_widget first_modal = {0}, second_modal = {0};
+    ui_box_init(&root);
+    ui_widget_init(&button.widget, &MODAL_OPS, &button);
+    ui_widget_init(&first_row.widget, &MODAL_OPS, &first_row);
+    ui_widget_init(&last_row.widget, &MODAL_OPS, &last_row);
+    ui_widget_init(&second_row.widget, &MODAL_OPS, &second_row);
+    ui_widget_init(&first_modal, NULL, NULL);
+    ui_widget_init(&second_modal, NULL, NULL);
+    ui_widget_set_focusable(&button.widget, true);
+    ui_widget_set_focusable(&first_row.widget, true);
+    ui_widget_set_focusable(&last_row.widget, true);
+    ui_widget_set_focusable(&second_row.widget, true);
+    assert(ui_widget_add_child(&root.widget, &button.widget));
+    assert(ui_widget_add_child(&first_modal, &first_row.widget));
+    assert(ui_widget_add_child(&first_modal, &last_row.widget));
+    assert(ui_widget_add_child(&second_modal, &second_row.widget));
+    ui_widget_set_modal(&first_modal, true);
+    ui_widget_set_modal(&second_modal, true);
+
+    struct ui_surface surface = {0};
+    ui_surface_init(&surface, NULL, NULL);
+    ui_surface_set_root(&surface, &root.widget);
+    ui_surface_set_scale(&surface, (struct css_scale_context){
+        .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
+    });
+    ui_surface_resize(&surface, (struct vector2i){ .x = 100, .y = 80 });
+    ui_surface_prepare(&surface);
+    ui_surface_focus(&surface, &button.widget);
+    assert(button.focus_in == 1);
+
+    /* Each modal takes the focus, and it gives the focus back in reverse
+     * order. */
+    assert(ui_surface_add_overlay(&surface, &first_modal));
+    assert(ui_surface_focused(&surface) == &first_row.widget);
+    ui_surface_focus(&surface, &last_row.widget);
+    assert(ui_surface_add_overlay(&surface, &second_modal));
+    assert(ui_surface_focused(&surface) == &second_row.widget);
+    assert(button.focus_out == 1 && last_row.focus_out == 1);
+
+    /* The top modal gives the focus back to the widget that it took it from,
+     * not to the widget below the first modal. */
+    assert(ui_surface_remove_overlay(&surface, &second_modal));
+    assert(ui_surface_focused(&surface) == &last_row.widget);
+    assert(ui_surface_has_modal(&surface));
+    assert(ui_surface_remove_overlay(&surface, &first_modal));
+    assert(ui_surface_focused(&surface) == &button.widget);
+    assert(!ui_surface_has_modal(&surface));
+
+    /* A modal can close below the top one. The focus stays in the top modal.
+     * The stored target of the closed modal is stale, so the bottom frame
+     * gives the focus back to the widget below the first modal. */
+    assert(ui_surface_add_overlay(&surface, &first_modal));
+    assert(ui_surface_focused(&surface) == &first_row.widget);
+    ui_surface_focus(&surface, &last_row.widget);
+    assert(ui_surface_add_overlay(&surface, &second_modal));
+    assert(ui_surface_focused(&surface) == &second_row.widget);
+    assert(ui_surface_remove_overlay(&surface, &first_modal));
+    assert(ui_surface_has_modal(&surface));
+    assert(ui_surface_focused(&surface) == &second_row.widget);
+    assert(ui_surface_remove_overlay(&surface, &second_modal));
+    assert(!ui_surface_has_modal(&surface));
+    assert(ui_surface_focused(&surface) == &button.widget);
+
+    /* Dialogs that stop being modal give the focus back in the same way. Both
+     * stored targets still live, so the bottom frame wins. */
+    assert(ui_surface_add_overlay(&surface, &first_modal));
+    assert(ui_surface_focused(&surface) == &first_row.widget);
+    ui_surface_focus(&surface, &last_row.widget);
+    assert(ui_surface_add_overlay(&surface, &second_modal));
+    assert(ui_surface_focused(&surface) == &second_row.widget);
+    ui_widget_set_modal(&first_modal, false);
+    assert(ui_surface_focused(&surface) == &second_row.widget);
+    ui_widget_set_modal(&second_modal, false);
+    assert(!ui_surface_has_modal(&surface));
+    assert(ui_surface_focused(&surface) == &button.widget);
+
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&root.widget);
+    ui_widget_destroy(&first_modal);
+    ui_widget_destroy(&second_modal);
+}
+
 struct post_probe {
     int runs;
     bool ran_busy;
@@ -808,6 +920,7 @@ int main(void)
     overlay_layer_test();
     overlay_growth_test();
     overlay_modal_focus_test();
+    nested_modal_focus_test();
     measurement_change_requests_another_frame_test();
     independent_surfaces_test();
     style_application_grow_test();
