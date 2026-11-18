@@ -20,9 +20,10 @@ layout(push_constant) uniform PushConstants {
 layout(set = 0, binding = 0) uniform sampler2D tex;
 
 layout(location = 0) in vec2 in_uv;
-layout(location = 1) flat in vec4 in_color;
-layout(location = 2) flat in uint in_mode;
-layout(location = 3) flat in uint in_blend;
+layout(location = 1) flat in vec4 in_uv_rect;
+layout(location = 2) flat in vec4 in_color;
+layout(location = 3) flat in uint in_mode;
+layout(location = 4) flat in uint in_blend;
 
 layout(location = 0) out vec4 out_color;
 
@@ -35,10 +36,10 @@ layout(location = 0) out vec4 out_color;
 
 #define BLEND_NONE 4u
 
-/* The texel of `uv`, clamped to the texture. */
-vec4 texel_at(ivec2 uv)
+/* The texel of `uv`, clamped to the uv sub-rect. */
+vec4 texel_in(ivec2 uv, ivec2 lo, ivec2 hi)
 {
-    return texelFetch(tex, clamp(uv, ivec2(0), textureSize(tex, 0) - 1), 0);
+    return texelFetch(tex, clamp(uv, lo, hi), 0);
 }
 
 /*
@@ -46,23 +47,28 @@ vec4 texel_at(ivec2 uv)
  * source coordinate (i + 0.5) * src / n. A nearest sample takes the texel
  * that holds the coordinate. A linear sample mixes four texels by the rest
  * of the way between their centers. The CPU painter uses the same rule.
+ * Every tap stays inside the uv sub-rect, so a texel of the image next to
+ * the sub-rect cannot bleed into the sample.
  */
-vec4 image_sample(vec2 uv, bool linear)
+vec4 image_sample(vec2 uv, bool linear, vec4 uv_rect)
 {
+    ivec2 lo = ivec2(uv_rect.xy);
+    ivec2 hi = ivec2(uv_rect.zw) - ivec2(1);
     if (!linear)
-        return texel_at(ivec2(floor(uv)));
-    vec2 last = vec2(textureSize(tex, 0) - 1);
-    vec2 p = clamp(uv - 0.5, vec2(0.0), last);
+        return texel_in(ivec2(floor(uv)), lo, hi);
+    vec2 p = clamp(uv - 0.5, vec2(lo), vec2(hi));
     vec2 f = fract(p);
     ivec2 i = ivec2(p);
-    vec4 top = mix(texel_at(i), texel_at(i + ivec2(1, 0)), f.x);
-    vec4 bottom = mix(texel_at(i + ivec2(0, 1)), texel_at(i + ivec2(1, 1)), f.x);
+    vec4 top = mix(texel_in(i, lo, hi), texel_in(i + ivec2(1, 0), lo, hi), f.x);
+    vec4 bottom = mix(texel_in(i + ivec2(0, 1), lo, hi), texel_in(i + ivec2(1, 1), lo, hi), f.x);
     return mix(top, bottom, f.y);
 }
 
 void main()
 {
-    if (in_color.a <= 0.0)
+    /* A solid draw at alpha 0 still runs: MULTIPLY zeroes the color, and
+     * NONE replaces the pixel. Other modes draw nothing at alpha 0. */
+    if (in_color.a <= 0.0 && in_mode != MODE_SOLID)
         discard;
 
     /* A NONE draw replaces the pixel, so it writes a straight color. */
