@@ -305,9 +305,16 @@ static void part_bucket_insert(uint32_t *buckets, uint32_t cap, uint32_t id,
     buckets[slot] = id;
 }
 
-static void part_abort(const char *message)
+/* Reports a part-table failure. The UI core has no logger, so the message
+   goes to stderr like every other UI core diagnostic. */
+static void part_log(const char *message)
 {
     fprintf(stderr, "wsap: %s\n", message);
+}
+
+static void part_abort(const char *message)
+{
+    part_log(message);
     abort();
 }
 
@@ -342,19 +349,25 @@ ui_part_id ui_part_intern(const char *name)
     }
 
     if ((part_table.count + 1) * 2 > part_table.bucket_cap &&
-        !part_table_grow())
-        part_abort("out of memory growing the UI part table");
+        !part_table_grow()) {
+        part_log("out of memory growing the UI part table");
+        return 0;
+    }
     if (part_table.count == part_table.name_cap) {
         uint32_t cap = part_table.name_cap ? part_table.name_cap * 2 : 32;
         char **names = realloc(part_table.names, cap * sizeof(*names));
-        if (!names)
-            part_abort("out of memory growing the UI part names");
+        if (!names) {
+            part_log("out of memory growing the UI part names");
+            return 0;
+        }
         part_table.names = names;
         part_table.name_cap = cap;
     }
     char *copy = strdup(name);
-    if (!copy)
-        part_abort("out of memory copying a UI part name");
+    if (!copy) {
+        part_log("out of memory copying a UI part name");
+        return 0;
+    }
     part_table.names[part_table.count++] = copy;
     ui_part_id id = part_table.count;
     part_bucket_insert(part_table.buckets, part_table.bucket_cap, id, hash);
