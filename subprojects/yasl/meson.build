@@ -4,7 +4,7 @@ project(
     meson_version: '>=1.6.0',
     version: '0.2.0',
     default_options: [
-        'c_std=c23',
+        'c_std=c17',
         'warning_level=2',
         'b_lto=false',
     ],
