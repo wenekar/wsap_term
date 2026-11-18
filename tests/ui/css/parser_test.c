@@ -759,14 +759,13 @@ static void test_border_shorthand(void)
     css_sheet_clear(&sheet);
 }
 
-/* The UI core sheet holds no app rule. A sheet that a client appends holds
- * the app rules, and the variables of the core sheet reach them. */
+/* The UI core sheet holds the rules of the core widgets and no app rule. A
+ * sheet that a client appends holds the app rules, and the variables of the
+ * core sheet reach them. */
 static void test_appended_sheet_holds_app_rules(void)
 {
     static const char *const app_classes[] = {
-        "tab", "tab-bar", "tab-close", "tab-new", "tab-preview",
-        "command-palette", "settings-form", "settings-row",
-        "terminal-drop-target",
+        "settings-form", "settings-row", "terminal-drop-target",
     };
     const size_t count = sizeof(app_classes) / sizeof(app_classes[0]);
 
@@ -778,6 +777,13 @@ static void test_appended_sheet_holds_app_rules(void)
         assert(!st.has_bg_color && !st.has_text_color && !st.has_border_color);
         assert(!st.has_cursor && st.width.unit == CSS_UNIT_AUTO);
     }
+    /* The promoted widgets carry their own default rules. */
+    struct css_style bar;
+    css_style_resolve(&paper, "tab-bar", NULL, NULL, CSS_PSEUDO_NONE, &bar);
+    assert(bar.height.unit == CSS_UNIT_EM && bar.height.val == 2.2f);
+    struct css_style card;
+    css_style_resolve(&paper, "tab-preview", NULL, NULL, CSS_PSEUDO_NONE, &card);
+    assert(card.has_bg_color && card.bg_color == 0xFF1E1E2Eu);
     css_sheet_clear(&paper);
 
     struct css_sheet sheet = {0};

@@ -1,4 +1,4 @@
-#include "app/tabs/tabbar/internal.h"
+#include "ui/widgets/tabbar/internal.h"
 
 #include "ui/debug.h"
 #include "ui/paint.h"
@@ -950,6 +950,20 @@ void ui_tabbar_init(struct ui_tabbar *tb)
     ui_widget_init(&tb->widget, &TABBAR_OPS, NULL);
     tb->state.new_accessibility_id = ui_widget_accessibility_id_allocate();
     ui_widget_set_style_identity(&tb->widget, NULL, NULL, "tab-bar");
+}
+
+void ui_tabbar_set_empty_title(struct ui_tabbar *tb, const char *text)
+{
+    if (!tb)
+        return;
+    tb->state.empty_title = text;
+}
+
+void ui_tabbar_set_shortcut_prefix(struct ui_tabbar *tb, const char *text)
+{
+    if (!tb)
+        return;
+    tb->state.shortcut_prefix = text;
 }
 
 /* Tests if the tab bar holds this label set already. A NULL label set names

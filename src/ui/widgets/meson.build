@@ -5,5 +5,11 @@ ui_widgets_src = files(
     'label.c',
     'list.c',
     'menu.c',
+    'palette.c',
     'scrollview.c',
+    'tab_preview.c',
+    'tabbar/geometry.c',
+    'tabbar/scene.c',
+    'tabbar/style.c',
+    'tabbar/tabbar.c',
 )

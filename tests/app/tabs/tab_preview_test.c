@@ -7,7 +7,7 @@
 #include "ui/ui.h"
 #include "ui/widget_ops.h"
 #include "app/style.h"
-#include "app/tabs/tab_preview.h"
+#include "ui/widgets/tab_preview.h"
 #include "util/json.h"
 
 static uint32_t pixels[400 * 300];

@@ -60,6 +60,8 @@ struct ui_tabbar {
         uint64_t new_accessibility_id;
         struct ui_hover_anim reveal;
         struct ui_hover_anim new_hover;
+        const char *empty_title;
+        const char *shortcut_prefix;
         struct vector2i drag_origin;
         struct vector2i drag_pos;
         struct vector2i size;
@@ -84,6 +86,12 @@ struct ui_tabbar {
 
 /* Initializes tab bar widget `tb`. */
 void ui_tabbar_init(struct ui_tabbar *tb);
+/* Sets the title that a tab shows when its label text is empty. A NULL text
+ * shows nothing. */
+void ui_tabbar_set_empty_title(struct ui_tabbar *tb, const char *text);
+/* Sets the text that comes before the tab number in a shortcut badge, for
+ * example "^". A NULL text shows the number alone. */
+void ui_tabbar_set_shortcut_prefix(struct ui_tabbar *tb, const char *text);
 /* Sets tab labels and tab count for `tb`. */
 void ui_tabbar_set_tabs(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
                         int n_tabs);

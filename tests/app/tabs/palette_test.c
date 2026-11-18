@@ -5,7 +5,7 @@
 #include "ui/debug.h"
 #include "paint/scene.h"
 #include "ui/ui.h"
-#include "app/tabs/palette.h"
+#include "ui/widgets/palette.h"
 
 static const struct ui_palette_cmd CMDS[] = {
     { .label = "New Tab", .shortcut = "Ctrl+Shift+T", .action = 1 },

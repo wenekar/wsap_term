@@ -1,4 +1,4 @@
-#include "app/tabs/tabbar/internal.h"
+#include "ui/widgets/tabbar/internal.h"
 
 #include "ui/css.h"
 #include "ui/widget_ops.h"

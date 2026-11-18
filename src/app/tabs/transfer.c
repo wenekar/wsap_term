@@ -1,7 +1,7 @@
 #include <stdlib.h>
 
 #include "app/tabs/internal.h"
-#include "app/tabs/tabbar.h"
+#include "ui/widgets/tabbar.h"
 #include "ui/yasl/window.h"
 
 /* The model owns the drag in `model->flight`. The dragged tab stays in the
