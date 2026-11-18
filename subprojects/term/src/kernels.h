@@ -245,11 +245,11 @@ static inline size_t scan_crlf_pairs_avx2(const char *buf, size_t len)
 static inline size_t scan_crlf_pairs(const char *buf, size_t len)
 {
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
-    if (wsap_vtcore_use_avx512())
+    if (len >= 64 && wsap_vtcore_use_avx512())
         return scan_crlf_pairs_avx512(buf, len);
 #endif
 #if defined(WSAP_VTCORE_KERNEL_AVX2)
-    if (wsap_vtcore_use_avx2())
+    if (len >= 32 && wsap_vtcore_use_avx2())
         return scan_crlf_pairs_avx2(buf, len);
 #endif
     size_t i = 0;
@@ -303,11 +303,11 @@ static inline size_t scan_byte_run_avx2(const char *buf, size_t len, char byte)
 static inline size_t scan_byte_run(const char *buf, size_t len, char byte)
 {
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
-    if (wsap_vtcore_use_avx512())
+    if (len >= 64 && wsap_vtcore_use_avx512())
         return scan_byte_run_avx512(buf, len, byte);
 #endif
 #if defined(WSAP_VTCORE_KERNEL_AVX2)
-    if (wsap_vtcore_use_avx2())
+    if (len >= 32 && wsap_vtcore_use_avx2())
         return scan_byte_run_avx2(buf, len, byte);
 #endif
     size_t i = 0;
