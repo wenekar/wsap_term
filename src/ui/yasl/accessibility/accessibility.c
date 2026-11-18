@@ -229,7 +229,30 @@ static bool build_grapheme_cb(size_t start, size_t end, void *userdata)
 struct build_word_ctx {
     struct text_model *model;
     uint64_t node_id;
+    /* The index of the run of the word found last. */
+    int run;
 };
+
+/* Returns the run of `owner` that holds `offset`, and moves `hint` forward to
+ * it. The words of a node come in increasing offset order, and the runs of a
+ * node hold increasing offsets, so the scan starts at the run it found last.
+ * This keeps the text build linear in the number of runs. */
+static const struct text_run *run_from(const struct text_model *model,
+                                       uint64_t owner, size_t offset, int *hint)
+{
+    const struct text_run *last = NULL;
+    for (int i = *hint; i < model->count; i++) {
+        const struct text_run *run = &model->runs[i];
+        if (run->owner != owner)
+            continue;
+        last = run;
+        if (offset < run->offset + run->length) {
+            *hint = i;
+            return run;
+        }
+    }
+    return last;
+}
 
 static bool build_word_cb(size_t start, size_t end, bool is_word, void *userdata)
 {
@@ -237,13 +260,15 @@ static bool build_word_cb(size_t start, size_t end, bool is_word, void *userdata
     if (!is_word)
         return true;
     struct build_word_ctx *ctx = userdata;
-    accesskit_text_position pos = text_position(ctx->model, ctx->node_id, start);
-    for (int i = 0; i < ctx->model->count; i++) {
-        struct text_run *run = &ctx->model->runs[i];
-        if (run->id == pos.node && pos.character_index < RUN_CHARACTERS &&
-            run->word_count < RUN_CHARACTERS)
-            run->words[run->word_count++] = (uint8_t)pos.character_index;
-    }
+    struct text_run *run = (struct text_run *)run_from(
+        ctx->model, ctx->node_id, start, &ctx->run);
+    if (!run)
+        return true;
+    size_t index = 0, byte = run->offset;
+    while (index < run->characters && byte + run->lengths[index] <= start)
+        byte += run->lengths[index++];
+    if (index < RUN_CHARACTERS && run->word_count < RUN_CHARACTERS)
+        run->words[run->word_count++] = (uint8_t)index;
     return true;
 }
 
@@ -1636,7 +1661,10 @@ static bool copy_snapshot(struct ui_accessibility_tree *copy,
                 .role = node->role, .states = node->states, .actions = node->actions,
                 .bounds = node->bounds, .name = node->name, .description = node->description,
                 .value = node->value, .caret_offset = node->caret_offset,
-                .selection_start = node->selection_start, .selection_end = node->selection_end }))
+                .selection_start = node->selection_start, .selection_end = node->selection_end,
+                .text = node->text, .text_offset = node->text_offset,
+                .text_length = node->text_length,
+                .text_direction = node->text_direction }))
             return false;
     }
     return true;
