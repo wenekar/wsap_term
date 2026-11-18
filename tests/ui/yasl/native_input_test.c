@@ -260,76 +260,28 @@ static void expect_paste(const char *text)
     input_event_release(&out);
 }
 
-/* Makes a new empty directory in /tmp. The path is written to `path`. */
-static void fresh_dir(char path[PATH_MAX])
+/* An image drop writes no file and queues nothing. The payload stays in
+ * memory for a MIME drop event. */
+static void image_drop_writes_no_file_test(void)
 {
-    snprintf(path, PATH_MAX, "/tmp/wsap-drop-XXXXXX");
-    assert(mkdtemp(path));
-}
-
-/* Points XDG_RUNTIME_DIR at `dir` for the next drop. */
-static void use_runtime(const char *dir)
-{
-    assert(setenv("XDG_RUNTIME_DIR", dir, 1) == 0);
-}
-
-/* Removes the drop directories of a case, when the case made them. */
-static void remove_drop_dirs(const char *runtime)
-{
-    char path[PATH_MAX];
-    snprintf(path, sizeof path, "%s/wsap_term/drops", runtime);
-    rmdir(path);
-    snprintf(path, sizeof path, "%s/wsap_term", runtime);
-    rmdir(path);
-    rmdir(runtime);
-}
-
-/* The image payload holds NUL bytes, so every byte must survive the save. */
-static const char image_bytes[] = { 'P', 'N', 'G', 0, 1, 0, 2, 'x' };
-
-/* A PNG drop is saved to a private file. The input queue gets the file as a
- * file drop. Drop cleanup then removes the file. */
-static void image_drop_saves_file_test(void)
-{
+    static const char image_bytes[] = { 'P', 'N', 'G', 0, 1, 0, 2, 'x' };
     char runtime[PATH_MAX];
-    fresh_dir(runtime);
-    use_runtime(runtime);
-    fresh_window();
+    snprintf(runtime, PATH_MAX, "/tmp/wsap-drop-XXXXXX");
+    assert(mkdtemp(runtime));
+    assert(setenv("XDG_RUNTIME_DIR", runtime, 1) == 0);
 
+    fresh_window();
     struct yasl_event e = drop_release("image/png", image_bytes, sizeof image_bytes);
     window_native_input(&w, &e);
     struct input_event out;
-    assert(input_queue_take(&w.input, &out));
-    assert(out.kind == INPUT_DROP_FILES);
-    char *uri = malloc(out.drop.len + 1);
-    assert(uri);
-    memcpy(uri, out.drop.data, out.drop.len);
-    uri[out.drop.len] = '\0';
-    input_event_release(&out);
     assert(!input_queue_take(&w.input, &out));
-
-    char prefix[PATH_MAX + 32];
-    snprintf(prefix, sizeof prefix, "file://%s/wsap_term/drops/", runtime);
-    assert(strncmp(uri, prefix, strlen(prefix)) == 0);
-    size_t n = strlen(uri);
-    assert(n > 4 && strcmp(uri + n - 4, ".png") == 0);
-
-    const char *path = uri + strlen("file://");
-    struct stat st;
-    assert(stat(path, &st) == 0 && S_ISREG(st.st_mode));
-    assert((st.st_mode & 0777) == 0600);
-    char got[sizeof image_bytes + 1];
-    FILE *f = fopen(path, "rb");
-    assert(f);
-    size_t got_len = fread(got, 1, sizeof got, f);
-    fclose(f);
-    assert(got_len == sizeof image_bytes);
-    assert(memcmp(got, image_bytes, sizeof image_bytes) == 0);
-
+    assert(drop_save_image("image/png", image_bytes, sizeof image_bytes) == NULL);
     drop_cleanup();
-    assert(stat(path, &st) != 0 && errno == ENOENT);
-    free(uri);
-    remove_drop_dirs(runtime);
+
+    char drops[PATH_MAX + 32];
+    snprintf(drops, sizeof drops, "%s/wsap_term", runtime);
+    assert(access(drops, F_OK) != 0);
+    assert(rmdir(runtime) == 0);
 }
 
 /* Text drops paste like clipboard text, for each text type. */
@@ -385,9 +337,6 @@ static void local_uri_list_drops_files_test(void)
 /* A drop of another data type queues nothing. An empty image queues nothing. */
 static void other_drops_queue_nothing_test(void)
 {
-    char runtime[PATH_MAX];
-    fresh_dir(runtime);
-    use_runtime(runtime);
     static const char json[] = "{}";
 
     fresh_window();
@@ -397,53 +346,6 @@ static void other_drops_queue_nothing_test(void)
     window_native_input(&w, &e);
     struct input_event out;
     assert(!input_queue_take(&w.input, &out));
-    remove_drop_dirs(runtime);
-}
-
-/* An image over 64 MiB is refused. The save never reads the bytes, so the
- * buffer stays untouched. Nothing is queued. */
-static void oversize_image_refused_test(void)
-{
-    char runtime[PATH_MAX];
-    fresh_dir(runtime);
-    use_runtime(runtime);
-    const size_t limit = (size_t)64 * 1024 * 1024;
-    char *big = calloc(1, limit + 1);
-    assert(big);
-
-    fresh_window();
-    struct yasl_event e = drop_release("image/png", big, limit + 1);
-    window_native_input(&w, &e);
-    struct input_event out;
-    assert(!input_queue_take(&w.input, &out));
-    free(big);
-    remove_drop_dirs(runtime);
-}
-
-/* A drops directory that is a symlink refuses the image. Nothing is queued,
- * and the link target stays empty. */
-static void drops_symlink_refused_test(void)
-{
-    char runtime[PATH_MAX], target[PATH_MAX];
-    char base[2 * PATH_MAX], drops[3 * PATH_MAX];
-    fresh_dir(runtime);
-    fresh_dir(target);
-    snprintf(base, sizeof base, "%s/wsap_term", runtime);
-    snprintf(drops, sizeof drops, "%s/drops", base);
-    assert(mkdir(base, 0700) == 0);
-    assert(symlink(target, drops) == 0);
-    use_runtime(runtime);
-
-    fresh_window();
-    struct yasl_event e = drop_release("image/png", image_bytes, sizeof image_bytes);
-    window_native_input(&w, &e);
-    struct input_event out;
-    assert(!input_queue_take(&w.input, &out));
-    assert(rmdir(target) == 0);
-
-    unlink(drops);
-    rmdir(base);
-    rmdir(runtime);
 }
 
 int main(void)
@@ -456,12 +358,10 @@ int main(void)
     bound_key_reaches_widget_test();
     alt_key_text_deferred_test();
     keypad_clear_test();
-    image_drop_saves_file_test();
+    image_drop_writes_no_file_test();
     text_drop_pastes_test();
     web_uri_list_pastes_test();
     local_uri_list_drops_files_test();
     other_drops_queue_nothing_test();
-    oversize_image_refused_test();
-    drops_symlink_refused_test();
     return 0;
 }

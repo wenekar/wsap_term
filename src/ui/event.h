@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "input/pointer.h"
 #include "ui/keys.h"
@@ -54,6 +55,14 @@ enum ui_event_kind : uint8_t {
     UI_EVENT_SHORTCUT,
     UI_EVENT_DROP_FILES,
     UI_EVENT_WINDOW_FOCUS,
+    /* A drag came over a widget, moved over it, or left it. The event holds
+     * surface coordinates and the offered types. */
+    UI_EVENT_DRAG_ENTER,
+    UI_EVENT_DRAG_OVER,
+    UI_EVENT_DRAG_LEAVE,
+    /* The drag ended on the widget. The event holds the type that the target
+     * asked for, and its payload. */
+    UI_EVENT_DROP,
     /* Input method preedit. `begin` and `end` are the byte offsets of its
      * cursor, and `revision` names the text that the host sent. */
     UI_EVENT_COMPOSITION,
@@ -72,6 +81,79 @@ struct ui_ime_text_event {
     uint64_t revision;
 };
 
+/* The longest type that a drag carries. yasl uses the same limit, so a type
+ * that fits here fits a native drop too. */
+#define UI_DRAG_MIME_MAX 64
+
+/* The source of a drag. A target asks it for a type, and it answers with the
+ * data of that type or with a refusal. A drag from outside the app has no
+ * source: the native layer already holds the data of the one type that the
+ * surface accepts. */
+struct ui_drop_source {
+    /* Returns true and sets `data` and `len` when the source has type
+     * `mime`. Returns false to refuse the type. The data stays valid until
+     * the drag ends. */
+    bool (*read)(void *userdata, const char *mime, const char **data, size_t *len);
+    void *userdata;
+};
+
+/* One drag over one surface. `pos` is the pointer position in surface
+ * coordinates. `mimes` lists the offered types, best first, and `mime_count`
+ * counts them. The target writes `mime` to ask for a type. `data` is the
+ * payload of that type, or NULL when the source refused it. */
+struct ui_drag_event {
+    const char *const *mimes;
+    size_t mime_count;
+    const char *mime;
+    const char *data;
+    size_t len;
+    const struct ui_drop_source *source;
+    struct vector2i pos;
+};
+
+/* Returns true when the drag offers type `mime`. A major type with a star,
+ * such as "image/" "*", matches every type that starts with its major type. */
+static inline bool ui_drag_offers(const struct ui_drag_event *drag, const char *mime)
+{
+    if (!drag || !mime)
+        return false;
+    size_t n = strlen(mime);
+    for (size_t i = 0; i < drag->mime_count; i++) {
+        const char *offer = drag->mimes[i];
+        if (!offer)
+            continue;
+        if (!strcmp(offer, mime))
+            return true;
+        if (n && offer[n] == '*' && !strncmp(offer, mime, n))
+            return true;
+        if (offer[0] == '*' && !offer[1])
+            return true;
+    }
+    return false;
+}
+
+/* Asks the source of the drag for the type `mime`. A target calls it from a
+ * DRAG_ENTER, DRAG_OVER, or DROP handler, and writes the type to `mime` so the
+ * payload travels with the DROP. Returns true when the source has the type;
+ * then `data` and `len` hold its payload. Returns false on a refusal, and the
+ * target then takes no drop. */
+static inline bool ui_drag_event_read(const struct ui_drag_event *drag,
+                                      const char *mime, const char **data,
+                                      size_t *len)
+{
+    if (!drag || !mime || !drag->source || !drag->source->read)
+        return false;
+    const char *out = NULL;
+    size_t size = 0;
+    if (!drag->source->read(drag->source->userdata, mime, &out, &size) || !out)
+        return false;
+    if (data)
+        *data = out;
+    if (len)
+        *len = size;
+    return true;
+}
+
 struct ui_event {
     uint64_t time_ms;
     union {
@@ -80,6 +162,7 @@ struct ui_event {
         struct { const char *data; size_t len; } text;
         struct { int action; enum ui_edit_command edit; } shortcut;
         struct ui_ime_text_event ime;
+        struct ui_drag_event drag;
         bool window_focused;
     } data;
     enum ui_event_kind kind;
@@ -184,6 +267,17 @@ static inline struct ui_event ui_event_text_edit(
         .kind = UI_EVENT_TEXT_EDIT,
         .time_ms = time_ms,
         .data.ime = *text,
+    };
+}
+
+static inline struct ui_event ui_event_drag(enum ui_event_kind kind,
+                                            const struct ui_drag_event *drag,
+                                            uint64_t time_ms)
+{
+    return (struct ui_event){
+        .kind = kind,
+        .time_ms = time_ms,
+        .data.drag = *drag,
     };
 }
 
