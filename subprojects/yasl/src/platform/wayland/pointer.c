@@ -1563,8 +1563,8 @@ void seat_forget_surface(struct seat *s, struct wayland_surface *w)
     }
     struct wayland_surface **refs[] = {
         &s->pointer_focus, &s->keyboard_focus,
-        &s->tablet_focus, &s->ime_focus, &s->focus_leaving, &s->ptr_left,
-        &s->press_surface,
+        &s->tablet_focus, &s->ime_focus, &s->focus_leaving, &s->compose_surface,
+        &s->ptr_left, &s->press_surface,
     };
     for (size_t i = 0; i < sizeof(refs) / sizeof(refs[0]); i++)
         if (*refs[i] == w)

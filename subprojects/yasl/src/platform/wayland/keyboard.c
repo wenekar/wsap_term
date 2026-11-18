@@ -6,8 +6,83 @@
 #define XKB_EVDEV_OFFSET 8
 #define KEYMAP_MAX_BYTES (8u * 1024 * 1024)
 
+/* Ends the preedit of a dead-key sequence, if one is shown. */
+static void keyboard_compose_clear(struct seat *s)
+{
+    struct wayland_surface *w = s->compose_surface;
+    s->compose_surface = NULL;
+    if (!w || w->closed) return;
+    struct yasl_private_event ev = {
+        .type = YASL_PRIVATE_EVENT_COMPOSITION,
+        .surface = &w->base,
+        .composition = {
+            .data = "", .len = 0, .begin = -1, .end = -1,
+            .revision = w->base.text_revision,
+            .generation = w->base.text_generation,
+        },
+    };
+    input_queue_push(&w->input, &ev);
+}
+
+/* A dead key has no text of its own. Show its spacing mark as the preedit,
+ * as the X11 input method and Cocoa do. */
+static const char *dead_key_mark(xkb_keysym_t keysym)
+{
+    static const struct dead_key {
+        xkb_keysym_t keysym;
+        const char *mark;
+    } marks[] = {
+        {XKB_KEY_dead_grave, "`"}, {XKB_KEY_dead_acute, "\xc2\xb4"},
+        {XKB_KEY_dead_circumflex, "^"}, {XKB_KEY_dead_tilde, "~"},
+        {XKB_KEY_dead_perispomeni, "~"}, {XKB_KEY_dead_macron, "\xc2\xaf"},
+        {XKB_KEY_dead_breve, "\xcb\x98"}, {XKB_KEY_dead_abovedot, "\xcb\x99"},
+        {XKB_KEY_dead_diaeresis, "\xc2\xa8"}, {XKB_KEY_dead_abovering, "\xcb\x9a"},
+        {XKB_KEY_dead_doubleacute, "\xcb\x9d"}, {XKB_KEY_dead_caron, "\xcb\x87"},
+        {XKB_KEY_dead_cedilla, "\xc2\xb8"}, {XKB_KEY_dead_ogonek, "\xcb\x9b"},
+        {XKB_KEY_dead_iota, "\xcd\x85"}, {XKB_KEY_dead_belowdot, "\xcc\xa3"},
+        {XKB_KEY_dead_hook, "\xcc\x89"}, {XKB_KEY_dead_horn, "\xcc\x9b"},
+        {XKB_KEY_dead_stroke, "/"}, {XKB_KEY_dead_abovecomma, "\xcc\x93"},
+        {XKB_KEY_dead_abovereversedcomma, "\xcc\x94"}, {XKB_KEY_dead_doublegrave, "\xcc\x8f"},
+        {XKB_KEY_dead_belowring, "\xcc\xa5"}, {XKB_KEY_dead_belowmacron, "\xcc\xb1"},
+        {XKB_KEY_dead_belowcircumflex, "\xcc\xad"}, {XKB_KEY_dead_belowtilde, "\xcc\xb0"},
+        {XKB_KEY_dead_belowbreve, "\xcc\xae"}, {XKB_KEY_dead_belowdiaeresis, "\xcc\xa4"},
+        {XKB_KEY_dead_invertedbreve, "\xcc\xaf"}, {XKB_KEY_dead_belowcomma, "\xcc\xa6"},
+        {XKB_KEY_dead_currency, "\xc2\xa4"}, {XKB_KEY_dead_lowline, "_"},
+        {XKB_KEY_dead_aboveverticalline, "\xcc\x8d"}, {XKB_KEY_dead_belowverticalline, "\xcc\xa9"},
+        {XKB_KEY_dead_longsolidusoverlay, "\xcc\xb8"}, {XKB_KEY_dead_psili, "\xcc\x93"},
+        {XKB_KEY_dead_dasia, "\xcc\x94"}, {XKB_KEY_dead_voiced_sound, "\xe3\x82\x9b"},
+        {XKB_KEY_dead_semivoiced_sound, "\xe3\x82\x9c"},
+    };
+    for (size_t i = 0; i < sizeof(marks) / sizeof(marks[0]); i++)
+        if (marks[i].keysym == keysym)
+            return marks[i].mark;
+    return NULL;
+}
+
+/* Shows the pending dead-key sequence, such as the acute accent of a
+ * dead_acute key, as a preedit at the caret. */
+static void keyboard_compose_show(struct seat *s, struct wayland_surface *w, uint32_t key)
+{
+    xkb_keysym_t keysym = xkb_state_key_get_one_sym(s->xkb_state, key + XKB_EVDEV_OFFSET);
+    const char *text = dead_key_mark(keysym);
+    if (!text) return;
+    struct yasl_private_event ev = {
+        .type = YASL_PRIVATE_EVENT_COMPOSITION,
+        .surface = &w->base,
+        .composition = {
+            .data = text, .len = strlen(text), .begin = -1, .end = -1,
+            .active = true,
+            .revision = w->base.text_revision,
+            .generation = w->base.text_generation,
+        },
+    };
+    if (input_queue_push(&w->input, &ev))
+        s->compose_surface = w;
+}
+
 void keyboard_text_reset(struct seat *s)
 {
+    keyboard_compose_clear(s);
     if (s->compose) xkb_compose_state_reset(s->compose);
 }
 
@@ -245,7 +320,7 @@ static void keyboard_text(struct seat *s, struct wayland_surface *w, uint32_t ke
     if (s->compose) {
         xkb_compose_state_feed(s->compose, xkb_state_key_get_one_sym(s->xkb_state, code));
         switch (xkb_compose_state_get_status(s->compose)) {
-        case XKB_COMPOSE_COMPOSING: return;
+        case XKB_COMPOSE_COMPOSING: keyboard_compose_show(s, w, key); return;
         case XKB_COMPOSE_CANCELLED: keyboard_text_reset(s); return;
         case XKB_COMPOSE_COMPOSED: composed = true; break;
         default: break;

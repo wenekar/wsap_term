@@ -93,27 +93,37 @@ int main(void)
     key(&s, KEY_E, true);
     assert(next(&w, YASL_PRIVATE_EVENT_KEY).key.key == YASL_KEY_E);
     assert(strcmp(next(&w, YASL_PRIVATE_EVENT_TEXT).text.data, "€") == 0);
+    /* A dead key shows its pending mark as a preedit. The composed key ends
+     * the preedit when it commits. */
     layout(&s, "us", "intl");
     key(&s, KEY_APOSTROPHE, true);
     next(&w, YASL_PRIVATE_EVENT_KEY);
-    empty(&w);
+    ev = next(&w, YASL_PRIVATE_EVENT_COMPOSITION);
+    assert(ev.composition.active && ev.composition.begin == -1 && ev.composition.end == -1);
+    assert(strcmp(ev.composition.data, "´") == 0);
     key(&s, KEY_E, true);
     next(&w, YASL_PRIVATE_EVENT_KEY);
     assert(strcmp(next(&w, YASL_PRIVATE_EVENT_TEXT).text.data, "é") == 0);
+    ev = next(&w, YASL_PRIVATE_EVENT_COMPOSITION);
+    assert(!ev.composition.active && ev.composition.len == 0);
     assert(keyboard_dispatch_key(&s, &w, KEY_E, YASL_KEY_REPEAT));
     assert(next(&w, YASL_PRIVATE_EVENT_KEY).key.action == YASL_KEY_REPEAT);
     assert(strcmp(next(&w, YASL_PRIVATE_EVENT_TEXT).text.data, "e") == 0);
     key(&s, KEY_APOSTROPHE, true);
     next(&w, YASL_PRIVATE_EVENT_KEY);
+    next(&w, YASL_PRIVATE_EVENT_COMPOSITION);
     keyboard_reset_keys(&s, &w);
+    assert(!next(&w, YASL_PRIVATE_EVENT_COMPOSITION).composition.active);
     key(&s, KEY_E, true);
     next(&w, YASL_PRIVATE_EVENT_KEY);
     assert(strcmp(next(&w, YASL_PRIVATE_EVENT_TEXT).text.data, "e") == 0);
     key(&s, KEY_APOSTROPHE, true);
     next(&w, YASL_PRIVATE_EVENT_KEY);
+    next(&w, YASL_PRIVATE_EVENT_COMPOSITION);
     s.ime_focus = &w;
     w.base.text_input_active = true;
     text_input_listener.commit_string(&s, NULL, "字");
+    assert(!next(&w, YASL_PRIVATE_EVENT_COMPOSITION).composition.active);
     text_input_listener.done(&s, NULL, 0);
     assert(strcmp(next(&w, YASL_PRIVATE_EVENT_TEXT).text.data, "字") == 0);
     key(&s, KEY_E, true);

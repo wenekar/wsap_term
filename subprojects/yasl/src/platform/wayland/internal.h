@@ -171,6 +171,7 @@ struct seat {
     struct wayland_surface *tablet_focus;
     struct wayland_surface *ime_focus;
     struct wayland_surface *focus_leaving;
+    struct wayland_surface *compose_surface;
     struct wayland_surface *press_surface;
     struct wayland_surface *ptr_left;
     struct tablet_tool *tool;
