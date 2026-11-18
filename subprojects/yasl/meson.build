@@ -230,4 +230,6 @@ add_test_setup(
     exclude_suites: ['extlib'],
 )
 
-subdir('tests')
+if get_option('tests')
+    subdir('tests')
+endif
