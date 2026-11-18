@@ -17,6 +17,7 @@
 
 struct font_handle {
     int pixel_size;
+    bool monospace;
 };
 
 char **font_list_families(size_t *count)
@@ -108,25 +109,54 @@ static bool ft_init(void)
         ft_apply_hinting();
 
     ft_applied_px = FONT_PT_TO_PX(font_configured_size());
-    ft_reload_family();
+    ft_reload_family(font_get_family());
     fc_unpin();
     return true;
 }
 
-void ft_reload_family(void)
+/* Owned list of the family set that the face tables hold. */
+static char *active_family;
+
+/* Returns the family list that `list` names, with the configured default filled in. */
+static const char *family_or_default(const char *list)
+{
+    return list && list[0] ? list : font_get_family();
+}
+
+/*
+ * Makes `family_list` the loaded family set. The backend holds one set for
+ * the process. A caller that needs another set reloads the face tables of
+ * every thread.
+ */
+bool ft_family_ensure(const char *family_list)
+{
+    const char *want = family_or_default(family_list);
+    if (active_family && !strcmp(active_family, want))
+        return true;
+    ft_reload_family(want);
+    return active_family && !strcmp(active_family, want);
+}
+
+void ft_reload_family(const char *family_list)
 {
     if (!ft_lib)
         return;
+    const char *want = family_or_default(family_list);
+    char *next = strdup(want);
+    if (!next)
+        return;
+    free(active_family);
+    active_family = next;
     bool pinned = fc_pin();
     shape_thread_reset();
     fallback_destroy();
     release_all_faces();
     fallback_coverage_reset();
-    load_named_face(font_get_family());
+    load_named_face(want);
     if (!num_faces) load_named_face(FT_LAST_RESORT_FAMILY);
     if (!num_faces) load_named_face("monospace");
     if (num_faces) {
-        struct font_metrics m = ft_measure_cell(faces[0].styles[0]);
+        struct font_metrics m = ft_measure_cell(faces[0].styles[0], true);
         font_thread_metrics_set(&m);
     }
 
@@ -209,14 +239,17 @@ static bool ft_thread_ready(void)
     return ft_thread_attach();
 }
 
-static font_handle_t *ft_face_open(const char *family_list, struct font_size size)
+static font_handle_t *ft_face_open(const struct font_desc *desc)
 {
-    (void)family_list;
-    if (!ft_thread_ready())
+    if (!desc || !ft_thread_ready())
+        return NULL;
+    if (!ft_family_ensure(desc->family_list))
         return NULL;
     struct font_handle *face = calloc(1, sizeof(*face));
-    if (face)
-        face->pixel_size = font_size_px(size);
+    if (!face)
+        return NULL;
+    face->pixel_size = font_size_px(desc->size);
+    face->monospace = !desc->proportional;
     return face;
 }
 
@@ -238,7 +271,7 @@ static bool ft_face_metrics(font_handle_t *face, struct font_metrics *out)
         return false;
 
     ft_size_faces(face->pixel_size);
-    struct font_metrics m = ft_measure_cell(faces[0].styles[0]);
+    struct font_metrics m = ft_measure_cell(faces[0].styles[0], face->monospace);
     m.pixel_size = face->pixel_size;
     font_thread_metrics_set(&m);
     *out = m;

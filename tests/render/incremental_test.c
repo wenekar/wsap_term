@@ -561,8 +561,10 @@ static void run(const struct config *cfg, struct font_instance *big)
 int main(void)
 {
     TCHECK(render_init(), "render_init");
-    struct font_instance *big = font_instance_acquire(
-        font_instance_size_pt(font_instance_default()), 180);
+    const struct font_desc desc = {
+        .size = { .pt = font_instance_size_pt(font_instance_default()), .scale_120 = 180 },
+    };
+    struct font_instance *big = font_instance_acquire(&desc);
     TCHECK(big, "1.5x font");
 
     const char *env = getenv("INCREMENTAL_STEPS");

@@ -367,8 +367,10 @@ int main(void)
     font_set_aa_mode(FONT_AA_GRAYSCALE);
     rend = renderer_create(NULL);
     TCHECK(rend, "renderer");
-    struct font_instance *big = font_instance_acquire(
-        font_instance_size_pt(font_instance_default()), 180);
+    const struct font_desc desc = {
+        .size = { .pt = font_instance_size_pt(font_instance_default()), .scale_120 = 180 },
+    };
+    struct font_instance *big = font_instance_acquire(&desc);
     struct font_instance *fonts[] = { font_instance_default(), big };
     for (int i = 0; i < 2; i++) {
         font = fonts[i];

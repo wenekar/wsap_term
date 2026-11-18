@@ -13,6 +13,7 @@ The font API is in `src/font/font.h` and `src/font/glyph_cache.h`.
 | rebuild | An operation in `glyph_cache_rebuild()`. It reopens the font face when the font generation changes. It drops all cached glyphs, tiles, and runs of the instance. It then caches ASCII and Latin-1 glyphs again. |
 | thread_attach, thread_detach | Management of per-thread backend state. `font_thread_attach()` initializes thread state before use. `font_thread_detach()` frees thread state. `glyph_cache_thread_detach()` frees per-thread glyph cache buffers. |
 | `font_handle_t` | An opaque face handle for one font size. The backend in `src/font/backend.h` creates and owns this handle. Each instance stores one handle in `face`. The handle can be NULL. |
+| descriptor | A `struct font_desc`. It holds the family list, the size, the display scale, the weight, the slant, and the monospace or proportional choice. `font_instance_acquire()` takes one. |
 | slot | A storage location. The term has three meanings. A cache slot (`struct cache_slot`) stores one glyph or tile. It publishes the buffer through an atomic pointer. The buffer header stores the key. A face slot (`struct ft_face_slot`, FreeType) holds one font file and its four variants. Variant arrays use `enum font_variant` as an index, not a slot index. |
 | variant | One of four typeface styles in a family: plain, bold, italic, and bold italic. `enum font_variant` in `src/font/font.h` defines these values: plain (0), bold (1), italic (2), and bold italic (3). The expression `style & FONT_STYLE_VARIANT_MASK` or `font_variant_of()` calculates this index. Variant arrays use this index: `ft_face_slot.styles[]`, `hb[]`, `layout_gids[]`, `font_instance.layouts[]`, and CoreText `hb_face[]` and `hb_font[]`. |
 | style | A bitmask of `enum font_style` flags: bold, italic, emoji, text, and wide. It does not represent raw cell attributes. `render_cell_style()` creates a style mask from a cell. |
@@ -36,7 +37,7 @@ The font API is in `src/font/font.h` and `src/font/glyph_cache.h`.
 | `font_instance_render_glyph()` | Fills a caller-owned `struct glyph` | Allocated planes remain valid until `glyph_release()` frees them. Subsequent renders into the same glyph reuse allocated planes. |
 | `font_list_families()` | Owned array of owned strings | The array and each string require deallocation. |
 
-`font_instance_acquire()` interns font instances. Identical size and scale parameters reuse the existing instance while a reference exists. A cache hit rebuilds a stale instance in place and invalidates previous glyph pointers of that instance.
+`font_instance_acquire()` interns font instances. An identical descriptor reuses the existing instance while a reference exists. A cache hit rebuilds a stale instance in place and invalidates previous glyph pointers of that instance.
 
 `font_instance_default()` also rebuilds a stale instance in place. A rebuild invalidates existing glyph pointers of the default instance.
 
@@ -52,6 +53,29 @@ A fetch result comes from one of four sources:
 Every rebuild retires all glyphs, tiles, and runs of an instance. In serial mode, a rebuild frees this memory immediately. Five functions trigger a rebuild: `glyph_cache_rebuild()`, `glyph_cache_begin_frame()`, `glyph_cache_refresh()`, `font_instance_acquire()`, and `font_instance_default()`. Fetch and shape operations never trigger a rebuild. A rebuild invalidates all previously returned fetch pointers.
 
 `struct glyph_span` cells originate from run cache entries or thread scratch (`priv_run_cells`). In parallel mode, cache eviction can retire a run entry. Evicted entries remain valid until `glyph_cache_flush_frame()` runs. Span cells therefore stay valid through the end of the `emit` callback.
+
+## Font descriptors
+
+`struct font_desc` in `src/font/font.h` holds the request for an instance. A zero field takes its configured default. An all-zero descriptor therefore gives the default instance.
+
+| Field | Meaning | Default |
+|---|---|---|
+| `family_list` | Comma-separated family names. | The configured family list. |
+| `size.pt` | Point size. | `font_configured_size()`. |
+| `size.scale_120` | Display scale in 1/120 units. | 120. |
+| `weight` | CSS weight from 100 to 900. | `FONT_WEIGHT_REGULAR`. |
+| `slant` | Base slant, one value of `enum font_slant`. | `FONT_SLANT_NORMAL`. |
+| `proportional` | The request wants the natural advance of each glyph. | false, one advance for every glyph. |
+
+A weight of `FONT_WEIGHT_BOLD_MIN` or more adds `FONT_STYLE_BOLD` to every glyph request of the instance. A slant other than `FONT_SLANT_NORMAL` adds `FONT_STYLE_ITALIC`. The instance adds these bits to the style that the caller passes to `glyph_cache_fetch()`, `glyph_cache_shape_segment()`, and `font_instance_render_glyph()`. The glyph cache key holds the result, so every instance caches its own glyphs. The backend draws the face when the family has one, and synthesizes it when the family does not.
+
+`font_instance_monospace()` reports the advance choice. `font_instance_weight()` reports the weight.
+
+### One family set for the process
+
+The FreeType backend holds one family set for the process. The configured family list selects that set. A descriptor that names another family list sets the configured family list, as `font_set_family()` does. That call increments `font_generation()`, so every instance rebuilds at the next frame start.
+
+A per-instance family list needs one face table for each family set. The FreeType face table, the fallback machinery, and the face configuration snapshot are process state today. The CoreText backend holds a `CTFontRef` for each variant in its handle, so it does not have this limit.
 
 ## Stale checks
 
@@ -149,11 +173,13 @@ Worker threads manage state during their lifecycle. A worker attaches backend st
 - `font_prefers_emoji()`: Returns true when a code point renders as emoji under the specified style.
 - `font_size_px()`: Calculates the em size in device pixels for a `struct font_size`.
 - `font_size_resolve()`: Replaces a zero size with the configured size and a zero scale with 120.
-- `font_instance_acquire()`: Returns an owned font instance for a specified size and scale.
+- `font_instance_acquire()`: Returns an owned font instance for a `struct font_desc`.
 - `font_instance_ref()`: Increments the instance reference count.
 - `font_instance_unref()`: Decrements the instance reference count and frees the instance on the last drop.
 - `font_instance_default()`: Returns a borrowed pointer to the default font instance.
 - `font_instance_metrics()`: Returns cell metrics for an instance.
+- `font_instance_weight()`: Returns the weight of an instance.
+- `font_instance_monospace()`: Returns true when the instance uses one advance for every glyph.
 - `font_instance_size_pt()`: Returns instance size in points.
 - `font_instance_scale_120()`: Returns instance display scale.
 - `font_instance_version()`: Returns a version integer that changes whenever glyph appearance changes.

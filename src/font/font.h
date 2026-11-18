@@ -57,6 +57,59 @@ struct font_size {
 /* Converts font size `size` to pixels. */
 int font_size_px(struct font_size size);
 
+enum font_slant {
+    FONT_SLANT_NORMAL = 0,
+    FONT_SLANT_ITALIC = 1,
+    FONT_SLANT_OBLIQUE = 2,
+};
+
+#define FONT_WEIGHT_MIN 100
+#define FONT_WEIGHT_REGULAR 400
+#define FONT_WEIGHT_MAX 900
+/* A weight at or above this value selects a bold face. */
+#define FONT_WEIGHT_BOLD_MIN 600
+
+/*
+ * The request for a font instance. A zero field takes its configured
+ * default. The backend can synthesize a face that the family does not
+ * have.
+ */
+struct font_desc {
+    /* Comma-separated family names. NULL uses the configured family list. */
+    const char *family_list;
+    /* Point size and display scale. */
+    struct font_size size;
+    /* CSS weight from FONT_WEIGHT_MIN to FONT_WEIGHT_MAX. */
+    uint16_t weight;
+    /* Base slant of the face. One value of enum font_slant. */
+    uint8_t slant;
+    /* The request wants the natural advance of each glyph, not one advance
+     * for every glyph. A zero value asks for a monospace face. */
+    bool proportional;
+};
+
+/* Returns the weight of `desc` with the default filled in. */
+static inline uint16_t font_desc_weight(const struct font_desc *desc)
+{
+    if (!desc || !desc->weight)
+        return FONT_WEIGHT_REGULAR;
+    return desc->weight < FONT_WEIGHT_MIN ? FONT_WEIGHT_MIN
+         : desc->weight > FONT_WEIGHT_MAX ? FONT_WEIGHT_MAX : desc->weight;
+}
+
+/* Returns the style bits that the base weight and slant of `desc` select. */
+static inline uint16_t font_desc_base_style(const struct font_desc *desc)
+{
+    uint16_t style = 0;
+    if (!desc)
+        return 0;
+    if (font_desc_weight(desc) >= FONT_WEIGHT_BOLD_MIN)
+        style |= FONT_STYLE_BOLD;
+    if (desc->slant != FONT_SLANT_NORMAL)
+        style |= FONT_STYLE_ITALIC;
+    return style;
+}
+
 struct font_metrics {
     int cell_w, cell_h;
     int baseline;
@@ -66,8 +119,8 @@ struct font_metrics {
 
 struct font_instance;
 
-/* Acquires a font instance matching point size `size_pt` and scale factor `scale_120`. */
-struct font_instance *font_instance_acquire(int size_pt, uint32_t scale_120);
+/* Acquires a font instance that matches font descriptor `desc`. */
+struct font_instance *font_instance_acquire(const struct font_desc *desc);
 /* Increments the reference count of font instance `fi`. */
 struct font_instance *font_instance_ref(struct font_instance *fi);
 /* Decrements the reference count of font instance `fi` and frees it on zero. */
@@ -88,6 +141,10 @@ uint32_t font_instance_scale_120(const struct font_instance *fi);
 uint64_t font_instance_version(const struct font_instance *fi);
 /* Binds font rasterizer state of `fi` to the calling thread. */
 void font_bind_thread(const struct font_instance *fi);
+/* Returns the weight of font instance `fi`. */
+uint16_t font_instance_weight(const struct font_instance *fi);
+/* Returns true when font instance `fi` uses one advance for every glyph. */
+bool font_instance_monospace(const struct font_instance *fi);
 
 #define FONT_RUN_MAX 32
 

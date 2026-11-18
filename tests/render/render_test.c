@@ -252,8 +252,10 @@ static void scale_respawn_test(void)
     assert(!memcmp(px, want, bytes));
 
     int before = settled_thread_count();
-    struct font_instance *big = font_instance_acquire(
-        font_instance_size_pt(font_instance_default()), 180);
+    const struct font_desc desc = {
+        .size = { .pt = font_instance_size_pt(font_instance_default()), .scale_120 = 180 },
+    };
+    struct font_instance *big = font_instance_acquire(&desc);
     assert(big && big != font_instance_default());
     for (int i = 0; i < 8; i++) {
         (void)draw_grid(r, px, size, &history, false, &frame, big);
@@ -645,9 +647,11 @@ static void surface_histories_are_independent_test(void)
     assert(!memcmp(pb, eb, bytes));
 
     /* A gets a new size and a new font. B is still current. */
-    struct font_instance *other = font_instance_acquire(
-        font_instance_size_pt(test_font()) + 2,
-        font_instance_scale_120(test_font()));
+    const struct font_desc other_desc = {
+        .size = { .pt = font_instance_size_pt(test_font()) + 2,
+                  .scale_120 = font_instance_scale_120(test_font()) },
+    };
+    struct font_instance *other = font_instance_acquire(&other_desc);
     const int rw = w + 7, rh = h + 5;
     struct vector2i rsize = { .x = rw, .y = rh };
     size_t resized_bytes = (size_t)rw * rh * sizeof(uint32_t);
@@ -1876,8 +1880,10 @@ static void double_size_rows_test(void)
 /* The tests that run again with a font at 1.5 times the scale. */
 static void scaled_font_pass(void)
 {
-    test_font_override = font_instance_acquire(
-        font_instance_size_pt(font_instance_default()), 180);
+    const struct font_desc override_desc = {
+        .size = { .pt = font_instance_size_pt(font_instance_default()), .scale_120 = 180 },
+    };
+    test_font_override = font_instance_acquire(&override_desc);
     assert(test_font_override);
     explicit_theme_colors_test(FONT_AA_GRAYSCALE);
     explicit_theme_colors_test(FONT_AA_RGB);

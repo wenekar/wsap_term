@@ -872,14 +872,14 @@ void face_reload_configured(void)
     }
 }
 
-struct font_metrics ft_measure_cell(FT_Face face)
+struct font_metrics ft_measure_cell(FT_Face face, bool monospace)
 {
     if (!face || !face->size)
         return font_thread_metrics;
     FT_Size_Metrics m = face->size->metrics;
     int advance = (int)(m.max_advance >> 6);
     int load_flags = font_ft_load_flags();
-    if (!FT_Load_Char(face, 'M', load_flags))
+    if (monospace && !FT_Load_Char(face, 'M', load_flags))
         advance = ft_px_round(face->glyph->advance.x);
 
     int line = ft_px_round(FT_MulFix(face->height, m.y_scale));

@@ -93,6 +93,7 @@ struct font_handle {
     CTFontRef bold;
     CTFontRef bold_italic;
     int pixel_size;
+    bool monospace;
     CGFloat scale;
     uint32_t serial;
     hb_face_t *hb_face[FONT_VARIANT_COUNT];
@@ -500,12 +501,14 @@ static CTFontRef ct_load_base_font(const char *family_list, CGFloat pt)
     return CTFontCreateWithName(CFSTR("Menlo"), pt, NULL);
 }
 
-static font_handle_t *ct_face_open(const char *family_list, struct font_size size)
+static font_handle_t *ct_face_open(const struct font_desc *desc)
 {
-    int pt = font_size_resolve(size).pt;
-    int pixel_size = font_size_px(size);
+    if (!desc)
+        return NULL;
+    int pt = font_size_resolve(desc->size).pt;
+    int pixel_size = font_size_px(desc->size);
 
-    CTFontRef base = ct_load_base_font(family_list, (CGFloat)pt);
+    CTFontRef base = ct_load_base_font(desc->family_list, (CGFloat)pt);
     if (!base)
         return NULL;
 
@@ -517,6 +520,7 @@ static font_handle_t *ct_face_open(const char *family_list, struct font_size siz
 
     face->regular = base;
     face->pixel_size = pixel_size;
+    face->monospace = !desc->proportional;
     face->scale = (CGFloat)pixel_size / pt;
     face->serial = atomic_fetch_add_explicit(&ct_face_serial, 1, memory_order_relaxed) + 1;
     pthread_mutex_init(&face->style_lock, NULL);
@@ -557,7 +561,10 @@ static bool ct_face_metrics(font_handle_t *face, struct font_metrics *out)
     CGFloat descent = CTFontGetDescent(f) * face->scale;
     CGFloat leading = CTFontGetLeading(f) * face->scale;
 
-    UniChar m = 'M';
+    /* A monospace face has one advance for every glyph, so the advance of
+     * 'M' is the cell width. A proportional face has no such glyph; use the
+     * advance of '0' as the cell width unit. */
+    UniChar m = face->monospace ? 'M' : '0';
     CGGlyph glyph = 0;
     CTFontGetGlyphsForCharacters(f, &m, &glyph, 1);
 
@@ -566,7 +573,7 @@ static bool ct_face_metrics(font_handle_t *face, struct font_metrics *out)
         CTFontGetAdvancesForGlyphs(f, kCTFontOrientationHorizontal, &glyph, &adv, 1);
     int cell_w = (int)lround(adv.width * face->scale);
     if (cell_w <= 0) {
-        UniChar fallback = '0';
+        UniChar fallback = face->monospace ? '0' : 'M';
         CGGlyph fallback_glyph = 0;
         CGSize fallback_advance = CGSizeZero;
         if (CTFontGetGlyphsForCharacters(f, &fallback, &fallback_glyph, 1) && fallback_glyph)

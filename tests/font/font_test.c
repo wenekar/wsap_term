@@ -22,6 +22,15 @@
 
 static struct font_instance *scaled;
 
+/* Acquires a font instance of `size_pt` at display scale `scale_120`. */
+static struct font_instance *acquire_at(int size_pt, uint32_t scale_120)
+{
+    const struct font_desc desc = {
+        .size = { .pt = size_pt, .scale_120 = scale_120 },
+    };
+    return font_instance_acquire(&desc);
+}
+
 static struct font_instance *cur(void)
 {
     return scaled ? scaled : font_instance_default();
@@ -1124,7 +1133,7 @@ static void test_tile_colors(void)
 static void set_scale(uint32_t scale_120)
 {
     struct font_instance *fi =
-        font_instance_acquire(font_instance_size_pt(font_instance_default()), scale_120);
+        acquire_at(font_instance_size_pt(font_instance_default()), scale_120);
     font_instance_unref(scaled);
     scaled = fi;
     font_bind_thread(fi);
@@ -1183,13 +1192,13 @@ static void test_font_sizes(void)
     const struct font_metrics *bm = font_instance_metrics(base);
     check("font starts at the configured default size",
           font_instance_size_pt(base) == FONT_DEFAULT_SIZE_PT);
-    struct font_instance *bigger = font_instance_acquire(font_instance_size_pt(base) + 4, 120);
+    struct font_instance *bigger = acquire_at(font_instance_size_pt(base) + 4, 120);
     check("a larger size is another instance", bigger && bigger != base);
     const struct font_metrics *gm = font_instance_metrics(bigger);
     check("a larger font does not shrink its cell",
           gm->cell_w >= bm->cell_w && gm->cell_h > bm->cell_h);
     check("the same size and scale give the same instance",
-          font_instance_acquire(font_instance_size_pt(base) + 4, 120) == bigger);
+          acquire_at(font_instance_size_pt(base) + 4, 120) == bigger);
     font_instance_unref(bigger);
 
     const struct glyph *small_a = glyph_cache_fetch(base, 'A', 0);
@@ -1198,17 +1207,69 @@ static void test_font_sizes(void)
           big_a->width == gm->cell_w && small_a->width == bm->cell_w);
     font_instance_unref(bigger);
 
-    struct font_instance *huge = font_instance_acquire(FONT_MAX_SIZE_PT + 100, 120);
+    struct font_instance *huge = acquire_at(FONT_MAX_SIZE_PT + 100, 120);
     check("font size is clamped to the supported maximum",
           huge && font_instance_size_pt(huge) == FONT_MAX_SIZE_PT);
     font_instance_unref(huge);
     font_bind_thread(base);
 }
 
+static void test_font_descriptor(void)
+{
+    struct font_instance *base = font_instance_default();
+    struct glyph g = {0};
+
+    check("an empty descriptor gives the default instance",
+          font_instance_acquire(&(struct font_desc){0}) == base);
+    check("the default instance is monospace", font_instance_monospace(base));
+
+    const struct font_desc plain = {
+        .size = { .pt = font_instance_size_pt(base), .scale_120 = 120 },
+    };
+    struct font_instance *plain_fi = font_instance_acquire(&plain);
+    check("a plain descriptor reuses the default instance", plain_fi == base);
+    check("the default weight is regular",
+          font_instance_weight(base) == FONT_WEIGHT_REGULAR);
+
+    const struct font_desc heavy = {
+        .size = { .pt = font_instance_size_pt(base), .scale_120 = 120 },
+        .weight = 700,
+    };
+    struct font_instance *bold_fi = font_instance_acquire(&heavy);
+    check("a bold weight makes another instance",
+          bold_fi && bold_fi != base && font_instance_weight(bold_fi) == 700);
+    check("a bold descriptor interns by its weight",
+          font_instance_acquire(&heavy) == bold_fi);
+
+    uint64_t plain_ink = 0, bold_ink = 0;
+    if (bold_fi && font_instance_render_glyph(base, 'e', 0, &g)) {
+        plain_ink = glyph_ink_hash(&g);
+        if (font_instance_render_glyph(bold_fi, 'e', 0, &g))
+            bold_ink = glyph_ink_hash(&g);
+    }
+    check("a bold descriptor draws bold ink without a bold style bit",
+          plain_ink && bold_ink && plain_ink != bold_ink);
+
+    const struct font_desc slanted = {
+        .size = { .pt = font_instance_size_pt(base), .scale_120 = 120 },
+        .slant = FONT_SLANT_ITALIC,
+    };
+    struct font_instance *italic_fi = font_instance_acquire(&slanted);
+    uint64_t italic_ink = 0;
+    if (italic_fi && font_instance_render_glyph(italic_fi, 'e', 0, &g))
+        italic_ink = glyph_ink_hash(&g);
+    check("an italic descriptor draws slanted ink",
+          italic_ink && italic_ink != plain_ink && italic_ink != bold_ink);
+    glyph_release(&g);
+    font_instance_unref(bold_fi);
+    font_instance_unref(italic_fi);
+    font_bind_thread(base);
+}
+
 static void test_render_binds_own_instance(void)
 {
-    struct font_instance *small = font_instance_acquire(8, 120);
-    struct font_instance *large = font_instance_acquire(20, 120);
+    struct font_instance *small = acquire_at(8, 120);
+    struct font_instance *large = acquire_at(20, 120);
     assert(small && large);
     struct font_instance *pairs[2][2] = { { small, large }, { large, small } };
     struct glyph g = {0};
@@ -2230,6 +2291,7 @@ int main(int argc, char **argv)
 
     test_scaled_cells();
     test_font_sizes();
+    test_font_descriptor();
     test_render_binds_own_instance();
     test_hinting();
 

@@ -364,7 +364,7 @@ void glyph_cache_shape_segment(struct font_instance *fi, const uint32_t *cps, in
 {
     if (!fi || !cps || count < 2 || !ensure_segment(count))
         return;
-    style &= FONT_STYLE_VARIANT_MASK;
+    style = instance_style(fi, style) & FONT_STYLE_VARIANT_MASK;
     const struct font_layout *l = instance_layout(fi, style);
     if (!l)
         return;

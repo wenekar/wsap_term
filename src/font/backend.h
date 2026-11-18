@@ -23,7 +23,7 @@ struct font_backend {
     bool (*thread_attach)(void);
     void (*thread_detach)(void);
 
-    font_handle_t *(*open)(const char *family_list, struct font_size size);
+    font_handle_t *(*open)(const struct font_desc *desc);
     void (*close)(font_handle_t *face);
     bool (*measure)(font_handle_t *face, struct font_metrics *out);
 

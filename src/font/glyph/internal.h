@@ -95,7 +95,11 @@ struct font_instance {
     struct font_metrics m;
     int size_pt;
     uint32_t scale_120;
+    uint16_t weight;
+    uint16_t base_style;
     uint32_t id;
+    uint8_t slant;
+    bool proportional;
     int refs;
     _Atomic uint32_t built_fg;
     struct font_instance *next;
@@ -119,6 +123,18 @@ _Static_assert(offsetof(struct font_instance, runs) % 64 == 0,
                "run cache sets align on 64-byte boundaries");
 _Static_assert(sizeof(struct run_slot) * RUN_CACHE_SIZE <= 16u * 1024u,
                "run cache stays within 16 KiB per font instance");
+
+/* Returns the style bits that the descriptor of `fi` adds to every glyph. */
+static inline uint16_t instance_base_style(const struct font_instance *fi)
+{
+    return fi ? fi->base_style : 0;
+}
+
+/* Returns the style that `fi` uses for a glyph requested with `style`. */
+static inline uint16_t instance_style(const struct font_instance *fi, uint16_t style)
+{
+    return glyph_style(style) | instance_base_style(fi);
+}
 
 static inline size_t tile_pixels(const struct font_instance *fi)
 {
