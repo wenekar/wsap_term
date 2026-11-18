@@ -1,9 +1,9 @@
 option(
     'window_backend',
     type: 'combo',
-    choices: ['auto', 'wayland', 'metal'],
+    choices: ['auto', 'wayland', 'x11', 'metal'],
     value: 'auto',
-    description: 'Window backend (Wayland is Linux-only, Metal is macOS-only)',
+    description: 'Window backend (Wayland and X11 are Linux-only, Metal is macOS-only)',
 )
 option(
     'vulkan_render',
@@ -80,4 +80,41 @@ option(
     type: 'string',
     value: '',
     description: 'Directory that receives wsap_term.app on macOS; empty picks ~/Applications for a prefix under $HOME, else /Applications',
+)
+
+option(
+    'app',
+    type: 'boolean',
+    value: true,
+    description: 'Build the wsap_term application',
+)
+option(
+    'framework',
+    type: 'boolean',
+    value: false,
+    description: 'Install the framework libraries, headers, and pkg-config files',
+)
+option(
+    'dev_paths',
+    type: 'boolean',
+    value: true,
+    description: 'Read themes and terminfo from the source tree in a development build',
+)
+option(
+    'install_desktop',
+    type: 'boolean',
+    value: true,
+    description: 'Install the application icon and the desktop entry',
+)
+option(
+    'install_shell',
+    type: 'boolean',
+    value: true,
+    description: 'Install wsap-ssh and the shell integration scripts',
+)
+option(
+    'fastpty',
+    type: 'boolean',
+    value: true,
+    description: 'Build and install the libfastpty preload helper',
 )
