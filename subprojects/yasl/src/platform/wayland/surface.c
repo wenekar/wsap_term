@@ -505,6 +505,8 @@ struct wayland_surface *wayland_surface_create_toplevel(struct wayland_display *
     w->base.size = (struct yasl_private_vector2i){width, height};
     w->base.scale_120 = YASL_PRIVATE_SCALE_UNIT;
     if (surface_build_toplevel(w, spec->fullscreen) < 0) goto err;
+    /* The compositor applies the request and reports the state in a configure. */
+    if (spec->maximized && !spec->fullscreen) xdg_toplevel_set_maximized(w->toplevel);
     display_leave(c);
     return w;
 

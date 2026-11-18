@@ -75,6 +75,14 @@ struct wl_conn_output {
     uint32_t name;
     int32_t scale, pending_scale;
     uint32_t refresh_ns, pending_refresh_ns;
+    /* Geometry and mode of the output, for the monitor queries. */
+    int32_t x, y, physical_width_mm, physical_height_mm;
+    int32_t width, height, transform;
+    /* A done event commits the fields above; this marks them as changed. */
+    bool geometry_changed;
+    /* The compositor sent the state of the output, so the queries list it. */
+    bool ready;
+    char label[YASL_MONITOR_NAME_MAX];
 };
 
 struct pending_press {
@@ -367,6 +375,8 @@ struct wayland_surface {
     struct yasl_private_rect2i content;
     struct yasl_private_rect2i ime_caret;
     struct yasl_private_popup_spec popup_pending_spec;
+    /* Limits of the user's resize, in logical units; a zero axis is no limit. */
+    struct yasl_private_vector2i min_size, max_size;
     uint32_t ime_delete_before, ime_delete_after;
     int ime_cursor_begin;
     enum yasl_private_cursor cursor;
@@ -440,6 +450,8 @@ int  surface_init_scaling(struct wayland_surface *w);
 
 uint64_t conn_output_mask(const struct wayland_display *c, const struct wl_output *proxy);
 uint32_t conn_output_scale_120(const struct wayland_display *c, uint64_t outputs);
+/* Fills the monitors of the display from its outputs. Returns the count. */
+int conn_display_monitors(struct yasl_private_display *base, struct yasl_monitor_info *out, int capacity);
 void     conn_destroy_outputs(struct wayland_display *c);
 void     surface_follow_outputs(struct wayland_surface *w);
 uint64_t conn_pres_to_mono(const struct wayland_display *c, uint64_t ns);
