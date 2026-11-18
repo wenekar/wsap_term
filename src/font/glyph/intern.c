@@ -79,8 +79,8 @@ static uint32_t glyph_intern_locked(const uint32_t *cps, int len)
         return 0;
     if (len == 1)
         return cps[0];
-    if (len > WSAP_VTCORE_GRAPHEME_MAX_LEN)
-        len = WSAP_VTCORE_GRAPHEME_MAX_LEN;
+    if (len > UNICODE_GRAPHEME_MAX_LEN)
+        len = UNICODE_GRAPHEME_MAX_LEN;
 
     if (num_entries >= MAX_CLUSTERS)
         grapheme_reset();
@@ -101,7 +101,7 @@ static uint32_t glyph_intern_locked(const uint32_t *cps, int len)
             uint32_t entry_idx = idx - 1;
             const struct entry *e = &entries[entry_idx];
             if (entry_matches(e, cps, len, h))
-                return WSAP_VTCORE_GRAPHEME_HANDLE_BASE + entry_idx;
+                return UNICODE_GRAPHEME_HANDLE_BASE + entry_idx;
             slot = (slot + 1) & (index_size - 1);
         }
         if ((num_entries + 1) * 2 < index_size)
@@ -149,7 +149,7 @@ static uint32_t glyph_intern_locked(const uint32_t *cps, int len)
         .cp1 = cps[1],
     };
     index_table[slot] = (uint32_t)(num_entries + 1);
-    return WSAP_VTCORE_GRAPHEME_HANDLE_BASE + (uint32_t)num_entries++;
+    return UNICODE_GRAPHEME_HANDLE_BASE + (uint32_t)num_entries++;
 }
 
 uint32_t glyph_intern(const uint32_t *cps, int len)
@@ -164,11 +164,11 @@ static int glyph_intern_expand_locked(uint32_t c, uint32_t *out, size_t out_cap)
 {
     if (!out_cap)
         return 0;
-    if (!wsap_vtcore_grapheme_is_handle(c)) {
+    if (!unicode_grapheme_is_handle(c)) {
         out[0] = c;
         return 1;
     }
-    uint32_t i = c - WSAP_VTCORE_GRAPHEME_HANDLE_BASE;
+    uint32_t i = c - UNICODE_GRAPHEME_HANDLE_BASE;
     if (i >= num_entries) {
         out[0] = 0xFFFD;
         return 1;

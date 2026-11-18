@@ -253,8 +253,8 @@ static bool ft_rasterize_glyph(font_handle_t *face, uint32_t codepoint, uint16_t
         return false;
     face_activate(m);
 
-    uint32_t cps[WSAP_VTCORE_GRAPHEME_MAX_LEN];
-    int len = glyph_intern_expand(codepoint, cps, WSAP_VTCORE_GRAPHEME_MAX_LEN);
+    uint32_t cps[UNICODE_GRAPHEME_MAX_LEN];
+    int len = glyph_intern_expand(codepoint, cps, UNICODE_GRAPHEME_MAX_LEN);
     if (len > 1) {
         bool emoji = font_prefers_emoji(cps[0], style) ||
                      font_prefers_emoji(cps[len - 1], style);

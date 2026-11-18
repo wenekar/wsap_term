@@ -5,6 +5,7 @@
 #include "font/backends/freetype/internal.h"
 #include <wsap_vtcore/wsap_vtcore.h>
 #include "font/glyph/intern.h"
+#include <wsap_vtcore/unicode/grapheme.h>
 #include <wsap_vtcore/unicode/unicode.h>
 #include <ft2build.h>
 #include FT_FREETYPE_H
