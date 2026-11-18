@@ -3812,6 +3812,10 @@ static bool impl_surface_get_native_frame(struct yasl_surface *s,
     return true;
 }
 
+/* Cocoa keeps YASL_SURFACE_GL unsupported. The table has no surface_create_gl,
+ * so yasl_surface_create returns -ENOTSUP for that type. OpenGL would need a
+ * second context path through ANGLE over the Metal layer, and a third-party
+ * dependency. Metal and Vulkan cover application-managed drawing on macOS. */
 const struct yasl_private_backend_ops yasl_private_cocoa_backend = {
     .type = YASL_PRIVATE_BACKEND_COCOA,
     .surface_get_metal_layer = impl_surface_get_metal_layer,
