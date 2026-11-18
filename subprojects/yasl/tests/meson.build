@@ -80,7 +80,7 @@ if has_wayland
     endforeach
 endif
 if has_x11
-    foreach unit : ['state', 'tablet']
+    foreach unit : ['state', 'surface', 'tablet']
         exe = executable('yasl-' + unit + '-x11-test', 'x11/test_' + unit + '.c',
             include_directories: inc, dependencies: yasl_dep)
         test(unit + '-x11', exe)
