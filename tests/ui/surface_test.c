@@ -10,11 +10,29 @@
 
 struct host_probe {
     int requests;
+    int primary_copies, primary_pastes, text_inputs;
 };
 
 static void request_frame(void *userdata)
 {
     ((struct host_probe *)userdata)->requests++;
+}
+
+static void copy_primary(void *userdata, const char *text)
+{
+    (void)text;
+    ((struct host_probe *)userdata)->primary_copies++;
+}
+
+static void paste_primary(void *userdata)
+{
+    ((struct host_probe *)userdata)->primary_pastes++;
+}
+
+static void set_text_input(void *userdata, const struct ui_text_input *input)
+{
+    if (input)
+        ((struct host_probe *)userdata)->text_inputs++;
 }
 
 static void paint_widget(const struct ui_widget *widget,
@@ -97,6 +115,32 @@ static struct vector2i flex_measure(const struct ui_widget *widget,
 }
 
 static const struct ui_widget_ops FLEX_OPS = { .measure = flex_measure };
+
+static void primary_and_text_input_host_test(void)
+{
+    struct host_probe probe = {0};
+    const struct ui_surface_host host = {
+        .copy_primary = copy_primary,
+        .paste_primary = paste_primary,
+        .set_text_input = set_text_input,
+    };
+    struct ui_surface surface = {0};
+    ui_surface_init(&surface, &host, &probe);
+
+    assert(ui_surface_can_copy_primary(&surface));
+    assert(ui_surface_can_paste_primary(&surface));
+    assert(ui_surface_copy_primary(&surface, "primary"));
+    assert(ui_surface_paste_primary(&surface));
+    struct ui_text_input input = {
+        .purpose = UI_TEXT_NORMAL,
+        .text = "ab", .length = 2, .revision = 3,
+    };
+    assert(ui_surface_set_text_input(&surface, &input));
+    assert(probe.primary_copies == 1 && probe.primary_pastes == 1);
+    assert(probe.text_inputs == 1);
+
+    ui_surface_destroy(&surface);
+}
 
 static void style_application_grow_test(void)
 {
@@ -923,6 +967,7 @@ int main(void)
     nested_modal_focus_test();
     measurement_change_requests_another_frame_test();
     independent_surfaces_test();
+    primary_and_text_input_host_test();
     style_application_grow_test();
     hover_restyle_test();
     update_cycle_test();

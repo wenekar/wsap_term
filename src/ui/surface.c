@@ -48,6 +48,42 @@ bool ui_surface_paste_text(struct ui_surface *surface)
     return true;
 }
 
+bool ui_surface_can_copy_primary(const struct ui_surface *surface)
+{
+    return surface && surface->impl.host.copy_primary;
+}
+
+bool ui_surface_can_paste_primary(const struct ui_surface *surface)
+{
+    return surface && surface->impl.host.paste_primary;
+}
+
+bool ui_surface_copy_primary(struct ui_surface *surface, const char *text)
+{
+    if (!surface || !text || !surface->impl.host.copy_primary)
+        return false;
+    surface->impl.host.copy_primary(surface->impl.host_userdata, text);
+    return true;
+}
+
+bool ui_surface_paste_primary(struct ui_surface *surface)
+{
+    if (!surface || !surface->impl.host.paste_primary)
+        return false;
+    surface->impl.paste_target = surface->impl.focused;
+    surface->impl.host.paste_primary(surface->impl.host_userdata);
+    return true;
+}
+
+bool ui_surface_set_text_input(struct ui_surface *surface,
+                               const struct ui_text_input *input)
+{
+    if (!surface || !surface->impl.host.set_text_input)
+        return false;
+    surface->impl.host.set_text_input(surface->impl.host_userdata, input);
+    return true;
+}
+
 bool ui_surface_open_url(struct ui_surface *surface, const char *target)
 {
     if (!surface || !target || !*target || !surface->impl.host.open_url)
@@ -844,6 +880,8 @@ static bool keyboard_path(enum ui_event_kind kind)
     case UI_EVENT_PASTE:
     case UI_EVENT_SHORTCUT:
     case UI_EVENT_DROP_FILES:
+    case UI_EVENT_COMPOSITION:
+    case UI_EVENT_TEXT_EDIT:
         return true;
     default:
         return false;
@@ -870,6 +908,8 @@ bool ui_surface_dispatch(struct ui_surface *surface,
         case UI_EVENT_TEXT:
         case UI_EVENT_SHORTCUT:
         case UI_EVENT_DROP_FILES:
+        case UI_EVENT_COMPOSITION:
+        case UI_EVENT_TEXT_EDIT:
             handled = dispatch_keyboard(surface, event);
             break;
         case UI_EVENT_PASTE:

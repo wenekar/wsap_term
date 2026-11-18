@@ -9,7 +9,7 @@
 #include "ui/widget_ops.h"
 
 struct probe {
-    int keys, texts, shortcuts, drops, captures;
+    int keys, texts, shortcuts, drops, captures, ime_texts;
     int focus_in, focus_out, leave, motions;
     bool handle_key;
     bool keep_text;
@@ -42,6 +42,10 @@ static bool probe_event(struct ui_widget *widget, const struct ui_event *event)
         return p->handle_other;
     case UI_EVENT_DROP_FILES:
         p->drops++;
+        return p->handle_other;
+    case UI_EVENT_COMPOSITION:
+    case UI_EVENT_TEXT_EDIT:
+        p->ime_texts++;
         return p->handle_other;
     case UI_EVENT_POINTER:
         if (event->data.pointer.kind == UI_POINTER_LEAVE)
@@ -381,8 +385,35 @@ static void handler_gets_focus_and_capture_events_test(void)
     ui_widget_destroy(&root.widget);
 }
 
+static void ime_events_go_to_focused_widget_test(void)
+{
+    struct probe root, child;
+    probe_init(&root);
+    probe_init(&child);
+    child.handle_key = true;
+    child.handle_other = true;
+    assert(ui_widget_add_child(&root.widget, &child.widget));
+    struct ui_surface s = {0};
+    set_root_200x100(&s, &root.widget);
+    ui_surface_prepare(&s);
+    ui_surface_focus(&s, &child.widget);
+
+    struct ui_ime_text_event preedit = {
+        .data = "ab", .len = 2, .begin = 1, .end = 2, .revision = 7,
+    };
+    struct ui_event composition = ui_event_composition(&preedit, 0);
+    assert(ui_surface_dispatch(&s, &composition));
+    struct ui_event edit = ui_event_text_edit(&preedit, 0);
+    assert(ui_surface_dispatch(&s, &edit));
+    assert(child.ime_texts == 2);
+
+    ui_surface_destroy(&s);
+    ui_widget_destroy(&root.widget);
+}
+
 int main(void)
 {
+    ime_events_go_to_focused_widget_test();
     default_focus_test();
     focus_beats_default_test();
     capture_before_label_test();
@@ -392,6 +423,6 @@ int main(void)
     frame_requests_test();
     hover_leave_goes_to_one_widget_test();
     handler_gets_focus_and_capture_events_test();
-    puts("PASS: default focus, shortcut events, key capture, hover leave, and handlers");
+    puts("PASS: IME text, default focus, shortcut events, key capture, hover leave, and handlers");
     return 0;
 }

@@ -54,6 +54,22 @@ enum ui_event_kind : uint8_t {
     UI_EVENT_SHORTCUT,
     UI_EVENT_DROP_FILES,
     UI_EVENT_WINDOW_FOCUS,
+    /* Input method preedit. `begin` and `end` are the byte offsets of its
+     * cursor, and `revision` names the text that the host sent. */
+    UI_EVENT_COMPOSITION,
+    /* The input method replaced the bytes `begin`..`end` of the text that
+     * the host sent. `revision` is the revision of the replaced text. */
+    UI_EVENT_TEXT_EDIT,
+};
+
+/* The preedit or the text edit of an input method. `data` is UTF-8 and is
+ * not NUL terminated. */
+struct ui_ime_text_event {
+    const char *data;
+    size_t len;
+    int begin;
+    int end;
+    uint64_t revision;
 };
 
 struct ui_event {
@@ -63,6 +79,7 @@ struct ui_event {
         struct ui_key_event key;
         struct { const char *data; size_t len; } text;
         struct { int action; enum ui_edit_command edit; } shortcut;
+        struct ui_ime_text_event ime;
         bool window_focused;
     } data;
     enum ui_event_kind kind;
@@ -147,6 +164,26 @@ static inline struct ui_event ui_event_drop_files(const char *data, size_t len,
         .kind = UI_EVENT_DROP_FILES,
         .time_ms = time_ms,
         .data.text = { .data = data, .len = len },
+    };
+}
+
+static inline struct ui_event ui_event_composition(
+    const struct ui_ime_text_event *text, uint64_t time_ms)
+{
+    return (struct ui_event){
+        .kind = UI_EVENT_COMPOSITION,
+        .time_ms = time_ms,
+        .data.ime = *text,
+    };
+}
+
+static inline struct ui_event ui_event_text_edit(
+    const struct ui_ime_text_event *text, uint64_t time_ms)
+{
+    return (struct ui_event){
+        .kind = UI_EVENT_TEXT_EDIT,
+        .time_ms = time_ms,
+        .data.ime = *text,
     };
 }
 

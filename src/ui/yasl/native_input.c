@@ -532,10 +532,12 @@ void window_native_input(struct window *w, const struct yasl_event *in)
             w->ime_preedit = strndup(in->text, in->length);
             w->ime_begin = (int)in->ime.begin;
             w->ime_end = (int)in->ime.end;
+            w->ime_revision = in->ime.revision;
         } else {
             w->ime_preedit = NULL;
             w->ime_begin = 0;
             w->ime_end = 0;
+            w->ime_revision = 0;
         }
         window_redraw(w);
         break;
