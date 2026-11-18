@@ -255,6 +255,23 @@ static void key_press(struct x11_surface *s, unsigned code, unsigned state, bool
     key_event(s, &event, false);
 }
 
+/* A drop reports where in the surface its release happened. */
+static void check_drop_position(struct yasl_private_display *display, struct x11_surface *s)
+{
+    struct paste_request *request = calloc(1, sizeof(*request));
+    assert(request);
+    request->target = s;
+    request->drop = true;
+    request->pos = (struct yasl_private_vector2i){12, 34};
+    snprintf(request->mime, sizeof(request->mime), "text/uri-list");
+    drop_complete((struct x11_display *)display, request, YASL_PRIVATE_TRANSFER_OK, "x", 1);
+    struct yasl_private_event event = next_type(display, YASL_PRIVATE_EVENT_DROP);
+    assert(event.text.pos.x == 12 && event.text.pos.y == 34);
+    assert(event.text.len == 1 && !strcmp(event.text.data, "x"));
+    free(request);
+    drain_display_events(display);
+}
+
 /* The backend reports which keys inserted text, which modifiers text input
  * consumed, and that a dead key starts and ends a composition. */
 static void check_key_events(struct yasl_private_display *display, struct x11_surface *s)
@@ -488,6 +505,7 @@ int main(void)
     free(symbols);
     XFree(saved);
     check_key_events(base, s);
+    check_drop_position(base, s);
     s->ic = saved_ic;
     check_selection_encoding(d, s);
     check_double_click(d);

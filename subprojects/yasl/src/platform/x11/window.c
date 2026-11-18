@@ -679,6 +679,8 @@ struct paste_request {
     char *buf;
     size_t buf_len;
     Window source;
+    /* Surface-relative device-pixel position of the XdndPosition. */
+    struct yasl_private_vector2i pos;
     char mime[YASL_PRIVATE_DROP_MIME_MAX];
     /* INCR receive: chunks accumulate in buf until a zero-length chunk arrives. */
     bool incr;
@@ -1693,6 +1695,7 @@ static void drop_complete(struct x11_display *d, struct paste_request *r,
     bool ok = s && status == YASL_PRIVATE_TRANSFER_OK && len > 0;
     if (ok) {
         struct yasl_private_event event = {.type = YASL_PRIVATE_EVENT_DROP};
+        event.text.pos = r->pos;
         snprintf(event.text.mime, sizeof(event.text.mime), "%s", r->mime);
         push(s, event, data, len);
     }
@@ -3460,6 +3463,7 @@ static bool drop_start(struct x11_display *d, struct x11_surface *s, Window sour
     if (!r) return false;
     r->drop = true;
     r->source = source;
+    r->pos = d->xdnd.pos;
     snprintf(r->mime, sizeof(r->mime), "%s", d->xdnd.mime);
     XConvertSelection(d->native, d->xdnd_selection, d->xdnd.picked, d->paste_property,
                       r->window, time);

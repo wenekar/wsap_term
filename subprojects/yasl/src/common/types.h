@@ -449,6 +449,8 @@ struct yasl_private_text_event {
     char mime[YASL_PRIVATE_DROP_MIME_MAX];
     /** Physical key that produced TEXT. Zero means no key. */
     uint64_t text_key_id;
+    /** DROP only: surface-relative device-pixel position of the release. */
+    struct yasl_private_vector2i pos;
 };
 
 /** Clipboard transfer outcome. */
