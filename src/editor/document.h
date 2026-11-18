@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "editor/encoding.h"
 #include "editor/journal.h"
 #include "editor/text.h"
 
@@ -20,6 +21,12 @@ bool editor_document_reload(struct editor_document *document);
 
 const char *editor_document_path(const struct editor_document *document);
 const struct editor_text *editor_document_text(const struct editor_document *document);
+
+/* How the file holds the text. The document text stays UTF-8, and a save
+ * converts it back. A load sets it from the byte order mark or the bytes. */
+struct editor_encoding_info editor_document_encoding(const struct editor_document *document);
+void editor_document_set_encoding(struct editor_document *document,
+                                 struct editor_encoding_info encoding);
 
 /* Replaces `remove` bytes at `offset` with `insert_length` bytes from
  * `insert`. */

@@ -96,6 +96,7 @@ test_cases = [
     ['editor-file-test', files('editor/file_test.c'), editor_lib, []],
     ['editor-journal-test', files('editor/journal_test.c'), editor_lib, []],
     ['editor-document-test', files('editor/document_test.c'), editor_lib, []],
+    ['editor-encoding-test', files('editor/encoding_test.c'), editor_lib, []],
 ]
 
 # metal-render-bench is off. It is not ported to the current renderer.
