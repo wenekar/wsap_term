@@ -156,6 +156,9 @@ struct cocoa_surface {
     uint32_t mods;
     uint32_t buttons;
     enum yasl_private_cursor cursor;
+    /* The pointer is locked: pos holds its last position and motion arrives as
+     * device deltas. */
+    bool pointer_locked;
     enum yasl_private_pointer_device tablet_device;
     bool tablet_down;
     uint64_t pen_device_id, pen_tool_id;
@@ -286,6 +289,7 @@ static size_t grown_capacity(size_t cap, size_t need)
 
 static void reap_dead(struct cocoa_display *d);
 static void push_pen(struct cocoa_surface *w, NSEvent *event, unsigned action, bool contact);
+static void apply_pointer_lock(struct cocoa_surface *w);
 
 static void set_state(struct cocoa_surface *w, uint32_t bit, bool on)
 {
@@ -335,6 +339,7 @@ static void push_focus(struct cocoa_surface *w, bool focused)
     input_queue_push(&w->input, &ev);
     darwin_ctx.depth++;
     set_state(w, YASL_PRIVATE_STATE_ACTIVATED, focused);
+    apply_pointer_lock(w);
     if (!w->destroyed && !w->closed)
         cocoa_surface_schedule_redraw(w);
     darwin_ctx.depth--;
@@ -695,6 +700,16 @@ static struct yasl_private_vector2i event_pos(struct cocoa_surface *w, NSEvent *
     };
 }
 
+/* The device movement of a locked pointer event, in device pixels. AppKit gives
+ * the deltas in points with y up; the surface y grows down. */
+static struct yasl_private_vector2d locked_delta(struct cocoa_surface *w, NSEvent *ev)
+{
+    CGFloat scale = w->window ? w->window.backingScaleFactor : 1.0;
+    if (scale < 1.0)
+        scale = 1.0;
+    return (struct yasl_private_vector2d){ .x = ev.deltaX * scale, .y = -ev.deltaY * scale };
+}
+
 static void update_drag_hover(struct cocoa_display *d, NSPoint screenPoint)
 {
     if (!d || !d->drag.active) return;
@@ -906,7 +921,7 @@ static void push_pointer(struct cocoa_surface *w, NSEvent *ev, enum yasl_private
         type = YASL_PRIVATE_EVENT_POINTER_LEAVE;
     }
     w->mods = cocoa_mods(ev.modifierFlags);
-    if (type != YASL_PRIVATE_EVENT_POINTER_LEAVE)
+    if (type != YASL_PRIVATE_EVENT_POINTER_LEAVE && !w->pointer_locked)
         w->pointer = event_pos(w, ev);
 
     enum yasl_private_pointer_device device = YASL_PRIVATE_PTR_DEV_MOUSE;
@@ -951,6 +966,8 @@ static void push_pointer(struct cocoa_surface *w, NSEvent *ev, enum yasl_private
             .pen = pen,
         },
     };
+    if (w->pointer_locked && type == YASL_PRIVATE_EVENT_POINTER_MOTION)
+        input_ev.pointer.delta = locked_delta(w, ev);
     input_queue_push(&w->input, &input_ev);
     if (type == YASL_PRIVATE_EVENT_POINTER_LEAVE && device != YASL_PRIVATE_PTR_DEV_MOUSE) {
         push_pen(w, ev, YASL_PRIVATE_PEN_LEAVE, false);
@@ -1030,6 +1047,29 @@ static NSCursor *cocoa_cursor(enum yasl_private_cursor cursor)
     case YASL_PRIVATE_CURSOR_ARROW:
     default: return [NSCursor arrowCursor];
     }
+}
+
+/* Shows the cursor that the surface selects now. A locked surface hides it,
+ * because its position no longer follows the mouse. */
+static void apply_cursor(struct cocoa_surface *w)
+{
+    if (!w || w->closed || w->destroyed || !w->window)
+        return;
+    [cocoa_cursor(w->pointer_locked ? YASL_PRIVATE_CURSOR_HIDDEN : w->cursor) set];
+}
+
+/* A locked surface hides the cursor and disconnects it from the mouse, so the
+ * cursor stays in place. Motion then reports raw device movement. The lock
+ * holds only while the surface has key focus, as it does on Wayland. */
+static void apply_pointer_lock(struct cocoa_surface *w)
+{
+    if (!w || w->closed || w->destroyed || !w->window)
+        return;
+    bool locked = w->pointer_locked && w->window.isKeyWindow;
+    CGAssociateMouseAndMouseCursorPosition(locked ? 0 : 1);
+    if (!locked && !w->window.isKeyWindow)
+        return;
+    apply_cursor(w);
 }
 
 @implementation YaslAppDelegate
@@ -1296,7 +1336,10 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
 {
     (void)event;
     struct cocoa_surface *w = self.surface;
-    [cocoa_cursor(w ? w->cursor : YASL_PRIVATE_CURSOR_ARROW) set];
+    if (w)
+        apply_cursor(w);
+    else
+        [cocoa_cursor(YASL_PRIVATE_CURSOR_ARROW) set];
 }
 
 - (void)keyDown:(NSEvent *)event
@@ -2335,6 +2378,7 @@ uint32_t cocoa_display_caps(const struct cocoa_display *d)
                 YASL_PRIVATE_CAP_PLACE_WINDOW | YASL_PRIVATE_CAP_PRIMARY_SELECTION |
                 YASL_PRIVATE_CAP_CSD | YASL_PRIVATE_CAP_NATIVE_GRAPHICS |
                 YASL_PRIVATE_CAP_FRAME_PACING | YASL_PRIVATE_CAP_TABLET |
+                YASL_PRIVATE_CAP_RELATIVE_POINTER |
                 YASL_PRIVATE_CAP_VULKAN | YASL_PRIVATE_CAP_TEXT_INPUT) : 0;
 }
 
@@ -2500,6 +2544,12 @@ void cocoa_surface_destroy(struct cocoa_surface *w)
     }
     w->buttons = 0;
     w->tablet_down = false;
+    /* A destroyed surface releases the pointer lock of the display. */
+    if (w->pointer_locked) {
+        w->pointer_locked = false;
+        w->input.relative = false;
+        CGAssociateMouseAndMouseCursorPosition(1);
+    }
     darwin_ctx.depth++;
     bool native_closed = w->closed;
     static const struct yasl_private_window_cbs no_callbacks = {0};
@@ -2627,7 +2677,7 @@ void cocoa_surface_set_cursor(struct cocoa_surface *w, enum yasl_private_cursor 
     w->cursor = cursor;
     NSPoint p = [w->view convertPoint:w->window.mouseLocationOutsideOfEventStream fromView:nil];
     if (w->window.isKeyWindow && NSPointInRect(p, w->view.bounds))
-        [cocoa_cursor(cursor) set];
+        apply_cursor(w);
 }
 
 bool cocoa_surface_place_under_pointer(struct cocoa_surface *w, struct yasl_private_vector2i at)
@@ -3296,6 +3346,20 @@ static void impl_surface_set_cursor(struct yasl_surface *s, enum yasl_private_cu
     cocoa_surface_set_cursor((struct cocoa_surface *)s, cursor);
 }
 
+static bool impl_surface_set_pointer_mode(struct yasl_surface *s, enum yasl_private_pointer_mode mode)
+{
+    struct cocoa_surface *w = (struct cocoa_surface *)s;
+    if (!w || w->closed || w->destroyed) {
+        errno = EINVAL;
+        return false;
+    }
+    w->pointer_locked = mode == YASL_PRIVATE_POINTER_RELATIVE;
+    w->input.relative = w->pointer_locked;
+    apply_pointer_lock(w);
+    errno = 0;
+    return true;
+}
+
 static void impl_surface_set_background_color(struct yasl_surface *s, uint32_t bg)
 {
     cocoa_surface_set_background_color((struct cocoa_surface *)s, bg);
@@ -3538,6 +3602,7 @@ const struct yasl_private_backend_ops yasl_private_cocoa_backend = {
     .surface_timing = impl_surface_timing,
     .surface_frame_time_ns = impl_surface_frame_time_ns,
     .surface_set_cursor = impl_surface_set_cursor,
+    .surface_set_pointer_mode = impl_surface_set_pointer_mode,
     .surface_set_background_color = impl_surface_set_background_color,
     .surface_ime_preedit = impl_surface_ime_preedit,
     .surface_ime_preedit_cursor = impl_surface_ime_preedit_cursor,

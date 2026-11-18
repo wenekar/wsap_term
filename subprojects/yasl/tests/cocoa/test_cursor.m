@@ -1,6 +1,30 @@
 #import <AppKit/AppKit.h>
 #include <common/private_native.h>
 #include <assert.h>
+#include <math.h>
+
+/* A motion event with device deltas, which a synthetic NSEvent cannot carry. */
+@interface MotionSample : NSObject
+@property NSEventType type;
+@property NSEventModifierFlags modifierFlags;
+@property NSEventSubtype subtype;
+@property NSPoint locationInWindow;
+@property CGFloat deltaX;
+@property CGFloat deltaY;
+@end
+
+@implementation MotionSample
+@end
+
+static struct yasl_private_event next_motion(struct yasl_surface *surface)
+{
+    struct yasl_private_event event;
+    while (yasl_private_display_poll_event(yasl_private_surface_display(surface), &event))
+        if (event.type == YASL_PRIVATE_EVENT_POINTER_MOTION)
+            return event;
+    assert(0 && "no pointer motion event");
+    return event;
+}
 
 static void assert_transparent(NSCursor *cursor)
 {
@@ -39,9 +63,12 @@ int main(void)
         assert([NSCursor currentCursor] == hidden);
         struct yasl_private_event event;
         bool moved = false;
+        struct yasl_private_vector2i start = {0};
         while (yasl_private_display_poll_event(yasl_private_surface_display(surface), &event))
-            if (event.type == YASL_PRIVATE_EVENT_POINTER_MOTION)
+            if (event.type == YASL_PRIVATE_EVENT_POINTER_MOTION) {
                 moved = true;
+                start = event.pointer.pos;
+            }
         assert(moved);
 
         [[NSCursor arrowCursor] set]; /* Simulate leaving and re-entering. */
@@ -50,6 +77,36 @@ int main(void)
         yasl_private_surface_set_cursor(surface, YASL_PRIVATE_CURSOR_ARROW);
         [view cursorUpdate:cursor];
         assert([NSCursor currentCursor] == [NSCursor arrowCursor]);
+
+        /* A locked pointer hides the cursor, keeps its position, and reports
+         * device movement. */
+        assert(yasl_surface_set_cursor(surface, YASL_CURSOR_LOCKED) == 0);
+        assert(yasl_private_display_caps(display) & YASL_PRIVATE_CAP_RELATIVE_POINTER);
+        [view cursorUpdate:cursor];
+        assert([NSCursor currentCursor] == hidden);
+
+        CGFloat scale = window.backingScaleFactor < 1.0 ? 1.0 : window.backingScaleFactor;
+        MotionSample *sample = [MotionSample new];
+        sample.type = NSEventTypeMouseMoved;
+        sample.subtype = NSEventSubtypeMouseEvent;
+        sample.locationInWindow = NSMakePoint(100, 120);
+        sample.deltaX = 3.5;
+        sample.deltaY = 2.0;
+        [view mouseMoved:(NSEvent *)sample];
+        event = next_motion(surface);
+        assert(event.pointer.pos.x == start.x && event.pointer.pos.y == start.y);
+        assert(fabs(event.pointer.delta.x - 3.5 * scale) < 1e-9);
+        assert(fabs(event.pointer.delta.y + 2.0 * scale) < 1e-9);
+
+        /* Unlocked motion reports the change of position again. */
+        assert(yasl_surface_set_cursor(surface, YASL_CURSOR_ARROW) == 0);
+        sample.deltaX = 0;
+        sample.deltaY = 0;
+        sample.locationInWindow = NSMakePoint(40, 60);
+        [view mouseMoved:(NSEvent *)sample];
+        event = next_motion(surface);
+        assert(fabs(event.pointer.delta.x - (event.pointer.pos.x - start.x)) < 1e-9);
+        [sample release];
 
         /* Every shape selects its system cursor. */
         struct {
