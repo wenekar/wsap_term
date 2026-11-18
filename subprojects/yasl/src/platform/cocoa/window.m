@@ -113,6 +113,8 @@ struct cocoa_surface {
 
     struct cocoa_surface *parent;
     bool is_popup;
+    /* Creation order of a popup, so the newest one is the topmost. */
+    unsigned popup_order;
     struct yasl_private_vector2i content_offset;
 
     const struct yasl_private_window_cbs *cbs;
@@ -193,6 +195,7 @@ struct cocoa_display {
     YaslAppDelegate *delegate;
     NSPoint cascade;
     struct cocoa_surface *dead;
+    unsigned popup_serial;
     struct {
         bool active;
         struct cocoa_surface *origin;
@@ -300,6 +303,7 @@ static size_t grown_capacity(size_t cap, size_t need)
 static void reap_dead(struct cocoa_display *d);
 static void push_pen(struct cocoa_surface *w, NSEvent *event, unsigned action, bool contact);
 static void apply_pointer_lock(struct cocoa_surface *w);
+static void dismiss_popup_press(const struct cocoa_surface *pressed);
 
 static void set_state(struct cocoa_surface *w, uint32_t bit, bool on)
 {
@@ -1874,6 +1878,10 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
 {
     darwin_ctx.depth++;
     @try {
+        if (event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeRightMouseDown ||
+            event.type == NSEventTypeOtherMouseDown) {
+            dismiss_popup_press(self.surface);
+        }
         /* AppKit keeps Control+Tab and Control+Shift+Tab for window tabbing and
          * key view navigation. It drops the press before the first responder
          * sees it. Send the press to the first responder so the application can
@@ -2404,6 +2412,34 @@ void cocoa_surface_schedule_redraw(struct cocoa_surface *w)
         w->link.paused = NO;
     }
     yasl_private_loop_wake(darwin_ctx.loop);
+}
+
+/* The popup that was created last. A popup takes the input grab, and a newer
+ * popup takes it from an older one. */
+static struct cocoa_surface *topmost_popup(struct cocoa_display *d)
+{
+    struct cocoa_surface *top = NULL;
+    for (int i = 0; i < d->count; i++) {
+        struct cocoa_surface *w = d->windows[i];
+        if (!w->is_popup || w->closed || w->destroyed || !w->window)
+            continue;
+        if (!top || w->popup_order > top->popup_order)
+            top = w;
+    }
+    return top;
+}
+
+/* A press dismisses the topmost popup unless the press is in it, as the pointer
+ * grab does on X11. A press arrives at a YASL window of this application, so a
+ * press in another application keeps the popup. */
+static void dismiss_popup_press(const struct cocoa_surface *pressed)
+{
+    struct cocoa_surface *top = topmost_popup(&darwin_ctx);
+    if (!top || top == pressed)
+        return;
+    darwin_ctx.depth++;
+    yasl_private_surface_notify_close(&top->base);
+    darwin_ctx.depth--;
 }
 
 static void app_init(const char *app_name)
@@ -3104,6 +3140,7 @@ struct cocoa_surface *cocoa_surface_create_popup(struct cocoa_surface *parent,
         w->clock.refresh_ns = parent->clock.refresh_ns ? parent->clock.refresh_ns : YASL_PRIVATE_REFRESH_DEFAULT_NS;
         w->parent = parent;
         w->is_popup = true;
+        w->popup_order = ++darwin_ctx.popup_serial;
         w->content_offset = spec->content_offset;
 
         NSRect frame = popup_calc_frame(parent, spec);

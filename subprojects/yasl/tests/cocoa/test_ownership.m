@@ -10,6 +10,18 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Polls every queued event and reports whether one matches. */
+static bool has_event(struct yasl_private_display *d, enum yasl_private_event_type type,
+                      struct yasl_surface *surface)
+{
+    struct yasl_private_event event;
+    bool found = false;
+    while (yasl_private_display_poll_event(d, &event))
+        if (event.type == type && event.surface == surface)
+            found = true;
+    return found;
+}
+
 int main(void)
 {
     struct yasl_private_display *d = yasl_private_display_open(NULL, NULL);
@@ -65,6 +77,22 @@ int main(void)
     assert(!yasl_private_surface_set_fullscreen(popup, true) && errno == EINVAL);
     assert(!yasl_private_surface_set_maximized(popup, true) && errno == EINVAL);
     assert(!yasl_private_surface_minimize(popup) && errno == EINVAL);
+
+    /* A press in another window of the application dismisses the popup, and a
+     * press in the popup keeps it. */
+    NSWindow *popup_window = (NSWindow *)yasl_private_surface_get_native_handle(popup);
+    @autoreleasepool {
+        NSEvent *in_popup = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
+            location:NSMakePoint(4, 4) modifierFlags:0 timestamp:0
+            windowNumber:popup_window.windowNumber context:nil eventNumber:0 clickCount:1 pressure:1];
+        NSEvent *in_parent = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
+            location:NSMakePoint(20, 20) modifierFlags:0 timestamp:0
+            windowNumber:window.windowNumber context:nil eventNumber:0 clickCount:1 pressure:1];
+        [popup_window sendEvent:in_popup];
+        assert(!has_event(d, YASL_PRIVATE_EVENT_WINDOW_CLOSE, popup));
+        [window sendEvent:in_parent];
+        assert(has_event(d, YASL_PRIVATE_EVENT_WINDOW_CLOSE, popup));
+    }
     yasl_private_surface_destroy(popup);
     while (yasl_private_display_poll_event(d, &event)) {}
 
