@@ -26,7 +26,8 @@ RANKS = {
     "render/term_frame.h": 12,
     "ui/yasl": 13,
     "terminal": 14,
-    "app": 15,
+    "runtime": 15,
+    "app": 16,
 }
 
 PRIVATE_OWNERS = {
@@ -53,6 +54,7 @@ LIBRARY_PATHS = {
     "render_term": ("terminal/render", "render/term_frame.h"),
     "ui_yasl": ("ui/yasl",),
     "terminal": ("terminal",),
+    "runtime": ("runtime",),
     "app": ("app",),
 }
 ALLOWED_DEPENDENCIES = {
@@ -69,11 +71,12 @@ ALLOWED_DEPENDENCIES = {
     "render_term": {"render", "paint", "font", "base"},
     "ui_yasl": {"paint", "input", "ui", "font", "base"},
     "terminal": {"ui_yasl", "session", "ui", "input", "font", "paint", "base", "render_term"},
-    "app": {"base", "pty", "session", "input", "paint", "font", "ui", "theme", "render", "render_term", "ui_yasl", "terminal"},
+    "runtime": {"base", "paint", "font", "ui", "render", "render_term", "ui_yasl"},
+    "app": {"base", "pty", "session", "input", "paint", "font", "ui", "theme", "render", "render_term", "ui_yasl", "terminal", "runtime"},
 }
 # Libraries that may include yasl headers. The editor is not one of them: it
 # has no window system dependency.
-YASL_LIBRARIES = {"base", "pty", "session", "ui_yasl", "terminal", "app"}
+YASL_LIBRARIES = {"base", "pty", "session", "ui_yasl", "terminal", "runtime", "app"}
 YASL_PREFIX = "yasl/"
 INCLUDE = re.compile(r'^\s*#\s*include\s*["<]([^">]+)[">]')
 SOURCE_SUFFIXES = {".c", ".h", ".m", ".mm"}
