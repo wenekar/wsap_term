@@ -138,6 +138,26 @@ bool ui_scene_rect(struct ui_scene *s, struct rect2i r, uint32_t color);
 /* Emits four non-overlapping edge rectangles to outline `box`. */
 bool ui_scene_rect_stroke(struct ui_scene *s, struct rect2i box, int width,
                           uint32_t color);
+
+/* The width of each side of a border. Zero draws no side. */
+struct ui_scene_border_width {
+    int left, top, right, bottom;
+};
+/*
+ * Emits one rectangle for each side with a width above zero. The sides do
+ * not overlap. A corner belongs to the top or bottom side.
+ */
+bool ui_scene_rect_border(struct ui_scene *s, struct rect2i box,
+                          struct ui_scene_border_width width, uint32_t color);
+/*
+ * Emits a wavy underline. The wave is a triangle staircase of the `amplitude`
+ * rows below `run.y`, with one period of `period` columns. `thickness` is the
+ * height of each step. The run starts at `run.x` and takes `run.width`
+ * columns. The steps do not overlap.
+ */
+bool ui_scene_wavy_underline(struct ui_scene *s, struct rect2i run,
+                             int amplitude, int period, int thickness,
+                             uint32_t color);
 bool ui_scene_blend_rect(struct ui_scene *s, struct rect2i r,
                          uint32_t color, uint8_t alpha);
 bool ui_scene_rounded_rect(struct ui_scene *s, struct rect2i r,
