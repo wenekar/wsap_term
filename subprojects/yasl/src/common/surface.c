@@ -1001,6 +1001,9 @@ static bool convert_event(const struct yasl_private_event *p, yasl_event *e)
     case YASL_PRIVATE_EVENT_DISPLAY_RESTORED:
         e->type = YASL_EVENT_DISPLAY_RESTORED;
         return true;
+    case YASL_PRIVATE_EVENT_MONITORS:
+        e->type = YASL_EVENT_MONITORS_CHANGED;
+        return true;
     case YASL_PRIVATE_EVENT_REFRESH:
         if (!p->surface)
             return false;

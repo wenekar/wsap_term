@@ -178,3 +178,29 @@ size_t desktop_default_locale(char *buf, size_t cap)
     }
     return copy_str(buf, cap, name);
 }
+
+/* The Library folders of the user; the app folders sit under its own name. */
+size_t desktop_user_dir(enum yasl_user_dir which, char *buf, size_t cap)
+{
+    @autoreleasepool {
+        NSSearchPathDirectory directory;
+        NSSearchPathDomainMask domain = NSUserDomainMask;
+        switch (which) {
+        case YASL_DIR_PREFERENCE: directory = NSLibraryDirectory; break;
+        case YASL_DIR_DATA:       directory = NSApplicationSupportDirectory; break;
+        case YASL_DIR_CACHE:      directory = NSCachesDirectory; break;
+        case YASL_DIR_HOME:       directory = NSLibraryDirectory; break;
+        case YASL_DIR_DOCUMENTS:  directory = NSDocumentDirectory; break;
+        case YASL_DIR_DOWNLOADS:  directory = NSDownloadsDirectory; break;
+        case YASL_DIR_DESKTOP:    directory = NSDesktopDirectory; break;
+        default: errno = EINVAL; return 0;
+        }
+        NSString *path = which == YASL_DIR_HOME
+            ? NSHomeDirectory()
+            : [NSSearchPathForDirectoriesInDomains(directory, domain, YES) firstObject];
+        /* PREFERENCE wants Library/Preferences, which the search path does not give. */
+        if (which == YASL_DIR_PREFERENCE && path)
+            path = [path stringByAppendingPathComponent:@"Preferences"];
+        return path ? copy_str(buf, cap, path.fileSystemRepresentation) : 0;
+    }
+}
