@@ -1123,4 +1123,5 @@ void ui_shutdown(void)
 {
     css_shutdown();
     ui_part_shutdown();
+    ui_widget_shutdown();
 }

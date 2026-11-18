@@ -194,6 +194,20 @@ int main(void)
     assert(!strncmp(line_at(&c, 6), "{\"ok\":true,", 11));
     assert(!strcmp(font_asked, "Mono"));
 
+    /* A second window keeps its own inspector state. Closing it leaves the
+     * first window and the registry lookup intact. */
+    struct window *second = test_terminal_window(ta.app);
+    assert(second && app_tabs_new(second));
+    exchange(&c, "windows\n", 1);
+    assert(strstr(line_at(&c, 7), "\"index\":1"));
+    exchange(&c, "-w 1 tree --depth 0\n", 1);
+    assert(strstr(line_at(&c, 8), "\"type\":\"window-root\""));
+    window_close(second);
+    exchange(&c, "windows\n", 1);
+    assert(!strstr(line_at(&c, 9), "\"index\":1"));
+    exchange(&c, "tree --depth 0\n", 1);
+    assert(strstr(line_at(&c, 10), "\"type\":\"window-root\""));
+
     close(c.fd);
     bool fired = false;
     assert(yasl_loop_add_timer(loop, MS_TO_NS(20), mark_fired, &fired) != 0);

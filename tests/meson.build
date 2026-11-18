@@ -51,6 +51,7 @@ test_cases = [
     ['window-ui-input-test', files('ui/yasl/ui_input_test.c'), app_lib, deps],
     ['window-native-input-test', files('ui/yasl/native_input_test.c'), app_lib, deps],
     ['window-host-veto-test', files('ui/yasl/host_veto_test.c'), ui_yasl_lib, deps],
+    ['window-host-registry-test', files('ui/yasl/host_registry_test.c'), ui_yasl_lib, deps],
     font_backend == 'coretext'
         ? ['font-coretext-test', files('font/coretext_test.m'), font_lib, font_deps + [m_dep] + platform_deps]
         : ['font-test', files('font/font_test.c'), font_lib, font_deps + [m_dep]],

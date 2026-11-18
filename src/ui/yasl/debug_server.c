@@ -38,6 +38,7 @@ static struct {
     struct dbg_pending *pending;
     int n_pending, pending_cap;
     char path[sizeof(((struct sockaddr_un *)0)->sun_path)];
+    struct window_host *host;
 } srv = { .listen_fd = -1, .listen_watch = -1 };
 
 static struct window_debug_hooks hooks;
@@ -517,7 +518,7 @@ char *window_debug_eval(const char *line)
 bool window_debug_server_start(struct yasl_loop *loop, struct window_host *host,
                                const char *path)
 {
-    if (dbg_server_running || !path || !*path)
+    if (srv.listen_fd >= 0 || !path || !*path)
         return false;
     if (strlen(path) >= sizeof(srv.path)) {
         fprintf(stderr, "[debug] socket path too long: %s\n", path);
@@ -552,7 +553,8 @@ bool window_debug_server_start(struct yasl_loop *loop, struct window_host *host,
     srv.listen_fd = fd;
     srv.listen_watch = watch;
     memcpy(srv.path, path, strlen(path) + 1);
-    dbg_server_running = true;
+    srv.host = host;
+    host->debug_capture = true;
     fprintf(stderr, "[debug] UI inspector listening on %s\n", path);
     for (int i = 0; i < host->count; i++)
         dbg_redraw(host->windows[i], WINDOW_DEBUG_MAIN);
@@ -561,7 +563,7 @@ bool window_debug_server_start(struct yasl_loop *loop, struct window_host *host,
 
 void window_debug_server_stop(void)
 {
-    if (!dbg_server_running)
+    if (srv.listen_fd < 0)
         return;
     while (srv.clients)
         client_close(srv.clients);
@@ -576,6 +578,7 @@ void window_debug_server_stop(void)
         yasl_loop_del_fd(srv.loop, srv.listen_watch);
     close(srv.listen_fd);
     unlink(srv.path);
+    if (srv.host)
+        srv.host->debug_capture = false;
     srv = (typeof(srv)){ .listen_fd = -1, .listen_watch = -1 };
-    dbg_server_running = false;
 }

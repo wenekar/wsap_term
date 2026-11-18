@@ -63,6 +63,8 @@ struct window_host {
     uint64_t wake_at_ms;
     /* The frame time of the running host pass, or 0 outside a pass. */
     uint64_t frame_ms;
+    /* The inspector server runs and captures each window scene. */
+    bool debug_capture;
 
     struct window **windows;
     int count;

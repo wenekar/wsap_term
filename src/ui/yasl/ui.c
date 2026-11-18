@@ -7,8 +7,6 @@
 #include "ui/yasl/testing.h"
 #include "ui/yasl/internal.h"
 
-struct window_host *window_ui_host_last;
-
 struct window_ui *window_ui_of(const struct window *w)
 {
     return w->ui.mounted ? ui_of(w) : NULL;
@@ -52,7 +50,6 @@ bool window_ui_mount(struct window *w, const struct window_ui_spec *spec)
     struct window_ui *ui = ui_of(w);
     ui->mounted = true;
     ui->spec = *spec;
-    window_ui_host_last = window_host(w);
     ui->ui_font = font_instance_ref(font_instance_default());
     window_ui_root_init(w);
     struct yasl_surface *surface = window_surface(w);
@@ -169,8 +166,6 @@ void window_ui_closing(struct window *w)
 void window_ui_destroy(struct window *w)
 {
     struct window_ui *ui = ui_of(w);
-    if (window_ui_host_last == window_host(w) && window_host(w)->count == 0)
-        window_ui_host_last = NULL;
     window_accessibility_destroy(w);
     window_debug_destroy(w);
     window_menu_destroy(w);

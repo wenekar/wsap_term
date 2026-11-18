@@ -3,8 +3,6 @@
 
 #include "ui/yasl/debug_internal.h"
 
-bool dbg_server_running;
-
 struct window_debug *dbg_state(struct window *w)
 {
     struct window_ui *ui = window_ui_of(w);
@@ -72,7 +70,7 @@ bool dbg_inject_scratch(struct window *w)
 static bool capturing(const struct window *w)
 {
     const struct window_ui *ui = window_ui_of(w);
-    return dbg_server_running || (ui && ui->debug && ui->debug->overlay.flags);
+    return w->host->debug_capture || (ui && ui->debug && ui->debug->overlay.flags);
 }
 
 void window_debug_end_scene(struct window *w, int surface, struct ui_scene *scene)

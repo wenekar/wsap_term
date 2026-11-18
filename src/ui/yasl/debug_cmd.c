@@ -38,7 +38,7 @@ static enum dbg_status cmd_fail(struct dbg_cmd *cmd, const char *fmt, ...)
 
 static struct window *window_at(int index)
 {
-    struct window_host *host = window_ui_host_last;
+    struct window_host *host = window_host_registry_first();
     if (!host || index < 0 || index >= host->count)
         return NULL;
     return host->windows[index];
@@ -46,7 +46,7 @@ static struct window *window_at(int index)
 
 static int window_index_of(const struct window *w)
 {
-    struct window_host *host = window_ui_host_last;
+    struct window_host *host = window_host_registry_first();
     for (int i = 0; host && i < host->count; i++)
         if (host->windows[i] == w)
             return i;
@@ -55,7 +55,7 @@ static int window_index_of(const struct window *w)
 
 static struct window *default_window(void)
 {
-    struct window_host *host = window_ui_host_last;
+    struct window_host *host = window_host_registry_first();
     return host ? host->primary : NULL;
 }
 
@@ -140,7 +140,7 @@ static enum dbg_status cmd_windows(struct dbg_cmd *cmd, struct json_writer *j)
 {
     (void)cmd;
     json_arr_begin(j);
-    struct window_host *host = window_ui_host_last;
+    struct window_host *host = window_host_registry_first();
     for (int i = 0; host && i < host->count; i++)
         write_window_summary(j, host->windows[i]);
     json_arr_end(j);
