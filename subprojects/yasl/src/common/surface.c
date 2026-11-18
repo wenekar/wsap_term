@@ -201,6 +201,25 @@ enum yasl_backend yasl_get_backend(void)
     return display && yasl_public_owner() ? (enum yasl_backend)display->ops->type
                                           : YASL_BACKEND_AUTO;
 }
+#if defined(__linux__)
+extern bool yasl_private_runtime_has_gl(void);
+#endif
+#if YASL_HAS_VULKAN
+extern bool yasl_private_runtime_has_vulkan(const char *surface_extension);
+#endif
+
+#if YASL_HAS_VULKAN
+static const char *vulkan_surface_extension(enum yasl_private_backend backend)
+{
+    switch (backend) {
+    case YASL_PRIVATE_BACKEND_WAYLAND: return "VK_KHR_wayland_surface";
+    case YASL_PRIVATE_BACKEND_X11: return "VK_KHR_xlib_surface";
+    case YASL_PRIVATE_BACKEND_COCOA: return "VK_EXT_metal_surface";
+    default: return NULL;
+    }
+}
+#endif
+
 unsigned yasl_get_features(void)
 {
     if (!display || !yasl_public_owner())
@@ -219,9 +238,14 @@ unsigned yasl_get_features(void)
         {YASL_PRIVATE_CAP_RELATIVE_POINTER, YASL_FEATURE_LOCKED_CURSOR},
     };
     uint32_t caps = yasl_private_display_caps(display);
-    unsigned features = display->ops->surface_create_gl ? YASL_FEATURE_OPENGL : 0;
+    unsigned features = 0;
+#if defined(__linux__)
+    if (display->ops->surface_create_gl && yasl_private_runtime_has_gl())
+        features |= YASL_FEATURE_OPENGL;
+#endif
 #if YASL_HAS_VULKAN
-    if (caps & YASL_PRIVATE_CAP_VULKAN)
+    if ((caps & YASL_PRIVATE_CAP_VULKAN) &&
+        yasl_private_runtime_has_vulkan(vulkan_surface_extension(display->ops->type)))
         features |= YASL_FEATURE_VULKAN;
 #endif
     for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++)
