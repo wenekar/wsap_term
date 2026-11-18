@@ -87,6 +87,12 @@ test_cases = [
     ['css-clipping-test', files('ui/css/clipping_test.c', 'ui/stubs/scene_paint_deps.c'), [ui_lib, render_lib], deps],
     ['css-selector-test', files('ui/css/selector_test.c'), ui_lib, ui_test_deps],
     ['css-lookup-test', files('ui/css/lookup_test.c'), ui_lib, ui_test_deps],
+    ['editor-text-test', files('editor/text_test.c'), editor_lib, []],
+    ['editor-position-test', files('editor/position_test.c'), editor_lib, []],
+    ['editor-undo-test', files('editor/undo_test.c'), editor_lib, []],
+    ['editor-file-test', files('editor/file_test.c'), editor_lib, []],
+    ['editor-journal-test', files('editor/journal_test.c'), editor_lib, []],
+    ['editor-document-test', files('editor/document_test.c'), editor_lib, []],
 ]
 
 # metal-render-bench is off. It is not ported to the current renderer.

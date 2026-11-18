@@ -66,6 +66,15 @@ while IFS= read -r file; do
     fi
 done < <(find src/ui/widgets -name '*.[chm]' | sort)
 
+# The editor library sits above base and below ui. It has no window system,
+# terminal core, or UI core dependency.
+while IFS= read -r file; do
+    if grep -nE '#include [<"](yasl/|ui/)|wsap_vtcore' "$file"; then
+        echo "$file: the editor library uses a layer above it" >&2
+        status=1
+    fi
+done < <(find src/editor -name '*.[chm]' | sort)
+
 for file in "${allowed[@]}"; do
     if ! grep -qE '(\.|->)impl\b|#include "ui/internal/' "$file"; then
         echo "$file: uses only public UI headers; remove it from the list" >&2
