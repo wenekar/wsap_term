@@ -103,6 +103,8 @@ test_cases = [
     ['editor-largefile-test', files('editor/largefile_test.c'), editor_lib, []],
     ['editor-edit-test', files('editor/edit_test.c'), editor_lib, []],
     ['editor-annotations-test', files('editor/annotations_test.c'), editor_lib, []],
+    ['editor-view-test', files('editor_view/editor_view_test.c'), editor_view_lib, ui_test_deps],
+    ['editor-view-demo-test', files('editor_view/demo_test.c'), editor_view_lib, ui_test_deps],
 ]
 
 # metal-render-bench is off. It is not ported to the current renderer.

@@ -10,6 +10,7 @@ subdir('paint')
 subdir('font')
 subdir('ui')
 subdir('theme')
+subdir('editor_view')
 subdir('render')
 subdir('terminal')
 subdir('runtime')
@@ -93,6 +94,17 @@ theme_lib = static_library(
     install: false,
 )
 
+# The code-editor view. It sits above the UI toolkit and the editor document
+# model, and it owns the retained rows of the visible text.
+editor_view_lib = static_library(
+    'wsap-editor-view',
+    editor_view_src,
+    link_with: [base_lib, editor_lib, paint_lib, font_lib, ui_lib, theme_lib],
+    include_directories: inc,
+    dependencies: [m_dep],
+    install: false,
+)
+
 render_lib = static_library(
     'wsap-render',
     render_src,
@@ -154,4 +166,4 @@ app_lib = static_library(
     install: false,
 )
 
-wsap_libs = [base_lib, editor_lib, pty_lib, session_lib, input_lib, paint_lib, font_lib, ui_lib, theme_lib, render_lib, render_term_lib, ui_yasl_lib, terminal_lib, runtime_lib, app_lib]
+wsap_libs = [base_lib, editor_lib, pty_lib, session_lib, input_lib, paint_lib, font_lib, ui_lib, theme_lib, editor_view_lib, render_lib, render_term_lib, ui_yasl_lib, terminal_lib, runtime_lib, app_lib]
