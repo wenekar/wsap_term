@@ -38,7 +38,6 @@ enum dbg_pending_kind {
     DBG_PENDING_SHOT,
 };
 
-extern bool dbg_server_running;
 void window_debug_free(struct window *w);
 struct window_debug *dbg_state(struct window *w);
 bool dbg_surface_exists(const struct window *w, int surface);

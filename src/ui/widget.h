@@ -138,6 +138,8 @@ void ui_widget_init(struct ui_widget *widget,
 void ui_widget_destroy(struct ui_widget *widget);
 /* Returns the unique accessibility node identifier of `widget`. */
 uint64_t ui_widget_accessibility_id(const struct ui_widget *widget);
+/* Resets the accessibility id sequence. Call it after the last widget is gone. */
+void ui_widget_shutdown(void);
 
 /* Sets the accessible name string of `widget`. */
 bool ui_widget_set_accessible_name(struct ui_widget *widget, const char *name);

@@ -12,6 +12,11 @@
 
 static atomic_uint_fast64_t next_accessibility_id = 1;
 
+void ui_widget_shutdown(void)
+{
+    atomic_store_explicit(&next_accessibility_id, 1, memory_order_relaxed);
+}
+
 uint64_t ui_widget_accessibility_id_allocate(void)
 {
     uint64_t id;
