@@ -134,6 +134,74 @@ size_t input_queue_push_drop_files(struct input_queue *q, const char *uris, size
     return push_data(q, INPUT_DROP_FILES, uris, len);
 }
 
+size_t input_queue_push_drop(struct input_queue *q, const char *mime,
+                             const char *data, size_t len)
+{
+    if (!q || !mime || !mime[0] || !data || !len ||
+        len > INPUT_TEXT_MAX - q->text_bytes)
+        return 0;
+    struct input_event ev = { .kind = INPUT_DROP };
+    ev.drop_type.mime = strdup(mime);
+    ev.drop_type.data = malloc(len);
+    if (!ev.drop_type.mime || !ev.drop_type.data) {
+        free(ev.drop_type.mime);
+        free(ev.drop_type.data);
+        return 0;
+    }
+    memcpy(ev.drop_type.data, data, len);
+    ev.drop_type.len = len;
+    if (input_queue_add(q, &ev) == INPUT_PUSH_DROPPED) {
+        free(ev.drop_type.mime);
+        free(ev.drop_type.data);
+        return 0;
+    }
+    return len;
+}
+
+size_t input_queue_push_drag(struct input_queue *q, const char *mime,
+                             struct vector2i pos)
+{
+    if (!q || !mime)
+        return 0;
+    struct input_event ev = {
+        .kind = INPUT_DRAG,
+        .drop_type = { .pos = pos, .leave = !mime[0] },
+    };
+    if (mime[0]) {
+        ev.drop_type.mime = strdup(mime);
+        if (!ev.drop_type.mime)
+            return 0;
+    }
+    if (input_queue_add(q, &ev) == INPUT_PUSH_DROPPED) {
+        free(ev.drop_type.mime);
+        return 0;
+    }
+    return mime[0] ? strlen(mime) : 1;
+}
+
+size_t input_queue_push_ime(struct input_queue *q, const char *data, size_t len,
+                            int begin, int end, uint64_t revision, bool edit)
+{
+    if (!q || (!data && len) || len > INPUT_TEXT_MAX - q->text_bytes)
+        return 0;
+    struct input_event ev = {
+        .kind = INPUT_IME,
+        .ime = { .begin = begin, .end = end, .revision = revision, .edit = edit },
+    };
+    if (len) {
+        ev.ime.data = malloc(len);
+        if (!ev.ime.data)
+            return 0;
+        memcpy(ev.ime.data, data, len);
+        ev.ime.len = len;
+    }
+    if (input_queue_add(q, &ev) == INPUT_PUSH_DROPPED) {
+        free(ev.ime.data);
+        return 0;
+    }
+    return len;
+}
+
 bool input_queue_take(struct input_queue *q, struct input_event *out)
 {
     if (!q || !out || q->head == q->tail) return false;
@@ -171,6 +239,20 @@ void input_event_release(struct input_event *ev)
         free(ev->key.text_utf8);
         ev->key.text_utf8 = NULL;
         ev->key.text_len = 0;
+        return;
+    }
+    if (ev && (ev->kind == INPUT_DROP || ev->kind == INPUT_DRAG)) {
+        free(ev->drop_type.mime);
+        free(ev->drop_type.data);
+        ev->drop_type.mime = NULL;
+        ev->drop_type.data = NULL;
+        ev->drop_type.len = 0;
+        return;
+    }
+    if (ev && ev->kind == INPUT_IME) {
+        free(ev->ime.data);
+        ev->ime.data = NULL;
+        ev->ime.len = 0;
         return;
     }
     if (!ev || (ev->kind != INPUT_PASTE && ev->kind != INPUT_DROP_FILES)) return;

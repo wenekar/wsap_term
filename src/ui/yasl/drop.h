@@ -26,13 +26,18 @@ bool drop_mime_is_uri_list(const char *mime);
  * drag leaves, and none to a widget that it stays on. */
 struct drop_hover {
     const void *target;
+    /* The widget that the last retarget left, or NULL. It gets one leave. */
+    const void *previous;
     bool active;
+    /* True after the first event on `target`. The first one is the enter. */
+    bool entered;
 };
 
 /* Sets the widget that the drag is over. Returns true when the previous
  * widget must get one leave: the drag moved to another widget, or it left the
  * surface. A move within one widget returns false. Call it with `target` NULL
- * when the drag leaves the surface. */
+ * when the drag leaves the surface. The call sets `previous` and clears
+ * `entered` on a move to another widget. */
 bool drop_hover_retarget(struct drop_hover *hover, const void *target);
 
 /* The old file path of a dropped image. A drop writes no file now, so it
