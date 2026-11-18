@@ -63,6 +63,28 @@ enum ui_accessibility_action {
     UI_ACCESSIBILITY_ACTION_DECREMENT = 1u << 5,
 };
 
+/* The text direction of the text of a node. */
+enum ui_accessibility_text_direction {
+    UI_ACCESSIBILITY_TEXT_DIRECTION_UNKNOWN = 0,
+    UI_ACCESSIBILITY_TEXT_DIRECTION_LEFT_TO_RIGHT,
+    UI_ACCESSIBILITY_TEXT_DIRECTION_RIGHT_TO_LEFT,
+    UI_ACCESSIBILITY_TEXT_DIRECTION_TOP_TO_BOTTOM,
+    UI_ACCESSIBILITY_TEXT_DIRECTION_BOTTOM_TO_TOP,
+};
+
+/* A text provider answers a range of document text on demand. The provider
+ * holds the document and no copy of the text. A large document then costs
+ * memory one time. A node shows the range that starts at `text_offset` and
+ * holds `text_length` bytes. */
+struct ui_accessibility_text_provider {
+    void *instance;
+    /* Returns the byte length of the whole document. */
+    size_t (*length)(void *instance);
+    /* Copies at most `capacity` bytes at `offset` to `out`. Returns the byte
+     * count of the copy. */
+    size_t (*read)(void *instance, size_t offset, char *out, size_t capacity);
+};
+
 struct ui_accessibility_node {
     uint64_t id;
     uint64_t parent_id;
@@ -77,6 +99,15 @@ struct ui_accessibility_node {
     size_t caret_offset;
     size_t selection_start;
     size_t selection_end;
+    const struct ui_accessibility_text_provider *text;
+    /* The first byte of the node range in the provider document. */
+    size_t text_offset;
+    /* The byte count of the node range. SIZE_MAX keeps the rest of the
+     * document. */
+    size_t text_length;
+    enum ui_accessibility_text_direction text_direction;
+    /* The number of nodes that name this node as their parent. */
+    uint32_t child_count;
 };
 
 struct ui_accessibility_node_spec {
@@ -93,6 +124,10 @@ struct ui_accessibility_node_spec {
     size_t caret_offset;
     size_t selection_start;
     size_t selection_end;
+    const struct ui_accessibility_text_provider *text;
+    size_t text_offset;
+    size_t text_length;
+    enum ui_accessibility_text_direction text_direction;
 };
 
 struct ui_accessibility_tree {
@@ -112,6 +147,38 @@ void ui_accessibility_tree_destroy(struct ui_accessibility_tree *tree);
 const struct ui_accessibility_node *
 ui_accessibility_tree_find(const struct ui_accessibility_tree *tree,
                            uint64_t id);
+
+/* Returns the byte length of the text of `node`. A provider node reports the
+ * length of its range. */
+size_t ui_accessibility_node_text_length(const struct ui_accessibility_node *node);
+
+/* Copies at most `capacity` bytes of the text of `node` at `offset` to `out`.
+ * Returns the byte count of the copy. A provider node reads only its range. */
+size_t ui_accessibility_node_text_read(const struct ui_accessibility_node *node,
+                                       size_t offset, char *out,
+                                       size_t capacity);
+
+/* Holds the nodes that a publish must send. */
+struct ui_accessibility_publish_set {
+    uint64_t *ids;
+    size_t count;
+    size_t capacity;
+    size_t *index;
+    size_t index_capacity;
+};
+
+/* Fills `set` with the nodes that a publish of `next` must send. A node goes
+ * out when it is new, when a field changed, or when its child list changed.
+ * A publish without a previous tree sends every node. The provider document
+ * bytes do not count as a change. */
+bool ui_accessibility_publish_set_build(
+    const struct ui_accessibility_tree *previous,
+    const struct ui_accessibility_tree *next,
+    struct ui_accessibility_publish_set *set);
+bool ui_accessibility_publish_set_has(
+    const struct ui_accessibility_publish_set *set, uint64_t id);
+void ui_accessibility_publish_set_destroy(
+    struct ui_accessibility_publish_set *set);
 
 bool ui_accessibility_tree_build(const struct ui_widget *root,
                                  struct ui_accessibility_tree *tree);

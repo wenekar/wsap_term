@@ -154,6 +154,12 @@ static bool tree_add(struct ui_accessibility_tree *tree,
     }
     node.name = copy_string(spec->name);
     node.description = copy_string(spec->description);
+    node.text = spec->text;
+    if (node.text) {
+        node.text_offset = spec->text_offset;
+        node.text_length = spec->text_length;
+        node.text_direction = spec->text_direction;
+    }
     if ((spec->name && !node.name) ||
         (spec->description && !node.description) ||
         (spec->value && !password && !node.value)) {
@@ -164,6 +170,11 @@ static bool tree_add(struct ui_accessibility_tree *tree,
     size_t slot = index_slot(tree, node.id);
     tree->nodes[tree->count++] = node;
     tree->id_index[slot] = tree->count;
+    if (node.parent_id) {
+        size_t parent = tree->id_index[index_slot(tree, node.parent_id)];
+        if (parent)
+            tree->nodes[parent - 1].child_count++;
+    }
     return true;
 }
 
@@ -203,6 +214,184 @@ ui_accessibility_tree_find(const struct ui_accessibility_tree *tree,
         return NULL;
     size_t entry = tree->id_index[index_slot(tree, id)];
     return entry ? &tree->nodes[entry - 1] : NULL;
+}
+
+static bool node_is_provider(const struct ui_accessibility_node *node)
+{
+    return node && node->text && node->text->length && node->text->read;
+}
+
+size_t ui_accessibility_node_text_length(const struct ui_accessibility_node *node)
+{
+    if (!node)
+        return 0;
+    if (node_is_provider(node)) {
+        size_t total = node->text->length(node->text->instance);
+        if (node->text_offset >= total)
+            return 0;
+        size_t rest = total - node->text_offset;
+        return node->text_length < rest ? node->text_length : rest;
+    }
+    return node->value ? strlen(node->value) : 0;
+}
+
+size_t ui_accessibility_node_text_read(const struct ui_accessibility_node *node,
+                                       size_t offset, char *out,
+                                       size_t capacity)
+{
+    if (!out || !capacity)
+        return 0;
+    size_t length = ui_accessibility_node_text_length(node);
+    if (offset >= length)
+        return 0;
+    size_t count = length - offset;
+    if (count > capacity)
+        count = capacity;
+    if (node_is_provider(node)) {
+        size_t read = node->text->read(node->text->instance,
+                                       node->text_offset + offset, out, count);
+        return read < count ? read : count;
+    }
+    memcpy(out, node->value + offset, count);
+    return count;
+}
+
+static size_t publish_slot(const struct ui_accessibility_publish_set *set,
+                           uint64_t id)
+{
+    size_t mask = set->index_capacity - 1;
+    size_t slot = (size_t)hash64_finish(id) & mask;
+    while (set->index[slot] && set->ids[set->index[slot] - 1] != id)
+        slot = (slot + 1) & mask;
+    return slot;
+}
+
+bool ui_accessibility_publish_set_has(
+    const struct ui_accessibility_publish_set *set, uint64_t id)
+{
+    if (!set || !id || !set->index_capacity)
+        return false;
+    size_t entry = set->index[publish_slot(set, id)];
+    return entry && set->ids[entry - 1] == id;
+}
+
+static bool publish_reserve(struct ui_accessibility_publish_set *set,
+                            size_t count)
+{
+    if (count > set->index_capacity / 2 || !set->index_capacity) {
+        size_t capacity = set->index_capacity ? set->index_capacity : 16;
+        while (count > capacity / 2) {
+            if (capacity > SIZE_MAX / 2)
+                return false;
+            capacity *= 2;
+        }
+        if (capacity > SIZE_MAX / sizeof(*set->index))
+            return false;
+        size_t *index = calloc(capacity, sizeof(*index));
+        if (!index)
+            return false;
+        free(set->index);
+        set->index = index;
+        set->index_capacity = capacity;
+        for (size_t i = 0; i < set->count; i++)
+            set->index[publish_slot(set, set->ids[i])] = i + 1;
+    }
+    if (count > set->capacity) {
+        size_t capacity = set->capacity ? set->capacity : 8;
+        while (capacity < count) {
+            if (capacity > SIZE_MAX / 2)
+                return false;
+            capacity *= 2;
+        }
+        if (capacity > SIZE_MAX / sizeof(*set->ids))
+            return false;
+        uint64_t *ids = realloc(set->ids, capacity * sizeof(*ids));
+        if (!ids)
+            return false;
+        set->ids = ids;
+        set->capacity = capacity;
+    }
+    return true;
+}
+
+static bool publish_add(struct ui_accessibility_publish_set *set, uint64_t id)
+{
+    if (!id || ui_accessibility_publish_set_has(set, id))
+        return true;
+    if (!publish_reserve(set, set->count + 1))
+        return false;
+    set->ids[set->count++] = id;
+    set->index[publish_slot(set, id)] = set->count;
+    return true;
+}
+
+static bool same_text(const char *a, const char *b)
+{
+    return a == b || (a && b && strcmp(a, b) == 0);
+}
+
+/* A provider node compares by range. The document bytes stay out of the
+ * compare, so a changed document costs no full read. */
+static bool node_changed(const struct ui_accessibility_node *old,
+                         const struct ui_accessibility_node *node)
+{
+    return old->parent_id != node->parent_id || old->order != node->order ||
+           old->role != node->role || old->states != node->states ||
+           old->actions != node->actions ||
+           !rect2i_eq(old->bounds, node->bounds) ||
+           old->caret_offset != node->caret_offset ||
+           old->selection_start != node->selection_start ||
+           old->selection_end != node->selection_end ||
+           old->text != node->text || old->text_offset != node->text_offset ||
+           old->text_length != node->text_length ||
+           old->text_direction != node->text_direction ||
+           old->child_count != node->child_count ||
+           !same_text(old->name, node->name) ||
+           !same_text(old->description, node->description) ||
+           !same_text(old->value, node->value);
+}
+
+bool ui_accessibility_publish_set_build(
+    const struct ui_accessibility_tree *previous,
+    const struct ui_accessibility_tree *next,
+    struct ui_accessibility_publish_set *set)
+{
+    if (!next || !set)
+        return false;
+    for (size_t i = 0; i < next->count; i++)
+        if (!publish_add(set, next->nodes[i].id))
+            return false;
+    if (!previous || !previous->count)
+        return true;
+
+    /* An update cannot remove a node. A removed node then costs a full
+     * publish. */
+    for (size_t i = 0; i < previous->count; i++)
+        if (!ui_accessibility_tree_find(next, previous->nodes[i].id))
+            return true;
+
+    ui_accessibility_publish_set_destroy(set);
+    for (size_t i = 0; i < next->count; i++) {
+        const struct ui_accessibility_node *node = &next->nodes[i];
+        const struct ui_accessibility_node *old =
+            ui_accessibility_tree_find(previous, node->id);
+        if (old && !node_changed(old, node))
+            continue;
+        if (!publish_add(set, node->id) ||
+            (node->parent_id && !publish_add(set, node->parent_id)))
+            return false;
+    }
+    return true;
+}
+
+void ui_accessibility_publish_set_destroy(
+    struct ui_accessibility_publish_set *set)
+{
+    if (!set)
+        return;
+    free(set->ids);
+    free(set->index);
+    *set = (struct ui_accessibility_publish_set){0};
 }
 
 static bool widget_visible(const struct ui_widget *widget)

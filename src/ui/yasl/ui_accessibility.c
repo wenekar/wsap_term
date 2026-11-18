@@ -280,7 +280,8 @@ void window_accessibility_publish(struct window *window)
             continue;
         if (!ui_accessibility_provider_is_active(&popup_accessibility->provider))
             continue;
-        ui_surface_prepare(&popup->ui);
+        /* The frame path already prepared the popup. A prepare here would
+         * run layout a second time inside the publish. */
         if (!ui_accessibility_tree_build(&popup->root,
                                          &popup_accessibility->tree))
             continue;
