@@ -66,15 +66,6 @@ while IFS= read -r file; do
     fi
 done < <(find src/ui/widgets -name '*.[chm]' | sort)
 
-# The editor library sits above base and below ui. It has no window system,
-# terminal core, or UI core dependency.
-while IFS= read -r file; do
-    if grep -nE '#include [<"](yasl/|ui/)|wsap_vtcore' "$file"; then
-        echo "$file: the editor library uses a layer above it" >&2
-        status=1
-    fi
-done < <(find src/editor -name '*.[chm]' | sort)
-
 # The runtime library sits above render and ui_yasl. The lower layers may not
 # use it. It uses the window UI API and the window host, not their internals.
 while IFS= read -r file; do
@@ -83,15 +74,6 @@ while IFS= read -r file; do
         status=1
     fi
 done < <({ find src/ui src/render -name '*.[chm]'; } | sort)
-
-# The editor view sits above the UI toolkit and the editor document model. The
-# lower libraries may not use it.
-while IFS= read -r file; do
-    if grep -n '#include "editor_view/' "$file"; then
-        echo "$file: a lower library uses the editor view" >&2
-        status=1
-    fi
-done < <({ find src/ui src/theme src/render -name '*.[chm]'; } | sort)
 
 # The render library draws a grid through render/grid.h. The terminal grid
 # renderer sits above it and owns the terminal frame and the VT cells. The

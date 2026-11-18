@@ -13,7 +13,6 @@ RANKS = {
     "util": 1,
     "platform": 1,
     "loop": 1,
-    "editor": 2,
     "pty": 4,
     "session": 5,
     "input": 6,
@@ -21,7 +20,6 @@ RANKS = {
     "font": 8,
     "ui": 9,
     "theme": 10,
-    "editor_view": 10.5,
     "render": 11,
     "terminal/render": 12,
     "render/term_frame.h": 12,
@@ -43,7 +41,6 @@ PRIVATE_ALLOW = {
 }
 LIBRARY_PATHS = {
     "base": ("util", "platform", "loop"),
-    "editor": ("editor",),
     "pty": ("pty",),
     "session": ("session",),
     "input": ("input",),
@@ -51,7 +48,6 @@ LIBRARY_PATHS = {
     "font": ("font",),
     "ui": ("ui",),
     "theme": ("theme",),
-    "editor_view": ("editor_view",),
     "render": ("render",),
     "render_term": ("terminal/render", "render/term_frame.h"),
     "ui_yasl": ("ui/yasl",),
@@ -61,7 +57,6 @@ LIBRARY_PATHS = {
 }
 ALLOWED_DEPENDENCIES = {
     "base": set(),
-    "editor": {"base"},
     "pty": {"base"},
     "session": {"pty", "base"},
     "input": {"base"},
@@ -69,7 +64,6 @@ ALLOWED_DEPENDENCIES = {
     "font": {"paint", "base"},
     "ui": {"paint", "input", "base"},
     "theme": {"ui", "base"},
-    "editor_view": {"base", "editor", "paint", "font", "ui", "theme"},
     "render": {"paint", "font", "base"},
     "render_term": {"render", "paint", "font", "base"},
     "ui_yasl": {"paint", "input", "ui", "font", "base"},
@@ -77,8 +71,8 @@ ALLOWED_DEPENDENCIES = {
     "runtime": {"base", "paint", "font", "ui", "render", "render_term", "ui_yasl"},
     "app": {"base", "pty", "session", "input", "paint", "font", "ui", "theme", "render", "render_term", "ui_yasl", "terminal", "runtime"},
 }
-# Libraries that may include yasl headers. The editor is not one of them: it
-# has no window system dependency.
+# Libraries that may include yasl headers. The pure toolkit libraries have no
+# window system dependency.
 YASL_LIBRARIES = {"base", "pty", "session", "ui_yasl", "terminal", "runtime", "app"}
 YASL_PREFIX = "yasl/"
 INCLUDE = re.compile(r'^\s*#\s*include\s*["<]([^">]+)[">]')
@@ -241,18 +235,6 @@ def self_test() -> int:
             return 1
         if any("ui/yasl/native.c" in error for error in errors):
             print("self-test failed: ui_yasl may not include yasl", file=sys.stderr)
-            return 1
-        (src / "editor").mkdir()
-        (src / "editor" / "note.c").write_text(
-            '#include "yasl/yasl.h"\n'
-            '#include "ui/public.h"\n'
-        )
-        errors = scan(src)
-        if not any("editor may not include yasl: yasl/yasl.h" in error for error in errors):
-            print("self-test failed: editor may not include yasl", file=sys.stderr)
-            return 1
-        if not any("rank 2 (editor) includes rank 9 (ui)" in error for error in errors):
-            print("self-test failed: editor rank violation was not rejected", file=sys.stderr)
             return 1
         for directory in ("ui/yasl", "app"):
             (src / directory).mkdir(parents=True, exist_ok=True)

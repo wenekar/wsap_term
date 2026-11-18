@@ -4,7 +4,6 @@ build_app = get_option('app')
 subdir('util')
 subdir('platform')
 subdir('loop')
-subdir('editor')
 subdir('pty')
 subdir('session')
 subdir('input')
@@ -12,7 +11,6 @@ subdir('paint')
 subdir('font')
 subdir('ui')
 subdir('theme')
-subdir('editor_view')
 subdir('render')
 if build_app
     subdir('terminal')
@@ -25,13 +23,6 @@ base_lib = static_library(
     util_src + platform_src + loop_src,
     include_directories: inc,
     dependencies: [thread_dep, dl_dep, yyjson_dep, yasl_dep] + platform_deps,
-    install: install_framework,
-)
-
-editor_lib = static_library(
-    'wsap-editor',
-    editor_src,
-    include_directories: inc,
     install: install_framework,
 )
 
@@ -98,17 +89,6 @@ theme_lib = static_library(
     install: install_framework,
 )
 
-# The code-editor view. It sits above the UI toolkit and the editor document
-# model, and it owns the retained rows of the visible text.
-editor_view_lib = static_library(
-    'wsap-editor-view',
-    editor_view_src,
-    link_with: [base_lib, editor_lib, paint_lib, font_lib, ui_lib, theme_lib],
-    include_directories: inc,
-    dependencies: [m_dep],
-    install: install_framework,
-)
-
 render_lib = static_library(
     'wsap-render',
     render_src,
@@ -171,14 +151,14 @@ if build_app
         install: false,
     )
 
-    wsap_libs = [base_lib, editor_lib, pty_lib, session_lib, input_lib, paint_lib, font_lib, ui_lib, theme_lib, editor_view_lib, render_lib, render_term_lib, ui_yasl_lib, terminal_lib, runtime_lib, app_lib]
+    wsap_libs = [base_lib, pty_lib, session_lib, input_lib, paint_lib, font_lib, ui_lib, theme_lib, render_lib, render_term_lib, ui_yasl_lib, terminal_lib, runtime_lib, app_lib]
 else
-    wsap_libs = [base_lib, editor_lib, input_lib, paint_lib, font_lib, ui_lib, theme_lib, editor_view_lib, render_lib]
+    wsap_libs = [base_lib, input_lib, paint_lib, font_lib, ui_lib, theme_lib, render_lib]
 endif
 
 # The installable framework SDK. Each library gets a dependency that a
-# subproject or an installed pkg-config consumer can use. The terminal app and
-# a future editor binary stay outside this set.
+# subproject or an installed pkg-config consumer can use. The terminal app
+# stays outside this set.
 framework_specs = [
     {
         'name': 'wsap-base',
@@ -187,14 +167,6 @@ framework_specs = [
         'uses': ['yyjson'],
         'private_libs': ['-pthread', '-ldl', '-lm'],
         'external': [thread_dep, dl_dep, m_dep, yyjson_dep] + platform_deps,
-    },
-    {
-        'name': 'wsap-editor',
-        'lib': editor_lib,
-        'description': 'Document model of the WSAP editor',
-        'uses': [],
-        'private_libs': [],
-        'external': [],
     },
     {
         'name': 'wsap-input',
@@ -235,14 +207,6 @@ framework_specs = [
         'uses': ['wsap-base', 'wsap-ui'],
         'private_libs': ['-pthread', '-ldl', '-lm'],
         'external': lib_deps,
-    },
-    {
-        'name': 'wsap-editor-view',
-        'lib': editor_view_lib,
-        'description': 'Multiline code-editor widget of the WSAP UI framework',
-        'uses': ['wsap-base', 'wsap-editor', 'wsap-paint', 'wsap-font', 'wsap-ui', 'wsap-theme'],
-        'private_libs': ['-pthread', '-ldl', '-lm'],
-        'external': [m_dep],
     },
     {
         'name': 'wsap-render',

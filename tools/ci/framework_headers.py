@@ -18,8 +18,6 @@ SDK_DIRS = (
     "font",
     "ui",
     "theme",
-    "editor",
-    "editor_view",
     "render",
 )
 PRIVATE_DIRS = ("ui/yasl", "font/backends")
