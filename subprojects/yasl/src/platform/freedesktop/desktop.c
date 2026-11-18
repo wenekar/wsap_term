@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdio.h>
 #include <spawn.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -182,4 +183,42 @@ size_t desktop_default_locale(char *buf, size_t cap)
         if (v && *v) return copy_str(buf, cap, v);
     }
     return copy_str(buf, cap, "C.UTF-8");
+}
+
+/* An XDG folder, with its fallback under the home directory. */
+static size_t xdg_dir(const char *variable, const char *fallback, char *buf, size_t cap)
+{
+    const char *value = getenv(variable);
+    if (value && value[0] == '/') return copy_str(buf, cap, value);
+    const char *home = getenv("HOME");
+    if (!home || home[0] != '/') { errno = ENOENT; return 0; }
+    char path[4096];
+    int len = snprintf(path, sizeof(path), "%s/%s", home, fallback);
+    if (len <= 0 || (size_t)len >= sizeof(path)) { errno = ENAMETOOLONG; return 0; }
+    return copy_str(buf, cap, path);
+}
+
+size_t desktop_user_dir(enum yasl_user_dir which, char *buf, size_t cap)
+{
+    switch (which) {
+    case YASL_DIR_PREFERENCE:
+        return xdg_dir("XDG_CONFIG_HOME", ".config", buf, cap);
+    case YASL_DIR_DATA:
+        return xdg_dir("XDG_DATA_HOME", ".local/share", buf, cap);
+    case YASL_DIR_CACHE:
+        return xdg_dir("XDG_CACHE_HOME", ".cache", buf, cap);
+    case YASL_DIR_HOME: {
+        const char *home = getenv("HOME");
+        if (!home || home[0] != '/') { errno = ENOENT; return 0; }
+        return copy_str(buf, cap, home);
+    }
+    case YASL_DIR_DOCUMENTS:
+        return xdg_dir("XDG_DOCUMENTS_DIR", "Documents", buf, cap);
+    case YASL_DIR_DOWNLOADS:
+        return xdg_dir("XDG_DOWNLOAD_DIR", "Downloads", buf, cap);
+    case YASL_DIR_DESKTOP:
+        return xdg_dir("XDG_DESKTOP_DIR", "Desktop", buf, cap);
+    }
+    errno = EINVAL;
+    return 0;
 }

@@ -78,6 +78,8 @@ struct yasl_surface_options {
     int width, height; /**< Required. */
     enum yasl_surface_type type;
     bool undecorated, fixed_size, tearing;
+    /** Ask for these states at creation; a WINDOW event reports the result. */
+    bool fullscreen, maximized, hidden;
     void *userdata;
     /** Called when the window needs drawing while the system blocks the event
      * loop, as during a macOS live resize; draw and present before returning.
@@ -118,6 +120,37 @@ YASL_API int yasl_surface_set_title(yasl_surface *surface, const char *title);
 enum yasl_request { YASL_REQUEST_RESTORE, YASL_REQUEST_FULLSCREEN, YASL_REQUEST_MAXIMIZE, YASL_REQUEST_MINIMIZE };
 YASL_API int yasl_surface_request(yasl_surface *surface, enum yasl_request request);
 YASL_API int yasl_surface_request_size(yasl_surface *surface, int width, int height);
+/** Puts the window so that its upper left corner is at (x, y) in logical
+ * screen units. ENOTSUP where the platform places windows itself. */
+YASL_API int yasl_surface_set_position(yasl_surface *surface, int x, int y);
+/** Writes the logical screen position of the window and returns 0, or returns a
+ * negative errno and changes nothing. ENOTSUP when the position is unknown. */
+YASL_API int yasl_surface_get_position(const yasl_surface *surface, int *x, int *y);
+/** Limits the size that the user can resize the window to, in logical units. A
+ * zero minimum or maximum means no limit on that axis. A maximum below the
+ * minimum is an EINVAL error. */
+YASL_API int yasl_surface_set_size_limits(yasl_surface *surface, int min_width,
+                                          int min_height, int max_width, int max_height);
+/** Locks the width to height ratio of the user's resize to numerator : denominator.
+ * Zero for both restores free resizing. */
+YASL_API int yasl_surface_set_aspect_ratio(yasl_surface *surface, int numerator,
+                                           int denominator);
+/** Maps a point in the window, in logical units, to logical screen units. It
+ * returns 0, or a negative errno with the outputs unchanged. ENOTSUP when the
+ * platform does not report window placement. */
+YASL_API int yasl_surface_client_to_screen(const yasl_surface *surface, double x, double y,
+                                           double *screen_x, double *screen_y);
+/** Sets how opaque the window is, from 0.0 to 1.0; 1.0 is the default. The
+ * platform may refuse the value, and the window then stays at its last value. */
+YASL_API int yasl_surface_set_opacity(yasl_surface *surface, double opacity);
+/** Shows or hides the window without destroying it. A hidden window gets no
+ * REFRESH events. */
+YASL_API int yasl_surface_set_visible(yasl_surface *surface, bool visible);
+/** Keeps the window above other windows, or stops it, where the platform has a
+ * stacking layer for it. */
+YASL_API int yasl_surface_set_always_on_top(yasl_surface *surface, bool enabled);
+/** Keeps the window out of the taskbar and window list, or stops it. */
+YASL_API int yasl_surface_set_skip_taskbar(yasl_surface *surface, bool enabled);
 /** Asks for a REFRESH after the next frame is shown. A frame presented after
  * the request, in the same callback, is that frame, so an animation can ask
  * before it draws. The platform answers at its next display callback, or one
@@ -262,6 +295,8 @@ enum yasl_event_type {
      * fails with ENOTCONN once no event is left. */
     YASL_EVENT_DISPLAY_LOST,
     YASL_EVENT_DISPLAY_RESTORED,
+    YASL_EVENT_MONITORS_CHANGED, /**< A monitor was added, removed, or changed. It
+                                  * has no payload, so query the monitors again. */
     YASL_EVENT_USER        /**< user: a message from yasl_post_user_event. */
 };
 enum yasl_key_action { YASL_KEY_PRESS, YASL_KEY_RELEASE, YASL_KEY_REPEAT };
@@ -478,6 +513,76 @@ YASL_API int yasl_surface_get_native(const yasl_surface *surface, struct yasl_na
 /** NATIVE surfaces on macOS: the view's CAMetalLayer, reserving the surface for
  * Metal. YASL sizes it; choose the device and format, and present yourself. */
 YASL_API void *yasl_metal_get_layer(yasl_surface *surface);
+
+/* Monitors */
+/** Clockwise rotation of the content of a monitor, in degrees. */
+enum yasl_orientation {
+    YASL_ORIENTATION_0, YASL_ORIENTATION_90, YASL_ORIENTATION_180, YASL_ORIENTATION_270
+};
+#define YASL_MONITOR_NAME_MAX 64
+/** Bounds and workareas are in logical screen units. The workarea is the part
+ * of the bounds that no system panel or dock covers. A physical size of zero is
+ * unknown. dpi is the physical dot density and scale the logical factor. */
+struct yasl_monitor_info {
+    char name[YASL_MONITOR_NAME_MAX];
+    int x, y, width, height;
+    int work_x, work_y, work_width, work_height;
+    int physical_width_mm, physical_height_mm;
+    double scale, dpi, refresh_hz;
+    enum yasl_orientation orientation;
+    bool primary;
+};
+/** Counts the monitors of the display. It returns 0 before yasl_init and when
+ * the platform reports no monitor. */
+YASL_API int yasl_get_monitor_count(void);
+/** Writes the monitor at index, from 0 below yasl_get_monitor_count(). It
+ * returns 0, or a negative errno: EINVAL for a bad index or a NULL out, ENOTSUP
+ * when this platform cannot list monitors. */
+YASL_API int yasl_get_monitor(int index, struct yasl_monitor_info *out);
+/** Writes the primary monitor. It returns 0, or a negative errno: ENOTSUP when
+ * the platform cannot list monitors, ENOENT when it reports no primary one. */
+YASL_API int yasl_get_primary_monitor(struct yasl_monitor_info *out);
+
+/* Files */
+/** Standard folders of the user. PREFERENCE, DATA and CACHE belong to the app
+ * and use its app ID. The others belong to the user. */
+enum yasl_user_dir {
+    YASL_DIR_PREFERENCE, YASL_DIR_DATA, YASL_DIR_CACHE,
+    YASL_DIR_HOME, YASL_DIR_DOCUMENTS, YASL_DIR_DOWNLOADS, YASL_DIR_DESKTOP
+};
+/** Returns the folder path length, or 0 with errno. Writes it with a NUL only
+ * if capacity exceeds the length, and creates none of the folders. YASL does
+ * not create them. Thread-safe. */
+YASL_API size_t yasl_get_user_dir(enum yasl_user_dir which, char *out, size_t capacity);
+/** Size in bytes and modification time in nanoseconds since the epoch. */
+struct yasl_file_info {
+    uint64_t size;
+    int64_t modified_ns;
+    bool is_file, is_dir, is_symlink; /**< is_symlink describes the link itself. */
+};
+/** Reads the state of path, which may be relative to the working directory. It
+ * follows symbolic links. It returns 0, or a negative errno such as ENOENT. */
+YASL_API int yasl_file_stat(const char *path, struct yasl_file_info *out);
+typedef struct yasl_dir yasl_dir;
+#define YASL_DIR_NAME_MAX 256
+struct yasl_dir_entry {
+    char name[YASL_DIR_NAME_MAX];
+    struct yasl_file_info info;
+};
+/** Opens a directory for listing; NULL with errno. The dot entries are skipped.
+ * One listing can be open more than once. Destroy it with yasl_dir_close. */
+YASL_API yasl_dir *yasl_dir_open(const char *path);
+/** Reads the next entry into out. It returns 1 for an entry, 0 at the end, or a
+ * negative errno. A name that does not fit is skipped. */
+YASL_API int yasl_dir_next(yasl_dir *dir, struct yasl_dir_entry *out);
+/** Also valid for NULL. */
+YASL_API void yasl_dir_close(yasl_dir *dir);
+/** Loads the file name of an app asset into memory, with a NUL after the data.
+ * It looks in the app bundle's resource directory, then next to the executable,
+ * then in the working directory. On success returns 0, sets *data to a buffer
+ * of *size bytes that free() releases, and *size to the length. Returns ENOENT
+ * when no such asset exists, or another negative errno. Thread-safe. */
+YASL_API int yasl_load_asset(const char *name, void **data, size_t *size);
 
 /* Desktop */
 enum yasl_appearance { YASL_APPEARANCE_DARK = 1, YASL_APPEARANCE_LIGHT = 2, YASL_APPEARANCE_HIGH_CONTRAST = 4 };

@@ -258,6 +258,20 @@ struct yasl_private_backend_ops {
     void *(*surface_get_native_handle)(struct yasl_surface *s);
     bool (*surface_get_native_frame)(struct yasl_surface *s,
             const struct yasl_private_framebuffer *target, struct yasl_private_native_frame *out);
+    /* Optional window controls; NULL means ENOTSUP. Positions and sizes are
+     * logical units. A monitor count of 0 means that the platform lists none. */
+    bool (*surface_set_position)(struct yasl_surface *s, struct yasl_private_vector2i pos);
+    bool (*surface_get_position)(const struct yasl_surface *s, struct yasl_private_vector2i *out);
+    bool (*surface_set_size_limits)(struct yasl_surface *s,
+            struct yasl_private_vector2i min, struct yasl_private_vector2i max);
+    bool (*surface_set_aspect)(struct yasl_surface *s, struct yasl_private_vector2i ratio);
+    bool (*surface_set_opacity)(struct yasl_surface *s, double opacity);
+    bool (*surface_set_visible)(struct yasl_surface *s, bool visible);
+    bool (*surface_set_always_on_top)(struct yasl_surface *s, bool enabled);
+    bool (*surface_set_skip_taskbar)(struct yasl_surface *s, bool enabled);
+    /* Fills up to capacity monitors and returns how many the display has. */
+    int (*display_monitors)(struct yasl_private_display *d,
+            struct yasl_monitor_info *out, int capacity);
 };
 
 #if YASL_HAS_VULKAN

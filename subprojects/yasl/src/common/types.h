@@ -374,6 +374,7 @@ enum yasl_private_event_type {
     YASL_PRIVATE_EVENT_TEXT_EDIT,
     YASL_PRIVATE_EVENT_REFRESH, /**< No payload; surface contents are needed. */
     YASL_PRIVATE_EVENT_DISPLAY_RESTORED, /**< No payload; display reconnected after DISPLAY_LOST. */
+    YASL_PRIVATE_EVENT_MONITORS, /**< No payload; the monitor set or its geometry changed. */
 };
 
 /** Physical keyboard transition with optional layout labels.

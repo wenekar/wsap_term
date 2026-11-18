@@ -1,4 +1,4 @@
-sources += files('backend.c', 'desktop.c', 'events.c', 'input.c', 'native.c', 'timing.c', 'uri.c', 'utf8.c', 'surface.c', 'gl_options.c')
+sources += files('backend.c', 'desktop.c', 'events.c', 'input.c', 'native.c', 'timing.c', 'uri.c', 'utf8.c', 'surface.c', 'gl_options.c', 'controls.c')
 if has_vulkan
     sources += files('vulkan.c')
     # The application passes PFN_vkGetInstanceProcAddr, so yasl needs only the
