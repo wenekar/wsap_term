@@ -237,6 +237,116 @@ static void drain_display_events(struct yasl_private_display *display)
     while (yasl_private_display_poll_event(display, &event)) {}
 }
 
+static struct yasl_private_event next_type(struct yasl_private_display *display,
+        enum yasl_private_event_type type)
+{
+    struct yasl_private_event event;
+    for (int i = 0; i < 256 && yasl_private_display_poll_event(display, &event); i++)
+        if (event.type == type) return event;
+    assert(!"expected event type was not queued");
+    return (struct yasl_private_event){0};
+}
+
+static void key_press(struct x11_surface *s, unsigned code, unsigned state, bool release)
+{
+    struct x11_display *d = (struct x11_display *)s->base.display;
+    XKeyEvent event = {.type = release ? KeyRelease : KeyPress, .display = d->native,
+        .window = s->window, .keycode = code, .state = state};
+    key_event(s, &event, false);
+}
+
+/* The backend reports which keys inserted text, which modifiers text input
+ * consumed, and that a dead key starts and ends a composition. */
+static void check_key_events(struct yasl_private_display *display, struct x11_surface *s)
+{
+    struct x11_display *d = (struct x11_display *)display;
+    unsigned a = XKeysymToKeycode(d->native, XK_a);
+    unsigned e = XKeysymToKeycode(d->native, XK_e);
+    assert(a && e);
+    drain_display_events(display);
+
+    key_press(s, a, 0, false);
+    struct yasl_private_event key = next_type(display, YASL_PRIVATE_EVENT_KEY);
+    assert(key.key.text_input == YASL_KEY_TEXT_COMMIT && key.key.text_id);
+    struct yasl_private_event text = next_type(display, YASL_PRIVATE_EVENT_TEXT);
+    assert(text.text.text_key_id == key.key.text_id && !strcmp(text.text.data, "a"));
+    key_press(s, a, 0, true);
+    key = next_type(display, YASL_PRIVATE_EVENT_KEY);
+    assert(key.key.action == YASL_KEY_RELEASE && key.key.text_input == YASL_KEY_TEXT_COMMIT);
+    assert(key.key.text_id == 0 && key.key.consumed_mods == 0);
+
+    /* Alt does not consume the text, and it no longer suppresses it. */
+    key_press(s, a, Mod1Mask, false);
+    key = next_type(display, YASL_PRIVATE_EVENT_KEY);
+    assert(key.key.mods & YASL_PRIVATE_MOD_ALT && key.key.text_input == YASL_KEY_TEXT_COMMIT);
+    assert(key.key.consumed_mods == 0);
+    text = next_type(display, YASL_PRIVATE_EVENT_TEXT);
+    assert(!strcmp(text.text.data, "a"));
+    key_press(s, a, Mod1Mask, true);
+    (void)next_type(display, YASL_PRIVATE_EVENT_KEY);
+
+    /* Ctrl still suppresses text. */
+    key_press(s, a, ControlMask, false);
+    key = next_type(display, YASL_PRIVATE_EVENT_KEY);
+    assert(key.key.text_input == YASL_KEY_TEXT_NONE && key.key.text_id == 0);
+    assert(!yasl_private_display_poll_event(display, &text));
+    key_press(s, a, ControlMask, true);
+    (void)next_type(display, YASL_PRIVATE_EVENT_KEY);
+
+    /* Dead key compose: the dead key shows a preedit, the next key commits the
+     * composed character with a text identity. */
+    struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    struct xkb_compose_table *table = context
+        ? xkb_compose_table_new_from_locale(context, "C.UTF-8", XKB_COMPOSE_COMPILE_NO_FLAGS)
+        : NULL;
+    struct xkb_compose_state *state = table
+        ? xkb_compose_state_new(table, XKB_COMPOSE_STATE_NO_FLAGS) : NULL;
+    if (state) {
+        if (d->compose_state) xkb_compose_state_unref(d->compose_state);
+        if (d->compose_table) xkb_compose_table_unref(d->compose_table);
+        if (d->xkb_context) xkb_context_unref(d->xkb_context);
+        d->xkb_context = context;
+        d->compose_table = table;
+        d->compose_state = state;
+        int width = 0;
+        KeySym *saved = XGetKeyboardMapping(d->native, a, 1, &width);
+        assert(saved && width >= 2);
+        KeySym *symbols = calloc((size_t)width, sizeof(*symbols));
+        assert(symbols);
+        symbols[0] = symbols[1] = XK_dead_acute;
+        XChangeKeyboardMapping(d->native, a, width, symbols, 1);
+        XSync(d->native, False);
+        dispatch(display);
+        drain_display_events(display);
+
+        key_press(s, a, 0, false);
+        struct yasl_private_event composition = next_type(display, YASL_PRIVATE_EVENT_COMPOSITION);
+        assert(composition.composition.active && !strcmp(composition.composition.data, "\xc2\xb4"));
+        key = next_type(display, YASL_PRIVATE_EVENT_KEY);
+        assert(key.key.text_input == YASL_KEY_TEXT_COMPOSITION && key.key.text_id == 0);
+        key_press(s, e, 0, false);
+        composition = next_type(display, YASL_PRIVATE_EVENT_COMPOSITION);
+        assert(!composition.composition.active);
+        key = next_type(display, YASL_PRIVATE_EVENT_KEY);
+        assert(key.key.text_input == YASL_KEY_TEXT_COMPOSITION && key.key.text_id == 0);
+        text = next_type(display, YASL_PRIVATE_EVENT_TEXT);
+        assert(text.text.text_key_id && !strcmp(text.text.data, "\xc3\xa9"));
+        key_press(s, e, 0, true);
+        key = next_type(display, YASL_PRIVATE_EVENT_KEY);
+        assert(key.key.text_input == YASL_KEY_TEXT_COMPOSITION);
+
+        XChangeKeyboardMapping(d->native, a, width, saved, 1);
+        XSync(d->native, False);
+        dispatch(display);
+        free(symbols);
+        XFree(saved);
+    } else {
+        xkb_context_unref(context);
+        if (table) xkb_compose_table_unref(table);
+    }
+    drain_display_events(display);
+}
+
 static void check_xim_callbacks(struct yasl_private_display *display, struct x11_surface *s)
 {
     const char *old_locale = setlocale(LC_CTYPE, NULL);
@@ -377,6 +487,7 @@ int main(void)
     XSync(d->native, False);
     free(symbols);
     XFree(saved);
+    check_key_events(base, s);
     s->ic = saved_ic;
     check_selection_encoding(d, s);
     check_double_click(d);
@@ -385,6 +496,7 @@ int main(void)
 
     /* Test CSD interactive actions, window menu, and IME caret */
     assert(yasl_private_display_caps(base) & YASL_PRIVATE_CAP_CSD);
+    assert(yasl_private_display_caps(base) & YASL_PRIVATE_CAP_TEXT_INPUT);
     yasl_private_surface_set_ime_caret(surface, (struct yasl_private_rect2i){10, 20, 2, 16});
     assert(yasl_private_surface_ime_preedit(surface) == NULL);
     int begin = -1, end = -1;

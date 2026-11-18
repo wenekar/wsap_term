@@ -28,7 +28,9 @@
 #if YASL_HAS_XRANDR
 #include <X11/extensions/Xrandr.h>
 #endif
+#include <locale.h>
 #include <xkbcommon/xkbcommon.h>
+#include <xkbcommon/xkbcommon-compose.h>
 
 #include <assert.h>
 #include <dlfcn.h>
@@ -781,6 +783,17 @@ struct x11_display {
         char mime[YASL_PRIVATE_DROP_MIME_MAX]; /* The picked type, by name. */
     } xdnd;
     uint16_t keys[256];
+    /* Text ownership of the key press for the matching release. */
+    enum yasl_key_text key_text[256];
+    uint32_t key_consumed[256];
+    uint64_t text_key_id;
+    struct xkb_context *xkb_context;
+    struct xkb_compose_table *compose_table;
+    struct xkb_compose_state *compose_state;
+    struct x11_surface *compose_surface;
+    char compose_preedit[64];
+    size_t compose_len;
+    bool composing;
     int screen;
     int watch;
     int depth;
@@ -1791,6 +1804,12 @@ static void surface_destroy(struct yasl_surface *base)
     }
     if (d->xdnd.surface == s)
         d->xdnd.surface = NULL;
+    if (d->compose_surface == s) {
+        d->compose_surface = NULL;
+        d->composing = false;
+        d->compose_len = 0;
+        d->compose_preedit[0] = '\0';
+    }
     for (struct x11_surface *p = d->surfaces; p; p = p->next) {
         if (p->parent == s) p->parent = NULL;
     }
@@ -3167,8 +3186,11 @@ static bool paste_incr_property(struct x11_display *d, const XPropertyEvent *ev)
     return true;
 }
 
+static void compose_reset(struct x11_display *d, bool notify);
+
 static void refresh_keyboard(struct x11_display *d)
 {
+    compose_reset(d, true);
     memset(d->keys, 0, sizeof(d->keys));
     if (!d->has_xkb) return;
     XkbDescPtr keyboard = XkbGetKeyboard(d->native, XkbAllComponentsMask, XkbUseCoreKbd);
@@ -3178,6 +3200,89 @@ static void refresh_keyboard(struct x11_display *d)
             d->keys[code] = (uint16_t)yasl_private_key_from_xkb_name(keyboard->names->keys[code].name);
     }
     XkbFreeKeyboard(keyboard, XkbAllComponentsMask, True);
+}
+
+/* The keys of an active composition. A dead key has no Unicode value, so the
+ * preedit shows the mark that the key adds. */
+static const char *dead_key_text(xkb_keysym_t sym)
+{
+    switch (sym) {
+    case XKB_KEY_dead_grave: return "`";
+    case XKB_KEY_dead_acute: return "´";
+    case XKB_KEY_dead_circumflex: return "^";
+    case XKB_KEY_dead_tilde: return "~";
+    case XKB_KEY_dead_macron: return "¯";
+    case XKB_KEY_dead_breve: return "˘";
+    case XKB_KEY_dead_abovedot: return "˙";
+    case XKB_KEY_dead_diaeresis: return "¨";
+    case XKB_KEY_dead_abovering: return "˚";
+    case XKB_KEY_dead_doubleacute: return "˝";
+    case XKB_KEY_dead_caron: return "ˇ";
+    case XKB_KEY_dead_cedilla: return "¸";
+    case XKB_KEY_dead_ogonek: return "˛";
+    case XKB_KEY_dead_belowdot: return "̣";
+    default: return NULL;
+    }
+}
+
+static void compose_reset(struct x11_display *d, bool notify)
+{
+    if (d->compose_state) xkb_compose_state_reset(d->compose_state);
+    if (notify && d->composing && d->compose_surface && !d->compose_surface->destroyed)
+        yasl_private_surface_notify_composition(&d->compose_surface->base, NULL, -1, -1);
+    d->composing = false;
+    d->compose_surface = NULL;
+    d->compose_len = 0;
+    d->compose_preedit[0] = '\0';
+}
+
+static void compose_append(struct x11_display *d, const char *text)
+{
+    size_t len = text ? strlen(text) : 0;
+    if (!len || len > sizeof(d->compose_preedit) - 1 - d->compose_len) return;
+    memcpy(d->compose_preedit + d->compose_len, text, len);
+    d->compose_len += len;
+    d->compose_preedit[d->compose_len] = '\0';
+}
+
+/* The key releases no text while a compose sequence runs. Returns the compose
+ * status that the caller must report. */
+enum compose_result { COMPOSE_NONE, COMPOSE_STARTED, COMPOSE_COMMITTED, COMPOSE_CANCELLED };
+
+static enum compose_result compose_key(struct x11_surface *s, xkb_keysym_t sym,
+                                       xkb_keysym_t *composed)
+{
+    struct x11_display *d = (struct x11_display *)s->base.display;
+    if (!d->compose_state || sym == NoSymbol) return COMPOSE_NONE;
+    if (xkb_compose_state_feed(d->compose_state, sym) != XKB_COMPOSE_FEED_ACCEPTED)
+        return COMPOSE_NONE;
+    switch (xkb_compose_state_get_status(d->compose_state)) {
+    case XKB_COMPOSE_COMPOSING: {
+        const char *text = dead_key_text(sym);
+        char utf8[8] = {0};
+        if (!text) {
+            int len = xkb_keysym_to_utf8(sym, utf8, sizeof(utf8));
+            text = len > 1 ? utf8 : NULL;
+        }
+        compose_append(d, text);
+        d->composing = true;
+        d->compose_surface = s;
+        yasl_private_surface_notify_composition(&s->base, d->compose_preedit, -1, -1);
+        return COMPOSE_STARTED;
+    }
+    case XKB_COMPOSE_COMPOSED:
+        *composed = xkb_compose_state_get_one_sym(d->compose_state);
+        compose_reset(d, false);
+        yasl_private_surface_notify_composition(&s->base, NULL, -1, -1);
+        return COMPOSE_COMMITTED;
+    case XKB_COMPOSE_CANCELLED:
+        compose_reset(d, false);
+        yasl_private_surface_notify_composition(&s->base, NULL, -1, -1);
+        return COMPOSE_CANCELLED;
+    default:
+        compose_reset(d, false);
+        return COMPOSE_NONE;
+    }
 }
 
 static void key_event(struct x11_surface *s, XKeyEvent *key, bool repeat)
@@ -3200,11 +3305,38 @@ static void key_event(struct x11_surface *s, XKeyEvent *key, bool repeat)
         base = XLookupKeysym(&clean_key, 0);
         shifted = XLookupKeysym(&clean_key, 1);
     }
+    uint64_t key_id = 0;
+    enum yasl_key_text text_input = YASL_KEY_TEXT_NONE;
+    uint32_t consumed_mods = 0;
+    bool composing = false, composed = false;
+    if (key->type == KeyPress) {
+        if (++d->text_key_id == 0) ++d->text_key_id;
+        key_id = d->text_key_id;
+        if (!repeat) {
+            xkb_keysym_t composed_sym = XKB_KEY_NoSymbol;
+            enum compose_result result = compose_key(s, (xkb_keysym_t)sym, &composed_sym);
+            if (result == COMPOSE_STARTED) {
+                composing = true;
+                text_input = YASL_KEY_TEXT_COMPOSITION;
+            } else if (result == COMPOSE_COMMITTED) {
+                composed = true;
+                sym = (KeySym)composed_sym;
+                /* The key that completes a composition owns it, like Cocoa. */
+                text_input = YASL_KEY_TEXT_COMPOSITION;
+            } else if (result == COMPOSE_CANCELLED) {
+                composing = true;
+                text_input = YASL_KEY_TEXT_COMPOSITION;
+            }
+        }
+    }
     char local[128];
     char *text = local;
     int len = 0;
-    if (key->type == KeyPress) {
-        if (s->ic) {
+    if (key->type == KeyPress && !composing) {
+        if (composed) {
+            int written = xkb_keysym_to_utf8((xkb_keysym_t)sym, local, sizeof(local));
+            len = written > 0 ? written - 1 : 0;
+        } else if (s->ic) {
             Status status;
             len = Xutf8LookupString(s->ic, key, local, sizeof(local), &sym, &status);
             if (status == XBufferOverflow && len > 0 && len < TEXT_LIMIT) {
@@ -3221,6 +3353,30 @@ static void key_event(struct x11_surface *s, XKeyEvent *key, bool repeat)
             len = len > 0 ? len - 1 : 0; /* xkb includes the terminating NUL. */
         }
     }
+    /* Ctrl and Super keep their shortcut meaning and insert no text. Alt no
+     * longer suppresses text, so AltGr and layouts that use Alt can type. */
+    bool printable = len > 0 && text && (unsigned char)text[0] >= 0x20 && text[0] != 0x7f &&
+        !(d->mods & (YASL_PRIVATE_MOD_CTRL | YASL_PRIVATE_MOD_SUPER));
+    if (printable && text_input == YASL_KEY_TEXT_NONE) {
+        text_input = YASL_KEY_TEXT_COMMIT;
+        /* Modifiers that changed the produced character are consumed by text
+         * input; Alt alone passes the base character through. */
+        uint32_t text_mods = YASL_PRIVATE_MOD_ALT | YASL_PRIVATE_MOD_CTRL | YASL_PRIVATE_MOD_SUPER;
+        if (sym != base && sym != shifted) consumed_mods = d->mods & text_mods;
+    }
+    if (key->keycode < 256) {
+        if (key->type == KeyRelease) {
+            if (d->key_text[key->keycode] != YASL_KEY_TEXT_UNSPECIFIED) {
+                text_input = d->key_text[key->keycode];
+                consumed_mods = d->key_consumed[key->keycode];
+            }
+            d->key_text[key->keycode] = YASL_KEY_TEXT_UNSPECIFIED;
+            d->key_consumed[key->keycode] = 0;
+        } else {
+            d->key_text[key->keycode] = text_input;
+            d->key_consumed[key->keycode] = consumed_mods;
+        }
+    }
     uint32_t cp = xkb_keysym_to_utf32((xkb_keysym_t)base);
     push(s, (struct yasl_private_event){
         .type = YASL_PRIVATE_EVENT_KEY,
@@ -3228,12 +3384,16 @@ static void key_event(struct x11_surface *s, XKeyEvent *key, bool repeat)
                 .codepoint = yasl_private_key_label(cp), .native_code = key->keycode,
                 .shifted = yasl_private_key_label(xkb_keysym_to_utf32((xkb_keysym_t)shifted)),
                 .mods = d->mods,
+                .text_input = text_input, .consumed_mods = consumed_mods,
+                .text_id = text_input == YASL_KEY_TEXT_COMMIT ? key_id : 0,
                 .action = key->type == KeyRelease ? YASL_KEY_RELEASE :
                           repeat ? YASL_KEY_REPEAT : YASL_KEY_PRESS},
     }, NULL, 0);
-    if (len > 0 && text && (unsigned char)text[0] >= 0x20 && text[0] != 0x7f &&
-        !(d->mods & (YASL_PRIVATE_MOD_CTRL | YASL_PRIVATE_MOD_SUPER | YASL_PRIVATE_MOD_ALT)))
-        push(s, (struct yasl_private_event){.type = YASL_PRIVATE_EVENT_TEXT}, text, (size_t)len);
+    if (printable) {
+        struct yasl_private_event event = {.type = YASL_PRIVATE_EVENT_TEXT};
+        event.text.text_key_id = key_id;
+        push(s, event, text, (size_t)len);
+    }
     if (text != local) free(text);
 }
 
@@ -3455,6 +3615,11 @@ static void dispatch(struct yasl_private_display *base)
         case FocusIn: case FocusOut: {
             bool focused = event.type == FocusIn;
             s->focused = focused;
+            if (!focused) {
+                compose_reset(d, true);
+                memset(d->key_text, 0, sizeof(d->key_text));
+                memset(d->key_consumed, 0, sizeof(d->key_consumed));
+            }
             if (s->ic) {
                 if (focused && s->base.text_input_active) XSetICFocus(s->ic);
                 else XUnsetICFocus(s->ic);
@@ -3849,6 +4014,13 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
         return NULL;
     }
     d->im = XOpenIM(d->native, NULL, NULL, NULL);
+    d->xkb_context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    const char *locale = setlocale(LC_CTYPE, NULL);
+    if (d->xkb_context && locale)
+        d->compose_table = xkb_compose_table_new_from_locale(d->xkb_context, locale,
+                                                             XKB_COMPOSE_COMPILE_NO_FLAGS);
+    if (d->compose_table)
+        d->compose_state = xkb_compose_state_new(d->compose_table, XKB_COMPOSE_STATE_NO_FLAGS);
     d->selection_window = XCreateSimpleWindow(d->native,
             RootWindow(d->native, d->screen), 0, 0, 1, 1, 0, 0, 0);
 #define ATOM(field, name) d->field = XInternAtom(d->native, name, False)
@@ -3922,6 +4094,9 @@ static void display_close(struct yasl_private_display *base)
         d->base.loop = NULL;
     }
     if (d->im) XCloseIM(d->im);
+    if (d->compose_state) xkb_compose_state_unref(d->compose_state);
+    if (d->compose_table) xkb_compose_table_unref(d->compose_table);
+    if (d->xkb_context) xkb_context_unref(d->xkb_context);
     clear_pointers(d);
 #if YASL_HAS_EGL
     if (d->egl_ready) {
