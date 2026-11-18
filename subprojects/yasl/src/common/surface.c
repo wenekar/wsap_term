@@ -599,6 +599,19 @@ uint64_t yasl_surface_frame_interval_ns(const yasl_surface *s)
         return 0;
     return yasl_private_clock_refresh_ns(yasl_private_surface_timing(s).refresh_ns);
 }
+int yasl_surface_set_pacing(yasl_surface *s, enum yasl_pacing pacing)
+{
+    if (!yasl_public_surface(s, false))
+        return -errno;
+    enum yasl_private_pacing_mode mode;
+    switch (pacing) {
+    case YASL_PACING_ON_DEMAND: mode = YASL_PRIVATE_PACING_ON_DEMAND; break;
+    case YASL_PACING_CONTINUOUS: mode = YASL_PRIVATE_PACING_CONTINUOUS; break;
+    default: return yasl_public_error(EINVAL);
+    }
+    errno = 0;
+    return yasl_private_surface_set_pacing(s, mode) ? 0 : yasl_public_error(errno);
+}
 int yasl_surface_set_cursor(yasl_surface *s, enum yasl_cursor cursor)
 {
     if (!yasl_public_surface(s, false))

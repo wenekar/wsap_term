@@ -32,6 +32,7 @@ int main(void)
     assert(yasl_surface_request(fake, (enum yasl_request)9) == -ENODEV);
     assert(yasl_surface_request_size(NULL, 10, 10) == -ENODEV);
     assert(yasl_surface_set_cursor(NULL, YASL_CURSOR_ARROW) == -ENODEV);
+    assert(yasl_surface_set_pacing(NULL, YASL_PACING_CONTINUOUS) == -ENODEV);
     assert(yasl_surface_set_text_input(NULL, NULL) == -ENODEV);
     assert(yasl_surface_begin_move_resize(NULL, 0) == -ENODEV);
     assert(yasl_surface_show_window_menu(NULL, 1, 1) == -ENODEV);
