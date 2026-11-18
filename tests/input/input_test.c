@@ -1,4 +1,5 @@
 #include "util/text_limit.h"
+#include "input/command.h"
 #include "input/input.h"
 #include "input/keybind.h"
 #include <assert.h>
@@ -98,8 +99,78 @@ static void keymap_grows_test(void)
     input_keymap_free(&km);
 }
 
+
+/* The built-in registry names every app command. The name and the label
+ * agree with the ID in both directions. */
+static void command_registry_test(void)
+{
+    const struct input_command_registry *reg = input_command_builtin();
+    assert(reg && reg->n > 0);
+
+    const struct input_command *copy =
+        input_command_find(reg, INPUT_COMMAND_SCOPE_APP, INPUT_SHORTCUT_COPY);
+    assert(copy && copy->id == INPUT_SHORTCUT_COPY);
+    assert(!strcmp(copy->name, "copy"));
+    assert(copy->label && copy->label[0]);
+
+    const struct input_command *by_name = input_command_find_name(reg, "new_tab");
+    assert(by_name && by_name->id == INPUT_SHORTCUT_NEW_TAB);
+    /* The config word for a command parses back to the same ID. */
+    enum input_shortcut id;
+    assert(input_parse_action("new_tab", &id) && id == INPUT_SHORTCUT_NEW_TAB);
+    assert(input_parse_action("none", &id) && id == INPUT_SHORTCUT_NONE);
+    assert(!input_parse_action("no_such_command", &id));
+
+    /* A widget adds a command in its own scope. */
+    struct input_command_registry own;
+    input_command_registry_init(&own);
+    assert(input_command_add(&own, 3, INPUT_SHORTCUT_SETTINGS,
+                             "widget_settings", "Widget Settings"));
+    const struct input_command *scoped =
+        input_command_find(&own, 3, INPUT_SHORTCUT_SETTINGS);
+    assert(scoped && scoped->scope == 3);
+    assert(!strcmp(scoped->label, "Widget Settings"));
+    /* The app scope has the same ID and keeps its own entry. */
+    const struct input_command *app =
+        input_command_find(&own, INPUT_COMMAND_SCOPE_APP, INPUT_SHORTCUT_SETTINGS);
+    assert(!app);
+    assert(!input_command_add(&own, INPUT_COMMAND_SCOPE_COUNT,
+                              INPUT_SHORTCUT_COPY, "x", "X"));
+    input_command_registry_free(&own);
+    assert(!own.cmds && !own.n);
+}
+
+/* A command that a widget binds wins over the app command on the same
+ * chord. A scope without a binding reads the app binding. */
+static void scoped_binding_wins_test(void)
+{
+    struct input_keymap km;
+    input_keymap_init(&km);
+    assert(input_keymap_apply_spec(&km, "ctrl+w = close_tab"));
+    assert(input_keymap_apply_spec_scoped(&km, 2, "ctrl+w = settings"));
+
+    struct input_key_event ev = { .key = INPUT_KEY_NONE, .codepoint = 'w',
+                                 .mods = INPUT_MOD_CTRL };
+    assert(input_keymap_lookup_scoped(&km, &ev, 2) == INPUT_SHORTCUT_SETTINGS);
+    assert(input_keymap_lookup_scoped(&km, &ev, 0) == INPUT_SHORTCUT_CLOSE_TAB);
+    assert(input_keymap_lookup_scoped(&km, &ev, 5) == INPUT_SHORTCUT_CLOSE_TAB);
+
+    /* A widget unbinds its own chord. The app chord still runs there. */
+    assert(input_keymap_apply_spec_scoped(&km, 2, "ctrl+w = none"));
+    assert(input_keymap_lookup_scoped(&km, &ev, 2) == INPUT_SHORTCUT_CLOSE_TAB);
+
+    /* A non-ASCII key binds in a widget scope without a modifier. */
+    assert(input_keymap_apply_spec_scoped(&km, 2, "\xc3\xa9 = command_palette"));
+    struct input_key_event e_acute = { .key = INPUT_KEY_NONE, .codepoint = 0xe9 };
+    assert(input_keymap_lookup_scoped(&km, &e_acute, 2) == INPUT_SHORTCUT_COMMAND_PALETTE);
+    assert(input_keymap_lookup_scoped(&km, &e_acute, 0) == INPUT_SHORTCUT_NONE);
+    input_keymap_free(&km);
+}
+
 int main(void)
 {
+    command_registry_test();
+    scoped_binding_wins_test();
     keymap_match_test();
     zero_modifier_binding_test();
     wide_codepoint_binding_test();
