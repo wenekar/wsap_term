@@ -211,7 +211,7 @@ static enum input_key_route queue_key(struct window *w, const struct yasl_event 
     };
 
     /* The key goes to the focused widget first. Step 3 (`ui_route.c`) runs
-     * the global keymap only when no widget handles the key. */
+     * the keymap of the window only when no widget handles the key. */
     if (len) {
         if (len > INPUT_TEXT_MAX || !(ev.text_utf8 = malloc(len)))
             return INPUT_KEY_DROPPED;
@@ -493,9 +493,8 @@ void window_native_input(struct window *w, const struct yasl_event *in)
              * runs an app command, so its text must not also reach the
              * widget. Other key text replaces what the key produced. */
             /* The router and this test read one map, so the key text and the
-             * key route never disagree. The router still reads the shared map
-             * (`ui_route.c`), so this test reads it too. */
-            bool bound = input_keymap_match(input_keymap_active(),
+             * key route never disagree. Both read the map of this window. */
+            bool bound = input_keymap_match(window_keymap(w),
                                             &(struct input_key_event){
                 .key = native_key(w->native_key.key.key),
                 .codepoint = w->native_key.key.codepoint,

@@ -165,19 +165,28 @@ int main(void)
     composing_key(w, YASL_KEY_LEFT, "é");
     expect(fds[0], "\033[0;1;233u");
 
-    assert(input_keymap_apply_spec(input_keymap_active(), "alt+8=debug_overlay"));
+    /* Each window owns its keymap. A chord that one window binds runs only
+     * in that window. The same chord reaches the shell of the other
+     * window. */
+    struct window *other = test_terminal_window(app.app);
+    assert(other && app_tabs_new(other));
+    struct terminal *other_content = app_tabs_active(other);
+    struct session *other_session = terminal_session(other_content);
+    assert(other_session);
+    int other_fds[2];
+    assert(pipe(other_fds) == 0);
+    for (int i = 0; i < 2; i++)
+        assert(fcntl(other_fds[i], F_SETFL,
+                     fcntl(other_fds[i], F_GETFL) | O_NONBLOCK) == 0);
+    assert(session_write_queue_bind(&other_session->input_writer,
+                                    other_session->loop, other_fds[1]));
+
+    assert(input_keymap_apply_spec(&w->keymap, "alt+8=debug_overlay"));
     key(w, YASL_KEY_8, YASL_MOD_ALT, '8', '(', "[", YASL_KEY_PRESS);
     expect(fds[0], "");
-    input_keymap_reset_active(INPUT_KEYBIND_LEGACY);
-
-    /* Each window owns its keymap. A binding in one window stays out of the
-     * other window. */
-    struct window *other = test_terminal_window(app.app);
-    assert(other);
-    assert(input_keymap_apply_spec(&other->keymap, "alt+8=debug_overlay"));
-    struct input_key_event alt8 = { .codepoint = '8', .mods = INPUT_MOD_ALT };
-    assert(input_keymap_lookup(&other->keymap, &alt8) == INPUT_SHORTCUT_DEBUG_OVERLAY);
-    assert(input_keymap_lookup(&w->keymap, &alt8) == INPUT_SHORTCUT_NONE);
+    key(other, YASL_KEY_8, YASL_MOD_ALT, '8', '(', "[", YASL_KEY_PRESS);
+    expect(other_fds[0], "[");
+    input_keymap_reset(&w->keymap, INPUT_KEYBIND_LEGACY);
 
     struct ui_surface *ui = window_ui_surface(w);
     ui_surface_set_scale(ui, (struct css_scale_context){
@@ -247,8 +256,11 @@ int main(void)
     assert(ui_surface_build_scene(ui, scene));
     assert(ui_debug_lint_scene(&view, NULL, 0) == 0);
 
+    window_close(other);
     window_close(w);
     test_app_fini(&app);
+    close(other_fds[0]);
+    close(other_fds[1]);
     close(fds[0]);
     close(fds[1]);
     return 0;

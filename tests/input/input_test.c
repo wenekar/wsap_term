@@ -397,12 +397,15 @@ int main(void)
         assert(input_format_chord(INPUT_MOD_HYPER, 'k', INPUT_KEY_NONE, sc, sizeof(sc)));
         assert(!strcmp(sc, "Hyper+K"));
 
-        const struct input_keymap *km = input_keymap_active();
-        assert(input_keymap_format_action_chord(km, INPUT_SHORTCUT_COPY, sc, sizeof(sc)));
+        struct input_keymap km;
+        input_keymap_init(&km);
+        input_keymap_defaults(&km, &input_platform_shortcuts, INPUT_KEYBIND_MODERN);
+        assert(input_keymap_format_action_chord(&km, INPUT_SHORTCUT_COPY, sc, sizeof(sc)));
         assert(!strcmp(sc, "Ctrl+C") || !strcmp(sc, "Cmd+C"));
 
-        assert(input_keymap_format_action_chord(km, INPUT_SHORTCUT_PASTE, sc, sizeof(sc)));
+        assert(input_keymap_format_action_chord(&km, INPUT_SHORTCUT_PASTE, sc, sizeof(sc)));
         assert(!strcmp(sc, "Ctrl+V") || !strcmp(sc, "Cmd+V"));
+        input_keymap_free(&km);
     }
 
     {

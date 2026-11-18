@@ -12,18 +12,20 @@ enum palette_action {
     PALETTE_ACT_TAB_BASE = INPUT_SHORTCUT_COUNT + 16,
 };
 
-static void fmt_shortcut(enum input_shortcut sc, char *out, size_t sz)
+static void fmt_shortcut(const struct window *w, enum input_shortcut sc,
+                         char *out, size_t sz)
 {
     out[0] = '\0';
-    struct input_keymap *km = input_keymap_active();
+    const struct input_keymap *km = window_keymap(w);
     if (km)
         input_keymap_format_action_chord(km, sc, out, sz);
 }
 
 static int add_cmd(struct ui_palette_cmd *cmds, char (*sc)[64], int n,
-                   const char *label, int action, enum input_shortcut sc_of)
+                   const struct window *w, const char *label, int action,
+                   enum input_shortcut sc_of)
 {
-    fmt_shortcut(sc_of, sc[n], sizeof(sc[n]));
+    fmt_shortcut(w, sc_of, sc[n], sizeof(sc[n]));
     cmds[n] = (struct ui_palette_cmd){
         .label = label,
         .shortcut = sc[n][0] ? sc[n] : NULL,
@@ -51,15 +53,15 @@ static void palette_toggle(struct app_tabs *tabs)
     char *tab_labels[TAB_CMDS] = {0};
     int n = 0;
 
-    n = add_cmd(cmds, sc, n, "New Tab", INPUT_SHORTCUT_NEW_TAB,
+    n = add_cmd(cmds, sc, n, w, "New Tab", INPUT_SHORTCUT_NEW_TAB,
                 INPUT_SHORTCUT_NEW_TAB);
-    n = add_cmd(cmds, sc, n, "Close Tab", INPUT_SHORTCUT_CLOSE_TAB,
+    n = add_cmd(cmds, sc, n, w, "Close Tab", INPUT_SHORTCUT_CLOSE_TAB,
                 INPUT_SHORTCUT_CLOSE_TAB);
-    n = add_cmd(cmds, sc, n, "Next Tab", INPUT_SHORTCUT_NEXT_TAB,
+    n = add_cmd(cmds, sc, n, w, "Next Tab", INPUT_SHORTCUT_NEXT_TAB,
                 INPUT_SHORTCUT_NEXT_TAB);
-    n = add_cmd(cmds, sc, n, "Previous Tab", INPUT_SHORTCUT_PREV_TAB,
+    n = add_cmd(cmds, sc, n, w, "Previous Tab", INPUT_SHORTCUT_PREV_TAB,
                 INPUT_SHORTCUT_PREV_TAB);
-    n = add_cmd(cmds, sc, n, "Last Tab", INPUT_SHORTCUT_LAST_TAB,
+    n = add_cmd(cmds, sc, n, w, "Last Tab", INPUT_SHORTCUT_LAST_TAB,
                 INPUT_SHORTCUT_LAST_TAB);
 
     int listed = 0;
@@ -72,26 +74,26 @@ static void palette_toggle(struct app_tabs *tabs)
             tab_labels[listed] = NULL;
             continue;
         }
-        n = add_cmd(cmds, sc, n, tab_labels[listed],
+        n = add_cmd(cmds, sc, n, w, tab_labels[listed],
                     PALETTE_ACT_TAB_BASE + i, INPUT_SHORTCUT_NONE);
         listed++;
     }
 
-    n = add_cmd(cmds, sc, n, "Copy", INPUT_SHORTCUT_COPY,
+    n = add_cmd(cmds, sc, n, w, "Copy", INPUT_SHORTCUT_COPY,
                 INPUT_SHORTCUT_COPY);
-    n = add_cmd(cmds, sc, n, "Paste", INPUT_SHORTCUT_PASTE,
+    n = add_cmd(cmds, sc, n, w, "Paste", INPUT_SHORTCUT_PASTE,
                 INPUT_SHORTCUT_PASTE);
-    n = add_cmd(cmds, sc, n, "Select All", INPUT_SHORTCUT_SELECT_ALL,
+    n = add_cmd(cmds, sc, n, w, "Select All", INPUT_SHORTCUT_SELECT_ALL,
                 INPUT_SHORTCUT_SELECT_ALL);
-    n = add_cmd(cmds, sc, n, "Zoom In", INPUT_SHORTCUT_FONT_LARGER,
+    n = add_cmd(cmds, sc, n, w, "Zoom In", INPUT_SHORTCUT_FONT_LARGER,
                 INPUT_SHORTCUT_FONT_LARGER);
-    n = add_cmd(cmds, sc, n, "Zoom Out", INPUT_SHORTCUT_FONT_SMALLER,
+    n = add_cmd(cmds, sc, n, w, "Zoom Out", INPUT_SHORTCUT_FONT_SMALLER,
                 INPUT_SHORTCUT_FONT_SMALLER);
-    n = add_cmd(cmds, sc, n, "Scroll to Bottom", PALETTE_ACT_SCROLL_BOTTOM,
+    n = add_cmd(cmds, sc, n, w, "Scroll to Bottom", PALETTE_ACT_SCROLL_BOTTOM,
                 INPUT_SHORTCUT_NONE);
-    n = add_cmd(cmds, sc, n, "New Window", PALETTE_ACT_NEW_WINDOW,
+    n = add_cmd(cmds, sc, n, w, "New Window", PALETTE_ACT_NEW_WINDOW,
                 INPUT_SHORTCUT_NONE);
-    n = add_cmd(cmds, sc, n, "Settings", INPUT_SHORTCUT_SETTINGS,
+    n = add_cmd(cmds, sc, n, w, "Settings", INPUT_SHORTCUT_SETTINGS,
                 INPUT_SHORTCUT_SETTINGS);
 
     ui_palette_open(&tabs->palette, cmds, n);

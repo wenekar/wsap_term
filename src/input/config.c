@@ -134,8 +134,11 @@ void input_config_init(const struct app_identity *identity)
     config_has_path = true;
     if (access(config_path, R_OK) != 0 && errno == ENOENT)
         write_default_input_config(identity, config_path);
-    /* The keymap accessor that the window fallback path still reads stays in
-     * step with the configuration. */
-    input_keymap_reset_active(config_style);
-    config_parse_file(config_path, input_config_line, input_keymap_active());
+    /* The parse validates each line, and a 'style' line sets the style that
+     * each window then loads. The app keeps no keymap of its own. */
+    struct input_keymap km;
+    input_keymap_init(&km);
+    input_keymap_defaults(&km, &input_platform_shortcuts, config_style);
+    config_parse_file(config_path, input_config_line, &km);
+    input_keymap_free(&km);
 }
