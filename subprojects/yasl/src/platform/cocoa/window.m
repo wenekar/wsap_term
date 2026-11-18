@@ -175,6 +175,8 @@ struct cocoa_display {
     struct yasl_loop *loop;
     id key_up_monitor;
     NSCursor *hidden_cursor;
+    /* Diagonal resize cursors, made on first use. */
+    NSCursor *diagonal_cursors[2];
     YaslAppDelegate *delegate;
     NSPoint cascade;
     struct cocoa_surface *dead;
@@ -983,12 +985,37 @@ static void push_pointer(struct cocoa_surface *w, NSEvent *ev, enum yasl_private
     }
 }
 
+/* macOS has no public diagonal resize cursor. It has the two diagonal arrows as
+ * template symbols, so the cursor starts from those. */
+static NSCursor *cocoa_symbol_cursor(NSString *name, NSCursor **cache)
+{
+    if (*cache)
+        return *cache;
+    NSImage *image = [NSImage imageWithSystemSymbolName:name accessibilityDescription:nil];
+    if (!image)
+        return [NSCursor arrowCursor];
+    image.template = YES;
+    *cache = [[NSCursor alloc] initWithImage:image
+                                     hotSpot:NSMakePoint(image.size.width / 2,
+                                                         image.size.height / 2)];
+    return *cache ?: [NSCursor arrowCursor];
+}
+
 static NSCursor *cocoa_cursor(enum yasl_private_cursor cursor)
 {
     switch (cursor) {
     case YASL_PRIVATE_CURSOR_TEXT: return [NSCursor IBeamCursor];
     case YASL_PRIVATE_CURSOR_LINK: return [NSCursor pointingHandCursor];
     case YASL_PRIVATE_CURSOR_CROSSHAIR: return [NSCursor crosshairCursor];
+    case YASL_PRIVATE_CURSOR_MOVE: return [NSCursor openHandCursor];
+    case YASL_PRIVATE_CURSOR_RESIZE_NWSE:
+        return cocoa_symbol_cursor(@"arrow.up.left.and.arrow.down.right",
+                                  &darwin_ctx.diagonal_cursors[0]);
+    case YASL_PRIVATE_CURSOR_RESIZE_NESW:
+        return cocoa_symbol_cursor(@"arrow.up.right.and.arrow.down.left",
+                                  &darwin_ctx.diagonal_cursors[1]);
+    case YASL_PRIVATE_CURSOR_RESIZE_EW: return [NSCursor resizeLeftRightCursor];
+    case YASL_PRIVATE_CURSOR_RESIZE_NS: return [NSCursor resizeUpDownCursor];
     case YASL_PRIVATE_CURSOR_HIDDEN:
         if (!darwin_ctx.hidden_cursor) {
             NSImage *image = [[NSImage alloc] initWithSize:NSMakeSize(1, 1)];
@@ -2295,6 +2322,8 @@ void cocoa_display_close(struct cocoa_display *d)
     [d->delegate release];
     d->delegate = nil;
     [d->hidden_cursor release];
+    [d->diagonal_cursors[0] release];
+    [d->diagonal_cursors[1] release];
     free(d->app_id);
     free(d->windows);
     *d = (struct cocoa_display){0};

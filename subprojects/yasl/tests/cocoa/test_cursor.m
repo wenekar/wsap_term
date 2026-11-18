@@ -50,6 +50,31 @@ int main(void)
         yasl_private_surface_set_cursor(surface, YASL_PRIVATE_CURSOR_ARROW);
         [view cursorUpdate:cursor];
         assert([NSCursor currentCursor] == [NSCursor arrowCursor]);
+
+        /* Every shape selects its system cursor. */
+        struct {
+            enum yasl_private_cursor shape;
+            NSCursor *want;
+        } system[] = {
+            {YASL_PRIVATE_CURSOR_MOVE, [NSCursor openHandCursor]},
+            {YASL_PRIVATE_CURSOR_RESIZE_EW, [NSCursor resizeLeftRightCursor]},
+            {YASL_PRIVATE_CURSOR_RESIZE_NS, [NSCursor resizeUpDownCursor]},
+        };
+        for (size_t i = 0; i < sizeof(system) / sizeof(system[0]); i++) {
+            yasl_private_surface_set_cursor(surface, system[i].shape);
+            [view cursorUpdate:cursor];
+            assert([NSCursor currentCursor] == system[i].want);
+        }
+        /* macOS has no system diagonal cursor. The two diagonal shapes still
+         * select a cursor of their own with an image. */
+        yasl_private_surface_set_cursor(surface, YASL_PRIVATE_CURSOR_RESIZE_NWSE);
+        [view cursorUpdate:cursor];
+        NSCursor *nwse = [NSCursor currentCursor];
+        assert(nwse && nwse != [NSCursor arrowCursor] && nwse.image.size.width > 0);
+        yasl_private_surface_set_cursor(surface, YASL_PRIVATE_CURSOR_RESIZE_NESW);
+        [view cursorUpdate:cursor];
+        assert([NSCursor currentCursor] && [NSCursor currentCursor] != nwse);
+
         yasl_private_surface_destroy(surface);
         yasl_private_display_close(display);
     }
