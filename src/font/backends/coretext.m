@@ -7,6 +7,7 @@
 #include "font/shaping.h"
 #include "platform/platform.h"
 #include "font/glyph/intern.h"
+#include "util/app_identity.h"
 #include "util/hash.h"
 #include "util/unicode/grapheme.h"
 
@@ -329,9 +330,11 @@ static bool register_bundled_fonts(bool include_extras)
 #ifdef WSAP_DEV_FONTS_DIR
             register_font_dir(@WSAP_DEV_FONTS_DIR, include_extras);
 #endif
-#ifdef WSAP_DATADIR
-            register_font_dir(@WSAP_DATADIR "/wsap_term/fonts", include_extras);
-#endif
+            char app_fonts[APP_IDENTITY_PATH_MAX];
+            if (app_identity_data_path(app_identity_current(), app_fonts,
+                                       sizeof(app_fonts), "fonts"))
+                register_font_dir([NSString stringWithUTF8String:app_fonts],
+                                  include_extras);
         }
         bundled_regular_done = true;
         if (include_extras)

@@ -1,6 +1,8 @@
 #define _GNU_SOURCE
 #include "font/backends/freetype/internal.h"
 
+#include "util/app_identity.h"
+
 #include <fontconfig/fontconfig.h>
 #include <fontconfig/fcfreetype.h>
 #include <hb-ft.h>
@@ -273,9 +275,10 @@ static bool fc_ensure_locked(void)
 #ifdef WSAP_DEV_FONTS_DIR
     FcConfigAppFontAddDir(NULL, (const FcChar8 *)WSAP_DEV_FONTS_DIR);
 #endif
-#ifdef WSAP_DATADIR
-    FcConfigAppFontAddDir(NULL, (const FcChar8 *)(WSAP_DATADIR "/wsap_term/fonts"));
-#endif
+    char app_fonts[APP_IDENTITY_PATH_MAX];
+    if (app_identity_data_path(app_identity_current(), app_fonts,
+                               sizeof(app_fonts), "fonts"))
+        FcConfigAppFontAddDir(NULL, (const FcChar8 *)app_fonts);
     fc_ready = true;
     return true;
 }

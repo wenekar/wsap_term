@@ -1,5 +1,13 @@
 #define _GNU_SOURCE
 #include "render/gpu/vulkan/internal.h"
+#include "util/app_identity.h"
+
+/* The app names the log lines of this backend. */
+static const char *log_tag(void)
+{
+    const struct app_identity *identity = app_identity_current();
+    return identity ? identity->id : "vk";
+}
 
 #include <dlfcn.h>
 #include <stdio.h>
@@ -51,7 +59,8 @@ static bool desc_pool_add(struct render_gpu *g)
         uint32_t cap = g->cap_desc_pools ? g->cap_desc_pools * 2 : 4;
         struct vulkan_desc_pool *pools = realloc(g->desc_pools, (size_t)cap * sizeof(*pools));
         if (!pools) {
-            fprintf(stderr, "wsap: no memory for a Vulkan descriptor pool of %u sets\n", sets);
+            fprintf(stderr, "%s: no memory for a Vulkan descriptor pool of %u sets\n",
+                    log_tag(), sets);
             return false;
         }
         g->desc_pools = pools;
@@ -59,7 +68,8 @@ static bool desc_pool_add(struct render_gpu *g)
     }
     struct vulkan_desc_pool *entry = &g->desc_pools[g->n_desc_pools];
     if (g->vk.CreateDescriptorPool(g->dev.device, &info, NULL, &entry->pool) != VK_SUCCESS) {
-        fprintf(stderr, "wsap: the Vulkan device makes no descriptor pool of %u sets\n", sets);
+        fprintf(stderr, "%s: the Vulkan device makes no descriptor pool of %u sets\n",
+                    log_tag(), sets);
         return false;
     }
     entry->sets = sets;
@@ -94,7 +104,8 @@ static bool desc_set_alloc(struct render_gpu *g, VkDescriptorSet *set, VkDescrip
         return false;
     info.descriptorPool = g->desc_pools[g->n_desc_pools - 1].pool;
     if (g->vk.AllocateDescriptorSets(g->dev.device, &info, set) != VK_SUCCESS) {
-        fprintf(stderr, "wsap: the new Vulkan descriptor pool gives no set\n");
+        fprintf(stderr, "%s: the new Vulkan descriptor pool gives no set\n",
+                    log_tag());
         return false;
     }
     *pool = info.descriptorPool;
@@ -666,9 +677,11 @@ static bool instance_create(struct render_gpu *g)
     if (n < 2)
         return false;
 
+    const struct app_identity *identity = app_identity_current();
+    (void)identity;
     VkApplicationInfo app = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-        .pApplicationName = "wsap_term",
+        .pApplicationName = identity ? identity->id : "",
         .apiVersion = VK_API_VERSION_1_3,
     };
     VkInstanceCreateInfo info = {

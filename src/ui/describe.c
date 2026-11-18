@@ -1,4 +1,5 @@
 #include "ui/describe.h"
+#include "util/app_identity.h"
 
 #include "ui/surface.h"
 #include "ui/widget_ops.h"
@@ -8,6 +9,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static void log_out_of_memory(void);
 
 #define UI_VIEW_MAX_DEPTH 128
 
@@ -715,7 +718,15 @@ static void dispose_nodes(struct ui_surface *surface, struct ui_view_node *nodes
     }
     /* No memory for the queue. Freeing now would break the rule that no
      * storage is freed while the surface is busy, so it stays. */
-    fprintf(stderr, "wsap: view storage stays: out of memory\n");
+    log_out_of_memory();
+}
+
+/* Reports an allocation failure that costs a queue entry. */
+static void log_out_of_memory(void)
+{
+    const struct app_identity *identity = app_identity_current();
+    fprintf(stderr, "%s: view storage stays: out of memory\n",
+            identity ? identity->id : "ui");
 }
 
 /* Drops the nodes that a failed update created. A supplied widget goes back
@@ -838,7 +849,7 @@ void ui_view_destroy(struct ui_view *view)
             return;
         /* No memory for the queue. Freeing now would break the rule that no
          * storage is freed while the surface is busy, so it stays. */
-        fprintf(stderr, "wsap: view storage stays: out of memory\n");
+        log_out_of_memory();
         return;
     }
     free_view(surface, view);
