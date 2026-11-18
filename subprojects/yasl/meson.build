@@ -179,7 +179,7 @@ if has_egl
 endif
 
 # meson test --setup NAME needs the setup in each project with tests. The
-# parent project defines the same setup.
+# parent project defines the same setups.
 sanitizer_common = 'halt_on_error=1:abort_on_error=1:print_summary=1'
 asan_options = sanitizer_common + ':detect_stack_use_after_return=1' + \
     ':strict_string_checks=1:check_initialization_order=1' + \
@@ -198,6 +198,23 @@ add_test_setup(
         'LD_PRELOAD': '',
         'DYLD_INSERT_LIBRARIES': '',
     },
+)
+add_test_setup(
+    'tsan',
+    env: {
+        'TSAN_OPTIONS': sanitizer_common + ':history_size=7:second_deadlock_stack=1',
+        'LD_PRELOAD': '',
+        'DYLD_INSERT_LIBRARIES': '',
+    },
+)
+add_test_setup(
+    'msan',
+    env: {
+        'MSAN_OPTIONS': sanitizer_common + ':print_stats=1',
+        'LD_PRELOAD': '',
+        'DYLD_INSERT_LIBRARIES': '',
+    },
+    exclude_suites: ['extlib'],
 )
 
 subdir('tests')

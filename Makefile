@@ -15,6 +15,9 @@ else
 BUILD_DIR ?= build
 MESON_ENV ?=
 TOOLCHAIN_CHECK = @:
+# GCC has no MemorySanitizer. Clang links the sanitizer runtime only into
+# executables, so the MSan build allows undefined symbols in shared libraries.
+MSAN_ENV ?= CC=clang CXX=clang++
 endif
 MESON_SETUP = $(MESON_ENV) meson setup
 PREFIX ?= $(HOME)/.local
@@ -106,7 +109,7 @@ test-msan: $(BUILD_DIR)-msan/build.ninja
 
 $(BUILD_DIR)-msan/build.ninja:
 	$(TOOLCHAIN_CHECK)
-	$(MESON_SETUP) "$(BUILD_DIR)-msan" $(SAN_SETUP_FLAGS) -Db_sanitize=memory
+	$(MSAN_ENV) $(MESON_SETUP) "$(BUILD_DIR)-msan" $(SAN_SETUP_FLAGS) -Db_sanitize=memory -Db_lundef=false
 
 test-sanitizers: test-asan test-msan test-tsan
 

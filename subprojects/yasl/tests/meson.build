@@ -1,4 +1,8 @@
 python = find_program('python3', native: true)
+# The extlib suite holds the tests that call uninstrumented system libraries:
+# libwayland, xkbcommon, libdbus, and libX11. The msan setup skips it, because
+# MSan reports false positives in uninstrumented code.
+extlib_wayland = ['clipboard', 'drop', 'keyboard', 'modifiers', 'input', 'surface_lifetime']
 # yasl/vulkan.h includes <vulkan/vulkan.h>, so the header path must come with the library.
 shared_dep = declare_dependency(link_with: yasl_lib.get_shared_lib(),
     include_directories: include_directories('../include'),
@@ -61,16 +65,16 @@ if system == 'linux'
     desktop = executable('yasl-desktop-test', 'common/test_desktop.c', include_directories: inc, dependencies: yasl_dep)
     dbus_run = find_program('dbus-run-session', required: false)
     if has_dbus and dbus_run.found()
-        test('desktop', dbus_run, args: ['--', desktop])
+        test('desktop', dbus_run, args: ['--', desktop], suite: ['extlib'])
     else
-        test('desktop', desktop)
+        test('desktop', desktop, suite: ['extlib'])
     endif
 endif
 if has_wayland
     foreach unit : ['state', 'clipboard', 'drop', 'keyboard', 'modifiers', 'input', 'tablet', 'cursor', 'relative_pointer', 'app_input', 'popup_positioner', 'surface_lifetime']
         exe = executable('yasl-' + unit + '-wayland-test', 'wayland/test_' + unit + '.c',
             include_directories: inc, dependencies: yasl_dep)
-        test(unit + '-wayland', exe)
+        test(unit + '-wayland', exe, suite: unit in extlib_wayland ? ['extlib'] : [])
     endforeach
 endif
 if has_x11
@@ -81,7 +85,8 @@ if has_x11
     endforeach
     drop_x11 = executable('yasl-drop-x11-test', 'x11/test_drop.c',
         include_directories: inc, dependencies: [yasl_dep, x11])
-    test('drop-x11', python, args: [files('helpers/run_x11_drop.py'), drop_x11], timeout: 300)
+    test('drop-x11', python, args: [files('helpers/run_x11_drop.py'), drop_x11], timeout: 300,
+        suite: ['extlib'])
     if get_option('x11_tablet_tests')
         xorg = find_program('/usr/lib/Xorg', '/usr/lib/xorg/Xorg', 'Xorg')
         native_tablet = executable('yasl-tablet-x11-native-test', 'x11/test_tablet_native.c',

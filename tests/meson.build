@@ -111,6 +111,8 @@ test_env.set('DYLD_INSERT_LIBRARIES', '')
 test_env.set('WSAP_NO_PRELOAD', '1')
 bash = find_program('bash', native: true)
 
+# Tests that call uninstrumented system libraries, such as fontconfig or the
+# system yyjson. The msan setup skips them: MSan reports false positives there.
 extlib_tests = [
     'font-test',
     'font-coretext-test',
@@ -124,6 +126,27 @@ extlib_tests = [
     'render-incremental-test',
     'render-pool-test',
     'resize-alloc-test',
+    'render-cpu-canvas-test',
+    'vulkan-render-test',
+    'json-test',
+    'ui-debug-test',
+    'ui-tab-preview-test',
+    'terminal-input-test',
+    'terminal-lifecycle-test',
+    'terminal-scrolling-test',
+    'terminal-kind-test',
+    'terminal-bell-close-test',
+    'app-reload-test',
+    'app-tabs-rows-test',
+    'app-tabs-cwd-test',
+    'app-tabs-transfer-test',
+    'app-tabs-service-test',
+    'app-tabs-preview-test',
+    'thumbnail-test',
+    'settings-window-test',
+    'window-ui-hosts-test',
+    'window-ui-tree-test',
+    'window-debug-server-test',
 ]
 
 isa_tests = [
