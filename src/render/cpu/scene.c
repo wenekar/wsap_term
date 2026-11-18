@@ -575,7 +575,7 @@ static void paint_glyph(const struct render_kernels *k, uint32_t *px,
     uint8_t buf[SCENE_CHUNK * 3];
 
     for (int y = 0; y < max_y; y++) {
-        int64_t py = (int64_t)y0 + y;
+        int64_t py = (int64_t)y0 + g->y_offset + y;
         if (py < clip.y || py >= (int64_t)clip.y + clip.height || py >= height)
             continue;
         uint32_t *row = px + (size_t)py * width + sx;
