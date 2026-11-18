@@ -1,3 +1,5 @@
+subdir('unicode')
+
 util_src = files(
     'config.c',
     'file.c',
@@ -8,4 +10,4 @@ util_src = files(
     'path.c',
     'png.c',
     'proc.c',
-)
+) + unicode_src
