@@ -44,6 +44,10 @@ typedef uint32_t ui_part_id;
    part table is out of memory. */
 ui_part_id ui_part_intern(const char *name);
 const char *ui_part_name(ui_part_id part);
+/* Returns a counter that never holds 0. The counter changes when
+   ui_part_shutdown() clears the table. A cache of part handles compares the
+   counter and interns its handles again after a change. */
+uint32_t ui_part_epoch(void);
 void ui_part_shutdown(void);
 
 void ui_style_context_apply(struct ui_style_context *context,

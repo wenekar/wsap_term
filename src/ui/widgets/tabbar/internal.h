@@ -8,8 +8,10 @@
 #include "ui/widgets/tabbar.h"
 
 /* The interned part handles of the bar. struct tb_parts stays zero until
- * tb_part() fills it. */
+ * tb_part() fills it. tb_part() fills it again after a part table restart,
+ * because a handle of an earlier table would abort the name lookup. */
 struct tb_parts {
+    uint32_t epoch;
     ui_part_id bar;
     ui_part_id tab;
     ui_part_id tab_active;

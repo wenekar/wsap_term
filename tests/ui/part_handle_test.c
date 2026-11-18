@@ -6,13 +6,16 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "paint/scene.h"
 #include "ui/box.h"
+#include "ui/ui.h"
 #include "ui/surface.h"
 #include "ui/widget_ops.h"
 #include "ui/widgets/input.h"
 #include "ui/widgets/label.h"
 #include "ui/widgets/list.h"
 #include "ui/widgets/scrollview.h"
+#include "ui/widgets/tab_preview.h"
 
 static const char SHEET_A[] =
     ".tab { background: #111111; color: #222222; }"
@@ -259,10 +262,107 @@ static void unknown_handles_abort_test(void)
     expect_abort(part_unknown_handle);
 }
 
+/* Fills the part cache of each widget, and closes the surface. */
+static void fill_part_caches(const struct css_sheet *sheet)
+{
+    struct ui_surface surface = {0};
+    ui_surface_init(&surface, NULL, NULL);
+    ui_surface_set_sheet(&surface, sheet);
+
+    struct ui_box root = {0};
+    struct ui_list list = {0};
+    struct ui_label label = {0};
+    struct ui_input input = {0};
+    struct ui_scrollview scrollview = {0};
+    struct ui_tab_preview preview = {0};
+    ui_box_init(&root);
+    ui_list_init(&list);
+    ui_label_init(&label);
+    ui_input_init(&input);
+    ui_scrollview_init(&scrollview);
+    ui_tab_preview_init(&preview);
+    assert(ui_widget_add_child(&root.widget, &list.widget));
+    assert(ui_widget_add_child(&root.widget, &label.widget));
+    assert(ui_widget_add_child(&root.widget, &input.widget));
+    assert(ui_widget_add_child(&root.widget, &scrollview.widget));
+    assert(ui_widget_add_child(&root.widget, &preview.widget));
+    assert(ui_surface_set_root(&surface, &root.widget));
+    ui_surface_resize(&surface, (struct vector2i){ .x = 200, .y = 40 });
+    struct ui_scene scene = {0};
+    ui_scene_init(&scene);
+    assert(ui_surface_build_scene(&surface, &scene));
+    ui_scene_destroy(&scene);
+
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&root.widget);
+    ui_widget_destroy(&list.widget);
+    ui_widget_destroy(&label.widget);
+    ui_widget_destroy(&input.widget);
+    ui_widget_destroy(&scrollview.widget);
+    ui_widget_destroy(&preview.widget);
+}
+
+/* ui_shutdown() clears the part table. A cached handle of the old table must
+ * not abort a lookup, and the widgets must style and paint again after it. */
+static void shutdown_rebuild_test(void)
+{
+    struct css_sheet sheet = {0};
+    assert(css_parse(&sheet, SHEET_A));
+    fill_part_caches(&sheet);
+
+    ui_shutdown();
+
+    /* The input interns four parts into the empty table. A handle of the wider
+       widget set from before the shutdown is then out of range, or points at
+       another name. */
+    struct css_sheet input_sheet = {0};
+    assert(css_parse(&input_sheet,
+                     ".text-input-text { color: #cccccc; }"
+                     ".text-input-text { background: #000000; }"));
+    struct ui_surface surface = {0};
+    ui_surface_init(&surface, NULL, NULL);
+    ui_surface_set_sheet(&surface, &input_sheet);
+    struct ui_box root = {0};
+    struct ui_input input = {0};
+    ui_box_init(&root);
+    ui_widget_set_style_identity(&root.widget, "panel", NULL, "panel");
+    ui_input_init(&input);
+    assert(ui_input_set_text(&input, "after shutdown"));
+    assert(ui_widget_add_child(&root.widget, &input.widget));
+    assert(ui_surface_set_root(&surface, &root.widget));
+    ui_surface_resize(&surface, (struct vector2i){ .x = 200, .y = 40 });
+
+    struct ui_scene scene = {0};
+    ui_scene_init(&scene);
+    assert(ui_surface_build_scene(&surface, &scene));
+    bool text_drawn = false;
+    for (int i = 0; i < scene.n_ops; i++)
+        if (scene.ops[i].kind == UI_SCENE_OP_TEXT &&
+            scene.ops[i].color == 0xFFCCCCCC)
+            text_drawn = true;
+    assert(text_drawn);
+    ui_scene_destroy(&scene);
+
+    static const char *const INPUT_PARTS[] = {
+        "text-input-text", "text-input-selection",
+    };
+    const struct probe input_probe = {
+        &input.widget, INPUT_PARTS, sizeof(INPUT_PARTS) / sizeof(INPUT_PARTS[0]),
+    };
+    expect_parts_match_fresh(&input_probe);
+
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&root.widget);
+    ui_widget_destroy(&input.widget);
+    css_sheet_clear(&input_sheet);
+    css_sheet_clear(&sheet);
+}
+
 int main(void)
 {
     intern_handles_test();
     cache_matches_string_api_test();
     unknown_handles_abort_test();
+    shutdown_rebuild_test();
     return 0;
 }

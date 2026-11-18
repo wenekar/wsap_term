@@ -22,29 +22,37 @@ static const char *const ITEM_CLASSES[4] = {
     "menu-item submenu disabled",
 };
 
-static struct {
+struct list_parts {
+    uint32_t epoch;
     ui_part_id item[4];
     ui_part_id separator;
     ui_part_id label;
     ui_part_id shortcut;
-} parts;
+};
 
-static void list_parts_init(void)
+static struct list_parts list_parts_cache;
+
+/* Returns the cached part handles. A handle from an earlier part table would
+ * abort the name lookup, so the cache interns again after a table restart. */
+static const struct list_parts *list_parts(void)
 {
-    if (parts.item[0])
-        return;
-    for (int i = 0; i < 4; i++)
-        parts.item[i] = ui_part_intern(ITEM_CLASSES[i]);
-    parts.separator = ui_part_intern("menu-separator");
-    parts.label = ui_part_intern("menu-label");
-    parts.shortcut = ui_part_intern("menu-shortcut");
+    uint32_t epoch = ui_part_epoch();
+    if (list_parts_cache.epoch != epoch) {
+        list_parts_cache.epoch = epoch;
+        for (int i = 0; i < 4; i++)
+            list_parts_cache.item[i] = ui_part_intern(ITEM_CLASSES[i]);
+        list_parts_cache.separator = ui_part_intern("menu-separator");
+        list_parts_cache.label = ui_part_intern("menu-label");
+        list_parts_cache.shortcut = ui_part_intern("menu-shortcut");
+    }
+    return &list_parts_cache;
 }
 
 static ui_part_id item_part(const struct ui_list_item *it)
 {
     unsigned variant = ((it->flags & UI_LIST_ITEM_SUBMENU) ? 1u : 0u) |
                        ((it->flags & UI_LIST_ITEM_DISABLED) ? 2u : 0u);
-    return parts.item[variant];
+    return list_parts()->item[variant];
 }
 
 static struct ui_list *list_of(const struct ui_widget *widget)
@@ -135,8 +143,8 @@ static struct ui_list_metrics compute_metrics(const struct ui_list *l)
     const struct ui_widget *w = &l->widget;
     const struct css_scale_context *scale = &w->style_scale;
     struct ui_text_style text = ui_widget_text_style(scale);
-    struct css_style item = ui_widget_part(w, parts.item[0], 0);
-    struct css_style sep = ui_widget_part(w, parts.separator, 0);
+    struct css_style item = ui_widget_part(w, list_parts()->item[0], 0);
+    struct css_style sep = ui_widget_part(w, list_parts()->separator, 0);
     int radius = ui_css_resolve_int(w->style.border_radius, 0, 0, scale, true);
     int min_pad = ui_ctx_px(scale, 4);
     int thickness = edge_or(sep.height, ui_ctx_px(scale, 1), scale);
@@ -265,7 +273,7 @@ static void row_paint(const struct ui_widget *widget,
     const struct css_scale_context *scale = &l->widget.style_scale;
     struct rect2i box = ui_paint_bounds(paint);
     if (it->flags & UI_LIST_ITEM_SEPARATOR) {
-        struct css_style sep = ui_widget_part(&l->widget, parts.separator, 0);
+        struct css_style sep = ui_widget_part(&l->widget, list_parts()->separator, 0);
         struct rect2i line = rect2i_apply_insets(box, m->sep_margin);
         line.height = m->sep_thickness;
         if (sep.has_bg_color && !rect2i_is_empty(line))
@@ -285,7 +293,7 @@ static void row_paint(const struct ui_widget *widget,
 
     struct ui_text_style text = { .advance = m->cell_w, .cell_h = m->cell_h };
     int text_y = box.y + (box.height - m->cell_h) / 2;
-    struct css_style label = ui_widget_part(&l->widget, parts.label, pseudo);
+    struct css_style label = ui_widget_part(&l->widget, list_parts()->label, pseudo);
     uint32_t fg = label.has_text_color ? label.text_color
                 : item.has_text_color ? item.text_color : 0xFFFFFFFF;
     int shortcut_w = it->shortcut && it->shortcut[0]
@@ -312,7 +320,7 @@ static void row_paint(const struct ui_widget *widget,
     }
     if (!it->shortcut || !it->shortcut[0])
         return;
-    struct css_style sc = ui_widget_part(&l->widget, parts.shortcut, pseudo);
+    struct css_style sc = ui_widget_part(&l->widget, list_parts()->shortcut, pseudo);
     int width = ui_text_run_cells(it->shortcut, strlen(it->shortcut)) * m->cell_w;
     ui_paint_text(paint, (struct rect2i){
         .pos = { .x = box.x + box.width - m->item_pad.r - width, .y = text_y },
@@ -529,7 +537,7 @@ static enum ui_cursor list_cursor(const struct ui_widget *widget,
     int index = l->state.hovered;
     if (index < 0 || index >= l->state.n)
         return UI_CURSOR_AUTO;
-    struct css_style style = ui_widget_part(widget, parts.item[0],
+    struct css_style style = ui_widget_part(widget, list_parts()->item[0],
                                             CSS_PSEUDO_HOVER);
     return style.has_cursor ? style.cursor : UI_CURSOR_POINTER;
 }
@@ -567,7 +575,6 @@ void ui_list_init(struct ui_list *l)
 {
     if (!l)
         return;
-    list_parts_init();
     *l = (struct ui_list){0};
     l->state.hovered = -1;
     l->state.selected = -1;

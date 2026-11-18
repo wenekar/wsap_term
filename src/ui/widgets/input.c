@@ -257,21 +257,29 @@ bool ui_input_selection(const struct ui_input *in, size_t *start, size_t *end)
     return ui_text_select_range(in ? &in->state.select : NULL, start, end);
 }
 
-static struct {
+struct input_parts {
+    uint32_t epoch;
     ui_part_id text;
     ui_part_id empty;
     ui_part_id selection;
     ui_part_id caret;
-} input_parts;
+};
 
-static void input_parts_init(void)
+static struct input_parts input_parts_cache;
+
+/* Returns the cached part handles. A handle from an earlier part table would
+ * abort the name lookup, so the cache interns again after a table restart. */
+static const struct input_parts *input_parts(void)
 {
-    if (input_parts.text)
-        return;
-    input_parts.text = ui_part_intern("text-input-text");
-    input_parts.empty = ui_part_intern("text-input-text empty");
-    input_parts.selection = ui_part_intern("text-input-selection");
-    input_parts.caret = ui_part_intern("text-input-caret");
+    uint32_t epoch = ui_part_epoch();
+    if (input_parts_cache.epoch != epoch) {
+        input_parts_cache.epoch = epoch;
+        input_parts_cache.text = ui_part_intern("text-input-text");
+        input_parts_cache.empty = ui_part_intern("text-input-text empty");
+        input_parts_cache.selection = ui_part_intern("text-input-selection");
+        input_parts_cache.caret = ui_part_intern("text-input-caret");
+    }
+    return &input_parts_cache;
 }
 
 static const struct ui_widget_ops INPUT_OPS;
@@ -281,8 +289,7 @@ static void input_ensure_init(struct ui_input *in)
     if (!in || in->widget.ops)
         return;
     in->state.blink_on = true;
-    input_parts_init();
-    ui_widget_init(&in->widget, &INPUT_OPS, NULL);
+        ui_widget_init(&in->widget, &INPUT_OPS, NULL);
     ui_widget_set_style_identity(&in->widget, "text-input", NULL, "input");
     ui_widget_set_focusable(&in->widget, true);
 }
@@ -889,7 +896,7 @@ static void input_paint(const struct ui_widget *widget,
     if (lo != hi) {
         /* A selection with no color is transparent. The default sheet
          * supplies the color. */
-        uint32_t color = part_color(widget, input_parts.selection, true, 0);
+        uint32_t color = part_color(widget, input_parts()->selection, true, 0);
         ui_paint_rect(paint, (struct rect2i){
             .pos = { .x = geom_sat_i((int64_t)content.x +
                           ((int64_t)cells_to(in, lo) - in->state.scroll_cells) * cw),
@@ -905,10 +912,10 @@ static void input_paint(const struct ui_widget *widget,
     if (!len && in->state.placeholder && in->state.placeholder[0]) {
         text = in->state.placeholder;
         len = strlen(text);
-        fg = part_color(widget, input_parts.empty, false,
+        fg = part_color(widget, input_parts()->empty, false,
                         rs->has_text_color ? rs->text_color : 0);
     } else {
-        fg = part_color(widget, input_parts.text, false,
+        fg = part_color(widget, input_parts()->text, false,
                         rs->has_text_color ? rs->text_color : 0);
     }
     if (len > 0) {
@@ -923,7 +930,7 @@ static void input_paint(const struct ui_widget *widget,
 
     if (in->state.blink_on && ui_widget_has_focus(widget)) {
         int caret_w = ui_ctx_px(scale, 2);
-        uint32_t color = part_color(widget, input_parts.caret, true, 0);
+        uint32_t color = part_color(widget, input_parts()->caret, true, 0);
         ui_paint_rect(paint, (struct rect2i){
             .pos = { .x = geom_sat_i((int64_t)content.x +
                           ((int64_t)cells_to(in, in->state.select.caret) - in->state.scroll_cells) * cw),

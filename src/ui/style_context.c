@@ -308,6 +308,9 @@ struct part_table {
 };
 
 static struct part_table part_table;
+/* A stale handle can point at the wrong name after a restart of the table, or
+ * abort ui_part_name(). The epoch lets each cache of handles see the restart. */
+static uint32_t part_epoch = 1;
 
 static uint32_t part_hash(const char *name)
 {
@@ -408,6 +411,11 @@ const char *ui_part_name(ui_part_id part)
     return part_table.names[part - 1];
 }
 
+uint32_t ui_part_epoch(void)
+{
+    return part_epoch;
+}
+
 void ui_part_shutdown(void)
 {
     for (uint32_t i = 0; i < part_table.count; i++)
@@ -415,6 +423,8 @@ void ui_part_shutdown(void)
     free(part_table.names);
     free(part_table.buckets);
     part_table = (struct part_table){0};
+    if (++part_epoch == 0)
+        part_epoch = 1;
 }
 
 static struct ui_part_slot *find_part_slot(const struct ui_widget *widget,

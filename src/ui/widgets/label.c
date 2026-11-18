@@ -17,19 +17,27 @@ static struct ui_label *label_of(const struct ui_widget *widget)
     return ui_container_of((struct ui_widget *)widget, struct ui_label, widget);
 }
 
-static struct {
+struct label_parts {
+    uint32_t epoch;
     ui_part_id selection;
     ui_part_id link;
     ui_part_id focus;
-} parts;
+};
 
-static void label_parts_init(void)
+static struct label_parts label_parts_cache;
+
+/* Returns the cached part handles. A handle from an earlier part table would
+ * abort the name lookup, so the cache interns again after a table restart. */
+static const struct label_parts *label_parts_ids(void)
 {
-    if (parts.selection)
-        return;
-    parts.selection = ui_part_intern("label-selection");
-    parts.link = ui_part_intern("label-link");
-    parts.focus = ui_part_intern("label-focus");
+    uint32_t epoch = ui_part_epoch();
+    if (label_parts_cache.epoch != epoch) {
+        label_parts_cache.epoch = epoch;
+        label_parts_cache.selection = ui_part_intern("label-selection");
+        label_parts_cache.link = ui_part_intern("label-link");
+        label_parts_cache.focus = ui_part_intern("label-focus");
+    }
+    return &label_parts_cache;
 }
 
 static struct css_style label_part(const struct ui_label *label, ui_part_id part)
@@ -265,7 +273,7 @@ static void paint_line(const struct ui_label *label, struct ui_paint_context *pa
         struct rect2i selection = rect;
         selection.x += before;
         selection.width = width;
-        struct css_style sel = label_part(label, parts.selection);
+        struct css_style sel = label_part(label, label_parts_ids()->selection);
         float sel_opacity = opacity * css_style_effective_opacity(&sel);
         /* A selection with no color is transparent. The default sheet
          * supplies the color. */
@@ -289,7 +297,7 @@ static void paint_line(const struct ui_label *label, struct ui_paint_context *pa
         ui_paint_text(paint, marker, style, color, "\xE2\x80\xA6", 3);
     }
     if (label->state.link && rect.width > 0) {
-        struct css_style link = label_part(label, parts.link);
+        struct css_style link = label_part(label, label_parts_ids()->link);
         int thickness = ui_css_resolve_int(link.border_width,
             0, 1, &label->widget.style_scale, true);
         thickness = geom_clamp_i(thickness, 0, rect.height);
@@ -316,7 +324,7 @@ static void label_paint(const struct ui_widget *widget, struct ui_paint_context 
     float opacity = css_style_effective_opacity(&widget->style);
     uint32_t color = widget->style.has_text_color ? widget->style.text_color : 0;
     if (label->state.link) {
-        struct css_style link = label_part(label, parts.link);
+        struct css_style link = label_part(label, label_parts_ids()->link);
         if (link.has_text_color)
             color = link.text_color;
         opacity *= css_style_effective_opacity(&link);
@@ -335,7 +343,7 @@ static void label_paint(const struct ui_widget *widget, struct ui_paint_context 
     }
     ui_paint_pop_clip(paint);
     if (ui_widget_has_focus(widget) && !label->state.disabled) {
-        struct css_style fs = label_part(label, parts.focus);
+        struct css_style fs = label_part(label, label_parts_ids()->focus);
         uint32_t focus = ui_color_opacity(
             fs.has_border_color ? fs.border_color : 0,
             css_style_effective_opacity(&widget->style) *
@@ -668,7 +676,6 @@ static void label_ensure_init(struct ui_label *label)
 {
     if (!label || label->widget.ops)
         return;
-    label_parts_init();
     ui_widget_init(&label->widget, &LABEL_OPS, NULL);
     ui_widget_set_style_identity(&label->widget, "label", NULL, "label");
 }

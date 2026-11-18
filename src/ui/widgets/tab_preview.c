@@ -25,18 +25,26 @@ struct ui_tab_preview_skin {
     float opacity;
 };
 
-static struct {
+struct tab_preview_parts {
+    uint32_t epoch;
     ui_part_id card[2];
     ui_part_id title;
-} parts;
+};
 
-static void tab_preview_parts_init(void)
+static struct tab_preview_parts tab_preview_parts_cache;
+
+/* Returns the cached part handles. A handle from an earlier part table would
+ * abort the name lookup, so the cache interns again after a table restart. */
+static const struct tab_preview_parts *tab_preview_parts(void)
 {
-    if (parts.card[0])
-        return;
-    parts.card[0] = ui_part_intern("tab-preview");
-    parts.card[1] = ui_part_intern("tab-preview dragging");
-    parts.title = ui_part_intern("tab-preview-title");
+    uint32_t epoch = ui_part_epoch();
+    if (tab_preview_parts_cache.epoch != epoch) {
+        tab_preview_parts_cache.epoch = epoch;
+        tab_preview_parts_cache.card[0] = ui_part_intern("tab-preview");
+        tab_preview_parts_cache.card[1] = ui_part_intern("tab-preview dragging");
+        tab_preview_parts_cache.title = ui_part_intern("tab-preview-title");
+    }
+    return &tab_preview_parts_cache;
 }
 
 static struct ui_tab_preview *preview_of(const struct ui_widget *widget)
@@ -49,7 +57,7 @@ static struct ui_tab_preview_skin skin_of(const struct ui_widget *widget,
                                           bool dragging)
 {
     const struct css_scale_context *scale = &widget->style_scale;
-    struct css_style card = ui_widget_part(widget, parts.card[dragging ? 1 : 0], 0);
+    struct css_style card = ui_widget_part(widget, tab_preview_parts()->card[dragging ? 1 : 0], 0);
     float widget_opacity = css_style_effective_opacity(&widget->style);
     float opacity = widget_opacity * css_style_effective_opacity(&card);
     struct ui_paint_box_style box = ui_paint_box_style_of(&card, scale);
@@ -531,7 +539,7 @@ static void preview_paint(const struct ui_widget *widget,
     struct paint_rects r = paint_rects_of(p, &s, fill);
     struct ui_text_style text = ui_widget_text_style(&widget->style_scale);
     text.flags = UI_TEXT_BOLD;
-    struct css_style title_style = ui_widget_part(widget, parts.title, 0);
+    struct css_style title_style = ui_widget_part(widget, tab_preview_parts()->title, 0);
     /* The default sheet supplies the color. A title with no color falls back
      * to the text color of the preview widget. */
     uint32_t title_fallback = widget->style.has_text_color
@@ -597,7 +605,6 @@ void ui_tab_preview_init(struct ui_tab_preview *p)
 {
     if (!p)
         return;
-    tab_preview_parts_init();
     *p = (struct ui_tab_preview){ .state.index = -1, .state.pending = -1 };
     ui_widget_init(&p->widget, &TAB_PREVIEW_OPS, NULL);
     ui_widget_set_style_identity(&p->widget, NULL, NULL, "tab-preview");
