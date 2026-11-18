@@ -9,7 +9,7 @@
 #include "ui/damage.h"
 #include "ui/surface.h"
 #include "ui/ui.h"
-#include "app/tabs/tabbar.h"
+#include "ui/widgets/tabbar.h"
 
 #include <errno.h>
 #include <math.h>
