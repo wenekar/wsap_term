@@ -4,6 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* True when the glyph that is being rasterized fills a cell. A cell glyph
+ * keeps the ink centred in the columns that its advance does not fill. */
+__thread bool ft_cell_aligned = true;
+
 static inline uint8_t subpx_luma(unsigned a, unsigned b, unsigned c)
 {
     return (uint8_t)((a * 77 + b * 150 + c * 29) >> 8);
@@ -68,7 +72,8 @@ bool supported_pixel_mode(const FT_Bitmap *bitmap)
 struct box ft_place_ink(int left, int above_baseline, int w, int h,
                         int advance, int cols, int max_rows, bool color)
 {
-    int rows = max_rows > 0 && max_rows < GLYPH_CELL_H ? max_rows : GLYPH_CELL_H;
+    int cell_h = font_thread_metrics.cell_h;
+    int rows = max_rows > 0 && max_rows < cell_h ? max_rows : cell_h;
     if (h <= 0) h = 1;
     struct box box = { left, font_thread_metrics.baseline - above_baseline, w, h };
 
@@ -76,7 +81,7 @@ struct box ft_place_ink(int left, int above_baseline, int w, int h,
         box.w = w * rows / h > 0 ? w * rows / h : 1;
         box.h = rows;
         box.x = (cols - box.w) / 2;
-        box.y = (GLYPH_CELL_H - box.h) / 2;
+        box.y = (cell_h - box.h) / 2;
         return box;
     }
 
@@ -85,7 +90,9 @@ struct box ft_place_ink(int left, int above_baseline, int w, int h,
     else if (box.y + box.h > rows)
         box.y = rows - box.h;
 
-    if (advance > 0 && advance < cols)
+    /* A proportional glyph stays where the pen puts it. A cell glyph is
+     * centred in the columns that its advance does not fill. */
+    if (ft_cell_aligned && advance > 0 && advance < cols)
         box.x += (cols - advance) / 2;
     return box;
 }
@@ -116,7 +123,7 @@ bool ft_prepare_canvas(struct glyph *g, struct box *ink, const struct box *inked
     int total = right - left > max_span ? max_span : right - left;
     g->x_offset = (int16_t)left;
     ink->x -= left;
-    return glyph_prepare(g, (unsigned)total);
+    return glyph_prepare(g, (unsigned)total, (unsigned)font_thread_metrics.cell_h);
 }
 
 /* An LCD bitmap has a margin for its filter. A scaled bitmap can have a clear

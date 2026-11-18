@@ -22,6 +22,26 @@
 
 static struct font_instance *scaled;
 
+/* Cell size of the font that `cur()` rasterizes with. */
+static int cell_w(void)
+{
+    return font_thread_metrics.cell_w;
+}
+
+static int cell_h(void)
+{
+    return font_thread_metrics.cell_h;
+}
+
+/* Acquires a font instance of `size_pt` at display scale `scale_120`. */
+static struct font_instance *acquire_at(int size_pt, uint32_t scale_120)
+{
+    const struct font_desc desc = {
+        .size = { .pt = size_pt, .scale_120 = scale_120 },
+    };
+    return font_instance_acquire(&desc);
+}
+
 static struct font_instance *cur(void)
 {
     return scaled ? scaled : font_instance_default();
@@ -175,7 +195,7 @@ static struct shaped shape(const char *utf8)
         s.color |= g.has_color;
         h = (h ^ g.width) * UINT64_C(1099511628211);
         h = (h ^ (uint8_t)g.x_offset) * UINT64_C(1099511628211);
-        for (int y = 0; y < GLYPH_CELL_H; y++)
+        for (int y = 0; y < cell_h(); y++)
             for (int x = 0; x < g.width; x++) {
                 uint32_t px = g.has_color ? *glyph_color_at(&g, y, x) : g.alpha[y][x];
                 h = (h ^ px) * UINT64_C(1099511628211);
@@ -206,13 +226,13 @@ static bool is_unknown(const struct glyph *g)
 {
     return g->mask_words == unknown.mask_words &&
            !memcmp(g->row_masks, unknown.row_masks,
-                   (size_t)GLYPH_CELL_H * g->mask_words * sizeof(*g->row_masks));
+                   (size_t)cell_h() * g->mask_words * sizeof(*g->row_masks));
 }
 
 static void ink_box(const struct glyph *g, int *w, int *h)
 {
     int top = -1, bottom = -1, left = INT_MAX, right = -1;
-    for (int y = 0; y < GLYPH_CELL_H; y++) {
+    for (int y = 0; y < cell_h(); y++) {
         if (!glyph_row_inked(g, y))
             continue;
         if (top < 0)
@@ -253,7 +273,7 @@ static void ink_boxes(uint32_t cp, int *nw, int *nh, int *ww, int *wh)
 
 static bool column_inked(const struct glyph *g, int x)
 {
-    for (int y = 0; y < GLYPH_CELL_H; y++)
+    for (int y = 0; y < cell_h(); y++)
         if (glyph_inked(g, y, x))
             return true;
     return false;
@@ -288,9 +308,9 @@ static void test_raster_invariants(void)
         snprintf(label, sizeof(label), "%s renders", samples[i].name);
         check(label, font_instance_render_glyph(cur(), samples[i].cp, samples[i].flags, &g));
 
-        int allocated = GLYPH_CELL_W * ((samples[i].flags & FONT_STYLE_WIDE) ? 2 : 1);
+        int allocated = cell_w() * ((samples[i].flags & FONT_STYLE_WIDE) ? 2 : 1);
         bool masks_agree = true, contained = g.mask_words == (g.width + 63) / 64;
-        for (int y = 0; y < GLYPH_CELL_H; y++) {
+        for (int y = 0; y < cell_h(); y++) {
             for (int x = 0; x < g.mask_words * 64; x++) {
                 bool visible = x < g.width &&
                     (g.has_color ? (*glyph_color_at(&g, y, x) >> 24) != 0
@@ -302,7 +322,7 @@ static void test_raster_invariants(void)
         snprintf(label, sizeof(label), "%s row masks match its pixels", samples[i].name);
         check(label, masks_agree);
         snprintf(label, sizeof(label), "%s ink fits its stored raster around %d columns",
-                 samples[i].name, allocated / GLYPH_CELL_W);
+                 samples[i].name, allocated / cell_w());
         check(label, contained);
         bool tight = (g.x_offset >= 0 || column_inked(&g, 0)) &&
                      (g.x_offset + g.width <= allocated || column_inked(&g, g.width - 1));
@@ -354,7 +374,7 @@ static void test_coverage(void)
           font_instance_render_glyph(cur(), 'A', 0, &regular) &&
           font_instance_render_glyph(cur(), 'A', FONT_STYLE_ITALIC, &italic) &&
           memcmp(regular.row_masks, italic.row_masks,
-                 (size_t)GLYPH_CELL_H * regular.mask_words *
+                 (size_t)cell_h() * regular.mask_words *
                  sizeof(*regular.row_masks)) != 0);
 
     static const uint16_t variants[] = {
@@ -437,7 +457,7 @@ static void test_color_aspect_ratio(void)
         struct glyph wide = {0};
         font_instance_render_glyph(cur(), emoji[i], FONT_STYLE_WIDE, &wide);
         snprintf(label, sizeof(label), "U+%04X fills its two columns", emoji[i]);
-        check(label, wide.width > GLYPH_CELL_W);
+        check(label, wide.width > cell_w());
         glyph_release(&wide);
     }
 }
@@ -465,7 +485,7 @@ static void test_music(void)
         if (is_unknown(&note))
             all_covered = false;
         bool visible = false;
-        for (int y = 0; y < GLYPH_CELL_H; y++)
+        for (int y = 0; y < cell_h(); y++)
             visible |= glyph_row_inked(&note, y);
         if (!visible)
             all_visible = false;
@@ -592,7 +612,7 @@ static void ink_margins(const struct glyph *g, int allocated,
                         int *left, int *right, int *top, int *bottom)
 {
     int t = -1, b = -1, l = INT_MAX, r = -1;
-    for (int y = 0; y < GLYPH_CELL_H; y++) {
+    for (int y = 0; y < cell_h(); y++) {
         if (!glyph_row_inked(g, y))
             continue;
         if (t < 0)
@@ -607,7 +627,7 @@ static void ink_margins(const struct glyph *g, int allocated,
     *left = g->x_offset + l;
     *right = allocated - 1 - (g->x_offset + r);
     *top = t;
-    *bottom = GLYPH_CELL_H - 1 - b;
+    *bottom = cell_h() - 1 - b;
 }
 
 static void test_ink_centering(void)
@@ -617,7 +637,7 @@ static void test_ink_centering(void)
         struct glyph g = {0};
         font_instance_render_glyph(cur(), emoji[i], FONT_STYLE_WIDE, &g);
         int left, right, top, bottom;
-        ink_margins(&g, 2 * GLYPH_CELL_W, &left, &right, &top, &bottom);
+        ink_margins(&g, 2 * cell_w(), &left, &right, &top, &bottom);
         glyph_release(&g);
 
         char label[96];
@@ -634,7 +654,7 @@ static void test_ink_centering(void)
         struct glyph g = {0};
         font_instance_render_glyph(cur(), text[i], 0, &g);
         int left, right, top, bottom;
-        ink_margins(&g, GLYPH_CELL_W, &left, &right, &top, &bottom);
+        ink_margins(&g, cell_w(), &left, &right, &top, &bottom);
 
         char label[96];
         snprintf(label, sizeof(label), "'%c' is centred horizontally in its cell",
@@ -674,7 +694,7 @@ static void test_outline_aspect_ratio(void)
     struct glyph circle = {0};
     font_instance_render_glyph(cur(), 0x25CF, 0, &circle);
     int cl, cr, ct, cb;
-    ink_margins(&circle, GLYPH_CELL_W, &cl, &cr, &ct, &cb);
+    ink_margins(&circle, cell_w(), &cl, &cr, &ct, &cb);
     check("U+25CF black circle keeps its horizontal overhang", cl < 0 || cr < 0);
     glyph_release(&circle);
 
@@ -711,7 +731,7 @@ static uint64_t render_after(uint32_t target, uint32_t lo, uint32_t hi)
     font_instance_render_glyph(cur(), target, 0, &g);
 
     uint64_t h = UINT64_C(1469598103934665603);
-    for (int y = 0; y < GLYPH_CELL_H; y++)
+    for (int y = 0; y < cell_h(); y++)
         h = row_hash(h, &g, y);
     glyph_release(&g);
     return h;
@@ -734,7 +754,7 @@ static void test_fallback_order_independence(void)
 static struct glyph drawn(uint32_t cp)
 {
     struct glyph g = {0};
-    g.width = GLYPH_CELL_W;
+    g.width = cell_w();
     check("aligned-symbol drawing supports the tested code point",
           draw_cell_aligned_symbol(cp, &g));
     return g;
@@ -992,8 +1012,8 @@ static bool partitions_cell(const uint32_t *cps, int n)
     for (int i = 0; i < n; i++)
         g[i] = drawn(cps[i]);
 
-    for (int y = 0; y < GLYPH_CELL_H; y++)
-        for (int x = 0; x < GLYPH_CELL_W; x++) {
+    for (int y = 0; y < cell_h(); y++)
+        for (int x = 0; x < cell_w(); x++) {
             int times = 0;
             for (int i = 0; i < n; i++)
                 if (solid(&g[i], y, x))
@@ -1012,8 +1032,8 @@ static void test_cell_tiling(void)
 
     struct glyph full = drawn(0x2588);
     bool every_pixel = true;
-    for (int y = 0; y < GLYPH_CELL_H; y++)
-        for (int x = 0; x < GLYPH_CELL_W; x++)
+    for (int y = 0; y < cell_h(); y++)
+        for (int x = 0; x < cell_w(); x++)
             if (!solid(&full, y, x))
                 every_pixel = false;
     check("a full block covers every pixel of its cell", every_pixel);
@@ -1043,8 +1063,8 @@ static void test_cell_tiling(void)
 
     struct glyph lower = drawn(0x2581), upper = drawn(0x2594);
     bool meet = true;
-    for (int x = 0; x < GLYPH_CELL_W; x++)
-        if (!solid(&lower, GLYPH_CELL_H - 1, x) || !solid(&upper, 0, x))
+    for (int x = 0; x < cell_w(); x++)
+        if (!solid(&lower, cell_h() - 1, x) || !solid(&upper, 0, x))
             meet = false;
     check("bars stacked in neighbouring rows meet at the boundary", meet);
 
@@ -1053,19 +1073,19 @@ static void test_cell_tiling(void)
 
     struct glyph line = drawn(0x2500), cross = drawn(0x253C), bar = drawn(0x2502);
     bool aligned = true;
-    for (int y = 0; y < GLYPH_CELL_H; y++)
+    for (int y = 0; y < cell_h(); y++)
         if (solid(&line, y, 0) != solid(&cross, y, 0) ||
-            solid(&line, y, GLYPH_CELL_W - 1) != solid(&cross, y, GLYPH_CELL_W - 1))
+            solid(&line, y, cell_w() - 1) != solid(&cross, y, cell_w() - 1))
             aligned = false;
-    for (int x = 0; x < GLYPH_CELL_W; x++)
+    for (int x = 0; x < cell_w(); x++)
         if (solid(&bar, 0, x) != solid(&cross, 0, x) ||
-            solid(&bar, GLYPH_CELL_H - 1, x) != solid(&cross, GLYPH_CELL_H - 1, x))
+            solid(&bar, cell_h() - 1, x) != solid(&cross, cell_h() - 1, x))
             aligned = false;
     check("a line, a bar and a cross meet on the same pixels", aligned);
 
     bool spans = false;
-    for (int y = 0; y < GLYPH_CELL_H; y++)
-        if (solid(&line, y, 0) && solid(&line, y, GLYPH_CELL_W - 1))
+    for (int y = 0; y < cell_h(); y++)
+        if (solid(&line, y, 0) && solid(&line, y, cell_w() - 1))
             spans = true;
     check("a light horizontal line reaches both edges of its cell", spans);
     glyph_release(&line);
@@ -1124,7 +1144,7 @@ static void test_tile_colors(void)
 static void set_scale(uint32_t scale_120)
 {
     struct font_instance *fi =
-        font_instance_acquire(font_instance_size_pt(font_instance_default()), scale_120);
+        acquire_at(font_instance_size_pt(font_instance_default()), scale_120);
     font_instance_unref(scaled);
     scaled = fi;
     font_bind_thread(fi);
@@ -1133,7 +1153,7 @@ static void set_scale(uint32_t scale_120)
 
 static void test_scaled_cells(void)
 {
-    int base_w = GLYPH_CELL_W, base_h = GLYPH_CELL_H;
+    int base_w = cell_w(), base_h = cell_h();
     uint32_t ceiling = 480;
 
     int last_w = base_w, last_h = base_h;
@@ -1141,32 +1161,32 @@ static void test_scaled_cells(void)
         set_scale(scale);
         char what[80];
         snprintf(what, sizeof(what), "cell does not shrink as the scale rises (%u/120)", scale);
-        check(what, GLYPH_CELL_W >= last_w && GLYPH_CELL_H >= last_h);
+        check(what, cell_w() >= last_w && cell_h() >= last_h);
 
-        last_w = GLYPH_CELL_W;
-        last_h = GLYPH_CELL_H;
+        last_w = cell_w();
+        last_h = cell_h();
     }
 
     if (ceiling >= 240) {
         set_scale(240);
         check("doubling the scale approximately doubles the cell width",
-              abs(GLYPH_CELL_W - base_w * 2) <= 1);
+              abs(cell_w() - base_w * 2) <= 1);
         check("doubling the scale doubles the cell height",
-              abs(GLYPH_CELL_H - base_h * 2) <= 1);
+              abs(cell_h() - base_h * 2) <= 1);
     }
 
     set_scale(ceiling);
-    int ceiling_w = GLYPH_CELL_W, ceiling_h = GLYPH_CELL_H;
+    int ceiling_w = cell_w(), ceiling_h = cell_h();
     set_scale(ceiling * 3);
     check("a scale past the old 200% ceiling keeps growing the cell",
-          GLYPH_CELL_W > ceiling_w && GLYPH_CELL_H > ceiling_h);
+          cell_w() > ceiling_w && cell_h() > ceiling_h);
     struct glyph big = {0};
     check("a wide glyph past 64 pixels renders with ink",
-          GLYPH_CELL_W * 2 > 64 &&
+          cell_w() * 2 > 64 &&
           font_instance_render_glyph(cur(), 0x4E2D, FONT_STYLE_WIDE, &big) &&
-          big.mask_words > 1 && glyph_row_inked(&big, GLYPH_CELL_H / 2));
+          big.mask_words > 1 && glyph_row_inked(&big, cell_h() / 2));
     bool right_half = false;
-    for (int y = 0; y < GLYPH_CELL_H; y++)
+    for (int y = 0; y < cell_h(); y++)
         for (int x = 64; x < big.width; x++)
             right_half |= glyph_inked(&big, y, x);
     check("ink past column 64 is marked", right_half);
@@ -1174,7 +1194,7 @@ static void test_scaled_cells(void)
 
     set_scale(120);
     check("returning to an unscaled cell restores it",
-          GLYPH_CELL_W == base_w && GLYPH_CELL_H == base_h);
+          cell_w() == base_w && cell_h() == base_h);
 }
 
 static void test_font_sizes(void)
@@ -1183,13 +1203,13 @@ static void test_font_sizes(void)
     const struct font_metrics *bm = font_instance_metrics(base);
     check("font starts at the configured default size",
           font_instance_size_pt(base) == FONT_DEFAULT_SIZE_PT);
-    struct font_instance *bigger = font_instance_acquire(font_instance_size_pt(base) + 4, 120);
+    struct font_instance *bigger = acquire_at(font_instance_size_pt(base) + 4, 120);
     check("a larger size is another instance", bigger && bigger != base);
     const struct font_metrics *gm = font_instance_metrics(bigger);
     check("a larger font does not shrink its cell",
           gm->cell_w >= bm->cell_w && gm->cell_h > bm->cell_h);
     check("the same size and scale give the same instance",
-          font_instance_acquire(font_instance_size_pt(base) + 4, 120) == bigger);
+          acquire_at(font_instance_size_pt(base) + 4, 120) == bigger);
     font_instance_unref(bigger);
 
     const struct glyph *small_a = glyph_cache_fetch(base, 'A', 0);
@@ -1198,17 +1218,96 @@ static void test_font_sizes(void)
           big_a->width == gm->cell_w && small_a->width == bm->cell_w);
     font_instance_unref(bigger);
 
-    struct font_instance *huge = font_instance_acquire(FONT_MAX_SIZE_PT + 100, 120);
+    struct font_instance *huge = acquire_at(FONT_MAX_SIZE_PT + 100, 120);
     check("font size is clamped to the supported maximum",
           huge && font_instance_size_pt(huge) == FONT_MAX_SIZE_PT);
     font_instance_unref(huge);
     font_bind_thread(base);
 }
 
+static void test_glyph_placement(void)
+{
+    struct glyph g = {0};
+    struct font_instance *fi = cur();
+    const struct font_metrics *m = font_instance_metrics(fi);
+
+    check("a cell glyph renders", font_instance_render_glyph(fi, 'A', 0, &g));
+    check("a cell glyph reports the advance of its column", g.advance == m->cell_w);
+    int first = -1;
+    for (int y = 0; y < g.height && first < 0; y++)
+        if (glyph_row_inked(&g, y))
+            first = y;
+    check("a cell glyph records the row of its ink", first >= 0 && g.y_offset == first);
+    glyph_release(&g);
+
+    check("a subpixel render succeeds",
+          font_instance_render_glyph_at(fi, 'l', 0, 2, &g) &&
+          g.advance == m->cell_w);
+    glyph_release(&g);
+
+    const struct glyph *cell = glyph_cache_fetch(fi, 'l', 0);
+    const struct glyph *shifted = glyph_cache_fetch_at(fi, 'l', 0, 2);
+    check("the glyph cache keys a subpixel phase apart from the cell",
+          cell && shifted && cell != shifted);
+    font_bind_thread(fi);
+}
+
+static void test_font_descriptor(void)
+{
+    struct font_instance *base = font_instance_default();
+    struct glyph g = {0};
+
+    check("an empty descriptor gives the default instance",
+          font_instance_acquire(&(struct font_desc){0}) == base);
+    check("the default instance is monospace", font_instance_monospace(base));
+
+    const struct font_desc plain = {
+        .size = { .pt = font_instance_size_pt(base), .scale_120 = 120 },
+    };
+    struct font_instance *plain_fi = font_instance_acquire(&plain);
+    check("a plain descriptor reuses the default instance", plain_fi == base);
+    check("the default weight is regular",
+          font_instance_weight(base) == FONT_WEIGHT_REGULAR);
+
+    const struct font_desc heavy = {
+        .size = { .pt = font_instance_size_pt(base), .scale_120 = 120 },
+        .weight = 700,
+    };
+    struct font_instance *bold_fi = font_instance_acquire(&heavy);
+    check("a bold weight makes another instance",
+          bold_fi && bold_fi != base && font_instance_weight(bold_fi) == 700);
+    check("a bold descriptor interns by its weight",
+          font_instance_acquire(&heavy) == bold_fi);
+
+    uint64_t plain_ink = 0, bold_ink = 0;
+    if (bold_fi && font_instance_render_glyph(base, 'e', 0, &g)) {
+        plain_ink = glyph_ink_hash(&g);
+        if (font_instance_render_glyph(bold_fi, 'e', 0, &g))
+            bold_ink = glyph_ink_hash(&g);
+    }
+    check("a bold descriptor draws bold ink without a bold style bit",
+          plain_ink && bold_ink && plain_ink != bold_ink);
+
+    const struct font_desc slanted = {
+        .size = { .pt = font_instance_size_pt(base), .scale_120 = 120 },
+        .slant = FONT_SLANT_ITALIC,
+    };
+    struct font_instance *italic_fi = font_instance_acquire(&slanted);
+    uint64_t italic_ink = 0;
+    if (italic_fi && font_instance_render_glyph(italic_fi, 'e', 0, &g))
+        italic_ink = glyph_ink_hash(&g);
+    check("an italic descriptor draws slanted ink",
+          italic_ink && italic_ink != plain_ink && italic_ink != bold_ink);
+    glyph_release(&g);
+    font_instance_unref(bold_fi);
+    font_instance_unref(italic_fi);
+    font_bind_thread(base);
+}
+
 static void test_render_binds_own_instance(void)
 {
-    struct font_instance *small = font_instance_acquire(8, 120);
-    struct font_instance *large = font_instance_acquire(20, 120);
+    struct font_instance *small = acquire_at(8, 120);
+    struct font_instance *large = acquire_at(20, 120);
     assert(small && large);
     struct font_instance *pairs[2][2] = { { small, large }, { large, small } };
     struct glyph g = {0};
@@ -1267,12 +1366,12 @@ static void test_hinting(void)
     check("glyphs rasterize under both antialiased and monochrome modes", ok);
     check("hinting modes produce distinct rasters",
           memcmp(hinted.row_masks, mono.row_masks,
-                 (size_t)GLYPH_CELL_H * hinted.mask_words *
+                 (size_t)cell_h() * hinted.mask_words *
                  sizeof(*hinted.row_masks)) != 0 ||
           memcmp(hinted.alpha[0], mono.alpha[0],
-                 (size_t)GLYPH_CELL_H * hinted.width) != 0);
+                 (size_t)cell_h() * hinted.width) != 0);
     bool binary = true;
-    for (int y = 0; y < GLYPH_CELL_H; y++)
+    for (int y = 0; y < cell_h(); y++)
         for (int x = 0; x < mono.width; x++)
             if (mono.alpha[y][x] != 0 && mono.alpha[y][x] != 255)
                 binary = false;
@@ -1284,7 +1383,7 @@ static void test_hinting(void)
     struct glyph still_mono = {0};
     font_instance_render_glyph(cur(), 'A', 0, &still_mono);
     binary = still_mono.width > 0;
-    for (int y = 0; y < GLYPH_CELL_H && binary; y++)
+    for (int y = 0; y < cell_h() && binary; y++)
         for (int x = 0; x < still_mono.width; x++)
             if (still_mono.alpha[y][x] != 0 && still_mono.alpha[y][x] != 255)
                 binary = false;
@@ -1295,7 +1394,7 @@ static void test_hinting(void)
     struct glyph unhinted_mono = {0};
     font_instance_render_glyph(cur(), 'A', 0, &unhinted_mono);
     binary = unhinted_mono.width > 0;
-    for (int y = 0; y < GLYPH_CELL_H && binary; y++)
+    for (int y = 0; y < cell_h() && binary; y++)
         for (int x = 0; x < unhinted_mono.width; x++)
             if (unhinted_mono.alpha[y][x] != 0 && unhinted_mono.alpha[y][x] != 255)
                 binary = false;
@@ -1306,7 +1405,7 @@ static void test_hinting(void)
     struct glyph gray = {0};
     font_instance_render_glyph(cur(), 'A', 0, &gray);
     bool smooth = false;
-    for (int y = 0; y < GLYPH_CELL_H; y++)
+    for (int y = 0; y < cell_h(); y++)
         for (int x = 0; x < gray.width; x++)
             if (gray.alpha[y][x] != 0 && gray.alpha[y][x] != 255)
                 smooth = true;
@@ -1318,7 +1417,7 @@ static void test_hinting(void)
     font_instance_render_glyph(cur(), 'A', 0, &subpx_g);
     check("subpixel RGB mode sets has_subpx_ink", subpx_g.has_subpx_ink && subpx_g.subpx != NULL);
     bool has_distinct_rgb = false;
-    for (int y = 0; y < GLYPH_CELL_H; y++) {
+    for (int y = 0; y < cell_h(); y++) {
         for (int x = 0; x < subpx_g.width; x++) {
             const uint8_t *rgb = glyph_subpx_at(&subpx_g, y, x);
             if (rgb[0] != rgb[1] || rgb[1] != rgb[2])
@@ -1337,7 +1436,7 @@ static uint64_t glyph_ink_hash(const struct glyph *g)
     h = (h ^ (unsigned)g->width) * UINT64_C(1099511628211);
     h = (h ^ (unsigned)g->x_offset) * UINT64_C(1099511628211);
     h = (h ^ g->has_color) * UINT64_C(1099511628211);
-    for (int y = 0; y < GLYPH_CELL_H; y++) {
+    for (int y = 0; y < cell_h(); y++) {
         h = row_hash(h, g, y);
         for (int x = 0; x < g->width; x++)
             h = (h ^ (g->has_color ? *glyph_color_at(g, y, x) : g->alpha[y][x])) *
@@ -1478,7 +1577,7 @@ static void test_playing_cards(void)
         check(label, ok);
         if (ok) {
             bool ink = false;
-            for (int y = 0; y < GLYPH_CELL_H; y++)
+            for (int y = 0; y < cell_h(); y++)
                 ink |= glyph_row_inked(&g, y);
             snprintf(label, sizeof(label),
                      "U+%05X draws monochrome ink", cp);
@@ -1656,6 +1755,85 @@ static bool each_regular_font(bool (*fn)(const char *file, const char *family,
     FT_Done_FreeType(lib);
     FcFini();
     return found;
+}
+
+/* A regular face of an installed family, named for the discovery test. */
+struct family_sample {
+    char proportional[128];
+    char monospace[128];
+};
+
+static bool sample_family(const char *file, const char *family, FcCharSet *cs,
+                          void *ctx)
+{
+    struct family_sample *sample = ctx;
+    if (!FcCharSetHasChar(cs, 'i') || !FcCharSetHasChar(cs, 'M'))
+        return false;
+    FT_Library lib;
+    if (FT_Init_FreeType(&lib))
+        return false;
+    FT_Face face = NULL;
+    bool both = false;
+    if (!FT_New_Face(lib, file, 0, &face) && FT_IS_SCALABLE(face) &&
+        !FT_Set_Pixel_Sizes(face, 0, 16) &&
+        !FT_Load_Char(face, 'i', FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP)) {
+        FT_Pos narrow = face->glyph->advance.x;
+        both = !FT_Load_Char(face, 'M', FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP) &&
+               face->glyph->advance.x != narrow;
+    }
+    if (both && !sample->proportional[0])
+        snprintf(sample->proportional, sizeof(sample->proportional), "%s", family);
+    if (!both && !sample->monospace[0])
+        snprintf(sample->monospace, sizeof(sample->monospace), "%s", family);
+    if (face)
+        FT_Done_Face(face);
+    FT_Done_FreeType(lib);
+    return sample->proportional[0] && sample->monospace[0];
+}
+
+static bool family_listed(char **names, size_t count, const char *family)
+{
+    for (size_t i = 0; family && family[0] && i < count; i++)
+        if (!strcmp(names[i], family))
+            return true;
+    return false;
+}
+
+static void test_family_discovery(void)
+{
+    size_t count = 0;
+    char **names = font_list_families(&count);
+    if (!names || !count) {
+        printf("SKIP  no font families are installed\n");
+        return;
+    }
+
+    bool unique = true;
+    for (size_t i = 0; i < count && unique; i++)
+        for (size_t j = i + 1; j < count; j++)
+            if (!strcmp(names[i], names[j])) {
+                unique = false;
+                break;
+            }
+    check("the family list names each family once", unique);
+
+    struct family_sample sample = {0};
+    each_regular_font(sample_family, &sample);
+    if (!sample.proportional[0] || !sample.monospace[0]) {
+        printf("SKIP  no pair of monospace and proportional families is installed\n");
+    } else {
+        char what[192];
+        snprintf(what, sizeof(what), "the family list offers the monospace family %s",
+                 sample.monospace);
+        check(what, family_listed(names, count, sample.monospace));
+        snprintf(what, sizeof(what), "the family list offers the proportional family %s",
+                 sample.proportional);
+        check(what, family_listed(names, count, sample.proportional));
+    }
+
+    for (size_t i = 0; i < count; i++)
+        free(names[i]);
+    free(names);
 }
 
 static bool match_sibling(const char *regular, const char *family, int weight,
@@ -2195,6 +2373,7 @@ int main(int argc, char **argv)
     font_instance_render_glyph(cur(), 0x10FFFF, 0, &unknown);
 
     test_variant_golden();
+    test_family_discovery();
     test_cell_tiling();
     test_tile_colors();
     test_programming_ligatures();
@@ -2230,6 +2409,8 @@ int main(int argc, char **argv)
 
     test_scaled_cells();
     test_font_sizes();
+    test_font_descriptor();
+    test_glyph_placement();
     test_render_binds_own_instance();
     test_hinting();
 

@@ -32,6 +32,13 @@ void glyph_cache_thread_detach(void);
 /* Looks up or rasterizes the glyph for code point `cp` with `style`. */
 const struct glyph *glyph_cache_fetch(struct font_instance *fi, uint32_t cp,
                                       uint16_t style);
+/*
+ * Looks up or rasterizes the glyph for code point `cp` with `style` at
+ * `phase` quarter pixels. The key holds the phase, so a cell glyph and a
+ * placed glyph do not share an entry.
+ */
+const struct glyph *glyph_cache_fetch_at(struct font_instance *fi, uint32_t cp,
+                                         uint16_t style, uint8_t phase);
 /* Looks up or creates the color tile for code point `cp` with `style`. */
 const uint32_t *glyph_cache_fetch_tile(struct font_instance *fi,
                                        uint32_t cp, uint16_t style);

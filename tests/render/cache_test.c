@@ -393,7 +393,10 @@ int main(void)
     TCHECK(render_init(), "render_init");
     font_set_aa_mode(FONT_AA_GRAYSCALE);
     fonts[0] = font_instance_default();
-    fonts[1] = font_instance_acquire(font_instance_size_pt(fonts[0]), 180);
+    const struct font_desc desc = {
+        .size = { .pt = font_instance_size_pt(fonts[0]), .scale_120 = 180 },
+    };
+    fonts[1] = font_instance_acquire(&desc);
     TCHECK(fonts[0] && fonts[1], "fonts");
     oracle = renderer_create(&(struct render_options){
         .threads = RENDER_NONE, .cache_bytes = RENDER_NONE });

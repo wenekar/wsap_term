@@ -17,6 +17,7 @@
 
 struct font_handle {
     int pixel_size;
+    bool monospace;
 };
 
 char **font_list_families(size_t *count)
@@ -26,16 +27,13 @@ char **font_list_families(size_t *count)
         return NULL;
     fc_query_lock();
     FcPattern *pattern = FcPatternCreate();
-    FcObjectSet *objects = FcObjectSetBuild(FC_FAMILY, FC_SPACING, NULL);
+    FcObjectSet *objects = FcObjectSetBuild(FC_FAMILY, NULL);
     FcFontSet *fonts = pattern && objects ? FcFontList(NULL, pattern, objects) : NULL;
     char **names = fonts ? calloc((size_t)fonts->nfont + 1, sizeof(*names)) : NULL;
     bool ok = names != NULL;
     for (int i = 0; ok && i < fonts->nfont; i++) {
-        int spacing = 0;
         FcChar8 *family = NULL;
-        if (FcPatternGetInteger(fonts->fonts[i], FC_SPACING, 0, &spacing) != FcResultMatch ||
-            spacing < FC_MONO ||
-            FcPatternGetString(fonts->fonts[i], FC_FAMILY, 0, &family) != FcResultMatch)
+        if (FcPatternGetString(fonts->fonts[i], FC_FAMILY, 0, &family) != FcResultMatch)
             continue;
         bool duplicate = false;
         for (size_t j = 0; j < *count; j++)
@@ -68,7 +66,7 @@ static const char *env_first(const char *a, const char *b)
 }
 
 static bool ft_fit_coverable(const uint32_t *cps, int len, uint16_t flags,
-                             bool emoji, struct glyph *g)
+                             bool emoji, uint8_t phase, struct glyph *g)
 {
     if (!run_coverable(cps, len))
         return false;
@@ -77,7 +75,7 @@ static bool ft_fit_coverable(const uint32_t *cps, int len, uint16_t flags,
     int i;
     while ((i = font_next_face_covering(&q, cps, len)) >= 0)
         if (font_shape(i, cps, len, flags, 0, &run) != FONT_SHAPE_UNAVAILABLE &&
-            font_fit_single(&run, g))
+            font_fit_single(&run, phase, g))
             return true;
     return false;
 }
@@ -107,26 +105,67 @@ static bool ft_init(void)
     if (font_hinting_has_auto_axis())
         ft_apply_hinting();
 
-    ft_applied_px = FONT_PT_TO_PX(font_configured_size());
-    ft_reload_family();
+    ft_reload_family(font_get_family());
     fc_unpin();
     return true;
 }
 
-void ft_reload_family(void)
+/* Owned list of the family set that the face tables hold. */
+static char *active_family;
+
+/* True when the last face open asked for a cell font. The embedded playing
+ * card face serves cell glyphs only, so a proportional font set leaves it
+ * out of the fallback list. */
+static bool cell_mode = true;
+
+bool ft_cell_mode(void)
+{
+    return cell_mode;
+}
+
+/* Returns the family list that `list` names, with the configured default filled in. */
+static const char *family_or_default(const char *list)
+{
+    return list && list[0] ? list : font_get_family();
+}
+
+/*
+ * Makes `family_list` the loaded family set. The backend holds one set for
+ * the process. A caller that needs another set reloads the face tables of
+ * every thread.
+ */
+bool ft_family_ensure(const char *family_list)
+{
+    const char *want = family_or_default(family_list);
+    if (active_family && !strcmp(active_family, want))
+        return true;
+    ft_reload_family(want);
+    return active_family && !strcmp(active_family, want);
+}
+
+void ft_reload_family(const char *family_list)
 {
     if (!ft_lib)
         return;
+    const char *want = family_or_default(family_list);
+    char *next = strdup(want);
+    if (!next)
+        return;
+    free(active_family);
+    active_family = next;
     bool pinned = fc_pin();
     shape_thread_reset();
     fallback_destroy();
     release_all_faces();
     fallback_coverage_reset();
-    load_named_face(font_get_family());
+    load_named_face(want);
     if (!num_faces) load_named_face(FT_LAST_RESORT_FAMILY);
     if (!num_faces) load_named_face("monospace");
     if (num_faces) {
-        struct font_metrics m = ft_measure_cell(faces[0].styles[0]);
+        int px = font_size_px((struct font_size){0});
+        size_face(faces[0].styles[0], px);
+        faces[0].applied_px = px;
+        struct font_metrics m = ft_measure_cell(faces[0].styles[0], px, true);
         font_thread_metrics_set(&m);
     }
 
@@ -209,14 +248,18 @@ static bool ft_thread_ready(void)
     return ft_thread_attach();
 }
 
-static font_handle_t *ft_face_open(const char *family_list, struct font_size size)
+static font_handle_t *ft_face_open(const struct font_desc *desc)
 {
-    (void)family_list;
-    if (!ft_thread_ready())
+    if (!desc || !ft_thread_ready())
+        return NULL;
+    if (!ft_family_ensure(desc->family_list))
         return NULL;
     struct font_handle *face = calloc(1, sizeof(*face));
-    if (face)
-        face->pixel_size = font_size_px(size);
+    if (!face)
+        return NULL;
+    face->pixel_size = font_size_px(desc->size);
+    face->monospace = !desc->proportional;
+    cell_mode = !desc->proportional;
     return face;
 }
 
@@ -238,7 +281,8 @@ static bool ft_face_metrics(font_handle_t *face, struct font_metrics *out)
         return false;
 
     ft_size_faces(face->pixel_size);
-    struct font_metrics m = ft_measure_cell(faces[0].styles[0]);
+    struct font_metrics m = ft_measure_cell(faces[0].styles[0], face->pixel_size,
+                                            face->monospace);
     m.pixel_size = face->pixel_size;
     font_thread_metrics_set(&m);
     *out = m;
@@ -246,11 +290,12 @@ static bool ft_face_metrics(font_handle_t *face, struct font_metrics *out)
 }
 
 static bool ft_rasterize_glyph(font_handle_t *face, uint32_t codepoint, uint16_t style,
-                               const struct font_metrics *m, struct glyph *out)
+                               uint8_t phase, const struct font_metrics *m,
+                               struct glyph *out)
 {
-    (void)face;
     if (!ft_thread_ready())
         return false;
+    ft_cell_aligned = !face || face->monospace;
     face_activate(m);
 
     uint32_t cps[UNICODE_GRAPHEME_MAX_LEN];
@@ -258,11 +303,12 @@ static bool ft_rasterize_glyph(font_handle_t *face, uint32_t codepoint, uint16_t
     if (len > 1) {
         bool emoji = font_prefers_emoji(cps[0], style) ||
                      font_prefers_emoji(cps[len - 1], style);
-        if (ft_fit_coverable(cps, len, style, emoji, out))
+        if (ft_fit_coverable(cps, len, style, emoji, phase, out))
             return true;
     }
 
-    return ft_fit_coverable(&codepoint, 1, style, font_prefers_emoji(codepoint, style), out);
+    return ft_fit_coverable(&codepoint, 1, style,
+                            font_prefers_emoji(codepoint, style), phase, out);
 }
 
 static bool core_unchanged(const struct shaped_run *run, const struct font_window *w)

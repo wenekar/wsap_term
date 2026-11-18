@@ -680,7 +680,7 @@ static bool fallback_init_locked(void)
     b.tmp_pages = malloc(FALLBACK_PAGES * sizeof(*b.tmp_pages));
     uint32_t embedded_off = 0;
     uint16_t embedded_cnt = 0;
-    int embedded = (b.page_map && b.tmp_pages &&
+    int embedded = (ft_cell_mode() && b.page_map && b.tmp_pages &&
                     collect_embedded_charset(&b, &embedded_off, &embedded_cnt)) ? 1 : 0;
     int total = nfont + embedded;
     int words = (total + 63) / 64;

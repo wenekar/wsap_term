@@ -141,7 +141,7 @@ static void *tile_slot_slow(uint32_t cp, uint16_t flags, void *ctx)
 const uint32_t *glyph_cache_fetch_tile(struct font_instance *fi, uint32_t cp,
                                        uint16_t style)
 {
-    style = glyph_style(style);
+    style = instance_style(fi, style);
     if (__builtin_expect(cp > GLYPH_KEY_CP_MAX, 0))
         return NULL;
 

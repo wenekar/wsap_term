@@ -41,9 +41,13 @@ static void thumbnail_tracks_content(void)
     free(before);
 
     gen = image.gen;
-    struct font_instance *other = font_instance_acquire(
-        font_instance_size_pt(font_instance_default()) + 2,
-        font_instance_scale_120(font_instance_default()));
+    const struct font_desc bigger = {
+        .size = {
+            .pt = font_instance_size_pt(font_instance_default()) + 2,
+            .scale_120 = font_instance_scale_120(font_instance_default()),
+        },
+    };
+    struct font_instance *other = font_instance_acquire(&bigger);
     assert(other);
     assert(app_thumbnail_capture(fixture.app, &state, other, term, 100, &image));
     assert(image.gen != gen);

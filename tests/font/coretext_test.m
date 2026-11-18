@@ -9,6 +9,15 @@
 #include <string.h>
 #include <pthread.h>
 
+/* Acquires a font instance of `size_pt` at display scale `scale_120`. */
+static struct font_instance *acquire_at(int size_pt, uint32_t scale_120)
+{
+    const struct font_desc desc = {
+        .size = { .pt = size_pt, .scale_120 = scale_120 },
+    };
+    return font_instance_acquire(&desc);
+}
+
 static uint64_t glyph_pixels(const struct glyph *g, int rows)
 {
     uint64_t hash = 14695981039346656037ULL;
@@ -116,7 +125,7 @@ static void test_coretext_scaling(void)
     struct font_instance *base = font_instance_default();
     const struct font_metrics *base_m = font_instance_metrics(base);
 
-    struct font_instance *retina = font_instance_acquire(font_instance_size_pt(base), 240);
+    struct font_instance *retina = acquire_at(font_instance_size_pt(base), 240);
     assert(retina != NULL);
     const struct font_metrics *retina_m = font_instance_metrics(retina);
 
@@ -193,7 +202,7 @@ static void test_coretext_glyph_orientation(void)
 {
     font_set_family("Menlo");
     for (uint32_t scale = 120; scale <= 240; scale += 120) {
-        struct font_instance *fi = font_instance_acquire(20, scale);
+        struct font_instance *fi = acquire_at(20, scale);
         assert(fi);
         font_bind_thread(fi);
         const struct font_metrics *m = font_instance_metrics(fi);
@@ -250,7 +259,7 @@ static void test_coretext_clusters(void)
     const uint32_t *sequences[] = { accent, tone, family, flag, keycap };
     const int lengths[] = { 2, 2, 5, 2, 3 };
     for (uint32_t scale = 120; scale <= 240; scale += 120) {
-        struct font_instance *fi = font_instance_acquire(20, scale);
+        struct font_instance *fi = acquire_at(20, scale);
         assert(fi);
         font_bind_thread(fi);
         int rows = font_instance_metrics(fi)->cell_h;

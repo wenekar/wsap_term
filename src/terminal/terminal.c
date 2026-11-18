@@ -114,7 +114,10 @@ static bool fit_font(struct terminal *t, int size_pt)
     }
     if (size_pt < 1)
         return false;
-    struct font_instance *fi = font_instance_acquire(size_pt, scale);
+    const struct font_desc desc = {
+        .size = { .pt = size_pt, .scale_120 = scale },
+    };
+    struct font_instance *fi = font_instance_acquire(&desc);
     if (!fi)
         return false;
     font_instance_unref(t->font);

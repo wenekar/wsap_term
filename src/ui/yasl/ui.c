@@ -18,9 +18,14 @@ static void update_ui_font(struct window *w)
 {
     struct window_ui *ui = ui_of(w);
     struct window_host *host = window_host(w);
-    struct font_instance *fi =
-        font_instance_acquire(ui->spec.ui_font_size > 0 ? ui->spec.ui_font_size : host->config->font_size,
-                              window_scale_120(w));
+    const struct font_desc desc = {
+        .size = {
+            .pt = ui->spec.ui_font_size > 0 ? ui->spec.ui_font_size
+                                            : host->config->font_size,
+            .scale_120 = window_scale_120(w),
+        },
+    };
+    struct font_instance *fi = font_instance_acquire(&desc);
     if (!fi)
         return;
     font_instance_unref(ui->ui_font);

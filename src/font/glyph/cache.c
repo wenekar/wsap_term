@@ -139,9 +139,28 @@ void *cache_slot_fill(struct cache_slot *slot, uint32_t key, uint32_t cp, uint16
     return p;
 }
 
+/* The render request of one cache slot fill. */
+struct glyph_fill_ctx {
+    struct font_instance *fi;
+    uint8_t phase;
+};
+
+/* The cache slot layer passes the code point and the style. The phase and
+ * the instance travel in the fill context. */
+static inline void glyph_fill_args(uint16_t flags, void *ctx, uint8_t *phase,
+                                   struct font_instance **fi)
+{
+    const struct glyph_fill_ctx *c = ctx;
+    *phase = c ? c->phase : 0;
+    *fi = c ? c->fi : NULL;
+    (void)flags;
+}
+
 static void *glyph_slot_produce(uint32_t cp, uint16_t flags, void *old, void *ctx)
 {
-    struct font_instance *fi = ctx;
+    struct font_instance *fi;
+    uint8_t phase;
+    glyph_fill_args(flags, ctx, &phase, &fi);
     struct glyph *g = old;
     if (!g) {
         g = buf_new(BK_GLYPH_ARR, 1, sizeof(*g));
@@ -149,24 +168,32 @@ static void *glyph_slot_produce(uint32_t cp, uint16_t flags, void *old, void *ct
             return NULL;
         *g = (struct glyph){0};
     }
-    font_instance_render_glyph(fi, cp, flags, g);
+    font_instance_render_glyph_at(fi, cp, flags, phase, g);
     return g;
 }
 
 static void *glyph_slot_slow(uint32_t cp, uint16_t flags, void *ctx)
 {
-    return (void *)glyph_scratch_fill(ctx, cp, flags);
+    struct font_instance *fi;
+    uint8_t phase;
+    glyph_fill_args(flags, ctx, &phase, &fi);
+    if (!phase)
+        return (void *)glyph_scratch_fill(fi, cp, flags);
+    release_glyphs(&glyph_scratch, 1);
+    font_instance_render_glyph_at(fi, cp, flags, phase, &glyph_scratch);
+    return &glyph_scratch;
 }
 
 static inline const struct glyph *slot_fill(struct font_instance *fi, struct cache_slot *slot,
-                                            uint32_t cp, uint16_t flags)
+                                            uint32_t cp, uint16_t flags, uint8_t phase)
 {
-    uint32_t key = glyph_key(cp, flags);
+    uint32_t key = glyph_key_at(cp, flags, phase);
     void *p = cache_slot_lookup(slot, key);
     if (__builtin_expect(p != NULL, 1))
         return (const struct glyph *)p;
 
-    const struct slot_fill_ops ops = { glyph_slot_produce, glyph_slot_slow, fi };
+    struct glyph_fill_ctx ctx = { .fi = fi, .phase = phase };
+    const struct slot_fill_ops ops = { glyph_slot_produce, glyph_slot_slow, &ctx };
     return cache_slot_fill(slot, key, cp, flags, &ops);
 }
 
@@ -187,19 +214,20 @@ struct cache_slot *slot_cache_ensure(_Atomic(struct cache_slot *) *ptr, int coun
     return cache;
 }
 
-const struct glyph *glyph_cache_fetch(struct font_instance *fi, uint32_t cp,
-                                      uint16_t style)
+/* Returns the cached glyph of code point `cp` at subpixel `phase`. */
+const struct glyph *glyph_cache_fetch_at(struct font_instance *fi, uint32_t cp,
+                                         uint16_t style, uint8_t phase)
 {
-    style = glyph_style(style);
+    style = instance_style(fi, style);
     if (__builtin_expect(cp > GLYPH_KEY_CP_MAX, 0))
         return glyph_scratch_fill(fi, cp, style);
 
     struct cache_slot *slot;
-    if (__builtin_expect(cp < 128 && !style, 1))
+    if (__builtin_expect(phase == 0 && cp < 128 && !style, 1))
         slot = &fi->ascii[cp];
-    else if (cp < 128 && style == FONT_STYLE_ITALIC)
+    else if (phase == 0 && cp < 128 && style == FONT_STYLE_ITALIC)
         slot = &fi->ascii_italic[cp];
-    else if (__builtin_expect(cp < LATIN_CACHE_SIZE && !style, 1)) {
+    else if (__builtin_expect(phase == 0 && cp < LATIN_CACHE_SIZE && !style, 1)) {
         struct cache_slot *latin = slot_cache_ensure(&fi->latin, LATIN_CACHE_SIZE);
         if (!latin)
             return glyph_scratch_fill(fi, cp, style);
@@ -208,9 +236,15 @@ const struct glyph *glyph_cache_fetch(struct font_instance *fi, uint32_t cp,
         struct cache_slot *cjk = slot_cache_ensure(&fi->cjk, CJK_CACHE_SIZE);
         if (!cjk)
             return glyph_scratch_fill(fi, cp, style);
-        slot = &cjk[(glyph_key(cp, style) * KNUTH_HASH_MULT) >> 20];
+        slot = &cjk[(glyph_key_at(cp, style, phase) * KNUTH_HASH_MULT) >> 20];
     }
-    return slot_fill(fi, slot, cp, style);
+    return slot_fill(fi, slot, cp, style, phase);
+}
+
+const struct glyph *glyph_cache_fetch(struct font_instance *fi, uint32_t cp,
+                                      uint16_t style)
+{
+    return glyph_cache_fetch_at(fi, cp, style, 0);
 }
 
 static struct font_instance *instances;
@@ -267,23 +301,34 @@ static void drop_all(struct font_instance *fi)
     atomic_store_explicit(&fi->run_stamp, 0, memory_order_relaxed);
 }
 
+/* Returns the font descriptor that instance `fi` was made from. */
+static struct font_desc instance_desc(const struct font_instance *fi)
+{
+    return (struct font_desc){
+        .size = { .pt = fi->size_pt, .scale_120 = fi->scale_120 },
+        .weight = fi->weight,
+        .slant = fi->slant,
+        .proportional = fi->proportional,
+    };
+}
+
 static void instance_reopen_if_stale(struct font_instance *fi)
 {
     if (atomic_load_explicit(&fi->built_gen, memory_order_relaxed) == font_generation())
         return;
     const struct font_backend *be = FONT_BACKEND;
-    struct font_size size = { .pt = fi->size_pt, .scale_120 = fi->scale_120 };
+    struct font_desc desc = instance_desc(fi);
     instance_drop_layouts(fi);
     if (fi->face && be->close) {
         be->close(fi->face);
         fi->face = NULL;
     }
     if (be->open)
-        fi->face = be->open(font_get_family(), size);
+        fi->face = be->open(&desc);
     if (fi->face && be->measure)
         be->measure(fi->face, &fi->m);
     else
-        font_measure_size(size, &fi->m);
+        font_measure_desc(&desc, &fi->m);
 }
 
 void glyph_cache_rebuild(struct font_instance *fi)
@@ -322,13 +367,24 @@ void glyph_cache_begin_frame(struct font_instance *fi, uint32_t default_fg,
     instance_refresh(fi);
 }
 
-struct font_instance *font_instance_acquire(int size_pt, uint32_t scale_120)
+/* Returns true when instance `fi` was made from descriptor `desc`. */
+static bool instance_matches(const struct font_instance *fi, const struct font_desc *desc,
+                             int size_pt, uint32_t scale_120)
 {
-    size_pt = clamp_size(size_pt);
-    if (!scale_120)
-        scale_120 = 120;
+    return fi->size_pt == size_pt && fi->scale_120 == scale_120 &&
+           fi->weight == font_desc_weight(desc) && fi->slant == desc->slant &&
+           fi->proportional == desc->proportional;
+}
+
+struct font_instance *font_instance_acquire(const struct font_desc *desc)
+{
+    if (!desc)
+        return NULL;
+    int size_pt = clamp_size(font_size_resolve(desc->size).pt);
+    uint32_t scale_120 = desc->size.scale_120 ? desc->size.scale_120 : 120;
+    font_apply_desc_family(desc);
     for (struct font_instance *fi = instances; fi; fi = fi->next) {
-        if (fi->size_pt == size_pt && fi->scale_120 == scale_120) {
+        if (instance_matches(fi, desc, size_pt, scale_120)) {
             instance_refresh(fi);
             fi->refs++;
             return fi;
@@ -338,29 +394,34 @@ struct font_instance *font_instance_acquire(int size_pt, uint32_t scale_120)
     if (!fi)
         return NULL;
     memset(fi, 0, sizeof(*fi));
-    struct font_size size = { .pt = size_pt, .scale_120 = scale_120 };
+    fi->weight = font_desc_weight(desc);
+    fi->slant = desc->slant;
+    fi->proportional = desc->proportional;
+    fi->base_style = font_desc_base_style(desc);
+    fi->size_pt = size_pt;
+    fi->scale_120 = scale_120;
+    struct font_desc made = instance_desc(fi);
     const struct font_backend *be = FONT_BACKEND;
-    font_handle_t *face = be->open ? be->open(font_get_family(), size) : NULL;
+    font_handle_t *face = be->open ? be->open(&made) : NULL;
     if (face) {
         if (!be->measure(face, &fi->m)) {
             be->close(face);
-            free(fi);
-            return NULL;
+            goto fail;
         }
         fi->face = face;
-    } else if (!font_measure_size(size, &fi->m)) {
-        free(fi);
-        return NULL;
+    } else if (!font_measure_desc(&made, &fi->m)) {
+        goto fail;
     }
     atomic_store_explicit(&fi->built_gen, font_generation(), memory_order_relaxed);
-    fi->size_pt = size_pt;
-    fi->scale_120 = scale_120;
     fi->id = next_instance_id++;
     fi->refs = 1;
     fi->next = instances;
     instances = fi;
     glyph_cache_rebuild(fi);
     return fi;
+fail:
+    free(fi);
+    return NULL;
 }
 
 struct font_instance *font_instance_ref(struct font_instance *fi)
@@ -426,7 +487,8 @@ bool font_system_init(void)
         return true;
     if (!font_backend_init())
         return false;
-    default_instance = font_instance_acquire(font_configured_size(), 120);
+    const struct font_desc desc = { .size = { .pt = font_configured_size() } };
+    default_instance = font_instance_acquire(&desc);
     if (!default_instance) {
         font_backend_shutdown();
         return false;

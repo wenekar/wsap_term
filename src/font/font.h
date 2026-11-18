@@ -57,6 +57,59 @@ struct font_size {
 /* Converts font size `size` to pixels. */
 int font_size_px(struct font_size size);
 
+enum font_slant {
+    FONT_SLANT_NORMAL = 0,
+    FONT_SLANT_ITALIC = 1,
+    FONT_SLANT_OBLIQUE = 2,
+};
+
+#define FONT_WEIGHT_MIN 100
+#define FONT_WEIGHT_REGULAR 400
+#define FONT_WEIGHT_MAX 900
+/* A weight at or above this value selects a bold face. */
+#define FONT_WEIGHT_BOLD_MIN 600
+
+/*
+ * The request for a font instance. A zero field takes its configured
+ * default. The backend can synthesize a face that the family does not
+ * have.
+ */
+struct font_desc {
+    /* Comma-separated family names. NULL uses the configured family list. */
+    const char *family_list;
+    /* Point size and display scale. */
+    struct font_size size;
+    /* CSS weight from FONT_WEIGHT_MIN to FONT_WEIGHT_MAX. */
+    uint16_t weight;
+    /* Base slant of the face. One value of enum font_slant. */
+    uint8_t slant;
+    /* The request wants the natural advance of each glyph, not one advance
+     * for every glyph. A zero value asks for a monospace face. */
+    bool proportional;
+};
+
+/* Returns the weight of `desc` with the default filled in. */
+static inline uint16_t font_desc_weight(const struct font_desc *desc)
+{
+    if (!desc || !desc->weight)
+        return FONT_WEIGHT_REGULAR;
+    return desc->weight < FONT_WEIGHT_MIN ? FONT_WEIGHT_MIN
+         : desc->weight > FONT_WEIGHT_MAX ? FONT_WEIGHT_MAX : desc->weight;
+}
+
+/* Returns the style bits that the base weight and slant of `desc` select. */
+static inline uint16_t font_desc_base_style(const struct font_desc *desc)
+{
+    uint16_t style = 0;
+    if (!desc)
+        return 0;
+    if (font_desc_weight(desc) >= FONT_WEIGHT_BOLD_MIN)
+        style |= FONT_STYLE_BOLD;
+    if (desc->slant != FONT_SLANT_NORMAL)
+        style |= FONT_STYLE_ITALIC;
+    return style;
+}
+
 struct font_metrics {
     int cell_w, cell_h;
     int baseline;
@@ -66,8 +119,8 @@ struct font_metrics {
 
 struct font_instance;
 
-/* Acquires a font instance matching point size `size_pt` and scale factor `scale_120`. */
-struct font_instance *font_instance_acquire(int size_pt, uint32_t scale_120);
+/* Acquires a font instance that matches font descriptor `desc`. */
+struct font_instance *font_instance_acquire(const struct font_desc *desc);
 /* Increments the reference count of font instance `fi`. */
 struct font_instance *font_instance_ref(struct font_instance *fi);
 /* Decrements the reference count of font instance `fi` and frees it on zero. */
@@ -88,9 +141,20 @@ uint32_t font_instance_scale_120(const struct font_instance *fi);
 uint64_t font_instance_version(const struct font_instance *fi);
 /* Binds font rasterizer state of `fi` to the calling thread. */
 void font_bind_thread(const struct font_instance *fi);
+/* Returns the weight of font instance `fi`. */
+uint16_t font_instance_weight(const struct font_instance *fi);
+/* Returns true when font instance `fi` uses one advance for every glyph. */
+bool font_instance_monospace(const struct font_instance *fi);
 
 #define FONT_RUN_MAX 32
 
+/*
+ * One rasterized glyph. The raster covers `width` by `height` pixels. Pixel
+ * (0, 0) sits at (`x_offset`, `y_offset`) from the pen origin, which is the
+ * left edge of the baseline. `advance` is the pen step after the glyph.
+ * A cell glyph covers its cell from the cell left and the cell top, so both
+ * offsets are relative to the cell.
+ */
 struct glyph {
     uint64_t *row_masks;
     uint8_t **alpha;
@@ -102,10 +166,15 @@ struct glyph {
     uint32_t subpx_capacity;
     uint16_t width;
     uint16_t height;
-    uint16_t mask_words;
+    /* One mask word holds 64 columns, so 11 bits cover the largest width.
+     * The two flags share the rest of the unit, to keep the struct at 64
+     * bytes. */
+    uint16_t mask_words : 11;
+    uint16_t has_color : 1;
+    uint16_t has_subpx_ink : 1;
     int16_t x_offset;
-    bool has_color;
-    bool has_subpx_ink;
+    int16_t y_offset;
+    int16_t advance;
 };
 
 _Static_assert(sizeof(struct glyph) == 64, "struct glyph fits in one cacheline");
@@ -158,8 +227,8 @@ bool glyph_subpx_plane(struct glyph *g);
 
 /* Frees allocated raster buffers in glyph `g`. */
 void glyph_release(struct glyph *g);
-/* Prepares raster buffers of glyph `g` for pixel width `width`. */
-bool glyph_prepare(struct glyph *g, unsigned width);
+/* Prepares raster buffers of glyph `g` for pixel size `width` by `rows`. */
+bool glyph_prepare(struct glyph *g, unsigned width, unsigned rows);
 
 enum font_shape_result {
     FONT_SHAPE_UNAVAILABLE,
@@ -170,6 +239,14 @@ enum font_shape_result {
 /* Renders glyph `g` for code point `cp` with `style` using font instance `fi`. */
 bool font_instance_render_glyph(const struct font_instance *fi, uint32_t cp,
                                 uint16_t style, struct glyph *g);
+/*
+ * Renders glyph `g` for code point `cp` with `style` at `phase` quarter
+ * pixels to the right of the pen origin. A phase other than zero places the
+ * outline on a subpixel grid. The glyph cache keys such a glyph apart from
+ * the phase-zero glyph.
+ */
+bool font_instance_render_glyph_at(const struct font_instance *fi, uint32_t cp,
+                                   uint16_t style, uint8_t phase, struct glyph *g);
 enum font_run_result {
     FONT_RUN_UNAVAILABLE,
     FONT_RUN_UNCHANGED,

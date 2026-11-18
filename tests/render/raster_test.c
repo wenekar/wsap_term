@@ -498,7 +498,10 @@ static void test_window_scan(void)
     struct renderer *oracle = renderer_create(&(struct render_options){
         .threads = RENDER_NONE, .cache_bytes = RENDER_NONE });
     TCHECK(oracle, "oracle");
-    struct font_instance *big = font_instance_acquire(font_instance_size_pt(font), 180);
+    const struct font_desc desc = {
+        .size = { .pt = font_instance_size_pt(font), .scale_120 = 180 },
+    };
+    struct font_instance *big = font_instance_acquire(&desc);
     TCHECK(big, "1.5x font");
     for (int aa = 0; aa < 2; aa++) {
         font_set_aa_mode(aa ? FONT_AA_RGB : FONT_AA_GRAYSCALE);
