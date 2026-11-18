@@ -250,7 +250,8 @@ enum yasl_event_type {
      * follows: recreate them (GL contexts are new). After FINAL, yasl_wait_event
      * fails with ENOTCONN once no event is left. */
     YASL_EVENT_DISPLAY_LOST,
-    YASL_EVENT_DISPLAY_RESTORED
+    YASL_EVENT_DISPLAY_RESTORED,
+    YASL_EVENT_USER        /**< user: a message from yasl_post_user_event. */
 };
 enum yasl_key_action { YASL_KEY_PRESS, YASL_KEY_RELEASE, YASL_KEY_REPEAT };
 enum yasl_mod { YASL_MOD_SHIFT = 1, YASL_MOD_ALT = 2, YASL_MOD_CTRL = 4, YASL_MOD_SUPER = 8, YASL_MOD_CAPS = 16 };
@@ -318,6 +319,13 @@ struct yasl_drop_event {
      * Empty on LEAVE and CANCEL. A type that does not fit is never picked. */
     char mime[YASL_DROP_MIME_MAX];
 };
+/** A posted message. code, payload and size pass through unchanged. payload is
+ * borrowed until its release callback runs. */
+struct yasl_user_event {
+    uint32_t code;
+    void *payload;
+    size_t size;
+};
 struct yasl_event {
     enum yasl_event_type type;
     yasl_surface *surface;
@@ -336,6 +344,7 @@ struct yasl_event {
         struct yasl_pen_event pen;
         struct yasl_ime_event ime;
         struct yasl_drop_event drop;
+        struct yasl_user_event user;
     };
 };
 /** 1 with an event, 0 once timeout_ms passes or after yasl_wake. 0 polls and -1
@@ -344,6 +353,14 @@ YASL_API int yasl_wait_event(yasl_event *out, int timeout_ms);
 /** Makes a waiting, or the next, yasl_wait_event return 0 once no event is
  * pending. With on_event, wakes the loop. Thread-safe. */
 YASL_API void yasl_wake(void);
+/** Queues YASL_EVENT_USER for the next wait or on_event, from any thread. A
+ * NULL surface sends it to the display. payload is borrowed until release
+ * runs, after delivery or cancellation, exactly once and on the loop's thread;
+ * release is optional. 0 on success; ENODEV before yasl_init, EINVAL for a
+ * surface of another display, ENOENT for a destroyed surface, ENOMEM when the
+ * queue cannot grow. Stop producer threads before yasl_shutdown. */
+YASL_API int yasl_post_user_event(yasl_surface *surface, uint32_t code, void *payload,
+                                  size_t size, void (*release)(void *payload));
 /** Monotonic nanoseconds, the clock of event times. Thread-safe. */
 YASL_API uint64_t yasl_time_ns(void);
 
@@ -362,6 +379,13 @@ YASL_API int yasl_loop_step(yasl_loop *loop, int timeout_ms);
 /** Steps until yasl_loop_quit. A quit made before the run ends it at once. */
 YASL_API int yasl_loop_run(yasl_loop *loop);
 YASL_API void yasl_loop_quit(yasl_loop *loop);
+/** Runs callback on the loop's thread during a later step, from any thread.
+ * Callbacks run in posting order; one posted while they run waits for a later
+ * step. 0 on success, EINVAL for NULL arguments, ENOMEM when the post cannot
+ * be allocated. Use it from other threads instead of changing watches or
+ * timers, which belong to the loop's thread. */
+YASL_API int yasl_loop_post(yasl_loop *loop, void (*callback)(void *userdata),
+                            void *userdata);
 /** Calls callback with the poll(2) revents, errors and hangup included; it
  * must consume them or change the watch. Returns an ID above zero. */
 YASL_API int yasl_loop_add_fd(yasl_loop *loop, int fd, short events,
@@ -371,16 +395,21 @@ YASL_API int yasl_loop_add_fd(yasl_loop *loop, int fd, short events,
 YASL_API int yasl_loop_del_fd(yasl_loop *loop, int id);
 YASL_API int yasl_loop_set_fd_events(yasl_loop *loop, int id, short events);
 /** Calls callback after delay_ns, 0 meaning the next step. It returns the next
- * delay, or 0 to stop. Returns an ID that is never reused, or 0 with errno. */
+ * delay, or 0 to stop. Returns an ID that is never reused, or 0 with errno.
+ * Loop thread only: another thread must post with yasl_loop_post and arm the
+ * timer there. */
 YASL_API uint64_t yasl_loop_add_timer(yasl_loop *loop, uint64_t delay_ns,
                                       uint64_t (*callback)(void *userdata, uint64_t id,
                                                            uint64_t delay_ns),
                                       void *userdata);
-/** True when it cancels an armed timer, also from its own callback. */
+/** True when it cancels an armed timer, also from its own callback. Loop
+ * thread only, as for yasl_loop_add_timer. */
 YASL_API bool yasl_loop_del_timer(yasl_loop *loop, uint64_t id);
 /** Calls callback on the loop's thread for each signal; repeats before the
- * call coalesce. EBUSY when this loop already watches signals or another loop
- * watches one of them. Unwatching restores the previous actions. */
+ * call coalesce. Several loops can watch one signal, and each gets it. A loop
+ * has one watch: EBUSY when this loop already watches signals. ENOMEM when too
+ * many loops watch one signal. Unwatching restores the previous actions when
+ * the last loop stops watching. Call on the loop's thread. */
 YASL_API int yasl_loop_watch_signals(yasl_loop *loop, const int *signals, int count,
                                      void (*callback)(void *userdata, int signo),
                                      void *userdata);

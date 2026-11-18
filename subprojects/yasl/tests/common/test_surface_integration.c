@@ -10,6 +10,12 @@
 #if YASL_HAS_COCOA
 void yasl_test_frame_tick(struct yasl_surface *surface);
 #endif
+static int user_released;
+static void release_user(void *payload)
+{
+    (void)payload;
+    user_released++;
+}
 static void drain(void)
 {
     yasl_event e;
@@ -302,6 +308,31 @@ int main(int argc, char **argv)
         }
     }
     assert(e.type == YASL_EVENT_REFRESH);
+
+    /* A posted user event reaches the wait and releases its payload once. */
+    int marker = 7;
+    assert(yasl_post_user_event(s, 42, &marker, sizeof(marker), release_user) == 0);
+    bool got_user = false;
+    for (int i = 0; i < 100 && !got_user; i++) {
+        assert(yasl_wait_event(&e, 20) >= 0);
+        if (e.type == YASL_EVENT_USER) {
+            assert(e.surface == s && e.user.code == 42);
+            assert(e.user.payload == &marker && e.user.size == sizeof(marker));
+            got_user = true;
+        }
+    }
+    assert(got_user);
+    /* A display-wide post has no surface. The next delivery releases the
+     * previous message payload. */
+    assert(yasl_post_user_event(NULL, 43, NULL, 0, NULL) == 0);
+    for (int i = 0; i < 100; i++) {
+        assert(yasl_wait_event(&e, 20) >= 0);
+        if (e.type == YASL_EVENT_USER && e.user.code == 43)
+            break;
+    }
+    assert(e.type == YASL_EVENT_USER && e.user.code == 43 && e.surface == NULL);
+    assert(user_released == 1);
+
     struct yasl_surface_info info = yasl_surface_get_info(s);
     assert(info.pixel_width == fw && info.pixel_height == fh && info.scale > 0);
 

@@ -1001,6 +1001,11 @@ static bool convert_event(const struct yasl_private_event *p, yasl_event *e)
     case YASL_PRIVATE_EVENT_INPUT_RESET:
         e->type = YASL_EVENT_INPUT_RESET;
         return true;
+    case YASL_PRIVATE_EVENT_USER:
+        e->type = YASL_EVENT_USER;
+        e->user = (struct yasl_user_event){
+            .code = p->user.code, .payload = p->user.payload, .size = p->user.size};
+        return true;
     case YASL_PRIVATE_EVENT_FOCUS:
         /* Activation comes from the window state; losing focus releases held input. */
         if (p->focus.focused)
@@ -1215,6 +1220,32 @@ void yasl_wake(void)
     if (display && display->loop)
         yasl_private_loop_kick(display->loop);
     pthread_mutex_unlock(&lifecycle_mutex);
+}
+int yasl_post_user_event(yasl_surface *surface, uint32_t code, void *payload, size_t size,
+                         void (*release)(void *payload))
+{
+    pthread_mutex_lock(&lifecycle_mutex);
+    struct yasl_private_display *d = display;
+    if (!d) {
+        pthread_mutex_unlock(&lifecycle_mutex);
+        return yasl_public_error(ENODEV);
+    }
+    if (surface && (surface->display != d || !surface->id)) {
+        pthread_mutex_unlock(&lifecycle_mutex);
+        return yasl_public_error(EINVAL);
+    }
+    struct yasl_private_message message = {
+        .target_id = surface ? surface->id : 0,
+        .code = code,
+        .payload = payload,
+        .size = size,
+        .release = release,
+    };
+    errno = 0;
+    bool ok = yasl_private_display_post(d, &message);
+    int error = errno;
+    pthread_mutex_unlock(&lifecycle_mutex);
+    return ok ? 0 : yasl_public_error(error ? error : EIO);
 }
 uint64_t yasl_time_ns(void)
 {

@@ -449,6 +449,19 @@ bool yasl_private_loop_post(yasl_loop *l, void (*fn)(void *ud), void *ud)
     return true;
 }
 
+int yasl_loop_post(yasl_loop *l, void (*callback)(void *userdata), void *userdata)
+{
+    if (!l || !callback) {
+        errno = EINVAL;
+        return -EINVAL;
+    }
+    if (!yasl_private_loop_post(l, callback, userdata)) {
+        errno = ENOMEM;
+        return -ENOMEM;
+    }
+    return 0;
+}
+
 static void signal_handler(int signo)
 {
     for (int i = 0; i < SIGNAL_SLOTS; i++) {

@@ -76,6 +76,8 @@ int main(void)
     assert(yasl_surface_get_native(NULL, NULL) == -EINVAL);
     assert(yasl_surface_get_native(NULL, &native) == -ENODEV && native.x11_window == 0);
 
+    assert(yasl_post_user_event(NULL, 1, NULL, 0, NULL) == -ENODEV);
+
     /* Waiting needs a display; yasl_wake with no display does nothing and does not crash. */
     yasl_event e = {.type = YASL_EVENT_QUIT};
     assert(yasl_wait_event(&e, 0) == -ENODEV && e.type == YASL_EVENT_NONE);
