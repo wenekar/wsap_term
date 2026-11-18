@@ -15,6 +15,7 @@
 #include "util/damage.h"
 #include "ui/yasl/stats.h"
 #include "ui/yasl/client.h"
+#include "ui/yasl/drop.h"
 #include "ui/yasl/window.h"
 
 #define YASL_SCALE_UNIT 120
@@ -86,6 +87,8 @@ struct window_ui {
 
     struct ui_menu menu;
     struct ui_menu_layer menu_layer;
+    /* The widget that the drag is over. */
+    struct drop_hover drop_hover;
     struct window_ui_menu_popup *menu_popup;
     struct ui_damage_tracker ui_damage;
 

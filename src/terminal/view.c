@@ -210,8 +210,9 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
     if (event->kind == UI_EVENT_KEY) {
         const struct input_key_event *key = event->data.key.native;
         /* A key that the app binds belongs to the app command. The terminal
-         * declines it, so the global keymap in step 3 runs the command. */
-        if (key && input_keymap_match(input_keymap_active(), key))
+         * declines it, so the keymap of the window in step 3 runs the
+         * command. */
+        if (key && input_keymap_match(window_keymap(w), key))
             return false;
         if (!key || !terminal_key(t, key))
             ui_surface_keep_key_text(ui_widget_surface(widget));

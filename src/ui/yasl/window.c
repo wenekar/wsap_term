@@ -733,6 +733,11 @@ const struct input_keyboard_state *window_keyboard(const struct window *w)
     return &w->keyboard;
 }
 
+const struct input_keymap *window_keymap(const struct window *w)
+{
+    return w ? &w->keymap : NULL;
+}
+
 void window_copy(struct window *w, enum yasl_selection sel, const char *text)
 {
     (void)w;

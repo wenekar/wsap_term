@@ -260,8 +260,21 @@ static void expect_paste(const char *text)
     input_event_release(&out);
 }
 
-/* An image drop writes no file and queues nothing. The payload stays in
- * memory for a MIME drop event. */
+/* Takes the next queued event. It must be a drop of type `mime` with
+ * payload `data`. No paste is queued. */
+static void expect_drop(const char *mime, const char *data, size_t len)
+{
+    struct input_event out;
+    assert(input_queue_take(&w.input, &out));
+    assert(out.kind == INPUT_DROP);
+    assert(!strcmp(out.drop_type.mime, mime));
+    assert(out.drop_type.len == len);
+    assert(!memcmp(out.drop_type.data, data, len));
+    input_event_release(&out);
+    assert(!input_queue_take(&w.input, &out));
+}
+
+/* An image drop writes no file. It stays a drop of its own type. */
 static void image_drop_writes_no_file_test(void)
 {
     static const char image_bytes[] = { 'P', 'N', 'G', 0, 1, 0, 2, 'x' };
@@ -273,8 +286,7 @@ static void image_drop_writes_no_file_test(void)
     fresh_window();
     struct yasl_event e = drop_release("image/png", image_bytes, sizeof image_bytes);
     window_native_input(&w, &e);
-    struct input_event out;
-    assert(!input_queue_take(&w.input, &out));
+    expect_drop("image/png", image_bytes, sizeof image_bytes);
     assert(drop_save_image("image/png", image_bytes, sizeof image_bytes) == NULL);
     drop_cleanup();
 
@@ -299,15 +311,15 @@ static void text_drop_pastes_test(void)
     }
 }
 
-/* A uri list with no local file pastes its URLs. Comment lines and blank
- * lines are skipped, and the URLs are joined with a space. */
-static void web_uri_list_pastes_test(void)
+/* A uri list with no local file stays a uri list drop. It is not text, so it
+ * never becomes a paste. */
+static void web_uri_list_stays_a_uri_list_test(void)
 {
     fresh_window();
     static const char link[] = "https://example.com/a.png\r\n";
     struct yasl_event e = drop_release("text/uri-list", link, sizeof link - 1);
     window_native_input(&w, &e);
-    expect_paste("https://example.com/a.png");
+    expect_drop("text/uri-list", link, sizeof link - 1);
 
     fresh_window();
     static const char list[] = "# copied from a browser\r\n"
@@ -316,7 +328,7 @@ static void web_uri_list_pastes_test(void)
                                "https://example.com/b.png\r\n";
     e = drop_release("text/uri-list", list, sizeof list - 1);
     window_native_input(&w, &e);
-    expect_paste("https://example.com/a.png https://example.com/b.png");
+    expect_drop("text/uri-list", list, sizeof list - 1);
 }
 
 /* A uri list with a local file queues the list as a file drop, as before. */
@@ -334,18 +346,62 @@ static void local_uri_list_drops_files_test(void)
     input_event_release(&out);
 }
 
-/* A drop of another data type queues nothing. An empty image queues nothing. */
-static void other_drops_queue_nothing_test(void)
+/* A drop of another data type keeps that type. A drop with no payload
+ * queues nothing. */
+static void other_drops_keep_their_type_test(void)
 {
     static const char json[] = "{}";
 
     fresh_window();
     struct yasl_event e = drop_release("application/json", json, sizeof json - 1);
     window_native_input(&w, &e);
+    expect_drop("application/json", json, sizeof json - 1);
+
+    fresh_window();
     e = drop_release("image/png", json, 0);
     window_native_input(&w, &e);
     struct input_event out;
     assert(!input_queue_take(&w.input, &out));
+}
+
+/* A composition event keeps its range and its revision. */
+static void composition_keeps_revision_test(void)
+{
+    fresh_window();
+    struct yasl_event e = {
+        .type = YASL_EVENT_COMPOSITION,
+        .text = "\xe6\xbc\xa2",
+        .length = 3,
+        .ime = { .begin = 1, .end = 2, .revision = 7 },
+    };
+    window_native_input(&w, &e);
+    struct input_event out;
+    assert(input_queue_take(&w.input, &out));
+    assert(out.kind == INPUT_IME);
+    assert(!out.ime.edit);
+    assert(out.ime.len == 3 && !memcmp(out.ime.data, "\xe6\xbc\xa2", 3));
+    assert(out.ime.begin == 1 && out.ime.end == 2);
+    assert(out.ime.revision == 7);
+    input_event_release(&out);
+
+    /* A text edit reports the range of the text that it replaces. */
+    struct yasl_event edit = {
+        .type = YASL_EVENT_TEXT_EDIT,
+        .text = "\xe6\xbc\xa2\xe5\xad\x97",
+        .length = 6,
+        .ime = { .begin = 0, .end = 3, .revision = 9 },
+    };
+    window_native_input(&w, &edit);
+    bool seen_edit = false;
+    while (input_queue_take(&w.input, &out)) {
+        if (out.kind == INPUT_IME) {
+            seen_edit = true;
+            assert(out.ime.edit);
+            assert(out.ime.end == 3 && out.ime.revision == 9);
+        }
+        input_event_release(&out);
+    }
+    assert(seen_edit);
 }
 
 int main(void)
@@ -360,8 +416,9 @@ int main(void)
     keypad_clear_test();
     image_drop_writes_no_file_test();
     text_drop_pastes_test();
-    web_uri_list_pastes_test();
+    web_uri_list_stays_a_uri_list_test();
     local_uri_list_drops_files_test();
-    other_drops_queue_nothing_test();
+    other_drops_keep_their_type_test();
+    composition_keeps_revision_test();
     return 0;
 }

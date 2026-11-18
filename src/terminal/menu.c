@@ -135,7 +135,7 @@ void terminal_open_ctx_menu(struct terminal *t, struct vector2i at)
     bool has_sel = term ? wsap_vtcore_has_selection(term) : false;
     bool can_reset = term ? wsap_vtcore_scrollback(term).offset > 0 : false;
 
-    struct input_keymap *km = input_keymap_active();
+    const struct input_keymap *km = window_keymap(w);
     char copy_sc[64] = {0};
     char paste_sc[64] = {0};
     char sel_all_sc[64] = {0};

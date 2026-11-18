@@ -9,6 +9,7 @@
 
 #include "input/keybind.h"
 #include "ui/yasl/inspector.h"
+#include "ui/yasl/drop.h"
 #include "ui/yasl/ui_input.h"
 #include "ui/yasl/internal.h"
 
@@ -53,6 +54,63 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
         event = ui_event_drop_files(ev->drop.data, ev->drop.len, now_ms);
         ui_surface_dispatch(keys, &event);
         return WINDOW_INPUT_HANDLED;
+    case INPUT_DROP: {
+        /* The drop goes to the widget under the pointer. */
+        const char *mimes[1] = { ev->drop_type.mime };
+        struct ui_drag_event drag = {
+            .mimes = mimes,
+            .mime_count = 1,
+            .mime = ev->drop_type.mime,
+            .data = ev->drop_type.data,
+            .len = ev->drop_type.len,
+            .pos = w->pointer.pos,
+        };
+        event = ui_event_drag(UI_EVENT_DROP, &drag, now_ms);
+        struct ui_widget *target = ui_surface_hit_test(keys, drag.pos);
+        if (target)
+            ui_widget_event(target, &event);
+        return WINDOW_INPUT_HANDLED;
+    }
+    case INPUT_DRAG: {
+        struct ui_widget *target = ev->drop_type.leave
+            ? NULL : ui_surface_hit_test(keys, ev->drop_type.pos);
+        struct drop_hover *hover = &ui_of(w)->drop_hover;
+        const char *mimes[1] = { ev->drop_type.mime };
+        struct ui_drag_event drag = {
+            .mimes = mimes,
+            .mime_count = ev->drop_type.mime ? 1 : 0,
+            .mime = ev->drop_type.mime,
+            .pos = ev->drop_type.pos,
+        };
+        /* A drag that stays on one widget gets ENTER once, then OVER. A drag
+         * that leaves the widget gives it LEAVE. */
+        if (drop_hover_retarget(hover, target)) {
+            struct ui_widget *left = (struct ui_widget *)hover->previous;
+            if (left) {
+                struct ui_event leave_event =
+                    ui_event_drag(UI_EVENT_DRAG_LEAVE, &drag, now_ms);
+                ui_widget_event(left, &leave_event);
+            }
+        }
+        if (target) {
+            event = ui_event_drag(hover->entered ? UI_EVENT_DRAG_OVER
+                                                 : UI_EVENT_DRAG_ENTER,
+                                  &drag, now_ms);
+            ui_widget_event(target, &event);
+        }
+        return WINDOW_INPUT_HANDLED;
+    }
+    case INPUT_IME: {
+        struct ui_ime_text_event ime = {
+            .data = ev->ime.data, .len = ev->ime.len,
+            .begin = ev->ime.begin, .end = ev->ime.end,
+            .revision = ev->ime.revision,
+        };
+        event = ev->ime.edit ? ui_event_text_edit(&ime, now_ms)
+                             : ui_event_composition(&ime, now_ms);
+        ui_surface_dispatch(keys, &event);
+        return WINDOW_INPUT_HANDLED;
+    }
     case INPUT_MOUSE:
         event = ui_event_pointer(ui_pointer_from_input(&ev->mouse), now_ms);
         ui_surface_dispatch(window_ui_surface_at(w, ev->mouse.popup), &event);
@@ -164,12 +222,12 @@ void window_ui_route(struct window *w, struct input_event *ev)
     enum window_input_result result = menu_input(w, ev);
     if (result == WINDOW_INPUT_UNHANDLED)
         result = ui_input(w, ev);
-    /* The focused widget sees the key first. The global keymap runs only for
-     * a key that no widget handles. */
+    /* The focused widget sees the key first. The keymap of the window runs
+     * only for a key that no widget handles. */
     if (result == WINDOW_INPUT_UNHANDLED && ev->kind == INPUT_KEY &&
         !ev->key.ime_handled) {
         enum input_key_route route = input_shortcut_route_key(
-            input_keymap_active(), &w->input, &w->sc_state, &ev->key,
+            window_keymap(w), &w->input, &w->sc_state, &ev->key,
             input_key_id(&ev->key), NULL);
         if (route == INPUT_KEY_DROPPED)
             fprintf(stderr, "shortcut queue is full\n");

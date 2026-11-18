@@ -62,7 +62,13 @@ bool drop_hover_retarget(struct drop_hover *hover, const void *target)
 {
     if (!hover)
         return false;
-    bool left = hover->active && hover->target != target;
+    bool moved = hover->target != target;
+    hover->previous = moved ? hover->target : NULL;
+    if (moved)
+        hover->entered = false;
+    else
+        hover->entered = hover->active;
+    bool left = hover->active && moved;
     hover->target = target;
     hover->active = target != NULL;
     return left;

@@ -194,6 +194,16 @@ enum input_kind {
     INPUT_FOCUS,
     INPUT_PASTE,
     INPUT_DROP_FILES,
+    /* A drop of one type. `mime` names the type, and `data` holds the
+     * payload. It never becomes text. */
+    INPUT_DROP,
+    /* A drag moved over the window, or left it. `mime` names the type that
+     * the drag offers, and it is empty on a leave. */
+    INPUT_DRAG,
+    /* Input method text. A preedit has `edit` false. A text edit has `edit`
+     * true, and it replaces the bytes `begin`..`end` of the text that the
+     * host sent in revision `revision`. */
+    INPUT_IME,
     INPUT_SHORTCUT,
 };
 
@@ -216,6 +226,21 @@ struct input_event {
 
         struct input_data paste;
         struct input_data drop;
+        struct {
+            char *mime;
+            char *data;
+            size_t len;
+            struct vector2i pos;
+            bool leave;
+        } drop_type;
+        struct {
+            char *data;
+            size_t len;
+            int begin;
+            int end;
+            uint64_t revision;
+            bool edit;
+        } ime;
         struct { enum input_shortcut action; } shortcut;
     };
     enum input_kind kind;
@@ -253,6 +278,32 @@ enum input_push_result input_queue_add(struct input_queue *q,
  */
 size_t input_queue_push_drop_files(struct input_queue *q, const char *uris,
                                   size_t len);
+
+/*
+ * Enqueues a drop event of type `mime` with payload `data` of length `len`.
+ * The queue owns its copies of both strings.
+ * Returns the number of bytes queued, or 0 on failure.
+ */
+size_t input_queue_push_drop(struct input_queue *q, const char *mime,
+                             const char *data, size_t len);
+
+/*
+ * Enqueues a drag event at `pos` that offers type `mime`. An empty `mime`
+ * reports that the drag left the window. The queue owns its copy of `mime`.
+ * Returns the number of bytes queued, or 0 on failure.
+ */
+size_t input_queue_push_drag(struct input_queue *q, const char *mime,
+                             struct vector2i pos);
+
+/*
+ * Enqueues an input method event with UTF-8 text `data` of length `len`.
+ * `begin` and `end` are the byte offsets of the cursor of a preedit, or the
+ * replaced range of a text edit. `revision` names the text that the host
+ * sent. `edit` selects a text edit over a preedit.
+ * Returns the number of bytes queued, or 0 on failure.
+ */
+size_t input_queue_push_ime(struct input_queue *q, const char *data, size_t len,
+                            int begin, int end, uint64_t revision, bool edit);
 
 /*
  * Enqueues a paste event containing clipboard `data` of length `len`.

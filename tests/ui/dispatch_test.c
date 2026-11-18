@@ -18,6 +18,8 @@ struct probe {
     bool handle_other;
     int shortcut_action;
     enum ui_edit_command shortcut_edit;
+    uint64_t ime_revision;
+    int ime_begin, ime_end;
     struct ui_widget widget;
 };
 
@@ -46,6 +48,9 @@ static bool probe_event(struct ui_widget *widget, const struct ui_event *event)
     case UI_EVENT_COMPOSITION:
     case UI_EVENT_TEXT_EDIT:
         p->ime_texts++;
+        p->ime_revision = event->data.ime.revision;
+        p->ime_begin = event->data.ime.begin;
+        p->ime_end = event->data.ime.end;
         return p->handle_other;
     case UI_EVENT_POINTER:
         if (event->data.pointer.kind == UI_POINTER_LEAVE)
@@ -406,6 +411,11 @@ static void ime_events_go_to_focused_widget_test(void)
     struct ui_event edit = ui_event_text_edit(&preedit, 0);
     assert(ui_surface_dispatch(&s, &edit));
     assert(child.ime_texts == 2);
+    /* The focused widget sees the range and the revision of the host text
+     * that the input method replaced. */
+    assert(child.ime_revision == 7);
+    assert(child.ime_begin == 1 && child.ime_end == 2);
+    assert(root.ime_texts == 0);
 
     ui_surface_destroy(&s);
     ui_widget_destroy(&root.widget);
