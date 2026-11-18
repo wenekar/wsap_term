@@ -382,29 +382,161 @@ static void paint_text(const struct render_kernels *k, struct font_instance *fi,
 
 /* ---- Images ---------------------------------------------------------- */
 
-/* A 1:1 copy with the alpha forced to opaque, clipped. */
-static void paint_image(uint32_t *px, int width, int height, struct rect2i rect,
-                        struct rect2i clip, const struct ui_image *image)
+/*
+ * One axis of the sample rule of an image op. `pos` is the texel that holds
+ * the sample point, and `frac` is the rest of the way to the next texel in
+ * 1/65536 steps.
+ */
+struct image_tap {
+    int32_t pos;
+    int32_t frac;
+};
+
+/* The sample point of destination step `i` of `n` over `src` texels: 16.16. */
+static int64_t image_coord(int i, int n, int src)
 {
-    if (!image || !image->pixels || image->size.x <= 0 || image->size.y <= 0)
-        return;
-    struct rect2i img_rect = {
-        .pos = rect.pos,
-        .size = {
-            .x = rect.width < image->size.x ? rect.width : image->size.x,
-            .y = rect.height < image->size.y ? rect.height : image->size.y,
-        },
-    };
-    struct rect2i r = rect2i_intersect(img_rect, clip);
-    if (!rect2i_clip(&r, (struct vector2i){ .x = width, .y = height }))
-        return;
-    int sx = r.x - rect.x, sy = r.y - rect.y;
-    for (int y = 0; y < r.height; y++) {
-        uint32_t *dst = px + (size_t)(r.y + y) * width + r.x;
-        const uint32_t *src = image->pixels + (size_t)(sy + y) * image->size.x + sx;
-        for (int x = 0; x < r.width; x++)
-            dst[x] = src[x] | 0xFF000000u;
+    return ((int64_t)(2 * i + 1) * src << 15) / n;
+}
+
+/* The texel that holds the sample point. */
+static struct image_tap image_tap_nearest(int i, int n, int src)
+{
+    return (struct image_tap){ .pos = (int32_t)(image_coord(i, n, src) >> 16), .frac = 0 };
+}
+
+/*
+ * The two texels of a linear sample. The centers of the texels sit at
+ * half-texel steps, so the mix runs from the center to the next center.
+ */
+static struct image_tap image_tap_linear(int i, int n, int src)
+{
+    int64_t u = image_coord(i, n, src) - 32768;
+    int64_t last = (int64_t)(src - 1) << 16;
+    if (u < 0)
+        u = 0;
+    if (u > last)
+        u = last;
+    return (struct image_tap){ .pos = (int32_t)(u >> 16), .frac = (int32_t)(u & 0xffff) };
+}
+
+/* The 16.16 scale of a premultiplied channel: the tint and the opacity. */
+static int32_t image_scale(uint32_t value, uint32_t alpha)
+{
+    /* (value / 255) * (alpha / 255) * 65536 */
+    return (int32_t)((uint64_t)value * alpha * 65536 / (255u * 255u * 255u));
+}
+
+/* Scales a premultiplied channel of 0 to 255 by a 16.16 scale. */
+static inline uint32_t image_scaled(uint32_t value, int32_t scale)
+{
+    return (value * (uint32_t)scale + 32768u) >> 16;
+}
+
+/* One channel of the premultiplied source over a straight backdrop. */
+static inline uint32_t image_over_channel(uint32_t src, uint32_t bg, uint32_t inv)
+{
+    uint32_t v = src + (bg * inv + 127u) / 255u;
+    return v > 255u ? 255u : v;
+}
+
+/* The premultiplied source over the straight color of the canvas. */
+static inline uint32_t image_over(uint32_t src, uint32_t bg)
+{
+    uint32_t a = src >> 24;
+    if (!a)
+        return bg;
+    uint32_t inv = 255u - a;
+    uint32_t r = image_over_channel((src >> 16) & 0xff, (bg >> 16) & 0xff, inv);
+    uint32_t g = image_over_channel((src >> 8) & 0xff, (bg >> 8) & 0xff, inv);
+    uint32_t b = image_over_channel(src & 0xff, bg & 0xff, inv);
+    uint32_t out_a = image_over_channel(a, bg >> 24, inv);
+    return (out_a << 24) | (r << 16) | (g << 8) | b;
+}
+
+/* Mixes four premultiplied texels by their 16.16 weights. */
+static inline uint32_t image_mix4(uint32_t t00, uint32_t t10, uint32_t t01, uint32_t t11,
+                                  int32_t wx, int32_t wy)
+{
+    uint64_t sx = (uint64_t)(uint32_t)(65536 - wx), sy = (uint64_t)(uint32_t)(65536 - wy);
+    uint64_t w00 = sx * sy, w10 = (uint64_t)(uint32_t)wx * sy;
+    uint64_t w01 = sx * (uint64_t)(uint32_t)wy, w11 = (uint64_t)(uint32_t)wx * (uint64_t)(uint32_t)wy;
+    uint32_t out = 0;
+    for (int shift = 0; shift < 32; shift += 8) {
+        uint64_t v = (uint64_t)((t00 >> shift) & 0xff) * w00 +
+                     (uint64_t)((t10 >> shift) & 0xff) * w10 +
+                     (uint64_t)((t01 >> shift) & 0xff) * w01 +
+                     (uint64_t)((t11 >> shift) & 0xff) * w11;
+        out |= (uint32_t)((v + (1ull << 31)) >> 32) << shift;
     }
+    return out;
+}
+
+/*
+ * Draws the texels of the image of `op` into its rect, over the canvas.
+ * The op scales, tints, and clips the copy.
+ */
+static bool paint_image(uint32_t *px, int width, int height, const struct ui_scene_op *op,
+                        struct rect2i clip)
+{
+    const struct ui_image *image = op->image.src;
+    if (!image || !image->pixels || image->size.x <= 0 || image->size.y <= 0)
+        return true;
+    struct rect2i dst = op->rect, uv = op->image.uv;
+    struct rect2i r = rect2i_intersect(dst, clip);
+    if (!rect2i_clip(&r, (struct vector2i){ .x = width, .y = height }))
+        return true;
+    if (dst.width <= 0 || dst.height <= 0)
+        return true;
+
+    /* A zero tint is white, and an opacity of 0 or 255 keeps the image. */
+    uint32_t tint = op->color ? op->color : 0xFFFFFFFFu;
+    bool plain = op->alpha >= 255 && tint == 0xFFFFFFFFu;
+    uint32_t tint_alpha = (tint >> 24) * op->alpha;
+    int32_t scale_r = image_scale((tint >> 16) & 0xff, tint_alpha);
+    int32_t scale_g = image_scale((tint >> 8) & 0xff, tint_alpha);
+    int32_t scale_b = image_scale(tint & 0xff, tint_alpha);
+    int32_t scale_a = (int32_t)((uint64_t)tint_alpha * 65536 / (255u * 255u));
+    bool linear = (op->flags & UI_IMAGE_LINEAR) != 0;
+
+    struct image_tap inline_taps[SCENE_CHUNK];
+    struct image_tap *taps = inline_taps;
+    if (r.width > SCENE_CHUNK) {
+        taps = malloc((size_t)r.width * sizeof(*taps));
+        if (!taps)
+            return false;
+    }
+    for (int i = 0; i < r.width; i++) {
+        int step = r.x - dst.x + i;
+        taps[i] = linear ? image_tap_linear(step, dst.width, uv.width)
+                         : image_tap_nearest(step, dst.width, uv.width);
+    }
+
+    int last_x = uv.x + uv.width - 1, last_y = uv.y + uv.height - 1;
+    for (int j = 0; j < r.height; j++) {
+        int step = r.y - dst.y + j;
+        struct image_tap ty = linear ? image_tap_linear(step, dst.height, uv.height)
+                                     : image_tap_nearest(step, dst.height, uv.height);
+        int sy0 = uv.y + ty.pos, sy1 = sy0 < last_y ? sy0 + 1 : sy0;
+        const uint32_t *row0 = image->pixels + (size_t)sy0 * image->size.x;
+        const uint32_t *row1 = image->pixels + (size_t)sy1 * image->size.x;
+        uint32_t *out = px + (size_t)(r.y + j) * width + r.x;
+        for (int i = 0; i < r.width; i++) {
+            int tx0 = uv.x + taps[i].pos, tx1 = tx0 < last_x ? tx0 + 1 : tx0;
+            uint32_t texel = linear
+                ? image_mix4(row0[tx0], row0[tx1], row1[tx0], row1[tx1],
+                             taps[i].frac, ty.frac)
+                : row0[tx0];
+            if (!plain)
+                texel = (image_scaled(texel >> 24, scale_a) << 24) |
+                        (image_scaled((texel >> 16) & 0xff, scale_r) << 16) |
+                        (image_scaled((texel >> 8) & 0xff, scale_g) << 8) |
+                        image_scaled(texel & 0xff, scale_b);
+            out[i] = image_over(texel, out[i]);
+        }
+    }
+    if (taps != inline_taps)
+        free(taps);
+    return true;
 }
 
 /* ---- Walk ------------------------------------------------------------ */
@@ -440,8 +572,9 @@ bool ui_scene_paint_clipped(struct font_instance *fi, uint32_t *px, int width, i
     }
     int clip_n = 0;
     struct rect2i clip = paint_clip;
+    bool painted = true;
 
-    for (int i = 0; i < scene->n_ops; i++) {
+    for (int i = 0; i < scene->n_ops && painted; i++) {
         const struct ui_scene_op *op = &scene->ops[i];
         switch (op->kind) {
         case UI_SCENE_OP_PUSH_CLIP:
@@ -480,13 +613,13 @@ bool ui_scene_paint_clipped(struct font_instance *fi, uint32_t *px, int width, i
             break;
         case UI_SCENE_OP_IMAGE:
             if (op_outside_clip(scene, op, clip)) break;
-            paint_image(px, width, height, op->rect, clip, op->image);
+            painted = paint_image(px, width, height, op, clip);
             break;
         }
     }
     if (clip_stack != inline_stack)
         free(clip_stack);
-    return true;
+    return painted;
 }
 
 bool ui_scene_paint(struct font_instance *fi, uint32_t *px, int width, int height,

@@ -61,9 +61,23 @@ static struct frame_slot *slot_acquire(struct render_gpu *g, uint64_t wait_ns)
 
 /* The layout changes of textures that go into one barrier command. */
 struct barriers {
-    VkImageMemoryBarrier2 list[1 + GPU_IMAGES];
+    VkImageMemoryBarrier2 inline_list[4];
+    VkImageMemoryBarrier2 *list;
     uint32_t n;
+    uint32_t cap;
+    /* The list ran out of memory, so the batch is incomplete. */
+    bool failed;
 };
+
+/* Frees the list of `bs`, when it grew past the inline part. */
+static void barriers_release(struct barriers *bs)
+{
+    if (bs->list && bs->list != bs->inline_list)
+        free(bs->list);
+    bs->list = NULL;
+    bs->n = 0;
+    bs->cap = 0;
+}
 
 static void layout_use(VkImageLayout layout, VkPipelineStageFlags2 *stage, VkAccessFlags2 *access)
 {
@@ -107,16 +121,36 @@ static VkImageMemoryBarrier2 image_barrier(VkImage image, VkImageLayout from, Vk
 /* Appends an image layout transition barrier for texture `t` to `to`. */
 static void barriers_add(struct barriers *bs, struct vulkan_texture *t, VkImageLayout to)
 {
-    if (t->layout == to)
+    if (t->layout == to || bs->failed)
         return;
+    if (!bs->list) {
+        bs->list = bs->inline_list;
+        bs->cap = (uint32_t)(sizeof(bs->inline_list) / sizeof(bs->inline_list[0]));
+    }
+    if (bs->n == bs->cap) {
+        uint32_t cap = bs->cap * 2;
+        VkImageMemoryBarrier2 *list = malloc((size_t)cap * sizeof(*list));
+        if (!list) {
+            bs->failed = true;
+            return;
+        }
+        memcpy(list, bs->list, (size_t)bs->n * sizeof(*list));
+        if (bs->list != bs->inline_list)
+            free(bs->list);
+        bs->list = list;
+        bs->cap = cap;
+    }
     bs->list[bs->n++] = image_barrier(t->image, t->layout, to);
     t->layout = to;
 }
 
-static void barriers_flush(struct render_gpu *g, VkCommandBuffer cmd, struct barriers *bs)
+/* Records the layout changes of `bs`. Returns false when it ran out of memory. */
+static bool barriers_flush(struct render_gpu *g, VkCommandBuffer cmd, struct barriers *bs)
 {
+    if (bs->failed)
+        return false;
     if (!bs->n)
-        return;
+        return true;
     VkDependencyInfo info = {
         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
         .imageMemoryBarrierCount = bs->n,
@@ -124,6 +158,7 @@ static void barriers_flush(struct render_gpu *g, VkCommandBuffer cmd, struct bar
     };
     g->vk.CmdPipelineBarrier2(cmd, &info);
     bs->n = 0;
+    return true;
 }
 
 /* ---- The pass of a frame ------------------------------------------------ */
@@ -303,14 +338,37 @@ static void frame_abandon(struct render_gpu *g, struct gpu_surface *gs, struct f
 
 /* ---- Drawing a built frame ---------------------------------------------- */
 
+/*
+ * Makes room in `g` for `n` image textures. A frame with more images than
+ * the device has slots adds textures. A new texture holds no image. On
+ * failure the device keeps its earlier count.
+ */
+static bool images_reserve(struct render_gpu *g, int n)
+{
+    if (n <= g->n_images)
+        return true;
+    struct vulkan_texture *textures = realloc(g->images, (size_t)n * sizeof(*textures));
+    if (!textures)
+        return false;
+    g->images = textures;
+    size_t *offsets = realloc(g->image_offsets, (size_t)n * sizeof(*offsets));
+    if (!offsets)
+        return false;
+    g->image_offsets = offsets;
+    memset(textures + g->n_images, 0, (size_t)(n - g->n_images) * sizeof(*textures));
+    memset(offsets + g->n_images, 0, (size_t)(n - g->n_images) * sizeof(*offsets));
+    g->n_images = n;
+    return true;
+}
+
 /* Allocates or resizes the glyph atlas and UI image textures for the frame. */
 static bool textures_sync(struct render_gpu *g)
 {
     const struct gpu_build *b = &g->build;
     const struct vector2i atlas_size = { .x = b->atlas.size, .y = b->atlas.size };
-    if (!vulkan_texture_ensure(g, &g->atlas, atlas_size))
+    if (!vulkan_texture_ensure(g, &g->atlas, atlas_size) || !images_reserve(g, b->n_images))
         return false;
-    for (int i = 0; i < GPU_IMAGES; i++)
+    for (int i = 0; i < b->n_images; i++)
         if (b->images[i].frame == b->frame &&
             !vulkan_texture_ensure(g, &g->images[i], b->images[i].size))
             return false;
@@ -322,7 +380,7 @@ static bool uploads_stage(struct render_gpu *g, struct frame_slot *slot)
 {
     const struct gpu_build *b = &g->build;
     size_t total = b->atlas.stage_used;
-    for (int i = 0; i < GPU_IMAGES; i++) {
+    for (int i = 0; i < b->n_images; i++) {
         if (!gpu_image_needs_upload(b, i))
             continue;
         g->image_offsets[i] = total;
@@ -342,15 +400,18 @@ static bool uploads_stage(struct render_gpu *g, struct frame_slot *slot)
     uint8_t *dst = slot->uploads.mapped;
     if (b->atlas.stage_used)
         memcpy(dst, b->atlas.stage, b->atlas.stage_used);
-    for (int i = 0; i < GPU_IMAGES; i++)
+    for (int i = 0; i < b->n_images; i++)
         if (gpu_image_needs_upload(b, i))
             memcpy(dst + g->image_offsets[i], b->images[i].pixels,
                    (size_t)b->images[i].size.x * (size_t)b->images[i].size.y * 4);
     return true;
 }
 
-/* Records buffer-to-image copies and shader read barriers for dirty textures. */
-static void uploads_record(struct render_gpu *g, struct frame_slot *slot)
+/*
+ * Records buffer-to-image copies and shader read barriers for dirty textures.
+ * Returns false when it ran out of memory.
+ */
+static bool uploads_record(struct render_gpu *g, struct frame_slot *slot)
 {
     const struct gpu_build *b = &g->build;
     VkCommandBuffer cmd = slot->cmd;
@@ -358,10 +419,13 @@ static void uploads_record(struct render_gpu *g, struct frame_slot *slot)
 
     if (b->atlas.n_uploads)
         barriers_add(&barriers, &g->atlas, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    for (int i = 0; i < GPU_IMAGES; i++)
+    for (int i = 0; i < b->n_images; i++)
         if (gpu_image_needs_upload(b, i))
             barriers_add(&barriers, &g->images[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    barriers_flush(g, cmd, &barriers);
+    if (!barriers_flush(g, cmd, &barriers)) {
+        barriers_release(&barriers);
+        return false;
+    }
 
     if (b->atlas.n_uploads) {
         for (uint32_t i = 0; i < b->atlas.n_uploads; i++) {
@@ -377,7 +441,7 @@ static void uploads_record(struct render_gpu *g, struct frame_slot *slot)
                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, b->atlas.n_uploads,
                                g->copies);
     }
-    for (int i = 0; i < GPU_IMAGES; i++) {
+    for (int i = 0; i < b->n_images; i++) {
         if (!gpu_image_needs_upload(b, i))
             continue;
         VkBufferImageCopy copy = {
@@ -391,10 +455,12 @@ static void uploads_record(struct render_gpu *g, struct frame_slot *slot)
 
     /* A new atlas without uploads also moves here: a draw can bind it. */
     barriers_add(&barriers, &g->atlas, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    for (int i = 0; i < GPU_IMAGES; i++)
+    for (int i = 0; i < b->n_images; i++)
         if (b->images[i].frame == b->frame)
             barriers_add(&barriers, &g->images[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    barriers_flush(g, cmd, &barriers);
+    bool ok = barriers_flush(g, cmd, &barriers);
+    barriers_release(&barriers);
+    return ok;
 }
 
 /* Resets texture layouts to undefined when recorded uploads are not submitted. */
@@ -402,7 +468,7 @@ static void uploads_forget(struct render_gpu *g)
 {
     const struct gpu_build *b = &g->build;
     g->atlas.layout = VK_IMAGE_LAYOUT_UNDEFINED;
-    for (int i = 0; i < GPU_IMAGES; i++)
+    for (int i = 0; i < b->n_images; i++)
         if (gpu_image_needs_upload(b, i))
             g->images[i].layout = VK_IMAGE_LAYOUT_UNDEFINED;
 }
@@ -495,7 +561,11 @@ static enum render_gpu_status draw_built(struct render_gpu *g, struct gpu_surfac
         frame_abandon(g, gs, slot);
         return RENDER_GPU_DROPPED;
     }
-    uploads_record(g, slot);
+    if (!uploads_record(g, slot)) {
+        uploads_forget(g);
+        frame_abandon(g, gs, slot);
+        return RENDER_GPU_DROPPED;
+    }
     float color[4];
     gpu_color(base, 1.0f, color);
     const VkClearColorValue clear = { .float32 = { color[0], color[1], color[2], color[3] } };
@@ -594,12 +664,20 @@ static bool present_pixels(struct render_gpu *g, struct gpu_surface *gs, struct 
             offset += (size_t)rects[i].width * (size_t)rects[i].height * 4;
         }
         barriers_add(&barriers, &gs->pixels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        barriers_flush(g, cmd, &barriers);
-        g->vk.CmdCopyBufferToImage(cmd, slot->uploads.buffer, gs->pixels.image,
-                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)n, copies);
+        bool copied = barriers_flush(g, cmd, &barriers);
+        if (copied)
+            g->vk.CmdCopyBufferToImage(cmd, slot->uploads.buffer, gs->pixels.image,
+                                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)n, copies);
     }
     barriers_add(&barriers, &gs->pixels, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    barriers_flush(g, cmd, &barriers);
+    bool ok = barriers_flush(g, cmd, &barriers);
+    barriers_release(&barriers);
+    if (!ok) {
+        /* The next present loads every pixel. */
+        gs->pixels.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        frame_abandon(g, gs, slot);
+        return false;
+    }
 
     pass_begin(g, cmd, gs, image_index, fb->size, NULL);
     set_scissor(g, cmd, (struct rect2i){ .size = target_bounds(gs, fb->size) });

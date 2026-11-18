@@ -27,9 +27,11 @@
  * a new texture when they differ.
  *
  * Images. A UI image has a slot in `images`. The backend keeps one texture
- * for each slot. A slot with `frame == build.frame` is drawn by this frame.
- * When that slot is also `dirty`, the backend must load `pixels` into the
- * texture of the slot before it draws. `pixels` is valid only in that case.
+ * for each slot of `n_images`. A slot with `frame == build.frame` is drawn
+ * by this frame. When that slot is also `dirty`, the backend must load
+ * `pixels` into the texture of the slot before it draws. `pixels` is valid
+ * only in that case. A frame with more images than slots grows the table,
+ * so a backend must read both `images` and `n_images` in every frame.
  *
  * The frame is all or nothing.
  * - gpu_build_frame() false: the CPU paints the frame. The builder state
@@ -56,7 +58,6 @@ struct render_frame;
 #define GPU_ATLAS_START_SIZE 512
 #define GPU_ATLAS_MAX_SIZE 4096
 #define GPU_SHELVES_MAX 1024
-#define GPU_IMAGES 4
 /* Each stream starts at a multiple of this in the instance buffer. */
 #define GPU_STREAM_ALIGN 256
 
@@ -67,6 +68,8 @@ enum gpu_glyph_mode {
     GPU_MODE_COLOR = 2,
     GPU_MODE_IMAGE = 3,
     GPU_MODE_SUBPX = 4,
+    /* An image that samples four texels. */
+    GPU_MODE_IMAGE_LINEAR = 5,
 };
 
 enum gpu_shape_mode {
@@ -78,7 +81,8 @@ enum gpu_shape_mode {
 /*
  * One textured or solid quad. `rect` is x, y, width, height in pixels.
  * `uv` is the texel rect x0, y0, x1, y1. `color` is a straight color, and
- * its alpha is the opacity.
+ * its alpha is the opacity. An image mode multiplies its premultiplied
+ * texels by `color`.
  */
 struct gpu_glyph_inst {
     float rect[4];
@@ -188,13 +192,20 @@ struct gpu_image {
     bool dirty;
 };
 
+/*
+ * The UI image slots of the builder. A slot with `frame == build.frame` is
+ * drawn by this frame. The backend keeps one texture for each slot, so it
+ * reads `images` and `n_images`.
+ */
 struct gpu_build {
     struct gpu_stream streams[GPU_ST_COUNT];
     struct gpu_cmd *cmds;
     uint32_t n_cmds;
     uint32_t cap_cmds;
     struct gpu_atlas atlas;
-    struct gpu_image images[GPU_IMAGES];
+    struct gpu_image *images;
+    int n_images;
+    int cap_images;
     /* The number of the frame that gpu_build_frame() built last. */
     uint64_t frame;
 

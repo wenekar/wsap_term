@@ -14,6 +14,7 @@
 #include "render/render.h"
 #include "util/damage.h"
 #include "util/geom.h"
+#include "util/grow.h"
 #include "util/hash.h"
 
 /* See build.h for the contract of this file. */
@@ -731,17 +732,18 @@ static void emit_shape(struct gpu_build *b, struct rect2i scissor, struct rect2i
 }
 
 /*
- * The slot of a UI image, or -1 when every slot holds an image of this
- * frame. A slot that this frame draws is never taken, because a command of
- * the frame points to it. A new image prefers the slot of the same pixel
+ * The slot of a UI image, or -1 when the memory of the table ran out. A
+ * slot that this frame draws is never taken, because a command of the
+ * frame points to it. A new image prefers the slot of the same pixel
  * buffer, so an image that changes in place keeps its slot and its texture.
  * An image with gen 0 has no identity between frames, and it loads again
- * in each frame.
+ * in each frame. The table never shrinks: a frame with more images than
+ * slots adds a slot.
  */
 static int image_slot(struct gpu_build *b, const struct ui_image *image)
 {
     struct gpu_image *victim = NULL;
-    for (int i = 0; i < GPU_IMAGES; i++) {
+    for (int i = 0; i < b->n_images; i++) {
         struct gpu_image *e = &b->images[i];
         bool same_buffer = e->pixels == image->pixels && vector2i_eq(e->size, image->size);
         if (same_buffer && e->gen == image->gen && (image->gen || e->frame == b->frame)) {
@@ -757,8 +759,11 @@ static int image_slot(struct gpu_build *b, const struct ui_image *image)
             (same_buffer == victim_same && e->used < victim->used))
             victim = e;
     }
-    if (!victim)
-        return -1;
+    if (!victim) {
+        if (!util_grow(&b->images, &b->cap_images, b->n_images + 1, sizeof(*b->images)))
+            return -1;
+        victim = &b->images[b->n_images++];
+    }
     *victim = (struct gpu_image){
         .pixels = image->pixels, .gen = image->gen, .size = image->size,
         .used = ++b->image_clock, .frame = b->frame, .dirty = true,
@@ -769,15 +774,13 @@ static int image_slot(struct gpu_build *b, const struct ui_image *image)
 static void scene_image(struct gpu_build *b, const struct ui_scene_op *op, struct rect2i clip,
                         struct rect2i canvas_rect)
 {
-    const struct ui_image *image = op->image;
+    const struct ui_image *image = op->image.src;
     if (!image || !image->pixels || image->size.x <= 0 || image->size.y <= 0)
         return;
-    struct rect2i img = {
-        .pos = op->rect.pos,
-        .size = { .x = geom_min_i(op->rect.width, image->size.x),
-                  .y = geom_min_i(op->rect.height, image->size.y) },
-    };
-    struct rect2i r = rect2i_intersect(img, clip);
+    struct rect2i dst = op->rect, uv = op->image.uv;
+    if (rect2i_is_empty(dst) || rect2i_is_empty(uv))
+        return;
+    struct rect2i r = rect2i_intersect(dst, clip);
     if (!rect2i_clip(&r, canvas_rect.size))
         return;
     int slot = image_slot(b, image);
@@ -790,11 +793,16 @@ static void scene_image(struct gpu_build *b, const struct ui_scene_op *op, struc
     if (!c || !in)
         return;
     c->count++;
-    float sx = (float)(r.x - op->rect.x), sy = (float)(r.y - op->rect.y);
+    /* The uv of the visible part of the quad. */
+    float sx = (float)(r.x - dst.x), sy = (float)(r.y - dst.y);
+    float dx = (float)uv.width / (float)dst.width, dy = (float)uv.height / (float)dst.height;
     rect2i_to_vec4(r, in->rect);
-    rect_to_vec4(sx, sy, sx + (float)r.width, sy + (float)r.height, in->uv);
-    white_of(1.0f, in->color);
-    in->mode = GPU_MODE_IMAGE;
+    rect_to_vec4((float)uv.x + sx * dx, (float)uv.y + sy * dy,
+                 (float)uv.x + (sx + (float)r.width) * dx,
+                 (float)uv.y + (sy + (float)r.height) * dy, in->uv);
+    /* A zero tint is white. The alpha of the color is the opacity. */
+    gpu_color(op->color ? op->color : 0xFFFFFFFFu, (float)op->alpha / 255.0f, in->color);
+    in->mode = op->flags & UI_IMAGE_LINEAR ? GPU_MODE_IMAGE_LINEAR : GPU_MODE_IMAGE;
 }
 
 static void scene_text(struct gpu_build *b, struct font_instance *fi, const struct ui_scene *s,
@@ -1018,6 +1026,7 @@ void gpu_build_release(struct gpu_build *b)
         free(b->streams[i].data);
     free(b->cmds);
     free(b->clips);
+    free(b->images);
     free(b->atlas.map);
     free(b->atlas.shelves);
     free(b->atlas.stage);
@@ -1049,7 +1058,7 @@ void gpu_build_commit(struct gpu_build *b)
 {
     b->atlas.stage_used = 0;
     b->atlas.n_uploads = 0;
-    for (int i = 0; i < GPU_IMAGES; i++)
+    for (int i = 0; i < b->n_images; i++)
         if (b->images[i].frame == b->frame)
             b->images[i].dirty = false;
 }

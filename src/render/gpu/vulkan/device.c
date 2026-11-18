@@ -24,6 +24,83 @@ void vulkan_wait_idle(struct render_gpu *g)
 
 /* ---- Textures and buffers ----------------------------------------------- */
 
+/* The number of sets of the first descriptor pool. */
+#define VULKAN_DESC_SETS_START 64
+
+/*
+ * Adds a descriptor pool to `g`. The pool takes twice the sets of the last
+ * one, so a device with many textures adds a few pools only. Returns false
+ * and reports the reason when the device cannot make the pool.
+ */
+static bool desc_pool_add(struct render_gpu *g)
+{
+    uint32_t sets = g->n_desc_pools
+        ? g->desc_pools[g->n_desc_pools - 1].sets * 2 : VULKAN_DESC_SETS_START;
+    VkDescriptorPoolSize pool_size = {
+        .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .descriptorCount = sets,
+    };
+    VkDescriptorPoolCreateInfo info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+        .maxSets = sets,
+        .poolSizeCount = 1,
+        .pPoolSizes = &pool_size,
+    };
+    if (g->n_desc_pools == g->cap_desc_pools) {
+        uint32_t cap = g->cap_desc_pools ? g->cap_desc_pools * 2 : 4;
+        struct vulkan_desc_pool *pools = realloc(g->desc_pools, (size_t)cap * sizeof(*pools));
+        if (!pools) {
+            fprintf(stderr, "wsap: no memory for a Vulkan descriptor pool of %u sets\n", sets);
+            return false;
+        }
+        g->desc_pools = pools;
+        g->cap_desc_pools = cap;
+    }
+    struct vulkan_desc_pool *entry = &g->desc_pools[g->n_desc_pools];
+    if (g->vk.CreateDescriptorPool(g->dev.device, &info, NULL, &entry->pool) != VK_SUCCESS) {
+        fprintf(stderr, "wsap: the Vulkan device makes no descriptor pool of %u sets\n", sets);
+        return false;
+    }
+    entry->sets = sets;
+    g->n_desc_pools++;
+    return true;
+}
+
+/*
+ * Allocates one descriptor set with the layout of the device. The set comes
+ * from the newest pool that has room. When every pool is full, a new pool
+ * of twice the sets takes it. Returns false and reports the reason when the
+ * device gives no set.
+ */
+static bool desc_set_alloc(struct render_gpu *g, VkDescriptorSet *set, VkDescriptorPool *pool)
+{
+    VkDescriptorSetAllocateInfo info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &g->desc_layout,
+    };
+    for (uint32_t i = g->n_desc_pools; i-- > 0;) {
+        info.descriptorPool = g->desc_pools[i].pool;
+        VkResult result = g->vk.AllocateDescriptorSets(g->dev.device, &info, set);
+        if (result == VK_SUCCESS) {
+            *pool = info.descriptorPool;
+            return true;
+        }
+        if (result != VK_ERROR_OUT_OF_POOL_MEMORY)
+            return false;
+    }
+    if (!desc_pool_add(g))
+        return false;
+    info.descriptorPool = g->desc_pools[g->n_desc_pools - 1].pool;
+    if (g->vk.AllocateDescriptorSets(g->dev.device, &info, set) != VK_SUCCESS) {
+        fprintf(stderr, "wsap: the new Vulkan descriptor pool gives no set\n");
+        return false;
+    }
+    *pool = info.descriptorPool;
+    return true;
+}
+
 static uint32_t memory_type(struct render_gpu *g, uint32_t type_bits, VkMemoryPropertyFlags want)
 {
     VkPhysicalDeviceMemoryProperties props;
@@ -62,7 +139,8 @@ static void texture_drop_image(struct render_gpu *g, struct vulkan_texture *t)
     if (t->memory)
         g->vk.FreeMemory(device, t->memory, NULL);
     VkDescriptorSet set = t->set;
-    *t = (struct vulkan_texture){ .set = set };
+    VkDescriptorPool pool = t->pool;
+    *t = (struct vulkan_texture){ .set = set, .pool = pool };
 }
 
 static bool texture_make_image(struct render_gpu *g, struct vulkan_texture *t,
@@ -99,16 +177,8 @@ static bool texture_make_image(struct render_gpu *g, struct vulkan_texture *t,
     if (g->vk.CreateImageView(device, &view_info, NULL, &t->view) != VK_SUCCESS)
         return false;
     if (!t->set) {
-        VkDescriptorSetAllocateInfo set_info = {
-            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-            .descriptorPool = g->desc_pool,
-            .descriptorSetCount = 1,
-            .pSetLayouts = &g->desc_layout,
-        };
-        if (g->vk.AllocateDescriptorSets(device, &set_info, &t->set) != VK_SUCCESS) {
-            t->set = VK_NULL_HANDLE;
+        if (!desc_set_alloc(g, &t->set, &t->pool))
             return false;
-        }
     }
     VkDescriptorImageInfo sampled = {
         .sampler = g->sampler,
@@ -147,7 +217,7 @@ void vulkan_texture_destroy(struct render_gpu *g, struct vulkan_texture *t)
 {
     texture_drop_image(g, t);
     if (t->set)
-        g->vk.FreeDescriptorSets(g->dev.device, g->desc_pool, 1, &t->set);
+        g->vk.FreeDescriptorSets(g->dev.device, t->pool, 1, &t->set);
     *t = (struct vulkan_texture){0};
 }
 
@@ -736,21 +806,8 @@ static bool objects_create(struct render_gpu *g)
         return false;
 
     /* One set for each texture: the atlas, the UI images, and the CPU
-     * pixels of each surface that needs them. */
-    VkDescriptorPoolSize pool_size = {
-        .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .descriptorCount = 64,
-    };
-    VkDescriptorPoolCreateInfo desc_pool = {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-        .maxSets = 64,
-        .poolSizeCount = 1,
-        .pPoolSizes = &pool_size,
-    };
-    if (g->vk.CreateDescriptorPool(device, &desc_pool, NULL, &g->desc_pool) != VK_SUCCESS)
-        return false;
-
+     * pixels of each surface that needs them. The first pool comes with
+     * the first texture, and a full pool adds a bigger one. */
     VkDescriptorSetLayoutBinding binding = {
         .binding = 0,
         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -1003,7 +1060,7 @@ void render_gpu_free(struct render_gpu *g)
             vulkan_buffer_destroy(g, &slot->uploads);
         }
         vulkan_texture_destroy(g, &g->atlas);
-        for (int i = 0; i < GPU_IMAGES; i++)
+        for (int i = 0; i < g->n_images; i++)
             vulkan_texture_destroy(g, &g->images[i]);
         pipelines_destroy(g);
         if (g->pipeline_cache)
@@ -1014,8 +1071,8 @@ void render_gpu_free(struct render_gpu *g)
             g->vk.DestroySampler(device, g->sampler, NULL);
         if (g->desc_layout)
             g->vk.DestroyDescriptorSetLayout(device, g->desc_layout, NULL);
-        if (g->desc_pool)
-            g->vk.DestroyDescriptorPool(device, g->desc_pool, NULL);
+        for (uint32_t i = 0; i < g->n_desc_pools; i++)
+            g->vk.DestroyDescriptorPool(device, g->desc_pools[i].pool, NULL);
         /* The pool frees the command buffers of the slots. */
         if (g->cmd_pool)
             g->vk.DestroyCommandPool(device, g->cmd_pool, NULL);
@@ -1027,6 +1084,9 @@ void render_gpu_free(struct render_gpu *g)
         dlclose(g->vk_lib);
     gpu_build_release(&g->build);
     free(g->copies);
+    free(g->images);
+    free(g->image_offsets);
+    free(g->desc_pools);
     free(g);
 }
 

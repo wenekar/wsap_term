@@ -382,9 +382,10 @@ static bool shows_image(const uint32_t *px, int stride, struct vector2i pos, con
 }
 
 /*
- * An image draws as an opaque copy of its pixels. An image that changes in
+ * An image draws its opaque pixels as they are. An image that changes in
  * place shows its new pixels. A frame with more images than the backend
- * keeps goes to the CPU, and a frame that fits works again after it.
+ * started with adds textures and still presents. This test cannot run on
+ * Linux, so the Vulkan test checks the same behavior there.
  */
 static void test_images(void)
 {
@@ -397,10 +398,10 @@ static void test_images(void)
     TestDrawable *first = fixture_shot(&f, size);
     TestDrawable *changed = fixture_shot(&f, size);
 
-    /* Translucent source pixels: the copy is opaque. */
+    /* Opaque source pixels: the draw copies them. */
     uint32_t pixels[SIDE * SIDE], first_pixels[SIDE * SIDE];
     for (int i = 0; i < SIDE * SIDE; i++)
-        pixels[i] = 0x80000000u | (uint32_t)(i * 2654435761u >> 8);
+        pixels[i] = 0xFF000000u | (uint32_t)(i * 2654435761u >> 8);
     memcpy(first_pixels, pixels, sizeof(pixels));
     struct ui_image image = { .size = { .x = SIDE, .y = SIDE }, .pixels = pixels, .gen = 1 };
     struct ui_scene scene = {0};
@@ -414,7 +415,8 @@ static void test_images(void)
     assert(draw(&f, &rf, changed, size) == RENDER_GPU_PRESENTED);
     ui_scene_destroy(&scene);
 
-    enum { IMAGES = GPU_IMAGES + 1 };
+    /* More images than the backend has slots for at its start. */
+    enum { IMAGES = 70 };
     static uint32_t many_pixels[IMAGES][8 * 8];
     struct ui_image many[IMAGES];
     for (int i = 0; i < IMAGES; i++) {
@@ -425,14 +427,13 @@ static void test_images(void)
         };
     }
     TestDrawable *scratch = fixture_shot(&f, size);
-    for (int n = IMAGES; n >= GPU_IMAGES; n--) {
+    for (int n = IMAGES; n >= 1; n -= 23) {
         ui_scene_init(&scene);
         for (int i = 0; i < n; i++)
-            assert(ui_scene_image(&scene, (struct vector2i){ .x = 10 + i * 12, .y = 10 },
-                                  &many[i]));
+            assert(ui_scene_image(&scene, (struct vector2i){ .x = 10 + i % 10 * 10,
+                                                            .y = 10 + i / 10 * 10 }, &many[i]));
         rf.ui = &scene;
-        enum render_gpu_status want = n <= GPU_IMAGES ? RENDER_GPU_PRESENTED : RENDER_GPU_UNUSED;
-        assert(draw(&f, &rf, scratch, size) == want);
+        assert(draw(&f, &rf, scratch, size) == RENDER_GPU_PRESENTED);
         ui_scene_destroy(&scene);
     }
     fixture_finish(&f);

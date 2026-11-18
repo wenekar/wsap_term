@@ -159,8 +159,8 @@ static void hover_shows_card_below_tab_after_delay_test(void)
 
     assert(ui_surface_build_scene(&f.surface, &f.scene));
     const struct ui_scene_op *image = find_op(&f.scene, UI_SCENE_OP_IMAGE);
-    assert(image && image->image->pixels == f.image.pixels);
-    assert(vector2i_eq(image->image->size, f.image.size));
+    assert(image && image->image.src->pixels == f.image.pixels);
+    assert(vector2i_eq(image->image.src->size, f.image.size));
     struct ui_debug_parts parts = {0};
     ui_debug_collect_parts(ui_tab_preview_widget(&f.card), &parts);
     const struct ui_debug_part *title = find_part(&parts, "title");
@@ -356,7 +356,7 @@ static void unchanged_refresh_requests_no_redraw_test(void)
     assert(card_dirty(&f) == CARD_CLEAN);
     assert(ui_surface_build_scene(&f.surface, &f.scene));
     const struct ui_scene_op *image = find_op(&f.scene, UI_SCENE_OP_IMAGE);
-    assert(image && image->image->gen == (uint64_t)f.captures);
+    assert(image && image->image.src->gen == (uint64_t)f.captures);
 
     /* A taller picture relayouts the card. */
     assert(ui_surface_build_scene(&f.surface, &f.scene));

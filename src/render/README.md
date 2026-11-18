@@ -68,6 +68,7 @@ Each build includes one GPU backend: Metal on macOS, Vulkan on Linux, or `gpu/no
 - The scene painter selects its ISA level once per process. It does not inherit the ISA level from a renderer instance. The `WSAP_RENDER_ISA` environment variable controls this selection. Different ISA levels produce bit-identical pixel output.
 - Incremental frame rendering produces pixels identical to a full repaint.
 - Grid rendering is opaque. Base backgrounds and UI overlays support translucency.
+- A UI image stores premultiplied ARGB. The CPU painter and the GPU shaders blend it with its own alpha, as `src + dst * (1 - src.a)`. An image op scales the source texel rect of the image and may tint it. Nearest and linear samples follow one rule in both paths: destination pixel `i` of `n` samples the source coordinate `(i + 0.5) * src / n`.
 - Glyph pixel spills never cross into grid margins.
 
 ## Link contract of the scene painter
