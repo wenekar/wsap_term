@@ -1,0 +1,27 @@
+# Theme metadata. The label names the theme in the picker.
+# The polarity is dark or light.
+# The terminal app reads the [ansi] block. Other blocks are
+# available to an application that knows them.
+
+label = macOS 26 Dark
+polarity = dark
+
+[ansi]
+foreground = #F2F2F2
+background = #000000
+color0 = #242424
+color1 = #B60000
+color2 = #00A600
+color3 = #999900
+color4 = #452FF6
+color5 = #B200B2
+color6 = #00A6B2
+color7 = #BFBFBF
+color8 = #666666
+color9 = #E50000
+color10 = #00D900
+color11 = #E5E500
+color12 = #3030FF
+color13 = #E500E5
+color14 = #00E5E5
+color15 = #E5E5E5

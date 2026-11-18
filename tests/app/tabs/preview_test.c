@@ -48,7 +48,7 @@ static void setup_fixture(struct preview_fixture *f, struct vector2i size,
        sheet, as in app.c. */
     window_ui_set_style(f->w, app_style_sheet(),
                         look_sheet(f->app.app->look),
-                        look_palette(f->app.app->look)->bg);
+                        f->app.app->palette.bg);
     ui_surface_set_scale(window_ui_surface(f->w), (struct css_scale_context){
         .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
     });

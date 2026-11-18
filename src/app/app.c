@@ -243,15 +243,37 @@ static bool app_paint_scene(void *ud, struct font_instance *font,
 
 static void style_window(struct app *a, struct window *w)
 {
-    const struct wsap_vtcore_theme *theme = look_palette(a->look);
     if (app_tabs_is(w))
-        app_tabs_set_theme(w, theme);
-    window_ui_set_style(w, app_style_sheet(), look_sheet(a->look), theme->bg);
+        app_tabs_set_theme(w, &a->palette);
+    window_ui_set_style(w, app_style_sheet(), look_sheet(a->look),
+                        a->palette.bg);
+}
+
+/* The terminal palette keys of a theme data block. The theme module does not
+   know them. The terminal app reads the "ansi" block. */
+static const char *const ansi_keys[] = {
+    "foreground", "background",
+    "color0", "color1", "color2", "color3", "color4", "color5", "color6",
+    "color7", "color8", "color9", "color10", "color11", "color12", "color13",
+    "color14", "color15",
+};
+
+static void refresh_palette(struct app *a)
+{
+    struct wsap_vtcore_theme palette = a->config.palette;
+    for (size_t i = 0; i < sizeof(ansi_keys) / sizeof(ansi_keys[0]); i++) {
+        const char *value = look_theme_value(a->look, "ansi", ansi_keys[i]);
+        if (value && !wsap_vtcore_theme_set_key(&palette, ansi_keys[i], value))
+            fprintf(stderr, "[%s] theme: bad 'ansi' value for %s: %s\n",
+                    app_name(), ansi_keys[i], value);
+    }
+    a->palette = palette;
 }
 
 static void look_changed(void *ud)
 {
     struct app *a = ud;
+    refresh_palette(a);
     for (int i = 0; i < a->host.count; i++)
         style_window(a, a->host.windows[i]);
 }
@@ -364,7 +386,7 @@ struct window *app_open_terminal(struct app *a, app_tab_id tab,
     if (!app_tabs_mount(w, &(struct app_tabs_spec){
             .config = &a->config.terminal, .cwd = cwd,
             .model = &a->tabs, .tab = tab,
-            .theme = look_palette(a->look),
+            .theme = &a->palette,
             .theme_picker = app_theme_picker(a),
             .preview_capture = app_thumbnail_capture,
             .preview_release = app_thumbnail_release, .preview_ud = a,
@@ -504,7 +526,7 @@ bool app_apply_config(struct app *a, const struct app_config *draft)
     font_apply_settings(&pf, &nf);
     if (!new_look) {
         look_changed(a);
-    } else if (!look_apply(a->look, &a->config.palette, a->config.theme)) {
+    } else if (!look_apply(a->look, a->config.theme)) {
         font_apply_settings(&nf, &pf);
         a->config = previous;
         opts_destroy(&app_config_spec, &next);
@@ -651,12 +673,13 @@ static struct app *app_new(int argc, char **argv, bool gpu_first, int *status)
         app_free(a);
         return NULL;
     }
-    a->look = look_create(&a->config.palette, a->config.theme);
+    a->look = look_create(a->config.theme);
     if (!a->look) {
         *status = 1;
         app_free(a);
         return NULL;
     }
+    refresh_palette(a);
     window_host_init(&a->host, a->loop, &a->config.window,
                      &(struct window_host_hooks){
                          .empty = host_empty,

@@ -7,7 +7,6 @@
 #include <unistd.h>
 
 #include "theme/look.h"
-#include <wsap_vtcore/wsap_vtcore.h>
 #include "ui/css.h"
 
 static char user_themes[4096];
@@ -25,21 +24,9 @@ static void write_file(const char *dir, const char *name, const char *text)
 
 static struct look *open_look(const char *theme)
 {
-    struct wsap_vtcore_theme base;
-    wsap_vtcore_theme_default(&base);
-    struct look *look = look_create(&base, theme);
+    struct look *look = look_create(theme);
     assert(look);
     return look;
-}
-
-static uint32_t look_fg(const struct look *a)
-{
-    return look_palette(a)->fg;
-}
-
-static uint32_t look_bg(const struct look *a)
-{
-    return look_palette(a)->bg;
 }
 
 static int theme_index(struct look *a, const char *name)
@@ -82,17 +69,20 @@ static void test_theme_discover_and_labels(void)
 
     const struct look_theme *t = theme_named(a, "breeze-twilight");
     assert(t && !strcmp(t->label, "Breeze Twilight"));
+    assert(t->polarity == THEME_POLARITY_DARK);
     assert(strstr(t->css_path, "breeze-twilight.css"));
-    assert(strstr(t->conf_path, "breeze-twilight-term.conf"));
+    assert(strstr(t->data_path, "breeze-twilight.theme"));
     assert(!strcmp(theme_named(a, "macos26-dark")->label, "macOS 26 Dark"));
     assert(!strcmp(theme_named(a, "pop-os-light")->label, "Pop!_OS Light"));
+    assert(theme_named(a, "pop-os-light")->polarity == THEME_POLARITY_LIGHT);
 
     t = theme_named(a, "my-custom-theme");
-    assert(t && !strcmp(t->label, "My Custom Theme") && !t->conf_path);
+    assert(t && !strcmp(t->label, "My Custom Theme") && !t->data_path);
+    assert(t->polarity == THEME_POLARITY_UNKNOWN);
 
     t = theme_named(a, "breeze-dark");
     assert(t && strstr(t->css_path, user_themes) == t->css_path);
-    assert(t->conf_path && strstr(t->conf_path, user_themes) != t->conf_path);
+    assert(t->data_path && strstr(t->data_path, user_themes) != t->data_path);
 
     for (int i = 1; i < look_theme_count(a); i++)
         assert(strcasecmp(look_theme_at(a, i - 1)->label,
@@ -125,8 +115,8 @@ static void test_theme_apply(void)
     assert(look_preview(a, theme_index(a, "breeze-twilight")));
     look_commit(a);
     assert(!strcmp(look_committed_name(a), "breeze-twilight"));
-    assert(look_bg(a) == 0xFF232627u);
-    assert(look_fg(a) == 0xFFFCFCFCu);
+    assert(!strcmp(look_theme_value(a, "ansi", "background"), "#232627"));
+    assert(!strcmp(look_theme_value(a, "ansi", "foreground"), "#FCFCFC"));
     assert(tab_bar_bg(a) == 0xFFEFF0F1u);
     look_destroy(a);
 
@@ -181,7 +171,7 @@ static void test_theme_config_names_theme(void)
 {
     struct look *a = open_look("Breeze Twilight");
     assert(!strcmp(look_committed_name(a), "breeze-twilight"));
-    assert(look_bg(a) == 0xFF232627u);
+    assert(!strcmp(look_theme_value(a, "ansi", "background"), "#232627"));
     look_destroy(a);
 }
 
@@ -208,7 +198,7 @@ static void test_theme_preview_cancel_and_rescan(void)
     assert(look_previewed(a) == -1);
     assert(look_rescan(a) == n);
     assert(!strcmp(look_committed_name(a), "breeze-twilight"));
-    assert(look_bg(a) == 0xFF232627u);
+    assert(!strcmp(look_theme_value(a, "ansi", "background"), "#232627"));
     look_destroy(a);
 }
 
@@ -237,25 +227,30 @@ static void test_theme_rescan_reloads_edited_files(void)
     look_destroy(a);
 }
 
-static void test_theme_keeps_config_palette(void)
+static void test_theme_data_blocks(void)
 {
-    struct wsap_vtcore_theme base;
-    wsap_vtcore_theme_default(&base);
-    base.fg = 0xFF112233u;
-    struct look *a = look_create(&base, "my-custom-theme");
-    assert(a);
-    assert(look_fg(a) == 0xFF112233u);
-
-    assert(look_preview(a, theme_index(a, "my-custom-theme")));
-    assert(look_fg(a) == 0xFF112233u);
-    look_commit(a);
-    assert(look_fg(a) == 0xFF112233u);
+    struct look *a = open_look("my-custom-theme");
+    assert(!look_theme_value(a, "ansi", "background"));
 
     assert(look_preview(a, theme_index(a, "breeze-twilight")));
-    assert(look_fg(a) == 0xFFFCFCFCu);
+    assert(!strcmp(look_theme_value(a, "ansi", "color4"), "#1D99F3"));
+    assert(!look_theme_value(a, "syntax", "keyword"));
     look_cancel(a);
-    assert(look_fg(a) == 0xFF112233u);
+    assert(!look_theme_value(a, "ansi", "background"));
     look_destroy(a);
+
+    /* A data block that the theme module does not know stays available to an
+       application that knows it. */
+    write_file(user_themes, "my-custom-theme.theme",
+               "label = My Custom Theme\npolarity = light\n"
+               "[syntax]\nkeyword = #112233\n");
+    struct look *blocks = open_look("my-custom-theme");
+    assert(!strcmp(look_theme_at(blocks, theme_index(blocks, "my-custom-theme"))->label,
+                   "My Custom Theme"));
+    assert(look_theme_at(blocks, theme_index(blocks, "my-custom-theme"))->polarity ==
+           THEME_POLARITY_LIGHT);
+    assert(!strcmp(look_theme_value(blocks, "syntax", "keyword"), "#112233"));
+    look_destroy(blocks);
 }
 
 static void setup_user_themes(char *root, size_t n)
@@ -272,23 +267,18 @@ static void setup_user_themes(char *root, size_t n)
     write_file(user_themes, "breeze-dark.css", ".tab-bar { background: #010101; }\n");
 }
 
-static void test_settings_replace_base_palette(void)
+static void test_theme_apply_by_name(void)
 {
     struct look *look = open_look(NULL);
     int custom = theme_index(look, "my-custom-theme");
     assert(look_preview(look, custom));
     look_cancel(look);
-    struct wsap_vtcore_theme palette;
-    wsap_vtcore_theme_default(&palette);
-    palette.fg = 0xFF123456u;
-    assert(look_apply(look, &palette, NULL));
-    assert(look_fg(look) == palette.fg);
+    assert(look_apply(look, NULL));
     assert(look_preview(look, custom));
-    assert(look_fg(look) == palette.fg);
     look_cancel(look);
-    assert(look_apply(look, &palette, "breeze-dark"));
+    assert(look_apply(look, "breeze-dark"));
     assert(!strcmp(look_committed_name(look), "breeze-dark"));
-    assert(!look_apply(look, &palette, "missing-theme"));
+    assert(!look_apply(look, "missing-theme"));
     assert(!strcmp(look_committed_name(look), "breeze-dark"));
     look_destroy(look);
 }
@@ -355,8 +345,8 @@ int main(void)
     test_theme_config_names_theme();
     test_theme_preview_cancel_and_rescan();
     test_theme_rescan_reloads_edited_files();
-    test_theme_keeps_config_palette();
-    test_settings_replace_base_palette();
+    test_theme_data_blocks();
+    test_theme_apply_by_name();
     test_theme_root_overrides_and_defaults();
 
     char cmd[4200];

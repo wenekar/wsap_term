@@ -4,23 +4,31 @@
 #include <stdbool.h>
 
 struct css_sheet;
-struct wsap_vtcore_theme;
+
+/* The preferred color scheme of a theme. */
+enum theme_polarity {
+    THEME_POLARITY_UNKNOWN = 0,
+    THEME_POLARITY_DARK,
+    THEME_POLARITY_LIGHT,
+};
 
 struct look_theme {
     char *name;
     char *label;
+    enum theme_polarity polarity;
     char *css_path;
-    char *conf_path;
+    /* The theme data file. It holds the metadata and optional data blocks. */
+    char *data_path;
 };
 
 struct look;
 
 /*
  * Creates and initializes a theme manager.
- * Applies the initial `theme` name or file path over `base` colors.
+ * Applies the initial `theme` name or CSS file path.
  * Returns a pointer to the new instance, or NULL on allocation failure.
  */
-struct look *look_create(const struct wsap_vtcore_theme *base, const char *theme);
+struct look *look_create(const char *theme);
 
 /*
  * Frees a theme manager and its loaded appearances.
@@ -40,9 +48,12 @@ void look_set_listener(struct look *look, void (*changed)(void *ud), void *ud);
 const struct css_sheet *look_sheet(const struct look *look);
 
 /*
- * Returns the terminal color palette of the active theme appearance.
+ * Returns the value of `key` in the first data block `block` of the active
+ * theme. A theme that an application reads with this call keeps its data in
+ * the theme data file. Returns NULL when the block or key is absent.
  */
-const struct wsap_vtcore_theme *look_palette(const struct look *look);
+const char *look_theme_value(const struct look *look, const char *block,
+                             const char *key);
 
 /*
  * Returns the number of discovered themes in the catalog.
@@ -86,10 +97,10 @@ void look_cancel(struct look *look);
 
 /*
  * Loads and commits a theme by name or CSS file path.
- * Updates base palette colors and notifies listeners.
+ * Notifies listeners.
  * Returns true on success, or false if loading failed.
  */
-bool look_apply(struct look *look, const struct wsap_vtcore_theme *base, const char *theme);
+bool look_apply(struct look *look, const char *theme);
 
 /*
  * Returns the name of the committed theme, or an empty string if unnamed.

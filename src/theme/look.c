@@ -9,7 +9,6 @@
 
 struct look {
     struct theme_catalog catalog;
-    struct wsap_vtcore_theme base;
     struct appearance *committed;
     struct appearance *preview;
     void (*changed)(void *ud);
@@ -39,24 +38,23 @@ static struct appearance *build_startup(struct look *look, const char *ref)
     if (!ref || !ref[0])
         return NULL;
     if (is_css_path(ref))
-        return appearance_load(NULL, ref, NULL, &look->base);
+        return appearance_load(NULL, ref, NULL);
     struct theme_entry *e = theme_catalog_find(&look->catalog, ref);
     if (!e) {
         fprintf(stderr, "[%s] unknown theme '%s'\n", app_name(), ref);
         return NULL;
     }
-    return appearance_ref(theme_entry_appearance(e, &look->base));
+    return appearance_ref(theme_entry_appearance(e));
 }
 
-struct look *look_create(const struct wsap_vtcore_theme *base, const char *theme)
+struct look *look_create(const char *theme)
 {
     struct look *look = calloc(1, sizeof(*look));
     if (!look)
         return NULL;
-    look->base = *base;
     look->committed = build_startup(look, theme);
     if (!look->committed)
-        look->committed = appearance_load(NULL, NULL, NULL, &look->base);
+        look->committed = appearance_load(NULL, NULL, NULL);
     if (!look->committed) {
         look_destroy(look);
         return NULL;
@@ -86,9 +84,10 @@ const struct css_sheet *look_sheet(const struct look *look)
     return &active(look)->chrome;
 }
 
-const struct wsap_vtcore_theme *look_palette(const struct look *look)
+const char *look_theme_value(const struct look *look, const char *block,
+                             const char *key)
 {
-    return &active(look)->palette;
+    return theme_data_value(&active(look)->data, block, key);
 }
 
 int look_theme_count(struct look *look)
@@ -119,7 +118,7 @@ bool look_preview(struct look *look, int idx)
     if (look->previewed == idx + 1)
         return true;
     struct appearance *ap =
-        theme_entry_appearance(&look->catalog.items[idx], &look->base);
+        theme_entry_appearance(&look->catalog.items[idx]);
     if (!ap)
         return false;
     appearance_unref(look->preview);
@@ -166,25 +165,24 @@ bool look_is_committed(struct look *look, int idx)
     return theme && name[0] && !strcmp(name, theme->name);
 }
 
-bool look_apply(struct look *look, const struct wsap_vtcore_theme *base, const char *theme)
+bool look_apply(struct look *look, const char *theme)
 {
     struct appearance *next;
     if (!theme || !theme[0]) {
-        next = appearance_load(NULL, NULL, NULL, base);
+        next = appearance_load(NULL, NULL, NULL);
     } else if (is_css_path(theme)) {
-        next = appearance_load(NULL, theme, NULL, base);
+        next = appearance_load(NULL, theme, NULL);
     } else {
         struct theme_entry *entry = theme_catalog_find(&look->catalog, theme);
         if (!entry) return false;
         next = appearance_load(entry->info.name, entry->info.css_path,
-                                entry->info.conf_path, base);
+                               &entry->data);
     }
     if (!next) return false;
     appearance_unref(look->preview);
     appearance_unref(look->committed);
     look->preview = NULL;
     look->previewed = 0;
-    look->base = *base;
     look->committed = next;
     for (int i = 0; i < look->catalog.count; i++) {
         appearance_unref(look->catalog.items[i].built);

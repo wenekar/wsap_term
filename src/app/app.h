@@ -13,6 +13,8 @@ struct renderer;
 
 struct app {
     struct app_config config;
+    /* The terminal palette of the active theme, over the configured one. */
+    struct wsap_vtcore_theme palette;
     char *config_path;
     struct yasl_loop *loop;
     struct renderer *renderer;

@@ -23,9 +23,9 @@ static inline struct window *test_terminal_window(struct app *app)
         window_close(w);
         return NULL;
     }
-    app_tabs_set_theme(w, look_palette(app->look));
+    app_tabs_set_theme(w, &app->palette);
     window_ui_set_style(w, app_style_sheet(), look_sheet(app->look),
-                        look_palette(app->look)->bg);
+                        app->palette.bg);
     return w;
 }
 
