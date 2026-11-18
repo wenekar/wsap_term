@@ -10,11 +10,25 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Polls every queued event and reports whether one matches. */
+static bool has_event(struct yasl_private_display *d, enum yasl_private_event_type type,
+                      struct yasl_surface *surface)
+{
+    struct yasl_private_event event;
+    bool found = false;
+    while (yasl_private_display_poll_event(d, &event))
+        if (event.type == type && event.surface == surface)
+            found = true;
+    return found;
+}
+
 int main(void)
 {
     struct yasl_private_display *d = yasl_private_display_open(NULL, NULL);
     assert(d);
     assert(yasl_private_display_caps(d) & YASL_PRIVATE_CAP_TEXT_INPUT);
+    /* macOS has one system pasteboard and no primary selection. */
+    assert(!(yasl_private_display_caps(d) & YASL_PRIVATE_CAP_PRIMARY_SELECTION));
     struct yasl_private_window_spec spec = {.title = "Ownership test", .size = {160, 100}};
     struct yasl_surface *s = yasl_private_surface_create_toplevel(d, &spec);
     assert(s);
@@ -40,6 +54,10 @@ int main(void)
     assert(metal && [metal isKindOfClass:[CAMetalLayer class]] && !metal.device);
     NSWindow *hidden = (NSWindow *)yasl_private_surface_get_native_handle(gpu);
     assert(!hidden.isVisible && hidden.styleMask == NSWindowStyleMaskBorderless);
+    /* A titled window keeps its system title bar. An undecorated window has
+     * none, so the application draws the frame. */
+    assert(!(s->state & YASL_PRIVATE_STATE_CSD));
+    assert(gpu->state & YASL_PRIVATE_STATE_CSD);
     yasl_private_surface_destroy(gpu);
 
     assert(!d->ops->surface_create_gl && !d->ops->gl_make_current &&
@@ -57,6 +75,7 @@ int main(void)
     };
     struct yasl_surface *popup = yasl_private_surface_create_popup(s, &popup_spec);
     assert(popup);
+    assert(popup->state & YASL_PRIVATE_STATE_CSD);
     popup_spec.anchor_edges = 8;
     popup_spec.gravity = 5;
     assert(yasl_private_surface_popup_reposition(popup, &popup_spec));
@@ -65,6 +84,22 @@ int main(void)
     assert(!yasl_private_surface_set_fullscreen(popup, true) && errno == EINVAL);
     assert(!yasl_private_surface_set_maximized(popup, true) && errno == EINVAL);
     assert(!yasl_private_surface_minimize(popup) && errno == EINVAL);
+
+    /* A press in another window of the application dismisses the popup, and a
+     * press in the popup keeps it. */
+    NSWindow *popup_window = (NSWindow *)yasl_private_surface_get_native_handle(popup);
+    @autoreleasepool {
+        NSEvent *in_popup = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
+            location:NSMakePoint(4, 4) modifierFlags:0 timestamp:0
+            windowNumber:popup_window.windowNumber context:nil eventNumber:0 clickCount:1 pressure:1];
+        NSEvent *in_parent = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
+            location:NSMakePoint(20, 20) modifierFlags:0 timestamp:0
+            windowNumber:window.windowNumber context:nil eventNumber:0 clickCount:1 pressure:1];
+        [popup_window sendEvent:in_popup];
+        assert(!has_event(d, YASL_PRIVATE_EVENT_WINDOW_CLOSE, popup));
+        [window sendEvent:in_parent];
+        assert(has_event(d, YASL_PRIVATE_EVENT_WINDOW_CLOSE, popup));
+    }
     yasl_private_surface_destroy(popup);
     while (yasl_private_display_poll_event(d, &event)) {}
 
@@ -78,8 +113,12 @@ int main(void)
     [text_input setMarkedText:@"é漢" selectedRange:NSMakeRange(1, 1)
               replacementRange:NSMakeRange(NSNotFound, 0)];
     assert(strcmp(yasl_private_surface_ime_preedit(s), "é漢") == 0);
+    int cursor_begin = 0, cursor_end = 0;
+    assert(yasl_private_surface_ime_preedit_cursor(s, &cursor_begin, &cursor_end));
+    assert(cursor_begin == 2 && cursor_end == 5);
     [text_input unmarkText];
     assert(yasl_private_surface_ime_preedit(s) == NULL);
+    assert(!yasl_private_surface_ime_preedit_cursor(s, &cursor_begin, &cursor_end));
     assert(yasl_private_display_poll_event(d, &event));
     assert(event.type == YASL_PRIVATE_EVENT_COMPOSITION && event.composition.active);
     assert(strcmp(event.composition.data, "é漢") == 0);

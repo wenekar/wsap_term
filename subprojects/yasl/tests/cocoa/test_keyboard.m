@@ -17,6 +17,8 @@
 @property CGFloat scrollingDeltaX;
 @property CGFloat scrollingDeltaY;
 @property BOOL hasPreciseScrollingDeltas;
+@property NSEventPhase phase;
+@property NSEventPhase momentumPhase;
 @end
 
 @implementation InputSample
@@ -184,8 +186,21 @@ int main(void)
         assert(event.key.text_input == YASL_KEY_TEXT_COMMIT && event.key.text_id);
         key_id = event.key.text_id;
         event = next(surface, YASL_PRIVATE_EVENT_TEXT);
-        assert(event.text.text_key_id == key_id && !strcmp(event.text.data, "ä😀"));
+        assert(event.text.text_key_id == key_id && !strcmp(event.text.data, "ä😀"));
         empty(surface);
+
+        /* A dead key shows its preedit before the surface has a text field. */
+        [view setMarkedText:@"´" selectedRange:NSMakeRange(1, 0)
+            replacementRange:NSMakeRange(NSNotFound, 0)];
+        assert(strcmp(yasl_private_surface_ime_preedit(surface), "´") == 0);
+        event = next(surface, YASL_PRIVATE_EVENT_COMPOSITION);
+        assert(event.composition.active && !strcmp(event.composition.data, "´"));
+        assert(event.composition.begin == 2 && event.composition.end == 2);
+        [view unmarkText];
+        event = next(surface, YASL_PRIVATE_EVENT_COMPOSITION);
+        assert(!event.composition.active && !yasl_private_surface_ime_preedit(surface));
+        empty(surface);
+
         surface->text_input_active = true;
         assert(display->ops->surface_update_text_input(surface));
 
@@ -199,15 +214,46 @@ int main(void)
         sample.hasPreciseScrollingDeltas = YES;
         sample.scrollingDeltaX = -2.5;
         sample.scrollingDeltaY = 1.25;
+        sample.phase = NSEventPhaseBegan;
         [view scrollWheel:native];
         event = next(surface, YASL_PRIVATE_EVENT_POINTER_SCROLL);
         assert(event.pointer.scroll.x == 0.25 && event.pointer.scroll.y == -0.125);
+        /* A precise device reports pixels and the beginning of a gesture. */
+        CGFloat scale = window.backingScaleFactor < 1.0 ? 1.0 : window.backingScaleFactor;
+        assert(event.pointer.scroll_valid ==
+               (YASL_PRIVATE_SCROLL_LINES | YASL_PRIVATE_SCROLL_PIXELS));
+        assert(fabs(event.pointer.pixel_scroll.x - 2.5 * scale) < 1e-9);
+        assert(fabs(event.pointer.pixel_scroll.y + 1.25 * scale) < 1e-9);
+        assert(event.pointer.scroll_source == 2 && event.pointer.scroll_phase == 1);
+        assert(!event.pointer.scroll_momentum);
+
+        /* A momentum sample continues a finger scroll and reports its phase. */
+        sample.phase = NSEventPhaseNone;
+        sample.momentumPhase = NSEventPhaseChanged;
+        [view scrollWheel:native];
+        event = next(surface, YASL_PRIVATE_EVENT_POINTER_SCROLL);
+        assert(event.pointer.scroll_source == 2 && event.pointer.scroll_phase == 2);
+        assert(event.pointer.scroll_momentum);
+
+        /* A gesture end can carry no delta and still ends the gesture. */
+        sample.momentumPhase = NSEventPhaseEnded;
+        sample.scrollingDeltaX = 0;
+        sample.scrollingDeltaY = 0;
+        [view scrollWheel:native];
+        event = next(surface, YASL_PRIVATE_EVENT_POINTER_SCROLL);
+        assert(event.pointer.scroll_phase == 3 && event.pointer.scroll.x == 0);
+
+        /* A wheel reports line offsets and no pixels. */
+        sample.momentumPhase = NSEventPhaseNone;
         sample.hasPreciseScrollingDeltas = NO;
         sample.scrollingDeltaX = 1;
         sample.scrollingDeltaY = -1;
         [view scrollWheel:native];
         event = next(surface, YASL_PRIVATE_EVENT_POINTER_SCROLL);
         assert(event.pointer.scroll.x == -1 && event.pointer.scroll.y == 1);
+        assert(event.pointer.scroll_valid == YASL_PRIVATE_SCROLL_LINES);
+        assert(event.pointer.pixel_scroll.x == 0 && event.pointer.pixel_scroll.y == 0);
+        assert(event.pointer.scroll_source == 1 && event.pointer.scroll_phase == 0);
         sample.scrollingDeltaX = NAN;
         [view scrollWheel:native];
         empty(surface);

@@ -3,6 +3,10 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
 
+#if YASL_HAS_VULKAN
+#include <vulkan/vulkan.h>
+#endif
+
 #include "platform/cocoa/api.h"
 #include "common/backend.h"
 #include "common/public_internal.h"
@@ -14,6 +18,7 @@
 #include "keymap.h"
 
 #include <assert.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
@@ -39,6 +44,16 @@
 /* Wait bound while some loop descriptor cannot be watched with kqueue. */
 #define LOOP_FALLBACK_MS 10
 #define SCROLL_POINTS_PER_LINE 10.0
+
+/* Values of yasl_private_pointer_event.scroll_source and scroll_phase. They
+ * match the public scroll enums. */
+enum {
+    SCROLL_SOURCE_WHEEL  = 1,
+    SCROLL_SOURCE_FINGER = 2,
+    SCROLL_PHASE_BEGIN   = 1,
+    SCROLL_PHASE_UPDATE  = 2,
+    SCROLL_PHASE_END     = 3,
+};
 
 enum {
     DEVICE_LCTL   = 0x0001,
@@ -103,6 +118,8 @@ struct cocoa_surface {
 
     struct cocoa_surface *parent;
     bool is_popup;
+    /* Creation order of a popup, so the newest one is the topmost. */
+    unsigned popup_order;
     struct yasl_private_vector2i content_offset;
 
     const struct yasl_private_window_cbs *cbs;
@@ -111,6 +128,8 @@ struct cocoa_surface {
 
     char *preedit;
     size_t preedit_begin, preedit_end;
+    /* The selected range of the preedit, in UTF-8 bytes; -1 if unknown. */
+    int preedit_cursor_begin, preedit_cursor_end;
     NSUInteger marked_utf16_location;
     uint64_t preedit_revision, preedit_generation;
     struct yasl_private_rect2i ime_caret;
@@ -156,6 +175,9 @@ struct cocoa_surface {
     uint32_t mods;
     uint32_t buttons;
     enum yasl_private_cursor cursor;
+    /* The pointer is locked: pos holds its last position and motion arrives as
+     * device deltas. */
+    bool pointer_locked;
     enum yasl_private_pointer_device tablet_device;
     bool tablet_down;
     uint64_t pen_device_id, pen_tool_id;
@@ -175,9 +197,12 @@ struct cocoa_display {
     struct yasl_loop *loop;
     id key_up_monitor;
     NSCursor *hidden_cursor;
+    /* Diagonal resize cursors, made on first use. */
+    NSCursor *diagonal_cursors[2];
     YaslAppDelegate *delegate;
     NSPoint cascade;
     struct cocoa_surface *dead;
+    unsigned popup_serial;
     struct {
         bool active;
         struct cocoa_surface *origin;
@@ -284,6 +309,8 @@ static size_t grown_capacity(size_t cap, size_t need)
 
 static void reap_dead(struct cocoa_display *d);
 static void push_pen(struct cocoa_surface *w, NSEvent *event, unsigned action, bool contact);
+static void apply_pointer_lock(struct cocoa_surface *w);
+static void dismiss_popup_press(const struct cocoa_surface *pressed);
 
 static void set_state(struct cocoa_surface *w, uint32_t bit, bool on)
 {
@@ -333,6 +360,7 @@ static void push_focus(struct cocoa_surface *w, bool focused)
     input_queue_push(&w->input, &ev);
     darwin_ctx.depth++;
     set_state(w, YASL_PRIVATE_STATE_ACTIVATED, focused);
+    apply_pointer_lock(w);
     if (!w->destroyed && !w->closed)
         cocoa_surface_schedule_redraw(w);
     darwin_ctx.depth--;
@@ -693,6 +721,39 @@ static struct yasl_private_vector2i event_pos(struct cocoa_surface *w, NSEvent *
     };
 }
 
+/* The device movement of a locked pointer event, in device pixels. AppKit gives
+ * the deltas in points with y up; the surface y grows down. */
+static struct yasl_private_vector2d locked_delta(struct cocoa_surface *w, NSEvent *ev)
+{
+    CGFloat scale = w->window ? w->window.backingScaleFactor : 1.0;
+    if (scale < 1.0)
+        scale = 1.0;
+    return (struct yasl_private_vector2d){ .x = ev.deltaX * scale, .y = -ev.deltaY * scale };
+}
+
+/* The source of a scroll. A precise device scrolls with a finger; a wheel
+ * reports notches. */
+static unsigned scroll_source(NSEvent *event, bool precise)
+{
+    return precise || event.momentumPhase != NSEventPhaseNone ? SCROLL_SOURCE_FINGER
+                                                              : SCROLL_SOURCE_WHEEL;
+}
+
+/* The phase of a scroll gesture. Momentum is the tail of a finger scroll, and a
+ * cancelled gesture ends, because the events have no cancel phase. */
+static unsigned scroll_phase(NSEventPhase phase, NSEventPhase momentum)
+{
+    if (phase == NSEventPhaseNone)
+        phase = momentum;
+    switch (phase) {
+    case NSEventPhaseBegan: return SCROLL_PHASE_BEGIN;
+    case NSEventPhaseChanged: return SCROLL_PHASE_UPDATE;
+    case NSEventPhaseEnded: return SCROLL_PHASE_END;
+    case NSEventPhaseCancelled: return SCROLL_PHASE_END;
+    default: return 0;
+    }
+}
+
 static void update_drag_hover(struct cocoa_display *d, NSPoint screenPoint)
 {
     if (!d || !d->drag.active) return;
@@ -904,7 +965,7 @@ static void push_pointer(struct cocoa_surface *w, NSEvent *ev, enum yasl_private
         type = YASL_PRIVATE_EVENT_POINTER_LEAVE;
     }
     w->mods = cocoa_mods(ev.modifierFlags);
-    if (type != YASL_PRIVATE_EVENT_POINTER_LEAVE)
+    if (type != YASL_PRIVATE_EVENT_POINTER_LEAVE && !w->pointer_locked)
         w->pointer = event_pos(w, ev);
 
     enum yasl_private_pointer_device device = YASL_PRIVATE_PTR_DEV_MOUSE;
@@ -949,6 +1010,8 @@ static void push_pointer(struct cocoa_surface *w, NSEvent *ev, enum yasl_private
             .pen = pen,
         },
     };
+    if (w->pointer_locked && type == YASL_PRIVATE_EVENT_POINTER_MOTION)
+        input_ev.pointer.delta = locked_delta(w, ev);
     input_queue_push(&w->input, &input_ev);
     if (type == YASL_PRIVATE_EVENT_POINTER_LEAVE && device != YASL_PRIVATE_PTR_DEV_MOUSE) {
         push_pen(w, ev, YASL_PRIVATE_PEN_LEAVE, false);
@@ -983,12 +1046,37 @@ static void push_pointer(struct cocoa_surface *w, NSEvent *ev, enum yasl_private
     }
 }
 
+/* macOS has no public diagonal resize cursor. It has the two diagonal arrows as
+ * template symbols, so the cursor starts from those. */
+static NSCursor *cocoa_symbol_cursor(NSString *name, NSCursor **cache)
+{
+    if (*cache)
+        return *cache;
+    NSImage *image = [NSImage imageWithSystemSymbolName:name accessibilityDescription:nil];
+    if (!image)
+        return [NSCursor arrowCursor];
+    image.template = YES;
+    *cache = [[NSCursor alloc] initWithImage:image
+                                     hotSpot:NSMakePoint(image.size.width / 2,
+                                                         image.size.height / 2)];
+    return *cache ?: [NSCursor arrowCursor];
+}
+
 static NSCursor *cocoa_cursor(enum yasl_private_cursor cursor)
 {
     switch (cursor) {
     case YASL_PRIVATE_CURSOR_TEXT: return [NSCursor IBeamCursor];
     case YASL_PRIVATE_CURSOR_LINK: return [NSCursor pointingHandCursor];
     case YASL_PRIVATE_CURSOR_CROSSHAIR: return [NSCursor crosshairCursor];
+    case YASL_PRIVATE_CURSOR_MOVE: return [NSCursor openHandCursor];
+    case YASL_PRIVATE_CURSOR_RESIZE_NWSE:
+        return cocoa_symbol_cursor(@"arrow.up.left.and.arrow.down.right",
+                                  &darwin_ctx.diagonal_cursors[0]);
+    case YASL_PRIVATE_CURSOR_RESIZE_NESW:
+        return cocoa_symbol_cursor(@"arrow.up.right.and.arrow.down.left",
+                                  &darwin_ctx.diagonal_cursors[1]);
+    case YASL_PRIVATE_CURSOR_RESIZE_EW: return [NSCursor resizeLeftRightCursor];
+    case YASL_PRIVATE_CURSOR_RESIZE_NS: return [NSCursor resizeUpDownCursor];
     case YASL_PRIVATE_CURSOR_HIDDEN:
         if (!darwin_ctx.hidden_cursor) {
             NSImage *image = [[NSImage alloc] initWithSize:NSMakeSize(1, 1)];
@@ -1003,6 +1091,29 @@ static NSCursor *cocoa_cursor(enum yasl_private_cursor cursor)
     case YASL_PRIVATE_CURSOR_ARROW:
     default: return [NSCursor arrowCursor];
     }
+}
+
+/* Shows the cursor that the surface selects now. A locked surface hides it,
+ * because its position no longer follows the mouse. */
+static void apply_cursor(struct cocoa_surface *w)
+{
+    if (!w || w->closed || w->destroyed || !w->window)
+        return;
+    [cocoa_cursor(w->pointer_locked ? YASL_PRIVATE_CURSOR_HIDDEN : w->cursor) set];
+}
+
+/* A locked surface hides the cursor and disconnects it from the mouse, so the
+ * cursor stays in place. Motion then reports raw device movement. The lock
+ * holds only while the surface has key focus, as it does on Wayland. */
+static void apply_pointer_lock(struct cocoa_surface *w)
+{
+    if (!w || w->closed || w->destroyed || !w->window)
+        return;
+    bool locked = w->pointer_locked && w->window.isKeyWindow;
+    CGAssociateMouseAndMouseCursorPosition(locked ? 0 : 1);
+    if (!locked && !w->window.isKeyWindow)
+        return;
+    apply_cursor(w);
 }
 
 @implementation YaslAppDelegate
@@ -1054,6 +1165,117 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
     };
 }
 
+/* A drag names its data with a pasteboard type, which is a UTI, and the drop
+ * types of a surface name MIME types. This table gives the MIME name of the
+ * pasteboard types that a window takes. A type that is absent has no MIME name,
+ * so a drop can never select it. The names are constants. */
+static NSString *drop_mime_of_type(NSString *type)
+{
+    static const struct {
+        NSPasteboardType pasteboard;
+        NSString *mime;
+    } map[] = {
+        {NSPasteboardTypeFileURL, @"text/uri-list"},
+        {NSPasteboardTypeURL, @"text/uri-list"},
+        {NSPasteboardTypeString, @"text/plain"},
+        {NSPasteboardTypeHTML, @"text/html"},
+        {NSPasteboardTypeRTF, @"text/rtf"},
+        {NSPasteboardTypePNG, @"image/png"},
+        {NSPasteboardTypeTIFF, @"image/tiff"},
+        {NSPasteboardTypePDF, @"application/pdf"},
+    };
+    for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++)
+        if ([type isEqualToString:map[i].pasteboard])
+            return map[i].mime;
+    return nil;
+}
+
+/* The pasteboard types that a drop can offer. A surface only takes the ones
+ * that its drop types select. */
+static NSArray<NSPasteboardType> *drop_pasteboard_types(void)
+{
+    return @[NSPasteboardTypeFileURL, NSPasteboardTypeURL, NSPasteboardTypeString,
+             NSPasteboardTypeHTML, NSPasteboardTypeRTF, NSPasteboardTypePNG,
+             NSPasteboardTypeTIFF, NSPasteboardTypePDF];
+}
+
+/* The pasteboard type that a drop on the view reads and its MIME name. Returns
+ * false when the drop types of the surface refuse the drag. */
+static bool drop_pick(struct cocoa_surface *w, NSPasteboard *pb, NSString **type_out,
+                      char mime_out[YASL_PRIVATE_DROP_MIME_MAX])
+{
+    enum { DROP_TYPES_MAX = 32 };
+    NSArray<NSPasteboardType> *types = pb.types;
+    const char *offered[DROP_TYPES_MAX];
+    size_t count = 0;
+    NSString *uri_list = nil;
+    for (NSUInteger i = 0; i < types.count && count < DROP_TYPES_MAX; i++) {
+        NSString *mime = drop_mime_of_type(types[i]);
+        if (!mime)
+            continue;
+        if (!uri_list && [mime isEqualToString:@"text/uri-list"])
+            uri_list = types[i];
+        /* The table holds constant names, so the bytes outlive this call. */
+        offered[count++] = mime.UTF8String;
+    }
+    /* A source can offer file URLs through a type that has no MIME name. */
+    if (!uri_list && [pb canReadItemWithDataConformingToTypes:@[NSPasteboardTypeFileURL]]) {
+        uri_list = NSPasteboardTypeFileURL;
+        if (count < DROP_TYPES_MAX)
+            offered[count++] = "text/uri-list";
+    }
+    if (!count)
+        return false;
+    struct cocoa_surface *root = w;
+    while (root->parent)
+        root = root->parent;
+    const char *picked = yasl_private_surface_pick_drop_type(&root->base, offered, count);
+    if (!picked)
+        return false;
+    NSString *type = uri_list && !strcmp(picked, "text/uri-list") ? uri_list : nil;
+    for (NSUInteger i = 0; !type && i < types.count; i++) {
+        NSString *mime = drop_mime_of_type(types[i]);
+        if (mime && !strcmp(mime.UTF8String, picked))
+            type = types[i];
+    }
+    if (!type)
+        return false;
+    *type_out = type;
+    snprintf(mime_out, YASL_PRIVATE_DROP_MIME_MAX, "%s", picked);
+    return true;
+}
+
+/* Delivers the data of a picked drop type as a DROP event. A URI list arrives
+ * as CRLF-separated file URLs; any other type arrives as its bytes. */
+static bool push_drop(struct cocoa_surface *w, NSPasteboard *pb, NSString *type, const char *mime)
+{
+    NSData *data = nil;
+    if (!strcmp(mime, "text/uri-list")) {
+        NSArray<NSURL *> *urls = [pb readObjectsForClasses:@[[NSURL class]]
+            options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+        NSMutableString *list = [NSMutableString string];
+        for (NSURL *url in urls) {
+            [list appendString:url.absoluteString];
+            [list appendString:@"\r\n"];
+        }
+        data = [list dataUsingEncoding:NSUTF8StringEncoding];
+    } else {
+        data = [pb dataForType:type];
+    }
+    if (!data.length)
+        return false;
+    struct yasl_private_event ev = {
+        .type = YASL_PRIVATE_EVENT_DROP,
+        .surface = &w->base,
+        .text = { .data = data.bytes, .len = data.length },
+    };
+    snprintf(ev.text.mime, sizeof(ev.text.mime), "%s", mime);
+    bool pushed = input_queue_push(&w->input, &ev);
+    if (pushed)
+        cocoa_surface_schedule_redraw(w);
+    return pushed;
+}
+
 @implementation YaslView
 
 - (instancetype)initWithFrame:(NSRect)frameRect cpuLayer:(BOOL)cpuLayer
@@ -1064,7 +1286,7 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
         self.wantsLayer = YES;
         self.layerContentsRedrawPolicy = NSViewLayerContentsRedrawNever;
         self.layerContentsPlacement = NSViewLayerContentsPlacementTopLeft;
-        [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+        [self registerForDraggedTypes:drop_pasteboard_types()];
     }
     return self;
 }
@@ -1076,18 +1298,16 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
 
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender
 {
-    NSPasteboard *pb = [sender draggingPasteboard];
-    if ([pb canReadItemWithDataConformingToTypes:@[NSPasteboardTypeFileURL]]) {
-        struct cocoa_surface *w = self.surface;
-        if (w && !w->closed) {
-            struct yasl_private_vector2i pos = dragging_pos(self, sender);
-            darwin_ctx.depth++;
-            yasl_private_surface_notify_drop(&w->base, YASL_PRIVATE_DROP_OVER, pos);
-            darwin_ctx.depth--;
-        }
-        return NSDragOperationCopy;
-    }
-    return NSDragOperationNone;
+    struct cocoa_surface *w = self.surface;
+    NSString *type = nil;
+    char mime[YASL_PRIVATE_DROP_MIME_MAX];
+    if (!w || w->closed || !drop_pick(w, [sender draggingPasteboard], &type, mime))
+        return NSDragOperationNone;
+    struct yasl_private_vector2i pos = dragging_pos(self, sender);
+    darwin_ctx.depth++;
+    yasl_private_surface_notify_drop_mime(&w->base, YASL_PRIVATE_DROP_OVER, pos, mime);
+    darwin_ctx.depth--;
+    return NSDragOperationCopy;
 }
 
 - (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender
@@ -1097,16 +1317,15 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
 
 - (void)draggingExited:(id<NSDraggingInfo>)sender
 {
-    NSPasteboard *pb = [sender draggingPasteboard];
-    if ([pb canReadItemWithDataConformingToTypes:@[NSPasteboardTypeFileURL]]) {
-        struct cocoa_surface *w = self.surface;
-        if (w && !w->closed) {
-            struct yasl_private_vector2i pos = dragging_pos(self, sender);
-            darwin_ctx.depth++;
-            yasl_private_surface_notify_drop(&w->base, YASL_PRIVATE_DROP_LEAVE, pos);
-            darwin_ctx.depth--;
-        }
-    }
+    struct cocoa_surface *w = self.surface;
+    NSString *type = nil;
+    char mime[YASL_PRIVATE_DROP_MIME_MAX];
+    if (!w || w->closed || !drop_pick(w, [sender draggingPasteboard], &type, mime))
+        return;
+    struct yasl_private_vector2i pos = dragging_pos(self, sender);
+    darwin_ctx.depth++;
+    yasl_private_surface_notify_drop(&w->base, YASL_PRIVATE_DROP_LEAVE, pos);
+    darwin_ctx.depth--;
 }
 
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender
@@ -1114,29 +1333,10 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
     struct cocoa_surface *w = self.surface;
     if (!w) return NO;
     struct yasl_private_vector2i pos = dragging_pos(self, sender);
-    BOOL ok = NO;
-
     NSPasteboard *pb = [sender draggingPasteboard];
-    NSArray<NSURL *> *urls = [pb readObjectsForClasses:@[[NSURL class]]
-        options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
-    if (urls.count) {
-        NSMutableString *result = [NSMutableString string];
-        for (NSURL *url in urls) {
-            [result appendString:url.absoluteString];
-            [result appendString:@"\r\n"];
-        }
-        const char *utf8 = result.UTF8String;
-        if (utf8 && strlen(utf8)) {
-            struct yasl_private_event ev = {
-                .type = YASL_PRIVATE_EVENT_DROP,
-                .surface = &w->base,
-                .text = { .data = utf8, .len = strlen(utf8) },
-            };
-            input_queue_push(&w->input, &ev);
-            cocoa_surface_schedule_redraw(w);
-            ok = YES;
-        }
-    }
+    NSString *type = nil;
+    char mime[YASL_PRIVATE_DROP_MIME_MAX];
+    BOOL ok = drop_pick(w, pb, &type, mime) && push_drop(w, pb, type, mime);
     if (!w->destroyed) {
         darwin_ctx.depth++;
         yasl_private_surface_notify_drop(&w->base, YASL_PRIVATE_DROP_LEAVE, pos);
@@ -1269,7 +1469,10 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
 {
     (void)event;
     struct cocoa_surface *w = self.surface;
-    [cocoa_cursor(w ? w->cursor : YASL_PRIVATE_CURSOR_ARROW) set];
+    if (w)
+        apply_cursor(w);
+    else
+        [cocoa_cursor(YASL_PRIVATE_CURSOR_ARROW) set];
 }
 
 - (void)keyDown:(NSEvent *)event
@@ -1401,11 +1604,23 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
     struct cocoa_surface *w = self.surface;
     if (!w) return;
     double dx = -event.scrollingDeltaX, dy = -event.scrollingDeltaY;
-    if (event.hasPreciseScrollingDeltas) {
+    bool precise = event.hasPreciseScrollingDeltas;
+    CGFloat scale = w->window.backingScaleFactor;
+    if (scale < 1.0) scale = 1.0;
+    /* A precise device reports pixels; every device reports line offsets. */
+    struct yasl_private_vector2d pixels = {dx * scale, dy * scale};
+    unsigned valid = YASL_PRIVATE_SCROLL_LINES;
+    if (precise) {
         dx /= SCROLL_POINTS_PER_LINE;
         dy /= SCROLL_POINTS_PER_LINE;
+        valid |= YASL_PRIVATE_SCROLL_PIXELS;
+    } else {
+        pixels = (struct yasl_private_vector2d){0, 0};
     }
-    if (!isfinite(dx) || !isfinite(dy) || (dx == 0 && dy == 0)) return;
+    unsigned phase = scroll_phase(event.phase, event.momentumPhase);
+    /* A gesture end can arrive with no delta, and it still ends the gesture. */
+    if (!isfinite(dx) || !isfinite(dy) ||
+        ((dx == 0 && dy == 0) && phase != SCROLL_PHASE_END)) return;
     w->mods = cocoa_mods(event.modifierFlags);
     w->pointer = event_pos(w, event);
     struct yasl_private_event input_ev = {
@@ -1415,6 +1630,11 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
             .pos = w->pointer,
             .mods = w->mods,
             .scroll = {dx, dy},
+            .pixel_scroll = pixels,
+            .scroll_valid = (uint8_t)valid,
+            .scroll_source = (uint8_t)scroll_source(event, precise),
+            .scroll_phase = (uint8_t)phase,
+            .scroll_momentum = event.momentumPhase != NSEventPhaseNone,
         },
     };
     input_queue_push(&w->input, &input_ev);
@@ -1518,11 +1738,18 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
             w->key_composing = true;
             return;
         }
+        bool had_preedit = w->preedit != NULL;
         w->key_insertions++;
         input_queue_push(&w->text_events, &(struct yasl_private_event){
             .type = YASL_PRIVATE_EVENT_TEXT, .surface = &w->base,
             .text = { .data = utf8, .len = len, .text_key_id = w->text_key_id },
         });
+        /* The commit ends the preedit of a dead key. */
+        free(w->preedit);
+        w->preedit = NULL;
+        w->preedit_cursor_begin = w->preedit_cursor_end = -1;
+        if (had_preedit)
+            push_composition(w, NULL, -1, -1);
         return;
     }
     size_t begin, end;
@@ -1537,6 +1764,7 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
     free(w->preedit);
     w->preedit = NULL;
     w->preedit_begin = w->preedit_end = 0;
+    w->preedit_cursor_begin = w->preedit_cursor_end = -1;
     if (had_preedit)
         push_composition(w, NULL, -1, -1);
     if (!w->destroyed && !w->closed)
@@ -1571,18 +1799,22 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
      replacementRange:(NSRange)replacementRange
 {
     struct cocoa_surface *w = self.surface;
-    if (!w || w->destroyed || w->closed || !w->base.text_input_active) return;
+    if (!w || w->destroyed || w->closed) return;
     NSString *str = plain_string(string);
     if (w->interpreting_key) w->key_composing = true;
-    size_t range_begin, range_end;
-    if (!text_edit_range(w, replacementRange, true, &range_begin, &range_end)) return;
-    w->preedit_begin = range_begin;
-    w->preedit_end = range_end;
-    w->preedit_revision = w->base.text_revision;
-    w->preedit_generation = w->base.text_generation;
-    if (!text_utf8_to_utf16(w->base.text_surrounding ?: "", range_begin,
-                            &w->marked_utf16_location))
-        w->marked_utf16_location = 0;
+    /* A dead key composes before the surface has a text field, so the preedit
+     * feedback does not depend on one. Only the range in the text does. */
+    if (w->base.text_input_active) {
+        size_t range_begin, range_end;
+        if (!text_edit_range(w, replacementRange, true, &range_begin, &range_end)) return;
+        w->preedit_begin = range_begin;
+        w->preedit_end = range_end;
+        w->preedit_revision = w->base.text_revision;
+        w->preedit_generation = w->base.text_generation;
+        if (!text_utf8_to_utf16(w->base.text_surrounding ?: "", range_begin,
+                                &w->marked_utf16_location))
+            w->marked_utf16_location = 0;
+    }
     const char *utf8 = str.length ? str.UTF8String : NULL;
     free(w->preedit);
     w->preedit = utf8 ? strdup(utf8) : NULL;
@@ -1600,6 +1832,8 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
     }
     darwin_ctx.depth++;
     push_composition(w, w->preedit, begin, end);
+    w->preedit_cursor_begin = begin;
+    w->preedit_cursor_end = end;
     if (!w->destroyed && !w->closed)
         cocoa_surface_schedule_redraw(w);
     darwin_ctx.depth--;
@@ -1611,6 +1845,7 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
     if (!w || w->destroyed || w->closed || !w->preedit) return;
     free(w->preedit);
     w->preedit = NULL;
+    w->preedit_cursor_begin = w->preedit_cursor_end = -1;
     darwin_ctx.depth++;
     push_composition(w, NULL, -1, -1);
     if (!w->destroyed && !w->closed)
@@ -1665,6 +1900,10 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
 {
     darwin_ctx.depth++;
     @try {
+        if (event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeRightMouseDown ||
+            event.type == NSEventTypeOtherMouseDown) {
+            dismiss_popup_press(self.surface);
+        }
         /* AppKit keeps Control+Tab and Control+Shift+Tab for window tabbing and
          * key view navigation. It drops the press before the first responder
          * sees it. Send the press to the first responder so the application can
@@ -1754,6 +1993,7 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
     bool fullscreen = (self.window.styleMask & NSWindowStyleMaskFullScreen) != 0;
     set_state(w, YASL_PRIVATE_STATE_FULLSCREEN, fullscreen);
     set_state(w, YASL_PRIVATE_STATE_MAXIMIZED, !fullscreen && self.window.isZoomed);
+    set_state(w, YASL_PRIVATE_STATE_CSD, !(self.window.styleMask & NSWindowStyleMaskTitled));
     sync_size(w, false);
     darwin_ctx.depth--;
 }
@@ -2197,6 +2437,34 @@ void cocoa_surface_schedule_redraw(struct cocoa_surface *w)
     yasl_private_loop_wake(darwin_ctx.loop);
 }
 
+/* The popup that was created last. A popup takes the input grab, and a newer
+ * popup takes it from an older one. */
+static struct cocoa_surface *topmost_popup(struct cocoa_display *d)
+{
+    struct cocoa_surface *top = NULL;
+    for (int i = 0; i < d->count; i++) {
+        struct cocoa_surface *w = d->windows[i];
+        if (!w->is_popup || w->closed || w->destroyed || !w->window)
+            continue;
+        if (!top || w->popup_order > top->popup_order)
+            top = w;
+    }
+    return top;
+}
+
+/* A press dismisses the topmost popup unless the press is in it, as the pointer
+ * grab does on X11. A press arrives at a YASL window of this application, so a
+ * press in another application keeps the popup. */
+static void dismiss_popup_press(const struct cocoa_surface *pressed)
+{
+    struct cocoa_surface *top = topmost_popup(&darwin_ctx);
+    if (!top || top == pressed)
+        return;
+    darwin_ctx.depth++;
+    yasl_private_surface_notify_close(&top->base);
+    darwin_ctx.depth--;
+}
+
 static void app_init(const char *app_name)
 {
     /* finishLaunching runs once per process, even when the display reopens. */
@@ -2295,18 +2563,68 @@ void cocoa_display_close(struct cocoa_display *d)
     [d->delegate release];
     d->delegate = nil;
     [d->hidden_cursor release];
+    [d->diagonal_cursors[0] release];
+    [d->diagonal_cursors[1] release];
     free(d->app_id);
     free(d->windows);
     *d = (struct cocoa_display){0};
 }
 
+/* A Vulkan surface needs a loader and its Metal surface extension. This build
+ * can have the headers and the system can have no driver, so probe the loader
+ * once. The application supplies the loader of the real instance, which is the
+ * system loader that this probe opens. */
+static bool cocoa_vulkan_available(void)
+{
+#if YASL_HAS_VULKAN
+    static int available = -1;
+    if (available >= 0)
+        return available != 0;
+    available = 0;
+    void *lib = dlopen("libvulkan.1.dylib", RTLD_LAZY | RTLD_LOCAL);
+    if (!lib)
+        lib = dlopen("libvulkan.dylib", RTLD_LAZY | RTLD_LOCAL);
+    if (!lib)
+        return false;
+    PFN_vkEnumerateInstanceExtensionProperties enumerate =
+        (PFN_vkEnumerateInstanceExtensionProperties)dlsym(lib,
+            "vkEnumerateInstanceExtensionProperties");
+    uint32_t count = 0;
+    VkExtensionProperties *extensions = NULL;
+    if (enumerate && enumerate(NULL, &count, NULL) == VK_SUCCESS && count) {
+        extensions = calloc(count, sizeof(*extensions));
+        if (extensions && enumerate(NULL, &count, extensions) == VK_SUCCESS) {
+            /* The surface needs both the core surface extension and the Metal one. */
+            bool surface = false, metal = false;
+            for (uint32_t i = 0; i < count; i++) {
+                if (!strcmp(extensions[i].extensionName, "VK_KHR_surface"))
+                    surface = true;
+                else if (!strcmp(extensions[i].extensionName, "VK_EXT_metal_surface"))
+                    metal = true;
+            }
+            available = surface && metal;
+        }
+    }
+    free(extensions);
+    dlclose(lib);
+    return available != 0;
+#else
+    return false;
+#endif
+}
+
 uint32_t cocoa_display_caps(const struct cocoa_display *d)
 {
-    return d ? (YASL_PRIVATE_CAP_POPUPS | YASL_PRIVATE_CAP_DRAG | YASL_PRIVATE_CAP_DRAG_CARRY |
-                YASL_PRIVATE_CAP_PLACE_WINDOW | YASL_PRIVATE_CAP_PRIMARY_SELECTION |
-                YASL_PRIVATE_CAP_CSD | YASL_PRIVATE_CAP_NATIVE_GRAPHICS |
-                YASL_PRIVATE_CAP_FRAME_PACING | YASL_PRIVATE_CAP_TABLET |
-                YASL_PRIVATE_CAP_VULKAN | YASL_PRIVATE_CAP_TEXT_INPUT) : 0;
+    if (!d)
+        return 0;
+    uint32_t caps = YASL_PRIVATE_CAP_POPUPS | YASL_PRIVATE_CAP_DRAG |
+                    YASL_PRIVATE_CAP_DRAG_CARRY | YASL_PRIVATE_CAP_PLACE_WINDOW |
+                    YASL_PRIVATE_CAP_CSD | YASL_PRIVATE_CAP_NATIVE_GRAPHICS |
+                    YASL_PRIVATE_CAP_FRAME_PACING | YASL_PRIVATE_CAP_TABLET |
+                    YASL_PRIVATE_CAP_RELATIVE_POINTER | YASL_PRIVATE_CAP_TEXT_INPUT;
+    if (cocoa_vulkan_available())
+        caps |= YASL_PRIVATE_CAP_VULKAN;
+    return caps;
 }
 
 struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
@@ -2350,6 +2668,9 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
             NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable;
         if (!(spec->flags & YASL_PRIVATE_SURFACE_FIXED_SIZE))
             style |= NSWindowStyleMaskResizable;
+        /* The system draws the title bar of a titled window. A borderless window
+         * has none, so the application draws the frame. */
+        w->base.state = (style & NSWindowStyleMaskTitled) ? 0 : YASL_PRIVATE_STATE_CSD;
         w->window = [[YaslWindow alloc] initWithContentRect:NSMakeRect(0, 0, win_w, win_h)
                                                   styleMask:style
                                                     backing:NSBackingStoreBuffered
@@ -2471,6 +2792,12 @@ void cocoa_surface_destroy(struct cocoa_surface *w)
     }
     w->buttons = 0;
     w->tablet_down = false;
+    /* A destroyed surface releases the pointer lock of the display. */
+    if (w->pointer_locked) {
+        w->pointer_locked = false;
+        w->input.relative = false;
+        CGAssociateMouseAndMouseCursorPosition(1);
+    }
     darwin_ctx.depth++;
     bool native_closed = w->closed;
     static const struct yasl_private_window_cbs no_callbacks = {0};
@@ -2598,7 +2925,7 @@ void cocoa_surface_set_cursor(struct cocoa_surface *w, enum yasl_private_cursor 
     w->cursor = cursor;
     NSPoint p = [w->view convertPoint:w->window.mouseLocationOutsideOfEventStream fromView:nil];
     if (w->window.isKeyWindow && NSPointInRect(p, w->view.bounds))
-        [cocoa_cursor(cursor) set];
+        apply_cursor(w);
 }
 
 bool cocoa_surface_place_under_pointer(struct cocoa_surface *w, struct yasl_private_vector2i at)
@@ -2622,20 +2949,19 @@ void cocoa_surface_set_ime_caret(struct cocoa_surface *w, struct yasl_private_re
 
 bool cocoa_surface_ime_preedit_cursor(const struct cocoa_surface *w, int *begin, int *end)
 {
-    (void)w; (void)begin; (void)end;
-    return false;
+    if (!w || !w->preedit || w->preedit_cursor_begin < 0)
+        return false;
+    if (begin) *begin = w->preedit_cursor_begin;
+    if (end) *end = w->preedit_cursor_end;
+    return true;
 }
 
 static NSPasteboard *pasteboard_for_selection(enum yasl_private_selection sel)
 {
-    switch (sel) {
-    case YASL_PRIVATE_CLIPBOARD:
-        return [NSPasteboard generalPasteboard];
-    case YASL_PRIVATE_PRIMARY:
-        return [NSPasteboard pasteboardWithName:@"dev.wsap.yasl.primary"];
-    default:
-        return nil;
-    }
+    /* macOS has one system pasteboard, which is the clipboard. It has no primary
+     * selection, so the backend reports no such capability and refuses the
+     * selection instead of keeping a pasteboard of its own. */
+    return sel == YASL_PRIVATE_CLIPBOARD ? [NSPasteboard generalPasteboard] : nil;
 }
 
 static bool cocoa_display_copy_text(struct cocoa_display *d, enum yasl_private_selection sel, const char *text);
@@ -2645,7 +2971,7 @@ static bool cocoa_display_copy_text(struct cocoa_display *d, enum yasl_private_s
     assert([NSThread isMainThread]);
     if (!d || !text) { errno = EINVAL; return false; }
     NSPasteboard *pb = pasteboard_for_selection(sel);
-    if (!pb) { errno = EINVAL; return false; }
+    if (!pb) { errno = sel == YASL_PRIVATE_PRIMARY ? ENOTSUP : EINVAL; return false; }
     NSString *s = [NSString stringWithUTF8String:text];
     if (!s) { errno = EINVAL; return false; }
     [pb clearContents];
@@ -2667,7 +2993,7 @@ static bool cocoa_display_request_paste(struct cocoa_display *d, enum yasl_priva
         return false;
     }
     NSPasteboard *pb = pasteboard_for_selection(sel);
-    if (!pb) { errno = EINVAL; return false; }
+    if (!pb) { errno = sel == YASL_PRIVATE_PRIMARY ? ENOTSUP : EINVAL; return false; }
     NSString *s = [pb stringForType:NSPasteboardTypeString];
     const char *utf8 = s ? s.UTF8String : NULL;
     enum yasl_private_transfer_status status = !s ? YASL_PRIVATE_TRANSFER_UNAVAILABLE :
@@ -2886,6 +3212,9 @@ struct cocoa_surface *cocoa_surface_create_popup(struct cocoa_surface *parent,
         w->clock.refresh_ns = parent->clock.refresh_ns ? parent->clock.refresh_ns : YASL_PRIVATE_REFRESH_DEFAULT_NS;
         w->parent = parent;
         w->is_popup = true;
+        w->popup_order = ++darwin_ctx.popup_serial;
+        /* A popup has no system decorations, so the application draws its frame. */
+        w->base.state = YASL_PRIVATE_STATE_CSD;
         w->content_offset = spec->content_offset;
 
         NSRect frame = popup_calc_frame(parent, spec);
@@ -3267,6 +3596,20 @@ static void impl_surface_set_cursor(struct yasl_surface *s, enum yasl_private_cu
     cocoa_surface_set_cursor((struct cocoa_surface *)s, cursor);
 }
 
+static bool impl_surface_set_pointer_mode(struct yasl_surface *s, enum yasl_private_pointer_mode mode)
+{
+    struct cocoa_surface *w = (struct cocoa_surface *)s;
+    if (!w || w->closed || w->destroyed) {
+        errno = EINVAL;
+        return false;
+    }
+    w->pointer_locked = mode == YASL_PRIVATE_POINTER_RELATIVE;
+    w->input.relative = w->pointer_locked;
+    apply_pointer_lock(w);
+    errno = 0;
+    return true;
+}
+
 static void impl_surface_set_background_color(struct yasl_surface *s, uint32_t bg)
 {
     cocoa_surface_set_background_color((struct cocoa_surface *)s, bg);
@@ -3469,6 +3812,10 @@ static bool impl_surface_get_native_frame(struct yasl_surface *s,
     return true;
 }
 
+/* Cocoa keeps YASL_SURFACE_GL unsupported. The table has no surface_create_gl,
+ * so yasl_surface_create returns -ENOTSUP for that type. OpenGL would need a
+ * second context path through ANGLE over the Metal layer, and a third-party
+ * dependency. Metal and Vulkan cover application-managed drawing on macOS. */
 const struct yasl_private_backend_ops yasl_private_cocoa_backend = {
     .type = YASL_PRIVATE_BACKEND_COCOA,
     .surface_get_metal_layer = impl_surface_get_metal_layer,
@@ -3509,6 +3856,7 @@ const struct yasl_private_backend_ops yasl_private_cocoa_backend = {
     .surface_timing = impl_surface_timing,
     .surface_frame_time_ns = impl_surface_frame_time_ns,
     .surface_set_cursor = impl_surface_set_cursor,
+    .surface_set_pointer_mode = impl_surface_set_pointer_mode,
     .surface_set_background_color = impl_surface_set_background_color,
     .surface_ime_preedit = impl_surface_ime_preedit,
     .surface_ime_preedit_cursor = impl_surface_ime_preedit_cursor,

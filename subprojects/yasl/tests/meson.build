@@ -130,7 +130,7 @@ if get_option('integration_tests')
         endif
     elif has_cocoa
         test('surface-cocoa', integration, args: ['cocoa'], timeout: 30, is_parallel: false)
-        foreach unit : ['native', 'ownership', 'keyboard', 'tablet', 'cursor', 'pacing', 'software-stage']
+        foreach unit : ['native', 'ownership', 'keyboard', 'tablet', 'cursor', 'pacing', 'software-stage', 'drop']
             extension = unit == 'native' ? '.c' : '.m'
             exe = executable('yasl-' + unit + '-cocoa-test', 'cocoa/test_' + unit + extension,
                 include_directories: inc, dependencies: yasl_dep)
