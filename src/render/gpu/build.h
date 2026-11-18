@@ -18,7 +18,7 @@
  *
  * The atlas. Glyph pixels live in one square texture of `atlas.size` texels.
  * A glyph enters the atlas once, under its glyph id and font version
- * (render/frame/walk.h). The builder decides where each glyph goes, and it
+ * (render/cell.h). The builder decides where each glyph goes, and it
  * stages the pixels in `atlas.stage`. The backend copies each
  * `atlas.uploads` rect into its texture before it draws. The builder also
  * decides the size: when the atlas is full, it forgets every glyph and

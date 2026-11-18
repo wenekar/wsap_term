@@ -1,6 +1,13 @@
 # Renderer
 
-This directory turns a terminal snapshot and a UI scene into canvas pixels. The CPU path provides the reference implementation. The GPU path renders identical cell output.
+This directory turns a UI scene and a grid view into canvas pixels. The CPU
+path provides the reference implementation. The GPU path renders identical
+cell output.
+
+The terminal frame and the VT cell policy are not here. The terminal content
+owns them in `src/terminal/render/`. That library turns a terminal snapshot
+into the grid view of `render/grid.h` and calls the renderer. A new app or a
+different grid source can use `render_lib` without the terminal core.
 
 Each build includes one GPU backend: Metal on macOS, Vulkan on Linux, or `gpu/none.c` when building without GPU support.
 
@@ -9,13 +16,14 @@ Each build includes one GPU backend: Metal on macOS, Vulkan on Linux, or `gpu/no
 | Path | Job |
 |---|---|
 | `render.h` | Public API: `renderer_create()`, `render_draw()`, `render_init()`. |
+| `core.h` | The calls of the terminal grid renderer: `render_draw_view()` and `renderer_cursor_band()`. |
+| `grid.h` | `struct render_grid_view`: the grid size, colors, row keys, and walk of one frame. |
+| `cell.h` | `struct render_cell`, glyph references, walk sinks, and the decoration and line kinds. |
 | `scene_paint.h` | Public API: `ui_scene_paint()`, `ui_scene_paint_clipped()`. |
-| `term_frame.h` | Public API: `struct terminal_frame` and its accessors. |
 | `render.c` | Coordinates frame execution by invoking renderer components in sequence. |
 | `surface.c/.h` | Manages canvas state inside `framebuffer_history.data`. |
 | `plan.c/.h` | Plans row operations (keep, move, paint), UI regions, and damage bounds. |
-| `frame/term_frame.c` | Adapts terminal snapshots for rendering. |
-| `frame/walk.c/.h` | Traverses rows, applies cell policy, segments text, shapes glyphs, and assigns glyph IDs. |
+| `scratch.c/.h` | Holds the thread-local word scratch of the row walk. |
 | `cpu/isa.c/.h` | Detects CPU instruction set extensions and defines target macros. |
 | `cpu/kernels.c/.h` | Implements pixel rendering kernels for each ISA level. |
 | `cpu/raster.c/.h` | Implements the two-pass row rasterizer. |
@@ -32,13 +40,14 @@ Each build includes one GPU backend: Metal on macOS, Vulkan on Linux, or `gpu/no
 ## Ownership
 
 - The application owns a single renderer instance. The application invokes `render_draw()`.
+- The terminal grid renderer owns the terminal frame, the row walk, the row key, and the cursor cell call.
 - The renderer owns its worker pool, cell cache, decoration cache, per-thread `raster_worker` instances, scratch surface, planner arrays, and GPU backend.
 - The window owns each `framebuffer_history`. The renderer owns the `struct render_surface` referenced by `history.data`.
 - Renders without frame history use the scratch surface without dynamic allocation.
 - The font subsystem owns all glyphs. Glyph pointers remain valid only during a walk callback. Modules do not retain glyph pointers.
-- The terminal subsystem owns the terminal snapshot. `terminal_frame` holds borrowed pointers into that snapshot.
+- The terminal subsystem owns the terminal snapshot. `terminal_frame` holds borrowed pointers into that snapshot. It lives in `src/terminal/render/`.
 
-## Frame order in `render_draw`
+## Frame order in `render_draw_view`
 
 1. Font resolution: `glyph_cache_refresh()` refreshes the grid font and UI font in serial mode before any glyph fetch.
 2. Surface preparation: The renderer reads the surface and builds its key, row keys, and UI ink (`plan_ui_ink`). A frame is marked invalid when the surface is invalid, `fb->fresh` is true, `frame->repaint` is true, `WSAP_RENDER_FULL=1` is active, or the surface key changes.
@@ -54,10 +63,10 @@ Each build includes one GPU backend: Metal on macOS, Vulkan on Linux, or `gpu/no
 
 ## Thread rules
 
-- The main thread executes `render_draw()`, the planner, surface operations, row moves, `cell_cache_begin()`, `cell_cache_publish()`, `decor_get()`, UI painting, and GPU operations.
+- The main thread executes `render_draw_view()`, the planner, surface operations, row moves, `cell_cache_begin()`, `cell_cache_publish()`, `decor_get()`, UI painting, and GPU operations.
 - The parallel phase runs only during step 6 (row rasterization). This phase executes row walks, rasterization, `cell_cache_find()`, `cell_cache_claim()`, color pair LUT lookups, and glyph fetch and shape operations.
 - The parallel phase always sets `glyph_cache_set_parallel(true)`, even when using zero worker threads. Serial and multi-threaded configurations execute identical font code paths.
-- During the parallel phase, threads treat the following structures as read-only: `raster_frame`, `terminal_frame`, terminal snapshot, cell cache index, published tiles, and decoration sets.
+- During the parallel phase, threads treat the following structures as read-only: `raster_frame`, the grid view, the terminal snapshot, cell cache index, published tiles, and decoration sets.
 - Each worker thread writes only to its assigned `raster_worker`, its claimed cache slots, and the canvas pixels of its row windows. The free list cursor provides the only shared atomic variable.
 - Worker threads follow the font thread protocol defined in `cpu/pool.h`.
 - Dynamic timing determines row distribution across worker threads. Pre-existing frames do not trigger buffer growth during the parallel phase. Before the parallel phase, `render_walk_thread_reserve()` allocates walk and font scratch memory for the full terminal width across all threads. After worker threads join, `raster_workers_balance()` expands scratch and spill buffers to match the largest worker.

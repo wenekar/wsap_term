@@ -16,7 +16,7 @@
 
 #include "font/font.h"
 #include "render/cell.h"
-#include "render/term_frame.h"
+#include "terminal/render/term_frame.h"
 
 /*
  * Walks row `y` of `f`, columns [c0, c1), and calls the sink for each

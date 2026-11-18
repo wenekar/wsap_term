@@ -1,3 +1,5 @@
+subdir('render')
+
 terminal_src = files(
     'blink.c',
     'draw.c',

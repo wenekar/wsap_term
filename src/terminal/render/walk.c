@@ -1,4 +1,4 @@
-#include "render/frame/walk.h"
+#include "terminal/render/walk.h"
 
 #include <stdlib.h>
 #include <string.h>

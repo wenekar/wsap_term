@@ -19,7 +19,6 @@
 
 #include "paint/framebuffer.h"
 #include "render/plan.h"
-#include "render/term_frame.h"
 #include "util/geom.h"
 
 /*
@@ -107,14 +106,6 @@ bool render_surface_reserve(struct render_surface *s, int rows);
 
 /* Forgets the canvas contents: valid = false. It keeps the memory. */
 void render_surface_invalidate(struct render_surface *s);
-
-/*
- * The key of grid row `row` as the canvas shows it: a mix of the content
- * key, the selection span of the row, and the cursor x and style when the
- * cursor is on the row. It is never 0. Use hash64_finish() from
- * util/hash.h as the mixer.
- */
-uint64_t render_surface_row_key(const struct terminal_frame *f, int row);
 
 /*
  * Stores canvas cache key, row keys, UI spans, and reach values in `s`.

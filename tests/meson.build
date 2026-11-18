@@ -35,17 +35,17 @@ test_cases = [
     ['window-ui-hosts-test', files('app/tabs/ui_hosts_test.c'), app_lib, deps],
     ['window-ui-tree-test', files('app/tabs/ui_tree_test.c'), app_lib, deps],
     ['window-debug-server-test', files('ui/yasl/debug_server_test.c'), app_lib, deps],
-    ['render-test', files('render/render_test.c'), [render_lib, ui_lib], deps],
+    ['render-test', files('render/render_test.c'), [render_lib, render_term_lib, ui_lib], deps],
     ['render-kernels-test', files('render/cpu/kernels_test.c'), render_lib, [m_dep, thread_dep]],
     ['render-pool-test', files('render/cpu/pool_test.c'), render_lib, deps],
-    ['render-plan-test', files('render/plan_test.c'), render_lib, deps],
-    ['render-decor-test', files('render/decor_test.c'), render_lib, deps],
-    ['render-cache-test', files('render/cache_test.c'), render_lib, deps],
+    ['render-plan-test', files('render/plan_test.c'), [render_lib, render_term_lib], deps],
+    ['render-decor-test', files('render/decor_test.c'), [render_lib, render_term_lib], deps],
+    ['render-cache-test', files('render/cache_test.c'), [render_lib, render_term_lib], deps],
     ['render-scene-test', files('render/scene_test.c'), render_lib, deps],
-    ['render-raster-test', files('render/raster_test.c'), render_lib, deps],
-    ['render-damage-test', files('render/damage_test.c'), render_lib, deps],
-    ['render-incremental-test', files('render/incremental_test.c'), render_lib, deps],
-    ['render-cpu-canvas-test', files('render/cpu_canvas_test.c'), render_lib, deps],
+    ['render-raster-test', files('render/raster_test.c'), [render_lib, render_term_lib], deps],
+    ['render-damage-test', files('render/damage_test.c'), [render_lib, render_term_lib], deps],
+    ['render-incremental-test', files('render/incremental_test.c'), [render_lib, render_term_lib], deps],
+    ['render-cpu-canvas-test', files('render/cpu_canvas_test.c'), render_term_lib, deps],
     ['resize-alloc-test', files('ui/yasl/resize_alloc_test.c'), app_lib, deps],
     ['window-ui-input-test', files('ui/yasl/ui_input_test.c'), app_lib, deps],
     ['window-native-input-test', files('ui/yasl/native_input_test.c'), app_lib, deps],
@@ -212,12 +212,12 @@ standalone_tests = [
 # builds on its own, because the link group renames main for C sources only.
 if system == 'darwin'
     test_cases += [['window-pacing-test', files('ui/yasl/window_pacing_test.m'), app_lib, deps]]
-    test_cases += [['render-gpu-slot-test', files('render/gpu_slot_test.m'), render_lib, deps]]
-    test_cases += [['metal-render-test', files('render/metal_render_test.m'), render_lib, deps]]
+    test_cases += [['render-gpu-slot-test', files('render/gpu_slot_test.m'), [render_lib, render_term_lib], deps]]
+    test_cases += [['metal-render-test', files('render/metal_render_test.m'), [render_lib, render_term_lib], deps]]
     standalone_tests += ['window-pacing-test', 'render-gpu-slot-test']
 endif
 if has_vulkan
-    test_cases += [['vulkan-render-test', files('render/vulkan_render_test.c'), [render_lib, ui_yasl_lib], deps]]
+    test_cases += [['vulkan-render-test', files('render/vulkan_render_test.c'), [render_lib, render_term_lib, ui_yasl_lib], deps]]
     standalone_tests += ['vulkan-render-test']
 endif
 test_groups = {}

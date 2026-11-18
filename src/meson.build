@@ -94,12 +94,22 @@ theme_lib = static_library(
     install: false,
 )
 
-# render_lib still uses the terminal frame, the VT cell types, and the
-# underline and line-size enums. B4 removes the coupling, and then term_dep goes.
 render_lib = static_library(
     'wsap-render',
     render_src,
     link_with: [base_lib, font_lib, paint_lib],
+    include_directories: [inc] + render_inc,
+    c_args: ['-ffp-contract=off'],
+    dependencies: lib_deps,
+    install: false,
+)
+
+# The terminal grid renderer. It turns a terminal frame into cells and
+# draws them through render_lib. The terminal content owns it.
+render_term_lib = static_library(
+    'wsap-render-term',
+    render_term_src,
+    link_with: [base_lib, font_lib, paint_lib, render_lib],
     include_directories: [inc] + render_inc,
     c_args: ['-ffp-contract=off'],
     dependencies: lib_deps + [term_dep],
@@ -118,7 +128,7 @@ ui_yasl_lib = static_library(
 terminal_lib = static_library(
     'wsap-terminal',
     terminal_src,
-    link_with: [base_lib, ui_yasl_lib, session_lib, font_lib, ui_lib, paint_lib],
+    link_with: [base_lib, ui_yasl_lib, session_lib, font_lib, ui_lib, paint_lib, render_term_lib],
     include_directories: inc,
     dependencies: core_deps + [yasl_dep] + [term_dep],
     install: false,
@@ -127,10 +137,10 @@ terminal_lib = static_library(
 app_lib = static_library(
     'wsap-app',
     app_src,
-    link_with: [base_lib, terminal_lib, ui_yasl_lib, session_lib, font_lib, ui_lib, pty_lib, paint_lib, theme_lib, render_lib],
+    link_with: [base_lib, terminal_lib, ui_yasl_lib, session_lib, font_lib, ui_lib, pty_lib, paint_lib, theme_lib, render_lib, render_term_lib],
     include_directories: inc,
     dependencies: core_deps + [yasl_dep] + [term_dep],
     install: false,
 )
 
-wsap_libs = [base_lib, editor_lib, pty_lib, session_lib, input_lib, paint_lib, font_lib, ui_lib, theme_lib, render_lib, ui_yasl_lib, terminal_lib, app_lib]
+wsap_libs = [base_lib, editor_lib, pty_lib, session_lib, input_lib, paint_lib, font_lib, ui_lib, theme_lib, render_lib, render_term_lib, ui_yasl_lib, terminal_lib, app_lib]

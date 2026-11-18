@@ -9,6 +9,5 @@ render_src = files(
     'surface.c',
 )
 
-subdir('frame')
 subdir('cpu')
 subdir('gpu')

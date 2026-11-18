@@ -19,18 +19,15 @@
 #include "render/cpu/pool.h"
 #include "render/core.h"
 #include "render/cpu/raster.h"
-#include "render/frame/term_view.h"
-#include "render/frame/walk.h"
 #include "render/gpu/gpu.h"
 #include "render/plan.h"
 #include "render/scene_paint.h"
 #include "render/scratch.h"
-#include "render/term_frame.h"
 #include "render/surface.h"
 
 /*
- * render_draw() runs one frame in the order of src/render/README.md,
- * "Frame order in render_draw". This file owns no pixel math. It plans,
+ * render_draw_view() runs one frame in the order of src/render/README.md,
+ * "Frame order in render_draw_view". This file owns no pixel math. It plans,
  * moves rows, starts the row raster on the pool, and paints the UI.
  */
 
@@ -54,7 +51,7 @@ struct renderer {
     struct plan_window *windows;
     struct raster_job *jobs;
     struct render_surface scratch;
-    /* The state of render_cursor_cell(): one raster worker with no cell
+    /* The state of renderer_cursor_band(): one raster worker with no cell
      * cache, and the buffer that the raster paints the cursor cells into. */
     struct raster_worker *cursor_worker;
     uint32_t *cursor_band;
@@ -138,7 +135,7 @@ static bool cpu_ensure(struct renderer *r)
     r->workers = aligned_alloc(64, (workers_bytes + 63) & ~(size_t)63);
     if (r->workers)
         memset(r->workers, 0, workers_bytes);
-    /* render_cursor_cell() can make the decor cache before the first CPU
+    /* renderer_cursor_band() can make the decor cache before the first CPU
      * frame. Keep that cache. */
     if (!r->decor)
         r->decor = decor_cache_create();
@@ -352,22 +349,6 @@ bool renderer_cursor_band(struct renderer *r, struct font_instance *font,
     return true;
 }
 
-bool render_cursor_cell(struct renderer *r, struct font_instance *font,
-                        const struct terminal_frame *tf,
-                        int span_begin, int span_cols,
-                        uint32_t *out, size_t max_px,
-                        int *out_w, int *out_h)
-{
-    if (!tf || tf->cursor_y < 0 || tf->cursor_y >= tf->rows ||
-        terminal_frame_row_size(tf, tf->cursor_y) != WSAP_VTCORE_LINE_SINGLE)
-        return false;
-    struct render_grid_view grid;
-    if (!render_term_grid_view(tf, &grid))
-        return false;
-    return renderer_cursor_band(r, font, &grid, tf->cursor_y, span_begin, span_cols,
-                                out, max_px, out_w, out_h);
-}
-
 int renderer_isa(const struct renderer *r)
 {
     return r ? r->isa : render_isa_resolve(RENDER_ISA_AUTO);
@@ -533,6 +514,7 @@ static void paint_moves(const struct renderer *r, struct plan_output *out, int r
 /* ---- The parallel phase ---------------------------------------------- */
 
 struct walk_reserve {
+    const struct render_grid_ops *ops;
     int cols;
     _Atomic bool failed;
 };
@@ -541,7 +523,7 @@ static void walk_reserve_run(void *ctx, int worker)
 {
     struct walk_reserve *w = ctx;
     (void)worker;
-    if (!render_walk_thread_reserve(w->cols))
+    if (!w->ops->reserve_walk(w->cols))
         atomic_store_explicit(&w->failed, true, memory_order_relaxed);
 }
 
@@ -551,11 +533,11 @@ static void walk_reserve_run(void *ctx, int worker)
  * in the phase would make the allocations of a frame depend on timing.
  * After a failure the next frame tries again.
  */
-static void reserve_walk(struct renderer *r, int cols)
+static void reserve_walk(struct renderer *r, const struct render_grid_ops *ops, int cols)
 {
     if (cols <= r->walk_cols)
         return;
-    struct walk_reserve w = { .cols = cols };
+    struct walk_reserve w = { .ops = ops, .cols = cols };
     pool_each(r->pool, walk_reserve_run, &w);
     if (!atomic_load_explicit(&w.failed, memory_order_relaxed))
         r->walk_cols = cols;
@@ -580,7 +562,7 @@ static void phase_run(void *ctx, int worker, int begin, int end)
     }
 }
 
-/* ---- render_draw ----------------------------------------------------- */
+/* ---- render_draw_view ------------------------------------------------ */
 
 static struct render_result result_all(void)
 {
@@ -597,25 +579,6 @@ static bool pixels_ensure(struct framebuffer *fb)
     if (!fb->pixels && fb->acquire_pixels)
         fb->pixels = fb->acquire_pixels(fb->acquire_pixels_ud, fb->size);
     return fb->pixels != NULL;
-}
-
-struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
-                                 const struct render_frame *frame)
-{
-    struct render_grid_view grid;
-    const struct render_grid_view *view = NULL;
-    if (frame && render_term_grid_view(frame->grid.frame, &grid))
-        view = &grid;
-    return render_draw_view(r, fb, frame, view);
-}
-
-enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surface *s,
-                                       struct framebuffer *fb, const struct render_frame *frame)
-{
-    struct render_grid_view grid;
-    const struct render_grid_view *view =
-        frame && render_term_grid_view(frame->grid.frame, &grid) ? &grid : NULL;
-    return render_gpu_draw_view(g, s, fb, frame, view);
 }
 
 struct render_result render_draw_view(struct renderer *r, struct framebuffer *fb,
@@ -816,7 +779,7 @@ struct render_result render_draw_view(struct renderer *r, struct framebuffer *fb
         struct phase ph = {
             .r = r, .rf = &rf, .jobs = r->jobs, .n_full = n_full, .reach = r->reach,
         };
-        reserve_walk(r, grid_view->cells.x);
+        reserve_walk(r, grid_view->ops, grid_view->cells.x);
         int64_t t0 = clock_ps();
         glyph_cache_set_parallel(true);
         pool_run(r->pool, n_jobs, serial ? n_jobs : 1, phase_run, &ph);
