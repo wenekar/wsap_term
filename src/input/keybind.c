@@ -595,10 +595,17 @@ void input_keymap_defaults(struct input_keymap *km,
 static struct input_keymap active_keymap;
 static bool active_ready;
 
+void input_keymap_reset(struct input_keymap *km, enum input_keybind_style style)
+{
+    if (!km)
+        return;
+    input_keymap_free(km);
+    input_keymap_defaults(km, &input_platform_shortcuts, style);
+}
+
 void input_keymap_reset_active(enum input_keybind_style style)
 {
-    input_keymap_free(&active_keymap);
-    input_keymap_defaults(&active_keymap, &input_platform_shortcuts, style);
+    input_keymap_reset(&active_keymap, style);
     active_ready = true;
 }
 

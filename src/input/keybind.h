@@ -118,13 +118,22 @@ bool input_parse_action(const char *s, enum input_shortcut *out);
 /* Returns a pointer to the globally active keymap. */
 struct input_keymap *input_keymap_active(void);
 
+/* Resets keymap `km` to the default bindings for `style`. */
+void input_keymap_reset(struct input_keymap *km, enum input_keybind_style style);
+
 /* Resets the globally active keymap to default bindings for `style`. */
 void input_keymap_reset_active(enum input_keybind_style style);
 
 /* Initializes global input configuration and default key bindings. */
 struct app_identity;
 
-/* Reads the input keymap of the app identity `identity`. */
+/* Reads the input configuration of the app identity `identity`. */
 void input_config_init(const struct app_identity *identity);
+
+/*
+ * Loads the input configuration into keymap `km`.
+ * A window calls this once in its init, so each window owns its bindings.
+ */
+void input_config_load(struct input_keymap *km);
 
 #endif

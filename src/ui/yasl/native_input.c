@@ -492,6 +492,9 @@ void window_native_input(struct window *w, const struct yasl_event *in)
             /* The text belongs to the key. A key that the global map binds
              * runs an app command, so its text must not also reach the
              * widget. Other key text replaces what the key produced. */
+            /* The router and this test read one map, so the key text and the
+             * key route never disagree. The router still reads the shared map
+             * (`ui_route.c`), so this test reads it too. */
             bool bound = input_keymap_match(input_keymap_active(),
                                             &(struct input_key_event){
                 .key = native_key(w->native_key.key.key),
