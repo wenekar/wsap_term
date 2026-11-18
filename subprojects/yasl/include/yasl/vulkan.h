@@ -20,7 +20,8 @@ YASL_API int yasl_vulkan_init(PFN_vkGetInstanceProcAddr loader, struct yasl_vulk
 YASL_API VkResult yasl_vulkan_create_surface(yasl_surface *surface, VkInstance instance,
                                              const VkAllocationCallbacks *allocator,
                                              VkSurfaceKHR *out);
-/** Destroy swapchains first. Also works after DISPLAY_LOST; no surface is a no-op. */
+/** Destroy swapchains first. Also works after DISPLAY_LOST, or after YASL
+ * released a surface whose window went away. No surface is a no-op. */
 YASL_API int yasl_vulkan_destroy_surface(yasl_surface *surface);
 #ifdef __cplusplus
 }

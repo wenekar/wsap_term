@@ -123,7 +123,8 @@ if get_option('integration_tests')
             integration, hello_example, tablet_example, gl_integration, vulkan_integration, notepad_example] +
             x11_input_args, timeout: 120)
         if has_wayland and has_egl
-            reconnect = executable('yasl-reconnect-test', 'wayland/test_reconnect.c', dependencies: yasl_dep,
+            reconnect = executable('yasl-reconnect-test', 'wayland/test_reconnect.c',
+                dependencies: has_vulkan ? [yasl_dep, vulkan_dep] : [yasl_dep],
                 c_args: ['-DTEST_VULKAN=' + (has_vulkan ? '1' : '0')])
             test('reconnect-wayland', python, args: [files('helpers/run_reconnect.py'), weston, reconnect], timeout: 60)
         endif
