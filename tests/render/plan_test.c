@@ -928,16 +928,18 @@ static void null_ui_damage_test(void)
 
 static void damage_overflow_test(void)
 {
-    struct fixture *f = standard(20);
+    /* More non-touching bands than the list holds, so it merges them. */
+    int rows = 2 * (DAMAGE_RECTS_MAX + 2);
+    struct fixture *f = standard(rows);
     keys_idle(f);
-    for (int r = 1; r < 20; r += 2)
+    for (int r = 1; r < rows; r += 2)
         f->new_keys[r] = 500 + (uint64_t)r;
     plan_run(f);
     assert(f->out.damage.any && !f->out.damage.all);
     assert(f->out.damage.n == 1);
     assert(rect2i_eq(f->out.damage.rects[0], f->out.damage.bounds));
-    assert(rect2i_eq(f->out.damage.bounds, band(f, 1, 20)));
-    assert(f->out.ui.n == 10);
+    assert(rect2i_eq(f->out.damage.bounds, band(f, 1, rows)));
+    assert(f->out.ui.n == DAMAGE_RECTS_MAX + 2);
     model_check(f, &no_scene, &no_scene);
     fixture_free(f);
 }

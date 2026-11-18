@@ -608,6 +608,70 @@ static void overlay_layer_test(void)
     ui_scene_destroy(&scene);
 }
 
+static void overlay_growth_test(void)
+{
+    enum { OVERLAYS = 6 };
+    struct ui_box root = {0};
+    struct layer_probe layers[OVERLAYS] = {0};
+    ui_box_init(&root);
+    for (int i = 0; i < OVERLAYS; i++) {
+        layers[i].color = 0xFF000100u + (uint32_t)i;
+        ui_widget_init(&layers[i].widget, &LAYER_OPS, &layers[i]);
+    }
+
+    struct host_probe host = {0};
+    const struct ui_surface_host surface_host = { .request_frame = request_frame };
+    struct ui_surface surface = {0};
+    ui_surface_init(&surface, &surface_host, &host);
+    ui_surface_set_root(&surface, &root.widget);
+    ui_surface_set_scale(&surface, (struct css_scale_context){
+        .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
+    });
+    ui_surface_resize(&surface, (struct vector2i){ .x = 100, .y = 80 });
+
+    /* The surface grows its list, so it takes more than the first four. */
+    for (int i = 0; i < OVERLAYS; i++)
+        assert(ui_surface_add_overlay(&surface, &layers[i].widget));
+    assert(ui_surface_overlay_count(&surface) == OVERLAYS);
+    for (int i = 0; i < OVERLAYS; i++)
+        assert(ui_surface_overlay_at(&surface, (size_t)i) ==
+               &layers[i].widget);
+
+    struct ui_scene scene = {0};
+    assert(ui_surface_build_scene(&surface, &scene));
+    assert(scene.n_ops == OVERLAYS);
+    for (int i = 0; i < OVERLAYS; i++) {
+        assert(rect2i_eq(layers[i].widget.bounds,
+                         (struct rect2i){ .size = { .x = 100, .y = 80 } }));
+        assert(scene.ops[i].color == layers[i].color);
+    }
+
+    /* The last overlay in the list takes the press. */
+    struct ui_event press = ui_event_pointer((struct ui_pointer_event){
+        .kind = UI_POINTER_PRESS, .pos = { .x = 10, .y = 10 },
+    }, 0);
+    assert(ui_surface_dispatch(&surface, &press));
+    assert(layers[OVERLAYS - 1].presses == 1);
+    for (int i = 0; i < OVERLAYS - 1; i++)
+        assert(layers[i].presses == 0);
+
+    /* A remove in the middle keeps the order of the rest. */
+    assert(ui_surface_remove_overlay(&surface, &layers[2].widget));
+    assert(ui_widget_surface(&layers[2].widget) == NULL);
+    assert(ui_surface_overlay_count(&surface) == OVERLAYS - 1);
+    const int order[] = { 0, 1, 3, 4, 5 };
+    for (size_t i = 0; i < sizeof(order) / sizeof(order[0]); i++)
+        assert(ui_surface_overlay_at(&surface, i) ==
+               &layers[order[i]].widget);
+
+    ui_surface_destroy(&surface);
+    assert(ui_surface_overlay_count(&surface) == 0);
+    ui_widget_destroy(&root.widget);
+    for (int i = 0; i < OVERLAYS; i++)
+        ui_widget_destroy(&layers[i].widget);
+    ui_scene_destroy(&scene);
+}
+
 static void overlay_modal_focus_test(void)
 {
     struct layer_probe root_button = { .color = 0xFF000003 };
@@ -667,6 +731,118 @@ static void overlay_modal_focus_test(void)
     ui_surface_destroy(&surface);
     ui_widget_destroy(&root.widget);
     ui_widget_destroy(&layer.widget);
+}
+
+struct modal_probe {
+    struct ui_widget widget;
+    int focus_in;
+    int focus_out;
+};
+
+static bool modal_event(struct ui_widget *widget, const struct ui_event *event)
+{
+    struct modal_probe *probe = widget->userdata;
+    if (event->kind == UI_EVENT_FOCUS_IN) {
+        probe->focus_in++;
+        return true;
+    }
+    if (event->kind == UI_EVENT_FOCUS_OUT) {
+        probe->focus_out++;
+        return true;
+    }
+    return false;
+}
+
+static const struct ui_widget_ops MODAL_OPS = {
+    .name = "modal-probe",
+    .event = modal_event,
+};
+
+static void nested_modal_focus_test(void)
+{
+    struct modal_probe button = {0}, first_row = {0}, last_row = {0};
+    struct modal_probe second_row = {0};
+    struct ui_box root = {0};
+    struct ui_widget first_modal = {0}, second_modal = {0};
+    ui_box_init(&root);
+    ui_widget_init(&button.widget, &MODAL_OPS, &button);
+    ui_widget_init(&first_row.widget, &MODAL_OPS, &first_row);
+    ui_widget_init(&last_row.widget, &MODAL_OPS, &last_row);
+    ui_widget_init(&second_row.widget, &MODAL_OPS, &second_row);
+    ui_widget_init(&first_modal, NULL, NULL);
+    ui_widget_init(&second_modal, NULL, NULL);
+    ui_widget_set_focusable(&button.widget, true);
+    ui_widget_set_focusable(&first_row.widget, true);
+    ui_widget_set_focusable(&last_row.widget, true);
+    ui_widget_set_focusable(&second_row.widget, true);
+    assert(ui_widget_add_child(&root.widget, &button.widget));
+    assert(ui_widget_add_child(&first_modal, &first_row.widget));
+    assert(ui_widget_add_child(&first_modal, &last_row.widget));
+    assert(ui_widget_add_child(&second_modal, &second_row.widget));
+    ui_widget_set_modal(&first_modal, true);
+    ui_widget_set_modal(&second_modal, true);
+
+    struct ui_surface surface = {0};
+    ui_surface_init(&surface, NULL, NULL);
+    ui_surface_set_root(&surface, &root.widget);
+    ui_surface_set_scale(&surface, (struct css_scale_context){
+        .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
+    });
+    ui_surface_resize(&surface, (struct vector2i){ .x = 100, .y = 80 });
+    ui_surface_prepare(&surface);
+    ui_surface_focus(&surface, &button.widget);
+    assert(button.focus_in == 1);
+
+    /* Each modal takes the focus, and it gives the focus back in reverse
+     * order. */
+    assert(ui_surface_add_overlay(&surface, &first_modal));
+    assert(ui_surface_focused(&surface) == &first_row.widget);
+    ui_surface_focus(&surface, &last_row.widget);
+    assert(ui_surface_add_overlay(&surface, &second_modal));
+    assert(ui_surface_focused(&surface) == &second_row.widget);
+    assert(button.focus_out == 1 && last_row.focus_out == 1);
+
+    /* The top modal gives the focus back to the widget that it took it from,
+     * not to the widget below the first modal. */
+    assert(ui_surface_remove_overlay(&surface, &second_modal));
+    assert(ui_surface_focused(&surface) == &last_row.widget);
+    assert(ui_surface_has_modal(&surface));
+    assert(ui_surface_remove_overlay(&surface, &first_modal));
+    assert(ui_surface_focused(&surface) == &button.widget);
+    assert(!ui_surface_has_modal(&surface));
+
+    /* A modal can close below the top one. The focus stays in the top modal.
+     * The stored target of the closed modal is stale, so the bottom frame
+     * gives the focus back to the widget below the first modal. */
+    assert(ui_surface_add_overlay(&surface, &first_modal));
+    assert(ui_surface_focused(&surface) == &first_row.widget);
+    ui_surface_focus(&surface, &last_row.widget);
+    assert(ui_surface_add_overlay(&surface, &second_modal));
+    assert(ui_surface_focused(&surface) == &second_row.widget);
+    assert(ui_surface_remove_overlay(&surface, &first_modal));
+    assert(ui_surface_has_modal(&surface));
+    assert(ui_surface_focused(&surface) == &second_row.widget);
+    assert(ui_surface_remove_overlay(&surface, &second_modal));
+    assert(!ui_surface_has_modal(&surface));
+    assert(ui_surface_focused(&surface) == &button.widget);
+
+    /* Dialogs that stop being modal give the focus back in the same way. Both
+     * stored targets still live, so the bottom frame wins. */
+    assert(ui_surface_add_overlay(&surface, &first_modal));
+    assert(ui_surface_focused(&surface) == &first_row.widget);
+    ui_surface_focus(&surface, &last_row.widget);
+    assert(ui_surface_add_overlay(&surface, &second_modal));
+    assert(ui_surface_focused(&surface) == &second_row.widget);
+    ui_widget_set_modal(&first_modal, false);
+    assert(ui_surface_focused(&surface) == &second_row.widget);
+    ui_widget_set_modal(&second_modal, false);
+    assert(!ui_surface_has_modal(&surface));
+    assert(ui_surface_focused(&surface) == &button.widget);
+
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&root.widget);
+    ui_widget_destroy(&first_modal);
+    ui_widget_destroy(&second_modal);
 }
 
 struct post_probe {
@@ -742,7 +918,9 @@ int main(void)
 {
     surface_post_runs_after_dispatch_test();
     overlay_layer_test();
+    overlay_growth_test();
     overlay_modal_focus_test();
+    nested_modal_focus_test();
     measurement_change_requests_another_frame_test();
     independent_surfaces_test();
     style_application_grow_test();

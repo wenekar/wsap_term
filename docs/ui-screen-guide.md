@@ -129,6 +129,36 @@ The typed lookup returns `NULL` if the key or widget type does not match.
 Use stable handles and setters to update the mounted screen.
 This preserves widget focus and edit state between updates.
 
+`ui_view_update()` re-describes a mounted view from a new descriptor tree.
+A node with a key takes over the mounted node with the same key.
+A node without a key takes over the mounted node at the same child index.
+The node kind must be the same.
+A node that takes over a widget keeps its focus, its hover, and its edit state.
+The view applies the new text, the new disabled state, and the new style identity.
+A node without a match gets a new widget.
+A mounted node without a match loses its widget, and the view clears its handle.
+The children follow the descriptor order.
+A supplied widget node keeps its widget only when the new descriptor supplies the same widget.
+A different widget replaces the whole node.
+An action handler can call `ui_view_update()`.
+The view then frees the storage of a removed node after the dispatch ends.
+`ui_view_update_ex()` reports the descriptor that caused a failure.
+A failed update keeps the mounted nodes.
+A matched widget can hold the properties that the update applied before it failed.
+
+A list node holds a `ui_list`, and its class name is the list style class.
+Use `ui_view_list()` to get the list handle.
+A menu node holds a `ui_menu` and its layer.
+The menu opens when the descriptor sets items, and it closes when they are empty.
+The menu layer is the node widget.
+Add the layer to the surface overlay layer to show the menu above the content.
+Use `ui_view_menu()` to get the menu handle.
+
+The view observes each widget that it owns.
+When another owner destroys one of these widgets, the view clears its reference.
+The typed handle becomes `NULL`.
+An update can then create the node again.
+
 The diagnostic gives an error, a detail message, and, when applicable, the descriptor that caused it.
 The descriptor pointer is borrowed from the input tree.
 Read it before the descriptor tree goes out of scope.

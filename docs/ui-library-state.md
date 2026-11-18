@@ -65,6 +65,9 @@ static bool settings_init(struct settings_screen *screen,
 ```
 
 The descriptor arrays and strings only need to stay valid through `ui_view_mount()`.
+`ui_view_update()` re-describes the mounted view with a new descriptor tree.
+It takes over each widget that it matches by key.
+See [Build a window screen](ui-screen-guide.md) for the match rules.
 Use `ui_view_mount_ex()` to get the error, details, and the descriptor that caused it.
 The diagnostic node is borrowed from the descriptor tree.
 Read it while the tree is valid.

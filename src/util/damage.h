@@ -5,7 +5,8 @@
 
 #include "util/geom.h"
 
-#define DAMAGE_RECTS_MAX 8
+/* The most damage rectangles of one surface update. */
+#define DAMAGE_RECTS_MAX 16
 
 struct damage_list {
     struct rect2i bounds;

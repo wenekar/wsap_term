@@ -64,6 +64,7 @@ test_cases = [
     ['ui-part-handle-test', files('ui/part_handle_test.c'), ui_lib, ui_test_deps],
     ['ui-paint-test', files('ui/paint_test.c'), ui_lib, ui_test_deps],
     ['ui-surface-test', files('ui/surface_test.c'), ui_lib, ui_test_deps],
+    ['ui-transition-test', files('ui/transition_test.c'), ui_lib, ui_test_deps],
     ['ui-core-contract-test', files('ui/core_contract_test.c'), ui_lib, ui_test_deps],
     ['ui-model-contract-test', files('ui/model_contract_test.c'), ui_lib, ui_test_deps],
     ['ui-scrollview-test', files('ui/widgets/scrollview_test.c'), ui_lib, ui_test_deps],

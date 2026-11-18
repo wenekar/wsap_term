@@ -11,6 +11,8 @@
 #include "ui/widgets/dropdown.h"
 #include "ui/widgets/input.h"
 #include "ui/widgets/label.h"
+#include "ui/widgets/list.h"
+#include "ui/widgets/menu.h"
 #include "ui/widgets/scrollview.h"
 
 struct ui_view;
@@ -24,6 +26,8 @@ enum ui_node_kind : uint8_t {
     UI_NODE_INPUT,
     UI_NODE_DROPDOWN,
     UI_NODE_SCROLLVIEW,
+    UI_NODE_LIST,
+    UI_NODE_MENU,
     UI_NODE_WIDGET,
 };
 
@@ -37,6 +41,8 @@ struct ui_node_bindings {
     struct ui_input **input;
     struct ui_dropdown **dropdown;
     struct ui_scrollview **scrollview;
+    struct ui_list **list;
+    struct ui_menu **menu;
 };
 
 struct ui_node_desc {
@@ -82,6 +88,24 @@ struct ui_node_desc {
             bool scrollbar;
             int scroll_step;
         } scrollview;
+        /* The node class name is the list style class. */
+        struct {
+            const struct ui_list_item *items;
+            int count;
+            int selected;
+            bool wrap_navigation;
+        } list;
+        /* A menu opens when the items are set, and closes when they are not.
+         * The menu layer is the node widget, so the app shows it as a surface
+         * overlay. */
+        struct {
+            const ui_menu_item *items;
+            int count;
+            struct vector2i pos;
+            ui_menu_submenu_fn on_submenu;
+            void *submenu_userdata;
+            uint32_t hover_delay_ms;
+        } menu;
         /* Supply an initialized, detached widget or subtree.
          * On success, the view destroys its widget resources.
          * Keep its enclosing storage alive until view destruction.
@@ -122,6 +146,27 @@ struct ui_view *ui_view_mount_ex(const struct ui_node_desc *root,
 struct ui_view *ui_view_mount(const struct ui_node_desc *root,
                               enum ui_view_error *error);
 
+/* Updates the mounted view to match `root`. A node takes over the mounted
+ * widget of the node that it matches:
+ * - A node with a key matches the node with the same key.
+ * - A node without a key matches the node at the same child index.
+ * The kind must be the same. A matched widget keeps its focus, its hover, and
+ * its control state, and it takes the new text and the new style identity.
+ * A node without a match gets a new widget. A mounted node without a match
+ * loses its widget. The children follow the descriptor order.
+ *
+ * A supplied widget node keeps its widget only when the descriptor supplies
+ * the same widget. A different widget replaces it.
+ *
+ * On failure the view keeps its mounted nodes. A matched widget can hold the
+ * properties that the update applied before it failed. The view frees the
+ * storage of a removed node after the surface is idle, so a handler can call
+ * this function. The call fails while the surface is busy only when memory is
+ * short. */
+bool ui_view_update_ex(struct ui_view *view, const struct ui_node_desc *root,
+                       struct ui_view_diagnostic *diagnostic);
+bool ui_view_update(struct ui_view *view, const struct ui_node_desc *root);
+
 void ui_view_destroy(struct ui_view *view);
 
 /* Returns the widget of the descriptor root. */
@@ -135,6 +180,8 @@ struct ui_input *ui_view_input(struct ui_view *view, const char *key);
 struct ui_dropdown *ui_view_dropdown(struct ui_view *view, const char *key);
 struct ui_scrollview *ui_view_scrollview(struct ui_view *view,
                                          const char *key);
+struct ui_list *ui_view_list(struct ui_view *view, const char *key);
+struct ui_menu *ui_view_menu(struct ui_view *view, const char *key);
 
 #define UI_NODES(...) ((const struct ui_node_desc[]){ __VA_ARGS__ })
 

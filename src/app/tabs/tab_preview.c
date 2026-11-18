@@ -20,9 +20,6 @@
 struct ui_tab_preview_skin {
     struct ui_paint_box_style box;
     struct insets2i pad;
-    struct vector2i shadow_offset;
-    uint32_t shadow_color;
-    int shadow_blur;
     int gap;
     int width;
     float opacity;
@@ -58,20 +55,13 @@ static struct ui_tab_preview_skin skin_of(const struct ui_widget *widget,
     struct ui_paint_box_style box = ui_paint_box_style_of(&card, scale);
     box.bg_color = ui_color_opacity(box.bg_color, widget_opacity);
     box.border_color = ui_color_opacity(box.border_color, widget_opacity);
+    /* The box paints the shadow, so the card shares its path. */
+    box.shadow_color = ui_color_opacity(box.shadow_color, widget_opacity);
     return (struct ui_tab_preview_skin){
         .box = box,
         .pad = ui_ctx_insets(scale, card.padding, 0),
         .gap = ui_ctx_inset(scale, card.gap, 0),
         .width = ui_ctx_size(scale, card.width, 400),
-        .shadow_color = card.has_shadow
-            ? ui_color_opacity(card.shadow_color, opacity) : 0,
-        .shadow_blur = card.has_shadow
-            ? ui_css_resolve_int(card.shadow_blur, 0, 0, scale, true) : 0,
-        .shadow_offset = card.has_shadow
-            ? (struct vector2i){
-                  .x = ui_css_resolve_int(card.shadow_x, 0, 0, scale, false),
-                  .y = ui_css_resolve_int(card.shadow_y, 0, 0, scale, false),
-              } : (struct vector2i){},
         .opacity = opacity,
     };
 }
@@ -530,9 +520,8 @@ static void preview_paint(const struct ui_widget *widget,
     struct rect2i box = ui_paint_bounds(paint);
     if (rect2i_is_empty(box))
         return;
-    if (s.shadow_color >> 24)
-        ui_paint_shadow(paint, rect2i_translate(box, s.shadow_offset),
-                        s.box.radius, s.shadow_blur, s.shadow_color);
+    if (!ui_paint_box_shadow(paint, box, &s.box))
+        return;
     struct rect2i fill;
     if (!ui_paint_box(paint, box, &s.box, &fill) || rect2i_is_empty(fill))
         return;

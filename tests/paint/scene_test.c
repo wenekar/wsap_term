@@ -333,6 +333,24 @@ static void damage_bounds_test(void)
     assert(b.x == 5 && b.y == 10 && b.width == 105 && b.height == 100);
 }
 
+/* A full damage list merges its rectangles and never writes out of bounds.
+ * A negative count, the overflow mark, adds nothing. */
+static void damage_overflow_test(void)
+{
+    struct ui_damage d = {0};
+    for (int i = 0; i < 4 * UI_DAMAGE_MAX_RECTS; i++)
+        ui_damage_add(&d, r_at(i * 100, i * 100, 4, 4));
+    assert(d.n > 0 && d.n <= UI_DAMAGE_MAX_RECTS);
+    struct rect2i b = ui_damage_bounds(&d);
+    assert(b.x == 0 && b.y == 0);
+    assert(b.width >= (4 * UI_DAMAGE_MAX_RECTS - 1) * 100);
+
+    d.n = -1;
+    ui_damage_add(&d, r_at(0, 0, 10, 10));
+    assert(d.n == -1);
+    assert(rect2i_is_empty(ui_damage_bounds(&d)));
+}
+
 static void scene_copy_test(void)
 {
     const struct ui_text_style style = { .advance = 8, .cell_h = 16 };
@@ -413,6 +431,7 @@ int main(void)
     scene_node_origin_test();
     scene_damage_test();
     damage_bounds_test();
+    damage_overflow_test();
     scene_part_damage_test();
     scene_clip_damage_test();
     scene_damage_empty_scene_test();

@@ -12,6 +12,7 @@
 #define UI_VIEW_MAX_DEPTH 128
 
 struct ui_view_node {
+    /* The descriptor of the node. NULL once the view holds the node. */
     const struct ui_node_desc *desc;
     uint32_t parent;
     char *key;
@@ -20,6 +21,8 @@ struct ui_view_node {
     char *tag_name;
     void *storage;
     struct ui_widget *widget;
+    /* The slots that the view wrote. It clears them when the node leaves. */
+    struct ui_node_bindings bind;
     enum ui_node_kind kind;
 };
 
@@ -29,6 +32,14 @@ struct ui_view {
     size_t capacity;
     struct ui_widget *root;
     bool committed;
+    /* The view destroys its own widgets, so it ignores its observer. */
+    bool destroying;
+};
+
+/* A menu and the layer that shows it. */
+struct ui_menu_node {
+    struct ui_menu menu;
+    struct ui_menu_layer layer;
 };
 
 struct validate_context {
@@ -86,6 +97,9 @@ static const struct node_kind_info NODE_KINDS[] = {
                                    struct ui_dropdown, 0),
     [UI_NODE_SCROLLVIEW] = NODE_KIND("scrollview", "scrollview",
                                      struct ui_scrollview, NODE_CHILDREN),
+    /* The list sets its own style class from the node class name. */
+    [UI_NODE_LIST] = NODE_KIND(NULL, NULL, struct ui_list, 0),
+    [UI_NODE_MENU] = NODE_KIND("menu", "menu", struct ui_menu_node, 0),
     /* A supplied widget has no storage of its own. */
     [UI_NODE_WIDGET] = { .flags = NODE_SUPPORTED | NODE_CHILDREN },
 };
@@ -130,7 +144,9 @@ static bool node_props_valid(const struct ui_node_desc *desc,
         (desc->bind.button && desc->kind != UI_NODE_BUTTON) ||
         (desc->bind.input && desc->kind != UI_NODE_INPUT) ||
         (desc->bind.dropdown && desc->kind != UI_NODE_DROPDOWN) ||
-        (desc->bind.scrollview && desc->kind != UI_NODE_SCROLLVIEW)) {
+        (desc->bind.scrollview && desc->kind != UI_NODE_SCROLLVIEW) ||
+        (desc->bind.list && desc->kind != UI_NODE_LIST) ||
+        (desc->bind.menu && desc->kind != UI_NODE_MENU)) {
         *error = UI_VIEW_ERROR_INVALID_ARGUMENT;
         *detail = "Binding does not match the node kind";
         return false;
@@ -163,6 +179,22 @@ static bool node_props_valid(const struct ui_node_desc *desc,
         if (desc->props.scrollview.scroll_step < 0) {
             *error = UI_VIEW_ERROR_INVALID_ARGUMENT;
             *detail = "Scroll step cannot be negative";
+            return false;
+        }
+        return true;
+    case UI_NODE_LIST:
+        if (desc->props.list.count < 0 ||
+            (desc->props.list.count && !desc->props.list.items)) {
+            *error = UI_VIEW_ERROR_INVALID_ARGUMENT;
+            *detail = "Invalid list items or count";
+            return false;
+        }
+        return true;
+    case UI_NODE_MENU:
+        if (desc->props.menu.count < 0 ||
+            (desc->props.menu.count && !desc->props.menu.items)) {
+            *error = UI_VIEW_ERROR_INVALID_ARGUMENT;
+            *detail = "Invalid menu items or count";
             return false;
         }
         return true;
@@ -298,6 +330,26 @@ static bool validate_node(struct validate_context *context,
     return true;
 }
 
+/* Checks the descriptor tree and returns its nodes in pre-order. */
+static struct ui_view_node *plan_nodes(const struct ui_node_desc *root,
+                                       size_t *count,
+                                       struct ui_view_diagnostic *diagnostic)
+{
+    struct ui_view plan = {0};
+    struct validate_context context = { .view = &plan };
+    if (!validate_node(&context, root, UINT32_MAX, 0)) {
+        if (diagnostic) {
+            diagnostic->error = context.error;
+            diagnostic->node = context.failed_node;
+            diagnostic->detail = context.detail;
+        }
+        free(plan.nodes);
+        return NULL;
+    }
+    *count = plan.count;
+    return plan.nodes;
+}
+
 static struct ui_view_node *find_node(struct ui_view *view, const char *key)
 {
     if (!view || !key)
@@ -319,6 +371,18 @@ static const char *default_tag(enum ui_node_kind kind)
 {
     const struct node_kind_info *info = node_kind_info(kind);
     return info ? info->tag_name : NULL;
+}
+
+static void free_node_strings(struct ui_view_node *node)
+{
+    free(node->key);
+    free(node->class_name);
+    free(node->id_name);
+    free(node->tag_name);
+    node->key = NULL;
+    node->class_name = NULL;
+    node->id_name = NULL;
+    node->tag_name = NULL;
 }
 
 static bool copy_node_strings(struct ui_view_node *node)
@@ -344,48 +408,146 @@ static size_t widget_size(enum ui_node_kind kind)
     return info ? info->storage_size : 0;
 }
 
-static bool initialize_node(struct ui_view_node *node,
-                            enum ui_view_error *error)
+/* Allocates the storage of `node` and initializes its widget. A supplied
+ * widget node adopts its widget as it is. */
+static bool node_create(struct ui_view_node *node, enum ui_view_error *error)
 {
-    const struct ui_node_desc *desc = node->desc;
-    if (node->kind != UI_NODE_WIDGET) {
-        node->storage = calloc(1, widget_size(node->kind));
-        if (!node->storage) {
-            *error = UI_VIEW_ERROR_OUT_OF_MEMORY;
-            return false;
-        }
+    enum ui_node_kind kind = node->kind;
+    if (kind == UI_NODE_WIDGET) {
+        node->widget = node->desc->props.widget;
+        return true;
     }
-    if (!copy_node_strings(node)) {
+    node->storage = calloc(1, widget_size(kind));
+    if (!node->storage) {
         *error = UI_VIEW_ERROR_OUT_OF_MEMORY;
         return false;
     }
-
-    switch (node->kind) {
-    case UI_NODE_WIDGET:
-        node->widget = desc->props.widget;
-        return true;
+    switch (kind) {
     case UI_NODE_ROW:
     case UI_NODE_COLUMN:
     case UI_NODE_STACK: {
         struct ui_box *box = node->storage;
         ui_box_init(box);
         node->widget = &box->widget;
-        enum ui_box_direction direction = node->kind == UI_NODE_COLUMN
-            ? UI_BOX_COLUMN : node->kind == UI_NODE_STACK
-            ? UI_BOX_STACK : UI_BOX_ROW;
-        ui_box_set_direction(box, direction);
+        ui_box_set_direction(box, kind == UI_NODE_COLUMN ? UI_BOX_COLUMN
+                                   : kind == UI_NODE_STACK ? UI_BOX_STACK
+                                                           : UI_BOX_ROW);
         break;
     }
     case UI_NODE_LABEL: {
         struct ui_label *label = node->storage;
         ui_label_init(label);
         node->widget = &label->widget;
-        if (!ui_label_set_text(label, desc->props.label.text)) {
-            *error = UI_VIEW_ERROR_INIT_FAILED;
-            return false;
-        }
-        if (desc->props.label.link &&
-            !ui_label_set_link(label, desc->props.label.link)) {
+        break;
+    }
+    case UI_NODE_BUTTON: {
+        struct ui_button *button = node->storage;
+        ui_button_init(button);
+        node->widget = &button->widget;
+        break;
+    }
+    case UI_NODE_INPUT: {
+        struct ui_input *input = node->storage;
+        ui_input_init(input);
+        node->widget = &input->widget;
+        break;
+    }
+    case UI_NODE_DROPDOWN: {
+        struct ui_dropdown *dropdown = node->storage;
+        ui_dropdown_init(dropdown);
+        node->widget = &dropdown->widget;
+        break;
+    }
+    case UI_NODE_SCROLLVIEW: {
+        struct ui_scrollview *scrollview = node->storage;
+        ui_scrollview_init(scrollview);
+        node->widget = &scrollview->widget;
+        break;
+    }
+    case UI_NODE_LIST: {
+        struct ui_list *list = node->storage;
+        ui_list_init(list);
+        node->widget = &list->widget;
+        break;
+    }
+    case UI_NODE_MENU: {
+        struct ui_menu_node *menu = node->storage;
+        ui_menu_init(&menu->menu);
+        ui_menu_layer_init(&menu->layer, &menu->menu);
+        node->widget = &menu->layer.widget;
+        break;
+    }
+    case UI_NODE_WIDGET:
+        return true;
+    }
+    return true;
+}
+
+static bool set_list_props(struct ui_list *list,
+                           const struct ui_node_desc *node,
+                           enum ui_view_error *error)
+{
+    const struct ui_node_desc *desc = node;
+    ui_list_set_style_class(list, desc->class_name);
+    ui_list_set_wrap_navigation(list, desc->props.list.wrap_navigation);
+    if (desc->props.list.count &&
+        !ui_list_set_items(list, desc->props.list.items,
+                           desc->props.list.count)) {
+        *error = UI_VIEW_ERROR_OUT_OF_MEMORY;
+        return false;
+    }
+    if (desc->props.list.selected >= 0)
+        ui_list_select(list, desc->props.list.selected);
+    return true;
+}
+
+static bool set_menu_props(struct ui_menu_node *menu,
+                           const struct ui_node_desc *desc,
+                           enum ui_view_error *error)
+{
+    ui_menu_set_action_handler(&menu->menu, desc->on_action,
+                               desc->action_userdata);
+    ui_menu_set_submenu_provider(&menu->menu, desc->props.menu.on_submenu,
+                                 desc->props.menu.submenu_userdata);
+    ui_menu_set_hover_delay(&menu->menu, desc->props.menu.hover_delay_ms);
+    ui_menu_layer_set_origin(&menu->layer, desc->props.menu.pos);
+    if (!desc->props.menu.count) {
+        ui_menu_close(&menu->menu);
+        return true;
+    }
+    if (!ui_menu_open(&menu->menu, desc->props.menu.items,
+                      desc->props.menu.count)) {
+        *error = UI_VIEW_ERROR_INIT_FAILED;
+        return false;
+    }
+    return true;
+}
+
+/* Applies the descriptor to the widget of `node`. */
+static bool node_set_props(struct ui_view_node *node,
+                           enum ui_view_error *error)
+{
+    const struct ui_node_desc *desc = node->desc;
+    /* A list sets its style class from the node class name. */
+    if (node->kind != UI_NODE_WIDGET && node->kind != UI_NODE_LIST)
+        ui_widget_set_style_identity(node->widget, node->class_name,
+                                     node->id_name, node->tag_name);
+    ui_widget_set_debug_key(node->widget, node->key);
+    ui_widget_set_action_handler(node->widget, desc->on_action,
+                                 desc->action_userdata);
+    ui_widget_set_event_handler(node->widget, desc->on_event,
+                                desc->event_userdata);
+
+    switch (node->kind) {
+    case UI_NODE_ROW:
+    case UI_NODE_COLUMN:
+    case UI_NODE_STACK:
+        return true;
+    case UI_NODE_LABEL: {
+        struct ui_label *label = node->storage;
+        if (!ui_label_set_text(label, desc->props.label.text) ||
+            (desc->props.label.link &&
+             !ui_label_set_link(label, desc->props.label.link))) {
             *error = UI_VIEW_ERROR_INIT_FAILED;
             return false;
         }
@@ -394,24 +556,20 @@ static bool initialize_node(struct ui_view_node *node,
         ui_label_set_selectable(label, desc->props.label.selectable);
         ui_label_set_disabled(label, desc->props.label.disabled);
         ui_label_set_action_id(label, desc->action_id);
-        break;
+        return true;
     }
     case UI_NODE_BUTTON: {
         struct ui_button *button = node->storage;
-        ui_button_init(button);
-        node->widget = &button->widget;
         if (!ui_button_set_text(button, desc->props.button.text)) {
             *error = UI_VIEW_ERROR_INIT_FAILED;
             return false;
         }
         ui_button_set_disabled(button, desc->props.button.disabled);
         ui_button_set_action_id(button, desc->action_id);
-        break;
+        return true;
     }
     case UI_NODE_INPUT: {
         struct ui_input *input = node->storage;
-        ui_input_init(input);
-        node->widget = &input->widget;
         if (!ui_input_set_text(input, desc->props.input.text) ||
             !ui_input_set_placeholder(input, desc->props.input.placeholder)) {
             *error = UI_VIEW_ERROR_INIT_FAILED;
@@ -424,12 +582,10 @@ static bool initialize_node(struct ui_view_node *node,
             return false;
         }
         ui_input_set_action_id(input, desc->action_id);
-        break;
+        return true;
     }
     case UI_NODE_DROPDOWN: {
         struct ui_dropdown *dropdown = node->storage;
-        ui_dropdown_init(dropdown);
-        node->widget = &dropdown->widget;
         if (!ui_dropdown_set_items(dropdown, desc->props.dropdown.items,
                                    desc->props.dropdown.count)) {
             *error = UI_VIEW_ERROR_OUT_OF_MEMORY;
@@ -448,28 +604,188 @@ static bool initialize_node(struct ui_view_node *node,
             return false;
         }
         ui_dropdown_set_action_id(dropdown, desc->action_id);
-        break;
+        return true;
     }
     case UI_NODE_SCROLLVIEW: {
         struct ui_scrollview *scrollview = node->storage;
-        ui_scrollview_init(scrollview);
-        node->widget = &scrollview->widget;
         ui_scrollview_set_scrollbar(scrollview,
                                     desc->props.scrollview.scrollbar);
         ui_scrollview_set_scroll_step(scrollview,
                                       desc->props.scrollview.scroll_step);
-        break;
+        return true;
     }
+    case UI_NODE_LIST:
+        return set_list_props(node->storage, desc, error);
+    case UI_NODE_MENU:
+        return set_menu_props(node->storage, desc, error);
+    case UI_NODE_WIDGET:
+        return true;
     }
+    *error = UI_VIEW_ERROR_INVALID_KIND;
+    return false;
+}
 
-    ui_widget_set_style_identity(node->widget, node->class_name,
-                                 node->id_name, node->tag_name);
-    ui_widget_set_debug_key(node->widget, node->key);
-    ui_widget_set_action_handler(node->widget, desc->on_action,
-                                 desc->action_userdata);
-    ui_widget_set_event_handler(node->widget, desc->on_event,
-                                desc->event_userdata);
-    return true;
+/* Initializes a node that the view does not hold yet. */
+static bool node_init(struct ui_view_node *node, enum ui_view_error *error)
+{
+    if (!copy_node_strings(node)) {
+        *error = UI_VIEW_ERROR_OUT_OF_MEMORY;
+        return false;
+    }
+    node->bind = node->desc->bind;
+    if (!node_create(node, error))
+        return false;
+    return node_set_props(node, error);
+}
+
+/* Clears each handle slot that still points at the storage of `node`. */
+static void clear_bind_slots(const struct ui_view_node *node)
+{
+    const struct ui_node_bindings *bind = &node->bind;
+    if (bind->box && *bind->box == node->storage)
+        *bind->box = NULL;
+    if (bind->label && *bind->label == node->storage)
+        *bind->label = NULL;
+    if (bind->button && *bind->button == node->storage)
+        *bind->button = NULL;
+    if (bind->input && *bind->input == node->storage)
+        *bind->input = NULL;
+    if (bind->dropdown && *bind->dropdown == node->storage)
+        *bind->dropdown = NULL;
+    if (bind->scrollview && *bind->scrollview == node->storage)
+        *bind->scrollview = NULL;
+    if (bind->list && *bind->list == node->storage)
+        *bind->list = NULL;
+    if (bind->menu && *bind->menu == node->storage)
+        *bind->menu = NULL;
+}
+
+static void write_bind_slots(const struct ui_view_node *node)
+{
+    const struct ui_node_bindings *bind = &node->bind;
+    if (bind->box) *bind->box = node->storage;
+    if (bind->label) *bind->label = node->storage;
+    if (bind->button) *bind->button = node->storage;
+    if (bind->input) *bind->input = node->storage;
+    if (bind->dropdown) *bind->dropdown = node->storage;
+    if (bind->scrollview) *bind->scrollview = node->storage;
+    if (bind->list) *bind->list = node->storage;
+    if (bind->menu) *bind->menu = node->storage;
+}
+
+/* The storage of nodes that the view released. A busy surface frees it in a
+ * post, because a handler can run an update. */
+struct ui_view_garbage {
+    struct ui_view_node *nodes;
+    size_t count;
+};
+
+static void free_garbage(struct ui_surface *surface, void *userdata)
+{
+    (void)surface;
+    struct ui_view_garbage *garbage = userdata;
+    for (size_t i = 0; i < garbage->count; i++) {
+        free_node_strings(&garbage->nodes[i]);
+        free(garbage->nodes[i].storage);
+    }
+    free(garbage->nodes);
+    free(garbage);
+}
+
+/* Frees the strings and the storage of `count` nodes. The widgets are gone.
+ * The call frees now, or posts the free when the surface is busy. */
+static void dispose_nodes(struct ui_surface *surface, struct ui_view_node *nodes,
+                          size_t count)
+{
+    if (!surface || !ui_surface_busy(surface)) {
+        for (size_t i = 0; i < count; i++) {
+            free_node_strings(&nodes[i]);
+            free(nodes[i].storage);
+        }
+        free(nodes);
+        return;
+    }
+    struct ui_view_garbage *garbage = calloc(1, sizeof(*garbage));
+    if (garbage) {
+        garbage->nodes = nodes;
+        garbage->count = count;
+        if (ui_surface_post(surface, free_garbage, garbage))
+            return;
+        free(garbage);
+    }
+    /* No memory for the queue. Freeing now would break the rule that no
+     * storage is freed while the surface is busy, so it stays. */
+    fprintf(stderr, "wsap: view storage stays: out of memory\n");
+}
+
+/* Drops the nodes that a failed update created. A supplied widget goes back
+ * to its caller, because the view does not adopt it. */
+static void discard_nodes(struct ui_surface *surface, struct ui_view_node *nodes,
+                          size_t count, const size_t *match)
+{
+    for (size_t i = 0; i < count; i++) {
+        if (match && match[i] != SIZE_MAX) {
+            /* The view keeps this node. Free the copy of the strings only. */
+            free_node_strings(&nodes[i]);
+            nodes[i] = (struct ui_view_node){0};
+            continue;
+        }
+        if (!nodes[i].widget)
+            continue;
+        if (nodes[i].kind == UI_NODE_WIDGET) {
+            if (nodes[i].widget->parent)
+                ui_widget_remove_child(nodes[i].widget->parent,
+                                       nodes[i].widget);
+        } else {
+            ui_widget_destroy(nodes[i].widget);
+        }
+        nodes[i].widget = NULL;
+    }
+    dispose_nodes(surface, nodes, count);
+}
+
+/* Drops the nodes that an update matched away. */
+static void retire_nodes(struct ui_surface *surface, struct ui_view_node *nodes,
+                         size_t count, const bool *kept)
+{
+    for (size_t i = 0; i < count; i++) {
+        if (kept[i]) {
+            /* The view holds its own strings now. */
+            free_node_strings(&nodes[i]);
+            nodes[i] = (struct ui_view_node){0};
+            continue;
+        }
+        clear_bind_slots(&nodes[i]);
+        if (nodes[i].widget) {
+            ui_widget_destroy(nodes[i].widget);
+            nodes[i].widget = NULL;
+        }
+    }
+    dispose_nodes(surface, nodes, count);
+}
+
+static void view_widget_destroyed(struct ui_widget *widget, void *userdata)
+{
+    struct ui_view *view = userdata;
+    if (!view || view->destroying)
+        return;
+    for (size_t i = 0; i < view->count; i++) {
+        if (view->nodes[i].widget != widget)
+            continue;
+        view->nodes[i].widget = NULL;
+        clear_bind_slots(&view->nodes[i]);
+        if (view->root == widget)
+            view->root = NULL;
+        return;
+    }
+}
+
+static void observe_widgets(struct ui_view *view)
+{
+    for (size_t i = 0; i < view->count; i++)
+        if (view->nodes[i].widget)
+            ui_widget_set_destroy_observer(view->nodes[i].widget,
+                                           view_widget_destroyed, view);
 }
 
 static void free_view(struct ui_surface *surface, void *userdata)
@@ -477,10 +793,7 @@ static void free_view(struct ui_surface *surface, void *userdata)
     (void)surface;
     struct ui_view *view = userdata;
     for (size_t i = 0; i < view->count; i++) {
-        free(view->nodes[i].key);
-        free(view->nodes[i].class_name);
-        free(view->nodes[i].id_name);
-        free(view->nodes[i].tag_name);
+        free_node_strings(&view->nodes[i]);
         free(view->nodes[i].storage);
     }
     free(view->nodes);
@@ -491,6 +804,9 @@ void ui_view_destroy(struct ui_view *view)
 {
     if (!view)
         return;
+    if (view->destroying)
+        return;
+    view->destroying = true;
     struct ui_surface *surface = NULL;
     if (view->root) {
         surface = ui_widget_surface(view->root);
@@ -507,10 +823,14 @@ void ui_view_destroy(struct ui_view *view)
                 ui_widget_remove_child(node->widget->parent, node->widget);
         }
     }
-    for (size_t i = 0; i < view->count; i++)
-        if (view->nodes[i].widget &&
-            (view->committed || view->nodes[i].kind != UI_NODE_WIDGET))
-            ui_widget_destroy(view->nodes[i].widget);
+    for (size_t i = 0; i < view->count; i++) {
+        struct ui_view_node *node = &view->nodes[i];
+        clear_bind_slots(node);
+        if (node->widget &&
+            (view->committed || node->kind != UI_NODE_WIDGET))
+            ui_widget_destroy(node->widget);
+        node->widget = NULL;
+    }
     /* The widgets are gone. The storage waits when the surface still reads
      * its tree, because a widget handler can call this function. */
     if (surface && ui_surface_busy(surface)) {
@@ -538,73 +858,150 @@ const char *ui_view_error_message(enum ui_view_error error)
     return "Unknown error";
 }
 
-struct ui_view *ui_view_mount_ex(const struct ui_node_desc *root,
-                                 struct ui_view_diagnostic *diagnostic)
+/* True when a mounted node takes over the descriptor node. */
+static bool node_matchable(const struct ui_view_node *node,
+                           const struct ui_node_desc *desc)
 {
-    if (diagnostic)
-        *diagnostic = (struct ui_view_diagnostic){0};
-    if (!root) {
-        if (diagnostic)
-            diagnostic->error = UI_VIEW_ERROR_INVALID_ARGUMENT;
-        if (diagnostic)
-            diagnostic->detail = "Root descriptor is NULL";
-        return NULL;
-    }
+    if (node->kind != desc->kind || !node->widget)
+        return false;
+    if (desc->kind == UI_NODE_WIDGET &&
+        node->widget != desc->props.widget)
+        return false;
+    if (desc->key)
+        return node->key && !strcmp(node->key, desc->key);
+    return !node->key;
+}
 
-    struct ui_view *view = calloc(1, sizeof(*view));
-    if (!view) {
-        if (diagnostic) {
-            diagnostic->error = UI_VIEW_ERROR_OUT_OF_MEMORY;
-            diagnostic->node = root;
-            diagnostic->detail = "Cannot allocate view";
-        }
-        return NULL;
-    }
-
-    struct validate_context context = { .view = view };
-    if (!validate_node(&context, root, UINT32_MAX, 0)) {
-        if (diagnostic) {
-            diagnostic->error = context.error;
-            diagnostic->node = context.failed_node;
-            diagnostic->detail = context.detail;
-        }
-        ui_view_destroy(view);
-        return NULL;
-    }
-    enum ui_view_error mount_error = UI_VIEW_ERROR_NONE;
+/* The mounted node at child `ordinal` of `parent`, or SIZE_MAX. */
+static size_t mounted_child(const struct ui_view *view, uint32_t parent,
+                            size_t ordinal)
+{
+    size_t seen = 0;
     for (size_t i = 0; i < view->count; i++) {
-        if (!initialize_node(&view->nodes[i], &mount_error)) {
-            if (diagnostic) {
-                diagnostic->error = mount_error;
-                diagnostic->node = view->nodes[i].desc;
-                diagnostic->detail = ui_view_error_message(mount_error);
-            }
-            ui_view_destroy(view);
-            return NULL;
-        }
-    }
-    for (size_t i = 1; i < view->count; i++) {
-        struct ui_view_node *node = &view->nodes[i];
-        if (node->parent >= view->count ||
-            !ui_widget_add_child(view->nodes[node->parent].widget,
-                                 node->widget)) {
-            if (diagnostic) {
-                diagnostic->error = UI_VIEW_ERROR_INVALID_CHILDREN;
-                diagnostic->node = node->desc;
-                diagnostic->detail = "Cannot attach child to parent";
-            }
-            ui_view_destroy(view);
-            return NULL;
-        }
-    }
-    view->root = view->nodes[0].widget;
-    /* Apply descriptor attributes to supplied widgets only after all
-     * fallible work has succeeded. */
-    for (size_t i = 0; i < view->count; i++) {
-        struct ui_view_node *node = &view->nodes[i];
-        const struct ui_node_desc *desc = node->desc;
-        if (node->kind != UI_NODE_WIDGET)
+        if (view->nodes[i].parent != parent)
             continue;
+        if (seen++ == ordinal)
+            return i;
+    }
+    return SIZE_MAX;
+}
+
+/* The index of plan node `i` among the children of `parent`. */
+static size_t plan_ordinal(const struct ui_view_node *nodes, size_t i,
+                           uint32_t parent)
+{
+    size_t ordinal = 0;
+    for (size_t k = 0; k < i; k++)
+        if (nodes[k].parent == parent)
+            ordinal++;
+    return ordinal;
+}
+
+/* Fills `match` with the mounted node of each plan node, or SIZE_MAX. A node
+ * matches inside the subtree of its matched parent only. */
+static void match_nodes(const struct ui_view *view, const struct ui_view_node *plan,
+                        size_t count, size_t *match, bool *taken)
+{
+    for (size_t i = 0; i < count; i++) {
+        match[i] = SIZE_MAX;
+        uint32_t parent = UINT32_MAX;
+        size_t ordinal = 0;
+        if (i) {
+            uint32_t plan_parent = plan[i].parent;
+            if (match[plan_parent] == SIZE_MAX)
+                continue;
+            parent = (uint32_t)match[plan_parent];
+            ordinal = plan_ordinal(plan, i, plan_parent);
+        }
+        if (plan[i].desc->key) {
+            for (size_t j = 0; j < view->count; j++) {
+                if (taken[j] || view->nodes[j].parent != parent)
+                    continue;
+                if (node_matchable(&view->nodes[j], plan[i].desc)) {
+                    match[i] = j;
+                    break;
+                }
+            }
+        } else {
+            size_t j = mounted_child(view, parent, ordinal);
+            if (j != SIZE_MAX && !taken[j] &&
+                node_matchable(&view->nodes[j], plan[i].desc))
+                match[i] = j;
+        }
+        if (match[i] != SIZE_MAX)
+            taken[match[i]] = true;
+    }
+}
+
+/* True when each container accepts the children of the plan. `failed` names
+ * the first node that does not fit. */
+static bool child_limits_ok(const struct ui_view_node *nodes, size_t count,
+                            size_t *failed)
+{
+    for (size_t p = 0; p < count; p++) {
+        const struct ui_widget *widget = nodes[p].widget;
+        if (!widget || !widget->ops || !widget->ops->child_limit)
+            continue;
+        size_t children = 0;
+        for (size_t i = 1; i < count; i++) {
+            if (nodes[i].parent != p)
+                continue;
+            if (++children > widget->ops->child_limit) {
+                *failed = i;
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/* Places each node widget in descriptor order. A widget that stays in its
+ * parent keeps its focus and its hover. */
+static bool place_nodes(struct ui_view_node *nodes, size_t count,
+                        size_t *failed)
+{
+    *failed = 0;
+    if (!child_limits_ok(nodes, count, failed))
+        return false;
+    if (count < 2)
+        return true;
+    struct ui_widget **before = calloc(count, sizeof(*before));
+    if (!before)
+        return false;
+    bool placed = true;
+    for (size_t i = count; i-- > 1;) {
+        uint32_t parent = nodes[i].parent;
+        struct ui_widget *parent_widget = nodes[parent].widget;
+        struct ui_widget *child = nodes[i].widget;
+        *failed = i;
+        if (!parent_widget || !child) {
+            placed = false;
+            break;
+        }
+        if (child->parent && child->parent != parent_widget &&
+            !ui_widget_remove_child(child->parent, child)) {
+            placed = false;
+            break;
+        }
+        if (!ui_widget_insert_child(parent_widget, child, before[parent])) {
+            placed = false;
+            break;
+        }
+        before[parent] = child;
+    }
+    free(before);
+    return placed;
+}
+
+/* Applies the descriptor attributes to the supplied widgets, after all
+ * fallible work has succeeded. */
+static void apply_supplied_attributes(struct ui_view *view)
+{
+    for (size_t i = 0; i < view->count; i++) {
+        struct ui_view_node *node = &view->nodes[i];
+        if (node->kind != UI_NODE_WIDGET || !node->widget || !node->desc)
+            continue;
+        const struct ui_node_desc *desc = node->desc;
         struct ui_widget *widget = node->widget;
         if (desc->class_name || desc->id_name || desc->tag_name)
             ui_widget_set_style_identity(widget,
@@ -621,17 +1018,135 @@ struct ui_view *ui_view_mount_ex(const struct ui_node_desc *root,
             ui_widget_set_event_handler(widget, desc->on_event,
                                         desc->event_userdata);
     }
+}
+
+bool ui_view_update_ex(struct ui_view *view, const struct ui_node_desc *root,
+                       struct ui_view_diagnostic *diagnostic)
+{
+    if (diagnostic)
+        *diagnostic = (struct ui_view_diagnostic){0};
+    if (!view || !root) {
+        if (diagnostic) {
+            diagnostic->error = UI_VIEW_ERROR_INVALID_ARGUMENT;
+            diagnostic->node = root;
+            diagnostic->detail = "Root descriptor is NULL";
+        }
+        return false;
+    }
+
+    size_t count = 0;
+    struct ui_view_node *plan = plan_nodes(root, &count, diagnostic);
+    if (!plan)
+        return false;
+
+    struct ui_surface *surface = view->root ? ui_widget_surface(view->root)
+                                            : NULL;
+    size_t *match = malloc(count * sizeof(*match));
+    bool *taken = calloc(view->count ? view->count : 1, sizeof(*taken));
+    struct ui_view_node *next = calloc(count ? count : 1, sizeof(*next));
+    if (!match || !taken || !next) {
+        if (diagnostic) {
+            diagnostic->error = UI_VIEW_ERROR_OUT_OF_MEMORY;
+            diagnostic->node = root;
+            diagnostic->detail = "Cannot allocate the update";
+        }
+        free(match);
+        free(taken);
+        free(next);
+        free(plan);
+        return false;
+    }
+
+    enum ui_view_error error = UI_VIEW_ERROR_NONE;
+    const struct ui_node_desc *failed = root;
+    match_nodes(view, plan, count, match, taken);
+    for (size_t i = 0; i < count; i++) {
+        if (match[i] == SIZE_MAX) {
+            next[i].desc = plan[i].desc;
+            next[i].kind = plan[i].kind;
+            next[i].parent = plan[i].parent;
+            failed = plan[i].desc;
+            if (!node_init(&next[i], &error))
+                goto fail;
+            continue;
+        }
+        struct ui_view_node *held = &view->nodes[match[i]];
+        next[i] = *held;
+        next[i].desc = plan[i].desc;
+        next[i].bind = plan[i].desc->bind;
+        failed = plan[i].desc;
+        if (!copy_node_strings(&next[i])) {
+            error = UI_VIEW_ERROR_OUT_OF_MEMORY;
+            goto fail;
+        }
+        if (!node_set_props(&next[i], &error))
+            goto fail;
+    }
+    size_t bad = 0;
+    if (!place_nodes(next, count, &bad)) {
+        failed = plan[bad].desc;
+        error = UI_VIEW_ERROR_INVALID_CHILDREN;
+        goto fail;
+    }
+
+    /* The update succeeded. Take the new node list, and retire the nodes that
+     * lost their match. */
+    struct ui_view_node *old = view->nodes;
+    size_t old_count = view->count;
+    for (size_t i = 0; i < count; i++)
+        write_bind_slots(&next[i]);
+    view->nodes = next;
+    view->count = count;
+    view->capacity = count;
+    view->root = count ? next[0].widget : NULL;
     view->committed = true;
-    for (size_t i = 0; i < view->count; i++) {
-        struct ui_view_node *node = &view->nodes[i];
-        const struct ui_node_bindings *bind = &node->desc->bind;
-        if (bind->box) *bind->box = node->storage;
-        if (bind->label) *bind->label = node->storage;
-        if (bind->button) *bind->button = node->storage;
-        if (bind->input) *bind->input = node->storage;
-        if (bind->dropdown) *bind->dropdown = node->storage;
-        if (bind->scrollview) *bind->scrollview = node->storage;
+    apply_supplied_attributes(view);
+    observe_widgets(view);
+    for (size_t i = 0; i < count; i++)
         view->nodes[i].desc = NULL;
+    retire_nodes(surface, old, old_count, taken);
+    free(match);
+    free(taken);
+    free(plan);
+    return true;
+
+fail:
+    if (diagnostic) {
+        diagnostic->error = error == UI_VIEW_ERROR_NONE
+            ? UI_VIEW_ERROR_INIT_FAILED : error;
+        diagnostic->node = failed;
+        diagnostic->detail = ui_view_error_message(diagnostic->error);
+    }
+    discard_nodes(surface, next, count, match);
+    free(match);
+    free(taken);
+    free(plan);
+    return false;
+}
+
+bool ui_view_update(struct ui_view *view, const struct ui_node_desc *root)
+{
+    struct ui_view_diagnostic diagnostic;
+    return ui_view_update_ex(view, root, &diagnostic);
+}
+
+struct ui_view *ui_view_mount_ex(const struct ui_node_desc *root,
+                                 struct ui_view_diagnostic *diagnostic)
+{
+    struct ui_view *view = calloc(1, sizeof(*view));
+    if (!view) {
+        if (diagnostic) {
+            *diagnostic = (struct ui_view_diagnostic){
+                .error = UI_VIEW_ERROR_OUT_OF_MEMORY,
+                .node = root,
+                .detail = "Cannot allocate view",
+            };
+        }
+        return NULL;
+    }
+    if (!ui_view_update_ex(view, root, diagnostic)) {
+        ui_view_destroy(view);
+        return NULL;
     }
     return view;
 }
@@ -678,3 +1193,13 @@ UI_VIEW_TYPED_LOOKUP(ui_view_dropdown, struct ui_dropdown,
                      node->kind == UI_NODE_DROPDOWN)
 UI_VIEW_TYPED_LOOKUP(ui_view_scrollview, struct ui_scrollview,
                      node->kind == UI_NODE_SCROLLVIEW)
+UI_VIEW_TYPED_LOOKUP(ui_view_list, struct ui_list,
+                     node->kind == UI_NODE_LIST)
+
+struct ui_menu *ui_view_menu(struct ui_view *view, const char *key)
+{
+    struct ui_view_node *node = find_node(view, key);
+    if (!node || node->kind != UI_NODE_MENU || !node->storage)
+        return NULL;
+    return &((struct ui_menu_node *)node->storage)->menu;
+}

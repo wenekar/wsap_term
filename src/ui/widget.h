@@ -56,6 +56,27 @@ struct ui_part_slot {
     struct css_style style;
 };
 
+/* The paint colors of one widget, moved across a CSS transition. The channels
+ * are the background, the border, and the text colors. */
+enum ui_style_channel : uint8_t {
+    UI_STYLE_CHANNEL_BG = 0,
+    UI_STYLE_CHANNEL_BORDER,
+    UI_STYLE_CHANNEL_TEXT,
+    UI_STYLE_CHANNEL_COUNT,
+};
+
+struct ui_widget_style_anim {
+    uint32_t from[UI_STYLE_CHANNEL_COUNT];
+    uint32_t to[UI_STYLE_CHANNEL_COUNT];
+    uint32_t current[UI_STYLE_CHANNEL_COUNT];
+    float opacity_from;
+    float opacity_to;
+    float opacity_current;
+    uint64_t start_ms;
+    uint32_t duration_ms;
+    bool valid;
+};
+
 struct ui_widget {
     const struct ui_widget_ops *ops;
     struct ui_widget *first_child;
@@ -69,6 +90,8 @@ struct ui_widget {
     struct vector2i measured_size;
     struct {
         uint16_t style_pseudo;
+        /* The hover and focus flags that the surface set last time. */
+        uint16_t style_pseudo_auto;
         uint8_t invalidation;
         bool accessibility_ignored : 1;
         bool accessibility_invalid : 1;
@@ -87,6 +110,10 @@ struct ui_widget {
         void *event_userdata;
         ui_capture_fn key_capture;
         void *key_capture_userdata;
+        /* Warns an owner that another owner destroys the widget. The owner
+         * clears the reference and keeps its own storage. */
+        void (*destroy_observer)(struct ui_widget *widget, void *userdata);
+        void *destroy_observer_userdata;
         uint64_t accessibility_id;
         char *accessible_name;
         char *accessible_description;
@@ -98,6 +125,7 @@ struct ui_widget {
         struct ui_part_slot *part_slots;
         uint64_t deadline;
         size_t child_count;
+        struct ui_widget_style_anim style_anim;
     } impl;
     struct css_style style;
     struct css_scale_context style_scale;
@@ -182,6 +210,15 @@ void ui_widget_set_event_handler(struct ui_widget *widget, ui_event_fn fn,
 /* Registers key capture callback `fn` and `userdata` for `widget`. */
 void ui_widget_set_key_capture(struct ui_widget *widget, ui_capture_fn fn,
                                void *userdata);
+
+/* Registers a function that ui_widget_destroy calls for `widget`. The call
+ * runs while the widget storage is still readable, after the children and the
+ * ops table release their resources. The function must not use the widget as
+ * a live widget. Pass NULL to remove the observer. */
+void ui_widget_set_destroy_observer(struct ui_widget *widget,
+                                    void (*fn)(struct ui_widget *widget,
+                                               void *userdata),
+                                    void *userdata);
 
 /* Dispatches input `event` to `widget`. */
 bool ui_widget_event(struct ui_widget *widget, const struct ui_event *event);
