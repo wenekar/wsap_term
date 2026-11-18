@@ -9,8 +9,9 @@
 #define UNICODE_BYTE_ONES 0x0101010101010101ull
 
 /* Sets the high bit of each byte that is below 0x20 or at or above `limit`.
- * `limit` is the same value in every byte and stays at or below 0x80.
- * The caller clears the high bits of high bytes by the last term. */
+ * `limit` holds the value of `hi` in every byte and stays at or below 0x80.
+ * The last term marks each byte above 0x7f, which is always outside the
+ * range. */
 static inline uint64_t unicode_outside_bytes(uint64_t word, uint64_t limit)
 {
     uint64_t subject = word | UNICODE_BYTE_HIGH;

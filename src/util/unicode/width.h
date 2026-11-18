@@ -8,13 +8,12 @@
 /*
  * This module is a copy of the Unicode helpers of wsap_vtcore.
  * The source is subprojects/term/include/wsap_vtcore/unicode/.
- * That subproject builds alone and cannot use the main tree.
- * So each side holds a copy of the code and of the data tables.
+ * The term subproject builds alone, so each side keeps its own copy.
  * The term copy is the output of subprojects/term/tools/generate_unicode.py.
- * When that copy changes, apply the same change here.
+ * After a regeneration, apply the same data here.
  * Rename the wsap_vtcore_ prefix to unicode_, and give each table the
- * unicode_table_ prefix. tests/util/unicode_parity_test.c checks that the two
- * copies agree.
+ * unicode_table_ prefix.
+ * tests/util/unicode_parity_test.c checks that the two copies agree.
  */
 
 struct unicode_range {
