@@ -7,6 +7,7 @@ ui_widgets_src = files(
     'menu.c',
     'palette.c',
     'scrollview.c',
+    'toggle.c',
     'tab_preview.c',
     'tabbar/geometry.c',
     'tabbar/scene.c',
