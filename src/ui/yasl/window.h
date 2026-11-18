@@ -25,6 +25,14 @@ struct window_config {
 
 struct window_host_hooks {
     void (*empty)(void *ud, struct window *last);
+    /* The close request of one window. Return false to keep it open. The
+     * host asks again on the next request. Without this hook the window
+     * closes. */
+    bool (*close)(void *ud, struct window *w);
+    /* A quit request. Return false to cancel the quit. The host asks again
+     * on the next request. Without this hook the quit runs. */
+    bool (*quit_request)(void *ud);
+    /* The quit action. It runs after a quit request is allowed. */
     void (*quit)(void *ud);
     void (*reopen)(void *ud);
     bool (*command)(void *ud, struct window *w, enum input_shortcut action);
@@ -68,6 +76,12 @@ struct window_host {
 void window_host_init(struct window_host *host, struct yasl_loop *loop,
                       const struct window_config *config,
                       const struct window_host_hooks *hooks);
+/* Asks the close hook whether `w` may close. Returns true when the host
+ * allows the close. */
+bool window_host_request_close(struct window *w);
+/* Asks the quit request hook whether the app may quit. Returns true when the
+ * host allows the quit. */
+bool window_host_request_quit(struct window_host *host);
 void window_host_destroy(struct window_host *host);
 void window_host_reap(struct window_host *host);
 void window_host_schedule(struct window_host *host);
