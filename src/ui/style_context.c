@@ -9,17 +9,27 @@
 #include <stdlib.h>
 #include <string.h>
 
+static void drop_owned_sheet(struct ui_style_context *context)
+{
+    if (!context->owned_sheet)
+        return;
+    css_sheet_clear(context->owned_sheet);
+    free(context->owned_sheet);
+    context->owned_sheet = NULL;
+}
+
 static void rebuild_sheet(struct ui_style_context *context)
 {
     if (!context)
         return;
     if (!context->host_sheet) {
-        if (context->owned_sheet) {
-            css_sheet_clear(context->owned_sheet);
-            free(context->owned_sheet);
-            context->owned_sheet = NULL;
-        }
+        drop_owned_sheet(context);
         context->sheet = css_default_sheet();
+        return;
+    }
+    if (context->host_sheet->has_defaults) {
+        drop_owned_sheet(context);
+        context->sheet = context->host_sheet;
         return;
     }
 
@@ -32,8 +42,7 @@ static void rebuild_sheet(struct ui_style_context *context)
     }
 
     css_sheet_clear(context->owned_sheet);
-    if (!context->host_sheet->has_defaults)
-        css_init_default(context->owned_sheet);
+    css_init_default(context->owned_sheet);
     css_sheet_append(context->owned_sheet, context->host_sheet);
     context->sheet = context->owned_sheet;
 }
