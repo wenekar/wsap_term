@@ -141,6 +141,47 @@ static void test_open_uri(const char *dir)
     if (old_path) setenv("PATH", old_path, 1);
 }
 
+/* The call starts the opener and returns. It must not wait for the opener to
+ * finish, and the opener must still run. */
+static void test_open_uri_nonblocking(const char *root)
+{
+    char dir[PATH_MAX * 2], script[PATH_MAX * 2 + 32], out[PATH_MAX * 2 + 32];
+    snprintf(dir, sizeof(dir), "%s/slow", root);
+    assert(mkdir(dir, 0700) == 0);
+    snprintf(script, sizeof(script), "%s/xdg-open", dir);
+    snprintf(out, sizeof(out), "%s/opened", dir);
+    FILE *f = fopen(script, "w");
+    assert(f);
+    fprintf(f, "#!/bin/sh\nsleep 1\nprintf '%%s\\n' \"$1\" > '%s'\n", out);
+    fclose(f);
+    assert(chmod(script, 0755) == 0);
+    const char *old_path = getenv("PATH");
+    char saved[8192];
+    snprintf(saved, sizeof(saved), "%s", old_path ? old_path : "");
+    char path[sizeof(dir) + 16];
+    snprintf(path, sizeof(path), "%s:/usr/bin:/bin", dir);
+    setenv("PATH", path, 1);
+
+    struct yasl_private_display display = {0};
+    struct timespec start, end;
+    assert(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+    assert(yasl_private_display_open_uri(&display, "https://example.com/slow"));
+    assert(clock_gettime(CLOCK_MONOTONIC, &end) == 0);
+    long elapsed_ms = (end.tv_sec - start.tv_sec) * 1000L +
+                      (end.tv_nsec - start.tv_nsec) / 1000000L;
+    assert(elapsed_ms < 500);
+
+    char *text = NULL;
+    for (int i = 0; i < 500 && !(text = read_file(out)); i++) sleep_ms(10);
+    assert(text && strstr(text, "https://example.com/slow"));
+
+    if (saved[0]) setenv("PATH", saved, 1);
+    else unsetenv("PATH");
+    unlink(out);
+    unlink(script);
+    rmdir(dir);
+}
+
 static void test_appearance_fallback(void)
 {
     assert(yasl_private_display_double_click_ms(NULL) == YASL_PRIVATE_DOUBLE_CLICK_MS_DEFAULT);
@@ -293,6 +334,17 @@ static void *serve(void *ud)
     return NULL;
 }
 
+struct read_worker { bool ok; };
+
+static void *read_settings(void *ud)
+{
+    struct read_worker *worker = ud;
+    for (int i = 0; i < 8; i++)
+        if (portal_double_click_ms() != 333)
+            worker->ok = false;
+    return NULL;
+}
+
 static void test_bus(const char *address)
 {
     DBusError err;
@@ -334,6 +386,16 @@ static void test_bus(const char *address)
     assert(yasl_private_display_appearance(&display) == want);
     unsetenv("GTK_THEME");
 
+    /* Concurrent callers share one connection and one result. */
+    struct read_worker workers[3] = {{.ok = true}, {.ok = true}, {.ok = true}};
+    pthread_t threads[3];
+    for (int i = 0; i < 3; i++)
+        assert(pthread_create(&threads[i], NULL, read_settings, &workers[i]) == 0);
+    for (int i = 0; i < 3; i++) {
+        pthread_join(threads[i], NULL);
+        assert(workers[i].ok);
+    }
+
     /* A KDE value, sent as a string, wins over the GNOME key. */
     assert(portal_double_click_ms() == 333);
     fb.kde = true;
@@ -356,6 +418,7 @@ int main(void)
     assert(mkdtemp(dir));
     test_buffers();
     test_open_uri(dir);
+    test_open_uri_nonblocking(dir);
 
     /* Hide the session bus so that desktop services fall back. */
     char *address = getenv("DBUS_SESSION_BUS_ADDRESS");

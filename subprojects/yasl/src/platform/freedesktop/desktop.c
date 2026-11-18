@@ -5,10 +5,12 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <signal.h>
+#include <spawn.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -43,54 +45,86 @@ static bool find_program(const char *name, char *out, size_t cap)
     return false;
 }
 
+/* The opener can outlive the call by seconds. Reap it on a detached thread, so
+ * the caller never waits and no child becomes a zombie. */
+static void *reap_child(void *ud)
+{
+    pid_t pid = (pid_t)(intptr_t)ud;
+    int status;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    return NULL;
+}
+
+/* Start the program in a new session with the state a helper needs: default
+ * signal dispositions, an empty signal mask, stdin on /dev/null, and no
+ * descriptors above stderr. */
+static bool spawn_detached(char *const argv[], const char *program, pid_t *pid_out)
+{
+    posix_spawn_file_actions_t actions;
+    posix_spawnattr_t attr;
+    if (posix_spawn_file_actions_init(&actions) != 0) return false;
+    if (posix_spawnattr_init(&attr) != 0) {
+        posix_spawn_file_actions_destroy(&actions);
+        return false;
+    }
+    int error = posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null",
+                                                 O_RDONLY, 0);
+    if (!error) {
+#if defined(__GLIBC__) && defined(__GLIBC_PREREQ) && __GLIBC_PREREQ(2, 34)
+        error = posix_spawn_file_actions_addclosefrom_np(&actions, 3);
+#else
+        long max_fd = sysconf(_SC_OPEN_MAX);
+        if (max_fd < 0 || max_fd > 65536) max_fd = 65536;
+        for (int fd = 3; !error && fd < max_fd; fd++)
+            error = posix_spawn_file_actions_addclose(&actions, fd);
+#endif
+    }
+    if (!error) {
+        sigset_t defaults, none;
+        sigfillset(&defaults);
+        sigdelset(&defaults, SIGKILL);
+        sigdelset(&defaults, SIGSTOP);
+        sigemptyset(&none);
+        error = posix_spawnattr_setsigdefault(&attr, &defaults);
+        if (!error) error = posix_spawnattr_setsigmask(&attr, &none);
+        short flags = POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK;
+#if defined(POSIX_SPAWN_SETSID)
+        if (!error) error = posix_spawnattr_setflags(&attr, flags | POSIX_SPAWN_SETSID);
+#else
+        if (!error) error = posix_spawnattr_setpgroup(&attr, 0);
+        if (!error) error = posix_spawnattr_setflags(&attr, flags | POSIX_SPAWN_SETPGROUP);
+#endif
+    }
+    bool ok = false;
+    if (!error) {
+        error = posix_spawn(pid_out, program, &actions, &attr, argv, environ);
+        ok = error == 0;
+    }
+    posix_spawnattr_destroy(&attr);
+    posix_spawn_file_actions_destroy(&actions);
+    if (!ok) errno = error ? error : EIO;
+    return ok;
+}
+
 bool desktop_open_uri(const char *uri)
 {
     char program[4096];
     if (!find_program("xdg-open", program, sizeof(program))) return false;
     char *argv[] = {"xdg-open", (char *)uri, NULL};
-
-    /* Prepare everything before fork: the children of a threaded process may
-     * only make async-signal-safe calls. */
-    struct sigaction dfl = {.sa_handler = SIG_DFL};
-    sigemptyset(&dfl.sa_mask);
-    sigset_t none;
-    sigemptyset(&none);
-    long max_fd = sysconf(_SC_OPEN_MAX);
-    if (max_fd < 0 || max_fd > 65536) max_fd = 65536;
-
-    /* The middle child exits at once, so the opener is reparented away from
-     * the application and never needs reaping here. */
-    pid_t pid = fork();
-    if (pid < 0) return false;
-    if (pid == 0) {
-        setsid();
-        pid_t opener = fork();
-        if (opener != 0) _exit(opener < 0 ? 1 : 0);
-        for (int sig = 1; sig < NSIG; sig++)
-            if (sig != SIGKILL && sig != SIGSTOP) sigaction(sig, &dfl, NULL);
-        sigprocmask(SIG_SETMASK, &none, NULL);
-        int null = open("/dev/null", O_RDONLY);
-        if (null > 0) {
-            dup2(null, STDIN_FILENO);
-            close(null);
-        }
-        /* Keep application descriptors, such as pty masters, out of the opener. */
-#ifdef SYS_close_range
-        if (syscall(SYS_close_range, 3u, ~0u, 0u) != 0)
-#endif
-            for (int fd = 3; fd < max_fd; fd++) close(fd);
-        execve(program, argv, environ);
-        _exit(127);
+    pid_t pid;
+    if (!spawn_detached(argv, program, &pid)) return false;
+    pthread_t thread;
+    int error = pthread_create(&thread, NULL, reap_child, (void *)(intptr_t)pid);
+    if (error == 0) {
+        pthread_detach(thread);
+        return true;
     }
-
+    /* No thread to reap it: kill the opener and collect it here. */
+    kill(pid, SIGKILL);
     int status;
-    pid_t done;
-    do {
-        done = waitpid(pid, &status, 0);
-    } while (done < 0 && errno == EINTR);
-    /* An application reaper can collect the middle child first. */
-    if (done < 0) return errno == ECHILD;
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    errno = error;
+    return false;
 }
 
 bool desktop_notify(const char *app_id, const char *title, const char *body)

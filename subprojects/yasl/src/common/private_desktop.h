@@ -39,8 +39,10 @@ enum yasl_private_appearance : uint32_t {
  * hosts it trusts. Success does not confirm that a handler opened the URI.
  * Linux runs xdg-open from PATH in a new session, with default signal
  * dispositions, an empty signal mask, stdin on /dev/null, and no descriptors
- * above stderr. It forks a short-lived helper first, which raises SIGCHLD;
- * YASL reaps it unless the application's reaper does. Cocoa uses NSWorkspace.
+ * above stderr. It starts the program with posix_spawn and reaps it on a
+ * detached thread, so the call does not wait for the opener. The child can
+ * raise SIGCHLD; the reaper collects it, or the application's own reaper can.
+ * Cocoa uses NSWorkspace.
  */
 bool yasl_private_display_open_uri(struct yasl_private_display *d, const char *uri);
 /**
