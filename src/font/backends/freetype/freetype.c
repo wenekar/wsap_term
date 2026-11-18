@@ -27,16 +27,13 @@ char **font_list_families(size_t *count)
         return NULL;
     fc_query_lock();
     FcPattern *pattern = FcPatternCreate();
-    FcObjectSet *objects = FcObjectSetBuild(FC_FAMILY, FC_SPACING, NULL);
+    FcObjectSet *objects = FcObjectSetBuild(FC_FAMILY, NULL);
     FcFontSet *fonts = pattern && objects ? FcFontList(NULL, pattern, objects) : NULL;
     char **names = fonts ? calloc((size_t)fonts->nfont + 1, sizeof(*names)) : NULL;
     bool ok = names != NULL;
     for (int i = 0; ok && i < fonts->nfont; i++) {
-        int spacing = 0;
         FcChar8 *family = NULL;
-        if (FcPatternGetInteger(fonts->fonts[i], FC_SPACING, 0, &spacing) != FcResultMatch ||
-            spacing < FC_MONO ||
-            FcPatternGetString(fonts->fonts[i], FC_FAMILY, 0, &family) != FcResultMatch)
+        if (FcPatternGetString(fonts->fonts[i], FC_FAMILY, 0, &family) != FcResultMatch)
             continue;
         bool duplicate = false;
         for (size_t j = 0; j < *count; j++)

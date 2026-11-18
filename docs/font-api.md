@@ -196,7 +196,7 @@ Worker threads manage state during their lifecycle. A worker attaches backend st
 - `font_parse_hint_style()`, `font_hint_style_name()`: Convert hinting strength between string names and enum values.
 - `font_parse_aa_mode()`, `font_aa_mode_name()`: Convert antialiasing mode between string names and enum values.
 - `font_set_family()`, `font_get_family()`: Set and read configured font family names.
-- `font_list_families()`: Returns a list of installed monospace font families.
+- `font_list_families()`: Returns a list of installed font families, each named once. The list holds monospace and proportional families. Use a descriptor to ask for one or the other.
 - `font_set_configured_size()`, `font_configured_size()`: Set and read the default fallback font size.
 - `font_apply_settings()`: Applies font settings, updating only values that changed from a previous configuration.
 - `font_backend_init()`, `font_backend_shutdown()`: Initialize and terminate the font backend.

@@ -27,29 +27,8 @@ char **font_list_families(size_t *count)
     *count = 0;
     register_bundled_fonts(true);
     @autoreleasepool {
-        int32_t mono_trait = kCTFontMonoSpaceTrait;
-        const void *trait_keys[] = { kCTFontSymbolicTrait };
-        const void *trait_values[] = { CFNumberCreate(kCFAllocatorDefault,
-            kCFNumberSInt32Type, &mono_trait) };
-        if (!trait_values[0]) return NULL;
-        CFDictionaryRef traits = CFDictionaryCreate(kCFAllocatorDefault,
-            trait_keys, trait_values, 1, &kCFTypeDictionaryKeyCallBacks,
-            &kCFTypeDictionaryValueCallBacks);
-        CFRelease(trait_values[0]);
-        if (!traits) return NULL;
-        const void *keys[] = { kCTFontTraitsAttribute };
-        const void *values[] = { traits };
-        CFDictionaryRef attrs = CFDictionaryCreate(kCFAllocatorDefault,
-            keys, values, 1, &kCFTypeDictionaryKeyCallBacks,
-            &kCFTypeDictionaryValueCallBacks);
-        CFRelease(traits);
-        if (!attrs) return NULL;
-        CTFontDescriptorRef query = CTFontDescriptorCreateWithAttributes(attrs);
-        CFRelease(attrs);
-        if (!query) return NULL;
-        CTFontCollectionRef collection = CTFontCollectionCreateWithFontDescriptors(
-            (__bridge CFArrayRef)@[(__bridge id)query], NULL);
-        CFRelease(query);
+        CTFontCollectionRef collection =
+            CTFontCollectionCreateFromAvailableFonts(NULL);
         if (!collection) return NULL;
         CFArrayRef families = CTFontCollectionCreateMatchingFontDescriptors(collection);
         CFRelease(collection);

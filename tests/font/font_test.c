@@ -1719,6 +1719,85 @@ static bool each_regular_font(bool (*fn)(const char *file, const char *family,
     return found;
 }
 
+/* A regular face of an installed family, named for the discovery test. */
+struct family_sample {
+    char proportional[128];
+    char monospace[128];
+};
+
+static bool sample_family(const char *file, const char *family, FcCharSet *cs,
+                          void *ctx)
+{
+    struct family_sample *sample = ctx;
+    if (!FcCharSetHasChar(cs, 'i') || !FcCharSetHasChar(cs, 'M'))
+        return false;
+    FT_Library lib;
+    if (FT_Init_FreeType(&lib))
+        return false;
+    FT_Face face = NULL;
+    bool both = false;
+    if (!FT_New_Face(lib, file, 0, &face) && FT_IS_SCALABLE(face) &&
+        !FT_Set_Pixel_Sizes(face, 0, 16) &&
+        !FT_Load_Char(face, 'i', FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP)) {
+        FT_Pos narrow = face->glyph->advance.x;
+        both = !FT_Load_Char(face, 'M', FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP) &&
+               face->glyph->advance.x != narrow;
+    }
+    if (both && !sample->proportional[0])
+        snprintf(sample->proportional, sizeof(sample->proportional), "%s", family);
+    if (!both && !sample->monospace[0])
+        snprintf(sample->monospace, sizeof(sample->monospace), "%s", family);
+    if (face)
+        FT_Done_Face(face);
+    FT_Done_FreeType(lib);
+    return sample->proportional[0] && sample->monospace[0];
+}
+
+static bool family_listed(char **names, size_t count, const char *family)
+{
+    for (size_t i = 0; family && family[0] && i < count; i++)
+        if (!strcmp(names[i], family))
+            return true;
+    return false;
+}
+
+static void test_family_discovery(void)
+{
+    size_t count = 0;
+    char **names = font_list_families(&count);
+    if (!names || !count) {
+        printf("SKIP  no font families are installed\n");
+        return;
+    }
+
+    bool unique = true;
+    for (size_t i = 0; i < count && unique; i++)
+        for (size_t j = i + 1; j < count; j++)
+            if (!strcmp(names[i], names[j])) {
+                unique = false;
+                break;
+            }
+    check("the family list names each family once", unique);
+
+    struct family_sample sample = {0};
+    each_regular_font(sample_family, &sample);
+    if (!sample.proportional[0] || !sample.monospace[0]) {
+        printf("SKIP  no pair of monospace and proportional families is installed\n");
+    } else {
+        char what[192];
+        snprintf(what, sizeof(what), "the family list offers the monospace family %s",
+                 sample.monospace);
+        check(what, family_listed(names, count, sample.monospace));
+        snprintf(what, sizeof(what), "the family list offers the proportional family %s",
+                 sample.proportional);
+        check(what, family_listed(names, count, sample.proportional));
+    }
+
+    for (size_t i = 0; i < count; i++)
+        free(names[i]);
+    free(names);
+}
+
 static bool match_sibling(const char *regular, const char *family, int weight,
                           int slant, char out[PATH_MAX], FcCharSet **cs)
 {
@@ -2256,6 +2335,7 @@ int main(int argc, char **argv)
     font_instance_render_glyph(cur(), 0x10FFFF, 0, &unknown);
 
     test_variant_golden();
+    test_family_discovery();
     test_cell_tiling();
     test_tile_colors();
     test_programming_ligatures();
