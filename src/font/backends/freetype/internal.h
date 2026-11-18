@@ -51,6 +51,8 @@ static inline int ft_configured_faces(void)
 extern const char embedded_cards_path[];
 
 int ft_face_px(void);
+/* Returns true when the last face open asked for a cell font. */
+bool ft_cell_mode(void);
 void ensure_primary_face(int i);
 void ensure_styled_face(int i, enum font_variant variant);
 hb_font_t *face_hb_font(int i, enum font_variant variant);
@@ -75,6 +77,8 @@ uint8_t raster_hint_key(void);
 void ft_apply_hinting(void);
 void font_hinting_init_library(FT_Library lib);
 bool font_hinting_has_auto_axis(void);
+
+extern __thread bool ft_cell_aligned;
 
 bool supported_pixel_mode(const FT_Bitmap *bitmap);
 struct box ft_place_ink(int left, int above_baseline, int w, int h,
@@ -176,7 +180,7 @@ enum font_shape_result font_shape(int slot, const uint32_t *cps, int len,
                                   uint16_t flags, uint32_t script,
                                   struct shaped_run *out);
 
-bool font_fit_single(const struct shaped_run *run, struct glyph *g);
+bool font_fit_single(const struct shaped_run *run, uint8_t phase, struct glyph *g);
 bool font_fit_cells(const struct shaped_run *run, int n_cells, struct glyph *cells);
 
 void raster_cache_clear(void);

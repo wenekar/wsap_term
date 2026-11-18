@@ -139,9 +139,28 @@ void *cache_slot_fill(struct cache_slot *slot, uint32_t key, uint32_t cp, uint16
     return p;
 }
 
+/* The render request of one cache slot fill. */
+struct glyph_fill_ctx {
+    struct font_instance *fi;
+    uint8_t phase;
+};
+
+/* The cache slot layer passes the code point and the style. The phase and
+ * the instance travel in the fill context. */
+static inline void glyph_fill_args(uint16_t flags, void *ctx, uint8_t *phase,
+                                   struct font_instance **fi)
+{
+    const struct glyph_fill_ctx *c = ctx;
+    *phase = c ? c->phase : 0;
+    *fi = c ? c->fi : NULL;
+    (void)flags;
+}
+
 static void *glyph_slot_produce(uint32_t cp, uint16_t flags, void *old, void *ctx)
 {
-    struct font_instance *fi = ctx;
+    struct font_instance *fi;
+    uint8_t phase;
+    glyph_fill_args(flags, ctx, &phase, &fi);
     struct glyph *g = old;
     if (!g) {
         g = buf_new(BK_GLYPH_ARR, 1, sizeof(*g));
@@ -149,24 +168,32 @@ static void *glyph_slot_produce(uint32_t cp, uint16_t flags, void *old, void *ct
             return NULL;
         *g = (struct glyph){0};
     }
-    font_instance_render_glyph(fi, cp, flags, g);
+    font_instance_render_glyph_at(fi, cp, flags, phase, g);
     return g;
 }
 
 static void *glyph_slot_slow(uint32_t cp, uint16_t flags, void *ctx)
 {
-    return (void *)glyph_scratch_fill(ctx, cp, flags);
+    struct font_instance *fi;
+    uint8_t phase;
+    glyph_fill_args(flags, ctx, &phase, &fi);
+    if (!phase)
+        return (void *)glyph_scratch_fill(fi, cp, flags);
+    release_glyphs(&glyph_scratch, 1);
+    font_instance_render_glyph_at(fi, cp, flags, phase, &glyph_scratch);
+    return &glyph_scratch;
 }
 
 static inline const struct glyph *slot_fill(struct font_instance *fi, struct cache_slot *slot,
-                                            uint32_t cp, uint16_t flags)
+                                            uint32_t cp, uint16_t flags, uint8_t phase)
 {
-    uint32_t key = glyph_key(cp, flags);
+    uint32_t key = glyph_key_at(cp, flags, phase);
     void *p = cache_slot_lookup(slot, key);
     if (__builtin_expect(p != NULL, 1))
         return (const struct glyph *)p;
 
-    const struct slot_fill_ops ops = { glyph_slot_produce, glyph_slot_slow, fi };
+    struct glyph_fill_ctx ctx = { .fi = fi, .phase = phase };
+    const struct slot_fill_ops ops = { glyph_slot_produce, glyph_slot_slow, &ctx };
     return cache_slot_fill(slot, key, cp, flags, &ops);
 }
 
@@ -187,19 +214,20 @@ struct cache_slot *slot_cache_ensure(_Atomic(struct cache_slot *) *ptr, int coun
     return cache;
 }
 
-const struct glyph *glyph_cache_fetch(struct font_instance *fi, uint32_t cp,
-                                      uint16_t style)
+/* Returns the cached glyph of code point `cp` at subpixel `phase`. */
+const struct glyph *glyph_cache_fetch_at(struct font_instance *fi, uint32_t cp,
+                                         uint16_t style, uint8_t phase)
 {
     style = instance_style(fi, style);
     if (__builtin_expect(cp > GLYPH_KEY_CP_MAX, 0))
         return glyph_scratch_fill(fi, cp, style);
 
     struct cache_slot *slot;
-    if (__builtin_expect(cp < 128 && !style, 1))
+    if (__builtin_expect(phase == 0 && cp < 128 && !style, 1))
         slot = &fi->ascii[cp];
-    else if (cp < 128 && style == FONT_STYLE_ITALIC)
+    else if (phase == 0 && cp < 128 && style == FONT_STYLE_ITALIC)
         slot = &fi->ascii_italic[cp];
-    else if (__builtin_expect(cp < LATIN_CACHE_SIZE && !style, 1)) {
+    else if (__builtin_expect(phase == 0 && cp < LATIN_CACHE_SIZE && !style, 1)) {
         struct cache_slot *latin = slot_cache_ensure(&fi->latin, LATIN_CACHE_SIZE);
         if (!latin)
             return glyph_scratch_fill(fi, cp, style);
@@ -208,9 +236,15 @@ const struct glyph *glyph_cache_fetch(struct font_instance *fi, uint32_t cp,
         struct cache_slot *cjk = slot_cache_ensure(&fi->cjk, CJK_CACHE_SIZE);
         if (!cjk)
             return glyph_scratch_fill(fi, cp, style);
-        slot = &cjk[(glyph_key(cp, style) * KNUTH_HASH_MULT) >> 20];
+        slot = &cjk[(glyph_key_at(cp, style, phase) * KNUTH_HASH_MULT) >> 20];
     }
-    return slot_fill(fi, slot, cp, style);
+    return slot_fill(fi, slot, cp, style, phase);
+}
+
+const struct glyph *glyph_cache_fetch(struct font_instance *fi, uint32_t cp,
+                                      uint16_t style)
+{
+    return glyph_cache_fetch_at(fi, cp, style, 0);
 }
 
 static struct font_instance *instances;

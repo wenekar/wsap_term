@@ -6,9 +6,21 @@
 #include <math.h>
 #include <string.h>
 
+/* A cell-drawn symbol covers the cell of the font that the thread
+ * rasterizes with. */
+static inline int cell_w(void)
+{
+    return font_thread_metrics.cell_w;
+}
+
+static inline int cell_h(void)
+{
+    return font_thread_metrics.cell_h;
+}
+
 static void glyph_paint_rect(struct glyph *g, int y0, int y1, int x0, int x1, uint8_t a)
 {
-    if (!g->alpha && !glyph_prepare(g, g->width ? g->width : GLYPH_CELL_W))
+    if (!g->alpha && !glyph_prepare(g, g->width ? g->width : cell_w(), cell_h()))
         return;
     if (x1 > (int)g->width) x1 = g->width;
     if (y1 > glyph_rows(g)) y1 = glyph_rows(g);
@@ -35,7 +47,7 @@ static int cut(int extent, int k, int n)
 
 static int thin_stroke(void)
 {
-    int t = GLYPH_CELL_H / 16;
+    int t = cell_h() / 16;
     return t < 1 ? 1 : t;
 }
 
@@ -55,16 +67,16 @@ static void fill_mosaic(struct glyph *g, unsigned mask, int cols, int rows, int 
         for (int c = 0; c < cols; c++) {
             if (!(mask & 1u << (r * cols + c)))
                 continue;
-            glyph_paint_rect(g, cut(GLYPH_CELL_H, r, rows) + inset,
-                             cut(GLYPH_CELL_H, r + 1, rows) - inset,
-                             cut(GLYPH_CELL_W, c, cols) + inset,
-                             cut(GLYPH_CELL_W, c + 1, cols) - inset, 255);
+            glyph_paint_rect(g, cut(cell_h(), r, rows) + inset,
+                             cut(cell_h(), r + 1, rows) - inset,
+                             cut(cell_w(), c, cols) + inset,
+                             cut(cell_w(), c + 1, cols) - inset, 255);
         }
 }
 
 static int mosaic_inset(int cols, int rows)
 {
-    return GLYPH_CELL_W / cols >= 3 && GLYPH_CELL_H / rows >= 3 ? 1 : 0;
+    return cell_w() / cols >= 3 && cell_h() / rows >= 3 ? 1 : 0;
 }
 
 static unsigned nth_mosaic_mask(unsigned index, const uint8_t *absent, int n_absent)
@@ -95,7 +107,7 @@ enum { EDGE_TOP, EDGE_RIGHT, EDGE_BOTTOM, EDGE_LEFT };
 
 static void fill_edge_triangle(struct glyph *g, int edge, uint8_t a)
 {
-    int H = GLYPH_CELL_H, W = GLYPH_CELL_W;
+    int H = cell_h(), W = cell_w();
 
     if (edge == EDGE_LEFT || edge == EDGE_RIGHT) {
         for (int y = 0; y < H; y++) {
@@ -118,7 +130,7 @@ static void fill_edge_triangle(struct glyph *g, int edge, uint8_t a)
 
 static void fill_corner_triangle(struct glyph *g, int corner, uint8_t a)
 {
-    int H = GLYPH_CELL_H, W = GLYPH_CELL_W;
+    int H = cell_h(), W = cell_w();
 
     for (int y = 0; y < H; y++) {
         bool upper = corner == QUAD_UL || corner == QUAD_UR;
@@ -130,7 +142,7 @@ static void fill_corner_triangle(struct glyph *g, int corner, uint8_t a)
 
 static void fill_hatch(struct glyph *g, bool falling)
 {
-    int H = GLYPH_CELL_H, W = GLYPH_CELL_W;
+    int H = cell_h(), W = cell_w();
     int period = W / 2 < 2 ? 2 : W / 2;
 
     for (int y = 0; y < H; y++)
@@ -144,7 +156,7 @@ static void fill_hatch(struct glyph *g, bool falling)
 
 static bool draw_block(uint32_t cp, struct glyph *g)
 {
-    int H = GLYPH_CELL_H, W = GLYPH_CELL_W;
+    int H = cell_h(), W = cell_w();
 
     switch (cp) {
     case 0x2580: glyph_paint_rect(g, 0, cut(H, 1, 2), 0, W, 255); return true;
@@ -183,19 +195,19 @@ static bool draw_block(uint32_t cp, struct glyph *g)
 
 static void eighth_col(struct glyph *g, int k)
 {
-    glyph_paint_rect(g, 0, GLYPH_CELL_H,
-                     cut(GLYPH_CELL_W, k - 1, 8), cut(GLYPH_CELL_W, k, 8), 255);
+    glyph_paint_rect(g, 0, cell_h(),
+                     cut(cell_w(), k - 1, 8), cut(cell_w(), k, 8), 255);
 }
 
 static void eighth_row(struct glyph *g, int k)
 {
-    glyph_paint_rect(g, cut(GLYPH_CELL_H, k - 1, 8), cut(GLYPH_CELL_H, k, 8),
-                     0, GLYPH_CELL_W, 255);
+    glyph_paint_rect(g, cut(cell_h(), k - 1, 8), cut(cell_h(), k, 8),
+                     0, cell_w(), 255);
 }
 
 static bool draw_legacy_computing_symbol(uint32_t cp, struct glyph *g)
 {
-    int H = GLYPH_CELL_H, W = GLYPH_CELL_W;
+    int H = cell_h(), W = cell_w();
 
     static const int part_eighths[] = { 2, 3, 5, 6, 7 };
 
@@ -336,8 +348,8 @@ static const uint8_t box_weights[0x80] = {
 
 static void draw_dashes(struct glyph *g, bool vertical, int marks, int t)
 {
-    int extent = vertical ? GLYPH_CELL_H : GLYPH_CELL_W;
-    int lo = (vertical ? GLYPH_CELL_W - t : GLYPH_CELL_H - t) / 2, hi = lo + t;
+    int extent = vertical ? cell_h() : cell_w();
+    int lo = (vertical ? cell_w() - t : cell_h() - t) / 2, hi = lo + t;
     int pieces = 2 * marks - 1;
 
     for (int m = 0; m < marks; m++) {
@@ -349,7 +361,7 @@ static void draw_dashes(struct glyph *g, bool vertical, int marks, int t)
 
 static void draw_box_single(struct glyph *g, const int *arm, int thin)
 {
-    int H = GLYPH_CELL_H, W = GLYPH_CELL_W;
+    int H = cell_h(), W = cell_w();
     int heavy = 2 * thin;
     int across = arm[DIR_LEFT] > arm[DIR_RIGHT] ? arm[DIR_LEFT] : arm[DIR_RIGHT];
     int along = arm[DIR_UP] > arm[DIR_DOWN] ? arm[DIR_UP] : arm[DIR_DOWN];
@@ -375,7 +387,7 @@ static void draw_box_single(struct glyph *g, const int *arm, int thin)
 
 static void draw_arc(struct glyph *g, bool down, bool right, int thin)
 {
-    int H = GLYPH_CELL_H, W = GLYPH_CELL_W;
+    int H = cell_h(), W = cell_w();
     double cy = arm_centre(H, thin), cx = arm_centre(W, thin);
     double sy = down ? 1.0 : -1.0, sx = right ? 1.0 : -1.0;
     double room_y = down ? H - cy : cy, room_x = right ? W - cx : cx;
@@ -399,7 +411,7 @@ static void draw_arc(struct glyph *g, bool down, bool right, int thin)
 
 static void draw_diagonal(struct glyph *g, bool falling, int thin)
 {
-    int H = GLYPH_CELL_H, W = GLYPH_CELL_W;
+    int H = cell_h(), W = cell_w();
     double len = hypot(H, W);
 
     for (int y = 0; y < H; y++)
@@ -435,17 +447,17 @@ static bool draw_box_double(uint32_t cp, struct glyph *g, int thin)
     if (cp < 0x2550 || cp > 0x256C)
         return false;
 
-    int y[8] = { 0, GLYPH_CELL_H, (GLYPH_CELL_H - 3 * thin) / 2 };
+    int y[8] = { 0, cell_h(), (cell_h() - 3 * thin) / 2 };
     y[3] = y[2] + thin;
     y[4] = y[3] + thin;
     y[5] = y[4] + thin;
-    y[6] = (GLYPH_CELL_H - thin) / 2;
+    y[6] = (cell_h() - thin) / 2;
     y[7] = y[6] + thin;
-    int x[8] = { 0, GLYPH_CELL_W, (GLYPH_CELL_W - 3 * thin) / 2 };
+    int x[8] = { 0, cell_w(), (cell_w() - 3 * thin) / 2 };
     x[3] = x[2] + thin;
     x[4] = x[3] + thin;
     x[5] = x[4] + thin;
-    x[6] = (GLYPH_CELL_W - thin) / 2;
+    x[6] = (cell_w() - thin) / 2;
     x[7] = x[6] + thin;
 
     unsigned shape = cp - 0x2550;
@@ -528,10 +540,10 @@ void glyph_render_5x7(uint32_t cp, struct glyph *g)
 
 void glyph_render_unknown_box(struct glyph *g)
 {
-    int x1 = GLYPH_CELL_W > 2 ? GLYPH_CELL_W - 1 : GLYPH_CELL_W;
-    int x0 = GLYPH_CELL_W > 2 ? 1 : 0;
-    int y0 = GLYPH_CELL_H / 6, y1 = GLYPH_CELL_H - GLYPH_CELL_H / 6;
-    if (y1 <= y0 + 1) { y0 = 0; y1 = GLYPH_CELL_H; }
+    int x1 = cell_w() > 2 ? cell_w() - 1 : cell_w();
+    int x0 = cell_w() > 2 ? 1 : 0;
+    int y0 = cell_h() / 6, y1 = cell_h() - cell_h() / 6;
+    if (y1 <= y0 + 1) { y0 = 0; y1 = cell_h(); }
     glyph_paint_rect(g, y0, y1, x0, x0 + 1, 255);
     glyph_paint_rect(g, y0, y1, x1 - 1, x1, 255);
     glyph_paint_rect(g, y0, y0 + 1, x0, x1, 255);

@@ -35,7 +35,11 @@ static bool reset_glyph(const struct font_metrics *m, struct glyph *g, uint16_t 
     if (!g)
         return false;
     int w = m->cell_w * ((style & FONT_STYLE_WIDE) ? 2 : 1);
-    return glyph_reset(g, (unsigned)w);
+    if (!glyph_reset(g, (unsigned)w, (unsigned)m->cell_h))
+        return false;
+    /* A glyph that does not report a pen advance fills its columns. */
+    g->advance = (int16_t)w;
+    return true;
 }
 
 uint16_t font_instance_weight(const struct font_instance *fi)
@@ -59,6 +63,12 @@ bool font_prefers_emoji(uint32_t cp, uint16_t style)
 
 bool font_instance_render_glyph(const struct font_instance *fi, uint32_t cp, uint16_t style, struct glyph *g)
 {
+    return font_instance_render_glyph_at(fi, cp, style, 0, g);
+}
+
+bool font_instance_render_glyph_at(const struct font_instance *fi, uint32_t cp,
+                                   uint16_t style, uint8_t phase, struct glyph *g)
+{
     if (!fi || !g)
         return false;
     font_bind_thread(fi);
@@ -74,18 +84,25 @@ bool font_instance_render_glyph(const struct font_instance *fi, uint32_t cp, uin
     uint32_t base = cps[0];
     if (unicode_grapheme_regional_indicator(base) && !(style & FONT_STYLE_EMOJI))
         base = 'A' + (base - 0x1F1E6);
-    if (draw_cell_aligned_symbol(base, g))
+    /* A cell symbol and the 5x7 fallback belong to the cell path. A
+     * proportional font draws every glyph from its own faces. */
+    bool cell_aligned = !fi->proportional;
+    if (cell_aligned && draw_cell_aligned_symbol(base, g))
         return true;
 
     uint32_t target = len > 1 ? cp : base;
 
     const struct font_backend *be = FONT_BACKEND;
     if (fi->face && be->rasterize_glyph &&
-        be->rasterize_glyph(fi->face, target, style, &fi->m, g))
+        be->rasterize_glyph(fi->face, target, style, phase, &fi->m, g))
         return true;
 
     if (!reset_glyph(&fi->m, g, style))
         return false;
+    if (!cell_aligned) {
+        /* Leave the glyph empty. It keeps its advance. */
+        return true;
+    }
     if (base < 128) {
         glyph_render_5x7(base, g);
         return true;

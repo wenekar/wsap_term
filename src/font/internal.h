@@ -9,18 +9,18 @@
 #include <stdint.h>
 #include <string.h>
 
+/* Cell metrics of the font that the calling thread rasterizes with. */
 extern __thread struct font_metrics font_thread_metrics;
-#define GLYPH_CELL_H font_thread_metrics.cell_h
-#define GLYPH_CELL_W font_thread_metrics.cell_w
 
+/* Returns the raster rows of glyph `g`. */
 static inline int glyph_rows(const struct glyph *g)
 {
-    return g->height ? g->height : GLYPH_CELL_H;
+    return g->height;
 }
 
 struct box { int x, y, w, h; };
 
-bool glyph_reset(struct glyph *g, unsigned width);
+bool glyph_reset(struct glyph *g, unsigned width, unsigned rows);
 void font_thread_metrics_set(const struct font_metrics *m);
 void face_activate(const struct font_metrics *m);
 bool font_measure_desc(const struct font_desc *desc, struct font_metrics *out);

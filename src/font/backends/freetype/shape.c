@@ -21,6 +21,7 @@ struct raster_entry {
     uint16_t px;
     uint8_t style;
     uint8_t hinting;
+    uint8_t phase;
     bool valid;
 };
 
@@ -129,7 +130,7 @@ _Static_assert((FONT_STYLE_VARIANT_MASK & (RASTER_OBLIQUE | RASTER_EMBOLDEN)) ==
                "the synthesis bits sit above the variant bits");
 
 static const struct raster_entry *raster_fetch(int slot, enum font_variant variant,
-        uint32_t gid, bool oblique, bool embolden)
+        uint32_t gid, bool oblique, bool embolden, uint8_t phase)
 {
     if (slot < 0 || slot >= num_faces || (unsigned)variant >= FONT_VARIANT_COUNT || !gid)
         return NULL;
@@ -143,12 +144,13 @@ static const struct raster_entry *raster_fetch(int slot, enum font_variant varia
                     (embolden ? RASTER_EMBOLDEN : 0);
     unsigned px = (unsigned)faces[slot].applied_px;
     unsigned mask = raster_cap - 1;
-    unsigned idx = raster_hash(slot, gid, bits ^ (px << 4), raster_cap);
+    unsigned key = bits ^ (px << 4) ^ ((unsigned)phase << 24);
+    unsigned idx = raster_hash(slot, gid, key, raster_cap);
     struct raster_entry *e = &raster_cache[idx];
     for (unsigned p = 0; p < raster_cap; p++) {
         if (e->valid && e->slot == slot &&
             e->slot_reuse == faces[slot].slot_reuse &&
-            e->gid == gid && e->style == bits && e->px == px &&
+            e->gid == gid && e->style == bits && e->px == px && e->phase == phase &&
             e->hinting == raster_hint_key()) {
             e->fit_pass = fit_pass;
             return e;
@@ -163,6 +165,11 @@ static const struct raster_entry *raster_fetch(int slot, enum font_variant varia
 
     int load_flags = font_ft_load_flags();
     FT_Render_Mode render_mode = font_ft_render_mode();
+
+    /* A quarter-pixel phase moves the outline in the 26.6 pixel grid. Reset
+     * the delta for a phase-zero glyph, because the face keeps it. */
+    FT_Vector delta = { .x = (FT_Pos)phase * 16, .y = 0 };
+    FT_Set_Transform(face, NULL, &delta);
 
     if (oblique || embolden) {
         if (FT_Load_Glyph(face, gid, load_flags | FT_LOAD_NO_BITMAP) != 0)
@@ -211,6 +218,7 @@ static const struct raster_entry *raster_fetch(int slot, enum font_variant varia
     e->slot_reuse = faces[slot].slot_reuse;
     e->gid = gid;
     e->style = (uint8_t)bits;
+    e->phase = phase;
     e->hinting = raster_hint_key();
     e->fit_pass = fit_pass;
     e->valid = true;
@@ -341,7 +349,7 @@ static int clamp_ink_coord(int64_t v)
 }
 
 static bool collect_run_ink(const struct shaped_run *run, bool by_cluster,
-                            struct run_ink *out)
+                            uint8_t phase, struct run_ink *out)
 {
     int64_t pen_x = 0, pen_y = 0, advance = 0;
     if (!raster_cache_ensure((unsigned)run->count))
@@ -350,7 +358,7 @@ static bool collect_run_ink(const struct shaped_run *run, bool by_cluster,
     for (int i = 0; i < run->count; i++) {
         const struct shaped_glyph *sg = &run->glyphs[i];
         const struct raster_entry *e = raster_fetch(run->slot,
-            run->variant, sg->gid, run->oblique, run->embolden);
+            run->variant, sg->gid, run->oblique, run->embolden, phase);
         if (!e || !supported_pixel_mode(&e->glyph->bitmap))
             return false;
         const FT_Bitmap *bm = &e->glyph->bitmap;
@@ -361,7 +369,7 @@ static bool collect_run_ink(const struct shaped_run *run, bool by_cluster,
         }
         int64_t dx, dy;
         if (by_cluster) {
-            dx = (int64_t)sg->cluster * GLYPH_CELL_W + (sg->x_off >> 6);
+            dx = (int64_t)sg->cluster * font_thread_metrics.cell_w + (sg->x_off >> 6);
             dy = -((pen_y + sg->y_off) >> 6);
             pen_y += sg->y_adv;
         } else {
@@ -404,7 +412,7 @@ static bool draw_run_ink(struct glyph *g, const struct run_ink *ri, struct box b
     return true;
 }
 
-bool font_fit_single(const struct shaped_run *run, struct glyph *g)
+bool font_fit_single(const struct shaped_run *run, uint8_t phase, struct glyph *g)
 {
     if (!run || !g || run->count < 1 || run->count > FONT_RUN_MAX)
         return false;
@@ -412,7 +420,7 @@ bool font_fit_single(const struct shaped_run *run, struct glyph *g)
         return false;
 
     struct run_ink ri = {0};
-    if (!collect_run_ink(run, false, &ri))
+    if (!collect_run_ink(run, false, phase, &ri))
         return false;
     if (ri.color && ri.drawn > 1)
         return false;
@@ -423,19 +431,21 @@ bool font_fit_single(const struct shaped_run *run, struct glyph *g)
     if (run_w <= 0 || run_h <= 0)
         return false;
     int cols = g->width;
-    struct box box = ft_place_ink(ri.left, -ri.top, run_w, run_h, ri.advance,
-                                  cols,
-                               ri.color ? font_thread_metrics.ink_rows : GLYPH_CELL_H,
-                               ri.color);
+    struct box box = ft_place_ink(ri.left, -ri.top, run_w, run_h, ri.advance, cols,
+                                  ri.color ? font_thread_metrics.ink_rows
+                                           : font_thread_metrics.cell_h,
+                                  ri.color);
     if (!draw_run_ink(g, &ri, box, run_w, run_h, NULL))
         return false;
+    g->y_offset = (int16_t)box.y;
+    g->advance = (int16_t)ri.advance;
 
     /* A glyph that stays in its cell can use a cached tile. Draw it again on
      * a canvas without the blank columns past the cell. */
     struct box inked;
     if (!ft_blank_overhang(g, cols, &inked))
         return true;
-    return glyph_reset(g, (unsigned)cols) &&
+    return glyph_reset(g, (unsigned)cols, (unsigned)font_thread_metrics.cell_h) &&
            draw_run_ink(g, &ri, box, run_w, run_h, &inked);
 }
 
@@ -448,21 +458,24 @@ bool font_fit_cells(const struct shaped_run *run, int n_cells, struct glyph *cel
         return false;
 
     struct run_ink ri = {0};
-    if (!collect_run_ink(run, true, &ri))
+    if (!collect_run_ink(run, true, 0, &ri))
         return false;
     if (!ri.drawn)
         return false;
 
-    for (int i = 0; i < n_cells; i++)
-        if (!glyph_reset(&cells[i], GLYPH_CELL_W))
+    const int cw = font_thread_metrics.cell_w;
+    const int ch = font_thread_metrics.cell_h;
+    for (int i = 0; i < n_cells; i++) {
+        if (!glyph_reset(&cells[i], (unsigned)cw, (unsigned)ch))
             return false;
+        cells[i].advance = (int16_t)cw;
+    }
 
     int run_w = ri.right - ri.left, run_h = ri.bottom - ri.top;
     if (run_w <= 0 || run_h <= 0)
         return false;
-    struct box fitted = ft_place_ink(ri.left, -ri.top, run_w, run_h,
-                                     n_cells * GLYPH_CELL_W, n_cells * GLYPH_CELL_W,
-                                  GLYPH_CELL_H, false);
+    struct box fitted = ft_place_ink(ri.left, -ri.top, run_w, run_h, ri.advance,
+                                     n_cells * cw, ch, false);
     uint8_t covered[FONT_RUN_MAX];
     memset(covered, 0, sizeof(covered[0]) * (size_t)n_cells);
     for (int i = 0; i < ri.drawn; i++) {
@@ -470,13 +483,13 @@ bool font_fit_cells(const struct shaped_run *run, int n_cells, struct glyph *cel
                                    run_w, run_h);
         if (dst.x < 0)
             dst.x = 0;
-        int first = dst.x / GLYPH_CELL_W;
-        int last = (dst.x + dst.w - 1) / GLYPH_CELL_W;
+        int first = dst.x / cw;
+        int last = (dst.x + dst.w - 1) / cw;
         if (first < 0) first = 0;
         if (last >= n_cells) last = n_cells - 1;
         for (int cell = first; cell <= last; cell++) {
             struct box slice = dst;
-            slice.x -= cell * GLYPH_CELL_W;
+            slice.x -= cell * cw;
             ft_blit_bitmap(&cells[cell], &ri.ras[i]->glyph->bitmap, &slice);
             covered[cell] = 1;
         }

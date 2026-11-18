@@ -148,6 +148,13 @@ bool font_instance_monospace(const struct font_instance *fi);
 
 #define FONT_RUN_MAX 32
 
+/*
+ * One rasterized glyph. The raster covers `width` by `height` pixels. Pixel
+ * (0, 0) sits at (`x_offset`, `y_offset`) from the pen origin, which is the
+ * left edge of the baseline. `advance` is the pen step after the glyph.
+ * A cell glyph covers its cell from the cell left and the cell top, so both
+ * offsets are relative to the cell.
+ */
 struct glyph {
     uint64_t *row_masks;
     uint8_t **alpha;
@@ -159,10 +166,15 @@ struct glyph {
     uint32_t subpx_capacity;
     uint16_t width;
     uint16_t height;
-    uint16_t mask_words;
+    /* One mask word holds 64 columns, so 11 bits cover the largest width.
+     * The two flags share the rest of the unit, to keep the struct at 64
+     * bytes. */
+    uint16_t mask_words : 11;
+    uint16_t has_color : 1;
+    uint16_t has_subpx_ink : 1;
     int16_t x_offset;
-    bool has_color;
-    bool has_subpx_ink;
+    int16_t y_offset;
+    int16_t advance;
 };
 
 _Static_assert(sizeof(struct glyph) == 64, "struct glyph fits in one cacheline");
@@ -215,8 +227,8 @@ bool glyph_subpx_plane(struct glyph *g);
 
 /* Frees allocated raster buffers in glyph `g`. */
 void glyph_release(struct glyph *g);
-/* Prepares raster buffers of glyph `g` for pixel width `width`. */
-bool glyph_prepare(struct glyph *g, unsigned width);
+/* Prepares raster buffers of glyph `g` for pixel size `width` by `rows`. */
+bool glyph_prepare(struct glyph *g, unsigned width, unsigned rows);
 
 enum font_shape_result {
     FONT_SHAPE_UNAVAILABLE,
@@ -227,6 +239,14 @@ enum font_shape_result {
 /* Renders glyph `g` for code point `cp` with `style` using font instance `fi`. */
 bool font_instance_render_glyph(const struct font_instance *fi, uint32_t cp,
                                 uint16_t style, struct glyph *g);
+/*
+ * Renders glyph `g` for code point `cp` with `style` at `phase` quarter
+ * pixels to the right of the pen origin. A phase other than zero places the
+ * outline on a subpixel grid. The glyph cache keys such a glyph apart from
+ * the phase-zero glyph.
+ */
+bool font_instance_render_glyph_at(const struct font_instance *fi, uint32_t cp,
+                                   uint16_t style, uint8_t phase, struct glyph *g);
 enum font_run_result {
     FONT_RUN_UNAVAILABLE,
     FONT_RUN_UNCHANGED,

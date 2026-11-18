@@ -27,8 +27,10 @@ struct font_backend {
     void (*close)(font_handle_t *face);
     bool (*measure)(font_handle_t *face, struct font_metrics *out);
 
+    /* `phase` is the subpixel placement in quarter pixels. */
     bool (*rasterize_glyph)(font_handle_t *face, uint32_t codepoint, uint16_t style,
-                            const struct font_metrics *m, struct glyph *out);
+                            uint8_t phase, const struct font_metrics *m,
+                            struct glyph *out);
 
     uint64_t (*scan_run)(const uint32_t *cps, int len, uint16_t style,
                          uint64_t *hash, int *dead_at);

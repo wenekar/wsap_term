@@ -764,8 +764,8 @@ static void ct_configure_synthetic_bold(CGContextRef ctx, CTFontRef font, CGFloa
 }
 
 static bool ct_rasterize_ink(CTFontRef font, CGGlyph gid, CTLineRef line,
-        CGRect bb, int advance, CGFloat units, bool color, uint16_t style,
-        const struct font_metrics *m, struct glyph *out)
+        CGRect bb, int advance, uint8_t phase, CGFloat units, bool color,
+        uint16_t style, const struct font_metrics *m, struct glyph *out)
 {
     int cols = m->cell_w * ((style & FONT_STYLE_WIDE) ? 2 : 1);
     int rows = m->cell_h < glyph_rows(out) ? m->cell_h : glyph_rows(out);
@@ -773,7 +773,7 @@ static bool ct_rasterize_ink(CTFontRef font, CGGlyph gid, CTLineRef line,
     if (cols <= 0 || rows <= 0 || CGRectIsNull(bb))
         goto done;
     if (CGRectIsEmpty(bb)) {
-        ok = glyph_prepare(out, (unsigned)cols);
+        ok = glyph_prepare(out, (unsigned)cols, (unsigned)rows);
         goto done;
     }
     int left = (int)floor(CGRectGetMinX(bb));
@@ -787,7 +787,8 @@ static bool ct_rasterize_ink(CTFontRef font, CGGlyph gid, CTLineRef line,
         dst_x = (cols - (int)ceil(ink_w * scale)) / 2;
         dst_y = (rows - (int)ceil(ink_h * scale)) / 2;
     } else {
-        if (advance > 0 && advance < cols) dst_x += (cols - advance) / 2;
+        /* The pen fixes the ink position. A narrow glyph is not moved to
+         * the middle of its columns. */
         if (dst_y < 0) dst_y = 0;
         if (dst_y + ink_h > rows) dst_y = rows - ink_h;
     }
@@ -804,7 +805,7 @@ static bool ct_rasterize_ink(CTFontRef font, CGGlyph gid, CTLineRef line,
         if (span_r - span_l > max_span) span_r = span_l + max_span;
     }
     int span = span_r - span_l;
-    if (!glyph_prepare(out, (unsigned)span) ||
+    if (!glyph_prepare(out, (unsigned)span, (unsigned)rows) ||
         (color && !glyph_color_plane(out)))
         goto done;
     struct ct_scratch *scratch = color ? &ct_color_scratch : &ct_gray_scratch;
@@ -829,6 +830,9 @@ static bool ct_rasterize_ink(CTFontRef font, CGGlyph gid, CTLineRef line,
     CGContextTranslateCTM(ctx, (dst_x - span_l) - left * scale,
                           rows - dst_y - above * scale);
     CGContextScaleCTM(ctx, scale * units, scale * units);
+    /* A quarter-pixel phase moves the outline on the subpixel grid. */
+    if (phase)
+        CGContextTranslateCTM(ctx, phase * 0.25, 0);
     if (line) {
         CGContextSetTextPosition(ctx, 0, 0);
         CTLineDraw(line, ctx);
@@ -837,6 +841,7 @@ static bool ct_rasterize_ink(CTFontRef font, CGGlyph gid, CTLineRef line,
     }
     ct_scratch_put(scratch);
     out->x_offset = (int16_t)span_l;
+    out->advance = (int16_t)advance;
     out->has_color = color;
     for (int y = 0; y < rows; y++) {
         for (int x = 0; x < span; x++) {
@@ -858,8 +863,8 @@ done:
     return ok;
 }
 static bool ct_rasterize_cluster(CTFontRef font, CGFloat units, uint32_t cp,
-                                 uint16_t style, const struct font_metrics *m,
-                                 struct glyph *out)
+                                 uint16_t style, uint8_t phase,
+                                 const struct font_metrics *m, struct glyph *out)
 {
     CFStringRef string = ct_string(&cp, 1, NULL);
     if (!string)
@@ -886,13 +891,15 @@ static bool ct_rasterize_cluster(CTFontRef font, CGFloat units, uint32_t cp,
     CGRect bb = ct_device_rect(CTLineGetImageBounds(line, bounds_context), units);
     ct_scratch_put(bounds_scratch);
     int advance = (int)lround(CTLineGetTypographicBounds(line, NULL, NULL, NULL) * units);
-    bool ok = ct_rasterize_ink(NULL, 0, line, bb, advance, units, color, style, m, out);
+    bool ok = ct_rasterize_ink(NULL, 0, line, bb, advance, phase, units, color,
+                               style, m, out);
     CFRelease(line);
     return ok;
 }
 
 static bool ct_rasterize_glyph(font_handle_t *face, uint32_t cp, uint16_t style,
-                              const struct font_metrics *m, struct glyph *out)
+                              uint8_t phase, const struct font_metrics *m,
+                              struct glyph *out)
 {
     if (!face || !m || !out)
         return false;
@@ -900,7 +907,7 @@ static bool ct_rasterize_glyph(font_handle_t *face, uint32_t cp, uint16_t style,
         return true;
     CTFontRef font = get_style_font(face, style);
     if (unicode_grapheme_is_handle(cp))
-        return ct_rasterize_cluster(font, face->scale, cp, style, m, out);
+        return ct_rasterize_cluster(font, face->scale, cp, style, phase, m, out);
     UniChar chars[2];
     CFIndex count;
     if (cp <= 0xFFFF) {
@@ -968,8 +975,8 @@ static bool ct_rasterize_glyph(font_handle_t *face, uint32_t cp, uint16_t style,
         CTFontGetAdvancesForGlyphs(matched, kCTFontOrientationHorizontal, gids, &advance, 1);
         bool color = (CTFontGetSymbolicTraits(matched) & kCTFontTraitColorGlyphs) != 0;
         ok = ct_rasterize_ink(matched, gids[0], NULL, ct_device_rect(bb, face->scale),
-                              (int)lround(advance.width * face->scale), face->scale,
-                              color, style, m, out);
+                              (int)lround(advance.width * face->scale), phase,
+                              face->scale, color, style, m, out);
     }
     CFRelease(matched);
     return ok;
@@ -1170,7 +1177,7 @@ static bool ct_fit_cells(const struct ct_ink *ink, int drawn, int n_cells,
 {
     if (!drawn)
         return false;
-    int cw = GLYPH_CELL_W, rows = GLYPH_CELL_H;
+    int cw = font_thread_metrics.cell_w, rows = font_thread_metrics.cell_h;
     int left = INT_MAX, top = INT_MAX, right = INT_MIN, bottom = INT_MIN;
     for (int i = 0; i < drawn; i++) {
         const struct box *b = &ink[i].box;
@@ -1192,9 +1199,11 @@ static bool ct_fit_cells(const struct ct_ink *ink, int drawn, int n_cells,
         if (fit.y + fit.h > rows) fit.y = rows - fit.h;
         if (fit.y < 0) fit.y = 0;
     }
-    for (int i = 0; i < n_cells; i++)
-        if (!glyph_reset(&cells[i], (unsigned)cw))
+    for (int i = 0; i < n_cells; i++) {
+        if (!glyph_reset(&cells[i], (unsigned)cw, (unsigned)rows))
             return false;
+        cells[i].advance = (int16_t)cw;
+    }
     uint8_t covered[FONT_RUN_MAX] = {0};
     for (int i = 0; i < drawn; i++) {
         const struct box *b = &ink[i].box;

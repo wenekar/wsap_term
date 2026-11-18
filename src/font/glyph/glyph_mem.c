@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-bool glyph_reset(struct glyph *g, unsigned width)
+bool glyph_reset(struct glyph *g, unsigned width, unsigned rows)
 {
     void *r = g->raster, *c = g->color;
     uint8_t **s = g->subpx;
@@ -15,7 +15,7 @@ bool glyph_reset(struct glyph *g, unsigned width)
         .color = c, .color_capacity = cc,
         .subpx = s, .subpx_capacity = sc
     };
-    return glyph_prepare(g, width);
+    return glyph_prepare(g, width, rows);
 }
 
 bool glyph_color_plane(struct glyph *g)
@@ -59,16 +59,16 @@ bool glyph_subpx_plane(struct glyph *g)
     return true;
 }
 
-bool glyph_prepare(struct glyph *g, unsigned width)
+bool glyph_prepare(struct glyph *g, unsigned width, unsigned rows)
 {
-    if (!g || !width || width > UINT16_MAX)
+    if (!g || !width || width > UINT16_MAX || !rows || rows > UINT16_MAX)
         return false;
     g->width = (uint16_t)width;
-    g->height = (uint16_t)GLYPH_CELL_H;
+    g->height = (uint16_t)rows;
     g->mask_words = (uint16_t)((width + 63) / 64);
-    size_t rows = g->height;
-    size_t mask_bytes = rows * g->mask_words * sizeof(*g->row_masks);
-    size_t needed = mask_bytes + rows * sizeof(*g->alpha) + rows * g->width;
+    size_t nrows = g->height;
+    size_t mask_bytes = nrows * g->mask_words * sizeof(*g->row_masks);
+    size_t needed = mask_bytes + nrows * sizeof(*g->alpha) + nrows * g->width;
     if (needed > g->raster_capacity) {
         if (needed > UINT32_MAX) {
             g->width = 0;
@@ -85,8 +85,8 @@ bool glyph_prepare(struct glyph *g, unsigned width)
     memset(g->raster, 0, needed);
     g->row_masks = g->raster;
     g->alpha = (uint8_t **)((char *)g->raster + mask_bytes);
-    uint8_t *pixels = (uint8_t *)(g->alpha + rows);
-    for (size_t y = 0; y < rows; y++)
+    uint8_t *pixels = (uint8_t *)(g->alpha + nrows);
+    for (size_t y = 0; y < nrows; y++)
         g->alpha[y] = pixels + y * g->width;
     g->has_subpx_ink = false;
     if (g->subpx && !glyph_subpx_plane(g)) {

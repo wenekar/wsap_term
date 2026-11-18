@@ -66,7 +66,7 @@ static const char *env_first(const char *a, const char *b)
 }
 
 static bool ft_fit_coverable(const uint32_t *cps, int len, uint16_t flags,
-                             bool emoji, struct glyph *g)
+                             bool emoji, uint8_t phase, struct glyph *g)
 {
     if (!run_coverable(cps, len))
         return false;
@@ -75,7 +75,7 @@ static bool ft_fit_coverable(const uint32_t *cps, int len, uint16_t flags,
     int i;
     while ((i = font_next_face_covering(&q, cps, len)) >= 0)
         if (font_shape(i, cps, len, flags, 0, &run) != FONT_SHAPE_UNAVAILABLE &&
-            font_fit_single(&run, g))
+            font_fit_single(&run, phase, g))
             return true;
     return false;
 }
@@ -112,6 +112,16 @@ static bool ft_init(void)
 
 /* Owned list of the family set that the face tables hold. */
 static char *active_family;
+
+/* True when the last face open asked for a cell font. The embedded playing
+ * card face serves cell glyphs only, so a proportional font set leaves it
+ * out of the fallback list. */
+static bool cell_mode = true;
+
+bool ft_cell_mode(void)
+{
+    return cell_mode;
+}
 
 /* Returns the family list that `list` names, with the configured default filled in. */
 static const char *family_or_default(const char *list)
@@ -249,6 +259,7 @@ static font_handle_t *ft_face_open(const struct font_desc *desc)
         return NULL;
     face->pixel_size = font_size_px(desc->size);
     face->monospace = !desc->proportional;
+    cell_mode = !desc->proportional;
     return face;
 }
 
@@ -279,11 +290,12 @@ static bool ft_face_metrics(font_handle_t *face, struct font_metrics *out)
 }
 
 static bool ft_rasterize_glyph(font_handle_t *face, uint32_t codepoint, uint16_t style,
-                               const struct font_metrics *m, struct glyph *out)
+                               uint8_t phase, const struct font_metrics *m,
+                               struct glyph *out)
 {
-    (void)face;
     if (!ft_thread_ready())
         return false;
+    ft_cell_aligned = !face || face->monospace;
     face_activate(m);
 
     uint32_t cps[UNICODE_GRAPHEME_MAX_LEN];
@@ -291,11 +303,12 @@ static bool ft_rasterize_glyph(font_handle_t *face, uint32_t codepoint, uint16_t
     if (len > 1) {
         bool emoji = font_prefers_emoji(cps[0], style) ||
                      font_prefers_emoji(cps[len - 1], style);
-        if (ft_fit_coverable(cps, len, style, emoji, out))
+        if (ft_fit_coverable(cps, len, style, emoji, phase, out))
             return true;
     }
 
-    return ft_fit_coverable(&codepoint, 1, style, font_prefers_emoji(codepoint, style), out);
+    return ft_fit_coverable(&codepoint, 1, style,
+                            font_prefers_emoji(codepoint, style), phase, out);
 }
 
 static bool core_unchanged(const struct shaped_run *run, const struct font_window *w)

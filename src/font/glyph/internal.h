@@ -21,13 +21,25 @@
 
 #define GLYPH_KEY_CP_BITS 21
 #define GLYPH_KEY_CP_MAX  0x10FFFFu
+#define GLYPH_KEY_PHASE_BITS 2
+#define GLYPH_KEY_PHASE_MAX  ((1u << GLYPH_KEY_PHASE_BITS) - 1)
+#define GLYPH_KEY_PHASE_SHIFT (32 - GLYPH_KEY_PHASE_BITS)
 
-_Static_assert(((uint64_t)FONT_STYLE_WIDE << GLYPH_KEY_CP_BITS) <= UINT32_MAX,
-               "glyph_key() style bits overflow 32 bits");
+_Static_assert(((uint64_t)FONT_STYLE_WIDE << GLYPH_KEY_CP_BITS) <=
+               (UINT64_C(1) << GLYPH_KEY_PHASE_SHIFT),
+               "glyph_key() style bits reach the phase bits");
+
+/* Returns the cache key of code point `cp` with `style` at `phase` quarter
+ * pixels. A zero phase is the cell glyph. */
+static inline uint32_t glyph_key_at(uint32_t cp, uint16_t style, uint8_t phase)
+{
+    return cp | ((uint32_t)style << GLYPH_KEY_CP_BITS) |
+           ((uint32_t)(phase & GLYPH_KEY_PHASE_MAX) << GLYPH_KEY_PHASE_SHIFT);
+}
 
 static inline uint32_t glyph_key(uint32_t cp, uint16_t style)
 {
-    return cp | ((uint32_t)style << GLYPH_KEY_CP_BITS);
+    return glyph_key_at(cp, style, 0);
 }
 
 static inline uint16_t glyph_style(uint16_t style)

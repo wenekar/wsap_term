@@ -54,6 +54,14 @@ Every rebuild retires all glyphs, tiles, and runs of an instance. In serial mode
 
 `struct glyph_span` cells originate from run cache entries or thread scratch (`priv_run_cells`). In parallel mode, cache eviction can retire a run entry. Evicted entries remain valid until `glyph_cache_flush_frame()` runs. Span cells therefore stay valid through the end of the `emit` callback.
 
+## Glyphs and cell fit
+
+`struct glyph` holds one raster. Pixel (0, 0) sits at (`x_offset`, `y_offset`) from the pen origin, which is the left edge of the baseline. `advance` is the pen step after the glyph. `width` and `height` are the raster size, and they vary with the glyph.
+
+A cell glyph covers its cell, so both offsets are relative to the corner of the cell. `y_offset` is the row that holds the first raster row. A narrow glyph stays where the pen puts it, and the ink is not moved to the middle of its columns. The cell path keeps its centring so that cell output does not change.
+
+`font_instance_render_glyph_at()` renders a glyph at `phase` quarter pixels. The glyph cache keys the phase with the code point and the style, so a phase-zero glyph and a placed glyph do not share an entry. The FreeType backend moves the outline in the 26.6 grid. The CoreText backend moves the drawing context.
+
 ## Font descriptors
 
 `struct font_desc` in `src/font/font.h` holds the request for an instance. A zero field takes its configured default. An all-zero descriptor therefore gives the default instance.
