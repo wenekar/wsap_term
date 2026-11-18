@@ -506,6 +506,23 @@ static struct input_queue *impl_surface_input_queue(struct yasl_surface *s)
     return w ? &w->input : NULL;
 }
 
+/* xdg-shell limits are logical and a zero axis means no limit. A window keeps
+ * the compositor floor, and a fixed-size window pins its own size. */
+static void apply_size_limits(struct wayland_surface *w)
+{
+    if (!w->toplevel || w->conn->lost) return;
+    int32_t min_x = w->min_size.x, min_y = w->min_size.y;
+    int32_t max_x = w->max_size.x, max_y = w->max_size.y;
+    if (w->base.creation_flags & YASL_PRIVATE_SURFACE_FIXED_SIZE) {
+        min_x = max_x = w->base.size.x;
+        min_y = max_y = w->base.size.y;
+    }
+    if (min_x < YASL_PRIVATE_MIN_LOGICAL_PX) min_x = YASL_PRIVATE_MIN_LOGICAL_PX;
+    if (min_y < YASL_PRIVATE_MIN_LOGICAL_PX) min_y = YASL_PRIVATE_MIN_LOGICAL_PX;
+    xdg_toplevel_set_min_size(w->toplevel, min_x, min_y);
+    xdg_toplevel_set_max_size(w->toplevel, max_x, max_y);
+}
+
 static bool impl_surface_set_size(struct yasl_surface *s, struct yasl_private_vector2i size)
 {
     struct wayland_surface *w = (struct wayland_surface *)s;
@@ -518,10 +535,7 @@ static bool impl_surface_set_size(struct yasl_surface *s, struct yasl_private_ve
     w->floating_width = size.x;
     w->floating_height = size.y;
     /* A fixed-size window is pinned at its size, so the compositor must not stretch it. */
-    if ((w->base.creation_flags & YASL_PRIVATE_SURFACE_FIXED_SIZE) && w->toplevel && !w->conn->lost) {
-        xdg_toplevel_set_min_size(w->toplevel, size.x, size.y);
-        xdg_toplevel_set_max_size(w->toplevel, size.x, size.y);
-    }
+    apply_size_limits(w);
     if (w->conn->lost ||
         (w->base.state & (YASL_PRIVATE_STATE_MAXIMIZED | YASL_PRIVATE_STATE_FULLSCREEN | YASL_PRIVATE_STATE_TILED)))
         return true;
@@ -559,8 +573,21 @@ static bool impl_surface_set_maximized(struct yasl_surface *s, bool enabled)
     return true;
 }
 
-static bool impl_surface_minimize(struct yasl_surface *s)
+static bool impl_surface_set_size_limits(struct yasl_surface *s,
+        struct yasl_private_vector2i min, struct yasl_private_vector2i max)
 {
+    struct wayland_surface *w = (struct wayland_surface *)s;
+    if (!w || w->closed || w->destroyed || (!w->toplevel && !w->conn->lost)) {
+        errno = EINVAL;
+        return false;
+    }
+    w->min_size = min;
+    w->max_size = max;
+    apply_size_limits(w);
+    return true;
+}
+
+static bool impl_surface_minimize(struct yasl_surface *s){
     struct wayland_surface *w = (struct wayland_surface *)s;
     if (!w || w->closed || w->destroyed || !w->toplevel) {
         errno = EINVAL;
@@ -764,4 +791,8 @@ const struct yasl_private_backend_ops yasl_private_wayland_backend = {
     .surface_read_pixels = impl_surface_read_pixels,
     .display_get_native_handle = impl_display_get_native_handle,
     .surface_get_native_handle = impl_surface_get_native_handle,
+    /* Wayland lets the compositor place windows and stack them, so it has no
+     * hook for a position, an opacity, a stack layer, or a taskbar filter. */
+    .surface_set_size_limits = impl_surface_set_size_limits,
+    .display_monitors = conn_display_monitors,
 };

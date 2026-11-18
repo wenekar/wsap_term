@@ -416,7 +416,8 @@ yasl_surface *yasl_surface_create(const struct yasl_surface_options *o)
         return yasl_public_fail(EBUSY), NULL;
     unsigned flags = (o->type == YASL_SURFACE_CPU ? YASL_PRIVATE_SURFACE_CPU : 0u) |
                      (o->undecorated ? YASL_PRIVATE_SURFACE_UNDECORATED : 0u) |
-                     (o->fixed_size ? YASL_PRIVATE_SURFACE_FIXED_SIZE : 0u);
+                     (o->fixed_size ? YASL_PRIVATE_SURFACE_FIXED_SIZE : 0u) |
+                     (o->hidden ? YASL_PRIVATE_SURFACE_HIDDEN : 0u);
     int attrs[31];
     yasl_surface *share = o->type == YASL_SURFACE_GL ? o->gl.share : NULL;
     if (o->type == YASL_SURFACE_GL && !gl_attributes(&o->gl, attrs))
@@ -432,6 +433,8 @@ yasl_surface *yasl_surface_create(const struct yasl_surface_options *o)
         .size = {o->width, o->height},
         .flags = flags,
         .external_gpu = o->type != YASL_SURFACE_CPU,
+        .fullscreen = o->fullscreen,
+        .maximized = o->maximized,
         .tearing = o->tearing,
     };
     yasl_surface *s = o->type == YASL_SURFACE_GL ? create_gl(&spec, attrs, share)

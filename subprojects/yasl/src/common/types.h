@@ -701,6 +701,8 @@ struct yasl_private_window_spec {
     bool external_gpu;
     /** Request initial fullscreen; actual state is reported asynchronously. */
     bool fullscreen;
+    /** Request initial maximized; actual state is reported asynchronously. */
+    bool maximized;
     /** Permit unpaced presentation where supported; a hint, not a guarantee. */
     bool tearing;
 };

@@ -45,27 +45,42 @@ static const struct wp_presentation_listener presentation_listener = {
     .clock_id = presentation_clock_id,
 };
 
+/* The compositor lays the output out in logical units, so x and y are the
+ * logical position of the monitor. */
 static void output_geometry(void *data, struct wl_output *output,
         int32_t x, int32_t y, int32_t physical_width, int32_t physical_height,
         int32_t subpixel, const char *make, const char *model, int32_t transform)
 {
-    (void)data; (void)output; (void)x; (void)y; (void)physical_width;
-    (void)physical_height; (void)subpixel; (void)make; (void)model;
-    (void)transform;
+    (void)output; (void)subpixel; (void)make; (void)model;
+    struct wl_conn_output *o = data;
+    if (o->x != x || o->y != y ||
+        o->physical_width_mm != physical_width ||
+        o->physical_height_mm != physical_height || o->transform != transform)
+        o->geometry_changed = true;
+    o->x = x;
+    o->y = y;
+    o->physical_width_mm = physical_width;
+    o->physical_height_mm = physical_height;
+    o->transform = transform;
 }
 
 static void output_done(void *data, struct wl_output *output);
 
+/* The mode size is in device pixels; the monitor queries divide it by scale. */
 static void output_mode(void *data, struct wl_output *output, uint32_t flags,
         int32_t width, int32_t height, int32_t refresh)
 {
-    (void)output; (void)width; (void)height;
+    (void)output;
     struct wl_conn_output *o = data;
-    if ((flags & WL_OUTPUT_MODE_CURRENT) && refresh > 0) {
+    if (!(flags & WL_OUTPUT_MODE_CURRENT)) return;
+    if (o->width != width || o->height != height) o->geometry_changed = true;
+    o->width = width;
+    o->height = height;
+    if (refresh > 0)
         o->pending_refresh_ns = (uint32_t)(1000000000000ull / (uint32_t)refresh);
-        if (wl_output_get_version(output) < WL_OUTPUT_DONE_SINCE_VERSION)
-            output_done(data, output);
-    }
+    /* Before version 3 the mode event is not followed by done. */
+    if (o->proxy && wl_output_get_version(o->proxy) < WL_OUTPUT_DONE_SINCE_VERSION)
+        output_done(data, o->proxy);
 }
 
 static void conn_follow_outputs(struct wayland_display *c)
@@ -78,11 +93,14 @@ static void output_done(void *data, struct wl_output *output)
 {
     (void)output;
     struct wl_conn_output *o = data;
-    if (o->pending_scale == o->scale && o->pending_refresh_ns == o->refresh_ns)
-        return;
+    bool changed = o->geometry_changed || o->pending_scale != o->scale ||
+                   o->pending_refresh_ns != o->refresh_ns;
+    o->geometry_changed = false;
     o->scale = o->pending_scale;
     o->refresh_ns = o->pending_refresh_ns;
+    if (!changed) return;
     conn_follow_outputs(o->conn);
+    yasl_private_display_notify_event(&o->conn->base, YASL_PRIVATE_EVENT_MONITORS);
 }
 
 static void output_scale(void *data, struct wl_output *output, int32_t factor)
@@ -94,7 +112,13 @@ static void output_scale(void *data, struct wl_output *output, int32_t factor)
 }
 
 static void output_name(void *data, struct wl_output *output, const char *name)
-{ (void)data; (void)output; (void)name; }
+{
+    (void)output;
+    struct wl_conn_output *o = data;
+    if (!name || strcmp(o->label, name) == 0) return;
+    snprintf(o->label, sizeof(o->label), "%s", name);
+    o->geometry_changed = true;
+}
 
 static void output_description(void *data, struct wl_output *output, const char *description)
 { (void)data; (void)output; (void)description; }
@@ -113,8 +137,9 @@ static void conn_bind_output(struct wayland_display *c, struct wl_registry *regi
 {
     struct wl_conn_output *o = calloc(1, sizeof(*o));
     if (!o) return;
+    /* Version 4 adds the output name and description events. */
     o->proxy = wl_registry_bind(registry, name, &wl_output_interface,
-            version < 3 ? version : 3);
+            version < 4 ? version : 4);
     if (!o->proxy) {
         free(o);
         return;
@@ -154,6 +179,7 @@ static bool conn_remove_output(struct wayland_display *c, uint32_t name)
         w->outputs &= ~o->mask;
     output_destroy(o);
     conn_follow_outputs(c);
+    yasl_private_display_notify_event(&c->base, YASL_PRIVATE_EVENT_MONITORS);
     return true;
 }
 
@@ -181,6 +207,47 @@ uint32_t conn_output_scale_120(const struct wayland_display *c, uint64_t outputs
         if ((o->mask & outputs) && o->scale > scale)
             scale = o->scale;
     return (uint32_t)scale * YASL_PRIVATE_SCALE_UNIT;
+}
+
+/* A compositor does not report the workarea, so it equals the bounds. It also
+ * names no output as primary, and the common layer answers then. */
+int conn_display_monitors(struct yasl_private_display *base, struct yasl_monitor_info *out, int capacity)
+{
+    struct wayland_display *c = (struct wayland_display *)base;
+    int count = 0;
+    for (struct wl_conn_output *o = c->outputs; o; o = o->next, count++) {
+        if (!out || count >= capacity) continue;
+        int32_t scale = o->scale > 0 ? o->scale : 1;
+        struct yasl_monitor_info *m = &out[count];
+        *m = (struct yasl_monitor_info){0};
+        snprintf(m->name, sizeof(m->name), "%s", o->label);
+        m->x = o->x;
+        m->y = o->y;
+        m->width = o->width / scale;
+        m->height = o->height / scale;
+        m->work_x = m->x;
+        m->work_y = m->y;
+        m->work_width = m->width;
+        m->work_height = m->height;
+        m->physical_width_mm = o->physical_width_mm;
+        m->physical_height_mm = o->physical_height_mm;
+        m->scale = (double)scale;
+        if (o->physical_width_mm > 0 && o->width > 0)
+            m->dpi = (double)o->width * 25.4 / (double)o->physical_width_mm;
+        if (o->refresh_ns > 0)
+            m->refresh_hz = 1e9 / (double)o->refresh_ns;
+        switch (o->transform) {
+        case WL_OUTPUT_TRANSFORM_90: case WL_OUTPUT_TRANSFORM_FLIPPED_90:
+            m->orientation = YASL_ORIENTATION_90; break;
+        case WL_OUTPUT_TRANSFORM_180: case WL_OUTPUT_TRANSFORM_FLIPPED_180:
+            m->orientation = YASL_ORIENTATION_180; break;
+        case WL_OUTPUT_TRANSFORM_270: case WL_OUTPUT_TRANSFORM_FLIPPED_270:
+            m->orientation = YASL_ORIENTATION_270; break;
+        default:
+            m->orientation = YASL_ORIENTATION_0; break;
+        }
+    }
+    return count;
 }
 
 static void registry_global(void *data, struct wl_registry *registry,
