@@ -797,7 +797,7 @@ void yasl_private_surface_schedule_redraw(struct yasl_surface *s);
  * once. Targets expire when that callback returns or the surface is destroyed.
  * damage is required: n must be -1 or 0..YASL_PRIVATE_DAMAGE_MAX. Rectangles must have
  * nonnegative extents; they are clipped to the target. Invalid input returns
- * false without consuming the frame. See yasl/native.h for native rendering. */
+ * false without consuming the frame. See yasl/yasl.h for native rendering. */
 /**
  * Submit the current draw target at most once.
  * @param s Surface currently being drawn.

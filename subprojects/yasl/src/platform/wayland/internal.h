@@ -10,7 +10,7 @@
 
 #include <wayland-client.h>
 #include <wayland-cursor.h>
-#if YASL_HAS_EGL
+#if YASL_HAS_WAYLAND_EGL
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <wayland-egl.h>
@@ -235,7 +235,7 @@ struct wayland_display {
     struct wl_display *wl;
     /* Serialize EGL swaps and native surface changes. Dispatch events without this lock. */
     pthread_mutex_t native_mutex;
-#if YASL_HAS_EGL
+#if YASL_HAS_WAYLAND_EGL
     EGLDisplay egl_display;
 #endif
     struct wl_registry *registry;
@@ -276,7 +276,7 @@ struct wayland_display {
     uint64_t next_tool_id;
 
     /* 4-byte integers */
-#if YASL_HAS_EGL
+#if YASL_HAS_WAYLAND_EGL
     EGLint egl_api;
 #endif
     int cursor_size;
@@ -286,7 +286,7 @@ struct wayland_display {
     int depth;
 
     /* 1-byte booleans */
-#if YASL_HAS_EGL
+#if YASL_HAS_WAYLAND_EGL
     bool egl_initialized;
 #endif
     bool stale;
@@ -312,7 +312,7 @@ struct wayland_surface {
     struct wayland_surface *dead_next;
     struct wayland_surface *parent;
     struct wl_surface *surface;
-#if YASL_HAS_EGL
+#if YASL_HAS_WAYLAND_EGL
     struct wl_egl_window *egl_window;
     EGLSurface egl_surface;
     EGLContext egl_context;
@@ -353,7 +353,7 @@ struct wayland_surface {
     struct latency_feedback latency_pool[8];
 
     /* 4-byte aligned sub-structures and integers */
-#if YASL_HAS_EGL
+#if YASL_HAS_WAYLAND_EGL
     struct yasl_private_gl_options gl_options;
 #endif
     struct yasl_private_rect2i content;
@@ -379,7 +379,7 @@ struct wayland_surface {
     struct yasl_private_damage_list damage;
 
     /* 1-byte booleans packed tightly */
-#if YASL_HAS_EGL
+#if YASL_HAS_WAYLAND_EGL
     bool gl_built;
 #endif
     bool tearing;
@@ -446,7 +446,7 @@ void display_leave(struct wayland_display *c);
 /* Native objects of a toplevel: built at creation and again after a reconnect. */
 int  surface_build_toplevel(struct wayland_surface *w, bool fullscreen);
 void surface_release_native(struct wayland_surface *w);
-#if YASL_HAS_EGL
+#if YASL_HAS_WAYLAND_EGL
 bool wayland_egl_ensure(struct wayland_display *d);
 void wayland_egl_display_release(struct wayland_display *d);
 void wayland_egl_surface_release(struct wayland_surface *w);

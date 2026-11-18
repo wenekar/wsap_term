@@ -3281,7 +3281,7 @@ static void handle_client_message(struct x11_display *d, struct x11_surface *s,
             if (d->xdnd.accepts && !s->destroyed)
                 yasl_private_surface_notify_drop(&s->base, YASL_PRIVATE_DROP_LEAVE, d->xdnd.pos);
         }
-        d->xdnd = (typeof(d->xdnd)){0};
+        d->xdnd = (__typeof__(d->xdnd)){0};
     } else if (ev->message_type == d->xdnd_drop) {
         Window source = (Window)ev->data.l[0];
         Window target = s->window;
@@ -3292,7 +3292,7 @@ static void handle_client_message(struct x11_display *d, struct x11_surface *s,
         /* A drop that cannot start is refused; its source gets XdndFinished now. */
         if (!accepting || !drop_start(d, s, source, drop_time))
             xdnd_finish(d, source, target, false);
-        d->xdnd = (typeof(d->xdnd)){0};
+        d->xdnd = (__typeof__(d->xdnd)){0};
     }
 }
 

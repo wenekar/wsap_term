@@ -214,7 +214,7 @@ static void connection_release(struct wayland_display *c)
     RELEASE(shm, wl_shm_destroy);
     RELEASE(compositor, wl_compositor_destroy);
     RELEASE(registry, wl_registry_destroy);
-#if YASL_HAS_EGL
+#if YASL_HAS_WAYLAND_EGL
     wayland_egl_display_release(c);
 #endif
     RELEASE(wl, wl_display_disconnect);
@@ -252,7 +252,7 @@ static void display_rebuild(struct wayland_display *c)
         if (surface_build_toplevel(w, w->base.state & YASL_PRIVATE_STATE_FULLSCREEN) < 0 && !c->lost)
             surface_fail(w);
     }
-#if YASL_HAS_EGL
+#if YASL_HAS_WAYLAND_EGL
     for (struct wayland_surface *w = c->surfaces; w && !c->lost; w = w->conn_next)
         if (w->base.presenter == YASL_PRIVATE_PRESENTER_GL && !w->closed && !w->gl_built &&
             (!wayland_egl_ensure(c) || !surface_build_gl(w)))
@@ -439,7 +439,7 @@ void surface_release_native(struct wayland_surface *w)
     if (gl) pthread_mutex_lock(&w->conn->native_mutex);
 #define DROP(field, destroy) do { if (w->field) { destroy(w->field); w->field = NULL; } } while (0)
     DROP(tearing_control, wp_tearing_control_v1_destroy);
-#if YASL_HAS_EGL
+#if YASL_HAS_WAYLAND_EGL
     wayland_egl_surface_release(w);
 #endif
     DROP(fifo, wp_fifo_v1_destroy);
@@ -534,7 +534,7 @@ void wayland_surface_destroy(struct wayland_surface *w)
     free(w->ime_shown);
     free(w->title);
     struct wayland_display *c = w->conn;
-#if YASL_HAS_EGL
+#if YASL_HAS_WAYLAND_EGL
     for (struct wayland_surface *o = c ? c->surfaces : NULL; o; o = o->conn_next)
         if (o->gl_share == w) o->gl_share = NULL;
 #endif

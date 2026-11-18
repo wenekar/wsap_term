@@ -276,7 +276,7 @@ static int apply_pending_geometry_locked(struct wayland_surface *w)
     w->base.scale_120 = w->scale_120;
     w->logical_width = logical_w;
     w->logical_height = logical_h;
-#if YASL_HAS_EGL
+#if YASL_HAS_WAYLAND_EGL
     if (w->egl_window && (resized || rescaled))
         wayland_egl_window_resize(w, width, height);
 #endif
