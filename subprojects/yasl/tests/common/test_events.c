@@ -5,6 +5,13 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+static void sleep_ms(int ms)
+{
+    struct timespec ts = {.tv_sec = ms / 1000, .tv_nsec = (long)(ms % 1000) * 1000000L};
+    nanosleep(&ts, NULL);
+}
 
 static struct input_queue *queue(struct yasl_surface *s) { return &s->input; }
 static const struct yasl_private_backend_ops ops = {.surface_input_queue = queue};
@@ -124,6 +131,43 @@ static void test_post_cleanup(void)
     errno = 0;
     assert(!yasl_private_display_post(&d, &(struct yasl_private_message){.payload = &released, .release = release}));
     assert(errno == EINVAL && released == 33);
+}
+
+/* A producer wakes a loop that waits, and the event is there when it returns. */
+struct loop_producer {
+    struct yasl_private_display *display;
+    uint64_t target;
+    uint32_t code;
+};
+
+static void *post_to_waiting_loop(void *ud)
+{
+    struct loop_producer *producer = ud;
+    sleep_ms(20);
+    assert(yasl_private_display_post(producer->display, &(struct yasl_private_message){
+        .target_id = producer->target, .code = producer->code}));
+    return NULL;
+}
+
+static void test_post_wakes_loop(void)
+{
+    struct yasl_private_display d;
+    struct yasl_surface a, b;
+    setup(&d, &a, &b);
+    owner = pthread_self();
+    d.loop = yasl_loop_create();
+    assert(d.loop);
+    struct loop_producer producer = {&d, a.id, 77};
+    pthread_t worker;
+    assert(!pthread_create(&worker, NULL, post_to_waiting_loop, &producer));
+    /* The loop waits until the producer posts; the wake pipe ends the wait. */
+    assert(yasl_loop_step(d.loop, -1) >= 1);
+    assert(!pthread_join(worker, NULL));
+    struct yasl_private_event ev;
+    assert(yasl_private_display_poll_event(&d, &ev));
+    assert(ev.type == YASL_PRIVATE_EVENT_USER && ev.user.code == 77 && ev.surface == &a);
+    teardown(&d, &a, &b);
+    assert(yasl_loop_destroy(d.loop) == 0);
 }
 
 static int damage_count;
@@ -265,6 +309,7 @@ int main(void)
 {
     test_order_and_lifetimes();
     test_post_cleanup();
+    test_post_wakes_loop();
     test_reuse_clears_release();
     test_damage();
     test_failures();

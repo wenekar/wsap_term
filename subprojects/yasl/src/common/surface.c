@@ -201,6 +201,25 @@ enum yasl_backend yasl_get_backend(void)
     return display && yasl_public_owner() ? (enum yasl_backend)display->ops->type
                                           : YASL_BACKEND_AUTO;
 }
+#if defined(__linux__)
+extern bool yasl_private_runtime_has_gl(void);
+#endif
+#if YASL_HAS_VULKAN
+extern bool yasl_private_runtime_has_vulkan(const char *surface_extension);
+#endif
+
+#if YASL_HAS_VULKAN
+static const char *vulkan_surface_extension(enum yasl_private_backend backend)
+{
+    switch (backend) {
+    case YASL_PRIVATE_BACKEND_WAYLAND: return "VK_KHR_wayland_surface";
+    case YASL_PRIVATE_BACKEND_X11: return "VK_KHR_xlib_surface";
+    case YASL_PRIVATE_BACKEND_COCOA: return "VK_EXT_metal_surface";
+    default: return NULL;
+    }
+}
+#endif
+
 unsigned yasl_get_features(void)
 {
     if (!display || !yasl_public_owner())
@@ -219,9 +238,14 @@ unsigned yasl_get_features(void)
         {YASL_PRIVATE_CAP_RELATIVE_POINTER, YASL_FEATURE_LOCKED_CURSOR},
     };
     uint32_t caps = yasl_private_display_caps(display);
-    unsigned features = display->ops->surface_create_gl ? YASL_FEATURE_OPENGL : 0;
+    unsigned features = 0;
+#if defined(__linux__)
+    if (display->ops->surface_create_gl && yasl_private_runtime_has_gl())
+        features |= YASL_FEATURE_OPENGL;
+#endif
 #if YASL_HAS_VULKAN
-    if (caps & YASL_PRIVATE_CAP_VULKAN)
+    if ((caps & YASL_PRIVATE_CAP_VULKAN) &&
+        yasl_private_runtime_has_vulkan(vulkan_surface_extension(display->ops->type)))
         features |= YASL_FEATURE_VULKAN;
 #endif
     for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++)
@@ -990,6 +1014,11 @@ static bool convert_event(const struct yasl_private_event *p, yasl_event *e)
     case YASL_PRIVATE_EVENT_INPUT_RESET:
         e->type = YASL_EVENT_INPUT_RESET;
         return true;
+    case YASL_PRIVATE_EVENT_USER:
+        e->type = YASL_EVENT_USER;
+        e->user = (struct yasl_user_event){
+            .code = p->user.code, .payload = p->user.payload, .size = p->user.size};
+        return true;
     case YASL_PRIVATE_EVENT_FOCUS:
         /* Activation comes from the window state; losing focus releases held input. */
         if (p->focus.focused)
@@ -1206,6 +1235,32 @@ void yasl_wake(void)
     if (display && display->loop)
         yasl_private_loop_kick(display->loop);
     pthread_mutex_unlock(&lifecycle_mutex);
+}
+int yasl_post_user_event(yasl_surface *surface, uint32_t code, void *payload, size_t size,
+                         void (*release)(void *payload))
+{
+    pthread_mutex_lock(&lifecycle_mutex);
+    struct yasl_private_display *d = display;
+    if (!d) {
+        pthread_mutex_unlock(&lifecycle_mutex);
+        return yasl_public_error(ENODEV);
+    }
+    if (surface && (surface->display != d || !surface->id)) {
+        pthread_mutex_unlock(&lifecycle_mutex);
+        return yasl_public_error(EINVAL);
+    }
+    struct yasl_private_message message = {
+        .target_id = surface ? surface->id : 0,
+        .code = code,
+        .payload = payload,
+        .size = size,
+        .release = release,
+    };
+    errno = 0;
+    bool ok = yasl_private_display_post(d, &message);
+    int error = errno;
+    pthread_mutex_unlock(&lifecycle_mutex);
+    return ok ? 0 : yasl_public_error(error ? error : EIO);
 }
 uint64_t yasl_time_ns(void)
 {

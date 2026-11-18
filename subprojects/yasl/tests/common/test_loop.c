@@ -63,6 +63,8 @@ static void test_post_order(void)
     assert(l);
     assert(!yasl_private_loop_post(NULL, post_b, NULL));
     assert(!yasl_private_loop_post(l, NULL, NULL));
+    assert(yasl_loop_post(NULL, post_b, NULL) == -EINVAL);
+    assert(yasl_loop_post(l, NULL, NULL) == -EINVAL);
 
     struct post_log log = {.loop = l};
     assert(yasl_private_loop_post(l, post_a, &log));
@@ -101,7 +103,7 @@ static void *wake_thread(void *ud)
     else if (ctx->kick)
         yasl_private_loop_kick(ctx->loop);
     else
-        assert(yasl_private_loop_post(ctx->loop, mark_ran, ctx));
+        assert(yasl_loop_post(ctx->loop, mark_ran, ctx) == 0);
     return NULL;
 }
 
@@ -175,9 +177,6 @@ static void test_signals(void)
     assert(yasl_loop_watch_signals(l, sigs, 3, NULL, &log) == -EINVAL);
     assert(yasl_loop_watch_signals(l, sigs, 3, on_signal, &log) == 0);
 
-    /* One signal belongs to one loop at a time. */
-    assert(yasl_loop_watch_signals(other, sigs, 1, on_signal, &log) == -EBUSY);
-
     /* Deliveries before the callback runs coalesce per signal. */
     raise(SIGUSR1);
     raise(SIGUSR1);
@@ -231,6 +230,53 @@ static void test_signals(void)
     assert(sigaction(SIGUSR1, NULL, &now) == 0);
     assert(now.sa_handler == SIG_DFL);
     yasl_loop_destroy(other);
+
+    struct sigaction dfl = {.sa_handler = SIG_DFL};
+    sigemptyset(&dfl.sa_mask);
+    sigaction(SIGUSR2, &dfl, NULL);
+}
+
+/* Several loops can watch one signal. Each gets its own delivery, and the
+ * previous action returns when the last loop stops. */
+static void test_two_loops_signals(void)
+{
+    struct sigaction prev = {.sa_handler = previous_handler};
+    sigemptyset(&prev.sa_mask);
+    assert(sigaction(SIGUSR2, &prev, NULL) == 0);
+    previous_handler_hits = 0;
+
+    struct yasl_loop *a = yasl_loop_create();
+    struct yasl_loop *b = yasl_loop_create();
+    assert(a && b);
+    struct signal_log la = {.loop = a}, lb = {.loop = b};
+    const int sigs[] = {SIGUSR1, SIGUSR2};
+    assert(yasl_loop_watch_signals(a, sigs, 2, on_signal, &la) == 0);
+    assert(yasl_loop_watch_signals(b, sigs, 2, on_signal, &lb) == 0);
+
+    /* Repeats coalesce in each loop, not across loops. */
+    raise(SIGUSR1);
+    raise(SIGUSR1);
+    raise(SIGUSR2);
+    assert(yasl_loop_step(a, 0) >= 1);
+    assert(yasl_loop_step(b, 0) >= 1);
+    assert(la.seen[SIGUSR1] == 1 && la.seen[SIGUSR2] == 1);
+    assert(lb.seen[SIGUSR1] == 1 && lb.seen[SIGUSR2] == 1);
+    assert(previous_handler_hits == 0);
+
+    /* One loop stops; the other keeps its delivery. */
+    yasl_loop_unwatch_signals(a);
+    raise(SIGUSR1);
+    assert(yasl_loop_step(a, 0) >= 0);
+    assert(yasl_loop_step(b, 0) >= 1);
+    assert(la.seen[SIGUSR1] == 1);
+    assert(lb.seen[SIGUSR1] == 2);
+
+    /* The previous action comes back after the last loop stops. */
+    yasl_loop_unwatch_signals(b);
+    raise(SIGUSR2);
+    assert(previous_handler_hits == 1);
+    assert(yasl_loop_destroy(a) == 0);
+    assert(yasl_loop_destroy(b) == 0);
 
     struct sigaction dfl = {.sa_handler = SIG_DFL};
     sigemptyset(&dfl.sa_mask);
@@ -320,6 +366,55 @@ static void test_fds(void)
     assert(yasl_loop_step(l, 0) == 0 && log.calls == 2);
     close(p[0]);
     close(p[1]);
+    assert(yasl_loop_destroy(l) == 0);
+}
+
+struct many_entry {
+    int calls;
+};
+
+static void on_many_ready(void *ud, int fd, short revents)
+{
+    struct many_entry *entry = ud;
+    char b;
+    if (revents & POLLIN)
+        assert(read(fd, &b, 1) == 1);
+    entry->calls++;
+}
+
+/* More descriptors than the epoll threshold. All watches must work, including
+ * removal and the wake pipe. */
+static void test_many_fds(void)
+{
+    enum { count = 96 };
+    int pipes[count][2];
+    struct many_entry entries[count] = {0};
+    yasl_loop *l = yasl_loop_create();
+    assert(l);
+    int ids[count];
+    for (int i = 0; i < count; i++) {
+        assert(pipe(pipes[i]) == 0);
+        ids[i] = yasl_loop_add_fd(l, pipes[i][0], POLLIN, on_many_ready, &entries[i]);
+        assert(ids[i] > 0);
+    }
+    for (int i = 0; i < count; i++)
+        assert(write(pipes[i][1], "x", 1) == 1);
+    assert(yasl_loop_step(l, -1) == count);
+    for (int i = 0; i < count; i++)
+        assert(entries[i].calls == 1);
+
+    for (int i = 0; i < count; i += 2)
+        assert(yasl_loop_del_fd(l, ids[i]) == 0);
+    for (int i = 1; i < count; i += 2)
+        assert(write(pipes[i][1], "x", 1) == 1);
+    assert(yasl_loop_step(l, -1) == count / 2);
+    for (int i = 0; i < count; i++)
+        assert(entries[i].calls == ((i & 1) ? 2 : 1));
+
+    for (int i = 0; i < count; i++) {
+        close(pipes[i][0]);
+        close(pipes[i][1]);
+    }
     assert(yasl_loop_destroy(l) == 0);
 }
 
@@ -418,8 +513,10 @@ int main(void)
     test_post_order();
     test_cross_thread();
     test_signals();
+    test_two_loops_signals();
     test_signal_order();
     test_fds();
+    test_many_fds();
     test_reentry_and_quit();
     test_interrupted_wait();
     printf("Loop tests passed.\n");

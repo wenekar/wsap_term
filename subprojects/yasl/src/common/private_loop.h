@@ -4,6 +4,11 @@
  * yasl.h. Use the loop's owning thread for all calls and callbacks, except
  * yasl_private_loop_now_ns(), yasl_private_loop_kick(), yasl_private_loop_wake()
  * and yasl_private_loop_post(), which any thread may call.
+ *
+ * Timers and reads belong to the owning thread. Another thread must post work
+ * with yasl_private_loop_post() or yasl_loop_post(), and change timers or
+ * watches in that callback. Wake and queue primitives do not make a timer or a
+ * watch thread-safe by themselves.
  */
 #ifndef YASL_PRIVATE_LOOP_H
 #define YASL_PRIVATE_LOOP_H

@@ -5,6 +5,7 @@
 
 #include <dbus/dbus.h>
 #include <errno.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +14,9 @@
 /* The portal may need activation on first use; bound how long a query blocks. */
 #define PORTAL_TIMEOUT_MS 1000
 
+/* One private connection serves every caller. The lock also serializes the
+ * libdbus calls, because a DBusConnection is not safe for concurrent use. */
+static pthread_mutex_t bus_mutex = PTHREAD_MUTEX_INITIALIZER;
 static DBusConnection *bus;
 
 /* The session bus address, without libdbus's X11 autolaunch fallback. */
@@ -35,7 +39,8 @@ static char *session_address(void)
     return address;
 }
 
-static DBusConnection *session_bus(void)
+/* Call with bus_mutex held. */
+static DBusConnection *session_bus_locked(void)
 {
     if (bus && dbus_connection_get_is_connected(bus)) return bus;
     if (bus) {
@@ -45,6 +50,12 @@ static DBusConnection *session_bus(void)
     }
     char *address = session_address();
     if (!address) return NULL;
+    /* Libdbus serializes its own shared state once this succeeds. The bus lock
+     * still serializes this connection, which libdbus also requires. */
+    if (!dbus_threads_init_default()) {
+        free(address);
+        return NULL;
+    }
     DBusError err;
     dbus_error_init(&err);
     DBusConnection *c = dbus_connection_open_private(address, &err);
@@ -66,11 +77,18 @@ static DBusConnection *session_bus(void)
 
 bool bus_notify(const char *app, const char *title, const char *body)
 {
-    DBusConnection *c = session_bus();
-    if (!c) return false;
+    pthread_mutex_lock(&bus_mutex);
+    DBusConnection *c = session_bus_locked();
+    if (!c) {
+        pthread_mutex_unlock(&bus_mutex);
+        return false;
+    }
     DBusMessage *msg = dbus_message_new_method_call("org.freedesktop.Notifications",
             "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "Notify");
-    if (!msg) return false;
+    if (!msg) {
+        pthread_mutex_unlock(&bus_mutex);
+        return false;
+    }
 
     const char *icon = "";
     dbus_uint32_t replaces = 0;
@@ -103,6 +121,7 @@ bool bus_notify(const char *app, const char *title, const char *body)
         if (ok) dbus_connection_flush(c);
     }
     dbus_message_unref(msg);
+    pthread_mutex_unlock(&bus_mutex);
     return ok;
 }
 
@@ -144,18 +163,20 @@ static bool iter_int(DBusMessageIter *it, int64_t *out)
 
 bool portal_read_int(const char *ns, const char *key, int64_t *out)
 {
-    DBusConnection *c = session_bus();
-    if (!c) return false;
+    bool result = false;
+    pthread_mutex_lock(&bus_mutex);
+    DBusConnection *c = session_bus_locked();
+    if (!c) goto done;
     /* ReadOne is portal version 2; older portals only have Read. */
     static const char *const methods[] = {"ReadOne", "Read"};
     for (int i = 0; i < 2; i++) {
         DBusMessage *msg = dbus_message_new_method_call("org.freedesktop.portal.Desktop",
                 "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Settings", methods[i]);
-        if (!msg) return false;
+        if (!msg) break;
         if (!dbus_message_append_args(msg, DBUS_TYPE_STRING, &ns, DBUS_TYPE_STRING, &key,
                                       DBUS_TYPE_INVALID)) {
             dbus_message_unref(msg);
-            return false;
+            break;
         }
         DBusError err;
         dbus_error_init(&err);
@@ -166,24 +187,28 @@ bool portal_read_int(const char *ns, const char *key, int64_t *out)
             bool retry = dbus_error_has_name(&err, DBUS_ERROR_UNKNOWN_METHOD);
             dbus_error_free(&err);
             if (retry) continue;
-            return false;
+            break;
         }
         DBusMessageIter it;
-        bool ok = dbus_message_iter_init(reply, &it) && iter_int(&it, out);
+        result = dbus_message_iter_init(reply, &it) && iter_int(&it, out);
         dbus_message_unref(reply);
-        return ok;
+        break;
     }
-    return false;
+done:
+    pthread_mutex_unlock(&bus_mutex);
+    return result;
 }
 
 void yasl_private_dbus_shutdown(void)
 {
+    pthread_mutex_lock(&bus_mutex);
     if (bus) {
         dbus_connection_close(bus);
         dbus_connection_unref(bus);
         bus = NULL;
     }
     dbus_shutdown();
+    pthread_mutex_unlock(&bus_mutex);
 }
 
 #else
