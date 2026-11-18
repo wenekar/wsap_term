@@ -20,7 +20,21 @@ struct ui_paint_box_style {
     uint32_t border_color;
     int border_width;
     int radius;
+    /* The drop shadow of the box. Zero alpha paints none. */
+    uint32_t shadow_color;
+    struct vector2i shadow_offset;
+    int shadow_blur;
 };
+
+/* Resolves the drop shadow of `style` into `out`. Returns false when the
+ * style has no shadow. */
+bool ui_paint_shadow_style_of(const struct css_style *style,
+                              const struct css_scale_context *scale,
+                              int radius, struct ui_paint_box_style *out);
+
+/* Paints the drop shadow of `style` below `local`. */
+bool ui_paint_box_shadow(struct ui_paint_context *paint, struct rect2i local,
+                         const struct ui_paint_box_style *style);
 
 /* Resolves box paint colors, border width, and corner radius from CSS. */
 struct ui_paint_box_style ui_paint_box_style_of(

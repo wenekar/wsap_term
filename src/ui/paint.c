@@ -3,13 +3,41 @@
 #include "ui/internal/tree.h"
 #include "ui/css.h"
 
+bool ui_paint_shadow_style_of(const struct css_style *style,
+                              const struct css_scale_context *scale,
+                              int radius, struct ui_paint_box_style *out)
+{
+    if (!style || !out || !style->has_shadow)
+        return false;
+    out->shadow_offset = (struct vector2i){
+        .x = ui_css_resolve_int(style->shadow_x, 0, 0, scale, false),
+        .y = ui_css_resolve_int(style->shadow_y, 0, 0, scale, false),
+    };
+    out->shadow_blur = ui_css_resolve_int(style->shadow_blur, 0, 0, scale,
+                                          true);
+    out->shadow_color = style->shadow_color;
+    (void)radius;
+    return out->shadow_color >> 24;
+}
+
+bool ui_paint_box_shadow(struct ui_paint_context *paint, struct rect2i local,
+                         const struct ui_paint_box_style *style)
+{
+    if (!paint || !style || !(style->shadow_color >> 24))
+        return true;
+    return ui_paint_shadow(paint,
+                           rect2i_translate(local, style->shadow_offset),
+                           style->radius, style->shadow_blur,
+                           style->shadow_color);
+}
+
 struct ui_paint_box_style ui_paint_box_style_of(
     const struct css_style *style, const struct css_scale_context *scale)
 {
     if (!style)
         return (struct ui_paint_box_style){0};
     float opacity = css_style_effective_opacity(style);
-    return (struct ui_paint_box_style){
+    struct ui_paint_box_style out = {
         .bg_color = style->has_bg_color
             ? ui_color_opacity(style->bg_color, opacity) : 0,
         .border_color = style->has_border_color
@@ -17,6 +45,9 @@ struct ui_paint_box_style ui_paint_box_style_of(
         .border_width = ui_css_border_width(style, scale),
         .radius = ui_css_resolve_int(style->border_radius, 0, 0, scale, true),
     };
+    ui_paint_shadow_style_of(style, scale, out.radius, &out);
+    out.shadow_color = ui_color_opacity(out.shadow_color, opacity);
+    return out;
 }
 
 bool ui_paint_box(struct ui_paint_context *paint, struct rect2i local,

@@ -242,17 +242,9 @@ static void list_paint(const struct ui_widget *widget,
     int max_radius = l->state.metrics.edge_pad;
     if (box.radius > max_radius)
         box.radius = max_radius;
-    if (style->has_shadow && !insets2i_eq(l->state.metrics.shadow,
-                                          (struct insets2i){0})) {
-        int sx = ui_css_resolve_int(style->shadow_x, 0, 0, scale, true);
-        int sy = ui_css_resolve_int(style->shadow_y, 0, 0, scale, true);
-        int blur = ui_css_resolve_int(style->shadow_blur, 0, 0, scale, true);
-        ui_paint_shadow(paint,
-                        rect2i_translate(bounds, (struct vector2i){ .x = sx, .y = sy }),
-                        box.radius, blur,
-                        ui_color_opacity(style->shadow_color,
-                                         css_style_effective_opacity(style)));
-    }
+    /* The shared painter draws the shadow of the resolved box style. */
+    if (!insets2i_eq(l->state.metrics.shadow, (struct insets2i){0}))
+        ui_paint_box_shadow(paint, bounds, &box);
     ui_paint_box(paint, bounds, &box, NULL);
 }
 
