@@ -40,6 +40,16 @@
 #define LOOP_FALLBACK_MS 10
 #define SCROLL_POINTS_PER_LINE 10.0
 
+/* Values of yasl_private_pointer_event.scroll_source and scroll_phase. They
+ * match the public scroll enums. */
+enum {
+    SCROLL_SOURCE_WHEEL  = 1,
+    SCROLL_SOURCE_FINGER = 2,
+    SCROLL_PHASE_BEGIN   = 1,
+    SCROLL_PHASE_UPDATE  = 2,
+    SCROLL_PHASE_END     = 3,
+};
+
 enum {
     DEVICE_LCTL   = 0x0001,
     DEVICE_LSHIFT = 0x0002,
@@ -708,6 +718,29 @@ static struct yasl_private_vector2d locked_delta(struct cocoa_surface *w, NSEven
     if (scale < 1.0)
         scale = 1.0;
     return (struct yasl_private_vector2d){ .x = ev.deltaX * scale, .y = -ev.deltaY * scale };
+}
+
+/* The source of a scroll. A precise device scrolls with a finger; a wheel
+ * reports notches. */
+static unsigned scroll_source(NSEvent *event, bool precise)
+{
+    return precise || event.momentumPhase != NSEventPhaseNone ? SCROLL_SOURCE_FINGER
+                                                              : SCROLL_SOURCE_WHEEL;
+}
+
+/* The phase of a scroll gesture. Momentum is the tail of a finger scroll, and a
+ * cancelled gesture ends, because the events have no cancel phase. */
+static unsigned scroll_phase(NSEventPhase phase, NSEventPhase momentum)
+{
+    if (phase == NSEventPhaseNone)
+        phase = momentum;
+    switch (phase) {
+    case NSEventPhaseBegan: return SCROLL_PHASE_BEGIN;
+    case NSEventPhaseChanged: return SCROLL_PHASE_UPDATE;
+    case NSEventPhaseEnded: return SCROLL_PHASE_END;
+    case NSEventPhaseCancelled: return SCROLL_PHASE_END;
+    default: return 0;
+    }
 }
 
 static void update_drag_hover(struct cocoa_display *d, NSPoint screenPoint)
@@ -1471,11 +1504,23 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
     struct cocoa_surface *w = self.surface;
     if (!w) return;
     double dx = -event.scrollingDeltaX, dy = -event.scrollingDeltaY;
-    if (event.hasPreciseScrollingDeltas) {
+    bool precise = event.hasPreciseScrollingDeltas;
+    CGFloat scale = w->window.backingScaleFactor;
+    if (scale < 1.0) scale = 1.0;
+    /* A precise device reports pixels; every device reports line offsets. */
+    struct yasl_private_vector2d pixels = {dx * scale, dy * scale};
+    unsigned valid = YASL_PRIVATE_SCROLL_LINES;
+    if (precise) {
         dx /= SCROLL_POINTS_PER_LINE;
         dy /= SCROLL_POINTS_PER_LINE;
+        valid |= YASL_PRIVATE_SCROLL_PIXELS;
+    } else {
+        pixels = (struct yasl_private_vector2d){0, 0};
     }
-    if (!isfinite(dx) || !isfinite(dy) || (dx == 0 && dy == 0)) return;
+    unsigned phase = scroll_phase(event.phase, event.momentumPhase);
+    /* A gesture end can arrive with no delta, and it still ends the gesture. */
+    if (!isfinite(dx) || !isfinite(dy) ||
+        ((dx == 0 && dy == 0) && phase != SCROLL_PHASE_END)) return;
     w->mods = cocoa_mods(event.modifierFlags);
     w->pointer = event_pos(w, event);
     struct yasl_private_event input_ev = {
@@ -1485,6 +1530,11 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
             .pos = w->pointer,
             .mods = w->mods,
             .scroll = {dx, dy},
+            .pixel_scroll = pixels,
+            .scroll_valid = (uint8_t)valid,
+            .scroll_source = (uint8_t)scroll_source(event, precise),
+            .scroll_phase = (uint8_t)phase,
+            .scroll_momentum = event.momentumPhase != NSEventPhaseNone,
         },
     };
     input_queue_push(&w->input, &input_ev);
