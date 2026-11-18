@@ -5,6 +5,7 @@
 #include <strings.h>
 
 #include "input/keybind.h"
+#include "util/unicode/utf8.h"
 
 struct name_entry {
     const char *name;
@@ -133,9 +134,10 @@ static bool parse_key_token(const char *tok, uint32_t *codepoint, uint16_t *key)
             return true;
         }
     }
-    if (tok[0] && !tok[1]) {
-        unsigned char c = (unsigned char)tok[0];
-        *codepoint = (c >= 'A' && c <= 'Z') ? (uint32_t)(c - 'A' + 'a') : c;
+    uint32_t cp;
+    int len = unicode_utf8_decode_one(tok, strlen(tok), &cp);
+    if (len > 0 && !tok[len]) {
+        *codepoint = cp >= 'A' && cp <= 'Z' ? cp - 'A' + 'a' : cp;
         return true;
     }
     return false;
@@ -264,7 +266,7 @@ bool input_keymap_format_action_chord(const struct input_keymap *km,
     if (!km || !out || sz == 0 || action == INPUT_SHORTCUT_NONE)
         return false;
     out[0] = '\0';
-    for (int i = 0; i < km->n; i++) {
+    for (size_t i = 0; i < km->n; i++) {
         const struct input_keybind *b = &km->binds[i];
         if (b->action == (uint16_t)action) {
             if (input_format_chord(b->mods, b->codepoint, b->key, out, sz))
@@ -272,6 +274,28 @@ bool input_keymap_format_action_chord(const struct input_keymap *km,
         }
     }
     return false;
+}
+
+void input_keymap_free(struct input_keymap *km)
+{
+    if (!km)
+        return;
+    free(km->hash_chord);
+    free(km->hash_action);
+    free(km->binds);
+    km->hash_chord = NULL;
+    km->hash_action = NULL;
+    km->binds = NULL;
+    km->hash_cap = 0;
+    km->n = 0;
+    km->cap = 0;
+    km->hash_valid = false;
+}
+
+void input_keymap_init(struct input_keymap *km)
+{
+    if (km)
+        *km = (struct input_keymap){0};
 }
 
 void input_keymap_clear(struct input_keymap *km)
@@ -287,59 +311,70 @@ static uint32_t lower(uint32_t c)
     return (c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c;
 }
 
+/* The token of a key is above every Unicode codepoint, and the token of a
+ * character is the codepoint itself. No token is zero. */
 static inline uint32_t chord_token(uint32_t codepoint, uint16_t key)
 {
-    return key != INPUT_KEY_NONE ? ((uint32_t)key | 0x8000u) : lower(codepoint);
+    return key != INPUT_KEY_NONE ? 0x110000u + key : lower(codepoint);
 }
 
-static inline uint32_t make_chord(unsigned mods, uint32_t token)
+/* A chord keeps all 32 bits of the modifiers and all 21 bits of the token. */
+static inline uint64_t make_chord(unsigned mods, uint32_t token)
 {
-    return (mods << 16) | (token & 0xFFFFu);
+    return ((uint64_t)mods << 32) | token;
 }
 
-static inline uint32_t hash_chord(uint32_t chord)
+static inline uint32_t hash_chord(uint64_t chord)
 {
-    return (chord * 2654435761u) & (INPUT_KEYMAP_HASH_CAP - 1);
+    return (uint32_t)((chord * 0x9e3779b97f4a7c15ull) >> 32);
 }
 
-static void rebuild_hash(struct input_keymap *km)
+static bool rebuild_hash(struct input_keymap *km)
 {
-    memset(km->hash_chord, 0, sizeof(km->hash_chord));
-    memset(km->hash_action, 0, sizeof(km->hash_action));
-    uint32_t mask = INPUT_KEYMAP_HASH_CAP - 1;
-    for (int i = 0; i < km->n; i++) {
-        const struct input_keybind *b = &km->binds[i];
-        if (!b->mods)
-            continue;
-        uint32_t token = chord_token(b->codepoint, b->key);
-        uint32_t chord = make_chord(b->mods, token);
+    size_t cap = 256;
+    while (cap < km->n * 2)
+        cap *= 2;
+    if (cap != km->hash_cap) {
+        uint64_t *chord = realloc(km->hash_chord, cap * sizeof *chord);
         if (!chord)
-            continue;
-        uint32_t idx = hash_chord(chord);
-        for (uint32_t probe = 0; probe <= mask; probe++) {
+            return false;
+        km->hash_chord = chord;
+        uint16_t *action = realloc(km->hash_action, cap * sizeof *action);
+        if (!action)
+            return false;
+        km->hash_action = action;
+        km->hash_cap = cap;
+    }
+    memset(km->hash_chord, 0, km->hash_cap * sizeof *km->hash_chord);
+    size_t mask = km->hash_cap - 1;
+    for (size_t i = 0; i < km->n; i++) {
+        const struct input_keybind *b = &km->binds[i];
+        uint64_t chord = make_chord(b->mods, chord_token(b->codepoint, b->key));
+        size_t idx = hash_chord(chord) & mask;
+        for (size_t probe = 0; probe <= mask; probe++) {
             if (km->hash_chord[idx] == 0) {
                 km->hash_chord[idx] = chord;
                 km->hash_action[idx] = b->action;
                 break;
             }
-            if (km->hash_chord[idx] == chord) {
+            if (km->hash_chord[idx] == chord)
                 break;
-            }
             idx = (idx + 1) & mask;
         }
     }
     km->hash_valid = true;
+    return true;
 }
 
-static inline bool hash_lookup(const struct input_keymap *km, uint32_t chord,
+static inline bool hash_lookup(const struct input_keymap *km, uint64_t chord,
                                enum input_shortcut *out)
 {
-    if (!chord)
+    if (!chord || !km->hash_cap)
         return false;
-    uint32_t mask = INPUT_KEYMAP_HASH_CAP - 1;
-    uint32_t idx = hash_chord(chord);
-    for (uint32_t probe = 0; probe <= mask; probe++) {
-        uint32_t slot_chord = km->hash_chord[idx];
+    size_t mask = km->hash_cap - 1;
+    size_t idx = hash_chord(chord) & mask;
+    for (size_t probe = 0; probe <= mask; probe++) {
+        uint64_t slot_chord = km->hash_chord[idx];
         if (slot_chord == 0)
             return false;
         if (slot_chord == chord) {
@@ -354,9 +389,9 @@ static inline bool hash_lookup(const struct input_keymap *km, uint32_t chord,
 static bool keymap_set(struct input_keymap *km, unsigned mods,
                        uint32_t codepoint, uint16_t key, uint16_t action)
 {
-    if (!km || !mods)
+    if (!km || (!codepoint && key == INPUT_KEY_NONE))
         return false;
-    for (int i = 0; i < km->n; i++) {
+    for (size_t i = 0; i < km->n; i++) {
         struct input_keybind *b = &km->binds[i];
         if (b->mods == mods && b->codepoint == codepoint && b->key == key) {
             b->action = action;
@@ -364,10 +399,15 @@ static bool keymap_set(struct input_keymap *km, unsigned mods,
             return true;
         }
     }
-    if (km->n >= INPUT_MAX_KEYBINDS)
-        return false;
-    km->binds[km->n++] = (struct input_keybind){mods, codepoint, key,
-                                                action};
+    if (km->n == km->cap) {
+        size_t cap = km->cap ? km->cap * 2 : INPUT_KEYMAP_INITIAL_CAP;
+        struct input_keybind *binds = realloc(km->binds, cap * sizeof *binds);
+        if (!binds)
+            return false;
+        km->binds = binds;
+        km->cap = cap;
+    }
+    km->binds[km->n++] = (struct input_keybind){mods, codepoint, key, action};
     km->hash_valid = false;
     return true;
 }
@@ -405,12 +445,12 @@ bool input_keymap_apply_spec(struct input_keymap *km, const char *spec)
         !input_parse_chord(chord, &mods, &codepoint, &key))
         return false;
     if (action == INPUT_SHORTCUT_NONE) {
-        for (int i = 0; i < km->n; i++) {
+        for (size_t i = 0; i < km->n; i++) {
             struct input_keybind *b = &km->binds[i];
             if (b->mods == mods && b->codepoint == codepoint && b->key == key) {
                 km->n--;
                 memmove(&km->binds[i], &km->binds[i + 1],
-                        (size_t)(km->n - i) * sizeof(km->binds[0]));
+                        (km->n - i) * sizeof(km->binds[0]));
                 km->hash_valid = false;
                 return true;
             }
@@ -426,11 +466,8 @@ enum input_shortcut input_keymap_lookup(const struct input_keymap *km,
     if (!km || !ev)
         return INPUT_SHORTCUT_NONE;
     unsigned mods = ev->mods & ~(unsigned)(INPUT_MOD_CAPS | INPUT_MOD_NUM);
-    if (!mods)
+    if (!km->hash_valid && !rebuild_hash((struct input_keymap *)km))
         return INPUT_SHORTCUT_NONE;
-
-    if (!km->hash_valid)
-        rebuild_hash((struct input_keymap *)km);
 
     enum input_shortcut sc;
     if (ev->key != INPUT_KEY_NONE &&
@@ -455,8 +492,7 @@ enum input_shortcut input_keymap_lookup(const struct input_keymap *km,
 static void add_bind(struct input_keymap *km, unsigned mods, uint32_t cp,
                      uint16_t key, enum input_shortcut action)
 {
-    if (mods)
-        keymap_set(km, mods, cp, key, (uint16_t)action);
+    keymap_set(km, mods, cp, key, (uint16_t)action);
 }
 
 void input_keymap_defaults(struct input_keymap *km,
@@ -465,7 +501,7 @@ void input_keymap_defaults(struct input_keymap *km,
 {
     if (!km || !p)
         return;
-    input_keymap_clear(km);
+    input_keymap_init(km);
 
 #ifndef __APPLE__
     unsigned accel = (style == INPUT_KEYBIND_MODERN)
@@ -551,6 +587,7 @@ static bool active_ready;
 
 void input_keymap_reset_active(enum input_keybind_style style)
 {
+    input_keymap_free(&active_keymap);
     input_keymap_defaults(&active_keymap, &input_platform_shortcuts, style);
     active_ready = true;
 }

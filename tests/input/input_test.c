@@ -11,7 +11,9 @@ static enum input_shortcut shortcut(struct input_key_event ev,
 {
     struct input_keymap km;
     input_keymap_defaults(&km, p, INPUT_KEYBIND_LEGACY);
-    return input_keymap_lookup(&km, &ev);
+    enum input_shortcut sc = input_keymap_lookup(&km, &ev);
+    input_keymap_free(&km);
+    return sc;
 }
 #define SC(p, ...) shortcut((struct input_key_event){ __VA_ARGS__ }, p)
 
@@ -33,11 +35,75 @@ static void keymap_match_test(void)
     ev.mods = INPUT_MOD_ALT;
     assert(!input_keymap_match(&km, &ev));
     assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_NONE);
+    input_keymap_free(&km);
+}
+
+/* A binding with no modifier runs from a bare key. */
+static void zero_modifier_binding_test(void)
+{
+    struct input_keymap km;
+    input_keymap_init(&km);
+    assert(input_keymap_apply_spec(&km, "escape = command_palette"));
+    struct input_key_event ev = { .key = INPUT_KEY_ESCAPE };
+    assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_COMMAND_PALETTE);
+    assert(input_keymap_apply_spec(&km, "escape = none"));
+    assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_NONE);
+    input_keymap_free(&km);
+}
+
+/* A key token and a codepoint do not share a bit. A codepoint above 0x7fff
+ * stays distinct, and a codepoint above 0xffff is not truncated. */
+static void wide_codepoint_binding_test(void)
+{
+    struct input_keymap km;
+    input_keymap_init(&km);
+    assert(input_keymap_apply_spec(&km, "ctrl+\xcf\x80 = copy"));
+    assert(input_keymap_apply_spec(&km, "ctrl+\xf0\x9f\x98\x80 = paste"));
+    struct input_key_event ev = { .key = INPUT_KEY_NONE, .mods = INPUT_MOD_CTRL };
+    ev.codepoint = 0x3c0;
+    assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_COPY);
+    ev.codepoint = 0x1f600;
+    assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_PASTE);
+    ev.codepoint = 0x3c1;
+    assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_NONE);
+    ev.codepoint = 0x1f601;
+    assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_NONE);
+    input_keymap_free(&km);
+}
+
+/* The map grows past the old 128-binding limit. */
+static void keymap_grows_test(void)
+{
+    struct input_keymap km;
+    input_keymap_init(&km);
+    static const unsigned mods[] = {
+        INPUT_MOD_CTRL, INPUT_MOD_ALT, INPUT_MOD_CTRL | INPUT_MOD_ALT,
+    };
+    static const char *const names[] = { "ctrl+", "alt+", "ctrl+alt+" };
+    unsigned added = 0;
+    for (size_t m = 0; m < 3; m++) {
+        for (char c = '!'; c <= '~'; c++) {
+            if (c == '+')
+                continue;
+            char spec[64];
+            snprintf(spec, sizeof spec, "%s%c = copy", names[m], c);
+            assert(input_keymap_apply_spec(&km, spec));
+            added++;
+        }
+    }
+    assert(added > 128);
+    assert(km.n > 128);
+    struct input_key_event ev = { .codepoint = '~', .mods = mods[2] };
+    assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_COPY);
+    input_keymap_free(&km);
 }
 
 int main(void)
 {
     keymap_match_test();
+    zero_modifier_binding_test();
+    wide_codepoint_binding_test();
+    keymap_grows_test();
     static const struct input_shortcut_policy lin = {
         .accel = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,
         .zoom = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,
