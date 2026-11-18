@@ -23,6 +23,8 @@ using namespace metal;
 #define MODE_COLOR 2u
 #define MODE_IMAGE 3u
 #define MODE_SUBPX 4u
+/* An image that samples four texels. */
+#define MODE_IMAGE_LINEAR 5u
 
 /* The shape instance modes. */
 #define SHAPE_ROUNDED 1u
@@ -80,11 +82,39 @@ vertex GlyphVertexOut glyph_vertex(uint vertex_id [[vertex_id]],
 }
 
 /*
+ * The sample rule of an image op: destination pixel i of n samples the
+ * source coordinate (i + 0.5) * src / n. A nearest sample takes the texel
+ * that holds the coordinate. A linear sample mixes four texels by the rest
+ * of the way. The CPU painter uses the same rule.
+ */
+static inline float4 image_texel(texture2d<float, access::read> image, int2 uv)
+{
+    int2 last = int2((int)image.get_width() - 1, (int)image.get_height() - 1);
+    return image.read(uint2(max(min(uv, last), int2(0))));
+}
+
+static inline float4 image_sample(texture2d<float, access::read> image, float2 uv, bool linear)
+{
+    if (!linear)
+        return image_texel(image, int2(floor(uv)));
+    float2 last = float2((float)((int)image.get_width() - 1), (float)((int)image.get_height() - 1));
+    float2 p = max(min(uv - 0.5f, last), float2(0.0f));
+    float2 f = p - floor(p);
+    int2 i = int2(floor(p));
+    float4 top = mix(image_texel(image, i), image_texel(image, i + int2(1, 0)), f.x);
+    float4 bottom = mix(image_texel(image, i + int2(0, 1)), image_texel(image, i + int2(1, 1)), f.x);
+    return mix(top, bottom, f.y);
+}
+
+/*
  * The atlas holds BGRA texels. An alpha glyph keeps its coverage in the
  * alpha channel. A subpixel glyph keeps red, green, and blue coverage in the
  * color channels. A color glyph keeps premultiplied color. A subpixel draw
  * runs three times, once for each color write mask. `channel` picks the
  * coverage of the pass.
+ *
+ * An image keeps the premultiplied color of its texels, scaled by the tint
+ * and the opacity of the instance.
  */
 fragment float4 glyph_fragment(GlyphVertexOut in [[stage_in]],
                                texture2d<float, access::read> atlas [[texture(0)]],
@@ -100,8 +130,11 @@ fragment float4 glyph_fragment(GlyphVertexOut in [[stage_in]],
     }
     if (in.mode == MODE_COLOR)
         return atlas.read(uint2(in.uv)) * c.a;
-    if (in.mode == MODE_IMAGE)
-        return float4(image.read(uint2(in.uv)).rgb, 1.0f);
+    if (in.mode == MODE_IMAGE || in.mode == MODE_IMAGE_LINEAR) {
+        float4 t = image_sample(image, in.uv, in.mode == MODE_IMAGE_LINEAR);
+        float a = t.a * c.a;
+        return float4(t.rgb * c.rgb * c.a, a);
+    }
     float3 cov = atlas.read(uint2(in.uv)).rgb;
     float a = c.a * cov[channel];
     return float4(c.rgb * a, a);

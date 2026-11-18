@@ -1481,7 +1481,7 @@ static bool bench_want(const char *only, const char *name)
     return !only || !strcmp(only, name);
 }
 
-enum bench_kind { BENCH_PLAIN, BENCH_OVERLAY, BENCH_STALE };
+enum bench_kind { BENCH_PLAIN, BENCH_OVERLAY, BENCH_IMAGES, BENCH_STALE };
 
 /* One bench case. The step function changes the terminal before each frame. */
 struct bench_case {
@@ -1585,6 +1585,28 @@ static void bench_run(const struct bench_case *c)
         assert(ok);
         (void)ok;
     }
+    /* The image case: one preview picture and a row of icons, as a tab
+     * preview draws them. The op paints them in every frame. The scene
+     * borrows the images, so they live in `bench_images` for the run. */
+    enum { ICONS = 8, ICON = 24, PIC_W = 240, PIC_H = 160 };
+    static uint32_t pic_px[PIC_W * PIC_H], icon_px[ICONS][ICON * ICON];
+    static struct ui_image pic, icons[ICONS];
+    if (c->kind == BENCH_IMAGES) {
+        for (int i = 0; i < PIC_W * PIC_H; i++)
+            pic_px[i] = 0xFF000000u | ((uint32_t)i * 2654435761u >> 8);
+        for (int n = 0; n < ICONS; n++)
+            for (int i = 0; i < ICON * ICON; i++)
+                icon_px[n][i] = 0xFF000000u | ((uint32_t)(i * 40503u + (unsigned)n) >> 8);
+        pic = (struct ui_image){ .pixels = pic_px, .size = { .x = PIC_W, .y = PIC_H }, .gen = 1 };
+        assert(ui_scene_image(&scene, (struct vector2i){ .x = 40, .y = 40 }, &pic));
+        for (int n = 0; n < ICONS; n++) {
+            icons[n] = (struct ui_image){
+                .pixels = icon_px[n], .size = { .x = ICON, .y = ICON }, .gen = 1,
+            };
+            assert(ui_scene_image(&scene, (struct vector2i){ .x = 40 + n * (ICON + 8),
+                                                             .y = 220 }, &icons[n]));
+        }
+    }
 
     struct framebuffer_history history = {0};
     double total = 0, worst = 0;
@@ -1602,10 +1624,10 @@ static void bench_run(const struct bench_case *c)
         };
         struct render_frame frame = test_grid_frame(&grid, w, h);
         frame.ui_damage = &no_ui_damage;
-        if (c->kind == BENCH_OVERLAY) {
+        if (c->kind == BENCH_OVERLAY || c->kind == BENCH_IMAGES) {
             frame.ui = &scene;
             /* The overlay changes only in the first frame. NULL means every UI pixel changed. */
-            frame.ui_damage = f ? &no_ui_damage : NULL;
+            frame.ui_damage = f && c->kind == BENCH_OVERLAY ? &no_ui_damage : NULL;
         }
         double begin = now();
         (void)render_draw(r, &target, &frame);
@@ -1647,6 +1669,7 @@ static void benchmark(void)
         { "idle", NULL, true, BENCH_PLAIN, bench_step_idle },
         { "scroll-region", "\033[5;45r\033[45;1H", true, BENCH_PLAIN, bench_step_region },
         { "overlay-scroll", "\033[50;1H", true, BENCH_OVERLAY, bench_step_scroll },
+        { "image", NULL, true, BENCH_IMAGES, bench_step_idle },
         { "italic", "\033[3m", false, BENCH_PLAIN, bench_step_italic },
         { "cjk-emoji", NULL, false, BENCH_PLAIN, bench_step_cjk },
         { "fresh-every-frame", NULL, true, BENCH_STALE, bench_step_typing },

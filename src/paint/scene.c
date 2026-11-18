@@ -220,14 +220,18 @@ static uint64_t hash_op(uint64_t h, const struct ui_scene *s,
 {
     h = hash_bytes(h, &op->kind, sizeof(op->kind));
     h = hash_bytes(h, &op->alpha, sizeof(op->alpha));
+    h = hash_bytes(h, &op->flags, sizeof(op->flags));
     h = hash_bytes(h, &op->rect, sizeof(op->rect));
     h = hash_bytes(h, &op->color, sizeof(op->color));
     h = hash_bytes(h, &op->radius, sizeof(op->radius));
     if (op->kind == UI_SCENE_OP_SHADOW)
         h = hash_bytes(h, &op->blur, sizeof(op->blur));
     if (op->kind == UI_SCENE_OP_IMAGE) {
-        h = hash_bytes(h, &op->image, sizeof(op->image));
-        h = hash_bytes(h, &op->image->gen, sizeof(op->image->gen));
+        const struct ui_image *image = op->image.src;
+        h = hash_bytes(h, &image, sizeof(image));
+        h = hash_bytes(h, &op->image.uv, sizeof(op->image.uv));
+        if (image)
+            h = hash_bytes(h, &image->gen, sizeof(image->gen));
     }
     if (op->kind == UI_SCENE_OP_TEXT) {
         h = hash_bytes(h, &op->style.advance, sizeof(op->style.advance));
@@ -405,17 +409,35 @@ bool ui_scene_shadow(struct ui_scene *s, struct rect2i box, int radius,
     return scene_commit(s, op);
 }
 
-bool ui_scene_image(struct ui_scene *s, struct vector2i pos,
-                    const struct ui_image *image)
+bool ui_scene_image_rect(struct ui_scene *s, struct rect2i dst,
+                         const struct ui_image *image,
+                         const struct ui_image_options *opt)
 {
     if (!image || !image->pixels || image->size.x <= 0 || image->size.y <= 0)
         return true;
-    struct ui_scene_op *op = scene_alloc(s, UI_SCENE_OP_IMAGE,
-        (struct rect2i){ .pos = pos, .size = image->size });
+    struct ui_image_options options = opt ? *opt : (struct ui_image_options){0};
+    struct rect2i uv = rect2i_is_empty(options.uv)
+        ? (struct rect2i){ .size = image->size }
+        : rect2i_intersect(options.uv, (struct rect2i){ .size = image->size });
+    if (rect2i_is_empty(dst) || rect2i_is_empty(uv))
+        return true;
+    struct ui_scene_op *op = scene_alloc(s, UI_SCENE_OP_IMAGE, dst);
     if (!op)
         return false;
-    op->image = image;
+    op->image = (struct ui_image_draw){ .src = image, .uv = uv };
+    op->color = options.tint;
+    op->alpha = options.opacity ? options.opacity : 255;
+    op->flags = (uint16_t)(options.flags & UI_IMAGE_LINEAR);
     return scene_commit(s, op);
+}
+
+bool ui_scene_image(struct ui_scene *s, struct vector2i pos,
+                    const struct ui_image *image)
+{
+    if (!image)
+        return true;
+    return ui_scene_image_rect(s, (struct rect2i){ .pos = pos, .size = image->size },
+                               image, NULL);
 }
 
 bool ui_scene_text_run(struct ui_scene *s, struct rect2i bounds,
@@ -504,7 +526,7 @@ static bool op_visible(const struct ui_scene_op *op)
     case UI_SCENE_OP_CIRCLE:
         return op->alpha > 0;
     case UI_SCENE_OP_IMAGE:
-        return op->image != NULL;
+        return op->image.src != NULL && op->alpha > 0;
     default:
         return (op->color >> 24) > 0;
     }

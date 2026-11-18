@@ -215,8 +215,8 @@ static void height_budget_and_anchor_refresh_test(void)
     show_hovered_preview(&f, 0);
 
     const struct ui_scene_op *op = find_image_op(&f.scene);
-    assert(op && op->image);
-    struct vector2i full_thumb = op->image->size;
+    assert(op && op->image.src);
+    struct vector2i full_thumb = op->image.src->size;
     struct rect2i tab0 = bar_part_rect(f.w, "tab", 0);
     assert(full_thumb.x > 0 && full_thumb.y > 0);
     assert(preview->bounds.y >= rect2i_end(tab0).y);
@@ -227,8 +227,8 @@ static void height_budget_and_anchor_refresh_test(void)
     render_and_lint(&f);
     assert(preview_shown(f.w));
     op = find_image_op(&f.scene);
-    assert(op && op->image);
-    assert(op->image->size.x < full_thumb.x && op->image->size.y < full_thumb.y);
+    assert(op && op->image.src);
+    assert(op->image.src->size.x < full_thumb.x && op->image.src->size.y < full_thumb.y);
     assert(rect2i_end(preview->bounds).y <= short_h);
 
     /* Tiny max_height (< 24dp) drops sliver thumbnail to title-only card. */

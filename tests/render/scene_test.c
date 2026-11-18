@@ -51,7 +51,7 @@ static void test_image(void)
     enum { W = 8, H = 6, IW = 5, IH = 4 };
     uint32_t src[IW * IH];
     for (int i = 0; i < IW * IH; i++)
-        src[i] = 0x40000000u + (uint32_t)i * 0x010203u;
+        src[i] = 0xFF000000u | (uint32_t)i * 0x010203u;
     struct ui_image image = { .pixels = src, .size = { .x = IW, .y = IH } };
 
     /* Partly off the canvas on the top-left. */
@@ -97,6 +97,143 @@ static void test_image(void)
     CHECK(out[(H - 1) * W + W - 2] == (src[0] | 0xFF000000u));
     CHECK(out[(H - 1) * W + W - 1] == (src[1] | 0xFF000000u));
     CHECK(out[(H - 2) * W + W - 1] == 0xFF778899u);
+    ui_scene_destroy(&s);
+}
+
+/* A premultiplied image blends with its own alpha. */
+static void test_image_alpha(void)
+{
+    enum { W = 8, H = 6, IW = 3, IH = 3 };
+    uint32_t src[IW * IH];
+    /* Half-transparent white: the premultiplied color equals the alpha. */
+    for (int i = 0; i < IW * IH; i++)
+        src[i] = 0x80808080u;
+    struct ui_image image = { .pixels = src, .size = { .x = IW, .y = IH } };
+
+    struct ui_scene s = {0};
+    ui_scene_init(&s);
+    CHECK(ui_scene_image(&s, (struct vector2i){ .x = 2, .y = 1 }, &image));
+
+    uint32_t out[W * H];
+    fill(out, W * H, 0xFF000000u);
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    /* 0x80 over black keeps 0x80, and the canvas stays opaque. */
+    CHECK(out[1 * W + 2] == 0xFF808080u);
+    CHECK(out[3 * W + 4] == 0xFF808080u);
+    CHECK(out[1 * W + 1] == 0xFF000000u);
+    CHECK(out[4 * W + 4] == 0xFF000000u);
+
+    /* Over a gray backdrop the source takes half of each channel. */
+    fill(out, W * H, 0xFF404040u);
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    CHECK(out[1 * W + 2] == 0xFFA0A0A0u);
+
+    /* A fully transparent texel shows the backdrop only. */
+    for (int i = 0; i < IW * IH; i++)
+        src[i] = 0x00000000u;
+    fill(out, W * H, 0xFF203040u);
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    for (int i = 0; i < W * H; i++)
+        CHECK(out[i] == 0xFF203040u);
+    ui_scene_destroy(&s);
+}
+
+/* A source texel rect selects a part of the image. */
+static void test_image_uv(void)
+{
+    enum { W = 8, H = 8, IW = 4, IH = 4 };
+    uint32_t src[IW * IH];
+    for (int i = 0; i < IW * IH; i++)
+        src[i] = 0xFF000000u | (uint32_t)(i + 1);
+    struct ui_image image = { .pixels = src, .size = { .x = IW, .y = IH } };
+    uint32_t out[W * H];
+
+    /* One texel for each pixel, from the middle of the image. */
+    struct ui_scene s = {0};
+    ui_scene_init(&s);
+    CHECK(ui_scene_image_rect(&s, R(2, 2, 2, 2), &image,
+        &(struct ui_image_options){ .uv = R(1, 1, 2, 2) }));
+    fill(out, W * H, 0xFF000000u);
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    CHECK(out[2 * W + 2] == src[1 * IW + 1]);
+    CHECK(out[2 * W + 3] == src[1 * IW + 2]);
+    CHECK(out[3 * W + 2] == src[2 * IW + 1]);
+    CHECK(out[3 * W + 3] == src[2 * IW + 2]);
+    CHECK(out[3 * W + 4] == 0xFF000000u);
+    CHECK(out[1 * W + 2] == 0xFF000000u);
+    ui_scene_destroy(&s);
+
+    /* The whole image, doubled: each texel covers a block of four pixels. */
+    ui_scene_init(&s);
+    CHECK(ui_scene_image_rect(&s, R(0, 0, W, H), &image, NULL));
+    fill(out, W * H, 0xFF000000u);
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    CHECK(out[0] == src[0] && out[1] == src[0] && out[W] == src[0]);
+    CHECK(out[2] == src[1] && out[3] == src[1]);
+    CHECK(out[4 * W + 4] == src[2 * IW + 2]);
+    CHECK(out[7 * W + 7] == src[3 * IW + 3]);
+    ui_scene_destroy(&s);
+}
+
+/* A linear sample mixes the neighbours; a nearest sample takes one texel. */
+static void test_image_linear(void)
+{
+    enum { W = 4, H = 2 };
+    /* A transparent texel and an opaque white texel, doubled in width. */
+    uint32_t src[2] = { 0x00000000u, 0xFFFFFFFFu };
+    struct ui_image image = { .pixels = src, .size = { .x = 2, .y = 1 } };
+    uint32_t out[W * H];
+    struct ui_scene s = {0};
+
+    ui_scene_init(&s);
+    CHECK(ui_scene_image_rect(&s, R(0, 0, W, H), &image,
+        &(struct ui_image_options){ .flags = UI_IMAGE_LINEAR }));
+    fill(out, W * H, 0xFF000000u);
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    CHECK(out[0] == 0xFF000000u);
+    CHECK(out[1] == 0xFF404040u);
+    CHECK(out[2] == 0xFFBFBFBFu);
+    CHECK(out[3] == 0xFFFFFFFFu);
+    /* The second row samples the one row of the image. */
+    CHECK(out[W + 1] == 0xFF404040u);
+    ui_scene_destroy(&s);
+
+    ui_scene_init(&s);
+    CHECK(ui_scene_image_rect(&s, R(0, 0, W, H), &image, NULL));
+    fill(out, W * H, 0xFF000000u);
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    CHECK(out[0] == 0xFF000000u && out[1] == 0xFF000000u);
+    CHECK(out[2] == 0xFFFFFFFFu && out[3] == 0xFFFFFFFFu);
+    ui_scene_destroy(&s);
+}
+
+/* A tint and an opacity scale the color and the alpha of the image. */
+static void test_image_tint(void)
+{
+    enum { W = 3, H = 3 };
+    uint32_t src[W * H];
+    for (int i = 0; i < W * H; i++)
+        src[i] = 0xFFFFFFFFu;
+    struct ui_image image = { .pixels = src, .size = { .x = W, .y = H } };
+    uint32_t out[W * H];
+
+    /* A blue tint keeps the blue channel only. */
+    struct ui_scene s = {0};
+    ui_scene_init(&s);
+    CHECK(ui_scene_image_rect(&s, R(0, 0, W, H), &image,
+        &(struct ui_image_options){ .tint = 0xFF0000FFu }));
+    fill(out, W * H, 0xFF000000u);
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    CHECK(out[0] == 0xFF0000FFu);
+    ui_scene_destroy(&s);
+
+    /* A half opacity of a white image over black gives a gray. */
+    ui_scene_init(&s);
+    CHECK(ui_scene_image_rect(&s, R(0, 0, W, H), &image,
+        &(struct ui_image_options){ .opacity = 128 }));
+    fill(out, W * H, 0xFF000000u);
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    CHECK(out[0] == 0xFF808080u);
     ui_scene_destroy(&s);
 }
 
@@ -562,6 +699,10 @@ int main(int argc, char **argv)
         return 0;
     }
     test_image();
+    test_image_alpha();
+    test_image_uv();
+    test_image_linear();
+    test_image_tint();
     test_translucent_rect();
     test_pill();
     test_pill_middle_edge();

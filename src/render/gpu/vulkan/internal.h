@@ -21,7 +21,9 @@
  *
  * Textures. Each texture has its own descriptor set with one binding. A
  * draw binds the set of the texture that it samples: the atlas, one UI
- * image, or the CPU pixels of a surface.
+ * image, or the CPU pixels of a surface. One descriptor pool holds the
+ * sets. A full pool adds a bigger pool, so the number of textures is not
+ * bounded by the first pool.
  *
  * Destroying. An object that a submitted frame can still use is destroyed
  * only after vulkan_wait_idle(). This happens on rare events only: a
@@ -50,12 +52,14 @@
  * backend prefers. It matches the 0xAARRGGBB words of the CPU. */
 #define TEXEL_FORMAT VK_FORMAT_B8G8R8A8_UNORM
 
-/* A sampled image with its view and its descriptor set. All zero: no texture. */
+/* A sampled image with its view and its descriptor set. All zero: no texture.
+ * `pool` owns `set`. */
 struct vulkan_texture {
     VkImage image;
     VkDeviceMemory memory;
     VkImageView view;
     VkDescriptorSet set;
+    VkDescriptorPool pool;
     VkImageLayout layout;
     struct vector2i size;
 };
@@ -178,6 +182,12 @@ struct vulkan_fns {
     PFN_vkQueuePresentKHR QueuePresentKHR;
 };
 
+/* A descriptor pool and the number of sets that it can give. */
+struct vulkan_desc_pool {
+    VkDescriptorPool pool;
+    uint32_t sets;
+};
+
 struct render_gpu {
     /* The handles that the window layer reads. See paint/vulkan.h. */
     struct vulkan_device dev;
@@ -185,7 +195,8 @@ struct render_gpu {
     struct vulkan_fns vk;
 
     VkCommandPool cmd_pool;
-    VkDescriptorPool desc_pool;
+    /* One set for each texture. A full pool adds a bigger pool. */
+    struct vulkan_desc_pool *desc_pools;
     VkDescriptorSetLayout desc_layout;
     VkPipelineLayout pipeline_layout;
     VkPipelineCache pipeline_cache;
@@ -193,17 +204,21 @@ struct render_gpu {
     /* The color format that the pipelines draw to. */
     VkFormat pipeline_format;
     unsigned next_slot;
+    uint32_t n_desc_pools;
+    uint32_t cap_desc_pools;
     VkPipeline pipelines[PIPE_COUNT];
 
     struct frame_slot slots[FRAME_SLOTS];
 
     struct gpu_build build;
     struct vulkan_texture atlas;
-    struct vulkan_texture images[GPU_IMAGES];
+    /* One texture for each image slot of the builder. */
+    struct vulkan_texture *images;
     /* Scratch of one frame: the copy regions of the atlas, and where the
-     * pixels of each image wait in the upload buffer. */
+     * pixels of each image waits in the upload buffer. */
     VkBufferImageCopy *copies;
-    size_t image_offsets[GPU_IMAGES];
+    size_t *image_offsets;
+    int n_images;
 
     /* Every surface that holds Vulkan objects of this device. */
     struct gpu_surface *surfaces;
