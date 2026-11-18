@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Operating-system desktop services behind yasl/desktop.h. Common code
+/* Operating-system desktop services behind the desktop calls in yasl/yasl.h. Common code
  * validates arguments first. Path and locale functions write a NUL-terminated
  * string to buf and return its length, or zero on failure or when it does not
  * fit in cap. */

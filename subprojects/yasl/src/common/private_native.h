@@ -3,9 +3,9 @@
  * Optional native handles and application-managed rendering.
  *
  * These extensions follow the core thread and lifetime rules. Handles are borrowed;
- * never destroy them or dispatch their native connection independently. Typed
- * backend accessors live in the yasl/native headers and are installed only for built
- * backends. Application-managed drawing currently supports Cocoa/Metal only.
+ * never destroy them or dispatch their native connection independently. The public
+ * accessor is yasl_surface_get_native() in yasl/yasl.h; it reports handles only for
+ * built backends. Application-managed drawing currently supports Cocoa/Metal only.
  */
 #ifndef YASL_PRIVATE_NATIVE_H
 #define YASL_PRIVATE_NATIVE_H
@@ -28,7 +28,7 @@ extern "C" {
  * Get a borrowed, backend-specific display handle.
  * @param d Display, or NULL.
  * @return Native handle, or NULL. Inspect yasl_private_display_backend() before casting.
- * Prefer a typed accessor from yasl/native/wayland.h, x11.h, or cocoa.h.
+ * Prefer yasl_surface_get_native() from yasl/yasl.h.
  * The handle expires on display close; do not close or dispatch it independently.
  */
 void *yasl_private_display_get_native_handle(struct yasl_private_display *d);
