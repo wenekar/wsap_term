@@ -110,6 +110,7 @@ static accesskit_role role_for_node(const struct ui_accessibility_node *node)
 static bool has_text(const struct ui_accessibility_node *node)
 {
     return !(node->states & UI_ACCESSIBILITY_STATE_PASSWORD) &&
+           (node->value || node->text) &&
            (node->role == UI_ACCESSIBILITY_ROLE_TEXT_FIELD ||
             node->role == UI_ACCESSIBILITY_ROLE_SEARCH_FIELD ||
             node->role == UI_ACCESSIBILITY_ROLE_TERMINAL ||
@@ -246,18 +247,43 @@ static bool build_word_cb(size_t start, size_t end, bool is_word, void *userdata
     return true;
 }
 
+/* Reads the text range of `node` and makes it valid UTF-8. A provider node
+ * reads only its range, so a large document costs one viewport. */
+static char *read_node_text(const struct ui_accessibility_node *node,
+                            size_t *out_length)
+{
+    size_t length = ui_accessibility_node_text_length(node);
+    char *raw = malloc(length + 1);
+    if (!raw)
+        return NULL;
+    size_t read = ui_accessibility_node_text_read(node, 0, raw, length);
+    raw[read] = '\0';
+    char *text = unicode_utf8_sanitize_dup(raw);
+    free(raw);
+    if (!text)
+        return NULL;
+    *out_length = strlen(text);
+    return text;
+}
+
 static bool build_text(struct text_model *model,
                          const struct text_model *previous,
                          const struct ui_accessibility_tree *snapshot,
                          const struct ui_accessibility_node *node)
 {
-    const char *value = node->value ? node->value : "";
-    size_t length = strlen(value);
-    if (length > INT_MAX)
+    size_t length = 0;
+    char *value = read_node_text(node, &length);
+    if (!value)
         return false;
+    if (length > INT_MAX) {
+        free(value);
+        return false;
+    }
     struct text_run *run = new_run(model, previous, snapshot, node->id, 0, 0);
-    if (!run)
+    if (!run) {
+        free(value);
         return false;
+    }
     struct build_grapheme_ctx gctx = {
         .model = model,
         .previous = previous,
@@ -270,18 +296,40 @@ static bool build_text(struct text_model *model,
         .ok = true,
     };
     ui_text_each_grapheme(value, length, build_grapheme_cb, &gctx);
-    if (!gctx.ok)
+    if (!gctx.ok) {
+        free(value);
         return false;
+    }
     if (length && value[length - 1] == '\n' &&
-        !new_run(model, previous, snapshot, node->id, gctx.ordinal, length))
+        !new_run(model, previous, snapshot, node->id, gctx.ordinal, length)) {
+        free(value);
         return false;
+    }
 
     struct build_word_ctx wctx = {
         .model = model,
         .node_id = node->id,
     };
     ui_text_each_word(value, length, build_word_cb, &wctx);
+    free(value);
     return true;
+}
+
+static accesskit_text_direction text_direction_for_node(
+    const struct ui_accessibility_node *node)
+{
+    switch (node->text_direction) {
+    case UI_ACCESSIBILITY_TEXT_DIRECTION_LEFT_TO_RIGHT:
+        return ACCESSKIT_TEXT_DIRECTION_LEFT_TO_RIGHT;
+    case UI_ACCESSIBILITY_TEXT_DIRECTION_RIGHT_TO_LEFT:
+        return ACCESSKIT_TEXT_DIRECTION_RIGHT_TO_LEFT;
+    case UI_ACCESSIBILITY_TEXT_DIRECTION_TOP_TO_BOTTOM:
+        return ACCESSKIT_TEXT_DIRECTION_TOP_TO_BOTTOM;
+    case UI_ACCESSIBILITY_TEXT_DIRECTION_BOTTOM_TO_TOP:
+        return ACCESSKIT_TEXT_DIRECTION_BOTTOM_TO_TOP;
+    default:
+        return ACCESSKIT_TEXT_DIRECTION_LEFT_TO_RIGHT;
+    }
 }
 
 static accesskit_rect node_bounds(const struct ui_accessibility_node *node)
@@ -343,7 +391,6 @@ static accesskit_node *build_node(const struct provider_window *window,
                 accesskit_node_add_action(node, actions[i].native);
     }
     if (has_text(source)) {
-        const char *value = source->value ? source->value : "";
         for (int i = 0; i < text->count; i++)
             if (text->runs[i].owner == source->id)
                 accesskit_node_push_child(node, text->runs[i].id);
@@ -355,7 +402,7 @@ static accesskit_node *build_node(const struct provider_window *window,
             start = end;
             end = swap;
         }
-        size_t length = strlen(value);
+        size_t length = ui_accessibility_node_text_length(source);
         accesskit_node_set_text_selection(node, (accesskit_text_selection){
             .anchor = text_position(text, source->id, start < length ? start : length),
             .focus = text_position(text, source->id, end < length ? end : length),
@@ -379,9 +426,11 @@ static int compare_children(const void *a, const void *b)
     return left->id < right->id ? -1 : left->id > right->id;
 }
 
-static accesskit_tree_update *build_update(const struct provider_window *window,
-                                           const struct ui_accessibility_tree *snapshot,
-                                           const struct text_model *text)
+static accesskit_tree_update *build_update(
+    const struct provider_window *window,
+    const struct ui_accessibility_tree *snapshot,
+    const struct text_model *text,
+    const struct ui_accessibility_publish_set *published)
 {
     if (!snapshot->count)
         return NULL;
@@ -397,13 +446,17 @@ static accesskit_tree_update *build_update(const struct provider_window *window,
             focus = node->id;
     }
     qsort(children, snapshot->count, sizeof(*children), compare_children);
+    bool full = !published;
     accesskit_tree_update *update = accesskit_tree_update_with_capacity_and_focus(
-        snapshot->count + (size_t)text->count, focus);
+        (full ? snapshot->count : published->count) + (size_t)text->count,
+        full || ui_accessibility_publish_set_has(published, focus) ? focus : 0);
     accesskit_tree_info *info = accesskit_tree_info_new(root);
     accesskit_tree_info_set_toolkit_name(info, "wsap-ui");
     accesskit_tree_update_set_tree_info(update, info);
     for (size_t i = 0; i < snapshot->count; i++) {
         const struct ui_accessibility_node *source = &snapshot->nodes[i];
+        if (!full && !ui_accessibility_publish_set_has(published, source->id))
+            continue;
         accesskit_node *node = build_node(window, source, text);
         size_t low = 0, high = snapshot->count;
         while (low < high) {
@@ -419,14 +472,26 @@ static accesskit_tree_update *build_update(const struct provider_window *window,
     }
     for (int i = 0; i < text->count; i++) {
         const struct text_run *run = &text->runs[i];
+        if (!full && !ui_accessibility_publish_set_has(published, run->owner))
+            continue;
         const struct ui_accessibility_node *source = ui_accessibility_tree_find(snapshot, run->owner);
         accesskit_node *node = accesskit_node_new(ACCESSKIT_ROLE_TEXT_RUN);
-        const char *value = source->value ? source->value : "";
-        accesskit_node_set_value_with_length(node, value + run->offset, run->length);
+        char *value = malloc((size_t)run->length + 1);
+        if (!value) {
+            accesskit_node_free(node);
+            free(children);
+            accesskit_tree_update_free(update);
+            return NULL;
+        }
+        size_t length = ui_accessibility_node_text_read(source, run->offset,
+                                                        value, run->length);
+        accesskit_node_set_value_with_length(node, value, length);
+        free(value);
         accesskit_node_set_character_lengths(node, run->characters, run->lengths);
         accesskit_node_set_word_starts(node, run->word_count, run->words);
         accesskit_node_set_bounds(node, node_bounds(source));
-        accesskit_node_set_text_direction(node, ACCESSKIT_TEXT_DIRECTION_LEFT_TO_RIGHT);
+        accesskit_node_set_text_direction(
+            node, text_direction_for_node(source));
         accesskit_tree_update_push_node(update, run->id, node);
     }
     free(children);
@@ -1604,6 +1669,10 @@ static bool same_snapshot(const struct ui_accessibility_tree *a,
             left->caret_offset != right->caret_offset ||
             left->selection_start != right->selection_start ||
             left->selection_end != right->selection_end ||
+            left->text != right->text ||
+            left->text_offset != right->text_offset ||
+            left->text_length != right->text_length ||
+            left->text_direction != right->text_direction ||
             !same_string(left->name, right->name) ||
             !same_string(left->description, right->description) ||
             !same_string(left->value, right->value))
@@ -1632,6 +1701,22 @@ static void update_focus(struct provider_window *window)
 #endif
 }
 
+/* Copies the text runs of the nodes that the publish set leaves out. The
+ * host keeps those runs. A one-line change then costs one viewport. */
+static bool keep_text_runs(const struct text_model *previous,
+                           const struct ui_accessibility_publish_set *published,
+                           struct text_model *text)
+{
+    for (int i = 0; i < previous->count; i++) {
+        if (ui_accessibility_publish_set_has(published, previous->runs[i].owner))
+            continue;
+        if (!UTIL_GROW(text->runs, text->capacity, text->count + 1))
+            return false;
+        text->runs[text->count++] = previous->runs[i];
+    }
+    return true;
+}
+
 static bool provider_publish(void *instance,
                               const struct ui_accessibility_tree *snapshot)
 {
@@ -1649,15 +1734,25 @@ static bool provider_publish(void *instance,
     }
     struct ui_accessibility_tree copy = {0};
     struct text_model text = {0};
+    struct ui_accessibility_publish_set published = {0};
     if (!copy_snapshot(&copy, snapshot))
+        goto fail;
+    /* A new activation sends the whole tree again. */
+    const struct ui_accessibility_tree *previous =
+        generation == window->published_generation ? &window->snapshot : NULL;
+    if (!ui_accessibility_publish_set_build(previous, &copy, &published))
         goto fail;
     for (size_t i = 0; i < copy.count; i++)
         if (has_text(&copy.nodes[i]) &&
+            ui_accessibility_publish_set_has(&published, copy.nodes[i].id) &&
             !build_text(&text, &window->text, &copy, &copy.nodes[i]))
             goto fail;
-    accesskit_tree_update *update = build_update(window, &copy, &text);
+    if (!keep_text_runs(&window->text, &published, &text))
+        goto fail;
+    accesskit_tree_update *update = build_update(window, &copy, &text, &published);
     if (!update)
         goto fail;
+    ui_accessibility_publish_set_destroy(&published);
     pthread_mutex_lock(&providers_mutex);
     struct ui_accessibility_tree old_snapshot = window->snapshot;
     struct text_model old_text = window->text;
@@ -1684,6 +1779,7 @@ static bool provider_publish(void *instance,
     update_focus(window);
     return true;
 fail:
+    ui_accessibility_publish_set_destroy(&published);
     ui_accessibility_tree_destroy(&copy);
     free(text.runs);
     return false;
