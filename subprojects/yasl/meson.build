@@ -178,4 +178,26 @@ if has_egl
     )
 endif
 
+# meson test --setup NAME needs the setup in each project with tests. The
+# parent project defines the same setup.
+sanitizer_common = 'halt_on_error=1:abort_on_error=1:print_summary=1'
+asan_options = sanitizer_common + ':detect_stack_use_after_return=1' + \
+    ':strict_string_checks=1:check_initialization_order=1' + \
+    ':strict_init_order=1:detect_invalid_pointer_pairs=2'
+if system == 'linux'
+    asan_options += ':detect_leaks=1'
+elif system == 'darwin'
+    asan_options += ':suppressions=' + meson.current_source_dir() / 'tests' / 'asan.supp'
+endif
+add_test_setup(
+    'asan',
+    env: {
+        'ASAN_OPTIONS': asan_options,
+        'UBSAN_OPTIONS': sanitizer_common + ':print_stacktrace=1',
+        'LSAN_OPTIONS': 'report_objects=1',
+        'LD_PRELOAD': '',
+        'DYLD_INSERT_LIBRARIES': '',
+    },
+)
+
 subdir('tests')

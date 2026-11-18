@@ -1,0 +1,2 @@
+# macOS only. The parent project uses the same suppression in tests/asan.supp.
+interceptor_via_lib:CoreGraphics
