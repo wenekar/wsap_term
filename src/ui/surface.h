@@ -13,10 +13,36 @@
 
 struct ui_scene;
 
+/* What a text widget asks an input method to do. `text` is UTF-8 around the
+ * caret. `selection_begin` and `selection_end` are byte offsets into it.
+ * `revision` names the text, and the input method returns it with an edit
+ * event. The caret rectangle places the candidate window. */
+enum ui_text_purpose {
+    UI_TEXT_NORMAL = 0,
+    UI_TEXT_PASSWORD,
+    UI_TEXT_NUMBER,
+    UI_TEXT_TERMINAL,
+};
+
+struct ui_text_input {
+    enum ui_text_purpose purpose;
+    const char *text;
+    size_t length;
+    size_t selection_begin;
+    size_t selection_end;
+    uint64_t revision;
+    float caret_x, caret_y, caret_width, caret_height;
+};
+
 struct ui_surface_host {
     void (*request_frame)(void *userdata);
     void (*copy_text)(void *userdata, const char *text);
     void (*paste_text)(void *userdata);
+    void (*copy_primary)(void *userdata, const char *text);
+    void (*paste_primary)(void *userdata);
+    /* Turns input methods on for the given field, or off when `input` is
+     * NULL. */
+    void (*set_text_input)(void *userdata, const struct ui_text_input *input);
     void (*open_url)(void *userdata, const char *target);
     uint32_t (*double_click_interval_ms)(void *userdata);
 };
@@ -177,6 +203,15 @@ bool ui_surface_can_copy(const struct ui_surface *surface);
 bool ui_surface_can_paste(const struct ui_surface *surface);
 bool ui_surface_copy_text(struct ui_surface *surface, const char *text);
 bool ui_surface_paste_text(struct ui_surface *surface);
+/* Returns true when the host of `surface` can use the primary selection. */
+bool ui_surface_can_copy_primary(const struct ui_surface *surface);
+bool ui_surface_can_paste_primary(const struct ui_surface *surface);
+bool ui_surface_copy_primary(struct ui_surface *surface, const char *text);
+bool ui_surface_paste_primary(struct ui_surface *surface);
+/* Sets the field that input methods edit, or turns them off with NULL.
+ * Returns false when the host has no text input support. */
+bool ui_surface_set_text_input(struct ui_surface *surface,
+                               const struct ui_text_input *input);
 bool ui_surface_open_url(struct ui_surface *surface, const char *target);
 uint32_t ui_surface_double_click_interval_ms(
     const struct ui_surface *surface);

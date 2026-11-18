@@ -132,6 +132,8 @@ struct window {
     uint32_t frame;
     int ime_begin;
     int ime_end;
+    /* The revision of the text that the input method edits. */
+    uint64_t ime_revision;
     uint32_t scale_120;
     int modifiers;
 

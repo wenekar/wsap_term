@@ -100,6 +100,44 @@ static void window_ui_paste_text(void *userdata)
     window_paste(w, YASL_CLIPBOARD);
 }
 
+static void window_ui_copy_primary(void *userdata, const char *text)
+{
+    struct window *w = userdata;
+    window_copy(w, YASL_PRIMARY, text);
+}
+
+static void window_ui_paste_primary(void *userdata)
+{
+    struct window *w = userdata;
+    window_paste(w, YASL_PRIMARY);
+}
+
+static void window_ui_set_text_input(void *userdata,
+                                     const struct ui_text_input *input)
+{
+    struct window *w = userdata;
+    struct yasl_surface *surface = window_surface(w);
+    if (!surface)
+        return;
+    if (!input) {
+        yasl_surface_set_text_input(surface, NULL);
+        return;
+    }
+    struct yasl_text_input native = {
+        .purpose = (enum yasl_text_purpose)input->purpose,
+        .text = input->text,
+        .length = input->length,
+        .selection_begin = input->selection_begin,
+        .selection_end = input->selection_end,
+        .revision = input->revision,
+        .caret_x = input->caret_x,
+        .caret_y = input->caret_y,
+        .caret_width = input->caret_width,
+        .caret_height = input->caret_height,
+    };
+    yasl_surface_set_text_input(surface, &native);
+}
+
 static void window_ui_open_url(void *userdata, const char *target)
 {
     (void)userdata;
@@ -115,6 +153,9 @@ const struct ui_surface_host window_ui_surface_host = {
     .request_frame = window_ui_request_frame,
     .copy_text = window_ui_copy_text,
     .paste_text = window_ui_paste_text,
+    .copy_primary = window_ui_copy_primary,
+    .paste_primary = window_ui_paste_primary,
+    .set_text_input = window_ui_set_text_input,
     .open_url = window_ui_open_url,
     .double_click_interval_ms = window_ui_double_click_interval_ms,
 };
