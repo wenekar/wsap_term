@@ -278,13 +278,22 @@ static bool frame_stage(struct render_gpu *g, struct frame_slot *slot,
     return true;
 }
 
+/* Ensures `g->queue` is available; recreated lazily after idle release. */
+static id<MTLCommandQueue> ensure_queue(struct render_gpu *g)
+{
+    if (!g->queue && g->device)
+        g->queue = [g->device newCommandQueue];
+    return g->queue;
+}
+
 /* Encodes the staged frame into the drawable of `fb`, and commits it. */
 static bool encode_frame(struct render_gpu *g, struct frame_slot *slot, struct framebuffer *fb,
                          const size_t offsets[GPU_ST_COUNT], uint32_t base)
 {
     const struct gpu_build *b = &g->build;
     id<CAMetalDrawable> drawable = (id<CAMetalDrawable>)fb->drawable;
-    id<MTLCommandBuffer> cb = [g->queue commandBuffer];
+    id<MTLCommandQueue> queue = ensure_queue(g);
+    id<MTLCommandBuffer> cb = [queue commandBuffer];
     if (!cb || !encode_uploads(g, slot, cb))
         return false;
 
@@ -417,7 +426,8 @@ static bool present_pixels(struct render_gpu *g, struct frame_slot *slot, struct
         return false;
     memcpy(slot->instances.contents, &quad, sizeof(quad));
 
-    id<MTLCommandBuffer> cb = [g->queue commandBuffer];
+    id<MTLCommandQueue> queue = ensure_queue(g);
+    id<MTLCommandBuffer> cb = [queue commandBuffer];
     if (!cb)
         return false;
     if (bytes) {
@@ -615,4 +625,23 @@ void render_gpu_free(struct render_gpu *g)
 void *render_gpu_native_device(struct render_gpu *g)
 {
     return g ? (void *)g->device : NULL;
+}
+
+bool render_gpu_idle(struct render_gpu *g)
+{
+    if (!g || !g->queue)
+        return true;
+    int held = 0;
+    for (int i = 0; i < FRAME_SLOTS; i++) {
+        if (dispatch_semaphore_wait(g->slots[i].ready, DISPATCH_TIME_NOW) != 0)
+            break;
+        held++;
+    }
+    for (int i = 0; i < held; i++)
+        dispatch_semaphore_signal(g->slots[i].ready);
+    if (held < FRAME_SLOTS)
+        return false;
+    [g->queue release];
+    g->queue = nil;
+    return true;
 }

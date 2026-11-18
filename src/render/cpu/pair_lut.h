@@ -49,18 +49,22 @@ struct pair_lut_tag {
 };
 
 struct pair_lut {
-    uint32_t alpha[PAIR_LUT_SLOTS][256];
-    struct subpx_lut subpx[PAIR_LUT_SLOTS];
+    _Alignas(64) uint32_t alpha[PAIR_LUT_SLOTS][256];
+    struct subpx_lut *subpx;
     struct pair_lut_tag alpha_tags[PAIR_LUT_SLOTS];
     struct pair_lut_tag alpha_pending[PAIR_LUT_SLOTS];
     struct pair_lut_tag subpx_tags[PAIR_LUT_SLOTS];
     struct pair_lut_tag subpx_pending[PAIR_LUT_SLOTS];
 };
 
-_Static_assert(offsetof(struct pair_lut, subpx) % 64 == 0,
-               "pair LUT tables stay 64-byte aligned");
+_Static_assert(offsetof(struct pair_lut, alpha) % 64 == 0,
+               "pair LUT alpha table stays 64-byte aligned");
 _Static_assert(sizeof(struct pair_lut) % 64 == 0,
                "pair_lut size stays a multiple of 64 bytes");
+
+/* Frees the subpixel tables of a cache. pair_lut_subpx() allocates them on
+ * its first call. The cache stays valid, with no subpixel pair. */
+void pair_lut_destroy(struct pair_lut *c);
 
 /* The alpha table of a pair, or NULL on the first request. */
 const uint32_t *pair_lut_alpha(struct pair_lut *c, uint32_t fg, uint32_t bg, bool faint);

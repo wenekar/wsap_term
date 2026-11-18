@@ -14,6 +14,12 @@ void render_gpu_free(struct render_gpu *g)
     (void)g;
 }
 
+bool render_gpu_idle(struct render_gpu *g)
+{
+    (void)g;
+    return true;
+}
+
 void *render_gpu_native_device(struct render_gpu *g)
 {
     (void)g;

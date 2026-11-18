@@ -61,9 +61,15 @@ static pthread_key_t scene_luts_key;
 static pthread_once_t scene_luts_once = PTHREAD_ONCE_INIT;
 static bool scene_luts_key_ok;
 
+static void scene_luts_destroy(void *p)
+{
+    pair_lut_destroy(p);
+    free(p);
+}
+
 static void scene_luts_key_init(void)
 {
-    scene_luts_key_ok = pthread_key_create(&scene_luts_key, free) == 0;
+    scene_luts_key_ok = pthread_key_create(&scene_luts_key, scene_luts_destroy) == 0;
 }
 
 /* Allocates one pair LUT table per thread on first glyph span blend. */

@@ -77,6 +77,9 @@ enum render_gpu_status {
 struct render_gpu *render_gpu_new(void);
 /* Waits for idle GPU execution and frees all backend resources. */
 void render_gpu_free(struct render_gpu *g);
+/* Releases transient idle command queues when no GPU frame is in flight.
+ * Returns true if the backend is idle. */
+bool render_gpu_idle(struct render_gpu *g);
 /* Returns a pointer to the platform native device handle, or NULL when disabled. */
 void *render_gpu_native_device(struct render_gpu *g);
 

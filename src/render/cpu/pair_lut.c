@@ -1,6 +1,7 @@
 #include "render/cpu/pair_lut.h"
 
 #include <stddef.h>
+#include <stdlib.h>
 
 /* The slot of a pair. A direct map: the hash picks one slot. */
 static unsigned pair_slot(uint32_t fg, uint32_t bg, bool faint)
@@ -51,6 +52,11 @@ static void faint_channel(uint32_t *t)
 
 const struct subpx_lut *pair_lut_subpx(struct pair_lut *c, uint32_t fg, uint32_t bg, bool faint)
 {
+    if (!c->subpx) {
+        c->subpx = calloc(PAIR_LUT_SLOTS, sizeof(*c->subpx));
+        if (!c->subpx)
+            return NULL;
+    }
     unsigned slot = pair_slot(fg, bg, faint);
     struct pair_lut_tag *tag = &c->subpx_tags[slot];
     struct subpx_lut *lut = &c->subpx[slot];
@@ -70,4 +76,17 @@ const struct subpx_lut *pair_lut_subpx(struct pair_lut *c, uint32_t fg, uint32_t
     *tag = *pending;
     *pending = (struct pair_lut_tag){0};
     return lut;
+}
+
+void pair_lut_destroy(struct pair_lut *c)
+{
+    if (!c)
+        return;
+    free(c->subpx);
+    c->subpx = NULL;
+    /* A tag without its table must not hit. The cache is empty again. */
+    for (int i = 0; i < PAIR_LUT_SLOTS; i++) {
+        c->subpx_tags[i] = (struct pair_lut_tag){0};
+        c->subpx_pending[i] = (struct pair_lut_tag){0};
+    }
 }

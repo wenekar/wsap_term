@@ -862,7 +862,7 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
     int row_cols = double_w ? (f->cols / 2 > 0 ? f->cols / 2 : (f->cols > 0 ? 1 : 0)) : f->cols;
     struct row_ctx c = {
         .w = w,
-        .row = f->origin + (size_t)job->row * (size_t)f->ch * (size_t)f->stride,
+        .row = f->origin + (size_t)(job->row - f->row0) * (size_t)f->ch * (size_t)f->stride,
         .stride = (size_t)f->stride,
         .cw = cw,
         .ch = f->ch,
@@ -1022,6 +1022,7 @@ void raster_worker_release(struct raster_worker *w)
 {
     if (!w)
         return;
+    pair_lut_destroy(&w->lut);
     cell_cache_worker_destroy(w->cache);
     free(w->spill.items);
     free(w->spill.cov);

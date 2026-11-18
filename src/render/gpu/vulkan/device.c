@@ -1034,3 +1034,9 @@ void *render_gpu_native_device(struct render_gpu *g)
 {
     return g ? (void *)&g->dev : NULL;
 }
+
+bool render_gpu_idle(struct render_gpu *g)
+{
+    (void)g;
+    return true;
+}

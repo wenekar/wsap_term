@@ -153,7 +153,9 @@ void raster_workers_balance(struct raster_worker *w, int n);
  * What every row of one frame shares. The main thread fills it before the
  * phase. It does not change during the phase.
  * - `origin` is the canvas pixel at the grid rect origin. Row r starts at
- *   origin + r * ch * stride.
+ *   origin + (r - row0) * ch * stride.
+ * - `row0` is the row that `origin` points at. It is 0 for a canvas. A
+ *   buffer that holds the band of one row has `row0` equal to that row.
  * - `cols` is the number of visible columns. `width` is the clipped grid
  *   rect width: cols * cw plus the right margin.
  * - `decor` NULL means: no decorations. Then no decorated or cursor cell is
@@ -172,6 +174,7 @@ struct raster_frame {
     int cw, ch;
     int cols;
     int width;
+    int row0;
 };
 
 /*

@@ -1866,6 +1866,91 @@ static void scaled_font_pass(void)
     test_font_override = NULL;
 }
 
+/* ---- The cursor cells --------------------------------------------------- */
+
+struct cursor_case {
+    const char *name;
+    /* Fed to a 12 x 3 terminal. It leaves the cursor on the cell to check. */
+    const char *text;
+    /* The cells that the cursor covers. */
+    int begin, cols;
+};
+
+/*
+ * render_cursor_cell() gives the pixels that a frame has at the cursor
+ * cells. The frame comes from the oracle renderer. The cases cover the
+ * things that change those pixels: the glyph, its style, the decorations,
+ * both halves of a wide glyph, a neighbor that shapes or spills into the
+ * cell, the cursor style, and the row.
+ */
+static void cursor_cell_matches_frame_test(enum font_aa_mode aa)
+{
+    static const struct cursor_case cases[] = {
+        { "plain glyph", "abc\033[1;2H", 1, 1 },
+        { "blank cell", "abc", 3, 1 },
+        { "bold italic underline", "\033[1;3;4mxyz\033[0m\033[1;2H", 1, 1 },
+        { "curly underline with a color", "\033[4:3m\033[58:2::255:0:0mqq\033[0m\033[1;1H", 0, 1 },
+        { "strike and overline", "\033[9;53mmmm\033[0m\033[1;2H", 1, 1 },
+        { "faint", "\033[2mdim\033[0m\033[1;2H", 1, 1 },
+        { "wide glyph, left half", "a\xe6\xbc\xa2" "b\033[1;2H", 1, 2 },
+        { "wide glyph, right half", "a\xe6\xbc\xa2" "b\033[1;3H", 1, 2 },
+        { "color glyph", "\xf0\x9f\x98\x80\033[1;1H", 0, 2 },
+        { "ligature, first cell", "a => b\033[1;3H", 2, 1 },
+        { "ligature, second cell", "a => b\033[1;4H", 3, 1 },
+        { "italic neighbors", "\033[3mfjf\033[0m\033[1;2H", 1, 1 },
+        { "reverse video", "\033[?5hrev\033[1;2H", 1, 1 },
+        { "bar cursor", "\033[6 qbar\033[1;2H", 1, 1 },
+        { "underline cursor", "\033[4 qund\033[1;2H", 1, 1 },
+        { "last column", "\033[1;12HZ\033[1;12H", 11, 1 },
+        { "third row", "top\033[3;1Hrow\033[3;2H", 1, 1 },
+    };
+    font_set_aa_mode(aa);
+    const int cw = CELL_W, ch = CELL_H;
+    const int w = 12 * cw, h = 3 * ch;
+    const size_t cell_px = (size_t)2 * (size_t)cw * (size_t)ch;
+    uint32_t *full = malloc((size_t)w * (size_t)h * sizeof(*full));
+    uint32_t *cell = malloc(cell_px * sizeof(*cell));
+    struct renderer *r = test_renderer();
+    assert(full && cell && r);
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        const struct cursor_case *c = &cases[i];
+        struct wsap_vtcore *t = tt_new(12, 3);
+        assert(t);
+        feed(t, c->text);
+        struct terminal_frame f;
+        test_frame_init(&f, t, true);
+        TCHECK(f.cursor_y >= 0 && f.cursor_x >= c->begin && f.cursor_x < c->begin + c->cols,
+               "%s: the cursor is at (%d, %d)", c->name, f.cursor_x, f.cursor_y);
+        (void)test_draw_once(test_oracle(), full, w, h, &f);
+
+        int bw = 0, bh = 0;
+        TCHECK(!render_cursor_cell(r, test_font(), &f, c->begin, c->cols, cell,
+                                   (size_t)c->cols * (size_t)cw * (size_t)ch - 1, &bw, &bh),
+               "%s: a buffer that is too small", c->name);
+        TCHECK(render_cursor_cell(r, test_font(), &f, c->begin, c->cols, cell, cell_px,
+                                  &bw, &bh), "%s", c->name);
+        TCHECK(bw == c->cols * cw && bh == ch, "%s: size %dx%d", c->name, bw, bh);
+        for (int y = 0; y < bh; y++) {
+            const uint32_t *want = full + (size_t)(f.cursor_y * ch + y) * (size_t)w + c->begin * cw;
+            for (int x = 0; x < bw; x++)
+                TCHECK(cell[(size_t)y * (size_t)bw + x] == want[x],
+                       "%s: pixel (%d, %d) is %08x, the frame has %08x", c->name, x, y,
+                       cell[(size_t)y * (size_t)bw + x], want[x]);
+        }
+
+        /* A frame with no cursor has no cursor cells. */
+        test_frame_init(&f, t, false);
+        TCHECK(!render_cursor_cell(r, test_font(), &f, c->begin, c->cols, cell, cell_px,
+                                   &bw, &bh), "%s: no cursor", c->name);
+        wsap_vtcore_free(t);
+    }
+    renderer_destroy(r);
+    free(cell);
+    free(full);
+    font_set_aa_mode(FONT_AA_GRAYSCALE);
+}
+
 int main(int argc, char **argv)
 {
     uninitialized_srgb_luts_test();
@@ -1904,6 +1989,8 @@ int main(int argc, char **argv)
         popup_cleared_target_test();
         overlay_grid_repaint_test();
         double_size_rows_test();
+        cursor_cell_matches_frame_test(FONT_AA_GRAYSCALE);
+        cursor_cell_matches_frame_test(FONT_AA_RGB);
         scaled_font_pass();
         puts("PASS: renderer pixel regressions");
     }

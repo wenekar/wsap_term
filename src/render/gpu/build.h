@@ -53,7 +53,7 @@ struct decor_cache;
 struct framebuffer;
 struct render_frame;
 
-#define GPU_ATLAS_START_SIZE 1024
+#define GPU_ATLAS_START_SIZE 512
 #define GPU_ATLAS_MAX_SIZE 4096
 #define GPU_SHELVES_MAX 1024
 #define GPU_IMAGES 4

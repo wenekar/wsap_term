@@ -4,7 +4,8 @@
 /*
  * The worker pool of one renderer.
  *
- * - The renderer creates the pool in renderer_create() and destroys it in
+ * - The renderer creates the pool at the first CPU frame that has
+ *   POOL_SERIAL_CELLS dirty cells or more. It destroys the pool in
  *   renderer_destroy(). There is no global pool.
  * - pool_run() splits n items into chunks of `grain`. The main thread works
  *   too. Each thread claims the next chunk with one atomic add on an item

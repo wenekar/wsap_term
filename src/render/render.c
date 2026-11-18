@@ -50,6 +50,11 @@ struct renderer {
     struct plan_window *windows;
     struct raster_job *jobs;
     struct render_surface scratch;
+    /* The state of render_cursor_cell(): one raster worker with no cell
+     * cache, and the buffer that the raster paints the cursor cells into. */
+    struct raster_worker *cursor_worker;
+    uint32_t *cursor_band;
+    size_t cursor_band_px;
 
     int isa;
     int threads;
@@ -64,6 +69,7 @@ struct renderer {
     enum { SCROLL_AUTO, SCROLL_MOVE, SCROLL_PAINT } scroll_mode;
 
     bool cpu_initialized;
+    bool pool_failed;
     bool gpu_initialized;
     bool disable_gpu;
     bool force_full;
@@ -111,39 +117,66 @@ static void cpu_release(struct renderer *r)
     decor_cache_destroy(r->decor);
     r->decor = NULL;
     r->cpu_initialized = false;
+    r->pool_failed = false;
 }
 
-/* Starts the CPU worker pool and caches on first CPU frame. */
+/* Starts the main-thread CPU state on the first CPU frame; the worker pool
+ * waits until a frame reaches POOL_SERIAL_CELLS. */
 static bool cpu_ensure(struct renderer *r)
 {
     if (r->cpu_initialized)
         return true;
-    if (r->threads > 0) {
-        r->pool = pool_create(r->threads);
-        if (!r->pool)
-            goto fail;
-    }
     if (r->cache_bytes > 0)
         r->cache = cell_cache_create((size_t)r->cache_bytes);
 
-    r->n_workers = 1 + pool_workers(r->pool);
-    size_t workers_bytes = (size_t)r->n_workers * sizeof(*r->workers);
+    int max_workers = 1 + (r->threads > 0 ? r->threads : 0);
+    size_t workers_bytes = (size_t)max_workers * sizeof(*r->workers);
     r->workers = aligned_alloc(64, (workers_bytes + 63) & ~(size_t)63);
     if (r->workers)
         memset(r->workers, 0, workers_bytes);
-    r->decor = decor_cache_create();
+    /* render_cursor_cell() can make the decor cache before the first CPU
+     * frame. Keep that cache. */
+    if (!r->decor)
+        r->decor = decor_cache_create();
     if (!r->workers || !r->decor)
         goto fail;
-    for (int i = 0; i < r->n_workers; i++) {
-        if (!raster_worker_init(&r->workers[i], r->cache))
-            goto fail;
-        r->cache_workers[i] = r->workers[i].cache;
-    }
+    if (!raster_worker_init(&r->workers[0], r->cache))
+        goto fail;
+    r->cache_workers[0] = r->workers[0].cache;
+    r->n_workers = 1;
     r->cpu_initialized = true;
     return true;
 fail:
     cpu_release(r);
     return false;
+}
+
+/* Starts the worker thread pool when a CPU frame has enough work to gain from it. */
+static void cpu_pool_ensure(struct renderer *r)
+{
+    if (r->pool || r->pool_failed || r->threads <= 0)
+        return;
+    r->pool = pool_create(r->threads);
+    if (!r->pool) {
+        r->pool_failed = true;
+        return;
+    }
+    int workers = pool_workers(r->pool);
+    for (int i = 1; i <= workers; i++) {
+        if (!raster_worker_init(&r->workers[i], r->cache)) {
+            for (int j = 1; j < i; j++) {
+                raster_worker_release(&r->workers[j]);
+                r->cache_workers[j] = NULL;
+            }
+            pool_destroy(r->pool);
+            r->pool = NULL;
+            r->pool_failed = true;
+            return;
+        }
+        r->cache_workers[i] = r->workers[i].cache;
+    }
+    r->n_workers = 1 + workers;
+    r->walk_cols = 0;
 }
 
 struct renderer *renderer_create(const struct render_options *opt)
@@ -189,6 +222,11 @@ void renderer_destroy(struct renderer *r)
     if (!r)
         return;
     cpu_release(r);
+    if (r->cursor_worker) {
+        raster_worker_release(r->cursor_worker);
+        free(r->cursor_worker);
+    }
+    free(r->cursor_band);
     render_surface_release(&r->scratch);
     render_gpu_free(r->gpu);
     free(r->keys);
@@ -218,6 +256,97 @@ void renderer_drop_gpu(struct renderer *r)
     render_gpu_free(r->gpu);
     r->gpu = NULL;
     r->gpu_initialized = true;
+}
+
+bool renderer_idle_gpu(struct renderer *r)
+{
+    return !r || !r->gpu || render_gpu_idle(r->gpu);
+}
+
+/*
+ * The cursor cells come from the row raster, as every other cell does. So
+ * the overlay and a CPU frame give the same pixels, with the same glyph
+ * spill from the neighbor cells.
+ *
+ * The raster writes pixel (x, y) of the row band at origin[y * stride + x].
+ * The window is [x0, x1) and the stride is x1 - x0. Thus the band is one
+ * block of (x1 - x0) * ch pixels that starts at origin + x0, and a buffer
+ * with x0 more pixels holds it.
+ */
+bool render_cursor_cell(struct renderer *r, struct font_instance *font,
+                        const struct terminal_frame *tf,
+                        int span_begin, int span_cols,
+                        uint32_t *out, size_t max_px,
+                        int *out_w, int *out_h)
+{
+    if (!r || !tf || !terminal_frame_valid(tf) || !out || !out_w || !out_h ||
+        span_cols < 1 || span_cols > 2 || span_begin < 0 ||
+        span_begin + span_cols > tf->cols ||
+        tf->cursor_y < 0 || tf->cursor_y >= tf->rows ||
+        terminal_frame_row_size(tf, tf->cursor_y) != WSAP_VTCORE_LINE_SINGLE)
+        return false;
+    struct font_instance *gfont = font ? font : font_instance_default();
+    if (!gfont)
+        return false;
+    glyph_cache_refresh(gfont);
+    const struct font_metrics *m = font_instance_metrics(gfont);
+    if (!m || m->cell_w <= 0 || m->cell_h <= 0)
+        return false;
+    const int cw = m->cell_w, ch = m->cell_h;
+    const int x0 = span_begin * cw, width = span_cols * cw;
+    size_t need = (size_t)width * (size_t)ch;
+    if (need > max_px)
+        return false;
+
+    if (!r->decor)
+        r->decor = decor_cache_create();
+    if (!r->cursor_worker) {
+        size_t bytes = (sizeof(*r->cursor_worker) + 63) & ~(size_t)63;
+        r->cursor_worker = aligned_alloc(64, bytes);
+        if (r->cursor_worker)
+            memset(r->cursor_worker, 0, bytes);
+    }
+    size_t band_px = (size_t)x0 + need;
+    if (band_px > r->cursor_band_px) {
+        uint32_t *band = realloc(r->cursor_band, band_px * sizeof(*band));
+        if (band) {
+            r->cursor_band = band;
+            r->cursor_band_px = band_px;
+        }
+    }
+    if (!r->decor || !r->cursor_worker || band_px > r->cursor_band_px)
+        return false;
+
+    struct raster_frame rf = {
+        .font = gfont,
+        .frame = tf,
+        .decor = decor_get(r->decor, m),
+        .font_version = font_instance_version(gfont),
+        .origin = r->cursor_band,
+        .stride = width,
+        .cw = cw,
+        .ch = ch,
+        .cols = tf->cols,
+        .width = tf->cols * cw,
+        .row0 = tf->cursor_y,
+    };
+    /* The reach of the row is not known here. The full width is always
+     * enough: the raster then reads the spill of each cell of the row. */
+    struct raster_job job = {
+        .row = tf->cursor_y, .x0 = x0, .x1 = x0 + width, .reach = rf.width,
+    };
+    (void)render_walk_thread_reserve(tf->cols);
+    /* The raster runs in parallel mode, as in render_draw(). No worker runs
+     * here, so the flush is safe. */
+    glyph_cache_set_parallel(true);
+    (void)r->row(&rf, r->cursor_worker, &job);
+    glyph_cache_set_parallel(false);
+    glyph_cache_flush_frame();
+
+    memcpy(out, r->cursor_band + x0, need * sizeof(*out));
+    *out_w = width;
+    *out_h = ch;
+    return true;
 }
 
 int renderer_isa(const struct renderer *r)
@@ -622,6 +751,8 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
         cells += (win->x.x1 - win->x.x0 + 2 * s->reach[src]) / cw + 2;
     }
     if (n_jobs) {
+        if (cells >= POOL_SERIAL_CELLS)
+            cpu_pool_ensure(r);
         const struct decor_set *decor = decor_get(r->decor, font_instance_metrics(gfont));
         uint32_t l0_fg = tf->reverse_video ? tf->default_bg : tf->default_fg;
         uint32_t l0_bg = tf->reverse_video ? tf->default_fg : tf->default_bg;

@@ -142,6 +142,26 @@ void *renderer_device(struct renderer *r);
 bool renderer_start_gpu(struct renderer *r);
 /* Releases the GPU device when no surface uses GPU presentation. */
 void renderer_drop_gpu(struct renderer *r);
+/* Releases transient idle GPU queues when no GPU work is in flight. */
+bool renderer_idle_gpu(struct renderer *r);
+/*
+ * Paints the cells [span_begin, span_begin + span_cols) of the cursor row
+ * of `tf` into `out`: span_cols * cell_w pixels wide, cell_h pixels high,
+ * 0xAARRGGBB, row after row. `span_cols` is 1 or 2.
+ *
+ * The pixels are the same as the pixels of those cells in a CPU frame of
+ * `tf` from render_draw(). `tf` gives the cursor: set it visible to get the
+ * cells with the cursor on them.
+ *
+ * Returns false and writes nothing when `out` has less than `max_px`
+ * pixels of room, when the row is not a single-size line, or when memory
+ * is missing. Main thread, outside render_draw().
+ */
+bool render_cursor_cell(struct renderer *r, struct font_instance *font,
+                        const struct terminal_frame *tf,
+                        int span_begin, int span_cols,
+                        uint32_t *out, size_t max_px,
+                        int *out_w, int *out_h);
 /* The enum render_isa level that the renderer uses. Never RENDER_ISA_AUTO. */
 int renderer_isa(const struct renderer *r);
 
