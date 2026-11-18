@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "editor/encoding.h"
 #include "editor/file.h"
 #include "editor/undo.h"
 
@@ -19,6 +20,8 @@ struct editor_document {
     struct editor_journal *journal;
     char *journal_path;
     bool journal_ok;
+    /* How the file holds the text. The document text stays UTF-8. */
+    struct editor_encoding_info encoding;
 };
 
 static char *string_copy(const char *text)
@@ -123,19 +126,30 @@ bool editor_document_open(struct editor_document *document, const char *path)
     char *bytes = editor_file_read(path, &length);
     if (!bytes && errno != ENOENT)
         return false;
-    const char *text = bytes ? bytes : "";
-    if (!editor_text_set(document->text, text, length)) {
+    struct editor_encoding_info encoding =
+        editor_encoding_detect(bytes ? bytes : "", bytes ? length : 0);
+    size_t text_length = 0;
+    char *decoded = editor_encoding_decode(bytes ? bytes : "", bytes ? length : 0,
+                                           encoding, &text_length);
+    if (!decoded) {
         free(bytes);
         return false;
     }
+    if (!editor_text_set(document->text, decoded, text_length)) {
+        free(decoded);
+        free(bytes);
+        return false;
+    }
+    document->encoding = encoding;
     bool ok = set_path(document, path);
     if (ok) {
         document->base = (struct editor_file_state){0};
         if (bytes)
             editor_file_state_get(path, &document->base);
-        document->base_hash = editor_file_hash(text, length);
+        document->base_hash = editor_file_hash(bytes ? bytes : "", length);
         editor_undo_clear(document->undo);
     }
+    free(decoded);
     free(bytes);
     if (ok && document->journal_path) {
         char *journal_path = string_copy(document->journal_path);
@@ -167,6 +181,24 @@ const char *editor_document_path(const struct editor_document *document)
 const struct editor_text *editor_document_text(const struct editor_document *document)
 {
     return document ? document->text : NULL;
+}
+
+struct editor_encoding_info editor_document_encoding(const struct editor_document *document)
+{
+    if (!document)
+        return (struct editor_encoding_info){0};
+    return document->encoding;
+}
+
+void editor_document_set_encoding(struct editor_document *document,
+                                 struct editor_encoding_info encoding)
+{
+    if (!document)
+        return;
+    if (encoding.encoding < EDITOR_ENCODING_UTF8 ||
+        encoding.encoding > EDITOR_ENCODING_WINDOWS_1252)
+        return;
+    document->encoding = encoding;
 }
 
 bool editor_document_replace(struct editor_document *document, uint64_t offset,
@@ -249,11 +281,18 @@ bool editor_document_save(struct editor_document *document)
     char *text = editor_text_dup(document->text, &length);
     if (!text)
         return false;
+    size_t file_length = 0;
+    char *file_bytes =
+        editor_encoding_encode(text, length, document->encoding, &file_length);
+    if (!file_bytes) {
+        free(text);
+        return false;
+    }
     struct editor_file_state state;
-    bool ok = editor_file_save(document->path, text, length, &state);
+    bool ok = editor_file_save(document->path, file_bytes, file_length, &state);
     if (ok) {
         document->base = state;
-        document->base_hash = editor_file_hash(text, length);
+        document->base_hash = editor_file_hash(file_bytes, file_length);
         editor_undo_mark_saved(document->undo);
         if (document->journal_path) {
             char *journal_path = string_copy(document->journal_path);
@@ -265,6 +304,7 @@ bool editor_document_save(struct editor_document *document)
             }
         }
     }
+    free(file_bytes);
     free(text);
     return ok;
 }
