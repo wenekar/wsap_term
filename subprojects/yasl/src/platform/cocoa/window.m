@@ -3,6 +3,10 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
 
+#if YASL_HAS_VULKAN
+#include <vulkan/vulkan.h>
+#endif
+
 #include "platform/cocoa/api.h"
 #include "common/backend.h"
 #include "common/public_internal.h"
@@ -14,6 +18,7 @@
 #include "keymap.h"
 
 #include <assert.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
@@ -2565,14 +2570,62 @@ void cocoa_display_close(struct cocoa_display *d)
     *d = (struct cocoa_display){0};
 }
 
+/* A Vulkan surface needs a loader and its Metal surface extension. This build
+ * can have the headers and the system can have no driver, so probe the loader
+ * once. The application supplies the loader of the real instance, which is the
+ * system loader that this probe opens. */
+static bool cocoa_vulkan_available(void)
+{
+#if YASL_HAS_VULKAN
+    static int available = -1;
+    if (available >= 0)
+        return available != 0;
+    available = 0;
+    void *lib = dlopen("libvulkan.1.dylib", RTLD_LAZY | RTLD_LOCAL);
+    if (!lib)
+        lib = dlopen("libvulkan.dylib", RTLD_LAZY | RTLD_LOCAL);
+    if (!lib)
+        return false;
+    PFN_vkEnumerateInstanceExtensionProperties enumerate =
+        (PFN_vkEnumerateInstanceExtensionProperties)dlsym(lib,
+            "vkEnumerateInstanceExtensionProperties");
+    uint32_t count = 0;
+    VkExtensionProperties *extensions = NULL;
+    if (enumerate && enumerate(NULL, &count, NULL) == VK_SUCCESS && count) {
+        extensions = calloc(count, sizeof(*extensions));
+        if (extensions && enumerate(NULL, &count, extensions) == VK_SUCCESS) {
+            /* The surface needs both the core surface extension and the Metal one. */
+            bool surface = false, metal = false;
+            for (uint32_t i = 0; i < count; i++) {
+                if (!strcmp(extensions[i].extensionName, "VK_KHR_surface"))
+                    surface = true;
+                else if (!strcmp(extensions[i].extensionName, "VK_EXT_metal_surface"))
+                    metal = true;
+            }
+            available = surface && metal;
+        }
+    }
+    free(extensions);
+    dlclose(lib);
+    return available != 0;
+#else
+    return false;
+#endif
+}
+
 uint32_t cocoa_display_caps(const struct cocoa_display *d)
 {
-    return d ? (YASL_PRIVATE_CAP_POPUPS | YASL_PRIVATE_CAP_DRAG | YASL_PRIVATE_CAP_DRAG_CARRY |
-                YASL_PRIVATE_CAP_PLACE_WINDOW | YASL_PRIVATE_CAP_PRIMARY_SELECTION |
-                YASL_PRIVATE_CAP_CSD | YASL_PRIVATE_CAP_NATIVE_GRAPHICS |
-                YASL_PRIVATE_CAP_FRAME_PACING | YASL_PRIVATE_CAP_TABLET |
-                YASL_PRIVATE_CAP_RELATIVE_POINTER |
-                YASL_PRIVATE_CAP_VULKAN | YASL_PRIVATE_CAP_TEXT_INPUT) : 0;
+    if (!d)
+        return 0;
+    uint32_t caps = YASL_PRIVATE_CAP_POPUPS | YASL_PRIVATE_CAP_DRAG |
+                    YASL_PRIVATE_CAP_DRAG_CARRY | YASL_PRIVATE_CAP_PLACE_WINDOW |
+                    YASL_PRIVATE_CAP_PRIMARY_SELECTION | YASL_PRIVATE_CAP_CSD |
+                    YASL_PRIVATE_CAP_NATIVE_GRAPHICS | YASL_PRIVATE_CAP_FRAME_PACING |
+                    YASL_PRIVATE_CAP_TABLET | YASL_PRIVATE_CAP_RELATIVE_POINTER |
+                    YASL_PRIVATE_CAP_TEXT_INPUT;
+    if (cocoa_vulkan_available())
+        caps |= YASL_PRIVATE_CAP_VULKAN;
+    return caps;
 }
 
 struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
