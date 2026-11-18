@@ -17,10 +17,11 @@ struct received {
 };
 
 static void receive(const char *text, size_t len, const char *drop_mime,
-                    struct wl_surface *surface, uint64_t request_id,
+                    struct wl_surface *surface, struct yasl_private_vector2d pos,
+                    uint64_t request_id,
                     enum yasl_private_transfer_status status, void *ud)
 {
-    (void)surface;
+    (void)surface; (void)pos;
     struct received *r = ud;
     assert(!drop_mime && len < sizeof(r->text));
     if (status == YASL_PRIVATE_TRANSFER_OK) {

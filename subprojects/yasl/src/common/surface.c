@@ -1011,6 +1011,8 @@ static bool convert_event(const struct yasl_private_event *p, yasl_event *e)
     case YASL_PRIVATE_EVENT_DROP:
         e->type = YASL_EVENT_DROP;
         e->action = YASL_DROP_RELEASE;
+        e->x = p->text.pos.x / scale;
+        e->y = p->text.pos.y / scale;
         drop_mime(e->drop.mime, p->text.mime);
         return with_text(e, p->text.data, p->text.len);
     case YASL_PRIVATE_EVENT_PASTE:

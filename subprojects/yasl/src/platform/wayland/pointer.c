@@ -1314,9 +1314,11 @@ static const struct zwp_tablet_seat_v2_listener tablet_seat_listener = {
 };
 
 /* Ends a transfer. A paste completes its request. A drop becomes one DROP event
- * on the root surface, and the event carries the type that was received. */
+ * on the root surface, and the event carries the type and position that were
+ * received. */
 static void clipboard_received(const char *text, size_t len, const char *drop_mime,
-                             struct wl_surface *on, uint64_t request_id,
+                             struct wl_surface *on, struct yasl_private_vector2d drop_pos,
+                             uint64_t request_id,
                              enum yasl_private_transfer_status status, void *ud)
 {
     (void)ud;
@@ -1335,6 +1337,10 @@ static void clipboard_received(const char *text, size_t len, const char *drop_mi
         .text = {
             .data = text,
             .len = len,
+            .pos = {
+                .x = (int)lround(drop_pos.x * w->scale_factor),
+                .y = (int)lround(drop_pos.y * w->scale_factor),
+            },
         },
     };
     snprintf(ev.text.mime, sizeof(ev.text.mime), "%s", drop_mime);

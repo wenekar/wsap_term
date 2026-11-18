@@ -3,9 +3,10 @@
 #include <sys/socket.h>
 
 static void receive(const char *text, size_t len, const char *drop_mime, struct wl_surface *surface,
-                    uint64_t request, enum yasl_private_transfer_status status, void *ud)
+                    struct yasl_private_vector2d pos, uint64_t request,
+                    enum yasl_private_transfer_status status, void *ud)
 {
-    (void)text; (void)len; (void)drop_mime; (void)surface; (void)request; (void)status;
+    (void)text; (void)len; (void)drop_mime; (void)surface; (void)pos; (void)request; (void)status;
     (*(int *)ud)++;
 }
 

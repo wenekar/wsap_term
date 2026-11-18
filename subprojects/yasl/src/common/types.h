@@ -447,6 +447,9 @@ struct yasl_private_text_event {
     size_t len;
     /** DROP only: the type of data, from yasl_private_surface_pick_drop_type. */
     char mime[YASL_PRIVATE_DROP_MIME_MAX];
+    /** DROP only: surface-relative device-pixel position. Zero when the
+     * backend does not report one. */
+    struct yasl_private_vector2i pos;
     /** Physical key that produced TEXT. Zero means no key. */
     uint64_t text_key_id;
 };
