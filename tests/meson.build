@@ -88,6 +88,7 @@ test_cases = [
     ['css-lookup-test', files('ui/css/lookup_test.c'), ui_lib, ui_test_deps],
     ['editor-text-test', files('editor/text_test.c'), editor_lib, []],
     ['editor-position-test', files('editor/position_test.c'), editor_lib, []],
+    ['editor-undo-test', files('editor/undo_test.c'), editor_lib, []],
 ]
 
 # metal-render-bench is off. It is not ported to the current renderer.
