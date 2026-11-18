@@ -13,6 +13,7 @@ RANKS = {
     "util": 1,
     "platform": 1,
     "loop": 1,
+    "editor": 2,
     "pty": 4,
     "session": 5,
     "input": 6,
@@ -38,6 +39,7 @@ PRIVATE_ALLOW = {
 }
 LIBRARY_PATHS = {
     "base": ("util", "platform", "loop"),
+    "editor": ("editor",),
     "pty": ("pty",),
     "session": ("session",),
     "input": ("input",),
@@ -52,6 +54,7 @@ LIBRARY_PATHS = {
 }
 ALLOWED_DEPENDENCIES = {
     "base": set(),
+    "editor": {"base"},
     "pty": {"base"},
     "session": {"pty", "base"},
     "input": {"base"},
@@ -64,6 +67,8 @@ ALLOWED_DEPENDENCIES = {
     "terminal": {"ui_yasl", "session", "ui", "input", "font", "paint", "base"},
     "app": {"base", "pty", "session", "input", "paint", "font", "ui", "theme", "render", "ui_yasl", "terminal"},
 }
+# Libraries that may include yasl headers. The editor is not one of them: it
+# has no window system dependency.
 YASL_LIBRARIES = {"base", "pty", "session", "ui_yasl", "terminal", "app"}
 YASL_PREFIX = "yasl/"
 INCLUDE = re.compile(r'^\s*#\s*include\s*["<]([^">]+)[">]')
@@ -226,6 +231,18 @@ def self_test() -> int:
             return 1
         if any("ui/yasl/native.c" in error for error in errors):
             print("self-test failed: ui_yasl may not include yasl", file=sys.stderr)
+            return 1
+        (src / "editor").mkdir()
+        (src / "editor" / "note.c").write_text(
+            '#include "yasl/yasl.h"\n'
+            '#include "ui/public.h"\n'
+        )
+        errors = scan(src)
+        if not any("editor may not include yasl: yasl/yasl.h" in error for error in errors):
+            print("self-test failed: editor may not include yasl", file=sys.stderr)
+            return 1
+        if not any("rank 2 (editor) includes rank 9 (ui)" in error for error in errors):
+            print("self-test failed: editor rank violation was not rejected", file=sys.stderr)
             return 1
         for directory in ("ui/yasl", "app"):
             (src / directory).mkdir(parents=True, exist_ok=True)

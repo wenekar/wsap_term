@@ -2,6 +2,7 @@
 subdir('util')
 subdir('platform')
 subdir('loop')
+subdir('editor')
 subdir('pty')
 subdir('session')
 subdir('input')
@@ -18,6 +19,13 @@ base_lib = static_library(
     util_src + platform_src + loop_src,
     include_directories: inc,
     dependencies: [thread_dep, dl_dep, yyjson_dep, yasl_dep] + platform_deps,
+    install: false,
+)
+
+editor_lib = static_library(
+    'wsap-editor',
+    editor_src,
+    include_directories: inc,
     install: false,
 )
 
@@ -122,4 +130,4 @@ app_lib = static_library(
     install: false,
 )
 
-wsap_libs = [base_lib, pty_lib, session_lib, input_lib, paint_lib, font_lib, ui_lib, theme_lib, render_lib, ui_yasl_lib, terminal_lib, app_lib]
+wsap_libs = [base_lib, editor_lib, pty_lib, session_lib, input_lib, paint_lib, font_lib, ui_lib, theme_lib, render_lib, ui_yasl_lib, terminal_lib, app_lib]
