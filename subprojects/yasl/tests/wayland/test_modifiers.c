@@ -46,6 +46,7 @@ static void setup(struct fixture *f, const char *options)
 static void teardown(struct fixture *f)
 {
     input_queue_clear(&f->w.input);
+    free(f->s.ptr_presses.ev);
     xkb_state_unref(f->s.xkb_state);
     xkb_keymap_unref(f->s.xkb_keymap);
     xkb_context_unref(f->d.xkb_ctx);
