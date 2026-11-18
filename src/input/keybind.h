@@ -7,8 +7,8 @@
 
 #include "input/input.h"
 
-#define INPUT_MAX_KEYBINDS 128
-#define INPUT_KEYMAP_HASH_CAP 256
+/* The capacity of a new keymap. The map grows past it. */
+#define INPUT_KEYMAP_INITIAL_CAP 8
 
 enum input_keybind_style {
     INPUT_KEYBIND_LEGACY = 0,
@@ -23,12 +23,21 @@ struct input_keybind {
 };
 
 struct input_keymap {
-    uint32_t hash_chord[INPUT_KEYMAP_HASH_CAP];
-    uint16_t hash_action[INPUT_KEYMAP_HASH_CAP];
-    struct input_keybind binds[INPUT_MAX_KEYBINDS];
-    int n;
+    uint64_t *hash_chord;
+    uint16_t *hash_action;
+    size_t hash_cap;
+    struct input_keybind *binds;
+    size_t n;
+    size_t cap;
     bool hash_valid;
 };
+
+/* Clears keymap `km` and releases its storage. The caller owns `km`. */
+void input_keymap_init(struct input_keymap *km);
+
+/* Releases the storage of keymap `km`. A keymap that runs out of scope
+ * without this call keeps its storage until the process exits. */
+void input_keymap_free(struct input_keymap *km);
 
 /* Clears all key bindings and lookup cache in keymap `km`. */
 void input_keymap_clear(struct input_keymap *km);
@@ -39,14 +48,16 @@ void input_keymap_defaults(struct input_keymap *km,
                            enum input_keybind_style style);
 
 /*
- * Parses and applies binding specification string `spec` to keymap `km`.
- * Returns true on success, or false on syntax error.
+ * Adds, replaces, or removes the binding that `spec` names in keymap `km`.
+ * A removed binding has the action `none`. The map grows as needed.
+ * Returns true on success, or false on syntax error or memory shortage.
  */
 bool input_keymap_apply_spec(struct input_keymap *km, const char *spec);
 
 /*
- * Looks up shortcut action matching key event `ev` in keymap `km`.
- * Returns the matching shortcut action, or INPUT_SHORTCUT_NONE.
+ * Looks up the command that key event `ev` runs in keymap `km`.
+ * A binding may have no modifiers.
+ * Returns the matching command, or INPUT_SHORTCUT_NONE.
  */
 enum input_shortcut input_keymap_lookup(const struct input_keymap *km,
                                         const struct input_key_event *ev);
