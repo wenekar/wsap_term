@@ -190,6 +190,17 @@ void ui_widget_set_key_capture(struct ui_widget *widget, ui_capture_fn fn,
     widget->impl.key_capture_userdata = userdata;
 }
 
+void ui_widget_set_destroy_observer(struct ui_widget *widget,
+                                    void (*fn)(struct ui_widget *widget,
+                                               void *userdata),
+                                    void *userdata)
+{
+    if (!widget || widget->impl.destroyed)
+        return;
+    widget->impl.destroy_observer = fn;
+    widget->impl.destroy_observer_userdata = userdata;
+}
+
 bool ui_widget_notify(struct ui_widget *widget, struct ui_action action)
 {
     if (!widget || widget->impl.destroyed)
@@ -902,6 +913,14 @@ void ui_widget_destroy(struct ui_widget *widget)
     }
     if (widget->ops && widget->ops->destroy)
         widget->ops->destroy(widget);
+    /* The owner of the widget storage still reads it, so the observer runs
+     * before the widget releases its own resources. */
+    void (*observer)(struct ui_widget *, void *) = widget->impl.destroy_observer;
+    void *observer_userdata = widget->impl.destroy_observer_userdata;
+    widget->impl.destroy_observer = NULL;
+    widget->impl.destroy_observer_userdata = NULL;
+    if (observer)
+        observer(widget, observer_userdata);
     ui_widget_part_cache_free(widget);
     free(widget->impl.accessible_name);
     widget->impl.accessible_name = NULL;

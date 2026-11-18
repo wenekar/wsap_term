@@ -87,6 +87,10 @@ struct ui_widget {
         void *event_userdata;
         ui_capture_fn key_capture;
         void *key_capture_userdata;
+        /* Warns an owner that another owner destroys the widget. The owner
+         * clears the reference and keeps its own storage. */
+        void (*destroy_observer)(struct ui_widget *widget, void *userdata);
+        void *destroy_observer_userdata;
         uint64_t accessibility_id;
         char *accessible_name;
         char *accessible_description;
@@ -182,6 +186,15 @@ void ui_widget_set_event_handler(struct ui_widget *widget, ui_event_fn fn,
 /* Registers key capture callback `fn` and `userdata` for `widget`. */
 void ui_widget_set_key_capture(struct ui_widget *widget, ui_capture_fn fn,
                                void *userdata);
+
+/* Registers a function that ui_widget_destroy calls for `widget`. The call
+ * runs while the widget storage is still readable, after the children and the
+ * ops table release their resources. The function must not use the widget as
+ * a live widget. Pass NULL to remove the observer. */
+void ui_widget_set_destroy_observer(struct ui_widget *widget,
+                                    void (*fn)(struct ui_widget *widget,
+                                               void *userdata),
+                                    void *userdata);
 
 /* Dispatches input `event` to `widget`. */
 bool ui_widget_event(struct ui_widget *widget, const struct ui_event *event);

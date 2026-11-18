@@ -615,6 +615,240 @@ static void view_root_keyboard_test(void)
     ui_view_destroy(view);
 }
 
+
+static void view_update_keeps_keyed_widgets_test(void)
+{
+    struct ui_button *apply = NULL;
+    struct ui_label *first = NULL;
+    struct ui_node_desc items[3] = {
+        { .kind = UI_NODE_LABEL, .key = "first",
+          .bind.label = &first,
+          .props.label = { .text = "First" } },
+        { .kind = UI_NODE_BUTTON, .key = "apply",
+          .bind.button = &apply,
+          .props.button = { .text = "Apply" } },
+        { .kind = UI_NODE_LABEL, .key = "last",
+          .props.label = { .text = "Last" } },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "content",
+        .children = items, .child_count = 3,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+    struct ui_surface surface;
+    show(&surface, ui_view_root(view), (struct vector2i){ .x = 200, .y = 120 });
+    ui_surface_focus(&surface, &apply->widget);
+    struct ui_widget *last = ui_view_widget(view, "last");
+
+    /* The same keys in a new order keep the widgets. */
+    struct ui_node_desc reordered[3] = { items[2], items[1], items[0] };
+    root.children = reordered;
+    assert(ui_view_update(view, &root));
+    assert(ui_view_widget(view, "first") == &first->widget);
+    assert(ui_view_widget(view, "apply") == &apply->widget);
+    assert(ui_view_widget(view, "last") == last);
+    assert(ui_widget_child_count(ui_view_root(view)) == 3);
+    assert(ui_widget_child_at(ui_view_root(view), 0) == last);
+    assert(ui_widget_child_at(ui_view_root(view), 2) == &first->widget);
+    assert(ui_surface_focused(&surface) == &apply->widget);
+
+    /* A new node gets a new widget. */
+    struct ui_node_desc added = {
+        .kind = UI_NODE_LABEL, .key = "added",
+        .props.label = { .text = "Added" },
+    };
+    struct ui_node_desc grown[4] = { items[2], items[1], items[0], added };
+    root.children = grown;
+    root.child_count = 4;
+    assert(ui_view_update(view, &root));
+    assert(ui_view_widget(view, "added") != NULL);
+    assert(ui_widget_child_count(ui_view_root(view)) == 4);
+
+    /* A removed node loses its widget and its handle. */
+    struct ui_node_desc shrunk[2] = { items[1], items[0] };
+    root.children = shrunk;
+    root.child_count = 2;
+    assert(ui_view_update(view, &root));
+    assert(ui_view_widget(view, "last") == NULL);
+    assert(ui_view_widget(view, "apply") == &apply->widget);
+    assert(ui_widget_child_count(ui_view_root(view)) == 2);
+
+    /* The new properties show on the widgets that stayed. */
+    items[0].props.label.text = "Renamed";
+    items[1].props.button.text = "Send";
+    items[1].props.button.disabled = true;
+    struct ui_node_desc updated[2] = { items[1], items[0] };
+    root.children = updated;
+    assert(ui_view_update(view, &root));
+    assert(!strcmp(ui_label_text(first), "Renamed"));
+    assert(!strcmp(ui_button_text(apply), "Send"));
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+}
+
+static void view_update_releases_removed_node_test(void)
+{
+    struct ui_label *note = NULL;
+    struct ui_node_desc child = {
+        .kind = UI_NODE_LABEL, .key = "note", .bind.label = &note,
+    };
+    struct ui_node_desc row = {
+        .kind = UI_NODE_COLUMN, .key = "row",
+        .children = &child, .child_count = 1,
+    };
+    struct ui_view *view = ui_view_mount(&row, NULL);
+    assert(view && note);
+    assert(ui_view_update(view, &row));
+    assert(ui_widget_child_count(ui_view_root(view)) == 1);
+
+    /* A tree without the node releases the node and its handle. */
+    row.children = NULL;
+    row.child_count = 0;
+    assert(ui_view_update(view, &row));
+    assert(note == NULL);
+    assert(ui_view_widget(view, "note") == NULL);
+    assert(ui_widget_child_count(ui_view_root(view)) == 0);
+    ui_view_destroy(view);
+}
+
+struct view_update_probe {
+    struct ui_view *view;
+    const struct ui_node_desc *next;
+    int updates;
+};
+
+static bool view_update_action(struct ui_widget *source,
+                               const struct ui_action *action, void *userdata)
+{
+    (void)source;
+    struct view_update_probe *probe = userdata;
+    if (action->kind != UI_ACTION_ACTIVATE)
+        return false;
+    probe->updates += ui_view_update(probe->view, probe->next) ? 1 : 0;
+    return true;
+}
+
+static void view_update_from_a_handler_test(void)
+{
+    struct ui_label *status = NULL;
+    struct ui_node_desc children[2] = {
+        { .kind = UI_NODE_LABEL, .key = "status", .bind.label = &status,
+          .props.label = { .text = "Idle" } },
+        { .kind = UI_NODE_BUTTON, .key = "go", .action_id = 1,
+          .props.button = { .text = "Go" } },
+    };
+    struct ui_node_desc shorter = {
+        .kind = UI_NODE_COLUMN, .key = "root",
+        .children = &children[1], .child_count = 1,
+    };
+    struct view_update_probe probe = { .next = &shorter };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root",
+        .children = children, .child_count = 2,
+        .on_action = view_update_action, .action_userdata = &probe,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view && status);
+    probe.view = view;
+    struct ui_surface surface;
+    show(&surface, ui_view_root(view), (struct vector2i){ .x = 200, .y = 120 });
+    struct ui_widget *button = ui_view_widget(view, "go");
+    ui_surface_focus(&surface, button);
+
+    /* A handler updates the view while the surface is busy. The surface runs
+     * the cleanup of the removed node after the dispatch ends. */
+    struct ui_event enter = ui_event_key((struct ui_key_event){
+        .key = UI_KEY_ENTER,
+    }, 0);
+    assert(ui_surface_dispatch(&surface, &enter));
+    assert(probe.updates == 1);
+    assert(!ui_surface_busy(&surface));
+    assert(status == NULL);
+    assert(ui_view_widget(view, "status") == NULL);
+    assert(ui_view_widget(view, "go") == button);
+    assert(ui_widget_child_count(ui_view_root(view)) == 1);
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+}
+
+static void view_observer_clears_a_destroyed_widget_test(void)
+{
+    struct ui_button *button = NULL;
+    struct ui_node_desc child = {
+        .kind = UI_NODE_BUTTON, .key = "go", .bind.button = &button,
+        .props.button = { .text = "Go" },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root",
+        .children = &child, .child_count = 1,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view && button);
+    struct ui_surface surface;
+    show(&surface, ui_view_root(view), (struct vector2i){ .x = 200, .y = 120 });
+
+    /* Another owner destroys a widget of the view. The view drops its
+     * reference, so an update and a destroy stay safe. */
+    ui_widget_destroy(&button->widget);
+    assert(button == NULL);
+    assert(ui_view_widget(view, "go") == NULL);
+    assert(ui_widget_child_count(ui_view_root(view)) == 0);
+
+    /* The node comes back as a new widget. */
+    assert(ui_view_update(view, &root));
+    assert(button != NULL);
+    assert(ui_view_widget(view, "go") == &button->widget);
+    assert(ui_widget_child_count(ui_view_root(view)) == 1);
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+}
+
+static void view_list_and_menu_node_test(void)
+{
+    const struct ui_list_item items[] = {
+        { .label = "One", .action = 1 },
+        { .label = "Two", .action = 2 },
+    };
+    const ui_menu_item menu_items[] = {
+        { .label = "Open", .action = 10 },
+        { .label = "Quit", .action = 11 },
+    };
+    struct ui_list *list = NULL;
+    struct ui_menu *menu = NULL;
+    struct ui_node_desc children[] = {
+        { .kind = UI_NODE_LIST, .key = "choices", .bind.list = &list,
+          .class_name = "choices",
+          .props.list = { .items = items, .count = 2, .selected = 1 } },
+        { .kind = UI_NODE_MENU, .key = "commands", .bind.menu = &menu,
+          .props.menu = { .items = menu_items, .count = 2 } },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root",
+        .children = children, .child_count = 2,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view && list && menu);
+    assert(ui_view_list(view, "choices") == list);
+    assert(ui_view_menu(view, "commands") == menu);
+    assert(ui_list_count(list) == 2);
+    assert(ui_list_selected(list) == 1);
+    assert(ui_menu_is_open(menu));
+    assert(ui_menu_level_count(menu) == 1);
+
+    /* An update with fewer items updates the list and closes the menu. */
+    struct ui_node_desc shrunk = {
+        .kind = UI_NODE_LIST, .key = "choices", .bind.list = &list,
+        .props.list = { .items = items, .count = 1 },
+    };
+    children[0] = shrunk;
+    children[1].props.menu.count = 0;
+    assert(ui_view_update(view, &root));
+    assert(ui_list_count(list) == 1);
+    assert(!ui_menu_is_open(menu));
+    ui_view_destroy(view);
+}
+
 int main(void)
 {
     view_diagnostic_test();
@@ -624,6 +858,11 @@ int main(void)
     view_supplied_widget_validation_test();
     view_supplied_container_test();
     view_supplied_root_with_popup_test();
+    view_update_keeps_keyed_widgets_test();
+    view_update_releases_removed_node_test();
+    view_update_from_a_handler_test();
+    view_observer_clears_a_destroyed_widget_test();
+    view_list_and_menu_node_test();
     view_root_keyboard_test();
     hidden_child_takes_no_space_or_input_test();
     hidden_modal_restores_focus_test();
