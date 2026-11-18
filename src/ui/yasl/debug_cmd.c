@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "wsap_vtcore/unicode/utf8.h"
+#include "util/unicode/utf8.h"
 #include "ui/yasl/debug_internal.h"
 #include "font/font.h"
 
@@ -427,7 +427,7 @@ static enum dbg_status cmd_type(struct dbg_cmd *cmd, struct json_writer *j)
                 continue;
             }
             uint32_t cp;
-            int len = wsap_vtcore_utf8_decode_one(s, strlen(s), &cp);
+            int len = unicode_utf8_decode_one(s, strlen(s), &cp);
             if (len <= 0)
                 len = 1;
             struct input_event ev = { .kind = INPUT_TEXT };

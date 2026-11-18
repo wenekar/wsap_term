@@ -3,15 +3,15 @@
 #include "ui/text_break.h"
 #include "ui/widget.h"
 #include "ui/widget_ops.h"
-#include "wsap_vtcore/unicode/utf8.h"
 #include "util/hash.h"
+#include "util/unicode/utf8.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 static char *copy_string(const char *src)
 {
-    return src ? wsap_vtcore_utf8_sanitize_dup(src) : NULL;
+    return src ? unicode_utf8_sanitize_dup(src) : NULL;
 }
 
 static size_t sanitized_offset(const char *text, size_t offset)
@@ -25,8 +25,8 @@ static size_t sanitized_offset(const char *text, size_t offset)
     size_t result = 0;
     while (source < offset) {
         uint32_t codepoint;
-        int bytes = wsap_vtcore_utf8_decode_one(text + source, length - source,
-                                                &codepoint);
+        int bytes = unicode_utf8_decode_one(text + source, length - source,
+                                            &codepoint);
         if (bytes <= 0) {
             source++;
             continue;

@@ -1,6 +1,6 @@
 #include "ui/text_break.h"
 #include "paint/text_run.h"
-#include "wsap_vtcore/unicode/utf8.h"
+#include "util/unicode/utf8.h"
 
 #include <stdint.h>
 
@@ -1123,7 +1123,7 @@ static inline struct uax29_prop prop_for(uint32_t cp)
 static inline size_t decode_next(const char *text, size_t len, size_t pos,
                                  uint32_t *cp)
 {
-    int n = wsap_vtcore_utf8_decode_one(text + pos, len - pos, cp);
+    int n = unicode_utf8_decode_one(text + pos, len - pos, cp);
     if (n <= 0) {
         *cp = 0xFFFDu;
         return 1;
@@ -1142,7 +1142,7 @@ static size_t utf8_align_down(const char *text, size_t len, size_t pos)
            ((unsigned char)text[start] & 0xC0u) == 0x80u)
         start--;
     uint32_t cp = 0;
-    int n = wsap_vtcore_utf8_decode_one(text + start, len - start, &cp);
+    int n = unicode_utf8_decode_one(text + start, len - start, &cp);
     if (n > 0 && start + (size_t)n > pos)
         return start;
     return pos;
@@ -1159,7 +1159,7 @@ static size_t utf8_prev(const char *text, size_t len, size_t pos,
     while (start > 0 && (pos - start) < 4 &&
            ((unsigned char)text[start] & 0xC0u) == 0x80u)
         start--;
-    int n = wsap_vtcore_utf8_decode_one(text + start, len - start, cp);
+    int n = unicode_utf8_decode_one(text + start, len - start, cp);
     if (n > 0 && start + (size_t)n == pos)
         return start;
     *cp = 0xFFFDu;

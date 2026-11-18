@@ -9,7 +9,7 @@
 #include "ui/css.h"
 #include "ui/widget.h"
 #include "ui/widget_ops.h"
-#include "wsap_vtcore/unicode/utf8.h"
+#include "util/unicode/utf8.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -70,7 +70,7 @@ static char *shortcut_text(const struct ui_list_item *it)
 {
     const char *check = (it->flags & UI_LIST_ITEM_CHECKED) ? "\xe2\x9c\x93" : "";
     const char *arrow = (it->flags & UI_LIST_ITEM_SUBMENU) ? "\xe2\x80\xba" : "";
-    char *keys = wsap_vtcore_utf8_sanitize_dup(it->shortcut ? it->shortcut : "");
+    char *keys = unicode_utf8_sanitize_dup(it->shortcut ? it->shortcut : "");
     if (!keys)
         return NULL;
     const char *parts[] = { check, keys, arrow };
@@ -641,7 +641,7 @@ bool ui_list_set_items(struct ui_list *l, const struct ui_list_item *items,
             .flags = items[i].flags,
         };
         if (items[i].label)
-            it->label = wsap_vtcore_utf8_sanitize_dup(items[i].label);
+            it->label = unicode_utf8_sanitize_dup(items[i].label);
         if (!it->label)
             it->flags |= UI_LIST_ITEM_SEPARATOR;
         else if (!(it->flags & UI_LIST_ITEM_SEPARATOR))
