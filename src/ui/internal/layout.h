@@ -10,6 +10,7 @@ struct ui_box_params {
     enum ui_box_direction direction;
     enum css_align align;
     enum css_justify justify;
+    enum css_flex_wrap wrap;
 };
 
 struct ui_box_params ui_box_params(const struct ui_box *box,

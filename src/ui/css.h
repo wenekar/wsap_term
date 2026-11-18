@@ -27,6 +27,15 @@ enum css_justify : uint8_t {
     CSS_JUSTIFY_START = 0,
     CSS_JUSTIFY_CENTER,
     CSS_JUSTIFY_END,
+    CSS_JUSTIFY_SPACE_BETWEEN,
+    CSS_JUSTIFY_SPACE_AROUND,
+    CSS_JUSTIFY_SPACE_EVENLY,
+};
+
+enum css_flex_wrap : uint8_t {
+    CSS_WRAP_NONE = 0,
+    CSS_WRAP_WRAP,
+    CSS_WRAP_REVERSE,
 };
 
 /* The units of a CSS length:
@@ -119,6 +128,8 @@ struct css_style {
     struct css_value border_radius;
     float opacity;
     float transition_duration;
+    float flex_grow;
+    float flex_shrink;
 
     struct css_value shadow_x;
     struct css_value shadow_y;
@@ -129,7 +140,9 @@ struct css_style {
     /* Pack enum values and presence flags into one 32-bit word. */
     uint32_t flex_direction : 2;
     uint32_t align_items : 3;
-    uint32_t justify_content : 2;
+    uint32_t justify_content : 3;
+    uint32_t flex_wrap : 2;
+    uint32_t align_self : 3;
     uint32_t cursor : 4;
     uint32_t has_bg_color : 1;
     uint32_t has_text_color : 1;
@@ -142,10 +155,13 @@ struct css_style {
     uint32_t has_flex_direction : 1;
     uint32_t has_align_items : 1;
     uint32_t has_justify_content : 1;
-    uint32_t pad_bits : 10;
+    uint32_t has_flex_wrap : 1;
+    uint32_t has_flex_grow : 1;
+    uint32_t has_flex_shrink : 1;
+    uint32_t has_align_self : 1;
 };
 
-_Static_assert(sizeof(struct css_style) == 192, "css_style must stay 192 bytes");
+_Static_assert(sizeof(struct css_style) == 200, "css_style must stay 200 bytes");
 
 /* Returns the effective opacity of `s`, or 1.0 when unset. */
 static inline float css_style_effective_opacity(const struct css_style *s)

@@ -324,6 +324,8 @@ enum prop_kind {
     P_DURATION,
     P_SHADOW,
     P_BORDER, /* A width and an optional color. */
+    P_WRAP,
+    P_ALIGN_SELF,
 };
 
 enum style_has_bit {
@@ -339,6 +341,10 @@ enum style_has_bit {
     HAS_has_flex_direction,
     HAS_has_align_items,
     HAS_has_justify_content,
+    HAS_has_flex_wrap,
+    HAS_has_flex_grow,
+    HAS_has_flex_shrink,
+    HAS_has_align_self,
 };
 
 struct prop_info {
@@ -402,6 +408,10 @@ static const struct prop_info props[] = {
     PROP_ENUM("flex-direction",     P_FLEX_DIR, has_flex_direction),
     PROP_ENUM("align-items",        P_ALIGN,    has_align_items),
     PROP_ENUM("justify-content",    P_JUSTIFY,  has_justify_content),
+    PROP_ENUM("flex-wrap",          P_WRAP,     has_flex_wrap),
+    PROP_ENUM("align-self",         P_ALIGN_SELF, has_align_self),
+    PROP_FLOAT("flex-grow",  flex_grow,   has_flex_grow),
+    PROP_FLOAT("flex-shrink", flex_shrink, has_flex_shrink),
     PROP_ENUM("cursor",             P_CURSOR,   has_cursor),
     PROP_HAS("transition-duration", P_DURATION, transition_duration, has_transition_duration),
     PROP_HAS("animation-duration",  P_DURATION, transition_duration, has_transition_duration),
@@ -436,6 +446,10 @@ static void set_style_has_bit(struct css_style *s, uint8_t bit, bool v)
     case HAS_has_flex_direction:      s->has_flex_direction = v; break;
     case HAS_has_align_items:         s->has_align_items = v; break;
     case HAS_has_justify_content:     s->has_justify_content = v; break;
+    case HAS_has_flex_wrap:           s->has_flex_wrap = v; break;
+    case HAS_has_flex_grow:           s->has_flex_grow = v; break;
+    case HAS_has_flex_shrink:         s->has_flex_shrink = v; break;
+    case HAS_has_align_self:          s->has_align_self = v; break;
     }
 }
 
@@ -454,6 +468,10 @@ static bool get_style_has_bit(const struct css_style *s, uint8_t bit)
     case HAS_has_flex_direction:      return s->has_flex_direction;
     case HAS_has_align_items:         return s->has_align_items;
     case HAS_has_justify_content:     return s->has_justify_content;
+    case HAS_has_flex_wrap:           return s->has_flex_wrap;
+    case HAS_has_flex_grow:           return s->has_flex_grow;
+    case HAS_has_flex_shrink:         return s->has_flex_shrink;
+    case HAS_has_align_self:          return s->has_align_self;
     }
     return false;
 }
@@ -485,6 +503,7 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
     /* A `border` value that holds no width must not declare the width, or it
        would clear the width of a rule below it. */
     bool sets_field = true;
+    bool sets_has = true;
     switch (p->kind) {
         case P_VAL: {
             struct css_value v = parse_value(val);
@@ -513,6 +532,10 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
             if (p->offset == offsetof(struct css_style, opacity)) {
                 if (f < 0.0f) f = 0.0f;
                 if (f > 1.0f) f = 1.0f;
+            }
+            if (p->offset == offsetof(struct css_style, flex_grow) ||
+                p->offset == offsetof(struct css_style, flex_shrink)) {
+                if (f < 0.0f) f = 0.0f;
             }
             memcpy(dst, &f, sizeof f);
             break;
@@ -554,6 +577,9 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
                 { "end",           CSS_JUSTIFY_END },
                 { "flex-start",    CSS_JUSTIFY_START },
                 { "start",         CSS_JUSTIFY_START },
+                { "space-between", CSS_JUSTIFY_SPACE_BETWEEN },
+                { "space-around",  CSS_JUSTIFY_SPACE_AROUND },
+                { "space-evenly",  CSS_JUSTIFY_SPACE_EVENLY },
             };
             enum css_justify just = CSS_JUSTIFY_START;
             bool found = false;
@@ -566,6 +592,43 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
             }
             if (!found) return CSS_DECLARATION_INVALID;
             r->style.justify_content = just;
+            break;
+        }
+        case P_WRAP: {
+            if (!strcmp(val, "nowrap"))
+                r->style.flex_wrap = CSS_WRAP_NONE;
+            else if (!strcmp(val, "wrap"))
+                r->style.flex_wrap = CSS_WRAP_WRAP;
+            else if (!strcmp(val, "wrap-reverse"))
+                r->style.flex_wrap = CSS_WRAP_REVERSE;
+            else
+                return CSS_DECLARATION_INVALID;
+            break;
+        }
+        case P_ALIGN_SELF: {
+            if (!strcmp(val, "auto")) {
+                sets_has = false;
+                break;
+            }
+            static const struct { const char *name; enum css_align val; } self_map[] = {
+                { "center",     CSS_ALIGN_CENTER },
+                { "flex-start", CSS_ALIGN_START },
+                { "start",      CSS_ALIGN_START },
+                { "flex-end",   CSS_ALIGN_END },
+                { "end",        CSS_ALIGN_END },
+                { "stretch",    CSS_ALIGN_STRETCH },
+            };
+            enum css_align align = CSS_ALIGN_STRETCH;
+            bool found = false;
+            for (size_t k = 0; k < sizeof(self_map)/sizeof(self_map[0]); k++) {
+                if (!strcmp(val, self_map[k].name)) {
+                    align = self_map[k].val;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return CSS_DECLARATION_INVALID;
+            r->style.align_self = align;
             break;
         }
         case P_CURSOR: {
@@ -632,7 +695,7 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
             break;
         }
     }
-    if (p->has_bit && p->kind != P_SHADOW)
+    if (p->has_bit && p->kind != P_SHADOW && sets_has)
         set_style_has_bit(&r->style, p->has_bit, true);
     if (sets_field)
         r->set_mask |= (1ULL << idx);
@@ -1818,6 +1881,8 @@ static void apply_rule_props(const struct css_rule *r, struct css_style *out)
         case P_ALIGN:    out->align_items = r->style.align_items; break;
         case P_JUSTIFY:  out->justify_content = r->style.justify_content; break;
         case P_CURSOR:   out->cursor = r->style.cursor; break;
+        case P_WRAP:     out->flex_wrap = r->style.flex_wrap; break;
+        case P_ALIGN_SELF: out->align_self = r->style.align_self; break;
         default:         memcpy(dst, src, p->size); break;
         }
         if (p->has_bit)
@@ -2091,5 +2156,13 @@ bool css_style_layout_eq(const struct css_style *a, const struct css_style *b)
            a->has_align_items == b->has_align_items &&
            a->align_items == b->align_items &&
            a->has_justify_content == b->has_justify_content &&
-           a->justify_content == b->justify_content;
+           a->justify_content == b->justify_content &&
+           a->has_flex_wrap == b->has_flex_wrap &&
+           a->flex_wrap == b->flex_wrap &&
+           a->has_flex_grow == b->has_flex_grow &&
+           a->flex_grow == b->flex_grow &&
+           a->has_flex_shrink == b->has_flex_shrink &&
+           a->flex_shrink == b->flex_shrink &&
+           a->has_align_self == b->has_align_self &&
+           a->align_self == b->align_self;
 }

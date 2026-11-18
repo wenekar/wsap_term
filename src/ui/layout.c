@@ -18,12 +18,15 @@ enum flex_kind {
     FLEX_FIT,
 };
 
-/* The size rule of one child along one axis. */
+/* The size rule of one child along one axis. `grow` and `shrink` are the CSS
+   weights of the free space and of the overflow that the child takes. */
 struct flex_axis {
     enum flex_kind kind;
     float value;
     float min;
     float max;
+    float grow;
+    float shrink;
 };
 
 struct layout_node {
@@ -159,6 +162,18 @@ static struct flex_axis axis_fixed(float value)
     return (struct flex_axis){ .kind = FLEX_FIXED, .value = value };
 }
 
+/* Adds the CSS grow and shrink weights to `axis`. They default to one, so a
+   child without a weight shares the space like its siblings. */
+static struct flex_axis axis_weighted(struct flex_axis axis,
+                                      const struct css_style *style)
+{
+    axis.grow = style->has_flex_grow && isfinite(style->flex_grow)
+        ? fmaxf(0.0f, style->flex_grow) : 1.0f;
+    axis.shrink = style->has_flex_shrink && isfinite(style->flex_shrink)
+        ? fmaxf(0.0f, style->flex_shrink) : 1.0f;
+    return axis;
+}
+
 /* Returns the size rule of `widget` on `axis` against a parent content size
  * `basis`. `grow` says that a stretch alignment can grow this axis. */
 static struct flex_axis axis_sizing(const struct ui_widget *widget, int axis,
@@ -175,19 +190,20 @@ static struct flex_axis axis_sizing(const struct ui_widget *widget, int axis,
          style->min_size[axis].unit == CSS_UNIT_NONE) &&
         (style->max_size[axis].unit == CSS_UNIT_AUTO ||
          style->max_size[axis].unit == CSS_UNIT_NONE))
-        return axis_fixed((float)fixed);
+        return axis_weighted(axis_fixed((float)fixed), style);
     struct flex_axis out;
     out.min = css_value_resolve(style->min_size[axis], basis, 0, scale);
     float max = css_value_resolve(style->max_size[axis], basis,
                                   (float)INT_MAX, scale);
     out.min = fmaxf(0, out.min);
     out.max = fmaxf(out.min, max);
+    out = axis_weighted(out, style);
     if (fixed > 0) {
         float size = fminf(out.max, fmaxf(out.min, (float)fixed));
-        return axis_fixed(size);
+        return axis_weighted(axis_fixed(size), style);
     }
     if (out.max == 0)
-        return axis_fixed(0);
+        return axis_weighted(axis_fixed(0), style);
 
     struct css_value value = style->size[axis];
     if (value.unit == CSS_UNIT_PERCENT && placing) {
@@ -245,12 +261,13 @@ static float margin_end(const struct insets2i *margin, int axis)
 
 static bool axis_resizable(const struct flex_axis *axis)
 {
-    return axis->kind != FLEX_FIXED && axis->kind != FLEX_PERCENT;
+    return axis->kind != FLEX_FIXED && axis->kind != FLEX_PERCENT &&
+           axis->shrink > 0.0f;
 }
 
 static bool axis_grows(const struct flex_axis *axis)
 {
-    return axis->kind == FLEX_GROW;
+    return axis->kind == FLEX_GROW && axis->grow > 0.0f;
 }
 
 /* Removes the entry at `index` from the scratch list of `count` entries. */
@@ -261,7 +278,8 @@ static void scratch_remove(struct layout_pass *pass, size_t *count, size_t index
 }
 
 /* Compresses the resizable children until `remaining` is zero or all children
- * reach their min size. */
+ * reach their min size. The largest children give up space first. A shrink
+ * weight above one makes a child give up more of the same step. */
 static void distribute_compress(struct layout_pass *pass, size_t first,
                                 size_t count, int axis, float *remaining)
 {
@@ -272,6 +290,12 @@ static void distribute_compress(struct layout_pass *pass, size_t first,
             pass->scratch[resizable++] = first + i;
     }
     while (*remaining < -LAYOUT_EPSILON && resizable > 0) {
+        float weight_sum = 0;
+        for (size_t i = 0; i < resizable; i++)
+            weight_sum += pass->nodes[pass->scratch[i]].axis[axis].shrink;
+        if (!(weight_sum > 0.0f))
+            break;
+        float mean_weight = weight_sum / (float)resizable;
         float largest = 0, second = 0, delta = *remaining;
         for (size_t i = 0; i < resizable; i++) {
             float size = pass->nodes[pass->scratch[i]].size[axis];
@@ -287,24 +311,30 @@ static void distribute_compress(struct layout_pass *pass, size_t first,
             }
         }
         delta = fmaxf(delta, *remaining / (float)resizable);
+        bool moved = false;
         for (size_t i = 0; i < resizable; i++) {
             struct layout_node *child = &pass->nodes[pass->scratch[i]];
             float *size = &child->size[axis];
             if (!float_equal(*size, largest))
                 continue;
             float before = *size;
-            *size += delta;
-            if (*size <= child->axis[axis].min) {
-                *size = child->axis[axis].min;
-                scratch_remove(pass, &resizable, i--);
-            }
+            float share = delta * child->axis[axis].shrink / mean_weight;
+            *size = fmaxf(child->axis[axis].min, before + share);
             *remaining -= *size - before;
+            if (*size <= child->axis[axis].min)
+                scratch_remove(pass, &resizable, i--);
+            if (*size != before)
+                moved = true;
         }
+        if (!moved)
+            break;
     }
 }
 
 /* Grows the growing children until `remaining` is zero or all children reach
- * their max size. */
+ * their max size. The children grow toward one level in their size divided by
+ * their grow weight, so equal weights produce equal sizes and a larger weight
+ * produces a larger size. */
 static void distribute_grow(struct layout_pass *pass, size_t first,
                             size_t count, int axis, float *remaining)
 {
@@ -315,34 +345,52 @@ static void distribute_grow(struct layout_pass *pass, size_t first,
             pass->scratch[growing++] = first + i;
     }
     while (*remaining > LAYOUT_EPSILON && growing > 0) {
-        float smallest = FLT_MAX, second = FLT_MAX, delta = *remaining;
+        float lowest = FLT_MAX, second = FLT_MAX;
         for (size_t i = 0; i < growing; i++) {
-            float size = pass->nodes[pass->scratch[i]].size[axis];
-            if (float_equal(size, smallest))
+            const struct layout_node *child = &pass->nodes[pass->scratch[i]];
+            float weight = child->axis[axis].grow;
+            float level = child->size[axis] / weight;
+            if (float_equal(level, lowest))
                 continue;
-            if (size < smallest) {
-                second = smallest;
-                smallest = size;
+            if (level < lowest) {
+                second = lowest;
+                lowest = level;
             }
-            if (size > smallest) {
-                second = fminf(second, size);
-                delta = second - smallest;
-            }
+            if (level > lowest)
+                second = fminf(second, level);
         }
-        delta = fminf(delta, *remaining / (float)growing);
+        float weight_sum = 0;
+        for (size_t i = 0; i < growing; i++) {
+            const struct layout_node *child = &pass->nodes[pass->scratch[i]];
+            if (float_equal(child->size[axis] / child->axis[axis].grow, lowest))
+                weight_sum += child->axis[axis].grow;
+        }
+        if (!(weight_sum > 0.0f))
+            break;
+        float delta = *remaining / weight_sum;
+        if (second < FLT_MAX)
+            delta = fminf(delta, second - lowest);
+        bool moved = false;
         for (size_t i = 0; i < growing; i++) {
             struct layout_node *child = &pass->nodes[pass->scratch[i]];
             float *size = &child->size[axis];
-            if (!float_equal(*size, smallest))
+            float weight = child->axis[axis].grow;
+            if (!float_equal(*size / weight, lowest))
                 continue;
             float before = *size;
-            *size += delta;
-            if (*size >= child->axis[axis].max) {
-                *size = child->axis[axis].max;
-                scratch_remove(pass, &growing, i--);
-            }
+            float target = fminf(child->axis[axis].max,
+                                 (lowest + delta) * weight);
+            if (target < before)
+                target = before;
+            *size = target;
             *remaining -= *size - before;
+            if (*size >= child->axis[axis].max)
+                scratch_remove(pass, &growing, i--);
+            if (*size != before)
+                moved = true;
         }
+        if (!moved)
+            break;
     }
 }
 
@@ -364,6 +412,192 @@ static void content_extent(const struct ui_box_params *params,
                       (float)(params->padding.top + params->padding.bottom));
 }
 
+/* Returns the alignment of `child` on the cross axis. The CSS `align-self`
+ * property of the child wins over the alignment of the parent. */
+static enum css_align child_align(const struct ui_widget *widget,
+                                  enum css_align parent)
+{
+    const struct css_style *style = &widget->style;
+    return style->has_align_self
+        ? (enum css_align)style->align_self : parent;
+}
+
+/* Returns the size a flex child takes on `axis` before the free space moves.
+ * `percent_basis` is the space inside the margins that a percentage names. */
+static float flow_hypothetical(const struct layout_node *child, int axis,
+                               float basis, float percent_basis, bool placing)
+{
+    struct flex_axis rule = axis_sizing(child->widget, axis, basis, false,
+                                        placing);
+    if (rule.kind == FLEX_PERCENT)
+        return fminf(rule.max, fmaxf(rule.min, rule.value * percent_basis));
+    return axis_clamp(&rule, child->natural[axis]);
+}
+
+/* Returns the space that a child leaves for a percentage size on `axis`. */
+static float flow_percent_basis(const struct layout_node *child, int axis,
+                                const float inner[2], float gaps)
+{
+    float start = margin_start(&child->margin, axis);
+    float end = margin_end(&child->margin, axis);
+    return fmaxf(0.0f, inner[axis] - start - end - gaps);
+}
+
+/* Places children [first, first + count) on one flex line. `cross_pos` is the
+ * start of the line on the cross axis and `cross_size` is its extent. */
+static void place_flow_line(struct layout_pass *pass, struct layout_node *node,
+                            size_t first, size_t count,
+                            const float content[2], const float inner[2],
+                            int main, int cross, float cross_pos,
+                            float cross_size)
+{
+    struct ui_box_params p = node->params;
+    float gaps = child_gap(&p, count);
+    float total = 0;
+    for (size_t i = 0; i < count; i++) {
+        struct layout_node *child = &pass->nodes[first + i];
+        enum css_align align = child_align(child->widget, p.align);
+        bool stretch = align == CSS_ALIGN_STRETCH;
+        for (int axis = 0; axis < 2; axis++) {
+            float percent_basis = flow_percent_basis(
+                child, axis, inner, axis == main ? gaps : 0.0f);
+            child->axis[axis] = axis_sizing(
+                child->widget, axis, inner[axis],
+                axis == cross && stretch, true);
+            if (child->axis[axis].kind == FLEX_PERCENT) {
+                float size = child->axis[axis].value * percent_basis;
+                child->size[axis] = fminf(child->axis[axis].max,
+                                          fmaxf(child->axis[axis].min, size));
+            } else {
+                child->size[axis] =
+                    axis_clamp(&child->axis[axis], child->natural[axis]);
+            }
+        }
+        total += child->size[main] + margin_start(&child->margin, main) +
+                 margin_end(&child->margin, main);
+    }
+
+    float remaining = inner[main] - total - gaps;
+    if (remaining < 0) {
+        if (!pass_reserve_scratch(pass, count))
+            return;
+        distribute_compress(pass, first, count, main, &remaining);
+    } else if (remaining > 0) {
+        if (!pass_reserve_scratch(pass, count))
+            return;
+        distribute_grow(pass, first, count, main, &remaining);
+    }
+
+    total = 0;
+    for (size_t i = 0; i < count; i++) {
+        struct layout_node *child = &pass->nodes[first + i];
+        struct flex_axis *axis = &child->axis[cross];
+        float content_cross = cross_size - margin_start(&child->margin, cross) -
+                              margin_end(&child->margin, cross);
+        float size = child->size[cross];
+        if (axis_resizable(axis)) {
+            if (child_align(child->widget, p.align) == CSS_ALIGN_STRETCH)
+                size = fminf(content_cross, axis->max);
+            size = fminf(axis->max, fmaxf(axis->min, fminf(size, content_cross)));
+            child->size[cross] = size;
+        }
+        total += child->size[main] + margin_start(&child->margin, main) +
+                 margin_end(&child->margin, main);
+    }
+
+    float extra = inner[main] - total - gaps;
+    if (extra < 0)
+        extra = 0;
+    float lead = 0, between = 0;
+    switch (p.justify) {
+    case CSS_JUSTIFY_CENTER: lead = extra / 2; break;
+    case CSS_JUSTIFY_END: lead = extra; break;
+    case CSS_JUSTIFY_SPACE_BETWEEN:
+        if (count > 1)
+            between = extra / (float)(count - 1);
+        break;
+    case CSS_JUSTIFY_SPACE_AROUND:
+        between = extra / (float)count;
+        lead = between / 2;
+        break;
+    case CSS_JUSTIFY_SPACE_EVENLY:
+        between = extra / (float)(count + 1);
+        lead = between;
+        break;
+    case CSS_JUSTIFY_START:
+        break;
+    }
+
+    float cursor = content[main] + lead;
+    for (size_t i = 0; i < count; i++) {
+        size_t index = first + i;
+        struct layout_node *child = &pass->nodes[index];
+        enum css_align align = child_align(child->widget, p.align);
+        float free = cross_size - margin_start(&child->margin, cross) -
+                     margin_end(&child->margin, cross) - child->size[cross];
+        float pos[2] = { content[0], content[1] };
+        pos[main] = cursor + margin_start(&child->margin, main);
+        pos[cross] = cross_pos + margin_start(&child->margin, cross);
+        if (align == CSS_ALIGN_CENTER)
+            pos[cross] += free / 2;
+        else if (align == CSS_ALIGN_END)
+            pos[cross] += free;
+        place_node(pass, index, pos, child->size);
+        cursor += margin_start(&child->margin, main) + child->size[main] +
+                  margin_end(&child->margin, main) + (float)p.gap + between;
+    }
+}
+
+/* Places the children of a wrapping flow in lines. A line takes as many
+ * children as its main extent allows. The lines follow each other on the cross
+ * axis in source order, or in the opposite order for `wrap-reverse`. */
+static void place_flow_wrapped(struct layout_pass *pass, struct layout_node *node,
+                               const float content[2], const float inner[2],
+                               int main, int cross)
+{
+    struct ui_box_params p = node->params;
+    bool reverse = p.wrap == CSS_WRAP_REVERSE;
+    float cross_cursor = reverse ? content[cross] + inner[cross]
+                                 : content[cross];
+    size_t first = 0, line_count = 0;
+    float extent = 0, line_cross = 0;
+    for (size_t i = 0; i < node->child_count; i++) {
+        struct layout_node *child = &pass->nodes[node->first_child + i];
+        float child_main =
+            flow_hypothetical(child, main, inner[main],
+                              flow_percent_basis(child, main, inner, 0.0f),
+                              true) +
+            margin_start(&child->margin, main) +
+            margin_end(&child->margin, main);
+        float child_cross =
+            flow_hypothetical(child, cross, inner[cross],
+                              flow_percent_basis(child, cross, inner, 0.0f),
+                              true) +
+            margin_start(&child->margin, cross) +
+            margin_end(&child->margin, cross);
+        if (line_count > 0 &&
+            extent + (float)p.gap + child_main > inner[main] + LAYOUT_EPSILON) {
+            float line_pos = reverse ? cross_cursor - line_cross : cross_cursor;
+            place_flow_line(pass, node, node->first_child + first, line_count,
+                            content, inner, main, cross, line_pos, line_cross);
+            cross_cursor += reverse ? -(line_cross + (float)p.gap)
+                                    : line_cross + (float)p.gap;
+            first = i;
+            line_count = 0;
+            extent = 0;
+            line_cross = 0;
+        }
+        extent += (line_count > 0 ? (float)p.gap : 0.0f) + child_main;
+        line_cross = fmaxf(line_cross, child_cross);
+        line_count++;
+    }
+    if (line_count > 0) {
+        float line_pos = reverse ? cross_cursor - line_cross : cross_cursor;
+        place_flow_line(pass, node, node->first_child + first, line_count,
+                        content, inner, main, cross, line_pos, line_cross);
+    }
+}
+
 static void place_flow_children(struct layout_pass *pass, struct layout_node *node)
 {
     struct ui_box_params p = node->params;
@@ -375,84 +609,13 @@ static void place_flow_children(struct layout_pass *pass, struct layout_node *no
         node->size[0] - (float)(p.padding.left + p.padding.right),
         node->size[1] - (float)(p.padding.top + p.padding.bottom),
     };
-    size_t count = node->child_count;
-    float gaps = child_gap(&p, count);
-    float percent_basis[2];
-    percent_basis[main] = inner[main] - gaps;
-    percent_basis[cross] = inner[cross];
-    bool stretch[2];
-    stretch[0] = p.direction == UI_BOX_COLUMN && p.align == CSS_ALIGN_STRETCH;
-    stretch[1] = p.direction != UI_BOX_COLUMN && p.align == CSS_ALIGN_STRETCH;
-
-    float total = 0;
-    for (size_t i = 0; i < count; i++) {
-        struct layout_node *child = &pass->nodes[node->first_child + i];
-        for (int axis = 0; axis < 2; axis++) {
-            child->axis[axis] = axis_sizing(child->widget, axis, inner[axis],
-                                            stretch[axis], true);
-            if (child->axis[axis].kind == FLEX_PERCENT)
-                child->size[axis] =
-                    child->axis[axis].value * percent_basis[axis];
-            else
-                child->size[axis] =
-                    axis_clamp(&child->axis[axis], child->natural[axis]);
-        }
-        total += child->size[main] + margin_start(&child->margin, main) +
-                 margin_end(&child->margin, main);
+    if (p.wrap == CSS_WRAP_NONE) {
+        place_flow_line(pass, node, node->first_child, node->child_count,
+                        content, inner, main, cross, content[cross],
+                        inner[cross]);
+        return;
     }
-
-    float remaining = inner[main] - total - gaps;
-    if (remaining < 0) {
-        if (!pass_reserve_scratch(pass, count))
-            return;
-        distribute_compress(pass, node->first_child, count, main, &remaining);
-    } else if (remaining > 0) {
-        if (!pass_reserve_scratch(pass, count))
-            return;
-        distribute_grow(pass, node->first_child, count, main, &remaining);
-    }
-
-    total = 0;
-    for (size_t i = 0; i < count; i++) {
-        struct layout_node *child = &pass->nodes[node->first_child + i];
-        struct flex_axis *axis = &child->axis[cross];
-        float content_cross = inner[cross] - margin_start(&child->margin, cross) -
-                              margin_end(&child->margin, cross);
-        float size = child->size[cross];
-        if (axis_resizable(axis)) {
-            if (axis->kind == FLEX_GROW)
-                size = fminf(content_cross, axis->max);
-            size = fmaxf(axis->min, fminf(size, content_cross));
-            child->size[cross] = size;
-        }
-        total += child->size[main] + margin_start(&child->margin, main) +
-                 margin_end(&child->margin, main);
-    }
-
-    float extra = inner[main] - total - gaps;
-    if (extra < 0)
-        extra = 0;
-    float cursor = content[main];
-    if (p.justify == CSS_JUSTIFY_CENTER)
-        cursor += extra / 2;
-    else if (p.justify == CSS_JUSTIFY_END)
-        cursor += extra;
-    for (size_t i = 0; i < count; i++) {
-        size_t index = node->first_child + i;
-        struct layout_node *child = &pass->nodes[index];
-        float free = inner[cross] - margin_start(&child->margin, cross) -
-                     margin_end(&child->margin, cross) - child->size[cross];
-        float pos[2] = { content[0], content[1] };
-        pos[main] = cursor + margin_start(&child->margin, main);
-        pos[cross] += margin_start(&child->margin, cross);
-        if (p.align == CSS_ALIGN_CENTER)
-            pos[cross] += free / 2;
-        else if (p.align == CSS_ALIGN_END)
-            pos[cross] += free;
-        place_node(pass, index, pos, child->size);
-        cursor += margin_start(&child->margin, main) + child->size[main] +
-                  margin_end(&child->margin, main) + (float)p.gap;
-    }
+    place_flow_wrapped(pass, node, content, inner, main, cross);
 }
 
 /* Returns the size of a stack child on one axis. A plain stack stretches every
@@ -468,7 +631,7 @@ static float stack_child_size(const struct flex_axis *axis, float basis,
     case FLEX_FIXED:
         return axis->value;
     case FLEX_PERCENT:
-        return axis->value * basis;
+        return axis_clamp(axis, axis->value * basis);
     case FLEX_GROW:
         return axis_stretch(axis, fill);
     case FLEX_FIT:
@@ -488,7 +651,6 @@ static void place_stack_children(struct layout_pass *pass, struct layout_node *n
         node->size[1] - (float)(p.padding.top + p.padding.bottom),
     };
     bool plain = !ui_widget_is_box(node->widget);
-    bool stretch = p.align == CSS_ALIGN_STRETCH;
     for (size_t i = 0; i < node->child_count; i++) {
         size_t index = node->first_child + i;
         struct layout_node *child = &pass->nodes[index];
@@ -497,6 +659,8 @@ static void place_stack_children(struct layout_pass *pass, struct layout_node *n
                 ui_widget_place_child(child->widget, node->widget->bounds);
             continue;
         }
+        enum css_align align = child_align(child->widget, p.align);
+        bool stretch = align == CSS_ALIGN_STRETCH;
         float size[2], pos[2] = { content[0], content[1] };
         for (int axis = 0; axis < 2; axis++) {
             float start = margin_start(&child->margin, axis);
@@ -504,13 +668,14 @@ static void place_stack_children(struct layout_pass *pass, struct layout_node *n
             float fill = fmaxf(0, inner[axis] - start - end);
             struct flex_axis rule = axis_sizing(child->widget, axis,
                                                 inner[axis], stretch, true);
-            size[axis] = stack_child_size(&rule, inner[axis], fill,
+            /* A percentage names the space inside the margins. */
+            size[axis] = stack_child_size(&rule, fill, fill,
                                           child->natural[axis], plain, stretch);
             float free = inner[axis] - start - end - size[axis];
             pos[axis] += start;
-            if (p.align == CSS_ALIGN_CENTER)
+            if (align == CSS_ALIGN_CENTER)
                 pos[axis] += free / 2;
-            else if (p.align == CSS_ALIGN_END)
+            else if (align == CSS_ALIGN_END)
                 pos[axis] += free;
         }
         place_node(pass, index, pos, size);
@@ -559,7 +724,10 @@ static struct vector2f flow_natural(struct layout_pass *pass,
     struct ui_box_params p = node->params;
     int main = p.direction == UI_BOX_COLUMN ? 1 : 0;
     int cross = 1 - main;
-    float main_sum = 0, cross_max = 0;
+    bool wrap = p.wrap != CSS_WRAP_NONE;
+    float line_main = 0, line_cross = 0;
+    float main_extent = 0, cross_extent = 0;
+    size_t line_count = 0, lines_done = 0;
     for (size_t i = 0; i < node->child_count; i++) {
         struct layout_node *child = &pass->nodes[node->first_child + i];
         for (int axis = 0; axis < 2; axis++) {
@@ -570,22 +738,36 @@ static struct vector2f flow_natural(struct layout_pass *pass,
         }
         if (child->container)
             child->widget->measured_size = raster_size(child->size);
-        main_sum += child->size[main] + margin_start(&child->margin, main) +
-                    margin_end(&child->margin, main);
-        cross_max = fmaxf(cross_max, child->size[cross] +
-                                     margin_start(&child->margin, cross) +
-                                     margin_end(&child->margin, cross));
+        float child_main = child->size[main] +
+            margin_start(&child->margin, main) +
+            margin_end(&child->margin, main);
+        float child_cross = child->size[cross] +
+            margin_start(&child->margin, cross) +
+            margin_end(&child->margin, cross);
+        if (wrap && line_count > 0 &&
+            line_main + (float)p.gap + child_main > inner[main] + LAYOUT_EPSILON) {
+            main_extent = fmaxf(main_extent, line_main);
+            cross_extent += (lines_done ? (float)p.gap : 0.0f) + line_cross;
+            lines_done++;
+            line_main = 0;
+            line_cross = 0;
+            line_count = 0;
+        }
+        line_main += (line_count > 0 ? (float)p.gap : 0.0f) + child_main;
+        line_cross = fmaxf(line_cross, child_cross);
+        line_count++;
     }
-    float gaps = child_gap(&p, node->child_count);
+    if (line_count > 0) {
+        main_extent = fmaxf(main_extent, line_main);
+        cross_extent += (lines_done ? (float)p.gap : 0.0f) + line_cross;
+    }
     struct vector2f natural;
     if (main == 0) {
-        natural.x = main_sum + gaps +
-                    (float)(p.padding.left + p.padding.right);
-        natural.y = cross_max + (float)(p.padding.top + p.padding.bottom);
+        natural.x = main_extent + (float)(p.padding.left + p.padding.right);
+        natural.y = cross_extent + (float)(p.padding.top + p.padding.bottom);
     } else {
-        natural.x = cross_max + (float)(p.padding.left + p.padding.right);
-        natural.y = main_sum + gaps +
-                    (float)(p.padding.top + p.padding.bottom);
+        natural.x = cross_extent + (float)(p.padding.left + p.padding.right);
+        natural.y = main_extent + (float)(p.padding.top + p.padding.bottom);
     }
     return natural;
 }
