@@ -488,7 +488,7 @@ struct wayland_surface *wayland_surface_create_toplevel(struct wayland_display *
         ? YASL_PRIVATE_PRESENTER_NONE : YASL_PRIVATE_PRESENTER_CPU;
     wayland_surface_set_callbacks(w, NULL, NULL);
     wayland_surface_set_title(w, spec->title ? spec->title : "YASL");
-    w->cursor = YASL_PRIVATE_CURSOR_TEXT;
+    w->cursor = YASL_PRIVATE_CURSOR_ARROW;
     w->floating_width = width;
     w->floating_height = height;
     w->logical_width = width;
