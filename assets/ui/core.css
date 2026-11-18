@@ -104,3 +104,14 @@
 .tab-preview { width: 400px; padding: 8px; gap: 6px; background: var(--surface); border-color: var(--border); border-width: 1px; border-radius: 8px; box-shadow: 0 6px 18px #00000073; }
 .tab-preview.dragging { width: 280px; }
 .tab-preview-title { color: var(--fg); }
+
+/* Standard controls. Each rule has a C fallback in its widget. */
+.checkbox, .radio, .switch { padding: 0.15em 0; }
+.checkbox:disabled, .radio:disabled, .switch:disabled { color: var(--control-disabled-fg); }
+.checkbox:focus, .radio:focus, .switch:focus { color: var(--button-focus-fg); }
+.checkbox:checked, .radio:checked, .switch:checked { border-color: var(--accent); }
+.slider { border-color: var(--accent); min-width: 8ch; }
+.slider:disabled { border-color: var(--control-disabled-bg); color: var(--control-disabled-fg); }
+.progress { background: var(--control-bg); border-color: var(--accent); }
+.spinner { color: var(--section-fg); }
+.icon { color: var(--fg); }
