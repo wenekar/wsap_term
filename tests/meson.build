@@ -13,6 +13,7 @@ test_cases = [
     ['geom-test', files('util/geom_test.c'), base_lib, [m_dep]],
     ['pty-shell-test', files('pty/shell_test.c'), pty_lib, [thread_dep, dl_dep]],
     ['app-identity-test', files('util/app_identity_test.c'), base_lib, [thread_dep, dl_dep]],
+    ['proc-test', files('util/proc_test.c'), base_lib, [thread_dep]],
     ['paste-test', files('session/write_queue_test.c'), [session_lib, input_lib], deps],
     ['session-cwd-test', files('session/cwd_test.c'), session_lib, deps],
     ['session-exit-order-test', files('session/exit_order_test.c'), session_lib, deps],
