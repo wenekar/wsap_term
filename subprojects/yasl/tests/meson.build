@@ -18,6 +18,7 @@ test('public-api', pre_init_test)
 foreach std : ['c11', 'c17']
     header_test = executable('yasl-header-' + std + '-test', 'test_header_c11.c',
         include_directories: include_directories('../include'),
+        dependencies: vulkan_headers,
         c_args: ['-pedantic-errors'], override_options: ['c_std=' + std])
     test('header-' + std, header_test)
 endforeach
