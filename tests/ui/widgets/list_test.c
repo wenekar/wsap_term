@@ -329,7 +329,7 @@ static void rows_center_and_inset_text_test(void)
 static void long_label_stays_inside_its_row_test(void)
 {
     const struct ui_list_item items[] = {
-        { .label = "Switch to Tab 1: /mnt/HDD/GitHub/terminal_proj/wsap_term - fish",
+        { .label = "Switch to Tab 1: /home/berke/src/terminal_proj/wsap_term - fish",
           .shortcut = "Ctrl+Shift+T", .action = 1 },
     };
     struct fixture f;

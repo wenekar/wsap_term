@@ -1087,7 +1087,7 @@ static void detach_drag_chip_bounds_test(void)
     setup_with(&f, NULL, (struct vector2i){ .x = 1000, .y = 700 },
                (struct vector2i){0});
     const struct ui_tab_label labels[] = {
-        {.text = "/mnt/HDD/GitHub/clernen_pi - fish", .active = true},
+        {.text = "/home/berke/src/clernen_pi - fish", .active = true},
         {.text = "tab1", .active = false},
         {.text = "tab2", .active = false},
     };
@@ -1978,9 +1978,9 @@ static void long_title_ends_with_a_marker(void)
     struct fixture f;
     setup(&f, 2, 400);
     struct ui_tab_label labels[] = {
-        { .text = "/mnt/HDD/GitHub/terminal_proj/wsap_term - fish",
+        { .text = "/home/berke/src/terminal_proj/wsap_term - fish",
           .active = true },
-        { .text = "/mnt/HDD/GitHub/terminal_proj/wsap_term - vim",
+        { .text = "/home/berke/src/terminal_proj/wsap_term - vim",
           .active = false },
     };
     set_tabs(&f, labels, 2);

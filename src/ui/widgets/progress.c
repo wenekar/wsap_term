@@ -107,7 +107,7 @@ static uint64_t progress_tick(struct ui_widget *widget, uint64_t now_ms)
 static bool progress_accessibility(const struct ui_widget *widget,
                                    struct ui_accessibility_node_spec *out)
 {
-    static char value[32];
+    static _Thread_local char value[32];
     const struct ui_progress *progress = ui_container_of_const(
         widget, struct ui_progress, widget);
     snprintf(value, sizeof(value), "%d%%",
