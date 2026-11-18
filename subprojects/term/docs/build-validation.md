@@ -31,7 +31,7 @@ meson test -C build --print-errorlogs
 ### Cross-platform test
 
 `term-cross-test` uses Zig to verify compilation.
-It builds the source files and the amalgamation for these targets:
+It compiles every source file, links one test executable per target, and compiles the amalgamation for these targets:
 
 - Linux AArch64
 - macOS x86-64 and AArch64
@@ -68,3 +68,5 @@ meson dist -C build --no-tests
 ```
 
 The standalone archive contains public headers, source files, tests, and tools.
+The test directory includes `tests/extern/kitty/parser.py` licensed under GPLv3.
+This file is test-only and not part of the library.

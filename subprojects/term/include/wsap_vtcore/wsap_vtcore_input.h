@@ -178,6 +178,13 @@ enum wsap_vtcore_keyboard_flag {
     WSAP_VTCORE_KEYBOARD_ASSOCIATED_TEXT = 16,
 };
 
+/* Input encoding status.
+ * UNHANDLED: event not handled or invalid arguments.
+ * CONSUMED: event handled but produces no bytes. Dropped mouse events
+ * also report this status.
+ * BYTES: valid sequence written to buffer.
+ * BUFFER_FULL: buffer too small, discard partial output.
+ */
 enum wsap_vtcore_input_status {
     WSAP_VTCORE_INPUT_UNHANDLED = 0,
     WSAP_VTCORE_INPUT_CONSUMED,

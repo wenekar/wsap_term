@@ -34,7 +34,7 @@ Embedding options:
 
 - **Meson subproject:** Use `dependency('wsap_vtcore')` or `subproject('wsap_vtcore').get_variable('wsap_vtcore_dep')`. The dependency adds libm and threads.
 - **Amalgamation:** Run `tools/amalgamate.py . OUT`. The script writes `OUT/wsap_vtcore.c` and `OUT/wsap_vtcore.h`. Compile `wsap_vtcore.c` with a C11 compiler and link libm and threads. On POSIX systems, add `-pthread`. In Rust `build.rs`, call `cc::Build::new().file("wsap_vtcore.c")`.
-- **Direct sources:** Compile `src/*.c` and `src/osc/*.c`. Do not compile `src/gstore.c`, `src/hist.c`, or `src/term.c` directly. `src/term_state.c` includes them. Add `src` and `include/wsap_vtcore` to the include path. Link libm and threads. `term-cross-test` validates this configuration.
+- **Direct sources:** Compile `src/*.c` (except `gstore.c`) plus `src/osc/*.c`, `src/csi/fast.c`, `src/hist/view.c`, `src/term/state.c`, `src/text/charset.c`, `src/text/run.c`, and `src/text/text.c`. The file `src/term/state.c` includes `gstore.c`, `hist/hist.c`, and `term/term.c`, so do not compile those three separately. Add `-Isrc -Iinclude -Iinclude/wsap_vtcore` to the include path. Link libm and threads. `term-cross-test` validates this configuration.
 
 On Windows, the internal writer lock uses system `SRWLOCK` primitives without additional links.
 

@@ -452,6 +452,10 @@ WSAP_VTCORE_API enum wsap_vtcore_line_size wsap_vtcore_snapshot_row_size(
     const struct wsap_vtcore_snapshot *s, int y);
 
 WSAP_VTCORE_API int wsap_vtcore_history_rows(const struct wsap_vtcore *t);
+/* Return text of the last max_rows history rows above viewport.
+ * Zero or negative max_rows returns an empty string.
+ * NULL means a NULL terminal or an allocation failure. Free with wsap_vtcore_text_free.
+ */
 WSAP_VTCORE_API char *wsap_vtcore_history_text(struct wsap_vtcore *t, int max_rows);
 WSAP_VTCORE_API struct wsap_vtcore_span wsap_vtcore_snapshot_row_selection(const struct wsap_vtcore_snapshot *s, int y);
 

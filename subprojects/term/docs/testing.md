@@ -14,7 +14,8 @@ meson test -C build --print-errorlogs
 
 | Suite | Contents |
 | --- | --- |
-| `unit` | Behavior tests, model tests, allocation-failure tests, symbol tests, and header tests. |
+| `unit` | Behavior tests, model tests, allocation-failure tests, symbol tests, header tests, and Kitty parity. |
+| `kitty` | Kitty terminal screen state parity suite (also in `unit`). |
 | `isa` | Re-runs SIMD-sensitive tests at each lower x86-64 level. |
 | `amalgamation` | Runs the unit suite against the generated single-file source. |
 | `portability` | Runs `term-cross-test` to compile for AArch64, macOS, and Windows with Zig. |

@@ -312,14 +312,17 @@ Full reset clears all XTSAVE values.
 Input encoders (`wsap_vtcore_input_encode_key`, `wsap_vtcore_input_encode_mouse`, `wsap_vtcore_input_encode_paste`) write into caller-provided byte buffers.
 Each function returns `struct wsap_vtcore_input_result`:
 - `status == WSAP_VTCORE_INPUT_BYTES`: The buffer contains a valid encoded sequence of `len` bytes.
-- `status == WSAP_VTCORE_INPUT_NONE`: The event produces no terminal input bytes.
+- `status == WSAP_VTCORE_INPUT_CONSUMED`: The event was handled but produces no terminal input bytes. Dropped mouse events also report this status.
 - `status == WSAP_VTCORE_INPUT_BUFFER_FULL`: The provided buffer capacity is insufficient. Partial sequences may be written; discard buffer contents.
-- `status == WSAP_VTCORE_INPUT_INVALID`: Input event arguments or mode parameters are invalid.
+- `status == WSAP_VTCORE_INPUT_UNHANDLED`: The event was not handled. This includes invalid input event arguments or mode parameters.
 
 Functions returning heap-allocated strings (`wsap_vtcore_cwd`, `wsap_vtcore_pointer_shape`, `wsap_vtcore_selection_text`, `wsap_vtcore_link_at`, `wsap_vtcore_history_text`):
-- Return a newly allocated NUL-terminated string, or NULL on empty values or allocation failure.
+- Return a newly allocated NUL-terminated string.
+- NULL means the terminal has no value for the query: no cwd, no shape, no selection, or no link under the cell. A NULL terminal and an allocation failure also give NULL. `wsap_vtcore_history_text` alone returns an allocated empty string for an empty history.
 - Release returned strings with `wsap_vtcore_text_free()`.
 - Do not pass returned pointers to standard `free()`.
+
+`wsap_vtcore_history_text(t, max_rows)` returns the last `max_rows` history rows above the viewport. Zero or negative `max_rows` returns an empty string.
 
 ## Invalid arguments
 

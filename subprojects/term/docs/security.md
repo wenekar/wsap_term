@@ -38,7 +38,7 @@ The parser enforces these implementation resource limits:
 | User variable value length | 4096 bytes | Discards oversized value. |
 | History mark table capacity | 65536 entries | Drops oldest history marks. |
 | Grapheme cluster size | 20 code points | Drops excess code points. |
-| Terminal column count | `WSAP_VTCORE_MAX_COLS` | Clamps columns to maximum. |
+| Terminal column count | `WSAP_VTCORE_MAX_COLS` | Rejects resize and keeps old size. |
 
 These values represent internal implementation limits.
 They do not guarantee that the parser accepts every sequence up to that size.

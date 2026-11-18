@@ -3,7 +3,7 @@
 This directory holds test suites imported from external projects. These are
 kept for reference and cross-checking against our own terminal emulator's
 behavior. Every unsanitized Linux build runs the adapted Kitty parser
-suite with the unit tests. `-Dkitty_tests=true` makes a missing suite an
+suite with the unit tests. `-Dkitty=enabled` makes a missing suite an
 error.
 
 ## kitty/
@@ -33,6 +33,12 @@ Kitty parser test suite against it via a Python compatibility layer.
   helpers (base64, UTF-8 decode, constants).
 - `kitty_harness.py` — `BaseTest`, `CmdDump`, and `parse_bytes` re-export.
 - `__init__.py` — Package marker.
+
+### Licensing
+
+`kitty/parser.py` is licensed under GPLv3 (Kovid Goyal).
+This file is test-only and not part of the library.
+The library is licensed under MIT.
 
 ### Test status (14 tests)
 

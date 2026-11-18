@@ -11,23 +11,28 @@ Each source directory lists its own build inputs.
 
 | File | Responsibility |
 | --- | --- |
-| `term.c` | Modes, cursor options, focus events, host reports, scrollback limits |
-| `term_state.c` | Combined grapheme, history, and mode compilation unit |
+| `internal.h` | Main internal header combining subsystem interfaces |
+| `term/term.c` | Modes, cursor options, focus events, host reports, scrollback limits |
+| `term/state.c` | Combined grapheme, history, and mode compilation unit |
 | `core.c`, `core.h` | Shared write primitives |
 | `screen.c`, `screen.h` | Screen ring, editing, resize, and reflow |
 | `marks.c`, `marks.h` | Prompt and output marks (OSC 133) and their history records |
 | `rect.c`, `rect.h` | Rectangle edits (DECFRA, DECERA, DECCRA) and column shifts |
-| `hist.c`, `hist.h` | Logical-line storage and page arena |
-| `hist_view.c`, `hist_view.h` | Viewport anchors and history lookup |
+| `hist/hist.c`, `hist/hist.h` | Logical-line storage and page arena |
+| `hist/view.c`, `hist/view.h` | Viewport anchors and history lookup |
 | `snapshot.c` | Copied views, row keys, and scroll movement |
 | `selection.c` | Selection, coordinate mapping, and UTF-8 export |
 | `gstore.c`, `gstore.h` | Per-terminal grapheme storage |
-| `text.c` | Byte decoding and control dispatch |
-| `text_run.c`, `text_run.h` | SIMD UTF-8 text runs |
+| `text/text.c` | Byte decoding and control dispatch |
+| `text/run.c`, `text/run.h` | SIMD UTF-8 text runs |
 | `text/charset.c`, `text/charset.h` | ISO 2022 character sets: designations, shifts, and maps |
-| `fastcsi.c` | Common CSI fast paths |
+| `csi/fast.c` | Common CSI fast paths |
+| `csi/csi.h` | CSI parser state and structures |
 | `input.c` | Key, mouse, and paste encoding |
 | `escape.c` | ESC, CSI, DCS, and OSC state machine |
+| `isa.c` | CPU feature detection and SIMD level selection |
+| `scan.c` | Printable span scanning |
+| `palette.c`, `palette.h` | Palette queries and color space conversions |
 | `pen.h` | Graphic attributes |
 | `style.c`, `style.h` | Style table: links and underline colors of cells |
 | `osc/dispatch.c` | OSC dispatch and palette queries |
