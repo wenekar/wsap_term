@@ -7,7 +7,7 @@
 #include "ui/css.h"
 #include "ui/widget.h"
 #include "ui/widget_ops.h"
-#include "wsap_vtcore/unicode/utf8.h"
+#include "util/unicode/utf8.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -179,7 +179,7 @@ static bool copy_text(const char *text, size_t len, bool value,
     size_t offset = 0, used = 0;
     while (offset < len && text[offset]) {
         uint32_t cp;
-        int n = wsap_vtcore_utf8_decode_one(text + offset, len - offset, &cp);
+        int n = unicode_utf8_decode_one(text + offset, len - offset, &cp);
         if (n <= 0) {
             offset++;
             continue;
@@ -652,8 +652,8 @@ static bool handle_key(struct ui_input *in, const struct ui_key_event *ev)
             return false;
         if (ev->text_deferred || ev->text < 0x20 || ev->text == 0x7f)
             return false;
-        char enc[WSAP_VTCORE_UTF8_MAX_BYTES + 1];
-        int n = wsap_vtcore_utf8_encode(ev->text, enc);
+        char enc[UNICODE_UTF8_MAX_BYTES + 1];
+        int n = unicode_utf8_encode(ev->text, enc);
         if (n <= 0)
             return false;
         enc[n] = '\0';

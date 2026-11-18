@@ -7,7 +7,8 @@
 #endif
 #include "font/cell_draw.h"
 #include "font/glyph/intern.h"
-#include "wsap_vtcore/unicode/unicode.h"
+#include "util/unicode/grapheme.h"
+#include "util/unicode/width.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -41,7 +42,7 @@ bool font_prefers_emoji(uint32_t cp, uint16_t style)
         return true;
     if (style & FONT_STYLE_TEXT)
         return false;
-    return wsap_vtcore_unicode_emoji_presentation(cp);
+    return unicode_emoji_presentation(cp);
 }
 
 bool font_instance_render_glyph(const struct font_instance *fi, uint32_t cp, uint16_t style, struct glyph *g)
@@ -54,11 +55,11 @@ bool font_instance_render_glyph(const struct font_instance *fi, uint32_t cp, uin
     if (cp <= ' ')
         return true;
 
-    uint32_t cps[WSAP_VTCORE_GRAPHEME_MAX_LEN];
-    int len = glyph_intern_expand(cp, cps, WSAP_VTCORE_GRAPHEME_MAX_LEN);
+    uint32_t cps[UNICODE_GRAPHEME_MAX_LEN];
+    int len = glyph_intern_expand(cp, cps, UNICODE_GRAPHEME_MAX_LEN);
 
     uint32_t base = cps[0];
-    if (wsap_vtcore_grapheme_regional_indicator(base) && !(style & FONT_STYLE_EMOJI))
+    if (unicode_grapheme_regional_indicator(base) && !(style & FONT_STYLE_EMOJI))
         base = 'A' + (base - 0x1F1E6);
     if (draw_cell_aligned_symbol(base, g))
         return true;

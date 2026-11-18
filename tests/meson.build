@@ -8,6 +8,7 @@ test_cases = [
     ['terminal-lifecycle-test', files('terminal/lifecycle_test.c'), app_lib, deps],
     ['terminal-scrolling-test', files('terminal/scrolling_test.c'), app_lib, deps],
     ['color-test', files('util/color_test.c'), base_lib, [m_dep]],
+    ['unicode-parity-test', files('util/unicode_parity_test.c'), base_lib, []],
     ['json-test', files('util/json_test.c'), base_lib, [yyjson_dep]],
     ['geom-test', files('util/geom_test.c'), base_lib, [m_dep]],
     ['proc-test', files('util/proc_test.c'), base_lib, [thread_dep, dl_dep]],

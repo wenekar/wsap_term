@@ -7,8 +7,8 @@
 #include "font/shaping.h"
 #include "platform/platform.h"
 #include "font/glyph/intern.h"
-#include "wsap_vtcore/unicode/unicode.h"
 #include "util/hash.h"
+#include "util/unicode/grapheme.h"
 
 #include <hb-ot.h>
 #include <limits.h>
@@ -162,13 +162,13 @@ static CGRect ct_device_rect(CGRect r, CGFloat scale)
 
 static CFStringRef ct_string(const uint32_t *cps, int count, int *cell_map)
 {
-    UniChar chars[FONT_RUN_MAX * WSAP_VTCORE_GRAPHEME_MAX_LEN * 2];
+    UniChar chars[FONT_RUN_MAX * UNICODE_GRAPHEME_MAX_LEN * 2];
     int used = 0;
     if (count < 1 || count > FONT_RUN_MAX)
         return NULL;
     for (int c = 0; c < count; c++) {
-        uint32_t expanded[WSAP_VTCORE_GRAPHEME_MAX_LEN];
-        int n = glyph_intern_expand(cps[c], expanded, WSAP_VTCORE_GRAPHEME_MAX_LEN);
+        uint32_t expanded[UNICODE_GRAPHEME_MAX_LEN];
+        int n = glyph_intern_expand(cps[c], expanded, UNICODE_GRAPHEME_MAX_LEN);
         if (n < 1)
             return NULL;
         for (int i = 0; i < n; i++) {
@@ -913,7 +913,7 @@ static bool ct_rasterize_glyph(font_handle_t *face, uint32_t cp, uint16_t style,
     if (cp <= ' ')
         return true;
     CTFontRef font = get_style_font(face, style);
-    if (wsap_vtcore_grapheme_is_handle(cp))
+    if (unicode_grapheme_is_handle(cp))
         return ct_rasterize_cluster(font, face->scale, cp, style, m, out);
     UniChar chars[2];
     CFIndex count;
@@ -1243,7 +1243,7 @@ static bool ct_fit_cells(const struct ct_ink *ink, int drawn, int n_cells,
 static enum font_run_result ct_shape_fallback(font_handle_t *face,
         const struct font_window *w, const struct font_metrics *m, struct glyph *cells)
 {
-    int cell_map[FONT_RUN_MAX * WSAP_VTCORE_GRAPHEME_MAX_LEN * 2];
+    int cell_map[FONT_RUN_MAX * UNICODE_GRAPHEME_MAX_LEN * 2];
     CFStringRef string = ct_string(w->cps, w->len, cell_map);
     if (!string)
         return FONT_RUN_UNAVAILABLE;
@@ -1252,11 +1252,11 @@ static enum font_run_result ct_shape_fallback(font_handle_t *face,
     CFRelease(string);
     if (!line)
         return FONT_RUN_UNAVAILABLE;
-    struct ct_ink ink[FONT_RUN_MAX * WSAP_VTCORE_GRAPHEME_MAX_LEN];
-    CGFloat primary[FONT_RUN_MAX * WSAP_VTCORE_GRAPHEME_MAX_LEN * 2];
-    CGFloat secondary_offsets[FONT_RUN_MAX * WSAP_VTCORE_GRAPHEME_MAX_LEN * 2];
-    bool offset_valid[FONT_RUN_MAX * WSAP_VTCORE_GRAPHEME_MAX_LEN * 2] = {0};
-    if (units > FONT_RUN_MAX * WSAP_VTCORE_GRAPHEME_MAX_LEN * 2) {
+    struct ct_ink ink[FONT_RUN_MAX * UNICODE_GRAPHEME_MAX_LEN];
+    CGFloat primary[FONT_RUN_MAX * UNICODE_GRAPHEME_MAX_LEN * 2];
+    CGFloat secondary_offsets[FONT_RUN_MAX * UNICODE_GRAPHEME_MAX_LEN * 2];
+    bool offset_valid[FONT_RUN_MAX * UNICODE_GRAPHEME_MAX_LEN * 2] = {0};
+    if (units > FONT_RUN_MAX * UNICODE_GRAPHEME_MAX_LEN * 2) {
         CFRelease(line);
         return FONT_RUN_UNAVAILABLE;
     }
@@ -1270,12 +1270,12 @@ static enum font_run_result ct_shape_fallback(font_handle_t *face,
         if (!font || (CTFontGetSymbolicTraits(font) & kCTFontTraitColorGlyphs))
             goto done;
         CFIndex count = CTRunGetGlyphCount(run);
-        if (count > FONT_RUN_MAX * WSAP_VTCORE_GRAPHEME_MAX_LEN)
+        if (count > FONT_RUN_MAX * UNICODE_GRAPHEME_MAX_LEN)
             goto done;
-        CGGlyph gids[FONT_RUN_MAX * WSAP_VTCORE_GRAPHEME_MAX_LEN];
-        CGPoint positions[FONT_RUN_MAX * WSAP_VTCORE_GRAPHEME_MAX_LEN];
-        CGSize advances[FONT_RUN_MAX * WSAP_VTCORE_GRAPHEME_MAX_LEN];
-        CFIndex indices[FONT_RUN_MAX * WSAP_VTCORE_GRAPHEME_MAX_LEN];
+        CGGlyph gids[FONT_RUN_MAX * UNICODE_GRAPHEME_MAX_LEN];
+        CGPoint positions[FONT_RUN_MAX * UNICODE_GRAPHEME_MAX_LEN];
+        CGSize advances[FONT_RUN_MAX * UNICODE_GRAPHEME_MAX_LEN];
+        CFIndex indices[FONT_RUN_MAX * UNICODE_GRAPHEME_MAX_LEN];
         CTRunGetGlyphs(run, CFRangeMake(0, count), gids);
         CTRunGetPositions(run, CFRangeMake(0, count), positions);
         CTRunGetAdvances(run, CFRangeMake(0, count), advances);
@@ -1293,7 +1293,7 @@ static enum font_run_result ct_shape_fallback(font_handle_t *face,
                 goto done;
             if (!r->w || !r->h)
                 continue;
-            if (drawn == FONT_RUN_MAX * WSAP_VTCORE_GRAPHEME_MAX_LEN)
+            if (drawn == FONT_RUN_MAX * UNICODE_GRAPHEME_MAX_LEN)
                 goto done;
             CGFloat anchor, secondary;
             if (offset_valid[index]) {
@@ -1357,7 +1357,7 @@ static enum font_run_result ct_shape_run(font_handle_t *face, const struct font_
         return FONT_RUN_UNAVAILABLE;
 
     for (int i = 0; i < w->len; i++)
-        if (wsap_vtcore_grapheme_is_handle(w->cps[i]))
+        if (unicode_grapheme_is_handle(w->cps[i]))
             return ct_shape_fallback(face, w, m, cells);
 
     if (!ct_buffer && !(ct_buffer = hb_buffer_create()))

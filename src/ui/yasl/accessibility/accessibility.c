@@ -5,7 +5,7 @@
 #include "ui/text_break.h"
 #include "ui/widget_ops.h"
 #include "util/grow.h"
-#include "wsap_vtcore/unicode/utf8.h"
+#include "util/unicode/utf8.h"
 #include "yasl/yasl.h"
 
 #include <accesskit.h>
@@ -206,8 +206,8 @@ static bool build_grapheme_cb(size_t start, size_t end, void *userdata)
         /* AccessKit stores one character's byte count in a uint8_t. */
         if (bytes > UINT8_MAX) {
             uint32_t cp;
-            bytes = (size_t)wsap_vtcore_utf8_decode_one(ctx->value + off,
-                                                       ctx->length - off, &cp);
+            bytes = (size_t)unicode_utf8_decode_one(ctx->value + off,
+                                                    ctx->length - off, &cp);
         }
         if (ctx->run->characters == RUN_CHARACTERS ||
             (ctx->run->length &&

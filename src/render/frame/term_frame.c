@@ -2,6 +2,8 @@
 
 #include "font/glyph/intern.h"
 
+#include <wsap_vtcore/unicode/grapheme.h>
+
 const struct wsap_vtcore_cell *terminal_frame_row(const struct terminal_frame *frame, int row)
 {
     return frame && frame->source ? wsap_vtcore_snapshot_row(frame->source, row) : NULL;

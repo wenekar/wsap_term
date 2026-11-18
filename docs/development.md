@@ -149,6 +149,19 @@ Only then does the tab close.
 When the display is lost and cannot reconnect, the app quits.
 If a Wayland compositor restarts, windows wait for it to return.
 
+## Unicode tables
+
+`src/util/unicode/` holds the base copy of the Unicode helpers.
+It holds the UTF-8 codec, the width and emoji tables, and the grapheme helpers.
+`unicode_utf8_printable_span()` replaces `wsap_vtcore_scan_printable_span()` for the framework libraries.
+`subprojects/term/include/wsap_vtcore/unicode/` holds a second copy.
+The term subproject builds alone, so it does not include the base headers.
+`subprojects/term/tools/generate_unicode.py` writes the term copy.
+The term copy is the source of truth.
+After a regeneration, apply the same data to the base copy.
+Rename the `wsap_vtcore_` prefix to `unicode_`, and give each table the `unicode_table_` prefix.
+`unicode-parity-test` compares the two copies and fails when they disagree.
+
 ## Tests
 
 `accessibility-atspi-test` checks the Linux accessibility adapter.

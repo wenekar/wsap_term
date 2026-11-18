@@ -6,7 +6,7 @@
 #include "ui/css.h"
 #include "ui/widget.h"
 #include "ui/widget_ops.h"
-#include "wsap_vtcore/unicode/utf8.h"
+#include "util/unicode/utf8.h"
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -345,9 +345,9 @@ bool ui_palette_open(struct ui_palette *p, const struct ui_palette_cmd *cmds,
             continue;
         struct ui_palette_cmd *c = &p->state.cmds[p->state.n_cmds++];
         c->action = cmds[i].action;
-        c->label = wsap_vtcore_utf8_sanitize_dup(cmds[i].label);
+        c->label = unicode_utf8_sanitize_dup(cmds[i].label);
         if (cmds[i].shortcut && cmds[i].shortcut[0])
-            c->shortcut = wsap_vtcore_utf8_sanitize_dup(cmds[i].shortcut);
+            c->shortcut = unicode_utf8_sanitize_dup(cmds[i].shortcut);
         if (!c->label) {
             free_cmds(p);
             return false;

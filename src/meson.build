@@ -44,7 +44,6 @@ input_lib = static_library(
     input_src,
     link_with: base_lib,
     include_directories: inc,
-    dependencies: [term_dep],
     install: false,
 )
 
@@ -54,7 +53,7 @@ paint_lib = static_library(
     link_with: [base_lib],
     include_directories: inc,
     c_args: ['-ffp-contract=off'],
-    dependencies: [thread_dep, m_dep] + [term_dep],
+    dependencies: [thread_dep, m_dep],
     install: false,
 )
 
@@ -63,7 +62,7 @@ font_lib = static_library(
     font_src,
     link_with: [base_lib, paint_lib],
     include_directories: inc,
-    dependencies: font_deps + [m_dep] + platform_deps + [term_dep],
+    dependencies: font_deps + [m_dep] + platform_deps,
     install: false,
 )
 
@@ -72,10 +71,12 @@ ui_lib = static_library(
     ui_src,
     link_with: [base_lib, paint_lib],
     include_directories: [inc, ui_inc],
-    dependencies: [m_dep, yyjson_dep] + [term_dep],
+    dependencies: [m_dep, yyjson_dep],
     install: false,
 )
 
+# theme_lib still uses struct wsap_vtcore_theme and its key helpers.
+# B3 removes the coupling, and then term_dep goes.
 theme_lib = static_library(
     'wsap-theme',
     theme_src,
@@ -85,6 +86,8 @@ theme_lib = static_library(
     install: false,
 )
 
+# render_lib still uses the terminal frame, the VT cell types, and the
+# underline and line-size enums. B4 removes the coupling, and then term_dep goes.
 render_lib = static_library(
     'wsap-render',
     render_src,
@@ -100,7 +103,7 @@ ui_yasl_lib = static_library(
     ui_yasl_src,
     link_with: [base_lib, input_lib, font_lib, ui_lib, paint_lib],
     include_directories: inc,
-    dependencies: core_deps + [yasl_dep, term_dep, accesskit_dep],
+    dependencies: core_deps + [yasl_dep, accesskit_dep],
     install: false,
 )
 
