@@ -67,6 +67,8 @@ float shape_phi(float z)
     return z < 0.0 ? cdf : 1.0 - cdf;
 }
 
+/* The same functions as paint/shape_math.h. A coverage value must match
+ * the CPU mask table, which that header builds. */
 int shape_shadow_edge(int p, float sigma)
 {
     return shape_quantize(shape_phi((float(p) + 0.5) / sigma));
@@ -74,26 +76,26 @@ int shape_shadow_edge(int p, float sigma)
 
 float shape_shadow_slice(float r, int k, int n)
 {
-    float phi = (float(k) + 0.5) / float(n) * 1.5707963267948966;
-    return r * sin(phi);
+    return (float(k) + 0.5) * (r / float(n));
 }
 
-float shape_shadow_row_term(float y, float v, float r, int n, float sigma)
+float shape_shadow_row_term(float p, float v, float r, int n, float sigma)
 {
-    float dy = y - (r - v);
-    return exp(-dy * dy / (2.0 * sigma * sigma)) * (1.5707963267948966 / float(n));
+    float t = (p - v) / sigma;
+    float norm = 1.0 / (sigma * sqrt(6.28318530717958647692));
+    return norm * exp(-0.5 * t * t) * (r / float(n));
 }
 
-float shape_shadow_col_term(float x, float v, float r, float sigma)
+float shape_shadow_col_term(float p, float v, float r, float sigma)
 {
-    float w = sqrt(max(0.0, r * r - (r - v) * (r - v)));
-    return shape_phi((x - (r - w) + 0.5) / sigma);
+    float l = r - sqrt(v * (2.0 * r - v));
+    return shape_phi((p - l) / sigma);
 }
 
 int shape_shadow_tile(float sum, float x, float y, float r, float sigma)
 {
-    float base = shape_phi((x + 0.5) / sigma) * shape_phi((y + 0.5) / sigma);
-    return shape_quantize(base - sum * 0.3989422804014327 / sigma);
+    float tail = shape_phi((y - r) / sigma);
+    return shape_quantize(sum + shape_phi(x / sigma) * tail);
 }
 
 int shadow_edge_at(int p, int extent, float sigma)
