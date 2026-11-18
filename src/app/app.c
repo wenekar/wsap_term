@@ -36,7 +36,7 @@ static void app_trim_heap(void)
 #include "app/tabs/tabs.h"
 #include "terminal/terminal.h"
 #include "util/app_identity.h"
-#include "util/name.h"
+#include "app/identity.h"
 
 /* The app ID. The app files read it for a config name or a log prefix. */
 const char *app_name(void)
