@@ -382,18 +382,21 @@ static uint32_t gradient_color(const struct ui_scene *s,
     return (a << 24) | (r << 16) | (gg << 8) | b;
 }
 
-/* Paints an integer rect with a blend mode other than PREMUL. */
+/*
+ * Paints an integer rect with a blend mode other than PREMUL. `alpha` is
+ * the alpha of a blend rect, or -1 to take the alpha of `color`. A blend
+ * rect keeps its alpha apart from its opaque color, so the two rules make
+ * the same source word as the GPU instance of the op.
+ */
 static void paint_rect_mode(uint32_t *px, int width, int height, struct rect2i r,
-                            struct rect2i clip, uint32_t color, uint8_t alpha,
+                            struct rect2i clip, uint32_t color, int alpha,
                             enum ui_scene_blend mode)
 {
     r = rect2i_intersect(r, clip);
     if (!rect2i_clip(&r, (struct vector2i){ .x = width, .y = height }))
         return;
-    if (!alpha)
-        return;
-    if (alpha != 255)
-        color = (color & 0x00FFFFFFu) | ((uint32_t)alpha << 24);
+    uint32_t a = alpha >= 0 ? (uint32_t)alpha : color >> 24;
+    color = (color & 0x00FFFFFFu) | (a << 24);
     for (int y = r.y; y < r.y + r.height; y++) {
         uint32_t *row = px + (size_t)y * width;
         for (int x = r.x; x < r.x + r.width; x++)
@@ -842,7 +845,8 @@ bool ui_scene_paint_clipped(struct font_instance *fi, uint32_t *px, int width, i
             }
             if (op->blend != UI_SCENE_BLEND_PREMUL) {
                 paint_rect_mode(px, width, height, op->rect, clip, op->color,
-                                op->alpha, op->blend);
+                                op->kind == UI_SCENE_OP_RECT ? -1 : op->alpha,
+                                op->blend);
                 break;
             }
             paint_rect(k, px, width, height, op->rect, clip, op->color,

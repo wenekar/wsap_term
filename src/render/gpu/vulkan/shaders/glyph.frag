@@ -74,7 +74,7 @@ void main()
     }
 
     if (in_mode == MODE_IMAGE || in_mode == MODE_IMAGE_LINEAR) {
-        vec4 t = image_sample(in_uv, in_mode == MODE_IMAGE_LINEAR);
+        vec4 t = image_sample(in_uv, in_mode == MODE_IMAGE_LINEAR, in_uv_rect);
         float a = t.a * in_color.a;
         if (a <= 0.0)
             discard;

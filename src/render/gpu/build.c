@@ -881,8 +881,9 @@ static void scene_rect(struct gpu_build *b, struct rect2i rect, struct rect2i cl
         return;
     float c[4];
     gpu_color(color, opacity_mult, c);
-    if (c[3] > 0.0f)
-        emit_solid(b, r, c, blend, canvas_rect);
+    /* Alpha 0 still draws: MULTIPLY zeroes the color, and NONE replaces
+     * the pixel. The other modes give no change at alpha 0. */
+    emit_solid(b, r, c, blend, canvas_rect);
 }
 
 static bool build_scene(struct gpu_build *b, struct font_instance *ufont,
