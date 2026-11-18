@@ -12,7 +12,7 @@
 #include "ui/yasl/internal.h"
 #include "ui/yasl/gpu_surface.h"
 #include "ui/yasl/native_input.h"
-#include "util/name.h"
+#include "util/app_identity.h"
 
 static struct window_native *native_find(struct window *w, const struct yasl_surface *s);
 static void stats_collect_presented(struct window *w);
@@ -98,6 +98,13 @@ uint64_t window_frame_time_ms(struct window *w)
     return yasl_time_ns() / 1000000;
 }
 
+/* The app ID of this process. It names the window when no title is set. */
+static const char *window_app_id(void)
+{
+    const struct app_identity *identity = app_identity_current();
+    return identity ? identity->id : "";
+}
+
 void window_set_title(struct window *w, const char *title)
 {
     char *copy = NULL;
@@ -106,7 +113,8 @@ void window_set_title(struct window *w, const char *title)
     free(w->title);
     w->title = copy;
     if (w->surface)
-        yasl_surface_set_title(w->surface, w->title ? w->title : app_name());
+        yasl_surface_set_title(w->surface,
+                               w->title ? w->title : window_app_id());
 }
 
 const char *window_title(const struct window *w)
@@ -501,7 +509,7 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
         size.y = spec->size.y;
 
     int init = yasl_init(&(struct yasl_options){
-        .app_id = app_name(),
+        .app_id = window_app_id(),
         .loop = host->loop,
         .on_event = host_on_event,
         .userdata = host,
@@ -521,7 +529,7 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
         device = NULL;
 
     struct yasl_surface_options options = {
-        .title = w->title ? w->title : app_name(),
+        .title = w->title ? w->title : window_app_id(),
         .width = size.x,
         .height = size.y,
         .type = device ? YASL_SURFACE_NATIVE : YASL_SURFACE_CPU,

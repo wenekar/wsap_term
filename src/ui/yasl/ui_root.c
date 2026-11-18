@@ -2,7 +2,7 @@
 #include "ui/yasl/internal.h"
 #include "ui/yasl/window.h"
 #include "ui/widgets/input.h"
-#include "util/name.h"
+#include "util/app_identity.h"
 
 static struct window *root_window(const struct ui_widget *widget)
 {
@@ -26,7 +26,8 @@ static bool root_accessibility(const struct ui_widget *widget,
     const struct window *w = root_window(widget);
     const char *title = window_title(w);
     out->role = UI_ACCESSIBILITY_ROLE_WINDOW;
-    out->name = title && title[0] ? title : app_name();
+    const struct app_identity *identity = app_identity_current();
+    out->name = title && title[0] ? title : (identity ? identity->id : "");
     return true;
 }
 

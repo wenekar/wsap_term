@@ -5,7 +5,7 @@ util_src = files(
     'file.c',
     'fs.c',
     'json.c',
-    'name.c',
+    'app_identity.c',
     'options.c',
     'path.c',
     'png.c',

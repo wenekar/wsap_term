@@ -29,19 +29,6 @@ int platform_eventfd(int *wr_fd)
     return fds[0];
 }
 
-int platform_fastpipe_create(int fds[2], int buf_size)
-{
-    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) < 0) {
-        perror("socketpair");
-        return -1;
-    }
-    fcntl(fds[0], F_SETFD, FD_CLOEXEC);
-    fcntl(fds[1], F_SETFD, FD_CLOEXEC);
-    setsockopt(fds[1], SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size));
-    setsockopt(fds[0], SOL_SOCKET, SO_RCVBUF, &buf_size, sizeof(buf_size));
-    return 0;
-}
-
 int platform_exe_path(char *out, size_t n)
 {
     char raw[4096];

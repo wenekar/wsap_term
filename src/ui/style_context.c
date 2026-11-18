@@ -1,4 +1,5 @@
 #include "ui/style_context.h"
+#include "util/app_identity.h"
 
 #include "ui/surface.h"
 #include "ui/css.h"
@@ -332,7 +333,8 @@ static void part_bucket_insert(uint32_t *buckets, uint32_t cap, uint32_t id,
    goes to stderr like every other UI core diagnostic. */
 static void part_log(const char *message)
 {
-    fprintf(stderr, "wsap: %s\n", message);
+    const struct app_identity *identity = app_identity_current();
+    fprintf(stderr, "%s: %s\n", identity ? identity->id : "ui", message);
 }
 
 static void part_abort(const char *message)

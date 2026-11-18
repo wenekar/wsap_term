@@ -5,6 +5,7 @@ pty_src = files(
     'plan.c',
     'pty.c',
     'ring.c',
+    'shell.c',
 )
 
 subdir('preload')

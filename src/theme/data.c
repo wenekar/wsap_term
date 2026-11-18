@@ -7,17 +7,16 @@
 #include "theme/internal.h"
 #include "util/file.h"
 #include "util/grow.h"
-#include "util/name.h"
 #include "util/str.h"
 
-static void data_warning(const char *path, int line, const char *message,
-                         const char *detail)
+static void data_warning(const char *tag, const char *path, int line,
+                         const char *message, const char *detail)
 {
     if (detail)
-        fprintf(stderr, "[%s] %s:%d: %s '%s'\n", app_name(), path, line,
-                message, detail);
+        fprintf(stderr, "[%s] %s:%d: %s '%s'\n", tag, path, line, message,
+                detail);
     else
-        fprintf(stderr, "[%s] %s:%d: %s\n", app_name(), path, line, message);
+        fprintf(stderr, "[%s] %s:%d: %s\n", tag, path, line, message);
 }
 
 static bool data_set(struct theme_data *data, const char *block,
@@ -62,9 +61,9 @@ static enum theme_polarity parse_polarity(const char *value)
 }
 
 bool theme_data_load(const char *path, struct theme_data *data,
-                     struct look_theme *meta)
+                     struct look_theme *meta, const char *tag)
 {
-    char *text = util_read_file(path, app_name());
+    char *text = util_read_file(path, tag);
     if (!text)
         return false;
     char *section = NULL;
@@ -79,17 +78,17 @@ bool theme_data_load(const char *path, struct theme_data *data,
             if (*entry == '[') {
                 char *close = strchr(entry + 1, ']');
                 if (!close || close[1] != '\0') {
-                    data_warning(path, line, "bad data block header", entry);
+                    data_warning(tag, path, line, "bad data block header", entry);
                 } else {
                     *close = '\0';
                     section = str_trim(entry + 1);
                     if (!*section)
-                        data_warning(path, line, "empty data block name", NULL);
+                        data_warning(tag, path, line, "empty data block name", NULL);
                 }
             } else {
                 char *eq = strchr(entry, '=');
                 if (!eq) {
-                    data_warning(path, line, "missing value for key", entry);
+                    data_warning(tag, path, line, "missing value for key", entry);
                 } else {
                     *eq = '\0';
                     char *key = str_trim(entry);
@@ -106,9 +105,9 @@ bool theme_data_load(const char *path, struct theme_data *data,
                     } else if (!strcmp(key, "polarity")) {
                         meta->polarity = parse_polarity(value);
                         if (meta->polarity == THEME_POLARITY_UNKNOWN)
-                            data_warning(path, line, "bad polarity", value);
+                            data_warning(tag, path, line, "bad polarity", value);
                     } else {
-                        data_warning(path, line, "unknown theme metadata key",
+                        data_warning(tag, path, line, "unknown theme metadata key",
                                      key);
                     }
                 }

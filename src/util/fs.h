@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 
-FILE *fs_create(const char *path);
+/* Creates `path` and its parent directories. `tag` is the log prefix. */
+FILE *fs_create(const char *tag, const char *path);
 
 #endif

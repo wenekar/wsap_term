@@ -3,7 +3,7 @@
 #include "app/style.h"
 #include "app_css.h"
 #include "ui/css.h"
-#include "util/name.h"
+#include "app/identity.h"
 
 static struct css_sheet app_sheet;
 static bool app_sheet_ready;

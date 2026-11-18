@@ -9,33 +9,11 @@
 
 #ifdef __linux__
 
-#include <pty.h>
-
-#define PLATFORM_PRELOAD_ENV "LD_PRELOAD"
-#define PLATFORM_PRELOAD_LIB "libfastpty.so"
-#define PLATFORM_FASTPIPE_DEFAULT 1
-
 #define platform_madv_dontfork(p, n) madvise((p), (n), MADV_DONTFORK)
 #define platform_madv_nohugepage(p, n) madvise((p), (n), MADV_NOHUGEPAGE)
 #define PLATFORM_CLOCK_COARSE CLOCK_MONOTONIC_COARSE
 
 #else
-
-#include <util.h>
-
-#if defined(__APPLE__)
-
-#define PLATFORM_PRELOAD_ENV "DYLD_INSERT_LIBRARIES"
-#define PLATFORM_PRELOAD_LIB "libfastpty.dylib"
-
-#else
-
-#define PLATFORM_PRELOAD_ENV "LD_PRELOAD"
-#define PLATFORM_PRELOAD_LIB "libfastpty.so"
-
-#endif
-
-#define PLATFORM_FASTPIPE_DEFAULT 0
 
 #define platform_madv_dontfork(p, n) ((void)(p), (void)(n))
 #define platform_madv_nohugepage(p, n) ((void)(p), (void)(n))
@@ -52,8 +30,6 @@
 #endif
 
 int platform_eventfd(int *wr_fd);
-
-int platform_fastpipe_create(int fds[2], int buf_size);
 
 int platform_exe_path(char *out, size_t n);
 

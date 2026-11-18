@@ -17,6 +17,11 @@
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <util.h>
+#else
+#include <pty.h>
+#endif
 
 #define PTY_HANGUP_GRACE_MS 2000
 #define PTY_REAP_POLL_MS 10

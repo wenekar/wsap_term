@@ -5,7 +5,7 @@
 #include <string.h>
 
 #include "platform/platform.h"
-#include "util/name.h"
+#include "app/identity.h"
 
 static bool hint_in_range(const struct opt *o, int v)
 {

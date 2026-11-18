@@ -3,7 +3,7 @@
 #include <unistd.h>
 
 #include "session/session.h"
-#include "util/proc.h"
+#include "pty/shell.h"
 
 int main(void)
 {
@@ -23,7 +23,7 @@ int main(void)
     const char file[] = "\033]7;file:///dev/null\033\\";
     wsap_vtcore_feed(s.term, file, sizeof(file) - 1, 0);
     char expected[sizeof(out)];
-    assert(proc_read_pid_cwd_buf(getpid(), expected, sizeof(expected)));
+    assert(pty_read_pid_cwd_buf(getpid(), expected, sizeof(expected)));
     assert(session_cwd(&s, out, sizeof(out)));
     assert(!strcmp(out, expected));
 

@@ -4,6 +4,7 @@
 #include <stdbool.h>
 
 struct css_sheet;
+struct app_identity;
 
 /* The preferred color scheme of a theme. */
 enum theme_polarity {
@@ -28,7 +29,8 @@ struct look;
  * Applies the initial `theme` name or CSS file path.
  * Returns a pointer to the new instance, or NULL on allocation failure.
  */
-struct look *look_create(const char *theme);
+struct look *look_create(const struct app_identity *identity,
+                         const char *theme);
 
 /*
  * Frees a theme manager and its loaded appearances.

@@ -5,6 +5,7 @@
 
 #include "terminal/internal.h"
 #include "platform/platform.h"
+#include "util/app_identity.h"
 #include "util/time.h"
 
 static const char *content_title(const struct terminal *t)
@@ -192,7 +193,9 @@ struct terminal *terminal_create(struct window *window,
     if (px.x <= 0 || px.y <= 0)
         px = default_content_size(window);
     struct vector2i grid = content_grid(terminal_font_metrics(t), px);
+    const struct app_identity *identity = app_identity_current();
     const struct session_spec session_spec = {
+        .app_id = identity ? identity->id : "",
         .command = spec->config->command,
         .cwd = spec->cwd,
         .locale = locale,

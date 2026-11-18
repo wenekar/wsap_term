@@ -11,8 +11,9 @@
 #include "yasl/yasl.h"
 #include "platform/platform.h"
 #include "session/session.h"
+
+#include "pty/shell.h"
 #include "wsap_vtcore/unicode/unicode.h"
-#include "util/name.h"
 #include "util/proc.h"
 #include "util/time.h"
 
@@ -161,7 +162,7 @@ static void on_term_response(void *ud, const char *data, size_t len)
 {
     struct session *s = ud;
     if (!session_write_queue_push_bytes(&s->input_writer, data, len))
-        fprintf(stderr, "[%s] failed to queue terminal input\n", app_name());
+        fprintf(stderr, "[%s] failed to queue terminal input\n", s->app_id ? s->app_id : "");
 }
 
 static void on_term_title(void *ud, const char *title)
@@ -291,7 +292,7 @@ static bool start_pty(struct session *s, const struct session_spec *spec)
         !session_write_queue_bind(&s->input_writer, s->loop, pty_master_fd(&s->pty)))
         return false;
     if (pty_ring_start(&s->ring, s->loop, &s->pty, &ring_callbacks, s) < 0) {
-        fprintf(stderr, "[%s] pty_ring_start failed\n", app_name());
+        fprintf(stderr, "[%s] pty_ring_start failed\n", s->app_id ? s->app_id : "");
         return false;
     }
     return true;
@@ -302,6 +303,7 @@ bool session_init(struct session *s, struct yasl_loop *loop,
 {
     memset(s, 0, sizeof(*s));
     s->loop = loop;
+    s->app_id = spec->app_id;
     if (pthread_mutex_init(&s->host_lock, NULL) != 0)
         return false;
     s->host_lock_ready = true;
@@ -420,7 +422,7 @@ bool session_write_bytes(struct session *s, const char *data, size_t len)
     if (!s) return false;
     if (!len) return true;
     if (!session_write_queue_push_bytes(&s->input_writer, data, len)) {
-        fprintf(stderr, "[%s] failed to queue terminal input\n", app_name());
+        fprintf(stderr, "[%s] failed to queue terminal input\n", s->app_id ? s->app_id : "");
         return false;
     }
     latency_probe_stage(LATENCY_STAGE_PTY_WRITTEN);
@@ -459,9 +461,9 @@ bool session_cwd(const struct session *s, char *out, size_t sz)
     pid_t target_pid = fg_pid > 0 ? fg_pid : s->pty.pid;
     if (target_pid <= 0)
         return false;
-    if (proc_read_pid_cwd_buf(target_pid, out, sz))
+    if (pty_read_pid_cwd_buf(target_pid, out, sz))
         return true;
-    return target_pid != s->pty.pid && proc_read_pid_cwd_buf(s->pty.pid, out, sz);
+    return target_pid != s->pty.pid && pty_read_pid_cwd_buf(s->pty.pid, out, sz);
 }
 
 void session_reap_exited(void)

@@ -5,24 +5,26 @@
 #include <string.h>
 #include <strings.h>
 
-#include "util/name.h"
+#include "util/app_identity.h"
 #include "input/keybind.h"
 #include "util/config.h"
 #include "util/fs.h"
 #include "util/path.h"
 
-static bool input_config_default_path(char *out, size_t sz)
+static bool input_config_default_path(const struct app_identity *identity,
+                                      char *out, size_t sz)
 {
-    return xdg_config_path(out, sz, "wsap_term/input.conf");
+    return app_identity_config_path(identity, out, sz, "input.conf");
 }
 
-static void write_default_input_config(const char *path)
+static void write_default_input_config(const struct app_identity *identity,
+                                       const char *path)
 {
-    FILE *f = fs_create(path);
+    FILE *f = fs_create(identity->id, path);
     if (!f)
         return;
     fprintf(f,
-        "# wsap_term input configuration.\n"
+        "# %s input configuration.\n"
         "# Lines are 'chord = action'; everything here is commented out.\n\n"
         "# 'style' picks the built-in copy and paste keys before any\n"
         "# binding below. Both styles also bind ctrl+shift+c and ctrl+shift+v.\n"
@@ -52,21 +54,25 @@ static void write_default_input_config(const char *path)
         "#ctrl+shift+1 = tab_1\n"
         "#ctrl+shift+9 = last_tab\n"
         "#ctrl+shift+f6 = focus_tabs (Linux)\n"
-        "#cmd+f6 = focus_tabs (macOS)\n");
+        "#cmd+f6 = focus_tabs (macOS)\n", identity->id);
     fclose(f);
 }
+
+/* The log prefix of the file that loads now. Initialization is one thread. */
+static const char *config_tag = "";
 
 static void input_config_line(void *ctx, const char *path, int line,
                               const char *chord, const char *val)
 {
     struct input_keymap *km = ctx;
+    const char *tag = config_tag;
     if (!val) {
         if (!strcasecmp(chord, "clear")) {
             input_keymap_clear(km);
             return;
         }
         fprintf(stderr, "[%s] %s:%d: expected 'chord = action'\n",
-                app_name(), path, line);
+                tag, path, line);
         return;
     }
 
@@ -76,7 +82,7 @@ static void input_config_line(void *ctx, const char *path, int line,
             input_keymap_reset_active(style);
         else
             fprintf(stderr, "[%s] %s:%d: invalid style '%s'\n",
-                    app_name(), path, line, val);
+                    tag, path, line, val);
         return;
     }
 
@@ -84,30 +90,33 @@ static void input_config_line(void *ctx, const char *path, int line,
     if (snprintf(spec, sizeof(spec), "%s=%s", chord, val) >= (int)sizeof(spec) ||
         !input_keymap_apply_spec(km, spec))
         fprintf(stderr, "[%s] %s:%d: cannot bind '%s' to '%s'\n",
-                app_name(), path, line, chord, val);
+                tag, path, line, chord, val);
 }
 
-static void input_config_load(const char *path)
+static void input_config_load(const struct app_identity *identity,
+                              const char *path)
 {
     if (!config_parse_file(path, input_config_line, input_keymap_active())) {
         if (errno == ENOENT)
-            write_default_input_config(path);
+            write_default_input_config(identity, path);
         else
-            fprintf(stderr, "[%s] cannot read %s: %s\n",
-                    app_name(), path, strerror(errno));
+            fprintf(stderr, "[%s] cannot read %s: %s\n", identity->id, path,
+                    strerror(errno));
     }
 }
 
-void input_config_init(void)
+void input_config_init(const struct app_identity *identity)
 {
     input_keymap_reset_active(INPUT_KEYBIND_MODERN);
+    if (identity)
+        config_tag = identity->id;
 
     const char *path = getenv("WSAP_INPUT_CONFIG");
     if (path && !path[0])
         path = NULL;
     char defbuf[4096];
-    if (!path && input_config_default_path(defbuf, sizeof(defbuf)))
+    if (!path && input_config_default_path(identity, defbuf, sizeof(defbuf)))
         path = defbuf;
     if (path && strcasecmp(path, "NONE"))
-        input_config_load(path);
+        input_config_load(identity, path);
 }

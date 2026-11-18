@@ -4,6 +4,7 @@
 #endif
 
 #include "pty/internal.h"
+#include "pty/shell.h"
 #include "pty/sync.h"
 #include "platform/platform.h"
 #include "util/proc.h"
@@ -130,17 +131,17 @@ static void set_preload_env(struct pty_env *env)
 
     char preload_path[5000];
     snprintf(preload_path, sizeof(preload_path), "%s/%s", exe_dir,
-             PLATFORM_PRELOAD_LIB);
+             PTY_PRELOAD_LIB);
     if (access(preload_path, R_OK) != 0)
         return;
 
-    const char *existing = pty_env_get(env, PLATFORM_PRELOAD_ENV);
+    const char *existing = pty_env_get(env, PTY_PRELOAD_ENV);
     if (existing && existing[0]) {
         char combined[10240];
         snprintf(combined, sizeof(combined), "%s:%s", preload_path, existing);
-        pty_env_set(env, PLATFORM_PRELOAD_ENV, combined);
+        pty_env_set(env, PTY_PRELOAD_ENV, combined);
     } else {
-        pty_env_set(env, PLATFORM_PRELOAD_ENV, preload_path);
+        pty_env_set(env, PTY_PRELOAD_ENV, preload_path);
     }
 }
 
@@ -259,7 +260,7 @@ int pty_plan_init(struct pty_plan *plan, const struct pty_spec *spec)
 {
     *plan = (struct pty_plan){0};
     const char *launch = spec->command && spec->command[0]
-                         ? spec->command : proc_default_shell();
+                         ? spec->command : pty_default_shell();
     plan->argv = split_cmdline(launch, &plan->argbuf);
     if (!plan->argv)
         return -1;
