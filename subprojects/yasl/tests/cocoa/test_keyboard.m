@@ -186,8 +186,21 @@ int main(void)
         assert(event.key.text_input == YASL_KEY_TEXT_COMMIT && event.key.text_id);
         key_id = event.key.text_id;
         event = next(surface, YASL_PRIVATE_EVENT_TEXT);
-        assert(event.text.text_key_id == key_id && !strcmp(event.text.data, "ä😀"));
+        assert(event.text.text_key_id == key_id && !strcmp(event.text.data, "ä😀"));
         empty(surface);
+
+        /* A dead key shows its preedit before the surface has a text field. */
+        [view setMarkedText:@"´" selectedRange:NSMakeRange(1, 0)
+            replacementRange:NSMakeRange(NSNotFound, 0)];
+        assert(strcmp(yasl_private_surface_ime_preedit(surface), "´") == 0);
+        event = next(surface, YASL_PRIVATE_EVENT_COMPOSITION);
+        assert(event.composition.active && !strcmp(event.composition.data, "´"));
+        assert(event.composition.begin == 2 && event.composition.end == 2);
+        [view unmarkText];
+        event = next(surface, YASL_PRIVATE_EVENT_COMPOSITION);
+        assert(!event.composition.active && !yasl_private_surface_ime_preedit(surface));
+        empty(surface);
+
         surface->text_input_active = true;
         assert(display->ops->surface_update_text_input(surface));
 

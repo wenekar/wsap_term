@@ -1733,11 +1733,18 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
             w->key_composing = true;
             return;
         }
+        bool had_preedit = w->preedit != NULL;
         w->key_insertions++;
         input_queue_push(&w->text_events, &(struct yasl_private_event){
             .type = YASL_PRIVATE_EVENT_TEXT, .surface = &w->base,
             .text = { .data = utf8, .len = len, .text_key_id = w->text_key_id },
         });
+        /* The commit ends the preedit of a dead key. */
+        free(w->preedit);
+        w->preedit = NULL;
+        w->preedit_cursor_begin = w->preedit_cursor_end = -1;
+        if (had_preedit)
+            push_composition(w, NULL, -1, -1);
         return;
     }
     size_t begin, end;
@@ -1787,18 +1794,22 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
      replacementRange:(NSRange)replacementRange
 {
     struct cocoa_surface *w = self.surface;
-    if (!w || w->destroyed || w->closed || !w->base.text_input_active) return;
+    if (!w || w->destroyed || w->closed) return;
     NSString *str = plain_string(string);
     if (w->interpreting_key) w->key_composing = true;
-    size_t range_begin, range_end;
-    if (!text_edit_range(w, replacementRange, true, &range_begin, &range_end)) return;
-    w->preedit_begin = range_begin;
-    w->preedit_end = range_end;
-    w->preedit_revision = w->base.text_revision;
-    w->preedit_generation = w->base.text_generation;
-    if (!text_utf8_to_utf16(w->base.text_surrounding ?: "", range_begin,
-                            &w->marked_utf16_location))
-        w->marked_utf16_location = 0;
+    /* A dead key composes before the surface has a text field, so the preedit
+     * feedback does not depend on one. Only the range in the text does. */
+    if (w->base.text_input_active) {
+        size_t range_begin, range_end;
+        if (!text_edit_range(w, replacementRange, true, &range_begin, &range_end)) return;
+        w->preedit_begin = range_begin;
+        w->preedit_end = range_end;
+        w->preedit_revision = w->base.text_revision;
+        w->preedit_generation = w->base.text_generation;
+        if (!text_utf8_to_utf16(w->base.text_surrounding ?: "", range_begin,
+                                &w->marked_utf16_location))
+            w->marked_utf16_location = 0;
+    }
     const char *utf8 = str.length ? str.UTF8String : NULL;
     free(w->preedit);
     w->preedit = utf8 ? strdup(utf8) : NULL;
