@@ -4284,7 +4284,7 @@ static bool vulkan_ready(struct x11_display *d)
         d->vulkan_probed = true;
 #if YASL_HAS_VULKAN
         int opcode, event, error;
-        d->vulkan_ready = vulkan_icd_ready() &&
+        d->vulkan_ready = vulkan_icd_ready() && d->native &&
             (d->has_shm || XQueryExtension(d->native, "DRI3", &opcode, &event, &error));
 #endif
     }
