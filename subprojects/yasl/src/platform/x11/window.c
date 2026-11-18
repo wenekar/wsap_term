@@ -769,7 +769,7 @@ struct x11_display {
     struct incr_send *incr_sends;
     Atom protocols, delete_window, utf8, clipboard, targets, paste_property, incr;
     Atom timestamp, multiple, pair;
-    Atom net_name, net_state, fullscreen, maximized_h, maximized_v, motif_hints;
+    Atom net_name, net_state, fullscreen, maximized_h, maximized_v, motif_hints, hidden;
     Atom xdnd_aware, xdnd_enter, xdnd_position, xdnd_status, xdnd_leave, xdnd_drop, xdnd_finished;
     Atom xdnd_selection, xdnd_action_copy, xdnd_type_list;
     char *selection[2];
@@ -2194,6 +2194,8 @@ static struct yasl_surface *create_toplevel_visual(struct yasl_private_display *
     s->base.creation_flags = spec->flags | (spec->external_gpu ? 0u : YASL_PRIVATE_SURFACE_CPU);
     s->base.presenter = presenter;
     s->clock.refresh_ns = d->refresh_ns;
+    s->base.state = (spec->flags & YASL_PRIVATE_SURFACE_UNDECORATED) ? YASL_PRIVATE_STATE_CSD : 0;
+    if (spec->flags & YASL_PRIVATE_SURFACE_HIDDEN) s->base.state |= YASL_PRIVATE_STATE_SUSPENDED;
     /* Logical creation sizes become device pixels. */
     struct yasl_private_vector2i px = {yasl_private_scale_to_device(spec->size.x, d->scale_120),
                                        yasl_private_scale_to_device(spec->size.y, d->scale_120)};
@@ -2716,6 +2718,7 @@ static struct yasl_surface *surface_create_popup(struct yasl_surface *parent_bas
     s->base.creation_flags = parent_base->creation_flags;
     s->base.presenter = YASL_PRIVATE_PRESENTER_CPU;
     s->base.scale_120 = d->scale_120;
+    s->base.state = YASL_PRIVATE_STATE_CSD;
     s->parent = parent;
     s->is_popup = true;
     s->content_offset = spec->content_offset;
@@ -2821,7 +2824,8 @@ static void update_state(struct x11_surface *s)
     int format;
     unsigned long count, left;
     unsigned char *data = NULL;
-    uint32_t state = s->base.state & ~(YASL_PRIVATE_STATE_FULLSCREEN | YASL_PRIVATE_STATE_MAXIMIZED);
+    uint32_t state = s->base.state & ~(YASL_PRIVATE_STATE_FULLSCREEN | YASL_PRIVATE_STATE_MAXIMIZED |
+                                       YASL_PRIVATE_STATE_SUSPENDED | YASL_PRIVATE_STATE_MINIMIZED);
     if (XGetWindowProperty(d->native, s->window, d->net_state, 0, 64, False,
             XA_ATOM, &actual, &format, &count, &left, &data) == Success && format == 32) {
         Atom *atoms = (Atom *)data;
@@ -2830,6 +2834,8 @@ static void update_state(struct x11_surface *s)
             if (atoms[i] == d->fullscreen) state |= YASL_PRIVATE_STATE_FULLSCREEN;
             if (atoms[i] == d->maximized_h) h = true;
             if (atoms[i] == d->maximized_v) v = true;
+            if (atoms[i] == d->hidden)
+                state |= YASL_PRIVATE_STATE_SUSPENDED | YASL_PRIVATE_STATE_MINIMIZED;
         }
         if (h && v) state |= YASL_PRIVATE_STATE_MAXIMIZED;
     }
@@ -4130,6 +4136,7 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
     ATOM(fullscreen, "_NET_WM_STATE_FULLSCREEN");
     ATOM(maximized_h, "_NET_WM_STATE_MAXIMIZED_HORZ");
     ATOM(maximized_v, "_NET_WM_STATE_MAXIMIZED_VERT");
+    ATOM(hidden, "_NET_WM_STATE_HIDDEN");
     ATOM(xdnd_aware, "XdndAware");
     ATOM(xdnd_enter, "XdndEnter");
     ATOM(xdnd_position, "XdndPosition");

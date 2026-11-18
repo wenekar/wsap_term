@@ -526,6 +526,13 @@ int main(void)
     errno = 0;
     assert(!yasl_private_surface_start_interactive_move(surface) && errno == ESTALE);
 
+    /* A decorated window uses system decorations; an undecorated one is CSD. */
+    assert(!(surface->state & YASL_PRIVATE_STATE_CSD));
+    struct yasl_private_window_spec plain_spec = {.title = "Undecorated",
+        .size = {90, 70}, .flags = YASL_PRIVATE_SURFACE_UNDECORATED};
+    struct yasl_surface *plain = yasl_private_surface_create_toplevel(base, &plain_spec);
+    assert(plain && (plain->state & YASL_PRIVATE_STATE_CSD));
+    yasl_private_surface_destroy(plain);
     yasl_private_surface_destroy(surface);
     yasl_private_display_close(base);
     return 0;

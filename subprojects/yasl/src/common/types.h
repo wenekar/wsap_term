@@ -146,6 +146,7 @@ enum yasl_private_surface_state : uint32_t {
     YASL_PRIVATE_STATE_SUSPENDED  = 1 << 3, /**< Compositor reports suspension. */
     YASL_PRIVATE_STATE_CSD        = 1 << 4, /**< Backend reports client-side decorations. */
     YASL_PRIVATE_STATE_TILED      = 1 << 5, /**< At least one edge is tiled; currently reported by Wayland. */
+    YASL_PRIVATE_STATE_MINIMIZED  = 1 << 6, /**< Minimized to the taskbar or dock. */
 };
 
 /** System cursor shapes. HIDDEN preserves pointer input. */

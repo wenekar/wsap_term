@@ -3,7 +3,7 @@
 #include "../../src/platform/x11/window.c"
 #undef XGetWindowProperty
 
-static Atom properties[3];
+static Atom properties[4];
 static unsigned long property_count;
 static int notifications;
 static uint32_t reported_state;
@@ -111,7 +111,8 @@ int main(void)
     test_refresh();
     test_xsettings();
     struct x11_display display = {.base.ops = &yasl_private_x11_backend,
-        .net_state = 10, .fullscreen = 20, .maximized_h = 21, .maximized_v = 22};
+        .net_state = 10, .fullscreen = 20, .maximized_h = 21, .maximized_v = 22,
+        .hidden = 23};
     display.native = (Display *)&display;
     struct x11_surface surface = {.base = {.display = &display.base,
         .state = YASL_PRIVATE_STATE_ACTIVATED}, .window = 42};
@@ -153,6 +154,19 @@ int main(void)
     update_state(&surface);
     collect(&display.base);
     assert(notifications == 5);
+
+    /* A hidden window is suspended and minimized; restoring clears both. */
+    properties[0] = display.hidden;
+    property_count = 1;
+    update_state(&surface);
+    collect(&display.base);
+    assert(notifications == 6);
+    assert(reported_state == (YASL_PRIVATE_STATE_SUSPENDED | YASL_PRIVATE_STATE_MINIMIZED |
+                              YASL_PRIVATE_STATE_ACTIVATED));
+    property_count = 0;
+    update_state(&surface);
+    collect(&display.base);
+    assert(notifications == 7 && reported_state == YASL_PRIVATE_STATE_ACTIVATED);
     yasl_private_events_unregister(&surface.base);
     yasl_private_events_close(&display.base);
     return 0;

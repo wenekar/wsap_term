@@ -99,7 +99,8 @@ enum yasl_state {
     YASL_STATE_ACTIVATED = 4,
     YASL_STATE_SUSPENDED = 8, /**< Hidden from view; skip drawing. */
     YASL_STATE_CSD = 16,      /**< No system title bar: draw your own. */
-    YASL_STATE_TILED = 32
+    YASL_STATE_TILED = 32,
+    YASL_STATE_MINIMIZED = 64 /**< Minimized to the taskbar or dock. */
 };
 struct yasl_surface_info {
     int width, height, pixel_width, pixel_height;
