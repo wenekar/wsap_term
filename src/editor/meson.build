@@ -3,6 +3,7 @@ editor_src = files(
     'encoding.c',
     'file.c',
     'journal.c',
+    'largefile.c',
     'position.c',
     'text.c',
     'undo.c',
