@@ -17,8 +17,6 @@
 #include <pthread/qos.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <dirent.h>
-#include <locale.h>
-#include <xlocale.h>
 
 int platform_eventfd(int *wr_fd)
 {
@@ -81,13 +79,13 @@ int platform_resource_dir(char *out, size_t n)
 
 bool platform_locale_valid(const char *loc)
 {
-    if (!loc || !loc[0])
+    if (!loc || !loc[0] || strchr(loc, '/'))
         return false;
-    locale_t l = newlocale(LC_CTYPE_MASK, loc, NULL);
-    if (!l)
-        return false;
-    freelocale(l);
-    return true;
+    if (strcmp(loc, "C") == 0 || strcmp(loc, "POSIX") == 0)
+        return true;
+    char path[160];
+    int n = snprintf(path, sizeof(path), "/usr/share/locale/%s/LC_CTYPE", loc);
+    return n > 0 && (size_t)n < sizeof(path) && access(path, R_OK) == 0;
 }
 
 void platform_locale_default(char *out, size_t n)
