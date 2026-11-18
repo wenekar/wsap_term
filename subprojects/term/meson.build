@@ -118,5 +118,9 @@ if get_option('tests')
 
   subdir('tests')
   subdir('benchmarks')
+  # Export kitty test status for parent project summary.
+  term_kitty_tests = wsap_vtcore_kitty_tests
+else
+  term_kitty_tests = false
 endif
 
