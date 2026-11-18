@@ -1,7 +1,6 @@
 #define _GNU_SOURCE
 #include "ui/widgets/dropdown.h"
 
-#include "ui/internal/tree.h"
 #include "ui/surface.h"
 #include "ui/widget_ops.h"
 

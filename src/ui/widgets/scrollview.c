@@ -2,7 +2,6 @@
 
 #include "ui/metrics.h"
 #include "ui/debug.h"
-#include "ui/internal/tree.h"
 #include "ui/paint.h"
 #include "ui/css.h"
 #include "ui/widget_ops.h"
@@ -276,13 +275,8 @@ static bool forward_to_child(struct ui_scrollview *sv,
                              const struct ui_event *event)
 {
     struct ui_widget *child = sv_child(sv);
-    if (!child || ui_widget_is_captured(child))
-        return false;
-    struct ui_widget *w = ui_widget_hit_test(child, event->data.pointer.pos);
-    for (; w && w != &sv->widget; w = w->parent)
-        if (ui_widget_deliver(w, event))
-            return true;
-    return false;
+    return child && !ui_widget_is_captured(child) &&
+           ui_widget_route_pointer(child, event);
 }
 
 static bool scrollview_event(struct ui_widget *widget,
@@ -348,7 +342,8 @@ static bool scrollview_event(struct ui_widget *widget,
         return true;
     case UI_POINTER_SCROLL:
         if ((sv->state.has_metrics || !bar_visible(sv)) &&
-            over_track(sv, local, hit_state(sv)) && forward_to_child(sv, event))
+            over_track(sv, local, hit_state(sv)) &&
+            (forward_to_child(sv, event) || ui_widget_is_destroyed(widget)))
             return true;
         return wheel(sv, p);
     default:

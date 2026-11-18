@@ -788,7 +788,12 @@ bool ui_widget_deliver(struct ui_widget *widget, const struct ui_event *event)
     return handled;
 }
 
-bool ui_widget_bubble(struct ui_widget *target, const struct ui_event *event)
+/* Gives `event` to `target` and then to each ancestor, until a widget handles
+ * it. The walk stops after `last`, or at the root when `last` is NULL. It also
+ * stops when a handler destroys `target` or `last`, or moves one of them to
+ * another surface. */
+static bool bubble_to(struct ui_widget *target, const struct ui_widget *last,
+                      const struct ui_event *event)
 {
     if (!target || !event || target->impl.destroyed)
         return false;
@@ -797,11 +802,28 @@ bool ui_widget_bubble(struct ui_widget *target, const struct ui_event *event)
         struct ui_widget *parent = w->parent;
         if (w->impl.surface == surface && ui_widget_deliver(w, event))
             return true;
-        if (target->impl.destroyed || target->impl.surface != surface)
+        if (w == last || target->impl.destroyed || target->impl.surface != surface)
+            break;
+        if (last && (last->impl.destroyed || last->impl.surface != surface))
             break;
         w = parent;
     }
     return false;
+}
+
+bool ui_widget_bubble(struct ui_widget *target, const struct ui_event *event)
+{
+    return bubble_to(target, NULL, event);
+}
+
+bool ui_widget_route_pointer(struct ui_widget *root,
+                             const struct ui_event *event)
+{
+    if (!root || !event || event->kind != UI_EVENT_POINTER ||
+        !ui_widget_visible(root))
+        return false;
+    return bubble_to(ui_widget_hit_test(root, event->data.pointer.pos), root,
+                     event);
 }
 
 bool ui_widget_event(struct ui_widget *widget, const struct ui_event *event)

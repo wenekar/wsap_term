@@ -15,10 +15,6 @@ struct ui_widget *ui_widget_hit_test(struct ui_widget *root,
                                      struct vector2i pos);
 struct ui_widget *ui_widget_modal(struct ui_widget *root);
 bool ui_widget_visible(const struct ui_widget *widget);
-/* True when `widget` left `surface`, or is destroyed or hidden. A handler can
- * do that during dispatch, so a stored target is tested before each use. */
-bool ui_widget_stale(const struct ui_surface *surface,
-                     const struct ui_widget *widget);
 bool ui_widget_is_ancestor(const struct ui_widget *ancestor,
                            const struct ui_widget *widget);
 uint64_t ui_widget_tick(struct ui_widget *widget, uint64_t now_ms);

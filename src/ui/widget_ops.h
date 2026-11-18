@@ -90,6 +90,18 @@ void ui_widget_release_pointer(struct ui_widget *widget);
 /* Returns true when `widget` holds pointer capture. */
 bool ui_widget_is_captured(const struct ui_widget *widget);
 
+/* Returns true when `widget` left `surface`, or is destroyed or hidden. A
+ * handler can do any of these during a dispatch. Test a stored widget pointer
+ * with this function before each use. */
+bool ui_widget_stale(const struct ui_surface *surface,
+                     const struct ui_widget *widget);
+/* Gives pointer `event` to the widget under the pointer in the subtree of
+ * `root`, and then to each ancestor up to `root`, until a widget handles it.
+ * Call it from the event op of a container that receives a pointer event for
+ * the area of a child. Returns true when a widget handled the event. */
+bool ui_widget_route_pointer(struct ui_widget *root,
+                             const struct ui_event *event);
+
 /* Computes the desired layout size of `widget` within `constraints`. */
 struct vector2i ui_widget_measure(struct ui_widget *widget,
                                   struct ui_constraints constraints);
