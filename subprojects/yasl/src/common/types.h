@@ -146,6 +146,7 @@ enum yasl_private_surface_state : uint32_t {
     YASL_PRIVATE_STATE_SUSPENDED  = 1 << 3, /**< Compositor reports suspension. */
     YASL_PRIVATE_STATE_CSD        = 1 << 4, /**< Backend reports client-side decorations. */
     YASL_PRIVATE_STATE_TILED      = 1 << 5, /**< At least one edge is tiled; currently reported by Wayland. */
+    YASL_PRIVATE_STATE_MINIMIZED  = 1 << 6, /**< Minimized to the taskbar or dock. */
 };
 
 /** System cursor shapes. HIDDEN preserves pointer input. */
@@ -410,6 +411,8 @@ struct yasl_private_pointer_event {
     /** MOTION: device-pixel movement since the previous sample on this surface.
      * Unbounded under YASL_PRIVATE_POINTER_RELATIVE; zero after enter, leave, or reset. */
     struct yasl_private_vector2d delta;
+    /** MOTION: unaccelerated movement when the device reports it; zero otherwise. */
+    struct yasl_private_vector2d unaccel;
     double precise_x, precise_y;
     /** Surface-relative device-pixel position. Frozen while YASL_PRIVATE_POINTER_RELATIVE is locked. */
     struct yasl_private_vector2i pos;
@@ -452,6 +455,8 @@ struct yasl_private_text_event {
     struct yasl_private_vector2i pos;
     /** Physical key that produced TEXT. Zero means no key. */
     uint64_t text_key_id;
+    /** DROP only: surface-relative device-pixel position of the release. */
+    struct yasl_private_vector2i pos;
 };
 
 /** Clipboard transfer outcome. */

@@ -20,12 +20,17 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #endif
+#if YASL_HAS_VULKAN
+#include <vulkan/vulkan.h>
+#endif
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #if YASL_HAS_XRANDR
 #include <X11/extensions/Xrandr.h>
 #endif
+#include <locale.h>
 #include <xkbcommon/xkbcommon.h>
+#include <xkbcommon/xkbcommon-compose.h>
 
 #include <assert.h>
 #include <dlfcn.h>
@@ -167,8 +172,15 @@ static bool dl_load_table(const char *soname, void **handle_out, void *base,
 
 #if YASL_HAS_XRANDR
 #define XRANDR_LIB_SYMS(X) \
+    X(XRRFreeCrtcInfo) \
     X(XRRFreeMonitors) \
-    X(XRRGetMonitors)
+    X(XRRFreeOutputInfo) \
+    X(XRRFreeScreenResources) \
+    X(XRRGetCrtcInfo) \
+    X(XRRGetMonitors) \
+    X(XRRGetOutputInfo) \
+    X(XRRGetOutputPrimary) \
+    X(XRRGetScreenResourcesCurrent)
 #endif
 
 struct x11_dl_table {
@@ -533,11 +545,32 @@ static inline const struct x11_dl_table *x11_syms(void)
 #endif
 
 #if YASL_HAS_XRANDR
+#ifndef XRRFreeCrtcInfo
+#define XRRFreeCrtcInfo (x11_syms()->fn_XRRFreeCrtcInfo)
+#endif
 #ifndef XRRFreeMonitors
 #define XRRFreeMonitors (x11_syms()->fn_XRRFreeMonitors)
 #endif
+#ifndef XRRFreeOutputInfo
+#define XRRFreeOutputInfo (x11_syms()->fn_XRRFreeOutputInfo)
+#endif
+#ifndef XRRFreeScreenResources
+#define XRRFreeScreenResources (x11_syms()->fn_XRRFreeScreenResources)
+#endif
+#ifndef XRRGetCrtcInfo
+#define XRRGetCrtcInfo (x11_syms()->fn_XRRGetCrtcInfo)
+#endif
 #ifndef XRRGetMonitors
 #define XRRGetMonitors (x11_syms()->fn_XRRGetMonitors)
+#endif
+#ifndef XRRGetOutputInfo
+#define XRRGetOutputInfo (x11_syms()->fn_XRRGetOutputInfo)
+#endif
+#ifndef XRRGetOutputPrimary
+#define XRRGetOutputPrimary (x11_syms()->fn_XRRGetOutputPrimary)
+#endif
+#ifndef XRRGetScreenResourcesCurrent
+#define XRRGetScreenResourcesCurrent (x11_syms()->fn_XRRGetScreenResourcesCurrent)
 #endif
 #endif
 
@@ -632,6 +665,7 @@ struct x11_surface {
     EGLContext gl_context;
     EGLSurface gl_surface;
     EGLConfig gl_config;
+    EGLint gl_api;
 #endif
     XImage *image;
     uint32_t *pixels;
@@ -673,6 +707,8 @@ struct paste_request {
     char *buf;
     size_t buf_len;
     Window source;
+    /* Surface-relative device-pixel position of the XdndPosition. */
+    struct yasl_private_vector2i pos;
     char mime[YASL_PRIVATE_DROP_MIME_MAX];
     /* INCR receive: chunks accumulate in buf until a zero-length chunk arrives. */
     bool incr;
@@ -733,7 +769,7 @@ struct x11_display {
     struct incr_send *incr_sends;
     Atom protocols, delete_window, utf8, clipboard, targets, paste_property, incr;
     Atom timestamp, multiple, pair;
-    Atom net_name, net_state, fullscreen, maximized_h, maximized_v, motif_hints;
+    Atom net_name, net_state, fullscreen, maximized_h, maximized_v, motif_hints, hidden;
     Atom xdnd_aware, xdnd_enter, xdnd_position, xdnd_status, xdnd_leave, xdnd_drop, xdnd_finished;
     Atom xdnd_selection, xdnd_action_copy, xdnd_type_list;
     char *selection[2];
@@ -745,7 +781,12 @@ struct x11_display {
     struct x11_pointer *pointers;
 #if YASL_HAS_EGL
     EGLDisplay egl;
+    /* The client API of the display's EGL contexts; zero before the first one. */
+    EGLint egl_api;
 #endif
+    /* Serializes EGL use: a render thread swaps while the display thread
+     * resizes, destroys a surface, or closes the display. */
+    pthread_mutex_t egl_mutex;
     Cursor cursors[16];
     struct {
         struct x11_surface *origin;
@@ -772,12 +813,25 @@ struct x11_display {
         char mime[YASL_PRIVATE_DROP_MIME_MAX]; /* The picked type, by name. */
     } xdnd;
     uint16_t keys[256];
+    /* Text ownership of the key press for the matching release. */
+    enum yasl_key_text key_text[256];
+    uint32_t key_consumed[256];
+    uint64_t text_key_id;
+    struct xkb_context *xkb_context;
+    struct xkb_compose_table *compose_table;
+    struct xkb_compose_state *compose_state;
+    struct x11_surface *compose_surface;
+    char compose_preedit[64];
+    size_t compose_len;
+    bool composing;
     int screen;
     int watch;
     int depth;
     int argb_depth;
     /* Device scale numerator from Xft.dpi, with 120 representing 1x. */
     uint32_t scale_120;
+    /* Frame interval of the display that shows the windows. */
+    double refresh_ns;
     uint32_t mods;
     int xi_opcode;
     int popup_device; /* XI2 device holding that grab. */
@@ -788,10 +842,27 @@ struct x11_display {
     bool has_xkb;
     bool lost;
     bool popup_grab; /* The pointer is grabbed for the topmost popup. */
-#if YASL_HAS_EGL
     bool egl_ready;
-#endif
+    bool vulkan_probed, vulkan_ready;
+    /* Latest unaccelerated pointer delta, attached to the next motion. */
+    struct yasl_private_vector2d raw_delta;
+    bool raw_valid;
 };
+
+/* EGL calls on one display are not safe from two threads at once. A render
+ * thread may swap buffers while the display thread resizes or destroys a
+ * surface. Returns true when the caller holds the lock. */
+static bool egl_enter(struct x11_display *d, const struct yasl_surface *s)
+{
+    if (!d->egl_ready || !s || s->presenter != YASL_PRIVATE_PRESENTER_GL) return false;
+    pthread_mutex_lock(&d->egl_mutex);
+    return true;
+}
+
+static void egl_leave(struct x11_display *d, bool entered)
+{
+    if (entered) pthread_mutex_unlock(&d->egl_mutex);
+}
 
 static bool place(struct yasl_surface *base, struct yasl_private_vector2i at);
 static void drag_end(struct x11_display *d, enum yasl_private_drag_end how);
@@ -1345,7 +1416,13 @@ static void xi_pointer_event(struct x11_surface *s, const XIDeviceEvent *ev)
             pressure_value(&p->pressure), tilt_value(&p->tilt_x), tilt_value(&p->tilt_y)};
     }
     if (p) update_scroll(p, &ev->valuators, &event.pointer);
-    if (ev->evtype == XI_Motion) event.type = YASL_PRIVATE_EVENT_POINTER_MOTION;
+    if (ev->evtype == XI_Motion) {
+        event.type = YASL_PRIVATE_EVENT_POINTER_MOTION;
+        if (d->raw_valid) {
+            event.pointer.unaccel = d->raw_delta;
+            d->raw_valid = false;
+        }
+    }
     else if (ev->detail >= 4 && ev->detail <= 7) {
         if (ev->evtype == XI_ButtonRelease) return;
         event.type = YASL_PRIVATE_EVENT_POINTER_SCROLL;
@@ -1396,8 +1473,24 @@ static void xi_event(struct x11_display *d, XGenericEventCookie *cookie)
             /* Removal/disable may interrupt a drag before a release arrives. */
             if (d->drag.active)
                 drag_end(d, YASL_PRIVATE_DRAG_CANCELLED);
+            d->raw_valid = false;
             for (struct x11_surface *s = d->surfaces; s; s = s->next)
                 push(s, (struct yasl_private_event){.type = YASL_PRIVATE_EVENT_INPUT_RESET}, NULL, 0);
+        }
+        return;
+    }
+    if (cookie->evtype == XI_RawMotion) {
+        const XIRawEvent *raw = cookie->data;
+        double axes[2] = {0, 0};
+        int found = 0;
+        for (int i = 0; i < raw->valuators.mask_len * 8 && found < 2; i++) {
+            if (!XIMaskIsSet(raw->valuators.mask, i)) continue;
+            if (isfinite(raw->raw_values[found])) axes[found] = raw->raw_values[found];
+            found++;
+        }
+        if (found == 2) {
+            d->raw_delta = (struct yasl_private_vector2d){axes[0], axes[1]};
+            d->raw_valid = true;
         }
         return;
     }
@@ -1657,6 +1750,7 @@ static void drop_complete(struct x11_display *d, struct paste_request *r,
     bool ok = s && status == YASL_PRIVATE_TRANSFER_OK && len > 0;
     if (ok) {
         struct yasl_private_event event = {.type = YASL_PRIVATE_EVENT_DROP};
+        event.text.pos = r->pos;
         snprintf(event.text.mime, sizeof(event.text.mime), "%s", r->mime);
         push(s, event, data, len);
     }
@@ -1768,6 +1862,12 @@ static void surface_destroy(struct yasl_surface *base)
     }
     if (d->xdnd.surface == s)
         d->xdnd.surface = NULL;
+    if (d->compose_surface == s) {
+        d->compose_surface = NULL;
+        d->composing = false;
+        d->compose_len = 0;
+        d->compose_preedit[0] = '\0';
+    }
     for (struct x11_surface *p = d->surfaces; p; p = p->next) {
         if (p->parent == s) p->parent = NULL;
     }
@@ -1781,8 +1881,16 @@ static void surface_destroy(struct yasl_surface *base)
     s->ime_preedit = NULL;
     if (s->ic) XDestroyIC(s->ic);
 #if YASL_HAS_EGL
-    if (s->gl_context && d->egl_ready) eglDestroyContext(d->egl, s->gl_context);
-    if (s->gl_surface && d->egl_ready) eglDestroySurface(d->egl, s->gl_surface);
+    if (s->gl_context || s->gl_surface) {
+        pthread_mutex_lock(&d->egl_mutex);
+        if (d->egl_ready) {
+            if (s->gl_context) eglDestroyContext(d->egl, s->gl_context);
+            if (s->gl_surface) eglDestroySurface(d->egl, s->gl_surface);
+        }
+        s->gl_context = EGL_NO_CONTEXT;
+        s->gl_surface = EGL_NO_SURFACE;
+        pthread_mutex_unlock(&d->egl_mutex);
+    }
 #endif
     if (s->shm_active) {
         if (!d->lost) XShmDetach(d->native, &s->shm_info);
@@ -1865,10 +1973,14 @@ static bool surface_set_size(struct yasl_surface *base, struct yasl_private_vect
         return false;
     }
     if (!d->native || !s->window) { errno = ENODEV; return false; }
+    /* Wait for an in-flight swap: an EGL window surface must not change size
+     * while another thread draws into it. */
+    bool locked = egl_enter(d, base);
     XResizeWindow(d->native, s->window, (unsigned)px.x, (unsigned)px.y);
     if (s->base.creation_flags & YASL_PRIVATE_SURFACE_FIXED_SIZE)
         set_fixed_size_hints(d, s->window, px);
     XFlush(d->native);
+    egl_leave(d, locked);
     return true;
 }
 
@@ -2106,7 +2218,9 @@ static struct yasl_surface *create_toplevel_visual(struct yasl_private_display *
     s->base.display = base;
     s->base.creation_flags = spec->flags | (spec->external_gpu ? 0u : YASL_PRIVATE_SURFACE_CPU);
     s->base.presenter = presenter;
-    s->clock.refresh_ns = YASL_PRIVATE_REFRESH_DEFAULT_NS;
+    s->clock.refresh_ns = d->refresh_ns;
+    s->base.state = (spec->flags & YASL_PRIVATE_SURFACE_UNDECORATED) ? YASL_PRIVATE_STATE_CSD : 0;
+    if (spec->flags & YASL_PRIVATE_SURFACE_HIDDEN) s->base.state |= YASL_PRIVATE_STATE_SUSPENDED;
     /* Logical creation sizes become device pixels. */
     struct yasl_private_vector2i px = {yasl_private_scale_to_device(spec->size.x, d->scale_120),
                                        yasl_private_scale_to_device(spec->size.y, d->scale_120)};
@@ -2190,19 +2304,40 @@ static struct yasl_surface *create_toplevel(struct yasl_private_display *base,
 #if YASL_HAS_EGL
 static bool egl_open(struct x11_display *d)
 {
-    if (d->egl_ready) return true;
-    if (!x11_egl_load()) {
-        errno = ENOTSUP;
-        return false;
+    pthread_mutex_lock(&d->egl_mutex);
+    bool ok = true;
+    if (!d->egl_ready) {
+        if (!x11_egl_load()) {
+            errno = ENOTSUP;
+            ok = false;
+        } else {
+            d->egl = eglGetDisplay((EGLNativeDisplayType)d->native);
+            EGLint major = 0, minor = 0;
+            if (d->egl == EGL_NO_DISPLAY || !eglInitialize(d->egl, &major, &minor)) {
+                errno = ENOTSUP;
+                ok = false;
+            } else {
+                d->egl_ready = true;
+            }
+        }
     }
-    d->egl = eglGetDisplay((EGLNativeDisplayType)d->native);
-    EGLint major = 0, minor = 0;
-    if (d->egl == EGL_NO_DISPLAY || !eglInitialize(d->egl, &major, &minor)) {
-        errno = ENOTSUP;
-        return false;
-    }
-    d->egl_ready = true;
-    return true;
+    pthread_mutex_unlock(&d->egl_mutex);
+    return ok;
+}
+
+/* ES 1 needs EGL_OPENGL_ES_BIT, ES 2 EGL_OPENGL_ES2_BIT, and ES 3 or later
+ * EGL_OPENGL_ES3_BIT_KHR. Desktop GL keeps EGL_OPENGL_BIT. */
+static EGLint renderable_bit(const struct yasl_private_gl_options *options)
+{
+    if (options->api != YASL_PRIVATE_GL_OPENGL_ES) return EGL_OPENGL_BIT;
+    EGLint bit = EGL_OPENGL_ES2_BIT;
+#ifdef EGL_OPENGL_ES_BIT
+    if (options->major < 2) bit = EGL_OPENGL_ES_BIT;
+#endif
+#ifdef EGL_OPENGL_ES3_BIT_KHR
+    if (options->major >= 3) bit = EGL_OPENGL_ES3_BIT_KHR;
+#endif
+    return bit;
 }
 
 static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
@@ -2214,18 +2349,19 @@ static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
     struct yasl_private_gl_options options;
     if (!yasl_private_gl_parse_options(attrs, &options)) { errno = EINVAL; return NULL; }
     if (!egl_open(d)) return NULL;
-    if (options.srgb) {
-        const char *extensions = eglQueryString(d->egl, EGL_EXTENSIONS);
-        if (!extensions || !strstr(extensions, "EGL_KHR_gl_colorspace")) {
-            errno = ENOTSUP;
-            return NULL;
-        }
+    const char *extensions = eglQueryString(d->egl, EGL_EXTENSIONS);
+    bool colorspace = extensions && strstr(extensions, "EGL_KHR_gl_colorspace");
+    if (options.srgb && !colorspace) {
+        errno = ENOTSUP;
+        return NULL;
     }
+    /* One display cannot mix a desktop GL context with a GLES context. */
+    EGLint api = options.api == YASL_PRIVATE_GL_OPENGL_ES ? EGL_OPENGL_ES_API : EGL_OPENGL_API;
+    if (d->egl_api && d->egl_api != api) { errno = ENOTSUP; return NULL; }
 
-    EGLint renderable = options.api == YASL_PRIVATE_GL_OPENGL_ES ? EGL_OPENGL_ES2_BIT : EGL_OPENGL_BIT;
     EGLint config_attrs[] = {
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-        EGL_RENDERABLE_TYPE, renderable,
+        EGL_RENDERABLE_TYPE, renderable_bit(&options),
         EGL_RED_SIZE, options.red_bits,
         EGL_GREEN_SIZE, options.green_bits,
         EGL_BLUE_SIZE, options.blue_bits,
@@ -2242,6 +2378,8 @@ static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
         errno = ENOTSUP;
         return NULL;
     }
+    if (!eglBindAPI(api)) { errno = ENOTSUP; return NULL; }
+    d->egl_api = api;
     EGLint visual_id = 0, depth = 0;
     if (!eglGetConfigAttrib(d->egl, config, EGL_NATIVE_VISUAL_ID, &visual_id) ||
         !eglGetConfigAttrib(d->egl, config, EGL_BUFFER_SIZE, &depth)) {
@@ -2267,19 +2405,22 @@ static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
     if (!base_surface) return NULL;
     struct x11_surface *s = (struct x11_surface *)base_surface;
     s->gl_config = config;
+    s->gl_api = api;
     s->swap_interval = 1; /* EGL's default for window surfaces. */
-    EGLint surface_attrs[] = {EGL_GL_COLORSPACE_KHR, EGL_GL_COLORSPACE_SRGB_KHR, EGL_NONE};
+    EGLint surface_attrs[3] = {EGL_GL_COLORSPACE_KHR,
+        options.srgb ? EGL_GL_COLORSPACE_SRGB_KHR : EGL_GL_COLORSPACE_LINEAR_KHR, EGL_NONE};
     s->gl_surface = eglCreateWindowSurface(d->egl, config,
-                    (EGLNativeWindowType)s->window, options.srgb ? surface_attrs : NULL);
+                    (EGLNativeWindowType)s->window, colorspace ? surface_attrs : NULL);
+    if (s->gl_surface == EGL_NO_SURFACE && options.srgb && colorspace) {
+        /* Some drivers refuse an sRGB window surface; linear is the fallback. */
+        surface_attrs[1] = EGL_GL_COLORSPACE_LINEAR_KHR;
+        s->gl_surface = eglCreateWindowSurface(d->egl, config,
+                        (EGLNativeWindowType)s->window, surface_attrs);
+    }
     if (s->gl_surface == EGL_NO_SURFACE) {
         surface_destroy(base_surface);
         errno = ENODEV;
         return NULL;
-    }
-    if (options.api == YASL_PRIVATE_GL_OPENGL) {
-        if (!eglBindAPI(EGL_OPENGL_API)) { surface_destroy(base_surface); errno = ENOTSUP; return NULL; }
-    } else if (!eglBindAPI(EGL_OPENGL_ES_API)) {
-        surface_destroy(base_surface); errno = ENOTSUP; return NULL;
     }
     EGLContext share_context = EGL_NO_CONTEXT;
     if (share) {
@@ -2292,20 +2433,25 @@ static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
     }
     EGLint context_attrs[12];
     EGLint n = 0;
-    context_attrs[n++] = EGL_CONTEXT_MAJOR_VERSION;
-    context_attrs[n++] = options.major;
-    context_attrs[n++] = EGL_CONTEXT_MINOR_VERSION;
-    context_attrs[n++] = options.minor;
-    if (options.api == YASL_PRIVATE_GL_OPENGL && options.profile != YASL_PRIVATE_GL_ANY) {
-        context_attrs[n++] = EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR;
-        context_attrs[n++] = options.profile == YASL_PRIVATE_GL_CORE ?
-            EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR : EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT_KHR;
-    }
-    EGLint context_flags = (options.debug ? EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR : 0) |
-        (options.forward_compat ? EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE_BIT_KHR : 0);
-    if (context_flags) {
-        context_attrs[n++] = EGL_CONTEXT_FLAGS_KHR;
-        context_attrs[n++] = context_flags;
+    if (options.api == YASL_PRIVATE_GL_OPENGL_ES) {
+        context_attrs[n++] = EGL_CONTEXT_CLIENT_VERSION;
+        context_attrs[n++] = options.major;
+    } else {
+        context_attrs[n++] = EGL_CONTEXT_MAJOR_VERSION;
+        context_attrs[n++] = options.major;
+        context_attrs[n++] = EGL_CONTEXT_MINOR_VERSION;
+        context_attrs[n++] = options.minor;
+        if (options.profile != YASL_PRIVATE_GL_ANY) {
+            context_attrs[n++] = EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR;
+            context_attrs[n++] = options.profile == YASL_PRIVATE_GL_CORE ?
+                EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR : EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT_KHR;
+        }
+        EGLint context_flags = (options.debug ? EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR : 0) |
+            (options.forward_compat ? EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE_BIT_KHR : 0);
+        if (context_flags) {
+            context_attrs[n++] = EGL_CONTEXT_FLAGS_KHR;
+            context_attrs[n++] = context_flags;
+        }
     }
     context_attrs[n] = EGL_NONE;
     s->gl_context = eglCreateContext(d->egl, config, share_context, context_attrs);
@@ -2320,31 +2466,44 @@ static struct yasl_surface *create_gl_surface(struct yasl_private_display *base,
 static bool gl_make_current(struct yasl_private_display *base, struct yasl_surface *surface)
 {
     struct x11_display *d = (struct x11_display *)base;
-    if (!surface) /* Without EGL there is no context to detach. */
-        return !d->egl_ready || eglMakeCurrent(d->egl, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT) == EGL_TRUE;
-    if (!d->egl_ready) { errno = ENOTSUP; return false; }
-    struct x11_surface *s = (struct x11_surface *)surface;
-    if (surface->display != base || s->base.presenter != YASL_PRIVATE_PRESENTER_GL || !s->gl_context) {
-        errno = EINVAL;
-        return false;
+    pthread_mutex_lock(&d->egl_mutex);
+    bool ok = false;
+    if (!surface) {
+        /* Without EGL there is no context to detach. */
+        ok = !d->egl_ready || eglMakeCurrent(d->egl, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT) == EGL_TRUE;
+    } else {
+        struct x11_surface *s = (struct x11_surface *)surface;
+        if (!d->egl_ready) {
+            errno = ENOTSUP;
+        } else if (surface->display != base || s->base.presenter != YASL_PRIVATE_PRESENTER_GL ||
+                   !s->gl_context) {
+            errno = EINVAL;
+        } else if (eglBindAPI(s->gl_api) &&
+                   eglMakeCurrent(d->egl, s->gl_surface, s->gl_surface, s->gl_context) == EGL_TRUE) {
+            eglSwapInterval(d->egl, s->swap_interval);
+            ok = true;
+        }
     }
-    if (eglMakeCurrent(d->egl, s->gl_surface, s->gl_surface, s->gl_context) != EGL_TRUE) return false;
-    eglSwapInterval(d->egl, s->swap_interval);
-    return true;
+    pthread_mutex_unlock(&d->egl_mutex);
+    return ok;
 }
 
 static yasl_private_gl_proc gl_get_proc_address(struct yasl_private_display *base, const char *name)
 {
     struct x11_display *d = (struct x11_display *)base;
-    if (!name || !d || !d->egl_ready || !__atomic_load_n(&x11_egl_dl.ready, __ATOMIC_ACQUIRE))
-        return NULL;
+    if (!name || !d) return NULL;
+    pthread_mutex_lock(&d->egl_mutex);
+    bool ready = d->egl_ready;
+    pthread_mutex_unlock(&d->egl_mutex);
+    if (!ready || !__atomic_load_n(&x11_egl_dl.ready, __ATOMIC_ACQUIRE)) return NULL;
     return (yasl_private_gl_proc)eglGetProcAddress(name);
 }
 
 static bool gl_swap_interval(struct yasl_private_display *base, struct yasl_surface *surface, int interval)
 {
     struct x11_display *d = (struct x11_display *)base;
-    if (!surface || surface->display != base || ((struct x11_surface *)surface)->base.presenter != YASL_PRIVATE_PRESENTER_GL) {
+    struct x11_surface *s = (struct x11_surface *)surface;
+    if (!surface || surface->display != base || s->base.presenter != YASL_PRIVATE_PRESENTER_GL) {
         errno = EINVAL;
         return false;
     }
@@ -2352,23 +2511,31 @@ static bool gl_swap_interval(struct yasl_private_display *base, struct yasl_surf
         errno = ENOTSUP;
         return false;
     }
-    struct x11_surface *s = (struct x11_surface *)surface;
+    pthread_mutex_lock(&d->egl_mutex);
     s->swap_interval = interval;
     /* EGL applies the interval to the calling thread's draw surface, so apply it now
      * only when this surface is current here; otherwise gl_make_current applies it. */
-    if (eglGetCurrentSurface(EGL_DRAW) != s->gl_surface) return true;
-    return eglSwapInterval(d->egl, interval) == EGL_TRUE;
+    bool ok = eglGetCurrentSurface(EGL_DRAW) != s->gl_surface ||
+              eglSwapInterval(d->egl, interval) == EGL_TRUE;
+    pthread_mutex_unlock(&d->egl_mutex);
+    return ok;
 }
 
 static bool gl_swap_buffers(struct yasl_private_display *base, struct yasl_surface *surface)
 {
     struct x11_display *d = (struct x11_display *)base;
     struct x11_surface *s = (struct x11_surface *)surface;
-    if (!surface || surface->display != base || s->base.presenter != YASL_PRIVATE_PRESENTER_GL || !d->egl_ready) {
+    if (!surface || surface->display != base || s->base.presenter != YASL_PRIVATE_PRESENTER_GL) {
         errno = EINVAL;
         return false;
     }
-    if (!eglSwapBuffers(d->egl, s->gl_surface)) return false;
+    pthread_mutex_lock(&d->egl_mutex);
+    bool ok = d->egl_ready && eglSwapBuffers(d->egl, s->gl_surface);
+    pthread_mutex_unlock(&d->egl_mutex);
+    if (!ok) {
+        if (!d->egl_ready) errno = ENOTSUP;
+        return false;
+    }
     s->presented = true;
     yasl_private_clock_presented(&s->clock, yasl_private_loop_now_ns(), false);
     return true;
@@ -2576,6 +2743,7 @@ static struct yasl_surface *surface_create_popup(struct yasl_surface *parent_bas
     s->base.creation_flags = parent_base->creation_flags;
     s->base.presenter = YASL_PRIVATE_PRESENTER_CPU;
     s->base.scale_120 = d->scale_120;
+    s->base.state = YASL_PRIVATE_STATE_CSD;
     s->parent = parent;
     s->is_popup = true;
     s->content_offset = spec->content_offset;
@@ -2681,7 +2849,8 @@ static void update_state(struct x11_surface *s)
     int format;
     unsigned long count, left;
     unsigned char *data = NULL;
-    uint32_t state = s->base.state & ~(YASL_PRIVATE_STATE_FULLSCREEN | YASL_PRIVATE_STATE_MAXIMIZED);
+    uint32_t state = s->base.state & ~(YASL_PRIVATE_STATE_FULLSCREEN | YASL_PRIVATE_STATE_MAXIMIZED |
+                                       YASL_PRIVATE_STATE_SUSPENDED | YASL_PRIVATE_STATE_MINIMIZED);
     if (XGetWindowProperty(d->native, s->window, d->net_state, 0, 64, False,
             XA_ATOM, &actual, &format, &count, &left, &data) == Success && format == 32) {
         Atom *atoms = (Atom *)data;
@@ -2690,6 +2859,8 @@ static void update_state(struct x11_surface *s)
             if (atoms[i] == d->fullscreen) state |= YASL_PRIVATE_STATE_FULLSCREEN;
             if (atoms[i] == d->maximized_h) h = true;
             if (atoms[i] == d->maximized_v) v = true;
+            if (atoms[i] == d->hidden)
+                state |= YASL_PRIVATE_STATE_SUSPENDED | YASL_PRIVATE_STATE_MINIMIZED;
         }
         if (h && v) state |= YASL_PRIVATE_STATE_MAXIMIZED;
     }
@@ -3079,8 +3250,11 @@ static bool paste_incr_property(struct x11_display *d, const XPropertyEvent *ev)
     return true;
 }
 
+static void compose_reset(struct x11_display *d, bool notify);
+
 static void refresh_keyboard(struct x11_display *d)
 {
+    compose_reset(d, true);
     memset(d->keys, 0, sizeof(d->keys));
     if (!d->has_xkb) return;
     XkbDescPtr keyboard = XkbGetKeyboard(d->native, XkbAllComponentsMask, XkbUseCoreKbd);
@@ -3090,6 +3264,89 @@ static void refresh_keyboard(struct x11_display *d)
             d->keys[code] = (uint16_t)yasl_private_key_from_xkb_name(keyboard->names->keys[code].name);
     }
     XkbFreeKeyboard(keyboard, XkbAllComponentsMask, True);
+}
+
+/* The keys of an active composition. A dead key has no Unicode value, so the
+ * preedit shows the mark that the key adds. */
+static const char *dead_key_text(xkb_keysym_t sym)
+{
+    switch (sym) {
+    case XKB_KEY_dead_grave: return "`";
+    case XKB_KEY_dead_acute: return "´";
+    case XKB_KEY_dead_circumflex: return "^";
+    case XKB_KEY_dead_tilde: return "~";
+    case XKB_KEY_dead_macron: return "¯";
+    case XKB_KEY_dead_breve: return "˘";
+    case XKB_KEY_dead_abovedot: return "˙";
+    case XKB_KEY_dead_diaeresis: return "¨";
+    case XKB_KEY_dead_abovering: return "˚";
+    case XKB_KEY_dead_doubleacute: return "˝";
+    case XKB_KEY_dead_caron: return "ˇ";
+    case XKB_KEY_dead_cedilla: return "¸";
+    case XKB_KEY_dead_ogonek: return "˛";
+    case XKB_KEY_dead_belowdot: return "̣";
+    default: return NULL;
+    }
+}
+
+static void compose_reset(struct x11_display *d, bool notify)
+{
+    if (d->compose_state) xkb_compose_state_reset(d->compose_state);
+    if (notify && d->composing && d->compose_surface && !d->compose_surface->destroyed)
+        yasl_private_surface_notify_composition(&d->compose_surface->base, NULL, -1, -1);
+    d->composing = false;
+    d->compose_surface = NULL;
+    d->compose_len = 0;
+    d->compose_preedit[0] = '\0';
+}
+
+static void compose_append(struct x11_display *d, const char *text)
+{
+    size_t len = text ? strlen(text) : 0;
+    if (!len || len > sizeof(d->compose_preedit) - 1 - d->compose_len) return;
+    memcpy(d->compose_preedit + d->compose_len, text, len);
+    d->compose_len += len;
+    d->compose_preedit[d->compose_len] = '\0';
+}
+
+/* The key releases no text while a compose sequence runs. Returns the compose
+ * status that the caller must report. */
+enum compose_result { COMPOSE_NONE, COMPOSE_STARTED, COMPOSE_COMMITTED, COMPOSE_CANCELLED };
+
+static enum compose_result compose_key(struct x11_surface *s, xkb_keysym_t sym,
+                                       xkb_keysym_t *composed)
+{
+    struct x11_display *d = (struct x11_display *)s->base.display;
+    if (!d->compose_state || sym == NoSymbol) return COMPOSE_NONE;
+    if (xkb_compose_state_feed(d->compose_state, sym) != XKB_COMPOSE_FEED_ACCEPTED)
+        return COMPOSE_NONE;
+    switch (xkb_compose_state_get_status(d->compose_state)) {
+    case XKB_COMPOSE_COMPOSING: {
+        const char *text = dead_key_text(sym);
+        char utf8[8] = {0};
+        if (!text) {
+            int len = xkb_keysym_to_utf8(sym, utf8, sizeof(utf8));
+            text = len > 1 ? utf8 : NULL;
+        }
+        compose_append(d, text);
+        d->composing = true;
+        d->compose_surface = s;
+        yasl_private_surface_notify_composition(&s->base, d->compose_preedit, -1, -1);
+        return COMPOSE_STARTED;
+    }
+    case XKB_COMPOSE_COMPOSED:
+        *composed = xkb_compose_state_get_one_sym(d->compose_state);
+        compose_reset(d, false);
+        yasl_private_surface_notify_composition(&s->base, NULL, -1, -1);
+        return COMPOSE_COMMITTED;
+    case XKB_COMPOSE_CANCELLED:
+        compose_reset(d, false);
+        yasl_private_surface_notify_composition(&s->base, NULL, -1, -1);
+        return COMPOSE_CANCELLED;
+    default:
+        compose_reset(d, false);
+        return COMPOSE_NONE;
+    }
 }
 
 static void key_event(struct x11_surface *s, XKeyEvent *key, bool repeat)
@@ -3112,11 +3369,38 @@ static void key_event(struct x11_surface *s, XKeyEvent *key, bool repeat)
         base = XLookupKeysym(&clean_key, 0);
         shifted = XLookupKeysym(&clean_key, 1);
     }
+    uint64_t key_id = 0;
+    enum yasl_key_text text_input = YASL_KEY_TEXT_NONE;
+    uint32_t consumed_mods = 0;
+    bool composing = false, composed = false;
+    if (key->type == KeyPress) {
+        if (++d->text_key_id == 0) ++d->text_key_id;
+        key_id = d->text_key_id;
+        if (!repeat) {
+            xkb_keysym_t composed_sym = XKB_KEY_NoSymbol;
+            enum compose_result result = compose_key(s, (xkb_keysym_t)sym, &composed_sym);
+            if (result == COMPOSE_STARTED) {
+                composing = true;
+                text_input = YASL_KEY_TEXT_COMPOSITION;
+            } else if (result == COMPOSE_COMMITTED) {
+                composed = true;
+                sym = (KeySym)composed_sym;
+                /* The key that completes a composition owns it, like Cocoa. */
+                text_input = YASL_KEY_TEXT_COMPOSITION;
+            } else if (result == COMPOSE_CANCELLED) {
+                composing = true;
+                text_input = YASL_KEY_TEXT_COMPOSITION;
+            }
+        }
+    }
     char local[128];
     char *text = local;
     int len = 0;
-    if (key->type == KeyPress) {
-        if (s->ic) {
+    if (key->type == KeyPress && !composing) {
+        if (composed) {
+            int written = xkb_keysym_to_utf8((xkb_keysym_t)sym, local, sizeof(local));
+            len = written > 0 ? written - 1 : 0;
+        } else if (s->ic) {
             Status status;
             len = Xutf8LookupString(s->ic, key, local, sizeof(local), &sym, &status);
             if (status == XBufferOverflow && len > 0 && len < TEXT_LIMIT) {
@@ -3133,6 +3417,30 @@ static void key_event(struct x11_surface *s, XKeyEvent *key, bool repeat)
             len = len > 0 ? len - 1 : 0; /* xkb includes the terminating NUL. */
         }
     }
+    /* Ctrl and Super keep their shortcut meaning and insert no text. Alt no
+     * longer suppresses text, so AltGr and layouts that use Alt can type. */
+    bool printable = len > 0 && text && (unsigned char)text[0] >= 0x20 && text[0] != 0x7f &&
+        !(d->mods & (YASL_PRIVATE_MOD_CTRL | YASL_PRIVATE_MOD_SUPER));
+    if (printable && text_input == YASL_KEY_TEXT_NONE) {
+        text_input = YASL_KEY_TEXT_COMMIT;
+        /* Modifiers that changed the produced character are consumed by text
+         * input; Alt alone passes the base character through. */
+        uint32_t text_mods = YASL_PRIVATE_MOD_ALT | YASL_PRIVATE_MOD_CTRL | YASL_PRIVATE_MOD_SUPER;
+        if (sym != base && sym != shifted) consumed_mods = d->mods & text_mods;
+    }
+    if (key->keycode < 256) {
+        if (key->type == KeyRelease) {
+            if (d->key_text[key->keycode] != YASL_KEY_TEXT_UNSPECIFIED) {
+                text_input = d->key_text[key->keycode];
+                consumed_mods = d->key_consumed[key->keycode];
+            }
+            d->key_text[key->keycode] = YASL_KEY_TEXT_UNSPECIFIED;
+            d->key_consumed[key->keycode] = 0;
+        } else {
+            d->key_text[key->keycode] = text_input;
+            d->key_consumed[key->keycode] = consumed_mods;
+        }
+    }
     uint32_t cp = xkb_keysym_to_utf32((xkb_keysym_t)base);
     push(s, (struct yasl_private_event){
         .type = YASL_PRIVATE_EVENT_KEY,
@@ -3140,12 +3448,16 @@ static void key_event(struct x11_surface *s, XKeyEvent *key, bool repeat)
                 .codepoint = yasl_private_key_label(cp), .native_code = key->keycode,
                 .shifted = yasl_private_key_label(xkb_keysym_to_utf32((xkb_keysym_t)shifted)),
                 .mods = d->mods,
+                .text_input = text_input, .consumed_mods = consumed_mods,
+                .text_id = text_input == YASL_KEY_TEXT_COMMIT ? key_id : 0,
                 .action = key->type == KeyRelease ? YASL_KEY_RELEASE :
                           repeat ? YASL_KEY_REPEAT : YASL_KEY_PRESS},
     }, NULL, 0);
-    if (len > 0 && text && (unsigned char)text[0] >= 0x20 && text[0] != 0x7f &&
-        !(d->mods & (YASL_PRIVATE_MOD_CTRL | YASL_PRIVATE_MOD_SUPER | YASL_PRIVATE_MOD_ALT)))
-        push(s, (struct yasl_private_event){.type = YASL_PRIVATE_EVENT_TEXT}, text, (size_t)len);
+    if (printable) {
+        struct yasl_private_event event = {.type = YASL_PRIVATE_EVENT_TEXT};
+        event.text.text_key_id = key_id;
+        push(s, event, text, (size_t)len);
+    }
     if (text != local) free(text);
 }
 
@@ -3212,6 +3524,7 @@ static bool drop_start(struct x11_display *d, struct x11_surface *s, Window sour
     if (!r) return false;
     r->drop = true;
     r->source = source;
+    r->pos = d->xdnd.pos;
     snprintf(r->mime, sizeof(r->mime), "%s", d->xdnd.mime);
     XConvertSelection(d->native, d->xdnd_selection, d->xdnd.picked, d->paste_property,
                       r->window, time);
@@ -3367,6 +3680,11 @@ static void dispatch(struct yasl_private_display *base)
         case FocusIn: case FocusOut: {
             bool focused = event.type == FocusIn;
             s->focused = focused;
+            if (!focused) {
+                compose_reset(d, true);
+                memset(d->key_text, 0, sizeof(d->key_text));
+                memset(d->key_consumed, 0, sizeof(d->key_consumed));
+            }
             if (s->ic) {
                 if (focused && s->base.text_input_active) XSetICFocus(s->ic);
                 else XUnsetICFocus(s->ic);
@@ -3683,6 +4001,61 @@ static void check(struct yasl_private_display *base)
     if (revents & POLLIN) dispatch(base);
 }
 
+#if YASL_HAS_XRANDR
+/* The frame interval of a mode: dotClock / (hTotal * vTotal) Hz. */
+static double mode_refresh_ns(const XRRScreenResources *resources, RRMode mode)
+{
+    for (int i = 0; i < resources->nmode; i++) {
+        const XRRModeInfo *info = &resources->modes[i];
+        if (info->id != mode || info->dotClock == 0 || !info->hTotal || !info->vTotal)
+            continue;
+        double total = (double)info->hTotal * (double)info->vTotal;
+        double ns = 1e9 * total / (double)info->dotClock;
+        return ns >= 2e6 && ns <= 100e6 ? ns : 0;
+    }
+    return 0;
+}
+
+/* Frame interval of the active mode of the primary output, or of the first
+ * active output. Zero when RandR gives no usable mode. */
+static double randr_refresh_ns(struct x11_display *d)
+{
+    if (!x11_syms()->xrandr_ready) return 0;
+    Window root = RootWindow(d->native, d->screen);
+    XRRScreenResources *resources = XRRGetScreenResourcesCurrent(d->native, root);
+    if (!resources) return 0;
+    RROutput primary = XRRGetOutputPrimary(d->native, root);
+    double first = 0;
+    for (int i = 0; i < resources->noutput; i++) {
+        XRROutputInfo *output = XRRGetOutputInfo(d->native, resources, resources->outputs[i]);
+        if (!output) continue;
+        double ns = 0;
+        if (output->crtc) {
+            XRRCrtcInfo *crtc = XRRGetCrtcInfo(d->native, resources, output->crtc);
+            if (crtc) {
+                if (crtc->mode) ns = mode_refresh_ns(resources, crtc->mode);
+                XRRFreeCrtcInfo(crtc);
+            }
+        }
+        bool is_primary = !primary || resources->outputs[i] == primary;
+        XRRFreeOutputInfo(output);
+        if (ns && is_primary) { first = ns; break; }
+        if (ns && !first) first = ns;
+    }
+    XRRFreeScreenResources(resources);
+    return first;
+}
+#endif
+
+static double display_refresh_ns(struct x11_display *d)
+{
+#if YASL_HAS_XRANDR
+    double ns = randr_refresh_ns(d);
+    if (ns > 0) return ns;
+#endif
+    return YASL_PRIVATE_REFRESH_DEFAULT_NS;
+}
+
 static struct yasl_private_display *display_open(struct yasl_loop *loop,
         const struct yasl_private_display_spec *spec)
 {
@@ -3703,6 +4076,7 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
     d->base.native_handle = d->native;
     d->screen = DefaultScreen(d->native);
     d->scale_120 = scale_from_xft_dpi(d->native);
+    d->refresh_ns = display_refresh_ns(d);
     XVisualInfo argb;
     if (XMatchVisualInfo(d->native, d->screen, 32, TrueColor, &argb)) {
         d->argb_visual = argb.visual;
@@ -3740,6 +4114,7 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
         unsigned char bits[XIMaskLen(XI_LASTEVENT)] = {0};
         XISetMask(bits, XI_HierarchyChanged);
         XISetMask(bits, XI_DeviceChanged);
+        XISetMask(bits, XI_RawMotion);
         XIEventMask mask = {XIAllDevices, sizeof(bits), bits};
         XISelectEvents(d->native, RootWindow(d->native, d->screen), &mask, 1);
     }
@@ -3761,6 +4136,13 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
         return NULL;
     }
     d->im = XOpenIM(d->native, NULL, NULL, NULL);
+    d->xkb_context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    const char *locale = setlocale(LC_CTYPE, NULL);
+    if (d->xkb_context && locale)
+        d->compose_table = xkb_compose_table_new_from_locale(d->xkb_context, locale,
+                                                             XKB_COMPOSE_COMPILE_NO_FLAGS);
+    if (d->compose_table)
+        d->compose_state = xkb_compose_state_new(d->compose_table, XKB_COMPOSE_STATE_NO_FLAGS);
     d->selection_window = XCreateSimpleWindow(d->native,
             RootWindow(d->native, d->screen), 0, 0, 1, 1, 0, 0, 0);
 #define ATOM(field, name) d->field = XInternAtom(d->native, name, False)
@@ -3780,6 +4162,7 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
     ATOM(fullscreen, "_NET_WM_STATE_FULLSCREEN");
     ATOM(maximized_h, "_NET_WM_STATE_MAXIMIZED_HORZ");
     ATOM(maximized_v, "_NET_WM_STATE_MAXIMIZED_VERT");
+    ATOM(hidden, "_NET_WM_STATE_HIDDEN");
     ATOM(xdnd_aware, "XdndAware");
     ATOM(xdnd_enter, "XdndEnter");
     ATOM(xdnd_position, "XdndPosition");
@@ -3804,6 +4187,19 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
             return NULL;
         }
     }
+    int mutex_error = pthread_mutex_init(&d->egl_mutex, NULL);
+    if (mutex_error) {
+        if (d->watch > 0) yasl_loop_del_fd(d->loop, d->watch);
+        if (d->im) XCloseIM(d->im);
+        XDestroyWindow(d->native, d->selection_window);
+        XCloseDisplay(d->native);
+        display_unregister(d);
+        free(d->app_id);
+        if (d->owns_loop) yasl_loop_destroy(d->loop);
+        free(d);
+        errno = mutex_error;
+        return NULL;
+    }
     return &d->base;
 }
 
@@ -3821,10 +4217,19 @@ static void display_close(struct yasl_private_display *base)
         d->base.loop = NULL;
     }
     if (d->im) XCloseIM(d->im);
+    if (d->compose_state) xkb_compose_state_unref(d->compose_state);
+    if (d->compose_table) xkb_compose_table_unref(d->compose_table);
+    if (d->xkb_context) xkb_context_unref(d->xkb_context);
     clear_pointers(d);
 #if YASL_HAS_EGL
-    if (d->egl_ready) eglTerminate(d->egl);
+    if (d->egl_ready) {
+        pthread_mutex_lock(&d->egl_mutex);
+        eglTerminate(d->egl);
+        d->egl_ready = false;
+        pthread_mutex_unlock(&d->egl_mutex);
+    }
 #endif
+    pthread_mutex_destroy(&d->egl_mutex);
     for (size_t i = 0; i < sizeof(d->cursors) / sizeof(d->cursors[0]); i++) {
         if (d->cursors[i]) {
             if (!d->lost) XFreeCursor(d->native, d->cursors[i]);
@@ -3842,11 +4247,60 @@ static void display_close(struct yasl_private_display *base)
     free(d);
 }
 
+#if YASL_HAS_VULKAN
+/* The loader is not linked here, so load it to read the instance extensions of
+ * the installed ICDs. The Xlib WSI needs both surface extensions. */
+static bool vulkan_icd_ready(void)
+{
+    void *lib = dlopen("libvulkan.so.1", RTLD_LAZY | RTLD_LOCAL);
+    if (!lib) return false;
+    PFN_vkEnumerateInstanceExtensionProperties enumerate = NULL;
+    void *symbol = dlsym(lib, "vkEnumerateInstanceExtensionProperties");
+    if (symbol) memcpy(&enumerate, &symbol, sizeof(enumerate));
+    bool surface = false, xlib = false;
+    uint32_t count = 0;
+    if (enumerate && enumerate(NULL, &count, NULL) == VK_SUCCESS && count) {
+        VkExtensionProperties *extensions = calloc(count, sizeof(*extensions));
+        if (extensions) {
+            if (enumerate(NULL, &count, extensions) == VK_SUCCESS)
+                for (uint32_t i = 0; i < count; i++) {
+                    if (!strcmp(extensions[i].extensionName, "VK_KHR_surface")) surface = true;
+                    if (!strcmp(extensions[i].extensionName, "VK_KHR_xlib_surface")) xlib = true;
+                }
+            free(extensions);
+        }
+    }
+    dlclose(lib);
+    return surface && xlib;
+}
+#endif
+
+/* A Vulkan surface needs a driver with the X11 WSI and a server path to show
+ * it: DRI3 or MIT-SHM. A missing path reports no feature instead of failing at
+ * the first swapchain. The result is cached per display. */
+static bool vulkan_ready(struct x11_display *d)
+{
+    if (!d->vulkan_probed) {
+        d->vulkan_probed = true;
+#if YASL_HAS_VULKAN
+        int opcode, event, error;
+        d->vulkan_ready = vulkan_icd_ready() && d->native &&
+            (d->has_shm || XQueryExtension(d->native, "DRI3", &opcode, &event, &error));
+#endif
+    }
+    return d->vulkan_ready;
+}
+
 static uint32_t caps(const struct yasl_private_display *d)
 {
-    return YASL_PRIVATE_CAP_POPUPS | YASL_PRIVATE_CAP_DRAG | YASL_PRIVATE_CAP_DRAG_CARRY | YASL_PRIVATE_CAP_PLACE_WINDOW |
-        YASL_PRIVATE_CAP_PRIMARY_SELECTION | YASL_PRIVATE_CAP_CSD | YASL_PRIVATE_CAP_NATIVE_GRAPHICS |
-        YASL_PRIVATE_CAP_VULKAN | (((const struct x11_display *)d)->xi2 ? YASL_PRIVATE_CAP_TABLET : 0);
+    struct x11_display *display = (struct x11_display *)d;
+    uint32_t result = YASL_PRIVATE_CAP_POPUPS | YASL_PRIVATE_CAP_DRAG |
+        YASL_PRIVATE_CAP_DRAG_CARRY | YASL_PRIVATE_CAP_PLACE_WINDOW |
+        YASL_PRIVATE_CAP_PRIMARY_SELECTION | YASL_PRIVATE_CAP_CSD |
+        YASL_PRIVATE_CAP_NATIVE_GRAPHICS | YASL_PRIVATE_CAP_TEXT_INPUT;
+    if (vulkan_ready(display)) result |= YASL_PRIVATE_CAP_VULKAN;
+    if (display->xi2) result |= YASL_PRIVATE_CAP_TABLET;
+    return result;
 }
 
 static bool copy_text(struct yasl_private_display *base, enum yasl_private_selection sel, const char *text)
