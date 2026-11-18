@@ -20,9 +20,12 @@
 
 #define DEFAULT_FAMILY_LIST FONT_DEFAULT_FAMILY
 
+static bool register_bundled_fonts(bool include_extras);
+
 char **font_list_families(size_t *count)
 {
     *count = 0;
+    register_bundled_fonts(true);
     @autoreleasepool {
         int32_t mono_trait = kCTFontMonoSpaceTrait;
         const void *trait_keys[] = { kCTFontSymbolicTrait };
@@ -94,6 +97,7 @@ struct font_handle {
     uint32_t serial;
     hb_face_t *hb_face[FONT_VARIANT_COUNT];
     hb_font_t *hb_font[FONT_VARIANT_COUNT];
+    pthread_mutex_t style_lock;
     CFArrayRef cascade_descriptors;
     CTFontRef cascade_fonts[CT_CASCADE_MAX];
     CFIndex cascade_loaded;
@@ -253,7 +257,43 @@ static void ct_open_hb(struct font_handle *face, enum font_variant variant,
     face->hb_font[variant] = hb;
 }
 
-static void register_font_dir(NSString *dir)
+/* The bundled fonts register in two steps: the regular files, then the bold
+ * and italic files. A start that shows only regular text loads no styled
+ * file. `bundled_lock` guards the two flags. */
+static bool bundled_regular_done;
+static bool bundled_extras_done;
+static pthread_mutex_t bundled_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static bool is_extra_style_font(NSString *filename)
+{
+    NSString *stem = filename.stringByDeletingPathExtension.lowercaseString;
+    return [stem rangeOfString:@"bold"].location != NSNotFound ||
+           [stem rangeOfString:@"italic"].location != NSNotFound ||
+           [stem rangeOfString:@"oblique"].location != NSNotFound;
+}
+
+static void register_urls(CFArrayRef urls)
+{
+    if (!urls || !CFArrayGetCount(urls))
+        return;
+    CTFontManagerRegisterFontURLs(urls, kCTFontManagerScopeProcess, true,
+        ^bool(CFArrayRef errors, bool done) {
+            (void)done;
+            for (CFIndex i = 0; errors && i < CFArrayGetCount(errors); i++) {
+                CFErrorRef error = (CFErrorRef)CFArrayGetValueAtIndex(errors, i);
+                CFStringRef description = CFErrorCopyDescription(error);
+                if (description) {
+                    NSLog(@"Unable to register bundled font: %@", description);
+                    CFRelease(description);
+                }
+            }
+            return true;
+        });
+}
+
+/* Registers the steps of one directory that are not done. The caller holds
+ * `bundled_lock`. */
+static void register_font_dir(NSString *dir, bool include_extras)
 {
     if (!dir)
         return;
@@ -261,53 +301,64 @@ static void register_font_dir(NSString *dir)
         NSArray<NSString *> *files =
             [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:nil];
         if (!files) return;
-        CFMutableArrayRef urls = CFArrayCreateMutable(kCFAllocatorDefault, 0,
+        CFMutableArrayRef regular_urls = CFArrayCreateMutable(kCFAllocatorDefault, 0,
             &kCFTypeArrayCallBacks);
-        if (!urls) return;
+        CFMutableArrayRef extra_urls = CFArrayCreateMutable(kCFAllocatorDefault, 0,
+            &kCFTypeArrayCallBacks);
+        if (!regular_urls || !extra_urls) {
+            if (regular_urls) CFRelease(regular_urls);
+            if (extra_urls) CFRelease(extra_urls);
+            return;
+        }
         for (NSString *f in files) {
             NSString *ext = f.pathExtension.lowercaseString;
             if (![ext isEqualToString:@"ttf"] && ![ext isEqualToString:@"otf"] &&
                 ![ext isEqualToString:@"ttc"] && ![ext isEqualToString:@"dfont"])
                 continue;
             NSURL *url = [NSURL fileURLWithPath:[dir stringByAppendingPathComponent:f]];
-            CFArrayAppendValue(urls, (__bridge CFURLRef)url);
+            if (is_extra_style_font(f))
+                CFArrayAppendValue(extra_urls, (__bridge CFURLRef)url);
+            else
+                CFArrayAppendValue(regular_urls, (__bridge CFURLRef)url);
         }
-        if (CFArrayGetCount(urls)) {
-            CTFontManagerRegisterFontURLs(urls, kCTFontManagerScopeProcess, true,
-                ^bool(CFArrayRef errors, bool done) {
-                    (void)done;
-                    for (CFIndex i = 0; errors && i < CFArrayGetCount(errors); i++) {
-                        CFErrorRef error = (CFErrorRef)CFArrayGetValueAtIndex(errors, i);
-                        CFStringRef description = CFErrorCopyDescription(error);
-                        if (description) {
-                            NSLog(@"Unable to register bundled font: %@", description);
-                            CFRelease(description);
-                        }
-                    }
-                    return true;
-                });
-        }
-        CFRelease(urls);
+        /* A directory with no regular file gives its styled files to the
+         * regular step. The styled step then has nothing left to register. */
+        bool styled_only = CFArrayGetCount(regular_urls) == 0;
+        if (!bundled_regular_done)
+            register_urls(styled_only ? extra_urls : regular_urls);
+        if (include_extras && !styled_only)
+            register_urls(extra_urls);
+        CFRelease(regular_urls);
+        CFRelease(extra_urls);
     }
 }
 
-static void register_bundled_fonts(void)
+/* Registers the bundled fonts: the regular files, and with `include_extras`
+ * also the bold and italic files. Returns true if this call registered a
+ * step. A font lookup by name can then give a new result. */
+static bool register_bundled_fonts(bool include_extras)
 {
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
+    pthread_mutex_lock(&bundled_lock);
+    bool pending = include_extras ? !bundled_extras_done : !bundled_regular_done;
+    if (pending) {
         char resources[PATH_MAX];
         if (platform_resource_dir(resources, sizeof(resources)) == 0) {
             register_font_dir([[NSString stringWithUTF8String:resources]
-                               stringByAppendingPathComponent:@"fonts"]);
-            return;
-        }
+                               stringByAppendingPathComponent:@"fonts"], include_extras);
+        } else {
 #ifdef WSAP_DEV_FONTS_DIR
-        register_font_dir(@WSAP_DEV_FONTS_DIR);
+            register_font_dir(@WSAP_DEV_FONTS_DIR, include_extras);
 #endif
 #ifdef WSAP_DATADIR
-        register_font_dir(@WSAP_DATADIR "/wsap_term/fonts");
+            register_font_dir(@WSAP_DATADIR "/wsap_term/fonts", include_extras);
 #endif
-    });
+        }
+        bundled_regular_done = true;
+        if (include_extras)
+            bundled_extras_done = true;
+    }
+    pthread_mutex_unlock(&bundled_lock);
+    return pending;
 }
 
 static CTFontRef create_style_copy(CTFontRef base, CTFontSymbolicTraits traits)
@@ -391,9 +442,30 @@ static CTFontRef ct_font_from_descriptor(CFStringRef name, CFStringRef attribute
     return font;
 }
 
+static CTFontRef ct_match_named_font(const char *name, const char *norm, CGFloat pt)
+{
+    CTFontRef font = NULL;
+    if (!strcmp(norm, "sfmono")) {
+        CTFontRef ui = CTFontCreateUIFontForLanguage(kCTFontUIFontUserFixedPitch, pt, NULL);
+        if (ui && ct_font_name_matches(ui, name))
+            font = ui;
+        else if (ui)
+            CFRelease(ui);
+    }
+    if (!font) {
+        CFStringRef cf_name = CFStringCreateWithCString(kCFAllocatorDefault, name, kCFStringEncodingUTF8);
+        if (cf_name) {
+            font = ct_font_from_descriptor(cf_name, kCTFontNameAttribute, pt);
+            if (!font)
+                font = ct_font_from_descriptor(cf_name, kCTFontFamilyNameAttribute, pt);
+            CFRelease(cf_name);
+        }
+    }
+    return font;
+}
+
 static CTFontRef ct_load_base_font(const char *family_list, CGFloat pt)
 {
-
     char copy[256];
     strncpy(copy, family_list && family_list[0] ? family_list : DEFAULT_FAMILY_LIST, sizeof(copy) - 1);
     copy[sizeof(copy) - 1] = '\0';
@@ -409,23 +481,14 @@ static CTFontRef ct_load_base_font(const char *family_list, CGFloat pt)
         char norm[128];
         normalize_name(name, norm, sizeof(norm));
 
-        CTFontRef font = NULL;
-        if (!strcmp(norm, "sfmono")) {
-            CTFontRef ui = CTFontCreateUIFontForLanguage(kCTFontUIFontUserFixedPitch, pt, NULL);
-            if (ui && ct_font_name_matches(ui, name))
-                font = ui;
-            else if (ui)
-                CFRelease(ui);
-        }
-        if (!font) {
-            CFStringRef cf_name = CFStringCreateWithCString(kCFAllocatorDefault, name, kCFStringEncodingUTF8);
-            if (cf_name) {
-                font = ct_font_from_descriptor(cf_name, kCTFontNameAttribute, pt);
-                if (!font)
-                    font = ct_font_from_descriptor(cf_name, kCTFontFamilyNameAttribute, pt);
-                CFRelease(cf_name);
-            }
-        }
+        /* Look among the installed fonts first. Register a bundled step
+         * only when the name is still not found, and look again only when
+         * that step added fonts. */
+        CTFontRef font = ct_match_named_font(name, norm, pt);
+        if (!font && register_bundled_fonts(false))
+            font = ct_match_named_font(name, norm, pt);
+        if (!font && register_bundled_fonts(true))
+            font = ct_match_named_font(name, norm, pt);
         if (font)
             return font;
     }
@@ -453,22 +516,11 @@ static font_handle_t *ct_face_open(const char *family_list, struct font_size siz
     }
 
     face->regular = base;
-    face->italic = create_style_copy(base, kCTFontTraitItalic);
-    face->bold = create_style_copy(base, kCTFontTraitBold);
-    face->bold_italic = create_style_copy(base, kCTFontTraitBold | kCTFontTraitItalic);
     face->pixel_size = pixel_size;
     face->scale = (CGFloat)pixel_size / pt;
     face->serial = atomic_fetch_add_explicit(&ct_face_serial, 1, memory_order_relaxed) + 1;
-    face->cascade_descriptors = CTFontCopyDefaultCascadeListForLanguages(base, NULL);
+    pthread_mutex_init(&face->style_lock, NULL);
     pthread_mutex_init(&face->cascade_lock, NULL);
-    const CTFontRef styles[FONT_VARIANT_COUNT] = {
-        [FONT_VARIANT_PLAIN] = face->regular,
-        [FONT_VARIANT_BOLD] = face->bold,
-        [FONT_VARIANT_ITALIC] = face->italic,
-        [FONT_VARIANT_BOLD_ITALIC] = face->bold_italic,
-    };
-    for (int i = 0; i < FONT_VARIANT_COUNT; i++)
-        ct_open_hb(face, (enum font_variant)i, styles[i]);
     return face;
 }
 
@@ -490,6 +542,7 @@ static void ct_face_close(font_handle_t *face)
         if (face->cascade_fonts[i])
             CFRelease(face->cascade_fonts[i]);
     }
+    pthread_mutex_destroy(&face->style_lock);
     pthread_mutex_destroy(&face->cascade_lock);
     free(face);
 }
@@ -541,16 +594,70 @@ static bool ct_face_metrics(font_handle_t *face, struct font_metrics *out)
     return true;
 }
 
-static CTFontRef get_style_font(const font_handle_t *face, uint16_t style)
+static CTFontRef get_style_font_locked(font_handle_t *face, uint16_t style)
+{
+    bool bold = (style & FONT_STYLE_BOLD) != 0;
+    bool italic = (style & FONT_STYLE_ITALIC) != 0;
+    if (bold && italic) {
+        if (!face->bold_italic) {
+            register_bundled_fonts(true);
+            face->bold_italic = create_style_copy(face->regular,
+                                                  kCTFontTraitBold | kCTFontTraitItalic);
+        }
+        return face->bold_italic ? face->bold_italic : face->regular;
+    }
+    if (bold) {
+        if (!face->bold) {
+            register_bundled_fonts(true);
+            face->bold = create_style_copy(face->regular, kCTFontTraitBold);
+        }
+        return face->bold ? face->bold : face->regular;
+    }
+    if (italic) {
+        if (!face->italic) {
+            register_bundled_fonts(true);
+            face->italic = create_style_copy(face->regular, kCTFontTraitItalic);
+        }
+        return face->italic ? face->italic : face->regular;
+    }
+    return face->regular;
+}
+
+static CTFontRef get_style_font(font_handle_t *face, uint16_t style)
 {
     if (!face)
         return NULL;
-    bool bold = (style & FONT_STYLE_BOLD) != 0;
-    bool italic = (style & FONT_STYLE_ITALIC) != 0;
-    if (bold && italic && face->bold_italic) return face->bold_italic;
-    if (bold && face->bold)                 return face->bold;
-    if (italic && face->italic)             return face->italic;
-    return face->regular;
+    if (!(style & (FONT_STYLE_BOLD | FONT_STYLE_ITALIC)))
+        return face->regular;
+    pthread_mutex_lock(&face->style_lock);
+    CTFontRef font = get_style_font_locked(face, style);
+    pthread_mutex_unlock(&face->style_lock);
+    return font;
+}
+
+static uint16_t style_for_variant(enum font_variant variant)
+{
+    switch (variant) {
+    case FONT_VARIANT_BOLD:        return FONT_STYLE_BOLD;
+    case FONT_VARIANT_ITALIC:      return FONT_STYLE_ITALIC;
+    case FONT_VARIANT_BOLD_ITALIC: return FONT_STYLE_BOLD | FONT_STYLE_ITALIC;
+    default:                       return 0;
+    }
+}
+
+static hb_font_t *ct_ensure_hb(font_handle_t *face, enum font_variant variant)
+{
+    if (!face)
+        return NULL;
+    pthread_mutex_lock(&face->style_lock);
+    if (!face->hb_font[variant]) {
+        CTFontRef font = get_style_font_locked(face, style_for_variant(variant));
+        if (font)
+            ct_open_hb(face, variant, font);
+    }
+    hb_font_t *hb = face->hb_font[variant];
+    pthread_mutex_unlock(&face->style_lock);
+    return hb;
 }
 
 struct ct_scratch {
@@ -644,6 +751,26 @@ static void ct_scratch_destroy(struct ct_scratch *scratch)
     memset(scratch, 0, sizeof(*scratch));
 }
 
+/* Draw one vector glyph via CoreGraphics so CoreText skips per-font language exemplar caches. */
+static void ct_draw_single_glyph(CGContextRef ctx, CTFontRef font, CGGlyph gid)
+{
+    CGPoint pos = CGPointZero;
+    if (!(CTFontGetSymbolicTraits(font) & kCTFontTraitColorGlyphs)) {
+        CGFontRef cg = CTFontCopyGraphicsFont(font, NULL);
+        if (cg) {
+            CGAffineTransform mat = CTFontGetMatrix(font);
+            CGContextSetFont(ctx, cg);
+            CGContextSetFontSize(ctx, CTFontGetSize(font));
+            if (!CGAffineTransformIsIdentity(mat))
+                CGContextSetTextMatrix(ctx, mat);
+            CGContextShowGlyphsAtPositions(ctx, &gid, &pos, 1);
+            CGFontRelease(cg);
+            return;
+        }
+    }
+    CTFontDrawGlyphs(font, &gid, &pos, 1, ctx);
+}
+
 static void ct_configure_synthetic_bold(CGContextRef ctx, CTFontRef font, CGFloat scale)
 {
     CGContextSetTextDrawingMode(ctx, kCGTextFillStroke);
@@ -720,8 +847,7 @@ static bool ct_rasterize_ink(CTFontRef font, CGGlyph gid, CTLineRef line,
         CGContextSetTextPosition(ctx, 0, 0);
         CTLineDraw(line, ctx);
     } else {
-        CGPoint pos = CGPointZero;
-        CTFontDrawGlyphs(font, &gid, &pos, 1, ctx);
+        ct_draw_single_glyph(ctx, font, gid);
     }
     ct_scratch_put(scratch);
     out->x_offset = (int16_t)span_l;
@@ -816,6 +942,8 @@ static bool ct_rasterize_glyph(font_handle_t *face, uint32_t cp, uint16_t style,
                 break;
             }
         }
+        if (!matched && !face->cascade_descriptors)
+            face->cascade_descriptors = CTFontCopyDefaultCascadeListForLanguages(face->regular, NULL);
         if (!matched && face->cascade_descriptors) {
             CFIndex total = CFArrayGetCount(face->cascade_descriptors);
             while (!matched && face->cascade_loaded < total &&
@@ -874,7 +1002,7 @@ struct ct_raster {
     bool valid;
 };
 
-#define CT_RASTER_CACHE 4096
+#define CT_RASTER_CACHE 512
 #define CT_RASTER_PROBES 8
 
 static __thread struct ct_raster *ct_rasters;
@@ -958,8 +1086,7 @@ static const struct ct_raster *ct_raster_gid(const font_handle_t *face,
             ct_configure_synthetic_bold(ctx, font, face->scale);
         CGContextTranslateCTM(ctx, -r->left, r->h - r->above);
         CGContextScaleCTM(ctx, face->scale, face->scale);
-        CGPoint pos = CGPointZero;
-        CTFontDrawGlyphs(font, &gid, &pos, 1, ctx);
+        ct_draw_single_glyph(ctx, font, gid);
         ct_scratch_put(&ct_gray_scratch);
         for (int y = 0; y < r->h; y++) {
             memcpy(r->alpha + (size_t)y * r->w,
@@ -1225,7 +1352,7 @@ static enum font_run_result ct_shape_run(font_handle_t *face, const struct font_
     face_activate(m);
     enum font_variant variant = font_variant_of(w->style);
     CTFontRef font = get_style_font(face, w->style);
-    hb_font_t *hb = face->hb_font[variant];
+    hb_font_t *hb = ct_ensure_hb(face, variant);
     if (!font || !hb || (CTFontGetSymbolicTraits(font) & kCTFontTraitColorGlyphs))
         return FONT_RUN_UNAVAILABLE;
 
@@ -1305,7 +1432,12 @@ static enum font_run_result ct_shape_run(font_handle_t *face, const struct font_
 
 static hb_face_t *ct_layout_face(font_handle_t *face, uint16_t style)
 {
-    return face ? hb_face_reference(face->hb_face[font_variant_of(style)]) : NULL;
+    if (!face)
+        return NULL;
+    enum font_variant variant = font_variant_of(style);
+    if (!ct_ensure_hb(face, variant))
+        return NULL;
+    return hb_face_reference(face->hb_face[variant]);
 }
 
 static void ct_font_registered_changed(CFNotificationCenterRef center, void *observer,
@@ -1318,7 +1450,6 @@ static void ct_font_registered_changed(CFNotificationCenterRef center, void *obs
 
 static bool ct_init(void)
 {
-    register_bundled_fonts();
     CFNotificationCenterAddObserver(
         CFNotificationCenterGetLocalCenter(),
         NULL,

@@ -170,16 +170,16 @@ static inline const struct glyph *slot_fill(struct font_instance *fi, struct cac
     return cache_slot_fill(slot, key, cp, flags, &ops);
 }
 
-static struct cache_slot *cjk_cache_ensure(struct font_instance *fi)
+struct cache_slot *slot_cache_ensure(_Atomic(struct cache_slot *) *ptr, int count)
 {
-    struct cache_slot *cache = atomic_load_explicit(&fi->cjk, memory_order_acquire);
+    struct cache_slot *cache = atomic_load_explicit(ptr, memory_order_acquire);
     if (cache)
         return cache;
-    cache = calloc(CJK_CACHE_SIZE, sizeof(*cache));
+    cache = calloc((size_t)count, sizeof(*cache));
     if (!cache)
         return NULL;
     struct cache_slot *expected = NULL;
-    if (!atomic_compare_exchange_strong_explicit(&fi->cjk, &expected, cache,
+    if (!atomic_compare_exchange_strong_explicit(ptr, &expected, cache,
             memory_order_release, memory_order_acquire)) {
         free(cache);
         cache = expected;
@@ -199,10 +199,13 @@ const struct glyph *glyph_cache_fetch(struct font_instance *fi, uint32_t cp,
         slot = &fi->ascii[cp];
     else if (cp < 128 && style == FONT_STYLE_ITALIC)
         slot = &fi->ascii_italic[cp];
-    else if (__builtin_expect(cp < LATIN_CACHE_SIZE && !style, 1))
-        slot = &fi->latin[cp];
-    else {
-        struct cache_slot *cjk = cjk_cache_ensure(fi);
+    else if (__builtin_expect(cp < LATIN_CACHE_SIZE && !style, 1)) {
+        struct cache_slot *latin = slot_cache_ensure(&fi->latin, LATIN_CACHE_SIZE);
+        if (!latin)
+            return glyph_scratch_fill(fi, cp, style);
+        slot = &latin[cp];
+    } else {
+        struct cache_slot *cjk = slot_cache_ensure(&fi->cjk, CJK_CACHE_SIZE);
         if (!cjk)
             return glyph_scratch_fill(fi, cp, style);
         slot = &cjk[(glyph_key(cp, style) * KNUTH_HASH_MULT) >> 20];
@@ -240,12 +243,11 @@ static void drop_glyph_slots(struct cache_slot *slots, int n)
 
 static void drop_all(struct font_instance *fi)
 {
-    for (int i = 0; i < 128; i++)
-        free(fi->ascii_tiles[i]);
-    memset(fi->ascii_tiles, 0, sizeof(fi->ascii_tiles));
     drop_glyph_slots(fi->ascii, 128);
     drop_glyph_slots(fi->ascii_italic, 128);
-    drop_glyph_slots(fi->latin, LATIN_CACHE_SIZE);
+    struct cache_slot *latin = atomic_load_explicit(&fi->latin, memory_order_acquire);
+    if (latin)
+        drop_glyph_slots(latin, LATIN_CACHE_SIZE);
     struct cache_slot *cjk = atomic_load_explicit(&fi->cjk, memory_order_acquire);
     if (cjk)
         drop_glyph_slots(cjk, CJK_CACHE_SIZE);
@@ -253,12 +255,15 @@ static void drop_all(struct font_instance *fi)
         struct run_data *d = atomic_load_explicit(&fi->runs[i].data, memory_order_relaxed);
         if (d) buf_retire(d);
     }
-    for (int i = 0; i < TILE_CACHE_SIZE; i++) {
-        uint32_t *px = atomic_load_explicit(&fi->tiles[i].payload, memory_order_relaxed);
-        if (px) buf_retire(px);
+    struct cache_slot *tiles = atomic_load_explicit(&fi->tiles, memory_order_acquire);
+    if (tiles) {
+        for (int i = 0; i < TILE_CACHE_SIZE; i++) {
+            uint32_t *px = atomic_load_explicit(&tiles[i].payload, memory_order_relaxed);
+            if (px) buf_retire(px);
+        }
+        memset(tiles, 0, sizeof(*tiles) * TILE_CACHE_SIZE);
     }
     memset(fi->runs, 0, sizeof(fi->runs));
-    memset(fi->tiles, 0, sizeof(fi->tiles));
     atomic_store_explicit(&fi->run_stamp, 0, memory_order_relaxed);
 }
 
@@ -285,16 +290,12 @@ void glyph_cache_rebuild(struct font_instance *fi)
 {
     instance_reopen_if_stale(fi);
     atomic_store_explicit(&fi->built_gen, font_generation(), memory_order_release);
+    /* Build the tile tables here, on the main thread. A worker that fills a
+     * tile then finds them complete and writes nothing. */
     build_default_lut();
     atomic_store_explicit(&fi->built_fg, glyph_tile_fg(), memory_order_relaxed);
     atomic_store_explicit(&fi->built_bg, glyph_tile_bg(), memory_order_relaxed);
     drop_all(fi);
-    for (uint32_t c = 32; c < 128; c++) {
-        if (c == 0x7f)
-            continue;
-        const struct glyph *g = slot_fill(fi, &fi->ascii[c], c, 0);
-        prime_ascii_tile(fi, c, g);
-    }
 }
 
 static void instance_refresh(struct font_instance *fi)
@@ -385,7 +386,9 @@ static void instance_free(struct font_instance *fi)
             be->close(fi->face);
         fi->face = NULL;
     }
+    free(atomic_load_explicit(&fi->latin, memory_order_relaxed));
     free(atomic_load_explicit(&fi->cjk, memory_order_relaxed));
+    free(atomic_load_explicit(&fi->tiles, memory_order_relaxed));
     free(fi);
 }
 

@@ -777,12 +777,11 @@ struct group_map {
 
 #define GROUP_MIN_SLOTS 64
 
-/* Keep the load factor at 1/2 or less. Linear probing then stays short.
-   A count of zero needs no table. */
+/* Keep linear probing below 2/3 load factor. A count of zero needs no table. */
 static uint32_t hash_slots(unsigned count)
 {
     uint32_t slots = 1;
-    while (slots < count * 2)
+    while (slots <= count + (count >> 1))
         slots <<= 1;
     return count ? slots : 0;
 }
@@ -833,24 +832,22 @@ static bool fill_map(struct font_layout *l, hb_face_t *face, const struct analys
     hb_face_collect_nominal_glyph_mapping(face, mapping, unicodes);
     bool ok = hb_map_allocation_successful(mapping);
 
-    /* Size the map from the codepoints that reach it. Codepoints below 128 use
-       the ascii array. */
-    unsigned mapped = 0;
-    for (hb_codepoint_t cp = HB_SET_VALUE_INVALID; ok && hb_set_next(unicodes, &cp);)
-        if (cp >= 128 && cp <= LAYOUT_CP_MASK)
-            mapped++;
-    uint32_t map_slots = ok ? hash_slots(mapped) : 0;
-    if (map_slots) {
-        l->mask = map_slots - 1;
-        l->keys = calloc(map_slots, sizeof(*l->keys));
-        l->values = calloc(map_slots, sizeof(*l->values));
-        ok = l->keys && l->values;
-    }
-
     struct group_map groups = { 0 };
     hb_unicode_funcs_t *uf = hb_unicode_funcs_get_default();
+    unsigned mapped = 0;
 
     for (int pass = 0; ok && pass < 2; pass++) {
+        if (pass == 1) {
+            /* Only non-complex codepoints >= 128 need table entries; misses in
+               font_layout_entry_slow() already return LAYOUT_COMPLEX for cp. */
+            uint32_t map_slots = hash_slots(mapped);
+            if (map_slots) {
+                l->mask = map_slots - 1;
+                l->keys = calloc(map_slots, sizeof(*l->keys));
+                l->values = calloc(map_slots, sizeof(*l->values));
+                ok = l->keys && l->values;
+            }
+        }
         hb_codepoint_t cp = HB_SET_VALUE_INVALID;
         while (ok && hb_set_next(unicodes, &cp)) {
             if (cp > LAYOUT_CP_MASK || cp <= ' ')
@@ -868,12 +865,16 @@ static bool fill_map(struct font_layout *l, hb_face_t *face, const struct analys
                 role = a->sig[g] ? LAYOUT_CONTEXT : LAYOUT_NEUTRAL;
             bool needs_group = role == LAYOUT_CONTEXT || role == LAYOUT_NEUTRAL;
             if (pass == 0) {
+                if (cp >= 128 && role != LAYOUT_COMPLEX)
+                    mapped++;
                 if (needs_group &&
                     !group_add(&groups, rep_key(a->sig[g], gdef,
                                                 hb_unicode_general_category(uf, cp)), cp))
                     ok = false;
                 continue;
             }
+            if (cp >= 128 && role == LAYOUT_COMPLEX)
+                continue;
             uint32_t stand_in = cp;
             if (needs_group)
                 stand_in = rep_find(groups.slots, groups.mask,

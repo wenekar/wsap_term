@@ -108,10 +108,9 @@ struct font_instance {
 
     _Alignas(64) struct cache_slot ascii[128];
     struct cache_slot ascii_italic[128];
-    struct cache_slot latin[LATIN_CACHE_SIZE];
-    uint32_t *ascii_tiles[128];
-    struct run_slot runs[RUN_CACHE_SIZE];
-    struct cache_slot tiles[TILE_CACHE_SIZE];
+    _Atomic(struct cache_slot *) latin;
+    _Atomic(struct cache_slot *) tiles;
+    _Alignas(64) struct run_slot runs[RUN_CACHE_SIZE];
 };
 
 _Static_assert(offsetof(struct font_instance, ascii) % 64 == 0,
@@ -134,7 +133,7 @@ bool glyph_tile_eligible(const struct font_instance *fi, const struct glyph *g);
 void fill_tile(const struct font_instance *fi, uint32_t *px, const struct glyph *g);
 bool fill_run_tiles(const struct font_instance *fi, uint32_t *tiles,
                     const struct glyph *cells, int count);
-void prime_ascii_tile(struct font_instance *fi, uint32_t c, const struct glyph *g);
+struct cache_slot *slot_cache_ensure(_Atomic(struct cache_slot *) *ptr, int count);
 void tile_worker_cleanup(void);
 
 void run_worker_cleanup(void);

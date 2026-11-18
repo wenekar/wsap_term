@@ -98,18 +98,6 @@ bool fill_run_tiles(const struct font_instance *fi, uint32_t *tiles,
     return true;
 }
 
-void prime_ascii_tile(struct font_instance *fi, uint32_t c, const struct glyph *g)
-{
-    if (!glyph_tile_eligible(fi, g))
-        return;
-    build_default_lut();
-    uint32_t *px = malloc(tile_pixels(fi) * sizeof(*px));
-    if (!px)
-        return;
-    fill_tile(fi, px, g);
-    fi->ascii_tiles[c] = px;
-}
-
 static const struct glyph *glyph_tile_prepare(struct font_instance *fi, uint32_t cp,
                                               uint16_t flags, size_t *out_count)
 {
@@ -154,23 +142,22 @@ const uint32_t *glyph_cache_fetch_tile(struct font_instance *fi, uint32_t cp,
                                        uint16_t style)
 {
     style = glyph_style(style);
-    if (__builtin_expect(cp < 128 && !style, 1)) {
-        const uint32_t *tile = fi->ascii_tiles[cp];
-        if (tile)
-            return tile;
-    }
     if (__builtin_expect(cp > GLYPH_KEY_CP_MAX, 0))
         return NULL;
+
+    struct cache_slot *tiles = slot_cache_ensure(&fi->tiles, TILE_CACHE_SIZE);
+    if (!tiles)
+        return tile_slot_slow(cp, style, fi);
 
     uint32_t key = glyph_key(cp, style);
     uint32_t idx = (cp < TILE_CACHE_SIZE && !style) ? cp
         : (key * KNUTH_HASH_MULT) >> (32 - TILE_CACHE_BITS);
-    void *p = cache_slot_lookup(&fi->tiles[idx], key);
+    void *p = cache_slot_lookup(&tiles[idx], key);
     if (__builtin_expect(p != NULL, 1))
         return (const uint32_t *)p;
 
     const struct slot_fill_ops ops = { tile_slot_produce, tile_slot_slow, fi };
-    return cache_slot_fill(&fi->tiles[idx], key, cp, style, &ops);
+    return cache_slot_fill(&tiles[idx], key, cp, style, &ops);
 }
 
 void tile_worker_cleanup(void)
