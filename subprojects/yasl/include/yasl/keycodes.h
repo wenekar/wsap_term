@@ -104,6 +104,17 @@ enum yasl_key {
     YASL_KEY_F23 = 0x136,
     YASL_KEY_F24 = 0x137,
     YASL_KEY_F25 = 0x138,
+    /* F26 to F35 keep a free block, so the keypad values do not move. */
+    YASL_KEY_F26 = 0x170,
+    YASL_KEY_F27 = 0x171,
+    YASL_KEY_F28 = 0x172,
+    YASL_KEY_F29 = 0x173,
+    YASL_KEY_F30 = 0x174,
+    YASL_KEY_F31 = 0x175,
+    YASL_KEY_F32 = 0x176,
+    YASL_KEY_F33 = 0x177,
+    YASL_KEY_F34 = 0x178,
+    YASL_KEY_F35 = 0x179,
     YASL_KEY_KP_0 = 0x140,
     YASL_KEY_KP_1 = 0x141,
     YASL_KEY_KP_2 = 0x142,
@@ -135,6 +146,13 @@ enum yasl_key {
     YASL_KEY_VOLUME_UP = 0x169,
     YASL_KEY_VOLUME_DOWN = 0x16a,
     YASL_KEY_MUTE = 0x16b,
+    YASL_KEY_MEDIA_PLAY_PAUSE = 0x16c,
+    YASL_KEY_MEDIA_STOP = 0x16d,
+    YASL_KEY_MEDIA_PREVIOUS = 0x16e,
+    YASL_KEY_MEDIA_NEXT = 0x16f,
+    YASL_KEY_MEDIA_REWIND = 0x17a,
+    YASL_KEY_MEDIA_FAST_FORWARD = 0x17b,
+    YASL_KEY_MEDIA_EJECT = 0x17c,
 };
 
 #endif /* YASL_KEYCODES_H */

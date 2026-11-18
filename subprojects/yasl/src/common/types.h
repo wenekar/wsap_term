@@ -301,6 +301,10 @@ enum yasl_private_mod : uint32_t {
     YASL_PRIVATE_MOD_CTRL  = 1 << 2, /**< Control modifier. */
     YASL_PRIVATE_MOD_SUPER = 1 << 3, /**< Super/Command modifier. */
     YASL_PRIVATE_MOD_CAPS  = 1 << 4, /**< Caps Lock modifier. */
+    YASL_PRIVATE_MOD_HYPER = 1 << 5, /**< Hyper modifier. */
+    YASL_PRIVATE_MOD_META  = 1 << 6, /**< Meta modifier. */
+    YASL_PRIVATE_MOD_NUM_LOCK = 1 << 7, /**< Num Lock modifier. */
+    YASL_PRIVATE_MOD_SCROLL_LOCK = 1 << 8, /**< Scroll Lock modifier. */
 };
 
 /** Pointer source class; capability support does not imply an attached device. */

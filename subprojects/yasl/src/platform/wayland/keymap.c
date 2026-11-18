@@ -131,6 +131,24 @@ enum yasl_key yasl_private_key_from_evdev(uint32_t code)
     case 192: return YASL_KEY_F22; /* KEY_F22 */
     case 193: return YASL_KEY_F23; /* KEY_F23 */
     case 194: return YASL_KEY_F24; /* KEY_F24 */
+    case 195: return YASL_KEY_F25; /* KEY_F25 */
+    case 196: return YASL_KEY_F26; /* KEY_F26 */
+    case 197: return YASL_KEY_F27; /* KEY_F27 */
+    case 198: return YASL_KEY_F28; /* KEY_F28 */
+    case 199: return YASL_KEY_F29; /* KEY_F29 */
+    case 200: return YASL_KEY_F30; /* KEY_F30 */
+    case 201: return YASL_KEY_F31; /* KEY_F31 */
+    case 202: return YASL_KEY_F32; /* KEY_F32 */
+    case 203: return YASL_KEY_F33; /* KEY_F33 */
+    case 204: return YASL_KEY_F34; /* KEY_F34 */
+    case 205: return YASL_KEY_F35; /* KEY_F35 */
+    case 161: return YASL_KEY_MEDIA_EJECT; /* KEY_EJECTCD */
+    case 163: return YASL_KEY_MEDIA_NEXT; /* KEY_NEXTSONG */
+    case 164: return YASL_KEY_MEDIA_PLAY_PAUSE; /* KEY_PLAYPAUSE */
+    case 165: return YASL_KEY_MEDIA_PREVIOUS; /* KEY_PREVIOUSSONG */
+    case 166: return YASL_KEY_MEDIA_STOP; /* KEY_STOPCD */
+    case 168: return YASL_KEY_MEDIA_REWIND; /* KEY_REWIND */
+    case 208: return YASL_KEY_MEDIA_FAST_FORWARD; /* KEY_FASTFORWARD */
     default: return YASL_KEY_UNKNOWN;
     }
 }

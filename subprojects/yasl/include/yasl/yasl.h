@@ -300,7 +300,11 @@ enum yasl_event_type {
     YASL_EVENT_USER        /**< user: a message from yasl_post_user_event. */
 };
 enum yasl_key_action { YASL_KEY_PRESS, YASL_KEY_RELEASE, YASL_KEY_REPEAT };
-enum yasl_mod { YASL_MOD_SHIFT = 1, YASL_MOD_ALT = 2, YASL_MOD_CTRL = 4, YASL_MOD_SUPER = 8, YASL_MOD_CAPS = 16 };
+enum yasl_mod {
+    YASL_MOD_SHIFT = 1, YASL_MOD_ALT = 2, YASL_MOD_CTRL = 4, YASL_MOD_SUPER = 8,
+    YASL_MOD_CAPS = 16, YASL_MOD_HYPER = 32, YASL_MOD_META = 64,
+    YASL_MOD_NUM_LOCK = 128, YASL_MOD_SCROLL_LOCK = 256,
+};
 enum yasl_pointer_action { YASL_POINTER_MOVE, YASL_POINTER_DOWN, YASL_POINTER_UP, YASL_POINTER_LEAVE };
 enum yasl_button { YASL_BUTTON_PRIMARY, YASL_BUTTON_MIDDLE, YASL_BUTTON_SECONDARY, YASL_BUTTON_BACK, YASL_BUTTON_FORWARD };
 #define YASL_BUTTON_BIT(button) (1u << (button))

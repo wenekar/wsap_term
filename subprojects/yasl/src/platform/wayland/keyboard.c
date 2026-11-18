@@ -111,10 +111,12 @@ void keyboard_repeat_sync(struct seat *s)
     timerfd_settime(s->repeat_fd, 0, &timer, NULL);
 }
 
-static const char *const input_mod_names[5] = {
+#define INPUT_MOD_COUNT 9
+static const char *const input_mod_names[INPUT_MOD_COUNT] = {
     XKB_MOD_NAME_SHIFT, XKB_MOD_NAME_ALT,
     XKB_MOD_NAME_CTRL, XKB_MOD_NAME_LOGO,
-    XKB_MOD_NAME_CAPS
+    XKB_MOD_NAME_CAPS,
+    "Hyper", "Meta", "NumLock", "ScrollLock"
 };
 
 static void resolve_input_mod_masks(struct seat *s)
@@ -125,7 +127,7 @@ static void resolve_input_mod_masks(struct seat *s)
     if (!probe) return;
     for (unsigned real = 0; real < 8; real++) {
         xkb_state_update_mask(probe, 1u << real, 0, 0, 0, 0, 0);
-        for (unsigned i = 0; i < 5; i++) {
+        for (unsigned i = 0; i < INPUT_MOD_COUNT; i++) {
             if (xkb_state_mod_name_is_active(probe, input_mod_names[i],
                     XKB_STATE_MODS_EFFECTIVE) > 0)
                 s->input_mod_masks[i] |= 1u << real;
@@ -559,7 +561,7 @@ int seat_modifiers(struct seat *s)
 
     unsigned mods = 0;
     xkb_mod_mask_t reported = 0;
-    for (unsigned i = 0; i < 5; i++) {
+    for (unsigned i = 0; i < INPUT_MOD_COUNT; i++) {
         xkb_mod_mask_t mask = s->input_mod_masks[i];
         if (mask && (mask & ~reported) &&
             xkb_state_mod_name_is_active(s->xkb_state, input_mod_names[i],
