@@ -2619,10 +2619,9 @@ uint32_t cocoa_display_caps(const struct cocoa_display *d)
         return 0;
     uint32_t caps = YASL_PRIVATE_CAP_POPUPS | YASL_PRIVATE_CAP_DRAG |
                     YASL_PRIVATE_CAP_DRAG_CARRY | YASL_PRIVATE_CAP_PLACE_WINDOW |
-                    YASL_PRIVATE_CAP_PRIMARY_SELECTION | YASL_PRIVATE_CAP_CSD |
-                    YASL_PRIVATE_CAP_NATIVE_GRAPHICS | YASL_PRIVATE_CAP_FRAME_PACING |
-                    YASL_PRIVATE_CAP_TABLET | YASL_PRIVATE_CAP_RELATIVE_POINTER |
-                    YASL_PRIVATE_CAP_TEXT_INPUT;
+                    YASL_PRIVATE_CAP_CSD | YASL_PRIVATE_CAP_NATIVE_GRAPHICS |
+                    YASL_PRIVATE_CAP_FRAME_PACING | YASL_PRIVATE_CAP_TABLET |
+                    YASL_PRIVATE_CAP_RELATIVE_POINTER | YASL_PRIVATE_CAP_TEXT_INPUT;
     if (cocoa_vulkan_available())
         caps |= YASL_PRIVATE_CAP_VULKAN;
     return caps;
@@ -2959,14 +2958,10 @@ bool cocoa_surface_ime_preedit_cursor(const struct cocoa_surface *w, int *begin,
 
 static NSPasteboard *pasteboard_for_selection(enum yasl_private_selection sel)
 {
-    switch (sel) {
-    case YASL_PRIVATE_CLIPBOARD:
-        return [NSPasteboard generalPasteboard];
-    case YASL_PRIVATE_PRIMARY:
-        return [NSPasteboard pasteboardWithName:@"dev.wsap.yasl.primary"];
-    default:
-        return nil;
-    }
+    /* macOS has one system pasteboard, which is the clipboard. It has no primary
+     * selection, so the backend reports no such capability and refuses the
+     * selection instead of keeping a pasteboard of its own. */
+    return sel == YASL_PRIVATE_CLIPBOARD ? [NSPasteboard generalPasteboard] : nil;
 }
 
 static bool cocoa_display_copy_text(struct cocoa_display *d, enum yasl_private_selection sel, const char *text);
@@ -2976,7 +2971,7 @@ static bool cocoa_display_copy_text(struct cocoa_display *d, enum yasl_private_s
     assert([NSThread isMainThread]);
     if (!d || !text) { errno = EINVAL; return false; }
     NSPasteboard *pb = pasteboard_for_selection(sel);
-    if (!pb) { errno = EINVAL; return false; }
+    if (!pb) { errno = sel == YASL_PRIVATE_PRIMARY ? ENOTSUP : EINVAL; return false; }
     NSString *s = [NSString stringWithUTF8String:text];
     if (!s) { errno = EINVAL; return false; }
     [pb clearContents];
@@ -2998,7 +2993,7 @@ static bool cocoa_display_request_paste(struct cocoa_display *d, enum yasl_priva
         return false;
     }
     NSPasteboard *pb = pasteboard_for_selection(sel);
-    if (!pb) { errno = EINVAL; return false; }
+    if (!pb) { errno = sel == YASL_PRIVATE_PRIMARY ? ENOTSUP : EINVAL; return false; }
     NSString *s = [pb stringForType:NSPasteboardTypeString];
     const char *utf8 = s ? s.UTF8String : NULL;
     enum yasl_private_transfer_status status = !s ? YASL_PRIVATE_TRANSFER_UNAVAILABLE :

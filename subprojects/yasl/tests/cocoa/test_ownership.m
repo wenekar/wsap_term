@@ -27,6 +27,8 @@ int main(void)
     struct yasl_private_display *d = yasl_private_display_open(NULL, NULL);
     assert(d);
     assert(yasl_private_display_caps(d) & YASL_PRIVATE_CAP_TEXT_INPUT);
+    /* macOS has one system pasteboard and no primary selection. */
+    assert(!(yasl_private_display_caps(d) & YASL_PRIVATE_CAP_PRIMARY_SELECTION));
     struct yasl_private_window_spec spec = {.title = "Ownership test", .size = {160, 100}};
     struct yasl_surface *s = yasl_private_surface_create_toplevel(d, &spec);
     assert(s);
