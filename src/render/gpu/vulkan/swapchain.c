@@ -107,16 +107,22 @@ static bool traits_ensure(struct render_gpu *g, struct gpu_surface *gs, VkSurfac
     if (!formats)
         return false;
     vr = g->vk.GetPhysicalDeviceSurfaceFormatsKHR(pd, surface, &format_count, formats);
-    bool ok = (vr == VK_SUCCESS || vr == VK_INCOMPLETE) && format_count;
-    if (ok) {
-        gs->traits.format = formats[0];
+    bool ok = false;
+    if ((vr == VK_SUCCESS || vr == VK_INCOMPLETE) && format_count) {
+        /* The blend rule of paint/scene.h uses 8-bit sRGB channel values.
+         * An _SRGB format converts every write, so the GPU would blend in
+         * linear light and the pixels would not match the CPU. The copy of
+         * the CPU pixels also needs the BGRA byte order of TEXEL_FORMAT.
+         * So the backend takes only TEXEL_FORMAT. Other formats, _SRGB
+         * included, give no GPU frame and the CPU paints. */
         for (uint32_t i = 0; i < format_count; i++) {
             if (formats[i].format == TEXEL_FORMAT) {
                 gs->traits.format = formats[i];
+                gs->traits.surface = surface;
+                ok = true;
                 break;
             }
         }
-        gs->traits.surface = surface;
     }
     free(formats);
     return ok;
