@@ -1,9 +1,8 @@
 #ifndef WSAP_UI_TEXT_RUN_H
 #define WSAP_UI_TEXT_RUN_H
 
-#include "wsap_vtcore/wsap_vtcore.h"
-#include "wsap_vtcore/unicode/unicode.h"
-#include "wsap_vtcore/unicode/utf8.h"
+#include "util/unicode/utf8.h"
+#include "util/unicode/width.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -20,12 +19,12 @@ static inline int ui_text_run_next(const char *text, size_t len,
         return 1;
     }
 
-    int n = wsap_vtcore_utf8_decode_one(text, len, cp);
+    int n = unicode_utf8_decode_one(text, len, cp);
     if (n <= 0) {
         *cp = UI_TEXT_REPLACEMENT;
         n = 1;
     }
-    int w = wsap_vtcore_unicode_width(*cp);
+    int w = unicode_width(*cp);
     if (w < 0) {
         *cp = UI_TEXT_REPLACEMENT;
         w = 1;
@@ -39,7 +38,7 @@ static inline int ui_text_run_cells(const char *text, size_t len)
     size_t off = 0;
     int cells = 0;
     while (off < len) {
-        size_t span = wsap_vtcore_scan_printable_span(text + off, len - off, 0x7f);
+        size_t span = unicode_utf8_printable_span(text + off, len - off, 0x7f);
         if (span > 0) {
             cells += (int)span;
             off += span;
