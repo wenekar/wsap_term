@@ -233,6 +233,20 @@ static void shortcut_set_route(struct input_shortcut_state *st, unsigned key_id,
     *entry = (uint8_t)((*entry & ~(15u << shift)) | ((unsigned)route << shift));
 }
 
+unsigned input_key_id(const struct input_key_event *ev)
+{
+    if (!ev)
+        return 0;
+    return ev->key != INPUT_KEY_NONE ? (unsigned)ev->key
+                                    : 512u + (ev->base < 256 ? ev->base : 0);
+}
+
+bool input_keymap_match(const struct input_keymap *km,
+                        const struct input_key_event *ev)
+{
+    return input_keymap_lookup(km, ev) != INPUT_SHORTCUT_NONE;
+}
+
 enum input_key_route input_shortcut_route_key(const struct input_keymap *km,
         struct input_queue *q,
         struct input_shortcut_state *st,

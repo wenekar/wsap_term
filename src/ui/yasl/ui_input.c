@@ -62,8 +62,24 @@ static struct ui_key_event raw_key_from_input(const struct input_key_event *ev)
     case INPUT_KEY_KP_PAGE_DOWN:
         out.key = UI_KEY_PAGE_DOWN;
         return out;
+    case INPUT_KEY_INSERT:
+    case INPUT_KEY_KP_INSERT:
+        out.key = UI_KEY_INSERT;
+        return out;
     default:
         break;
+    }
+    if (ev->key >= INPUT_KEY_F1 && ev->key <= INPUT_KEY_F35) {
+        out.key = (enum ui_key)(UI_KEY_F1 + (ev->key - INPUT_KEY_F1));
+        return out;
+    }
+    if (ev->key >= INPUT_KEY_KP_0 && ev->key <= INPUT_KEY_KP_BEGIN) {
+        out.key = (enum ui_key)(UI_KEY_KP_0 + (ev->key - INPUT_KEY_KP_0));
+        return out;
+    }
+    if (ev->key >= INPUT_KEY_CAPS_LOCK && ev->key <= INPUT_KEY_ISO_LEVEL5_SHIFT) {
+        out.key = (enum ui_key)(UI_KEY_CAPS_LOCK + (ev->key - INPUT_KEY_CAPS_LOCK));
+        return out;
     }
     if (ev->codepoint || ev->shifted) {
         out.key = UI_KEY_CHAR;

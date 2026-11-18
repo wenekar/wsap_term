@@ -343,6 +343,16 @@ enum input_key_route {
  * Enqueues shortcut events into `q` and writes matched action to `out_sc`.
  * Returns the routing action for the key event.
  */
+/* Returns the identifier that the shortcut state tracks for key `ev`. */
+unsigned input_key_id(const struct input_key_event *ev);
+
+/*
+ * Returns true when keymap `km` binds key event `ev`.
+ * The function reads the map only. It queues no event.
+ */
+bool input_keymap_match(const struct input_keymap *km,
+                        const struct input_key_event *ev);
+
 enum input_key_route input_shortcut_route_key(const struct input_keymap *km,
         struct input_queue *q,
         struct input_shortcut_state *st,
