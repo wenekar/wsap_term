@@ -1971,6 +1971,7 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
     bool fullscreen = (self.window.styleMask & NSWindowStyleMaskFullScreen) != 0;
     set_state(w, YASL_PRIVATE_STATE_FULLSCREEN, fullscreen);
     set_state(w, YASL_PRIVATE_STATE_MAXIMIZED, !fullscreen && self.window.isZoomed);
+    set_state(w, YASL_PRIVATE_STATE_CSD, !(self.window.styleMask & NSWindowStyleMaskTitled));
     sync_size(w, false);
     darwin_ctx.depth--;
 }
@@ -2598,6 +2599,9 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
             NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable;
         if (!(spec->flags & YASL_PRIVATE_SURFACE_FIXED_SIZE))
             style |= NSWindowStyleMaskResizable;
+        /* The system draws the title bar of a titled window. A borderless window
+         * has none, so the application draws the frame. */
+        w->base.state = (style & NSWindowStyleMaskTitled) ? 0 : YASL_PRIVATE_STATE_CSD;
         w->window = [[YaslWindow alloc] initWithContentRect:NSMakeRect(0, 0, win_w, win_h)
                                                   styleMask:style
                                                     backing:NSBackingStoreBuffered
@@ -3141,6 +3145,8 @@ struct cocoa_surface *cocoa_surface_create_popup(struct cocoa_surface *parent,
         w->parent = parent;
         w->is_popup = true;
         w->popup_order = ++darwin_ctx.popup_serial;
+        /* A popup has no system decorations, so the application draws its frame. */
+        w->base.state = YASL_PRIVATE_STATE_CSD;
         w->content_offset = spec->content_offset;
 
         NSRect frame = popup_calc_frame(parent, spec);

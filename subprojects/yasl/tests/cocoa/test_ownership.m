@@ -52,6 +52,10 @@ int main(void)
     assert(metal && [metal isKindOfClass:[CAMetalLayer class]] && !metal.device);
     NSWindow *hidden = (NSWindow *)yasl_private_surface_get_native_handle(gpu);
     assert(!hidden.isVisible && hidden.styleMask == NSWindowStyleMaskBorderless);
+    /* A titled window keeps its system title bar. An undecorated window has
+     * none, so the application draws the frame. */
+    assert(!(s->state & YASL_PRIVATE_STATE_CSD));
+    assert(gpu->state & YASL_PRIVATE_STATE_CSD);
     yasl_private_surface_destroy(gpu);
 
     assert(!d->ops->surface_create_gl && !d->ops->gl_make_current &&
@@ -69,6 +73,7 @@ int main(void)
     };
     struct yasl_surface *popup = yasl_private_surface_create_popup(s, &popup_spec);
     assert(popup);
+    assert(popup->state & YASL_PRIVATE_STATE_CSD);
     popup_spec.anchor_edges = 8;
     popup_spec.gravity = 5;
     assert(yasl_private_surface_popup_reposition(popup, &popup_spec));
