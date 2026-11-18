@@ -492,7 +492,10 @@ static void keyboard_repeat_ready(void *data, int fd, short revents)
     }
     if (count > 32) count = 32;
     while (count-- && s->repeat_held && s->repeat_rate > 0) {
-        if (!keyboard_dispatch_key(s, w, s->repeat_key, YASL_KEY_REPEAT, 0))
+        /* A repeat has no compositor event, and its 32-bit time mixes badly
+         * with the full monotonics. Stamp the loop clock. */
+        if (!keyboard_dispatch_key(s, w, s->repeat_key, YASL_KEY_REPEAT,
+                                   yasl_private_loop_now_ns()))
             keyboard_repeat_stop(s);
     }
 }
