@@ -69,7 +69,9 @@ struct render_gpu {
     struct gpu_build build;
     /* The atlas texture, and the texture of each image slot of the builder. */
     id<MTLTexture> atlas;
-    id<MTLTexture> images[GPU_IMAGES];
+    /* One texture for each image slot of the builder. The slots grow. */
+    id<MTLTexture> *images;
+    int images_cap;
     unsigned next_slot;
 };
 
@@ -110,7 +112,19 @@ static bool textures_sync(struct render_gpu *g)
         [g->atlas release];
         g->atlas = t;
     }
-    for (int i = 0; i < GPU_IMAGES; i++) {
+    if (b->n_images > g->images_cap) {
+        int cap = g->images_cap ? g->images_cap : 8;
+        while (cap < b->n_images)
+            cap *= 2;
+        id<MTLTexture> *next = realloc(g->images, (size_t)cap * sizeof(*next));
+        if (!next)
+            return false;
+        for (int i = g->images_cap; i < cap; i++)
+            next[i] = nil;
+        g->images = next;
+        g->images_cap = cap;
+    }
+    for (int i = 0; i < b->n_images; i++) {
         if (!gpu_image_needs_upload(b, i))
             continue;
         /* New pixels get a new texture, because an in-flight frame can
@@ -633,8 +647,9 @@ void render_gpu_free(struct render_gpu *g)
         [slot->instances release];
         [slot->upload release];
     }
-    for (int i = 0; i < GPU_IMAGES; i++)
+    for (int i = 0; i < g->images_cap; i++)
         [g->images[i] release];
+    free(g->images);
     [g->atlas release];
     for (int i = 0; i < GPU_BLEND_COUNT; i++)
         [g->glyph_pipeline[i] release];
