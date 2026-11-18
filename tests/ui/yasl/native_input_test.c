@@ -185,6 +185,16 @@ static void bound_key_reaches_widget_test(void)
     assert(!input_queue_take(&w.input, &out));
 }
 
+/* ALT changes the text of a key, but the text still arrives as a TEXT event.
+ * The key event defers its own label so the widget does not insert it twice. */
+static void alt_key_text_deferred_test(void)
+{
+    fresh_window();
+    struct input_key_event k = feed_key(YASL_KEY_A, 'a', 0xE5, YASL_MOD_ALT);
+    assert(k.text_deferred);
+    assert(ui_key_from_input(&k).text_deferred);
+}
+
 /* Keypad Clear keeps its identity. */
 static void keypad_clear_test(void)
 {
@@ -444,6 +454,7 @@ int main(void)
     pen_contact_test();
     caps_lock_key_text_test();
     bound_key_reaches_widget_test();
+    alt_key_text_deferred_test();
     keypad_clear_test();
     image_drop_saves_file_test();
     text_drop_pastes_test();

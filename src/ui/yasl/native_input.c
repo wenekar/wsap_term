@@ -206,7 +206,7 @@ static enum input_key_route queue_key(struct window *w, const struct yasl_event 
         .base = us_base(in->key.key),
         .text = label,
         .consumed_mods = (unsigned)input_modifiers_from_yasl(in->key.consumed_mods),
-        .text_deferred = native_text || (label != 0 && !(in->mods & YASL_MOD_ALT)),
+        .text_deferred = native_text || label != 0,
         .ime_handled = in->key.text_input == YASL_KEY_TEXT_COMPOSITION,
     };
 
