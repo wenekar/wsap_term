@@ -523,8 +523,86 @@ static void align_and_stack_placement_test(void)
     css_sheet_clear(&sheet);
 }
 
+
+static void fractional_scale_rounding_test(void)
+{
+    static const float scales[] = { 1.0f, 1.25f, 1.5f, 2.0f };
+    static const int values[] = { 1, 3, 5, 7 };
+
+    /* One length rounds to the nearest pixel, and a rectangle rounds each
+       edge. The CSS int resolver, the fixed helper, and the layout must use
+       the same rule at every scale. */
+    for (size_t s = 0; s < sizeof(scales) / sizeof(scales[0]); s++) {
+        struct css_scale_context ctx = {
+            .dpi_scale = scales[s],
+            .cell_w = 8.0f * scales[s],
+            .cell_h = 16.0f * scales[s],
+        };
+        for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
+            struct css_value v = {
+                .val = (float)values[i],
+                .unit = CSS_UNIT_PX,
+            };
+            int expected = (int)lroundf((float)values[i] * scales[s]);
+            assert(ui_px(scales[s], values[i]) == expected);
+            assert(ui_css_resolve_int(v, 0, 0, &ctx, true) == expected);
+            assert(ui_ctx_size(&ctx, v, 0) == expected);
+        }
+    }
+
+    struct css_sheet sheet = {0};
+    assert(css_parse(&sheet,
+        ".row { padding: 1.5px; align-items: stretch; }"
+        ".half { width: 2.5px; }"
+        ".tail { width: 5.5px; }"));
+
+    struct ui_box row = {0};
+    struct probe half = {0}, tail = {0};
+    ui_box_init(&row);
+    ui_widget_set_style_identity(&row.widget, "row", NULL, NULL);
+    probe_init(&half, "half", (struct vector2i){ .x = 0, .y = 4 });
+    probe_init(&tail, "tail", (struct vector2i){ .x = 0, .y = 4 });
+    assert(ui_widget_add_children(&row.widget, (struct ui_widget *[]){
+        &half.widget, &tail.widget }, 2));
+
+    for (size_t s = 0; s < sizeof(scales) / sizeof(scales[0]); s++) {
+        float scale = scales[s];
+        struct css_scale_context ctx = {
+            .dpi_scale = scale,
+            .cell_w = 8.0f * scale,
+            .cell_h = 16.0f * scale,
+        };
+        struct ui_surface surface = {0};
+        show(&surface, &row.widget, &sheet, (struct vector2i){ .x = 20, .y = 10 });
+        ui_surface_set_scale(&surface, ctx);
+
+        int pad = (int)lroundf(1.5f * scale);
+        float mid_edge = (float)pad + 2.5f * scale;
+        int mid = (int)lroundf(mid_edge);
+        int end = (int)lroundf(mid_edge + 5.5f * scale);
+        assert(half.widget.bounds.x == pad);
+        assert(half.widget.bounds.width == mid - pad);
+        assert(tail.widget.bounds.x == mid);
+        assert(tail.widget.bounds.width == end - mid);
+        assert(rect2i_end(half.widget.bounds).x == tail.widget.bounds.x);
+        assert(half.widget.layout_bounds.pos.x == (float)pad);
+        assert(half.widget.layout_bounds.size.x == 2.5f * scale);
+        assert(tail.widget.layout_bounds.pos.x == mid_edge);
+        assert(tail.widget.layout_bounds.size.x == 5.5f * scale);
+
+        struct vector2i natural = ui_widget_measure(&row.widget,
+            (struct ui_constraints){ .max = { .x = 400, .y = 100 } });
+        assert(natural.x == (int)lroundf(2.0f * (float)pad + 8.0f * scale));
+        ui_surface_destroy(&surface);
+    }
+
+    ui_widget_destroy(&row.widget);
+    css_sheet_clear(&sheet);
+}
+
 int main(void)
 {
+    fractional_scale_rounding_test();
     wrapped_label_test();
     row_sizing_test();
     nested_percent_and_limits_test();

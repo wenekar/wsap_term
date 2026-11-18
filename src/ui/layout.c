@@ -58,15 +58,11 @@ static bool float_equal(float a, float b)
     return diff < LAYOUT_EPSILON && diff > -LAYOUT_EPSILON;
 }
 
+/* Rounds one edge or one size. The rule comes from css.h so every part of
+   the UI core rounds the same way. */
 static int round_edge(float value)
 {
-    if (!isfinite(value))
-        return 0;
-    if (value >= (float)INT_MAX)
-        return INT_MAX;
-    if (value <= (float)INT_MIN)
-        return INT_MIN;
-    return (int)lroundf(value);
+    return ui_float_to_int(value, false);
 }
 
 static struct vector2i raster_size(const float size[2])

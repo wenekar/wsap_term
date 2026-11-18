@@ -376,6 +376,11 @@ static inline uint32_t ui_color_opacity(uint32_t color, float opacity)
     return (color & 0x00FFFFFFu) | (a << 24);
 }
 
+/* The pixel rounding rule of the UI core: one length rounds to the nearest
+   whole pixel, and a half pixel rounds away from zero. A rectangle rounds each
+   of its two edges, so its size follows from the rounded edges. Two touching
+   rectangles keep a shared edge, and no gap or overlap appears. */
+
 /* Returns `v` as a whole number, clamped to the int range. A nonnegative
    result is zero or more. */
 static inline int ui_float_to_int(float v, bool nonnegative)
@@ -388,7 +393,7 @@ static inline int ui_float_to_int(float v, bool nonnegative)
         return INT_MAX;
     if (v <= (float)INT_MIN)
         return nonnegative ? 0 : INT_MIN;
-    return (int)v;
+    return (int)lroundf(v);
 }
 
 /* Resolves CSS value `v` to whole pixels. */
@@ -422,7 +427,8 @@ static inline int ui_ctx_size(const struct css_scale_context *ctx,
     float resolved = css_value_resolve(v, 0, fallback, ctx);
     if (!isfinite(resolved) || resolved <= 0.0f)
         return (int)fallback;
-    return resolved < (float)INT_MAX ? (int)lroundf(resolved) : (int)fallback;
+    return resolved < (float)INT_MAX ? ui_float_to_int(resolved, true)
+                                     : (int)fallback;
 }
 
 /* Resolves CSS value `v` to a whole pixel inset. A negative result is zero. */
