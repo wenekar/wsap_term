@@ -173,7 +173,7 @@ Add tests with arguments or symbol overrides to `standalone_tests` in
 | `make test` | Regular host tests in `$(BUILD_DIR)-test`. |
 | `make test-asan` | Address, leak, and undefined behavior checks. |
 | `make test-tsan` | Thread checks. |
-| `make test-msan` | Memory checks without the `extlib` suite. |
+| `make test-msan` | Memory checks without the `extlib` suite. On Linux it builds with clang. |
 | `make test-sanitizers` | All sanitizer targets. |
 | `make test-fuzz` | 50,000 parser fuzz seeds. |
 | `meson test -C build --suite isa --print-errorlogs` | ISA tests. |
@@ -247,6 +247,10 @@ See [performance reports](../benchmarks/) for results and methods.
 Sanitizer targets use separate build directories.
 They clear `LD_PRELOAD` and `DYLD_INSERT_LIBRARIES` before each run.
 The preload shim and its exec helper remain unsanitized.
+The term and yasl subprojects define the same `asan`, `tsan`, and `msan`
+setups, so `meson test --setup NAME` runs the whole tree.
+The MSan build uses clang with `-Db_lundef=false`. Clang links the sanitizer
+runtime only into executables.
 
 For a direct MemorySanitizer run:
 
