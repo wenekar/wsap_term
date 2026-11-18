@@ -1,8 +1,7 @@
-#include "app/thumbnail.h"
+#include "runtime/runtime.h"
 
 #include <stdlib.h>
 
-#include "app/app.h"
 #include "font/font.h"
 #include "paint/scene.h"
 #include "render/render.h"
@@ -11,7 +10,7 @@
 
 /* A window keeps one of these while it shows a tab preview. The struct holds
  * only the small thumbnail: the full-resolution image is scratch that
- * app_thumbnail_capture() gives back before it returns. */
+ * app_runtime_thumbnail_capture() gives back before it returns. */
 struct app_thumbnail {
     struct ui_image image;
     uint32_t *pixels;
@@ -97,11 +96,11 @@ static void resample(uint32_t *dst, struct vector2i dst_size,
         free(ranges);
 }
 
-bool app_thumbnail_capture(void *ud, void **state, struct font_instance *font,
+bool app_runtime_thumbnail_capture(void *ud, void **state, struct font_instance *font,
                            struct wsap_vtcore *term, int width, struct ui_image *image)
 {
-    struct app *app = ud;
-    if (!app || !state || !font || !term || width <= 0 || !image)
+    struct app_runtime *rt = ud;
+    if (!rt || !state || !font || !term || width <= 0 || !image)
         return false;
     struct app_thumbnail *thumb = *state;
     if (!thumb) {
@@ -160,7 +159,7 @@ bool app_thumbnail_capture(void *ud, void **state, struct font_instance *font,
         .grid = { .frame = &grid, .font = font, .rect = { .size = full_size } },
         .cpu_only = true,
     };
-    (void)render_draw(app->renderer, &target, &frame);
+    (void)render_draw(app_runtime_renderer(rt), &target, &frame);
     resample(thumb->pixels, size, full, full_size);
     free(full);
     thumb->image = (struct ui_image){
@@ -174,7 +173,7 @@ bool app_thumbnail_capture(void *ud, void **state, struct font_instance *font,
     return true;
 }
 
-void app_thumbnail_release(void *state)
+void app_runtime_thumbnail_release(void *state)
 {
     struct app_thumbnail *thumb = state;
     if (!thumb)

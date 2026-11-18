@@ -8,6 +8,7 @@
 #include "app/tabs/model.h"
 #include "ui/yasl/window.h"
 
+struct app_runtime;
 struct look;
 struct renderer;
 
@@ -18,6 +19,9 @@ struct app {
     char *config_path;
     struct yasl_loop *loop;
     struct renderer *renderer;
+    /* The frame state above render and ui_yasl. It owns the renderer use
+     * that outlives one window. */
+    struct app_runtime *runtime;
     struct look *look;
     struct window_host host;
     /* The tab table. It owns every terminal of the app. Windows hold tab
@@ -27,8 +31,6 @@ struct app {
     char **argv;
     uint32_t *cursor_px;
     size_t cursor_px_cap;
-    uint64_t gpu_idle_timer;
-    uint64_t last_gpu_draw_ms;
     int argc;
     bool render_started;
 };

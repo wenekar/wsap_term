@@ -23,5 +23,4 @@ app_src = files(
     'app.c',
     'stats.c',
     'style.c',
-    'thumbnail.c',
 ) + app_tabs_src + app_config_src + app_css

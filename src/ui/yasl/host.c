@@ -64,6 +64,17 @@ void window_host_remove(struct window_host *host, struct window *w)
         host->primary = host->count ? host->windows[0] : NULL;
 }
 
+bool window_host_request_close(struct window *w)
+{
+    struct window_host *host = w->host;
+    return !host->hooks.close || host->hooks.close(host->hooks.ud, w);
+}
+
+bool window_host_request_quit(struct window_host *host)
+{
+    return !host->hooks.quit_request || host->hooks.quit_request(host->hooks.ud);
+}
+
 void window_host_reap(struct window_host *host)
 {
     while (host->closing) {
@@ -269,7 +280,7 @@ static void dispatch_event(struct window_host *host, const struct yasl_event *ev
 {
     switch (ev->type) {
     case YASL_EVENT_QUIT:
-        if (host->hooks.quit)
+        if (window_host_request_quit(host) && host->hooks.quit)
             host->hooks.quit(host->hooks.ud);
         return;
     case YASL_EVENT_REOPEN:
@@ -277,7 +288,8 @@ static void dispatch_event(struct window_host *host, const struct yasl_event *ev
             host->hooks.reopen(host->hooks.ud);
         return;
     case YASL_EVENT_DISPLAY_LOST:
-        if (ev->action == YASL_LOST_FINAL && host->hooks.quit)
+        if (ev->action == YASL_LOST_FINAL && window_host_request_quit(host) &&
+            host->hooks.quit)
             host->hooks.quit(host->hooks.ud);
         return;
     case YASL_EVENT_DISPLAY_RESTORED:
@@ -299,10 +311,10 @@ static void dispatch_event(struct window_host *host, const struct yasl_event *ev
         return;
     switch (ev->type) {
     case YASL_EVENT_CLOSE:
-        if (main)
-            window_close(w);
-        else
+        if (!main)
             window_menu_close(w);
+        else if (window_host_request_close(w))
+            window_close(w);
         break;
     case YASL_EVENT_WINDOW:
         if (main)

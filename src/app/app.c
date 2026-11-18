@@ -5,25 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#ifdef __GLIBC__
-#include <malloc.h>
-#elif defined(__APPLE__)
-#include <malloc/malloc.h>
-#endif
-
-static void app_trim_heap(void)
-{
-#ifdef __GLIBC__
-    malloc_trim(0);
-#elif defined(__APPLE__)
-    malloc_zone_pressure_relief(NULL, 0);
-#endif
-}
 
 #include "app/app.h"
 #include "app/config/settings.h"
 #include "app/style.h"
 #include "app/thumbnail.h"
+#include "runtime/runtime.h"
 #include "loop/latency_probe.h"
 #include "yasl/yasl.h"
 #include "loop/signals.h"
@@ -41,35 +28,8 @@ static void app_trim_heap(void)
 #include "ui/yasl/inspector.h"
 #include "ui/yasl/client.h"
 
-#define GPU_IDLE_RELEASE_MS 500u
-
 static void app_stop(struct app *a);
 static int run_loop(struct app *a);
-
-static uint64_t gpu_idle_fire(void *ud, uint64_t id, uint64_t interval_ns)
-{
-    (void)id; (void)interval_ns;
-    struct app *a = ud;
-    uint64_t now_ms = yasl_time_ns() / 1000000;
-    uint64_t elapsed = now_ms >= a->last_gpu_draw_ms ? now_ms - a->last_gpu_draw_ms : 0;
-    if (elapsed < GPU_IDLE_RELEASE_MS)
-        return (uint64_t)(GPU_IDLE_RELEASE_MS - elapsed) * 1000000ull;
-    if (!renderer_idle_gpu(a->renderer))
-        return 100ull * 1000000ull;
-    a->gpu_idle_timer = 0;
-    app_trim_heap();
-    return 0;
-}
-
-static void schedule_gpu_idle_release(struct app *a, uint64_t now_ms)
-{
-    a->last_gpu_draw_ms = now_ms;
-    if (!a->loop || a->gpu_idle_timer)
-        return;
-    a->gpu_idle_timer = yasl_loop_add_timer(a->loop,
-                                            (uint64_t)GPU_IDLE_RELEASE_MS * 1000000ull,
-                                            gpu_idle_fire, a);
-}
 
 static bool cursor_pixels_fit(struct app *a, size_t need_px)
 {
@@ -150,7 +110,6 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
          * closes a window or changes the tab model. */
         /* Settle pending stylesheet or root invalidations before taking UI
          * frame requests so initial styling does not schedule a second pass. */
-        ui_surface_prepare(window_ui_surface(w));
         window_ui_prepare_frame(w, now_ms);
         ui_surface_prepare(window_ui_surface(w));
         content = app_tabs_active(w);
@@ -164,13 +123,17 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
     struct window_ui_frame ui = {0};
     if (!window_ui_build_frame(w, frame->surface, now_ms, &ui))
         ui.repaint = true;
-    /* Scene preparation can finish a deferred layout pass. Retry instead
-     * of showing a snapshot at a different content rectangle. */
-    if (content && !rect2i_eq(content_bounds,
-                             terminal_input_widget(content)->bounds)) {
-        window_repaint_all(w);
-        window_redraw(w);
-        return;
+    /* Scene preparation can finish a deferred layout pass. Apply the new
+     * content rectangle in this frame, so the snapshot matches the scene. */
+    if (content) {
+        struct rect2i settled = terminal_input_widget(content)->bounds;
+        if (!rect2i_eq(content_bounds, settled)) {
+            content_bounds = settled;
+            terminal_commit_geometry(content);
+            terminal_prepare(content, now_ms);
+            if (!window_ui_build_frame(w, frame->surface, now_ms, &ui))
+                ui.repaint = true;
+        }
     }
 
     struct render_frame render = {
@@ -209,36 +172,26 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
     }
     struct render_result result = render_draw(a->renderer, &frame->target, &render);
     if (result.presented && !render.cpu_only)
-        schedule_gpu_idle_release(a, now_ms);
+        app_runtime_note_gpu_draw(a->runtime, now_ms);
     if (window_present(w, frame, &result.damage, result.presented) && main)
         latency_probe_complete();
     window_ui_frame_done(w, frame, now_ms);
 
-    static bool trimmed_first_frame;
-    if (!trimmed_first_frame && main) {
-        trimmed_first_frame = true;
-        app_trim_heap();
-    }
+    if (main)
+        app_runtime_note_first_frame(a->runtime);
 }
 
-static bool app_paint_scene(void *ud, struct font_instance *font,
-                            uint32_t *pixels, struct vector2i size,
-                            const struct ui_scene *scene)
+bool app_thumbnail_capture(void *ud, void **state, struct font_instance *font,
+                           struct wsap_vtcore *term, int width, struct ui_image *image)
 {
     struct app *a = ud;
-    struct framebuffer target = {
-        .pixels = pixels,
-        .size = size,
-        .fresh = true,
-    };
-    struct render_frame frame = {
-        .ui = scene,
-        .ui_font = font,
-        .repaint = true,
-        .cpu_only = true,
-    };
-    (void)render_draw(a->renderer, &target, &frame);
-    return true;
+    return app_runtime_thumbnail_capture(a ? a->runtime : NULL, state, font,
+                                         term, width, image);
+}
+
+void app_thumbnail_release(void *state)
+{
+    app_runtime_thumbnail_release(state);
 }
 
 static void style_window(struct app *a, struct window *w)
@@ -390,7 +343,7 @@ struct window *app_open_terminal(struct app *a, app_tab_id tab,
             .theme_picker = app_theme_picker(a),
             .preview_capture = app_thumbnail_capture,
             .preview_release = app_thumbnail_release, .preview_ud = a,
-            .scene_paint = app_paint_scene, .scene_paint_ud = a,
+            .scene_paint = app_runtime_paint_scene, .scene_paint_ud = a->runtime,
             .open_window = open_window, .ud = a })) {
         window_close(w);
         return NULL;
@@ -590,6 +543,8 @@ static char **copy_args(int argc, char **argv)
 
 static void app_free(struct app *a)
 {
+    app_runtime_destroy(a->runtime);
+    a->runtime = NULL;
     if (a->renderer) {
         renderer_destroy(a->renderer);
         a->renderer = NULL;
@@ -600,13 +555,8 @@ static void app_free(struct app *a)
         look_set_listener(a->look, NULL, NULL);
         look_destroy(a->look);
     }
-    if (a->loop) {
-        if (a->gpu_idle_timer) {
-            yasl_loop_del_timer(a->loop, a->gpu_idle_timer);
-            a->gpu_idle_timer = 0;
-        }
+    if (a->loop)
         yasl_loop_destroy(a->loop);
-    }
     free(a->cursor_px);
     free(a->config_path);
     opts_destroy(&app_config_spec, &a->config);
@@ -669,6 +619,12 @@ static struct app *app_new(int argc, char **argv, bool gpu_first, int *status)
     a->loop = yasl_loop_create();
     if (!a->loop) {
         perror("loop_create");
+        *status = 1;
+        app_free(a);
+        return NULL;
+    }
+    a->runtime = app_runtime_create(a->renderer, a->loop);
+    if (!a->runtime) {
         *status = 1;
         app_free(a);
         return NULL;
@@ -736,7 +692,7 @@ int app_run(struct app *a)
     const char *sock = a->config.debug_socket;
     if (sock)
         window_debug_server_start(a->loop, &a->host, sock);
-    app_trim_heap();
+    app_runtime_trim_heap();
     int result = run_loop(a);
     if (sock)
         window_debug_server_stop();

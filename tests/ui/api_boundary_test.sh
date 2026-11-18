@@ -75,6 +75,15 @@ while IFS= read -r file; do
     fi
 done < <(find src/editor -name '*.[chm]' | sort)
 
+# The runtime library sits above render and ui_yasl. The lower layers may not
+# use it. It uses the window UI API and the window host, not their internals.
+while IFS= read -r file; do
+    if grep -n '#include "runtime/' "$file"; then
+        echo "$file: a lower library uses the app runtime" >&2
+        status=1
+    fi
+done < <({ find src/ui src/render -name '*.[chm]'; } | sort)
+
 # The render library draws a grid through render/grid.h. The terminal grid
 # renderer sits above it and owns the terminal frame and the VT cells. The
 # forwarder at src/render/term_frame.h is part of the terminal grid renderer.

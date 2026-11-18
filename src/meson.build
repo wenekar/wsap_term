@@ -12,6 +12,7 @@ subdir('ui')
 subdir('theme')
 subdir('render')
 subdir('terminal')
+subdir('runtime')
 subdir('app')
 
 base_lib = static_library(
@@ -132,13 +133,25 @@ terminal_lib = static_library(
     install: false,
 )
 
+# The app runtime. It owns the renderer use that outlives one window: frame
+# composition helpers, scene capture, thumbnails, and the GPU idle release. It
+# sits above render and ui_yasl, and the app owns it.
+runtime_lib = static_library(
+    'wsap-runtime',
+    runtime_src,
+    link_with: [base_lib, paint_lib, font_lib, render_lib, render_term_lib],
+    include_directories: inc,
+    dependencies: lib_deps + [yasl_dep] + [term_dep],
+    install: false,
+)
+
 app_lib = static_library(
     'wsap-app',
     app_src,
-    link_with: [base_lib, terminal_lib, ui_yasl_lib, session_lib, font_lib, ui_lib, pty_lib, paint_lib, theme_lib, render_lib, render_term_lib],
+    link_with: [base_lib, runtime_lib, terminal_lib, ui_yasl_lib, session_lib, font_lib, ui_lib, pty_lib, paint_lib, theme_lib, render_lib, render_term_lib],
     include_directories: [inc, app_inc],
     dependencies: core_deps + [yasl_dep] + [term_dep],
     install: false,
 )
 
-wsap_libs = [base_lib, editor_lib, pty_lib, session_lib, input_lib, paint_lib, font_lib, ui_lib, theme_lib, render_lib, render_term_lib, ui_yasl_lib, terminal_lib, app_lib]
+wsap_libs = [base_lib, editor_lib, pty_lib, session_lib, input_lib, paint_lib, font_lib, ui_lib, theme_lib, render_lib, render_term_lib, ui_yasl_lib, terminal_lib, runtime_lib, app_lib]
