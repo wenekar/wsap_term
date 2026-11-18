@@ -168,6 +168,21 @@ static bool thread_count_settles(int want)
 }
 
 /*
+ * A frame with enough work makes the pool start its workers. A worker that
+ * fails to start is left out (renderer_create), so the count can grow by
+ * less than the number that the renderer asks for.
+ */
+static bool thread_count_grows(int base)
+{
+    for (int i = 0; i < 200; i++) {
+        if (live_thread_count() > base)
+            return true;
+        nanosleep(&(struct timespec){ .tv_nsec = 10 * 1000 * 1000 }, NULL);
+    }
+    return false;
+}
+
+/*
  * The thread count after the joined threads of earlier tests leave /proc.
  * The count only goes down while they leave, so it is settled when it
  * stays the same for 100 ms.
@@ -185,13 +200,26 @@ static int settled_thread_count(void)
 }
 #endif
 
-/* Each renderer owns its workers: first CPU frame starts them, destroy joins them. */
+/*
+ * Each renderer owns its workers. The first frame with enough work starts
+ * them, and destroy joins every one of them.
+ *
+ * The pool starts at the first frame that has more than POOL_SERIAL_CELLS
+ * dirty cells (render/cpu/pool.h), not at renderer_create(). So the frame
+ * below is large enough for the parallel path, and the thread count of the
+ * process shows the state of the pool:
+ * - renderer_create() adds no thread;
+ * - the frame adds the workers, and they stay while the renderer lives;
+ * - renderer_destroy() joins them, so the count comes back to the baseline.
+ * A renderer that does not join its workers keeps the count above the
+ * baseline, and thread_count_settles() times out.
+ */
 static void worker_pool_lifecycle_test(void)
 {
-    struct wsap_vtcore *t = tt_new(8, 10);
+    struct wsap_vtcore *t = tt_new(80, 30);
     assert(t);
     feed(t, "\033[?25lParallel rendering lifecycle test");
-    int w = 8 * CELL_W, h = 10 * CELL_H;
+    int w = 80 * CELL_W, h = 30 * CELL_H;
     size_t bytes = (size_t)w * h * sizeof(uint32_t);
     uint32_t *want = malloc(bytes), *got = malloc(bytes);
     assert(want && got);
@@ -207,10 +235,10 @@ static void worker_pool_lifecycle_test(void)
 #endif
         memset(got, 0x5a, bytes);
         test_renderer_paint(r, got, w, h, t, true);
-#ifdef __linux__
-        assert(live_thread_count() == before + 3);
-#endif
         assert(!memcmp(want, got, bytes));
+#ifdef __linux__
+        assert(thread_count_grows(before));
+#endif
         test_renderer_destroy(r);
 #ifdef __linux__
         assert(thread_count_settles(before));
@@ -223,6 +251,10 @@ static void worker_pool_lifecycle_test(void)
 #endif
     test_renderer_paint(r, got, w, h, t, true);
     assert(!memcmp(want, got, bytes));
+#ifdef __linux__
+    /* RENDER_NONE paints the same large frame with no worker. */
+    assert(live_thread_count() == before);
+#endif
     test_renderer_destroy(r);
     free(want);
     free(got);
