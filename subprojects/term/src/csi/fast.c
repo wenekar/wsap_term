@@ -107,6 +107,7 @@ static inline const char *parse_byte_delim2(const char *s, const char *end, char
     return s + 1;
 }
 
+#if defined(__x86_64__) || defined(_M_X64)
 /* Parse a number of len 1 to 3 digits at p. p can read 3 bytes. Clear *ok if a
  * byte is not a digit. */
 WSAP_VTCORE_ALWAYS_INLINE
@@ -121,6 +122,7 @@ static inline uint32_t parse_num_123(const char *p, int len, bool *ok)
     *ok &= (d0 <= 9) & ((len < 2) | (d1 <= 9)) & ((len < 3) | (d2 <= 9));
     return v;
 }
+#endif
 
 /* Parse "R;G;Bm" after the "38;2;" or "48;2;" at p. */
 WSAP_VTCORE_ALWAYS_INLINE
