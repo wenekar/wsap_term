@@ -313,7 +313,8 @@ void window_accessibility_menu_popup_open(struct window *window, int depth)
                                           depth);
     if (!ui_accessibility_provider_is_active(&popup_accessibility->provider))
         return;
-    ui_surface_prepare(&popup->ui);
+    /* open_popup() resized the popup surface, and a resize lays it out. A
+     * prepare here would run layout a second time inside the publish. */
     if (ui_accessibility_tree_build(&popup->root,
                                     &popup_accessibility->tree))
         ui_accessibility_provider_publish_snapshot(

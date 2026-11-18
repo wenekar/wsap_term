@@ -7,8 +7,10 @@ static struct tb_parts parts;
 
 const struct tb_parts *tb_part(void)
 {
-    if (parts.bar)
+    uint32_t epoch = ui_part_epoch();
+    if (parts.epoch == epoch)
         return &parts;
+    parts.epoch = epoch;
     parts.bar = ui_part_intern("tab-bar");
     parts.tab = ui_part_intern("tab");
     parts.tab_active = ui_part_intern("tab active");

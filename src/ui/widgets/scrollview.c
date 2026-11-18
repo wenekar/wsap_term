@@ -18,16 +18,24 @@
 
 enum bar_state { BAR_IDLE, BAR_HOVER, BAR_PRESSED };
 
-static struct {
+struct scroll_parts {
+    uint32_t epoch;
     ui_part_id track, thumb;
-} sv_parts;
+};
 
-static void sv_parts_init(void)
+static struct scroll_parts scroll_parts_cache;
+
+/* Returns the cached part handles. A handle from an earlier part table would
+ * abort the name lookup, so the cache interns again after a table restart. */
+static const struct scroll_parts *scroll_parts(void)
 {
-    if (sv_parts.thumb)
-        return;
-    sv_parts.track = ui_part_intern("scrollbar");
-    sv_parts.thumb = ui_part_intern("scrollbar-thumb");
+    uint32_t epoch = ui_part_epoch();
+    if (scroll_parts_cache.epoch != epoch) {
+        scroll_parts_cache.epoch = epoch;
+        scroll_parts_cache.track = ui_part_intern("scrollbar");
+        scroll_parts_cache.thumb = ui_part_intern("scrollbar-thumb");
+    }
+    return &scroll_parts_cache;
 }
 
 struct bar_skin {
@@ -89,8 +97,8 @@ static struct bar_skin bar_skin(const struct ui_scrollview *sv, int state)
     const struct css_scale_context *scale = &widget->style_scale;
     unsigned pseudo = state == BAR_HOVER ? CSS_PSEUDO_HOVER
                     : state == BAR_PRESSED ? CSS_PSEUDO_ACTIVE : CSS_PSEUDO_NONE;
-    struct css_style track = ui_widget_part(widget, sv_parts.track, pseudo);
-    struct css_style thumb = ui_widget_part(widget, sv_parts.thumb, pseudo);
+    struct css_style track = ui_widget_part(widget, scroll_parts()->track, pseudo);
+    struct css_style thumb = ui_widget_part(widget, scroll_parts()->thumb, pseudo);
     struct insets2i pad = ui_ctx_insets(scale, track.padding, 0);
     int track_w = ui_ctx_size(scale, track.width,
         ui_ctx_px(scale, state == BAR_IDLE ? BAR_TRACK_IDLE : BAR_TRACK_HOVER));
@@ -541,7 +549,6 @@ static void scrollview_ensure_init(struct ui_scrollview *sv)
 {
     if (!sv || sv->widget.ops)
         return;
-    sv_parts_init();
     ui_widget_init(&sv->widget, &SCROLLVIEW_OPS, NULL);
     ui_widget_init(&sv->bar, &BAR_OPS, sv);
     ui_widget_set_keeps_press_focus(&sv->bar, true);
