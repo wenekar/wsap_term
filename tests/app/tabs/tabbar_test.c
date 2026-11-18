@@ -9,6 +9,7 @@
 #include "paint/scene.h"
 #include "ui/ui.h"
 #include "ui/widget_ops.h"
+#include "app/style.h"
 #include "app/tabs/tabbar.h"
 #include <wsap_vtcore/unicode/utf8.h>
 
@@ -79,18 +80,6 @@ static bool on_action(struct ui_widget *source, const struct ui_action *action,
     return true;
 }
 
-/* The tab bar is an app widget, so the app stylesheet holds its rules. */
-static struct css_sheet app_sheet;
-
-static const struct css_sheet *app_rules(void)
-{
-    if (!app_sheet.rule_count) {
-        css_init_default(&app_sheet);
-        assert(css_parse_app(&app_sheet));
-    }
-    return &app_sheet;
-}
-
 static void setup_with(struct fixture *f, const struct css_sheet *sheet,
                        struct vector2i viewport, struct vector2i origin)
 {
@@ -99,7 +88,7 @@ static void setup_with(struct fixture *f, const struct css_sheet *sheet,
     ui_tabbar_init(&f->tb);
     assert(ui_widget_add_child(&f->root, ui_tabbar_widget(&f->tb)));
     ui_widget_set_action_handler(ui_tabbar_widget(&f->tb), on_action, f);
-    ui_surface_set_sheet(&f->surface, sheet ? sheet : app_rules());
+    ui_surface_set_sheet(&f->surface, sheet ? sheet : app_style_sheet());
     ui_surface_set_scale(&f->surface, SCALE);
     ui_surface_set_root(&f->surface, &f->root);
     ui_surface_resize(&f->surface, viewport);
@@ -362,8 +351,7 @@ static bool near(int a, int b)
 static void css_theme_drives_layout_and_scene(void)
 {
     struct css_sheet sheet = {0};
-    css_init_default(&sheet);
-    assert(css_parse_app(&sheet));
+    assert(css_sheet_append(&sheet, app_style_sheet()));
     assert(css_parse(&sheet,
         ".tab-bar { height: 24px; padding: 2px 6px; gap: 4px;"
         " background: #101820; border-color: #304050; }"

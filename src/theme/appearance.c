@@ -4,19 +4,8 @@
 #include <string.h>
 
 #include "theme/internal.h"
-#include "util/config.h"
 #include "util/file.h"
 #include "util/name.h"
-
-static void conf_line(void *ctx, const char *path, int line,
-                      const char *k, const char *v)
-{
-    if (!v || !strcmp(k, "label"))
-        return;
-    if (!wsap_vtcore_theme_set_key(ctx, k, v))
-        fprintf(stderr, "[%s] %s:%d: bad palette entry '%s = %s'\n",
-                app_name(), path, line, k, v);
-}
 
 static void css_warning(const struct css_diagnostic *diagnostic, void *userdata)
 {
@@ -28,35 +17,30 @@ static void css_warning(const struct css_diagnostic *diagnostic, void *userdata)
 }
 
 struct appearance *appearance_load(const char *name, const char *css_path,
-                                   const char *conf_path,
-                                   const struct wsap_vtcore_theme *base)
+                                   const struct theme_data *data)
 {
     struct appearance *ap = calloc(1, sizeof(*ap));
     if (!ap)
         return NULL;
     ap->refs = 1;
-    if (base)
-        ap->palette = *base;
-    else
-        wsap_vtcore_theme_default(&ap->palette);
-    css_init_default(&ap->chrome);
-    /* The app rules extend the core rules. The theme file then overrides
-       both. */
-    if (!css_parse_app(&ap->chrome))
-        fprintf(stderr, "[%s] cannot add the app stylesheet\n", app_name());
+    if (!theme_data_copy(&ap->data, data)) {
+        appearance_unref(ap);
+        return NULL;
+    }
     if (name && !(ap->name = strdup(name))) {
         appearance_unref(ap);
         return NULL;
     }
+    /* The theme rules layer over the toolkit and app rules that the caller
+       holds. The sheet holds no core rule. */
     if (css_path) {
         char *text = util_read_file(css_path, app_name());
-        if (text && !css_parse_with_diagnostics(&ap->chrome, text,
-                                                css_warning, (void *)css_path))
-            fprintf(stderr, "[%s] cannot parse CSS file %s\n", app_name(), css_path);
+        if (text && !css_parse_deferred(&ap->chrome, text, css_warning,
+                                        (void *)css_path))
+            fprintf(stderr, "[%s] cannot parse CSS file %s\n", app_name(),
+                    css_path);
         free(text);
     }
-    if (conf_path)
-        config_parse_file(conf_path, conf_line, &ap->palette);
     return ap;
 }
 
@@ -72,6 +56,7 @@ void appearance_unref(struct appearance *ap)
     if (!ap || --ap->refs > 0)
         return;
     css_sheet_clear(&ap->chrome);
+    theme_data_clear(&ap->data);
     free(ap->name);
     free(ap);
 }

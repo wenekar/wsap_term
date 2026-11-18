@@ -7,23 +7,59 @@
 #include <time.h>
 
 #include "theme/look.h"
-#include <wsap_vtcore/wsap_vtcore.h>
 #include "ui/css.h"
 
+/* One key of a theme data block. */
+struct theme_value {
+    char *block;
+    char *key;
+    char *value;
+};
+
+/* The optional data blocks of a theme data file. The theme module stores
+   them without a meaning. An application reads the block that it knows. */
+struct theme_data {
+    struct theme_value *items;
+    int count;
+    int cap;
+};
+
 struct appearance {
-    struct wsap_vtcore_theme palette;
     struct css_sheet chrome;
+    struct theme_data data;
     char *name;
     int refs;
 };
 
 /*
- * Loads an appearance bundle containing CSS chrome styles and terminal palette.
+ * Loads an appearance with CSS chrome styles and a copy of `data`.
  * Returns a pointer to the loaded appearance, or NULL on failure.
  */
 struct appearance *appearance_load(const char *name, const char *css_path,
-                                   const char *conf_path,
-                                   const struct wsap_vtcore_theme *base);
+                                   const struct theme_data *data);
+
+/*
+ * Parses a theme data file. It fills the metadata of `meta` and stores the
+ * data blocks in `data`. Returns false when the file cannot be read.
+ */
+bool theme_data_load(const char *path, struct theme_data *data,
+                     struct look_theme *meta);
+
+/*
+ * Copies the items of `src` into `dst`. Returns false on allocation failure.
+ */
+bool theme_data_copy(struct theme_data *dst, const struct theme_data *src);
+
+/*
+ * Returns the value of `key` in the first block `block`, or NULL.
+ */
+const char *theme_data_value(const struct theme_data *data, const char *block,
+                             const char *key);
+
+/*
+ * Releases the items of `data`.
+ */
+void theme_data_clear(struct theme_data *data);
 
 /*
  * Increments the reference count of appearance `ap`.
@@ -46,7 +82,8 @@ struct file_stamp {
 struct theme_entry {
     struct look_theme info;
     struct appearance *built;
-    struct file_stamp css_stamp, conf_stamp;
+    struct theme_data data;
+    struct file_stamp css_stamp, data_stamp;
     uint32_t name_len;
     uint32_t label_len;
     char name_c0;
@@ -79,7 +116,6 @@ struct theme_entry *theme_catalog_find(struct theme_catalog *c, const char *ref)
  * Builds or retrieves the cached appearance for theme entry `e`.
  * Returns the appearance pointer, or NULL on error.
  */
-struct appearance *theme_entry_appearance(struct theme_entry *e,
-                                          const struct wsap_vtcore_theme *base);
+struct appearance *theme_entry_appearance(struct theme_entry *e);
 
 #endif

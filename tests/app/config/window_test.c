@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include "app/config/config.h"
+#include "app/style.h"
 #include "app/config/settings.h"
 #include "platform/platform.h"
 #include "render/scene_paint.h"
@@ -55,8 +56,8 @@ static struct window *open_settings(struct app *app)
         window_close(w);
         return NULL;
     }
-    window_ui_set_style(w, look_sheet(app->look),
-                        look_palette(app->look)->bg);
+    window_ui_set_style(w, app_style_sheet(), look_sheet(app->look),
+                        app->palette.bg);
     return w;
 }
 
@@ -157,7 +158,7 @@ static void snapshot(struct app *app, struct window *window, const char *name)
     size_t count = (size_t)size.x * (size_t)size.y;
     uint32_t *pixels = malloc(count * sizeof(*pixels));
     assert(pixels);
-    uint32_t background = look_palette(app->look)->bg;
+    uint32_t background = app->palette.bg;
     for (size_t i = 0; i < count; i++)
         pixels[i] = background;
     assert(ui_scene_paint(window_ui_font(window), pixels, size.x, size.y, &scene));

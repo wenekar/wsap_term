@@ -74,6 +74,7 @@ struct window_ui_menu_popup {
 struct window_ui {
     struct window_ui_spec spec;
     const struct css_sheet *sheet;
+    const struct css_sheet *theme_sheet;
     struct font_instance *ui_font;
     struct window_debug *debug;
     struct window_accessibility *accessibility;

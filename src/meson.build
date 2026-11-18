@@ -83,14 +83,12 @@ ui_lib = static_library(
     install: false,
 )
 
-# theme_lib still uses struct wsap_vtcore_theme and its key helpers.
-# B3 removes the coupling, and then term_dep goes.
 theme_lib = static_library(
     'wsap-theme',
     theme_src,
     link_with: [base_lib, ui_lib],
     include_directories: inc,
-    dependencies: lib_deps + [term_dep],
+    dependencies: lib_deps,
     install: false,
 )
 
@@ -138,7 +136,7 @@ app_lib = static_library(
     'wsap-app',
     app_src,
     link_with: [base_lib, terminal_lib, ui_yasl_lib, session_lib, font_lib, ui_lib, pty_lib, paint_lib, theme_lib, render_lib, render_term_lib],
-    include_directories: inc,
+    include_directories: [inc, app_inc],
     dependencies: core_deps + [yasl_dep] + [term_dep],
     install: false,
 )

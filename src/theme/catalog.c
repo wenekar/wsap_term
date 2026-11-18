@@ -10,19 +10,19 @@
 
 #include "theme/internal.h"
 #include "platform/platform.h"
-#include "util/config.h"
 #include "util/grow.h"
 #include "util/path.h"
 
 static const char CSS_SUFFIX[] = ".css";
-static const char CONF_SUFFIX[] = "-term.conf";
+static const char DATA_SUFFIX[] = ".theme";
 
 static void entry_clear(struct theme_entry *e)
 {
     free(e->info.name);
     free(e->info.label);
     free(e->info.css_path);
-    free(e->info.conf_path);
+    free(e->info.data_path);
+    theme_data_clear(&e->data);
     appearance_unref(e->built);
     *e = (struct theme_entry){0};
 }
@@ -66,26 +66,16 @@ static void scan_dir(struct theme_catalog *c, const char *dir)
         const char *f = ent->d_name;
         size_t len = strlen(f);
         bool css = has_suffix(f, len, CSS_SUFFIX, sizeof(CSS_SUFFIX) - 1);
-        bool conf = has_suffix(f, len, CONF_SUFFIX, sizeof(CONF_SUFFIX) - 1);
-        if (f[0] == '.' || (!css && !conf))
+        bool data = has_suffix(f, len, DATA_SUFFIX, sizeof(DATA_SUFFIX) - 1);
+        if (f[0] == '.' || (!css && !data))
             continue;
-        size_t blen = len - (css ? sizeof(CSS_SUFFIX) : sizeof(CONF_SUFFIX)) + 1;
+        size_t blen = len - (css ? sizeof(CSS_SUFFIX) : sizeof(DATA_SUFFIX)) + 1;
         struct theme_entry *e = entry_get(c, f, blen);
-        char **slot = e ? (css ? &e->info.css_path : &e->info.conf_path) : NULL;
+        char **slot = e ? (css ? &e->info.css_path : &e->info.data_path) : NULL;
         if (slot && !*slot && asprintf(slot, "%s/%s", dir, f) < 0)
             *slot = NULL;
     }
     closedir(d);
-}
-
-static void label_line(void *ctx, const char *path, int line,
-                       const char *k, const char *v)
-{
-    (void)path;
-    (void)line;
-    char **label = ctx;
-    if (v && v[0] && !strcmp(k, "label") && !*label)
-        *label = strdup(v);
 }
 
 static char *title_case(const char *name)
@@ -128,10 +118,10 @@ static void adopt_cache(struct theme_entry *e, struct theme_catalog *old)
             o->name_c0 == e->name_c0 &&
             !strcmp(o->info.name, e->info.name) &&
             same_path(o->info.css_path, e->info.css_path) &&
-            same_path(o->info.conf_path, e->info.conf_path)) {
+            same_path(o->info.data_path, e->info.data_path)) {
             e->built = o->built;
             e->css_stamp = o->css_stamp;
-            e->conf_stamp = o->conf_stamp;
+            e->data_stamp = o->data_stamp;
             o->built = NULL;
             return;
         }
@@ -161,8 +151,8 @@ void theme_catalog_scan(struct theme_catalog *c)
     int n = 0;
     for (int i = 0; i < c->count; i++) {
         struct theme_entry *e = &c->items[i];
-        if (e->info.conf_path)
-            config_parse_file(e->info.conf_path, label_line, &e->info.label);
+        if (e->info.data_path)
+            theme_data_load(e->info.data_path, &e->data, &e->info);
         if (!e->info.label)
             e->info.label = title_case(e->info.name);
         if (!e->info.label) {
@@ -231,20 +221,20 @@ static bool same_stamp(struct file_stamp a, struct file_stamp b)
            a.ino == b.ino && a.dev == b.dev;
 }
 
-struct appearance *theme_entry_appearance(struct theme_entry *e,
-                                          const struct wsap_vtcore_theme *base)
+struct appearance *theme_entry_appearance(struct theme_entry *e)
 {
     struct file_stamp css = file_stamp(e->info.css_path);
-    struct file_stamp conf = file_stamp(e->info.conf_path);
-    if (e->built && same_stamp(css, e->css_stamp) && same_stamp(conf, e->conf_stamp))
+    struct file_stamp data = file_stamp(e->info.data_path);
+    if (e->built && same_stamp(css, e->css_stamp) &&
+        same_stamp(data, e->data_stamp))
         return e->built;
     struct appearance *ap = appearance_load(e->info.name, e->info.css_path,
-                                            e->info.conf_path, base);
+                                            &e->data);
     if (!ap)
         return e->built;
     appearance_unref(e->built);
     e->built = ap;
     e->css_stamp = css;
-    e->conf_stamp = conf;
+    e->data_stamp = data;
     return ap;
 }
