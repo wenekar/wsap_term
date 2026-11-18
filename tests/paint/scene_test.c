@@ -381,6 +381,53 @@ static void scene_copy_test(void)
     ui_scene_destroy(&dst);
 }
 
+static void scene_border_test(void)
+{
+    struct ui_scene s = {0};
+    ui_scene_init(&s);
+    assert(ui_scene_rect_border(&s, r_at(10, 10, 10, 10),
+        (struct ui_scene_border_width){ .left = 1, .top = 2, .right = 3, .bottom = 1 },
+        0xFF112233));
+    assert(s.n_ops == 4 && ui_scene_is_valid(&s));
+    assert(rect2i_eq(s.ops[0].rect, r_at(10, 10, 10, 2)));
+    assert(rect2i_eq(s.ops[1].rect, r_at(10, 19, 10, 1)));
+    assert(rect2i_eq(s.ops[2].rect, r_at(10, 12, 1, 7)));
+    assert(rect2i_eq(s.ops[3].rect, r_at(17, 12, 3, 7)));
+    for (int i = 0; i < s.n_ops; i++)
+        for (int j = i + 1; j < s.n_ops; j++)
+            assert(rect2i_is_empty(rect2i_intersect(s.ops[i].rect, s.ops[j].rect)));
+
+    ui_scene_init(&s);
+    assert(ui_scene_rect_border(&s, r_at(0, 0, 4, 4),
+        (struct ui_scene_border_width){ .right = 2 }, 0xFF112233));
+    assert(s.n_ops == 1 && rect2i_eq(s.ops[0].rect, r_at(2, 0, 2, 4)));
+    ui_scene_init(&s);
+    assert(ui_scene_rect_border(&s, r_at(0, 0, 4, 4),
+        (struct ui_scene_border_width){ .top = 9, .bottom = 9 }, 0xFF112233));
+    assert(s.n_ops == 1 && rect2i_eq(s.ops[0].rect, r_at(0, 0, 4, 4)));
+    ui_scene_init(&s);
+    assert(ui_scene_rect_border(&s, r_at(0, 0, 4, 4),
+        (struct ui_scene_border_width){ .left = -1 }, 0xFF112233));
+    assert(s.n_ops == 0);
+    ui_scene_destroy(&s);
+}
+
+static void scene_wavy_underline_test(void)
+{
+    struct ui_scene s = {0};
+    ui_scene_init(&s);
+    assert(ui_scene_wavy_underline(&s, r_at(0, 10, 8, 1), 2, 8, 1, 0xFF112233));
+    assert(s.n_ops == 4 && ui_scene_is_valid(&s));
+    assert(rect2i_eq(s.ops[0].rect, r_at(0, 11, 2, 1)));
+    assert(rect2i_eq(s.ops[1].rect, r_at(2, 10, 2, 1)));
+    assert(rect2i_eq(s.ops[2].rect, r_at(4, 10, 2, 1)));
+    assert(rect2i_eq(s.ops[3].rect, r_at(6, 11, 2, 1)));
+    ui_scene_init(&s);
+    assert(ui_scene_wavy_underline(&s, r_at(0, 0, 0, 1), 2, 8, 1, 0xFF112233));
+    assert(s.n_ops == 0 && ui_scene_is_valid(&s));
+    ui_scene_destroy(&s);
+}
+
 static void scene_rect_stroke_test(void)
 {
     struct ui_scene s = {0};
@@ -428,6 +475,8 @@ int main(void)
     scene_builder_bounds_test();
     scene_copy_test();
     scene_rect_stroke_test();
+    scene_border_test();
+    scene_wavy_underline_test();
     scene_node_origin_test();
     scene_damage_test();
     damage_bounds_test();

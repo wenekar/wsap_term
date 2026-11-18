@@ -692,6 +692,46 @@ static void test_cross_isa(const char *self)
     CHECK(scalar != 0);
 }
 
+static void test_border(void)
+{
+    enum { W = 12, H = 12 };
+    uint32_t out[W * H];
+    fill(out, W * H, 0);
+    struct ui_scene s = {0};
+    ui_scene_init(&s);
+    CHECK(ui_scene_rect_border(&s, R(2, 2, 8, 8),
+        (struct ui_scene_border_width){ .left = 1, .top = 2, .right = 3, .bottom = 1 },
+        0xFF00FF00u));
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    ui_scene_destroy(&s);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            bool top = y >= 2 && y < 4 && x >= 2 && x < 10;
+            bool bottom = y == 9 && x >= 2 && x < 10;
+            bool left = x == 2 && y >= 4 && y < 9;
+            bool right = x >= 7 && x < 10 && y >= 4 && y < 9;
+            CHECK(out[y * W + x] ==
+                  ((top || bottom || left || right) ? 0xFF00FF00u : 0u));
+        }
+}
+
+static void test_wavy_underline(void)
+{
+    enum { W = 8, H = 13 };
+    uint32_t out[W * H];
+    fill(out, W * H, 0);
+    struct ui_scene s = {0};
+    ui_scene_init(&s);
+    CHECK(ui_scene_wavy_underline(&s, R(0, 10, 8, 1), 2, 8, 1, 0xFF0000FFu));
+    CHECK(ui_scene_paint(TEST_FONT, out, W, H, &s));
+    ui_scene_destroy(&s);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            int wave = (x < 2 || x >= 6) ? 11 : 10;
+            CHECK(out[y * W + x] == (y == wave ? 0xFF0000FFu : 0u));
+        }
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1 && !strcmp(argv[1], "--hash")) {
@@ -716,6 +756,8 @@ int main(int argc, char **argv)
     test_paint_clip();
     test_rounded_rect_clipping_keeps_shape();
     test_node_draws_under_clip();
+    test_border();
+    test_wavy_underline();
     (void)parity_hash();
     test_cross_isa(argv[0]);
     puts("PASS: scene painter (new renderer)");

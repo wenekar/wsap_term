@@ -339,6 +339,85 @@ bool ui_scene_rect_stroke(struct ui_scene *s, struct rect2i box, int width,
         }, color);
 }
 
+bool ui_scene_rect_border(struct ui_scene *s, struct rect2i box,
+                          struct ui_scene_border_width width, uint32_t color)
+{
+    if (!ui_scene_ok(s))
+        return false;
+    if (rect2i_is_empty(box) || !(color >> 24))
+        return true;
+    if (width.left < 0) width.left = 0;
+    if (width.top < 0) width.top = 0;
+    if (width.right < 0) width.right = 0;
+    if (width.bottom < 0) width.bottom = 0;
+    if (width.top > box.height) width.top = box.height;
+    if (width.bottom > box.height - width.top)
+        width.bottom = box.height - width.top;
+    if (width.left > box.width) width.left = box.width;
+    if (width.right > box.width - width.left)
+        width.right = box.width - width.left;
+    int top = width.top, bottom = width.bottom;
+    int left = width.left, right = width.right;
+    bool ok = true;
+    if (top)
+        ok = ok && ui_scene_rect(s, (struct rect2i){ .pos = box.pos,
+            .size = { .x = box.width, .y = top } }, color);
+    if (bottom)
+        ok = ok && ui_scene_rect(s, (struct rect2i){
+            .pos = { .x = box.x, .y = geom_sat_i((int64_t)box.y + box.height - bottom) },
+            .size = { .x = box.width, .y = bottom } }, color);
+    int side_y = geom_sat_i((int64_t)box.y + top);
+    int side_h = box.height - top - bottom;
+    if (left && side_h > 0)
+        ok = ok && ui_scene_rect(s, (struct rect2i){
+            .pos = { .x = box.x, .y = side_y },
+            .size = { .x = left, .y = side_h } }, color);
+    if (right && side_h > 0)
+        ok = ok && ui_scene_rect(s, (struct rect2i){
+            .pos = { .x = geom_sat_i((int64_t)box.x + box.width - right), .y = side_y },
+            .size = { .x = right, .y = side_h } }, color);
+    return ok;
+}
+
+bool ui_scene_wavy_underline(struct ui_scene *s, struct rect2i run,
+                             int amplitude, int period, int thickness,
+                             uint32_t color)
+{
+    if (!ui_scene_ok(s))
+        return false;
+    if (run.width <= 0 || !(color >> 24))
+        return true;
+    if (amplitude < 1) amplitude = 1;
+    if (thickness < 1) thickness = 1;
+    int half = period / 2;
+    if (half < 1) half = 1;
+    int steps = amplitude < half ? amplitude : half;
+    int x_end = geom_sat_i((int64_t)run.x + run.width);
+    bool ok = true;
+    for (int px = run.x; px < x_end && ok; ) {
+        int next = geom_sat_i((int64_t)px + 2 * half);
+        for (int phase = 0; phase < 2 && ok; phase++) {
+            for (int i = 0; i < steps && ok; i++) {
+                int base = px + phase * half;
+                int x0 = base + i * half / steps;
+                int x1 = base + (i + 1) * half / steps;
+                if (x0 >= x_end)
+                    break;
+                if (x1 > x_end)
+                    x1 = x_end;
+                if (x1 <= x0)
+                    continue;
+                int y_off = phase ? i : steps - 1 - i;
+                ok = ui_scene_rect(s, (struct rect2i){
+                    .pos = { .x = x0, .y = geom_sat_i((int64_t)run.y + y_off) },
+                    .size = { .x = x1 - x0, .y = thickness } }, color);
+            }
+        }
+        px = next > px ? next : px + 1;
+    }
+    return ok;
+}
+
 bool ui_scene_blend_rect(struct ui_scene *s, struct rect2i r,
                          uint32_t color, uint8_t alpha)
 {
