@@ -103,6 +103,7 @@ static bool dl_load_table(const char *soname, void **handle_out, void *base,
     X(XGetEventData) \
     X(XGetSelectionOwner) \
     X(XGetVisualInfo) \
+    X(XGetWMNormalHints) \
     X(XGetWindowProperty) \
     X(XGrabPointer) \
     X(XIconifyWindow) \
@@ -136,6 +137,7 @@ static bool dl_load_table(const char *soname, void **handle_out, void *base,
     X(XSetIOErrorHandler) \
     X(XSetSelectionOwner) \
     X(XSetWMNormalHints) \
+    X(XUnmapWindow) \
     X(XSetWMProtocols) \
     X(XSetWindowBackgroundPixmap) \
     X(XStoreName) \
@@ -180,7 +182,10 @@ static bool dl_load_table(const char *soname, void **handle_out, void *base,
     X(XRRGetMonitors) \
     X(XRRGetOutputInfo) \
     X(XRRGetOutputPrimary) \
-    X(XRRGetScreenResourcesCurrent)
+    X(XRRGetScreenResourcesCurrent) \
+    X(XRRQueryExtension) \
+    X(XRRSelectInput) \
+    X(XRRUpdateConfiguration)
 #endif
 
 struct x11_dl_table {
@@ -544,6 +549,13 @@ static inline const struct x11_dl_table *x11_syms(void)
 #define XShmQueryExtension (x11_syms()->fn_XShmQueryExtension)
 #endif
 
+#ifndef XGetWMNormalHints
+#define XGetWMNormalHints (x11_syms()->fn_XGetWMNormalHints)
+#endif
+#ifndef XUnmapWindow
+#define XUnmapWindow (x11_syms()->fn_XUnmapWindow)
+#endif
+
 #if YASL_HAS_XRANDR
 #ifndef XRRFreeCrtcInfo
 #define XRRFreeCrtcInfo (x11_syms()->fn_XRRFreeCrtcInfo)
@@ -571,6 +583,15 @@ static inline const struct x11_dl_table *x11_syms(void)
 #endif
 #ifndef XRRGetScreenResourcesCurrent
 #define XRRGetScreenResourcesCurrent (x11_syms()->fn_XRRGetScreenResourcesCurrent)
+#endif
+#ifndef XRRQueryExtension
+#define XRRQueryExtension (x11_syms()->fn_XRRQueryExtension)
+#endif
+#ifndef XRRSelectInput
+#define XRRSelectInput (x11_syms()->fn_XRRSelectInput)
+#endif
+#ifndef XRRUpdateConfiguration
+#define XRRUpdateConfiguration (x11_syms()->fn_XRRUpdateConfiguration)
 #endif
 #endif
 
@@ -770,6 +791,7 @@ struct x11_display {
     Atom protocols, delete_window, utf8, clipboard, targets, paste_property, incr;
     Atom timestamp, multiple, pair;
     Atom net_name, net_state, fullscreen, maximized_h, maximized_v, motif_hints, hidden;
+    Atom net_above, net_skip_taskbar, net_opacity, net_workarea;
     Atom xdnd_aware, xdnd_enter, xdnd_position, xdnd_status, xdnd_leave, xdnd_drop, xdnd_finished;
     Atom xdnd_selection, xdnd_action_copy, xdnd_type_list;
     char *selection[2];
@@ -834,6 +856,8 @@ struct x11_display {
     double refresh_ns;
     uint32_t mods;
     int xi_opcode;
+    /* RandR event code base, or zero when the server has no RandR. */
+    int randr_event_base;
     int popup_device; /* XI2 device holding that grab. */
     int xkb_event;
     bool owns_loop;
@@ -865,6 +889,7 @@ static void egl_leave(struct x11_display *d, bool entered)
 }
 
 static bool place(struct yasl_surface *base, struct yasl_private_vector2i at);
+static double display_refresh_ns(struct x11_display *d);
 static void drag_end(struct x11_display *d, enum yasl_private_drag_end how);
 static void drag_cancel(struct yasl_private_display *base);
 static void schedule_redraw(struct yasl_surface *base);
@@ -2024,6 +2049,159 @@ static bool surface_minimize(struct yasl_surface *base)
     return true;
 }
 
+/* The window controls below take logical units and use device pixels. */
+
+static bool movable_toplevel(struct yasl_surface *base, struct x11_surface **out,
+                             struct x11_display **display)
+{
+    struct x11_surface *s = (struct x11_surface *)base;
+    struct x11_display *d = (struct x11_display *)base->display;
+    if (s->destroyed || s->is_popup) { errno = EINVAL; return false; }
+    if (!d->native || !s->window) { errno = ENODEV; return false; }
+    *out = s;
+    *display = d;
+    return true;
+}
+
+static bool surface_set_position(struct yasl_surface *base, struct yasl_private_vector2i pos)
+{
+    struct x11_surface *s;
+    struct x11_display *d;
+    if (!movable_toplevel(base, &s, &d)) return false;
+    XMoveWindow(d->native, s->window,
+                yasl_private_scale_to_device(pos.x, s->base.scale_120),
+                yasl_private_scale_to_device(pos.y, s->base.scale_120));
+    XFlush(d->native);
+    return true;
+}
+
+static bool surface_get_position(const struct yasl_surface *base, struct yasl_private_vector2i *out)
+{
+    struct x11_surface *s = (struct x11_surface *)base;
+    struct x11_display *d = (struct x11_display *)base->display;
+    if (!out || s->destroyed || !d->native || !s->window) { errno = EINVAL; return false; }
+    Window child = None;
+    int x = 0, y = 0;
+    if (!XTranslateCoordinates(d->native, s->window, RootWindow(d->native, d->screen),
+                               0, 0, &x, &y, &child)) {
+        errno = ENOTSUP;
+        return false;
+    }
+    out->x = yasl_private_scale_to_logical(x, s->base.scale_120);
+    out->y = yasl_private_scale_to_logical(y, s->base.scale_120);
+    return true;
+}
+
+/* A zero limit on an axis removes the limit of that axis. */
+static bool surface_set_size_limits(struct yasl_surface *base,
+        struct yasl_private_vector2i min, struct yasl_private_vector2i max)
+{
+    struct x11_surface *s;
+    struct x11_display *d;
+    if (!movable_toplevel(base, &s, &d)) return false;
+    XSizeHints hints = {0};
+    long supplied = 0;
+    XGetWMNormalHints(d->native, s->window, &hints, &supplied);
+    hints.flags &= ~(PMinSize | PMaxSize);
+    if (min.x > 0 || min.y > 0) {
+        hints.flags |= PMinSize;
+        hints.min_width = yasl_private_scale_to_device(min.x, s->base.scale_120);
+        hints.min_height = yasl_private_scale_to_device(min.y, s->base.scale_120);
+    } else {
+        hints.min_width = hints.min_height = 0;
+    }
+    if (max.x > 0 || max.y > 0) {
+        hints.flags |= PMaxSize;
+        hints.max_width = max.x > 0 ? yasl_private_scale_to_device(max.x, s->base.scale_120) : 0;
+        hints.max_height = max.y > 0 ? yasl_private_scale_to_device(max.y, s->base.scale_120) : 0;
+    } else {
+        hints.max_width = hints.max_height = 0;
+    }
+    XSetWMNormalHints(d->native, s->window, &hints);
+    XFlush(d->native);
+    return true;
+}
+
+/* The window manager locks the resize to one ratio, so the minimum and the
+ * maximum aspect are the same. A zero ratio removes the lock. */
+static bool surface_set_aspect(struct yasl_surface *base, struct yasl_private_vector2i ratio)
+{
+    struct x11_surface *s;
+    struct x11_display *d;
+    if (!movable_toplevel(base, &s, &d)) return false;
+    XSizeHints hints = {0};
+    long supplied = 0;
+    XGetWMNormalHints(d->native, s->window, &hints, &supplied);
+    hints.flags &= ~PAspect;
+    if (ratio.x > 0 && ratio.y > 0) {
+        hints.flags |= PAspect;
+        hints.min_aspect.x = hints.max_aspect.x = ratio.x;
+        hints.min_aspect.y = hints.max_aspect.y = ratio.y;
+    } else {
+        hints.min_aspect.x = hints.min_aspect.y = 0;
+        hints.max_aspect.x = hints.max_aspect.y = 0;
+    }
+    XSetWMNormalHints(d->native, s->window, &hints);
+    XFlush(d->native);
+    return true;
+}
+
+static bool surface_set_opacity(struct yasl_surface *base, double opacity)
+{
+    struct x11_surface *s;
+    struct x11_display *d;
+    if (!movable_toplevel(base, &s, &d)) return false;
+    unsigned long value = (unsigned long)(opacity * (double)0xffffffffu + 0.5);
+    XChangeProperty(d->native, s->window, d->net_opacity, XA_CARDINAL, 32,
+                    PropModeReplace, (unsigned char *)&value, 1);
+    XFlush(d->native);
+    return true;
+}
+
+static bool surface_set_visible(struct yasl_surface *base, bool visible)
+{
+    struct x11_surface *s;
+    struct x11_display *d;
+    if (!movable_toplevel(base, &s, &d)) return false;
+    if (visible) {
+        s->base.state &= ~YASL_PRIVATE_STATE_SUSPENDED;
+        XMapWindow(d->native, s->window);
+    } else {
+        s->base.state |= YASL_PRIVATE_STATE_SUSPENDED;
+        XUnmapWindow(d->native, s->window);
+    }
+    XFlush(d->native);
+    return true;
+}
+
+/* EWMH adds or removes a window state through a client message. A window
+ * manager without the state ignores the message and the window keeps its
+ * place. */
+static bool net_state_request(struct yasl_surface *base, Atom atom, bool enabled)
+{
+    struct x11_surface *s;
+    struct x11_display *d;
+    if (!movable_toplevel(base, &s, &d)) return false;
+    if (!net_message(s, d->net_state, enabled ? 1 : 0, (long)atom, 0, 1, 0)) {
+        errno = ENOTSUP;
+        return false;
+    }
+    XFlush(d->native);
+    return true;
+}
+
+static bool surface_set_always_on_top(struct yasl_surface *base, bool enabled)
+{
+    struct x11_display *d = (struct x11_display *)base->display;
+    return net_state_request(base, d->net_above, enabled);
+}
+
+static bool surface_set_skip_taskbar(struct yasl_surface *base, bool enabled)
+{
+    struct x11_display *d = (struct x11_display *)base->display;
+    return net_state_request(base, d->net_skip_taskbar, enabled);
+}
+
 static size_t utf8_offset_for_chars(const char *text, size_t len, int chars)
 {
     size_t at = 0;
@@ -2282,6 +2460,11 @@ static struct yasl_surface *create_toplevel_visual(struct yasl_private_display *
         XChangeProperty(d->native, s->window, d->net_state, XA_ATOM, 32,
                 PropModeReplace, (unsigned char *)&d->fullscreen, 1);
         s->base.state |= YASL_PRIVATE_STATE_FULLSCREEN;
+    } else if (spec->maximized) {
+        Atom states[2] = {d->maximized_v, d->maximized_h};
+        XChangeProperty(d->native, s->window, d->net_state, XA_ATOM, 32,
+                PropModeReplace, (unsigned char *)states, 2);
+        s->base.state |= YASL_PRIVATE_STATE_MAXIMIZED;
     }
     if (!(spec->flags & YASL_PRIVATE_SURFACE_HIDDEN)) XMapWindow(d->native, s->window);
     XFlush(d->native);
@@ -3628,6 +3811,16 @@ static void dispatch(struct yasl_private_display *base)
             refresh_keyboard(d);
             continue;
         }
+#if YASL_HAS_XRANDR
+        /* An output was added, removed, or changed. Xlib needs the update
+         * before it reports the new screen size. */
+        if (d->randr_event_base && event.type == d->randr_event_base + RRScreenChangeNotify) {
+            XRRUpdateConfiguration(&event);
+            d->refresh_ns = display_refresh_ns(d);
+            yasl_private_display_notify_event(&d->base, YASL_PRIVATE_EVENT_MONITORS);
+            continue;
+        }
+#endif
         if (d->has_xkb && event.type == d->xkb_event) {
             XkbEvent *xkb = (XkbEvent *)&event;
             if (xkb->any.xkb_type == XkbMapNotify) XkbRefreshKeyboardMapping(&xkb->map);
@@ -4047,6 +4240,118 @@ static double randr_refresh_ns(struct x11_display *d)
 }
 #endif
 
+/* A rectangle in device pixels, from the workarea property. */
+struct yasl_monitor_screen_area { int x, y, width, height; };
+
+#if YASL_HAS_XRANDR
+/* The workarea that EWMH defines for the whole screen. Without the property
+ * the window manager reserves no part of the screen. */
+static bool net_workarea(struct x11_display *d, struct yasl_monitor_screen_area *out)
+{
+    out->x = out->y = out->width = out->height = 0;
+    if (!d->native || d->net_workarea == None) return false;
+    Atom type = None;
+    int format = 0;
+    unsigned long count = 0, after = 0;
+    unsigned char *data = NULL;
+    if (XGetWindowProperty(d->native, RootWindow(d->native, d->screen), d->net_workarea,
+                           0, 4, False, XA_CARDINAL, &type, &format, &count,
+                           &after, &data) != Success || !data)
+        return false;
+    bool valid = type == XA_CARDINAL && format == 32 && count >= 4;
+    if (valid) {
+        const long *values = (const long *)data;
+        out->x = (int)values[0];
+        out->y = (int)values[1];
+        out->width = (int)values[2];
+        out->height = (int)values[3];
+    }
+    XFree(data);
+    return valid;
+}
+
+/* RandR gives the logical bounds, the physical size, and the primary flag of
+ * each monitor. The CRTC of an output gives its refresh rate and rotation. */
+static int display_monitors(struct yasl_private_display *base,
+        struct yasl_monitor_info *out, int capacity)
+{
+    struct x11_display *d = (struct x11_display *)base;
+    if (!d->native || !x11_syms()->xrandr_ready) return 0;
+    Window root = RootWindow(d->native, d->screen);
+    int nmonitors = 0;
+    XRRMonitorInfo *mons = XRRGetMonitors(d->native, root, True, &nmonitors);
+    if (!mons) return 0;
+    XRRScreenResources *resources = XRRGetScreenResourcesCurrent(d->native, root);
+    struct yasl_monitor_screen_area area;
+    bool has_area = net_workarea(d, &area);
+    int count = 0;
+    for (int i = 0; i < nmonitors; i++) {
+        const XRRMonitorInfo *mi = &mons[i];
+        if (!out || count >= capacity) { count++; continue; }
+        struct yasl_monitor_info *m = &out[count++];
+        *m = (struct yasl_monitor_info){0};
+        m->x = mi->x;
+        m->y = mi->y;
+        m->width = mi->width;
+        m->height = mi->height;
+        m->work_x = m->x;
+        m->work_y = m->y;
+        m->work_width = m->width;
+        m->work_height = m->height;
+        m->physical_width_mm = mi->mwidth;
+        m->physical_height_mm = mi->mheight;
+        m->primary = mi->primary != 0;
+        m->scale = (double)d->scale_120 / (double)YASL_PRIVATE_SCALE_UNIT;
+        if (mi->mwidth > 0)
+            m->dpi = (double)mi->width * 25.4 / (double)mi->mwidth;
+        if (has_area) {
+            int left = mi->x > area.x ? mi->x : area.x;
+            int top = mi->y > area.y ? mi->y : area.y;
+            int right = (mi->x + mi->width < area.x + area.width)
+                      ? mi->x + mi->width : area.x + area.width;
+            int bottom = (mi->y + mi->height < area.y + area.height)
+                       ? mi->y + mi->height : area.y + area.height;
+            if (right > left && bottom > top) {
+                m->work_x = left;
+                m->work_y = top;
+                m->work_width = right - left;
+                m->work_height = bottom - top;
+            }
+        }
+        for (int j = 0; j < mi->noutput; j++) {
+            XRROutputInfo *output = resources
+                                  ? XRRGetOutputInfo(d->native, resources, mi->outputs[j]) : NULL;
+            if (!output) continue;
+            if (j == 0 && output->name)
+                snprintf(m->name, sizeof(m->name), "%s", output->name);
+            if (output->crtc) {
+                XRRCrtcInfo *crtc = XRRGetCrtcInfo(d->native, resources, output->crtc);
+                if (crtc) {
+                    double ns = crtc->mode ? mode_refresh_ns(resources, crtc->mode) : 0;
+                    if (ns > 0) m->refresh_hz = 1e9 / ns;
+                    if (crtc->rotation & RR_Rotate_90) m->orientation = YASL_ORIENTATION_90;
+                    else if (crtc->rotation & RR_Rotate_180) m->orientation = YASL_ORIENTATION_180;
+                    else if (crtc->rotation & RR_Rotate_270) m->orientation = YASL_ORIENTATION_270;
+                    XRRFreeCrtcInfo(crtc);
+                }
+            }
+            XRRFreeOutputInfo(output);
+            if (m->refresh_hz > 0) break;
+        }
+    }
+    if (resources) XRRFreeScreenResources(resources);
+    XRRFreeMonitors(mons);
+    return count;
+}
+#else
+static int display_monitors(struct yasl_private_display *base,
+        struct yasl_monitor_info *out, int capacity)
+{
+    (void)base; (void)out; (void)capacity;
+    return 0;
+}
+#endif
+
 static double display_refresh_ns(struct x11_display *d)
 {
 #if YASL_HAS_XRANDR
@@ -4077,6 +4382,17 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
     d->screen = DefaultScreen(d->native);
     d->scale_120 = scale_from_xft_dpi(d->native);
     d->refresh_ns = display_refresh_ns(d);
+#if YASL_HAS_XRANDR
+    {
+        int event_base = 0, error_base = 0;
+        if (x11_syms()->xrandr_ready &&
+            XRRQueryExtension(d->native, &event_base, &error_base)) {
+            d->randr_event_base = event_base;
+            XRRSelectInput(d->native, RootWindow(d->native, d->screen),
+                           RRScreenChangeNotifyMask);
+        }
+    }
+#endif
     XVisualInfo argb;
     if (XMatchVisualInfo(d->native, d->screen, 32, TrueColor, &argb)) {
         d->argb_visual = argb.visual;
@@ -4163,6 +4479,10 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
     ATOM(maximized_h, "_NET_WM_STATE_MAXIMIZED_HORZ");
     ATOM(maximized_v, "_NET_WM_STATE_MAXIMIZED_VERT");
     ATOM(hidden, "_NET_WM_STATE_HIDDEN");
+    ATOM(net_above, "_NET_WM_STATE_ABOVE");
+    ATOM(net_skip_taskbar, "_NET_WM_STATE_SKIP_TASKBAR");
+    ATOM(net_opacity, "_NET_WM_WINDOW_OPACITY");
+    ATOM(net_workarea, "_NET_WORKAREA");
     ATOM(xdnd_aware, "XdndAware");
     ATOM(xdnd_enter, "XdndEnter");
     ATOM(xdnd_position, "XdndPosition");
@@ -4841,4 +5161,13 @@ const struct yasl_private_backend_ops yasl_private_x11_backend = {
     .surface_ime_preedit_cursor = ime_preedit_cursor,
     .display_get_native_handle = native_display,
     .surface_get_native_handle = native_surface,
+    .surface_set_position = surface_set_position,
+    .surface_get_position = surface_get_position,
+    .surface_set_size_limits = surface_set_size_limits,
+    .surface_set_aspect = surface_set_aspect,
+    .surface_set_opacity = surface_set_opacity,
+    .surface_set_visible = surface_set_visible,
+    .surface_set_always_on_top = surface_set_always_on_top,
+    .surface_set_skip_taskbar = surface_set_skip_taskbar,
+    .display_monitors = display_monitors,
 };
