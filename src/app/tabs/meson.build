@@ -4,5 +4,6 @@ app_tabs_src = files(
     'preview.c',
     'root.c',
     'tabs.c',
+    'terminal_content.c',
     'transfer.c',
 )

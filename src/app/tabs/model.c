@@ -2,7 +2,6 @@
 #include <string.h>
 
 #include "app/tabs/model.h"
-#include "terminal/terminal.h"
 
 /* The index of the tab with this ID, or -1. A new tab goes to the end with
  * a larger ID, and a removal keeps the order. The table is thus in ID
@@ -23,24 +22,28 @@ static int index_of(const struct app_tab_model *m, app_tab_id id)
     return -1;
 }
 
-app_tab_id app_tab_model_add(struct app_tab_model *m, struct terminal *content)
+app_tab_id app_tab_model_add(struct app_tab_model *m, void *content,
+                             const struct app_tab_content_ops *ops)
 {
-    if (!m || !content || m->last_id == UINT32_MAX) {
-        terminal_destroy(content);
+    if (!m || !content || !ops || !ops->destroy || m->last_id == UINT32_MAX) {
+        if (content && ops && ops->destroy)
+            ops->destroy(content);
         return 0;
     }
     if (m->count == m->cap) {
         int cap = m->cap ? m->cap * 2 : 8;
         struct app_tab *tabs = realloc(m->tabs, (size_t)cap * sizeof(*tabs));
         if (!tabs) {
-            terminal_destroy(content);
+            ops->destroy(content);
             return 0;
         }
         m->tabs = tabs;
         m->cap = cap;
     }
     app_tab_id id = ++m->last_id;
-    m->tabs[m->count++] = (struct app_tab){ .id = id, .content = content };
+    m->tabs[m->count++] = (struct app_tab){
+        .id = id, .content = content, .ops = ops,
+    };
     return id;
 }
 
@@ -51,7 +54,7 @@ struct app_tab *app_tab_model_get(const struct app_tab_model *m, app_tab_id id)
 }
 
 struct app_tab *app_tab_model_find(const struct app_tab_model *m,
-                                   const struct terminal *content)
+                                   const void *content)
 {
     for (int i = 0; m && content && i < m->count; i++)
         if (m->tabs[i].content == content)
@@ -71,7 +74,7 @@ void app_tab_model_destroy(struct app_tab_model *m, app_tab_id id)
     /* Remove the entry first, so a report during the destruction finds no
      * tab. */
     free(gone.label);
-    terminal_destroy(gone.content);
+    gone.ops->destroy(gone.content);
 }
 
 void app_tab_model_fini(struct app_tab_model *m)
