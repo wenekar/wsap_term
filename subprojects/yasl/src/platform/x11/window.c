@@ -844,6 +844,9 @@ struct x11_display {
     bool popup_grab; /* The pointer is grabbed for the topmost popup. */
     bool egl_ready;
     bool vulkan_probed, vulkan_ready;
+    /* Latest unaccelerated pointer delta, attached to the next motion. */
+    struct yasl_private_vector2d raw_delta;
+    bool raw_valid;
 };
 
 /* EGL calls on one display are not safe from two threads at once. A render
@@ -1413,7 +1416,13 @@ static void xi_pointer_event(struct x11_surface *s, const XIDeviceEvent *ev)
             pressure_value(&p->pressure), tilt_value(&p->tilt_x), tilt_value(&p->tilt_y)};
     }
     if (p) update_scroll(p, &ev->valuators, &event.pointer);
-    if (ev->evtype == XI_Motion) event.type = YASL_PRIVATE_EVENT_POINTER_MOTION;
+    if (ev->evtype == XI_Motion) {
+        event.type = YASL_PRIVATE_EVENT_POINTER_MOTION;
+        if (d->raw_valid) {
+            event.pointer.unaccel = d->raw_delta;
+            d->raw_valid = false;
+        }
+    }
     else if (ev->detail >= 4 && ev->detail <= 7) {
         if (ev->evtype == XI_ButtonRelease) return;
         event.type = YASL_PRIVATE_EVENT_POINTER_SCROLL;
@@ -1464,8 +1473,24 @@ static void xi_event(struct x11_display *d, XGenericEventCookie *cookie)
             /* Removal/disable may interrupt a drag before a release arrives. */
             if (d->drag.active)
                 drag_end(d, YASL_PRIVATE_DRAG_CANCELLED);
+            d->raw_valid = false;
             for (struct x11_surface *s = d->surfaces; s; s = s->next)
                 push(s, (struct yasl_private_event){.type = YASL_PRIVATE_EVENT_INPUT_RESET}, NULL, 0);
+        }
+        return;
+    }
+    if (cookie->evtype == XI_RawMotion) {
+        const XIRawEvent *raw = cookie->data;
+        double axes[2] = {0, 0};
+        int found = 0;
+        for (int i = 0; i < raw->valuators.mask_len * 8 && found < 2; i++) {
+            if (!XIMaskIsSet(raw->valuators.mask, i)) continue;
+            if (isfinite(raw->raw_values[found])) axes[found] = raw->raw_values[found];
+            found++;
+        }
+        if (found == 2) {
+            d->raw_delta = (struct yasl_private_vector2d){axes[0], axes[1]};
+            d->raw_valid = true;
         }
         return;
     }
@@ -4089,6 +4114,7 @@ static struct yasl_private_display *display_open(struct yasl_loop *loop,
         unsigned char bits[XIMaskLen(XI_LASTEVENT)] = {0};
         XISetMask(bits, XI_HierarchyChanged);
         XISetMask(bits, XI_DeviceChanged);
+        XISetMask(bits, XI_RawMotion);
         XIEventMask mask = {XIAllDevices, sizeof(bits), bits};
         XISelectEvents(d->native, RootWindow(d->native, d->screen), &mask, 1);
     }

@@ -255,6 +255,21 @@ static void key_press(struct x11_surface *s, unsigned code, unsigned state, bool
     key_event(s, &event, false);
 }
 
+/* A raw XI2 motion reaches the next pointer motion as an unaccelerated delta. */
+static void check_unaccelerated(struct yasl_private_display *display, struct x11_surface *s)
+{
+    struct x11_display *d = (struct x11_display *)display;
+    d->raw_delta = (struct yasl_private_vector2d){3.5, -2.0};
+    d->raw_valid = true;
+    XIDeviceEvent event = {.evtype = XI_Motion, .event = s->window,
+        .event_x = 10, .event_y = 20};
+    xi_pointer_event(s, &event);
+    struct yasl_private_event queued = next_type(display, YASL_PRIVATE_EVENT_POINTER_MOTION);
+    assert(queued.pointer.unaccel.x == 3.5 && queued.pointer.unaccel.y == -2.0);
+    assert(!d->raw_valid);
+    drain_display_events(display);
+}
+
 /* A drop reports where in the surface its release happened. */
 static void check_drop_position(struct yasl_private_display *display, struct x11_surface *s)
 {
@@ -505,6 +520,7 @@ int main(void)
     free(symbols);
     XFree(saved);
     check_key_events(base, s);
+    check_unaccelerated(base, s);
     check_drop_position(base, s);
     s->ic = saved_ic;
     check_selection_encoding(d, s);
