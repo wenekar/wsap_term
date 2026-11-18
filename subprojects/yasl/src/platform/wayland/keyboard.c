@@ -390,10 +390,11 @@ static void keyboard_text_begin(struct seat *s, struct wayland_surface *w, uint3
 
 /* Emits the text or preedit of a classified key press, after its KEY event. */
 static void keyboard_text_emit(struct seat *s, struct wayland_surface *w,
-                               uint32_t key, struct keyboard_text *t)
+                               uint32_t key, struct keyboard_text *t, uint64_t time_ns)
 {
     if (t->input_reset) {
-        struct yasl_private_event ev = {.type = YASL_PRIVATE_EVENT_INPUT_RESET, .surface = &w->base};
+        struct yasl_private_event ev = {.type = YASL_PRIVATE_EVENT_INPUT_RESET,
+            .surface = &w->base, .time_ns = time_ns};
         input_queue_push(&w->input, &ev);
         return;
     }
@@ -407,6 +408,7 @@ static void keyboard_text_emit(struct seat *s, struct wayland_surface *w,
             .type = YASL_PRIVATE_EVENT_TEXT,
             .surface = &w->base,
             .text = {.data = text, .len = (size_t)t->len, .text_key_id = t->key_id},
+            .time_ns = time_ns,
         };
         input_queue_push(&w->input, &ev);
     }
@@ -414,7 +416,7 @@ static void keyboard_text_emit(struct seat *s, struct wayland_surface *w,
 }
 
 static bool keyboard_dispatch_key(struct seat *s, struct wayland_surface *w, uint32_t key,
-                                  enum yasl_key_action action)
+                                  enum yasl_key_action action, uint64_t time_ns)
 {
     if (!s->xkb_state || !w->cbs) return false;
 
@@ -440,13 +442,14 @@ static bool keyboard_dispatch_key(struct seat *s, struct wayland_surface *w, uin
         .type = YASL_PRIVATE_EVENT_KEY,
         .surface = &w->base,
         .key = k,
+        .time_ns = time_ns,
     };
     if (!input_queue_push(&w->input, &ev)) {
         keyboard_text_free(&text);
         keyboard_text_reset(s);
         return false;
     }
-    if (action != YASL_KEY_RELEASE) keyboard_text_emit(s, w, key, &text);
+    if (action != YASL_KEY_RELEASE) keyboard_text_emit(s, w, key, &text, time_ns);
     keyboard_text_free(&text);
     return action != YASL_KEY_RELEASE;
 }
@@ -454,20 +457,21 @@ static bool keyboard_dispatch_key(struct seat *s, struct wayland_surface *w, uin
 static void keyboard_key(void *data, struct wl_keyboard *keyboard,
         uint32_t serial, uint32_t time, uint32_t key, uint32_t state)
 {
-    (void)keyboard; (void)time;
+    (void)keyboard;
     struct seat *s = data;
     struct wayland_surface *w = s->keyboard_focus;
     if (!w) return;
+    uint64_t time_ns = YASL_PRIVATE_MS_TO_NS(time);
     seat_note_input(s, serial);
     if (state == WL_KEYBOARD_KEY_STATE_RELEASED) {
         if (s->repeat_held && key == s->repeat_key) keyboard_repeat_stop(s);
-        keyboard_dispatch_key(s, w, key, YASL_KEY_RELEASE);
+        keyboard_dispatch_key(s, w, key, YASL_KEY_RELEASE, time_ns);
         return;
     }
     if (state != WL_KEYBOARD_KEY_STATE_PRESSED || !s->xkb_keymap) return;
     bool repeatable = xkb_keymap_key_repeats(s->xkb_keymap, key + XKB_EVDEV_OFFSET);
     if (repeatable) keyboard_repeat_stop(s);
-    if (keyboard_dispatch_key(s, w, key, YASL_KEY_PRESS) && repeatable) {
+    if (keyboard_dispatch_key(s, w, key, YASL_KEY_PRESS, time_ns) && repeatable) {
         s->repeat_key = key;
         s->repeat_held = true;
         s->repeat_started_ns = yasl_private_loop_now_ns();
@@ -488,7 +492,7 @@ static void keyboard_repeat_ready(void *data, int fd, short revents)
     }
     if (count > 32) count = 32;
     while (count-- && s->repeat_held && s->repeat_rate > 0) {
-        if (!keyboard_dispatch_key(s, w, s->repeat_key, YASL_KEY_REPEAT))
+        if (!keyboard_dispatch_key(s, w, s->repeat_key, YASL_KEY_REPEAT, 0))
             keyboard_repeat_stop(s);
     }
 }

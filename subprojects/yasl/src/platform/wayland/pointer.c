@@ -66,16 +66,24 @@ uint32_t seat_held_press_serial(const struct seat *s)
     return held ? s->press_serial : 0;
 }
 
-static void push_pointer(struct seat *s, struct wayland_surface *w,
-                         enum yasl_private_event_type type, struct yasl_private_pointer_event ev)
+static void push_pointer_at(struct seat *s, struct wayland_surface *w,
+                            enum yasl_private_event_type type,
+                            struct yasl_private_pointer_event ev, uint64_t time_ns)
 {
     ev.mods = (uint32_t)seat_modifiers(s);
     struct yasl_private_event input_ev = {
         .type = type,
         .surface = &w->base,
         .pointer = ev,
+        .time_ns = time_ns,
     };
     input_queue_push(&surface_root(w)->input, &input_ev);
+}
+
+static void push_pointer(struct seat *s, struct wayland_surface *w,
+                         enum yasl_private_event_type type, struct yasl_private_pointer_event ev)
+{
+    push_pointer_at(s, w, type, ev, s->event_time_ns);
 }
 
 static unsigned scroll_source_of(uint32_t source)
@@ -259,7 +267,7 @@ static void press_queue_flush(struct seat *s, struct press_queue *q,
         ev.precise_position = true;
         ev.button = (enum yasl_private_pointer_button)p.button;
         enum yasl_private_event_type type = p.release ? YASL_PRIVATE_EVENT_POINTER_UP : YASL_PRIVATE_EVENT_POINTER_DOWN;
-        push_pointer(s, p.surface, type, ev);
+        push_pointer_at(s, p.surface, type, ev, p.time_ns);
     }
     q->n = kept;
 }
@@ -278,7 +286,7 @@ static void press_queue_push(struct seat *s, struct press_queue *q, uint64_t *bu
             press_queue_flush(s, q, NULL, buttons, like);
             struct pending_press event = {
                 .surface = w, .pos = pos, .precise = precise,
-                .button = button, .release = release,
+                .time_ns = s->event_time_ns, .button = button, .release = release,
             };
             struct press_queue one = {.ev = &event, .n = 1};
             press_queue_flush(s, &one, NULL, buttons, like);
@@ -288,7 +296,8 @@ static void press_queue_push(struct seat *s, struct press_queue *q, uint64_t *bu
         q->capacity = capacity;
     }
     q->ev[q->n++] = (struct pending_press){
-        .surface = w, .pos = pos, .precise = precise, .button = button, .release = release,
+        .surface = w, .pos = pos, .precise = precise, .time_ns = s->event_time_ns,
+        .button = button, .release = release,
     };
 }
 
@@ -378,10 +387,11 @@ static void pointer_leave(void *data, struct wl_pointer *pointer,
 static void pointer_motion(void *data, struct wl_pointer *pointer,
         uint32_t time, wl_fixed_t surface_x, wl_fixed_t surface_y)
 {
-    (void)pointer; (void)time;
+    (void)pointer;
     struct seat *s = data;
     struct wayland_surface *w = s->pointer_focus;
     if (!w) return;
+    s->event_time_ns = YASL_PRIVATE_MS_TO_NS(time);
     s->pointer_precise = device_precise(w, surface_x, surface_y);
     s->pointer_pos = device_round(s->pointer_precise);
     s->motion_pending = true;
@@ -391,10 +401,11 @@ static void pointer_motion(void *data, struct wl_pointer *pointer,
 static void pointer_button(void *data, struct wl_pointer *pointer,
         uint32_t serial, uint32_t time, uint32_t button, uint32_t state)
 {
-    (void)pointer; (void)time;
+    (void)pointer;
     struct seat *s = data;
     struct wayland_surface *w = s->pointer_focus;
     if (unlikely(!w)) return;
+    s->event_time_ns = YASL_PRIVATE_MS_TO_NS(time);
 
     static const int8_t btn_map[8] = {
         [0] = 0, /* BTN_LEFT (0x110) */
@@ -424,9 +435,10 @@ static void pointer_button(void *data, struct wl_pointer *pointer,
 static void pointer_axis(void *data, struct wl_pointer *pointer,
         uint32_t time, uint32_t axis, wl_fixed_t value)
 {
-    (void)pointer; (void)time;
+    (void)pointer;
     struct seat *s = data;
     if (unlikely(!s->pointer_focus)) return;
+    s->event_time_ns = YASL_PRIVATE_MS_TO_NS(time);
     double v = wl_fixed_to_double(value);
     if (likely(axis < 2)) {
         s->axis[axis] += v;
@@ -450,8 +462,10 @@ static void pointer_axis_source(void *data, struct wl_pointer *pointer, uint32_t
 static void pointer_axis_stop(void *data, struct wl_pointer *pointer, uint32_t time, uint32_t axis)
 {
     /* A stop ends a gesture, not the offsets already received in this frame. */
-    (void)pointer; (void)time; (void)axis;
-    ((struct seat *)data)->axis_stop_pending = true;
+    (void)pointer; (void)axis;
+    struct seat *s = data;
+    s->event_time_ns = YASL_PRIVATE_MS_TO_NS(time);
+    s->axis_stop_pending = true;
 }
 
 static void pointer_axis_discrete(void *data, struct wl_pointer *pointer, uint32_t axis, int32_t discrete)
@@ -566,11 +580,12 @@ static void relative_motion(void *data, struct zwp_relative_pointer_v1 *pointer,
         uint32_t utime_hi, uint32_t utime_lo, wl_fixed_t dx, wl_fixed_t dy,
         wl_fixed_t dx_unaccel, wl_fixed_t dy_unaccel)
 {
-    (void)pointer; (void)utime_hi; (void)utime_lo; (void)dx; (void)dy;
+    (void)pointer; (void)dx; (void)dy;
     struct seat *s = data;
     struct wayland_surface *w = s->pointer_focus;
     /* Unlocked movement arrives as wl_pointer.motion; the queue derives its delta. */
     if (!w || !w->pointer_locked || w->lock_seat != s) return;
+    s->event_time_ns = (((uint64_t)utime_hi << 32) | utime_lo) * 1000;
     flush_pending_motion(s, w);
     /* A locked cursor reports raw input, as X11 and Cocoa do. The compositor
      * pointer acceleration applies to the absolute position, which stays fixed. */
@@ -722,8 +737,9 @@ static void touch_down(void *data, struct wl_touch *touch,
         uint32_t serial, uint32_t time, struct wl_surface *surface,
         int32_t id, wl_fixed_t x, wl_fixed_t y)
 {
-    (void)touch; (void)time;
+    (void)touch;
     struct seat *s = data;
+    s->event_time_ns = YASL_PRIVATE_MS_TO_NS(time);
     struct wayland_surface *w = surface ?
         (struct wayland_surface *)wl_surface_get_user_data(surface) : NULL;
     if (!w || touch_find(s, id)) return;
@@ -743,15 +759,19 @@ static void touch_down(void *data, struct wl_touch *touch,
 
 static void touch_up(void *data, struct wl_touch *touch, uint32_t serial, uint32_t time, int32_t id)
 {
-    (void)touch; (void)serial; (void)time;
+    (void)touch; (void)serial;
+    struct seat *s = data;
+    s->event_time_ns = YASL_PRIVATE_MS_TO_NS(time);
     struct touch_point *p = touch_find(data, id);
     if (p) p->up = true;
 }
 
 static void touch_motion(void *data, struct wl_touch *touch, uint32_t time, int32_t id, wl_fixed_t x, wl_fixed_t y)
 {
-    (void)touch; (void)time;
-    struct touch_point *p = touch_find(data, id);
+    (void)touch;
+    struct seat *s = data;
+    s->event_time_ns = YASL_PRIVATE_MS_TO_NS(time);
+    struct touch_point *p = touch_find(s, id);
     if (!p) return;
     p->x = wl_fixed_to_double(x);
     p->y = wl_fixed_to_double(y);
@@ -872,6 +892,7 @@ static void push_pen_sample(struct tablet_tool *tool, struct wayland_surface *w,
     struct yasl_private_event ev = {
         .type = YASL_PRIVATE_EVENT_PEN,
         .surface = &w->base,
+        .time_ns = s->event_time_ns,
         .pen = {
             .device_id = tool->device_id,
             .tool_id = tool->tool_id,
@@ -1084,10 +1105,11 @@ static void tool_wheel(void *d, struct zwp_tablet_tool_v2 *t, wl_fixed_t deg, in
 
 static void tool_frame(void *d, struct zwp_tablet_tool_v2 *t, uint32_t time)
 {
-    (void)t; (void)time;
+    (void)t;
     struct seat *s = ((struct tablet_tool *)d)->seat;
     struct tablet_tool *owned = d;
     struct wayland_surface *w = s->tablet_focus;
+    s->event_time_ns = YASL_PRIVATE_MS_TO_NS(time);
     if (!w) {
         s->tool_presses.n = 0;
         s->tool_wheel = 0;
