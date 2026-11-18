@@ -1,7 +1,6 @@
 #include "platform/platform.h"
 #include "ui/yasl/internal.h"
 #include "ui/yasl/window.h"
-#include "ui/widgets/input.h"
 #include "util/app_identity.h"
 
 static struct window *root_window(const struct ui_widget *widget)
@@ -28,51 +27,6 @@ static bool root_accessibility(const struct ui_widget *widget,
     out->role = UI_ACCESSIBILITY_ROLE_WINDOW;
     const struct app_identity *identity = app_identity_current();
     out->name = title && title[0] ? title : (identity ? identity->id : "");
-    return true;
-}
-
-static bool text_menu_action(struct ui_widget *source, const struct ui_action *action, void *userdata)
-{
-    (void)source;
-    struct window *w = userdata;
-    struct ui_widget *target = ui_surface_context_target(&ui_of(w)->screen);
-    if (action->kind == UI_ACTION_ACTIVATE) {
-        window_menu_close(w);
-        if (target) {
-            ui_surface_focus(&ui_of(w)->screen, target);
-            ui_input_command(ui_container_of(target, struct ui_input, widget), action->id);
-        }
-        return true;
-    }
-    if (action->kind == UI_ACTION_CLOSE)
-        ui_surface_set_context_target(&ui_of(w)->screen, NULL);
-    return false;
-}
-
-static bool root_action(struct ui_widget *source, const struct ui_action *action, void *userdata)
-{
-    struct ui_input *in = ui_input_of(source);
-    if (action->kind != UI_ACTION_MENU || !in)
-        return false;
-    struct window *w = userdata;
-    ui_menu_item items[] = {
-        UI_MENU_ITEM("Undo", UI_EDIT_UNDO),
-        UI_MENU_ITEM("Redo", UI_EDIT_REDO),
-        UI_MENU_SEPARATOR,
-        UI_MENU_ITEM("Cut", UI_EDIT_CUT),
-        UI_MENU_ITEM("Copy", UI_EDIT_COPY),
-        UI_MENU_ITEM("Paste", UI_EDIT_PASTE),
-        UI_MENU_SEPARATOR,
-        UI_MENU_ITEM("Select All", UI_EDIT_SELECT_ALL),
-    };
-    for (size_t i = 0; i < sizeof(items) / sizeof(items[0]); i++)
-        if (!(items[i].flags & UI_LIST_ITEM_SEPARATOR) && !ui_input_can_command(in, items[i].action))
-            items[i].flags |= UI_LIST_ITEM_DISABLED;
-    window_menu_close(w);
-    ui_surface_set_context_target(&ui_of(w)->screen, source);
-    if (!window_menu_open(w, items, sizeof(items) / sizeof(items[0]), action->pos,
-            text_menu_action, NULL, w))
-        ui_surface_set_context_target(&ui_of(w)->screen, NULL);
     return true;
 }
 
@@ -174,7 +128,6 @@ void window_ui_arm(struct window *w, uint64_t now_ms)
 void window_ui_root_init(struct window *w)
 {
     ui_widget_init(&ui_of(w)->root, &WINDOW_ROOT_OPS, NULL);
-    ui_widget_set_action_handler(&ui_of(w)->root, root_action, w);
     ui_menu_init(&ui_of(w)->menu);
     ui_menu_layer_init(&ui_of(w)->menu_layer, &ui_of(w)->menu);
     ui_widget_add_child(&ui_of(w)->root, ui_menu_layer_widget(&ui_of(w)->menu_layer));
