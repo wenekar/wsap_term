@@ -1,4 +1,5 @@
 #include "bench.h"
+#include "app/style.h"
 #include "font/font.h"
 #include "paint/scene.h"
 #include "paint/text_run.h"
@@ -31,16 +32,13 @@ static void bench_text(void)
 
 static void bench_css(void)
 {
-    /* The app gives every window the sheet of its theme store: the UI core
-       rules and the app rules. The probe classes below are app classes, so
-       this context needs the same sheet. */
-    struct css_sheet sheet = {0};
-    css_init_default(&sheet);
-    if (!css_parse_app(&sheet))
-        fprintf(stderr, "ui-bench: cannot build the app sheet\n");
+    /* The app gives every window its own sheet: the UI core rules and the
+       app rules. The probe classes below are app classes, so this context
+       needs the same sheet. */
+    const struct css_sheet *sheet = app_style_sheet();
     struct ui_style_context context;
     ui_style_context_init(&context);
-    ui_style_context_set_sheet(&context, &sheet);
+    ui_style_context_set_sheet(&context, sheet);
     const char *classes[] = { "tab", "tab active", "tab-close", "scrollbar-thumb",
                               "menu-item", "menu-label", "tooltip", "unknown-class" };
     BENCH_RUN("css/resolve", 50000, {
@@ -51,7 +49,6 @@ static void bench_css(void)
         }
     });
     ui_style_context_destroy(&context);
-    css_sheet_clear(&sheet);
 }
 
 static void bench_scene(void)

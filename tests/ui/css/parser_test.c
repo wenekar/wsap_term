@@ -759,9 +759,9 @@ static void test_border_shorthand(void)
     css_sheet_clear(&sheet);
 }
 
-/* The UI core sheet holds no app rule. The app sheet adds the app rules to it.
- * The variables of the core sheet reach the app rules. */
-static void test_app_rules_come_from_the_app_sheet(void)
+/* The UI core sheet holds no app rule. A sheet that a client appends holds
+ * the app rules, and the variables of the core sheet reach them. */
+static void test_appended_sheet_holds_app_rules(void)
 {
     static const char *const app_classes[] = {
         "tab", "tab-bar", "tab-close", "tab-new", "tab-preview",
@@ -770,24 +770,19 @@ static void test_app_rules_come_from_the_app_sheet(void)
     };
     const size_t count = sizeof(app_classes) / sizeof(app_classes[0]);
 
-    struct css_sheet sheet = {0};
-    css_init_default(&sheet);
+    struct css_sheet paper = {0};
+    css_init_default(&paper);
     for (size_t i = 0; i < count; i++) {
         struct css_style st;
-        css_style_resolve(&sheet, app_classes[i], NULL, NULL, CSS_PSEUDO_NONE, &st);
+        css_style_resolve(&paper, app_classes[i], NULL, NULL, CSS_PSEUDO_NONE, &st);
         assert(!st.has_bg_color && !st.has_text_color && !st.has_border_color);
         assert(!st.has_cursor && st.width.unit == CSS_UNIT_AUTO);
     }
+    css_sheet_clear(&paper);
 
-    assert(css_parse_app(&sheet));
-    for (size_t i = 0; i < count; i++) {
-        struct css_style st;
-        css_style_resolve(&sheet, app_classes[i], NULL, NULL, CSS_PSEUDO_NONE, &st);
-        assert(st.has_bg_color || st.has_text_color || st.has_border_color ||
-               st.width.unit != CSS_UNIT_AUTO || st.height.unit != CSS_UNIT_AUTO);
-    }
-
-    /* A variable of the core sheet reaches a rule of the app sheet. */
+    struct css_sheet sheet = {0};
+    css_init_default(&sheet);
+    assert(css_parse(&sheet, ".tab { background: var(--surface); cursor: pointer; }"));
     struct css_style tab;
     css_style_resolve(&sheet, "tab", NULL, NULL, CSS_PSEUDO_NONE, &tab);
     assert(tab.has_bg_color && tab.bg_color == 0xFF1E1E2Eu);
@@ -889,7 +884,7 @@ int main(void)
     test_variable_defined_after_its_use();
     test_border_shorthand();
     extended_properties_test();
-    test_app_rules_come_from_the_app_sheet();
+    test_appended_sheet_holds_app_rules();
     printf("PASS: CSS parser tests\n");
     return 0;
 }

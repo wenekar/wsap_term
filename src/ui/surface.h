@@ -136,6 +136,9 @@ struct ui_widget *ui_surface_hit_test(struct ui_surface *surface,
 
 void ui_surface_set_sheet(struct ui_surface *surface,
                           const struct css_sheet *sheet);
+/* Sets a sheet that applies above the surface sheet, such as a theme sheet. */
+void ui_surface_set_overlay_sheet(struct ui_surface *surface,
+                                  const struct css_sheet *sheet);
 void ui_surface_set_scale(struct ui_surface *surface,
                           struct css_scale_context scale);
 struct css_scale_context ui_surface_scale(const struct ui_surface *surface);

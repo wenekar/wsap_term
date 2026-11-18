@@ -128,7 +128,7 @@ app_lib = static_library(
     'wsap-app',
     app_src,
     link_with: [base_lib, terminal_lib, ui_yasl_lib, session_lib, font_lib, ui_lib, pty_lib, paint_lib, theme_lib, render_lib],
-    include_directories: inc,
+    include_directories: [inc, app_inc],
     dependencies: core_deps + [yasl_dep] + [term_dep],
     install: false,
 )

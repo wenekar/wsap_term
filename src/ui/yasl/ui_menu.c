@@ -221,6 +221,7 @@ static bool open_popup(struct window *w, int depth, struct rect2i anchor)
     ui_widget_add_child(&p->root, level);
     ui_surface_init(&p->ui, &window_ui_surface_host, w);
     ui_surface_set_sheet(&p->ui, ui->sheet);
+    ui_surface_set_overlay_sheet(&p->ui, ui->theme_sheet);
     ui_surface_set_scale(&p->ui, window_ui_scale(w));
     ui_surface_set_root(&p->ui, &p->root);
 

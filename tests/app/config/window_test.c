@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include "app/config/config.h"
+#include "app/style.h"
 #include "app/config/settings.h"
 #include "platform/platform.h"
 #include "render/scene_paint.h"
@@ -55,7 +56,7 @@ static struct window *open_settings(struct app *app)
         window_close(w);
         return NULL;
     }
-    window_ui_set_style(w, look_sheet(app->look),
+    window_ui_set_style(w, app_style_sheet(), look_sheet(app->look),
                         look_palette(app->look)->bg);
     return w;
 }

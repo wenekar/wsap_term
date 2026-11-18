@@ -22,6 +22,7 @@ static void app_trim_heap(void)
 
 #include "app/app.h"
 #include "app/config/settings.h"
+#include "app/style.h"
 #include "app/thumbnail.h"
 #include "loop/latency_probe.h"
 #include "yasl/yasl.h"
@@ -245,7 +246,7 @@ static void style_window(struct app *a, struct window *w)
     const struct wsap_vtcore_theme *theme = look_palette(a->look);
     if (app_tabs_is(w))
         app_tabs_set_theme(w, theme);
-    window_ui_set_style(w, look_sheet(a->look), theme->bg);
+    window_ui_set_style(w, app_style_sheet(), look_sheet(a->look), theme->bg);
 }
 
 static void look_changed(void *ud)

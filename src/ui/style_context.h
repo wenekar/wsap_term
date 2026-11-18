@@ -10,6 +10,8 @@ struct ui_widget;
 struct ui_style_context {
     const struct css_sheet *sheet;
     const struct css_sheet *host_sheet;
+    /* Rules above the host sheet, such as a theme sheet. */
+    const struct css_sheet *overlay_sheet;
     struct css_sheet *owned_sheet;
     uint64_t generation;
     struct css_scale_context scale;
@@ -20,8 +22,14 @@ struct ui_style_context {
 
 void ui_style_context_init(struct ui_style_context *context);
 void ui_style_context_destroy(struct ui_style_context *context);
+/* Sets the host sheet. A host sheet without the UI core rules gets them
+   below its rules. */
 void ui_style_context_set_sheet(struct ui_style_context *context,
                                 const struct css_sheet *sheet);
+/* Sets a sheet that applies above the host sheet. Its variables override the
+   variables of the host sheet. NULL removes the overlay. */
+void ui_style_context_set_overlay_sheet(struct ui_style_context *context,
+                                        const struct css_sheet *sheet);
 void ui_style_context_set_scale(struct ui_style_context *context,
                                 struct css_scale_context scale);
 const struct css_sheet *ui_style_context_sheet(

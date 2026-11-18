@@ -1,6 +1,23 @@
-/* The app stylesheet. The theme store appends it to every sheet it builds.
-   It holds the rules of the app screens: the tab bar, the command palette,
-   the tab preview, the settings screen, and the terminal drop target. */
+/* The app stylesheet. The app library embeds it in a generated header, so an
+   edit here needs no code change. It holds the :root variables and the rules
+   of the app screens: the tab bar, the command palette, the tab preview, the
+   settings screen, and the terminal drop target. */
+
+:root {
+    --drop-bg: #89b4fa33;
+    --settings-row-bg: #181825;
+    --settings-help-fg: #a6adc8;
+    --settings-active-fg: var(--accent);
+    --tab-bg: var(--surface);
+    --tab-fg: #a6adc8;
+    --tab-hover-bg: #313244;
+    --tab-hover-fg: var(--fg);
+    --tab-active-bg: #45475a;
+    --tab-active-fg: #ffffff;
+    --tab-close-fg: #a6adc8;
+    --tab-radius: 4px;
+    --tab-close-radius: 0.5em;
+}
 
 .tab-bar { height: 2.2em; flex-direction: row; align-items: center; padding: 0.25em 0.5em; gap: 0.4em; }
 .tab { height: 1.6em; background: var(--tab-bg); color: var(--tab-fg); border-radius: var(--tab-radius); padding: 0 0.8em; flex-direction: row; align-items: center; gap: 0.5em; cursor: pointer; ripple: #ffffff30; transition-duration: 300ms; }

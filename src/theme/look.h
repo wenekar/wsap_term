@@ -34,6 +34,8 @@ void look_set_listener(struct look *look, void (*changed)(void *ud), void *ud);
 
 /*
  * Returns the CSS style sheet of the active theme appearance.
+ * The sheet holds the theme rules only. The caller layers it above its own
+ * toolkit and app sheet.
  */
 const struct css_sheet *look_sheet(const struct look *look);
 

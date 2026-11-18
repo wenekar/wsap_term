@@ -39,19 +39,16 @@ struct appearance *appearance_load(const char *name, const char *css_path,
         ap->palette = *base;
     else
         wsap_vtcore_theme_default(&ap->palette);
-    css_init_default(&ap->chrome);
-    /* The app rules extend the core rules. The theme file then overrides
-       both. */
-    if (!css_parse_app(&ap->chrome))
-        fprintf(stderr, "[%s] cannot add the app stylesheet\n", app_name());
     if (name && !(ap->name = strdup(name))) {
         appearance_unref(ap);
         return NULL;
     }
+    /* The theme rules layer over the toolkit and app rules that the caller
+       holds. The sheet holds no core rule. */
     if (css_path) {
         char *text = util_read_file(css_path, app_name());
-        if (text && !css_parse_with_diagnostics(&ap->chrome, text,
-                                                css_warning, (void *)css_path))
+        if (text && !css_parse_deferred(&ap->chrome, text, css_warning,
+                                        (void *)css_path))
             fprintf(stderr, "[%s] cannot parse CSS file %s\n", app_name(), css_path);
         free(text);
     }

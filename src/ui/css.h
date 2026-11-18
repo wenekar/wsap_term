@@ -331,6 +331,11 @@ bool css_parse_with_diagnostics(struct css_sheet *sheet, const char *css_text,
 
 /* Parses CSS text and adds the rules to `sheet`. */
 bool css_parse(struct css_sheet *sheet, const char *css_text);
+/* Parses CSS text and adds the rules to `sheet`. A declaration that holds a
+   var() stays unresolved until css_sheet_append() adds the variables. A
+   stylesheet that layers over another sheet uses this call. */
+bool css_parse_deferred(struct css_sheet *sheet, const char *css_text,
+                        css_diagnostic_fn report, void *userdata);
 /* Appends rules from `src` to `dst`. */
 bool css_sheet_append(struct css_sheet *dst, const struct css_sheet *src);
 /* Releases all rules from `sheet`. */
@@ -342,10 +347,6 @@ void css_init_default(struct css_sheet *sheet);
 /* Returns the shared sheet of the UI core rules, which assets/ui/core.css
    holds. */
 const struct css_sheet *css_default_sheet(void);
-
-/* Adds the app rules of assets/ui/app.css to `sheet`, which must already hold
-   the UI core rules. A theme store calls this on each sheet that it builds. */
-bool css_parse_app(struct css_sheet *sheet);
 
 /* Clears the shared default sheet. */
 void css_shutdown(void);

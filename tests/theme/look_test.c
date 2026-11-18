@@ -55,11 +55,22 @@ static const struct look_theme *theme_named(struct look *a, const char *name)
     return look_theme_at(a, theme_index(a, name));
 }
 
+/* The app layers the theme sheet over its own sheet, which holds the UI core
+   rules and the app rules. */
+static struct css_sheet layered_sheet(struct look *a)
+{
+    struct css_sheet sheet = {0};
+    css_init_default(&sheet);
+    assert(css_sheet_append(&sheet, look_sheet(a)));
+    return sheet;
+}
+
 static uint32_t tab_bar_bg(struct look *a)
 {
+    struct css_sheet sheet = layered_sheet(a);
     struct css_style style = {0};
-    css_style_resolve(look_sheet(a), "tab-bar", NULL, NULL,
-                      CSS_PSEUDO_NONE, &style);
+    css_style_resolve(&sheet, "tab-bar", NULL, NULL, CSS_PSEUDO_NONE, &style);
+    css_sheet_clear(&sheet);
     assert(style.has_bg_color);
     return style.bg_color;
 }
@@ -126,57 +137,42 @@ static void test_theme_apply(void)
     };
     for (size_t i = 0; i < sizeof(css_themes) / sizeof(css_themes[0]); i++) {
         struct look *themed = open_theme_file(css_themes[i]);
-        const struct css_sheet *sheet = look_sheet(themed);
+        const struct css_sheet *theme = look_sheet(themed);
+        /* The theme sheet holds no app rule. */
+        assert(!resolve_class(theme, "command-palette", CSS_PSEUDO_NONE)
+                    .has_bg_color);
 
-        struct css_style bar = resolve_class(sheet, "tab-bar", CSS_PSEUDO_NONE);
+        struct css_sheet sheet = layered_sheet(themed);
+
+        struct css_style bar = resolve_class(&sheet, "tab-bar", CSS_PSEUDO_NONE);
         assert(bar.has_bg_color && bar.has_border_color);
 
-        struct css_style tab = resolve_class(sheet, "tab", CSS_PSEUDO_NONE);
-        assert(tab.has_bg_color && tab.has_text_color &&
-               tab.border_radius.val > 0.0f);
-
-        struct css_style tab_focus = resolve_class(sheet, "tab", CSS_PSEUDO_FOCUS);
-        assert(tab_focus.has_border_color);
-
-        struct css_style tab_new = resolve_class(sheet, "tab-new", CSS_PSEUDO_NONE);
-        assert(tab_new.has_text_color);
-
-        struct css_style menu = resolve_class(sheet, "context-menu",
+        struct css_style menu = resolve_class(&sheet, "context-menu",
                                               CSS_PSEUDO_NONE);
         assert(menu.has_bg_color && menu.has_border_color && menu.has_shadow);
 
-        struct css_style thumb = resolve_class(sheet, "scrollbar-thumb",
+        struct css_style thumb = resolve_class(&sheet, "scrollbar-thumb",
                                                CSS_PSEUDO_NONE);
         assert(thumb.has_bg_color && thumb.border_radius.val > 0.0f);
-        assert(resolve_class(sheet, "scrollbar-thumb", CSS_PSEUDO_HOVER)
+        assert(resolve_class(&sheet, "scrollbar-thumb", CSS_PSEUDO_HOVER)
                    .has_bg_color);
-        assert(resolve_class(sheet, "scrollbar-thumb", CSS_PSEUDO_ACTIVE)
+        assert(resolve_class(&sheet, "scrollbar-thumb", CSS_PSEUDO_ACTIVE)
                    .has_bg_color);
 
-        struct css_style input = resolve_class(sheet, "text-input",
+        struct css_style input = resolve_class(&sheet, "text-input",
                                                CSS_PSEUDO_NONE);
         assert(input.has_bg_color && input.has_border_color);
-        assert(resolve_class(sheet, "text-input-text", CSS_PSEUDO_NONE)
+        assert(resolve_class(&sheet, "text-input-text", CSS_PSEUDO_NONE)
                    .has_text_color);
-        assert(resolve_class(sheet, "text-input-selection", CSS_PSEUDO_NONE)
+        assert(resolve_class(&sheet, "text-input-selection", CSS_PSEUDO_NONE)
                    .has_bg_color);
-        assert(resolve_class(sheet, "text-input-caret", CSS_PSEUDO_NONE)
+        assert(resolve_class(&sheet, "text-input-caret", CSS_PSEUDO_NONE)
                    .has_bg_color);
 
-        struct css_style palette = resolve_class(sheet, "command-palette",
-                                                 CSS_PSEUDO_NONE);
-        assert(palette.has_bg_color && palette.has_border_color);
-
-        struct css_style palette_input = {0};
-        const struct css_element input_element = { .class_name = "text-input" };
-        const struct css_element palette_parent = { .class_name = "command-palette" };
-        css_style_resolve_node(sheet, &input_element, CSS_PSEUDO_NONE,
-                               &palette_parent, 1, &palette_input);
-        assert(palette_input.has_bg_color && palette_input.bg_color == 0u);
-
-        assert(resolve_class(sheet, "label-link", CSS_PSEUDO_NONE)
+        assert(resolve_class(&sheet, "label-link", CSS_PSEUDO_NONE)
                    .has_text_color);
 
+        css_sheet_clear(&sheet);
         look_destroy(themed);
     }
 }
@@ -300,53 +296,52 @@ static void test_settings_replace_base_palette(void)
 static void test_theme_root_overrides_and_defaults(void)
 {
     struct look *twilight = open_theme_file("breeze-twilight");
-    const struct css_sheet *tw_sheet = look_sheet(twilight);
-    struct css_style bar = resolve_class(tw_sheet, "tab-bar", CSS_PSEUDO_NONE);
+    struct css_sheet tw = layered_sheet(twilight);
+    struct css_style bar = resolve_class(&tw, "tab-bar", CSS_PSEUDO_NONE);
     assert(bar.has_bg_color && bar.bg_color == 0xFFEFF0F1u);
-    struct css_style tab = resolve_class(tw_sheet, "tab", CSS_PSEUDO_NONE);
-    assert(tab.has_bg_color && tab.bg_color == 0xFFFFFFFFu);
-    assert(tab.has_text_color && tab.text_color == 0xFF232629u);
-    struct css_style menu =
-        resolve_class(tw_sheet, "context-menu", CSS_PSEUDO_NONE);
+    struct css_style menu = resolve_class(&tw, "context-menu", CSS_PSEUDO_NONE);
     assert(menu.has_bg_color && menu.bg_color == 0xFF141618u);
     assert(menu.has_shadow && menu.shadow_color == 0x33000000u);
-    struct css_style close_hover =
-        resolve_class(tw_sheet, "tab-close", CSS_PSEUDO_HOVER);
-    assert(close_hover.has_bg_color && close_hover.bg_color == 0xFFDA4453u);
-    assert(close_hover.has_text_color && close_hover.text_color == 0xFFFFFFFFu);
-    struct css_style item =
-        resolve_class(tw_sheet, "menu-item", CSS_PSEUDO_NONE);
+    struct css_style item = resolve_class(&tw, "menu-item", CSS_PSEUDO_NONE);
     assert(item.has_text_color && item.text_color == 0xFFFCFCFCu);
+    css_sheet_clear(&tw);
     look_destroy(twilight);
 
     struct look *mac = open_theme_file("macos26-dark");
-    const struct css_sheet *mac_sheet = look_sheet(mac);
+    struct css_sheet mac_sheet = layered_sheet(mac);
     struct css_style mac_dis =
-        resolve_class(mac_sheet, "menu-item", CSS_PSEUDO_DISABLED);
+        resolve_class(&mac_sheet, "menu-item", CSS_PSEUDO_DISABLED);
     assert(mac_dis.has_text_color && mac_dis.text_color == 0xFF6E6E6Eu);
     struct css_style mac_short =
-        resolve_class(mac_sheet, "menu-shortcut", CSS_PSEUDO_NONE);
+        resolve_class(&mac_sheet, "menu-shortcut", CSS_PSEUDO_NONE);
     assert(mac_short.has_text_color && mac_short.text_color == 0xFF8C8C8Cu);
+    css_sheet_clear(&mac_sheet);
     look_destroy(mac);
 
     struct look *pop = open_theme_file("pop-os-light");
-    const struct css_sheet *pop_sheet = look_sheet(pop);
+    struct css_sheet pop_sheet = layered_sheet(pop);
     struct css_style pop_thumb =
-        resolve_class(pop_sheet, "scrollbar-thumb", CSS_PSEUDO_NONE);
+        resolve_class(&pop_sheet, "scrollbar-thumb", CSS_PSEUDO_NONE);
     assert(pop_thumb.has_bg_color && pop_thumb.bg_color == 0xFFB8B2ACu);
     struct css_style pop_short =
-        resolve_class(pop_sheet, "menu-shortcut", CSS_PSEUDO_NONE);
+        resolve_class(&pop_sheet, "menu-shortcut", CSS_PSEUDO_NONE);
     assert(pop_short.has_text_color && pop_short.text_color == 0xFF4D4D4Du);
+    css_sheet_clear(&pop_sheet);
     look_destroy(pop);
 
-    /* The theme store applies the core rules and then the app rules. */
+    /* The theme store holds no core rule. A caller layers the theme sheet
+       over the core rules. */
     struct look *plain = open_look(NULL);
-    const struct css_sheet *def = look_sheet(plain);
-    struct css_style def_bar = resolve_class(def, "tab-bar", CSS_PSEUDO_NONE);
-    assert(!def_bar.has_bg_color);
-    assert(def_bar.height.unit == CSS_UNIT_EM && def_bar.height.val == 2.2f);
-    struct css_style def_tab = resolve_class(def, "tab", CSS_PSEUDO_NONE);
-    assert(def_tab.has_bg_color && def_tab.bg_color == 0xFF1E1E2Eu);
+    const struct css_sheet *theme = look_sheet(plain);
+    assert(!resolve_class(theme, "context-menu", CSS_PSEUDO_NONE).has_bg_color);
+    struct css_sheet def = layered_sheet(plain);
+    struct css_style def_menu = resolve_class(&def, "context-menu",
+                                              CSS_PSEUDO_NONE);
+    assert(def_menu.has_bg_color && def_menu.bg_color == 0xFF1E1E2Eu);
+    struct css_style def_link = resolve_class(&def, "label-link",
+                                              CSS_PSEUDO_NONE);
+    assert(def_link.has_text_color && def_link.text_color == 0xFF89B4FAu);
+    css_sheet_clear(&def);
     look_destroy(plain);
 }
 

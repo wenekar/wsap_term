@@ -22,28 +22,40 @@ static void rebuild_sheet(struct ui_style_context *context)
 {
     if (!context)
         return;
-    if (!context->host_sheet) {
+    const struct css_sheet *host = context->host_sheet;
+    const struct css_sheet *overlay = context->overlay_sheet;
+    if (!host && !overlay) {
         drop_owned_sheet(context);
         context->sheet = css_default_sheet();
         return;
     }
-    if (context->host_sheet->has_defaults) {
+    /* A host sheet that holds the core rules needs no other layer. It shares
+       its rules with every context that it feeds. */
+    if (host && !overlay && host->has_defaults) {
         drop_owned_sheet(context);
-        context->sheet = context->host_sheet;
+        context->sheet = host;
         return;
     }
 
     if (!context->owned_sheet) {
         context->owned_sheet = calloc(1, sizeof(*context->owned_sheet));
         if (!context->owned_sheet) {
-            context->sheet = css_default_sheet();
+            context->sheet = host && host->has_defaults ? host
+                                                        : css_default_sheet();
             return;
         }
     }
 
     css_sheet_clear(context->owned_sheet);
-    css_init_default(context->owned_sheet);
-    css_sheet_append(context->owned_sheet, context->host_sheet);
+    if (host && host->has_defaults) {
+        css_sheet_append(context->owned_sheet, host);
+    } else {
+        css_init_default(context->owned_sheet);
+        if (host)
+            css_sheet_append(context->owned_sheet, host);
+    }
+    if (overlay)
+        css_sheet_append(context->owned_sheet, overlay);
     context->sheet = context->owned_sheet;
 }
 
@@ -74,6 +86,7 @@ void ui_style_context_destroy(struct ui_style_context *context)
     context->path_cap = 0;
     context->sheet = NULL;
     context->host_sheet = NULL;
+    context->overlay_sheet = NULL;
 }
 
 void ui_style_context_set_sheet(struct ui_style_context *context,
@@ -82,6 +95,16 @@ void ui_style_context_set_sheet(struct ui_style_context *context,
     if (!context)
         return;
     context->host_sheet = sheet;
+    rebuild_sheet(context);
+    context->generation = next_generation(context->generation);
+}
+
+void ui_style_context_set_overlay_sheet(struct ui_style_context *context,
+                                        const struct css_sheet *sheet)
+{
+    if (!context)
+        return;
+    context->overlay_sheet = sheet;
     rebuild_sheet(context);
     context->generation = next_generation(context->generation);
 }

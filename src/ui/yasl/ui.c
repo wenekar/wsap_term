@@ -78,8 +78,10 @@ void window_ui_restyle(struct window *w)
     if (surface)
         ui_surface_resize(&ui->screen, window_size(w));
     ui_surface_set_sheet(&ui->screen, ui->sheet);
+    ui_surface_set_overlay_sheet(&ui->screen, ui->theme_sheet);
     for (int i = 0; i < ui->menu_popups; i++) {
         ui_surface_set_sheet(&ui->menu_popup[i].ui, ui->sheet);
+        ui_surface_set_overlay_sheet(&ui->menu_popup[i].ui, ui->theme_sheet);
         ui_surface_set_scale(&ui->menu_popup[i].ui, scale);
     }
     window_menu_relayout(w);
@@ -90,12 +92,14 @@ void window_ui_restyle(struct window *w)
 }
 
 void window_ui_set_style(struct window *w, const struct css_sheet *sheet,
+                         const struct css_sheet *theme_sheet,
                          uint32_t background)
 {
     struct window_ui *ui = window_ui_of(w);
     if (!ui)
         return;
     ui->sheet = sheet;
+    ui->theme_sheet = theme_sheet;
     ui->background = background;
     window_ui_restyle(w);
     window_redraw(w);

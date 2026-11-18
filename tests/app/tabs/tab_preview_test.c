@@ -6,6 +6,7 @@
 #include "paint/scene.h"
 #include "ui/ui.h"
 #include "ui/widget_ops.h"
+#include "app/style.h"
 #include "app/tabs/tab_preview.h"
 #include "util/json.h"
 
@@ -65,18 +66,6 @@ static bool capture(void *userdata, int index, int width, int max_height,
     return true;
 }
 
-/* The tab preview is an app widget, so the app stylesheet holds its rules. */
-static struct css_sheet app_sheet;
-
-static const struct css_sheet *app_rules(void)
-{
-    if (!app_sheet.rule_count) {
-        css_init_default(&app_sheet);
-        assert(css_parse_app(&app_sheet));
-    }
-    return &app_sheet;
-}
-
 static void setup(struct fixture *f, const char *css)
 {
     *f = (struct fixture){ .tabs = 4 };
@@ -88,7 +77,7 @@ static void setup(struct fixture *f, const char *css)
         .capture = capture, .userdata = f,
     });
     assert(ui_widget_add_child(&f->root, ui_tab_preview_widget(&f->card)));
-    ui_surface_set_sheet(&f->surface, css ? &f->sheet : app_rules());
+    ui_surface_set_sheet(&f->surface, css ? &f->sheet : app_style_sheet());
     ui_surface_set_scale(&f->surface, (struct css_scale_context){
         .dpi_scale = 1, .cell_w = 8, .cell_h = 16,
     });

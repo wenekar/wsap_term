@@ -2,6 +2,7 @@
 #define TEST_TERMINAL_WINDOW_H
 
 #include "app/app.h"
+#include "app/style.h"
 #include "app/tabs/tabs.h"
 #include "terminal/terminal.h"
 #include "theme/look.h"
@@ -23,7 +24,8 @@ static inline struct window *test_terminal_window(struct app *app)
         return NULL;
     }
     app_tabs_set_theme(w, look_palette(app->look));
-    window_ui_set_style(w, look_sheet(app->look), look_palette(app->look)->bg);
+    window_ui_set_style(w, app_style_sheet(), look_sheet(app->look),
+                        look_palette(app->look)->bg);
     return w;
 }
 

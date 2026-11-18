@@ -203,6 +203,73 @@ static void plain_host_sheet_gets_defaults_test(void)
     css_sheet_clear(&host);
 }
 
+static void overlay_sheet_layers_over_promoted_host_test(void)
+{
+    struct css_sheet host = {0};
+    css_init_default(&host);
+    assert(css_parse(&host,
+        ":root { --panel-bg: #112233; }"
+        ".panel { background: var(--panel-bg); }"));
+
+    /* The overlay is a theme sheet. It holds no core rule, and it reads and
+       overrides the variables of the host. */
+    struct css_sheet overlay = {0};
+    assert(css_parse_deferred(&overlay,
+        ":root { --surface: #121314; --panel-bg: #445566; }"
+        ".badge { background: var(--panel-bg); color: var(--accent); }",
+        NULL, NULL));
+
+    struct ui_style_context context = {0};
+    ui_style_context_init(&context);
+    ui_style_context_set_sheet(&context, &host);
+    ui_style_context_set_overlay_sheet(&context, &overlay);
+
+    struct css_style menu = ui_style_context_style(&context, "context-menu", 0);
+    assert(menu.has_bg_color && menu.bg_color == 0xFF121314u);
+    struct css_style panel = ui_style_context_style(&context, "panel", 0);
+    assert(panel.has_bg_color && panel.bg_color == 0xFF445566u);
+    struct css_style badge = ui_style_context_style(&context, "badge", 0);
+    assert(badge.has_bg_color && badge.bg_color == 0xFF445566u);
+    assert(badge.has_text_color && badge.text_color == 0xFF89B4FAu);
+
+    /* Without the overlay, the host variables apply again. */
+    ui_style_context_set_overlay_sheet(&context, NULL);
+    panel = ui_style_context_style(&context, "panel", 0);
+    assert(panel.has_bg_color && panel.bg_color == 0xFF112233u);
+    menu = ui_style_context_style(&context, "context-menu", 0);
+    assert(menu.has_bg_color && menu.bg_color == 0xFF1E1E2Eu);
+
+    ui_style_context_destroy(&context);
+    css_sheet_clear(&overlay);
+    css_sheet_clear(&host);
+}
+
+static void overlay_sheet_adds_core_to_plain_host_test(void)
+{
+    struct css_sheet host = {0};
+    assert(css_parse(&host, ".panel { background: #112233; }"));
+
+    struct css_sheet overlay = {0};
+    assert(css_parse_deferred(&overlay,
+        ".badge { color: var(--accent); }", NULL, NULL));
+
+    struct ui_style_context context = {0};
+    ui_style_context_init(&context);
+    ui_style_context_set_sheet(&context, &host);
+    ui_style_context_set_overlay_sheet(&context, &overlay);
+
+    struct css_style menu = ui_style_context_style(&context, "context-menu", 0);
+    assert(menu.has_bg_color && menu.bg_color == 0xFF1E1E2Eu);
+    struct css_style panel = ui_style_context_style(&context, "panel", 0);
+    assert(panel.has_bg_color && panel.bg_color == 0xFF112233u);
+    struct css_style badge = ui_style_context_style(&context, "badge", 0);
+    assert(badge.has_text_color && badge.text_color == 0xFF89B4FAu);
+
+    ui_style_context_destroy(&context);
+    css_sheet_clear(&overlay);
+    css_sheet_clear(&host);
+}
+
 static void host_root_variables_override_defaults_test(void)
 {
     struct css_sheet host = {0};
@@ -239,6 +306,8 @@ int main(void)
     generic_style_sizing_test();
     host_sheet_with_defaults_is_not_duplicated_test();
     plain_host_sheet_gets_defaults_test();
+    overlay_sheet_layers_over_promoted_host_test();
+    overlay_sheet_adds_core_to_plain_host_test();
     host_root_variables_override_defaults_test();
     return 0;
 }

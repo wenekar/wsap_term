@@ -1,6 +1,5 @@
 #include "css.h"
 #include "ui/metrics.h"
-#include "ui_app_css.h"
 #include "ui_core_css.h"
 
 #include <ctype.h>
@@ -1967,6 +1966,16 @@ bool css_parse(struct css_sheet *sheet, const char *p)
     return css_parse_with_diagnostics(sheet, p, css_report_stderr, NULL);
 }
 
+bool css_parse_deferred(struct css_sheet *sheet, const char *p,
+                        css_diagnostic_fn report, void *userdata)
+{
+    if (!sheet || !p) return false;
+    bool ok = parse_rules(sheet, p, report, userdata);
+    if (!sheet_sort_rules(sheet))
+        return false;
+    return sheet_build_index(sheet) && ok;
+}
+
 void css_sheet_clear(struct css_sheet *sheet)
 {
     if (!sheet)
@@ -2038,13 +2047,6 @@ const struct css_sheet *css_default_sheet(void)
         default_sheet_ready = true;
     }
     return &default_sheet;
-}
-
-bool css_parse_app(struct css_sheet *sheet)
-{
-    if (!sheet)
-        return false;
-    return css_parse(sheet, kUiAppCss);
 }
 
 void css_shutdown(void)

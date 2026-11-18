@@ -424,6 +424,16 @@ void ui_surface_set_sheet(struct ui_surface *surface,
         ui_widget_invalidate(surface->impl.root, UI_WIDGET_INVALIDATE_MEASURE);
 }
 
+void ui_surface_set_overlay_sheet(struct ui_surface *surface,
+                                  const struct css_sheet *sheet)
+{
+    if (!surface)
+        return;
+    ui_style_context_set_overlay_sheet(&surface->impl.style, sheet);
+    if (surface->impl.root)
+        ui_widget_invalidate(surface->impl.root, UI_WIDGET_INVALIDATE_MEASURE);
+}
+
 void ui_surface_set_scale(struct ui_surface *surface,
                           struct css_scale_context scale)
 {

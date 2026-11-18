@@ -60,6 +60,7 @@ struct ui_surface *window_ui_key_surface(struct window *w);
 struct css_scale_context window_ui_scale(const struct window *w);
 void window_ui_restyle(struct window *w);
 void window_ui_set_style(struct window *w, const struct css_sheet *sheet,
+                         const struct css_sheet *theme_sheet,
                          uint32_t background);
 void window_ui_relayout(struct window *w);
 void window_ui_hide_pointer(struct window *w);
