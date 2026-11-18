@@ -22,6 +22,7 @@ has_wayland = false
 has_x11 = false
 has_dbus = false
 has_egl = false
+has_wayland_egl = false
 has_vulkan = false
 has_cocoa = system == 'darwin'
 
@@ -55,10 +56,13 @@ if system == 'linux'
     endif
     egl_dep = dependency('egl', required: false)
     wayland_egl_dep = dependency('wayland-egl', required: false)
-    has_egl = egl_dep.found() and (not has_wayland or wayland_egl_dep.found())
+    # X11 EGL needs only the EGL headers. The Wayland EGL window needs
+    # <wayland-egl.h> too, so a missing wayland-egl disables EGL on Wayland alone.
+    has_egl = egl_dep.found()
+    has_wayland_egl = has_wayland and egl_dep.found() and wayland_egl_dep.found()
     if has_egl
         deps += egl_dep.partial_dependency(compile_args: true, includes: true)
-        if has_wayland
+        if has_wayland_egl
             deps += wayland_egl_dep.partial_dependency(compile_args: true, includes: true)
         endif
     endif
@@ -97,9 +101,13 @@ if not has_wayland and not has_x11 and not has_cocoa
     error('Enable at least one window backend.')
 endif
 
+# The GL example and the GL integration test need GL on every built backend.
+has_gl_surfaces = has_egl and (not has_wayland or has_wayland_egl)
+
 add_project_arguments(
     '-Werror=deprecated-declarations',
     '-DYASL_HAS_EGL=' + (has_egl ? '1' : '0'),
+    '-DYASL_HAS_WAYLAND_EGL=' + (has_wayland_egl ? '1' : '0'),
     '-DYASL_HAS_VULKAN=' + (has_vulkan ? '1' : '0'),
     '-DYASL_HAS_WAYLAND=' + (has_wayland ? '1' : '0'),
     '-DYASL_HAS_X11=' + (has_x11 ? '1' : '0'),
@@ -137,8 +145,13 @@ if has_vulkan
     install_headers('include/yasl/vulkan.h', subdir: 'yasl')
 endif
 pkgconfig = import('pkgconfig')
+# yasl calls no Vulkan entry point. The application supplies the loader and
+# links it. A consumer of <yasl/vulkan.h> still needs <vulkan/vulkan.h>, so the
+# private pkg-config requirement supplies the Vulkan Cflags.
+vulkan_pc_requirement = (has_vulkan and vulkan_dep.type_name() == 'pkgconfig') ? 'vulkan' : []
 pkgconfig.generate(yasl_lib, name: 'yasl',
     description: 'Desktop surfaces for application-owned rendering',
+    requires_private: vulkan_pc_requirement,
     libraries_private: deps,
 )
 
@@ -170,7 +183,7 @@ notepad_example = executable(
     dependencies: yasl_dep,
 )
 
-if has_egl
+if has_gl_surfaces
     game_example = executable(
         'yasl-game',
         'examples/game.c',

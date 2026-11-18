@@ -96,7 +96,7 @@ static bool impl_surface_update_text_input(struct yasl_surface *s)
     return wayland_surface_update_text_input((struct wayland_surface *)s);
 }
 
-#if YASL_HAS_EGL
+#if YASL_HAS_WAYLAND_EGL
 struct wayland_dl_entry {
     const char *name;
     size_t offset;
@@ -707,7 +707,7 @@ static void *impl_surface_get_native_handle(struct yasl_surface *s)
 }
 
 const struct yasl_private_backend_ops yasl_private_wayland_backend = {
-#if YASL_HAS_EGL
+#if YASL_HAS_WAYLAND_EGL
     .surface_create_gl = impl_surface_create_gl,
     .gl_make_current = impl_gl_make_current,
     .gl_get_proc_address = impl_gl_get_proc_address,

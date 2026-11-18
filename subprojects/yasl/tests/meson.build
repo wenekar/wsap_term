@@ -4,9 +4,10 @@ python = find_program('python3', native: true)
 # MSan reports false positives in uninstrumented code.
 extlib_wayland = ['clipboard', 'drop', 'keyboard', 'modifiers', 'input', 'surface_lifetime']
 # yasl/vulkan.h includes <vulkan/vulkan.h>, so the header path must come with the library.
+vulkan_headers = has_vulkan ? [vulkan_dep.partial_dependency(compile_args: true, includes: true)] : []
 shared_dep = declare_dependency(link_with: yasl_lib.get_shared_lib(),
     include_directories: include_directories('../include'),
-    dependencies: has_vulkan ? [vulkan_dep] : [])
+    dependencies: vulkan_headers)
 foreach kind : ['static', 'shared']
     dep = kind == 'static' ? yasl_dep : shared_dep
     public_test = executable('yasl-' + kind + '-api-test', 'test_lifecycle.c', dependencies: dep)
@@ -104,13 +105,15 @@ if get_option('integration_tests')
     integration = executable('yasl-surface-integration', ['common/test_surface_integration.c'] + display_test_sources,
         include_directories: inc, dependencies: yasl_dep)
     gl_integration = '-'
-    if has_egl
+    if has_gl_surfaces
         gl_integration = executable('yasl-gl-integration', 'common/test_gl.c',
             dependencies: yasl_dep)
     endif
     vulkan_integration = '-'
     if has_vulkan
-        vulkan_integration = executable('yasl-vulkan-integration', 'common/test_vulkan.c', dependencies: yasl_dep)
+        # The test creates the VkInstance itself, so it links the loader.
+        vulkan_integration = executable('yasl-vulkan-integration', 'common/test_vulkan.c',
+            dependencies: [yasl_dep, vulkan_dep])
     endif
     if system == 'linux'
         weston = find_program('weston')
