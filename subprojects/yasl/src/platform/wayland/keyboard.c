@@ -78,7 +78,9 @@ static void keyboard_keymap(void *data, struct wl_keyboard *keyboard,
         close(fd);
         return;
     }
-    char *map_str = malloc(size);
+    /* The extra byte holds a NUL, so the text stays a C string when the
+     * compositor sends it without one. xkbcommon scans it as a C string. */
+    char *map_str = malloc((size_t)size + 1);
     if (!map_str) {
         close(fd);
         return;
@@ -94,6 +96,7 @@ static void keyboard_keymap(void *data, struct wl_keyboard *keyboard,
         free(map_str);
         return;
     }
+    map_str[size] = '\0';
 
     if (s->xkb_keymap)
         xkb_keymap_unref(s->xkb_keymap);
