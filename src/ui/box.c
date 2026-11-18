@@ -21,7 +21,9 @@ struct ui_box_params ui_box_params(const struct ui_box *box,
 
     const struct css_style *style = &box->widget.style;
     const struct css_scale_context *scale = &box->widget.style_scale;
-    if (style->has_flex_direction) {
+    /* A stack keeps its order. CSS flex-direction applies to a row or a
+       column only. */
+    if (style->has_flex_direction && out.direction != UI_BOX_STACK) {
         out.direction = style->flex_direction == CSS_FLEX_COLUMN
             ? UI_BOX_COLUMN : UI_BOX_ROW;
     }
@@ -29,12 +31,12 @@ struct ui_box_params ui_box_params(const struct ui_box *box,
         out.align = style->align_items;
     if (style->has_justify_content)
         out.justify = style->justify_content;
+    if (style->has_flex_wrap)
+        out.wrap = (enum css_flex_wrap)style->flex_wrap;
     out.padding = ui_css_resolve_insets(style->padding, basis, scale, true);
-    int border = ui_widget_border_width(&box->widget);
-    if (border > 0) {
-        for (int i = 0; i < 4; i++)
-            out.padding.v[i] = geom_sat_i((int64_t)out.padding.v[i] + border);
-    }
+    struct insets2i border = ui_css_border_insets(style, scale);
+    for (int i = 0; i < 4; i++)
+        out.padding.v[i] = geom_sat_i((int64_t)out.padding.v[i] + border.v[i]);
     float main_basis = (float)(out.direction == UI_BOX_COLUMN
         ? basis.y : basis.x);
     out.gap = ui_css_resolve_int(style->gap, main_basis, 0, scale, true);

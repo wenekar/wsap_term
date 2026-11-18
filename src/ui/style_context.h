@@ -32,6 +32,8 @@ struct css_style ui_style_context_style(const struct ui_style_context *context,
 uint64_t ui_style_context_generation(const struct ui_style_context *context);
 
 typedef uint32_t ui_part_id;
+/* Returns the handle of `name`. The handle 0 means an empty name, or that the
+   part table is out of memory. */
 ui_part_id ui_part_intern(const char *name);
 const char *ui_part_name(ui_part_id part);
 void ui_part_shutdown(void);

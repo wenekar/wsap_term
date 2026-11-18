@@ -523,8 +523,292 @@ static void align_and_stack_placement_test(void)
     css_sheet_clear(&sheet);
 }
 
+
+static void fractional_scale_rounding_test(void)
+{
+    static const float scales[] = { 1.0f, 1.25f, 1.5f, 2.0f };
+    static const int values[] = { 1, 3, 5, 7 };
+
+    /* One length rounds to the nearest pixel, and a rectangle rounds each
+       edge. The CSS int resolver, the fixed helper, and the layout must use
+       the same rule at every scale. */
+    for (size_t s = 0; s < sizeof(scales) / sizeof(scales[0]); s++) {
+        struct css_scale_context ctx = {
+            .dpi_scale = scales[s],
+            .cell_w = 8.0f * scales[s],
+            .cell_h = 16.0f * scales[s],
+        };
+        for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
+            struct css_value v = {
+                .val = (float)values[i],
+                .unit = CSS_UNIT_PX,
+            };
+            int expected = (int)lroundf((float)values[i] * scales[s]);
+            assert(ui_px(scales[s], values[i]) == expected);
+            assert(ui_css_resolve_int(v, 0, 0, &ctx, true) == expected);
+            assert(ui_ctx_size(&ctx, v, 0) == expected);
+        }
+    }
+
+    struct css_sheet sheet = {0};
+    assert(css_parse(&sheet,
+        ".row { padding: 1.5px; align-items: stretch; }"
+        ".half { width: 2.5px; }"
+        ".tail { width: 5.5px; }"));
+
+    struct ui_box row = {0};
+    struct probe half = {0}, tail = {0};
+    ui_box_init(&row);
+    ui_widget_set_style_identity(&row.widget, "row", NULL, NULL);
+    probe_init(&half, "half", (struct vector2i){ .x = 0, .y = 4 });
+    probe_init(&tail, "tail", (struct vector2i){ .x = 0, .y = 4 });
+    assert(ui_widget_add_children(&row.widget, (struct ui_widget *[]){
+        &half.widget, &tail.widget }, 2));
+
+    for (size_t s = 0; s < sizeof(scales) / sizeof(scales[0]); s++) {
+        float scale = scales[s];
+        struct css_scale_context ctx = {
+            .dpi_scale = scale,
+            .cell_w = 8.0f * scale,
+            .cell_h = 16.0f * scale,
+        };
+        struct ui_surface surface = {0};
+        show(&surface, &row.widget, &sheet, (struct vector2i){ .x = 20, .y = 10 });
+        ui_surface_set_scale(&surface, ctx);
+
+        int pad = (int)lroundf(1.5f * scale);
+        float mid_edge = (float)pad + 2.5f * scale;
+        int mid = (int)lroundf(mid_edge);
+        int end = (int)lroundf(mid_edge + 5.5f * scale);
+        assert(half.widget.bounds.x == pad);
+        assert(half.widget.bounds.width == mid - pad);
+        assert(tail.widget.bounds.x == mid);
+        assert(tail.widget.bounds.width == end - mid);
+        assert(rect2i_end(half.widget.bounds).x == tail.widget.bounds.x);
+        assert(half.widget.layout_bounds.pos.x == (float)pad);
+        assert(half.widget.layout_bounds.size.x == 2.5f * scale);
+        assert(tail.widget.layout_bounds.pos.x == mid_edge);
+        assert(tail.widget.layout_bounds.size.x == 5.5f * scale);
+
+        struct vector2i natural = ui_widget_measure(&row.widget,
+            (struct ui_constraints){ .max = { .x = 400, .y = 100 } });
+        assert(natural.x == (int)lroundf(2.0f * (float)pad + 8.0f * scale));
+        ui_surface_destroy(&surface);
+    }
+
+    ui_widget_destroy(&row.widget);
+    css_sheet_clear(&sheet);
+}
+
+
+static void stack_keeps_direction_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_surface surface = {0};
+    struct ui_box stack = {0};
+    struct probe first = {0}, second = {0};
+    assert(css_parse(&sheet,
+        ".stack { flex-direction: column; }"
+        ".small { width: 10px; height: 10px; }"
+        ".large { width: 20px; height: 20px; }"));
+    ui_box_init(&stack);
+    ui_box_set_direction(&stack, UI_BOX_STACK);
+    ui_widget_set_style_identity(&stack.widget, "stack", NULL, NULL);
+    probe_init(&first, "small", (struct vector2i){ .x = 10, .y = 10 });
+    probe_init(&second, "large", (struct vector2i){ .x = 20, .y = 20 });
+    assert(ui_widget_add_children(&stack.widget, (struct ui_widget *[]){
+        &first.widget, &second.widget }, 2));
+    show(&surface, &stack.widget, &sheet, (struct vector2i){ .x = 100, .y = 100 });
+    assert(rect2i_eq(first.widget.bounds, (struct rect2i){
+        .pos = { .x = 0, .y = 0 }, .size = { .x = 10, .y = 10 },
+    }));
+    assert(rect2i_eq(second.widget.bounds, (struct rect2i){
+        .pos = { .x = 0, .y = 0 }, .size = { .x = 20, .y = 20 },
+    }));
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&stack.widget);
+    css_sheet_clear(&sheet);
+}
+
+static void percent_margin_and_limits_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_surface surface = {0};
+    struct ui_box row = {0}, stack = {0};
+    struct probe clamped_min = {0}, clamped_max = {0}, stack_child = {0};
+    assert(css_parse(&sheet,
+        ".row { align-items: start; }"
+        ".clamped-min { height: 10px; width: 50%; margin: 0 10px; min-width: 70px; }"
+        ".clamped-max { height: 10px; width: 100%; max-width: 60px; }"
+        ".stack-child { height: 10px; width: 100%; margin: 0 10px; }"));
+
+    ui_box_init(&row);
+    ui_widget_set_style_identity(&row.widget, "row", NULL, NULL);
+    probe_init(&clamped_min, "clamped-min", (struct vector2i){ .x = 10, .y = 10 });
+    probe_init(&clamped_max, "clamped-max", (struct vector2i){ .x = 10, .y = 10 });
+    assert(ui_widget_add_children(&row.widget, (struct ui_widget *[]){
+        &clamped_min.widget, &clamped_max.widget }, 2));
+    show(&surface, &row.widget, &sheet, (struct vector2i){ .x = 100, .y = 40 });
+    /* The percentage names the space inside the margin: 50% of 80 is 40, and
+       the minimum raises it to 70. The second child caps at 60. */
+    assert(clamped_min.widget.bounds.width == 70);
+    assert(clamped_max.widget.bounds.width == 60);
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&row.widget);
+
+    ui_box_init(&stack);
+    ui_box_set_direction(&stack, UI_BOX_STACK);
+    probe_init(&stack_child, "stack-child", (struct vector2i){ .x = 10, .y = 10 });
+    assert(ui_widget_add_child(&stack.widget, &stack_child.widget));
+    show(&surface, &stack.widget, &sheet, (struct vector2i){ .x = 100, .y = 40 });
+    assert(stack_child.widget.bounds.width == 80);
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&stack.widget);
+    css_sheet_clear(&sheet);
+}
+
+static void flex_wrap_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_surface surface = {0};
+    struct ui_box row = {0};
+    struct probe cells[3] = {0};
+    assert(css_parse(&sheet,
+        ".row { flex-wrap: wrap; }"
+        ".cell { width: 40px; height: 10px; }"));
+    ui_box_init(&row);
+    ui_widget_set_style_identity(&row.widget, "row", NULL, NULL);
+    for (size_t i = 0; i < 3; i++) {
+        probe_init(&cells[i], "cell", (struct vector2i){ .x = 40, .y = 10 });
+        assert(ui_widget_add_child(&row.widget, &cells[i].widget));
+    }
+    show(&surface, &row.widget, &sheet, (struct vector2i){ .x = 100, .y = 40 });
+    assert(cells[0].widget.bounds.x == 0 && cells[0].widget.bounds.y == 0);
+    assert(cells[1].widget.bounds.x == 40 && cells[1].widget.bounds.y == 0);
+    assert(cells[2].widget.bounds.x == 0 && cells[2].widget.bounds.y == 10);
+    ui_surface_resize(&surface, (struct vector2i){ .x = 200, .y = 40 });
+    assert(cells[2].widget.bounds.x == 80 && cells[2].widget.bounds.y == 0);
+    struct vector2i natural = ui_widget_measure(&row.widget,
+        (struct ui_constraints){ .max = { .x = 100, .y = 200 } });
+    assert(vector2i_eq(natural, (struct vector2i){ .x = 80, .y = 20 }));
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&row.widget);
+    css_sheet_clear(&sheet);
+}
+
+static void weighted_flex_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_surface surface = {0};
+    struct ui_box row = {0};
+    struct probe grow_one = {0}, grow_three = {0};
+    assert(css_parse(&sheet,
+        ".grow-one { width: grow; flex-grow: 1; }"
+        ".grow-three { width: grow; flex-grow: 3; }"
+        ".shrink-one { width: fit; flex-shrink: 1; }"
+        ".shrink-three { width: fit; flex-shrink: 3; }"));
+    ui_box_init(&row);
+    probe_init(&grow_one, "grow-one", (struct vector2i){ .x = 10, .y = 10 });
+    probe_init(&grow_three, "grow-three", (struct vector2i){ .x = 10, .y = 10 });
+    assert(ui_widget_add_children(&row.widget, (struct ui_widget *[]){
+        &grow_one.widget, &grow_three.widget }, 2));
+    show(&surface, &row.widget, &sheet, (struct vector2i){ .x = 100, .y = 20 });
+    assert(grow_one.widget.bounds.width == 25);
+    assert(grow_three.widget.bounds.width == 75);
+    ui_widget_set_hidden(&grow_three.widget, true);
+    ui_widget_set_hidden(&grow_one.widget, true);
+
+    struct probe shrink_one = {0}, shrink_three = {0};
+    probe_init(&shrink_one, "shrink-one", (struct vector2i){ .x = 80, .y = 10 });
+
+    probe_init(&shrink_three, "shrink-three", (struct vector2i){ .x = 80, .y = 10 });
+
+    assert(ui_widget_add_children(&row.widget, (struct ui_widget *[]){
+        &shrink_one.widget, &shrink_three.widget }, 2));
+    ui_surface_prepare(&surface);
+    assert(shrink_one.widget.bounds.width == 65);
+    assert(shrink_three.widget.bounds.width == 35);
+
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&row.widget);
+    css_sheet_clear(&sheet);
+}
+
+static void justify_spaces_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_surface surface = {0};
+    struct ui_box rows[4] = {0};
+    struct probe cells[4] = {0};
+    static const char *const classes[4] = {
+        "between", "around", "evenly", "between-single",
+    };
+    assert(css_parse(&sheet,
+        ".between { justify-content: space-between; }"
+        ".around { justify-content: space-around; }"
+        ".evenly { justify-content: space-evenly; }"
+        ".between-single { justify-content: space-between; }"
+        ".cell { width: 10px; height: 10px; }"));
+    for (size_t i = 0; i < 3; i++) {
+        ui_box_init(&rows[i]);
+        ui_widget_set_style_identity(&rows[i].widget, classes[i], NULL, NULL);
+        probe_init(&cells[i], "cell", (struct vector2i){ .x = 10, .y = 10 });
+        assert(ui_widget_add_child(&rows[i].widget, &cells[i].widget));
+        show(&surface, &rows[i].widget, &sheet, (struct vector2i){ .x = 100, .y = 20 });
+        ui_surface_destroy(&surface);
+    }
+    ui_box_init(&rows[3]);
+    ui_widget_set_style_identity(&rows[3].widget, "between-single", NULL, NULL);
+    probe_init(&cells[3], "cell", (struct vector2i){ .x = 10, .y = 10 });
+    assert(ui_widget_add_child(&rows[3].widget, &cells[3].widget));
+    show(&surface, &rows[3].widget, &sheet, (struct vector2i){ .x = 100, .y = 20 });
+    assert(fabsf(cells[3].widget.layout_bounds.pos.x - 0.0f) < 0.01f);
+    ui_surface_destroy(&surface);
+    for (size_t i = 0; i < 3; i++)
+        ui_widget_destroy(&rows[i].widget);
+    ui_widget_destroy(&rows[3].widget);
+    css_sheet_clear(&sheet);
+}
+
+static void align_self_test(void)
+{
+    struct css_sheet sheet = {0};
+    struct ui_surface surface = {0};
+    struct ui_box row = {0};
+    struct probe start = {0}, center = {0}, end = {0}, stretch = {0};
+    assert(css_parse(&sheet,
+        ".row { height: 40px; align-items: start; }"
+        ".cell { width: 10px; height: 10px; }"
+        ".center { align-self: center; }"
+        ".end { align-self: end; }"
+        ".stretch { align-self: stretch; height: auto; }"));
+    ui_box_init(&row);
+    ui_widget_set_style_identity(&row.widget, "row", NULL, NULL);
+    probe_init(&start, "cell", (struct vector2i){ .x = 10, .y = 10 });
+    probe_init(&center, "cell center", (struct vector2i){ .x = 10, .y = 10 });
+    probe_init(&end, "cell end", (struct vector2i){ .x = 10, .y = 10 });
+    probe_init(&stretch, "cell stretch", (struct vector2i){ .x = 10, .y = 10 });
+    assert(ui_widget_add_children(&row.widget, (struct ui_widget *[]){
+        &start.widget, &center.widget, &end.widget, &stretch.widget }, 4));
+    show(&surface, &row.widget, &sheet, (struct vector2i){ .x = 100, .y = 40 });
+    assert(start.widget.bounds.y == 0);
+    assert(center.widget.bounds.y == 15);
+    assert(end.widget.bounds.y == 30);
+    assert(stretch.widget.bounds.y == 0 && stretch.widget.bounds.height == 40);
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&row.widget);
+    css_sheet_clear(&sheet);
+}
+
 int main(void)
 {
+    stack_keeps_direction_test();
+    percent_margin_and_limits_test();
+    flex_wrap_test();
+    weighted_flex_test();
+    justify_spaces_test();
+    align_self_test();
+    fractional_scale_rounding_test();
     wrapped_label_test();
     row_sizing_test();
     nested_percent_and_limits_test();

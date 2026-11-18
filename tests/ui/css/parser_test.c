@@ -165,7 +165,9 @@ static void test_every_cursor_keyword(void)
 {
     struct css_sheet sheet = {0};
     const char *names[] = { "auto", "default", "arrow", "text", "ibeam",
-                            "pointer", "clickable", "link", "hand", "none" };
+                            "pointer", "clickable", "link", "hand", "none",
+                            "crosshair", "move", "grab", "ew-resize",
+                            "ns-resize", "nwse-resize", "nesw-resize" };
     size_t count = sizeof(names) / sizeof(names[0]);
     char css[512];
     int off = 0;
@@ -184,6 +186,15 @@ static void test_every_cursor_keyword(void)
     struct css_style none_style;
     css_style_resolve(&sheet, "k9", NULL, NULL, CSS_PSEUDO_NONE, &none_style);
     assert(none_style.cursor == UI_CURSOR_NONE);
+    struct css_style resize_style;
+    css_style_resolve(&sheet, "k13", NULL, NULL, CSS_PSEUDO_NONE, &resize_style);
+    assert(resize_style.cursor == UI_CURSOR_RESIZE_EW);
+    css_style_resolve(&sheet, "k14", NULL, NULL, CSS_PSEUDO_NONE, &resize_style);
+    assert(resize_style.cursor == UI_CURSOR_RESIZE_NS);
+    css_style_resolve(&sheet, "k15", NULL, NULL, CSS_PSEUDO_NONE, &resize_style);
+    assert(resize_style.cursor == UI_CURSOR_RESIZE_NWSE);
+    css_style_resolve(&sheet, "k16", NULL, NULL, CSS_PSEUDO_NONE, &resize_style);
+    assert(resize_style.cursor == UI_CURSOR_RESIZE_NESW);
     css_sheet_clear(&sheet);
 }
 
@@ -784,6 +795,79 @@ static void test_app_rules_come_from_the_app_sheet(void)
     css_sheet_clear(&sheet);
 }
 
+
+static void extended_properties_test(void)
+{
+    struct css_sheet sheet = {0};
+    assert(css_parse(&sheet,
+        ".item {"
+        " font-family: \"DejaVu Sans\", monospace; font-size: 14px;"
+        " font-weight: 600; font-style: italic; line-height: 1.5;"
+        " overflow: hidden; position: relative; z-index: 7;"
+        " top: 2px; right: 3px; bottom: 4px; left: 5px;"
+        " padding-top: 1px; padding-right: 2px;"
+        " padding-bottom: 3px; padding-left: 4px;"
+        " margin-top: 5px; margin-right: 6px;"
+        " margin-bottom: 7px; margin-left: 8px;"
+        " border-color: rgb(1, 2, 3); border-width: 1px;"
+        " border-top-width: 2px; border-left-width: 4px; }"
+        ".alpha { color: rgba(10, 20, 30, 128); }"
+        ".plain { width: 10px; }"));
+
+    struct css_style st;
+    css_style_resolve(&sheet, "item", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_font_family &&
+           !strcmp(st.font_family, "\"DejaVu Sans\", monospace"));
+    assert(st.has_font_size && st.font_size.unit == CSS_UNIT_PX &&
+           st.font_size.val == 14.0f);
+    assert(st.has_font_weight && st.font_weight == 600);
+    assert(st.has_font_style && st.font_style == CSS_FONT_ITALIC);
+    assert(st.has_line_height &&
+           st.line_height.unit == CSS_UNIT_PERCENT &&
+           st.line_height.val == 150.0f);
+    assert(st.has_overflow && st.overflow == CSS_OVERFLOW_HIDDEN);
+    assert(st.has_position && st.position == CSS_POSITION_RELATIVE);
+    assert(st.has_z_index && st.z_index == 7);
+    assert(st.inset[0].val == 2.0f && st.inset[1].val == 3.0f &&
+           st.inset[2].val == 4.0f && st.inset[3].val == 5.0f);
+    assert(st.padding.top.val == 1.0f && st.padding.right.val == 2.0f &&
+           st.padding.bottom.val == 3.0f && st.padding.left.val == 4.0f);
+    assert(st.margin.top.val == 5.0f && st.margin.right.val == 6.0f &&
+           st.margin.bottom.val == 7.0f && st.margin.left.val == 8.0f);
+    assert(st.has_border_color && st.border_color == 0xFF010203u);
+
+    struct css_scale_context scale = { .dpi_scale = 1.0f, .cell_w = 8,
+                                       .cell_h = 16 };
+    assert(ui_css_border_edge(&st, &scale, 0) == 2);
+    assert(ui_css_border_edge(&st, &scale, 1) == 1);
+    assert(ui_css_border_edge(&st, &scale, 2) == 1);
+    assert(ui_css_border_edge(&st, &scale, 3) == 4);
+    assert(ui_css_font_size(&st, &scale, 12) == 14.0f);
+    assert(ui_css_line_height(&st, &scale, 16) == 21.0f);
+    assert(ui_css_font_weight(&st, 400) == 600);
+    assert(ui_css_font_style(&st, CSS_FONT_NORMAL) == CSS_FONT_ITALIC);
+    assert(ui_css_overflow(&st, CSS_OVERFLOW_VISIBLE) == CSS_OVERFLOW_HIDDEN);
+    assert(ui_css_position(&st, CSS_POSITION_STATIC) == CSS_POSITION_RELATIVE);
+    assert(ui_css_inset(&st, 0, &scale, 0) == 2);
+    assert(ui_css_z_index(&st, 0) == 7);
+
+    css_style_resolve(&sheet, "alpha", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(st.has_text_color && st.text_color == 0x800A141Eu);
+
+    /* Every unset property keeps the C-side fallback. */
+    css_style_resolve(&sheet, "plain", NULL, NULL, CSS_PSEUDO_NONE, &st);
+    assert(ui_css_font_size(&st, &scale, 12) == 12.0f);
+    assert(ui_css_line_height(&st, &scale, 16) == 16.0f);
+    assert(ui_css_font_weight(&st, 400) == 400);
+    assert(ui_css_font_style(&st, CSS_FONT_NORMAL) == CSS_FONT_NORMAL);
+    assert(ui_css_overflow(&st, CSS_OVERFLOW_VISIBLE) == CSS_OVERFLOW_VISIBLE);
+    assert(ui_css_position(&st, CSS_POSITION_STATIC) == CSS_POSITION_STATIC);
+    assert(ui_css_inset(&st, 0, &scale, -1) == -1);
+    assert(ui_css_z_index(&st, 0) == 0);
+    assert(ui_css_border_edge(&st, &scale, 0) == 0);
+    css_sheet_clear(&sheet);
+}
+
 int main(void)
 {
     test_declaration_diagnostics();
@@ -804,6 +888,7 @@ int main(void)
     test_cyclic_variable_diagnostic();
     test_variable_defined_after_its_use();
     test_border_shorthand();
+    extended_properties_test();
     test_app_rules_come_from_the_app_sheet();
     printf("PASS: CSS parser tests\n");
     return 0;

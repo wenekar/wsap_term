@@ -71,9 +71,17 @@ static enum window_input_result ui_input(struct window *w, const struct input_ev
 static enum yasl_cursor cursor_for(enum ui_cursor cursor)
 {
     switch (cursor) {
-    case UI_CURSOR_TEXT:    return YASL_CURSOR_TEXT;
-    case UI_CURSOR_POINTER: return YASL_CURSOR_LINK;
-    case UI_CURSOR_NONE:    return YASL_CURSOR_HIDDEN;
+    case UI_CURSOR_TEXT:       return YASL_CURSOR_TEXT;
+    case UI_CURSOR_POINTER:    return YASL_CURSOR_LINK;
+    case UI_CURSOR_NONE:       return YASL_CURSOR_HIDDEN;
+    case UI_CURSOR_CROSSHAIR:  return YASL_CURSOR_CROSSHAIR;
+    case UI_CURSOR_MOVE:       return YASL_CURSOR_MOVE;
+    /* yasl has no grab cursor, so a grab shows the move cursor. */
+    case UI_CURSOR_GRAB:       return YASL_CURSOR_MOVE;
+    case UI_CURSOR_RESIZE_EW:  return YASL_CURSOR_RESIZE_EW;
+    case UI_CURSOR_RESIZE_NS:  return YASL_CURSOR_RESIZE_NS;
+    case UI_CURSOR_RESIZE_NWSE: return YASL_CURSOR_RESIZE_NWSE;
+    case UI_CURSOR_RESIZE_NESW: return YASL_CURSOR_RESIZE_NESW;
     default:                return YASL_CURSOR_ARROW;
     }
 }
