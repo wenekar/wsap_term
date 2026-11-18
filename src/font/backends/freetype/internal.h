@@ -3,8 +3,6 @@
 
 #include "font/internal.h"
 
-extern __thread int ft_applied_px;
-
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_GLYPH_H
@@ -24,6 +22,8 @@ struct ft_face_slot {
     struct ft_font_blob *blobs[FONT_VARIANT_COUNT];
     char *path;
     uint64_t last_used;
+    /* Pixel size of the faces of this slot. Zero means not sized yet. */
+    int applied_px;
     int index;
     unsigned slot_reuse;
     uint8_t styles_checked;
@@ -50,6 +50,7 @@ static inline int ft_configured_faces(void)
 
 extern const char embedded_cards_path[];
 
+int ft_face_px(void);
 void ensure_primary_face(int i);
 void ensure_styled_face(int i, enum font_variant variant);
 hb_font_t *face_hb_font(int i, enum font_variant variant);
@@ -59,7 +60,7 @@ void load_named_face(const char *name);
 void defer_named_face(const char *name);
 bool size_face(FT_Face face, int px);
 void ft_size_faces(int px);
-struct font_metrics ft_measure_cell(FT_Face face, bool monospace);
+struct font_metrics ft_measure_cell(FT_Face face, int px, bool monospace);
 void face_snapshot_configured(void);
 void face_reload_configured(void);
 void ft_reload_family(const char *family_list);

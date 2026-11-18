@@ -108,7 +108,6 @@ static bool ft_init(void)
     if (font_hinting_has_auto_axis())
         ft_apply_hinting();
 
-    ft_applied_px = FONT_PT_TO_PX(font_configured_size());
     ft_reload_family(font_get_family());
     fc_unpin();
     return true;
@@ -156,7 +155,10 @@ void ft_reload_family(const char *family_list)
     if (!num_faces) load_named_face(FT_LAST_RESORT_FAMILY);
     if (!num_faces) load_named_face("monospace");
     if (num_faces) {
-        struct font_metrics m = ft_measure_cell(faces[0].styles[0], true);
+        int px = font_size_px((struct font_size){0});
+        size_face(faces[0].styles[0], px);
+        faces[0].applied_px = px;
+        struct font_metrics m = ft_measure_cell(faces[0].styles[0], px, true);
         font_thread_metrics_set(&m);
     }
 
@@ -271,7 +273,8 @@ static bool ft_face_metrics(font_handle_t *face, struct font_metrics *out)
         return false;
 
     ft_size_faces(face->pixel_size);
-    struct font_metrics m = ft_measure_cell(faces[0].styles[0], face->monospace);
+    struct font_metrics m = ft_measure_cell(faces[0].styles[0], face->pixel_size,
+                                            face->monospace);
     m.pixel_size = face->pixel_size;
     font_thread_metrics_set(&m);
     *out = m;

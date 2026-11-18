@@ -141,13 +141,14 @@ static const struct raster_entry *raster_fetch(int slot, enum font_variant varia
 
     unsigned bits = (unsigned)variant | (oblique ? RASTER_OBLIQUE : 0) |
                     (embolden ? RASTER_EMBOLDEN : 0);
+    unsigned px = (unsigned)faces[slot].applied_px;
     unsigned mask = raster_cap - 1;
-    unsigned idx = raster_hash(slot, gid, bits ^ ((unsigned)ft_applied_px << 4), raster_cap);
+    unsigned idx = raster_hash(slot, gid, bits ^ (px << 4), raster_cap);
     struct raster_entry *e = &raster_cache[idx];
     for (unsigned p = 0; p < raster_cap; p++) {
         if (e->valid && e->slot == slot &&
             e->slot_reuse == faces[slot].slot_reuse &&
-            e->gid == gid && e->style == bits && e->px == ft_applied_px &&
+            e->gid == gid && e->style == bits && e->px == px &&
             e->hinting == raster_hint_key()) {
             e->fit_pass = fit_pass;
             return e;
@@ -205,7 +206,7 @@ static const struct raster_entry *raster_fetch(int slot, enum font_variant varia
         FT_Done_Glyph((FT_Glyph)e->glyph);
     e->glyph = (FT_BitmapGlyph)owned;
     e->advance_px = ft_px_round(face->glyph->advance.x);
-    e->px = (uint16_t)ft_applied_px;
+    e->px = (uint16_t)px;
     e->slot = (uint16_t)slot;
     e->slot_reuse = faces[slot].slot_reuse;
     e->gid = gid;

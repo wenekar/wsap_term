@@ -161,6 +161,7 @@ Worker threads manage state during their lifecycle. A worker attaches backend st
 | `built_fg`, `built_bg` | Per instance | A rebuild writes current tile colors here. |
 | `run_stamp` | Per instance | Each run cache insertion increments this stamp. A cache hit updates the entry stamp. Cache eviction drops the entry with the oldest stamp. |
 | `ft_sync_epoch` | FreeType, global, atomic | Font family reloads, hinting changes, and backend shutdown increment this epoch. |
+| `applied_px` | FreeType, per face slot | `ft_size_faces()` writes the pixel size here. A face slot takes the size on first use and keeps it, so two sizes on one thread do not clobber each other. |
 | `synced_epoch` | FreeType, per thread | Records the epoch when this thread loaded its font faces. When this value differs from `ft_sync_epoch`, the next backend call reloads thread faces. |
 | `fit_pass` | FreeType, per thread | Each run fit pass increments this counter. Raster cache entries for the current pass remain protected from eviction during that pass. CoreText uses `ct_use_pass` for identical protection. |
 | `slot_reuse` | FreeType, per face slot | Releasing a face slot increments this counter to invalidate older raster cache entries in that slot. |

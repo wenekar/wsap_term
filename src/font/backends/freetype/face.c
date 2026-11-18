@@ -26,7 +26,6 @@ static _Thread_local int faces_cap = 0;
 __thread int num_faces = 0;
 _Atomic int configured_faces;
 __thread uint64_t face_stamp;
-__thread int ft_applied_px = FONT_DEFAULT_PIXEL_SIZE;
 
 static pthread_key_t faces_tls_key;
 static pthread_once_t faces_tls_once = PTHREAD_ONCE_INIT;
@@ -364,8 +363,7 @@ static FT_Face load_verified_style_face(const char *path, int index, int slant,
     if (!ft_new_face_cached(path, index, &styled, &blob))
         return NULL;
     if ((slant != FC_SLANT_ROMAN && !(styled->style_flags & FT_STYLE_FLAG_ITALIC)) ||
-        (weight != FC_WEIGHT_REGULAR && !(styled->style_flags & FT_STYLE_FLAG_BOLD)) ||
-        !size_face(styled, ft_applied_px)) {
+        (weight != FC_WEIGHT_REGULAR && !(styled->style_flags & FT_STYLE_FLAG_BOLD))) {
         FT_Done_Face(styled);
         ft_blob_release(blob);
         return NULL;
@@ -512,6 +510,24 @@ static FT_Face load_style_face(int slot_idx, const struct ft_face_slot *f,
     return styled;
 }
 
+/* Returns the pixel size that the face table of this thread uses. Zero
+ * before the first ft_size_faces() call. */
+int ft_face_px(void)
+{
+    return num_faces ? faces[0].applied_px : 0;
+}
+
+/* Sizes `face` for the pixel size of slot `f`. A slot without a size yet
+ * keeps the face unsized until the next ft_size_faces() call. */
+static bool slot_size_face(const struct ft_face_slot *f, FT_Face face)
+{
+    if (!face)
+        return false;
+    if (!f->applied_px)
+        return true;
+    return size_face(face, f->applied_px) && face->size;
+}
+
 void ensure_primary_face(int i)
 {
     if (i < 0 || i >= num_faces || !faces[i].deferred)
@@ -523,7 +539,7 @@ void ensure_primary_face(int i)
     struct ft_font_blob *blob = NULL;
     if (!ft_new_face_cached(f->path, f->index, &face, &blob))
         return;
-    if (!size_face(face, ft_applied_px) || !face->size) {
+    if (!slot_size_face(f, face)) {
         FT_Done_Face(face);
         ft_blob_release(blob);
         return;
@@ -548,6 +564,12 @@ void ensure_styled_face(int i, enum font_variant variant)
         variant & FONT_VARIANT_ITALIC ? FC_SLANT_ITALIC : FC_SLANT_ROMAN,
         variant & FONT_VARIANT_BOLD ? FC_WEIGHT_BOLD : FC_WEIGHT_REGULAR,
         &f->blobs[variant]);
+    if (f->styles[variant] && !slot_size_face(f, f->styles[variant])) {
+        FT_Done_Face(f->styles[variant]);
+        ft_blob_release(f->blobs[variant]);
+        f->styles[variant] = NULL;
+        f->blobs[variant] = NULL;
+    }
 }
 
 static bool style_covers(int i, const uint32_t *cps, int len,
@@ -674,13 +696,8 @@ static void release_face(int i)
 static int insert_face(FT_Face face, struct ft_font_blob *blob, const char *path,
                        int index, bool is_emoji)
 {
-    if (!size_face(face, ft_applied_px) || !face->size) {
-        FT_Done_Face(face);
-        ft_blob_release(blob);
-        return -1;
-    }
-
     int slot = num_faces;
+    int px = ft_face_px();
     if (num_faces == MAX_FACES) {
         int cfg = ft_configured_faces();
         if (cfg >= MAX_FACES) {
@@ -692,6 +709,7 @@ static int insert_face(FT_Face face, struct ft_font_blob *blob, const char *path
         for (int i = cfg + 1; i < num_faces; i++)
             if (faces[i].last_used < faces[slot].last_used)
                 slot = i;
+        px = faces[slot].applied_px;
         release_face(slot);
     } else {
         if (!faces_ensure(num_faces + 1)) {
@@ -702,11 +720,19 @@ static int insert_face(FT_Face face, struct ft_font_blob *blob, const char *path
         slot = num_faces++;
     }
 
+    struct ft_face_slot probe = { .applied_px = px };
+    if (!slot_size_face(&probe, face)) {
+        FT_Done_Face(face);
+        ft_blob_release(blob);
+        return -1;
+    }
+
     faces[slot] = (struct ft_face_slot){
         .styles = { face },
         .blobs = { blob },
         .is_emoji = is_emoji,
         .path = strdup(path),
+        .applied_px = px,
         .index = index,
         .last_used = ++face_stamp,
         .slot_reuse = faces[slot].slot_reuse,
@@ -748,6 +774,7 @@ static int defer_face(const char *path, int index, bool is_emoji)
     faces[slot] = (struct ft_face_slot){
         .is_emoji = is_emoji,
         .path = strdup(path),
+        .applied_px = ft_face_px(),
         .index = index,
         .last_used = ++face_stamp,
         .slot_reuse = faces[slot].slot_reuse,
@@ -872,7 +899,7 @@ void face_reload_configured(void)
     }
 }
 
-struct font_metrics ft_measure_cell(FT_Face face, bool monospace)
+struct font_metrics ft_measure_cell(FT_Face face, int px, bool monospace)
 {
     if (!face || !face->size)
         return font_thread_metrics;
@@ -888,7 +915,7 @@ struct font_metrics ft_measure_cell(FT_Face face, bool monospace)
     if (descent > 0)
         descent = -descent;
 
-    struct font_metrics t = { .pixel_size = ft_applied_px };
+    struct font_metrics t = { .pixel_size = px };
     t.cell_w = advance < 1 ? 1 : advance;
     t.cell_h = line < 1 ? 1 : line;
 
@@ -905,10 +932,10 @@ struct font_metrics ft_measure_cell(FT_Face face, bool monospace)
 
 void ft_size_faces(int px)
 {
-    if (px == ft_applied_px)
-        return;
-    ft_applied_px = px;
     for (int i = 0; i < num_faces; i++) {
+        if (faces[i].applied_px == px)
+            continue;
+        faces[i].applied_px = px;
         for (int s = 0; s < FONT_VARIANT_COUNT; s++)
             if (faces[i].styles[s])
                 size_face(faces[i].styles[s], px);
