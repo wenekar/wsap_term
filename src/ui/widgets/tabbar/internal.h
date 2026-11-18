@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #include "ui/widget.h"
-#include "app/tabs/tabbar.h"
+#include "ui/widgets/tabbar.h"
 
 /* The interned part handles of the bar. struct tb_parts stays zero until
  * tb_part() fills it. */

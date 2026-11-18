@@ -1,43 +1,15 @@
 /* The app stylesheet. The app library embeds it in a generated header, so an
    edit here needs no code change. It holds the :root variables and the rules
-   of the app screens: the tab bar, the command palette, the tab preview, the
-   settings screen, and the terminal drop target. */
+   of the app screens: the settings screen and the terminal drop target. The
+   widgets own their default rules, which are in assets/ui/core.css. */
 
 :root {
     --drop-bg: #89b4fa33;
     --settings-row-bg: #181825;
     --settings-help-fg: #a6adc8;
     --settings-active-fg: var(--accent);
-    --tab-bg: var(--surface);
-    --tab-fg: #a6adc8;
-    --tab-hover-bg: #313244;
-    --tab-hover-fg: var(--fg);
-    --tab-active-bg: #45475a;
-    --tab-active-fg: #ffffff;
-    --tab-close-fg: #a6adc8;
-    --tab-radius: 4px;
-    --tab-close-radius: 0.5em;
 }
 
-.tab-bar { height: 2.2em; flex-direction: row; align-items: center; padding: 0.25em 0.5em; gap: 0.4em; }
-.tab { height: 1.6em; background: var(--tab-bg); color: var(--tab-fg); border-radius: var(--tab-radius); padding: 0 0.8em; flex-direction: row; align-items: center; gap: 0.5em; cursor: pointer; ripple: #ffffff30; transition-duration: 300ms; }
-.tab:hover { background: var(--tab-hover-bg); color: var(--tab-hover-fg); }
-.tab:focus { border-color: var(--accent); border-width: 2px; }
-.tab.active { background: var(--tab-active-bg); color: var(--tab-active-fg); }
-.tab.drop-preview { background: var(--accent); opacity: 0.45; border-width: 1px; box-shadow: 0 2px 5px #00000066; }
-.tab-title { cursor: pointer; }
-/* The tab bar reads the right padding of the close button, and it reads its
-   left margin as the gap to the title. It reads no other edge. */
-.tab-close { width: 1em; height: 1em; color: var(--tab-close-fg); border-radius: var(--tab-close-radius); padding: 0 4px; margin: 0 0 0 4px; cursor: pointer; }
-.tab-close:hover { background: var(--danger); color: var(--danger-fg); }
-.tab-new { color: var(--tab-fg); border-radius: var(--tab-radius); padding: 0 0.4em; cursor: pointer; }
-.tab-new:hover { background: var(--tab-hover-bg); color: var(--tab-hover-fg); }
-.command-palette { background: var(--surface); border-color: var(--border); border-width: 1px; border-radius: 6px; }
-.command-palette .text-input { background: transparent; border-width: 0; border-radius: 0; min-width: 0; padding: 6px 0; }
-.palette-empty { color: var(--dim-fg); }
-.tab-preview { width: 400px; padding: 8px; gap: 6px; background: var(--surface); border-color: var(--border); border-width: 1px; border-radius: 8px; box-shadow: 0 6px 18px #00000073; }
-.tab-preview.dragging { width: 280px; }
-.tab-preview-title { color: var(--fg); }
 .terminal-drop-target { background: var(--drop-bg); border-color: var(--accent); border-width: 2px; }
 .settings-root { align-items: stretch; }
 .settings-form { flex-direction: column; padding: 1.2em 2ch; gap: 0.8em; align-items: stretch; color: var(--fg); }

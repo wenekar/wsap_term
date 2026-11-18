@@ -1,4 +1,4 @@
-#include "app/tabs/tab_preview.h"
+#include "ui/widgets/tab_preview.h"
 
 #include "ui/debug.h"
 #include "ui/paint.h"

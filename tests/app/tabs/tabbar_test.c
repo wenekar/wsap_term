@@ -10,7 +10,7 @@
 #include "ui/ui.h"
 #include "ui/widget_ops.h"
 #include "app/style.h"
-#include "app/tabs/tabbar.h"
+#include "ui/widgets/tabbar.h"
 #include <wsap_vtcore/unicode/utf8.h>
 
 #ifdef __APPLE__
@@ -86,6 +86,10 @@ static void setup_with(struct fixture *f, const struct css_sheet *sheet,
     *f = (struct fixture){ .origin = origin };
     ui_widget_init(&f->root, &ROOT_OPS, f);
     ui_tabbar_init(&f->tb);
+    /* The app names the fallback title and the shortcut key of the platform.
+       The tab bar holds no default text. */
+    ui_tabbar_set_empty_title(&f->tb, "shell");
+    ui_tabbar_set_shortcut_prefix(&f->tb, TAB_BADGE);
     assert(ui_widget_add_child(&f->root, ui_tabbar_widget(&f->tb)));
     ui_widget_set_action_handler(ui_tabbar_widget(&f->tb), on_action, f);
     ui_surface_set_sheet(&f->surface, sheet ? sheet : app_style_sheet());
@@ -2071,10 +2075,28 @@ static void hovered_tab_clears_on_tab_mutations_test(void)
     teardown(&f);
 }
 
+/* The tab bar shows the empty title that the caller sets. With no empty title,
+ * an empty label paints no title. */
+static void empty_title_is_caller_supplied(void)
+{
+    struct fixture f;
+    setup(&f, 2, 400);
+    set_tabs(&f, NULL, 2);
+    assert(find_text(build(&f), "shell"));
+
+    ui_tabbar_set_empty_title(&f.tb, NULL);
+    assert(!find_text(build(&f), "shell"));
+
+    ui_tabbar_set_empty_title(&f.tb, "untitled");
+    assert(find_text(build(&f), "untitled"));
+    teardown(&f);
+}
+
 int main(void)
 {
     title_change_damages_only_its_tab();
     labels_grow_and_shrink();
+    empty_title_is_caller_supplied();
     long_title_ends_with_a_marker();
     css_theme_drives_layout_and_scene();
     tabbar_edge_cases();

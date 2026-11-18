@@ -1,4 +1,4 @@
-#include "app/tabs/tabbar/internal.h"
+#include "ui/widgets/tabbar/internal.h"
 
 #include "paint/text_run.h"
 #include "ui/text_break.h"
@@ -12,11 +12,6 @@
 #include <string.h>
 
 #define TB_BADGE_TABS 8
-#ifdef __APPLE__
-#define TB_BADGE_PREFIX "\xe2\x8c\x98"
-#else
-#define TB_BADGE_PREFIX "^"
-#endif
 #define TB_CLOSE_MARK "\xc3\x97"
 #define TB_NEW_MARK   "+"
 
@@ -24,6 +19,15 @@
 #define TB_PART_NEW    (1ULL << 32)
 #define TB_PART_DRAG   (2ULL << 32)
 #define TB_PART_DROP   (3ULL << 32)
+
+/* Returns the text that a tab shows. An empty label text uses the empty title
+ * of the tab bar. */
+static const char *tb_tab_text(const struct ui_tabbar *tb, const char *text)
+{
+    if (text && text[0])
+        return text;
+    return tb->state.empty_title ? tb->state.empty_title : "";
+}
 
 /* Paints a tab title at `at`. Cuts it to `cap` cells. A cut title ends with
  * a marker. The marker takes one of the `cap` cells. When no cell fits, the
@@ -138,8 +142,7 @@ bool ui_tabbar_build_drag_scene(struct ui_tabbar *tb, int index,
     int text_x = l.tab_pad;
     int avail = close_box.x - l.close_gap - text_x;
     int cap = advance > 0 && avail > 0 ? avail / advance : 0;
-    const char *label = tabs[index].text && tabs[index].text[0]
-        ? tabs[index].text : "shell";
+    const char *label = tb_tab_text(tb, tabs[index].text);
     if (!tb_title(scene, (struct vector2i){
                       .x = text_x, .y = (r.height - text_h) / 2 },
                   advance, text_h, tb_text_color(tb, &active), true, label, cap))
@@ -359,7 +362,7 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
         int title_right = has_close ? close_box.x - l.close_gap
                                     : rect2i_end(r).x - l.tab_pad;
 
-        const char *label = tabs[i].text && tabs[i].text[0] ? tabs[i].text : "shell";
+        const char *label = tb_tab_text(tb, tabs[i].text);
         int text_x = r.x + l.tab_pad;
         int avail = title_right - text_x;
         int cap = advance > 0 && avail > 0 ? avail / advance : 0;
@@ -399,8 +402,11 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
 
             float badge_alpha = (1.0f - progress) * fade;
             if (badge_alpha > 0.001f && i < TB_BADGE_TABS) {
-                char badge[8];
-                int bn = snprintf(badge, sizeof(badge), TB_BADGE_PREFIX "%d", i + 1);
+                char badge[16];
+                int bn = snprintf(badge, sizeof(badge), "%s%d",
+                                  tb->state.shortcut_prefix
+                                      ? tb->state.shortcut_prefix : "",
+                                  i + 1);
                 size_t blen = (bn > 0 && (size_t)bn < sizeof(badge)) ? (size_t)bn : 0;
                 int b_w = ui_text_run_cells(badge, blen) * advance;
                 if (b_w <= r.width) {
@@ -564,8 +570,7 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
             !ui_scene_rect_stroke(scene, r, l.stroke_w, bcol))
             return false;
 
-        const char *label = tabs[drag_idx].text && tabs[drag_idx].text[0]
-                            ? tabs[drag_idx].text : "shell";
+        const char *label = tb_tab_text(tb, tabs[drag_idx].text);
         struct rect2i close_box = tb_close_box(r, l.close_w, l.close_h,
                                                l.close_pad);
         int text_x = r.x + l.tab_pad;

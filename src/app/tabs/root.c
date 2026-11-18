@@ -142,6 +142,13 @@ static void widgets_init(struct app_tabs *tabs)
 {
     ui_widget_init(&tabs->root, &TABS_ROOT_OPS, NULL);
     ui_tabbar_init(&tabs->tabbar);
+    ui_tabbar_set_empty_title(&tabs->tabbar, "shell");
+    /* The shortcut badge names the platform key that selects a tab. */
+#ifdef __APPLE__
+    ui_tabbar_set_shortcut_prefix(&tabs->tabbar, "\xe2\x8c\x98");
+#else
+    ui_tabbar_set_shortcut_prefix(&tabs->tabbar, "^");
+#endif
     ui_tab_preview_init(&tabs->preview);
     ui_tab_preview_set_managed_anchor(&tabs->preview, true);
     ui_palette_init(&tabs->palette);

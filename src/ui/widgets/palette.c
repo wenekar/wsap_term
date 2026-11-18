@@ -1,4 +1,4 @@
-#include "app/tabs/palette.h"
+#include "ui/widgets/palette.h"
 
 #include "ui/debug.h"
 #include "ui/paint.h"
