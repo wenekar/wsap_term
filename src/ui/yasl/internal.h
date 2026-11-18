@@ -6,6 +6,7 @@
 
 #include "yasl/yasl.h"
 #include "input/input.h"
+#include "input/keybind.h"
 #include "paint/framebuffer.h"
 #include "ui/damage.h"
 #include "ui/surface.h"
@@ -114,6 +115,9 @@ struct window {
 
     struct window_native natives[WINDOW_NATIVE_MAX];
     struct input_keyboard_state keyboard;
+    /* The key bindings of this window. Each window loads its own copy, so a
+     * change to one window never changes another. */
+    struct input_keymap keymap;
     struct input_queue input;
     struct input_shortcut_state sc_state;
     struct yasl_event native_key;

@@ -379,7 +379,8 @@ static bool inject_key(struct window *w, unsigned mods, uint32_t cp, uint16_t ke
         };
         enum input_shortcut sc;
         enum input_key_route route =
-            input_shortcut_route_key(input_keymap_active(), &dbg->scratch, &dbg->keys, &k, key_id, &sc);
+            input_shortcut_route_key(&w->keymap, &dbg->scratch, &dbg->keys, &k,
+                                    key_id, &sc);
         if (route == INPUT_KEY_PASSTHROUGH)
             ok &= input_queue_add(&dbg->scratch, &(struct input_event){
                 .kind = INPUT_KEY, .key = k,

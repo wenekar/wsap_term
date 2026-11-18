@@ -170,6 +170,15 @@ int main(void)
     expect(fds[0], "");
     input_keymap_reset_active(INPUT_KEYBIND_LEGACY);
 
+    /* Each window owns its keymap. A binding in one window stays out of the
+     * other window. */
+    struct window *other = test_terminal_window(app.app);
+    assert(other);
+    assert(input_keymap_apply_spec(&other->keymap, "alt+8=debug_overlay"));
+    struct input_key_event alt8 = { .codepoint = '8', .mods = INPUT_MOD_ALT };
+    assert(input_keymap_lookup(&other->keymap, &alt8) == INPUT_SHORTCUT_DEBUG_OVERLAY);
+    assert(input_keymap_lookup(&w->keymap, &alt8) == INPUT_SHORTCUT_NONE);
+
     struct ui_surface *ui = window_ui_surface(w);
     ui_surface_set_scale(ui, (struct css_scale_context){
         .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,

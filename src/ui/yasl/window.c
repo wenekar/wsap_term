@@ -450,6 +450,9 @@ struct window *window_create(struct window_host *host, const struct window_spec 
         return NULL;
     }
     w->host = host;
+    /* The keymap of a window is complete at once, so a key that arrives
+     * before the first frame still runs an app command. */
+    input_config_load(&w->keymap);
     w->stats = (struct frame_stats){
         .started_ns = yasl_time_ns(),
         .frame_min_ms = 1e18,
@@ -471,6 +474,7 @@ void window_destroy(struct window *w)
     while (fifo_pop(&w->inject, &ev))
         input_event_release(&ev);
     input_queue_reset(&w->input);
+    input_keymap_free(&w->keymap);
     free(w->inject.ev);
     free(w->ime_preedit);
     free(w->title);

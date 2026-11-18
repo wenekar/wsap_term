@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <unistd.h>
 
 #include "util/app_identity.h"
 #include "input/keybind.h"
@@ -61,6 +62,12 @@ static void write_default_input_config(const struct app_identity *identity,
 /* The log prefix of the file that loads now. Initialization is one thread. */
 static const char *config_tag = "";
 
+/* The style and the path of the app configuration. The app sets them once,
+ * before it opens a window. Each window then reads its own keymap. */
+static enum input_keybind_style config_style = INPUT_KEYBIND_MODERN;
+static char config_path[4096];
+static bool config_has_path;
+
 static void input_config_line(void *ctx, const char *path, int line,
                               const char *chord, const char *val)
 {
@@ -78,9 +85,10 @@ static void input_config_line(void *ctx, const char *path, int line,
 
     if (!strcasecmp(chord, "style")) {
         enum input_keybind_style style;
-        if (input_parse_keybind_style(val, &style))
-            input_keymap_reset_active(style);
-        else
+        if (input_parse_keybind_style(val, &style)) {
+            config_style = style;
+            input_keymap_reset(km, style);
+        } else
             fprintf(stderr, "[%s] %s:%d: invalid style '%s'\n",
                     tag, path, line, val);
         return;
@@ -93,30 +101,41 @@ static void input_config_line(void *ctx, const char *path, int line,
                 tag, path, line, chord, val);
 }
 
-static void input_config_load(const struct app_identity *identity,
-                              const char *path)
+void input_config_load(struct input_keymap *km)
 {
-    if (!config_parse_file(path, input_config_line, input_keymap_active())) {
-        if (errno == ENOENT)
-            write_default_input_config(identity, path);
-        else
-            fprintf(stderr, "[%s] cannot read %s: %s\n", identity->id, path,
-                    strerror(errno));
-    }
+    if (!km)
+        return;
+    input_keymap_reset(km, config_style);
+    if (!config_has_path)
+        return;
+    if (!config_parse_file(config_path, input_config_line, km) && errno != ENOENT)
+        fprintf(stderr, "[%s] cannot read %s: %s\n", config_tag, config_path,
+                strerror(errno));
 }
 
 void input_config_init(const struct app_identity *identity)
 {
-    input_keymap_reset_active(INPUT_KEYBIND_MODERN);
     if (identity)
         config_tag = identity->id;
+    config_style = INPUT_KEYBIND_MODERN;
+    config_has_path = false;
 
     const char *path = getenv("WSAP_INPUT_CONFIG");
     if (path && !path[0])
         path = NULL;
-    char defbuf[4096];
-    if (!path && input_config_default_path(identity, defbuf, sizeof(defbuf)))
-        path = defbuf;
-    if (path && strcasecmp(path, "NONE"))
-        input_config_load(identity, path);
+    if (!path && input_config_default_path(identity, config_path,
+                                           sizeof(config_path)))
+        path = config_path;
+    if (!path || !strcasecmp(path, "NONE"))
+        return;
+    if (path != config_path && strlen(path) < sizeof(config_path)) {
+        memcpy(config_path, path, strlen(path) + 1);
+    }
+    config_has_path = true;
+    if (access(config_path, R_OK) != 0 && errno == ENOENT)
+        write_default_input_config(identity, config_path);
+    /* The keymap accessor that the window fallback path still reads stays in
+     * step with the configuration. */
+    input_keymap_reset_active(config_style);
+    config_parse_file(config_path, input_config_line, input_keymap_active());
 }

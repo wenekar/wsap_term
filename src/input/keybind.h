@@ -20,6 +20,8 @@ struct input_keybind {
     uint32_t codepoint;
     uint16_t key;
     uint16_t action;
+    /* The command scope of the binding. See `enum input_command_scope`. */
+    uint8_t scope;
 };
 
 struct input_keymap {
@@ -55,12 +57,29 @@ void input_keymap_defaults(struct input_keymap *km,
 bool input_keymap_apply_spec(struct input_keymap *km, const char *spec);
 
 /*
+ * Adds, replaces, or removes the binding that `spec` names in scope `scope`
+ * of keymap `km`. A removed binding has the action `none`.
+ * Returns true on success, or false on syntax error or memory shortage.
+ */
+bool input_keymap_apply_spec_scoped(struct input_keymap *km, uint8_t scope,
+                                    const char *spec);
+
+/*
  * Looks up the command that key event `ev` runs in keymap `km`.
  * A binding may have no modifiers.
  * Returns the matching command, or INPUT_SHORTCUT_NONE.
  */
 enum input_shortcut input_keymap_lookup(const struct input_keymap *km,
                                         const struct input_key_event *ev);
+
+/*
+ * Looks up the command that key event `ev` runs for scope `scope` in keymap
+ * `km`. The function reads `scope` first, then the app scope.
+ * Returns the matching command, or INPUT_SHORTCUT_NONE.
+ */
+enum input_shortcut input_keymap_lookup_scoped(const struct input_keymap *km,
+                                               const struct input_key_event *ev,
+                                               uint8_t scope);
 
 /*
  * Formats key combination into human-readable text string in `out`.
@@ -99,13 +118,22 @@ bool input_parse_action(const char *s, enum input_shortcut *out);
 /* Returns a pointer to the globally active keymap. */
 struct input_keymap *input_keymap_active(void);
 
+/* Resets keymap `km` to the default bindings for `style`. */
+void input_keymap_reset(struct input_keymap *km, enum input_keybind_style style);
+
 /* Resets the globally active keymap to default bindings for `style`. */
 void input_keymap_reset_active(enum input_keybind_style style);
 
 /* Initializes global input configuration and default key bindings. */
 struct app_identity;
 
-/* Reads the input keymap of the app identity `identity`. */
+/* Reads the input configuration of the app identity `identity`. */
 void input_config_init(const struct app_identity *identity);
+
+/*
+ * Loads the input configuration into keymap `km`.
+ * A window calls this once in its init, so each window owns its bindings.
+ */
+void input_config_load(struct input_keymap *km);
 
 #endif
