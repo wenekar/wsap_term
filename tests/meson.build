@@ -11,7 +11,7 @@ test_cases = [
     ['unicode-parity-test', files('util/unicode_parity_test.c'), base_lib, []],
     ['json-test', files('util/json_test.c'), base_lib, [yyjson_dep]],
     ['geom-test', files('util/geom_test.c'), base_lib, [m_dep]],
-    ['proc-test', files('util/proc_test.c'), base_lib, [thread_dep, dl_dep]],
+    ['pty-shell-test', files('pty/shell_test.c'), pty_lib, [thread_dep, dl_dep]],
     ['paste-test', files('session/write_queue_test.c'), [session_lib, input_lib], deps],
     ['session-cwd-test', files('session/cwd_test.c'), session_lib, deps],
     ['session-exit-order-test', files('session/exit_order_test.c'), session_lib, deps],

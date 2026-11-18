@@ -3,7 +3,6 @@
 #include "platform/platform.h"
 #include "util/proc.h"
 #include "util/str.h"
-#include "yasl/yasl.h"
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -22,16 +21,6 @@ int platform_eventfd(int *wr_fd)
     }
     *wr_fd = fd;
     return fd;
-}
-
-int platform_fastpipe_create(int fds[2], int buf_size)
-{
-    if (pipe2(fds, O_CLOEXEC) < 0) {
-        perror("pipe2");
-        return -1;
-    }
-    fcntl(fds[0], F_SETPIPE_SZ, buf_size);
-    return 0;
 }
 
 int platform_exe_path(char *out, size_t n)
@@ -127,7 +116,8 @@ void platform_open_url(const char *url)
 
 void platform_notify(const char *title, const char *body)
 {
-    (void)yasl_notify(title ? title : "", body ? body : "");
+    proc_spawn_detached((char *const []){ "notify-send", (char *)title,
+                                          (char *)body, NULL });
 }
 
 void platform_bell(void)

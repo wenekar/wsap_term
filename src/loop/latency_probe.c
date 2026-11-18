@@ -9,9 +9,16 @@
 #include <unistd.h>
 
 #include "loop/latency_probe.h"
-#include "yasl/yasl.h"
+#include <time.h>
 
 static struct latency_probe_shm *probe;
+
+static uint64_t now_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
+}
 
 /*
  * The publication of one presentation. Two display threads can report at the
@@ -76,7 +83,7 @@ static void stage_locked(enum latency_stage stage)
         rendered = active;
     }
     if ((unsigned)stage < LATENCY_STAGE_COUNT && !stamps[stage])
-        stamps[stage] = yasl_time_ns();
+        stamps[stage] = now_ns();
 }
 
 void latency_probe_stage(enum latency_stage stage)
@@ -157,7 +164,7 @@ void latency_probe_complete(void)
         return;
     }
     if (!stamps[LATENCY_STAGE_COMMIT])
-        stamps[LATENCY_STAGE_COMMIT] = yasl_time_ns();
+        stamps[LATENCY_STAGE_COMMIT] = now_ns();
     memcpy(probe->stage_ns, stamps, sizeof(probe->stage_ns));
     /* The reader takes the stages above through this store. */
     atomic_store_explicit(&probe->completed, id, memory_order_release);

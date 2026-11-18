@@ -11,6 +11,8 @@
 #include "yasl/yasl.h"
 #include "platform/platform.h"
 #include "session/session.h"
+
+#include "pty/shell.h"
 #include "wsap_vtcore/unicode/unicode.h"
 #include "util/name.h"
 #include "util/proc.h"
@@ -459,9 +461,9 @@ bool session_cwd(const struct session *s, char *out, size_t sz)
     pid_t target_pid = fg_pid > 0 ? fg_pid : s->pty.pid;
     if (target_pid <= 0)
         return false;
-    if (proc_read_pid_cwd_buf(target_pid, out, sz))
+    if (pty_read_pid_cwd_buf(target_pid, out, sz))
         return true;
-    return target_pid != s->pty.pid && proc_read_pid_cwd_buf(s->pty.pid, out, sz);
+    return target_pid != s->pty.pid && pty_read_pid_cwd_buf(s->pty.pid, out, sz);
 }
 
 void session_reap_exited(void)
