@@ -35,7 +35,16 @@ static void app_trim_heap(void)
 #include "session/session.h"
 #include "app/tabs/tabs.h"
 #include "terminal/terminal.h"
+#include "util/app_identity.h"
 #include "util/name.h"
+
+/* The app ID. The app files read it for a config name or a log prefix. */
+const char *app_name(void)
+{
+    const struct app_identity *identity = app_identity_current();
+    return identity ? identity->id : "";
+}
+
 #include "ui/surface.h"
 #include "ui/widget.h"
 #include "ui/yasl/inspector.h"
@@ -673,7 +682,7 @@ static struct app *app_new(int argc, char **argv, bool gpu_first, int *status)
         app_free(a);
         return NULL;
     }
-    a->look = look_create(a->config.theme);
+    a->look = look_create(app_identity_current(), a->config.theme);
     if (!a->look) {
         *status = 1;
         app_free(a);

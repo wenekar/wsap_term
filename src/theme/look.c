@@ -5,10 +5,11 @@
 #include <strings.h>
 
 #include "theme/internal.h"
-#include "util/name.h"
+#include "util/app_identity.h"
 
 struct look {
     struct theme_catalog catalog;
+    const struct app_identity *identity;
     struct appearance *committed;
     struct appearance *preview;
     void (*changed)(void *ud);
@@ -38,23 +39,27 @@ static struct appearance *build_startup(struct look *look, const char *ref)
     if (!ref || !ref[0])
         return NULL;
     if (is_css_path(ref))
-        return appearance_load(NULL, ref, NULL);
+        return appearance_load(look->identity, NULL, ref, NULL);
     struct theme_entry *e = theme_catalog_find(&look->catalog, ref);
     if (!e) {
-        fprintf(stderr, "[%s] unknown theme '%s'\n", app_name(), ref);
+        fprintf(stderr, "[%s] unknown theme '%s'\n",
+                look->identity && look->identity->id[0] ? look->identity->id : "",
+                ref);
         return NULL;
     }
-    return appearance_ref(theme_entry_appearance(e));
+    return appearance_ref(theme_entry_appearance(e, look->identity));
 }
 
-struct look *look_create(const char *theme)
+struct look *look_create(const struct app_identity *identity, const char *theme)
 {
     struct look *look = calloc(1, sizeof(*look));
     if (!look)
         return NULL;
+    look->identity = identity;
+    look->catalog.identity = identity;
     look->committed = build_startup(look, theme);
     if (!look->committed)
-        look->committed = appearance_load(NULL, NULL, NULL);
+        look->committed = appearance_load(look->identity, NULL, NULL, NULL);
     if (!look->committed) {
         look_destroy(look);
         return NULL;
@@ -118,7 +123,7 @@ bool look_preview(struct look *look, int idx)
     if (look->previewed == idx + 1)
         return true;
     struct appearance *ap =
-        theme_entry_appearance(&look->catalog.items[idx]);
+        theme_entry_appearance(&look->catalog.items[idx], look->identity);
     if (!ap)
         return false;
     appearance_unref(look->preview);
@@ -169,14 +174,14 @@ bool look_apply(struct look *look, const char *theme)
 {
     struct appearance *next;
     if (!theme || !theme[0]) {
-        next = appearance_load(NULL, NULL, NULL);
+        next = appearance_load(look->identity, NULL, NULL, NULL);
     } else if (is_css_path(theme)) {
-        next = appearance_load(NULL, theme, NULL);
+        next = appearance_load(look->identity, NULL, theme, NULL);
     } else {
         struct theme_entry *entry = theme_catalog_find(&look->catalog, theme);
         if (!entry) return false;
-        next = appearance_load(entry->info.name, entry->info.css_path,
-                               &entry->data);
+        next = appearance_load(look->identity, entry->info.name,
+                               entry->info.css_path, &entry->data);
     }
     if (!next) return false;
     appearance_unref(look->preview);

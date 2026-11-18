@@ -7,9 +7,11 @@
 #include <unistd.h>
 
 #include "theme/look.h"
+#include "util/app_identity.h"
 #include "ui/css.h"
 
 static char user_themes[4096];
+static struct app_identity identity;
 
 static void write_file(const char *dir, const char *name, const char *text)
 {
@@ -24,7 +26,7 @@ static void write_file(const char *dir, const char *name, const char *text)
 
 static struct look *open_look(const char *theme)
 {
-    struct look *look = look_create(theme);
+    struct look *look = look_create(&identity, theme);
     assert(look);
     return look;
 }
@@ -259,7 +261,8 @@ static void setup_user_themes(char *root, size_t n)
     snprintf(root + strlen(root), n - strlen(root), "/theme-test-%d", (int)getpid());
     assert(mkdir(root, 0700) == 0);
     setenv("XDG_CONFIG_HOME", root, 1);
-    snprintf(user_themes, sizeof(user_themes), "%s/wsap_term", root);
+    assert(app_identity_init(&identity, "look-test"));
+    snprintf(user_themes, sizeof(user_themes), "%s/look-test", root);
     assert(mkdir(user_themes, 0700) == 0);
     strcat(user_themes, "/themes");
     assert(mkdir(user_themes, 0700) == 0);

@@ -92,6 +92,9 @@ struct input_keymap *input_keymap_active(void);
 void input_keymap_reset_active(enum input_keybind_style style);
 
 /* Initializes global input configuration and default key bindings. */
-void input_config_init(void);
+struct app_identity;
+
+/* Reads the input keymap of the app identity `identity`. */
+void input_config_init(const struct app_identity *identity);
 
 #endif

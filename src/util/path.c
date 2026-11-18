@@ -6,20 +6,41 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "util/app_identity.h"
 #include "util/path.h"
 #include "util/proc.h"
 
-bool xdg_config_path(char *out, size_t sz, const char *file)
+/* Builds "<base>/<suffix>" for an XDG base directory variable. */
+static bool xdg_home(char *out, size_t sz, const char *var, const char *suffix)
 {
-    const char *base = getenv("XDG_CONFIG_HOME");
-    const char *suffix = "";
+    const char *base = getenv(var);
+    const char *tail = "";
     if (!base || base[0] != '/') {
         base = proc_home_dir();
         if (!base || !base[0])
             return false;
-        suffix = "/.config";
+        tail = suffix;
     }
-    int n = snprintf(out, sz, "%s%s/%s", base, suffix, file);
+    int n = snprintf(out, sz, "%s%s", base, tail);
+    return n > 0 && n < (int)sz;
+}
+
+bool xdg_config_home(char *out, size_t sz)
+{
+    return xdg_home(out, sz, "XDG_CONFIG_HOME", "/.config");
+}
+
+bool xdg_cache_home(char *out, size_t sz)
+{
+    return xdg_home(out, sz, "XDG_CACHE_HOME", "/.cache");
+}
+
+bool xdg_config_path(char *out, size_t sz, const char *file)
+{
+    char base[APP_IDENTITY_PATH_MAX];
+    if (!xdg_config_home(base, sizeof(base)))
+        return false;
+    int n = snprintf(out, sz, "%s/%s", base, file);
     return n > 0 && n < (int)sz;
 }
 

@@ -339,7 +339,7 @@ static void load_line(void *ctx, const char *path, int line,
 static void write_default_file(const struct opts_spec *spec, const void *base,
                                const char *path)
 {
-    FILE *f = fs_create(path);
+    FILE *f = fs_create(spec->name(), path);
     if (!f)
         return;
     fchmod(fileno(f), 0600);

@@ -11,6 +11,7 @@
 #include "theme/internal.h"
 #include "platform/platform.h"
 #include "util/grow.h"
+#include "util/app_identity.h"
 #include "util/path.h"
 
 static const char CSS_SUFFIX[] = ".css";
@@ -133,8 +134,10 @@ void theme_catalog_scan(struct theme_catalog *c)
     struct theme_catalog old = *c;
     *c = (struct theme_catalog){ .scanned = true };
 
-    char user_dir[PATH_MAX];
-    if (xdg_config_path(user_dir, sizeof(user_dir), "wsap_term/themes"))
+    const char *tag = c->identity && c->identity->id[0] ? c->identity->id : "";
+    char user_dir[APP_IDENTITY_PATH_MAX];
+    if (app_identity_config_path(c->identity, user_dir, sizeof(user_dir),
+                                 "themes"))
         scan_dir(c, user_dir);
 #ifdef WSAP_DEV_THEMES_DIR
     scan_dir(c, WSAP_DEV_THEMES_DIR);
@@ -144,15 +147,16 @@ void theme_catalog_scan(struct theme_catalog *c)
         strcat(bundle_dir, "/themes");
         scan_dir(c, bundle_dir);
     }
-#ifdef WSAP_DATADIR
-    scan_dir(c, WSAP_DATADIR "/wsap_term/themes");
-#endif
+    char data_dir[APP_IDENTITY_PATH_MAX];
+    if (app_identity_data_path(c->identity, data_dir, sizeof(data_dir),
+                               "themes"))
+        scan_dir(c, data_dir);
 
     int n = 0;
     for (int i = 0; i < c->count; i++) {
         struct theme_entry *e = &c->items[i];
         if (e->info.data_path)
-            theme_data_load(e->info.data_path, &e->data, &e->info);
+            theme_data_load(e->info.data_path, &e->data, &e->info, tag);
         if (!e->info.label)
             e->info.label = title_case(e->info.name);
         if (!e->info.label) {
@@ -221,15 +225,16 @@ static bool same_stamp(struct file_stamp a, struct file_stamp b)
            a.ino == b.ino && a.dev == b.dev;
 }
 
-struct appearance *theme_entry_appearance(struct theme_entry *e)
+struct appearance *theme_entry_appearance(struct theme_entry *e,
+                                          const struct app_identity *identity)
 {
     struct file_stamp css = file_stamp(e->info.css_path);
     struct file_stamp data = file_stamp(e->info.data_path);
     if (e->built && same_stamp(css, e->css_stamp) &&
         same_stamp(data, e->data_stamp))
         return e->built;
-    struct appearance *ap = appearance_load(e->info.name, e->info.css_path,
-                                            &e->data);
+    struct appearance *ap = appearance_load(identity, e->info.name,
+                                            e->info.css_path, &e->data);
     if (!ap)
         return e->built;
     appearance_unref(e->built);

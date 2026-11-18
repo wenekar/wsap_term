@@ -7,6 +7,8 @@
 #include <time.h>
 
 #include "theme/look.h"
+
+struct app_identity;
 #include "ui/css.h"
 
 /* One key of a theme data block. */
@@ -35,7 +37,8 @@ struct appearance {
  * Loads an appearance with CSS chrome styles and a copy of `data`.
  * Returns a pointer to the loaded appearance, or NULL on failure.
  */
-struct appearance *appearance_load(const char *name, const char *css_path,
+struct appearance *appearance_load(const struct app_identity *identity,
+                                   const char *name, const char *css_path,
                                    const struct theme_data *data);
 
 /*
@@ -43,7 +46,7 @@ struct appearance *appearance_load(const char *name, const char *css_path,
  * data blocks in `data`. Returns false when the file cannot be read.
  */
 bool theme_data_load(const char *path, struct theme_data *data,
-                     struct look_theme *meta);
+                     struct look_theme *meta, const char *tag);
 
 /*
  * Copies the items of `src` into `dst`. Returns false on allocation failure.
@@ -94,6 +97,8 @@ struct theme_catalog {
     struct theme_entry *items;
     int count, cap;
     bool scanned;
+    /* The app whose user and data theme directories the scan reads. */
+    const struct app_identity *identity;
 };
 
 /*
@@ -116,6 +121,7 @@ struct theme_entry *theme_catalog_find(struct theme_catalog *c, const char *ref)
  * Builds or retrieves the cached appearance for theme entry `e`.
  * Returns the appearance pointer, or NULL on error.
  */
-struct appearance *theme_entry_appearance(struct theme_entry *e);
+struct appearance *theme_entry_appearance(struct theme_entry *e,
+                                          const struct app_identity *identity);
 
 #endif
