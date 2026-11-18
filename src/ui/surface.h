@@ -13,6 +13,32 @@
 
 struct ui_scene;
 
+/* The shape of a drop indicator. A widget draws one while a drag is over it.
+ * The theme gives the indicator its colors. */
+enum ui_drop_mark {
+    UI_DROP_MARK_NONE = 0,
+    /* A line between two tabs, at the height of the tab row. */
+    UI_DROP_MARK_TAB,
+    /* A line across a row of a tree or a list. */
+    UI_DROP_MARK_ROW,
+    /* A frame around a pane that the drop fills. */
+    UI_DROP_MARK_PANE,
+};
+
+/* What a widget draws when a drag is over it. `rect` is the marked area in
+ * surface coordinates. An all-zero value draws nothing. */
+struct ui_drop_indicator {
+    struct rect2i rect;
+    enum ui_drop_mark mark;
+};
+
+/* Returns true when `indicator` names a shape and an area. */
+static inline bool ui_drop_indicator_active(const struct ui_drop_indicator *indicator)
+{
+    return indicator && indicator->mark != UI_DROP_MARK_NONE &&
+           indicator->rect.width > 0 && indicator->rect.height > 0;
+}
+
 /* What a text widget asks an input method to do. `text` is UTF-8 around the
  * caret. `selection_begin` and `selection_end` are byte offsets into it.
  * `revision` names the text, and the input method returns it with an edit
