@@ -2,7 +2,7 @@
 #define APP_TABS_INTERNAL_H
 
 #include "app/tabs/tabs.h"
-#include "input/input.h"
+#include "terminal/key_set.h"
 #include "ui/widgets/palette.h"
 #include "ui/widgets/tab_preview.h"
 #include "ui/widgets/tabbar.h"
@@ -40,10 +40,10 @@ struct app_tabs {
     struct ui_image preview_image;
     void *preview_state;
 
-    /* The held keys whose press a content of this window declined to the
-     * keymap. The contents of the window share it, so the repeats and the
-     * release of such a key stay declined after a tab switch. */
-    struct input_key_set declined_keys;
+    /* The held keys of the terminals of this window. They share it, so the
+     * repeats and the release of a key follow its press after a tab
+     * switch. */
+    struct terminal_held_keys held_keys;
 
     int count;
     int cap;

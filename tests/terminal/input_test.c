@@ -525,6 +525,48 @@ int main(void)
         }
     }
 
+    /* A copy press in one window, and the tab moves to another window
+     * while the copy is held. The release reaches the moved tab in the new
+     * window. The terminal keeps its own record, so the release stays with
+     * the copy, and no shell gets it. */
+    {
+        assert(app_tabs_new(w));
+        struct terminal *moved = app_tabs_active(w);
+        struct session *s = terminal_session(moved);
+        int moved_fds[2];
+        assert(pipe(moved_fds) == 0);
+        for (int i = 0; i < 2; i++)
+            assert(fcntl(moved_fds[i], F_SETFL,
+                         fcntl(moved_fds[i], F_GETFL) | O_NONBLOCK) == 0);
+        assert(session_write_queue_bind(&s->input_writer, s->loop,
+                                        moved_fds[1]));
+        assert(wsap_vtcore_feed(s->term, "copy me\033[>2u", 12, 0));
+        terminal_select_all(moved);
+        raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_PRESS);
+        assert(app_tabs_move(w, app_tabs_active_index(w), other, -1));
+        assert(app_tabs_active(other) == moved);
+        raw_key(other, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_RELEASE);
+        expect(moved_fds[0], "");
+        expect(other_fds[0], "");
+        expect(fds[0], "");
+
+        /* A key that goes down unbound belongs to the shell. A binding that
+         * comes while the key is held does not take its release. */
+        raw_key(other, YASL_KEY_F7, 0, 0, 0, YASL_KEY_PRESS);
+        expect(moved_fds[0], "\033[18;1~");
+        assert(input_keymap_apply_spec(&other->keymap, "f7 = scroll_up"));
+        raw_key(other, YASL_KEY_F7, 0, 0, 0, YASL_KEY_RELEASE);
+        expect(moved_fds[0], "\033[18;1:3~");
+
+        /* The next press of the key belongs to the binding. */
+        raw_key(other, YASL_KEY_F7, 0, 0, 0, YASL_KEY_PRESS);
+        raw_key(other, YASL_KEY_F7, 0, 0, 0, YASL_KEY_RELEASE);
+        expect(moved_fds[0], "");
+        assert(input_keymap_apply_spec(&other->keymap, "f7 = none"));
+        close(moved_fds[0]);
+        close(moved_fds[1]);
+    }
+
     window_close(other);
     window_close(w);
     test_app_fini(&app);
