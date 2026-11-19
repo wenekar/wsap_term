@@ -106,7 +106,9 @@ struct ui_node_desc {
             void *submenu_userdata;
             uint32_t hover_delay_ms;
         } menu;
-        /* Supply an initialized, detached widget or subtree.
+        /* Supply an initialized, detached widget or subtree. An update can
+         * supply a widget that the view already holds, also when the view
+         * shows it. The widget can move to another parent node.
          * On success, the view destroys its widget resources.
          * Keep its enclosing storage alive until view destruction.
          * On failure, the caller retains the detached widget.

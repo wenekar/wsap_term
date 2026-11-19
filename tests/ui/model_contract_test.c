@@ -1118,6 +1118,86 @@ static void view_update_keeps_an_open_menu_test(void)
     ui_view_destroy(view);
 }
 
+/* A view updates a supplied widget that it shows. The widget can also move
+ * to another parent, and the view keeps it alive. */
+static void view_update_keeps_a_supplied_widget_test(void)
+{
+    int destroyed = 0;
+    struct supplied_control control = { .destroyed = &destroyed };
+    ui_widget_init(&control.widget, &SUPPLIED_CONTROL_OPS, NULL);
+    struct ui_node_desc custom = {
+        .kind = UI_NODE_WIDGET, .key = "custom",
+        .props.widget = &control.widget,
+    };
+    struct ui_node_desc boxes[] = {
+        { .kind = UI_NODE_ROW, .key = "a", .children = &custom,
+          .child_count = 1 },
+        { .kind = UI_NODE_ROW, .key = "b" },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root",
+        .children = boxes, .child_count = 2,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+    struct ui_widget *a = ui_view_widget(view, "a");
+    struct ui_widget *b = ui_view_widget(view, "b");
+    struct ui_surface surface;
+    show(&surface, ui_view_root(view), (struct vector2i){ .x = 200, .y = 100 });
+    ui_surface_prepare(&surface);
+
+    /* The same descriptor updates the shown widget. */
+    assert(ui_view_update(view, &root));
+    assert(control.widget.parent == a);
+    assert(ui_view_widget(view, "custom") == &control.widget);
+
+    /* A failed move leaves the widget in its parent. */
+    struct ui_widget full = {0}, old_child = {0};
+    ui_widget_init(&full, &SINGLE_CHILD_OPS, NULL);
+    ui_widget_init(&old_child, NULL, NULL);
+    assert(ui_widget_add_child(&full, &old_child));
+    struct ui_node_desc inner = { .kind = UI_NODE_LABEL, .key = "inner" };
+    struct ui_node_desc moved[] = {
+        { .kind = UI_NODE_ROW, .key = "a" },
+        { .kind = UI_NODE_ROW, .key = "b", .children = &custom,
+          .child_count = 1 },
+        { .kind = UI_NODE_WIDGET, .key = "full", .props.widget = &full,
+          .children = &inner, .child_count = 1 },
+    };
+    struct ui_node_desc bad = root;
+    bad.children = moved;
+    bad.child_count = 3;
+    assert(!ui_view_update(view, &bad));
+    assert(control.widget.parent == a);
+    assert(ui_widget_surface(&control.widget) == &surface);
+    assert(!destroyed);
+    ui_widget_destroy(&full);
+
+    /* The widget moves to another parent and stays alive. */
+    root.children = moved;
+    root.child_count = 2;
+    assert(ui_view_update(view, &root));
+    assert(control.widget.parent == b);
+    assert(ui_view_widget(view, "custom") == &control.widget);
+    assert(!destroyed);
+    ui_surface_prepare(&surface);
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+    assert(destroyed == 1);
+
+    /* A supplied root on a surface updates too. */
+    destroyed = 0;
+    ui_widget_init(&control.widget, &SUPPLIED_CONTROL_OPS, NULL);
+    view = ui_view_mount(&custom, NULL);
+    assert(view && ui_view_root(view) == &control.widget);
+    show(&surface, ui_view_root(view), (struct vector2i){ .x = 100, .y = 100 });
+    assert(ui_view_update(view, &custom));
+    assert(ui_view_root(view) == &control.widget);
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+    assert(destroyed == 1);
+}
+
 int main(void)
 {
     view_diagnostic_test();
@@ -1138,6 +1218,7 @@ int main(void)
     view_update_from_an_update_test();
     view_destroy_from_an_update_test();
     view_update_keeps_an_open_menu_test();
+    view_update_keeps_a_supplied_widget_test();
     view_root_keyboard_test();
     hidden_child_takes_no_space_or_input_test();
     hidden_modal_restores_focus_test();
