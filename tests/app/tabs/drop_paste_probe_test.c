@@ -27,7 +27,8 @@
  *   from there. It never falls back to the focused widget. A text drop
  *   follows the same rule as a file drop.
  * - While a modal is open, a release outside the modal reaches nothing.
- * - Every release ends the drag.
+ * - Every release ends the drag, and it clears the drop highlight of every
+ *   tab.
  *
  * The terminal content is wrapped, so the test sees what reaches the
  * terminal.
@@ -53,8 +54,25 @@ static void wrap_drop_files(void *content, const char *data, size_t len)
     app_terminal_content_ops.drop_files(content, data, len);
 }
 
+/* The last drop highlight state of each content, by content. */
+static struct { void *content; bool over; } highlights[8];
+
+static bool highlighted(void *content)
+{
+    for (size_t i = 0; i < sizeof highlights / sizeof highlights[0]; i++)
+        if (highlights[i].content == content)
+            return highlights[i].over;
+    return false;
+}
+
 static void wrap_drop_hover(void *content, bool over)
 {
+    size_t i = 0;
+    while (i < sizeof highlights / sizeof highlights[0] - 1 &&
+           highlights[i].content && highlights[i].content != content)
+        i++;
+    highlights[i].content = content;
+    highlights[i].over = over;
     hover_on = over;
     app_terminal_content_ops.drop_hover(content, over);
 }
@@ -87,6 +105,7 @@ static struct window *open_window(struct app *app)
     last_paste[0] = 0;
     file_drops = 0;
     hover_on = false;
+    memset(highlights, 0, sizeof highlights);
     return w;
 }
 
@@ -350,6 +369,32 @@ static void release_with_no_leave_clears_the_highlight_test(void)
     test_app_fini(&a);
 }
 
+/* A file drag over the first tab highlights it. The active tab changes
+ * during the drag, and the release comes with no LEAVE. No tab keeps its
+ * highlight. */
+static void tab_switch_during_a_drag_clears_every_highlight_test(void)
+{
+    struct test_app a;
+    test_app_init(&a, "/bin/cat", viewport);
+    struct window *w = open_two_tabs(a.app);
+    struct app_tabs *tabs = app_tabs_of(w);
+    int first = tabs->active;
+    void *first_content = app_tabs_active(w);
+
+    drop_event(w, YASL_DROP_OVER, "text/uri-list", NULL, over_terminal);
+    assert(highlighted(first_content));
+    app_tabs_select(w, first == 0 ? 1 : 0);
+    void *second_content = app_tabs_active(w);
+    assert(second_content != first_content);
+    drop_event(w, YASL_DROP_RELEASE, "text/uri-list", "file:///tmp/a\r\n",
+               over_terminal);
+    assert(!highlighted(first_content));
+    assert(!highlighted(second_content));
+
+    window_close(w);
+    test_app_fini(&a);
+}
+
 /* Two stand-ins for native surfaces: the window surface and a menu popup.
  * The test never draws on them. */
 static char fake_root_surface, fake_popup_surface;
@@ -405,6 +450,7 @@ int main(void)
     drop_on_the_scroll_bar_reaches_the_terminal_test();
     drop_with_the_palette_open_test();
     release_with_no_leave_clears_the_highlight_test();
+    tab_switch_during_a_drag_clears_every_highlight_test();
     drop_on_a_popup_clears_the_highlight_test();
     return 0;
 }

@@ -255,13 +255,21 @@ void app_tabs_drag(struct window *w, enum yasl_drop_action event,
     }
 }
 
+/* A drag over the window highlights the active tab only. The active tab can
+ * change during the drag, so every other tab loses its highlight, and the
+ * end of the drag clears every tab. */
 void app_tabs_drop_hover(struct window *w, bool over, void *ud)
 {
     (void)ud;
     struct app_tabs *tabs = app_tabs_of(w);
-    const struct app_tab *entry = app_tabs_entry(tabs, tabs ? tabs->active : -1);
-    if (entry && entry->content && entry->ops->drop_hover)
-        entry->ops->drop_hover(entry->content, over);
+    if (!tabs)
+        return;
+    for (int i = 0; i < tabs->count; i++) {
+        const struct app_tab *entry = app_tabs_entry(tabs, i);
+        if (!entry || !entry->content || !entry->ops->drop_hover)
+            continue;
+        entry->ops->drop_hover(entry->content, over && i == tabs->active);
+    }
 }
 
 void app_tabs_drag_forget(struct app_tab_model *m, struct window *w)
