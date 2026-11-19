@@ -92,8 +92,11 @@ static void publish_read(const struct ui_accessibility_node *node,
     free(whole);
 }
 
-/* The cost test: one run read must not take the history size into account,
- * and a publish at 20000 lines must stay far below one second. */
+/* The cost test: the run reads of one publish must cost about as much as
+ * one whole read, because both copy the same bytes. A run read that measures
+ * the document again costs O(history) each, and the runs then cost many
+ * times the whole read. The test compares the two reads of one publish, so
+ * load and sanitizers change both alike. */
 static void cost(void)
 {
     struct test_app app;
@@ -121,8 +124,7 @@ static void cost(void)
            "runs %.1f ms, one run %.3f ms (2000 lines: %.3f ms)\n",
            whole_ms, runs_ms, run_avg_ms, small_avg_ms);
     fflush(stdout);
-    assert(run_avg_ms < 0.015);
-    assert(whole_ms + runs_ms < 500.0);
+    assert(runs_ms < 4.0 * whole_ms);
 
     ui_accessibility_tree_destroy(&tree);
     test_app_fini(&app);
