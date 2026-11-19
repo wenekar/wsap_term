@@ -48,6 +48,11 @@ foreach unit : ['contracts', 'timing', 'frame_request', 'utf8', 'timers', 'loop'
         include_directories: inc, dependencies: yasl_dep)
     test(unit, exe, is_parallel: not has_cocoa or unit != 'timers')
 endforeach
+if system == 'linux'
+    runtime_test = executable('yasl-runtime-test', 'common/test_runtime.c',
+        include_directories: inc, dependencies: yasl_dep)
+    test('runtime', runtime_test)
+endif
 keyboard_sources = files('common/test_keyboard.c')
 if not has_wayland
     keyboard_sources += files('../src/platform/wayland/keymap.c')

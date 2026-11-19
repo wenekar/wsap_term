@@ -59,7 +59,13 @@ YASL_API int yasl_init(const struct yasl_options *options);
 YASL_API int yasl_shutdown(void);
 /** AUTO and 0 before initialization. */
 YASL_API enum yasl_backend yasl_get_backend(void);
+/** The feature bits that the backend supports. A graphics bit does not prove
+ * that the loader and driver are on the machine. Zero before initialization. */
 YASL_API unsigned yasl_get_features(void);
+/** True when the feature works on this machine. A graphics feature probes the
+ * loader on the first call, and the result is cached. A caller that does not
+ * ask maps no graphics library. False before initialization. */
+YASL_API bool yasl_has_feature(enum yasl_feature feature);
 
 /* Surfaces */
 enum yasl_surface_type {

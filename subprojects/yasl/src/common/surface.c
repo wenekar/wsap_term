@@ -220,38 +220,61 @@ static const char *vulkan_surface_extension(enum yasl_private_backend backend)
 }
 #endif
 
+static const struct {
+    uint32_t cap;
+    unsigned feature;
+} feature_map[] = {
+    {YASL_PRIVATE_CAP_POPUPS, YASL_FEATURE_POPUPS},
+    {YASL_PRIVATE_CAP_DRAG, YASL_FEATURE_DRAG},
+    {YASL_PRIVATE_CAP_DRAG_CARRY, YASL_FEATURE_DRAG_CARRY},
+    {YASL_PRIVATE_CAP_PLACE_WINDOW, YASL_FEATURE_PLACE_WINDOW},
+    {YASL_PRIVATE_CAP_PRIMARY_SELECTION, YASL_FEATURE_PRIMARY_SELECTION},
+    {YASL_PRIVATE_CAP_TABLET, YASL_FEATURE_TABLET},
+    {YASL_PRIVATE_CAP_TEXT_INPUT, YASL_FEATURE_TEXT_INPUT},
+    {YASL_PRIVATE_CAP_RELATIVE_POINTER, YASL_FEATURE_LOCKED_CURSOR},
+};
+
+static bool display_has_feature(uint32_t caps, enum yasl_feature feature)
+{
+    for (size_t i = 0; i < sizeof(feature_map) / sizeof(feature_map[0]); i++)
+        if (feature_map[i].feature == (unsigned)feature)
+            return (caps & feature_map[i].cap) != 0;
+    return false;
+}
+
 unsigned yasl_get_features(void)
 {
     if (!display || !yasl_public_owner())
         return 0;
-    static const struct {
-        uint32_t cap;
-        unsigned feature;
-    } map[] = {
-        {YASL_PRIVATE_CAP_POPUPS, YASL_FEATURE_POPUPS},
-        {YASL_PRIVATE_CAP_DRAG, YASL_FEATURE_DRAG},
-        {YASL_PRIVATE_CAP_DRAG_CARRY, YASL_FEATURE_DRAG_CARRY},
-        {YASL_PRIVATE_CAP_PLACE_WINDOW, YASL_FEATURE_PLACE_WINDOW},
-        {YASL_PRIVATE_CAP_PRIMARY_SELECTION, YASL_FEATURE_PRIMARY_SELECTION},
-        {YASL_PRIVATE_CAP_TABLET, YASL_FEATURE_TABLET},
-        {YASL_PRIVATE_CAP_TEXT_INPUT, YASL_FEATURE_TEXT_INPUT},
-        {YASL_PRIVATE_CAP_RELATIVE_POINTER, YASL_FEATURE_LOCKED_CURSOR},
-    };
     uint32_t caps = yasl_private_display_caps(display);
     unsigned features = 0;
-#if defined(__linux__)
-    if (display->ops->surface_create_gl && yasl_private_runtime_has_gl())
-        features |= YASL_FEATURE_OPENGL;
-#endif
-#if YASL_HAS_VULKAN
-    if ((caps & YASL_PRIVATE_CAP_VULKAN) &&
-        yasl_private_runtime_has_vulkan(vulkan_surface_extension(display->ops->type)))
-        features |= YASL_FEATURE_VULKAN;
-#endif
-    for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++)
-        if (caps & map[i].cap)
-            features |= map[i].feature;
+    for (size_t i = 0; i < sizeof(feature_map) / sizeof(feature_map[0]); i++)
+        if (caps & feature_map[i].cap)
+            features |= feature_map[i].feature;
     return features;
+}
+
+bool yasl_has_feature(enum yasl_feature feature)
+{
+    if (!display || !yasl_public_owner())
+        return false;
+    switch (feature) {
+    case YASL_FEATURE_OPENGL:
+#if defined(__linux__)
+        return display->ops->surface_create_gl && yasl_private_runtime_has_gl();
+#else
+        return false;
+#endif
+    case YASL_FEATURE_VULKAN:
+#if YASL_HAS_VULKAN
+        return (yasl_private_display_caps(display) & YASL_PRIVATE_CAP_VULKAN) &&
+               yasl_private_runtime_has_vulkan(vulkan_surface_extension(display->ops->type));
+#else
+        return false;
+#endif
+    default:
+        return display_has_feature(yasl_private_display_caps(display), feature);
+    }
 }
 
 /* Surfaces */
