@@ -9,14 +9,6 @@
 /* The drag and drop helpers of the window layer. A drop carries its type and
  * its data. It never becomes a file. */
 
-/* Returns the best type that the source offers and the target accepts, or
- * NULL when the two lists share no type. Both lists are best first, so the
- * result is the first entry of `accepted` that `offered` holds. An entry of
- * `offered` with a star, such as "image/" "*", matches every type with its
- * major type. */
-const char *drop_pick_mime(const char *const *offered, size_t offered_count,
-                           const char *const *accepted, size_t accepted_count);
-
 /* Returns true when `mime` names a text type. */
 bool drop_mime_is_text(const char *mime);
 

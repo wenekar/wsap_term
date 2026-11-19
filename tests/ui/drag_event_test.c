@@ -4,7 +4,11 @@
 #include <string.h>
 
 #include "ui/event.h"
-#include "ui/yasl/drop.h"
+
+/*
+ * The drag event of the UI core. ui_drag_offers() is the one rule that matches
+ * an offered type to a requested type.
+ */
 
 /* A source that holds a text payload and refuses every other type. */
 struct text_source {
@@ -75,22 +79,6 @@ static void drop_event_payload_test(void)
     assert(leave.kind == UI_EVENT_DRAG_LEAVE);
 }
 
-/* The first acceptable type wins, and a star in an offer gives its major
- * type. */
-static void pick_mime_test(void)
-{
-    static const char *const accepted[] = { "text/uri-list", "text/plain",
-                                            "image/png" };
-    static const char *const offers_uri[] = { "text/plain", "text/uri-list" };
-    assert(!strcmp(drop_pick_mime(offers_uri, 2, accepted, 3), "text/uri-list"));
-    static const char *const offers_text[] = { "text/plain;charset=utf-8" };
-    assert(drop_pick_mime(offers_text, 1, accepted, 3) == NULL);
-    static const char *const offers_image[] = { "image/*" };
-    assert(!strcmp(drop_pick_mime(offers_image, 1, accepted, 3), "image/png"));
-    static const char *const offers_none[] = { "application/json" };
-    assert(drop_pick_mime(offers_none, 1, accepted, 3) == NULL);
-}
-
 /* A major type with a star in an offer matches its subtypes. */
 static void drag_offers_star_test(void)
 {
@@ -112,14 +100,6 @@ static void drag_offers_star_test(void)
     drag.mimes = exact;
     assert(ui_drag_offers(&drag, "text/plain"));
     assert(!ui_drag_offers(&drag, "text/uri-list"));
-}
-
-/* A drop no longer becomes a file. */
-static void no_file_drop_test(void)
-{
-    static const char png[] = { 'P', 'N', 'G', 0, 1 };
-    assert(drop_save_image("image/png", png, sizeof png) == NULL);
-    drop_cleanup();
 }
 
 /* The star offers match any major type, the parameters do not count, and the
@@ -168,10 +148,8 @@ int main(void)
 {
     refused_type_test();
     drop_event_payload_test();
-    pick_mime_test();
     drag_offers_star_test();
     drag_offers_star_star_test();
     drag_offers_foreign_types_test();
-    no_file_drop_test();
     return 0;
 }
