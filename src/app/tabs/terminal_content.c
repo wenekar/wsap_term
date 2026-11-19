@@ -53,6 +53,15 @@ static void terminal_report_exited(void *ud, struct terminal *t)
     report_terminal(ud, t, APP_TAB_CONTENT_EXIT);
 }
 
+/* The terminals of one window share the record of their declined keys. */
+static struct input_key_set *terminal_declined_keys(void *ud, struct terminal *t)
+{
+    (void)t;
+    struct terminal_content_state *st = ud;
+    struct app_tabs *tabs = app_tabs_of(st->window);
+    return tabs ? &tabs->declined_keys : NULL;
+}
+
 void *app_terminal_content_create(struct window *window,
                                   struct app_tab_model *model, const char *cwd,
                                   struct vector2i content_size, int font_size,
@@ -74,6 +83,7 @@ void *app_terminal_content_create(struct window *window,
             .output = terminal_output,
             .title_changed = terminal_title_changed,
             .exited = terminal_report_exited,
+            .declined_keys = terminal_declined_keys,
             .ud = st,
         },
         .cwd = cwd,

@@ -53,6 +53,11 @@ struct terminal_host {
     void (*output)(void *ud, struct terminal *terminal);
     void (*title_changed)(void *ud, struct terminal *terminal);
     void (*exited)(void *ud, struct terminal *terminal);
+    /* The keys of the window of `terminal` whose press a terminal declined
+     * to the keymap, or NULL. Every terminal of one window shares the set,
+     * so the repeats and the release of a declined key stay declined after
+     * a tab switch. NULL makes the terminal keep its own set. */
+    struct input_key_set *(*declined_keys)(void *ud, struct terminal *terminal);
     void *ud;
 };
 

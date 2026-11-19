@@ -52,10 +52,10 @@ struct terminal_view {
     bool drop_hover;
     bool opening_link;
     bool blink_cells;
-    /* One bit per key ID, set for each held key whose press the view
-     * declined to the app command. The repeats and the release of that key
-     * follow the press. All zero means that no declined key is held. */
-    uint64_t declined_keys[(INPUT_SHORTCUT_KEY_COUNT + 63) / 64];
+    /* The held keys whose press the view declined to the app command, when
+     * the host shares no set for the window. The repeats and the release of
+     * such a key follow the press. */
+    struct input_key_set declined_keys;
 
     /* The byte offset of each logical history line in the accessibility
      * document, its byte length, and the history rows that it covers. The

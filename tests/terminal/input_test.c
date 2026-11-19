@@ -491,6 +491,34 @@ int main(void)
         raw_key(w, YASL_KEY_W, mods, 'w', 'W', YASL_KEY_RELEASE);
         expect(fds[0], "");
         expect(tab_fds[1][0], "");
+
+        /* A copy press in tab 0 and a tab switch while the copy is held.
+         * The copy release reaches the view of the new tab. The terminals
+         * of one window share the record, so the release stays with the
+         * copy, and no shell gets it. */
+        app_tabs_select(w, 0);
+        drain(w);
+        assert(app_tabs_active(w) == content);
+        terminal_select_all(content);
+        raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_PRESS);
+        raw_key(w, YASL_KEY_TAB, YASL_MOD_CTRL, '\t', '\t', YASL_KEY_PRESS);
+        raw_key(w, YASL_KEY_TAB, YASL_MOD_CTRL, '\t', '\t', YASL_KEY_RELEASE);
+        assert(app_tabs_active(w) == tab_content[1]);
+        raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_RELEASE);
+        expect(fds[0], "");
+        expect(tab_fds[1][0], "");
+
+        /* A press decides again. The copy release went missing, so the
+         * record still holds the key. A new press with no selection still
+         * belongs to the shell. */
+        app_tabs_select(w, 0);
+        drain(w);
+        terminal_select_all(content);
+        raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_PRESS);
+        expect(fds[0], "");
+        raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_PRESS);
+        raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_RELEASE);
+        expect(fds[0], "\x03");
         for (int i = 0; i < 2; i++) {
             close(tab_fds[i][0]);
             close(tab_fds[i][1]);
