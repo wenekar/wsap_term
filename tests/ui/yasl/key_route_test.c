@@ -371,9 +371,9 @@ static void taken_bound_key_keeps_text_test(void)
 }
 
 /* A widget follows the scope workflow of command.h with the public calls
- * only. It takes a scope, adds a command, and binds a chord in the window.
- * The chord runs the command, also after an input.conf reload. After the
- * widget clears its scope, the chord runs nothing. */
+ * only. It takes a scope, adds a command, and binds a chord in the host.
+ * The chord runs the command, also in a window that opens later and after
+ * an input.conf reload. After a clear spec, the chord runs nothing. */
 static void public_scope_workflow_test(void)
 {
     struct fixture f;
@@ -387,18 +387,24 @@ static void public_scope_workflow_test(void)
     assert(id != INPUT_COMMAND_NONE);
     f.plain.widget.command_scope = scope;
 
-    assert(window_bind_scope(f.window, &reg, scope, "ctrl+k = probe_new"));
-    assert(!window_bind_scope(f.window, &reg, INPUT_COMMAND_SCOPE_APP,
-                              "ctrl+k = probe_new"));
-    assert(!window_bind_scope(f.window, &reg, INPUT_COMMAND_SCOPE_COUNT,
-                              "ctrl+k = probe_new"));
-    assert(!window_bind_scope(f.window, &reg, scope, "ctrl+k = no_such"));
-    assert(!window_bind_scope(f.window, &reg, scope, "ctrl+"));
+    assert(window_host_bind_scope(&host, &reg, scope, "ctrl+k = probe_new"));
+    assert(!window_host_bind_scope(&host, &reg, INPUT_COMMAND_SCOPE_APP,
+                                   "ctrl+k = probe_new"));
+    assert(!window_host_bind_scope(&host, &reg, INPUT_COMMAND_SCOPE_COUNT,
+                                   "ctrl+k = probe_new"));
+    assert(!window_host_bind_scope(&host, &reg, scope, "ctrl+k = no_such"));
+    assert(!window_host_bind_scope(&host, &reg, scope, "ctrl+"));
 
     focus(&f, &f.plain);
     press(&f, 'k');
     assert(take_shortcut(&f, &action) && action == id);
     assert(deliver_shortcut(&f, action, &f.plain));
+
+    /* A window that opens later, such as a torn-off tab, has the chord. */
+    struct input_key_event ctrl_k = { .codepoint = 'k', .mods = INPUT_MOD_CTRL };
+    struct window *two = window_create(&host, &(struct window_spec){0});
+    assert(two);
+    assert(input_keymap_lookup_scoped(window_keymap(two), &ctrl_k, scope) == id);
 
     /* A reload with a clear line replaces the app bindings only. */
     char path[] = "/tmp/wsap-key-route-XXXXXX";
@@ -416,17 +422,26 @@ static void public_scope_workflow_test(void)
     press(&f, 'k');
     assert(take_shortcut(&f, &action) && action == id);
     assert(deliver_shortcut(&f, action, &f.plain));
+    assert(input_keymap_lookup_scoped(window_keymap(two), &ctrl_k, scope) == id);
 
-    /* The owner clears its scope. The chord runs nothing, and the app
-     * binding stays. */
-    window_clear_scope(f.window, scope);
+    /* The owner clears its scope. The chord runs nothing in any window, and
+     * the app binding stays. A new window does not get the chord. */
+    assert(window_host_bind_scope(&host, &reg, scope, "clear"));
     press(&f, 'k');
     assert(!take_shortcut(&f, &action));
     press(&f, 'y');
     assert(take_shortcut(&f, &action) && action == INPUT_COMMAND_SCROLL_DOWN);
+    assert(input_keymap_lookup_scoped(window_keymap(two), &ctrl_k, scope) ==
+           INPUT_COMMAND_NONE);
+    struct window *three = window_create(&host, &(struct window_spec){0});
+    assert(three);
+    assert(input_keymap_lookup_scoped(window_keymap(three), &ctrl_k, scope) ==
+           INPUT_COMMAND_NONE);
 
     input_command_registry_free(&reg);
-    input_command_scope_release(scope);
+    window_host_release_scope(&host, scope);
+    window_destroy(three);
+    window_destroy(two);
     unlink(path);
     assert(setenv("WSAP_INPUT_CONFIG", "NONE", 1) == 0);
     input_config_init(NULL);
@@ -448,8 +463,9 @@ static void release_scope_test(void)
     input_command_registry_init(&reg);
     input_command_id old = input_command_add(&reg, scope, "probe_old", "Old");
     assert(old != INPUT_COMMAND_NONE);
-    assert(window_bind_scope(f.window, &reg, scope, "ctrl+k = probe_old"));
-    assert(window_bind_scope(two, &reg, scope, "ctrl+k = probe_old"));
+    assert(window_host_bind_scope(&host, &reg, scope, "ctrl+k = probe_old"));
+    struct input_key_event ctrl_k = { .codepoint = 'k', .mods = INPUT_MOD_CTRL };
+    assert(input_keymap_lookup_scoped(window_keymap(two), &ctrl_k, scope) == old);
     f.plain.widget.command_scope = scope;
     focus(&f, &f.plain);
     press(&f, 'k');
@@ -457,9 +473,14 @@ static void release_scope_test(void)
 
     input_command_registry_free(&reg);
     window_host_release_scope(&host, scope);
-    struct input_key_event ctrl_k = { .codepoint = 'k', .mods = INPUT_MOD_CTRL };
     assert(input_keymap_lookup_scoped(window_keymap(two), &ctrl_k, scope) ==
            INPUT_COMMAND_NONE);
+    /* A window that opens after the release does not get the chord. */
+    struct window *three = window_create(&host, &(struct window_spec){0});
+    assert(three);
+    assert(input_keymap_lookup_scoped(window_keymap(three), &ctrl_k, scope) ==
+           INPUT_COMMAND_NONE);
+    window_destroy(three);
 
     /* A new owner takes the scope and adds a command. The old chord does
      * not run it. */

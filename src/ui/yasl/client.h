@@ -80,29 +80,24 @@ void *window_ui_content(const struct window *w);
 
 /*
  * Applies binding spec `spec`, such as "ctrl+k = find", in widget scope
- * `scope` of the keymap of window `w`.
+ * `scope` of every window of `host`. The host keeps the binding, so each
+ * window that opens later, such as a torn-off tab, gets it too. A reload of
+ * input.conf keeps it.
  * The action name resolves in registry `reg`, then in the app commands.
- * The binding stays when the window reloads input.conf.
+ * The spec "clear" drops the bindings of the scope, and keeps the scope.
  * A key that is down keeps its route until its release. The new binding
  * applies from the next press.
  * Returns false on a bad spec, on the app scope, on a scope out of range, or
  * on a memory shortage.
  */
-bool window_bind_scope(struct window *w,
-                       const struct input_command_registry *reg,
-                       uint8_t scope, const char *spec);
-
-/*
- * Drops the bindings of widget scope `scope` from the keymap of window `w`.
- * The widget owner calls this for each window that it bound, before it
- * releases its scope.
- * The call ignores the app scope.
- */
-void window_clear_scope(struct window *w, uint8_t scope);
+bool window_host_bind_scope(struct window_host *host,
+                            const struct input_command_registry *reg,
+                            uint8_t scope, const char *spec);
 
 /*
  * Releases widget scope `scope`. The call drops the bindings of the scope in
- * every window of `host`, and then it calls `input_command_scope_release()`.
+ * `host` and in every window of `host`, and then it calls
+ * `input_command_scope_release()`.
  * The widget owner calls this once when it is destroyed, after it frees its
  * registry. A later owner of the scope then gets none of its chords.
  * The call ignores the app scope.

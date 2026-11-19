@@ -108,16 +108,18 @@ _Static_assert(INPUT_COMMAND_APP_COUNT == 29, "app ID count moved");
  * 2. Call `input_command_add()` with the scope, the name, and the label, and
  *    keep the ID that it returns.
  * 3. Set the scope in the `command_scope` field of the widget.
- * 4. When the command has a chord, bind it in each window with
- *    `window_bind_scope()` from `ui/yasl/client.h`. Pass the registry of the
- *    widget. For a keymap of your own, use
- *    `input_keymap_apply_spec_registry()`. A menu item needs no chord. An
- *    app command, such as `close_tab`, can bind in the widget scope too.
+ * 4. When the command has a chord, bind it with `window_host_bind_scope()`
+ *    from `ui/yasl/client.h`. Pass the registry of the widget. The binding
+ *    applies in every window of the host, also in a window that opens later.
+ *    For a keymap of your own, use `input_keymap_apply_spec_registry()`. A
+ *    menu item needs no chord. An app command, such as `close_tab`, can bind
+ *    in the widget scope too.
  * 5. Put the ID in the action of the widget, and read the label of a menu
  *    item with `input_command_label()`.
  * When the owner is destroyed, it frees its registry. Then it calls
  * `window_host_release_scope()` from `ui/yasl/client.h`. The call drops the
- * bindings of the scope in every window, and then it releases the scope.
+ * bindings of the scope in the host and in every window, and then it
+ * releases the scope.
  * For a keymap of your own, call `input_keymap_clear_scope()` and then
  * `input_command_scope_release()`.
  * The UI core does not do this, because it owns no keymap.

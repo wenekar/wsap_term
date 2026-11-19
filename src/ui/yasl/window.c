@@ -773,28 +773,30 @@ void window_host_reload_input(struct window_host *host)
                                 INPUT_COMMAND_SCOPE_APP);
 }
 
-bool window_bind_scope(struct window *w,
-                       const struct input_command_registry *reg,
-                       uint8_t scope, const char *spec)
+bool window_host_bind_scope(struct window_host *host,
+                            const struct input_command_registry *reg,
+                            uint8_t scope, const char *spec)
 {
     /* The app scope belongs to input.conf, and a reload replaces it. */
-    if (!w || scope == INPUT_COMMAND_SCOPE_APP)
+    if (!host || scope == INPUT_COMMAND_SCOPE_APP ||
+        !input_keymap_apply_spec_registry(&host->keymap, reg, scope, spec))
         return false;
-    return input_keymap_apply_spec_registry(&w->keymap, reg, scope, spec);
-}
-
-void window_clear_scope(struct window *w, uint8_t scope)
-{
-    if (w && scope != INPUT_COMMAND_SCOPE_APP)
-        input_keymap_clear_scope(&w->keymap, scope);
+    bool copied = true;
+    for (int i = 0; i < host->count; i++)
+        copied &= input_keymap_copy_scope(&host->windows[i]->keymap,
+                                          &host->keymap, scope);
+    return copied;
 }
 
 void window_host_release_scope(struct window_host *host, uint8_t scope)
 {
     if (scope == INPUT_COMMAND_SCOPE_APP || scope >= INPUT_COMMAND_SCOPE_COUNT)
         return;
-    for (int i = 0; host && i < host->count; i++)
-        input_keymap_clear_scope(&host->windows[i]->keymap, scope);
+    if (host) {
+        input_keymap_clear_scope(&host->keymap, scope);
+        for (int i = 0; i < host->count; i++)
+            input_keymap_clear_scope(&host->windows[i]->keymap, scope);
+    }
     input_command_scope_release(scope);
 }
 
