@@ -122,12 +122,56 @@ static void no_file_drop_test(void)
     drop_cleanup();
 }
 
+/* The star offers match any major type, the parameters do not count, and the
+ * letters match without case. A foreign drag from a file manager offers
+ * "*" "*", and a text editor offers "text/plain". */
+static void drag_offers_star_star_test(void)
+{
+    static const char *const any[] = { "*/*" };
+    struct ui_drag_event drag = { .mimes = any, .mime_count = 1 };
+    assert(ui_drag_offers(&drag, "text/plain"));
+    assert(ui_drag_offers(&drag, "image/png"));
+    assert(ui_drag_offers(&drag, "text/plain;charset=utf-8"));
+
+    /* A major type with a star matches its subtypes, whatever the case. */
+    static const char *const images[] = { "IMAGE/*" };
+    drag.mimes = images;
+    assert(ui_drag_offers(&drag, "image/png"));
+    assert(ui_drag_offers(&drag, "image/svg+xml"));
+    assert(!ui_drag_offers(&drag, "text/plain"));
+
+    /* An exact offer matches a request that carries parameters, and it
+     * ignores its own parameters. */
+    static const char *const text[] = { "text/plain" };
+    drag.mimes = text;
+    assert(ui_drag_offers(&drag, "text/plain;charset=utf-8"));
+    assert(ui_drag_offers(&drag, "TEXT/PLAIN"));
+    assert(!ui_drag_offers(&drag, "text/html"));
+    static const char *const text_params[] = { "text/plain; charset=utf-8" };
+    drag.mimes = text_params;
+    assert(ui_drag_offers(&drag, "text/plain"));
+    assert(ui_drag_offers(&drag, "Text/Plain"));
+}
+
+/* A list of the accepted types answers for each one. */
+static void drag_offers_foreign_types_test(void)
+{
+    static const char *const offers[] = { "*/*" };
+    static const char *const accepted[] = { "text/uri-list", "image/png",
+                                            "text/plain;charset=utf-8" };
+    struct ui_drag_event drag = { .mimes = offers, .mime_count = 1 };
+    for (size_t i = 0; i < sizeof accepted / sizeof accepted[0]; i++)
+        assert(ui_drag_offers(&drag, accepted[i]));
+}
+
 int main(void)
 {
     refused_type_test();
     drop_event_payload_test();
     pick_mime_test();
     drag_offers_star_test();
+    drag_offers_star_star_test();
+    drag_offers_foreign_types_test();
     no_file_drop_test();
     return 0;
 }

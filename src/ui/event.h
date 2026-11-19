@@ -111,27 +111,86 @@ struct ui_drag_event {
     struct vector2i pos;
 };
 
-/* Returns true when the drag offers type `mime`. An offer with a star for
+/* Returns the length of the type part of `mime`: the part before a parameter
+ * separator or a space. */
+static inline size_t ui_mime_type_length(const char *mime)
+{
+    size_t n = 0;
+    while (mime[n] && mime[n] != ';' && mime[n] != ' ')
+        n++;
+    return n;
+}
+
+/* Returns the length of the major type of a type part of length `len`: the
+ * part before its slash, or the whole part when it has no slash. */
+static inline size_t ui_mime_major_length(const char *type, size_t len)
+{
+    size_t n = 0;
+    while (n < len && type[n] != '/')
+        n++;
+    return n;
+}
+
+/* Compares two type parts without case. The letters of a type match without
+ * case, as RFC 6838 says. */
+static inline bool ui_mime_part_eq(const char *a, size_t alen, const char *b,
+                                   size_t blen)
+{
+    if (alen != blen)
+        return false;
+    for (size_t i = 0; i < alen; i++) {
+        char ca = a[i], cb = b[i];
+        if (ca >= 'A' && ca <= 'Z')
+            ca = (char)(ca + ('a' - 'A'));
+        if (cb >= 'A' && cb <= 'Z')
+            cb = (char)(cb + ('a' - 'A'));
+        if (ca != cb)
+            return false;
+    }
+    return true;
+}
+
+/* Returns true when one offer matches type `mime`. A parameter and the spaces
+ * before it are not part of the type, so they do not count. The letters match
+ * without case. An offer of "*" matches every type. An offer with a star for
  * its subtype, such as "image/" "*", matches every type with that major
- * type. An offer of "*" matches every type. */
+ * type. An offer of "*" "/" "*" matches every type too. */
+static inline bool ui_mime_offer_matches(const char *offer, const char *mime)
+{
+    size_t on = ui_mime_type_length(offer);
+    size_t mn = ui_mime_type_length(mime);
+    if (!on || !mn)
+        return false;
+    if (on == 1 && offer[0] == '*')
+        return true;
+    size_t om = ui_mime_major_length(offer, on);
+    size_t mm = ui_mime_major_length(mime, mn);
+    bool major_star = om == 1 && offer[0] == '*';
+    if (!major_star && !ui_mime_part_eq(offer, om, mime, mm))
+        return false;
+    /* A star major type with a star subtype matches every type. */
+    if (major_star && on == om + 2 && offer[om + 1] == '*')
+        return true;
+    /* A type with no subtype matches a type with no subtype only. */
+    if (om == on || mm == mn)
+        return om == on && mm == mn;
+    const char *osub = offer + om + 1;
+    const char *msub = mime + mm + 1;
+    size_t osn = on - om - 1, msn = mn - mm - 1;
+    if (osn == 1 && osub[0] == '*')
+        return msn > 0;
+    return ui_mime_part_eq(osub, osn, msub, msn);
+}
+
+/* Returns true when the drag offers type `mime` through one of its offers. */
 static inline bool ui_drag_offers(const struct ui_drag_event *drag, const char *mime)
 {
     if (!drag || !mime)
         return false;
     for (size_t i = 0; i < drag->mime_count; i++) {
         const char *offer = drag->mimes[i];
-        if (!offer)
-            continue;
-        if (!strcmp(offer, mime))
+        if (offer && ui_mime_offer_matches(offer, mime))
             return true;
-        if (offer[0] == '*' && !offer[1])
-            return true;
-        size_t m = strlen(offer);
-        if (m >= 2 && offer[m - 1] == '*' && offer[m - 2] == '/') {
-            size_t n = strlen(mime);
-            if (n > m - 1 && !strncmp(offer, mime, m - 1))
-                return true;
-        }
     }
     return false;
 }
