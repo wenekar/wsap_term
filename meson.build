@@ -157,13 +157,22 @@ if get_option('b_lto')
         language: project_languages,
     )
     # Fat LTO objects hold the machine code next to the LTO bytecode. An
-    # installed framework archive then links with clang and with another GCC
-    # version, which cannot read the GCC LTO bytecode. The project's own link
-    # still uses LTO.
+    # installed archive then links with clang and with another GCC version,
+    # which cannot read the GCC LTO bytecode. The project's own link still
+    # uses LTO.
     add_project_arguments(
         cc.get_supported_arguments('-ffat-lto-objects'),
         language: project_languages,
     )
+    # A framework-only build ships its archives. LTO bytecode holds the source
+    # and build paths of this machine, and it needs the same compiler to read.
+    # A global argument also reaches the subprojects, whose archives install
+    # next to these.
+    if get_option('framework') and not get_option('app')
+        no_lto = cc.get_supported_arguments('-fno-lto')
+        add_global_arguments(no_lto, language: project_languages)
+        add_global_link_arguments(cc.get_supported_link_arguments('-fno-lto'), language: 'c')
+    endif
 endif
 
 if get_option('hardening') and get_option('b_sanitize') == 'none'
