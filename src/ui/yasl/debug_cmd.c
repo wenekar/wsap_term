@@ -377,7 +377,7 @@ static bool inject_key(struct window *w, unsigned mods, uint32_t cp, uint16_t ke
             .base = cp,
             .text = text,
         };
-        enum input_shortcut sc;
+        input_command_id sc;
         enum input_key_route route =
             input_shortcut_route_key(&w->keymap, &dbg->scratch, &dbg->keys, &k,
                                     key_id, &sc);
@@ -525,7 +525,7 @@ static enum dbg_status cmd_pointer(struct dbg_cmd *cmd, struct json_writer *j)
 
 static enum dbg_status cmd_shortcut(struct dbg_cmd *cmd, struct json_writer *j)
 {
-    enum input_shortcut sc;
+    input_command_id sc;
     if (cmd->argc < 2 || !input_parse_action(cmd->argv[1], &sc))
         return cmd_fail(cmd, "usage: shortcut ACTION (keybind action name)");
     json_str(j, cmd->argv[1]);

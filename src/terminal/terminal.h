@@ -127,7 +127,7 @@ void terminal_set_drop_hover(struct terminal *terminal, bool over);
 void terminal_paste(struct terminal *terminal, const char *text, size_t len);
 /* Runs the terminal commands of a shortcut. The owner runs the tab commands
  * and leaves the rest to this function. */
-void terminal_handle_shortcut(struct terminal *terminal, enum input_shortcut sc);
+void terminal_handle_shortcut(struct terminal *terminal, input_command_id sc);
 
 /*
  * The cursor as a window overlay. The window then shows and hides the

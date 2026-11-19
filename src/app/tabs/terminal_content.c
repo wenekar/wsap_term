@@ -181,11 +181,11 @@ static void content_drop_hover(void *content, bool over)
     terminal_set_drop_hover(content, over);
 }
 
-static bool content_shortcut(void *content, enum input_shortcut sc)
+static bool content_shortcut(void *content, input_command_id sc)
 {
     terminal_handle_shortcut(content, sc);
-    return sc == INPUT_SHORTCUT_FONT_LARGER ||
-           sc == INPUT_SHORTCUT_FONT_SMALLER;
+    return sc == INPUT_COMMAND_FONT_LARGER ||
+           sc == INPUT_COMMAND_FONT_SMALLER;
 }
 
 static void content_scroll_bottom(void *content)

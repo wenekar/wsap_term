@@ -1,6 +1,7 @@
 #ifndef INPUT_H
 #define INPUT_H
 
+#include "input/command.h"
 #include "util/text_limit.h"
 #include "input/pointer.h"
 #include "util/geom.h"
@@ -149,36 +150,6 @@ struct input_mouse_event {
     enum pointer_device device;
 };
 
-enum input_shortcut {
-    INPUT_SHORTCUT_NONE = 0,
-    INPUT_SHORTCUT_FONT_LARGER,
-    INPUT_SHORTCUT_FONT_SMALLER,
-    INPUT_SHORTCUT_COPY,
-    INPUT_SHORTCUT_PASTE,
-    INPUT_SHORTCUT_SELECT_ALL,
-    INPUT_SHORTCUT_SCROLL_UP,
-    INPUT_SHORTCUT_SCROLL_DOWN,
-    INPUT_SHORTCUT_NEW_TAB,
-    INPUT_SHORTCUT_CLOSE_TAB,
-    INPUT_SHORTCUT_NEXT_TAB,
-    INPUT_SHORTCUT_PREV_TAB,
-    INPUT_SHORTCUT_LAST_TAB,
-
-    INPUT_SHORTCUT_TAB_1,
-    INPUT_SHORTCUT_TAB_2,
-    INPUT_SHORTCUT_TAB_3,
-    INPUT_SHORTCUT_TAB_4,
-    INPUT_SHORTCUT_TAB_5,
-    INPUT_SHORTCUT_TAB_6,
-    INPUT_SHORTCUT_TAB_7,
-    INPUT_SHORTCUT_TAB_8,
-    INPUT_SHORTCUT_KILL_LINE,
-    INPUT_SHORTCUT_COMMAND_PALETTE,
-    INPUT_SHORTCUT_DEBUG_OVERLAY,
-    INPUT_SHORTCUT_SETTINGS,
-    INPUT_SHORTCUT_FOCUS_TABS,
-    INPUT_SHORTCUT_COUNT,
-};
 
 enum input_text_source : uint8_t {
     INPUT_TEXT_COMMIT = 0,
@@ -241,7 +212,7 @@ struct input_event {
             uint64_t revision;
             bool edit;
         } ime;
-        struct { enum input_shortcut action; } shortcut;
+        struct { input_command_id action; } shortcut;
     };
     enum input_kind kind;
 };
@@ -410,6 +381,6 @@ enum input_key_route input_shortcut_route_key(const struct input_keymap *km,
         struct input_queue *q,
         struct input_shortcut_state *st,
         const struct input_key_event *key, unsigned key_id,
-        enum input_shortcut *out_sc);
+        input_command_id *out_sc);
 
 #endif

@@ -70,12 +70,12 @@ static bool lookup_name(const struct name_entry *tab, size_t n,
     return false;
 }
 
-bool input_parse_action(const char *s, enum input_shortcut *out)
+bool input_parse_action(const char *s, input_command_id *out)
 {
     if (!s || !out)
         return false;
     if (!strcasecmp(s, "none")) {
-        *out = INPUT_SHORTCUT_NONE;
+        *out = INPUT_COMMAND_NONE;
         return true;
     }
     const struct input_command *cmd =
@@ -239,10 +239,10 @@ bool input_format_chord(unsigned mods, uint32_t codepoint, uint16_t key,
 }
 
 bool input_keymap_format_action_chord(const struct input_keymap *km,
-                                enum input_shortcut action, char *out,
+                                input_command_id action, char *out,
                                 size_t sz)
 {
-    if (!km || !out || sz == 0 || action == INPUT_SHORTCUT_NONE)
+    if (!km || !out || sz == 0 || action == INPUT_COMMAND_NONE)
         return false;
     out[0] = '\0';
     for (size_t i = 0; i < km->n; i++) {
@@ -347,7 +347,7 @@ static bool rebuild_hash(struct input_keymap *km)
 }
 
 static inline bool hash_lookup(const struct input_keymap *km, uint64_t chord,
-                               enum input_shortcut *out)
+                               input_command_id *out)
 {
     if (!chord || !km->hash_cap)
         return false;
@@ -358,7 +358,7 @@ static inline bool hash_lookup(const struct input_keymap *km, uint64_t chord,
         if (slot_chord == 0)
             return false;
         if (slot_chord == chord) {
-            *out = (enum input_shortcut)km->hash_action[idx];
+            *out = (input_command_id)km->hash_action[idx];
             return true;
         }
         idx = (idx + 1) & mask;
@@ -428,14 +428,14 @@ bool input_keymap_apply_spec_scoped(struct input_keymap *km, uint8_t scope,
     while (*act == ' ' || *act == '\t')
         act++;
 
-    enum input_shortcut action;
+    input_command_id action;
     unsigned mods;
     uint32_t codepoint;
     uint16_t key;
     if (!input_parse_action(act, &action) ||
         !input_parse_chord(chord, &mods, &codepoint, &key))
         return false;
-    if (action == INPUT_SHORTCUT_NONE) {
+    if (action == INPUT_COMMAND_NONE) {
         for (size_t i = 0; i < km->n; i++) {
             struct input_keybind *b = &km->binds[i];
             if (b->scope == scope && b->mods == mods &&
@@ -455,7 +455,7 @@ bool input_keymap_apply_spec_scoped(struct input_keymap *km, uint8_t scope,
 /* Looks up the chord of `ev` in one scope of `km`. */
 static bool lookup_scope(const struct input_keymap *km, uint8_t scope,
                          unsigned mods, const struct input_key_event *ev,
-                         enum input_shortcut *out)
+                         input_command_id *out)
 {
     if (ev->key != INPUT_KEY_NONE &&
         hash_lookup(km, make_chord(scope, mods, chord_token(0, (uint16_t)ev->key)), out))
@@ -475,32 +475,32 @@ static bool lookup_scope(const struct input_keymap *km, uint8_t scope,
     return false;
 }
 
-enum input_shortcut input_keymap_lookup(const struct input_keymap *km,
+input_command_id input_keymap_lookup(const struct input_keymap *km,
                                         const struct input_key_event *ev)
 {
     return input_keymap_lookup_scoped(km, ev, INPUT_COMMAND_SCOPE_APP);
 }
 
-enum input_shortcut input_keymap_lookup_scoped(const struct input_keymap *km,
+input_command_id input_keymap_lookup_scoped(const struct input_keymap *km,
                                                const struct input_key_event *ev,
                                                uint8_t scope)
 {
     if (!km || !ev || scope >= INPUT_COMMAND_SCOPE_COUNT)
-        return INPUT_SHORTCUT_NONE;
+        return INPUT_COMMAND_NONE;
     unsigned mods = ev->mods & ~(unsigned)(INPUT_MOD_CAPS | INPUT_MOD_NUM);
     if (!km->hash_valid && !rebuild_hash((struct input_keymap *)km))
-        return INPUT_SHORTCUT_NONE;
+        return INPUT_COMMAND_NONE;
 
-    enum input_shortcut sc;
+    input_command_id sc;
     if (scope != INPUT_COMMAND_SCOPE_APP && lookup_scope(km, scope, mods, ev, &sc))
         return sc;
     if (lookup_scope(km, INPUT_COMMAND_SCOPE_APP, mods, ev, &sc))
         return sc;
-    return INPUT_SHORTCUT_NONE;
+    return INPUT_COMMAND_NONE;
 }
 
 static void add_bind(struct input_keymap *km, unsigned mods, uint32_t cp,
-                     uint16_t key, enum input_shortcut action)
+                     uint16_t key, input_command_id action)
 {
     keymap_set(km, INPUT_COMMAND_SCOPE_APP, mods, cp, key, (uint16_t)action);
 }
@@ -530,70 +530,70 @@ void input_keymap_defaults(struct input_keymap *km,
          * set would bind the bare letter. */
         if (!accels[i])
             continue;
-        add_bind(km, accels[i], 'c', INPUT_KEY_NONE, INPUT_SHORTCUT_COPY);
-        add_bind(km, accels[i], 'v', INPUT_KEY_NONE, INPUT_SHORTCUT_PASTE);
+        add_bind(km, accels[i], 'c', INPUT_KEY_NONE, INPUT_COMMAND_COPY);
+        add_bind(km, accels[i], 'v', INPUT_KEY_NONE, INPUT_COMMAND_PASTE);
     }
 #ifdef __APPLE__
-    add_bind(km, INPUT_MOD_SUPER, 'a', INPUT_KEY_NONE, INPUT_SHORTCUT_SELECT_ALL);
-    add_bind(km, INPUT_MOD_SUPER, 0, INPUT_KEY_BACKSPACE, INPUT_SHORTCUT_KILL_LINE);
+    add_bind(km, INPUT_MOD_SUPER, 'a', INPUT_KEY_NONE, INPUT_COMMAND_SELECT_ALL);
+    add_bind(km, INPUT_MOD_SUPER, 0, INPUT_KEY_BACKSPACE, INPUT_COMMAND_KILL_LINE);
 #endif
 
 #ifdef __APPLE__
-    add_bind(km, p->zoom, '+', INPUT_KEY_NONE, INPUT_SHORTCUT_FONT_LARGER);
-    add_bind(km, p->zoom, '=', INPUT_KEY_NONE, INPUT_SHORTCUT_FONT_LARGER);
-    add_bind(km, p->zoom, 0, INPUT_KEY_KP_ADD, INPUT_SHORTCUT_FONT_LARGER);
-    add_bind(km, p->zoom, '-', INPUT_KEY_NONE, INPUT_SHORTCUT_FONT_SMALLER);
-    add_bind(km, p->zoom, '_', INPUT_KEY_NONE, INPUT_SHORTCUT_FONT_SMALLER);
-    add_bind(km, p->zoom, 0, INPUT_KEY_KP_SUBTRACT, INPUT_SHORTCUT_FONT_SMALLER);
+    add_bind(km, p->zoom, '+', INPUT_KEY_NONE, INPUT_COMMAND_FONT_LARGER);
+    add_bind(km, p->zoom, '=', INPUT_KEY_NONE, INPUT_COMMAND_FONT_LARGER);
+    add_bind(km, p->zoom, 0, INPUT_KEY_KP_ADD, INPUT_COMMAND_FONT_LARGER);
+    add_bind(km, p->zoom, '-', INPUT_KEY_NONE, INPUT_COMMAND_FONT_SMALLER);
+    add_bind(km, p->zoom, '_', INPUT_KEY_NONE, INPUT_COMMAND_FONT_SMALLER);
+    add_bind(km, p->zoom, 0, INPUT_KEY_KP_SUBTRACT, INPUT_COMMAND_FONT_SMALLER);
 #else
     add_bind(km, INPUT_MOD_CTRL, '=', INPUT_KEY_NONE,
-             INPUT_SHORTCUT_FONT_LARGER);
+             INPUT_COMMAND_FONT_LARGER);
     add_bind(km, INPUT_MOD_CTRL, '-', INPUT_KEY_NONE,
-             INPUT_SHORTCUT_FONT_SMALLER);
-    add_bind(km, p->zoom, 0, INPUT_KEY_KP_ADD, INPUT_SHORTCUT_FONT_LARGER);
+             INPUT_COMMAND_FONT_SMALLER);
+    add_bind(km, p->zoom, 0, INPUT_KEY_KP_ADD, INPUT_COMMAND_FONT_LARGER);
     add_bind(km, p->zoom, 0, INPUT_KEY_KP_SUBTRACT,
-             INPUT_SHORTCUT_FONT_SMALLER);
+             INPUT_COMMAND_FONT_SMALLER);
 #endif
 
 #ifdef __APPLE__
     add_bind(km, INPUT_MOD_SUPER | INPUT_MOD_SHIFT, 'p', INPUT_KEY_NONE,
-             INPUT_SHORTCUT_COMMAND_PALETTE);
+             INPUT_COMMAND_COMMAND_PALETTE);
 #else
     add_bind(km, INPUT_MOD_CTRL | INPUT_MOD_SHIFT, 'p', INPUT_KEY_NONE,
-             INPUT_SHORTCUT_COMMAND_PALETTE);
+             INPUT_COMMAND_COMMAND_PALETTE);
 #endif
 
     add_bind(km, INPUT_MOD_CTRL | INPUT_MOD_SHIFT, 0, INPUT_KEY_F12,
-             INPUT_SHORTCUT_DEBUG_OVERLAY);
+             INPUT_COMMAND_DEBUG_OVERLAY);
 #ifdef __APPLE__
-    add_bind(km, INPUT_MOD_SUPER, ',', INPUT_KEY_NONE, INPUT_SHORTCUT_SETTINGS);
+    add_bind(km, INPUT_MOD_SUPER, ',', INPUT_KEY_NONE, INPUT_COMMAND_SETTINGS);
 #else
     add_bind(km, INPUT_MOD_CTRL | INPUT_MOD_SHIFT, ',', INPUT_KEY_NONE,
-             INPUT_SHORTCUT_SETTINGS);
+             INPUT_COMMAND_SETTINGS);
 #endif
 
-    add_bind(km, INPUT_MOD_SHIFT, 0, INPUT_KEY_INSERT, INPUT_SHORTCUT_PASTE);
-    add_bind(km, INPUT_MOD_SHIFT, 0, INPUT_KEY_PAGE_UP, INPUT_SHORTCUT_SCROLL_UP);
+    add_bind(km, INPUT_MOD_SHIFT, 0, INPUT_KEY_INSERT, INPUT_COMMAND_PASTE);
+    add_bind(km, INPUT_MOD_SHIFT, 0, INPUT_KEY_PAGE_UP, INPUT_COMMAND_SCROLL_UP);
     add_bind(km, INPUT_MOD_SHIFT, 0, INPUT_KEY_PAGE_DOWN,
-             INPUT_SHORTCUT_SCROLL_DOWN);
+             INPUT_COMMAND_SCROLL_DOWN);
 
     unsigned tab = p->tab_accel ? p->tab_accel : p->accel;
     if (!tab)
         return;
 
-    add_bind(km, tab, 't', INPUT_KEY_NONE, INPUT_SHORTCUT_NEW_TAB);
-    add_bind(km, tab, 'w', INPUT_KEY_NONE, INPUT_SHORTCUT_CLOSE_TAB);
+    add_bind(km, tab, 't', INPUT_KEY_NONE, INPUT_COMMAND_NEW_TAB);
+    add_bind(km, tab, 'w', INPUT_KEY_NONE, INPUT_COMMAND_CLOSE_TAB);
     for (int i = 0; i < 8; i++)
         add_bind(km, tab, (uint32_t)('1' + i), INPUT_KEY_NONE,
-                 (enum input_shortcut)(INPUT_SHORTCUT_TAB_1 + i));
-    add_bind(km, tab, '9', INPUT_KEY_NONE, INPUT_SHORTCUT_LAST_TAB);
+                 (input_command_id)(INPUT_COMMAND_TAB_1 + i));
+    add_bind(km, tab, '9', INPUT_KEY_NONE, INPUT_COMMAND_LAST_TAB);
 
-    add_bind(km, INPUT_MOD_CTRL, 0, INPUT_KEY_TAB, INPUT_SHORTCUT_NEXT_TAB);
+    add_bind(km, INPUT_MOD_CTRL, 0, INPUT_KEY_TAB, INPUT_COMMAND_NEXT_TAB);
     add_bind(km, INPUT_MOD_CTRL | INPUT_MOD_SHIFT, 0, INPUT_KEY_TAB,
-             INPUT_SHORTCUT_PREV_TAB);
-    add_bind(km, tab, 0, INPUT_KEY_PAGE_DOWN, INPUT_SHORTCUT_NEXT_TAB);
-    add_bind(km, tab, 0, INPUT_KEY_PAGE_UP, INPUT_SHORTCUT_PREV_TAB);
-    add_bind(km, tab, 0, INPUT_KEY_F6, INPUT_SHORTCUT_FOCUS_TABS);
+             INPUT_COMMAND_PREV_TAB);
+    add_bind(km, tab, 0, INPUT_KEY_PAGE_DOWN, INPUT_COMMAND_NEXT_TAB);
+    add_bind(km, tab, 0, INPUT_KEY_PAGE_UP, INPUT_COMMAND_PREV_TAB);
+    add_bind(km, tab, 0, INPUT_KEY_F6, INPUT_COMMAND_FOCUS_TABS);
 }
 
 void input_keymap_reset(struct input_keymap *km, enum input_keybind_style style)

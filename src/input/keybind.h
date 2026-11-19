@@ -67,17 +67,17 @@ bool input_keymap_apply_spec_scoped(struct input_keymap *km, uint8_t scope,
 /*
  * Looks up the command that key event `ev` runs in keymap `km`.
  * A binding may have no modifiers.
- * Returns the matching command, or INPUT_SHORTCUT_NONE.
+ * Returns the matching command, or INPUT_COMMAND_NONE.
  */
-enum input_shortcut input_keymap_lookup(const struct input_keymap *km,
+input_command_id input_keymap_lookup(const struct input_keymap *km,
                                         const struct input_key_event *ev);
 
 /*
  * Looks up the command that key event `ev` runs for scope `scope` in keymap
  * `km`. The function reads `scope` first, then the app scope.
- * Returns the matching command, or INPUT_SHORTCUT_NONE.
+ * Returns the matching command, or INPUT_COMMAND_NONE.
  */
-enum input_shortcut input_keymap_lookup_scoped(const struct input_keymap *km,
+input_command_id input_keymap_lookup_scoped(const struct input_keymap *km,
                                                const struct input_key_event *ev,
                                                uint8_t scope);
 
@@ -93,7 +93,7 @@ bool input_format_chord(unsigned mods, uint32_t codepoint, uint16_t key,
  * Returns true on success, or false if unbound or buffer `sz` is too small.
  */
 bool input_keymap_format_action_chord(const struct input_keymap *km,
-                                enum input_shortcut action, char *out,
+                                input_command_id action, char *out,
                                 size_t sz);
 
 /*
@@ -113,7 +113,7 @@ bool input_parse_chord(const char *s, unsigned *mods, uint32_t *codepoint,
  * Parses shortcut action name string `s` into shortcut enum `out`.
  * Returns true on success, or false if name is unknown.
  */
-bool input_parse_action(const char *s, enum input_shortcut *out);
+bool input_parse_action(const char *s, input_command_id *out);
 
 /* Resets keymap `km` to the default bindings for `style`. */
 void input_keymap_reset(struct input_keymap *km, enum input_keybind_style style);

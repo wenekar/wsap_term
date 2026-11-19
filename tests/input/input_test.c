@@ -9,12 +9,12 @@
 #include <string.h>
 #include <unistd.h>
 
-static enum input_shortcut shortcut(struct input_key_event ev,
+static input_command_id shortcut(struct input_key_event ev,
                                     const struct input_shortcut_policy *p)
 {
     struct input_keymap km;
     input_keymap_defaults(&km, p, INPUT_KEYBIND_LEGACY);
-    enum input_shortcut sc = input_keymap_lookup(&km, &ev);
+    input_command_id sc = input_keymap_lookup(&km, &ev);
     input_keymap_free(&km);
     return sc;
 }
@@ -37,7 +37,7 @@ static void keymap_match_test(void)
     assert(input_keymap_match(&km, &ev));
     ev.mods = INPUT_MOD_ALT;
     assert(!input_keymap_match(&km, &ev));
-    assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_NONE);
+    assert(input_keymap_lookup(&km, &ev) == INPUT_COMMAND_NONE);
     input_keymap_free(&km);
 }
 
@@ -48,9 +48,9 @@ static void zero_modifier_binding_test(void)
     input_keymap_init(&km);
     assert(input_keymap_apply_spec(&km, "escape = command_palette"));
     struct input_key_event ev = { .key = INPUT_KEY_ESCAPE };
-    assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_COMMAND_PALETTE);
+    assert(input_keymap_lookup(&km, &ev) == INPUT_COMMAND_COMMAND_PALETTE);
     assert(input_keymap_apply_spec(&km, "escape = none"));
-    assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_NONE);
+    assert(input_keymap_lookup(&km, &ev) == INPUT_COMMAND_NONE);
     input_keymap_free(&km);
 }
 
@@ -64,13 +64,13 @@ static void wide_codepoint_binding_test(void)
     assert(input_keymap_apply_spec(&km, "ctrl+\xf0\x9f\x98\x80 = paste"));
     struct input_key_event ev = { .key = INPUT_KEY_NONE, .mods = INPUT_MOD_CTRL };
     ev.codepoint = 0x3c0;
-    assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_COPY);
+    assert(input_keymap_lookup(&km, &ev) == INPUT_COMMAND_COPY);
     ev.codepoint = 0x1f600;
-    assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_PASTE);
+    assert(input_keymap_lookup(&km, &ev) == INPUT_COMMAND_PASTE);
     ev.codepoint = 0x3c1;
-    assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_NONE);
+    assert(input_keymap_lookup(&km, &ev) == INPUT_COMMAND_NONE);
     ev.codepoint = 0x1f601;
-    assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_NONE);
+    assert(input_keymap_lookup(&km, &ev) == INPUT_COMMAND_NONE);
     input_keymap_free(&km);
 }
 
@@ -97,7 +97,7 @@ static void keymap_grows_test(void)
     assert(added > 128);
     assert(km.n > 128);
     struct input_key_event ev = { .codepoint = '~', .mods = mods[2] };
-    assert(input_keymap_lookup(&km, &ev) == INPUT_SHORTCUT_COPY);
+    assert(input_keymap_lookup(&km, &ev) == INPUT_COMMAND_COPY);
     input_keymap_free(&km);
 }
 
@@ -110,36 +110,88 @@ static void command_registry_test(void)
     assert(reg && reg->n > 0);
 
     const struct input_command *copy =
-        input_command_find(reg, INPUT_COMMAND_SCOPE_APP, INPUT_SHORTCUT_COPY);
-    assert(copy && copy->id == INPUT_SHORTCUT_COPY);
+        input_command_find(reg, INPUT_COMMAND_SCOPE_APP, INPUT_COMMAND_COPY);
+    assert(copy && copy->id == INPUT_COMMAND_COPY);
     assert(!strcmp(copy->name, "copy"));
     assert(copy->label && copy->label[0]);
 
     const struct input_command *by_name = input_command_find_name(reg, "new_tab");
-    assert(by_name && by_name->id == INPUT_SHORTCUT_NEW_TAB);
+    assert(by_name && by_name->id == INPUT_COMMAND_NEW_TAB);
     /* The config word for a command parses back to the same ID. */
-    enum input_shortcut id;
-    assert(input_parse_action("new_tab", &id) && id == INPUT_SHORTCUT_NEW_TAB);
-    assert(input_parse_action("none", &id) && id == INPUT_SHORTCUT_NONE);
+    input_command_id id;
+    assert(input_parse_action("new_tab", &id) && id == INPUT_COMMAND_NEW_TAB);
+    assert(input_parse_action("none", &id) && id == INPUT_COMMAND_NONE);
     assert(!input_parse_action("no_such_command", &id));
 
-    /* A widget adds a command in its own scope. */
+    /* A widget adds a command in its own scope. The registry gives the ID. */
     struct input_command_registry own;
     input_command_registry_init(&own);
-    assert(input_command_add(&own, 3, INPUT_SHORTCUT_SETTINGS,
-                             "widget_settings", "Widget Settings"));
-    const struct input_command *scoped =
-        input_command_find(&own, 3, INPUT_SHORTCUT_SETTINGS);
+    input_command_id widget_id =
+        input_command_add(&own, 3, "widget_settings", "Widget Settings");
+    assert(widget_id >= INPUT_COMMAND_DYNAMIC_ID);
+    const struct input_command *scoped = input_command_find(&own, 3, widget_id);
     assert(scoped && scoped->scope == 3);
     assert(!strcmp(scoped->label, "Widget Settings"));
-    /* The app scope has the same ID and keeps its own entry. */
+    assert(!strcmp(input_command_label(&own, 3, widget_id), "Widget Settings"));
+    assert(!strcmp(input_command_label(&own, 3, INPUT_COMMAND_COPY), ""));
+    /* The app scope has no entry for the widget ID. */
     const struct input_command *app =
-        input_command_find(&own, INPUT_COMMAND_SCOPE_APP, INPUT_SHORTCUT_SETTINGS);
+        input_command_find(&own, INPUT_COMMAND_SCOPE_APP, widget_id);
     assert(!app);
-    assert(!input_command_add(&own, INPUT_COMMAND_SCOPE_COUNT,
-                              INPUT_SHORTCUT_COPY, "x", "X"));
+    /* A second command takes the next ID. */
+    input_command_id other =
+        input_command_add(&own, 3, "widget_other", "Widget Other");
+    assert(other == widget_id + 1);
+    assert(input_command_add(&own, INPUT_COMMAND_SCOPE_COUNT,
+                             "x", "X") == INPUT_COMMAND_NONE);
     input_command_registry_free(&own);
     assert(!own.cmds && !own.n);
+}
+
+/* Every default chord gives the same command that its config word names.
+ * The table reads the default keymap, so a new default binding is covered. */
+static void default_chord_table_test(void)
+{
+    static const struct input_shortcut_policy policies[] = {
+        { .accel = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,
+          .accel_alt = INPUT_MOD_CTRL,
+          .zoom = INPUT_MOD_CTRL,
+          .tab_accel = INPUT_MOD_CTRL | INPUT_MOD_SHIFT },
+        { .accel = INPUT_MOD_SUPER,
+          .accel_alt = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,
+          .zoom = INPUT_MOD_SUPER | INPUT_MOD_SHIFT,
+          .tab_accel = INPUT_MOD_SUPER },
+    };
+    const struct input_command_registry *reg = input_command_builtin();
+    unsigned checked = 0;
+    for (size_t p = 0; p < sizeof(policies) / sizeof(policies[0]); p++) {
+        struct input_keymap km;
+        input_keymap_defaults(&km, &policies[p], INPUT_KEYBIND_LEGACY);
+        assert(km.n > 0);
+        for (size_t i = 0; i < km.n; i++) {
+            const struct input_keybind *b = &km.binds[i];
+            struct input_key_event ev = {
+                .codepoint = b->codepoint, .key = b->key, .mods = b->mods,
+            };
+            assert(input_keymap_lookup(&km, &ev) == b->action);
+            const struct input_command *cmd =
+                input_command_find(reg, b->scope, b->action);
+            assert(cmd && cmd->name);
+            input_command_id parsed = INPUT_COMMAND_NONE;
+            assert(input_parse_action(cmd->name, &parsed));
+            assert(parsed == b->action);
+            checked++;
+        }
+        input_keymap_free(&km);
+    }
+    assert(checked > 20);
+    /* The registry names every app command. */
+    for (input_command_id id = INPUT_COMMAND_FONT_LARGER;
+         id < INPUT_COMMAND_APP_COUNT; id++) {
+        const struct input_command *cmd =
+            input_command_find(reg, INPUT_COMMAND_SCOPE_APP, id);
+        assert(cmd && cmd->name && cmd->label && cmd->label[0]);
+    }
 }
 
 /* A command that a widget binds wins over the app command on the same
@@ -153,19 +205,19 @@ static void scoped_binding_wins_test(void)
 
     struct input_key_event ev = { .key = INPUT_KEY_NONE, .codepoint = 'w',
                                  .mods = INPUT_MOD_CTRL };
-    assert(input_keymap_lookup_scoped(&km, &ev, 2) == INPUT_SHORTCUT_SETTINGS);
-    assert(input_keymap_lookup_scoped(&km, &ev, 0) == INPUT_SHORTCUT_CLOSE_TAB);
-    assert(input_keymap_lookup_scoped(&km, &ev, 5) == INPUT_SHORTCUT_CLOSE_TAB);
+    assert(input_keymap_lookup_scoped(&km, &ev, 2) == INPUT_COMMAND_SETTINGS);
+    assert(input_keymap_lookup_scoped(&km, &ev, 0) == INPUT_COMMAND_CLOSE_TAB);
+    assert(input_keymap_lookup_scoped(&km, &ev, 5) == INPUT_COMMAND_CLOSE_TAB);
 
     /* A widget unbinds its own chord. The app chord still runs there. */
     assert(input_keymap_apply_spec_scoped(&km, 2, "ctrl+w = none"));
-    assert(input_keymap_lookup_scoped(&km, &ev, 2) == INPUT_SHORTCUT_CLOSE_TAB);
+    assert(input_keymap_lookup_scoped(&km, &ev, 2) == INPUT_COMMAND_CLOSE_TAB);
 
     /* A non-ASCII key binds in a widget scope without a modifier. */
     assert(input_keymap_apply_spec_scoped(&km, 2, "\xc3\xa9 = command_palette"));
     struct input_key_event e_acute = { .key = INPUT_KEY_NONE, .codepoint = 0xe9 };
-    assert(input_keymap_lookup_scoped(&km, &e_acute, 2) == INPUT_SHORTCUT_COMMAND_PALETTE);
-    assert(input_keymap_lookup_scoped(&km, &e_acute, 0) == INPUT_SHORTCUT_NONE);
+    assert(input_keymap_lookup_scoped(&km, &e_acute, 2) == INPUT_COMMAND_COMMAND_PALETTE);
+    assert(input_keymap_lookup_scoped(&km, &e_acute, 0) == INPUT_COMMAND_NONE);
     input_keymap_free(&km);
 }
 
@@ -188,12 +240,12 @@ static void config_style_order_test(void)
     struct input_key_event bound = {
         .codepoint = 'k', .mods = INPUT_MOD_CTRL | INPUT_MOD_ALT,
     };
-    assert(input_keymap_lookup(&km, &bound) == INPUT_SHORTCUT_NEW_TAB);
+    assert(input_keymap_lookup(&km, &bound) == INPUT_COMMAND_NEW_TAB);
     /* The style line still selects the legacy copy and paste keys. */
     struct input_key_event ctrl_c = { .codepoint = 'c', .mods = INPUT_MOD_CTRL };
     struct input_key_event plain_c = { .codepoint = 'c' };
-    assert(input_keymap_lookup(&km, &ctrl_c) == INPUT_SHORTCUT_NONE);
-    assert(input_keymap_lookup(&km, &plain_c) == INPUT_SHORTCUT_NONE);
+    assert(input_keymap_lookup(&km, &ctrl_c) == INPUT_COMMAND_NONE);
+    assert(input_keymap_lookup(&km, &plain_c) == INPUT_COMMAND_NONE);
     input_keymap_free(&km);
     unlink(path);
     unsetenv("WSAP_INPUT_CONFIG");
@@ -202,6 +254,7 @@ static void config_style_order_test(void)
 int main(void)
 {
     command_registry_test();
+    default_chord_table_test();
     scoped_binding_wins_test();
     keymap_match_test();
     zero_modifier_binding_test();
@@ -219,57 +272,57 @@ int main(void)
     };
     unsigned ctrl_shift = INPUT_MOD_CTRL | INPUT_MOD_SHIFT;
 
-    assert(SC(&lin, .codepoint = 'c', .mods = ctrl_shift) == INPUT_SHORTCUT_COPY);
-    assert(SC(&mac, .codepoint = 'c', .mods = INPUT_MOD_SUPER) == INPUT_SHORTCUT_COPY);
-    assert(SC(&mac, .codepoint = 'c', .mods = ctrl_shift) == INPUT_SHORTCUT_COPY);
+    assert(SC(&lin, .codepoint = 'c', .mods = ctrl_shift) == INPUT_COMMAND_COPY);
+    assert(SC(&mac, .codepoint = 'c', .mods = INPUT_MOD_SUPER) == INPUT_COMMAND_COPY);
+    assert(SC(&mac, .codepoint = 'c', .mods = ctrl_shift) == INPUT_COMMAND_COPY);
 
-    assert(SC(&lin, .codepoint = 'c', .mods = INPUT_MOD_CTRL) == INPUT_SHORTCUT_NONE);
-    assert(SC(&lin, .codepoint = 'c', .mods = INPUT_MOD_SUPER) == INPUT_SHORTCUT_NONE);
+    assert(SC(&lin, .codepoint = 'c', .mods = INPUT_MOD_CTRL) == INPUT_COMMAND_NONE);
+    assert(SC(&lin, .codepoint = 'c', .mods = INPUT_MOD_SUPER) == INPUT_COMMAND_NONE);
 
     assert(SC(&lin, .codepoint = 'v', .mods = ctrl_shift | INPUT_MOD_CAPS) ==
-           INPUT_SHORTCUT_PASTE);
+           INPUT_COMMAND_PASTE);
     assert(SC(&lin, .key = INPUT_KEY_INSERT, .mods = INPUT_MOD_SHIFT) ==
-           INPUT_SHORTCUT_PASTE);
+           INPUT_COMMAND_PASTE);
     assert(SC(&lin, .key = INPUT_KEY_PAGE_UP, .mods = INPUT_MOD_SHIFT) ==
-           INPUT_SHORTCUT_SCROLL_UP);
+           INPUT_COMMAND_SCROLL_UP);
     assert(SC(&lin, .key = INPUT_KEY_PAGE_DOWN, .mods = INPUT_MOD_SHIFT) ==
-           INPUT_SHORTCUT_SCROLL_DOWN);
+           INPUT_COMMAND_SCROLL_DOWN);
 
 #ifdef __APPLE__
     assert(SC(&mac, .codepoint = '=', .mods = INPUT_MOD_SUPER | INPUT_MOD_SHIFT) ==
-           INPUT_SHORTCUT_FONT_LARGER);
+           INPUT_COMMAND_FONT_LARGER);
 #else
     assert(SC(&lin, .codepoint = '=', .mods = INPUT_MOD_CTRL) ==
-           INPUT_SHORTCUT_FONT_LARGER);
+           INPUT_COMMAND_FONT_LARGER);
 #endif
     assert(SC(&lin, .keypad = INPUT_KEY_KP_ADD, .mods = ctrl_shift) ==
-           INPUT_SHORTCUT_FONT_LARGER);
+           INPUT_COMMAND_FONT_LARGER);
 #ifdef __APPLE__
     assert(SC(&mac, .codepoint = '-', .mods = INPUT_MOD_SUPER | INPUT_MOD_SHIFT) ==
-           INPUT_SHORTCUT_FONT_SMALLER);
+           INPUT_COMMAND_FONT_SMALLER);
 #else
     assert(SC(&lin, .codepoint = '-', .mods = INPUT_MOD_CTRL) ==
-           INPUT_SHORTCUT_FONT_SMALLER);
+           INPUT_COMMAND_FONT_SMALLER);
     assert(SC(&lin, .codepoint = '=', .shifted = '+', .base = '=',
-              .mods = ctrl_shift) == INPUT_SHORTCUT_NONE);
+              .mods = ctrl_shift) == INPUT_COMMAND_NONE);
 #endif
 #ifdef __APPLE__
     assert(SC(&mac, .codepoint = '4', .shifted = '+', .base = '4',
-              .mods = INPUT_MOD_SUPER) == INPUT_SHORTCUT_TAB_4);
+              .mods = INPUT_MOD_SUPER) == INPUT_COMMAND_TAB_4);
 #else
     assert(SC(&lin, .codepoint = '4', .shifted = '+', .base = '4',
-              .mods = ctrl_shift) == INPUT_SHORTCUT_TAB_4);
+              .mods = ctrl_shift) == INPUT_COMMAND_TAB_4);
 #endif
 
 #ifdef __APPLE__
     assert(SC(&mac, .key = INPUT_KEY_BACKSPACE, .mods = INPUT_MOD_SUPER) ==
-           INPUT_SHORTCUT_KILL_LINE);
+           INPUT_COMMAND_KILL_LINE);
     assert(SC(&mac, .codepoint = 'p',
               .mods = INPUT_MOD_SUPER | INPUT_MOD_SHIFT) ==
-           INPUT_SHORTCUT_COMMAND_PALETTE);
+           INPUT_COMMAND_COMMAND_PALETTE);
 #else
     assert(SC(&lin, .codepoint = 'p', .mods = ctrl_shift) ==
-           INPUT_SHORTCUT_COMMAND_PALETTE);
+           INPUT_COMMAND_COMMAND_PALETTE);
 #endif
 
     {
@@ -289,23 +342,23 @@ int main(void)
         struct input_key_event ctrl_shift_c = { .codepoint = 'c', .mods = ctrl_shift };
         struct input_key_event ctrl_t = { .codepoint = 't', .mods = INPUT_MOD_CTRL };
         struct input_key_event ctrl_shift_t = { .codepoint = 't', .mods = ctrl_shift };
-        assert(input_keymap_lookup(&modern, &ctrl_c) == INPUT_SHORTCUT_COPY);
-        assert(input_keymap_lookup(&modern, &ctrl_v) == INPUT_SHORTCUT_PASTE);
-        assert(input_keymap_lookup(&legacy, &ctrl_c) == INPUT_SHORTCUT_NONE);
-        assert(input_keymap_lookup(&legacy, &ctrl_v) == INPUT_SHORTCUT_NONE);
-        assert(input_keymap_lookup(&modern, &ctrl_shift_c) == INPUT_SHORTCUT_COPY);
-        assert(input_keymap_lookup(&legacy, &ctrl_shift_c) == INPUT_SHORTCUT_COPY);
-        assert(input_keymap_lookup(&modern, &ctrl_t) == INPUT_SHORTCUT_NONE);
-        assert(input_keymap_lookup(&legacy, &ctrl_t) == INPUT_SHORTCUT_NONE);
-        assert(input_keymap_lookup(&modern, &ctrl_shift_t) == INPUT_SHORTCUT_NEW_TAB);
-        assert(input_keymap_lookup(&legacy, &ctrl_shift_t) == INPUT_SHORTCUT_NEW_TAB);
+        assert(input_keymap_lookup(&modern, &ctrl_c) == INPUT_COMMAND_COPY);
+        assert(input_keymap_lookup(&modern, &ctrl_v) == INPUT_COMMAND_PASTE);
+        assert(input_keymap_lookup(&legacy, &ctrl_c) == INPUT_COMMAND_NONE);
+        assert(input_keymap_lookup(&legacy, &ctrl_v) == INPUT_COMMAND_NONE);
+        assert(input_keymap_lookup(&modern, &ctrl_shift_c) == INPUT_COMMAND_COPY);
+        assert(input_keymap_lookup(&legacy, &ctrl_shift_c) == INPUT_COMMAND_COPY);
+        assert(input_keymap_lookup(&modern, &ctrl_t) == INPUT_COMMAND_NONE);
+        assert(input_keymap_lookup(&legacy, &ctrl_t) == INPUT_COMMAND_NONE);
+        assert(input_keymap_lookup(&modern, &ctrl_shift_t) == INPUT_COMMAND_NEW_TAB);
+        assert(input_keymap_lookup(&legacy, &ctrl_shift_t) == INPUT_COMMAND_NEW_TAB);
         /* A zero modifier set binds nothing. The bare letters must reach the
          * shell in both styles. */
         struct input_key_event plain_c = { .codepoint = 'c' };
         struct input_key_event plain_v = { .codepoint = 'v' };
-        assert(input_keymap_lookup(&modern, &plain_c) == INPUT_SHORTCUT_NONE);
-        assert(input_keymap_lookup(&legacy, &plain_c) == INPUT_SHORTCUT_NONE);
-        assert(input_keymap_lookup(&legacy, &plain_v) == INPUT_SHORTCUT_NONE);
+        assert(input_keymap_lookup(&modern, &plain_c) == INPUT_COMMAND_NONE);
+        assert(input_keymap_lookup(&legacy, &plain_c) == INPUT_COMMAND_NONE);
+        assert(input_keymap_lookup(&legacy, &plain_v) == INPUT_COMMAND_NONE);
     }
 #endif
 
@@ -440,10 +493,10 @@ int main(void)
         struct input_keymap km;
         input_keymap_init(&km);
         input_keymap_defaults(&km, &input_platform_shortcuts, INPUT_KEYBIND_MODERN);
-        assert(input_keymap_format_action_chord(&km, INPUT_SHORTCUT_COPY, sc, sizeof(sc)));
+        assert(input_keymap_format_action_chord(&km, INPUT_COMMAND_COPY, sc, sizeof(sc)));
         assert(!strcmp(sc, "Ctrl+C") || !strcmp(sc, "Cmd+C"));
 
-        assert(input_keymap_format_action_chord(&km, INPUT_SHORTCUT_PASTE, sc, sizeof(sc)));
+        assert(input_keymap_format_action_chord(&km, INPUT_COMMAND_PASTE, sc, sizeof(sc)));
         assert(!strcmp(sc, "Ctrl+V") || !strcmp(sc, "Cmd+V"));
         input_keymap_free(&km);
     }

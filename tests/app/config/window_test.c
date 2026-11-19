@@ -374,7 +374,7 @@ int main(void)
     window = open_settings(app.app);
     assert(window);
     struct input_event close_tab = { .kind = INPUT_SHORTCUT,
-        .shortcut = { .action = INPUT_SHORTCUT_CLOSE_TAB } };
+        .shortcut = { .action = INPUT_COMMAND_CLOSE_TAB } };
     window_ui_test_route(window, &close_tab);
     assert(window_closed(window));
     test_app_fini(&app);
