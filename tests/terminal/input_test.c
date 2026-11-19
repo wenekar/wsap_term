@@ -101,6 +101,23 @@ static void native_key(struct window *w, enum yasl_key code, unsigned mods,
     drain(w);
 }
 
+/* Sends one key event with no text and drains it. A repeat sends no
+ * release, as a held key does. */
+static void raw_key(struct window *w, enum yasl_key code, unsigned mods,
+                    uint32_t label, uint32_t shifted, unsigned action)
+{
+    window_native_input(w, &(struct yasl_event){
+        .type = YASL_EVENT_KEY,
+        .action = action,
+        .mods = mods,
+        .key = {
+            .key = code, .codepoint = label, .shifted = shifted,
+            .text_input = YASL_KEY_TEXT_NONE,
+        },
+    });
+    drain(w);
+}
+
 static void composing_key(struct window *w, enum yasl_key code, const char *value)
 {
     struct yasl_event event = {
@@ -299,11 +316,30 @@ int main(void)
     assert(ui_surface_build_scene(ui, scene));
     assert(ui_debug_lint_scene(&view, NULL, 0) == 0);
 
-    /* A chord that runs no command keeps the key for the shell. An undo
-     * chord has no text widget here, so the shell gets its ^Z. */
+    /* A chord that the shell owns sends the key that the user pressed.
+     * alt+u = undo sends ESC u, not ^Z. */
+    assert(input_keymap_apply_spec(&w->keymap, "alt+u = undo"));
+    native_key(w, YASL_KEY_U, YASL_MOD_ALT, 'u', 'U', YASL_KEY_TEXT_NONE, NULL);
+    expect(fds[0], "\033u");
+
+    /* f5 = cut sends the f5 sequence, not ^X. */
+    assert(input_keymap_apply_spec(&w->keymap, "f5 = cut"));
+    key(w, YASL_KEY_F5, 0, 0, 0, NULL, YASL_KEY_PRESS);
+    expect(fds[0], "\033[15~");
+
+    /* Kitty keyboard mode encodes ctrl+z = undo as the kitty key. */
     assert(input_keymap_apply_spec(&w->keymap, "ctrl+z = undo"));
+    assert(wsap_vtcore_feed(session->term, "\033[>1u", 5, 0));
     key(w, YASL_KEY_Z, YASL_MOD_CTRL, 'z', 'Z', NULL, YASL_KEY_PRESS);
-    expect(fds[0], "\x1a");
+    expect(fds[0], "\033[122;5u");
+    assert(wsap_vtcore_feed(session->term, "\033[<u", 4, 0));
+
+    /* A held undo key sends the key for the press and for each repeat. */
+    raw_key(w, YASL_KEY_Z, YASL_MOD_CTRL, 'z', 'Z', YASL_KEY_PRESS);
+    raw_key(w, YASL_KEY_Z, YASL_MOD_CTRL, 'z', 'Z', YASL_KEY_REPEAT);
+    raw_key(w, YASL_KEY_Z, YASL_MOD_CTRL, 'z', 'Z', YASL_KEY_REPEAT);
+    expect(fds[0], "\x1a\x1a\x1a");
+
 
     window_close(other);
     window_close(w);
