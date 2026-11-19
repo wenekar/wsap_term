@@ -1664,7 +1664,8 @@ static bool copy_snapshot(struct ui_accessibility_tree *copy,
                 .selection_start = node->selection_start, .selection_end = node->selection_end,
                 .text = node->text, .text_offset = node->text_offset,
                 .text_length = node->text_length,
-                .text_direction = node->text_direction }))
+                .text_direction = node->text_direction,
+                .text_version = node->text_version }))
             return false;
     }
     return true;
@@ -1701,6 +1702,7 @@ static bool same_snapshot(const struct ui_accessibility_tree *a,
             left->text_offset != right->text_offset ||
             left->text_length != right->text_length ||
             left->text_direction != right->text_direction ||
+            left->text_version != right->text_version ||
             !same_string(left->name, right->name) ||
             !same_string(left->description, right->description) ||
             !same_string(left->value, right->value))

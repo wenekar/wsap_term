@@ -107,6 +107,9 @@ struct ui_accessibility_node {
      * document. */
     size_t text_length;
     enum ui_accessibility_text_direction text_direction;
+    /* Changes when the provider document changes. A provider compares this
+     * value because its pointer, offset, and length stay the same. */
+    uint64_t text_version;
     /* The number of nodes that name this node as their parent. */
     uint32_t child_count;
 };
@@ -129,6 +132,7 @@ struct ui_accessibility_node_spec {
     size_t text_offset;
     size_t text_length;
     enum ui_accessibility_text_direction text_direction;
+    uint64_t text_version;
 };
 
 struct ui_accessibility_tree {
