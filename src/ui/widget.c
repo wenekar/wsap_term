@@ -833,6 +833,12 @@ bool ui_widget_bubble(struct ui_widget *target, const struct ui_event *event)
     return bubble_to(target, NULL, event);
 }
 
+bool ui_widget_bubble_to(struct ui_widget *target, const struct ui_widget *last,
+                         const struct ui_event *event)
+{
+    return bubble_to(target, last, event);
+}
+
 bool ui_widget_route_pointer(struct ui_widget *root,
                              const struct ui_event *event)
 {

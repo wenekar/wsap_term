@@ -811,11 +811,24 @@ struct ui_widget *ui_surface_drop_target(struct ui_surface *surface,
     struct ui_widget *hit = ui_surface_hit_test(surface, pos);
     struct ui_widget *modal = hit ? surface_modal(surface) : NULL;
     /* A modal masks the widgets below it, and the hit test gives the modal
-     * itself for a point that misses it. */
+     * itself for a point that misses it. A part of the modal can lie outside
+     * the bounds of the modal, so only a hit on the modal itself checks the
+     * bounds. */
     if (modal && (!ui_widget_is_ancestor(modal, hit) ||
-                  !rect2i_contains(modal->bounds, pos)))
+                  (hit == modal && !rect2i_contains(modal->bounds, pos))))
         return NULL;
     return hit;
+}
+
+bool ui_surface_drop_event(struct ui_surface *surface,
+                           struct ui_widget *target,
+                           const struct ui_event *event)
+{
+    if (!surface || !target || !event)
+        return false;
+    struct ui_widget *modal = surface_modal(surface);
+    return ui_widget_bubble_to(target,
+        modal && ui_widget_is_ancestor(modal, target) ? modal : NULL, event);
 }
 
 static bool dispatch_pointer(struct ui_surface *surface,

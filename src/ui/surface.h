@@ -218,6 +218,12 @@ struct ui_widget *ui_surface_hit_test(struct ui_surface *surface,
  * drop reaches no widget. */
 struct ui_widget *ui_surface_drop_target(struct ui_surface *surface,
                                          struct vector2i pos);
+/* Sends the drag or drop event `event` to `target`, and bubbles it up until a
+ * widget takes it. While a modal is open, the walk from a widget of the modal
+ * stops at the modal. Returns true when a widget takes the event. */
+bool ui_surface_drop_event(struct ui_surface *surface,
+                           struct ui_widget *target,
+                           const struct ui_event *event);
 
 void ui_surface_set_sheet(struct ui_surface *surface,
                           const struct css_sheet *sheet);
