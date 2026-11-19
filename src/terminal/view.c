@@ -196,15 +196,21 @@ static bool pointer_is_local(const struct terminal *t)
                  terminal_pointer_selects_text(t->session.term));
 }
 
-/* Returns the byte that the shell expects for an edit command that the
- * terminal cannot run, or NULL for a command that the app runs. */
-static const char *shortcut_key_byte(enum ui_edit_command edit)
+/* Returns true when the shell gets the key of a bound edit command. Undo,
+ * redo, and cut belong to the shell. Copy belongs to the shell only when
+ * there is no selection. */
+static bool edit_key_for_shell(const struct terminal *t,
+                               input_command_id command)
 {
-    switch (edit) {
-    case UI_EDIT_UNDO: return "\x1a";
-    case UI_EDIT_REDO: return "\x19";
-    case UI_EDIT_CUT:  return "\x18";
-    default:           return NULL;
+    switch (command) {
+    case INPUT_COMMAND_UNDO:
+    case INPUT_COMMAND_REDO:
+    case INPUT_COMMAND_CUT:
+        return true;
+    case INPUT_COMMAND_COPY:
+        return !wsap_vtcore_has_selection(t->session.term);
+    default:
+        return false;
     }
 }
 
@@ -225,20 +231,15 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
         const struct input_key_event *key = event->data.key.native;
         /* A key that the app binds belongs to the app command. The terminal
          * declines it, so the keymap of the window in step 3 runs the
-         * command. */
-        if (key && input_keymap_match(window_keymap(w), key))
+         * command. A key that the shell owns goes to the encoder, which
+         * sends the key that the user pressed. */
+        input_command_id command = key
+            ? input_keymap_lookup(window_keymap(w), key)
+            : INPUT_COMMAND_NONE;
+        if (command != INPUT_COMMAND_NONE && !edit_key_for_shell(t, command))
             return false;
         if (!key || !terminal_key(t, key))
             ui_surface_keep_key_text(ui_widget_surface(widget));
-        return true;
-    }
-    if (event->kind == UI_EVENT_SHORTCUT) {
-        /* The keymap took the key of a chord that no widget runs, such as
-         * undo in a terminal. The shell keeps the key it expects. */
-        const char *fallback = shortcut_key_byte(event->data.shortcut.edit);
-        if (!fallback)
-            return false;
-        terminal_send_input(t, fallback, 1);
         return true;
     }
     if (event->kind == UI_EVENT_TEXT) {
