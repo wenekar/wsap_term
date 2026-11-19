@@ -511,7 +511,7 @@ bool render_gpu_present(struct render_gpu *g, struct render_surface *s, struct f
         return false;
     struct frame_slot *slot = slot_acquire(g);
     if (!slot)
-        return false;
+        return s->gpu ? present_failed(s->gpu) : false;
     bool presented = false;
     @autoreleasepool {
         presented = present_pixels(g, slot, s, fb, damage);

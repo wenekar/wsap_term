@@ -307,7 +307,15 @@ struct model_op {
     struct rect2i clip;
     bool clipped;
     bool invisible;
+    /* The op is an image. ui_scene_image() gives it no tint colour. */
+    bool image;
     uint32_t id;
+};
+
+static const uint32_t model_image_pixel = 0xFFFFFFFFu;
+static const struct ui_image model_image = {
+    .pixels = &model_image_pixel,
+    .size = { .x = 1, .y = 1 },
 };
 
 #define MODEL_OPS 8
@@ -344,7 +352,9 @@ static void scene_build(const struct model_scene *sc, struct ui_scene *s)
         const struct model_op *op = &sc->ops[i];
         if (op->clipped)
             assert(ui_scene_push_clip(s, op->clip));
-        if (op->invisible)
+        if (op->image)
+            assert(ui_scene_image_rect(s, op->rect, &model_image, NULL));
+        else if (op->invisible)
             assert(ui_scene_blend_rect(s, op->rect, 0xFF000000u | op->id, 0));
         else
             assert(ui_scene_rect(s, op->rect, 0xFF000000u | op->id));
@@ -504,7 +514,8 @@ static void model_check(struct fixture *f, const struct model_scene *old_sc,
 static bool op_eq(const struct model_op *a, const struct model_op *b)
 {
     return rect2i_eq(a->rect, b->rect) && rect2i_eq(a->clip, b->clip) &&
-           a->clipped == b->clipped && a->invisible == b->invisible && a->id == b->id;
+           a->clipped == b->clipped && a->invisible == b->invisible &&
+           a->image == b->image && a->id == b->id;
 }
 
 static void damage_scene_change(struct ui_damage *d, const struct model_scene *a,
@@ -788,6 +799,29 @@ static void vanished_overlay_test(void)
     struct model_scene popup = { .n = 1, .ops = { { .rect = rect(30, 45, 20, 30), .id = 3 } } };
     damage_scene_change(&f->ui_damage, &popup, &no_scene);
     model_check(f, &popup, &no_scene);
+    for (int r = 0; r < 10; r++)
+        assert(f->out.rows[r].op == PLAN_KEEP);
+    assert(f->out.ui.n == 1 && rect2i_eq(f->out.ui.rects[0], rect(30, 40, 20, 40)));
+    assert(f->out.n_windows == 4);
+    for (int i = 0; i < 4; i++)
+        assert(f->out.windows[i].row == 2 + i && f->out.windows[i].x.x0 == 20 &&
+               f->out.windows[i].x.x1 == 40);
+    assert(f->out.damage.n == 1 && rect2i_eq(f->out.damage.rects[0], rect(30, 45, 20, 30)));
+    fixture_free(f);
+}
+
+static void vanished_image_test(void)
+{
+    /* ui_scene_image() sets no tint colour. The planner must read the image
+     * op, not the colour. If it does not, the rows under a removed image stay
+     * kept, and a retained CPU canvas keeps a ghost of the image. */
+    struct fixture *f = standard(10);
+    keys_idle(f);
+    struct model_scene image = { .n = 1, .ops = { { .rect = rect(30, 45, 20, 30),
+                                                    .image = true,
+                                                    .id = 3 } } };
+    damage_scene_change(&f->ui_damage, &image, &no_scene);
+    model_check(f, &image, &no_scene);
     for (int r = 0; r < 10; r++)
         assert(f->out.rows[r].op == PLAN_KEEP);
     assert(f->out.ui.n == 1 && rect2i_eq(f->out.ui.rects[0], rect(30, 40, 20, 40)));
@@ -1421,6 +1455,7 @@ int main(void)
     competing_shifts_test();
     moved_row_under_overlay_test();
     vanished_overlay_test();
+    vanished_image_test();
     new_overlay_needs_no_restore_test();
     bottom_margin_test();
     ui_regions_snap_to_rows_test();

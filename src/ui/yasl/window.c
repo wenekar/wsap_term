@@ -622,9 +622,12 @@ bool window_present(struct window *w, struct window_frame *frame,
          * nothing. A true result means that the GPU submitted the frame, not
          * that the frame reached the screen. The display reports that later,
          * through the presentation handler. The window asks for the next frame
-         * when the result is false. */
-        if (n)
+         * when the result is false. A failed present loses the pixels of the
+         * canvas, so the next frame paints every pixel again. */
+        if (n) {
             n->frame_submitted = presented;
+            n->repaint = !presented;
+        }
         return presented;
     }
     int status;
