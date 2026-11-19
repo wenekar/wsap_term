@@ -2,6 +2,10 @@
  * only while the provider lock is held. A length call and every read of the
  * publish reuse the snapshot and the measure of the first lock call. */
 #include <assert.h>
+#include <sched.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -168,13 +172,12 @@ static char *read_consistent(const struct ui_accessibility_node *node)
     return whole;
 }
 
-/* The document must hold the current history text after each change. A stale
- * cache would return the text of the state before the change. */
-static void check_document(const char *label, struct terminal *content,
-                           struct wsap_vtcore *term,
-                           struct ui_accessibility_tree *tree)
+/* The document must start with the current history text. A stale cache
+ * would return the text of the state before the change. */
+static void check_text(const char *label,
+                       const struct ui_accessibility_node *node,
+                       struct wsap_vtcore *term)
 {
-    const struct ui_accessibility_node *node = build_node(content, tree);
     char *document = read_consistent(node);
     int rows = wsap_vtcore_history_rows(term);
     struct wsap_vtcore_scrollback scrollback = wsap_vtcore_scrollback(term);
@@ -189,6 +192,14 @@ static void check_document(const char *label, struct terminal *content,
            strlen(document), strlen(history));
     wsap_vtcore_text_free(history);
     free(document);
+}
+
+/* Builds the node again and checks its document after a change. */
+static void check_document(const char *label, struct terminal *content,
+                           struct wsap_vtcore *term,
+                           struct ui_accessibility_tree *tree)
+{
+    check_text(label, build_node(content, tree), term);
 }
 
 static void lifetime(void)
@@ -221,6 +232,103 @@ static void lifetime(void)
 
     wsap_vtcore_scroll_to(term, 0);
     check_document("after the scroll back", content, term, &tree);
+
+    ui_accessibility_tree_destroy(&tree);
+    test_app_fini(&app);
+}
+
+/* The thread that holds the provider lock changes the history. The term
+ * lock nests on one thread, so the change runs. The next length and read
+ * calls must give the new document, not the old index over the new history. */
+static void same_thread_change(void)
+{
+    struct test_app app;
+    test_app_init(&app, "sleep 60", (struct vector2i){ .x = 800, .y = 600 });
+    struct window *w = test_terminal_window(app.app);
+    assert(w && app_tabs_new(w));
+    struct terminal *content = app_tabs_active(w);
+    assert(content);
+    struct wsap_vtcore *term = terminal_session(content)->term;
+    assert(wsap_vtcore_set_scrollback_limit(term, 60000));
+    assert(wsap_vtcore_resize(term,
+                              (struct wsap_vtcore_vector2i){ .x = 80, .y = 24 }));
+    struct ui_accessibility_tree tree = {0};
+    feed_lines(term, 0, 299);
+    const struct ui_accessibility_node *node = build_node(content, &tree);
+    const struct ui_accessibility_text_provider *text = node->text;
+
+    text->lock(text->instance);
+    check_text("in the lock", node, term);
+    feed(term, "\x1b[H\x1b[2J\x1b[3J");
+    check_text("in the lock, after a clear", node, term);
+    feed_lines(term, 0, 99);
+    check_text("in the lock, after new lines", node, term);
+    assert(wsap_vtcore_resize(term,
+                              (struct wsap_vtcore_vector2i){ .x = 53, .y = 24 }));
+    check_text("in the lock, after a resize", node, term);
+    wsap_vtcore_scroll(term, 20);
+    check_text("in the lock, after a scroll", node, term);
+    wsap_vtcore_scroll_to(term, 0);
+    text->unlock(text->instance);
+
+    ui_accessibility_tree_destroy(&tree);
+    test_app_fini(&app);
+}
+
+struct reader {
+    struct ui_accessibility_text_provider text;
+    atomic_bool started;
+    atomic_bool stop;
+};
+
+/* Calls length and read with no provider lock until the test stops it. */
+static void *reader_main(void *arg)
+{
+    struct reader *reader = arg;
+    size_t sum = 0;
+    while (!atomic_load(&reader->stop)) {
+        char buffer[64];
+        sum += reader->text.length(reader->text.instance);
+        sum += reader->text.read(reader->text.instance, 0, buffer,
+                                 sizeof(buffer));
+        atomic_store(&reader->started, true);
+        sched_yield();
+    }
+    return (void *)(uintptr_t)sum;
+}
+
+/* A second thread calls length and read while this thread publishes. Each
+ * call of the second thread must wait for the publish and read the term on
+ * its own. A call that uses the cache of the publish races with it, and TSan
+ * reports the race. */
+static void second_thread(void)
+{
+    struct test_app app;
+    test_app_init(&app, "sleep 60", (struct vector2i){ .x = 800, .y = 600 });
+    struct window *w = test_terminal_window(app.app);
+    assert(w && app_tabs_new(w));
+    struct terminal *content = app_tabs_active(w);
+    assert(content);
+    struct wsap_vtcore *term = terminal_session(content)->term;
+    assert(wsap_vtcore_set_scrollback_limit(term, 60000));
+    struct ui_accessibility_tree tree = {0};
+    feed_lines(term, 0, 299);
+    const struct ui_accessibility_node *node = build_node(content, &tree);
+
+    struct reader reader = { .text = *node->text };
+    pthread_t thread;
+    assert(pthread_create(&thread, NULL, reader_main, &reader) == 0);
+    while (!atomic_load(&reader.started))
+        sched_yield();
+    for (int i = 0; i < 100; i++) {
+        char *document = read_consistent(node);
+        assert(strncmp(document, "cost 000000", 11) == 0);
+        free(document);
+    }
+    atomic_store(&reader.stop, true);
+    void *sum = NULL;
+    assert(pthread_join(thread, &sum) == 0);
+    assert((uintptr_t)sum > 0);
 
     ui_accessibility_tree_destroy(&tree);
     test_app_fini(&app);
@@ -259,6 +367,8 @@ int main(void)
 {
     cost();
     lifetime();
+    second_thread();
+    same_thread_change();
     text_interval();
     return 0;
 }

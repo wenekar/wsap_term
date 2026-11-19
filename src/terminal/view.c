@@ -642,12 +642,8 @@ static bool accessibility_index_append(struct terminal_view *view,
     return ok;
 }
 
-/* Keeps the index of the history rows above the view. The generation changes
- * on a new line, an eviction, a clear, a rewrap, and a mode switch. A new
- * line adds rows; any other change rebuilds the index. The index does not
- * depend on the text of the view rows. */
-static bool accessibility_rows_sync(struct terminal_view *view,
-                                    struct wsap_vtcore *term)
+/* Returns the count of the history rows above the view. */
+static int accessibility_rows_above(struct wsap_vtcore *term)
 {
     int total = wsap_vtcore_history_rows(term);
     if (total < 0)
@@ -658,6 +654,17 @@ static bool accessibility_rows_sync(struct terminal_view *view,
         above = 0;
     if (above > total)
         above = total;
+    return above;
+}
+
+/* Keeps the index of the history rows above the view. The generation changes
+ * on a new line, an eviction, a clear, a rewrap, and a mode switch. A new
+ * line adds rows; any other change rebuilds the index. The index does not
+ * depend on the text of the view rows. */
+static bool accessibility_rows_sync(struct terminal_view *view,
+                                    struct wsap_vtcore *term)
+{
+    int above = accessibility_rows_above(term);
     uint64_t generation = wsap_vtcore_history_generation(term);
     uint64_t first_line = above > 0 ? wsap_vtcore_history_first_line(term) : 0;
     int cols = wsap_vtcore_size(term).x;
@@ -891,6 +898,40 @@ static size_t accessibility_history_line(const struct terminal_view *view,
     return low;
 }
 
+/* Takes the snapshot and the measure of the provider cache. Call it with the
+ * term lock held. */
+static void accessibility_cache_fill(struct terminal_view *view,
+                                     struct wsap_vtcore *term)
+{
+    wsap_vtcore_snapshot_free(view->accessibility_snapshot);
+    view->accessibility_snapshot = accessibility_snapshot_take(term);
+    view->accessibility_document = (struct accessibility_document){0};
+    view->accessibility_document_valid = view->accessibility_snapshot &&
+        accessibility_document_measure(view, term, view->accessibility_snapshot,
+                                       &view->accessibility_document);
+    view->accessibility_document_generation =
+        wsap_vtcore_history_generation(term);
+    view->accessibility_document_rows = accessibility_rows_above(term);
+}
+
+/* Returns the provider cache when this thread holds the provider lock, or
+ * NULL when no thread holds it. Call it with the term lock held. The term
+ * lock nests on one thread and the lock depth changes only under the term
+ * lock, so a depth above zero means that this thread holds the cache. A
+ * history change on this thread since the fill makes the history index
+ * disagree with the term, so the call fills the cache again. */
+static const struct accessibility_document *accessibility_cache(
+    struct terminal_view *view, struct wsap_vtcore *term)
+{
+    if (view->accessibility_lock_depth <= 0)
+        return NULL;
+    if (wsap_vtcore_history_generation(term) !=
+            view->accessibility_document_generation ||
+        accessibility_rows_above(term) != view->accessibility_document_rows)
+        accessibility_cache_fill(view, term);
+    return &view->accessibility_document;
+}
+
 static void accessibility_provider_lock(void *instance)
 {
     struct terminal *terminal = instance;
@@ -900,13 +941,8 @@ static void accessibility_provider_lock(void *instance)
     struct wsap_vtcore *term = terminal->session.term;
     wsap_vtcore_lock(term);
     view->accessibility_lock_depth++;
-    if (view->accessibility_lock_depth > 1)
-        return;
-    view->accessibility_snapshot = accessibility_snapshot_take(term);
-    view->accessibility_document = (struct accessibility_document){0};
-    view->accessibility_document_valid = view->accessibility_snapshot &&
-        accessibility_document_measure(view, term, view->accessibility_snapshot,
-                                       &view->accessibility_document);
+    if (view->accessibility_lock_depth == 1)
+        accessibility_cache_fill(view, term);
 }
 
 static void accessibility_provider_unlock(void *instance)
@@ -915,16 +951,21 @@ static void accessibility_provider_unlock(void *instance)
     if (!terminal || !terminal->session.term)
         return;
     struct terminal_view *view = &terminal->view;
-    if (view->accessibility_lock_depth <= 0)
-        return;
-    view->accessibility_lock_depth--;
-    if (view->accessibility_lock_depth == 0) {
-        wsap_vtcore_snapshot_free(view->accessibility_snapshot);
-        view->accessibility_snapshot = NULL;
-        view->accessibility_document = (struct accessibility_document){0};
-        view->accessibility_document_valid = false;
+    struct wsap_vtcore *term = terminal->session.term;
+    /* The depth changes only under the term lock. A depth above zero then
+     * means that this thread holds one provider lock. */
+    wsap_vtcore_lock(term);
+    if (view->accessibility_lock_depth > 0) {
+        view->accessibility_lock_depth--;
+        if (view->accessibility_lock_depth == 0) {
+            wsap_vtcore_snapshot_free(view->accessibility_snapshot);
+            view->accessibility_snapshot = NULL;
+            view->accessibility_document = (struct accessibility_document){0};
+            view->accessibility_document_valid = false;
+        }
+        wsap_vtcore_unlock(term);
     }
-    wsap_vtcore_unlock(terminal->session.term);
+    wsap_vtcore_unlock(term);
 }
 
 static size_t accessibility_provider_length(void *instance)
@@ -933,18 +974,23 @@ static size_t accessibility_provider_length(void *instance)
     if (!terminal || !terminal->session.term)
         return 0;
     struct terminal_view *view = &terminal->view;
-    if (view->accessibility_lock_depth > 0)
-        return view->accessibility_document_valid
-            ? view->accessibility_document.length : 0;
     struct wsap_vtcore *term = terminal->session.term;
     size_t length = 0;
     wsap_vtcore_lock(term);
-    struct wsap_vtcore_snapshot *snapshot = accessibility_snapshot_take(term);
-    if (snapshot) {
-        struct accessibility_document doc = {0};
-        if (accessibility_document_measure(view, term, snapshot, &doc))
-            length = doc.length;
-        wsap_vtcore_snapshot_free(snapshot);
+    const struct accessibility_document *cached =
+        accessibility_cache(view, term);
+    if (cached) {
+        if (view->accessibility_document_valid)
+            length = cached->length;
+    } else {
+        struct wsap_vtcore_snapshot *snapshot =
+            accessibility_snapshot_take(term);
+        if (snapshot) {
+            struct accessibility_document doc = {0};
+            if (accessibility_document_measure(view, term, snapshot, &doc))
+                length = doc.length;
+            wsap_vtcore_snapshot_free(snapshot);
+        }
     }
     wsap_vtcore_unlock(term);
     return length;
@@ -963,15 +1009,17 @@ static size_t accessibility_provider_read(void *instance, size_t offset,
     struct accessibility_document doc = {0};
     size_t copied = 0;
     bool owned = false;
-    if (view->accessibility_lock_depth > 0) {
+    wsap_vtcore_lock(term);
+    const struct accessibility_document *cached =
+        accessibility_cache(view, term);
+    if (cached) {
         if (!view->accessibility_document_valid)
-            return 0;
+            goto done;
         snapshot = view->accessibility_snapshot;
-        doc = view->accessibility_document;
+        doc = *cached;
         if (offset >= doc.length)
-            return 0;
+            goto done;
     } else {
-        wsap_vtcore_lock(term);
         owned = true;
         snapshot = accessibility_snapshot_take(term);
         if (!snapshot)
@@ -1061,10 +1109,9 @@ static size_t accessibility_provider_read(void *instance, size_t offset,
             break;
     }
 done:
-    if (owned) {
+    if (owned)
         wsap_vtcore_snapshot_free(snapshot);
-        wsap_vtcore_unlock(term);
-    }
+    wsap_vtcore_unlock(term);
     return copied;
 }
 
