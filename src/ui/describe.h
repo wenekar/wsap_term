@@ -159,7 +159,6 @@ struct ui_view *ui_view_mount(const struct ui_node_desc *root,
  * - A node without a key matches the node at the same child index.
  * The kind must be the same. A matched widget keeps its focus, its hover, and
  * its control state, and it takes the new text and the new style identity.
- * A widget that moves to another parent loses its focus and its hover.
  * A node without a match gets a new widget. A mounted node without a match
  * loses its widget. The children follow the descriptor order.
  *
@@ -169,14 +168,53 @@ struct ui_view *ui_view_mount(const struct ui_node_desc *root,
  *
  * The child limit of a container counts the children that the descriptor
  * gives it and the own children of a supplied widget. A child that leaves the
- * container or that the update drops does not count.
+ * container or that the update drops does not count. The old root keeps the
+ * parent that its owner gave it, so a widget above it cannot be a node.
  *
- * A failed update leaves the view as it was: the same widgets in the same
- * places, the same bindings, and no widget destroyed. The update checks the
- * descriptor tree, the new nodes, and the child limits before it changes a
- * matched widget. After that, only a lack of memory makes it fail. Then a
- * matched widget can hold some of the new properties, and the tree stays as it
- * was. The view frees the storage of a removed node after the surface is idle,
+ * The update works in this order:
+ * 1. It checks the descriptor tree, creates the new nodes, and checks the
+ *    child limits. A new node can call its handler here, for example with the
+ *    CHANGE of a new list.
+ * 2. It places the widgets. It first detaches each widget that moves to
+ *    another parent, the new root when it leaves its old parent, and each
+ *    dropped widget in a planned container. Then it inserts the widgets.
+ * 3. The matched widgets take their new properties. A matched node can call
+ *    its handler here, for example with the CLOSE of a menu node.
+ *
+ * A failed update leaves the same widgets in the same places, the same
+ * bindings, and no widget that the update destroyed. It fails in step 1 for
+ * an invalid tree, or when memory runs out.
+ * After step 1 it fails only in these cases:
+ * - A handler that runs in step 2 changes the tree, so that an insert fails.
+ *   A detached widget with the focus gets FOCUS_OUT, so it can do this. The
+ *   update puts each widget back and fails with
+ *   UI_VIEW_ERROR_INVALID_CHILDREN. No matched widget has new properties.
+ * - A handler in step 1 or 2 destroys a widget that the update places. The
+ *   update fails with UI_VIEW_ERROR_INVALID_CHILDREN, as above.
+ * - Memory runs out in step 3. The update puts each widget back and fails
+ *   with UI_VIEW_ERROR_OUT_OF_MEMORY or UI_VIEW_ERROR_INIT_FAILED. A matched
+ *   widget can keep some of its new properties: text, items, handlers, or the
+ *   menu state. Its style identity and debug key go back.
+ * - A handler in step 1, 2, or 3 destroys the view. The update runs to its
+ *   end, the view is destroyed, and the call fails with UI_VIEW_ERROR_BUSY.
+ * The update does not check the tree again after step 3. A handler that
+ * changes the tree in step 3 does not make the update fail.
+ *
+ * A handler in step 3 can destroy a widget of the update. The update then
+ * skips the properties of that widget and drops it from its node. The node
+ * keeps no widget and no binding, ui_view_widget and the typed lookups give
+ * NULL for it, and the next update builds a new widget for it. The view does
+ * not touch a destroyed widget again, so the owner of a supplied widget can
+ * free its storage.
+ *
+ * These changes stay, also when the update fails:
+ * - The surface forgets each widget that step 2 detaches, and its subtree:
+ *   the focus, the hover, the pointer capture, the drop hover, the overlays,
+ *   the default focus, the paste target, and the context target. A modal
+ *   widget gets its focus back when the update places it again.
+ * - The update does not undo what a handler did in steps 1 to 3.
+ *
+ * The view frees the storage of a removed node after the surface is idle,
  * so a handler can call this function. The call fails while the surface is
  * busy only when memory is short.
  *

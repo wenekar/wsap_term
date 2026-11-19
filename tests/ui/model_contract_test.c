@@ -1,5 +1,6 @@
 
 #include <assert.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "ui/ui.h"
@@ -1412,6 +1413,347 @@ static void view_update_counts_only_planned_children_test(void)
     ui_view_destroy(view);
 }
 
+/* An owner puts the view root in a widget X. An update that supplies X
+ * inside the root fails before it changes a widget. */
+static void view_update_rejects_the_owner_of_the_root_test(void)
+{
+    for (int deep = 0; deep < 2; deep++) {
+        int destroyed = 0;
+        struct supplied_control owner = { .destroyed = &destroyed };
+        ui_widget_init(&owner.widget, &SUPPLIED_CONTROL_OPS, NULL);
+        static const ui_menu_item items[] = { { .label = "Open", .action = 1 } };
+        struct ui_label *label = NULL;
+        struct ui_menu *menu = NULL;
+        struct ui_node_desc kids[] = {
+            { .kind = UI_NODE_LABEL, .key = "l", .bind.label = &label,
+              .props.label = { .text = "Idle" } },
+            { .kind = UI_NODE_MENU, .key = "m", .bind.menu = &menu,
+              .props.menu = { .items = items, .count = 1 } },
+        };
+        struct ui_node_desc root = {
+            .kind = UI_NODE_COLUMN, .key = "root", .children = kids, .child_count = 2,
+        };
+        struct ui_view *view = ui_view_mount(&root, NULL);
+        assert(view && label && menu);
+        struct ui_widget *top = ui_view_root(view);
+        assert(ui_widget_add_child(&owner.widget, top));
+
+        struct ui_node_desc x = {
+            .kind = UI_NODE_WIDGET, .key = "x", .props.widget = &owner.widget,
+        };
+        struct ui_node_desc row = {
+            .kind = UI_NODE_ROW, .key = "row", .children = &x, .child_count = 1,
+        };
+        struct ui_node_desc k2[] = { kids[0], kids[1], deep ? row : x };
+        k2[0].props.label.text = "Busy";
+        k2[1].props.menu.count = 0;
+        struct ui_node_desc next = root;
+        next.children = k2;
+        next.child_count = 3;
+        struct ui_view_diagnostic diagnostic;
+        assert(!ui_view_update_ex(view, &next, &diagnostic));
+        assert(diagnostic.error == UI_VIEW_ERROR_INVALID_CHILDREN);
+        assert(ui_view_root(view) == top && top->parent == &owner.widget);
+        assert(!owner.widget.parent && !destroyed);
+        assert(!strcmp(ui_label_text(label), "Idle"));
+        assert(ui_menu_is_open(menu));
+        assert(ui_view_widget(view, "x") == NULL);
+        assert(ui_widget_child_count(top) == 2);
+        ui_view_destroy(view);
+        ui_widget_destroy(&owner.widget);
+        assert(destroyed == 1);
+    }
+}
+
+/* A widget that adds a child to a container when it loses the focus. */
+struct focus_out_control {
+    struct ui_widget widget;
+    struct ui_widget *container;
+    struct ui_widget *child;
+    int added;
+};
+
+static bool focus_out_event(struct ui_widget *widget, const struct ui_event *event)
+{
+    struct focus_out_control *control =
+        ui_container_of(widget, struct focus_out_control, widget);
+    if (event->kind == UI_EVENT_FOCUS_OUT && control->container &&
+        ui_widget_add_child(control->container, control->child))
+        control->added++;
+    return false;
+}
+
+static const struct ui_widget_ops FOCUS_OUT_OPS = {
+    .name = "focus-out",
+    .event = focus_out_event,
+};
+
+/* A handler that fills a container while the update places the widgets
+ * makes the update fail. The update then changes no widget. */
+static void view_update_fails_when_a_handler_fills_a_container_test(void)
+{
+    struct focus_out_control control = {0};
+    ui_widget_init(&control.widget, &FOCUS_OUT_OPS, NULL);
+    ui_widget_set_focusable(&control.widget, true);
+    struct ui_widget box = {0}, foreign = {0};
+    ui_widget_init(&box, &SINGLE_CHILD_OPS, NULL);
+    ui_widget_init(&foreign, NULL, NULL);
+    struct ui_label *status = NULL;
+    struct ui_node_desc w = {
+        .kind = UI_NODE_WIDGET, .key = "w", .props.widget = &control.widget,
+    };
+    struct ui_node_desc a_kids[] = {
+        { .kind = UI_NODE_LABEL, .key = "l1", .props.label = { .text = "1" } },
+        w,
+    };
+    struct ui_node_desc kids[] = {
+        { .kind = UI_NODE_ROW, .key = "a", .children = a_kids, .child_count = 2 },
+        { .kind = UI_NODE_LABEL, .key = "status", .bind.label = &status,
+          .props.label = { .text = "Idle" } },
+        { .kind = UI_NODE_WIDGET, .key = "box", .props.widget = &box },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .children = kids, .child_count = 3,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view && status);
+    struct ui_widget *a = ui_view_widget(view, "a");
+    struct ui_surface surface;
+    show(&surface, ui_view_root(view), (struct vector2i){ .x = 200, .y = 100 });
+    ui_surface_focus(&surface, &control.widget);
+
+    /* The move takes the focus from w, and w fills the box. */
+    control.container = &box;
+    control.child = &foreign;
+    struct ui_node_desc k2[] = { kids[0], kids[1], kids[2] };
+    k2[0].child_count = 1;
+    k2[1].props.label.text = "Busy";
+    k2[2].children = &w;
+    k2[2].child_count = 1;
+    struct ui_node_desc next = root;
+    next.children = k2;
+    struct ui_view_diagnostic diagnostic;
+    assert(!ui_view_update_ex(view, &next, &diagnostic));
+    assert(diagnostic.error == UI_VIEW_ERROR_INVALID_CHILDREN);
+    assert(control.added == 1);
+    assert(control.widget.parent == a && ui_widget_child_at(a, 1) == &control.widget);
+    assert(!strcmp(ui_label_text(status), "Idle"));
+    assert(ui_widget_child_count(&box) == 1 && foreign.parent == &box);
+
+    /* Without the foreign child the update succeeds. */
+    control.container = NULL;
+    assert(ui_widget_remove_child(&box, &foreign));
+    assert(ui_view_update(view, &next));
+    assert(control.widget.parent == &box);
+    assert(!strcmp(ui_label_text(status), "Busy"));
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+    ui_widget_destroy(&foreign);
+}
+
+/* A menu handler that runs during an update finds the widgets placed. */
+struct fill_on_close {
+    struct ui_widget *container;
+    struct ui_widget *child;
+    int closes;
+    bool added;
+};
+
+static bool fill_on_close_action(struct ui_widget *source,
+                                 const struct ui_action *action, void *userdata)
+{
+    (void)source;
+    struct fill_on_close *probe = userdata;
+    if (action->kind == UI_ACTION_CLOSE) {
+        probe->closes++;
+        probe->added = ui_widget_add_child(probe->container, probe->child);
+    }
+    return true;
+}
+
+static void view_update_places_before_handlers_run_test(void)
+{
+    int destroyed = 0;
+    struct supplied_control control = { .destroyed = &destroyed };
+    ui_widget_init(&control.widget, &SUPPLIED_CONTROL_OPS, NULL);
+    struct ui_widget box = {0}, foreign = {0};
+    ui_widget_init(&box, &SINGLE_CHILD_OPS, NULL);
+    ui_widget_init(&foreign, NULL, NULL);
+    struct fill_on_close probe = { .container = &box, .child = &foreign };
+    static const ui_menu_item items[] = { { .label = "Open", .action = 1 } };
+    struct ui_node_desc w = {
+        .kind = UI_NODE_WIDGET, .key = "w", .props.widget = &control.widget,
+    };
+    struct ui_node_desc kids[] = {
+        w,
+        { .kind = UI_NODE_WIDGET, .key = "box", .props.widget = &box },
+        { .kind = UI_NODE_MENU, .key = "m", .on_action = fill_on_close_action,
+          .action_userdata = &probe,
+          .props.menu = { .items = items, .count = 1 } },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .children = kids, .child_count = 3,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+
+    /* w moves into the box, and the menu closes. The CLOSE handler runs
+     * after the move, so the box is full and refuses the foreign child. */
+    struct ui_node_desc k2[] = { kids[1], kids[2] };
+    k2[0].children = &w;
+    k2[0].child_count = 1;
+    k2[1].props.menu.count = 0;
+    struct ui_node_desc next = root;
+    next.children = k2;
+    next.child_count = 2;
+    assert(ui_view_update(view, &next));
+    assert(probe.closes == 1 && !probe.added);
+    assert(control.widget.parent == &box && !foreign.parent);
+    ui_view_destroy(view);
+    assert(destroyed == 1);
+    ui_widget_destroy(&foreign);
+}
+
+/* An update that reorders the siblings keeps each kept child in its parent. */
+static void view_update_reorders_parents_with_children_test(void)
+{
+    struct ui_node_desc a_kids[] = {
+        { .kind = UI_NODE_LABEL, .key = "l1", .props.label = { .text = "1" } },
+        { .kind = UI_NODE_LABEL, .key = "l2", .props.label = { .text = "2" } },
+    };
+    struct ui_node_desc kids[] = {
+        { .kind = UI_NODE_ROW, .key = "a", .children = a_kids, .child_count = 2 },
+        { .kind = UI_NODE_ROW, .key = "b" },
+        { .kind = UI_NODE_ROW, .key = "c" },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .children = kids, .child_count = 3,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+    struct ui_widget *a = ui_view_widget(view, "a");
+    struct ui_widget *l1 = ui_view_widget(view, "l1");
+    struct ui_widget *l2 = ui_view_widget(view, "l2");
+
+    struct ui_node_desc reordered[] = { kids[2], kids[1], kids[0] };
+    root.children = reordered;
+    assert(ui_view_update(view, &root));
+    assert(ui_view_widget(view, "a") == a && ui_view_widget(view, "l1") == l1);
+    assert(l1->parent == a && l2->parent == a);
+    assert(ui_widget_child_at(a, 0) == l1 && ui_widget_child_at(a, 1) == l2);
+    assert(ui_widget_child_at(ui_view_root(view), 2) == a);
+    assert(ui_widget_child_count(ui_view_widget(view, "c")) == 0);
+
+    /* A second update finds the nodes under their new parents. */
+    assert(ui_view_update(view, &root));
+    assert(l1->parent == a && l2->parent == a);
+    ui_view_destroy(view);
+}
+
+/* A menu handler that destroys a widget when the menu closes. The caller
+ * can free the widget storage too. */
+struct destroy_on_close {
+    struct ui_widget *victim;
+    bool free_it;
+};
+
+static bool destroy_on_close_action(struct ui_widget *source,
+                                    const struct ui_action *action,
+                                    void *userdata)
+{
+    (void)source;
+    struct destroy_on_close *probe = userdata;
+    if (action->kind != UI_ACTION_CLOSE || !probe->victim)
+        return true;
+    struct ui_widget *victim = probe->victim;
+    probe->victim = NULL;
+    ui_widget_destroy(victim);
+    if (probe->free_it)
+        free(victim);
+    return true;
+}
+
+/* A handler that destroys a kept widget while the update applies the new
+ * properties. The view drops the widget, and the next update builds a new
+ * one. */
+static void view_update_drops_a_widget_that_a_handler_destroys_test(void)
+{
+    static const ui_menu_item items[] = { { .label = "Open", .action = 1 } };
+    struct ui_label *label = NULL;
+    struct destroy_on_close probe = {0};
+    struct ui_node_desc kids[] = {
+        { .kind = UI_NODE_LABEL, .key = "l", .bind.label = &label,
+          .props.label = { .text = "Idle" } },
+        { .kind = UI_NODE_MENU, .key = "m", .on_action = destroy_on_close_action,
+          .action_userdata = &probe,
+          .props.menu = { .items = items, .count = 1 } },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .children = kids, .child_count = 2,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view && label);
+    struct ui_surface surface;
+    show(&surface, ui_view_root(view), (struct vector2i){ .x = 200, .y = 100 });
+
+    probe.victim = &label->widget;
+    kids[0].props.label.text = "Busy";
+    kids[1].props.menu.count = 0;
+    assert(ui_view_update(view, &root));
+    assert(label == NULL);
+    assert(ui_view_widget(view, "l") == NULL);
+    assert(ui_view_label(view, "l") == NULL);
+    assert(ui_widget_child_count(ui_view_root(view)) == 1);
+    ui_surface_prepare(&surface);
+
+    /* The next update builds a new label. */
+    kids[1].props.menu.count = 1;
+    assert(ui_view_update(view, &root));
+    assert(label && ui_view_widget(view, "l") == &label->widget);
+    assert(label->widget.parent == ui_view_root(view));
+    assert(!strcmp(ui_label_text(label), "Busy"));
+    assert(ui_view_update(view, &root));
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+}
+
+/* The handler destroys a supplied widget, and the caller frees its storage.
+ * The view does not touch the widget again. */
+static void view_update_forgets_a_supplied_widget_that_a_handler_frees_test(void)
+{
+    static const ui_menu_item items[] = { { .label = "Open", .action = 1 } };
+    int destroyed = 0;
+    struct supplied_control *control = calloc(1, sizeof(*control));
+    assert(control);
+    control->destroyed = &destroyed;
+    ui_widget_init(&control->widget, &SUPPLIED_CONTROL_OPS, NULL);
+    struct destroy_on_close probe = {0};
+    struct ui_node_desc kids[] = {
+        { .kind = UI_NODE_WIDGET, .key = "w", .props.widget = &control->widget },
+        { .kind = UI_NODE_MENU, .key = "m", .on_action = destroy_on_close_action,
+          .action_userdata = &probe,
+          .props.menu = { .items = items, .count = 1 } },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .children = kids, .child_count = 2,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+
+    probe.victim = &control->widget;
+    probe.free_it = true;
+    kids[1].props.menu.count = 0;
+    assert(ui_view_update(view, &root));
+    assert(destroyed == 1);
+    assert(ui_view_widget(view, "w") == NULL);
+    struct ui_node_desc menu_only = root;
+    menu_only.children = &kids[1];
+    menu_only.child_count = 1;
+    assert(ui_view_update(view, &menu_only));
+    ui_view_destroy(view);
+    assert(destroyed == 1);
+}
+
 int main(void)
 {
     view_diagnostic_test();
@@ -1436,6 +1778,12 @@ int main(void)
     view_update_rearranges_supplied_widgets_test();
     view_update_makes_a_supplied_widget_the_root_test();
     view_update_counts_only_planned_children_test();
+    view_update_rejects_the_owner_of_the_root_test();
+    view_update_fails_when_a_handler_fills_a_container_test();
+    view_update_places_before_handlers_run_test();
+    view_update_reorders_parents_with_children_test();
+    view_update_drops_a_widget_that_a_handler_destroys_test();
+    view_update_forgets_a_supplied_widget_that_a_handler_frees_test();
     view_root_keyboard_test();
     hidden_child_takes_no_space_or_input_test();
     hidden_modal_restores_focus_test();
