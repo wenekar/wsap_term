@@ -388,6 +388,18 @@ static void free_node_strings(struct ui_view_node *node)
     node->tag_name = NULL;
 }
 
+/* Frees the strings and the storage of `node`. Call it after the node widget
+ * is destroyed. The layer of a menu node holds only the shown levels, so the
+ * menu destroys its other levels here. */
+static void free_node(struct ui_view_node *node)
+{
+    free_node_strings(node);
+    if (node->kind == UI_NODE_MENU && node->storage)
+        ui_menu_destroy(&((struct ui_menu_node *)node->storage)->menu);
+    free(node->storage);
+    node->storage = NULL;
+}
+
 static bool copy_node_strings(struct ui_view_node *node)
 {
     const struct ui_node_desc *desc = node->desc;
@@ -493,8 +505,8 @@ static bool set_list_props(struct ui_list *list,
     const struct ui_node_desc *desc = node;
     ui_list_set_style_class(list, desc->class_name);
     ui_list_set_wrap_navigation(list, desc->props.list.wrap_navigation);
-    if (desc->props.list.count &&
-        !ui_list_set_items(list, desc->props.list.items,
+    /* No items empty the list. */
+    if (!ui_list_set_items(list, desc->props.list.items,
                            desc->props.list.count)) {
         *error = UI_VIEW_ERROR_OUT_OF_MEMORY;
         return false;
@@ -687,10 +699,8 @@ static void free_garbage(struct ui_surface *surface, void *userdata)
 {
     (void)surface;
     struct ui_view_garbage *garbage = userdata;
-    for (size_t i = 0; i < garbage->count; i++) {
-        free_node_strings(&garbage->nodes[i]);
-        free(garbage->nodes[i].storage);
-    }
+    for (size_t i = 0; i < garbage->count; i++)
+        free_node(&garbage->nodes[i]);
     free(garbage->nodes);
     free(garbage);
 }
@@ -701,10 +711,8 @@ static void dispose_nodes(struct ui_surface *surface, struct ui_view_node *nodes
                           size_t count)
 {
     if (!surface || !ui_surface_busy(surface)) {
-        for (size_t i = 0; i < count; i++) {
-            free_node_strings(&nodes[i]);
-            free(nodes[i].storage);
-        }
+        for (size_t i = 0; i < count; i++)
+            free_node(&nodes[i]);
         free(nodes);
         return;
     }
@@ -803,10 +811,8 @@ static void free_view(struct ui_surface *surface, void *userdata)
 {
     (void)surface;
     struct ui_view *view = userdata;
-    for (size_t i = 0; i < view->count; i++) {
-        free_node_strings(&view->nodes[i]);
-        free(view->nodes[i].storage);
-    }
+    for (size_t i = 0; i < view->count; i++)
+        free_node(&view->nodes[i]);
     free(view->nodes);
     free(view);
 }

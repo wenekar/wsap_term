@@ -22,9 +22,10 @@ static struct window w;
 
 static void fresh_window(void)
 {
-    /* A lookup builds the hash tables of the keymap, so free them before
-     * the window is zeroed. */
+    /* A lookup builds the hash tables of the keymap, and a composition
+     * keeps its preedit text, so free them before the window is zeroed. */
     input_keymap_free(&w.keymap);
+    free(w.ime_preedit);
     memset(&w, 0, sizeof w);
 }
 
