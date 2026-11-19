@@ -221,6 +221,49 @@ static void scoped_binding_wins_test(void)
     input_keymap_free(&km);
 }
 
+/* A widget command binds with the registry of its scope. Two registries in
+ * different scopes never give the same ID, and a name resolves only in its
+ * own registry. */
+static void widget_command_binding_test(void)
+{
+    struct input_command_registry two, three;
+    input_command_registry_init(&two);
+    input_command_registry_init(&three);
+    input_command_id id_two =
+        input_command_add(&two, 2, "widget_two", "Widget Two");
+    input_command_id id_three =
+        input_command_add(&three, 3, "widget_three", "Widget Three");
+    assert(id_two >= INPUT_COMMAND_DYNAMIC_ID);
+    assert(id_three >= INPUT_COMMAND_DYNAMIC_ID);
+    assert(id_two != id_three);
+
+    struct input_keymap km;
+    input_keymap_init(&km);
+    assert(input_keymap_apply_spec_registry(&km, &two, 2,
+                                            "ctrl+j = widget_two"));
+    assert(input_keymap_apply_spec_registry(&km, &three, 3,
+                                            "ctrl+j = widget_three"));
+    /* A registry does not resolve a name that another scope holds. */
+    assert(!input_keymap_apply_spec_registry(&km, &three, 2,
+                                             "ctrl+k = widget_two"));
+
+    struct input_key_event ctrl_j = { .key = INPUT_KEY_NONE, .codepoint = 'j',
+                                     .mods = INPUT_MOD_CTRL };
+    assert(input_keymap_lookup_scoped(&km, &ctrl_j, 2) == id_two);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_j, 3) == id_three);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_j, 0) == INPUT_COMMAND_NONE);
+
+    char out[64];
+    assert(input_keymap_format_action_chord_scoped(&km, id_two, 2,
+                                                   out, sizeof(out)));
+    assert(!strcmp(out, "Ctrl+J"));
+    /* The app scope does not read a widget binding. */
+    assert(!input_keymap_format_action_chord(&km, id_two, out, sizeof(out)));
+    input_keymap_free(&km);
+    input_command_registry_free(&two);
+    input_command_registry_free(&three);
+}
+
 /* A binding above the 'style' line survives the load. The style applies to
  * the whole file. */
 static void config_style_order_test(void)
@@ -256,6 +299,7 @@ int main(void)
     command_registry_test();
     default_chord_table_test();
     scoped_binding_wins_test();
+    widget_command_binding_test();
     keymap_match_test();
     zero_modifier_binding_test();
     wide_codepoint_binding_test();

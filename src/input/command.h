@@ -86,8 +86,11 @@ _Static_assert(INPUT_COMMAND_CUT == 28, "cut ID moved");
 _Static_assert(INPUT_COMMAND_APP_COUNT == 29, "app ID count moved");
 
 /* The first ID that `input_command_add()` gives to a new command.
+ * Each scope gets a band of `INPUT_COMMAND_SCOPE_ID_SPAN` IDs from this
+ * value, so two registries in different scopes never give the same ID.
  * It is above every app ID, so a widget command never takes an app ID. */
 #define INPUT_COMMAND_DYNAMIC_ID 256
+#define INPUT_COMMAND_SCOPE_ID_SPAN 4096
 
 /*
  * A command scope groups the commands of one owner.
@@ -98,10 +101,13 @@ _Static_assert(INPUT_COMMAND_APP_COUNT == 29, "app ID count moved");
  * To add a command in a widget scope:
  * 1. Call `input_command_add()` with the scope, the name, and the label, and
  *    keep the ID that it returns.
- * 2. Bind the ID with `input_keymap_apply_spec_scoped()` when the command has
- *    a chord. A menu item needs no chord.
+ * 2. Bind the ID with `input_keymap_apply_spec_registry()` when the command
+ *    has a chord. Pass the registry of the widget. A menu item needs no
+ *    chord.
  * 3. Put the ID in the action of the widget, and read the label of a menu
  *    item with `input_command_label()`.
+ * A registry in one scope never gives an ID that a registry in another scope
+ * gives.
  */
 enum input_command_scope {
     INPUT_COMMAND_SCOPE_APP = 0,
@@ -139,8 +145,9 @@ void input_command_registry_free(struct input_command_registry *reg);
 
 /*
  * Adds a command to scope `scope` of registry `reg` with `name` and `label`.
- * The registry gives the command the first free ID at or above
- * `INPUT_COMMAND_DYNAMIC_ID`.
+ * The scope must be above zero.
+ * The registry gives the command the first free ID in the band of `scope`,
+ * at or above `INPUT_COMMAND_DYNAMIC_ID`.
  * A widget calls this for a command of its own scope.
  * The name and the label must stay valid while the registry lives.
  * Returns the ID, or `INPUT_COMMAND_NONE` on a bad scope or a memory
@@ -166,6 +173,15 @@ const struct input_command *input_command_find(const struct input_command_regist
  */
 const struct input_command *input_command_find_name(const struct input_command_registry *reg,
                                                     const char *name);
+
+/*
+ * Finds the command that `name` names in scope `scope` of `reg`.
+ * The function reads `scope` first, then the app scope.
+ * Returns NULL when no command has that name.
+ */
+const struct input_command *input_command_find_name_scoped(const struct input_command_registry *reg,
+                                                           uint8_t scope,
+                                                           const char *name);
 
 /*
  * Returns the label of command `id` for scope `scope`, or an empty string

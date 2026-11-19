@@ -65,6 +65,16 @@ bool input_keymap_apply_spec_scoped(struct input_keymap *km, uint8_t scope,
                                     const char *spec);
 
 /*
+ * Adds, replaces, or removes the binding that `spec` names in scope `scope`
+ * of keymap `km`. The action name resolves in registry `reg`.
+ * A widget passes its own registry and scope here.
+ * Returns true on success, or false on syntax error or memory shortage.
+ */
+bool input_keymap_apply_spec_registry(struct input_keymap *km,
+                                      const struct input_command_registry *reg,
+                                      uint8_t scope, const char *spec);
+
+/*
  * Looks up the command that key event `ev` runs in keymap `km`.
  * A binding may have no modifiers.
  * Returns the matching command, or INPUT_COMMAND_NONE.
@@ -95,6 +105,15 @@ bool input_format_chord(unsigned mods, uint32_t codepoint, uint16_t key,
 bool input_keymap_format_action_chord(const struct input_keymap *km,
                                 input_command_id action, char *out,
                                 size_t sz);
+
+/*
+ * Formats key chord bound to shortcut `action` for scope `scope` in keymap
+ * `km` into `out`. A widget passes its own scope here.
+ * Returns true on success, or false if unbound or buffer `sz` is too small.
+ */
+bool input_keymap_format_action_chord_scoped(const struct input_keymap *km,
+                                input_command_id action, uint8_t scope,
+                                char *out, size_t sz);
 
 /*
  * Parses keybind style name string `s` into style enum `out`.

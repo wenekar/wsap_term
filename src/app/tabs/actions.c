@@ -6,10 +6,12 @@
 #include "input/keybind.h"
 #include "ui/surface.h"
 
+/* A palette row that is not a command has an action above the command ID
+ * range, so a widget command ID cannot look like a tab row. */
 enum palette_action {
-    PALETTE_ACT_SCROLL_BOTTOM = INPUT_COMMAND_APP_COUNT,
+    PALETTE_ACT_SCROLL_BOTTOM = 1 << 16,
     PALETTE_ACT_NEW_WINDOW,
-    PALETTE_ACT_TAB_BASE = INPUT_COMMAND_APP_COUNT + 16,
+    PALETTE_ACT_TAB_BASE,
 };
 
 static void fmt_shortcut(const struct window *w, input_command_id sc,
@@ -116,7 +118,7 @@ static bool palette_action(struct ui_widget *source,
         app_tabs_select(w, id - PALETTE_ACT_TAB_BASE);
         return true;
     }
-    if (id >= 0 && id < INPUT_COMMAND_APP_COUNT) {
+    if (id > INPUT_COMMAND_NONE && id < INPUT_COMMAND_APP_COUNT) {
         app_tabs_shortcut(w, (input_command_id)id);
         return true;
     }

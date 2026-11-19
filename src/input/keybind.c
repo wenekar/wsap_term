@@ -70,7 +70,9 @@ static bool lookup_name(const struct name_entry *tab, size_t n,
     return false;
 }
 
-bool input_parse_action(const char *s, input_command_id *out)
+static bool parse_action_in(const struct input_command_registry *reg,
+                            uint8_t scope, const char *s,
+                            input_command_id *out)
 {
     if (!s || !out)
         return false;
@@ -79,11 +81,17 @@ bool input_parse_action(const char *s, input_command_id *out)
         return true;
     }
     const struct input_command *cmd =
-        input_command_find_name(input_command_builtin(), s);
+        input_command_find_name_scoped(reg, scope, s);
     if (!cmd)
         return false;
     *out = cmd->id;
     return true;
+}
+
+bool input_parse_action(const char *s, input_command_id *out)
+{
+    return parse_action_in(input_command_builtin(), INPUT_COMMAND_SCOPE_APP, s,
+                           out);
 }
 
 bool input_parse_keybind_style(const char *s, enum input_keybind_style *out)
@@ -238,21 +246,30 @@ bool input_format_chord(unsigned mods, uint32_t codepoint, uint16_t key,
     return true;
 }
 
-bool input_keymap_format_action_chord(const struct input_keymap *km,
-                                input_command_id action, char *out,
-                                size_t sz)
+bool input_keymap_format_action_chord_scoped(const struct input_keymap *km,
+                                input_command_id action, uint8_t scope,
+                                char *out, size_t sz)
 {
-    if (!km || !out || sz == 0 || action == INPUT_COMMAND_NONE)
+    if (!km || !out || sz == 0 || action == INPUT_COMMAND_NONE ||
+        scope >= INPUT_COMMAND_SCOPE_COUNT)
         return false;
     out[0] = '\0';
     for (size_t i = 0; i < km->n; i++) {
         const struct input_keybind *b = &km->binds[i];
-        if (b->action == (uint16_t)action) {
+        if (b->action == (uint16_t)action && b->scope == scope) {
             if (input_format_chord(b->mods, b->codepoint, b->key, out, sz))
                 return true;
         }
     }
     return false;
+}
+
+bool input_keymap_format_action_chord(const struct input_keymap *km,
+                                input_command_id action, char *out,
+                                size_t sz)
+{
+    return input_keymap_format_action_chord_scoped(
+        km, action, INPUT_COMMAND_SCOPE_APP, out, sz);
 }
 
 void input_keymap_free(struct input_keymap *km)
@@ -405,7 +422,15 @@ bool input_keymap_apply_spec(struct input_keymap *km, const char *spec)
 bool input_keymap_apply_spec_scoped(struct input_keymap *km, uint8_t scope,
                                     const char *spec)
 {
-    if (!km || !spec || scope >= INPUT_COMMAND_SCOPE_COUNT)
+    return input_keymap_apply_spec_registry(km, input_command_builtin(), scope,
+                                            spec);
+}
+
+bool input_keymap_apply_spec_registry(struct input_keymap *km,
+                                      const struct input_command_registry *reg,
+                                      uint8_t scope, const char *spec)
+{
+    if (!km || !spec || !reg || scope >= INPUT_COMMAND_SCOPE_COUNT)
         return false;
     if (!strcasecmp(spec, "clear")) {
         input_keymap_clear(km);
@@ -432,7 +457,7 @@ bool input_keymap_apply_spec_scoped(struct input_keymap *km, uint8_t scope,
     unsigned mods;
     uint32_t codepoint;
     uint16_t key;
-    if (!input_parse_action(act, &action) ||
+    if (!parse_action_in(reg, scope, act, &action) ||
         !input_parse_chord(chord, &mods, &codepoint, &key))
         return false;
     if (action == INPUT_COMMAND_NONE) {
