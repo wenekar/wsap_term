@@ -602,12 +602,14 @@ static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, c
         s->view.version++;
 }
 
-static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, struct wsap_vtcore *t)
+static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, struct wsap_vtcore *t,
+                                              bool live)
 {
     if (!s || !t)
         return false;
     int cols = t->cols, rows = t->rows;
     bool ok = false;
+    bool hide_anchor = false;
     bool resized = s->view.size.x != cols || s->view.size.y != rows;
     bool all = resized || s->source != t->serial;
     int scrolled = 0;
@@ -643,6 +645,11 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
             t->view.last_cells = t->hist.lines ? wsap_vtcore_hist_line_cells(&t->hist, hist_end_id(&t->hist) - 1) : 0;
         }
     }
+    // A live copy reads the screen rows as the view shows them at offset
+    // zero. The anchor comes back at the end, so the view does not move.
+    hide_anchor = live && t->view.anchor.active;
+    if (hide_anchor)
+        t->view.anchor.active = false;
     wsap_vtcore_screen_view_row_keys(t, new_keys, sizes);
 
     // Find a scroll. Compare each new key with the old key k rows lower.
@@ -768,6 +775,8 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
     ok = true;
 
 done:
+    if (hide_anchor)
+        t->view.anchor.active = true;
     return ok;
 }
 
@@ -776,7 +785,17 @@ bool wsap_vtcore_snapshot_update(struct wsap_vtcore_snapshot *s, struct wsap_vtc
     if (!s || !t)
         return false;
     wsap_vtcore_write_begin(t);
-    bool ok = wsap_vtcore_snapshot_update_inner(s, t);
+    bool ok = wsap_vtcore_snapshot_update_inner(s, t, false);
+    wsap_vtcore_write_end(t);
+    return ok;
+}
+
+bool wsap_vtcore_snapshot_update_live(struct wsap_vtcore_snapshot *s, struct wsap_vtcore *t)
+{
+    if (!s || !t)
+        return false;
+    wsap_vtcore_write_begin(t);
+    bool ok = wsap_vtcore_snapshot_update_inner(s, t, true);
     wsap_vtcore_write_end(t);
     return ok;
 }

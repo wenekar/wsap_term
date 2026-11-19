@@ -89,7 +89,7 @@ struct ui_accessibility_text_provider {
      * provider lock must block the document changes of other threads. The
      * lock can nest on one thread. Lock and unlock on the same thread. Do
      * not change the document on the thread that holds the lock: the reads
-     * after the change can show the old document. */
+     * after the change can show the old or the new document. */
     void (*lock)(void *instance);
     void (*unlock)(void *instance);
 };

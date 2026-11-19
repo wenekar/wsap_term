@@ -426,11 +426,92 @@ static void wide_resize_stream(void)
     }
 }
 
+static void expect_range(struct wsap_vtcore *term, int first, int count,
+                         const char *expected)
+{
+    char *text = wsap_vtcore_history_text_range(term, first, count, NULL);
+    assert(text);
+    if (strcmp(text, expected)) {
+        fprintf(stderr, "rows %d+%d: got \"%s\" want \"%s\"\n", first, count,
+                text, expected);
+        assert(0);
+    }
+    wsap_vtcore_text_free(text);
+}
+
+/* A blank in the last column of a row that wraps is text of its line. When
+ * the range ends at that row, the line goes on after the range, so the blank
+ * stays. The two parts then join to the text of the whole line. */
+static void wrapped_range_keeps_tail(void)
+{
+    struct wsap_vtcore *term = new_term(8);
+    feed(term, "abcdefg hij\r\nx\r\ny");
+    expect_history(term, 100, "abcdefg hij\n");
+    expect_range(term, 0, 1, "abcdefg ");
+    expect_range(term, 1, 1, "hij\n");
+    expect_range(term, 0, 2, "abcdefg hij\n");
+    wsap_vtcore_free(term);
+
+    /* The last history row continues into the screen. */
+    term = new_term(8);
+    feed(term, "abcdefg hijklmn pq");
+    assert(wsap_vtcore_history_rows(term) == 1);
+    expect_range(term, 0, 1, "abcdefg ");
+    expect_history(term, 100, "abcdefg ");
+    wsap_vtcore_free(term);
+}
+
+/* The epoch stays while lines arrive and the oldest lines leave. Then the
+ * first line ID grows by the count of the lines that left. A clear, a line
+ * taken back to the screen, a rewrap, and the alternate screen change it. */
+static void history_epoch_follows_rewrites(void)
+{
+    struct wsap_vtcore *term = wsap_vtcore_new(&(struct wsap_vtcore_options){
+        .size = { .x = 10, .y = 4 },
+        .scrollback = 20,
+    });
+    assert(term);
+    feed(term, "a\r\nb\r\nc\r\nd\r\ne\r\n");
+    uint64_t epoch = wsap_vtcore_history_epoch(term);
+    assert(epoch);
+    assert(wsap_vtcore_history_epoch(term) == epoch);
+    for (int i = 0; i < 30; i++)
+        feed(term, "line\r\n");
+    assert(wsap_vtcore_history_epoch(term) == epoch);
+    uint64_t first = wsap_vtcore_history_first_line(term);
+    feed(term, "one\r\ntwo\r\nthree\r\n");
+    assert(wsap_vtcore_history_epoch(term) == epoch);
+    assert(wsap_vtcore_history_first_line(term) == first + 3);
+    /* A long line grows while it wraps into the screen. */
+    feed(term, "0123456789012345678901234567890123456789");
+    assert(wsap_vtcore_history_epoch(term) == epoch);
+    feed(term, "\r\n");
+
+    assert(wsap_vtcore_resize(term, (struct wsap_vtcore_vector2i){ .x = 10, .y = 8 }));
+    uint64_t taller = wsap_vtcore_history_epoch(term);
+    assert(taller != epoch);
+    assert(wsap_vtcore_resize(term, (struct wsap_vtcore_vector2i){ .x = 7, .y = 8 }));
+    uint64_t narrow = wsap_vtcore_history_epoch(term);
+    assert(narrow != taller);
+    feed(term, "\x1b[?1049h");
+    uint64_t alternate = wsap_vtcore_history_epoch(term);
+    assert(alternate != narrow);
+    feed(term, "\x1b[?1049l");
+    uint64_t primary = wsap_vtcore_history_epoch(term);
+    assert(primary != alternate);
+    feed(term, "\x1b[3J");
+    assert(wsap_vtcore_history_epoch(term) != primary);
+    assert(wsap_vtcore_history_epoch(NULL) == 0);
+    wsap_vtcore_free(term);
+}
+
 int main(void)
 {
     unicode_and_selection();
     limits_and_scrolled_view();
     wrapped_rows();
+    wrapped_range_keeps_tail();
+    history_epoch_follows_rewrites();
     scrollback_limit();
     scrollback_zero_option();
     scrollback_small_option();
