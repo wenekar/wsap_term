@@ -264,6 +264,51 @@ static void widget_command_binding_test(void)
     input_command_registry_free(&three);
 }
 
+/* Each owner gets its own widget scope. Two registries in two given scopes
+ * never give the same ID. When every scope is taken, the call gives the app
+ * scope. A released scope can be given again. */
+static void scope_new_test(void)
+{
+    uint8_t scopes[INPUT_COMMAND_SCOPE_COUNT];
+    size_t n = 0;
+    for (;;) {
+        uint8_t scope = input_command_scope_new();
+        if (scope == INPUT_COMMAND_SCOPE_APP)
+            break;
+        assert(scope < INPUT_COMMAND_SCOPE_COUNT);
+        for (size_t i = 0; i < n; i++)
+            assert(scopes[i] != scope);
+        assert(n < INPUT_COMMAND_SCOPE_COUNT - 1);
+        scopes[n++] = scope;
+    }
+    assert(n == INPUT_COMMAND_SCOPE_COUNT - 1);
+
+    /* Two owners add their first commands. The IDs differ. */
+    struct input_command_registry a, b;
+    input_command_registry_init(&a);
+    input_command_registry_init(&b);
+    input_command_id id_a = input_command_add(&a, scopes[0], "find", "Find");
+    input_command_id id_b = input_command_add(&b, scopes[1], "save", "Save");
+    assert(id_a != INPUT_COMMAND_NONE && id_b != INPUT_COMMAND_NONE);
+    assert(id_a != id_b);
+    input_command_registry_free(&a);
+    input_command_registry_free(&b);
+
+    /* A scope out of range gets no command. */
+    struct input_command_registry c;
+    input_command_registry_init(&c);
+    assert(input_command_add(&c, 200, "x", "X") == INPUT_COMMAND_NONE);
+    input_command_registry_free(&c);
+
+    /* A released scope is free again. The app scope is never given. */
+    input_command_scope_release(INPUT_COMMAND_SCOPE_APP);
+    assert(input_command_scope_new() == INPUT_COMMAND_SCOPE_APP);
+    input_command_scope_release(scopes[3]);
+    assert(input_command_scope_new() == scopes[3]);
+    for (size_t i = 0; i < n; i++)
+        input_command_scope_release(scopes[i]);
+}
+
 /* A binding above the 'style' line survives the load. The style applies to
  * the whole file. */
 static void config_style_order_test(void)
@@ -347,6 +392,7 @@ int main(void)
     default_chord_table_test();
     scoped_binding_wins_test();
     widget_command_binding_test();
+    scope_new_test();
     keymap_match_test();
     zero_modifier_binding_test();
     wide_codepoint_binding_test();
