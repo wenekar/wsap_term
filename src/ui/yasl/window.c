@@ -523,7 +523,7 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
 
     bool wants_gpu = spec->graphics_device != NULL || spec->acquire_device != NULL;
 #if !defined(__APPLE__)
-    if (wants_gpu && !(yasl_get_features() & YASL_FEATURE_VULKAN))
+    if (wants_gpu && !yasl_has_feature(YASL_FEATURE_VULKAN))
         wants_gpu = false;
 #endif
     void *device = spec->graphics_device;

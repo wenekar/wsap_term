@@ -203,7 +203,7 @@ static struct yasl_popup_options popup_options(struct window *w, int depth,
 
 static bool open_popup(struct window *w, int depth, struct rect2i anchor)
 {
-    if (!(yasl_get_features() & YASL_FEATURE_POPUPS)) {
+    if (!yasl_has_feature(YASL_FEATURE_POPUPS)) {
         return false;
     }
     struct window_ui *ui = ui_of(w);

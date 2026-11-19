@@ -12,6 +12,8 @@ int main(void)
 
     assert(yasl_shutdown() == 0 && yasl_shutdown() == 0);
     assert(yasl_get_backend() == YASL_BACKEND_AUTO && yasl_get_features() == 0);
+    assert(!yasl_has_feature(YASL_FEATURE_POPUPS) && !yasl_has_feature(YASL_FEATURE_OPENGL));
+    assert(!yasl_has_feature((enum yasl_feature)0));
     assert(yasl_get_appearance() == 0 && yasl_get_double_click_ms() == 400);
 
     /* Invalid constructor arguments fail before any display is opened. */
