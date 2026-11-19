@@ -112,6 +112,10 @@ _Static_assert(INPUT_COMMAND_APP_COUNT == 29, "app ID count moved");
  *    scope too.
  * 4. Put the ID in the action of the widget, and read the label of a menu
  *    item with `input_command_label()`.
+ * When the owner is destroyed, it calls `input_keymap_clear_scope()` for its
+ * scope on each keymap that it bound. Then it frees its registry and calls
+ * `input_command_scope_release()`. The UI core does not do this, because it
+ * owns no keymap.
  * A registry in one scope never gives an ID that a registry in another scope
  * gives.
  */

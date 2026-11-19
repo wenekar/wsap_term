@@ -461,6 +461,57 @@ static void config_reload_keeps_widget_scope_test(void)
     unsetenv("WSAP_INPUT_CONFIG");
 }
 
+/* A widget owner drops the bindings of its scope, and the other scopes keep
+ * theirs. A clear spec and a clear line in input.conf drop the app scope
+ * only. */
+static void clear_scope_test(void)
+{
+    struct input_keymap km;
+    input_keymap_init(&km);
+    assert(input_keymap_apply_spec(&km, "ctrl+w = close_tab"));
+    assert(input_keymap_apply_spec_scoped(&km, 6, "ctrl+e = settings"));
+    assert(input_keymap_apply_spec_scoped(&km, 7, "ctrl+e = command_palette"));
+    struct input_key_event ctrl_w = { .codepoint = 'w', .mods = INPUT_MOD_CTRL };
+    struct input_key_event ctrl_e = { .codepoint = 'e', .mods = INPUT_MOD_CTRL };
+
+    input_keymap_clear_scope(&km, 6);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_e, 6) == INPUT_COMMAND_NONE);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_e, 7) == INPUT_COMMAND_COMMAND_PALETTE);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_w, 6) == INPUT_COMMAND_CLOSE_TAB);
+
+    /* A clear spec in a widget scope drops that scope only. */
+    assert(input_keymap_apply_spec_scoped(&km, 7, "clear"));
+    assert(input_keymap_lookup_scoped(&km, &ctrl_e, 7) == INPUT_COMMAND_NONE);
+    assert(input_keymap_lookup(&km, &ctrl_w) == INPUT_COMMAND_CLOSE_TAB);
+
+    /* A clear spec in the app scope keeps the widget scopes. */
+    assert(input_keymap_apply_spec_scoped(&km, 7, "ctrl+e = command_palette"));
+    assert(input_keymap_apply_spec(&km, "clear"));
+    assert(input_keymap_lookup(&km, &ctrl_w) == INPUT_COMMAND_NONE);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_e, 7) == INPUT_COMMAND_COMMAND_PALETTE);
+
+    /* A clear line in input.conf drops the defaults and keeps scope 7. */
+    char path[] = "/tmp/wsap-input-config-XXXXXX";
+    int fd = mkstemp(path);
+    assert(fd >= 0);
+    assert(close(fd) == 0);
+    write_input_config(path, "clear\nctrl+k = new_tab\n");
+    assert(setenv("WSAP_INPUT_CONFIG", path, 1) == 0);
+    input_config_init(NULL);
+    input_config_load(&km);
+    struct input_key_event ctrl_k = { .codepoint = 'k', .mods = INPUT_MOD_CTRL };
+    struct input_key_event ctrl_shift_c = {
+        .codepoint = 'c', .mods = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,
+    };
+    assert(input_keymap_lookup(&km, &ctrl_shift_c) == INPUT_COMMAND_NONE);
+    assert(input_keymap_lookup(&km, &ctrl_k) == INPUT_COMMAND_NEW_TAB);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_e, 7) == INPUT_COMMAND_COMMAND_PALETTE);
+
+    input_keymap_free(&km);
+    unlink(path);
+    unsetenv("WSAP_INPUT_CONFIG");
+}
+
 int main(void)
 {
     command_registry_test();
@@ -476,6 +527,7 @@ int main(void)
     config_style_order_test();
     config_reload_style_test();
     config_reload_keeps_widget_scope_test();
+    clear_scope_test();
     static const struct input_shortcut_policy lin = {
         .accel = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,
         .zoom = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,

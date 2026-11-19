@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "util/app_identity.h"
+#include "input/command.h"
 #include "input/keybind.h"
 #include "util/config.h"
 #include "util/fs.h"
@@ -98,7 +99,9 @@ static void input_config_line(void *ctx, const char *path, int line,
     }
     if (!val) {
         if (!strcasecmp(chord, "clear")) {
-            input_keymap_clear(km);
+            /* The file holds app bindings, so a clear line keeps the
+             * bindings of the widget scopes. */
+            input_keymap_clear_scope(km, INPUT_COMMAND_SCOPE_APP);
             return;
         }
         fprintf(stderr, "[%s] %s:%d: expected 'chord = action'\n",

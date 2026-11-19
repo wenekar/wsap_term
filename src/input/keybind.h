@@ -44,6 +44,13 @@ void input_keymap_free(struct input_keymap *km);
 /* Clears all key bindings and lookup cache in keymap `km`. */
 void input_keymap_clear(struct input_keymap *km);
 
+/*
+ * Drops the bindings of scope `scope` from keymap `km`.
+ * The bindings of other scopes stay.
+ * A widget owner calls this for its scope when it is destroyed.
+ */
+void input_keymap_clear_scope(struct input_keymap *km, uint8_t scope);
+
 /* Populates keymap `km` with default bindings for policy `p` and `style`. */
 void input_keymap_defaults(struct input_keymap *km,
                            const struct input_shortcut_policy *p,
@@ -52,6 +59,7 @@ void input_keymap_defaults(struct input_keymap *km,
 /*
  * Adds, replaces, or removes the binding that `spec` names in keymap `km`.
  * A removed binding has the action `none`. The map grows as needed.
+ * The spec `clear` drops the bindings of the app scope.
  * Returns true on success, or false on syntax error or memory shortage.
  */
 bool input_keymap_apply_spec(struct input_keymap *km, const char *spec);
@@ -59,6 +67,7 @@ bool input_keymap_apply_spec(struct input_keymap *km, const char *spec);
 /*
  * Adds, replaces, or removes the binding that `spec` names in scope `scope`
  * of keymap `km`. A removed binding has the action `none`.
+ * The spec `clear` drops the bindings of `scope` only.
  * Returns true on success, or false on syntax error or memory shortage.
  */
 bool input_keymap_apply_spec_scoped(struct input_keymap *km, uint8_t scope,
@@ -68,6 +77,7 @@ bool input_keymap_apply_spec_scoped(struct input_keymap *km, uint8_t scope,
  * Adds, replaces, or removes the binding that `spec` names in scope `scope`
  * of keymap `km`. The action name resolves in registry `reg`. When `reg` has
  * no command with that name, it resolves in the built-in app commands.
+ * The spec `clear` drops the bindings of `scope` only.
  * A widget passes its own registry and scope here.
  * Returns true on success, or false on syntax error or memory shortage.
  */

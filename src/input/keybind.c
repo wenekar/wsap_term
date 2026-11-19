@@ -308,6 +308,18 @@ void input_keymap_clear(struct input_keymap *km)
     }
 }
 
+void input_keymap_clear_scope(struct input_keymap *km, uint8_t scope)
+{
+    if (!km)
+        return;
+    size_t kept = 0;
+    for (size_t i = 0; i < km->n; i++)
+        if (km->binds[i].scope != scope)
+            km->binds[kept++] = km->binds[i];
+    km->n = kept;
+    km->hash_valid = false;
+}
+
 static uint32_t lower(uint32_t c)
 {
     return (c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c;
@@ -439,7 +451,7 @@ bool input_keymap_apply_spec_registry(struct input_keymap *km,
     if (!km || !spec || !reg || scope >= INPUT_COMMAND_SCOPE_COUNT)
         return false;
     if (!strcasecmp(spec, "clear")) {
-        input_keymap_clear(km);
+        input_keymap_clear_scope(km, scope);
         return true;
     }
     const char *eq = strrchr(spec, '=');
@@ -627,22 +639,11 @@ void input_keymap_defaults(struct input_keymap *km,
     add_bind(km, tab, 0, INPUT_KEY_F6, INPUT_COMMAND_FOCUS_TABS);
 }
 
-/* Drops the bindings of scope `scope` from keymap `km`. */
-static void drop_scope(struct input_keymap *km, uint8_t scope)
-{
-    size_t kept = 0;
-    for (size_t i = 0; i < km->n; i++)
-        if (km->binds[i].scope != scope)
-            km->binds[kept++] = km->binds[i];
-    km->n = kept;
-    km->hash_valid = false;
-}
-
 void input_keymap_reset(struct input_keymap *km, enum input_keybind_style style)
 {
     if (!km)
         return;
-    drop_scope(km, INPUT_COMMAND_SCOPE_APP);
+    input_keymap_clear_scope(km, INPUT_COMMAND_SCOPE_APP);
     struct input_keymap defaults;
     input_keymap_defaults(&defaults, &input_platform_shortcuts, style);
     for (size_t i = 0; i < defaults.n; i++) {
