@@ -15,6 +15,7 @@ const struct tb_parts *tb_part(void)
     parts.tab = ui_part_intern("tab");
     parts.tab_active = ui_part_intern("tab active");
     parts.tab_drop = ui_part_intern("tab drop-preview");
+    parts.drop_mark = ui_part_intern("tab-drop-mark");
     parts.tab_close = ui_part_intern("tab-close");
     parts.tab_new = ui_part_intern("tab-new");
     parts.tab_sep = ui_part_intern("tab-separator");

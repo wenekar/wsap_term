@@ -6,6 +6,7 @@
 
 #include "ui/anim.h"
 #include "paint/scene.h"
+#include "ui/surface.h"
 #include "ui/widget.h"
 #include "util/geom.h"
 
@@ -23,6 +24,9 @@ enum ui_tab_action_kind {
     UI_TAB_ACTION_MOVE = UI_ACTION_USER,
     UI_TAB_ACTION_DRAG,
     UI_TAB_ACTION_TEAR_OFF,
+    /* A drag from outside the app dropped on the bar. `index` is the insert
+     * slot, and `pos` is the drop position. */
+    UI_TAB_ACTION_DROP,
 };
 
 /* A core kind must stay below the tab kinds. */
@@ -68,6 +72,8 @@ struct ui_tabbar {
         struct vector2i drag_origin;
         struct vector2i drag_pos;
         struct vector2i size;
+        /* The mark that a drag from outside the app draws on the bar. */
+        struct ui_drop_indicator drop;
         int tab_cap;
         int capacity;
         uint32_t bg_color;
@@ -77,6 +83,7 @@ struct ui_tabbar {
         int external_slot;
         int drag_tab;
         int drag_target_slot;
+        int drag_slot;
         int drag_grab_x;
         int pressed_tab;
         int n_tabs;
@@ -144,6 +151,11 @@ bool ui_tabbar_new_tab_rect(const struct ui_tabbar *tb, struct rect2i *out);
 /* Updates external tab drag hover state and pointer position `pos`. */
 void ui_tabbar_set_external_drag(struct ui_tabbar *tb, bool active,
                                  struct vector2i pos);
+/* Returns the drop mark of a drag from outside the app, or NULL. */
+const struct ui_drop_indicator *ui_tabbar_drop_indicator(
+    const struct ui_tabbar *tb);
+/* Returns the insert slot of the drag that is over the bar, or -1. */
+int ui_tabbar_drop_slot(const struct ui_tabbar *tb);
 /* Returns the target insertion slot index for an external tab drop. */
 int ui_tabbar_external_slot(const struct ui_tabbar *tb);
 

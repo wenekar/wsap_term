@@ -28,7 +28,12 @@ struct list_parts {
     ui_part_id separator;
     ui_part_id label;
     ui_part_id shortcut;
+    ui_part_id drop;
+    ui_part_id drop_into;
 };
+
+/* The color of the drop mark when the stylesheet gives none. */
+#define LIST_DROP_COLOR 0xFF89B4FAu
 
 static struct list_parts list_parts_cache;
 
@@ -44,6 +49,8 @@ static const struct list_parts *list_parts(void)
         list_parts_cache.separator = ui_part_intern("menu-separator");
         list_parts_cache.label = ui_part_intern("menu-label");
         list_parts_cache.shortcut = ui_part_intern("menu-shortcut");
+        list_parts_cache.drop = ui_part_intern("menu-drop");
+        list_parts_cache.drop_into = ui_part_intern("menu-drop-into");
     }
     return &list_parts_cache;
 }
@@ -261,6 +268,15 @@ static const struct ui_list_row *row_of(const struct ui_widget *widget)
     return ui_container_of_const(widget, struct ui_list_row, widget);
 }
 
+/* Returns the drop mark in the coordinates of `row`. */
+static struct rect2i drop_local(const struct ui_list *l,
+                                const struct ui_list_row *row)
+{
+    struct vector2i o = row->widget.bounds.pos;
+    return rect2i_translate(l->state.drop.rect,
+                            (struct vector2i){ .x = -o.x, .y = -o.y });
+}
+
 static bool activate(struct ui_list *l, int index);
 
 static void row_paint(const struct ui_widget *widget,
@@ -290,6 +306,15 @@ static void row_paint(const struct ui_widget *widget,
     struct css_style item = ui_widget_part(&l->widget, item_part(it), pseudo);
     struct ui_paint_box_style box_style = ui_paint_box_style_of(&item, scale);
     ui_paint_box(paint, box, &box_style, NULL);
+    if (l->state.drop_into == row->index &&
+        ui_drop_indicator_active(&l->state.drop)) {
+        struct css_style into = ui_widget_part(&l->widget,
+                                               list_parts()->drop_into, 0);
+        struct ui_paint_box_style into_style =
+            ui_paint_box_style_of(&into, scale);
+        struct rect2i vis = rect2i_intersect(drop_local(l, row), box);
+        ui_paint_box(paint, vis, &into_style, NULL);
+    }
 
     struct ui_text_style text = { .advance = m->cell_w, .cell_h = m->cell_h };
     int text_y = box.y + (box.height - m->cell_h) / 2;
@@ -317,6 +342,19 @@ static void row_paint(const struct ui_widget *widget,
         label_box.x += label_w;
         label_box.width = m->cell_w;
         ui_paint_text(paint, label_box, text, fg, "\xE2\x80\xA6", 3);
+    }
+    if (ui_drop_indicator_active(&l->state.drop) &&
+        l->state.drop_into < 0) {
+        struct rect2i vis = rect2i_intersect(drop_local(l, row), box);
+        if (!rect2i_is_empty(vis)) {
+            struct css_style line = ui_widget_part(&l->widget,
+                                                   list_parts()->drop, 0);
+            uint32_t color = line.has_bg_color ? line.bg_color
+                                               : LIST_DROP_COLOR;
+            color = ui_color_opacity(color,
+                                     css_style_effective_opacity(&line));
+            ui_paint_rect(paint, vis, color);
+        }
     }
     if (!it->shortcut || !it->shortcut[0])
         return;
@@ -428,6 +466,93 @@ static void set_hovered(struct ui_list *l, int index)
     notify(l, UI_ACTION_HIGHLIGHT, index);
 }
 
+static void drop_clear(struct ui_list *l)
+{
+    if (l->state.drop_slot < 0 && l->state.drop_into < 0 &&
+        !ui_drop_indicator_active(&l->state.drop))
+        return;
+    l->state.drop = (struct ui_drop_indicator){0};
+    l->state.drop_slot = -1;
+    l->state.drop_into = -1;
+    ui_widget_invalidate(&l->widget, UI_WIDGET_INVALIDATE_PAINT);
+}
+
+/* Returns the mark rect of the line at the top of `row`. */
+static struct rect2i drop_line(const struct ui_list *l, const struct rect2i *row,
+                               int thickness, bool bottom)
+{
+    int pad = l->state.metrics.edge_pad;
+    struct rect2i b = l->widget.bounds;
+    return (struct rect2i){
+        .pos = { .x = b.x + pad, .y = bottom ? rect2i_end(*row).y - thickness
+                                             : row->y },
+        .size = { .x = b.width - 2 * pad, .y = thickness },
+    };
+}
+
+/* Marks the place where a drop on the list would land. A point near the edge
+ * of a row gives a line between two rows. A point in the middle of a row
+ * gives that row. */
+static void drop_at(struct ui_list *l, struct vector2i pos)
+{
+    if (l->state.n < 1 || !rect2i_contains(l->widget.bounds, pos)) {
+        drop_clear(l);
+        return;
+    }
+    const struct css_scale_context *scale = &l->widget.style_scale;
+    struct css_style mark = ui_widget_part(&l->widget, list_parts()->drop, 0);
+    int thickness = ui_ctx_size(scale, mark.height,
+                                (float)ui_ctx_px(scale, 2));
+    struct ui_drop_indicator next = {0};
+    int slot = -1;
+    int into = -1;
+    int row = row_at(l, pos);
+    if (row < 0) {
+        struct rect2i first = l->state.rows[0].widget.bounds;
+        struct rect2i last = l->state.rows[l->state.n - 1].widget.bounds;
+        if (pos.y < first.y) {
+            slot = 0;
+            next.rect = drop_line(l, &first, thickness, false);
+        } else if (pos.y >= rect2i_end(last).y) {
+            slot = l->state.n;
+            next.rect = drop_line(l, &last, thickness, true);
+        } else {
+            drop_clear(l);
+            return;
+        }
+        next.mark = UI_DROP_MARK_ROW;
+    } else {
+        struct rect2i r = l->state.rows[row].widget.bounds;
+        int rel = pos.y - r.y;
+        if (r.height > 0 && rel * 4 < r.height) {
+            slot = row;
+            next.rect = drop_line(l, &r, thickness, false);
+            next.mark = UI_DROP_MARK_ROW;
+        } else if (r.height > 0 && rel * 4 > r.height * 3) {
+            slot = row + 1;
+            next.rect = drop_line(l, &r, thickness, true);
+            next.mark = UI_DROP_MARK_ROW;
+        } else {
+            slot = row + 1;
+            into = row;
+            next.rect = r;
+            next.mark = UI_DROP_MARK_ROW;
+        }
+    }
+    if (rect2i_is_empty(next.rect)) {
+        drop_clear(l);
+        return;
+    }
+    if (l->state.drop_slot == slot && l->state.drop_into == into &&
+        l->state.drop.mark == next.mark &&
+        rect2i_eq(l->state.drop.rect, next.rect))
+        return;
+    l->state.drop = next;
+    l->state.drop_slot = slot;
+    l->state.drop_into = into;
+    ui_widget_invalidate(&l->widget, UI_WIDGET_INVALIDATE_PAINT);
+}
+
 void ui_list_select_edge(struct ui_list *l, int dir)
 {
     if (!l || !l->state.n || !dir)
@@ -498,8 +623,20 @@ static bool list_event(struct ui_widget *widget, const struct ui_event *event)
     struct ui_list *l = list_of(widget);
     if (event->kind == UI_EVENT_KEY)
         return list_key(l, &event->data.key);
+    if (event->kind == UI_EVENT_DRAG_ENTER ||
+        event->kind == UI_EVENT_DRAG_OVER) {
+        drop_at(l, event->data.drag.pos);
+        return true;
+    }
+    if (event->kind == UI_EVENT_DRAG_LEAVE || event->kind == UI_EVENT_DROP) {
+        drop_clear(l);
+        return true;
+    }
     if (event->kind != UI_EVENT_POINTER)
         return false;
+    /* The native drag owns the pointer. A pointer event means that the drag
+     * is over and that no leave event can come. */
+    drop_clear(l);
     const struct ui_pointer_event *p = &event->data.pointer;
     switch (p->kind) {
     case UI_POINTER_MOTION:
@@ -578,6 +715,8 @@ void ui_list_init(struct ui_list *l)
     *l = (struct ui_list){0};
     l->state.hovered = -1;
     l->state.selected = -1;
+    l->state.drop_slot = -1;
+    l->state.drop_into = -1;
     l->state.allow_focus = true;
     ui_widget_init(&l->widget, &LIST_OPS, NULL);
     ui_widget_set_focusable(&l->widget, false);
@@ -618,6 +757,7 @@ bool ui_list_set_items(struct ui_list *l, const struct ui_list_item *items,
     l->state.n = 0;
     l->state.hovered = -1;
     l->state.selected = -1;
+    drop_clear(l);
     ui_widget_invalidate(&l->widget, UI_WIDGET_INVALIDATE_MEASURE);
     if (!items || n <= 0) {
         ui_widget_set_focusable(&l->widget, false);
@@ -746,4 +886,21 @@ int ui_list_row_height(const struct ui_list *l)
 int ui_list_edge_pad(const struct ui_list *l)
 {
     return l && l->state.metrics.valid ? l->state.metrics.edge_pad : 0;
+}
+
+const struct ui_drop_indicator *ui_list_drop_indicator(
+    const struct ui_list *l)
+{
+    return l && ui_drop_indicator_active(&l->state.drop)
+        ? &l->state.drop : NULL;
+}
+
+int ui_list_drop_into(const struct ui_list *l)
+{
+    return l ? l->state.drop_into : -1;
+}
+
+int ui_list_drop_slot(const struct ui_list *l)
+{
+    return l ? l->state.drop_slot : -1;
 }

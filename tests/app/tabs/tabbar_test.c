@@ -2141,6 +2141,91 @@ static void empty_title_is_caller_supplied(void)
     teardown(&f);
 }
 
+static bool drag_event(struct fixture *f, enum ui_event_kind kind,
+                      struct vector2i pos)
+{
+    const char *mimes[1] = { "text/uri-list" };
+    struct ui_drag_event drag = {
+        .mimes = mimes,
+        .mime_count = 1,
+        .pos = pos,
+    };
+    struct ui_event event = ui_event_drag(kind, &drag, 100);
+    bool handled = ui_widget_event(ui_tabbar_widget(&f->tb), &event);
+    ui_surface_prepare(&f->surface);
+    return handled;
+}
+
+/* A drag from outside the app marks the insert position between two tabs.
+ * The mark moves with the pointer, and a leave removes it. */
+static void drag_mark_follows_the_pointer_test(void)
+{
+    struct fixture f;
+    setup(&f, 3, 900);
+    struct rect2i t0 = tab_rect(&f, 0);
+    struct rect2i t1 = tab_rect(&f, 1);
+    struct vector2i p0 = at(t0, t0.width / 4, t0.height / 2);
+    assert(drag_event(&f, UI_EVENT_DRAG_ENTER, p0));
+    const struct ui_drop_indicator *mark = ui_tabbar_drop_indicator(&f.tb);
+    assert(mark);
+    assert(mark->mark == UI_DROP_MARK_TAB);
+    assert(mark->rect.height == t0.height);
+    assert(mark->rect.width > 0);
+    assert(ui_tabbar_drop_slot(&f.tb) == 0);
+    assert(mark->rect.x == t0.x);
+    /* The app sheet gives the mark its width. */
+    assert(mark->rect.width == 3);
+    int first_x = mark->rect.x;
+
+    /* The left quarter of the second tab inserts before that tab. */
+    struct vector2i p1 = at(t1, t1.width / 4, t1.height / 2);
+    assert(drag_event(&f, UI_EVENT_DRAG_OVER, p1));
+    mark = ui_tabbar_drop_indicator(&f.tb);
+    assert(mark && mark->mark == UI_DROP_MARK_TAB);
+    assert(ui_tabbar_drop_slot(&f.tb) == 1);
+    assert(mark->rect.x != first_x);
+    assert(mark->rect.x <= t1.x && mark->rect.x + mark->rect.width >= t1.x);
+
+    /* The mark is in the scene in the accent color of the sheet. */
+    assert(ui_surface_build_scene(&f.surface, &f.scene));
+    bool painted = false;
+    for (int i = 0; i < f.scene.n_ops; i++) {
+        const struct ui_scene_op *op = &f.scene.ops[i];
+        if (op->kind == UI_SCENE_OP_RECT &&
+            rect2i_eq(op->rect, mark->rect) && op->color == 0xFF89B4FAu)
+            painted = true;
+    }
+    assert(painted);
+    struct rect2i part;
+    assert(find_part(&f, "drop-mark", -1, &part));
+    assert(rect2i_eq(part, mark->rect));
+    assert(lint(&f) == 0);
+
+    assert(drag_event(&f, UI_EVENT_DRAG_LEAVE, p1));
+    assert(ui_tabbar_drop_indicator(&f.tb) == NULL);
+    assert(ui_tabbar_drop_slot(&f.tb) == -1);
+    teardown(&f);
+}
+
+/* A drop on the bar reports its insert slot and removes the mark. */
+static void drop_reports_the_insert_slot_test(void)
+{
+    struct fixture f;
+    setup(&f, 3, 900);
+    struct rect2i t1 = tab_rect(&f, 1);
+    struct vector2i p = at(t1, t1.width / 4, t1.height / 2);
+    assert(drag_event(&f, UI_EVENT_DRAG_OVER, p));
+    assert(ui_tabbar_drop_indicator(&f.tb));
+    clear_log(&f);
+    assert(drag_event(&f, UI_EVENT_DROP, p));
+    const struct ui_action *drop = last(&f, UI_TAB_ACTION_DROP);
+    assert(drop);
+    assert(drop->index == 1);
+    assert(ui_tabbar_drop_indicator(&f.tb) == NULL);
+    assert(ui_tabbar_drop_slot(&f.tb) == -1);
+    teardown(&f);
+}
+
 int main(void)
 {
     title_change_damages_only_its_tab();
@@ -2166,6 +2251,8 @@ int main(void)
     tab_actions_stay_out_of_the_core_kinds();
     sideways_exit_detaches_test();
     external_drag_reveals_single_tab_target_test();
+    drag_mark_follows_the_pointer_test();
+    drop_reports_the_insert_slot_test();
     incoming_tab_has_translucent_drop_preview();
     bar_away_from_the_origin_uses_surface_space();
     tabbar_build_drag_preview_test();

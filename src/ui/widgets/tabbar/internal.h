@@ -7,6 +7,9 @@
 #include "ui/widget.h"
 #include "ui/widgets/tabbar.h"
 
+/* The color of the drop mark when the stylesheet gives none. */
+#define TB_DROP_MARK_COLOR 0xFF89B4FAu
+
 /* The interned part handles of the bar. struct tb_parts stays zero until
  * tb_part() fills it. tb_part() fills it again after a part table restart,
  * because a handle of an earlier table would abort the name lookup. */
@@ -16,6 +19,7 @@ struct tb_parts {
     ui_part_id tab;
     ui_part_id tab_active;
     ui_part_id tab_drop;
+    ui_part_id drop_mark;
     ui_part_id tab_close;
     ui_part_id tab_new;
     ui_part_id tab_sep;

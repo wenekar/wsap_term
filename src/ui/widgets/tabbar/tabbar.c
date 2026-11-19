@@ -388,6 +388,31 @@ bool ui_tabbar_is_dragging(const struct ui_tabbar *tb)
     return tb && (tb->state.drag_state == UI_TAB_DRAG_REORDER || tb->state.drag_state == UI_TAB_DRAG_DETACH);
 }
 
+/* Returns the insert slot of the point `p`, which is in widget space, or -1
+ * when `p` is off the bar. */
+static int tb_slot_at(const struct ui_tabbar *tb, int n_tabs,
+                      struct vector2i size, struct vector2i p)
+{
+    if (!tb || n_tabs < 1)
+        return -1;
+    int h = tb_drop_height(tb, n_tabs);
+    if (p.x < 0 || p.x >= size.x || p.y < 0 || p.y >= h)
+        return -1;
+    struct tb_layout l = tb_layout_for(tb, n_tabs, size);
+    int slot = 0;
+    float base_x = (float)l.pad.l;
+    for (int i = 0; i < n_tabs; i++) {
+        int width = tb_tab_width_at(tb, &l, i);
+        int x = (int)roundf(base_x);
+        base_x += tb_tab_width_f(tb, &l, i) +
+                  (float)l.gap * tb_open_progress(tb, i);
+        if (p.x < x + width / 2)
+            break;
+        slot = i + 1;
+    }
+    return slot;
+}
+
 static void external_drag_at(struct ui_tabbar *tb, bool active,
                              struct vector2i p, int n_tabs,
                              struct vector2i size)
@@ -406,24 +431,15 @@ static void external_drag_at(struct ui_tabbar *tb, bool active,
     }
     bool was_external = tb->state.external_drag;
     tb->state.external_drag = false;
-    struct tb_layout hit_l = tb_layout_for(tb, n_tabs, size);
     tb->state.external_drag = true;
     if (n_tabs == 1 && !was_external) {
         uint64_t now = tb->state.last_tick_ms ? tb->state.last_tick_ms : 1;
         ui_hover_anim_set_target(&tb->state.reveal, 1.0f, now);
     }
     struct tb_layout l = tb_layout_for(tb, n_tabs, size);
-    int slot = 0;
-    float base_x = (float)hit_l.pad.l;
-    for (int i = 0; i < n_tabs; i++) {
-        int width = tb_tab_width_at(tb, &hit_l, i);
-        int x = (int)roundf(base_x);
-        base_x += tb_tab_width_f(tb, &hit_l, i) +
-                  (float)hit_l.gap * tb_open_progress(tb, i);
-        if (p.x < x + width / 2)
-            break;
-        slot = i + 1;
-    }
+    int slot = tb_slot_at(tb, n_tabs, size, p);
+    if (slot < 0)
+        slot = 0;
     tb->state.external_slot = slot;
     tb_slide_tabs_to(tb, n_tabs, slot, n_tabs, (float)(l.tab_width + l.gap));
 }
@@ -442,6 +458,59 @@ static void notify(struct ui_tabbar *tb, int kind, int id, int index, int arg,
         .kind = (enum ui_action_kind)kind, .id = id, .index = index,
         .arg = arg, .pos = pos,
     });
+}
+
+static void clear_drop(struct ui_tabbar *tb)
+{
+    if (tb->state.drag_slot < 0 &&
+        !ui_drop_indicator_active(&tb->state.drop))
+        return;
+    tb->state.drop = (struct ui_drop_indicator){0};
+    tb->state.drag_slot = -1;
+    ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
+}
+
+/* Marks insert slot `slot` with a vertical mark at the gap between two tabs. */
+static void show_drop(struct ui_tabbar *tb, int n_tabs, int slot)
+{
+    if (!tb || slot < 0 || n_tabs < 1) {
+        if (tb)
+            clear_drop(tb);
+        return;
+    }
+    struct tb_layout l = tb_layout_for(tb, n_tabs, tb->state.size);
+    const struct css_scale_context *ctx = tb_ctx(tb);
+    struct css_style mark = tb_style(tb, tb_part()->drop_mark, CSS_PSEUDO_NONE);
+    int width = ui_ctx_size(ctx, mark.width, (float)ui_ctx_px(ctx, 3));
+    float base_x = (float)l.pad.l;
+    for (int i = 0; i < slot; i++) {
+        base_x += tb_tab_width_f(tb, &l, i);
+        base_x += (float)l.gap * tb_open_progress(tb, i);
+    }
+    int x = (int)roundf(base_x) - width / 2;
+    if (x < l.pad.l)
+        x = l.pad.l;
+    int max_x = tb->state.size.x - l.pad.r - width;
+    if (x > max_x)
+        x = max_x;
+    int y = l.pad.t + (l.height - l.pad.t - l.pad.b - l.tab_height) / 2;
+    struct ui_drop_indicator next = {
+        .rect = { .pos = { .x = x, .y = y },
+                  .size = { .x = width, .y = l.tab_height } },
+        .mark = UI_DROP_MARK_TAB,
+    };
+    if (rect2i_is_empty(next.rect)) {
+        clear_drop(tb);
+        return;
+    }
+    /* The model holds surface coordinates. */
+    next.rect = rect2i_translate(next.rect, tb->widget.bounds.pos);
+    if (rect2i_eq(next.rect, tb->state.drop.rect) &&
+        next.mark == tb->state.drop.mark && tb->state.drag_slot == slot)
+        return;
+    tb->state.drop = next;
+    tb->state.drag_slot = slot;
+    ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
 }
 
 static int active_tab(const struct ui_tabbar *tb)
@@ -664,9 +733,37 @@ static bool tb_event(struct ui_widget *widget, const struct ui_event *event)
     }
     if (event->kind == UI_EVENT_KEY)
         return tabbar_key(tb, &event->data.key);
+    if (event->kind == UI_EVENT_DRAG_ENTER ||
+        event->kind == UI_EVENT_DRAG_OVER) {
+        if (tb->state.n_tabs < 1) {
+            clear_drop(tb);
+            return false;
+        }
+        int slot = tb_slot_at(tb, tb->state.n_tabs, tb->state.size,
+                              ui_widget_to_local(widget, event->data.drag.pos));
+        show_drop(tb, tb->state.n_tabs, slot);
+        return slot >= 0;
+    }
+    if (event->kind == UI_EVENT_DRAG_LEAVE) {
+        clear_drop(tb);
+        return true;
+    }
+    if (event->kind == UI_EVENT_DROP) {
+        int slot = tb_slot_at(tb, tb->state.n_tabs, tb->state.size,
+                              ui_widget_to_local(widget, event->data.drag.pos));
+        clear_drop(tb);
+        if (slot >= 0)
+            notify(tb, UI_TAB_ACTION_DROP, 0, slot, 0, event->data.drag.pos);
+        return slot >= 0;
+    }
+    /* The native drag owns the pointer. A pointer event means that the drag
+     * is over and that no leave event can come. */
+    if (event->kind == UI_EVENT_POINTER)
+        clear_drop(tb);
     if (event->kind == UI_EVENT_CAPTURE_LOST) {
         tb->state.pressed_tab = -1;
         cancel_drag(tb);
+        clear_drop(tb);
         return true;
     }
     if (event->kind != UI_EVENT_POINTER)
@@ -794,6 +891,8 @@ static void tb_debug_parts(const struct ui_widget *widget,
     struct tb_layout l = tb_layout_for(tb, n, size);
     if (tb_drop_rect(tb, &l, size, &r))
         ui_debug_part(out, "drop-preview", -1, rect2i_translate(r, o));
+    if (ui_drop_indicator_active(&tb->state.drop))
+        ui_debug_part(out, "drop-mark", -1, tb->state.drop.rect);
     if (tb_new_tab_rect_at(tb, n, size, &r))
         ui_debug_part(out, "tab-new", -1, rect2i_translate(r, o));
     if (tb_drag_rect(tb, &l, n, size, &r))
@@ -954,6 +1053,7 @@ void ui_tabbar_init(struct ui_tabbar *tb)
         .state.hover_close = -1,
         .state.drag_tab = -1,
         .state.drag_target_slot = -1,
+        .state.drag_slot = -1,
         .state.pressed_tab = -1,
         .state.external_slot = -1,
     };
@@ -1218,6 +1318,18 @@ void ui_tabbar_set_external_drag(struct ui_tabbar *tb, bool active,
 int ui_tabbar_external_slot(const struct ui_tabbar *tb)
 {
     return tb && tb->state.external_drag ? tb->state.external_slot : -1;
+}
+
+const struct ui_drop_indicator *ui_tabbar_drop_indicator(
+    const struct ui_tabbar *tb)
+{
+    return tb && ui_drop_indicator_active(&tb->state.drop)
+        ? &tb->state.drop : NULL;
+}
+
+int ui_tabbar_drop_slot(const struct ui_tabbar *tb)
+{
+    return tb ? tb->state.drag_slot : -1;
 }
 
 int ui_tabbar_hovered_tab(const struct ui_tabbar *tb)

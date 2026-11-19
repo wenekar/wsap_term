@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "ui/css.h"
+#include "ui/surface.h"
 #include "ui/widget.h"
 #include "util/geom.h"
 
@@ -50,6 +51,13 @@ struct ui_list {
         int n;
         int hovered;
         int selected;
+        /* The mark that a drag draws on the list. The rect is a line between
+         * two rows, or the row that the drop lands on. */
+        struct ui_drop_indicator drop;
+        /* The insert slot of the drag, from 0 to `n`, or -1. */
+        int drop_slot;
+        /* The row that the drop lands on, or -1 when it lands between rows. */
+        int drop_into;
         char style_class[64];
         struct ui_list_metrics metrics;
         bool pinned;
@@ -82,6 +90,13 @@ int ui_list_row_height(const struct ui_list *l);
 /* Returns the padding between the edge of `l` and its rows, or 0 before `l`
  * has its metrics. */
 int ui_list_edge_pad(const struct ui_list *l);
+/* Returns the drop mark of a drag that is over the list, or NULL. */
+const struct ui_drop_indicator *ui_list_drop_indicator(
+    const struct ui_list *l);
+/* Returns the row that the drag would drop on, or -1. */
+int ui_list_drop_into(const struct ui_list *l);
+/* Returns the insert slot that the drag would use, or -1. */
+int ui_list_drop_slot(const struct ui_list *l);
 
 static inline struct ui_widget *ui_list_widget(struct ui_list *l)
 {

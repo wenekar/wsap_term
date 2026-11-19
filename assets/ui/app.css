@@ -37,3 +37,10 @@
 .settings-primary:disabled { background: var(--control-disabled-bg); color: var(--control-disabled-fg); }
 .settings-nav.active { background: var(--tab-active-bg); color: var(--settings-active-fg); }
 .settings-link { color: var(--section-fg); background: transparent; cursor: pointer; }
+
+/* The marks of a drag that comes from outside the app. A tab bar draws a
+   vertical mark at the insert position. A list draws a line between two rows,
+   or a highlight on the row that takes the drop. */
+.tab-drop-mark { background: var(--accent); width: 3px; }
+.menu-drop { background: var(--accent); height: 2px; }
+.menu-drop-into { background: var(--drop-bg); border-color: var(--accent); border-width: 1px; }
