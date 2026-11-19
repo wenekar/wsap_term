@@ -59,7 +59,7 @@ struct app_tab_content_ops {
     void (*drop_hover)(void *content, bool over);
     /* Runs the content commands of `sc`. Returns true when the content
      * size may have changed. */
-    bool (*shortcut)(void *content, enum input_shortcut sc);
+    bool (*shortcut)(void *content, input_command_id sc);
     /* Scrolls the content to its end. */
     void (*scroll_bottom)(void *content);
     /* Gives the working directory of the content. Returns false if it has

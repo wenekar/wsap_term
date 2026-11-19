@@ -94,7 +94,7 @@ static bool root_event(struct ui_widget *widget, const struct ui_event *event)
     }
     case UI_EVENT_SHORTCUT:
         app_tabs_shortcut(tabs->window,
-                          (enum input_shortcut)event->data.shortcut.action);
+                          (input_command_id)event->data.shortcut.action);
         return true;
     case UI_EVENT_WINDOW_FOCUS: {
         bool focused = event->data.window_focused;

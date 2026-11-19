@@ -298,13 +298,13 @@ enum shortcut_key_route {
     SHORTCUT_KEY_SCROLL_DOWN,
 };
 
-static enum shortcut_key_route shortcut_key_route(enum input_shortcut action)
+static enum shortcut_key_route shortcut_key_route(input_command_id action)
 {
     switch (action) {
-    case INPUT_SHORTCUT_FONT_LARGER:  return SHORTCUT_KEY_FONT_LARGER;
-    case INPUT_SHORTCUT_FONT_SMALLER: return SHORTCUT_KEY_FONT_SMALLER;
-    case INPUT_SHORTCUT_SCROLL_UP:   return SHORTCUT_KEY_SCROLL_UP;
-    case INPUT_SHORTCUT_SCROLL_DOWN: return SHORTCUT_KEY_SCROLL_DOWN;
+    case INPUT_COMMAND_FONT_LARGER:  return SHORTCUT_KEY_FONT_LARGER;
+    case INPUT_COMMAND_FONT_SMALLER: return SHORTCUT_KEY_FONT_SMALLER;
+    case INPUT_COMMAND_SCROLL_UP:   return SHORTCUT_KEY_SCROLL_UP;
+    case INPUT_COMMAND_SCROLL_DOWN: return SHORTCUT_KEY_SCROLL_DOWN;
     default:                        return SHORTCUT_KEY_CONSUMED;
     }
 }
@@ -328,16 +328,16 @@ unsigned input_key_id(const struct input_key_event *ev)
 bool input_keymap_match(const struct input_keymap *km,
                         const struct input_key_event *ev)
 {
-    return input_keymap_lookup(km, ev) != INPUT_SHORTCUT_NONE;
+    return input_keymap_lookup(km, ev) != INPUT_COMMAND_NONE;
 }
 
 enum input_key_route input_shortcut_route_key(const struct input_keymap *km,
         struct input_queue *q,
         struct input_shortcut_state *st,
         const struct input_key_event *key, unsigned key_id,
-        enum input_shortcut *out_sc)
+        input_command_id *out_sc)
 {
-    if (out_sc) *out_sc = INPUT_SHORTCUT_NONE;
+    if (out_sc) *out_sc = INPUT_COMMAND_NONE;
     if (!km || !q || !st || !key || key_id >= INPUT_SHORTCUT_KEY_COUNT)
         return INPUT_KEY_PASSTHROUGH;
     if (key->action != INPUT_PRESS && key->action != INPUT_REPEAT &&
@@ -359,9 +359,9 @@ enum input_key_route input_shortcut_route_key(const struct input_keymap *km,
     if (key->action == INPUT_PRESS)
         shortcut_set_route(st, key_id, SHORTCUT_KEY_PASSTHROUGH);
 
-    enum input_shortcut sc =
+    input_command_id sc =
         input_keymap_lookup(km, key);
-    if (sc == INPUT_SHORTCUT_NONE)
+    if (sc == INPUT_COMMAND_NONE)
         return key->action == INPUT_REPEAT
             ? INPUT_KEY_SWALLOWED : INPUT_KEY_PASSTHROUGH;
 

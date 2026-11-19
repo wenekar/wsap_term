@@ -116,7 +116,7 @@ void terminal_ctx_menu_perform(struct terminal *t, int action)
         break;
     case CTX_ACTION_SETTINGS:
         if (w)
-            window_host_command(w, INPUT_SHORTCUT_SETTINGS);
+            window_host_command(w, INPUT_COMMAND_SETTINGS);
         break;
     default:
         break;
@@ -140,9 +140,9 @@ void terminal_open_ctx_menu(struct terminal *t, struct vector2i at)
     char paste_sc[64] = {0};
     char sel_all_sc[64] = {0};
     if (km) {
-        input_keymap_format_action_chord(km, INPUT_SHORTCUT_COPY, copy_sc, sizeof(copy_sc));
-        input_keymap_format_action_chord(km, INPUT_SHORTCUT_PASTE, paste_sc, sizeof(paste_sc));
-        input_keymap_format_action_chord(km, INPUT_SHORTCUT_SELECT_ALL, sel_all_sc, sizeof(sel_all_sc));
+        input_keymap_format_action_chord(km, INPUT_COMMAND_COPY, copy_sc, sizeof(copy_sc));
+        input_keymap_format_action_chord(km, INPUT_COMMAND_PASTE, paste_sc, sizeof(paste_sc));
+        input_keymap_format_action_chord(km, INPUT_COMMAND_SELECT_ALL, sel_all_sc, sizeof(sel_all_sc));
     }
 
     ui_menu_item items[10];

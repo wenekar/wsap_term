@@ -45,7 +45,7 @@ struct window_host_hooks {
     /* The quit action. It runs after a quit request is allowed. */
     void (*quit)(void *ud);
     void (*reopen)(void *ud);
-    bool (*command)(void *ud, struct window *w, enum input_shortcut action);
+    bool (*command)(void *ud, struct window *w, input_command_id action);
     /*
      * The service step of a host pass. The owner applies its deferred model
      * changes here, such as the destruction of closed content. No frame, no
@@ -97,7 +97,7 @@ bool window_host_request_quit(struct window_host *host);
 void window_host_destroy(struct window_host *host);
 void window_host_reap(struct window_host *host);
 void window_host_schedule(struct window_host *host);
-bool window_host_command(struct window *w, enum input_shortcut action);
+bool window_host_command(struct window *w, input_command_id action);
 void window_host_hold(struct window_host *host);
 void window_host_release(struct window_host *host);
 bool window_host_destroying(const struct window_host *host);

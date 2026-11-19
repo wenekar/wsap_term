@@ -61,6 +61,7 @@ test_cases = [
     ['drop-mime-test', files('ui/yasl/drop_mime_test.c'), app_lib, deps],
     ['window-host-veto-test', files('ui/yasl/host_veto_test.c'), ui_yasl_lib, deps],
     ['window-host-registry-test', files('ui/yasl/host_registry_test.c'), ui_yasl_lib, deps],
+    ['window-text-menu-test', files('ui/yasl/text_menu_test.c'), ui_yasl_lib, deps],
     font_backend == 'coretext'
         ? ['font-coretext-test', files('font/coretext_test.m'), font_lib, font_deps + [m_dep] + platform_deps]
         : ['font-test', files('font/font_test.c'), font_lib, font_deps + [m_dep]],

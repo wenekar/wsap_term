@@ -90,7 +90,7 @@ struct window *app_tabs_detach(struct window *window, int index);
 void app_tabs_set_theme(struct window *window,
                         const struct wsap_vtcore_theme *theme);
 /* Executes tab management shortcuts for `window`. */
-void app_tabs_shortcut(struct window *window, enum input_shortcut sc);
+void app_tabs_shortcut(struct window *window, input_command_id sc);
 /*
  * Retires expired closing tabs in `model` relative to `now_ms`.
  * Destroys associated content and releases bar entries.

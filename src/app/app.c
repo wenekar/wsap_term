@@ -418,11 +418,11 @@ static void open_settings(struct app *a)
     }
 }
 
-static bool host_command(void *ud, struct window *w, enum input_shortcut action)
+static bool host_command(void *ud, struct window *w, input_command_id action)
 {
     (void)w;
     switch (action) {
-    case INPUT_SHORTCUT_SETTINGS:
+    case INPUT_COMMAND_SETTINGS:
         open_settings(ud);
         return true;
     default:

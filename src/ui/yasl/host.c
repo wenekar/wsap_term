@@ -236,7 +236,7 @@ void window_wake_at(struct window *w, uint64_t at_ms)
     arm_wake(w->host);
 }
 
-bool window_host_command(struct window *w, enum input_shortcut action)
+bool window_host_command(struct window *w, input_command_id action)
 {
     struct window_host *host = w->host;
     return host->hooks.command && host->hooks.command(host->hooks.ud, w, action);

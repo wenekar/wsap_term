@@ -13,12 +13,12 @@
 #include "ui/yasl/ui_input.h"
 #include "ui/yasl/internal.h"
 
-static enum ui_edit_command shortcut_edit(enum input_shortcut action)
+static enum ui_edit_command shortcut_edit(input_command_id action)
 {
     switch (action) {
-    case INPUT_SHORTCUT_COPY:       return UI_EDIT_COPY;
-    case INPUT_SHORTCUT_PASTE:      return UI_EDIT_PASTE;
-    case INPUT_SHORTCUT_SELECT_ALL: return UI_EDIT_SELECT_ALL;
+    case INPUT_COMMAND_COPY:       return UI_EDIT_COPY;
+    case INPUT_COMMAND_PASTE:      return UI_EDIT_PASTE;
+    case INPUT_COMMAND_SELECT_ALL: return UI_EDIT_SELECT_ALL;
     default:                        return UI_EDIT_NONE;
     }
 }
@@ -206,7 +206,7 @@ void window_ui_route(struct window *w, struct input_event *ev)
         window_menu_sync(w);
         return;
     case INPUT_SHORTCUT:
-        if (ev->shortcut.action == INPUT_SHORTCUT_DEBUG_OVERLAY) {
+        if (ev->shortcut.action == INPUT_COMMAND_DEBUG_OVERLAY) {
             window_debug_toggle_overlay(w);
             return;
         }
