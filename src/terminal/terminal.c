@@ -228,13 +228,11 @@ void terminal_destroy(struct terminal *t)
 {
     if (!t)
         return;
-    if (t->view.accessibility_timer && t->loop)
-        yasl_loop_del_timer(t->loop, t->view.accessibility_timer);
     ui_widget_destroy(&t->scrollview.widget);
     session_fini(&t->session);
     font_instance_unref(t->font);
     free(t->menu_theme_items);
-    free(t->view.accessibility_text);
+    free(t->view.accessibility_lines);
     wsap_vtcore_snapshot_free(t->snapshot);
     free(t->applied_font_family);
     free(t);
@@ -263,12 +261,12 @@ void terminal_set_window(struct terminal *t, struct window *window)
     if (!window && old && window_surface(old))
         yasl_surface_set_text_input(window_surface(old),
                                     &(struct yasl_text_input){0});
-    /* An accessibility timer belongs to the loop of the old window. */
-    if (t->view.accessibility_timer && t->loop) {
-        yasl_loop_del_timer(t->loop, t->view.accessibility_timer);
-        t->view.accessibility_timer = 0;
-        t->view.accessibility_text_valid = false;
-    }
+    /* The document rows belong to the old window. */
+    t->view.accessibility_line_count = 0;
+    t->view.accessibility_history_length = 0;
+    t->view.accessibility_rows = 0;
+    t->view.accessibility_open_line = false;
+    t->view.accessibility_valid = false;
     if (!window)
         return;
     t->loop = window_host(window)->loop;
