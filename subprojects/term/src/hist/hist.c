@@ -1536,12 +1536,16 @@ void wsap_vtcore_hist_close_open_line(struct hist *h)
     uint64_t rows = first == h->head - 1
                     ? cheap_rows(p->cells, p->wide, cols)
                     : cheap_rows(wsap_vtcore_hist_line_cells(h, id), wsap_vtcore_hist_line_wide(h, id), cols);
-    if (!rows && h->walk_on) {
+    /* The walk of the open line has the exact count of its first rows. Walk
+     * the rest of the line here, so the count of the closed line reads the
+     * walk and does not walk the whole line again. */
+    if (h->walk_on) {
         walk_advance(h);
-        rows = h->walk_rows;
+        if (!rows)
+            rows = h->walk_rows;
     }
-    h->walk_on = false;
     count_closed(h, part(h, first), rows);
+    h->walk_on = false;
 }
 
 static struct hline *open_room(struct hist *h, struct hline *p, size_t text_need,

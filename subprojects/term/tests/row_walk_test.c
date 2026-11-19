@@ -116,7 +116,6 @@ static void no_walk_when_wider(void)
     assert(snapshot);
     assert(wsap_vtcore_snapshot_update(snapshot, term));
     uint64_t narrow = walks(term);
-    assert(narrow > 0);
     assert(wsap_vtcore_resize(term, (struct wsap_vtcore_vector2i){ .x = 200, .y = 24 }));
     assert(wsap_vtcore_snapshot_update(snapshot, term));
     assert(walks(term) == narrow);
@@ -128,8 +127,42 @@ static void no_walk_when_wider(void)
     wsap_vtcore_free(term);
 }
 
+/* A line with wide cells that wraps reaches the history one row at a time.
+ * The walk of the open line counts its rows as they arrive, so the line
+ * closes with that count and needs no second walk. At 39 columns, a row
+ * holds 19 wide cells, so 39 wide cells take three rows, not the two that
+ * the cell count gives. */
+static void closed_line_reuses_its_walk(void)
+{
+    enum { LINES = 100, ROWS = 24, COLS = 39 };
+    struct wsap_vtcore *term = new_term(COLS, ROWS);
+    char line[512];
+    int n = 0;
+    for (int k = 0; k < 39; k++) {
+        memcpy(line + n, "\u4e2d", 3);
+        n += 3;
+    }
+    line[n++] = '\r';
+    line[n++] = '\n';
+    line[n] = '\0';
+    uint64_t before = walks(term);
+    for (int i = 0; i < LINES; i++)
+        feed(term, line);
+    uint64_t during = walks(term) - before;
+    int closed = affected_lines(term) - 1;
+    assert(closed > 0);
+    /* Each line takes three rows, and the cursor row is empty. */
+    assert(wsap_vtcore_history_rows(term) == LINES * 3 + 1 - ROWS);
+    printf("row walk: %d closed wide lines, %llu walks while feeding\n", closed,
+           (unsigned long long)during);
+    fflush(stdout);
+    assert(during == 0);
+    wsap_vtcore_free(term);
+}
+
 int main(void)
 {
+    closed_line_reuses_its_walk();
     walk_once_per_wide_line();
     no_walk_when_wider();
     return 0;
