@@ -299,6 +299,12 @@ int main(void)
     assert(ui_surface_build_scene(ui, scene));
     assert(ui_debug_lint_scene(&view, NULL, 0) == 0);
 
+    /* A chord that runs no command keeps the key for the shell. An undo
+     * chord has no text widget here, so the shell gets its ^Z. */
+    assert(input_keymap_apply_spec(&w->keymap, "ctrl+z = undo"));
+    key(w, YASL_KEY_Z, YASL_MOD_CTRL, 'z', 'Z', NULL, YASL_KEY_PRESS);
+    expect(fds[0], "\x1a");
+
     window_close(other);
     window_close(w);
     test_app_fini(&app);

@@ -109,9 +109,38 @@ static void disabled_command_test(void)
     destroy_window(w);
 }
 
+/* A shortcut that the keymap of the window sends runs the text command of the
+ * focused input. The words undo, redo, and cut must reach the input. */
+static void edit_shortcut_runs_the_text_command_test(void)
+{
+    struct ui_input in;
+    struct window *w = make_window(&in, "");
+    ui_surface_focus(window_ui_key_surface(w), &in.widget);
+    struct ui_event typed = ui_event_text("ab", 2, 0);
+    assert(ui_widget_event(&in.widget, &typed));
+    assert(!strcmp(ui_input_text(&in), "ab"));
+
+    /* An undo shortcut arrives as a command ID, not as a key. */
+    struct input_event undo = {
+        .kind = INPUT_SHORTCUT,
+        .shortcut = { .action = INPUT_COMMAND_UNDO },
+    };
+    window_ui_route(w, &undo);
+    assert(!strcmp(ui_input_text(&in), ""));
+
+    struct input_event redo = {
+        .kind = INPUT_SHORTCUT,
+        .shortcut = { .action = INPUT_COMMAND_REDO },
+    };
+    window_ui_route(w, &redo);
+    assert(!strcmp(ui_input_text(&in), "ab"));
+    destroy_window(w);
+}
+
 int main(void)
 {
     text_menu_test();
+    edit_shortcut_runs_the_text_command_test();
     disabled_command_test();
     return 0;
 }
