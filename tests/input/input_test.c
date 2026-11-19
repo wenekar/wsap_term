@@ -415,6 +415,52 @@ static void config_reload_style_test(void)
     unsetenv("WSAP_INPUT_CONFIG");
 }
 
+/* A reload replaces the app bindings and keeps the widget scope bindings.
+ * A stale app binding of the old file does not stay. */
+static void config_reload_keeps_widget_scope_test(void)
+{
+    char path[] = "/tmp/wsap-input-config-XXXXXX";
+    int fd = mkstemp(path);
+    assert(fd >= 0);
+    assert(close(fd) == 0);
+    write_input_config(path, "ctrl+k = new_tab\n");
+    assert(setenv("WSAP_INPUT_CONFIG", path, 1) == 0);
+    input_config_init(NULL);
+
+    struct input_command_registry own;
+    input_command_registry_init(&own);
+    input_command_id find = input_command_add(&own, 5, "find", "Find");
+    struct input_keymap km;
+    input_keymap_init(&km);
+    input_config_load(&km);
+    assert(input_keymap_apply_spec_registry(&km, &own, 5, "ctrl+f = find"));
+
+    struct input_key_event ctrl_f = { .codepoint = 'f', .mods = INPUT_MOD_CTRL };
+    struct input_key_event ctrl_j = { .codepoint = 'j', .mods = INPUT_MOD_CTRL };
+    struct input_key_event ctrl_k = { .codepoint = 'k', .mods = INPUT_MOD_CTRL };
+    struct input_key_event ctrl_c = { .codepoint = 'c', .mods = INPUT_MOD_CTRL };
+    assert(input_keymap_lookup(&km, &ctrl_k) == INPUT_COMMAND_NEW_TAB);
+
+    write_input_config(path, "style = legacy\nctrl+j = new_tab\n");
+    input_config_load(&km);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_f, 5) == find);
+    assert(input_keymap_lookup(&km, &ctrl_f) == INPUT_COMMAND_NONE);
+    assert(input_keymap_lookup(&km, &ctrl_j) == INPUT_COMMAND_NEW_TAB);
+    assert(input_keymap_lookup(&km, &ctrl_k) == INPUT_COMMAND_NONE);
+    assert(input_keymap_lookup(&km, &ctrl_c) == INPUT_COMMAND_NONE);
+
+    /* A second load of the same file gives the same keymap. */
+    size_t n = km.n;
+    input_config_load(&km);
+    assert(km.n == n);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_f, 5) == find);
+
+    input_keymap_free(&km);
+    input_command_registry_free(&own);
+    unlink(path);
+    unsetenv("WSAP_INPUT_CONFIG");
+}
+
 int main(void)
 {
     command_registry_test();
@@ -429,6 +475,7 @@ int main(void)
     keymap_grows_test();
     config_style_order_test();
     config_reload_style_test();
+    config_reload_keeps_widget_scope_test();
     static const struct input_shortcut_policy lin = {
         .accel = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,
         .zoom = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,

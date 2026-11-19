@@ -752,6 +752,16 @@ const struct input_keymap *window_keymap(const struct window *w)
     return w ? &w->keymap : NULL;
 }
 
+void window_reload_input(struct window *w)
+{
+    if (!w)
+        return;
+    input_config_load(&w->keymap);
+    /* A route that the old keymap gave must not apply to a key of the new
+     * keymap. */
+    w->sc_state = (struct input_shortcut_state){0};
+}
+
 void window_copy(struct window *w, enum yasl_selection sel, const char *text)
 {
     (void)w;

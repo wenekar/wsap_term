@@ -135,7 +135,10 @@ bool input_parse_chord(const char *s, unsigned *mods, uint32_t *codepoint,
  */
 bool input_parse_action(const char *s, input_command_id *out);
 
-/* Resets keymap `km` to the default bindings for `style`. */
+/*
+ * Resets the app scope of keymap `km` to the default bindings for `style`.
+ * The bindings of widget scopes stay.
+ */
 void input_keymap_reset(struct input_keymap *km, enum input_keybind_style style);
 
 struct app_identity;
@@ -145,7 +148,10 @@ void input_config_init(const struct app_identity *identity);
 
 /*
  * Loads the input configuration into keymap `km`.
- * A window calls this once in its init, so each window owns its bindings.
+ * The load replaces the bindings of the app scope. The bindings of widget
+ * scopes stay.
+ * A window calls this in its init. The app calls it again for each open
+ * window when it reloads its configuration.
  */
 void input_config_load(struct input_keymap *km);
 

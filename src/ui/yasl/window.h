@@ -196,9 +196,14 @@ struct window_pointer window_pointer(const struct window *w);
 void window_repaint_all(struct window *w);
 bool window_take_repaint(struct window *w);
 const struct input_keyboard_state *window_keyboard(const struct window *w);
-/* Returns the keymap of window `w`. The window loads it once at creation, so
- * a key that the window binds stays in that window. */
+/* Returns the keymap of window `w`. The window loads it at creation and in
+ * window_reload_input(). */
 const struct input_keymap *window_keymap(const struct window *w);
+/* Loads the input configuration into the keymap of window `w` again. The
+ * app bindings change. The widget scope bindings stay. The window forgets the
+ * shortcut route of each key that is down. The app calls this for each open
+ * window when it reloads its configuration. */
+void window_reload_input(struct window *w);
 void window_copy(struct window *w, enum yasl_selection sel, const char *text);
 void window_paste(struct window *w, enum yasl_selection sel);
 int window_modifiers(const struct window *w);

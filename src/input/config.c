@@ -66,7 +66,8 @@ static void write_default_input_config(const struct app_identity *identity,
 static const char *config_tag = "";
 
 /* The style and the path of the app configuration. The app sets them once,
- * before it opens a window. Each window then reads its own keymap. */
+ * before it opens a window. Each window then reads its own keymap, at its
+ * init and at each reload. */
 static enum input_keybind_style config_style = INPUT_KEYBIND_MODERN;
 static char config_path[4096];
 static bool config_has_path;
@@ -136,8 +137,9 @@ void input_config_load(struct input_keymap *km)
 {
     if (!km)
         return;
-    /* A load reads the style again, so a style change takes effect without
-     * a restart, as a binding change does. */
+    /* A load reads the style again. The app loads the keymap of each open
+     * window again on a reload, so a style change and a binding change take
+     * effect without a restart. */
     config_style = INPUT_KEYBIND_MODERN;
     input_config_find_style();
     input_keymap_reset(km, config_style);

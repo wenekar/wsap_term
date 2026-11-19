@@ -627,10 +627,27 @@ void input_keymap_defaults(struct input_keymap *km,
     add_bind(km, tab, 0, INPUT_KEY_F6, INPUT_COMMAND_FOCUS_TABS);
 }
 
+/* Drops the bindings of scope `scope` from keymap `km`. */
+static void drop_scope(struct input_keymap *km, uint8_t scope)
+{
+    size_t kept = 0;
+    for (size_t i = 0; i < km->n; i++)
+        if (km->binds[i].scope != scope)
+            km->binds[kept++] = km->binds[i];
+    km->n = kept;
+    km->hash_valid = false;
+}
+
 void input_keymap_reset(struct input_keymap *km, enum input_keybind_style style)
 {
     if (!km)
         return;
-    input_keymap_free(km);
-    input_keymap_defaults(km, &input_platform_shortcuts, style);
+    drop_scope(km, INPUT_COMMAND_SCOPE_APP);
+    struct input_keymap defaults;
+    input_keymap_defaults(&defaults, &input_platform_shortcuts, style);
+    for (size_t i = 0; i < defaults.n; i++) {
+        const struct input_keybind *b = &defaults.binds[i];
+        keymap_set(km, b->scope, b->mods, b->codepoint, b->key, b->action);
+    }
+    input_keymap_free(&defaults);
 }
