@@ -253,10 +253,20 @@ static void focus_chain_scope_test(void)
     teardown(&f);
 }
 
-/* Sends an Alt key that commits `text`, as a layout that types a symbol with
- * Alt does, and routes the queued events. */
-static void alt_text_key(struct fixture *f, enum yasl_key code, uint32_t label,
-                         const char *text)
+/* Routes the queued events, as the drain loop does. */
+static void drain(struct fixture *f)
+{
+    struct input_event ev;
+    while (input_queue_take(&f->window->input, &ev)) {
+        window_ui_test_route(f->window, &ev);
+        input_event_release(&ev);
+    }
+}
+
+/* Converts an Alt key that commits `text`, as a layout that types a symbol
+ * with Alt does. The events stay in the queue. */
+static void queue_alt_text_key(struct fixture *f, enum yasl_key code,
+                               uint32_t label, const char *text)
 {
     static uint64_t text_id;
     struct yasl_event key = {
@@ -277,11 +287,14 @@ static void alt_text_key(struct fixture *f, enum yasl_key code, uint32_t label,
     key.action = YASL_KEY_RELEASE;
     key.key.text_id = 0;
     window_native_input(f->window, &key);
-    struct input_event ev;
-    while (input_queue_take(&f->window->input, &ev)) {
-        window_ui_test_route(f->window, &ev);
-        input_event_release(&ev);
-    }
+}
+
+/* Converts an Alt key that commits `text` and routes it. */
+static void alt_text_key(struct fixture *f, enum yasl_key code, uint32_t label,
+                         const char *text)
+{
+    queue_alt_text_key(f, code, label, text);
+    drain(f);
 }
 
 /* With no focused widget, the keys go to the default focus. The scope of
@@ -364,6 +377,126 @@ static void taken_bound_key_keeps_text_test(void)
     teardown(&f);
 }
 
+/* The focus moves after a key is converted and before it is routed. The
+ * scope at the route decides the command and the text. */
+static void focus_moves_before_route_test(void)
+{
+    struct fixture f;
+    show(&f);
+    struct input_command_registry reg;
+    input_command_registry_init(&reg);
+    input_command_id id = input_command_add(&reg, SCOPE_A, "probe_a8", "A8");
+    assert(input_keymap_apply_spec_registry(&f.window->keymap, &reg, SCOPE_A,
+                                            "alt+8 = probe_a8"));
+    /* The key is bound only in the new scope. The command runs, and the
+     * text is dropped. */
+    focus(&f, &f.plain);
+    queue_alt_text_key(&f, YASL_KEY_8, '8', "[");
+    focus(&f, &f.a);
+    drain(&f);
+    assert(f.a.shortcuts == 1 && f.a.last_action == (int)id);
+    assert(f.a.texts == 0);
+
+    /* The key is bound only in the old scope. No command runs, and the
+     * text is typed once. */
+    queue_alt_text_key(&f, YASL_KEY_8, '8', "[");
+    focus(&f, &f.plain);
+    drain(&f);
+    assert(f.a.shortcuts == 1 && f.plain.shortcuts == 0);
+    assert(f.plain.texts == 1);
+    input_command_registry_free(&reg);
+    teardown(&f);
+}
+
+/* A Tab and a scoped chord arrive in one batch. The Tab moves the focus
+ * into the scope, so the chord runs its command and types no text. */
+static void tab_then_scoped_text_chord_test(void)
+{
+    struct fixture f;
+    show(&f);
+    struct input_command_registry reg;
+    input_command_registry_init(&reg);
+    input_command_id id = input_command_add(&reg, SCOPE_A, "probe_a8", "A8");
+    assert(input_keymap_apply_spec_registry(&f.window->keymap, &reg, SCOPE_A,
+                                            "alt+8 = probe_a8"));
+    focus(&f, &f.plain);
+    struct yasl_event tab = {
+        .type = YASL_EVENT_KEY,
+        .action = YASL_KEY_PRESS,
+        .key = { .key = YASL_KEY_TAB, .text_input = YASL_KEY_TEXT_NONE },
+    };
+    window_native_input(f.window, &tab);
+    tab.action = YASL_KEY_RELEASE;
+    window_native_input(f.window, &tab);
+    queue_alt_text_key(&f, YASL_KEY_8, '8', "[");
+    drain(&f);
+    assert(ui_surface_focused(window_ui_key_surface(f.window)) == &f.a.widget);
+    assert(f.a.shortcuts == 1 && f.a.last_action == (int)id);
+    assert(f.a.texts == 0 && f.leaf.texts == 0 && f.plain.texts == 0);
+    input_command_registry_free(&reg);
+    teardown(&f);
+}
+
+/* A key can send its text later, in a TEXT event with no key ID. A bound
+ * key that runs its command types no text. */
+static void deferred_text_bound_key_test(void)
+{
+    struct fixture f;
+    show(&f);
+    assert(input_keymap_apply_spec(&f.window->keymap, "alt+9 = scroll_down"));
+    focus(&f, &f.plain);
+    struct yasl_event key = {
+        .type = YASL_EVENT_KEY,
+        .action = YASL_KEY_PRESS,
+        .mods = YASL_MOD_ALT,
+        .key = { .key = YASL_KEY_9, .codepoint = '9', .shifted = ')' },
+    };
+    window_native_input(f.window, &key);
+    window_native_input(f.window, &(struct yasl_event){
+        .type = YASL_EVENT_TEXT, .text = "]", .length = 1,
+    });
+    key.action = YASL_KEY_RELEASE;
+    window_native_input(f.window, &key);
+    drain(&f);
+    assert(f.plain.shortcuts == 1 &&
+           f.plain.last_action == INPUT_COMMAND_SCROLL_DOWN);
+    assert(f.plain.texts == 0);
+    teardown(&f);
+}
+
+/* The shortcut queue is full, so the command of a bound key is lost. The
+ * text of the key is typed, so the key does not lose both. */
+static void full_queue_types_text_test(void)
+{
+    struct fixture f;
+    show(&f);
+    assert(input_keymap_apply_spec(&f.window->keymap, "alt+9 = scroll_down"));
+    focus(&f, &f.plain);
+    while (input_queue_add(&f.window->input, &(struct input_event){
+               .kind = INPUT_SHORTCUT,
+           }) != INPUT_PUSH_DROPPED) {
+    }
+    struct input_event key = {
+        .kind = INPUT_KEY,
+        .key = {
+            .codepoint = '9', .base = '9', .mods = INPUT_MOD_ALT,
+            .action = INPUT_PRESS,
+        },
+    };
+    window_ui_test_route(f.window, &key);
+    struct input_event text = {
+        .kind = INPUT_TEXT,
+        .text = { .utf8 = "]", .len = 1, .source = INPUT_TEXT_KEY },
+    };
+    window_ui_test_route(f.window, &text);
+    assert(f.plain.texts == 1);
+    assert(f.plain.shortcuts == 0);
+    struct input_event ev;
+    while (input_queue_take(&f.window->input, &ev))
+        input_event_release(&ev);
+    teardown(&f);
+}
+
 int main(void)
 {
     two_scopes_test();
@@ -374,5 +507,9 @@ int main(void)
     modal_scope_test();
     scoped_text_chord_test();
     taken_bound_key_keeps_text_test();
+    focus_moves_before_route_test();
+    tab_then_scoped_text_chord_test();
+    deferred_text_bound_key_test();
+    full_queue_types_text_test();
     return 0;
 }

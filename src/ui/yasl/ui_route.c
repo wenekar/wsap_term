@@ -301,11 +301,11 @@ void window_ui_route(struct window *w, struct input_event *ev)
     default:
         break;
     }
-    /* The text of a bound key is dropped only when the key went to the
-     * keymap. A widget that took the key gets its text. */
-    if (ev->kind == INPUT_TEXT &&
-        ((ev->text.source == INPUT_TEXT_SHORTCUT && ui_of(w)->key_to_keymap) ||
-         (ev->text.source != INPUT_TEXT_COMMIT && ui_of(w)->replace_key_text)))
+    /* The route of a key decides its text. The text is dropped when the
+     * key ran a command, or when the widget that took the key replaces its
+     * text. A widget that took the key gets its text. */
+    if (ev->kind == INPUT_TEXT && ev->text.source == INPUT_TEXT_KEY &&
+        (ui_of(w)->key_to_keymap || ui_of(w)->replace_key_text))
         return;
     enum window_input_result result = menu_input(w, ev);
     if (result == WINDOW_INPUT_UNHANDLED)
@@ -323,8 +323,11 @@ void window_ui_route(struct window *w, struct input_event *ev)
             ui_surface_command_scope(window_ui_key_surface(w)), NULL);
         if (route == INPUT_KEY_DROPPED)
             fprintf(stderr, "shortcut queue is full\n");
+        /* A command that the full queue dropped did not run, so the text
+         * of the key is typed. */
         if (ev->key.action != INPUT_RELEASE)
-            ui_of(w)->key_to_keymap = route != INPUT_KEY_PASSTHROUGH;
+            ui_of(w)->key_to_keymap = route == INPUT_KEY_SHORTCUT ||
+                                      route == INPUT_KEY_SWALLOWED;
     }
     if (ev->kind == INPUT_KEY && ev->key.action != INPUT_RELEASE)
         ui_of(w)->replace_key_text = result == WINDOW_INPUT_REPLACE_TEXT;

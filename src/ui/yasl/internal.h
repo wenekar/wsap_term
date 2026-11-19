@@ -102,7 +102,8 @@ struct window_ui {
     bool mounted;
     bool pointer_hidden;
     bool replace_key_text;
-    /* The last key press went to the keymap, so its text is dropped. */
+    /* The keymap took the last key press or repeat, so its text is
+     * dropped. */
     bool key_to_keymap;
     bool suspended;
 };
