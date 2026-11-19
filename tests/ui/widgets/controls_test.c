@@ -228,6 +228,38 @@ static void icon_click_test(void)
     teardown(&f);
 }
 
+/* A press on the icon does not move the keyboard focus. The icon is not
+ * focusable, so a click must not take the focus from another widget. */
+static void icon_press_keeps_focus_test(void)
+{
+    struct ui_icon icon = {0};
+    struct ui_widget other;
+    struct fixture f;
+    ui_icon_set_label(&icon, "X");
+    ui_icon_set_action_id(&icon, 7);
+    ui_widget_init(&other, NULL, NULL);
+    ui_widget_set_focusable(&other, true);
+    ui_widget_set_fixed_size(ui_icon_widget(&icon),
+                             (struct vector2i){ .x = 40, .y = 20 });
+    ui_widget_set_fixed_size(&other, (struct vector2i){ .x = 40, .y = 20 });
+    ui_widget_set_placement(&other, (struct ui_placement){
+        .kind = UI_PLACE_AT, .anchor.pos = { .y = 60 },
+    });
+    show(&f, ui_icon_widget(&icon));
+    assert(ui_widget_add_child(&f.root, &other));
+    ui_surface_focus(&f.surface, &other);
+    lint(&f);
+    struct rect2i bounds = ui_icon_widget(&icon)->bounds;
+    pointer(&f, UI_POINTER_PRESS,
+            (struct vector2i){ .x = bounds.x + bounds.width / 2,
+                               .y = bounds.y + bounds.height / 2 });
+    assert(ui_surface_focused(&f.surface) == &other);
+    pointer(&f, UI_POINTER_RELEASE,
+            (struct vector2i){ .x = bounds.x + bounds.width / 2,
+                               .y = bounds.y + bounds.height / 2 });
+    teardown(&f);
+}
+
 int main(void)
 {
     slider_range_test();
@@ -237,6 +269,7 @@ int main(void)
     spinner_test();
     icon_test();
     icon_click_test();
+    icon_press_keeps_focus_test();
     printf("control widget tests passed\n");
     return 0;
 }

@@ -119,8 +119,9 @@ static bool icon_event(struct ui_widget *widget, const struct ui_event *event)
     case UI_POINTER_PRESS:
         if (!inside || pointer->button != 0)
             return false;
+        /* The icon takes no focus. A click must not move the keyboard focus
+         * away from the widget that has it. */
         icon->state.pressed = true;
-        ui_widget_focus(widget);
         ui_widget_capture_pointer(widget);
         return true;
     case UI_POINTER_RELEASE: {
@@ -184,6 +185,8 @@ void ui_icon_init(struct ui_icon *icon)
     *icon = (struct ui_icon){0};
     ui_widget_init(&icon->widget, &ICON_OPS, NULL);
     ui_widget_set_style_identity(&icon->widget, "icon", NULL, "icon");
+    /* A press on the icon must not move the keyboard focus. */
+    ui_widget_set_keeps_press_focus(&icon->widget, true);
 }
 
 void ui_icon_set_image(struct ui_icon *icon, const struct ui_image *image)
