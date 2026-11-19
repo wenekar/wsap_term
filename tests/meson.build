@@ -43,6 +43,7 @@ test_cases = [
     ['settings-window-test', files('app/config/window_test.c'), app_lib, deps],
     ['window-ui-hosts-test', files('app/tabs/ui_hosts_test.c'), app_lib, deps],
     ['window-ui-tree-test', files('app/tabs/ui_tree_test.c'), app_lib, deps],
+    ['drop-paste-probe-test', files('app/tabs/drop_paste_probe_test.c'), app_lib, deps],
     ['window-debug-server-test', files('ui/yasl/debug_server_test.c'), app_lib, deps],
     ['render-test', files('render/render_test.c'), [render_lib, render_term_lib, ui_lib], deps],
     ['render-kernels-test', files('render/cpu/kernels_test.c'), render_lib, [m_dep, thread_dep]],
@@ -60,7 +61,6 @@ test_cases = [
     ['window-ui-input-test', files('ui/yasl/ui_input_test.c'), app_lib, deps],
     ['window-native-input-test', files('ui/yasl/native_input_test.c'), app_lib, deps],
     ['window-compose-test', files('ui/yasl/compose_test.c'), [ui_yasl_lib, render_lib, render_term_lib], deps],
-    ['drop-mime-test', files('ui/yasl/drop_mime_test.c'), app_lib, deps],
     ['drop-route-test', files('ui/yasl/drop_route_test.c'), ui_yasl_lib, deps],
     ['window-key-route-test', files('ui/yasl/key_route_test.c'), ui_yasl_lib, deps],
     ['drop-route-regress-test', files('ui/yasl/drop_route_regress_test.c'), ui_yasl_lib, deps],
@@ -76,6 +76,7 @@ test_cases = [
     ['ui-accessibility-test', files('ui/accessibility_test.c'), ui_lib, ui_test_deps],
     ['ui-focus-test', files('ui/focus_test.c'), ui_lib, ui_test_deps],
     ['ui-dispatch-test', files('ui/dispatch_test.c'), ui_lib, ui_test_deps],
+    ['ui-drag-event-test', files('ui/drag_event_test.c'), ui_lib, ui_test_deps],
     ['ui-box-test', files('ui/box_test.c'), ui_lib, ui_test_deps],
     ['ui-typed-widgets-test', files('ui/typed_widgets_test.c'), ui_lib, ui_test_deps],
     ['ui-style-context-test', files('ui/style_context_test.c'), ui_lib, ui_test_deps],
@@ -193,6 +194,7 @@ extlib_tests = [
     'settings-window-test',
     'window-ui-hosts-test',
     'window-ui-tree-test',
+    'drop-paste-probe-test',
     'window-debug-server-test',
 ]
 

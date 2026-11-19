@@ -20,6 +20,8 @@
  *   Hover state from an earlier drag does not give it.
  * - Drop hover state clears on leave, drop, cancel, and widget or surface
  *   teardown.
+ * - A menu popup takes no drop. A drop event on a popup ends the drag and
+ *   reaches no widget.
  *
  * The cases feed native events through window_native_input(), so the order of
  * a real backend is part of the test. Wayland and X11 send LEAVE before the
@@ -391,6 +393,85 @@ static void widget_freed_while_a_popup_is_open_test(void)
     teardown(&f);
 }
 
+/* Two stand-ins for native surfaces: the window surface and a menu popup.
+ * The test never draws on them. */
+static char fake_root_surface, fake_popup_surface;
+#define FAKE_ROOT ((struct yasl_surface *)&fake_root_surface)
+#define FAKE_POPUP ((struct yasl_surface *)&fake_popup_surface)
+
+/* Sends one native drop event on `surface`, then routes what it queued. The
+ * fake surfaces are gone before the route, so no draw can reach them. */
+static void native_on(struct fixture *f, struct yasl_surface *surface,
+                      struct yasl_event e)
+{
+    assert(window_native_add(f->window, FAKE_ROOT));
+    assert(window_native_add(f->window, FAKE_POPUP));
+    e.surface = surface;
+    window_native_input(f->window, &e);
+    window_native_remove(f->window, FAKE_POPUP);
+    window_native_remove(f->window, FAKE_ROOT);
+    struct input_event ev;
+    while (input_queue_take(&f->window->input, &ev)) {
+        window_ui_route(f->window, &ev);
+        input_event_release(&ev);
+    }
+}
+
+/* 13. A drop event on a menu popup has popup coordinates. The popup takes no
+ * drop, so the event reaches no widget of the window surface. It still ends
+ * the drag. */
+static void drop_on_a_popup_reaches_no_widget_test(void)
+{
+    struct fixture f;
+    show(&f);
+    focus(&f, &f.top.widget);
+    struct yasl_event over = {
+        .type = YASL_EVENT_DROP, .action = YASL_DROP_OVER,
+        .x = over_bottom.x, .y = over_bottom.y,
+    };
+    snprintf(over.drop.mime, sizeof over.drop.mime, "image/png");
+    native_on(&f, FAKE_ROOT, over);
+    assert(f.bottom->enter == 1);
+    /* The popup point (40, 20) is over the top probe in window
+     * coordinates. */
+    over.x = over_top.x;
+    over.y = over_top.y;
+    native_on(&f, FAKE_POPUP, over);
+    assert(f.top.enter == 0);
+    assert(f.bottom->leave == 1);
+    struct yasl_event drop = over;
+    drop.action = YASL_DROP_RELEASE;
+    drop.text = "PNG";
+    drop.length = 3;
+    native_on(&f, FAKE_POPUP, drop);
+    assert(f.top.drop == 0 && f.bottom->drop == 0);
+    assert(f.top.leave == 0 && f.bottom->leave == 1);
+    assert(!ui_surface_drag_target(window_ui_key_surface(f.window)));
+    teardown(&f);
+}
+
+/* 14. A file drop on a popup with no OVER before it reaches no widget, and
+ * the drag that hovered the window ends. */
+static void file_drop_on_a_popup_ends_the_drag_test(void)
+{
+    struct fixture f;
+    show(&f);
+    focus(&f, &f.top.widget);
+    hover(&f, "text/uri-list", over_bottom);
+    assert(f.bottom->enter == 1);
+    struct yasl_event drop = {
+        .type = YASL_EVENT_DROP, .action = YASL_DROP_RELEASE,
+        .x = over_top.x, .y = over_top.y,
+        .text = FILE_URI, .length = sizeof FILE_URI - 1,
+    };
+    snprintf(drop.drop.mime, sizeof drop.drop.mime, "text/uri-list");
+    native_on(&f, FAKE_POPUP, drop);
+    assert(f.top.drop == 0 && f.bottom->drop == 0);
+    assert(f.bottom->leave == 1);
+    assert(!ui_surface_drag_target(window_ui_key_surface(f.window)));
+    teardown(&f);
+}
+
 int main(void)
 {
     static void (*const cases[])(void) = {
@@ -406,6 +487,8 @@ int main(void)
         tree_replaced_during_a_drag_test,
         window_closed_during_a_drag_test,
         widget_freed_while_a_popup_is_open_test,
+        drop_on_a_popup_reaches_no_widget_test,
+        file_drop_on_a_popup_ends_the_drag_test,
     };
     /* CASE=n runs one case, so a run reports each failure. */
     const char *pick = getenv("CASE");
