@@ -58,22 +58,6 @@ bool drop_mime_is_uri_list(const char *mime)
     return mime && (!mime[0] || !strcasecmp(mime, "text/uri-list"));
 }
 
-bool drop_hover_retarget(struct drop_hover *hover, const void *target)
-{
-    if (!hover)
-        return false;
-    bool moved = hover->target != target;
-    hover->previous = moved ? hover->target : NULL;
-    if (moved)
-        hover->entered = false;
-    else
-        hover->entered = hover->active;
-    bool left = hover->active && moved;
-    hover->target = target;
-    hover->active = target != NULL;
-    return left;
-}
-
 /* Images and other binary payloads stay in memory. A dropped image reaches
  * the widget as a DROP event of its own type, and the widget keeps or shows
  * the bytes. This function is the old file path. It refuses every payload,

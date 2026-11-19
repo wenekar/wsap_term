@@ -114,23 +114,6 @@ static void drag_offers_star_test(void)
     assert(!ui_drag_offers(&drag, "text/uri-list"));
 }
 
-/* A drag that moves within one widget sends no leave. A drag that moves to
- * another widget, or off the surface, sends exactly one. */
-static void leave_once_test(void)
-{
-    struct drop_hover hover = {0};
-    int a = 1, b = 2;
-    assert(!drop_hover_retarget(&hover, &a));
-    assert(!drop_hover_retarget(&hover, &a));
-    assert(hover.active && hover.target == &a);
-    assert(drop_hover_retarget(&hover, &b));
-    assert(hover.active && hover.target == &b);
-    assert(drop_hover_retarget(&hover, NULL));
-    assert(!hover.active);
-    /* The surface is already left, so a second leave sends nothing. */
-    assert(!drop_hover_retarget(&hover, NULL));
-}
-
 /* A drop no longer becomes a file. */
 static void no_file_drop_test(void)
 {
@@ -145,7 +128,6 @@ int main(void)
     drop_event_payload_test();
     pick_mime_test();
     drag_offers_star_test();
-    leave_once_test();
     no_file_drop_test();
     return 0;
 }

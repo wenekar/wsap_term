@@ -623,6 +623,10 @@ static bool list_event(struct ui_widget *widget, const struct ui_event *event)
     struct ui_list *l = list_of(widget);
     if (event->kind == UI_EVENT_KEY)
         return list_key(l, &event->data.key);
+    if (event->kind == UI_EVENT_CAPTURE_LOST) {
+        drop_clear(l);
+        return true;
+    }
     if (event->kind == UI_EVENT_DRAG_ENTER ||
         event->kind == UI_EVENT_DRAG_OVER) {
         drop_at(l, event->data.drag.pos);
