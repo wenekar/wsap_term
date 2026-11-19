@@ -85,7 +85,11 @@ struct ui_accessibility_text_provider {
      * count of the copy. */
     size_t (*read)(void *instance, size_t offset, char *out, size_t capacity);
     /* Optional. The host takes the lock before the first read of a publish and
-     * releases it after the last read, so the reads see one document. */
+     * releases it after the last read, so the reads see one document. A
+     * provider lock must block the document changes of other threads. The
+     * lock can nest on one thread. Lock and unlock on the same thread. Do
+     * not change the document on the thread that holds the lock: the reads
+     * after the change can show the old document. */
     void (*lock)(void *instance);
     void (*unlock)(void *instance);
 };

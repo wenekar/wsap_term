@@ -81,9 +81,17 @@ struct terminal_view {
     /* The document cache of one provider publish. The first lock call takes
      * one snapshot and one measure, and every length and read call reuses
      * them. The unlock at depth zero frees them. The term lock is held for
-     * the whole cache life, so the cache cannot go stale. */
+     * the whole cache life, so other threads cannot change the term. The
+     * lock depth and the cache change and are read only under the term
+     * lock. The holder thread can still change the term, because the term
+     * lock nests. A length or read call then compares the history
+     * generation and the history rows above the view with the values of
+     * the fill, and fills the cache again when one changed. A change of the
+     * view rows alone shows at the next provider lock. */
     struct wsap_vtcore_snapshot *accessibility_snapshot;
     struct accessibility_document accessibility_document;
+    uint64_t accessibility_document_generation;
+    int accessibility_document_rows;
     int accessibility_lock_depth;
     bool accessibility_document_valid;
     /* The time of the last text build, the timer that sends the text of a
