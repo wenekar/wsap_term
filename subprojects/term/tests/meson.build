@@ -163,6 +163,19 @@ if cc.has_link_argument('-Wl,--wrap=realloc') and cc.has_link_argument('-Wl,--wr
   )
 endif
 
+if cc.has_link_argument('-Wl,--wrap=calloc')
+  rows_exact_failure_test = executable('rows-exact-failure-test',
+    'rows_exact_failure_test.c',
+    c_args: test_c_args,
+    link_args: ['-Wl,--wrap=calloc'],
+    dependencies: [wsap_vtcore_internal_dep],
+  )
+  test('rows-exact-failure-test', rows_exact_failure_test,
+    env: test_env,
+    suite: 'unit',
+  )
+endif
+
 version_test = executable('version-test', 'version_test.c',
   c_args: test_c_args + ['-DWSAP_VTCORE_TEST_PROJECT_VERSION="@0@"'.format(meson.project_version())],
   dependencies: [wsap_vtcore_internal_dep],

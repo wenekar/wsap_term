@@ -3216,8 +3216,13 @@ static bool rows_store_exact(struct hist *h, uint64_t id, uint64_t rows)
     if (rows >= ROWS_UNKNOWN) {
         if (!h->exact_rows) {
             h->exact_rows = calloc((size_t)h->ring_mask + 1, sizeof(*h->exact_rows));
-            if (!h->exact_rows)
+            if (!h->exact_rows) {
+                /* The byte cannot hold this count. Clear the flag and the
+                 * value, so no reader returns the count of the old width. */
+                first->flags &= (uint8_t)~HLINE_ROWS_EXACT;
+                first->wrap_rows = ROWS_UNKNOWN;
                 return false;
+            }
         }
         h->exact_rows[seq & h->ring_mask] = (uint32_t)rows;
     }
