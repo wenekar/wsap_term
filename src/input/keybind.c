@@ -70,6 +70,9 @@ static bool lookup_name(const struct name_entry *tab, size_t n,
     return false;
 }
 
+/* Finds the command that `s` names for scope `scope`. The function reads
+ * `reg` first, then the built-in app commands. A widget registry holds no app
+ * command, so a widget scope can still bind one. */
 static bool parse_action_in(const struct input_command_registry *reg,
                             uint8_t scope, const char *s,
                             input_command_id *out)
@@ -82,6 +85,9 @@ static bool parse_action_in(const struct input_command_registry *reg,
     }
     const struct input_command *cmd =
         input_command_find_name_scoped(reg, scope, s);
+    if (!cmd && reg != input_command_builtin())
+        cmd = input_command_find_name_scoped(input_command_builtin(),
+                                             INPUT_COMMAND_SCOPE_APP, s);
     if (!cmd)
         return false;
     *out = cmd->id;

@@ -108,7 +108,8 @@ _Static_assert(INPUT_COMMAND_APP_COUNT == 29, "app ID count moved");
  *    keep the ID that it returns.
  * 3. Bind the ID with `input_keymap_apply_spec_registry()` when the command
  *    has a chord. Pass the registry of the widget. A menu item needs no
- *    chord.
+ *    chord. An app command, such as `close_tab`, can bind in the widget
+ *    scope too.
  * 4. Put the ID in the action of the widget, and read the label of a menu
  *    item with `input_command_label()`.
  * A registry in one scope never gives an ID that a registry in another scope

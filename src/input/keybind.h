@@ -66,7 +66,8 @@ bool input_keymap_apply_spec_scoped(struct input_keymap *km, uint8_t scope,
 
 /*
  * Adds, replaces, or removes the binding that `spec` names in scope `scope`
- * of keymap `km`. The action name resolves in registry `reg`.
+ * of keymap `km`. The action name resolves in registry `reg`. When `reg` has
+ * no command with that name, it resolves in the built-in app commands.
  * A widget passes its own registry and scope here.
  * Returns true on success, or false on syntax error or memory shortage.
  */

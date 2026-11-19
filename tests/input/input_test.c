@@ -309,6 +309,35 @@ static void scope_new_test(void)
         input_command_scope_release(scopes[i]);
 }
 
+/* A widget registry binds an app command in its own scope. The binding
+ * runs only in that scope. A widget command with the name of an app command
+ * wins in its scope. */
+static void widget_scope_binds_app_command_test(void)
+{
+    struct input_command_registry own;
+    input_command_registry_init(&own);
+    input_command_id find = input_command_add(&own, 4, "find", "Find");
+    input_command_id own_copy = input_command_add(&own, 4, "copy", "Copy Path");
+    assert(find != INPUT_COMMAND_NONE && own_copy != INPUT_COMMAND_NONE);
+
+    struct input_keymap km;
+    input_keymap_init(&km);
+    assert(input_keymap_apply_spec_registry(&km, &own, 4, "ctrl+w = close_tab"));
+    assert(input_keymap_apply_spec_registry(&km, &own, 4, "ctrl+f = find"));
+    assert(input_keymap_apply_spec_registry(&km, &own, 4, "ctrl+y = copy"));
+    assert(!input_keymap_apply_spec_registry(&km, &own, 4, "ctrl+q = no_such"));
+
+    struct input_key_event ctrl_w = { .codepoint = 'w', .mods = INPUT_MOD_CTRL };
+    struct input_key_event ctrl_f = { .codepoint = 'f', .mods = INPUT_MOD_CTRL };
+    struct input_key_event ctrl_y = { .codepoint = 'y', .mods = INPUT_MOD_CTRL };
+    assert(input_keymap_lookup_scoped(&km, &ctrl_w, 4) == INPUT_COMMAND_CLOSE_TAB);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_w, 0) == INPUT_COMMAND_NONE);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_f, 4) == find);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_y, 4) == own_copy);
+    input_keymap_free(&km);
+    input_command_registry_free(&own);
+}
+
 /* A binding above the 'style' line survives the load. The style applies to
  * the whole file. */
 static void config_style_order_test(void)
@@ -393,6 +422,7 @@ int main(void)
     scoped_binding_wins_test();
     widget_command_binding_test();
     scope_new_test();
+    widget_scope_binds_app_command_test();
     keymap_match_test();
     zero_modifier_binding_test();
     wide_codepoint_binding_test();
