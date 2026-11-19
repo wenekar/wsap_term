@@ -415,19 +415,22 @@ void window_native_input(struct window *w, const struct yasl_event *in)
             ? INPUT_TEXT_KEY : INPUT_TEXT_COMMIT;
         if (in->ime.key_id && in->ime.key_id == w->native_key.key.text_id &&
             in->surface == w->native_key.surface) {
-            /* The text belongs to the key. A key that the global map binds
-             * runs an app command, so its text must not also reach the
-             * widget. Other key text replaces what the key produced. */
-            /* The router and this test read one map, so the key text and the
-             * key route never disagree. Both read the map of this window. */
-            bool bound = input_keymap_match(window_keymap(w),
+            /* The text belongs to the key. A key that the keymap binds
+             * can run a command, so the router drops its text when the key
+             * goes to the keymap. Other key text replaces what the key
+             * produced. */
+            /* The router and this test read one map and one scope, so the
+             * key text and the key route never disagree. Both read the map
+             * of this window in the command scope of its key surface. */
+            bool bound = input_keymap_lookup_scoped(window_keymap(w),
                                             &(struct input_key_event){
                 .key = native_key(w->native_key.key.key),
                 .codepoint = w->native_key.key.codepoint,
                 .shifted = w->native_key.key.shifted,
                 .base = us_base(w->native_key.key.key),
                 .mods = (unsigned)input_modifiers_from_yasl(w->native_key.mods),
-            });
+            }, ui_surface_command_scope(window_ui_key_surface(w))) !=
+                INPUT_COMMAND_NONE;
             queue_key(w, &w->native_key, in->text, in->length);
             source = bound ? INPUT_TEXT_SHORTCUT : INPUT_TEXT_KEY;
             w->native_key = (struct yasl_event){0};

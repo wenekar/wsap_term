@@ -322,6 +322,14 @@ int main(void)
     native_key(w, YASL_KEY_U, YASL_MOD_ALT, 'u', 'U', YASL_KEY_TEXT_NONE, NULL);
     expect(fds[0], "\033u");
 
+    /* TR_Q types `[` with alt+8. The terminal takes a key that the shell
+     * owns, so the shell gets the text of the key also when the key is
+     * bound to undo. */
+    assert(input_keymap_apply_spec(&w->keymap, "alt+8 = undo"));
+    key(w, YASL_KEY_8, YASL_MOD_ALT, '8', '(', "[", YASL_KEY_PRESS);
+    expect(fds[0], "[");
+    assert(input_keymap_apply_spec(&w->keymap, "alt+8 = none"));
+
     /* f5 = cut sends the f5 sequence, not ^X. */
     assert(input_keymap_apply_spec(&w->keymap, "f5 = cut"));
     key(w, YASL_KEY_F5, 0, 0, 0, NULL, YASL_KEY_PRESS);
@@ -384,6 +392,33 @@ int main(void)
     raw_key(w, YASL_KEY_F2, 0, 0, 0, YASL_KEY_RELEASE);
     expect(fds[0], "");
     assert(wsap_vtcore_feed(session->term, "\033[<u", 4, 0));
+
+    /* A command scope on an ancestor of the terminal view applies to the
+     * view. Its chord runs the scoped command and does not reach the
+     * shell. */
+    {
+        struct ui_surface *keys = window_ui_key_surface(w);
+        struct ui_widget *target = ui_surface_key_target(keys);
+        assert(target && target->parent);
+        struct input_command_registry reg;
+        input_command_registry_init(&reg);
+        input_command_id id = input_command_add(&reg, 3, "probe_k", "Probe K");
+        assert(id != INPUT_COMMAND_NONE);
+        assert(input_keymap_apply_spec_registry(&w->keymap, &reg, 3,
+                                                "ctrl+k = probe_k"));
+        raw_key(w, YASL_KEY_K, YASL_MOD_CTRL, 'k', 'K', YASL_KEY_PRESS);
+        raw_key(w, YASL_KEY_K, YASL_MOD_CTRL, 'k', 'K', YASL_KEY_RELEASE);
+        expect(fds[0], "\x0b");
+        target->parent->command_scope = 3;
+        assert(ui_surface_command_scope(keys) == 3);
+        raw_key(w, YASL_KEY_K, YASL_MOD_CTRL, 'k', 'K', YASL_KEY_PRESS);
+        raw_key(w, YASL_KEY_K, YASL_MOD_CTRL, 'k', 'K', YASL_KEY_RELEASE);
+        expect(fds[0], "");
+        target->parent->command_scope = 0;
+        assert(input_keymap_apply_spec_registry(&w->keymap, &reg, 3,
+                                                "ctrl+k = none"));
+        input_command_registry_free(&reg);
+    }
 
     window_close(other);
     window_close(w);

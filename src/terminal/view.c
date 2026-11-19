@@ -229,10 +229,11 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
     }
     if (event->kind == UI_EVENT_KEY) {
         const struct input_key_event *key = event->data.key.native;
-        /* A key that the app binds belongs to the app command. The terminal
+        /* A key that the keymap binds belongs to its command. The terminal
          * declines it, so the keymap of the window in step 3 runs the
-         * command. A key that the shell owns goes to the encoder, which
-         * sends the key that the user pressed. */
+         * command. The lookup reads the command scope of the key surface,
+         * as step 3 does. A key that the shell owns goes to the encoder,
+         * which sends the key that the user pressed. */
         if (key && key->action != INPUT_PRESS) {
             /* A repeat or a release follows its press. The app copy clears
              * the selection, so a new decision would send the key of a copy
@@ -244,8 +245,9 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
                 return false;
             }
         } else if (key) {
-            input_command_id command =
-                input_keymap_lookup(window_keymap(w), key);
+            input_command_id command = input_keymap_lookup_scoped(
+                window_keymap(w), key,
+                ui_surface_command_scope(ui_widget_surface(widget)));
             unsigned id = input_key_id(key);
             if (command != INPUT_COMMAND_NONE &&
                 !edit_key_for_shell(t, command)) {

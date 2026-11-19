@@ -1,5 +1,6 @@
 #include "ui/surface.h"
 
+#include "input/command.h"
 #include "ui/internal/tree.h"
 #include "paint/scene.h"
 #include "ui/css.h"
@@ -841,8 +842,10 @@ static bool dispatch_pointer(struct ui_surface *surface,
 
 #define UI_CAPTURE_PATH_MAX 64
 
-static struct ui_widget *keyboard_target(const struct ui_surface *surface)
+struct ui_widget *ui_surface_key_target(const struct ui_surface *surface)
 {
+    if (!surface)
+        return NULL;
     if (surface->impl.focused)
         return surface->impl.focused;
     if (surface->impl.modal)
@@ -851,6 +854,15 @@ static struct ui_widget *keyboard_target(const struct ui_surface *surface)
     if (fallback && !ui_widget_stale(surface, fallback))
         return fallback;
     return surface->impl.root;
+}
+
+uint8_t ui_surface_command_scope(const struct ui_surface *surface)
+{
+    for (struct ui_widget *w = ui_surface_key_target(surface); w; w = w->parent)
+        if (w->command_scope != INPUT_COMMAND_SCOPE_APP &&
+            w->command_scope < INPUT_COMMAND_SCOPE_COUNT)
+            return w->command_scope;
+    return INPUT_COMMAND_SCOPE_APP;
 }
 
 static bool capture_keyboard(struct ui_surface *surface,
@@ -891,7 +903,7 @@ static bool capture_keyboard(struct ui_surface *surface,
 static bool dispatch_keyboard(struct ui_surface *surface,
                               const struct ui_event *event)
 {
-    struct ui_widget *target = keyboard_target(surface);
+    struct ui_widget *target = ui_surface_key_target(surface);
     if (capture_keyboard(surface, target, event) ||
         ui_widget_bubble(target, event))
         return true;
