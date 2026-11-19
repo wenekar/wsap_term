@@ -250,11 +250,12 @@ enum input_push_result input_queue_add(struct input_queue *q,
                                         const struct input_event *ev);
 
 /*
- * Enqueues a file drop event containing URI list `uris` of length `len`.
+ * Enqueues a file drop event containing URI list `uris` of length `len`,
+ * released at device pixel position `pos`.
  * Returns the number of bytes queued, or 0 on failure.
  */
 size_t input_queue_push_drop_files(struct input_queue *q, const char *uris,
-                                  size_t len);
+                                  size_t len, struct vector2i pos);
 
 /*
  * Enqueues a paste event for a text drop of `data` of length `len`, released

@@ -108,10 +108,9 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
         return WINDOW_INPUT_HANDLED;
     case INPUT_DROP_FILES:
         event = ui_event_drop_files(ev->drop.data, ev->drop.len, now_ms);
-        /* The file drop goes to the widget that drew the mark. */
-        struct ui_widget *drop_target =
-            ui_surface_drag_target(&ui_of(w)->screen);
-        if (drop_target && ui_widget_event(drop_target, &event))
+        /* The file drop goes to the widget at its drop location. */
+        if (ev->drop.dropped &&
+            route_release(w, "text/uri-list", ev->drop.pos, &event))
             return WINDOW_INPUT_HANDLED;
         ui_surface_dispatch(keys, &event);
         return WINDOW_INPUT_HANDLED;

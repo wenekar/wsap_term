@@ -140,9 +140,10 @@ size_t input_queue_push_drop_text(struct input_queue *q, const char *data,
     return push_data(q, INPUT_PASTE, data, len, &pos);
 }
 
-size_t input_queue_push_drop_files(struct input_queue *q, const char *uris, size_t len)
+size_t input_queue_push_drop_files(struct input_queue *q, const char *uris,
+                                  size_t len, struct vector2i pos)
 {
-    return push_data(q, INPUT_DROP_FILES, uris, len, NULL);
+    return push_data(q, INPUT_DROP_FILES, uris, len, &pos);
 }
 
 size_t input_queue_push_drop(struct input_queue *q, const char *mime,

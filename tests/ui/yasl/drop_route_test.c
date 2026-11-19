@@ -154,7 +154,8 @@ static void file_drop_goes_to_the_marked_widget_test(void)
     assert(f.mark.enter == 1);
     struct input_event ev = {
         .kind = INPUT_DROP_FILES,
-        .drop = { .data = (char *)"file:///tmp/a\r\n", .len = 17 },
+        .drop = { .data = (char *)"file:///tmp/a\r\n", .len = 17,
+                  .pos = over_mark, .dropped = true },
     };
     window_ui_route(f.window, &ev);
     assert(f.mark.drop == 1);

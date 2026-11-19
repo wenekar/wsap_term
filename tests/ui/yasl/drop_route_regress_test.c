@@ -150,6 +150,14 @@ static void hover(struct fixture *f, const char *mime, struct vector2i pos)
     native(f, &e);
 }
 
+static void leave(struct fixture *f, struct vector2i pos)
+{
+    native(f, &(struct yasl_event){
+        .type = YASL_EVENT_DROP, .action = YASL_DROP_LEAVE,
+        .x = pos.x, .y = pos.y,
+    });
+}
+
 static void release(struct fixture *f, const char *mime, const char *data,
                     struct vector2i pos)
 {
@@ -236,6 +244,38 @@ static void paste_after_a_binary_drop_goes_to_the_focus_test(void)
     teardown(&f);
 }
 
+/* 5. Wayland and X11 order: LEAVE, then the release. A file drop goes to the
+ * widget at the drop location, not to the focus. */
+static void file_drop_after_leave_goes_to_its_location_test(void)
+{
+    struct fixture f;
+    show(&f);
+    focus(&f, &f.top.widget);
+    hover(&f, "text/uri-list", over_bottom);
+    leave(&f, over_bottom);
+    release(&f, "text/uri-list", FILE_URI, over_bottom);
+    assert(f.bottom->drop == 1);
+    assert(f.top.drop == 0);
+    teardown(&f);
+}
+
+/* 6. Cocoa order: the release, then LEAVE. The file drop goes to its
+ * location, and the next paste goes to the focus. */
+static void file_drop_before_leave_goes_to_its_location_test(void)
+{
+    struct fixture f;
+    show(&f);
+    focus(&f, &f.top.widget);
+    hover(&f, "text/uri-list", over_bottom);
+    release(&f, "text/uri-list", FILE_URI, over_bottom);
+    leave(&f, over_bottom);
+    assert(f.bottom->drop == 1);
+    assert(f.top.drop == 0);
+    clipboard(&f, "y");
+    assert(f.top.paste == 1 && f.bottom->paste == 0);
+    teardown(&f);
+}
+
 int main(void)
 {
     static void (*const cases[])(void) = {
@@ -243,6 +283,8 @@ int main(void)
         paste_after_a_text_drop_goes_to_the_focus_test,
         paste_after_a_file_drop_goes_to_the_focus_test,
         paste_after_a_binary_drop_goes_to_the_focus_test,
+        file_drop_after_leave_goes_to_its_location_test,
+        file_drop_before_leave_goes_to_its_location_test,
     };
     /* CASE=n runs one case, so a run reports each failure. */
     const char *pick = getenv("CASE");

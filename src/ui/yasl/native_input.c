@@ -372,7 +372,7 @@ static void queue_drop_release(struct window *w, const struct yasl_event *in)
         input_queue_push_drop_text(&w->input, in->text, in->length, pos);
     } else if (mime_is_uri_list(mime)) {
         if (uri_list_has_file(in))
-            input_queue_push_drop_files(&w->input, in->text, in->length);
+            input_queue_push_drop_files(&w->input, in->text, in->length, pos);
         else
             input_queue_push_drop(&w->input, "text/uri-list", in->text,
                                   in->length, pos);
