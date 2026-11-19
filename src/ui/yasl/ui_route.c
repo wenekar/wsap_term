@@ -88,7 +88,7 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
     case INPUT_PASTE:
         event = ui_event_paste(ev->paste.data, ev->paste.len, now_ms);
         /* The release of a drag goes to the widget that drew the mark. */
-        struct ui_widget *drop_target = ui_surface_drag_target(keys);
+        struct ui_widget *drop_target = ui_surface_drag_target(&ui_of(w)->screen);
         if (drop_target && ui_widget_event(drop_target, &event))
             return WINDOW_INPUT_HANDLED;
         ui_surface_dispatch(keys, &event);
@@ -96,7 +96,7 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
     case INPUT_DROP_FILES:
         event = ui_event_drop_files(ev->drop.data, ev->drop.len, now_ms);
         /* The file drop goes to the widget that drew the mark. */
-        drop_target = ui_surface_drag_target(keys);
+        drop_target = ui_surface_drag_target(&ui_of(w)->screen);
         if (drop_target && ui_widget_event(drop_target, &event))
             return WINDOW_INPUT_HANDLED;
         ui_surface_dispatch(keys, &event);
@@ -143,7 +143,9 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
         /* A drag that stays on one widget gets ENTER once, then OVER. A drag
          * that leaves the widget gives it LEAVE. */
         bool enter = false;
-        struct ui_widget *left = ui_surface_drag_hover(keys, target, &enter);
+        /* The drop is hit-tested on the window surface, so its hover state
+         * lives there too. A popup must not keep a target it cannot reach. */
+        struct ui_widget *left = ui_surface_drag_hover(screen, target, &enter);
         if (left) {
             struct ui_event leave_event =
                 ui_event_drag(UI_EVENT_DRAG_LEAVE, &drag, now_ms);
