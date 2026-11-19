@@ -841,7 +841,7 @@ bool ui_scene_paint_clipped(struct font_instance *fi, uint32_t *px, int width, i
         case UI_SCENE_OP_RECT:
         case UI_SCENE_OP_BLEND_RECT:
             if (op_outside_clip(scene, op, clip)) break;
-            if (op->kind == UI_SCENE_OP_RECT && op->geom >= 0) {
+            if (ui_scene_op_has_geom(op)) {
                 paint_float_op(k, px, width, height, scene, op, clip);
                 break;
             }

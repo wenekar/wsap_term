@@ -247,7 +247,7 @@ static uint64_t hash_op(uint64_t h, const struct ui_scene *s,
         if (image)
             h = hash_bytes(h, &image->gen, sizeof(image->gen));
     }
-    if (op->geom >= 0 && op->geom < s->n_geoms) {
+    if (ui_scene_op_has_geom(op) && op->geom < s->n_geoms) {
         const struct ui_scene_geom *g = &s->geoms[op->geom];
         h = hash_bytes(h, g, sizeof(*g));
         if (g->point_len && g->point_off + g->point_len <= (uint32_t)s->n_points)
@@ -538,7 +538,7 @@ static struct ui_scene_op *op_add_geom(struct ui_scene *s,
 const struct ui_scene_geom *ui_scene_op_geom(const struct ui_scene *s,
                                              const struct ui_scene_op *op)
 {
-    if (!s || !op || op->geom < 0 || op->geom >= s->n_geoms)
+    if (!s || !ui_scene_op_has_geom(op) || op->geom >= s->n_geoms)
         return NULL;
     return &s->geoms[op->geom];
 }
@@ -877,7 +877,7 @@ static bool op_visible(const struct ui_scene_op *op)
     case UI_SCENE_OP_CIRCLE:
         return op->alpha > 0;
     case UI_SCENE_OP_RECT:
-        return op->geom >= 0 || (op->color >> 24) > 0;
+        return ui_scene_op_has_geom(op) || (op->color >> 24) > 0;
     case UI_SCENE_OP_IMAGE:
         return op->image.src != NULL && op->alpha > 0;
     default:

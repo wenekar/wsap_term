@@ -917,7 +917,7 @@ static bool build_scene(struct gpu_build *b, struct font_instance *ufont,
          * The float geometry waits for its GPU instances. The CPU painter
          * draws such a frame, so the pixels stay correct.
          */
-        if (op->geom >= 0) {
+        if (ui_scene_op_has_geom(op)) {
             b->failed = true;
             break;
         }
