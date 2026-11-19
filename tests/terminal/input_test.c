@@ -340,6 +340,15 @@ int main(void)
     raw_key(w, YASL_KEY_Z, YASL_MOD_CTRL, 'z', 'Z', YASL_KEY_REPEAT);
     expect(fds[0], "\x1a\x1a\x1a");
 
+    /* A shortcut with no key sends nothing. The debug socket `shortcut
+     * undo` takes this path. */
+    struct input_event keyless = {
+        .kind = INPUT_SHORTCUT,
+        .shortcut = { .action = INPUT_COMMAND_UNDO },
+    };
+    window_ui_test_route(w, &keyless);
+    expect(fds[0], "");
+
 
     window_close(other);
     window_close(w);
