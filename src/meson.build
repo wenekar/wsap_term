@@ -159,13 +159,17 @@ endif
 # The installable framework SDK. Each library gets a dependency that a
 # subproject or an installed pkg-config consumer can use. The terminal app
 # stays outside this set.
+#
+# libdl is a Linux library. A macOS consumer must not get -ldl, because the
+# platform puts these calls in libSystem.
+framework_dl_libs = system == 'linux' ? ['-ldl'] : []
 framework_specs = [
     {
         'name': 'wsap-base',
         'lib': base_lib,
         'description': 'Base utilities of the WSAP UI framework',
         'uses': ['yyjson'],
-        'private_libs': ['-pthread', '-ldl', '-lm'],
+        'private_libs': ['-pthread', '-lm'] + framework_dl_libs,
         'external': [thread_dep, dl_dep, m_dep, yyjson_dep] + platform_deps,
     },
     {
@@ -189,7 +193,7 @@ framework_specs = [
         'lib': font_lib,
         'description': 'Font discovery, shaping, and rasterization of the WSAP UI framework',
         'uses': ['wsap-base', 'wsap-paint', 'freetype2', 'fontconfig', 'harfbuzz'],
-        'private_libs': ['-pthread', '-ldl', '-lm'],
+        'private_libs': ['-pthread', '-lm'] + framework_dl_libs,
         'external': font_deps + [m_dep] + platform_deps,
     },
     {
@@ -205,7 +209,7 @@ framework_specs = [
         'lib': theme_lib,
         'description': 'Theme catalog of the WSAP UI framework',
         'uses': ['wsap-base', 'wsap-ui'],
-        'private_libs': ['-pthread', '-ldl', '-lm'],
+        'private_libs': ['-pthread', '-lm'] + framework_dl_libs,
         'external': lib_deps,
     },
     {
@@ -213,7 +217,7 @@ framework_specs = [
         'lib': render_lib,
         'description': 'Scene renderer of the WSAP UI framework',
         'uses': ['wsap-base', 'wsap-paint', 'wsap-font'],
-        'private_libs': ['-pthread', '-ldl', '-lm'],
+        'private_libs': ['-pthread', '-lm'] + framework_dl_libs,
         'external': lib_deps,
     },
 ]
