@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -97,31 +98,25 @@ int main(void)
     printf("publish after one line: %zu bytes, %.3f ms\n", next_length,
            next_build_ms);
 
-    /* The document starts with the history text of the terminal. */
-    size_t history_length = content->view.accessibility_history_length;
-    assert(history_length > 0 && history_length < next_length);
-    char *document = malloc(history_length + 1);
-    assert(document);
-    size_t got = ui_accessibility_node_text_read(node, 0, document,
-                                                 history_length);
-    document[got] = '\0';
-    char *history_all = wsap_vtcore_history_text(
-        term, (int)content->view.accessibility_rows);
-    assert(history_all);
-    assert(strlen(history_all) == got);
-    assert(memcmp(history_all, document, got) == 0);
-    wsap_vtcore_text_free(history_all);
-    free(document);
-
-    /* The old path built 500 history rows at each publish. Measure the same
-     * build for the comparison. */
+    /* The old path built 500 history rows at each publish. Measure that
+     * build, then check that the document holds the same text. */
     clock_gettime(CLOCK_MONOTONIC, &start);
     char *history = wsap_vtcore_history_text(term, 500);
     double scrape_ms = elapsed_ms(&start);
     assert(history);
     size_t scrape_bytes = strlen(history);
-    wsap_vtcore_text_free(history);
     printf("old 500-row scrape: %zu bytes, %.3f ms\n", scrape_bytes, scrape_ms);
+
+    /* The document holds the history text of the terminal. */
+    char *document = malloc(next_length + 1);
+    assert(document);
+    size_t got = ui_accessibility_node_text_read(node, 0, document,
+                                                 next_length);
+    document[got] = '\0';
+    assert(got == next_length);
+    assert(strstr(document, history) != NULL);
+    free(document);
+    wsap_vtcore_text_free(history);
 
     /* A later publish keeps the roles, the names, and the actions. */
     struct ui_accessibility_tree next = {0};

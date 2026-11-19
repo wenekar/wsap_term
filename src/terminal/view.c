@@ -760,57 +760,66 @@ static size_t accessibility_provider_read(void *instance, size_t offset,
         !accessibility_document_measure(view, terminal, &doc) ||
         offset >= doc.length)
         goto done;
-    if (offset < doc.history_length) {
-        if (!view->accessibility_line_count)
-            goto done;
-        size_t line = accessibility_history_line(view, offset);
-        size_t within = offset - view->accessibility_lines[line].offset;
-        size_t row = view->accessibility_lines[line].row;
-        if (row >= view->accessibility_rows)
-            goto done;
-        char *history = wsap_vtcore_history_text(
-            term, (int)(view->accessibility_rows - row));
-        if (!history)
-            goto done;
-        const char *newline = strchr(history, '\n');
-        size_t available = newline ? (size_t)(newline - history) + 1
-                                   : strlen(history);
-        if (within < available) {
-            copied = available - within;
-            if (copied > capacity)
-                copied = capacity;
-            memcpy(out, history + within, copied);
+    while (copied < capacity && offset + copied < doc.length) {
+        size_t at = offset + copied;
+        if (at < doc.history_length) {
+            if (!view->accessibility_line_count)
+                break;
+            size_t line = accessibility_history_line(view, at);
+            size_t within = at - view->accessibility_lines[line].offset;
+            size_t row = view->accessibility_lines[line].row;
+            if (row >= view->accessibility_rows)
+                break;
+            char *history = wsap_vtcore_history_text(
+                term, (int)(view->accessibility_rows - row));
+            if (!history)
+                break;
+            size_t available = strlen(history);
+            size_t take = available > within ? available - within : 0;
+            if (take > capacity - copied)
+                take = capacity - copied;
+            if (take)
+                memcpy(out + copied, history + within, take);
+            wsap_vtcore_text_free(history);
+            if (!take)
+                break;
+            copied += take;
+            continue;
         }
-        wsap_vtcore_text_free(history);
-        goto done;
-    }
-    size_t base = doc.history_length;
-    int last_row = accessibility_last_row(snapshot);
-    int cols = term_view->size.x;
-    for (int y = 0; y <= last_row; y++) {
-        int end_col = accessibility_row_end_col(snapshot, y, cols);
-        size_t bytes = accessibility_row_bytes(snapshot, y, end_col) +
-                       (y < last_row ? 1 : 0);
-        if (offset < base + bytes) {
-            struct accessibility_text_builder builder = {0};
-            const struct wsap_vtcore_cell *cells =
-                wsap_vtcore_snapshot_row(snapshot, y);
-            bool ok = true;
-            for (int x = 0; cells && x < end_col && ok; x++)
-                ok = accessibility_append_cell(&builder, snapshot, &cells[x]);
-            if (ok && y < last_row)
-                ok = accessibility_text_append(&builder, "\n", 1);
-            if (ok) {
-                size_t within = offset - base;
-                copied = bytes - within;
-                if (copied > capacity)
-                    copied = capacity;
-                memcpy(out, builder.text + within, copied);
+        size_t base = doc.history_length;
+        int last_row = accessibility_last_row(snapshot);
+        int cols = term_view->size.x;
+        bool found = false;
+        for (int y = 0; y <= last_row; y++) {
+            int end_col = accessibility_row_end_col(snapshot, y, cols);
+            size_t bytes = accessibility_row_bytes(snapshot, y, end_col) +
+                           (y < last_row ? 1 : 0);
+            if (at < base + bytes) {
+                struct accessibility_text_builder builder = {0};
+                const struct wsap_vtcore_cell *cells =
+                    wsap_vtcore_snapshot_row(snapshot, y);
+                bool ok = true;
+                for (int x = 0; cells && x < end_col && ok; x++)
+                    ok = accessibility_append_cell(&builder, snapshot,
+                                                   &cells[x]);
+                if (ok && y < last_row)
+                    ok = accessibility_text_append(&builder, "\n", 1);
+                if (ok) {
+                    size_t inside = at - base;
+                    size_t take = bytes - inside;
+                    if (take > capacity - copied)
+                        take = capacity - copied;
+                    memcpy(out + copied, builder.text + inside, take);
+                    copied += take;
+                    found = take > 0;
+                }
+                free(builder.text);
+                break;
             }
-            free(builder.text);
-            goto done;
+            base += bytes;
         }
-        base += bytes;
+        if (!found)
+            break;
     }
 done:
     wsap_vtcore_unlock(term);
