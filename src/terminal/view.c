@@ -488,7 +488,7 @@ static bool accessibility_append_cell(struct accessibility_text_builder *b,
  * of its range only. */
 
 static bool accessibility_line_add(struct terminal_view *view, size_t offset,
-                                   size_t row)
+                                   size_t bytes, size_t row, size_t rows)
 {
     if (view->accessibility_line_count == view->accessibility_line_capacity) {
         size_t capacity = view->accessibility_line_capacity
@@ -501,72 +501,141 @@ static bool accessibility_line_add(struct terminal_view *view, size_t offset,
         view->accessibility_line_capacity = capacity;
     }
     view->accessibility_lines[view->accessibility_line_count++] =
-        (struct terminal_text_line){ .offset = offset, .row = row };
+        (struct terminal_text_line){ .offset = offset, .bytes = bytes,
+                                     .row = row, .rows = rows };
     return true;
 }
 
-/* Adds the logical lines of `text` to the index. A wrapped row makes no
- * newline, so a line can start before the first row of `text`. `base` is
- * the first history row of `text`. */
-static bool accessibility_lines_add(struct terminal_view *view,
-                                    const char *text, size_t base)
+/* Splits the text of `row_count` history rows that start at `row` into
+ * logical lines. A soft-wrapped row joins the next row, so the text has no
+ * newline between them. `wrapped[i]` is true when row `first_row + i` joins
+ * the row after it. */
+static bool accessibility_lines_parse(struct terminal_view *view,
+                                      const char *text, size_t text_len,
+                                      const bool *wrapped, size_t first_row,
+                                      size_t row_count, size_t base_offset)
 {
-    if (!text[0])
-        return true;
-    size_t row = base;
-    bool open = view->accessibility_open_line;
-    const char *line = text;
-    for (;;) {
-        const char *newline = strchr(line, '\n');
-        size_t bytes = newline ? (size_t)(newline - line) + 1 : strlen(line);
-        if (!open &&
-            !accessibility_line_add(view, view->accessibility_history_length,
-                                    row))
+    size_t pos = 0, row = 0;
+    while (row < row_count && pos <= text_len) {
+        size_t line_rows = 1;
+        while (row + line_rows < row_count &&
+               wrapped[row + line_rows - 1])
+            line_rows++;
+        const char *newline = memchr(text + pos, '\n', text_len - pos);
+        size_t bytes = newline ? (size_t)(newline - (text + pos)) + 1
+                               : text_len - pos;
+        if (!accessibility_line_add(view, base_offset + pos, bytes,
+                                    first_row + row, line_rows))
             return false;
-        view->accessibility_history_length += bytes;
-        if (!newline) {
-            open = true;
-            break;
-        }
-        open = false;
-        row++;
-        line = newline + 1;
-        if (!line[0])
-            break;
+        pos += bytes;
+        row += line_rows;
     }
-    view->accessibility_open_line = open;
+    view->accessibility_open_line = row_count && wrapped[row_count - 1];
     return true;
 }
 
-/* Counts the history rows from the document. A new row above the view adds
- * its own text to the index. A shrink of the history rebuilds the index. */
+/* Rebuilds the index of the history rows above the view. */
+static bool accessibility_index_rebuild(struct terminal_view *view,
+                                        struct wsap_vtcore *term, size_t rows)
+{
+    view->accessibility_line_count = 0;
+    view->accessibility_history_length = 0;
+    view->accessibility_open_line = false;
+    if (!rows)
+        return true;
+    bool *wrapped = malloc(rows * sizeof(*wrapped));
+    if (!wrapped)
+        return false;
+    char *text = wsap_vtcore_history_text_range(term, 0, (int)rows, wrapped);
+    if (!text) {
+        free(wrapped);
+        return false;
+    }
+    size_t length = strlen(text);
+    bool ok = accessibility_lines_parse(view, text, length, wrapped, 0, rows, 0);
+    if (ok)
+        view->accessibility_history_length = length;
+    wsap_vtcore_text_free(text);
+    free(wrapped);
+    return ok;
+}
+
+/* Adds the history rows that came after the indexed rows. A line that
+ * continues below the view grows with the new rows, so its index entry is
+ * read again from its start row. */
+static bool accessibility_index_append(struct terminal_view *view,
+                                       struct wsap_vtcore *term, size_t rows)
+{
+    size_t first = view->accessibility_rows;
+    size_t base = view->accessibility_history_length;
+    if (view->accessibility_open_line && view->accessibility_line_count) {
+        const struct terminal_text_line *last =
+            &view->accessibility_lines[view->accessibility_line_count - 1];
+        first = last->row;
+        base = last->offset;
+        view->accessibility_history_length = base;
+        view->accessibility_line_count--;
+    }
+    if (first >= rows) {
+        view->accessibility_open_line = false;
+        return true;
+    }
+    size_t count = rows - first;
+    bool *wrapped = malloc(count * sizeof(*wrapped));
+    if (!wrapped)
+        return false;
+    char *text = wsap_vtcore_history_text_range(term, (int)first, (int)count,
+                                                wrapped);
+    if (!text) {
+        free(wrapped);
+        return false;
+    }
+    size_t length = strlen(text);
+    bool ok = accessibility_lines_parse(view, text, length, wrapped, first,
+                                        count, base);
+    if (ok)
+        view->accessibility_history_length = base + length;
+    wsap_vtcore_text_free(text);
+    free(wrapped);
+    return ok;
+}
+
+/* Keeps the index of the history rows above the view. The generation changes
+ * on a new line, an eviction, a clear, a rewrap, and a mode switch. A new
+ * line adds rows; any other change rebuilds the index. The index does not
+ * depend on the text of the view rows. */
 static bool accessibility_rows_sync(struct terminal_view *view,
                                     struct wsap_vtcore *term)
 {
-    int rows = wsap_vtcore_history_rows(term);
-    if (rows < 0)
-        rows = 0;
-    size_t count = (size_t)rows;
-    if (view->accessibility_valid && count == view->accessibility_rows)
+    int total = wsap_vtcore_history_rows(term);
+    if (total < 0)
+        total = 0;
+    struct wsap_vtcore_scrollback scrollback = wsap_vtcore_scrollback(term);
+    int above = total - scrollback.offset;
+    if (above < 0)
+        above = 0;
+    if (above > total)
+        above = total;
+    uint64_t generation = wsap_vtcore_history_generation(term);
+    uint64_t first_line = above > 0 ? wsap_vtcore_history_first_line(term) : 0;
+    int cols = wsap_vtcore_size(term).x;
+    if (view->accessibility_valid &&
+        generation == view->accessibility_generation &&
+        (size_t)above == view->accessibility_rows)
         return true;
-    size_t first = 0;
-    bool rebuild = !view->accessibility_valid || count < view->accessibility_rows;
-    if (rebuild) {
-        view->accessibility_line_count = 0;
-        view->accessibility_history_length = 0;
-        view->accessibility_open_line = false;
-        first = count;
-    } else {
-        first = count - view->accessibility_rows;
+    bool rebuild = !view->accessibility_valid ||
+                   (size_t)above < view->accessibility_rows ||
+                   cols != view->accessibility_cols ||
+                   first_line != view->accessibility_first_line;
+    bool ok = rebuild
+        ? accessibility_index_rebuild(view, term, (size_t)above)
+        : accessibility_index_append(view, term, (size_t)above);
+    if (ok) {
+        view->accessibility_rows = (size_t)above;
+        view->accessibility_generation = generation;
+        view->accessibility_first_line = first_line;
+        view->accessibility_cols = cols;
     }
-    char *history = wsap_vtcore_history_text(term, (int)first);
-    if (!history)
-        return false;
-    bool ok = accessibility_lines_add(view, history,
-                                      view->accessibility_rows);
-    wsap_vtcore_text_free(history);
-    if (ok)
-        view->accessibility_rows = count;
     view->accessibility_valid = ok;
     return ok;
 }
@@ -653,8 +722,14 @@ struct accessibility_document {
     size_t caret_offset;
     size_t selection_start;
     size_t selection_end;
+    uint64_t version;
     bool has_selection;
 };
+
+static uint64_t accessibility_mix(uint64_t hash, uint64_t value)
+{
+    return (hash ^ value) * UINT64_C(1099511628211);
+}
 
 static bool accessibility_document_measure(struct terminal_view *view,
                                            struct terminal *terminal,
@@ -709,6 +784,19 @@ static bool accessibility_document_measure(struct terminal_view *view,
             offset += 1;
     }
     doc->length = offset;
+    /* A provider node keeps its pointer, offset, and length, so the version
+     * carries the document content to the publish compare. */
+    uint64_t version = UINT64_C(1469598103934665603);
+    version = accessibility_mix(version, view->accessibility_generation);
+    version = accessibility_mix(version, doc->history_length);
+    version = accessibility_mix(version, doc->length);
+    version = accessibility_mix(version, doc->caret_offset);
+    version = accessibility_mix(version, doc->selection_start);
+    version = accessibility_mix(version, doc->selection_end);
+    for (int y = 0; y <= last_row; y++)
+        version = accessibility_mix(version,
+                                    wsap_vtcore_snapshot_row_key(snapshot, y));
+    doc->version = version;
     return true;
 }
 
@@ -725,6 +813,20 @@ static size_t accessibility_history_line(const struct terminal_view *view,
             high = mid;
     }
     return low;
+}
+
+static void accessibility_provider_lock(void *instance)
+{
+    struct terminal *terminal = instance;
+    if (terminal && terminal->session.term)
+        wsap_vtcore_lock(terminal->session.term);
+}
+
+static void accessibility_provider_unlock(void *instance)
+{
+    struct terminal *terminal = instance;
+    if (terminal && terminal->session.term)
+        wsap_vtcore_unlock(terminal->session.term);
 }
 
 static size_t accessibility_provider_length(void *instance)
@@ -765,24 +867,27 @@ static size_t accessibility_provider_read(void *instance, size_t offset,
         if (at < doc.history_length) {
             if (!view->accessibility_line_count)
                 break;
-            size_t line = accessibility_history_line(view, at);
-            size_t within = at - view->accessibility_lines[line].offset;
-            size_t row = view->accessibility_lines[line].row;
-            if (row >= view->accessibility_rows)
+            const struct terminal_text_line *line =
+                &view->accessibility_lines[accessibility_history_line(view, at)];
+            size_t within = at - line->offset;
+            size_t take = line->bytes > within ? line->bytes - within : 0;
+            if (take > capacity - copied)
+                take = capacity - copied;
+            if (!take)
                 break;
-            char *history = wsap_vtcore_history_text(
-                term, (int)(view->accessibility_rows - row));
+            char *history = wsap_vtcore_history_text_range(
+                term, (int)line->row, (int)line->rows, NULL);
             if (!history)
                 break;
             size_t available = strlen(history);
-            size_t take = available > within ? available - within : 0;
-            if (take > capacity - copied)
-                take = capacity - copied;
-            if (take)
-                memcpy(out + copied, history + within, take);
-            wsap_vtcore_text_free(history);
-            if (!take)
+            if (within >= available) {
+                wsap_vtcore_text_free(history);
                 break;
+            }
+            if (take > available - within)
+                take = available - within;
+            memcpy(out + copied, history + within, take);
+            wsap_vtcore_text_free(history);
             copied += take;
             continue;
         }
@@ -840,11 +945,14 @@ static bool terminal_view_accessibility_text(struct terminal_view *view,
         .instance = terminal,
         .length = accessibility_provider_length,
         .read = accessibility_provider_read,
+        .lock = accessibility_provider_lock,
+        .unlock = accessibility_provider_unlock,
     };
     out->text = &view->accessibility_provider;
     out->text_offset = 0;
     out->text_length = SIZE_MAX;
     out->text_direction = UI_ACCESSIBILITY_TEXT_DIRECTION_LEFT_TO_RIGHT;
+    out->text_version = doc.version;
     out->caret_offset = doc.caret_offset;
     out->selection_start = doc.selection_start;
     out->selection_end = doc.selection_end;

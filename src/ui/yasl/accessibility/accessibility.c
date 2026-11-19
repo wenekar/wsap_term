@@ -1664,7 +1664,8 @@ static bool copy_snapshot(struct ui_accessibility_tree *copy,
                 .selection_start = node->selection_start, .selection_end = node->selection_end,
                 .text = node->text, .text_offset = node->text_offset,
                 .text_length = node->text_length,
-                .text_direction = node->text_direction }))
+                .text_direction = node->text_direction,
+                .text_version = node->text_version }))
             return false;
     }
     return true;
@@ -1701,6 +1702,7 @@ static bool same_snapshot(const struct ui_accessibility_tree *a,
             left->text_offset != right->text_offset ||
             left->text_length != right->text_length ||
             left->text_direction != right->text_direction ||
+            left->text_version != right->text_version ||
             !same_string(left->name, right->name) ||
             !same_string(left->description, right->description) ||
             !same_string(left->value, right->value))
@@ -1745,6 +1747,41 @@ static bool keep_text_runs(const struct text_model *previous,
     return true;
 }
 
+/* Takes the lock of each distinct provider that the publish reads. The
+ * caller holds the locks until it built the text and the update, so the
+ * length and the bytes of a publish come from one document. */
+static size_t lock_providers(const struct ui_accessibility_tree *snapshot,
+                             const struct ui_accessibility_text_provider **held,
+                             size_t capacity)
+{
+    size_t count = 0;
+    for (size_t i = 0; i < snapshot->count && count < capacity; i++) {
+        const struct ui_accessibility_text_provider *provider =
+            snapshot->nodes[i].text;
+        if (!provider || !provider->lock)
+            continue;
+        bool seen = false;
+        for (size_t k = 0; k < count; k++)
+            if (held[k] == provider) {
+                seen = true;
+                break;
+            }
+        if (seen)
+            continue;
+        provider->lock(provider->instance);
+        held[count++] = provider;
+    }
+    return count;
+}
+
+static void unlock_providers(
+    const struct ui_accessibility_text_provider **held, size_t count)
+{
+    for (size_t i = 0; i < count; i++)
+        if (held[i]->unlock)
+            held[i]->unlock(held[i]->instance);
+}
+
 static bool provider_publish(void *instance,
                               const struct ui_accessibility_tree *snapshot)
 {
@@ -1763,6 +1800,8 @@ static bool provider_publish(void *instance,
     struct ui_accessibility_tree copy = {0};
     struct text_model text = {0};
     struct ui_accessibility_publish_set published = {0};
+    const struct ui_accessibility_text_provider *held[8] = {0};
+    size_t held_count = 0;
     if (!copy_snapshot(&copy, snapshot))
         goto fail;
     /* A new activation sends the whole tree again. */
@@ -1770,6 +1809,7 @@ static bool provider_publish(void *instance,
         generation == window->published_generation ? &window->snapshot : NULL;
     if (!ui_accessibility_publish_set_build(previous, &copy, &published))
         goto fail;
+    held_count = lock_providers(&copy, held, sizeof(held) / sizeof(held[0]));
     for (size_t i = 0; i < copy.count; i++)
         if (has_text(&copy.nodes[i]) &&
             ui_accessibility_publish_set_has(&published, copy.nodes[i].id) &&
@@ -1778,6 +1818,8 @@ static bool provider_publish(void *instance,
     if (!keep_text_runs(&window->text, &published, &text))
         goto fail;
     accesskit_tree_update *update = build_update(window, &copy, &text, &published);
+    unlock_providers(held, held_count);
+    held_count = 0;
     if (!update)
         goto fail;
     ui_accessibility_publish_set_destroy(&published);
@@ -1807,6 +1849,7 @@ static bool provider_publish(void *instance,
     update_focus(window);
     return true;
 fail:
+    unlock_providers(held, held_count);
     ui_accessibility_publish_set_destroy(&published);
     ui_accessibility_tree_destroy(&copy);
     free(text.runs);

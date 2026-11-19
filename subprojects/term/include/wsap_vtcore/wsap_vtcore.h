@@ -457,6 +457,23 @@ WSAP_VTCORE_API int wsap_vtcore_history_rows(const struct wsap_vtcore *t);
  * NULL means a NULL terminal or an allocation failure. Free with wsap_vtcore_text_free.
  */
 WSAP_VTCORE_API char *wsap_vtcore_history_text(struct wsap_vtcore *t, int max_rows);
+/* Return a counter that changes when the history changes: on a new line, an
+ * eviction, a clear, a rewrap, or a switch to or from the alternate screen.
+ * The counter increases. A NULL terminal gives zero. */
+WSAP_VTCORE_API uint64_t wsap_vtcore_history_generation(struct wsap_vtcore *t);
+/* Return the id of the oldest history line, or zero when the history is empty.
+ * The id changes when a line leaves the history. */
+WSAP_VTCORE_API uint64_t wsap_vtcore_history_first_line(const struct wsap_vtcore *t);
+/* Return the text of history rows [first_row, first_row + row_count). Row zero
+ * is the oldest history row. The view offset does not change the row count.
+ * The rows of a soft-wrapped line join with no newline. Each hard line end
+ * gets one '\n'. wrapped[i] is true when row i joins the next row. Pass NULL
+ * to skip it. row_count is clamped to the history. NULL means a NULL terminal
+ * or an allocation failure. Free with wsap_vtcore_text_free. */
+WSAP_VTCORE_API char *wsap_vtcore_history_text_range(struct wsap_vtcore *t,
+                                                     int first_row,
+                                                     int row_count,
+                                                     bool *wrapped);
 WSAP_VTCORE_API struct wsap_vtcore_span wsap_vtcore_snapshot_row_selection(const struct wsap_vtcore_snapshot *s, int y);
 
 /* Direct access to the snapshot row store. The store is a ring.

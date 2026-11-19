@@ -84,6 +84,10 @@ struct ui_accessibility_text_provider {
     /* Copies at most `capacity` bytes at `offset` to `out`. Returns the byte
      * count of the copy. */
     size_t (*read)(void *instance, size_t offset, char *out, size_t capacity);
+    /* Optional. The host takes the lock before the first read of a publish and
+     * releases it after the last read, so the reads see one document. */
+    void (*lock)(void *instance);
+    void (*unlock)(void *instance);
 };
 
 struct ui_accessibility_node {
@@ -107,6 +111,9 @@ struct ui_accessibility_node {
      * document. */
     size_t text_length;
     enum ui_accessibility_text_direction text_direction;
+    /* Changes when the provider document changes. A provider compares this
+     * value because its pointer, offset, and length stay the same. */
+    uint64_t text_version;
     /* The number of nodes that name this node as their parent. */
     uint32_t child_count;
 };
@@ -129,6 +136,7 @@ struct ui_accessibility_node_spec {
     size_t text_offset;
     size_t text_length;
     enum ui_accessibility_text_direction text_direction;
+    uint64_t text_version;
 };
 
 struct ui_accessibility_tree {

@@ -218,6 +218,9 @@ struct wsap_vtcore {
     struct screen spare;
     struct resize_scratch resize;
     struct hist hist;
+    /* The history generation and the stamp that it was computed from. */
+    uint64_t history_generation;
+    uint64_t history_stamp;
     struct hist_view view;
     struct wsap_vtcore_sel_point sel_start, sel_end;
     struct wsap_vtcore_sel_point sel_anchor_first, sel_anchor_last;

@@ -160,6 +160,7 @@ static bool tree_add(struct ui_accessibility_tree *tree,
         node.text_offset = spec->text_offset;
         node.text_length = spec->text_length;
         node.text_direction = spec->text_direction;
+        node.text_version = spec->text_version;
     }
     if ((spec->name && !node.name) ||
         (spec->description && !node.description) ||
@@ -346,6 +347,7 @@ static bool node_changed(const struct ui_accessibility_node *old,
            old->text != node->text || old->text_offset != node->text_offset ||
            old->text_length != node->text_length ||
            old->text_direction != node->text_direction ||
+           old->text_version != node->text_version ||
            old->child_count != node->child_count ||
            !same_text(old->name, node->name) ||
            !same_text(old->description, node->description) ||
