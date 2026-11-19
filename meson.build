@@ -55,6 +55,11 @@ if get_option('kitty_tests') and not get_option('tests')
     error('Kitty tests require tests=true')
 endif
 isa = get_option('isa')
+# An SDK build ships to other machines, so it never gets a native target by
+# default. A local app build keeps the native target for speed.
+if isa == 'auto'
+    isa = get_option('app') ? 'native' : ''
+endif
 if meson.is_cross_build() and isa == 'native'
     error('Cross builds must set -Disa= or an explicit target ISA')
 endif
@@ -129,9 +134,34 @@ add_project_link_arguments(
     language: project_languages,
 )
 
+# A release binary must not hold absolute source paths in __FILE__. The prefix
+# map is a global argument so that it also applies to the subprojects. The
+# system root mapping keeps the system headers readable.
+if get_option('buildtype') == 'release'
+    prefix_map_args = cc.get_supported_arguments(
+        '-fmacro-prefix-map=' + meson.project_source_root() + '=.',
+    )
+    if system == 'darwin'
+        prefix_map_args += objc.get_supported_arguments(
+            '-fmacro-prefix-map=' + meson.project_source_root() + '=.',
+        )
+    endif
+    if prefix_map_args.length() > 0
+        add_global_arguments(prefix_map_args, language: project_languages)
+    endif
+endif
+
 if get_option('b_lto')
     add_project_arguments(
         cc.get_supported_arguments('-fno-ipa-cp-clone'),
+        language: project_languages,
+    )
+    # Fat LTO objects hold the machine code next to the LTO bytecode. An
+    # installed framework archive then links with clang and with another GCC
+    # version, which cannot read the GCC LTO bytecode. The project's own link
+    # still uses LTO.
+    add_project_arguments(
+        cc.get_supported_arguments('-ffat-lto-objects'),
         language: project_languages,
     )
 endif

@@ -22,8 +22,8 @@ option(
 option(
     'isa',
     type: 'string',
-    value: 'native',
-    description: 'Compiler -march target; empty uses the compiler default. The term core picks its SIMD level at run time, at or above this target',
+    value: 'auto',
+    description: 'Compiler -march target. auto uses native for an app build and the compiler default for a framework-only build; empty uses the compiler default; native forces the native target. The term core picks its SIMD level at run time, at or above this target',
 )
 option(
     'tests',
