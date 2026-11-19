@@ -462,8 +462,8 @@ WSAP_VTCORE_API enum wsap_vtcore_line_size wsap_vtcore_snapshot_row_size(
     const struct wsap_vtcore_snapshot *s, int y);
 
 /* Return true when logical row y joins the next row with no line break.
- * A history row, a row that does not wrap, an invalid row, and a NULL
- * snapshot give false. */
+ * A history row in a scrolled view gives its wrap flag too. A row that does
+ * not wrap, an invalid row, and a NULL snapshot give false. */
 WSAP_VTCORE_API bool wsap_vtcore_snapshot_row_wrapped(
     const struct wsap_vtcore_snapshot *s, int y);
 
