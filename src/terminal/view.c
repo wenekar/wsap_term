@@ -575,6 +575,17 @@ static bool accessibility_lines_parse(struct terminal_view *view,
         row += line_rows;
     }
     view->accessibility_open_line = row_count && wrapped[row_count - 1];
+    /* The last line continues below the history part. Count its trailing
+     * blanks: they drop when the rows below hold no text. */
+    view->accessibility_open_blanks = 0;
+    if (view->accessibility_open_line) {
+        size_t end = text_len;
+        while (end > 0 && (unsigned char)text[end - 1] <= ' ' &&
+               text[end - 1] != '\n') {
+            end--;
+            view->accessibility_open_blanks++;
+        }
+    }
     return true;
 }
 
@@ -585,6 +596,7 @@ static bool accessibility_index_rebuild(struct terminal_view *view,
     view->accessibility_line_count = 0;
     view->accessibility_history_length = 0;
     view->accessibility_open_line = false;
+    view->accessibility_open_blanks = 0;
     if (!rows)
         return true;
     bool *wrapped = malloc(rows * sizeof(*wrapped));
@@ -622,6 +634,7 @@ static bool accessibility_index_append(struct terminal_view *view,
     }
     if (first >= rows) {
         view->accessibility_open_line = false;
+        view->accessibility_open_blanks = 0;
         return true;
     }
     size_t count = rows - first;
@@ -747,9 +760,11 @@ static size_t accessibility_row_bytes(const struct wsap_vtcore_snapshot *snapsho
 
 /* The accessibility document has one shape. A logical line is one or more
  * rows joined at a soft wrap. A joined row keeps all of its cells, and a
- * wrap pad cell adds no bytes. The last row of the line drops its trailing
- * blank cells. One '\n' ends each logical line. The history part follows
- * the same rule through wsap_vtcore_history_text_range(). */
+ * wrap pad cell adds no bytes. The line drops its trailing blank cells, also
+ * those of a joined row when the rows after it hold no text. The text of a
+ * line then does not depend on the width. One '\n' ends each logical line.
+ * The history part follows the same rule through
+ * wsap_vtcore_history_text_range(). */
 static int accessibility_line_end_row(const struct wsap_vtcore_snapshot *snapshot,
                                       int y, int last_row)
 {
@@ -758,13 +773,27 @@ static int accessibility_line_end_row(const struct wsap_vtcore_snapshot *snapsho
     return y;
 }
 
-/* The first column after the text of a view row. A joined row has the full
- * width of the line. The last row of a line drops its trailing blanks. */
-static int accessibility_view_row_end_col(const struct wsap_vtcore_snapshot *snapshot,
-                                          int y, int last_row, int cols)
+/* The last row of the line [y, line_end] with text or a selection, or y - 1
+ * when no row has one. */
+static int accessibility_line_text_row(const struct wsap_vtcore_snapshot *snapshot,
+                                       int y, int line_end, int cols)
 {
-    if (y < last_row && wsap_vtcore_snapshot_row_wrapped(snapshot, y))
+    int row = line_end;
+    while (row >= y && accessibility_row_end_col(snapshot, row, cols) == 0)
+        row--;
+    return row;
+}
+
+/* The first column after the text of a view row. text_row is the last row of
+ * its line with text. A row before it keeps all of its cells. A row after it
+ * adds no bytes. */
+static int accessibility_view_row_end_col(const struct wsap_vtcore_snapshot *snapshot,
+                                          int y, int text_row, int cols)
+{
+    if (y < text_row)
         return cols;
+    if (y > text_row)
+        return 0;
     return accessibility_row_end_col(snapshot, y, cols);
 }
 
@@ -820,14 +849,22 @@ static bool accessibility_document_measure(struct terminal_view *view,
     };
     int cols = term_view->size.x;
     int last_row = accessibility_last_row(snapshot);
+    /* The last history line continues in the first view line. With no text
+     * there, the line ends in the history part and drops its blanks. */
+    if (view->accessibility_open_line &&
+        accessibility_line_text_row(
+            snapshot, 0, accessibility_line_end_row(snapshot, 0, last_row),
+            cols) < 0)
+        doc->history_length -= view->accessibility_open_blanks;
     int cursor_y = term_view->cursor.pos.y;
     int cursor_x = term_view->cursor.pos.x;
     size_t offset = doc->history_length;
     for (int y = 0; y <= last_row; ) {
         int line_end = accessibility_line_end_row(snapshot, y, last_row);
+        int text_row = accessibility_line_text_row(snapshot, y, line_end, cols);
         for (int row = y; row <= line_end; row++) {
             int end_col = accessibility_view_row_end_col(snapshot, row,
-                                                         last_row, cols);
+                                                         text_row, cols);
             const struct wsap_vtcore_cell *cells =
                 wsap_vtcore_snapshot_row(snapshot, row);
             if (term_view->cursor.visible && row == cursor_y) {
@@ -1040,6 +1077,8 @@ static size_t accessibility_provider_read(void *instance, size_t offset,
                 &view->accessibility_lines[accessibility_history_line(view, at)];
             size_t within = at - line->offset;
             size_t take = line->bytes > within ? line->bytes - within : 0;
+            if (take > doc.history_length - at)
+                take = doc.history_length - at;
             if (take > capacity - copied)
                 take = capacity - copied;
             if (!take)
@@ -1066,10 +1105,12 @@ static size_t accessibility_provider_read(void *instance, size_t offset,
         bool found = false;
         for (int y = 0; y <= last_row && !found; ) {
             int line_end = accessibility_line_end_row(snapshot, y, last_row);
+            int text_row = accessibility_line_text_row(snapshot, y, line_end,
+                                                       cols);
             size_t inside = at - base;
             for (int row = y; row <= line_end && !found; row++) {
                 int end_col = accessibility_view_row_end_col(snapshot, row,
-                                                             last_row, cols);
+                                                             text_row, cols);
                 bool newline = row == line_end && line_end < last_row;
                 size_t bytes = accessibility_row_bytes(snapshot, row, end_col) +
                                (newline ? 1 : 0);
@@ -1099,7 +1140,7 @@ static size_t accessibility_provider_read(void *instance, size_t offset,
             if (!found) {
                 for (int row = y; row <= line_end; row++) {
                     int end_col = accessibility_view_row_end_col(
-                        snapshot, row, last_row, cols);
+                        snapshot, row, text_row, cols);
                     base += accessibility_row_bytes(snapshot, row, end_col);
                 }
                 if (line_end < last_row)

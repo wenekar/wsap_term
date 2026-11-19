@@ -69,8 +69,11 @@ struct terminal_view {
     size_t accessibility_line_capacity;
     /* The byte length of the history part, the history rows and the first
      * line that it covers, its generation, width, and whether its last line
-     * continues below the view. */
+     * continues below the view. That open line keeps its trailing blanks in
+     * the index. open_blanks counts them: they drop when the rows below hold
+     * no text. */
     size_t accessibility_history_length;
+    size_t accessibility_open_blanks;
     size_t accessibility_rows;
     uint64_t accessibility_generation;
     uint64_t accessibility_first_line;

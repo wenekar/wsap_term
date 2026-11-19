@@ -665,9 +665,10 @@ static bool text_reserve(char **text, size_t *cap, size_t need)
 }
 
 /* The text of the selection, or of the cells in bounds. A row that joins the
- * next row keeps all of its cells. The last row of a line drops its trailing
- * blanks. With keep_tail, the last row of the range keeps them too, because
- * its line continues after the range. */
+ * next row keeps all of its cells. A line drops its trailing blanks, also the
+ * blanks of a joined row when the rows after it hold no text. The text of a
+ * line then does not depend on the width. With keep_tail, the last row of the
+ * range keeps its blanks, because its line continues after the range. */
 static char *range_text_inner(const struct wsap_vtcore *t,
                               const struct wsap_vtcore_sel_point *bounds,
                               bool keep_tail)
@@ -692,6 +693,7 @@ static char *range_text_inner(const struct wsap_vtcore *t,
     enum { BATCH_SEGS = 64 };
     struct cell *batch_cells = text ? malloc((size_t)BATCH_SEGS * (size_t)t->cols * sizeof(struct cell)) : NULL;
     for (uint64_t id = start.line_id; text && id <= end.line_id; id++) {
+        size_t line_start = n;
         int nsegs = line_total_segs(&L, id);
         int start_seg = 0;
         if (id == start.line_id) {
@@ -772,7 +774,8 @@ static char *range_text_inner(const struct wsap_vtcore *t,
                 continue;
             bool is_last = id == end.line_id && (end.cell_off < seg_end || seg == nsegs - 1);
             bool wrapped = !is_last && row_wrapped;
-            if (!wrapped && !(is_last && keep_tail))
+            bool line_end = !wrapped && !(is_last && keep_tail);
+            if (line_end)
                 while (c1 >= c0 && cells[c1].c <= ' ')
                     c1--;
 
@@ -818,6 +821,12 @@ static char *range_text_inner(const struct wsap_vtcore *t,
                         n += (size_t)wsap_vtcore_utf8_encode(cps[k], text + n);
                 }
             }
+            /* A blank row at the end of a line leaves the blanks of the
+             * joined row before it. A blank cell gives one byte at or below
+             * a space, and no UTF-8 sequence holds such a byte. */
+            if (text && line_end)
+                while (n > line_start && (unsigned char)text[n - 1] <= ' ')
+                    n--;
             if (text && !is_last && !wrapped && text_reserve(&text, &cap, n + 2))
                 text[n++] = '\n';
         }

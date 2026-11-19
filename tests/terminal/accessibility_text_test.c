@@ -50,6 +50,11 @@ static void feed(struct fixture *f, const char *text, size_t len)
     assert(wsap_vtcore_feed(f->term, text, len, 0));
 }
 
+static void feeds(struct fixture *f, const char *text)
+{
+    feed(f, text, strlen(text));
+}
+
 /* Adds one line to the expected text. */
 static void expect_line(struct fixture *f, const char *text, size_t len)
 {
@@ -147,8 +152,78 @@ static void blank_at_history_edge(void)
     fixture_fini(&f);
 }
 
+static uint64_t next_random(uint64_t *state)
+{
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    return *state;
+}
+
+/* Feeds lines of wide cells, clusters, emoji, and blanks. A line has no tab:
+ * a tab stop depends on the width at the write. */
+static void feed_wide_lines(struct fixture *f, uint64_t *state, int lines,
+                            int max_pieces)
+{
+    static const char *const pieces[] = {
+        "\u4e2d", "e\xcc\x81", "x", "\u4e2d\u6587", "\u4e2d\u4e2d", "abc",
+        " ", "  ", "\xf0\x9f\x98\x80", "   ",
+    };
+    const uint64_t kinds = sizeof(pieces) / sizeof(pieces[0]);
+    char line[8192];
+    for (int i = 0; i < lines; i++) {
+        size_t n = (size_t)snprintf(line, sizeof(line), "L%04d:", i);
+        int count = 1 + (int)(next_random(state) % (uint64_t)max_pieces);
+        for (int k = 0; k < count; k++) {
+            const char *piece = pieces[next_random(state) % kinds];
+            size_t m = strlen(piece);
+            memcpy(line + n, piece, m);
+            n += m;
+        }
+        feed_line(f, line, n);
+    }
+}
+
+/* A line drops its trailing blanks as one line. When its last row holds
+ * only blanks, the row before it drops its trailing blanks too. The text of
+ * a line then stays the same at every width. */
+static void text_does_not_depend_on_width(void)
+{
+    struct fixture f;
+    fixture_init(&f, 100, 35);
+    uint64_t state = UINT64_C(0x5eed) * UINT64_C(0x9e3779b97f4a7c15) + 1;
+    feed_wide_lines(&f, &state, 300, 200);
+    expect_document(&f, "fed at 100");
+    static const struct wsap_vtcore_vector2i sizes[] = {
+        { .x = 54, .y = 41 }, { .x = 100, .y = 35 }, { .x = 37, .y = 35 },
+        { .x = 161, .y = 35 }, { .x = 79, .y = 20 },
+    };
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+        assert(wsap_vtcore_resize(f.term, sizes[i]));
+        char label[64];
+        snprintf(label, sizeof(label), "rewrap to %dx%d", sizes[i].x, sizes[i].y);
+        expect_document(&f, label);
+    }
+
+    /* Blanks pushed past the edge give a last row with no text. */
+    assert(wsap_vtcore_resize(f.term, (struct wsap_vtcore_vector2i){ .x = 20, .y = 10 }));
+    feeds(&f, "\x1b[H\x1b[2J\x1b[3J");
+    f.expect_len = 0;
+    char line[128];
+    for (int i = 0; i < 30; i++) {
+        int n = snprintf(line, sizeof(line), "word%02d", i);
+        memset(line + n, ' ', 17 + (size_t)i % 5);
+        feed_line(&f, line, (size_t)n + 17 + (size_t)i % 5);
+    }
+    expect_document(&f, "blank last rows at 20");
+    assert(wsap_vtcore_resize(f.term, (struct wsap_vtcore_vector2i){ .x = 40, .y = 10 }));
+    expect_document(&f, "blank last rows at 40");
+    fixture_fini(&f);
+}
+
 int main(void)
 {
     blank_at_history_edge();
+    text_does_not_depend_on_width();
     return 0;
 }
