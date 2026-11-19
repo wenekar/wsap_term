@@ -422,6 +422,14 @@ static bool surface_texture(struct render_gpu *g, struct gpu_surface *gs, struct
     return true;
 }
 
+/* The texture of the CPU pixels holds no pixels, so the next present loads
+ * every pixel. The blit never ran, or no drawable took the frame. */
+static bool present_failed(struct gpu_surface *gs)
+{
+    gs->size = (struct vector2i){0};
+    return false;
+}
+
 static bool present_pixels(struct render_gpu *g, struct frame_slot *slot, struct render_surface *s,
                            struct framebuffer *fb, const struct damage_list *damage)
 {
@@ -442,17 +450,17 @@ static bool present_pixels(struct render_gpu *g, struct frame_slot *slot, struct
     gpu_pixels_quad(fb->size, &quad);
     if (!ensure_buffer(g, &slot->instances, sizeof(quad)) ||
         (bytes && !ensure_buffer(g, &slot->upload, bytes)))
-        return false;
+        return present_failed(gs);
     memcpy(slot->instances.contents, &quad, sizeof(quad));
 
     id<MTLCommandQueue> queue = ensure_queue(g);
     id<MTLCommandBuffer> cb = [queue commandBuffer];
     if (!cb)
-        return false;
+        return present_failed(gs);
     if (bytes) {
         id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
         if (!blit)
-            return false;
+            return present_failed(gs);
         gpu_pixels_pack(fb, rects, n, slot->upload.contents);
         size_t offset = 0;
         for (int i = 0; i < n; i++) {
@@ -474,14 +482,14 @@ static bool present_pixels(struct render_gpu *g, struct frame_slot *slot, struct
 
     id<CAMetalDrawable> drawable = frame_drawable(fb);
     if (!drawable || !drawable_size_ok(fb, drawable))
-        return false;
+        return present_failed(gs);
     MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
     pass.colorAttachments[0].texture = drawable.texture;
     pass.colorAttachments[0].loadAction = MTLLoadActionDontCare;
     pass.colorAttachments[0].storeAction = MTLStoreActionStore;
     id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:pass];
     if (!enc)
-        return false;
+        return present_failed(gs);
     const struct uniforms uniforms = {
         .viewport_size = simd_make_float2((float)fb->size.x, (float)fb->size.y),
     };
