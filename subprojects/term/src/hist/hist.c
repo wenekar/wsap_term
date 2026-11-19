@@ -2693,8 +2693,9 @@ uint8_t wsap_vtcore_hist_line_flags(const struct hist *h, uint64_t id)
     return flags;
 }
 
-static int line_rows_walk(const struct hist *h, uint64_t first, uint64_t end, int cols)
+static int line_rows_walk(struct hist *h, uint64_t first, uint64_t end, int cols)
 {
+    h->walk_calls++;
     int rows = 1, col = 0;
     for (uint64_t s = first; s < end; s++) {
         const struct hline *p = part(h, s);
@@ -2736,7 +2737,9 @@ int wsap_vtcore_hist_line_rows(const struct hist *h, uint64_t id, int cols)
     if (cells <= (uint64_t)cols ||
         !(wsap_vtcore_hist_line_flags(h, id) & (HLINE_HAS_WIDE | HLINE_HAS_CLUSTER)))
         return (int)rows_narrow(cells, cols);
-    return line_rows_walk(h, first, line_end(h, first), cols);
+    /* The walk count is a test hook, so this read function updates it. The
+     * history object is mutable even when the caller holds a const view. */
+    return line_rows_walk((struct hist *)h, first, line_end(h, first), cols);
 }
 
 static void walk_advance(struct hist *h)
@@ -3256,6 +3259,12 @@ uint64_t wsap_vtcore_hist_estimated_rows(const struct hist *h, int cols)
     for (uint64_t id = first; id < hist_end_id(h); id++)
         total += wsap_vtcore_hist_line_estimate(h, id, cols);
     return total;
+}
+
+/* Test hook: the number of exact row walks of one line since init. */
+uint64_t wsap_vtcore_hist_walk_calls(const struct hist *h)
+{
+    return h ? h->walk_calls : 0;
 }
 
 uint64_t wsap_vtcore_hist_rows(const struct hist *h, int cols)

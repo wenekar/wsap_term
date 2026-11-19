@@ -40,6 +40,7 @@ wsap_vtcore_tests = [
   ['gstore-test', files('gstore_test.c'), [], []],
   ['hist-test', files('hist_test.c'), [], []],
   ['history-text-test', files('history_text_test.c'), [thread_dep], []],
+  ['row-walk-test', files('row_walk_test.c'), [], []],
   ['snapshot-scroll-arena-test', files('snapshot_scroll_arena_test.c'), [], []],
   ['view-test', files('view_test.c'), [], []],
   ['resize-property-test', files('resize_property_test.c'), [], []],
