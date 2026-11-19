@@ -194,10 +194,19 @@ static void show_hovered_preview(struct preview_fixture *f, int index)
 {
     struct ui_surface *ui = window_ui_surface(f->w);
     hover_tab(f->w, index);
-    uint64_t due = ui_surface_next_deadline(ui);
-    assert(due > 0);
-    ui_surface_tick(ui, due);
-    ui_surface_prepare(ui);
+    /* The window asks for a frame at each animation step, such as the hover
+     * fade of the tab bar. Draw them until the preview shows. */
+    uint64_t now = window_frame_time_ms(f->w);
+    for (int frame = 0; frame < 200; frame++) {
+        uint64_t due = ui_surface_next_deadline(ui);
+        if (!due)
+            break;
+        now = due > now ? due : now + 16;
+        ui_surface_tick(ui, now);
+        ui_surface_prepare(ui);
+        if (preview_shown(f->w))
+            break;
+    }
     render_and_lint(f);
     assert(preview_shown(f->w));
 }

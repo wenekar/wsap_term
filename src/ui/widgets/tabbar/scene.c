@@ -234,6 +234,7 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
 
     uint32_t text_color = tb_text_color(tb, &idle);
     uint32_t active_text = tb_text_color(tb, &active);
+    uint32_t hover_text = hover.has_text_color ? hover.text_color : text_color;
     uint32_t tab_active_bg = active.has_bg_color ? active.bg_color : 0;
 
     bool bar_clip = tb->state.reveal.start_ms != 0 &&
@@ -334,12 +335,15 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
                 return false;
         }
 
+        /* The hover color of a tab fades in over the CSS transition of the
+         * tab part. `hover_bg` holds the progress, from 0 to 1. */
+        float hover_mix = i < tb->state.tab_cap
+            ? ui_hover_anim_value(&tb->state.tabs[i].hover_bg) : 0.0f;
         uint32_t bg_c = tab_active_bg;
         if (!tabs[i].active) {
-            if (tb->state.hover_tab == i)
-                bg_c = tab_hover_bg;
-            else
-                bg_c = idle.has_bg_color ? idle.bg_color : 0;
+            uint32_t bg_idle = idle.has_bg_color ? idle.bg_color : 0;
+            uint32_t bg_hot = tb->state.hover_tab == i ? tab_hover_bg : bg_idle;
+            bg_c = ui_color_lerp(bg_idle, bg_hot, hover_mix);
         }
 
         if (!ui_scene_rounded_rect(scene, r, l.radius, bg_c))
@@ -366,7 +370,8 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
         int text_x = r.x + l.tab_pad;
         int avail = title_right - text_x;
         int cap = advance > 0 && avail > 0 ? avail / advance : 0;
-        uint32_t txt_c = tabs[i].active ? active_text : text_color;
+        uint32_t txt_c = tabs[i].active
+            ? active_text : ui_color_lerp(text_color, hover_text, hover_mix);
         txt_c = ui_color_opacity(txt_c, fade);
         int pad_t = (r.height - text_h) / 2;
         if (pad_t < 0) pad_t = 0;

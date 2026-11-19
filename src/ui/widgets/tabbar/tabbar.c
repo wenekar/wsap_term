@@ -87,6 +87,9 @@ static void set_hover(struct ui_tabbar *tb, int hover_tab, int hover_close, uint
     for (int i = 0; i < tb->state.tab_cap; i++) {
         float target = (i == hover_close) ? 1.0f : 0.0f;
         ui_hover_anim_set_target(&tb->state.tabs[i].close_hover, target, now_ms);
+        float bg_target = (i == hover_tab) ? 1.0f : 0.0f;
+        ui_hover_anim_set_target(&tb->state.tabs[i].hover_bg, bg_target,
+                                 now_ms);
     }
 }
 
@@ -114,9 +117,16 @@ static bool bar_tick(struct ui_tabbar *tb, struct vector2i size, uint64_t now_ms
     tb->state.last_tick_ms = now_ms;
     bool animating = false;
 
+    struct css_style tab = tb_style(tb, tb_part()->tab, CSS_PSEUDO_NONE);
+    uint32_t fade_ms = tab.has_transition_duration &&
+                       tab.transition_duration >= 1.0f
+        ? (uint32_t)tab.transition_duration : 0;
     for (int i = 0; i < tb->state.tab_cap; i++) {
         if (ui_hover_anim_tick(&tb->state.tabs[i].close_hover, now_ms,
                                UI_TABBAR_ANIM_DURATION_MS,
+                               UI_EASE_OUT_CUBIC))
+            animating = true;
+        if (ui_hover_anim_tick(&tb->state.tabs[i].hover_bg, now_ms, fade_ms,
                                UI_EASE_OUT_CUBIC))
             animating = true;
         struct ui_ripple *rp = &tb->state.tabs[i].ripple;

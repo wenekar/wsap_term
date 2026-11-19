@@ -39,6 +39,9 @@ enum ui_tab_drag_state : uint8_t {
 struct ui_tab_state {
     uint64_t accessibility_id;
     struct ui_hover_anim close_hover;
+    /* The background of the tab moves from the idle color to the hover color
+     * over the CSS transition-duration of the tab part. */
+    struct ui_hover_anim hover_bg;
     struct ui_hover_anim open;
     struct ui_hover_anim slide;
     struct ui_ripple ripple;
