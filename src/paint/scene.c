@@ -869,6 +869,13 @@ struct rect2i ui_scene_text_ink(const struct ui_scene *s,
 
 static bool op_visible(const struct ui_scene_op *op)
 {
+    if (op->kind == UI_SCENE_OP_IMAGE)
+        return op->image.src != NULL && op->alpha > 0;
+    return ui_scene_op_draws(op);
+}
+
+bool ui_scene_op_draws(const struct ui_scene_op *op)
+{
     switch (op->kind) {
     case UI_SCENE_OP_PUSH_CLIP:
     case UI_SCENE_OP_POP_CLIP:
@@ -877,12 +884,13 @@ static bool op_visible(const struct ui_scene_op *op)
     case UI_SCENE_OP_CIRCLE:
         return op->alpha > 0;
     case UI_SCENE_OP_RECT:
-        return ui_scene_op_has_geom(op) || (op->color >> 24) > 0;
-    case UI_SCENE_OP_IMAGE:
-        return op->image.src != NULL && op->alpha > 0;
+        if (ui_scene_op_has_geom(op))
+            return true;
+        break;
     default:
-        return (op->color >> 24) > 0;
+        break;
     }
+    return (op->color >> 24) > 0;
 }
 
 bool ui_scene_intersects_rect(const struct ui_scene *s, struct rect2i r)

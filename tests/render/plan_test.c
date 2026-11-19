@@ -1136,6 +1136,20 @@ static void ui_ink_test(void)
     assert(ui_scene_rect(&s, rect(12, 21, 3, 3), 0xFFFFFFFF));
     plan_ui_ink(&s, rect(10, 20, 80, 6), 10, 0, ink);
     assert(ink[0].x0 == 2 && ink[0].x1 == 5);
+
+    /* A gradient without a style has no op colour, but its geom paints.
+     * The painter shows its ink, so the planner must count it. */
+    ui_scene_init(&s);
+    assert(ui_scene_linear_gradient(&s,
+                                    (struct rect2f){ .pos = { .x = 20.0f, .y = 32.0f },
+                                                     .size = { .x = 30.0f, .y = 6.0f } },
+                                    (struct ui_scene_point){ .x = 20.0f, .y = 32.0f },
+                                    (struct ui_scene_point){ .x = 50.0f, .y = 38.0f },
+                                    0xFFFF0000u, 0xFF0000FFu, NULL));
+    plan_ui_ink(&s, grid, 10, 10, ink);
+    assert(plan_span_empty(ink[0]));
+    assert(ink[1].x0 == 10 && ink[1].x1 == 40);
+    assert(plan_span_empty(ink[2]));
     ui_scene_destroy(&s);
 }
 
