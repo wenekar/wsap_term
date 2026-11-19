@@ -30,6 +30,18 @@ struct terminal_preedit {
     uint32_t bg;
 };
 
+/* The byte lengths and the offsets of the accessibility document. A node
+ * reports the whole document, and a read starts at its own range. */
+struct accessibility_document {
+    size_t history_length;
+    size_t length;
+    size_t caret_offset;
+    size_t selection_start;
+    size_t selection_end;
+    uint64_t version;
+    bool has_selection;
+};
+
 struct terminal_view {
     struct ui_widget widget;
     /* The snapshot view version of the scan that set blink_cells. */
@@ -63,6 +75,25 @@ struct terminal_view {
     bool accessibility_open_line;
     bool accessibility_valid;
     struct ui_accessibility_text_provider accessibility_provider;
+    /* The document cache of one provider publish. The first lock call takes
+     * one snapshot and one measure, and every length and read call reuses
+     * them. The unlock at depth zero frees them. The term lock is held for
+     * the whole cache life, so the cache cannot go stale. */
+    struct wsap_vtcore_snapshot *accessibility_snapshot;
+    struct accessibility_document accessibility_document;
+    int accessibility_lock_depth;
+    bool accessibility_document_valid;
+    /* The time of the last text build, the timer that sends the text of a
+     * burst, and the node values of that build. A build runs at most once
+     * each ACCESSIBILITY_TEXT_INTERVAL_MS. */
+    uint64_t accessibility_built_ms;
+    uint64_t accessibility_timer;
+    uint64_t accessibility_text_version;
+    size_t accessibility_caret_offset;
+    size_t accessibility_selection_start;
+    size_t accessibility_selection_end;
+    struct wsap_vtcore *accessibility_text_term;
+    bool accessibility_text_valid;
 
     struct terminal_preedit preedit;
     bool blink_suppressed;

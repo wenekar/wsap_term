@@ -759,18 +759,6 @@ static int accessibility_last_row(const struct wsap_vtcore_snapshot *snapshot)
     return last_row;
 }
 
-/* The byte lengths and the offsets of the document. A node reports the
- * whole document, and a read starts at its own range. */
-struct accessibility_document {
-    size_t history_length;
-    size_t length;
-    size_t caret_offset;
-    size_t selection_start;
-    size_t selection_end;
-    uint64_t version;
-    bool has_selection;
-};
-
 static uint64_t accessibility_mix(uint64_t hash, uint64_t value)
 {
     return (hash ^ value) * UINT64_C(1099511628211);
@@ -886,15 +874,37 @@ static size_t accessibility_history_line(const struct terminal_view *view,
 static void accessibility_provider_lock(void *instance)
 {
     struct terminal *terminal = instance;
-    if (terminal && terminal->session.term)
-        wsap_vtcore_lock(terminal->session.term);
+    if (!terminal || !terminal->session.term)
+        return;
+    struct terminal_view *view = &terminal->view;
+    struct wsap_vtcore *term = terminal->session.term;
+    wsap_vtcore_lock(term);
+    view->accessibility_lock_depth++;
+    if (view->accessibility_lock_depth > 1)
+        return;
+    view->accessibility_snapshot = accessibility_snapshot_take(term);
+    view->accessibility_document = (struct accessibility_document){0};
+    view->accessibility_document_valid = view->accessibility_snapshot &&
+        accessibility_document_measure(view, term, view->accessibility_snapshot,
+                                       &view->accessibility_document);
 }
 
 static void accessibility_provider_unlock(void *instance)
 {
     struct terminal *terminal = instance;
-    if (terminal && terminal->session.term)
-        wsap_vtcore_unlock(terminal->session.term);
+    if (!terminal || !terminal->session.term)
+        return;
+    struct terminal_view *view = &terminal->view;
+    if (view->accessibility_lock_depth <= 0)
+        return;
+    view->accessibility_lock_depth--;
+    if (view->accessibility_lock_depth == 0) {
+        wsap_vtcore_snapshot_free(view->accessibility_snapshot);
+        view->accessibility_snapshot = NULL;
+        view->accessibility_document = (struct accessibility_document){0};
+        view->accessibility_document_valid = false;
+    }
+    wsap_vtcore_unlock(terminal->session.term);
 }
 
 static size_t accessibility_provider_length(void *instance)
@@ -902,14 +912,17 @@ static size_t accessibility_provider_length(void *instance)
     struct terminal *terminal = instance;
     if (!terminal || !terminal->session.term)
         return 0;
+    struct terminal_view *view = &terminal->view;
+    if (view->accessibility_lock_depth > 0)
+        return view->accessibility_document_valid
+            ? view->accessibility_document.length : 0;
     struct wsap_vtcore *term = terminal->session.term;
     size_t length = 0;
     wsap_vtcore_lock(term);
     struct wsap_vtcore_snapshot *snapshot = accessibility_snapshot_take(term);
     if (snapshot) {
         struct accessibility_document doc = {0};
-        if (accessibility_document_measure(&terminal->view, term, snapshot,
-                                           &doc))
+        if (accessibility_document_measure(view, term, snapshot, &doc))
             length = doc.length;
         wsap_vtcore_snapshot_free(snapshot);
     }
@@ -927,16 +940,27 @@ static size_t accessibility_provider_read(void *instance, size_t offset,
     struct wsap_vtcore *term = terminal->session.term;
     struct wsap_vtcore_snapshot *snapshot = NULL;
     const struct wsap_vtcore_view *term_view = NULL;
-    size_t copied = 0;
-    wsap_vtcore_lock(term);
-    snapshot = accessibility_snapshot_take(term);
-    if (!snapshot)
-        goto done;
-    term_view = wsap_vtcore_snapshot_view(snapshot);
     struct accessibility_document doc = {0};
-    if (!accessibility_document_measure(view, term, snapshot, &doc) ||
-        offset >= doc.length)
-        goto done;
+    size_t copied = 0;
+    bool owned = false;
+    if (view->accessibility_lock_depth > 0) {
+        if (!view->accessibility_document_valid)
+            return 0;
+        snapshot = view->accessibility_snapshot;
+        doc = view->accessibility_document;
+        if (offset >= doc.length)
+            return 0;
+    } else {
+        wsap_vtcore_lock(term);
+        owned = true;
+        snapshot = accessibility_snapshot_take(term);
+        if (!snapshot)
+            goto done;
+        if (!accessibility_document_measure(view, term, snapshot, &doc) ||
+            offset >= doc.length)
+            goto done;
+    }
+    term_view = wsap_vtcore_snapshot_view(snapshot);
     while (copied < capacity && offset + copied < doc.length) {
         size_t at = offset + copied;
         if (at < doc.history_length) {
@@ -1017,9 +1041,42 @@ static size_t accessibility_provider_read(void *instance, size_t offset,
             break;
     }
 done:
-    wsap_vtcore_snapshot_free(snapshot);
-    wsap_vtcore_unlock(term);
+    if (owned) {
+        wsap_vtcore_snapshot_free(snapshot);
+        wsap_vtcore_unlock(term);
+    }
     return copied;
+}
+
+/* The shortest time between two accessibility text builds. The text holds
+ * the whole document. During a flood, a build at each frame costs more than
+ * the parser. The first change after a quiet period goes out at once. A
+ * timer sends the last change of a burst. */
+#define ACCESSIBILITY_TEXT_INTERVAL_MS 100
+
+static uint64_t accessibility_text_due(void *userdata, uint64_t id,
+                                       uint64_t delay_ns)
+{
+    (void)id;
+    (void)delay_ns;
+    struct terminal *terminal = userdata;
+    terminal->view.accessibility_timer = 0;
+    if (terminal->window)
+        window_redraw(terminal->window);
+    return 0;
+}
+
+static void accessibility_node_spec_set(struct terminal_view *view,
+                                        struct ui_accessibility_node_spec *out)
+{
+    out->text = &view->accessibility_provider;
+    out->text_offset = 0;
+    out->text_length = SIZE_MAX;
+    out->text_direction = UI_ACCESSIBILITY_TEXT_DIRECTION_LEFT_TO_RIGHT;
+    out->text_version = view->accessibility_text_version;
+    out->caret_offset = view->accessibility_caret_offset;
+    out->selection_start = view->accessibility_selection_start;
+    out->selection_end = view->accessibility_selection_end;
 }
 
 static bool terminal_view_accessibility_text(struct terminal_view *view,
@@ -1029,6 +1086,26 @@ static bool terminal_view_accessibility_text(struct terminal_view *view,
     struct wsap_vtcore *term = terminal->session.term;
     if (!term)
         return false;
+    view->accessibility_provider = (struct ui_accessibility_text_provider){
+        .instance = terminal,
+        .length = accessibility_provider_length,
+        .read = accessibility_provider_read,
+        .lock = accessibility_provider_lock,
+        .unlock = accessibility_provider_unlock,
+    };
+    struct window *window = terminal->window;
+    uint64_t now_ms = window ? window_frame_time_ms(window) : 0;
+    uint64_t due_ms = view->accessibility_built_ms + ACCESSIBILITY_TEXT_INTERVAL_MS;
+    if (view->accessibility_text_valid &&
+        view->accessibility_text_term == term && now_ms < due_ms) {
+        if (!view->accessibility_timer && window)
+            view->accessibility_timer = yasl_loop_add_timer(
+                window_host(window)->loop,
+                (due_ms - now_ms) * UINT64_C(1000000),
+                accessibility_text_due, terminal);
+        accessibility_node_spec_set(view, out);
+        return true;
+    }
     struct wsap_vtcore_snapshot *snapshot = accessibility_snapshot_take(term);
     if (!snapshot)
         return false;
@@ -1038,21 +1115,14 @@ static bool terminal_view_accessibility_text(struct terminal_view *view,
         return false;
     }
     wsap_vtcore_snapshot_free(snapshot);
-    view->accessibility_provider = (struct ui_accessibility_text_provider){
-        .instance = terminal,
-        .length = accessibility_provider_length,
-        .read = accessibility_provider_read,
-        .lock = accessibility_provider_lock,
-        .unlock = accessibility_provider_unlock,
-    };
-    out->text = &view->accessibility_provider;
-    out->text_offset = 0;
-    out->text_length = SIZE_MAX;
-    out->text_direction = UI_ACCESSIBILITY_TEXT_DIRECTION_LEFT_TO_RIGHT;
-    out->text_version = doc.version;
-    out->caret_offset = doc.caret_offset;
-    out->selection_start = doc.selection_start;
-    out->selection_end = doc.selection_end;
+    view->accessibility_built_ms = now_ms;
+    view->accessibility_text_term = term;
+    view->accessibility_text_valid = true;
+    view->accessibility_text_version = doc.version;
+    view->accessibility_caret_offset = doc.caret_offset;
+    view->accessibility_selection_start = doc.selection_start;
+    view->accessibility_selection_end = doc.selection_end;
+    accessibility_node_spec_set(view, out);
     return true;
 }
 
