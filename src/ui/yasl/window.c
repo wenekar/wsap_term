@@ -757,10 +757,9 @@ void window_reload_input(struct window *w)
 {
     if (!w)
         return;
+    /* The shortcut state stays. A key that is down keeps the route of its
+     * press, so its repeats and its release do not reach the content. */
     input_config_load(&w->keymap);
-    /* A route that the old keymap gave must not apply to a key of the new
-     * keymap. */
-    w->sc_state = (struct input_shortcut_state){0};
 }
 
 bool window_bind_scope(struct window *w,

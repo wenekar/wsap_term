@@ -200,9 +200,10 @@ const struct input_keyboard_state *window_keyboard(const struct window *w);
  * window_reload_input(). */
 const struct input_keymap *window_keymap(const struct window *w);
 /* Loads the input configuration into the keymap of window `w` again. The
- * app bindings change. The widget scope bindings stay. The window forgets the
- * shortcut route of each key that is down. The app calls this for each open
- * window when it reloads its configuration. */
+ * app bindings change. The widget scope bindings stay. A key that is down
+ * keeps the route of its press until its release. The new bindings apply
+ * from the next press. The app calls this for each open window when it
+ * reloads its configuration. */
 void window_reload_input(struct window *w);
 void window_copy(struct window *w, enum yasl_selection sel, const char *text);
 void window_paste(struct window *w, enum yasl_selection sel);
