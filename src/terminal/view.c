@@ -214,13 +214,55 @@ static bool edit_key_for_shell(const struct terminal *t,
     }
 }
 
-/* The held keys whose press a terminal of this window declined. The host
- * shares one set among the terminals of a window. */
-static struct input_key_set *declined_keys(struct terminal *t)
+/* Where a key event goes. Zero means that no record holds the key. */
+enum held_route {
+    HELD_UNKNOWN = 0,
+    HELD_DECLINED,
+    HELD_SHELL,
+};
+
+/* The record of the window and the record of the view. The window record
+ * holds a press that another view of the window took. The view record
+ * holds a press that this view took in another window. */
+struct held_records {
+    struct terminal_held_keys *window;
+    struct terminal_held_keys *view;
+};
+
+static struct held_records held_records_of(struct terminal *t)
 {
-    struct input_key_set *keys = t->host.declined_keys
-        ? t->host.declined_keys(t->host.ud, t) : NULL;
-    return keys ? keys : &t->view.declined_keys;
+    return (struct held_records){
+        .window = t->host.held_keys ? t->host.held_keys(t->host.ud, t) : NULL,
+        .view = &t->view.held_keys,
+    };
+}
+
+/* Returns where the press of held key `id` went. A declined press wins over
+ * a press that went to the shell. */
+static enum held_route held_route(struct held_records r, unsigned id)
+{
+    struct terminal_held_keys *keys[2] = { r.window, r.view };
+    for (int i = 0; i < 2; i++)
+        if (keys[i] && terminal_key_set_has(&keys[i]->declined, id))
+            return HELD_DECLINED;
+    for (int i = 0; i < 2; i++)
+        if (keys[i] && terminal_key_set_has(&keys[i]->shell, id))
+            return HELD_SHELL;
+    return HELD_UNKNOWN;
+}
+
+/* Records in both records where the press of key `id` went. HELD_UNKNOWN
+ * forgets the key. */
+static void held_record(struct held_records r, unsigned id,
+                        enum held_route route)
+{
+    struct terminal_held_keys *keys[2] = { r.window, r.view };
+    for (int i = 0; i < 2; i++) {
+        if (!keys[i])
+            continue;
+        terminal_key_set_put(&keys[i]->declined, id, route == HELD_DECLINED);
+        terminal_key_set_put(&keys[i]->shell, id, route == HELD_SHELL);
+    }
 }
 
 static bool view_event(struct ui_widget *widget, const struct ui_event *event)
@@ -245,27 +287,31 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
          * which sends the key that the user pressed. */
         if (key) {
             unsigned id = input_key_id(key);
+            struct held_records records = held_records_of(t);
             /* A repeat or a release follows its press. The app copy clears
-             * the selection, so a new decision would send the key of a copy
-             * that already ran to the shell. */
-            struct input_key_set *declined = declined_keys(t);
-            if (key->action != INPUT_PRESS && input_key_set_has(declined, id)) {
+             * the selection, and a reload can bind a key while it is held,
+             * so a new decision could send part of a key to the wrong
+             * owner. */
+            enum held_route route = HELD_UNKNOWN;
+            if (key->action != INPUT_PRESS) {
+                route = held_route(records, id);
                 if (key->action == INPUT_RELEASE)
-                    input_key_set_put(declined, id, false);
-                return false;
+                    held_record(records, id, HELD_UNKNOWN);
             }
             /* A press always decides again, so a stale record never takes
-             * a press. A repeat or a release that has no declined press
-             * decides by itself, for example when the press went to
-             * another widget. */
-            input_command_id command = input_keymap_lookup_scoped(
-                window_keymap(w), key,
-                ui_surface_command_scope(ui_widget_surface(widget)));
-            bool decline = command != INPUT_COMMAND_NONE &&
-                           !edit_key_for_shell(t, command);
-            if (key->action == INPUT_PRESS)
-                input_key_set_put(declined, id, decline);
-            if (decline)
+             * a press. A repeat or a release that has no record decides by
+             * itself, for example when the press went to another widget. */
+            if (route == HELD_UNKNOWN) {
+                input_command_id command = input_keymap_lookup_scoped(
+                    window_keymap(w), key,
+                    ui_surface_command_scope(ui_widget_surface(widget)));
+                route = command != INPUT_COMMAND_NONE &&
+                        !edit_key_for_shell(t, command)
+                    ? HELD_DECLINED : HELD_SHELL;
+                if (key->action == INPUT_PRESS)
+                    held_record(records, id, route);
+            }
+            if (route == HELD_DECLINED)
                 return false;
         }
         if (!key || !terminal_key(t, key))

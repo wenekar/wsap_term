@@ -7,6 +7,7 @@
 #include "input/input.h"
 #include "input/keybind.h"
 #include "session/session.h"
+#include "terminal/key_set.h"
 #include "terminal/selection.h"
 #include "terminal/terminal.h"
 #include "ui/accessibility.h"
@@ -52,10 +53,9 @@ struct terminal_view {
     bool drop_hover;
     bool opening_link;
     bool blink_cells;
-    /* The held keys whose press the view declined to the app command, when
-     * the host shares no set for the window. The repeats and the release of
-     * such a key follow the press. */
-    struct input_key_set declined_keys;
+    /* The held keys whose press this view decided. The record follows the
+     * terminal when its tab moves to another window. */
+    struct terminal_held_keys held_keys;
 
     /* The byte offset of each logical history line in the accessibility
      * document, its byte length, and the history rows that it covers. The

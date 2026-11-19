@@ -8,6 +8,11 @@
 #include <sys/un.h>
 
 #define PTY_SYNC_ENV "WSAP_SYNC"
+/* The time in milliseconds that the preload waits for a sync ack. The
+ * default is PTY_SYNC_TIMEOUT_MS. Tests set it higher, so a slow machine
+ * does not miss the ack. */
+#define PTY_SYNC_TIMEOUT_ENV "WSAP_SYNC_TIMEOUT_MS"
+#define PTY_SYNC_TIMEOUT_MS 200
 #define PTY_SYNC_LEAVE_PIPE 'p'
 #define PTY_SYNC_LEAVE_TTY 't'
 

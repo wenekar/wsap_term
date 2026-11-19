@@ -12,8 +12,6 @@
 #include "pty/preload/shim.h"
 #include "pty/sync.h"
 
-#define FP_SYNC_TIMEOUT_MS 200
-
 static int routed_fd[2] = { -1, -1 };
 static int routed;
 static dev_t tty_rdev;
@@ -35,6 +33,19 @@ static int is_terminal_dev(int fd)
     return st.st_rdev == tty_rdev;
 }
 
+/* Returns the wait for a sync ack in milliseconds. A value in the
+ * environment from 1 to 60000 replaces the default. */
+static int sync_timeout_ms(void)
+{
+    const char *text = getenv(PTY_SYNC_TIMEOUT_ENV);
+    if (!text || !text[0])
+        return PTY_SYNC_TIMEOUT_MS;
+    char *end = NULL;
+    long ms = strtol(text, &end, 10);
+    return *end == '\0' && ms >= 1 && ms <= 60000 ? (int)ms
+                                                   : PTY_SYNC_TIMEOUT_MS;
+}
+
 static int sync_barrier(char req)
 {
     const char *name = getenv(PTY_SYNC_ENV);
@@ -47,7 +58,7 @@ static int sync_barrier(char req)
     struct pollfd pfd = { .fd = fd, .events = POLLIN };
     int ok = connect(fd, (const struct sockaddr *)&addr, len) == 0 &&
              send(fd, &req, 1, PTY_SYNC_SEND_FLAGS) == 1 &&
-             poll(&pfd, 1, FP_SYNC_TIMEOUT_MS) == 1 &&
+             poll(&pfd, 1, sync_timeout_ms()) == 1 &&
              recv(fd, &ack, 1, 0) == 1 && ack == req;
     close(fd);
     return ok ? 0 : -1;

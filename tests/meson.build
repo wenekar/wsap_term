@@ -381,6 +381,9 @@ if backend == 'wayland'
     fastpty_env.set('LD_PRELOAD', '')
     fastpty_env.set('DYLD_INSERT_LIBRARIES', '')
     fastpty_env.set('WSAP_NO_PRELOAD', '0')
+    # The preload waits this long for a sync ack. The default of 200 ms is
+    # too short on a loaded machine, and the transport check then fails.
+    fastpty_env.set('WSAP_SYNC_TIMEOUT_MS', '5000')
     test(
         'fastpty-test',
         python,

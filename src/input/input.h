@@ -379,32 +379,6 @@ enum input_key_route {
 /* Returns the identifier that the shortcut state tracks for key `ev`. */
 unsigned input_key_id(const struct input_key_event *ev);
 
-/* A set of key IDs from input_key_id(). All zero is the empty set. */
-struct input_key_set {
-    uint64_t bits[(INPUT_SHORTCUT_KEY_COUNT + 63) / 64];
-};
-
-/* Returns true when set `s` holds key ID `id`. */
-static inline bool input_key_set_has(const struct input_key_set *s, unsigned id)
-{
-    return s && id < INPUT_SHORTCUT_KEY_COUNT &&
-           ((s->bits[id / 64] >> (id % 64)) & 1);
-}
-
-/* Adds key ID `id` to set `s` when `in` is true, and removes it otherwise.
- * An ID out of range changes nothing. */
-static inline void input_key_set_put(struct input_key_set *s, unsigned id,
-                                     bool in)
-{
-    if (!s || id >= INPUT_SHORTCUT_KEY_COUNT)
-        return;
-    uint64_t bit = UINT64_C(1) << (id % 64);
-    if (in)
-        s->bits[id / 64] |= bit;
-    else
-        s->bits[id / 64] &= ~bit;
-}
-
 /*
  * Returns true when keymap `km` binds key event `ev`.
  * The function reads the map only. It queues no event.
