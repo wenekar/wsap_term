@@ -562,6 +562,24 @@ static void drop_indicator_follows_the_pointer_test(void)
     teardown(&f);
 }
 
+/* A lost capture ends the drag, so the list clears its drop mark. */
+static void capture_lost_clears_drop_mark_test(void)
+{
+    struct fixture f;
+    show_default(&f);
+    ui_surface_prepare(&f.surface);
+    struct rect2i r = ui_list_item_rect(&f.list, 1);
+    struct vector2i p = { .x = r.x + r.width / 2, .y = r.y + r.height / 2 };
+    assert(drag(&f.surface, &f.list, UI_EVENT_DRAG_OVER, p));
+    assert(ui_list_drop_indicator(&f.list));
+    struct ui_event lost = { .kind = UI_EVENT_CAPTURE_LOST };
+    assert(ui_widget_event(ui_list_widget(&f.list), &lost));
+    assert(ui_list_drop_indicator(&f.list) == NULL);
+    assert(ui_list_drop_into(&f.list) == -1);
+    assert(ui_list_drop_slot(&f.list) == -1);
+    teardown(&f);
+}
+
 int main(void)
 {
     label_and_shortcut_do_not_overlap_test();
@@ -581,6 +599,7 @@ int main(void)
     item_flags_pick_their_class_rule_test();
     non_focusable_list_does_not_take_focus_test();
     drop_indicator_follows_the_pointer_test();
+    capture_lost_clears_drop_mark_test();
     puts("PASS: list tests");
     return 0;
 }
