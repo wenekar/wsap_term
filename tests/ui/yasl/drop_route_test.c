@@ -9,9 +9,14 @@
 #include "ui/yasl/window.h"
 
 /*
- * A drop mark shows only where the drop lands.
- * A text or file drop goes to the focused widget, so no other widget draws a
- * mark for it. A drop of any other type goes to the widget that drew the mark.
+ * Decision of the codebase owner (2026-11-19):
+ * - A paste always goes to the focused widget.
+ * - Only a drop release goes to the drop target, and the drop location on the
+ *   window surface gives it.
+ * - A text drop marks only a widget inside the focused subtree.
+ *
+ * The file drop case uses the order of a real backend: the drag enters, the
+ * LEAVE comes, and then the release lands.
  */
 
 struct probe {
@@ -101,6 +106,15 @@ static void drag(struct fixture *f, enum input_kind kind, const char *mime,
     window_ui_route(f->window, &ev);
 }
 
+static void leave(struct fixture *f, struct vector2i pos)
+{
+    struct input_event ev = {
+        .kind = INPUT_DRAG,
+        .drop_type = { .mime = (char *)"", .pos = pos, .leave = true },
+    };
+    window_ui_route(f->window, &ev);
+}
+
 static void drop(struct fixture *f, const char *mime, struct vector2i pos)
 {
     struct input_event ev = {
@@ -146,7 +160,8 @@ static void position_drop_goes_to_the_marked_widget_test(void)
     teardown(&f);
 }
 
-/* A file drop goes to the widget that drew the mark. */
+/* A file drop goes to the widget at its drop location, also after the LEAVE
+ * that Wayland and X11 send before the release. */
 static void file_drop_goes_to_the_marked_widget_test(void)
 {
     struct fixture f;
@@ -155,6 +170,8 @@ static void file_drop_goes_to_the_marked_widget_test(void)
     struct vector2i over_mark = { .x = 40, .y = 150 };
     drag(&f, INPUT_DRAG, "text/uri-list", over_mark);
     assert(f.mark.enter == 1);
+    leave(&f, over_mark);
+    assert(f.mark.leave == 1);
     struct input_event ev = {
         .kind = INPUT_DROP_FILES,
         .drop = { .data = (char *)"file:///tmp/a\r\n", .len = 17,
