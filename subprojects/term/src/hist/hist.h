@@ -185,6 +185,10 @@ struct hist {
 
     uint64_t rows_id;
     uint64_t counted_rows;
+    /* Exact row walks of one line since init. The tests read this count to
+     * prove that a width change walks each wide line once and that a frame
+     * at a fixed size walks none. */
+    uint64_t walk_calls;
     uint64_t walk_seq;
     uint64_t base_cell_id, base_cell;
     uint64_t last_id, last_cells, last_wide;
@@ -262,6 +266,7 @@ uint64_t wsap_vtcore_hist_rows(const struct hist *h, int cols);
 uint64_t wsap_vtcore_hist_total_cells(const struct hist *h);
 uint64_t wsap_vtcore_hist_line_estimate(const struct hist *h, uint64_t id, int cols);
 uint64_t wsap_vtcore_hist_estimated_rows(const struct hist *h, int cols);
+uint64_t wsap_vtcore_hist_walk_calls(const struct hist *h);
 void wsap_vtcore_hist_prepare_rows(struct hist *h, int cols);
 void wsap_vtcore_hist_refine_rows(struct hist *h, uint64_t id, int cols, int rows);
 
