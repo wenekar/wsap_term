@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "input/command.h"
@@ -21,7 +22,8 @@ static struct window_host host;
 
 static struct window *make_window(struct ui_input *in, const char *text)
 {
-    struct window_config config = { .size = { .x = 320, .y = 200 } };
+    /* The host borrows the config, so it must outlive the host. */
+    static const struct window_config config = { .size = { .x = 320, .y = 200 } };
     window_host_init(&host, NULL, &config, NULL);
     struct window *w = window_create(&host, &(struct window_spec){0});
     assert(w);
@@ -35,6 +37,7 @@ static void destroy_window(struct window *w)
 {
     window_destroy(w);
     window_host_registry_remove(&host);
+    free(host.windows);
 }
 
 static struct ui_menu *open_menu(struct window *w, struct ui_input *in,

@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <stdlib.h>
 
 #include "ui/yasl/internal.h"
 #include "ui/yasl/window.h"
@@ -33,5 +34,7 @@ int main(void)
     assert(window_host_registry_count == 0);
     assert(window_host_registry_first() == NULL);
     window_destroy(wa);
+    free(a.windows);
+    free(b.windows);
     return 0;
 }

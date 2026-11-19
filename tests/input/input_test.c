@@ -451,6 +451,8 @@ int main(void)
         assert(input_keymap_lookup(&modern, &plain_c) == INPUT_COMMAND_NONE);
         assert(input_keymap_lookup(&legacy, &plain_c) == INPUT_COMMAND_NONE);
         assert(input_keymap_lookup(&legacy, &plain_v) == INPUT_COMMAND_NONE);
+        input_keymap_free(&modern);
+        input_keymap_free(&legacy);
     }
 #endif
 

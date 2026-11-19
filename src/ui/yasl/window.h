@@ -85,6 +85,9 @@ struct window_host {
     bool destroying;
 };
 
+/* Prepares `host` for its first window. The host keeps the `config`
+ * pointer, so `config` must outlive the host. It copies `hooks`. Call it
+ * once, before window_create(). */
 void window_host_init(struct window_host *host, struct yasl_loop *loop,
                       const struct window_config *config,
                       const struct window_host_hooks *hooks);

@@ -22,6 +22,9 @@ static struct window w;
 
 static void fresh_window(void)
 {
+    /* A lookup builds the hash tables of the keymap, so free them before
+     * the window is zeroed. */
+    input_keymap_free(&w.keymap);
     memset(&w, 0, sizeof w);
 }
 
@@ -459,5 +462,6 @@ int main(void)
     local_uri_list_drops_files_test();
     other_drops_keep_their_type_test();
     composition_keeps_revision_test();
+    fresh_window();
     return 0;
 }

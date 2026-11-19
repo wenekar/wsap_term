@@ -72,7 +72,8 @@ static const struct vector2i over_bottom = { .x = 40, .y = 150 };
 static void show(struct fixture *f)
 {
     *f = (struct fixture){0};
-    struct window_config config = { .size = { .x = 320, .y = 200 } };
+    /* The host borrows the config, so it must outlive the host. */
+    static const struct window_config config = { .size = { .x = 320, .y = 200 } };
     window_host_init(&host, NULL, &config, NULL);
     f->window = window_create(&host, &(struct window_spec){0});
     assert(f->window);

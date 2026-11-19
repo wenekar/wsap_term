@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
 
@@ -67,6 +68,8 @@ static void close_veto_test(void)
     state.close_allowed = true;
     assert(window_host_request_close(&w));
     assert(state.close_asks == 3);
+    window_host_registry_remove(&host);
+    free(host.windows);
 }
 
 /* A canceled quit runs no action. A later allowed request runs it once. */
@@ -91,6 +94,8 @@ static void quit_veto_test(void)
     state.quit_allowed = true;
     window_host_dispatch_event(&host, &ev);
     assert(state.quit_asks == 3);
+    window_host_registry_remove(&host);
+    free(host.windows);
 }
 
 /* Without hooks the host allows both requests. */
@@ -102,6 +107,8 @@ static void no_hook_test(void)
     w.host = &host;
     assert(window_host_request_close(&w));
     assert(window_host_request_quit(&host));
+    window_host_registry_remove(&host);
+    free(host.windows);
 }
 
 int main(void)

@@ -24,8 +24,12 @@ static void show(struct fixture *f, struct ui_widget *child)
     ui_surface_resize(&f->surface, (struct vector2i){ .x = 320, .y = 120 });
 }
 
+/* Destroys the widget tree, so each widget frees what it owns, and then
+ * the surface. */
 static void teardown(struct fixture *f)
 {
+    ui_surface_set_root(&f->surface, NULL);
+    ui_widget_destroy(&f->root);
     ui_surface_destroy(&f->surface);
 }
 
