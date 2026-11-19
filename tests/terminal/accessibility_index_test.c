@@ -94,6 +94,50 @@ static size_t count(const char *text, const char *needle)
     return n;
 }
 
+/* A fixed random stream keeps the test the same on every run. A line can hold
+ * a wide cell, a combining mark, a tab, and blanks, so a rewrap gives a row
+ * that wastes its last column. */
+static uint64_t next_random(uint64_t *state)
+{
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    return *state;
+}
+
+static void feed_wide_lines(struct wsap_vtcore *term, int lines)
+{
+    static const char *const pieces[] = {
+        "\u4e2d", "e\xcc\x81", "\t", "   ", "x", "\u4e2d\u6587",
+        "\u4e2d\u4e2d", "abc", " ", "  ",
+    };
+    const uint64_t kinds = sizeof(pieces) / sizeof(pieces[0]);
+    uint64_t state = UINT64_C(0x5eed) * UINT64_C(0x9e3779b97f4a7c15) + 1;
+    char block[4096];
+    size_t used = 0;
+    for (int i = 0; i < lines; i++) {
+        int count = 1 + (int)(next_random(&state) % 200u);
+        for (int k = 0; k < count; k++) {
+            const char *piece = pieces[next_random(&state) % kinds];
+            size_t n = strlen(piece);
+            if (used + n + 2 > sizeof(block)) {
+                assert(wsap_vtcore_feed(term, block, used, 0));
+                used = 0;
+            }
+            memcpy(block + used, piece, n);
+            used += n;
+        }
+        if (used + 2 > sizeof(block)) {
+            assert(wsap_vtcore_feed(term, block, used, 0));
+            used = 0;
+        }
+        block[used++] = '\r';
+        block[used++] = '\n';
+    }
+    if (used)
+        assert(wsap_vtcore_feed(term, block, used, 0));
+}
+
 static void check_history_prefix(struct terminal *content,
                                  const struct ui_accessibility_node *node)
 {
@@ -332,6 +376,36 @@ int main(void)
     assert(ui_accessibility_publish_set_has(&set, terminal_id));
     ui_accessibility_publish_set_destroy(&set);
     ui_accessibility_tree_destroy(&previous);
+
+    /* A11: a rewrap with wide cells keeps the document and the index exact.
+     * The node length is the length of the whole read, and the line bytes of
+     * the index add up to the history length. */
+    assert(wsap_vtcore_set_scrollback_limit(term, 60000));
+    assert(wsap_vtcore_resize(term, (struct wsap_vtcore_vector2i){ .x = 100, .y = 35 }));
+    feed(term, "\x1b[H\x1b[2J\x1b[3J");
+    feed_wide_lines(term, 300);
+    assert(wsap_vtcore_resize(term, (struct wsap_vtcore_vector2i){ .x = 54, .y = 41 }));
+    node = build_node(content, &tree);
+    size_t node_len = ui_accessibility_node_text_length(node);
+    size_t read_len = 0;
+    char *document = read_document(node, &read_len);
+    assert(read_len == node_len);
+    assert(content->view.accessibility_line_count > 0);
+    size_t line_bytes = 0;
+    for (size_t i = 0; i < content->view.accessibility_line_count; i++) {
+        const struct terminal_text_line *line = &content->view.accessibility_lines[i];
+        char *one = wsap_vtcore_history_text_range(term, (int)line->row,
+                                                   (int)line->rows, NULL);
+        assert(one);
+        assert(strlen(one) == line->bytes);
+        line_bytes += line->bytes;
+        wsap_vtcore_text_free(one);
+    }
+    assert(line_bytes == content->view.accessibility_history_length);
+    check_history_prefix(content, node);
+    printf("a11: rewrap document %zu bytes in %zu history lines\n", node_len,
+           content->view.accessibility_line_count);
+    free(document);
 
     /* A5: a read costs the rows of its range, not the history. */
     assert(wsap_vtcore_set_scrollback_limit(term, 60000));
