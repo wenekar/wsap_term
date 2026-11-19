@@ -2207,8 +2207,9 @@ static void drag_mark_follows_the_pointer_test(void)
     teardown(&f);
 }
 
-/* A drop on the bar reports its insert slot and removes the mark. */
-static void drop_reports_the_insert_slot_test(void)
+/* A drop on the bar removes the mark and goes on to the parent. The bar has
+ * no drop payload handler, so it does not take the drop. */
+static void drop_clears_the_mark_and_passes_to_the_parent_test(void)
 {
     struct fixture f;
     setup(&f, 3, 900);
@@ -2217,12 +2218,25 @@ static void drop_reports_the_insert_slot_test(void)
     assert(drag_event(&f, UI_EVENT_DRAG_OVER, p));
     assert(ui_tabbar_drop_indicator(&f.tb));
     clear_log(&f);
-    assert(drag_event(&f, UI_EVENT_DROP, p));
-    const struct ui_action *drop = last(&f, UI_TAB_ACTION_DROP);
-    assert(drop);
-    assert(drop->index == 1);
+    assert(!drag_event(&f, UI_EVENT_DROP, p));
     assert(ui_tabbar_drop_indicator(&f.tb) == NULL);
     assert(ui_tabbar_drop_slot(&f.tb) == -1);
+    teardown(&f);
+}
+
+/* A drop at the center of the first tab on a bar that reserves the incoming
+ * slot inserts before that tab. The dragged tab has left the bar, so one tab
+ * remains. */
+static void drop_at_a_tab_center_inserts_before_it_test(void)
+{
+    struct fixture f;
+    setup(&f, 2, 700);
+    show(&f, 2, 0);
+    struct rect2i t0 = tab_rect(&f, 0);
+    struct vector2i p = at(t0, t0.width / 2, t0.height / 2);
+    show(&f, 1, 0);
+    ui_tabbar_set_external_drag(&f.tb, true, p);
+    assert(ui_tabbar_external_slot(&f.tb) == 0);
     teardown(&f);
 }
 
@@ -2252,7 +2266,8 @@ int main(void)
     sideways_exit_detaches_test();
     external_drag_reveals_single_tab_target_test();
     drag_mark_follows_the_pointer_test();
-    drop_reports_the_insert_slot_test();
+    drop_clears_the_mark_and_passes_to_the_parent_test();
+    drop_at_a_tab_center_inserts_before_it_test();
     incoming_tab_has_translucent_drop_preview();
     bar_away_from_the_origin_uses_surface_space();
     tabbar_build_drag_preview_test();
