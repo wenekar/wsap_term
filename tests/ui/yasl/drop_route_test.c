@@ -17,6 +17,7 @@
 struct probe {
     struct ui_widget widget;
     int enter;
+    int leave;
     int drop;
     struct vector2i drop_pos;
 };
@@ -35,6 +36,8 @@ static bool probe_event(struct ui_widget *widget, const struct ui_event *event)
     struct probe *p = widget->userdata;
     if (event->kind == UI_EVENT_DRAG_ENTER || event->kind == UI_EVENT_DRAG_OVER)
         p->enter++;
+    if (event->kind == UI_EVENT_DRAG_LEAVE)
+        p->leave++;
     if (event->kind == UI_EVENT_DROP) {
         p->drop++;
         p->drop_pos = event->data.drag.pos;
@@ -176,11 +179,29 @@ static void text_drag_marks_the_focused_widget_test(void)
     teardown(&f);
 }
 
+/* A release ends the drag. The widget that the drag was over gets one LEAVE,
+ * and the surface holds no drop target. */
+static void release_ends_the_drag_test(void)
+{
+    struct fixture f;
+    show(&f);
+    ui_surface_focus(window_ui_key_surface(f.window), &f.pane.widget);
+    struct vector2i over_mark = { .x = 40, .y = 150 };
+    drag(&f, INPUT_DRAG, "image/png", over_mark);
+    assert(f.mark.enter == 1);
+    drop(&f, "image/png", over_mark);
+    assert(f.mark.drop == 1);
+    assert(f.mark.leave == 1);
+    assert(!ui_surface_drag_target(window_ui_key_surface(f.window)));
+    teardown(&f);
+}
+
 int main(void)
 {
     text_drag_marks_no_other_widget_test();
     position_drop_goes_to_the_marked_widget_test();
     text_drag_marks_the_focused_widget_test();
     file_drop_goes_to_the_marked_widget_test();
+    release_ends_the_drag_test();
     return 0;
 }

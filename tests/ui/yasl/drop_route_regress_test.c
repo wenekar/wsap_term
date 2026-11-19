@@ -290,6 +290,106 @@ static void drop_goes_to_its_location_not_an_old_hover_test(void)
     teardown(&f);
 }
 
+/* 8. The hover widget is freed during a drag (D1). The next OVER, LEAVE, and
+ * release must not touch it. ASan reports a use after free. */
+static void widget_freed_during_a_drag_test(void)
+{
+    struct fixture f;
+    show(&f);
+    focus(&f, &f.top.widget);
+    hover(&f, "image/png", over_bottom);
+    assert(f.bottom->enter == 1);
+    free_bottom(&f);
+    hover(&f, "image/png", over_bottom);
+    leave(&f, over_bottom);
+    hover(&f, "text/uri-list", over_bottom);
+    release(&f, "text/uri-list", FILE_URI, over_bottom);
+    clipboard(&f, "y");
+    assert(f.top.paste == 1);
+    teardown(&f);
+}
+
+/* 9. The hover widget is freed during a drag that then gets a paste and a
+ * release with no OVER between them. */
+static void widget_freed_then_release_test(void)
+{
+    struct fixture f;
+    show(&f);
+    focus(&f, &f.top.widget);
+    hover(&f, "text/uri-list", over_bottom);
+    free_bottom(&f);
+    clipboard(&f, "y");
+    assert(f.top.paste == 1);
+    release(&f, "text/uri-list", FILE_URI, over_bottom);
+    release(&f, "image/png", "PNG", over_bottom);
+    teardown(&f);
+}
+
+/* 10. The window surface replaces its tree during a drag. The old tree is
+ * freed. The next events must not touch it. */
+static void tree_replaced_during_a_drag_test(void)
+{
+    struct fixture f;
+    show(&f);
+    focus(&f, &f.top.widget);
+    hover(&f, "image/png", over_bottom);
+    struct ui_surface *screen = window_ui_surface_at(f.window, 0);
+    struct ui_widget other;
+    ui_widget_init(&other, NULL, NULL);
+    assert(ui_surface_set_root(screen, &other));
+    free_bottom(&f);
+    leave(&f, over_bottom);
+    clipboard(&f, "y");
+    release(&f, "image/png", "PNG", over_bottom);
+    assert(ui_surface_set_root(screen, NULL));
+    ui_widget_destroy(&other);
+    teardown(&f);
+}
+
+/* 11. The window closes during a drag. Its queued drop events are not
+ * routed after the close. */
+static void window_closed_during_a_drag_test(void)
+{
+    struct fixture f;
+    show(&f);
+    focus(&f, &f.top.widget);
+    hover(&f, "image/png", over_bottom);
+    window_destroy(f.window);
+    f.window = NULL;
+    free_bottom(&f);
+    teardown(&f);
+}
+
+/* 12. A menu popup is open during a drag, so the key surface is the popup.
+ * The hover widget on the window surface is freed. The next events must not
+ * touch it. Before 16b1f8d the popup kept the target. */
+static void widget_freed_while_a_popup_is_open_test(void)
+{
+    struct fixture f;
+    show(&f);
+    focus(&f, &f.top.widget);
+    /* The state that open_popup makes: a popup surface above the window. */
+    struct window_ui *ui = ui_of(f.window);
+    ui->menu_popup = calloc(UI_MENU_MAX_LEVELS, sizeof(*ui->menu_popup));
+    assert(ui->menu_popup);
+    ui_surface_init(&ui->menu_popup[0].ui, NULL, NULL);
+    ui->menu_popups = 1;
+    assert(window_ui_key_surface(f.window) == &ui->menu_popup[0].ui);
+    hover(&f, "image/png", over_bottom);
+    assert(f.bottom->enter == 1);
+    free_bottom(&f);
+    hover(&f, "image/png", over_bottom);
+    leave(&f, over_bottom);
+    release(&f, "image/png", "PNG", over_bottom);
+    clipboard(&f, "y");
+    /* The test owns the fake popup, so it frees it before the window. */
+    ui->menu_popups = 0;
+    ui_surface_destroy(&ui->menu_popup[0].ui);
+    free(ui->menu_popup);
+    ui->menu_popup = NULL;
+    teardown(&f);
+}
+
 int main(void)
 {
     static void (*const cases[])(void) = {
@@ -300,6 +400,11 @@ int main(void)
         file_drop_after_leave_goes_to_its_location_test,
         file_drop_before_leave_goes_to_its_location_test,
         drop_goes_to_its_location_not_an_old_hover_test,
+        widget_freed_during_a_drag_test,
+        widget_freed_then_release_test,
+        tree_replaced_during_a_drag_test,
+        window_closed_during_a_drag_test,
+        widget_freed_while_a_popup_is_open_test,
     };
     /* CASE=n runs one case, so a run reports each failure. */
     const char *pick = getenv("CASE");
