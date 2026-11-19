@@ -294,6 +294,53 @@ static void config_style_order_test(void)
     unsetenv("WSAP_INPUT_CONFIG");
 }
 
+/* Rewrites the input configuration at `path` with `text`. */
+static void write_input_config(const char *path, const char *text)
+{
+    FILE *f = fopen(path, "w");
+    assert(f);
+    fputs(text, f);
+    assert(fclose(f) == 0);
+}
+
+/* A reload reads the style again, so a style change needs no restart. A
+ * clear line wins over a style line in either order. */
+static void config_reload_style_test(void)
+{
+    char path[] = "/tmp/wsap-input-config-XXXXXX";
+    int fd = mkstemp(path);
+    assert(fd >= 0);
+    assert(close(fd) == 0);
+    write_input_config(path, "style = modern\n");
+    assert(setenv("WSAP_INPUT_CONFIG", path, 1) == 0);
+    input_config_init(NULL);
+
+    struct input_keymap km;
+    input_keymap_init(&km);
+    struct input_key_event ctrl_c = { .codepoint = 'c', .mods = INPUT_MOD_CTRL };
+    input_config_load(&km);
+    assert(input_keymap_lookup(&km, &ctrl_c) == INPUT_COMMAND_COPY);
+
+    /* Change the style line only. The next load uses the new style. */
+    write_input_config(path, "style = legacy\n");
+    input_config_load(&km);
+    assert(input_keymap_lookup(&km, &ctrl_c) == INPUT_COMMAND_NONE);
+
+    /* A clear line before a style line still clears the defaults. */
+    write_input_config(path, "clear\nstyle = modern\n");
+    input_config_load(&km);
+    assert(input_keymap_lookup(&km, &ctrl_c) == INPUT_COMMAND_NONE);
+
+    /* A clear line after a style line also clears the defaults. */
+    write_input_config(path, "style = legacy\nclear\n");
+    input_config_load(&km);
+    assert(input_keymap_lookup(&km, &ctrl_c) == INPUT_COMMAND_NONE);
+
+    input_keymap_free(&km);
+    unlink(path);
+    unsetenv("WSAP_INPUT_CONFIG");
+}
+
 int main(void)
 {
     command_registry_test();
@@ -305,6 +352,7 @@ int main(void)
     wide_codepoint_binding_test();
     keymap_grows_test();
     config_style_order_test();
+    config_reload_style_test();
     static const struct input_shortcut_policy lin = {
         .accel = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,
         .zoom = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,
