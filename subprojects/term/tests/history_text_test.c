@@ -426,11 +426,47 @@ static void wide_resize_stream(void)
     }
 }
 
+static void expect_range(struct wsap_vtcore *term, int first, int count,
+                         const char *expected)
+{
+    char *text = wsap_vtcore_history_text_range(term, first, count, NULL);
+    assert(text);
+    if (strcmp(text, expected)) {
+        fprintf(stderr, "rows %d+%d: got \"%s\" want \"%s\"\n", first, count,
+                text, expected);
+        assert(0);
+    }
+    wsap_vtcore_text_free(text);
+}
+
+/* A blank in the last column of a row that wraps is text of its line. When
+ * the range ends at that row, the line goes on after the range, so the blank
+ * stays. The two parts then join to the text of the whole line. */
+static void wrapped_range_keeps_tail(void)
+{
+    struct wsap_vtcore *term = new_term(8);
+    feed(term, "abcdefg hij\r\nx\r\ny");
+    expect_history(term, 100, "abcdefg hij\n");
+    expect_range(term, 0, 1, "abcdefg ");
+    expect_range(term, 1, 1, "hij\n");
+    expect_range(term, 0, 2, "abcdefg hij\n");
+    wsap_vtcore_free(term);
+
+    /* The last history row continues into the screen. */
+    term = new_term(8);
+    feed(term, "abcdefg hijklmn pq");
+    assert(wsap_vtcore_history_rows(term) == 1);
+    expect_range(term, 0, 1, "abcdefg ");
+    expect_history(term, 100, "abcdefg ");
+    wsap_vtcore_free(term);
+}
+
 int main(void)
 {
     unicode_and_selection();
     limits_and_scrolled_view();
     wrapped_rows();
+    wrapped_range_keeps_tail();
     scrollback_limit();
     scrollback_zero_option();
     scrollback_small_option();

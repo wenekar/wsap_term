@@ -664,8 +664,13 @@ static bool text_reserve(char **text, size_t *cap, size_t need)
     return true;
 }
 
+/* The text of the selection, or of the cells in bounds. A row that joins the
+ * next row keeps all of its cells. The last row of a line drops its trailing
+ * blanks. With keep_tail, the last row of the range keeps them too, because
+ * its line continues after the range. */
 static char *range_text_inner(const struct wsap_vtcore *t,
-                              const struct wsap_vtcore_sel_point *bounds)
+                              const struct wsap_vtcore_sel_point *bounds,
+                              bool keep_tail)
 {
     if (!t || (!bounds && !t->selection)) return NULL;
     struct lines L;
@@ -767,7 +772,7 @@ static char *range_text_inner(const struct wsap_vtcore *t,
                 continue;
             bool is_last = id == end.line_id && (end.cell_off < seg_end || seg == nsegs - 1);
             bool wrapped = !is_last && row_wrapped;
-            if (!wrapped)
+            if (!wrapped && !(is_last && keep_tail))
                 while (c1 >= c0 && cells[c1].c <= ' ')
                     c1--;
 
@@ -825,7 +830,9 @@ static char *range_text_inner(const struct wsap_vtcore *t,
 }
 
 /* The text of history rows [begin_row, end_row) and the wrap flag of the
- * last row. The caller holds the write lock and prepared the view. */
+ * last row. A last row that wraps keeps its trailing blanks: its line goes
+ * on after the range. The caller holds the write lock and prepared the
+ * view. */
 static char *history_range_text(struct wsap_vtcore *t, int begin_row, int end_row,
                                 bool *last_wrapped)
 {
@@ -848,7 +855,7 @@ static char *history_range_text(struct wsap_vtcore *t, int begin_row, int end_ro
                                                    last_seg, NULL, &wrapped);
         bounds[1].cell_off = last_start +
             (uint32_t)seg_display_cols(t->cols, cells, wrapped) - 1;
-        text = range_text_inner(t, bounds);
+        text = range_text_inner(t, bounds, wrapped);
         if (text && !wrapped) {
             size_t n = strlen(text);
             size_t cap = n + 1;
@@ -970,7 +977,7 @@ char *wsap_vtcore_selection_text(const struct wsap_vtcore *t)
 {
     if (!t) return NULL;
     wsap_vtcore_write_begin((struct wsap_vtcore *)t);
-    char *text = range_text_inner(t, NULL);
+    char *text = range_text_inner(t, NULL, false);
     wsap_vtcore_write_end((struct wsap_vtcore *)t);
     return text;
 }

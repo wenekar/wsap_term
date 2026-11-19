@@ -476,9 +476,11 @@ WSAP_VTCORE_API uint64_t wsap_vtcore_history_first_line(const struct wsap_vtcore
 /* Return the text of history rows [first_row, first_row + row_count). Row zero
  * is the oldest history row. The view offset does not change the row count.
  * The rows of a soft-wrapped line join with no newline. Each hard line end
- * gets one '\n'. wrapped[i] is true when row i joins the next row. Pass NULL
- * to skip it. row_count is clamped to the history. NULL means a NULL terminal
- * or an allocation failure. Free with wsap_vtcore_text_free. */
+ * gets one '\n'. A line drops its trailing blanks. When the last row of the
+ * range joins the next row, the line goes on after the range, and that row
+ * keeps its trailing blanks. wrapped[i] is true when row i joins the next
+ * row. Pass NULL to skip it. row_count is clamped to the history. NULL means
+ * a NULL terminal or an allocation failure. Free with wsap_vtcore_text_free. */
 WSAP_VTCORE_API char *wsap_vtcore_history_text_range(struct wsap_vtcore *t,
                                                      int first_row,
                                                      int row_count,
