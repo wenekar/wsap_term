@@ -106,16 +106,18 @@ _Static_assert(INPUT_COMMAND_APP_COUNT == 29, "app ID count moved");
  * 1. Call `input_command_scope_new()`, and keep the scope that it returns.
  * 2. Call `input_command_add()` with the scope, the name, and the label, and
  *    keep the ID that it returns.
- * 3. Bind the ID with `input_keymap_apply_spec_registry()` when the command
- *    has a chord. Pass the registry of the widget. A menu item needs no
- *    chord. An app command, such as `close_tab`, can bind in the widget
- *    scope too.
- * 4. Put the ID in the action of the widget, and read the label of a menu
+ * 3. Set the scope in the `command_scope` field of the widget.
+ * 4. When the command has a chord, bind it in each window with
+ *    `window_bind_scope()` from `ui/yasl/client.h`. Pass the registry of the
+ *    widget. For a keymap of your own, use
+ *    `input_keymap_apply_spec_registry()`. A menu item needs no chord. An
+ *    app command, such as `close_tab`, can bind in the widget scope too.
+ * 5. Put the ID in the action of the widget, and read the label of a menu
  *    item with `input_command_label()`.
- * When the owner is destroyed, it calls `input_keymap_clear_scope()` for its
- * scope on each keymap that it bound. Then it frees its registry and calls
- * `input_command_scope_release()`. The UI core does not do this, because it
- * owns no keymap.
+ * When the owner is destroyed, it calls `window_clear_scope()` for each
+ * window that it bound, or `input_keymap_clear_scope()` for a keymap of its
+ * own. Then it frees its registry and calls `input_command_scope_release()`.
+ * The UI core does not do this, because it owns no keymap.
  * A registry in one scope never gives an ID that a registry in another scope
  * gives.
  */

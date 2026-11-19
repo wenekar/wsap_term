@@ -1,7 +1,10 @@
+#define _GNU_SOURCE
 #include <assert.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "input/command.h"
 #include "input/input.h"
@@ -364,6 +367,69 @@ static void taken_bound_key_keeps_text_test(void)
     teardown(&f);
 }
 
+/* A widget follows the scope workflow of command.h with the public calls
+ * only. It takes a scope, adds a command, and binds a chord in the window.
+ * The chord runs the command, also after an input.conf reload. After the
+ * widget clears its scope, the chord runs nothing. */
+static void public_scope_workflow_test(void)
+{
+    struct fixture f;
+    show(&f);
+    int action = 0;
+    uint8_t scope = input_command_scope_new();
+    assert(scope != INPUT_COMMAND_SCOPE_APP);
+    struct input_command_registry reg;
+    input_command_registry_init(&reg);
+    input_command_id id = input_command_add(&reg, scope, "probe_new", "New");
+    assert(id != INPUT_COMMAND_NONE);
+    f.plain.widget.command_scope = scope;
+
+    assert(window_bind_scope(f.window, &reg, scope, "ctrl+k = probe_new"));
+    assert(!window_bind_scope(f.window, &reg, INPUT_COMMAND_SCOPE_APP,
+                              "ctrl+k = probe_new"));
+    assert(!window_bind_scope(f.window, &reg, INPUT_COMMAND_SCOPE_COUNT,
+                              "ctrl+k = probe_new"));
+    assert(!window_bind_scope(f.window, &reg, scope, "ctrl+k = no_such"));
+    assert(!window_bind_scope(f.window, &reg, scope, "ctrl+"));
+
+    focus(&f, &f.plain);
+    press(&f, 'k');
+    assert(take_shortcut(&f, &action) && action == id);
+    assert(deliver_shortcut(&f, action, &f.plain));
+
+    /* A reload with a clear line replaces the app bindings only. */
+    char path[] = "/tmp/wsap-key-route-XXXXXX";
+    int fd = mkstemp(path);
+    assert(fd >= 0);
+    FILE *file = fdopen(fd, "w");
+    assert(file);
+    fputs("clear\nctrl+y = scroll_down\n", file);
+    assert(fclose(file) == 0);
+    assert(setenv("WSAP_INPUT_CONFIG", path, 1) == 0);
+    input_config_init(NULL);
+    window_reload_input(f.window);
+    press(&f, 'y');
+    assert(take_shortcut(&f, &action) && action == INPUT_COMMAND_SCROLL_DOWN);
+    press(&f, 'k');
+    assert(take_shortcut(&f, &action) && action == id);
+    assert(deliver_shortcut(&f, action, &f.plain));
+
+    /* The owner clears its scope. The chord runs nothing, and the app
+     * binding stays. */
+    window_clear_scope(f.window, scope);
+    press(&f, 'k');
+    assert(!take_shortcut(&f, &action));
+    press(&f, 'y');
+    assert(take_shortcut(&f, &action) && action == INPUT_COMMAND_SCROLL_DOWN);
+
+    input_command_registry_free(&reg);
+    input_command_scope_release(scope);
+    unlink(path);
+    assert(setenv("WSAP_INPUT_CONFIG", "NONE", 1) == 0);
+    input_config_init(NULL);
+    teardown(&f);
+}
+
 int main(void)
 {
     two_scopes_test();
@@ -374,5 +440,6 @@ int main(void)
     modal_scope_test();
     scoped_text_chord_test();
     taken_bound_key_keeps_text_test();
+    public_scope_workflow_test();
     return 0;
 }
