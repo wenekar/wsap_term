@@ -97,6 +97,22 @@ int main(void)
     printf("publish after one line: %zu bytes, %.3f ms\n", next_length,
            next_build_ms);
 
+    /* The document starts with the history text of the terminal. */
+    size_t history_length = content->view.accessibility_history_length;
+    assert(history_length > 0 && history_length < next_length);
+    char *document = malloc(history_length + 1);
+    assert(document);
+    size_t got = ui_accessibility_node_text_read(node, 0, document,
+                                                 history_length);
+    document[got] = '\0';
+    char *history_all = wsap_vtcore_history_text(
+        term, (int)content->view.accessibility_rows);
+    assert(history_all);
+    assert(strlen(history_all) == got);
+    assert(memcmp(history_all, document, got) == 0);
+    wsap_vtcore_text_free(history_all);
+    free(document);
+
     /* The old path built 500 history rows at each publish. Measure the same
      * build for the comparison. */
     clock_gettime(CLOCK_MONOTONIC, &start);
