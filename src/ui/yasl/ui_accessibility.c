@@ -127,8 +127,8 @@ static void actions_ready(void *userdata, int fd, short revents)
     while (actions) {
         struct queued_action *next = actions->next;
         if (!window_closed(window) && !accessibility->stopped) {
-            bool handled = ui_accessibility_dispatch_action(
-                &ui_of(window)->root, &actions->request);
+            bool handled = ui_accessibility_dispatch_surface_action(
+                &ui_of(window)->screen, &actions->request);
             for (int i = 0; !handled && i < ui_of(window)->menu_popups; i++)
                 handled = ui_accessibility_dispatch_action(
                     &ui_of(window)->menu_popup[i].root, &actions->request);
@@ -268,7 +268,8 @@ void window_accessibility_publish(struct window *window)
     struct window_accessibility *accessibility = ui_of(window)->accessibility;
     if (!ui_accessibility_provider_is_active(&accessibility->provider))
         return;
-    if (!ui_accessibility_tree_build(&ui_of(window)->root, &accessibility->tree))
+    if (!ui_accessibility_tree_build_surface(&ui_of(window)->screen,
+                                             &accessibility->tree))
         return;
     ui_accessibility_provider_publish_snapshot(&accessibility->provider,
                                                &accessibility->tree);

@@ -8,6 +8,7 @@
 #include "util/geom.h"
 
 struct ui_widget;
+struct ui_surface;
 
 enum ui_accessibility_role {
     UI_ACCESSIBILITY_ROLE_UNKNOWN = 0,
@@ -182,6 +183,10 @@ void ui_accessibility_publish_set_destroy(
 
 bool ui_accessibility_tree_build(const struct ui_widget *root,
                                  struct ui_accessibility_tree *tree);
+/* Builds the tree of `surface`: the root, then each overlay that `surface`
+ * holds. A modal overlay scopes the tree to its own subtree. */
+bool ui_accessibility_tree_build_surface(const struct ui_surface *surface,
+                                         struct ui_accessibility_tree *tree);
 
 struct ui_accessibility_action_request {
     uint64_t node_id;
@@ -197,6 +202,12 @@ struct ui_accessibility_action_request {
 
 bool ui_accessibility_dispatch_action(
     struct ui_widget *root,
+    const struct ui_accessibility_action_request *request);
+/* Runs `request` on the first widget of `surface` that answers it. The action
+ * reaches the root and each overlay. A modal overlay scopes the action to its
+ * own subtree. */
+bool ui_accessibility_dispatch_surface_action(
+    struct ui_surface *surface,
     const struct ui_accessibility_action_request *request);
 
 /* A provider calls the sink from any thread. A request with no node and no

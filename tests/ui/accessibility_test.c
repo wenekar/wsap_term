@@ -243,6 +243,59 @@ static size_t document_read(void *instance, size_t offset, char *out,
     return count;
 }
 
+/* A widget in an overlay, such as a palette row, reaches the assistive
+ * client. A modal overlay scopes the actions to its own subtree. */
+static void overlay_tree_and_modal_scope(void)
+{
+    struct ui_button outside = {0}, inside = {0};
+    struct ui_widget overlay = {0};
+    struct ui_surface surface = {0};
+    struct ui_widget *outside_widget = ui_button_widget(&outside);
+    struct ui_widget *inside_widget = ui_button_widget(&inside);
+    ui_widget_init(&overlay, NULL, NULL);
+    assert(ui_widget_add_child(&overlay, inside_widget));
+    ui_surface_set_root(&surface, outside_widget);
+    assert(ui_surface_add_overlay(&surface, &overlay));
+
+    int calls = 0;
+    ui_widget_set_action_handler(outside_widget, activated, &calls);
+    ui_widget_set_action_handler(inside_widget, activated, &calls);
+    struct ui_accessibility_action_request request = {
+        .node_id = ui_widget_accessibility_id(outside_widget),
+        .action = UI_ACCESSIBILITY_ACTION_INVOKE,
+    };
+
+    /* A plain overlay leaves the root reachable. */
+    struct ui_accessibility_tree tree = {0};
+    assert(ui_accessibility_tree_build_surface(&surface, &tree));
+    assert(ui_accessibility_tree_find(
+        &tree, ui_widget_accessibility_id(outside_widget)));
+    assert(ui_accessibility_tree_find(
+        &tree, ui_widget_accessibility_id(inside_widget)));
+    assert(ui_accessibility_dispatch_surface_action(&surface, &request));
+    assert(calls == 1);
+    ui_accessibility_tree_destroy(&tree);
+
+    /* A modal overlay hides the root from the client and from the actions. */
+    ui_widget_set_modal(&overlay, true);
+    assert(ui_surface_has_modal(&surface));
+    assert(ui_accessibility_tree_build_surface(&surface, &tree));
+    assert(!ui_accessibility_tree_find(
+        &tree, ui_widget_accessibility_id(outside_widget)));
+    assert(ui_accessibility_tree_find(
+        &tree, ui_widget_accessibility_id(inside_widget)));
+    assert(!ui_accessibility_dispatch_surface_action(&surface, &request));
+    request.node_id = ui_widget_accessibility_id(inside_widget);
+    assert(ui_accessibility_dispatch_surface_action(&surface, &request));
+    assert(calls == 2);
+    ui_accessibility_tree_destroy(&tree);
+
+    ui_surface_remove_overlay(&surface, &overlay);
+    ui_surface_destroy(&surface);
+    ui_widget_destroy(&overlay);
+    ui_widget_destroy(outside_widget);
+}
+
 static void document_make(struct synthetic_document *document, size_t lines)
 {
     char line[64];
@@ -371,6 +424,7 @@ int main(void)
     text_copy_and_password();
     rebuild_keeps_text();
     live_actions_and_modal_scope();
+    overlay_tree_and_modal_scope();
     large_document_ranges();
     puts("PASS: accessibility tree and actions");
     return 0;
