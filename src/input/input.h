@@ -154,7 +154,6 @@ struct input_mouse_event {
 enum input_text_source : uint8_t {
     INPUT_TEXT_COMMIT = 0,
     INPUT_TEXT_KEY,
-    INPUT_TEXT_SHORTCUT,
 };
 
 enum input_kind {

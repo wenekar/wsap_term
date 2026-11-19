@@ -77,9 +77,10 @@ Each text event records its source.
 All chunks from that key keep the same source.
 A key release does not change its text route.
 `INPUT_TEXT_COMMIT` is independent of the key route.
-`INPUT_TEXT_SHORTCUT` is text from a key that the keymap binds.
-The window drops that text when the key goes to the keymap.
+The window drops the text of a key that runs a command.
 A widget that takes the key gets its text.
+The router decides this when the key routes, so a focus change earlier in the batch counts.
+When the shortcut queue is full, the command is lost and the text is typed.
 The keymap reads the command scope of the key surface, `ui_surface_command_scope()`.
 The walk starts at the key target, `ui_surface_key_target()`, and ends at the root.
 Focus loss clears held keys and the key text route.
