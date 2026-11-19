@@ -440,6 +440,9 @@ static void public_scope_workflow_test(void)
     unlink(path);
     assert(setenv("WSAP_INPUT_CONFIG", "NONE", 1) == 0);
     input_config_init(NULL);
+    teardown(&f);
+}
+
 /* The focus moves after a key is converted and before it is routed. The
  * scope at the route decides the command and the text. */
 static void focus_moves_before_route_test(void)
