@@ -114,6 +114,9 @@ struct ui_node_desc {
          * view is destroyed. Keep the enclosing storage alive until then.
          * A failed mount or update does not adopt the widget and does not
          * destroy it, and the widget stays where it was.
+         * The view sets its own destroy observer on the widget. A failed
+         * mount or update gives the widget back with the observer that the
+         * caller set.
          * Descriptor children are added after the own children of the widget.
          * The own children count against the child limit of the widget.
          * Unset style fields and handlers preserve the widget values.
@@ -206,6 +209,15 @@ struct ui_view *ui_view_mount(const struct ui_node_desc *root,
  * NULL for it, and the next update builds a new widget for it. The view does
  * not touch a destroyed widget again, so the owner of a supplied widget can
  * free its storage.
+ *
+ * A handler can also destroy and free a widget that the caller owns and that
+ * is not a node, for example an own child of a supplied widget. A failed
+ * update puts each widget back at its old child index, or last when the
+ * parent has fewer children now. A parent that the caller owns and that is
+ * not a node must stay alive until the update returns. A widget that step 2
+ * detaches must stay alive until its detach returns, as
+ * ui_widget_remove_child states, so its FOCUS_OUT handler can destroy it but
+ * not free it.
  *
  * These changes stay, also when the update fails:
  * - The surface forgets each widget that step 2 detaches, and its subtree:

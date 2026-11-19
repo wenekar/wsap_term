@@ -589,7 +589,9 @@ void ui_surface_forget(struct ui_surface *surface, struct ui_widget *subtree)
     struct ui_widget *hovered = surface->impl.hovered;
     if (hovered && ui_widget_is_ancestor(subtree, hovered)) {
         surface->impl.hovered = NULL;
-        leave(hovered);
+        /* A subtree that a destroy forgets gets no LEAVE, as for a drag. */
+        if (!destroying(hovered, subtree))
+            leave(hovered);
     }
     struct drop_hover *drag = &surface->impl.drop_hover;
     if (drag->target && ui_widget_is_ancestor(subtree, drag->target)) {
