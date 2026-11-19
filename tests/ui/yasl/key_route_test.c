@@ -8,6 +8,7 @@
 #include "input/keybind.h"
 #include "ui/yasl/client.h"
 #include "ui/yasl/internal.h"
+#include "ui/yasl/native_input.h"
 #include "ui/yasl/testing.h"
 #include "ui/yasl/window.h"
 
@@ -24,8 +25,11 @@ struct probe {
     struct ui_widget widget;
     /* A probe with `take` false lets the shortcut bubble to its parent. */
     bool take;
+    /* A probe with `take_keys` true handles each key and keeps its text. */
+    bool take_keys;
     int shortcuts;
     int last_action;
+    int texts;
 };
 
 static struct window_host host;
@@ -42,6 +46,14 @@ static const struct ui_widget_ops PROBE_OPS = {
 static bool probe_event(struct ui_widget *widget, const struct ui_event *event)
 {
     struct probe *p = widget->userdata;
+    if (event->kind == UI_EVENT_TEXT) {
+        p->texts++;
+        return true;
+    }
+    if (event->kind == UI_EVENT_KEY && p->take_keys) {
+        ui_surface_keep_key_text(ui_widget_surface(widget));
+        return true;
+    }
     if (event->kind != UI_EVENT_SHORTCUT || !p->take)
         return false;
     p->shortcuts++;
@@ -241,11 +253,126 @@ static void focus_chain_scope_test(void)
     teardown(&f);
 }
 
+/* Sends an Alt key that commits `text`, as a layout that types a symbol with
+ * Alt does, and routes the queued events. */
+static void alt_text_key(struct fixture *f, enum yasl_key code, uint32_t label,
+                         const char *text)
+{
+    static uint64_t text_id;
+    struct yasl_event key = {
+        .type = YASL_EVENT_KEY,
+        .action = YASL_KEY_PRESS,
+        .mods = YASL_MOD_ALT,
+        .key = {
+            .key = code, .codepoint = label,
+            .text_input = YASL_KEY_TEXT_COMMIT, .text_id = ++text_id,
+            .consumed_mods = YASL_MOD_ALT,
+        },
+    };
+    window_native_input(f->window, &key);
+    window_native_input(f->window, &(struct yasl_event){
+        .type = YASL_EVENT_TEXT, .text = text, .length = strlen(text),
+        .ime = { .key_id = key.key.text_id },
+    });
+    key.action = YASL_KEY_RELEASE;
+    key.key.text_id = 0;
+    window_native_input(f->window, &key);
+    struct input_event ev;
+    while (input_queue_take(&f->window->input, &ev)) {
+        window_ui_test_route(f->window, &ev);
+        input_event_release(&ev);
+    }
+}
+
+/* With no focused widget, the keys go to the default focus. The scope of
+ * the default focus applies. */
+static void default_focus_scope_test(void)
+{
+    struct fixture f;
+    show(&f);
+    int action = 0;
+    struct ui_surface *keys = window_ui_key_surface(f.window);
+    ui_surface_focus(keys, NULL);
+    ui_surface_set_default_focus(keys, &f.a.widget);
+    press(&f, 'j');
+    assert(take_shortcut(&f, &action) && action == f.id_a);
+    assert(deliver_shortcut(&f, action, &f.a));
+    ui_surface_set_default_focus(keys, NULL);
+    teardown(&f);
+}
+
+/* A modal with a scope and no focusable child gets the keys. Its scope
+ * applies. */
+static void modal_scope_test(void)
+{
+    struct fixture f;
+    show(&f);
+    int action = 0;
+    struct probe modal;
+    probe_init(&modal, SCOPE_B, true);
+    ui_widget_set_focusable(&modal.widget, false);
+    focus(&f, &f.plain);
+    assert(ui_widget_add_child(&f.root, &modal.widget));
+    ui_widget_set_modal(&modal.widget, true);
+    press(&f, 'k');
+    assert(take_shortcut(&f, &action) && action == f.id_b);
+    assert(deliver_shortcut(&f, action, &modal));
+    ui_widget_set_modal(&modal.widget, false);
+    ui_widget_destroy(&modal.widget);
+    teardown(&f);
+}
+
+/* A scoped chord that types text runs its command. Its text does not also
+ * reach the widget. */
+static void scoped_text_chord_test(void)
+{
+    struct fixture f;
+    show(&f);
+    struct input_command_registry reg;
+    input_command_registry_init(&reg);
+    input_command_id id = input_command_add(&reg, SCOPE_A, "probe_a8", "A8");
+    assert(input_keymap_apply_spec_registry(&f.window->keymap, &reg, SCOPE_A,
+                                            "alt+8 = probe_a8"));
+    focus(&f, &f.a);
+    alt_text_key(&f, YASL_KEY_8, '8', "[");
+    assert(f.a.shortcuts == 1 && f.a.last_action == (int)id);
+    assert(f.a.texts == 0);
+    input_command_registry_free(&reg);
+    teardown(&f);
+}
+
+/* A widget that takes a bound key gets the text of the key. The keymap
+ * does not run the command. */
+static void taken_bound_key_keeps_text_test(void)
+{
+    struct fixture f;
+    show(&f);
+    assert(input_keymap_apply_spec(&f.window->keymap, "alt+9 = scroll_down"));
+    f.plain.take_keys = true;
+    focus(&f, &f.plain);
+    alt_text_key(&f, YASL_KEY_9, '9', "]");
+    assert(f.plain.texts == 1);
+    assert(f.plain.shortcuts == 0);
+
+    /* A widget that does not take the key leaves it to the keymap. The
+     * command runs, and the text is dropped. */
+    f.plain.take_keys = false;
+    alt_text_key(&f, YASL_KEY_9, '9', "]");
+    assert(f.plain.texts == 1);
+    assert(f.plain.shortcuts == 1 &&
+           f.plain.last_action == INPUT_COMMAND_SCROLL_DOWN);
+    teardown(&f);
+}
+
 int main(void)
 {
     two_scopes_test();
     zero_scope_app_binding_test();
     focus_chain_scope_test();
     bad_scope_keeps_app_bindings_test();
+    default_focus_scope_test();
+    modal_scope_test();
+    scoped_text_chord_test();
+    taken_bound_key_keeps_text_test();
     return 0;
 }

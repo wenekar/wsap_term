@@ -231,6 +231,19 @@ bool ui_surface_dispatch(struct ui_surface *surface,
 /* Set the widget that takes keyboard events when nothing is focused. */
 void ui_surface_set_default_focus(struct ui_surface *surface,
                                   struct ui_widget *widget);
+
+/* Returns the widget that gets the key events of `surface`. This is the
+ * focused widget, or else the modal, or else the default focus, or else the
+ * root. Returns NULL when `surface` is NULL or has no root. */
+struct ui_widget *ui_surface_key_target(const struct ui_surface *surface);
+
+/* Returns the command scope that the keys of `surface` read. The walk starts
+ * at the key target and ends at the root. The first widget with a valid
+ * scope above zero gives the scope. Returns the app scope when no widget
+ * gives one. Call it to look up a key in the keymap, so that every reader
+ * of a key reads the same scope. */
+uint8_t ui_surface_command_scope(const struct ui_surface *surface);
+
 void ui_surface_keep_key_text(struct ui_surface *surface);
 bool ui_surface_key_text_kept(const struct ui_surface *surface);
 

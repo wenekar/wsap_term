@@ -31,19 +31,6 @@ static bool widget_is_inside(const struct ui_widget *root,
     return false;
 }
 
-/* Returns the command scope of the nearest widget in the focus chain of
- * `surface` that has one. The walk starts at the focused widget and ends at
- * the root. A scope out of range counts as no scope. Returns the app scope
- * when no widget has a scope. */
-static uint8_t focus_command_scope(struct ui_surface *surface)
-{
-    for (struct ui_widget *w = ui_surface_focused(surface); w; w = w->parent)
-        if (w->command_scope != INPUT_COMMAND_SCOPE_APP &&
-            w->command_scope < INPUT_COMMAND_SCOPE_COUNT)
-            return w->command_scope;
-    return INPUT_COMMAND_SCOPE_APP;
-}
-
 /* Returns the widget that draws the drop mark, or NULL when no widget draws
  * one. The mark follows the drop: a text drop goes to the focused widget, so
  * only a widget in the focused subtree draws a mark for it. Any other type
@@ -277,6 +264,8 @@ static enum window_input_result menu_input(struct window *w, const struct input_
 
 void window_ui_route(struct window *w, struct input_event *ev)
 {
+    if (ev->kind == INPUT_KEY && ev->key.action != INPUT_RELEASE)
+        ui_of(w)->key_to_keymap = false;
     if (ev->kind == INPUT_KEY && ev->key.ime_handled)
         return;
     switch (ev->kind) {
@@ -291,6 +280,7 @@ void window_ui_route(struct window *w, struct input_event *ev)
     case INPUT_FOCUS:
         if (!ev->focus.focused) {
             ui_of(w)->replace_key_text = false;
+            ui_of(w)->key_to_keymap = false;
             ui_surface_cancel_capture(&ui_of(w)->screen);
         }
         if (ui_of(w)->spec.root) {
@@ -311,9 +301,11 @@ void window_ui_route(struct window *w, struct input_event *ev)
     default:
         break;
     }
+    /* The text of a bound key is dropped only when the key went to the
+     * keymap. A widget that took the key gets its text. */
     if (ev->kind == INPUT_TEXT &&
-        (ev->text.source == INPUT_TEXT_SHORTCUT ||
-         (ev->text.source == INPUT_TEXT_KEY && ui_of(w)->replace_key_text)))
+        ((ev->text.source == INPUT_TEXT_SHORTCUT && ui_of(w)->key_to_keymap) ||
+         (ev->text.source != INPUT_TEXT_COMMIT && ui_of(w)->replace_key_text)))
         return;
     enum window_input_result result = menu_input(w, ev);
     if (result == WINDOW_INPUT_UNHANDLED)
@@ -322,14 +314,17 @@ void window_ui_route(struct window *w, struct input_event *ev)
      * only for a key that no widget handles. */
     if (result == WINDOW_INPUT_UNHANDLED && ev->kind == INPUT_KEY &&
         !ev->key.ime_handled) {
-        /* A widget scope in the focus chain wins over the app scope. The
-         * lookup reads that scope first and the app scope after it. */
+        /* A widget scope in the chain of the key target wins over the
+         * app scope. The lookup reads that scope first and the app scope
+         * after it. */
         enum input_key_route route = input_shortcut_route_key_scoped(
             window_keymap(w), &w->input, &w->sc_state, &ev->key,
             input_key_id(&ev->key),
-            focus_command_scope(window_ui_key_surface(w)), NULL);
+            ui_surface_command_scope(window_ui_key_surface(w)), NULL);
         if (route == INPUT_KEY_DROPPED)
             fprintf(stderr, "shortcut queue is full\n");
+        if (ev->key.action != INPUT_RELEASE)
+            ui_of(w)->key_to_keymap = route != INPUT_KEY_PASSTHROUGH;
     }
     if (ev->kind == INPUT_KEY && ev->key.action != INPUT_RELEASE)
         ui_of(w)->replace_key_text = result == WINDOW_INPUT_REPLACE_TEXT;
