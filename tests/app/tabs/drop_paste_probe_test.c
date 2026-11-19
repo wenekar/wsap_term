@@ -350,6 +350,52 @@ static void release_with_no_leave_clears_the_highlight_test(void)
     test_app_fini(&a);
 }
 
+/* Two stand-ins for native surfaces: the window surface and a menu popup.
+ * The test never draws on them. */
+static char fake_root_surface, fake_popup_surface;
+#define FAKE_ROOT ((struct yasl_surface *)&fake_root_surface)
+#define FAKE_POPUP ((struct yasl_surface *)&fake_popup_surface)
+
+/* Sends one native drop event on the fake popup, then routes what it
+ * queued. The fake surfaces are gone before the route. */
+static void popup_drop_event(struct window *w, enum yasl_drop_action action,
+                             const char *data)
+{
+    assert(window_native_add(w, FAKE_ROOT));
+    assert(window_native_add(w, FAKE_POPUP));
+    struct yasl_event e = {
+        .type = YASL_EVENT_DROP, .action = action, .x = 10, .y = 10,
+        .surface = FAKE_POPUP, .text = data,
+        .length = data ? strlen(data) : 0,
+    };
+    snprintf(e.drop.mime, sizeof e.drop.mime, "text/uri-list");
+    window_native_input(w, &e);
+    window_native_remove(w, FAKE_POPUP);
+    window_native_remove(w, FAKE_ROOT);
+    drain(w);
+}
+
+/* A file drag over the terminal moves onto a menu popup and lands there, as
+ * X11 and Cocoa report it. The highlight turns off, and no file drop
+ * reaches the terminal. */
+static void drop_on_a_popup_clears_the_highlight_test(void)
+{
+    struct test_app a;
+    test_app_init(&a, "/bin/cat", viewport);
+    struct window *w = open_window(a.app);
+
+    drop_event(w, YASL_DROP_OVER, "text/uri-list", NULL, over_terminal);
+    assert(hover_on);
+    popup_drop_event(w, YASL_DROP_OVER, NULL);
+    assert(!hover_on);
+    popup_drop_event(w, YASL_DROP_RELEASE, "file:///tmp/a\r\n");
+    assert(!hover_on);
+    assert(file_drops == 0);
+
+    window_close(w);
+    test_app_fini(&a);
+}
+
 int main(void)
 {
     palette_paste_after_a_lost_drag_test();
@@ -359,5 +405,6 @@ int main(void)
     drop_on_the_scroll_bar_reaches_the_terminal_test();
     drop_with_the_palette_open_test();
     release_with_no_leave_clears_the_highlight_test();
+    drop_on_a_popup_clears_the_highlight_test();
     return 0;
 }
