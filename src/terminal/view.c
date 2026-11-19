@@ -214,6 +214,27 @@ static bool edit_key_for_shell(const struct terminal *t,
     }
 }
 
+/* Returns true when the view declined the press of held key `id`. */
+static bool declined_key_held(const struct terminal_view *view, unsigned id)
+{
+    return id < INPUT_SHORTCUT_KEY_COUNT &&
+           ((view->declined_keys[id / 64] >> (id % 64)) & 1);
+}
+
+/* Records whether the view declined the press of key `id`. Call it on each
+ * press, and on the release of a declined key. */
+static void declined_key_set(struct terminal_view *view, unsigned id,
+                             bool declined)
+{
+    if (id >= INPUT_SHORTCUT_KEY_COUNT)
+        return;
+    uint64_t bit = UINT64_C(1) << (id % 64);
+    if (declined)
+        view->declined_keys[id / 64] |= bit;
+    else
+        view->declined_keys[id / 64] &= ~bit;
+}
+
 static bool view_event(struct ui_widget *widget, const struct ui_event *event)
 {
     struct terminal_view *view = view_of(widget);
@@ -234,30 +255,29 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
          * command. The lookup reads the command scope of the key surface,
          * as step 3 does. A key that the shell owns goes to the encoder,
          * which sends the key that the user pressed. */
-        if (key && key->action != INPUT_PRESS) {
+        if (key) {
+            unsigned id = input_key_id(key);
             /* A repeat or a release follows its press. The app copy clears
              * the selection, so a new decision would send the key of a copy
              * that already ran to the shell. */
-            unsigned id = input_key_id(key);
-            if (view->declined_key == id) {
+            if (key->action != INPUT_PRESS && declined_key_held(view, id)) {
                 if (key->action == INPUT_RELEASE)
-                    view->declined_key = 0;
+                    declined_key_set(view, id, false);
                 return false;
             }
-        } else if (key) {
+            /* A press decides again. A repeat or a release that has no
+             * declined press decides by itself. This view can miss the
+             * press, for example after a tab switch while the chord is
+             * held. */
             input_command_id command = input_keymap_lookup_scoped(
                 window_keymap(w), key,
                 ui_surface_command_scope(ui_widget_surface(widget)));
-            unsigned id = input_key_id(key);
-            if (command != INPUT_COMMAND_NONE &&
-                !edit_key_for_shell(t, command)) {
-                view->declined_key = id;
+            bool declined = command != INPUT_COMMAND_NONE &&
+                            !edit_key_for_shell(t, command);
+            if (key->action == INPUT_PRESS)
+                declined_key_set(view, id, declined);
+            if (declined)
                 return false;
-            }
-            /* A new press of the declined key belongs to the shell. A press
-             * of another key keeps the record of a held declined key. */
-            if (view->declined_key == id)
-                view->declined_key = 0;
         }
         if (!key || !terminal_key(t, key))
             ui_surface_keep_key_text(ui_widget_surface(widget));

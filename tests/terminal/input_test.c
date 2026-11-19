@@ -420,6 +420,83 @@ int main(void)
         input_command_registry_free(&reg);
     }
 
+    /* A repeat of the copy chord with no press in this view still belongs
+     * to the copy while a selection exists. The shell gets no ^C, and the
+     * selection stays. */
+    terminal_select_all(content);
+    raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_REPEAT);
+    raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_REPEAT);
+    expect(fds[0], "");
+    assert(wsap_vtcore_has_selection(session->term));
+    wsap_vtcore_select_clear(session->term);
+
+    /* In the kitty mode that reports releases, a second app chord inside a
+     * held copy does not drop the record of the copy. The shell gets no
+     * release of either chord. */
+    assert(input_keymap_apply_spec(&w->keymap, "f3 = font_larger"));
+    assert(wsap_vtcore_feed(session->term, "\033[>2u", 5, 0));
+    terminal_select_all(content);
+    raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_PRESS);
+    raw_key(w, YASL_KEY_F3, 0, 0, 0, YASL_KEY_PRESS);
+    raw_key(w, YASL_KEY_F3, 0, 0, 0, YASL_KEY_RELEASE);
+    raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_REPEAT);
+    raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_RELEASE);
+    expect(fds[0], "");
+    assert(wsap_vtcore_feed(session->term, "\033[<u", 4, 0));
+    assert(input_keymap_apply_spec(&w->keymap, "f3 = none"));
+
+    /* A held tab chord switches the tab on its press. Its repeats and its
+     * release reach the view of the new tab, which did not see the press.
+     * They still belong to the chord, so no shell gets the key. Tab 0 is
+     * the first tab, and tabs 1 and 2 report releases. */
+    {
+        struct terminal *tab_content[2];
+        int tab_fds[2][2];
+        for (int i = 0; i < 2; i++) {
+            assert(app_tabs_new(w));
+            tab_content[i] = app_tabs_active(w);
+            struct session *s = terminal_session(tab_content[i]);
+            assert(s);
+            assert(pipe(tab_fds[i]) == 0);
+            for (int j = 0; j < 2; j++)
+                assert(fcntl(tab_fds[i][j], F_SETFL,
+                             fcntl(tab_fds[i][j], F_GETFL) | O_NONBLOCK) == 0);
+            assert(session_write_queue_bind(&s->input_writer, s->loop,
+                                            tab_fds[i][1]));
+            assert(wsap_vtcore_feed(s->term, "\033[>2u", 5, 0));
+        }
+        assert(input_keymap_apply_spec(&w->keymap, "ctrl+tab = next_tab"));
+        assert(input_keymap_apply_spec(&w->keymap, "ctrl+shift+w = close_tab"));
+
+        app_tabs_select(w, 0);
+        drain(w);
+        raw_key(w, YASL_KEY_TAB, YASL_MOD_CTRL, '\t', '\t', YASL_KEY_PRESS);
+        assert(app_tabs_active(w) == tab_content[0]);
+        raw_key(w, YASL_KEY_TAB, YASL_MOD_CTRL, '\t', '\t', YASL_KEY_REPEAT);
+        raw_key(w, YASL_KEY_TAB, YASL_MOD_CTRL, '\t', '\t', YASL_KEY_REPEAT);
+        raw_key(w, YASL_KEY_TAB, YASL_MOD_CTRL, '\t', '\t', YASL_KEY_RELEASE);
+        expect(fds[0], "");
+        expect(tab_fds[0][0], "");
+        expect(tab_fds[1][0], "");
+
+        /* A held close chord closes one tab. The neighbor tab gets no key. */
+        app_tabs_select(w, 1);
+        drain(w);
+        assert(app_tabs_active(w) == tab_content[0]);
+        unsigned mods = YASL_MOD_CTRL | YASL_MOD_SHIFT;
+        raw_key(w, YASL_KEY_W, mods, 'w', 'W', YASL_KEY_PRESS);
+        assert(app_tabs_active(w) != tab_content[0]);
+        raw_key(w, YASL_KEY_W, mods, 'w', 'W', YASL_KEY_REPEAT);
+        raw_key(w, YASL_KEY_W, mods, 'w', 'W', YASL_KEY_REPEAT);
+        raw_key(w, YASL_KEY_W, mods, 'w', 'W', YASL_KEY_RELEASE);
+        expect(fds[0], "");
+        expect(tab_fds[1][0], "");
+        for (int i = 0; i < 2; i++) {
+            close(tab_fds[i][0]);
+            close(tab_fds[i][1]);
+        }
+    }
+
     window_close(other);
     window_close(w);
     test_app_fini(&app);
