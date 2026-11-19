@@ -43,6 +43,7 @@ test_cases = [
     ['settings-window-test', files('app/config/window_test.c'), app_lib, deps],
     ['window-ui-hosts-test', files('app/tabs/ui_hosts_test.c'), app_lib, deps],
     ['window-ui-tree-test', files('app/tabs/ui_tree_test.c'), app_lib, deps],
+    ['drop-paste-probe-test', files('app/tabs/drop_paste_probe_test.c'), app_lib, deps],
     ['window-debug-server-test', files('ui/yasl/debug_server_test.c'), app_lib, deps],
     ['render-test', files('render/render_test.c'), [render_lib, render_term_lib, ui_lib], deps],
     ['render-kernels-test', files('render/cpu/kernels_test.c'), render_lib, [m_dep, thread_dep]],
@@ -193,6 +194,7 @@ extlib_tests = [
     'settings-window-test',
     'window-ui-hosts-test',
     'window-ui-tree-test',
+    'drop-paste-probe-test',
     'window-debug-server-test',
 ]
 
