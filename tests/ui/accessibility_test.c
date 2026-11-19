@@ -376,15 +376,25 @@ static void large_document_ranges(void)
         ui_accessibility_tree_find(&before, 1);
     assert(node->text == &provider && !node->value);
     assert(node->text_direction == UI_ACCESSIBILITY_TEXT_DIRECTION_RIGHT_TO_LEFT);
+    /* The node has no value, so its caret and selection are offsets in the
+     * provider range. */
+    assert(!node->caret_offset && !node->selection_start && !node->selection_end);
     assert(ui_accessibility_node_text_length(node) == viewport);
     assert(document.reads == 0);
     double add_ms = elapsed_ms(&start);
 
-    /* One new line at the top moves the range and keeps the document. */
+    /* One new line at the top moves the range and keeps the document. The
+     * caret and the selection stay offsets in the range. */
     struct ui_accessibility_tree after = {0};
     spec.text_offset = document.line_length;
+    spec.caret_offset = viewport - 3;
+    spec.selection_start = 5;
+    spec.selection_end = 9;
     assert(ui_accessibility_tree_add(&after, &spec));
     assert(document.reads == 0);
+    node = ui_accessibility_tree_find(&after, 1);
+    assert(node->caret_offset == viewport - 3);
+    assert(node->selection_start == 5 && node->selection_end == 9);
 
     clock_gettime(CLOCK_MONOTONIC, &start);
     struct ui_accessibility_publish_set published = {0};

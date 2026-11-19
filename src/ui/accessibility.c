@@ -146,6 +146,12 @@ static bool tree_add(struct ui_accessibility_tree *tree,
                                                     spec->selection_start);
         node.selection_end = ui_text_clamp_offset(node.value, length,
                                                   spec->selection_end);
+    } else if (!password && !spec->value && spec->text) {
+        /* A provider node keeps its offsets in its range. The publish clamps
+         * them to the range length under the provider lock. */
+        node.caret_offset = spec->caret_offset;
+        node.selection_start = spec->selection_start;
+        node.selection_end = spec->selection_end;
     } else if (!password) {
         node.caret_offset = sanitized_offset(spec->value, spec->caret_offset);
         node.selection_start = sanitized_offset(spec->value,
