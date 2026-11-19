@@ -37,7 +37,8 @@ struct ui_view {
     size_t capacity;
     struct ui_widget *root;
     bool committed;
-    /* The view destroys its own widgets, so it ignores its observer. */
+    /* The view destroys its widgets. Its observer only clears the node of
+     * each destroyed widget then. */
     bool destroying;
     /* An update runs. A handler that it calls cannot update the view, and a
      * destroy waits until the update ends. */
@@ -841,8 +842,16 @@ static void forget_logged_widget(struct place_log *log,
 static void view_widget_destroyed(struct ui_widget *widget, void *userdata)
 {
     struct ui_view *view = userdata;
-    if (!view || view->destroying)
+    if (!view)
         return;
+    if (view->destroying) {
+        /* A destroy hook of one widget can destroy and free another one
+         * that the view holds. The destroy loop then skips that node. */
+        for (size_t i = 0; i < view->count; i++)
+            if (view->nodes[i].widget == widget)
+                view->nodes[i].widget = NULL;
+        return;
+    }
     if (view->root == widget)
         view->root = NULL;
     for (size_t i = 0; i < view->count; i++) {

@@ -1858,6 +1858,55 @@ static void view_rollback_survives_a_freed_foreign_sibling_test(void)
     ui_widget_destroy(&filler);
 }
 
+/* A widget whose destroy hook destroys and frees another widget. */
+struct destroy_hook {
+    struct ui_widget widget;
+    struct supplied_control *victim;
+};
+
+static void destroy_hook_destroy(struct ui_widget *widget)
+{
+    struct destroy_hook *hook =
+        ui_container_of(widget, struct destroy_hook, widget);
+    struct supplied_control *victim = hook->victim;
+    hook->victim = NULL;
+    if (victim) {
+        ui_widget_destroy(&victim->widget);
+        free(victim);
+    }
+}
+
+static const struct ui_widget_ops DESTROY_HOOK_OPS = {
+    .name = "destroy-hook",
+    .destroy = destroy_hook_destroy,
+};
+
+/* The destroy hook of one view widget frees another view widget. The view
+ * destroy does not touch the freed widget. */
+static void view_destroy_skips_a_widget_that_a_hook_frees_test(void)
+{
+    int destroyed = 0;
+    struct destroy_hook hook = {0};
+    ui_widget_init(&hook.widget, &DESTROY_HOOK_OPS, NULL);
+    hook.victim = calloc(1, sizeof(*hook.victim));
+    assert(hook.victim);
+    hook.victim->destroyed = &destroyed;
+    ui_widget_init(&hook.victim->widget, &SUPPLIED_CONTROL_OPS, NULL);
+    struct ui_node_desc kids[] = {
+        { .kind = UI_NODE_WIDGET, .key = "hook", .props.widget = &hook.widget },
+        { .kind = UI_NODE_WIDGET, .key = "victim",
+          .props.widget = &hook.victim->widget },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .children = kids, .child_count = 2,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+    ui_view_destroy(view);
+    assert(!hook.victim);
+    assert(destroyed == 1);
+}
+
 int main(void)
 {
     view_diagnostic_test();
@@ -1889,6 +1938,7 @@ int main(void)
     view_update_drops_a_widget_that_a_handler_destroys_test();
     view_update_forgets_a_supplied_widget_that_a_handler_frees_test();
     view_rollback_survives_a_freed_foreign_sibling_test();
+    view_destroy_skips_a_widget_that_a_hook_frees_test();
     view_root_keyboard_test();
     hidden_child_takes_no_space_or_input_test();
     hidden_modal_restores_focus_test();
