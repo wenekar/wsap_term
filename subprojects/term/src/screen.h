@@ -29,8 +29,9 @@ void wsap_vtcore_screen_insert_chars(struct wsap_vtcore *t, int count);
  * blanks. */
 const struct cell *wsap_vtcore_screen_view_row(const struct wsap_vtcore *t, int y);
 uint64_t wsap_vtcore_screen_view_row_key(const struct wsap_vtcore *t, int y);
-/* Write the keys and the line sizes (RF_LINE_SIZE bits) of all view rows.
- * keys and sizes hold t->rows entries. A history row is single width. */
+/* Write the keys and the sizes (RF_LINE_SIZE bits and ROW_FLAG_WRAPPED) of
+ * all view rows. keys and sizes hold t->rows entries. A history row is
+ * single width. */
 void wsap_vtcore_screen_view_row_keys(const struct wsap_vtcore *t, uint64_t *keys, uint8_t *sizes);
 /* Make all rows of the screen single width. */
 void wsap_vtcore_screen_reset_line_sizes(struct wsap_vtcore *t);

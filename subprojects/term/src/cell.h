@@ -22,6 +22,9 @@ enum cell_flags {
     CELL_LINK      = WSAP_VTCORE_ATTR_LINK,
 };
 
+_Static_assert((unsigned)CELL_WRAP_PAD == (unsigned)WSAP_VTCORE_ATTR_WRAP_PAD,
+               "a wrap pad keeps its flag in the public cell");
+
 #define CELL_ANY_UNDERLINE WSAP_VTCORE_ATTR_UNDERLINE_MASK
 
 /* The pad field of a cell holds its extended style. Bits 0 to 12 hold a

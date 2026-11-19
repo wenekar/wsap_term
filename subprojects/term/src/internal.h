@@ -86,6 +86,10 @@ enum {
     RF_MARKS = RF_PROMPT | RF_OUTPUT,
 };
 
+/* One byte for each view row holds the RF_LINE_SIZE bits and this flag.
+ * The snapshot keeps the byte, so a reader sees the soft wrap. */
+enum { ROW_FLAG_WRAPPED = 1 };
+
 struct srow {
     struct cell *cells;
     uint8_t *ascii;
