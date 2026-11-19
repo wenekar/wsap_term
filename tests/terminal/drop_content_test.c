@@ -31,11 +31,13 @@ static void drain(struct window *w)
 }
 
 static void drop(struct window *w, const char *mime, const char *data,
-                 size_t len)
+                 size_t len, struct vector2i pos)
 {
     struct yasl_event event = {
         .type = YASL_EVENT_DROP,
         .action = YASL_DROP_RELEASE,
+        .x = pos.x,
+        .y = pos.y,
         .text = data,
         .length = len,
     };
@@ -87,21 +89,22 @@ int main(void)
     for (int i = 0; i < 2; i++)
         assert(fcntl(fds[i], F_SETFL, fcntl(fds[i], F_GETFL) | O_NONBLOCK) == 0);
     assert(session_write_queue_bind(&session->input_writer, session->loop, fds[1]));
-    /* The drop goes to the widget under the pointer. Put the pointer in the
-     * terminal view, below the tab bar. */
+    /* The drop goes to the widget at its own position. The pointer never
+     * entered the window, so it sits outside the surface. */
     ui_surface_set_scale(window_ui_surface(w), (struct css_scale_context){
         .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
     });
     ui_surface_resize(window_ui_surface(w), (struct vector2i){ .x = 800, .y = 480 });
     ui_surface_prepare(window_ui_surface(w));
     struct rect2i view = terminal_view_rect(content);
-    w->pointer.pos = vector2i_add(view.pos,
-                                  (struct vector2i){ .x = view.size.x / 2,
-                                                     .y = view.size.y / 2 });
+    struct vector2i at = vector2i_add(view.pos,
+                                     (struct vector2i){ .x = view.size.x / 2,
+                                                        .y = view.size.y / 2 });
+    w->pointer.pos = (struct vector2i){ .x = -1, .y = -1 };
 
     /* An image drop saves the bytes and pastes the quoted file path. */
     const char image[] = "image bytes";
-    drop(w, "image/png", image, sizeof(image) - 1);
+    drop(w, "image/png", image, sizeof(image) - 1, at);
     char pasted[512];
     ssize_t length = take(fds[0], pasted, sizeof(pasted));
     char prefix[256];
@@ -127,7 +130,7 @@ int main(void)
 
     /* A uri list with no local file becomes one line, joined by spaces. */
     const char uris[] = "https://example.com/a\r\nhttps://example.com/b\n";
-    drop(w, "text/uri-list", uris, sizeof(uris) - 1);
+    drop(w, "text/uri-list", uris, sizeof(uris) - 1, at);
     expect_text(fds[0], "https://example.com/a https://example.com/b");
 
     window_close(w);

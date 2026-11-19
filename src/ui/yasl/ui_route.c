@@ -55,7 +55,7 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
         ui_surface_dispatch(keys, &event);
         return WINDOW_INPUT_HANDLED;
     case INPUT_DROP: {
-        /* The drop goes to the widget under the pointer. */
+        /* The drop goes to the widget at the drop position. */
         const char *mimes[1] = { ev->drop_type.mime };
         struct ui_drag_event drag = {
             .mimes = mimes,
@@ -63,9 +63,10 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
             .mime = ev->drop_type.mime,
             .data = ev->drop_type.data,
             .len = ev->drop_type.len,
-            .pos = w->pointer.pos,
+            .pos = ev->drop_type.pos,
         };
         event = ui_event_drag(UI_EVENT_DROP, &drag, now_ms);
+        ui_surface_prepare(keys);
         struct ui_widget *target = ui_surface_hit_test(keys, drag.pos);
         if (target)
             ui_widget_event(target, &event);

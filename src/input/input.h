@@ -280,12 +280,14 @@ size_t input_queue_push_drop_files(struct input_queue *q, const char *uris,
                                   size_t len);
 
 /*
- * Enqueues a drop event of type `mime` with payload `data` of length `len`.
+ * Enqueues a drop event of type `mime` with payload `data` of length `len`,
+ * at device pixel position `pos`.
  * The queue owns its copies of both strings.
  * Returns the number of bytes queued, or 0 on failure.
  */
 size_t input_queue_push_drop(struct input_queue *q, const char *mime,
-                             const char *data, size_t len);
+                             const char *data, size_t len,
+                             struct vector2i pos);
 
 /*
  * Enqueues a drag event at `pos` that offers type `mime`. An empty `mime`
