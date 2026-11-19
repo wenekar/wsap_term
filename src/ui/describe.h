@@ -182,19 +182,30 @@ struct ui_view *ui_view_mount(const struct ui_node_desc *root,
  *    its handler here, for example with the CLOSE of a menu node.
  *
  * A failed update leaves the same widgets in the same places, the same
- * bindings, and no widget destroyed. It fails in step 1 for an invalid tree,
- * or when memory runs out.
+ * bindings, and no widget that the update destroyed. It fails in step 1 for
+ * an invalid tree, or when memory runs out.
  * After step 1 it fails only in these cases:
  * - A handler that runs in step 2 changes the tree, so that an insert fails.
  *   A detached widget with the focus gets FOCUS_OUT, so it can do this. The
  *   update puts each widget back and fails with
  *   UI_VIEW_ERROR_INVALID_CHILDREN. No matched widget has new properties.
+ * - A handler in step 1 or 2 destroys a widget that the update places. The
+ *   update fails with UI_VIEW_ERROR_INVALID_CHILDREN, as above.
  * - Memory runs out in step 3. The update puts each widget back and fails
  *   with UI_VIEW_ERROR_OUT_OF_MEMORY or UI_VIEW_ERROR_INIT_FAILED. A matched
  *   widget can keep some of its new properties: text, items, handlers, or the
  *   menu state. Its style identity and debug key go back.
+ * - A handler in step 1, 2, or 3 destroys the view. The update runs to its
+ *   end, the view is destroyed, and the call fails with UI_VIEW_ERROR_BUSY.
  * The update does not check the tree again after step 3. A handler that
  * changes the tree in step 3 does not make the update fail.
+ *
+ * A handler in step 3 can destroy a widget of the update. The update then
+ * skips the properties of that widget and drops it from its node. The node
+ * keeps no widget and no binding, ui_view_widget and the typed lookups give
+ * NULL for it, and the next update builds a new widget for it. The view does
+ * not touch a destroyed widget again, so the owner of a supplied widget can
+ * free its storage.
  *
  * These changes stay, also when the update fails:
  * - The surface forgets each widget that step 2 detaches, and its subtree:
