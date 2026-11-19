@@ -594,6 +594,25 @@ static void tab_hover_fades_over_the_transition(void)
     assert(!tick(&f, 1200));
     scene = build(&f);
     assert(scene_has_color(scene, 0xFFE0E0E0));
+
+    /* A tab that the pointer leaves fades back over the same duration. The
+     * background must not snap to the idle color, so the tab keeps a color
+     * between the hover color and the idle color. */
+    struct rect2i hot = tab_rect(&f, 1);
+    motion(&f, (struct vector2i){ .x = 2, .y = 90 }, 1200);
+    assert(tick(&f, 1200));
+    assert(tick(&f, 1300));
+    scene = build(&f);
+    uint32_t fresh = 0;
+    for (int i = 0; i < scene->n_ops; i++) {
+        const struct ui_scene_op *op = &scene->ops[i];
+        if (op->kind == UI_SCENE_OP_ROUNDED_RECT &&
+            rect2i_contains(op->rect, (struct vector2i){
+                .x = hot.x + hot.width / 2, .y = hot.y + hot.height / 2 }))
+            fresh = op->color;
+    }
+    uint32_t red = (fresh >> 16) & 0xFF;
+    assert(red > 0x20 && red < 0xE0);
     teardown(&f);
     css_sheet_clear(&sheet);
 }

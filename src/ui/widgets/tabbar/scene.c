@@ -343,7 +343,11 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
         uint32_t bg_c = tab_active_bg;
         if (!tabs[i].active) {
             uint32_t bg_idle = idle.has_bg_color ? idle.bg_color : 0;
-            uint32_t bg_hot = tb->state.hover_tab == i ? tab_hover_bg : bg_idle;
+            /* The hover color stays hot while the fade runs out. A tab that
+             * the pointer leaves fades back, so its background must not
+             * snap to the idle color. */
+            uint32_t bg_hot = tb->state.hover_tab == i || hover_mix > 0.0f
+                ? tab_hover_bg : bg_idle;
             bg_c = ui_color_lerp(bg_idle, bg_hot, hover_mix);
         }
 
