@@ -367,6 +367,7 @@ static bool uri_list_has_file(const struct yasl_event *in)
 static void queue_drop_release(struct window *w, const struct yasl_event *in)
 {
     const char *mime = in->drop.mime;
+    struct vector2i pos = device_pos(w, in);
     if (mime_is_text(mime)) {
         input_queue_push_paste(&w->input, in->text, in->length);
     } else if (mime_is_uri_list(mime)) {
@@ -374,9 +375,9 @@ static void queue_drop_release(struct window *w, const struct yasl_event *in)
             input_queue_push_drop_files(&w->input, in->text, in->length);
         else
             input_queue_push_drop(&w->input, "text/uri-list", in->text,
-                                  in->length);
+                                  in->length, pos);
     } else if (mime[0]) {
-        input_queue_push_drop(&w->input, mime, in->text, in->length);
+        input_queue_push_drop(&w->input, mime, in->text, in->length, pos);
     }
 }
 

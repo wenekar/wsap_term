@@ -91,6 +91,29 @@ static void pick_mime_test(void)
     assert(drop_pick_mime(offers_none, 1, accepted, 3) == NULL);
 }
 
+/* A major type with a star in an offer matches its subtypes. */
+static void drag_offers_star_test(void)
+{
+    static const char *const offers[] = { "image/*" };
+    struct ui_drag_event drag = { .mimes = offers, .mime_count = 1 };
+    assert(ui_drag_offers(&drag, "image/png"));
+    assert(ui_drag_offers(&drag, "image/svg+xml"));
+    assert(!ui_drag_offers(&drag, "image/"));
+    assert(!ui_drag_offers(&drag, "image"));
+    assert(!ui_drag_offers(&drag, "text/plain"));
+
+    /* A star alone takes every type. */
+    static const char *const any[] = { "*" };
+    drag.mimes = any;
+    assert(ui_drag_offers(&drag, "text/plain"));
+
+    /* An exact offer matches its type only. */
+    static const char *const exact[] = { "text/plain" };
+    drag.mimes = exact;
+    assert(ui_drag_offers(&drag, "text/plain"));
+    assert(!ui_drag_offers(&drag, "text/uri-list"));
+}
+
 /* A drag that moves within one widget sends no leave. A drag that moves to
  * another widget, or off the surface, sends exactly one. */
 static void leave_once_test(void)
@@ -121,6 +144,7 @@ int main(void)
     refused_type_test();
     drop_event_payload_test();
     pick_mime_test();
+    drag_offers_star_test();
     leave_once_test();
     no_file_drop_test();
     return 0;

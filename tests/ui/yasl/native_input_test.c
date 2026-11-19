@@ -277,6 +277,8 @@ static struct yasl_event drop_release(const char *mime, const char *text, size_t
     struct yasl_event e = {
         .type = YASL_EVENT_DROP,
         .action = YASL_DROP_RELEASE,
+        .x = 12,
+        .y = 34,
         .text = text,
         .length = length,
     };
@@ -304,6 +306,7 @@ static void expect_drop(const char *mime, const char *data, size_t len)
     assert(out.kind == INPUT_DROP);
     assert(!strcmp(out.drop_type.mime, mime));
     assert(out.drop_type.len == len);
+    assert(out.drop_type.pos.x == 12 && out.drop_type.pos.y == 34);
     assert(!memcmp(out.drop_type.data, data, len));
     input_event_release(&out);
     assert(!input_queue_take(&w.input, &out));

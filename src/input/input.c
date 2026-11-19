@@ -135,12 +135,14 @@ size_t input_queue_push_drop_files(struct input_queue *q, const char *uris, size
 }
 
 size_t input_queue_push_drop(struct input_queue *q, const char *mime,
-                             const char *data, size_t len)
+                             const char *data, size_t len,
+                             struct vector2i pos)
 {
     if (!q || !mime || !mime[0] || !data || !len ||
         len > INPUT_TEXT_MAX - q->text_bytes)
         return 0;
     struct input_event ev = { .kind = INPUT_DROP };
+    ev.drop_type.pos = pos;
     ev.drop_type.mime = strdup(mime);
     ev.drop_type.data = malloc(len);
     if (!ev.drop_type.mime || !ev.drop_type.data) {

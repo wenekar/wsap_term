@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "util/text_limit.h"
 #include "input/command.h"
 #include "input/input.h"
@@ -6,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static enum input_shortcut shortcut(struct input_key_event ev,
                                     const struct input_shortcut_policy *p)
@@ -167,6 +169,36 @@ static void scoped_binding_wins_test(void)
     input_keymap_free(&km);
 }
 
+/* A binding above the 'style' line survives the load. The style applies to
+ * the whole file. */
+static void config_style_order_test(void)
+{
+    char path[] = "/tmp/wsap-input-config-XXXXXX";
+    int fd = mkstemp(path);
+    assert(fd >= 0);
+    FILE *f = fdopen(fd, "w");
+    assert(f);
+    fputs("ctrl+alt+k = new_tab\nstyle = legacy\n", f);
+    assert(fclose(f) == 0);
+    assert(setenv("WSAP_INPUT_CONFIG", path, 1) == 0);
+    input_config_init(NULL);
+    struct input_keymap km;
+    input_keymap_init(&km);
+    input_config_load(&km);
+    struct input_key_event bound = {
+        .codepoint = 'k', .mods = INPUT_MOD_CTRL | INPUT_MOD_ALT,
+    };
+    assert(input_keymap_lookup(&km, &bound) == INPUT_SHORTCUT_NEW_TAB);
+    /* The style line still selects the legacy copy and paste keys. */
+    struct input_key_event ctrl_c = { .codepoint = 'c', .mods = INPUT_MOD_CTRL };
+    struct input_key_event plain_c = { .codepoint = 'c' };
+    assert(input_keymap_lookup(&km, &ctrl_c) == INPUT_SHORTCUT_NONE);
+    assert(input_keymap_lookup(&km, &plain_c) == INPUT_SHORTCUT_NONE);
+    input_keymap_free(&km);
+    unlink(path);
+    unsetenv("WSAP_INPUT_CONFIG");
+}
+
 int main(void)
 {
     command_registry_test();
@@ -175,6 +207,7 @@ int main(void)
     zero_modifier_binding_test();
     wide_codepoint_binding_test();
     keymap_grows_test();
+    config_style_order_test();
     static const struct input_shortcut_policy lin = {
         .accel = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,
         .zoom = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,
@@ -266,6 +299,13 @@ int main(void)
         assert(input_keymap_lookup(&legacy, &ctrl_t) == INPUT_SHORTCUT_NONE);
         assert(input_keymap_lookup(&modern, &ctrl_shift_t) == INPUT_SHORTCUT_NEW_TAB);
         assert(input_keymap_lookup(&legacy, &ctrl_shift_t) == INPUT_SHORTCUT_NEW_TAB);
+        /* A zero modifier set binds nothing. The bare letters must reach the
+         * shell in both styles. */
+        struct input_key_event plain_c = { .codepoint = 'c' };
+        struct input_key_event plain_v = { .codepoint = 'v' };
+        assert(input_keymap_lookup(&modern, &plain_c) == INPUT_SHORTCUT_NONE);
+        assert(input_keymap_lookup(&legacy, &plain_c) == INPUT_SHORTCUT_NONE);
+        assert(input_keymap_lookup(&legacy, &plain_v) == INPUT_SHORTCUT_NONE);
     }
 #endif
 
