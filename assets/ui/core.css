@@ -86,7 +86,7 @@
 .dropdown-popup { width: 46ch; height: 17em; padding: 0.6em 1ch; gap: 0.5em; align-items: stretch; background: var(--surface); color: var(--fg); border-radius: 6px; }
 .dropdown-scroll { height: grow; }
 .tab-bar { height: 2.2em; flex-direction: row; align-items: center; padding: 0.25em 0.5em; gap: 0.4em; }
-.tab { height: 1.6em; background: var(--tab-bg); color: var(--tab-fg); border-radius: var(--tab-radius); padding: 0 0.8em; flex-direction: row; align-items: center; gap: 0.5em; cursor: pointer; ripple: #ffffff30; transition-duration: 300ms; }
+.tab { height: 1.6em; background: var(--tab-bg); color: var(--tab-fg); border-radius: var(--tab-radius); padding: 0 0.8em; flex-direction: row; align-items: center; gap: 0.5em; cursor: pointer; ripple: #ffffff30; ripple-duration: 300ms; transition-duration: 300ms; }
 .tab:hover { background: var(--tab-hover-bg); color: var(--tab-hover-fg); }
 .tab:focus { border-color: var(--accent); border-width: 2px; }
 .tab.active { background: var(--tab-active-bg); color: var(--tab-active-fg); }

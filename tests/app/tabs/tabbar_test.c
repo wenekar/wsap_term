@@ -1896,7 +1896,8 @@ static void press_ripple_ticks_until_done_and_uses_css(void)
     struct css_sheet sheet = {0};
     assert(css_parse(&sheet,
         ".tab-bar { height: 24px; padding: 4px; gap: 4px; }"
-        ".tab { ripple-color: #11223344; transition-duration: 200ms; }"));
+        ".tab { ripple-color: #11223344; ripple-duration: 200ms;"
+        "        transition-duration: 900ms; }"));
     struct fixture f;
     setup_with(&f, &sheet, (struct vector2i){ .x = 400, .y = 100 },
                (struct vector2i){0});

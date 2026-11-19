@@ -67,8 +67,8 @@ static void ripple(struct ui_tabbar *tb, int n_tabs, struct vector2i size,
     struct css_style tab = tb_style(tb, tb_part()->tab, CSS_PSEUDO_NONE);
     uint32_t color = tab.has_ripple_color ? tab.ripple_color : 0;
     if ((color >> 24) > 0) {
-        uint32_t duration = tab.has_transition_duration
-            ? (uint32_t)tab.transition_duration : 0;
+        uint32_t duration = tab.has_ripple_duration
+            ? tab.ripple_duration_ms : 0;
         ui_ripple_start(&tb->state.tabs[index].ripple, r, click_pos, color,
                         now_ms, duration);
         ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
