@@ -1166,29 +1166,26 @@ static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingIn
 }
 
 /* A drag names its data with a pasteboard type, which is a UTI, and the drop
- * types of a surface name MIME types. This table gives the MIME name of the
+ * types of a surface name MIME types. This function gives the MIME name of the
  * pasteboard types that a window takes. A type that is absent has no MIME name,
- * so a drop can never select it. The names are constants. */
+ * so a drop can never select it.
+ *
+ * The pasteboard type objects belong to the system framework, and an element of
+ * a static initializer must be a compile-time constant. A static table cannot
+ * hold them, so this function compares the type against each constant name. It
+ * returns a constant string, so the bytes outlive the call. */
 static NSString *drop_mime_of_type(NSString *type)
 {
-    static const struct {
-        NSPasteboardType pasteboard;
-        NSString *mime;
-    } map[] = {
-        {NSPasteboardTypeFileURL, @"text/uri-list"},
-        {NSPasteboardTypeURL, @"text/uri-list"},
-        {NSPasteboardTypeString, @"text/plain"},
-        /* Some sources name UTF-8 text with its MIME type. */
-        {@"text/plain;charset=utf-8", @"text/plain"},
-        {NSPasteboardTypeHTML, @"text/html"},
-        {NSPasteboardTypeRTF, @"text/rtf"},
-        {NSPasteboardTypePNG, @"image/png"},
-        {NSPasteboardTypeTIFF, @"image/tiff"},
-        {NSPasteboardTypePDF, @"application/pdf"},
-    };
-    for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++)
-        if ([type isEqualToString:map[i].pasteboard])
-            return map[i].mime;
+    if ([type isEqualToString:NSPasteboardTypeFileURL]) return @"text/uri-list";
+    if ([type isEqualToString:NSPasteboardTypeURL]) return @"text/uri-list";
+    if ([type isEqualToString:NSPasteboardTypeString]) return @"text/plain";
+    /* Some sources name UTF-8 text with its MIME type. */
+    if ([type isEqualToString:@"text/plain;charset=utf-8"]) return @"text/plain";
+    if ([type isEqualToString:NSPasteboardTypeHTML]) return @"text/html";
+    if ([type isEqualToString:NSPasteboardTypeRTF]) return @"text/rtf";
+    if ([type isEqualToString:NSPasteboardTypePNG]) return @"image/png";
+    if ([type isEqualToString:NSPasteboardTypeTIFF]) return @"image/tiff";
+    if ([type isEqualToString:NSPasteboardTypePDF]) return @"application/pdf";
     return nil;
 }
 
@@ -1218,7 +1215,7 @@ static bool drop_pick(struct cocoa_surface *w, NSPasteboard *pb, NSString **type
             continue;
         if (!uri_list && [mime isEqualToString:@"text/uri-list"])
             uri_list = types[i];
-        /* The table holds constant names, so the bytes outlive this call. */
+        /* The MIME name is a constant, so its bytes outlive this call. */
         offered[count++] = mime.UTF8String;
     }
     /* A source can offer file URLs through a type that has no MIME name. */
