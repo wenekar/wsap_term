@@ -1365,15 +1365,17 @@ static bool terminal_view_accessibility_text(struct terminal_view *view,
         accessibility_node_spec_set(view, out);
         return true;
     }
+    /* The snapshot and the history index come from one term state, so the
+     * caret and the version match the document. */
+    wsap_vtcore_lock(term);
     struct wsap_vtcore_snapshot *snapshot = accessibility_snapshot_take(term);
-    if (!snapshot)
-        return false;
     struct accessibility_document doc = {0};
-    if (!accessibility_document_measure(view, term, snapshot, &doc)) {
-        wsap_vtcore_snapshot_free(snapshot);
-        return false;
-    }
+    bool measured = snapshot &&
+        accessibility_document_measure(view, term, snapshot, &doc);
+    wsap_vtcore_unlock(term);
     wsap_vtcore_snapshot_free(snapshot);
+    if (!measured)
+        return false;
     view->accessibility_built_ms = now_ms;
     view->accessibility_text_term = term;
     view->accessibility_text_valid = true;
@@ -1396,9 +1398,7 @@ static bool view_accessibility(const struct ui_widget *widget,
                    UI_ACCESSIBILITY_STATE_MULTILINE;
     if (!term || !terminal->snapshot || !terminal->window)
         return true;
-    wsap_vtcore_lock(term);
     terminal_view_accessibility_text(view, terminal, out);
-    wsap_vtcore_unlock(term);
     return true;
 }
 
