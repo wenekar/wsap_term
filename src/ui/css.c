@@ -358,6 +358,7 @@ enum prop_kind {
     P_JUSTIFY,
     P_CURSOR,
     P_DURATION,
+    P_RIPPLE_DURATION,
     P_SHADOW,
     P_BORDER, /* A width and an optional color. */
     P_WRAP,
@@ -383,6 +384,7 @@ enum style_has_bit {
     HAS_has_shadow,
     HAS_has_opacity,
     HAS_has_transition_duration,
+    HAS_has_ripple_duration,
     HAS_has_cursor,
     HAS_has_ripple_color,
     HAS_has_flex_direction,
@@ -415,6 +417,14 @@ struct prop_info {
 #define CSS_SHADOW_SIZE \
     (offsetof(struct css_style, shadow_color) + sizeof(uint32_t) - \
      offsetof(struct css_style, shadow_x))
+
+/* A duration bitfield has no address, so it has no offset. The sentinel is
+ * unique: a `var()` of this property then keeps its place among the other
+ * `var()` declarations of the rule. */
+#define PROP_RIPPLE_DURATION(n, has_m) { \
+    .name = (n), .offset = offsetof(struct css_style, ripple_color) + 1, \
+    .kind = P_RIPPLE_DURATION, .has_bit = HAS_##has_m, \
+}
 
 /* A rule records the properties it sets in `set_mask`. Bit `i` belongs to
  * entry `i` of this table, so a set bit names its own entry. */
@@ -476,6 +486,7 @@ static const struct prop_info props[] = {
     PROP_HAS("transition-duration", P_DURATION, transition_duration, has_transition_duration),
     PROP_HAS("animation-duration",  P_DURATION, transition_duration, has_transition_duration),
     PROP_HAS("transition",          P_DURATION, transition_duration, has_transition_duration),
+    PROP_RIPPLE_DURATION("ripple-duration", has_ripple_duration),
     PROP_SHADOW("box-shadow",       shadow_x,                        has_shadow),
     PROP_COLOR("ripple-color", ripple_color, has_ripple_color),
     PROP_COLOR("ripple",       ripple_color, has_ripple_color),
@@ -579,6 +590,7 @@ static void set_style_has_bit(struct css_style *s, uint8_t bit, bool v)
     case HAS_has_shadow:              s->has_shadow = v; break;
     case HAS_has_opacity:             s->has_opacity = v; break;
     case HAS_has_transition_duration: s->has_transition_duration = v; break;
+    case HAS_has_ripple_duration:     s->has_ripple_duration = v; break;
     case HAS_has_cursor:              s->has_cursor = v; break;
     case HAS_has_ripple_color:        s->has_ripple_color = v; break;
     case HAS_has_flex_direction:      s->has_flex_direction = v; break;
@@ -609,6 +621,7 @@ static bool get_style_has_bit(const struct css_style *s, uint8_t bit)
     case HAS_has_shadow:              return s->has_shadow;
     case HAS_has_opacity:             return s->has_opacity;
     case HAS_has_transition_duration: return s->has_transition_duration;
+    case HAS_has_ripple_duration:     return s->has_ripple_duration;
     case HAS_has_cursor:              return s->has_cursor;
     case HAS_has_ripple_color:        return s->has_ripple_color;
     case HAS_has_flex_direction:      return s->has_flex_direction;
@@ -646,6 +659,28 @@ static int find_prop_idx(const char *key)
             return (int)i;
     }
     return -1;
+}
+
+/* Reads a time in milliseconds. A suffix of `s` multiplies by 1000. */
+static bool parse_duration_ms(const char *val, float *out)
+{
+    const char *s = val;
+    while (*s && !isdigit((unsigned char)*s) && *s != '.')
+        s++;
+    char *end = NULL;
+    float f = strtof(s, &end);
+    if (!end || end == s || !isfinite(f))
+        return false;
+    while (isspace((unsigned char)*end))
+        end++;
+    if (!strncmp(end, "s", 1) && strncmp(end, "ms", 2) != 0)
+        f *= 1000.0f;
+    if (f < 0.0f)
+        f = 0.0f;
+    if (f > 3600000.0f)
+        f = 3600000.0f;
+    *out = f;
+    return true;
 }
 
 static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
@@ -942,19 +977,19 @@ static enum css_declaration_result apply_prop_at(struct css_rule *r, size_t idx,
             break;
         }
         case P_DURATION: {
-            const char *s = val;
-            while (*s && !isdigit((unsigned char)*s) && *s != '.')
-                s++;
-            char *end = NULL;
-            float f = strtof(s, &end);
-            if (!end || end == s || !isfinite(f))
+            float f;
+            if (!parse_duration_ms(val, &f))
                 return CSS_DECLARATION_INVALID;
-            while (isspace((unsigned char)*end)) end++;
-            if (!strncmp(end, "s", 1) && strncmp(end, "ms", 2) != 0)
-                f *= 1000.0f;
-            if (f < 0.0f) f = 0.0f;
-            if (f > 3600000.0f) f = 3600000.0f;
             memcpy(dst, &f, sizeof(f));
+            break;
+        }
+        case P_RIPPLE_DURATION: {
+            float f;
+            if (!parse_duration_ms(val, &f))
+                return CSS_DECLARATION_INVALID;
+            if (f > 65535.0f)
+                f = 65535.0f;
+            r->style.ripple_duration_ms = (uint32_t)(f + 0.5f);
             break;
         }
     }
@@ -2175,6 +2210,9 @@ static void apply_rule_props(const struct css_rule *r, struct css_style *out)
             case P_POSITION: out->position = r->style.position; break;
             case P_FONT_WEIGHT: out->font_weight = r->style.font_weight; break;
             case P_INT:      out->z_index = r->style.z_index; break;
+            case P_RIPPLE_DURATION:
+                out->ripple_duration_ms = r->style.ripple_duration_ms;
+                break;
             default:         memcpy(dst, src, p->size); break;
             }
             if (p->has_bit)

@@ -257,6 +257,21 @@ static void test_transition_duration_parsing(void)
     css_sheet_clear(&sheet);
 }
 
+/* A ripple has its own duration. It is not a transition. */
+static void test_ripple_duration_parsing(void)
+{
+    struct css_sheet sheet = {0};
+    assert(css_parse(&sheet,
+        ".tab { ripple-duration: 120ms; transition-duration: 400ms; }"));
+    struct css_style style;
+    css_style_resolve(&sheet, "tab", NULL, NULL, CSS_PSEUDO_NONE, &style);
+    assert(style.has_ripple_duration);
+    assert(style.ripple_duration_ms == 120);
+    assert(style.has_transition_duration);
+    assert(style.transition_duration == 400.0f);
+    css_sheet_clear(&sheet);
+}
+
 static void test_box_shadow_parsing(void)
 {
     struct css_sheet sheet = {0};
@@ -881,6 +896,7 @@ int main(void)
     test_tag_selectors_and_specificity();
     test_every_cursor_keyword();
     test_transition_duration_parsing();
+    test_ripple_duration_parsing();
     test_box_shadow_parsing();
     test_property_spellings_share_a_field();
     test_root_variables_and_var_expansion();

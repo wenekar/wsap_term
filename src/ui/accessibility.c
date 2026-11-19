@@ -1,5 +1,6 @@
 #include "ui/accessibility.h"
 
+#include "ui/surface.h"
 #include "ui/text_break.h"
 #include "ui/widget.h"
 #include "ui/widget_ops.h"
@@ -533,6 +534,41 @@ bool ui_accessibility_tree_build(const struct ui_widget *root,
     return built;
 }
 
+/* The topmost modal of `surface`, or NULL. The overlays come before the root,
+ * because an overlay sits above it. */
+static const struct ui_widget *surface_modal(const struct ui_surface *surface)
+{
+    for (size_t i = ui_surface_overlay_count(surface); i > 0; i--) {
+        const struct ui_widget *modal =
+            modal_in_tree(ui_surface_overlay_at(surface, i - 1));
+        if (modal)
+            return modal;
+    }
+    return modal_in_tree(ui_surface_root(surface));
+}
+
+bool ui_accessibility_tree_build_surface(const struct ui_surface *surface,
+                                         struct ui_accessibility_tree *tree)
+{
+    if (!tree)
+        return false;
+    struct ui_accessibility_tree previous = *tree;
+    *tree = (struct ui_accessibility_tree){0};
+    const struct ui_widget *modal = surface_modal(surface);
+    /* The root and the overlays are siblings in the published tree, so they
+     * share one order. */
+    uint32_t order = 0;
+    bool built = build_widget(ui_surface_root(surface), 0, &order, tree,
+                              &previous, modal);
+    for (size_t i = 0; built && i < ui_surface_overlay_count(surface); i++)
+        built = build_widget(ui_surface_overlay_at(surface, i), 0, &order,
+                             tree, &previous, modal);
+    ui_accessibility_tree_destroy(&previous);
+    if (!built)
+        ui_accessibility_tree_clear(tree);
+    return built;
+}
+
 static bool dispatch_widget_action(
     struct ui_widget *widget,
     const struct ui_accessibility_action_request *request,
@@ -593,6 +629,23 @@ bool ui_accessibility_dispatch_action(
         return false;
     const struct ui_widget *modal = modal_in_tree(root);
     return dispatch_widget_action(root, request, modal);
+}
+
+bool ui_accessibility_dispatch_surface_action(
+    struct ui_surface *surface,
+    const struct ui_accessibility_action_request *request)
+{
+    if (!surface || !request || !request->node_id || !request->action ||
+        ((unsigned)request->action & ((unsigned)request->action - 1)))
+        return false;
+    const struct ui_widget *modal = surface_modal(surface);
+    if (dispatch_widget_action(ui_surface_root(surface), request, modal))
+        return true;
+    for (size_t i = 0; i < ui_surface_overlay_count(surface); i++)
+        if (dispatch_widget_action(ui_surface_overlay_at(surface, i), request,
+                                   modal))
+            return true;
+    return false;
 }
 
 bool ui_accessibility_provider_attach(

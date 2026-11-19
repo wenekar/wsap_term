@@ -14,6 +14,7 @@ struct ui_icon {
         struct ui_image image;
         char *label;
         int action_id;
+        bool pressed;
     } state;
 };
 

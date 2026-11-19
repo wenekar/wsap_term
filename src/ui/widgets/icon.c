@@ -103,19 +103,48 @@ static bool icon_event(struct ui_widget *widget, const struct ui_event *event)
         ? ui_container_of(widget, struct ui_icon, widget) : NULL;
     if (!icon || !event || !icon->state.action_id)
         return false;
+    if (event->kind == UI_EVENT_CAPTURE_LOST) {
+        icon->state.pressed = false;
+        return true;
+    }
+    if (event->kind == UI_EVENT_FOCUS_OUT) {
+        icon->state.pressed = false;
+        return false;
+    }
     if (event->kind != UI_EVENT_POINTER)
         return false;
     const struct ui_pointer_event *pointer = &event->data.pointer;
-    if (pointer->kind != UI_POINTER_RELEASE || pointer->button != 0)
+    bool inside = rect2i_contains(widget->bounds, pointer->pos);
+    switch (pointer->kind) {
+    case UI_POINTER_PRESS:
+        if (!inside || pointer->button != 0)
+            return false;
+        icon->state.pressed = true;
+        ui_widget_focus(widget);
+        ui_widget_capture_pointer(widget);
+        return true;
+    case UI_POINTER_RELEASE: {
+        if (pointer->button != 0)
+            return false;
+        ui_widget_release_pointer(widget);
+        bool activate = inside && icon->state.pressed;
+        icon->state.pressed = false;
+        if (!activate)
+            return false;
+        ui_widget_notify(widget, (struct ui_action){
+            .kind = UI_ACTION_ACTIVATE,
+            .id = icon->state.action_id,
+            .index = -1,
+        });
+        return true;
+    }
+    case UI_POINTER_NONE:
+    case UI_POINTER_MOTION:
+    case UI_POINTER_SCROLL:
+    case UI_POINTER_LEAVE:
         return false;
-    if (!rect2i_contains(widget->bounds, pointer->pos))
-        return false;
-    ui_widget_notify(widget, (struct ui_action){
-        .kind = UI_ACTION_ACTIVATE,
-        .id = icon->state.action_id,
-        .index = -1,
-    });
-    return true;
+    }
+    return false;
 }
 
 static bool icon_accessibility(const struct ui_widget *widget,

@@ -48,6 +48,25 @@ static void lint(struct fixture *f)
     ui_scene_destroy(&scene);
 }
 
+static void pointer(struct fixture *f, enum ui_pointer_kind kind,
+                    struct vector2i pos)
+{
+    struct ui_event event = ui_event_pointer((struct ui_pointer_event){
+        .kind = kind, .pos = pos,
+    }, 0);
+    (void)ui_surface_dispatch(&f->surface, &event);
+}
+
+static bool activated(struct ui_widget *widget, const struct ui_action *action,
+                      void *userdata)
+{
+    (void)widget;
+    if (action->kind != UI_ACTION_ACTIVATE)
+        return false;
+    (*(int *)userdata)++;
+    return true;
+}
+
 static void slider_range_test(void)
 {
     struct ui_slider slider;
@@ -169,6 +188,46 @@ static void icon_test(void)
     teardown(&f);
 }
 
+/* A click on the icon takes a press inside it and a release inside it. */
+static void icon_click_test(void)
+{
+    struct ui_icon icon = {0};
+    struct fixture f;
+    int calls = 0;
+    ui_icon_set_label(&icon, "X");
+    ui_icon_set_action_id(&icon, 7);
+    ui_widget_set_action_handler(ui_icon_widget(&icon), activated, &calls);
+    show(&f, ui_icon_widget(&icon));
+    lint(&f);
+    struct rect2i bounds = ui_icon_widget(&icon)->bounds;
+    struct vector2i inside = {
+        .x = bounds.x + bounds.width / 2,
+        .y = bounds.y + bounds.height / 2,
+    };
+    struct vector2i outside = { .x = 400, .y = 200 };
+
+    /* A press that starts away from the icon does not arm it. */
+    pointer(&f, UI_POINTER_PRESS, outside);
+    pointer(&f, UI_POINTER_RELEASE, inside);
+    assert(calls == 0);
+
+    /* A press inside the icon and a release inside it activate it. */
+    pointer(&f, UI_POINTER_PRESS, inside);
+    pointer(&f, UI_POINTER_RELEASE, inside);
+    assert(calls == 1);
+
+    /* A release outside the icon cancels the press. */
+    pointer(&f, UI_POINTER_PRESS, inside);
+    pointer(&f, UI_POINTER_RELEASE, outside);
+    assert(calls == 1);
+
+    /* The second click still works after a cancelled press. */
+    pointer(&f, UI_POINTER_PRESS, inside);
+    pointer(&f, UI_POINTER_RELEASE, inside);
+    assert(calls == 2);
+    teardown(&f);
+}
+
 int main(void)
 {
     slider_range_test();
@@ -177,6 +236,7 @@ int main(void)
     progress_value_test();
     spinner_test();
     icon_test();
+    icon_click_test();
     printf("control widget tests passed\n");
     return 0;
 }

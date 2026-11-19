@@ -19,7 +19,8 @@ bool ui_widget_is_ancestor(const struct ui_widget *ancestor,
                            const struct ui_widget *widget);
 uint64_t ui_widget_tick(struct ui_widget *widget, uint64_t now_ms);
 /* Moves each paint color of `widget` and its children toward the CSS style.
- * Returns the time of the next step, or 0 when nothing moves. */
+ * Returns the time of the next step of a transition, no later than the end of
+ * that transition, or 0 when nothing moves. */
 uint64_t ui_widget_animate_style(struct ui_widget *widget, uint64_t now_ms);
 void ui_widget_clear_invalidation(struct ui_widget *widget, unsigned flags);
 const struct css_sheet *ui_widget_sheet(const struct ui_widget *widget);

@@ -873,6 +873,10 @@ uint64_t ui_widget_tick(struct ui_widget *widget, uint64_t now_ms)
     return next;
 }
 
+/* The interval of the frames of a CSS transition. A 60 Hz host draws each
+ * step. */
+#define UI_STYLE_ANIM_STEP_MS 16
+
 /* The color of one channel of the resolved style of `widget`. */
 static uint32_t style_channel(const struct css_style *style, enum ui_style_channel ch)
 {
@@ -951,8 +955,12 @@ uint64_t ui_widget_animate_style(struct ui_widget *widget, uint64_t now_ms)
         a->opacity_from + (a->opacity_to - a->opacity_from) * eased;
     if (style->has_opacity)
         style->opacity = a->opacity_current;
-    if (progress < 1.0f)
-        next = a->start_ms + a->duration_ms;
+    if (progress < 1.0f) {
+        /* A frame at each step of the transition, and no later than its end. */
+        uint64_t end_ms = a->start_ms + a->duration_ms;
+        uint64_t step_ms = now_ms + UI_STYLE_ANIM_STEP_MS;
+        next = step_ms < end_ms ? step_ms : end_ms;
+    }
     for (struct ui_widget *c = widget->first_child; c; c = c->next_sibling) {
         uint64_t child = ui_widget_animate_style(c, now_ms);
         if (child && (!next || child < next))

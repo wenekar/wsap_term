@@ -536,7 +536,9 @@ static void close_hover_crossfade_is_visible(void)
     motion(&f, center(close_rect(&f, 0)), 1000);
     assert(last(&f, UI_ACTION_HIGHLIGHT)->index == 0);
     assert(tick(&f, 1075));
-    assert(!tick(&f, 1200));
+    /* The close mark crossfades and the tab background fades. */
+    assert(tick(&f, 1200));
+    assert(!tick(&f, 1300));
     scene = build(&f);
     assert(find_text(scene, CLOSE_MARK));
     assert(!find_text(scene, TAB_BADGE "1"));
@@ -545,11 +547,55 @@ static void close_hover_crossfade_is_visible(void)
     motion(&f, (struct vector2i){ .x = 100, .y = 200 }, 2000);
     assert(last(&f, UI_ACTION_HIGHLIGHT)->index == -1);
     assert(tick(&f, 2075));
-    assert(!tick(&f, 2200));
+    assert(tick(&f, 2200));
+    assert(!tick(&f, 2300));
     scene = build(&f);
     assert(find_text(scene, TAB_BADGE "1"));
     assert(!find_text(scene, CLOSE_MARK));
     teardown(&f);
+}
+
+/* The hover color of a tab fades in over the transition-duration of the tab
+ * part. */
+static void tab_hover_fades_over_the_transition(void)
+{
+    struct css_sheet sheet = {0};
+    assert(css_parse(&sheet,
+        ".tab-bar { height: 24px; padding: 4px; gap: 4px; }"
+        ".tab { background: #202020; transition-duration: 200ms; }"
+        ".tab:hover { background: #E0E0E0; }"));
+    struct fixture f;
+    setup_with(&f, &sheet, (struct vector2i){ .x = 400, .y = 100 },
+               (struct vector2i){0});
+    show(&f, 2, 0);
+
+    motion(&f, center(tab_rect(&f, 1)), 1000);
+    /* The fade asks for the next frame. */
+    assert(tick(&f, 1000));
+    const struct ui_scene *scene = build(&f);
+    assert(!scene_has_color(scene, 0xFFE0E0E0));
+
+    /* Halfway, the tab paints a color between the two. */
+    assert(tick(&f, 1100));
+    scene = build(&f);
+    bool blended = false;
+    for (int i = 0; i < scene->n_ops; i++) {
+        uint32_t c = scene->ops[i].color;
+        if (scene->ops[i].kind != UI_SCENE_OP_ROUNDED_RECT ||
+            (c >> 24) != 0xFF)
+            continue;
+        uint32_t r = (c >> 16) & 0xFF;
+        if (r > 0x20 && r < 0xE0)
+            blended = true;
+    }
+    assert(blended);
+
+    /* The fade ends at the duration. */
+    assert(!tick(&f, 1200));
+    scene = build(&f);
+    assert(scene_has_color(scene, 0xFFE0E0E0));
+    teardown(&f);
+    css_sheet_clear(&sheet);
 }
 
 static void hover_and_active_styling_in_scene(void)
@@ -563,6 +609,8 @@ static void hover_and_active_styling_in_scene(void)
     motion(&f, center(tab_rect(&f, 1)), 1000);
     assert(f.n_log == 1 && f.log[0].kind == UI_ACTION_HIGHLIGHT &&
            f.log[0].index == 1);
+    /* The hover color fades in over the 300 ms of the default sheet. */
+    assert(!tick(&f, 1300));
 
     const struct ui_scene *scene = build(&f);
     assert(scene_has_color(scene, 0xFF45475Au));
@@ -1405,7 +1453,7 @@ static void chrome_glyphs_are_vertically_centered(void)
     assert(lint(&f) == 0);
 
     motion(&f, center(close), 1000);
-    assert(!tick(&f, 1200));
+    assert(!tick(&f, 1300));
     scene = build(&f);
     const struct ui_scene_op *mark = find_text(scene, CLOSE_MARK);
     assert(mark);
@@ -1896,7 +1944,8 @@ static void press_ripple_ticks_until_done_and_uses_css(void)
     struct css_sheet sheet = {0};
     assert(css_parse(&sheet,
         ".tab-bar { height: 24px; padding: 4px; gap: 4px; }"
-        ".tab { ripple-color: #11223344; transition-duration: 200ms; }"));
+        ".tab { ripple-color: #11223344; ripple-duration: 200ms;"
+        "        transition-duration: 900ms; }"));
     struct fixture f;
     setup_with(&f, &sheet, (struct vector2i){ .x = 400, .y = 100 },
                (struct vector2i){0});
@@ -2104,6 +2153,7 @@ int main(void)
     tabbar_keyboard_navigation_test();
     tabbar_key_requests_frame_test();
     close_hover_crossfade_is_visible();
+    tab_hover_fades_over_the_transition();
     hover_and_active_styling_in_scene();
     height_scales_with_dpi();
     restyled_bar_repaints_test();

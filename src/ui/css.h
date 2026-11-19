@@ -186,6 +186,7 @@ struct css_style {
     uint32_t has_shadow : 1;
     uint32_t has_opacity : 1;
     uint32_t has_transition_duration : 1;
+    uint32_t has_ripple_duration : 1;
     uint32_t has_cursor : 1;
     uint32_t has_ripple_color : 1;
     uint32_t has_flex_direction : 1;
@@ -206,6 +207,10 @@ struct css_style {
     uint32_t overflow : 3;
     uint32_t position : 2;
     uint32_t font_style : 2;
+    /* The time of a ripple of the part, in whole milliseconds. It is not a
+     * transition. A larger value is clamped to 65535 ms. The spare bits of
+     * the packed word hold it, so the style keeps its size. */
+    uint32_t ripple_duration_ms : 16;
 };
 
 _Static_assert(sizeof(struct css_style) == 340, "css_style must stay 340 bytes");
