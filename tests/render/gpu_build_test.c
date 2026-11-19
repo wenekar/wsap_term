@@ -114,8 +114,10 @@ static void test_text_rows(void)
     text_scene(&scene, box, "H");
     const struct glyph *g = glyph_cache_fetch(font_instance_default(), 'H', 0);
     assert(g);
-    /* A glyph with no row offset cannot tell the two rules apart. */
-    assert(g->y_offset > 0);
+    /* Some backends keep raster row 0 at the cell top and write no row
+     * offset. Such a glyph cannot tell the two rules apart, and the check
+     * below still holds for it. */
+    const bool row_offset = g->y_offset > 0;
 
     struct gpu_build b = {0};
     assert(gpu_build_init(&b));
@@ -128,6 +130,9 @@ static void test_text_rows(void)
     const struct gpu_glyph_inst *in = ui_glyph(&b, 0);
     assert(in);
     assert(in->rect[1] == (float)box.y);
+    /* The builder must not add the row offset a second time. */
+    if (row_offset)
+        assert(in->rect[1] != (float)(box.y + g->y_offset));
     assert(in->rect[3] > 0.0f);
     gpu_build_commit(&b);
     gpu_build_release(&b);
