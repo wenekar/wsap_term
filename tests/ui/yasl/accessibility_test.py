@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import socket
 import subprocess
@@ -80,7 +81,33 @@ def selection(node):
     return span.start_offset, span.end_offset
 
 
+def start_a11y_bus():
+    # Start the accessibility bus by hand. The private session bus has no
+    # service directory, so D-Bus activation cannot start it. The launcher
+    # starts the registry and keeps the bus in XDG_RUNTIME_DIR.
+    launcher = shutil.which('at-spi-bus-launcher')
+    if launcher is None:
+        for path in ('/usr/libexec/at-spi-bus-launcher',
+                     '/usr/lib/at-spi-bus-launcher',
+                     '/usr/lib/at-spi2-core/at-spi-bus-launcher'):
+            if Path(path).is_file():
+                launcher = path
+                break
+    if launcher is None:
+        raise RuntimeError('at-spi-bus-launcher is not installed')
+    return subprocess.Popen([launcher, '--launch-immediately'],
+                            env=os.environ, start_new_session=True)
+
+
 def run_session():
+    bus = start_a11y_bus()
+    try:
+        run_session_with_bus()
+    finally:
+        stop_session(bus)
+
+
+def run_session_with_bus():
     set_enabled(False)
     Atspi.init()
     Atspi.set_timeout(1000, 1000)
@@ -152,27 +179,13 @@ def run_session():
         Atspi.exit()
 
 
-def find_a11y_service():
-    data_dirs = os.environ.get('XDG_DATA_DIRS') or '/usr/local/share:/usr/share'
-    candidates = [Path(entry) / 'dbus-1/services/org.a11y.Bus.service'
-                  for entry in data_dirs.split(':') if entry]
-    candidates.extend([
-        Path('/usr/local/share/dbus-1/services/org.a11y.Bus.service'),
-        Path('/usr/share/dbus-1/services/org.a11y.Bus.service'),
-    ])
-    return next((path for path in candidates if path.is_file()), None)
-
-
 def write_dbus_config(directory):
-    # Limit D-Bus activation to AT-SPI so portal helpers cannot hold test pipes.
-    service = find_a11y_service()
-    if service is not None:
-        services_dir = directory / 'services'
-        services_dir.mkdir()
-        (services_dir / 'org.a11y.Bus.service').symlink_to(service)
-        servicedir_xml = f'  <servicedir>{escape(str(services_dir))}</servicedir>'
-    else:
-        servicedir_xml = '  <standard_session_servicedirs />'
+    # The test starts every helper by hand. No service directory keeps D-Bus
+    # activation from starting a bus that the test does not control. A portal
+    # helper also cannot hold the test pipes.
+    services_dir = directory / 'services'
+    services_dir.mkdir()
+    servicedir_xml = f'  <servicedir>{escape(str(services_dir))}</servicedir>'
     conf = directory / 'session.conf'
     conf.write_text(
         '<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"\n'
@@ -246,6 +259,11 @@ def main():
     env['ATSPI_DBUS_IMPLEMENTATION'] = 'dbus-daemon'
     with tempfile.TemporaryDirectory(prefix='wsap-dbus-') as tmp:
         conf = write_dbus_config(Path(tmp))
+        # A private runtime directory keeps the accessibility bus socket away
+        # from the desktop session.
+        runtime = Path(tmp) / 'runtime'
+        runtime.mkdir(mode=0o700)
+        env['XDG_RUNTIME_DIR'] = str(runtime)
         process = None
         try:
             process = subprocess.Popen(
