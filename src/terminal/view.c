@@ -3,6 +3,7 @@
 #include "input/input.h"
 #include "input/keybind.h"
 #include "platform/platform.h"
+#include "terminal/drop.h"
 #include "ui/paint.h"
 #include "paint/text_run.h"
 #include "ui/css.h"
@@ -13,6 +14,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 static struct terminal *view_terminal(const struct ui_widget *widget)
 {
@@ -682,6 +684,48 @@ static void view_prepare(struct ui_widget *widget)
         : (struct ui_scroll_metrics){0});
 }
 
+/* Pastes the payload of a typed drop. The window keeps the type negotiation
+ * and sends the type that it picked. An image saves to a file first, and the
+ * paste holds its path. A uri list becomes one text line. Other types are
+ * left to the framework. */
+static bool paste_drop(struct terminal *t, const struct ui_drag_event *drag)
+{
+    if (!drag || !drag->data || !drag->len)
+        return false;
+    if (terminal_mime_is_image(drag->mime)) {
+        char *path = terminal_save_dropped_image(drag->mime, drag->data,
+                                                 drag->len);
+        char *text = terminal_quote_path(path);
+        free(path);
+        if (text) {
+            terminal_paste(t, text, strlen(text));
+            free(text);
+        }
+        return true;
+    }
+    if (drag->mime && (!drag->mime[0] ||
+                       !strcasecmp(drag->mime, "text/uri-list"))) {
+        char *text = terminal_join_uri_lines(drag->data, drag->len);
+        if (text) {
+            terminal_paste(t, text, strlen(text));
+            free(text);
+        }
+        return true;
+    }
+    return false;
+}
+
+/* Drops on any part of the terminal content arrive here. The view and the
+ * scrollbar leave the event unhandled, so it bubbles to the content root. */
+static bool view_drop_event(struct ui_widget *widget,
+                            const struct ui_event *event, void *userdata)
+{
+    (void)widget;
+    if (event->kind != UI_EVENT_DROP)
+        return false;
+    return paste_drop(userdata, &event->data.drag);
+}
+
 static const struct ui_widget_ops VIEW_OPS = {
     .name = "terminal-view",
     .prepare = view_prepare,
@@ -723,6 +767,7 @@ void terminal_view_attach(struct terminal *t)
 {
     ui_widget_set_action_handler(ui_scrollview_widget(&t->scrollview),
                                  scrollview_action, t);
+    ui_widget_set_event_handler(&t->scrollview.widget, view_drop_event, t);
 }
 
 void terminal_view_drop_hover(struct terminal *t, bool over, void *ud)
