@@ -15,7 +15,8 @@
 /* Returns the widget that takes a drop at `pos`, or NULL when no widget
  * takes it. That widget also draws the drop mark. Every type follows one
  * rule: the drop goes to the widget at its position, and it bubbles up from
- * there. While a modal is open, a drop outside the modal reaches nothing. */
+ * there. While a modal is open, a drop outside the modal reaches nothing,
+ * and a drop on the modal bubbles up to the modal at most. */
 static struct ui_widget *drop_mark_target(struct ui_surface *surface,
                                           struct vector2i pos)
 {
@@ -37,23 +38,23 @@ static struct ui_surface *end_drag(struct window *w, struct vector2i pos,
         struct ui_drag_event drag = { .pos = pos };
         struct ui_event leave = ui_event_drag(UI_EVENT_DRAG_LEAVE, &drag,
                                               now_ms);
-        ui_widget_event(left, &leave);
+        ui_surface_drop_event(screen, left, &leave);
     }
     return screen;
 }
 
 /* Sends the event of a drop release to the widget at the drop location
- * `pos` on the window surface. The event bubbles up from that
- * widget. Hover state from the drag does not choose the widget, and the
- * focused widget is no fallback. When no widget on that path takes the
- * release, nothing takes it. */
+ * `pos` on the window surface. The event bubbles up from that widget, and
+ * while a modal is open it stops at the modal. Hover state from the drag
+ * does not choose the widget, and the focused widget is no fallback. When no
+ * widget on that path takes the release, nothing takes it. */
 static void route_release(struct window *w, struct vector2i pos,
                           const struct ui_event *event, uint64_t now_ms)
 {
     struct ui_surface *screen = end_drag(w, pos, now_ms);
     struct ui_widget *target = drop_mark_target(screen, pos);
     if (target)
-        ui_widget_event(target, event);
+        ui_surface_drop_event(screen, target, event);
 }
 
 static enum ui_edit_command shortcut_edit(input_command_id action)
@@ -145,13 +146,13 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
         if (left) {
             struct ui_event leave_event =
                 ui_event_drag(UI_EVENT_DRAG_LEAVE, &drag, now_ms);
-            ui_widget_event(left, &leave_event);
+            ui_surface_drop_event(screen, left, &leave_event);
         }
         if (target) {
             event = ui_event_drag(enter ? UI_EVENT_DRAG_ENTER
                                         : UI_EVENT_DRAG_OVER,
                                   &drag, now_ms);
-            ui_widget_event(target, &event);
+            ui_surface_drop_event(screen, target, &event);
         }
         return WINDOW_INPUT_HANDLED;
     }

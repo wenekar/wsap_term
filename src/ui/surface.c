@@ -820,6 +820,17 @@ struct ui_widget *ui_surface_drop_target(struct ui_surface *surface,
     return hit;
 }
 
+bool ui_surface_drop_event(struct ui_surface *surface,
+                           struct ui_widget *target,
+                           const struct ui_event *event)
+{
+    if (!surface || !target || !event)
+        return false;
+    struct ui_widget *modal = surface_modal(surface);
+    return ui_widget_bubble_to(target,
+        modal && ui_widget_is_ancestor(modal, target) ? modal : NULL, event);
+}
+
 static bool dispatch_pointer(struct ui_surface *surface,
                              const struct ui_event *event)
 {

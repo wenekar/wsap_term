@@ -22,8 +22,8 @@
  * - A text drop follows the same rule as a file drop. The focus and the
  *   default focus do not limit it.
  * - While a modal is open, a release outside the modal reaches nothing. A
- *   part of the modal outside its bounds takes a drop like the rest of the
- *   modal.
+ *   release on the modal bubbles up to the modal at most. A part of the
+ *   modal outside its bounds takes a drop like the rest of the modal.
  *
  * The file drop case uses the order of a real backend: the drag enters, the
  * LEAVE comes, and then the release lands.
@@ -37,6 +37,8 @@ struct probe {
     struct vector2i drop_pos;
     /* The widget declines every drop release. */
     bool decline;
+    /* The widget declines every drag ENTER, OVER, and LEAVE. */
+    bool decline_drag;
 };
 
 static struct window_host host;
@@ -64,6 +66,10 @@ static bool probe_event(struct ui_widget *widget, const struct ui_event *event)
     if (p->decline && (event->kind == UI_EVENT_DROP ||
                        event->kind == UI_EVENT_DROP_FILES ||
                        event->kind == UI_EVENT_PASTE))
+        return false;
+    if (p->decline_drag && (event->kind == UI_EVENT_DRAG_ENTER ||
+                            event->kind == UI_EVENT_DRAG_OVER ||
+                            event->kind == UI_EVENT_DRAG_LEAVE))
         return false;
     /* The widget takes the drop, so it is the receiver of the drag. */
     return true;
@@ -404,6 +410,44 @@ static void release_all(struct window *w, struct vector2i pos)
                        .len = 1, .pos = pos } });
 }
 
+/* The modal is a child of a panel that covers the window. The modal declines
+ * every drag event and every drop. Nothing bubbles past the modal to the
+ * panel, and a drop outside the modal reaches nothing. */
+static void declined_drop_stops_at_the_modal_test(void)
+{
+    struct ui_widget root;
+    struct probe panel, modal;
+    ui_widget_init(&root, NULL, NULL);
+    probe_place(&panel, (struct rect2i){ .size = { .x = 320, .y = 200 } });
+    probe_place(&modal, (struct rect2i){ .pos = { .x = 100, .y = 50 },
+                                         .size = { .x = 100, .y = 50 } });
+    assert(ui_widget_add_child(&root, &panel.widget));
+    assert(ui_widget_add_child(&panel.widget, &modal.widget));
+    ui_widget_set_modal(&modal.widget, true);
+    struct window *w = open_tree(&root);
+    modal.decline = true;
+    modal.decline_drag = true;
+    struct vector2i on_modal = { .x = 150, .y = 70 };
+    struct vector2i off_modal = { .x = 20, .y = 20 };
+
+    route(w, (struct input_event){ .kind = INPUT_DRAG,
+        .drop_type = { .mime = (char *)"image/png", .pos = on_modal } });
+    route(w, (struct input_event){ .kind = INPUT_DRAG,
+        .drop_type = { .mime = (char *)"image/png", .pos = on_modal } });
+    assert(modal.enter == 2);
+    release_all(w, on_modal);
+    assert(modal.leave == 1);
+    assert(modal.drop == 3);
+    release_all(w, off_modal);
+    assert(modal.drop == 3);
+    assert(panel.enter == 0 && panel.leave == 0 && panel.drop == 0);
+
+    close_tree(w);
+    ui_widget_destroy(&modal.widget);
+    ui_widget_destroy(&panel.widget);
+    ui_widget_destroy(&root);
+}
+
 /* Lays out a modal that hangs its first part 20 pixels below its own
  * bounds, as a popup list of a dropdown does. */
 static void hanging_layout(struct ui_widget *widget, struct rect2i bounds)
@@ -486,6 +530,7 @@ int main(void)
     text_release_on_the_focus_reaches_it_test();
     text_release_ignores_the_default_focus_test();
     release_outside_a_modal_reaches_nothing_test();
+    declined_drop_stops_at_the_modal_test();
     drop_on_a_modal_part_outside_its_bounds_test();
     return 0;
 }
