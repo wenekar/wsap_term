@@ -1,0 +1,46 @@
+/* The app stylesheet. The app library embeds it in a generated header, so an
+   edit here needs no code change. It holds the :root variables and the rules
+   of the app screens: the settings screen and the terminal drop target. The
+   widgets own their default rules, which are in assets/ui/core.css. */
+
+:root {
+    --drop-bg: #89b4fa33;
+    --settings-row-bg: #181825;
+    --settings-help-fg: #a6adc8;
+    --settings-active-fg: var(--accent);
+}
+
+.terminal-drop-target { background: var(--drop-bg); border-color: var(--accent); border-width: 2px; }
+.settings-root { align-items: stretch; }
+.settings-form { flex-direction: column; padding: 1.2em 2ch; gap: 0.8em; align-items: stretch; color: var(--fg); }
+.settings-header { align-items: center; gap: 2ch; }
+.settings-title { width: grow; }
+.settings-search { padding: 0.45em 1ch; }
+.settings-body { height: grow; gap: 2ch; align-items: stretch; }
+.settings-sidebar { width: 17ch; gap: 0.4em; align-items: stretch; }
+.settings-scroll { width: grow; }
+.settings-fields { gap: 0.55em; align-items: stretch; }
+.settings-section { padding: 0.4em 0; color: var(--section-fg); }
+.settings-row { padding: 0.65em 1ch; gap: 2ch; align-items: center; background: var(--settings-row-bg); border-radius: 6px; }
+.settings-description { width: grow; min-width: 0; gap: 0.25em; align-items: stretch; }
+.settings-help { color: var(--settings-help-fg); }
+.settings-editor { width: grow; min-width: 0; align-items: stretch; gap: 0.4em; }
+.settings-editor .text-input { min-width: 0; padding: 0.4em 1ch; }
+.settings-error { color: var(--danger); }
+.settings-footer { align-items: center; gap: 1ch; }
+.settings-status { width: grow; }
+.settings-button { padding: 0.4em 1ch; background: var(--control-bg); border-radius: 4px; cursor: pointer; }
+.settings-button:hover, .settings-button:focus { background: var(--control-hover-bg); color: var(--button-focus-fg); }
+.settings-button:disabled { background: var(--control-disabled-bg); color: var(--control-disabled-fg); cursor: default; }
+.settings-primary { background: var(--accent); color: var(--accent-fg); }
+.settings-primary:hover, .settings-primary:focus { background: var(--accent-hover); color: var(--accent-fg); }
+.settings-primary:disabled { background: var(--control-disabled-bg); color: var(--control-disabled-fg); }
+.settings-nav.active { background: var(--tab-active-bg); color: var(--settings-active-fg); }
+.settings-link { color: var(--section-fg); background: transparent; cursor: pointer; }
+
+/* The marks of a drag that comes from outside the app. A tab bar draws a
+   vertical mark at the insert position. A list draws a line between two rows,
+   or a highlight on the row that takes the drop. */
+.tab-drop-mark { background: var(--accent); width: 3px; }
+.menu-drop { background: var(--accent); height: 2px; }
+.menu-drop-into { background: var(--drop-bg); border-color: var(--accent); border-width: 1px; }

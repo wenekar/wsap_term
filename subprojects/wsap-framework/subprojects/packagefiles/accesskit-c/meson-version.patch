@@ -1,0 +1,10 @@
+diff --git a/meson.build b/meson.build
+--- a/meson.build
++++ b/meson.build
+@@ -491,5 +491,6 @@ endif
+ # This is the main dependency to use for tests; it means "link to the library we just built"
+ accesskit_c_dep = declare_dependency(
++  version: project_version,
+   sources: includes,
+   include_directories: [includeinc],
+   dependencies: library_dependencies,

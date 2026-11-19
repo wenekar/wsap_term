@@ -1,0 +1,1037 @@
+#include "ui/internal/tree.h"
+
+#include "ui/anim.h"
+#include "ui/anchor.h"
+#include "ui/internal/layout.h"
+#include "ui/surface.h"
+#include "ui/css.h"
+
+#include <stdlib.h>
+#include <stdatomic.h>
+#include <string.h>
+
+static atomic_uint_fast64_t next_accessibility_id = 1;
+
+void ui_widget_shutdown(void)
+{
+    atomic_store_explicit(&next_accessibility_id, 1, memory_order_relaxed);
+}
+
+uint64_t ui_widget_accessibility_id_allocate(void)
+{
+    uint64_t id;
+    do {
+        id = atomic_fetch_add_explicit(&next_accessibility_id, 1,
+                                       memory_order_relaxed);
+    } while (!id);
+    return id;
+}
+
+bool ui_widget_is_ancestor(const struct ui_widget *ancestor,
+                           const struct ui_widget *widget)
+{
+    for (const struct ui_widget *p = widget; p; p = p->parent) {
+        if (p == ancestor)
+            return true;
+    }
+    return false;
+}
+
+bool ui_widget_stale(const struct ui_surface *surface,
+                     const struct ui_widget *widget)
+{
+    return !widget || widget->impl.destroyed || widget->impl.surface != surface ||
+           !ui_widget_visible(widget);
+}
+
+bool ui_widget_visible(const struct ui_widget *widget)
+{
+    for (const struct ui_widget *p = widget; p; p = p->parent)
+        if (p->impl.destroyed || p->impl.hidden)
+            return false;
+    return widget != NULL;
+}
+
+void ui_widget_init(struct ui_widget *widget,
+                    const struct ui_widget_ops *ops, void *userdata)
+{
+    if (!widget)
+        return;
+    *widget = (struct ui_widget){
+        .ops = ops,
+        .userdata = userdata,
+        .impl.invalidation = UI_WIDGET_INVALIDATE_MEASURE |
+                             UI_WIDGET_INVALIDATE_LAYOUT,
+        .impl.accessibility_id = ui_widget_accessibility_id_allocate(),
+    };
+}
+
+uint64_t ui_widget_accessibility_id(const struct ui_widget *widget)
+{
+    return widget ? widget->impl.accessibility_id : 0;
+}
+
+bool ui_widget_set_accessible_name(struct ui_widget *widget, const char *name)
+{
+    if (!widget || widget->impl.destroyed)
+        return false;
+    if (name && widget->impl.accessible_name &&
+        strcmp(name, widget->impl.accessible_name) == 0)
+        return true;
+    char *copy = name ? strdup(name) : NULL;
+    if (name && !copy)
+        return false;
+    free(widget->impl.accessible_name);
+    widget->impl.accessible_name = copy;
+    ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
+    return true;
+}
+
+bool ui_widget_set_accessible_description(struct ui_widget *widget,
+                                          const char *description)
+{
+    if (!widget || widget->impl.destroyed)
+        return false;
+    if (description && widget->impl.accessible_description &&
+        strcmp(description, widget->impl.accessible_description) == 0)
+        return true;
+    char *copy = description ? strdup(description) : NULL;
+    if (description && !copy)
+        return false;
+    free(widget->impl.accessible_description);
+    widget->impl.accessible_description = copy;
+    ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
+    return true;
+}
+
+bool ui_widget_set_accessible_invalid(struct ui_widget *widget, bool invalid)
+{
+    if (!widget || widget->impl.destroyed)
+        return false;
+    if (widget->impl.accessibility_invalid == invalid)
+        return true;
+    widget->impl.accessibility_invalid = invalid;
+    ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
+    return true;
+}
+
+void ui_widget_set_accessibility_ignored(struct ui_widget *widget,
+                                         bool ignored)
+{
+    if (!widget || widget->impl.destroyed ||
+        widget->impl.accessibility_ignored == ignored)
+        return;
+    widget->impl.accessibility_ignored = ignored;
+    ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
+}
+
+struct ui_surface *ui_widget_surface(const struct ui_widget *widget)
+{
+    return widget ? widget->impl.surface : NULL;
+}
+
+void ui_widget_set_style_identity(struct ui_widget *widget,
+                                  const char *class_name,
+                                  const char *id_name,
+                                  const char *tag_name)
+{
+    if (!widget)
+        return;
+    widget->impl.style_class = class_name;
+    widget->impl.style_id = id_name;
+    widget->impl.style_tag = tag_name;
+    widget->impl.style_valid = false;
+    ui_widget_part_cache_stale_subtree(widget);
+    ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_MEASURE);
+}
+
+void ui_widget_set_debug_key(struct ui_widget *widget, const char *key)
+{
+    if (widget)
+        widget->impl.debug_key = key;
+}
+
+void ui_widget_set_style_pseudo(struct ui_widget *widget, unsigned pseudo_flags)
+{
+    if (!widget || widget->impl.style_pseudo == pseudo_flags)
+        return;
+    widget->impl.style_pseudo = (uint16_t)pseudo_flags;
+    widget->impl.style_valid = false;
+    ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
+}
+
+unsigned ui_widget_style_pseudo(const struct ui_widget *widget)
+{
+    return widget ? widget->impl.style_pseudo : 0;
+}
+
+void ui_widget_restyle(struct ui_widget *widget)
+{
+    if (widget)
+        widget->impl.style_valid = false;
+}
+
+void ui_widget_set_action_handler(struct ui_widget *widget, ui_action_fn fn,
+                                  void *userdata)
+{
+    if (widget && !widget->impl.destroyed)
+        widget->impl.actions = (struct ui_action_handler){ fn, userdata };
+}
+
+void ui_widget_set_event_handler(struct ui_widget *widget, ui_event_fn fn,
+                                 void *userdata)
+{
+    if (!widget || widget->impl.destroyed)
+        return;
+    widget->impl.event_fn = fn;
+    widget->impl.event_userdata = userdata;
+}
+
+void ui_widget_set_key_capture(struct ui_widget *widget, ui_capture_fn fn,
+                               void *userdata)
+{
+    if (!widget || widget->impl.destroyed)
+        return;
+    widget->impl.key_capture = fn;
+    widget->impl.key_capture_userdata = userdata;
+}
+
+void ui_widget_set_destroy_observer(struct ui_widget *widget,
+                                    void (*fn)(struct ui_widget *widget,
+                                               void *userdata),
+                                    void *userdata)
+{
+    if (!widget || widget->impl.destroyed)
+        return;
+    widget->impl.destroy_observer = fn;
+    widget->impl.destroy_observer_userdata = userdata;
+}
+
+bool ui_widget_notify(struct ui_widget *widget, struct ui_action action)
+{
+    if (!widget || widget->impl.destroyed)
+        return false;
+    for (struct ui_widget *w = widget; w && !widget->impl.destroyed;) {
+        struct ui_widget *parent = w->parent;
+        if (!w->impl.destroyed && w->impl.actions.fn &&
+            w->impl.actions.fn(widget, &action, w->impl.actions.userdata))
+            return true;
+        w = parent;
+    }
+    return false;
+}
+
+bool ui_widget_is_focusable(const struct ui_widget *widget)
+{
+    return widget && widget->impl.focusable;
+}
+
+void ui_widget_set_focusable(struct ui_widget *widget, bool focusable)
+{
+    if (!widget || widget->impl.focusable == focusable)
+        return;
+    widget->impl.focusable = focusable;
+    if (!focusable && ui_widget_has_focus(widget))
+        ui_surface_focus(widget->impl.surface, NULL);
+}
+
+void ui_widget_set_modal(struct ui_widget *widget, bool modal)
+{
+    if (!widget || widget->impl.modal == modal)
+        return;
+    widget->impl.modal = modal;
+    if (widget->impl.surface)
+        ui_surface_sync_modal(widget->impl.surface);
+}
+
+void ui_widget_set_pointer_transparent(struct ui_widget *widget,
+                                       bool transparent)
+{
+    if (widget)
+        widget->impl.pointer_transparent = transparent;
+}
+
+void ui_widget_set_keeps_press_focus(struct ui_widget *widget, bool keeps)
+{
+    if (widget)
+        widget->impl.keeps_press_focus = keeps;
+}
+
+void ui_widget_set_hidden(struct ui_widget *widget, bool hidden)
+{
+    if (!widget || widget->impl.destroyed || widget->impl.hidden == hidden)
+        return;
+    widget->impl.hidden = hidden;
+    widget->impl.style_valid = false;
+    struct ui_surface *surface = widget->impl.surface;
+    if (hidden && surface)
+        ui_surface_forget(surface, widget);
+    ui_widget_invalidate(widget->parent ? widget->parent : widget,
+                         UI_WIDGET_INVALIDATE_MEASURE);
+    if (surface)
+        ui_surface_sync_modal(surface);
+}
+
+bool ui_widget_is_hidden(const struct ui_widget *widget)
+{
+    return widget && widget->impl.hidden;
+}
+
+bool ui_widget_is_destroyed(const struct ui_widget *widget)
+{
+    return widget && widget->impl.destroyed;
+}
+
+static bool ui_placement_eq(struct ui_placement a, struct ui_placement b)
+{
+    return rect2i_eq(a.anchor, b.anchor) &&
+           a.gap == b.gap &&
+           a.y_fraction == b.y_fraction &&
+           a.kind == b.kind;
+}
+
+void ui_widget_set_placement(struct ui_widget *widget,
+                             struct ui_placement placement)
+{
+    if (!widget || ui_placement_eq(widget->impl.placement, placement))
+        return;
+    widget->impl.placement = placement;
+    ui_widget_invalidate(widget->parent ? widget->parent : widget,
+                         UI_WIDGET_INVALIDATE_LAYOUT);
+}
+
+struct ui_placement ui_widget_placement(const struct ui_widget *widget)
+{
+    return widget ? widget->impl.placement : (struct ui_placement){0};
+}
+
+bool ui_widget_needs_layout(const struct ui_widget *widget)
+{
+    unsigned dirty = UI_WIDGET_INVALIDATE_MEASURE |
+                     UI_WIDGET_INVALIDATE_LAYOUT;
+    return widget && (widget->impl.invalidation & dirty);
+}
+
+bool ui_widget_needs_measure(const struct ui_widget *widget)
+{
+    return widget &&
+           (widget->impl.invalidation & UI_WIDGET_INVALIDATE_MEASURE);
+}
+
+bool ui_widget_is_style_current(const struct ui_widget *widget)
+{
+    if (!widget || !widget->impl.style_valid)
+        return false;
+    const struct ui_surface *surface = widget->impl.surface;
+    return !surface ||
+           widget->impl.style_generation ==
+               ui_style_context_generation(&surface->impl.style);
+}
+
+void ui_widget_set_fixed_size(struct ui_widget *widget, struct vector2i size)
+{
+    if (!widget)
+        return;
+    size = vector2i_max(size, (struct vector2i){0});
+    if (vector2i_eq(widget->impl.fixed_size, size))
+        return;
+    widget->impl.fixed_size = size;
+    ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_MEASURE);
+}
+
+void ui_widget_focus(struct ui_widget *widget)
+{
+    if (widget && widget->impl.surface)
+        ui_surface_focus(widget->impl.surface, widget);
+}
+
+bool ui_widget_has_focus(const struct ui_widget *widget)
+{
+    return widget && widget->impl.surface &&
+           widget->impl.surface->impl.focused == widget;
+}
+
+void ui_widget_capture_pointer(struct ui_widget *widget)
+{
+    if (widget && widget->impl.surface && ui_widget_visible(widget))
+        widget->impl.surface->impl.captured = widget;
+}
+
+void ui_widget_release_pointer(struct ui_widget *widget)
+{
+    if (ui_widget_is_captured(widget))
+        widget->impl.surface->impl.captured = NULL;
+}
+
+bool ui_widget_is_captured(const struct ui_widget *widget)
+{
+    return widget && widget->impl.surface &&
+           widget->impl.surface->impl.captured == widget;
+}
+
+void ui_widget_prepare(struct ui_widget *widget)
+{
+    if (!widget || widget->impl.destroyed)
+        return;
+    if (widget->ops && widget->ops->prepare)
+        widget->ops->prepare(widget);
+    struct ui_widget *child = widget->first_child;
+    while (!widget->impl.destroyed && child) {
+        struct ui_widget *next = child->next_sibling;
+        if (child->parent == widget)
+            ui_widget_prepare(child);
+        child = next;
+    }
+}
+
+static void unlink_child(struct ui_widget *parent, struct ui_widget *child)
+{
+    if (child->prev_sibling)
+        child->prev_sibling->next_sibling = child->next_sibling;
+    else
+        parent->first_child = child->next_sibling;
+
+    if (child->next_sibling)
+        child->next_sibling->prev_sibling = child->prev_sibling;
+    else
+        parent->last_child = child->prev_sibling;
+
+    child->prev_sibling = NULL;
+    child->next_sibling = NULL;
+}
+
+static void link_child(struct ui_widget *parent, struct ui_widget *child,
+                       struct ui_widget *before)
+{
+    child->prev_sibling = before ? before->prev_sibling : parent->last_child;
+    child->next_sibling = before;
+    if (child->prev_sibling)
+        child->prev_sibling->next_sibling = child;
+    else
+        parent->first_child = child;
+    if (before)
+        before->prev_sibling = child;
+    else
+        parent->last_child = child;
+}
+
+bool ui_widget_insert_child(struct ui_widget *parent, struct ui_widget *child,
+                            struct ui_widget *before)
+{
+    if (!parent || !child || parent == child || parent->impl.destroyed ||
+        child->impl.destroyed || before == child ||
+        (before && before->parent != parent))
+        return false;
+
+    if (child->parent == parent) {
+        if (child->next_sibling == before)
+            return true;
+        unlink_child(parent, child);
+        link_child(parent, child, before);
+        ui_widget_invalidate(parent, UI_WIDGET_INVALIDATE_LAYOUT);
+        return true;
+    }
+    if (child->parent || ui_widget_is_ancestor(child, parent))
+        return false;
+    if (parent->ops && parent->ops->child_limit &&
+        parent->impl.child_count >= parent->ops->child_limit)
+        return false;
+    if (child->impl.surface && child->impl.surface != parent->impl.surface)
+        ui_widget_detach(child);
+    if (child->parent || child->impl.destroyed)
+        return false;
+
+    child->parent = parent;
+    link_child(parent, child, before);
+    parent->impl.child_count++;
+    ui_widget_part_cache_stale_subtree(child);
+
+    ui_widget_attach(child, parent->impl.surface);
+    ui_widget_invalidate(parent, UI_WIDGET_INVALIDATE_MEASURE);
+    if (parent->impl.surface)
+        ui_surface_sync_modal(parent->impl.surface);
+    return true;
+}
+
+bool ui_widget_add_child(struct ui_widget *parent, struct ui_widget *child)
+{
+    if (child && child->parent)
+        return false;
+    return ui_widget_insert_child(parent, child, NULL);
+}
+
+void ui_widget_attach(struct ui_widget *widget, struct ui_surface *surface)
+{
+    if (!widget)
+        return;
+    if (widget->impl.surface && widget->impl.surface != surface) {
+        ui_widget_detach(widget);
+        if (widget->impl.surface)
+            return;
+    }
+    if (widget->impl.surface != surface)
+        ui_widget_part_cache_stale(widget);
+    widget->impl.surface = surface;
+    struct ui_widget *c = widget->first_child;
+    while (c) {
+        struct ui_widget *next = c->next_sibling;
+        ui_widget_attach(c, surface);
+        c = next;
+    }
+}
+
+bool ui_widget_remove_child(struct ui_widget *parent, struct ui_widget *child)
+{
+    if (!parent || !child || child->parent != parent)
+        return false;
+
+    unlink_child(parent, child);
+    child->parent = NULL;
+    parent->impl.child_count--;
+    ui_widget_part_cache_stale_subtree(child);
+
+    ui_widget_detach(child);
+    ui_widget_invalidate(parent, UI_WIDGET_INVALIDATE_MEASURE);
+    if (parent->impl.surface)
+        ui_surface_sync_modal(parent->impl.surface);
+    return true;
+}
+
+bool ui_widget_add_children(struct ui_widget *parent,
+                            struct ui_widget * const children[], size_t count)
+{
+    if (!parent || parent->impl.destroyed)
+        return false;
+    if (count == 0)
+        return true;
+    if (!children)
+        return false;
+    if (parent->ops && parent->ops->child_limit > 0) {
+        if (count > parent->ops->child_limit ||
+            parent->impl.child_count > parent->ops->child_limit - count)
+            return false;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        struct ui_widget *child = children[i];
+        if (!child || child == parent || child->parent || child->impl.destroyed ||
+            ui_widget_is_ancestor(child, parent))
+            return false;
+        for (size_t j = 0; j < i; j++) {
+            if (children[j] == child)
+                return false;
+        }
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        if (!ui_widget_add_child(parent, children[i])) {
+            for (size_t j = i; j > 0; j--)
+                ui_widget_remove_child(parent, children[j - 1]);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static void clear_surface(struct ui_widget *widget, struct ui_surface *origin)
+{
+    if (widget->impl.surface == origin)
+        widget->impl.surface = NULL;
+    widget->impl.style_valid = false;
+    ui_widget_part_cache_stale(widget);
+    for (struct ui_widget *c = widget->first_child; c; c = c->next_sibling)
+        if (!c->impl.surface || c->impl.surface == origin)
+            clear_surface(c, origin);
+}
+
+void ui_widget_detach(struct ui_widget *widget)
+{
+    if (!widget)
+        return;
+    struct ui_surface *surface = widget->impl.surface;
+    if (surface) {
+        if (surface->impl.root == widget)
+            surface->impl.root = NULL;
+        /* A detached overlay leaves the list. A hidden one stays in it, so
+         * that showing it again works. */
+        ui_surface_drop_overlay(surface, widget);
+        ui_surface_forget(surface, widget);
+    }
+    clear_surface(widget, surface);
+}
+
+size_t ui_widget_child_count(const struct ui_widget *widget)
+{
+    return widget ? widget->impl.child_count : 0;
+}
+
+struct ui_widget *ui_widget_child_at(struct ui_widget *widget, size_t index)
+{
+    if (!widget || index >= widget->impl.child_count)
+        return NULL;
+    struct ui_widget *c = widget->first_child;
+    while (index-- && c)
+        c = c->next_sibling;
+    return c;
+}
+
+/* Applies the CSS size, min, max, and the fixed size of `widget` on `axis`
+ * to the measure limits. A definite parent limit wins. Otherwise min wins
+ * over max. */
+static void measure_axis_limits(const struct ui_widget *widget, int axis,
+                                struct ui_constraints *limits)
+{
+    int parent_min = limits->min.v[axis];
+    int parent_max = limits->max.v[axis];
+    if (parent_min == parent_max)
+        return;
+    const struct css_style *style = &widget->style;
+    const struct css_scale_context *scale = &widget->style_scale;
+    float basis = (float)parent_max;
+    int style_min = ui_css_resolve_int(style->min_size[axis], basis, 0.0f,
+                                       scale, true);
+    int style_max = ui_css_resolve_int(style->max_size[axis], basis,
+                                       (float)parent_max, scale, true);
+    if (style_min > style_max)
+        style_max = style_min;
+
+    int fixed = widget->impl.fixed_size.v[axis];
+    struct css_value value = style->size[axis];
+    /* A percent needs a definite basis. css_value_resolve returns the
+     * fallback for a basis of 1e9 or more, so the size is not definite. */
+    bool percent = value.unit == CSS_UNIT_PERCENT && basis < 1e9f;
+    bool definite = fixed > 0 || percent ||
+                    value.unit == CSS_UNIT_PX || value.unit == CSS_UNIT_EM ||
+                    value.unit == CSS_UNIT_REM || value.unit == CSS_UNIT_CH;
+    int lo, hi;
+    if (definite) {
+        int size = fixed > 0 ? fixed
+            : ui_css_resolve_int(value, basis, (float)parent_max, scale, true);
+        size = geom_clamp_i(size, style_min, style_max);
+        lo = hi = geom_clamp_i(size, parent_min,
+                               geom_max_i(parent_max, parent_min));
+    } else {
+        lo = geom_max_i(parent_min, style_min);
+        hi = geom_max_i(lo, geom_min_i(parent_max, style_max));
+    }
+    limits->min.v[axis] = lo;
+    limits->max.v[axis] = hi;
+}
+
+struct vector2i ui_widget_measure(struct ui_widget *widget,
+                                  struct ui_constraints constraints)
+{
+    if (!widget || widget->impl.destroyed)
+        return (struct vector2i){0};
+
+    widget->impl.invalidation &= ~UI_WIDGET_INVALIDATE_MEASURE;
+    struct ui_constraints limits = constraints;
+    measure_axis_limits(widget, 0, &limits);
+    measure_axis_limits(widget, 1, &limits);
+    struct vector2i size;
+    if (widget->ops && widget->ops->measure) {
+        size = widget->ops->measure(widget, limits);
+    } else {
+        size = ui_layout_measure(widget, limits);
+    }
+    widget->measured_size = vector2i_clamp(size, limits.min, limits.max);
+    return widget->measured_size;
+}
+
+static int clamp_axis(int v, int lo, int hi)
+{
+    return v > hi ? hi : v < lo ? lo : v;
+}
+
+static struct rect2i placed_rect(const struct ui_widget *child,
+                                 struct rect2i bounds)
+{
+    const struct ui_placement *p = &child->impl.placement;
+    if (p->kind == UI_PLACE_FILL)
+        return bounds;
+    struct vector2i size = vector2i_min(child->measured_size, bounds.size);
+    struct vector2i end = rect2i_end(bounds);
+    switch (p->kind) {
+    case UI_PLACE_BELOW: {
+        struct vector2i at = {
+            .x = p->anchor.x,
+            .y = geom_sat_i((int64_t)p->anchor.y + p->anchor.height),
+        };
+        return ui_anchor_place_below(at, size, p->gap,
+                                     p->anchor.y - p->gap, bounds);
+    }
+    case UI_PLACE_RIGHT: {
+        struct vector2i at = vector2i_sub(
+            (struct vector2i){
+                .x = geom_sat_i((int64_t)p->anchor.x + p->anchor.width),
+                .y = p->anchor.y,
+            }, bounds.pos);
+        struct rect2i r = ui_anchor_place_right(
+            at, size, p->gap, p->anchor.x - bounds.x - p->gap, bounds.size);
+        return rect2i_translate(r, bounds.pos);
+    }
+    case UI_PLACE_AT:
+        return (struct rect2i){
+            .pos = {
+                .x = clamp_axis(p->anchor.x, bounds.x, end.x - size.x),
+                .y = clamp_axis(p->anchor.y, bounds.y, end.y - size.y),
+            },
+            .size = size,
+        };
+    case UI_PLACE_CENTER: {
+        int free_h = bounds.height - size.y;
+        int top = (int)((float)free_h * p->y_fraction);
+        top = clamp_axis(top, p->gap, free_h - p->gap);
+        return (struct rect2i){
+            .pos = {
+                .x = bounds.x + (bounds.width - size.x) / 2,
+                .y = bounds.y + (top > 0 ? top : 0),
+            },
+            .size = size,
+        };
+    }
+    case UI_PLACE_FILL:
+        break;
+    }
+    return bounds;
+}
+
+void ui_widget_layout(struct ui_widget *widget, struct rect2i bounds)
+{
+    if (!widget || widget->impl.destroyed)
+        return;
+    widget->bounds = bounds;
+    widget->layout_bounds = (struct rect2f){
+        .pos = { .x = bounds.x, .y = bounds.y },
+        .size = { .x = bounds.width, .y = bounds.height },
+    };
+    widget->impl.invalidation &= ~UI_WIDGET_INVALIDATE_LAYOUT;
+    if (widget->ops && widget->ops->layout) {
+        widget->ops->layout(widget, bounds);
+        return;
+    }
+    if (widget->first_child)
+        ui_layout_place(widget, bounds);
+}
+
+void ui_widget_place_child(struct ui_widget *child, struct rect2i parent_bounds)
+{
+    if (child && !child->impl.hidden)
+        ui_widget_place(child, placed_rect(child, parent_bounds));
+}
+
+void ui_widget_place(struct ui_widget *widget, struct rect2i bounds)
+{
+    if (!widget || widget->impl.destroyed)
+        return;
+    bool same = vector2i_eq(widget->bounds.pos, bounds.pos) &&
+                vector2i_eq(widget->bounds.size, bounds.size);
+    if (!same || (widget->impl.invalidation & UI_WIDGET_INVALIDATE_LAYOUT))
+        ui_widget_layout(widget, bounds);
+}
+
+struct ui_widget *ui_widget_modal(struct ui_widget *root)
+{
+    if (!root || root->impl.destroyed || root->impl.hidden ||
+        root->impl.pointer_transparent)
+        return NULL;
+    for (struct ui_widget *c = root->last_child; c; c = c->prev_sibling) {
+        struct ui_widget *modal = ui_widget_modal(c);
+        if (modal)
+            return modal;
+    }
+    return root->impl.modal ? root : NULL;
+}
+
+static bool takes_pointer(const struct ui_widget *widget)
+{
+    return (widget->ops && widget->ops->event) || widget->impl.event_fn;
+}
+
+static struct ui_widget *hit_tree(struct ui_widget *widget,
+                                  struct vector2i pos)
+{
+    if (!widget || widget->impl.destroyed || widget->impl.hidden ||
+        widget->impl.pointer_transparent)
+        return NULL;
+    bool inside = rect2i_contains(widget->bounds, pos);
+    if (!widget->ops || !widget->ops->clip_children || inside) {
+        for (struct ui_widget *c = widget->last_child; c; c = c->prev_sibling) {
+            struct ui_widget *hit = hit_tree(c, pos);
+            if (hit)
+                return hit;
+        }
+    }
+    if (!takes_pointer(widget))
+        return NULL;
+    bool hit = widget->ops && widget->ops->hit_test
+        ? widget->ops->hit_test(widget, pos) : inside;
+    return hit ? widget : NULL;
+}
+
+struct ui_widget *ui_widget_hit_test(struct ui_widget *root,
+                                     struct vector2i pos)
+{
+    struct ui_widget *modal = ui_widget_modal(root);
+    struct ui_widget *hit = hit_tree(modal ? modal : root, pos);
+    return hit ? hit : modal;
+}
+
+static bool wants(const struct ui_widget *widget, const struct ui_event *event)
+{
+    if ((!widget->ops || !widget->ops->event) && !widget->impl.event_fn)
+        return false;
+    return event->kind != UI_EVENT_KEY ||
+           event->data.key.action != UI_KEY_RELEASE ||
+           widget->impl.event_fn ||
+           (widget->ops && widget->ops->key_release);
+}
+
+/* Gives `event` to the event op of `widget`, and then to the handler that
+ * ui_widget_set_event_handler set when the op does not handle it. */
+bool ui_widget_deliver(struct ui_widget *widget, const struct ui_event *event)
+{
+    if (!widget || !event || widget->impl.destroyed || !wants(widget, event))
+        return false;
+    bool key_release = event->kind == UI_EVENT_KEY &&
+                       event->data.key.action == UI_KEY_RELEASE;
+    bool handled = widget->ops && widget->ops->event &&
+                   (!key_release || widget->ops->key_release) &&
+                   widget->ops->event(widget, event);
+    if (!handled && !widget->impl.destroyed && widget->impl.event_fn)
+        handled = widget->impl.event_fn(widget, event,
+                                        widget->impl.event_userdata);
+    return handled;
+}
+
+/* Gives `event` to `target` and then to each ancestor, until a widget handles
+ * it. The walk stops after `last`, or at the root when `last` is NULL. It also
+ * stops when a handler destroys `target` or `last`, or moves one of them to
+ * another surface. */
+static bool bubble_to(struct ui_widget *target, const struct ui_widget *last,
+                      const struct ui_event *event)
+{
+    if (!target || !event || target->impl.destroyed)
+        return false;
+    struct ui_surface *surface = target->impl.surface;
+    for (struct ui_widget *w = target; w;) {
+        struct ui_widget *parent = w->parent;
+        if (w->impl.surface == surface && ui_widget_deliver(w, event))
+            return true;
+        if (w == last || target->impl.destroyed || target->impl.surface != surface)
+            break;
+        if (last && (last->impl.destroyed || last->impl.surface != surface))
+            break;
+        w = parent;
+    }
+    return false;
+}
+
+bool ui_widget_bubble(struct ui_widget *target, const struct ui_event *event)
+{
+    return bubble_to(target, NULL, event);
+}
+
+bool ui_widget_bubble_to(struct ui_widget *target, const struct ui_widget *last,
+                         const struct ui_event *event)
+{
+    return bubble_to(target, last, event);
+}
+
+bool ui_widget_route_pointer(struct ui_widget *root,
+                             const struct ui_event *event)
+{
+    if (!root || !event || event->kind != UI_EVENT_POINTER ||
+        !ui_widget_visible(root))
+        return false;
+    return bubble_to(ui_widget_hit_test(root, event->data.pointer.pos), root,
+                     event);
+}
+
+bool ui_widget_event(struct ui_widget *widget, const struct ui_event *event)
+{
+    if (!widget || !event || widget->impl.destroyed)
+        return false;
+    if (event->kind == UI_EVENT_POINTER)
+        return ui_widget_bubble(ui_widget_hit_test(widget,
+                                                   event->data.pointer.pos),
+                                event);
+    struct ui_widget *modal = ui_widget_modal(widget);
+    return ui_widget_bubble(modal ? modal : widget, event);
+}
+
+uint64_t ui_widget_tick(struct ui_widget *widget, uint64_t now_ms)
+{
+    if (!widget || widget->impl.destroyed || widget->impl.hidden)
+        return 0;
+    uint64_t next = widget->ops && widget->ops->tick
+        ? widget->ops->tick(widget, now_ms) : 0;
+    widget->impl.deadline = next;
+    struct ui_widget *c = widget->first_child;
+    while (!widget->impl.destroyed && c) {
+        struct ui_widget *following = c->next_sibling;
+        uint64_t child = ui_widget_tick(c, now_ms);
+        if (child && (!next || child < next))
+            next = child;
+        c = following;
+    }
+    return next;
+}
+
+/* The interval of the frames of a CSS transition. A 60 Hz host draws each
+ * step. */
+#define UI_STYLE_ANIM_STEP_MS 16
+
+/* The color of one channel of the resolved style of `widget`. */
+static uint32_t style_channel(const struct css_style *style, enum ui_style_channel ch)
+{
+    switch (ch) {
+    case UI_STYLE_CHANNEL_BORDER: return style->border_color;
+    case UI_STYLE_CHANNEL_TEXT: return style->text_color;
+    case UI_STYLE_CHANNEL_BG:
+    default: return style->bg_color;
+    }
+}
+
+static void style_channel_set(struct css_style *style, enum ui_style_channel ch,
+                              uint32_t color)
+{
+    switch (ch) {
+    case UI_STYLE_CHANNEL_BORDER: style->border_color = color; break;
+    case UI_STYLE_CHANNEL_TEXT: style->text_color = color; break;
+    case UI_STYLE_CHANNEL_BG:
+    default: style->bg_color = color; break;
+    }
+}
+
+uint64_t ui_widget_animate_style(struct ui_widget *widget, uint64_t now_ms)
+{
+    if (!widget || widget->impl.destroyed)
+        return 0;
+    uint64_t next = 0;
+    struct css_style *style = &widget->style;
+    struct ui_widget_style_anim *a = &widget->impl.style_anim;
+    uint32_t duration = style->has_transition_duration &&
+                        style->transition_duration >= 1.0f
+        ? (uint32_t)style->transition_duration : 0;
+    if (!duration) {
+        /* No transition: the widget paints its resolved style as it is. */
+        a->valid = false;
+        return 0;
+    }
+    float opacity = css_style_effective_opacity(style);
+    bool changed = false;
+    if (!a->valid) {
+        for (int i = 0; i < UI_STYLE_CHANNEL_COUNT; i++)
+            a->from[i] = a->to[i] = a->current[i] = style_channel(style, i);
+        a->opacity_from = a->opacity_to = a->opacity_current = opacity;
+        a->start_ms = now_ms;
+        a->valid = true;
+    } else {
+        /* The style holds the value that the last pass wrote. A resolved
+         * color that differs from it is a new target. */
+        for (int i = 0; i < UI_STYLE_CHANNEL_COUNT; i++)
+            if (a->current[i] != style_channel(style, i))
+                changed = true;
+        if (style->has_opacity && a->opacity_current != style->opacity)
+            changed = true;
+        if (changed) {
+            for (int i = 0; i < UI_STYLE_CHANNEL_COUNT; i++) {
+                a->from[i] = a->current[i];
+                a->to[i] = style_channel(style, i);
+            }
+            a->opacity_from = a->opacity_current;
+            a->opacity_to = opacity;
+            a->start_ms = now_ms;
+        }
+    }
+    a->duration_ms = duration;
+    float progress = 1.0f;
+    if (now_ms < a->start_ms)
+        progress = 0.0f;
+    else if (now_ms - a->start_ms < a->duration_ms)
+        progress = (float)(now_ms - a->start_ms) / (float)a->duration_ms;
+    float eased = ui_ease_eval(UI_EASE_OUT_CUBIC, progress);
+    for (int i = 0; i < UI_STYLE_CHANNEL_COUNT; i++) {
+        a->current[i] = ui_color_lerp(a->from[i], a->to[i], eased);
+        style_channel_set(style, i, a->current[i]);
+    }
+    a->opacity_current =
+        a->opacity_from + (a->opacity_to - a->opacity_from) * eased;
+    if (style->has_opacity)
+        style->opacity = a->opacity_current;
+    if (progress < 1.0f) {
+        /* A frame at each step of the transition, and no later than its end. */
+        uint64_t end_ms = a->start_ms + a->duration_ms;
+        uint64_t step_ms = now_ms + UI_STYLE_ANIM_STEP_MS;
+        next = step_ms < end_ms ? step_ms : end_ms;
+    }
+    for (struct ui_widget *c = widget->first_child; c; c = c->next_sibling) {
+        uint64_t child = ui_widget_animate_style(c, now_ms);
+        if (child && (!next || child < next))
+            next = child;
+    }
+    return next;
+}
+
+void ui_widget_invalidate(struct ui_widget *widget, unsigned flags)
+{
+    if (!widget || widget->impl.destroyed ||
+        flags == UI_WIDGET_INVALIDATE_NONE)
+        return;
+    /* Paint is not a stored state. Any invalidation asks for a frame, and the
+     * frame paints the tree. */
+    if (flags & UI_WIDGET_INVALIDATE_MEASURE)
+        flags |= UI_WIDGET_INVALIDATE_LAYOUT;
+    flags &= UI_WIDGET_INVALIDATE_MEASURE | UI_WIDGET_INVALIDATE_LAYOUT;
+
+    for (struct ui_widget *p = widget; p; p = p->parent)
+        p->impl.invalidation |= flags;
+    if (widget->impl.surface)
+        ui_surface_request_frame(widget->impl.surface);
+}
+
+void ui_widget_clear_invalidation(struct ui_widget *widget, unsigned flags)
+{
+    if (widget)
+        widget->impl.invalidation &= ~flags;
+}
+
+const struct css_sheet *ui_widget_sheet(const struct ui_widget *widget)
+{
+    const struct ui_surface *surface = ui_widget_surface(widget);
+    return surface ? ui_style_context_sheet(&surface->impl.style)
+                   : css_default_sheet();
+}
+
+void ui_widget_destroy(struct ui_widget *widget)
+{
+    if (!widget || widget->impl.destroyed)
+        return;
+    widget->impl.destroyed = true;
+    if (widget->parent)
+        ui_widget_remove_child(widget->parent, widget);
+    else
+        ui_widget_detach(widget);
+    while (widget->first_child) {
+        struct ui_widget *child = widget->first_child;
+        ui_widget_remove_child(widget, child);
+        ui_widget_destroy(child);
+    }
+    if (widget->ops && widget->ops->destroy)
+        widget->ops->destroy(widget);
+    /* The owner of the widget storage still reads it, so the observer runs
+     * before the widget releases its own resources. */
+    void (*observer)(struct ui_widget *, void *) = widget->impl.destroy_observer;
+    void *observer_userdata = widget->impl.destroy_observer_userdata;
+    widget->impl.destroy_observer = NULL;
+    widget->impl.destroy_observer_userdata = NULL;
+    if (observer)
+        observer(widget, observer_userdata);
+    ui_widget_part_cache_free(widget);
+    free(widget->impl.accessible_name);
+    widget->impl.accessible_name = NULL;
+    free(widget->impl.accessible_description);
+    widget->impl.accessible_description = NULL;
+}

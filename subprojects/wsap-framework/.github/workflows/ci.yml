@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # The distribution meson is older than the project minimum.
+      - name: Install Meson and Ninja
+        run: |
+          python3 -m pip install --user --break-system-packages \
+            "meson>=1.12.0" ninja
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config python3 python3-pip cmake git \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            libx11-dev libxi-dev libxext-dev libxrandr-dev \
+            libdbus-1-dev libegl-dev \
+            libfreetype-dev libfontconfig-dev libharfbuzz-dev \
+            libvulkan-dev glslc cargo rustc gcc-14 g++-14
+
+      # Ubuntu 24.04 has no yyjson package.
+      - name: Install yyjson
+        run: |
+          git clone --depth 1 --branch 0.13.0 \
+            https://github.com/ibireme/yyjson.git /tmp/yyjson
+          cmake -S /tmp/yyjson -B /tmp/yyjson/build \
+            -DYYJSON_BUILD_TESTS=OFF -DYYJSON_BUILD_MISC=OFF \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
+          sudo cmake --install /tmp/yyjson/build
+          sudo ldconfig
+
+      - name: Check the include graph
+        run: python3 tools/dev/dirgraph.py src
+
+      - name: Test the include graph check
+        run: python3 tools/dev/dirgraph.py --self-test
+
+      - name: Configure with tests
+        env: &c23
+          CC: gcc-14
+          CXX: g++-14
+        run: meson setup build-tests -Dtests=true -Dbenchmarks=false
+
+      - name: Build with tests
+        env: *c23
+        run: ninja -C build-tests
+
+      - name: Run the tests
+        env: *c23
+        run: meson test -C build-tests --print-errorlogs
+
+      - name: Configure with benchmarks
+        env: *c23
+        run: meson setup build-bench -Dtests=false -Dbenchmarks=true
+
+      - name: Build with benchmarks
+        env: *c23
+        run: ninja -C build-bench
+
+      - name: Configure for release
+        env: *c23
+        run: meson setup build -Dtests=false -Dbenchmarks=false
+
+      - name: Build for release
+        env: *c23
+        run: ninja -C build
+
+      - name: Install to a staging prefix
+        run: meson install -C build --destdir "$PWD/STAGE"
+
+      - name: Build a pkg-config consumer
+        run: |
+          export PKG_CONFIG_PATH="$PWD/STAGE/usr/local/lib/pkgconfig"
+          export PKG_CONFIG_SYSROOT_DIR="$PWD/STAGE"
+          export LD_LIBRARY_PATH="$PWD/STAGE/usr/local/lib"
+          cc tools/ci/pkgconfig_consumer.c -o build/pkgconfig-consumer \
+            $(pkg-config --cflags --libs wsap-ui)
+          ./build/pkgconfig-consumer
+
+      - name: Check the installed SDK
+        run: bash tools/ci/sdk_install_check.sh build "$PWD/STAGE"
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install meson ninja harfbuzz yyjson cmake pkg-config rust
+
+      - name: Configure
+        run: |
+          export MACOSX_DEPLOYMENT_TARGET=14.0
+          meson setup build -Dtests=false -Dbenchmarks=false -Disa=

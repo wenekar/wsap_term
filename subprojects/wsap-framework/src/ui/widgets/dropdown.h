@@ -1,0 +1,53 @@
+#ifndef WSAP_UI_WIDGETS_DROPDOWN_H
+#define WSAP_UI_WIDGETS_DROPDOWN_H
+
+#include "ui/box.h"
+#include "ui/widgets/button.h"
+#include "ui/widgets/input.h"
+#include "ui/widgets/label.h"
+#include "ui/widgets/list.h"
+#include "ui/widgets/scrollview.h"
+
+struct ui_dropdown_item {
+    const char *label;
+    const char *value;
+};
+
+struct ui_dropdown {
+    struct ui_widget widget;
+    struct ui_button button;
+    struct ui_widget layer;
+    struct ui_box panel;
+    struct ui_input search;
+    struct ui_scrollview scroll;
+    struct ui_list list;
+    struct ui_label empty;
+    struct {
+        struct ui_dropdown_item *items;
+        size_t count;
+        int selected;
+        int action_id;
+        bool open;
+    } state;
+};
+
+void ui_dropdown_init(struct ui_dropdown *dropdown);
+bool ui_dropdown_set_items(struct ui_dropdown *dropdown,
+                            const struct ui_dropdown_item *items, size_t count);
+/* Select the item with this value. Show its label.
+ * A failed label update keeps the previous selection. */
+bool ui_dropdown_set_value(struct ui_dropdown *dropdown, const char *value);
+void ui_dropdown_set_action_id(struct ui_dropdown *dropdown, int id);
+const char *ui_dropdown_value(const struct ui_dropdown *dropdown);
+bool ui_dropdown_open(struct ui_dropdown *dropdown);
+void ui_dropdown_close(struct ui_dropdown *dropdown);
+bool ui_dropdown_is_open(const struct ui_dropdown *dropdown);
+
+static inline struct ui_widget *ui_dropdown_widget(struct ui_dropdown *dropdown)
+{
+    if (dropdown && !dropdown->widget.ops)
+        ui_dropdown_init(dropdown);
+    return dropdown ? &dropdown->widget : NULL;
+}
+
+#endif

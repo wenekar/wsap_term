@@ -1,0 +1,38 @@
+subdir('widgets')
+subdir('yasl')
+
+# The default stylesheet is data, and the UI library embeds it in a generated
+# header. The header is not in the source tree, so a CSS edit always reaches
+# the build. `ui_inc` makes it visible to css.c.
+ui_css_headers = [
+    custom_target(
+        'ui-core-css',
+        input: files('../../assets/ui/core.css'),
+        output: 'ui_core_css.h',
+        command: [
+            python,
+            files('../../tools/embed_css.py'),
+            'kUiCoreCss',
+            '@INPUT@',
+            '@OUTPUT@',
+        ],
+    ),
+]
+ui_inc = include_directories('.')
+
+ui_src = files(
+    'accessibility.c',
+    'anchor.c',
+    'box.c',
+    'css.c',
+    'damage.c',
+    'debug.c',
+    'describe.c',
+    'layout.c',
+    'paint.c',
+    'style_context.c',
+    'surface.c',
+    'text_break.c',
+    'text_select.c',
+    'widget.c',
+) + ui_widgets_src + ui_css_headers

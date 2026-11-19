@@ -1,0 +1,163 @@
+#define VK_NO_PROTOTYPES
+#include "ui/yasl/gpu_surface.h"
+
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "paint/vulkan.h"
+#include "ui/yasl/internal.h"
+#include "yasl/yasl.h"
+#include "yasl/vulkan.h"
+
+/*
+ * Vulkan window surface attachment.
+ * This file joins yasl native windows with the Vulkan renderer.
+ */
+
+struct window_vulkan {
+    struct yasl_surface *surface;
+    VkSurfaceKHR vk_surface;
+    struct vulkan_drawable drawable;
+    struct present_watch *presents;
+    struct vector2i last_size;
+    bool watch_sample;
+    bool has_size;
+};
+
+/*
+ * True when the device of the renderer can show images on the surface. A
+ * display server without buffer sharing gives a surface that takes no
+ * swapchain: a software compositor, or an X server without DRI3. The
+ * window then draws on the CPU.
+ */
+static bool surface_presentable(const struct vulkan_device *dev, VkSurfaceKHR surface)
+{
+    if (!dev->get_instance_proc_addr)
+        return false;
+    PFN_vkGetPhysicalDeviceSurfaceSupportKHR get_support =
+        (PFN_vkGetPhysicalDeviceSurfaceSupportKHR)dev->get_instance_proc_addr(
+            dev->instance, "vkGetPhysicalDeviceSurfaceSupportKHR");
+    PFN_vkGetPhysicalDeviceSurfaceFormatsKHR get_formats =
+        (PFN_vkGetPhysicalDeviceSurfaceFormatsKHR)dev->get_instance_proc_addr(
+            dev->instance, "vkGetPhysicalDeviceSurfaceFormatsKHR");
+    if (!get_support || !get_formats)
+        return false;
+    VkBool32 supported = VK_FALSE;
+    uint32_t formats = 0;
+    return get_support(dev->physical_device, dev->queue_family,
+                       surface, &supported) == VK_SUCCESS &&
+           supported &&
+           get_formats(dev->physical_device, surface, &formats,
+                       NULL) == VK_SUCCESS &&
+           formats > 0;
+}
+
+void *window_gpu_attach(struct yasl_surface *s, void *device)
+{
+    if (!s || !device)
+        return NULL;
+    const struct vulkan_device *vdev = device;
+    if (!vdev->instance || !vdev->get_instance_proc_addr)
+        return NULL;
+    struct yasl_vulkan_requirements reqs = {0};
+    if (yasl_vulkan_init(vdev->get_instance_proc_addr, &reqs) != 0 && errno != EBUSY)
+        return NULL;
+    VkSurfaceKHR vk_surface = VK_NULL_HANDLE;
+    VkResult vr = yasl_vulkan_create_surface(s, vdev->instance, NULL, &vk_surface);
+    if (vr != VK_SUCCESS)
+        return NULL;
+    if (!surface_presentable(vdev, vk_surface)) {
+        yasl_vulkan_destroy_surface(s);
+        errno = ENOTSUP;
+        return NULL;
+    }
+    struct window_vulkan *wv = calloc(1, sizeof(*wv));
+    if (!wv) {
+        yasl_vulkan_destroy_surface(s);
+        return NULL;
+    }
+    wv->surface = s;
+    wv->vk_surface = vk_surface;
+    wv->drawable.surface = vk_surface;
+    wv->drawable.userdata = wv;
+    return wv;
+}
+
+void window_gpu_detach(void *layer, struct yasl_surface *s)
+{
+    struct window_vulkan *wv = layer;
+    if (s)
+        yasl_vulkan_destroy_surface(s);
+    free(wv);
+}
+
+static void *acquire_vulkan_drawable(void *ud)
+{
+    struct window_vulkan *wv = ud;
+    if (!wv)
+        return NULL;
+    if (wv->surface) {
+        struct window *w = (struct window *)yasl_surface_get_userdata(wv->surface);
+        if (w && w->surface == wv->surface)
+            wv->drawable.unpaced = w->unpaced;
+    }
+    return &wv->drawable;
+}
+
+bool window_gpu_draw(void *layer, struct yasl_surface *s,
+                     struct window_gpu_watch watch,
+                     window_gpu_draw_fn draw, void *ud)
+{
+    struct window_vulkan *wv = layer;
+    if (!wv || !s || !draw)
+        return false;
+    struct yasl_surface_info info = yasl_surface_get_info(s);
+    struct vector2i size = { .x = info.pixel_width, .y = info.pixel_height };
+    if (size.x <= 0 || size.y <= 0)
+        return false;
+    struct window *w = (struct window *)yasl_surface_get_userdata(s);
+    if (w && w->surface == s)
+        wv->drawable.unpaced = w->unpaced;
+    /* A size change starts a resize transaction. */
+    bool transaction = wv->has_size && !vector2i_eq(wv->last_size, size);
+    wv->last_size = size;
+    wv->has_size = true;
+    wv->presents = watch.presents;
+    wv->watch_sample = watch.sample;
+    struct window_gpu_frame frame = {
+        .drawable = &wv->drawable,
+        .size = size,
+        .transaction = transaction,
+        .acquire = acquire_vulkan_drawable,
+        .acquire_ud = wv,
+    };
+    draw(&frame, ud);
+    return true;
+}
+
+bool window_gpu_cursor_supported(struct yasl_surface *s)
+{
+    (void)s;
+    return false;
+}
+
+bool window_gpu_set_cursor(struct yasl_surface *s, bool active, bool visible,
+                           struct rect2i rect, uint32_t color,
+                           const uint32_t *pixels, uint64_t key)
+{
+    (void)s; (void)active; (void)visible; (void)rect;
+    (void)color; (void)pixels; (void)key;
+    return false;
+}
+
+bool window_gpu_set_cursor_visible(struct yasl_surface *s, bool visible)
+{
+    (void)s; (void)visible;
+    return false;
+}
+
+void window_gpu_clear_cursor(struct yasl_surface *s)
+{
+    (void)s;
+}
