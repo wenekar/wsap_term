@@ -406,7 +406,9 @@ static int tb_slot_at(const struct ui_tabbar *tb, int n_tabs,
         int x = (int)roundf(base_x);
         base_x += tb_tab_width_f(tb, &l, i) +
                   (float)l.gap * tb_open_progress(tb, i);
-        if (p.x < x + width / 2)
+        /* The midpoint belongs to the left half. A drop at the center of a
+         * tab must insert before it, not after it. */
+        if (p.x - x <= width / 2)
             break;
         slot = i + 1;
     }
@@ -749,12 +751,11 @@ static bool tb_event(struct ui_widget *widget, const struct ui_event *event)
         return true;
     }
     if (event->kind == UI_EVENT_DROP) {
-        int slot = tb_slot_at(tb, tb->state.n_tabs, tb->state.size,
-                              ui_widget_to_local(widget, event->data.drag.pos));
+        /* The bar marks the insert slot, but it has no handler for the
+         * payload. Let the drop bubble to a parent. A tab drag does not use
+         * this path. It uses the drag target. */
         clear_drop(tb);
-        if (slot >= 0)
-            notify(tb, UI_TAB_ACTION_DROP, 0, slot, 0, event->data.drag.pos);
-        return slot >= 0;
+        return false;
     }
     /* The native drag owns the pointer. A pointer event means that the drag
      * is over and that no leave event can come. */

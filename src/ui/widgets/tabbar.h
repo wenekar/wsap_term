@@ -24,9 +24,6 @@ enum ui_tab_action_kind {
     UI_TAB_ACTION_MOVE = UI_ACTION_USER,
     UI_TAB_ACTION_DRAG,
     UI_TAB_ACTION_TEAR_OFF,
-    /* A drag from outside the app dropped on the bar. `index` is the insert
-     * slot, and `pos` is the drop position. */
-    UI_TAB_ACTION_DROP,
 };
 
 /* A core kind must stay below the tab kinds. */
