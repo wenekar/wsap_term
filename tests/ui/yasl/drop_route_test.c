@@ -109,6 +109,7 @@ static void teardown(struct fixture *f)
     window_destroy(f->window);
     window_host_registry_remove(&host);
     free(host.windows);
+    input_keymap_free(&host.keymap);
     ui_widget_destroy(&f->root);
 }
 

@@ -4,6 +4,7 @@
 #include <stdbool.h>
 
 #include "input/input.h"
+#include "input/keybind.h"
 #include "yasl/yasl.h"
 #include "paint/framebuffer.h"
 #include "util/damage.h"
@@ -83,6 +84,10 @@ struct window_host {
     struct window *closing;
     int holds;
     bool destroying;
+    /* The keymap that each window copies. The host loads input.conf into it
+     * once, before its first window and at each reload. */
+    struct input_keymap keymap;
+    bool keymap_loaded;
 };
 
 /* Prepares `host` for its first window. The host keeps the `config`
@@ -104,6 +109,12 @@ bool window_host_command(struct window *w, input_command_id action);
 void window_host_hold(struct window_host *host);
 void window_host_release(struct window_host *host);
 bool window_host_destroying(const struct window_host *host);
+/* Reads input.conf once, and gives the same app bindings to every window of
+ * `host` and to each window that opens later. The widget scope bindings stay.
+ * A key that is down keeps the route of its press until its release. The
+ * new bindings apply from the next press. The app calls this when it
+ * reloads its configuration. */
+void window_host_reload_input(struct window_host *host);
 
 struct window_frame {
     struct yasl_surface *surface;
@@ -196,15 +207,9 @@ struct window_pointer window_pointer(const struct window *w);
 void window_repaint_all(struct window *w);
 bool window_take_repaint(struct window *w);
 const struct input_keyboard_state *window_keyboard(const struct window *w);
-/* Returns the keymap of window `w`. The window loads it at creation and in
- * window_reload_input(). */
+/* Returns the keymap of window `w`. The window copies it from its host at
+ * creation and in window_host_reload_input(). */
 const struct input_keymap *window_keymap(const struct window *w);
-/* Loads the input configuration into the keymap of window `w` again. The
- * app bindings change. The widget scope bindings stay. A key that is down
- * keeps the route of its press until its release. The new bindings apply
- * from the next press. The app calls this for each open window when it
- * reloads its configuration. */
-void window_reload_input(struct window *w);
 void window_copy(struct window *w, enum yasl_selection sel, const char *text);
 void window_paste(struct window *w, enum yasl_selection sel);
 int window_modifiers(const struct window *w);

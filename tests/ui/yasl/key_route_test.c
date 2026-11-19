@@ -140,6 +140,7 @@ static void teardown(struct fixture *f)
     window_destroy(f->window);
     window_host_registry_remove(&host);
     free(host.windows);
+    input_keymap_free(&host.keymap);
     ui_widget_destroy(&f->root);
     input_command_registry_free(&f->reg_a);
     input_command_registry_free(&f->reg_b);
@@ -409,7 +410,7 @@ static void public_scope_workflow_test(void)
     assert(fclose(file) == 0);
     assert(setenv("WSAP_INPUT_CONFIG", path, 1) == 0);
     input_config_init(NULL);
-    window_reload_input(f.window);
+    window_host_reload_input(&host);
     press(&f, 'y');
     assert(take_shortcut(&f, &action) && action == INPUT_COMMAND_SCROLL_DOWN);
     press(&f, 'k');

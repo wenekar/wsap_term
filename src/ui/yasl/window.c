@@ -459,8 +459,14 @@ struct window *window_create(struct window_host *host, const struct window_spec 
     }
     w->host = host;
     /* The keymap of a window is complete at once, so a key that arrives
-     * before the first frame still runs an app command. */
-    input_config_load(&w->keymap);
+     * before the first frame still runs an app command. Every window copies
+     * the keymap of its host, so two windows never differ. */
+    if (!host->keymap_loaded) {
+        input_config_load(&host->keymap);
+        host->keymap_loaded = true;
+    }
+    for (uint8_t scope = 0; scope < INPUT_COMMAND_SCOPE_COUNT; scope++)
+        input_keymap_copy_scope(&w->keymap, &host->keymap, scope);
     w->stats = (struct frame_stats){
         .started_ns = yasl_time_ns(),
         .frame_min_ms = 1e18,
@@ -753,13 +759,18 @@ const struct input_keymap *window_keymap(const struct window *w)
     return w ? &w->keymap : NULL;
 }
 
-void window_reload_input(struct window *w)
+void window_host_reload_input(struct window_host *host)
 {
-    if (!w)
+    if (!host)
         return;
-    /* The shortcut state stays. A key that is down keeps the route of its
-     * press, so its repeats and its release do not reach the content. */
-    input_config_load(&w->keymap);
+    input_config_load(&host->keymap);
+    host->keymap_loaded = true;
+    /* The shortcut state of each window stays. A key that is down keeps the
+     * route of its press, so its repeats and its release do not reach the
+     * content. */
+    for (int i = 0; i < host->count; i++)
+        input_keymap_copy_scope(&host->windows[i]->keymap, &host->keymap,
+                                INPUT_COMMAND_SCOPE_APP);
 }
 
 bool window_bind_scope(struct window *w,

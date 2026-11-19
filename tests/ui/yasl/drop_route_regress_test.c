@@ -123,6 +123,7 @@ static void teardown(struct fixture *f)
     window_host_registry_remove(&host);
     /* The host has no yasl loop, so the test frees its window list. */
     free(host.windows);
+    input_keymap_free(&host.keymap);
     host = (struct window_host){0};
     free_bottom(f);
     ui_widget_destroy(&f->root);

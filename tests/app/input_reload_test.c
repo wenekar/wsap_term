@@ -33,8 +33,10 @@ static input_command_id lookup(struct window *w, uint32_t codepoint)
     return input_keymap_lookup(window_keymap(w), &ev);
 }
 
-/* SIGUSR1 loads input.conf again in every open window. Both windows then
- * have the new binding, and neither keeps the binding of the old file. */
+/* SIGUSR1 loads input.conf again in every open window. All windows then
+ * have the new binding, and none keeps the binding of the old file. One
+ * reload reads the file once, so no window can differ: a window that opens
+ * after an edit and before the reload has the keymap of the open windows. */
 static void test_reload_reaches_open_windows(const char *dir)
 {
     char path[128];
@@ -51,19 +53,31 @@ static void test_reload_reaches_open_windows(const char *dir)
     assert(lookup(one, 'k') == INPUT_COMMAND_NEW_TAB);
     assert(lookup(two, 'k') == INPUT_COMMAND_NEW_TAB);
 
+    /* The file changes, and no reload runs yet. A new window gets the same
+     * keymap as the open windows. */
     write_file(path, "ctrl+j = new_tab\n");
+    struct window *three = test_terminal_window(t.app);
+    assert(three);
+    if (lookup(three, 'k') != INPUT_COMMAND_NEW_TAB ||
+        lookup(three, 'j') != INPUT_COMMAND_NONE) {
+        fprintf(stderr, "FAIL: a window that opens before the reload has "
+                        "ctrl+j=%u ctrl+k=%u; the open windows have ctrl+k\n",
+                lookup(three, 'j'), lookup(three, 'k'));
+        exit(1);
+    }
+
     assert(app_watch_signals(t.app));
     raise(SIGUSR1);
     uint64_t deadline = yasl_time_ns() + 2000000000ull;
-    while ((lookup(one, 'j') != INPUT_COMMAND_NEW_TAB ||
-            lookup(two, 'j') != INPUT_COMMAND_NEW_TAB) &&
+    while (lookup(one, 'j') != INPUT_COMMAND_NEW_TAB &&
            yasl_time_ns() < deadline)
         assert(yasl_loop_step(t.app->loop, 20) >= 0);
 
-    struct window *windows[] = { one, two };
-    for (int i = 0; i < 2; i++) {
+    struct window *windows[] = { one, two, three };
+    for (int i = 0; i < 3; i++) {
         if (lookup(windows[i], 'j') != INPUT_COMMAND_NEW_TAB ||
-            lookup(windows[i], 'k') != INPUT_COMMAND_NONE) {
+            lookup(windows[i], 'k') != INPUT_COMMAND_NONE ||
+            window_keymap(windows[i])->n != window_keymap(one)->n) {
             fprintf(stderr, "FAIL: after SIGUSR1 window %d has ctrl+j=%u "
                             "ctrl+k=%u; the file binds only ctrl+j\n",
                     i + 1, lookup(windows[i], 'j'), lookup(windows[i], 'k'));
@@ -71,11 +85,12 @@ static void test_reload_reaches_open_windows(const char *dir)
         }
     }
     /* A window that opens after the reload has the same app keymap. */
-    struct window *three = test_terminal_window(t.app);
-    assert(three);
-    assert(window_keymap(three)->n == window_keymap(one)->n);
-    assert(lookup(three, 'j') == INPUT_COMMAND_NEW_TAB);
+    struct window *four = test_terminal_window(t.app);
+    assert(four);
+    assert(window_keymap(four)->n == window_keymap(one)->n);
+    assert(lookup(four, 'j') == INPUT_COMMAND_NEW_TAB);
 
+    window_close(four);
     window_close(three);
     window_close(two);
     window_close(one);

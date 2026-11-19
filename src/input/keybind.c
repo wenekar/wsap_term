@@ -432,6 +432,23 @@ static bool keymap_set(struct input_keymap *km, uint8_t scope, unsigned mods,
     return true;
 }
 
+bool input_keymap_copy_scope(struct input_keymap *dst,
+                             const struct input_keymap *src, uint8_t scope)
+{
+    if (!dst || !src || scope >= INPUT_COMMAND_SCOPE_COUNT)
+        return false;
+    if (dst == src)
+        return true;
+    input_keymap_clear_scope(dst, scope);
+    for (size_t i = 0; i < src->n; i++) {
+        const struct input_keybind *b = &src->binds[i];
+        if (b->scope == scope &&
+            !keymap_set(dst, scope, b->mods, b->codepoint, b->key, b->action))
+            return false;
+    }
+    return true;
+}
+
 bool input_keymap_apply_spec(struct input_keymap *km, const char *spec)
 {
     return input_keymap_apply_spec_scoped(km, INPUT_COMMAND_SCOPE_APP, spec);

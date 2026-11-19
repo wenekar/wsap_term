@@ -41,6 +41,7 @@ static void destroy_window(struct window *w, struct ui_input *in)
     ui_widget_destroy(&in->widget);
     window_host_registry_remove(&host);
     free(host.windows);
+    input_keymap_free(&host.keymap);
 }
 
 static struct ui_menu *open_menu(struct window *w, struct ui_input *in,
