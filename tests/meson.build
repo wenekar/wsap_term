@@ -24,6 +24,7 @@ test_cases = [
     ['drop-test', files('terminal/drop_test.c'), app_lib, deps],
     ['terminal-drop-content-test', files('terminal/drop_content_test.c'), app_lib, deps],
     ['terminal-accessibility-test', files('terminal/accessibility_test.c'), app_lib, deps],
+    ['terminal-accessibility-index-test', files('terminal/accessibility_index_test.c'), app_lib, deps],
     ['terminal-kind-test', files('app/tabs/kind_test.c'), app_lib, deps],
     ['terminal-bell-close-test', files('app/tabs/exit_close_test.c'), app_lib, deps],
     ['app-tabs-rows-test', files('app/tabs/rows_test.c'), app_lib, deps],

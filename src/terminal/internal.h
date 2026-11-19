@@ -41,19 +41,25 @@ struct terminal_view {
     bool opening_link;
     bool blink_cells;
 
-    /* The byte offset of each history line in the accessibility document,
-     * and the history row that starts it. The provider reads a range from
-     * the document and keeps no text. */
+    /* The byte offset of each logical history line in the accessibility
+     * document, its byte length, and the history rows that it covers. The
+     * provider reads a range from the document and keeps no text. */
     struct terminal_text_line {
         size_t offset;
+        size_t bytes;
         size_t row;
+        size_t rows;
     } *accessibility_lines;
     size_t accessibility_line_count;
     size_t accessibility_line_capacity;
-    /* The byte length of the history part, its history row count, and
-     * whether its last line continues below the view. */
+    /* The byte length of the history part, the history rows and the first
+     * line that it covers, its generation, width, and whether its last line
+     * continues below the view. */
     size_t accessibility_history_length;
     size_t accessibility_rows;
+    uint64_t accessibility_generation;
+    uint64_t accessibility_first_line;
+    int accessibility_cols;
     bool accessibility_open_line;
     bool accessibility_valid;
     struct ui_accessibility_text_provider accessibility_provider;
