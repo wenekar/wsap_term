@@ -6,7 +6,7 @@
 #include "paint/scene.h"
 #include "render/plan.h"
 #include "render/surface.h"
-#include "render/term_frame.h"
+#include "terminal/render/term_frame.h"
 #include "term_api.h"
 #include "terminal/render/view.h"
 #include "terminal/render/term_render.h"

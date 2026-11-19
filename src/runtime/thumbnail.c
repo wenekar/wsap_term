@@ -5,7 +5,7 @@
 #include "font/font.h"
 #include "paint/scene.h"
 #include "render/render.h"
-#include "render/term_frame.h"
+#include "terminal/render/term_frame.h"
 #include "terminal/render/term_render.h"
 #include <wsap_vtcore/wsap_vtcore.h>
 

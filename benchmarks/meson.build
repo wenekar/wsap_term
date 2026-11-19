@@ -1,15 +1,10 @@
+# The framework benchmarks live in the `wsap-framework` subproject. This list
+# holds the terminal and app cases only.
 bench_cases = [
-    ['font-lookup-bench', files('font_lookup_bench.c'), font_lib, font_deps + [m_dep] + platform_deps],
-    ['input-queue-bench', files('input_queue_bench.c'), app_lib, deps],
-    ['ui-bench', files('ui_bench.c'), [app_lib, ui_yasl_lib, ui_lib, font_lib, render_lib], deps + [m_dep]],
-    ['ui-frame-bench', files('ui_frame_bench.c'), [app_lib, ui_yasl_lib, ui_lib, font_lib, render_lib], deps + [m_dep]],
+    ['input-queue-bench', files('input_queue_bench.c'), [app_lib], deps],
+    ['ui-bench', files('ui_bench.c'), [app_lib], deps + [m_dep]],
+    ['ui-frame-bench', files('ui_frame_bench.c'), [app_lib], deps + [m_dep]],
 ]
-
-if font_backend != 'coretext'
-    bench_cases += [
-        ['font-fallback-bench', files('font_fallback_bench.c'), font_lib, font_deps + [m_dep]],
-    ]
-endif
 
 executable('termbench', 'termbench.c', build_by_default: false)
 
@@ -20,7 +15,7 @@ if system == 'linux'
 endif
 
 if system == 'linux' or system == 'darwin'
-    latency_deps = []
+    latency_deps = [wsap_base_dep, yasl_dep, thread_dep]
     latency_src = files('input_latency_bench.c')
     latency_args = ['-D_POSIX_C_SOURCE=200809L']
     if system == 'darwin'

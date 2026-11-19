@@ -13,7 +13,7 @@
 #include "render/gpu/gpu.h"
 #include "render/render.h"
 #include "render/surface.h"
-#include "render/term_frame.h"
+#include "terminal/render/term_frame.h"
 #include "terminal/render/term_render.h"
 #include "ui/yasl/gpu_surface.h"
 #include "util/damage.h"
