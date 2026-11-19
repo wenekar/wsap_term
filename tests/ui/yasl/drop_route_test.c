@@ -9,14 +9,20 @@
 #include "ui/yasl/window.h"
 
 /*
- * A drop mark shows only where the drop lands.
- * A text or file drop goes to the focused widget, so no other widget draws a
- * mark for it. A drop of any other type goes to the widget that drew the mark.
+ * Decision of the codebase owner (2026-11-19):
+ * - A paste always goes to the focused widget.
+ * - Only a drop release goes to the drop target, and the drop location on the
+ *   window surface gives it.
+ * - A text drop marks only a widget inside the focused subtree.
+ *
+ * The file drop case uses the order of a real backend: the drag enters, the
+ * LEAVE comes, and then the release lands.
  */
 
 struct probe {
     struct ui_widget widget;
     int enter;
+    int leave;
     int drop;
     struct vector2i drop_pos;
 };
@@ -35,6 +41,8 @@ static bool probe_event(struct ui_widget *widget, const struct ui_event *event)
     struct probe *p = widget->userdata;
     if (event->kind == UI_EVENT_DRAG_ENTER || event->kind == UI_EVENT_DRAG_OVER)
         p->enter++;
+    if (event->kind == UI_EVENT_DRAG_LEAVE)
+        p->leave++;
     if (event->kind == UI_EVENT_DROP) {
         p->drop++;
         p->drop_pos = event->data.drag.pos;
@@ -98,6 +106,15 @@ static void drag(struct fixture *f, enum input_kind kind, const char *mime,
     window_ui_route(f->window, &ev);
 }
 
+static void leave(struct fixture *f, struct vector2i pos)
+{
+    struct input_event ev = {
+        .kind = INPUT_DRAG,
+        .drop_type = { .mime = (char *)"", .pos = pos, .leave = true },
+    };
+    window_ui_route(f->window, &ev);
+}
+
 static void drop(struct fixture *f, const char *mime, struct vector2i pos)
 {
     struct input_event ev = {
@@ -143,7 +160,8 @@ static void position_drop_goes_to_the_marked_widget_test(void)
     teardown(&f);
 }
 
-/* A file drop goes to the widget that drew the mark. */
+/* A file drop goes to the widget at its drop location, also after the LEAVE
+ * that Wayland and X11 send before the release. */
 static void file_drop_goes_to_the_marked_widget_test(void)
 {
     struct fixture f;
@@ -152,9 +170,12 @@ static void file_drop_goes_to_the_marked_widget_test(void)
     struct vector2i over_mark = { .x = 40, .y = 150 };
     drag(&f, INPUT_DRAG, "text/uri-list", over_mark);
     assert(f.mark.enter == 1);
+    leave(&f, over_mark);
+    assert(f.mark.leave == 1);
     struct input_event ev = {
         .kind = INPUT_DROP_FILES,
-        .drop = { .data = (char *)"file:///tmp/a\r\n", .len = 17 },
+        .drop = { .data = (char *)"file:///tmp/a\r\n", .len = 17,
+                  .pos = over_mark, .dropped = true },
     };
     window_ui_route(f.window, &ev);
     assert(f.mark.drop == 1);
@@ -175,11 +196,29 @@ static void text_drag_marks_the_focused_widget_test(void)
     teardown(&f);
 }
 
+/* A release ends the drag. The widget that the drag was over gets one LEAVE,
+ * and the surface holds no drop target. */
+static void release_ends_the_drag_test(void)
+{
+    struct fixture f;
+    show(&f);
+    ui_surface_focus(window_ui_key_surface(f.window), &f.pane.widget);
+    struct vector2i over_mark = { .x = 40, .y = 150 };
+    drag(&f, INPUT_DRAG, "image/png", over_mark);
+    assert(f.mark.enter == 1);
+    drop(&f, "image/png", over_mark);
+    assert(f.mark.drop == 1);
+    assert(f.mark.leave == 1);
+    assert(!ui_surface_drag_target(window_ui_key_surface(f.window)));
+    teardown(&f);
+}
+
 int main(void)
 {
     text_drag_marks_no_other_widget_test();
     position_drop_goes_to_the_marked_widget_test();
     text_drag_marks_the_focused_widget_test();
     file_drop_goes_to_the_marked_widget_test();
+    release_ends_the_drag_test();
     return 0;
 }

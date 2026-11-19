@@ -609,7 +609,8 @@ int main(void)
     {
         struct input_queue queue = {0};
         const char uris[] = "file:///tmp/a%20b.txt\r\n";
-        assert(input_queue_push_drop_files(&queue, uris, sizeof(uris) - 1)
+        assert(input_queue_push_drop_files(&queue, uris, sizeof(uris) - 1,
+                                           (struct vector2i){ .x = 3, .y = 4 })
                == sizeof(uris) - 1);
         struct input_event event;
         assert(input_queue_take(&queue, &event));
