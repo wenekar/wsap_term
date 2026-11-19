@@ -251,6 +251,16 @@ unsigned yasl_get_features(void)
     for (size_t i = 0; i < sizeof(feature_map) / sizeof(feature_map[0]); i++)
         if (caps & feature_map[i].cap)
             features |= feature_map[i].feature;
+    /* The graphics bits come from the backend, not from the loader. The probe
+     * stays in yasl_has_feature, which a caller that asks for it pays for. */
+#if defined(__linux__)
+    if (display->ops->surface_create_gl)
+        features |= YASL_FEATURE_OPENGL;
+#endif
+#if YASL_HAS_VULKAN
+    if (caps & YASL_PRIVATE_CAP_VULKAN)
+        features |= YASL_FEATURE_VULKAN;
+#endif
     return features;
 }
 

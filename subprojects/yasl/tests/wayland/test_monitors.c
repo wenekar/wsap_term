@@ -55,10 +55,12 @@ int main(void)
     assert(conn_display_monitors(&display.base, info, 4) == 1);
     struct yasl_monitor_info *m = &info[0];
     assert(strcmp(m->name, "DP-1") == 0);
-    /* The bounds are logical and divide the mode size by the scale. */
+    /* The bounds are logical, divide the mode size by the scale, and follow
+     * the transform: a monitor at 90 degrees is taller than it is wide. */
     assert(m->x == 1920 && m->y == 100);
-    assert(m->width == 1920 && m->height == 1080);
+    assert(m->width == 1080 && m->height == 1920);
     assert(m->work_x == m->x && m->work_width == m->width);
+    assert(m->work_height == m->height);
     assert(m->physical_width_mm == 600 && m->physical_height_mm == 340);
     assert(m->scale == 2.0);
     assert(m->dpi > 160.0 && m->dpi < 164.0);
@@ -76,7 +78,7 @@ int main(void)
     assert(poll_monitors(&display.base) == 1);
     struct yasl_monitor_info one[1];
     assert(conn_display_monitors(&display.base, one, 1) == 2);
-    assert(one[0].width == 1920);
+    assert(one[0].width == 1080 && one[0].height == 1920);
     assert(conn_display_monitors(&display.base, NULL, 0) == 2);
 
     /* A done event without a change sends nothing. */
@@ -90,6 +92,8 @@ int main(void)
     assert(poll_monitors(&display.base) == 1);
     assert(conn_display_monitors(&display.base, info, 4) == 2);
     assert(info[0].orientation == YASL_ORIENTATION_0);
+    /* An upright monitor keeps the mode size in its natural order. */
+    assert(info[0].width == 1920 && info[0].height == 1080);
 
     yasl_private_events_close(&display.base);
     return 0;

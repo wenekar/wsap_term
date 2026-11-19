@@ -66,7 +66,8 @@ static void output_geometry(void *data, struct wl_output *output,
 
 static void output_done(void *data, struct wl_output *output);
 
-/* The mode size is in device pixels; the monitor queries divide it by scale. */
+/* The mode size is in device pixels; the monitor queries divide it by scale
+ * and put the long side on the logical x axis for a quarter turn. */
 static void output_mode(void *data, struct wl_output *output, uint32_t flags,
         int32_t width, int32_t height, int32_t refresh)
 {
@@ -228,6 +229,14 @@ int conn_display_monitors(struct yasl_private_display *base, struct yasl_monitor
         m->y = o->y;
         m->width = o->width / scale;
         m->height = o->height / scale;
+        /* A quarter turn shows the mode's height on the logical x axis. */
+        if (o->transform == WL_OUTPUT_TRANSFORM_90 || o->transform == WL_OUTPUT_TRANSFORM_270 ||
+            o->transform == WL_OUTPUT_TRANSFORM_FLIPPED_90 ||
+            o->transform == WL_OUTPUT_TRANSFORM_FLIPPED_270) {
+            int32_t swap = m->width;
+            m->width = m->height;
+            m->height = swap;
+        }
         m->work_x = m->x;
         m->work_y = m->y;
         m->work_width = m->width;

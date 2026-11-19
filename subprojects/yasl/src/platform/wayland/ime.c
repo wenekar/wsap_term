@@ -329,7 +329,11 @@ static void text_input_done(void *data, struct zwp_text_input_v3 *text_input,
             size_t cursor = snapshot->cursor, length = snapshot->length;
             begin = w->ime_delete_before > cursor ? 0 : cursor - w->ime_delete_before;
             end = w->ime_delete_after > length - cursor ? length : cursor + w->ime_delete_after;
-            while (begin && ((unsigned char)snapshot->text[begin] & 0xc0) == 0x80) begin--;
+            /* The cursor can equal the window length, and the snapshot text
+             * has no terminator, so the scan must stop at the length. */
+            while (begin && begin < length &&
+                   ((unsigned char)snapshot->text[begin] & 0xc0) == 0x80)
+                begin--;
             while (end < length && ((unsigned char)snapshot->text[end] & 0xc0) == 0x80) end++;
             begin += snapshot->offset;
             end += snapshot->offset;
