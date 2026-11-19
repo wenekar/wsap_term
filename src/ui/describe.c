@@ -37,6 +37,10 @@ struct ui_view {
     bool committed;
     /* The view destroys its own widgets, so it ignores its observer. */
     bool destroying;
+    /* An update runs. A handler that it calls cannot update the view, and a
+     * destroy waits until the update ends. */
+    bool updating;
+    bool destroy_pending;
 };
 
 /* A menu and the layer that shows it. */
@@ -47,6 +51,8 @@ struct ui_menu_node {
 
 struct validate_context {
     struct ui_view *view;
+    /* The view that the plan updates. */
+    const struct ui_view *mounted;
     enum ui_view_error error;
     const struct ui_node_desc *failed_node;
     const char *detail;
@@ -139,7 +145,19 @@ static bool node_kind_valid(enum ui_node_kind kind)
     return node_kind_info(kind) != NULL;
 }
 
+/* True when a supplied widget node of `view` holds `widget`. */
+static bool view_holds_widget(const struct ui_view *view,
+                              const struct ui_widget *widget)
+{
+    for (size_t i = 0; view && i < view->count; i++)
+        if (view->nodes[i].kind == UI_NODE_WIDGET &&
+            view->nodes[i].widget == widget)
+            return true;
+    return false;
+}
+
 static bool node_props_valid(const struct ui_node_desc *desc,
+                             const struct ui_view *mounted,
                              enum ui_view_error *error, const char **detail)
 {
     if ((desc->bind.box && !node_is_container(desc->kind)) ||
@@ -202,11 +220,13 @@ static bool node_props_valid(const struct ui_node_desc *desc,
         }
         return true;
     case UI_NODE_WIDGET:
+        /* The view placed its own widget, so that widget can be attached. */
         if (!desc->props.widget ||
             !ui_widget_accessibility_id(desc->props.widget) ||
             desc->props.widget->impl.destroyed ||
-            desc->props.widget->parent ||
-            ui_widget_surface(desc->props.widget)) {
+            ((desc->props.widget->parent ||
+              ui_widget_surface(desc->props.widget)) &&
+             !view_holds_widget(mounted, desc->props.widget))) {
             *error = UI_VIEW_ERROR_INVALID_ARGUMENT;
             *detail = "Widget must be initialized and detached";
             return false;
@@ -292,7 +312,8 @@ static bool validate_node(struct validate_context *context,
         context->detail = "Scrollview accepts at most one child";
         return false;
     }
-    if (!node_props_valid(desc, &context->error, &context->detail))
+    if (!node_props_valid(desc, context->mounted, &context->error,
+                          &context->detail))
         return false;
 
     if (desc->key) {
@@ -334,12 +355,13 @@ static bool validate_node(struct validate_context *context,
 }
 
 /* Checks the descriptor tree and returns its nodes in pre-order. */
-static struct ui_view_node *plan_nodes(const struct ui_node_desc *root,
+static struct ui_view_node *plan_nodes(const struct ui_view *mounted,
+                                       const struct ui_node_desc *root,
                                        size_t *count,
                                        struct ui_view_diagnostic *diagnostic)
 {
     struct ui_view plan = {0};
-    struct validate_context context = { .view = &plan };
+    struct validate_context context = { .view = &plan, .mounted = mounted };
     if (!validate_node(&context, root, UINT32_MAX, 0)) {
         if (diagnostic) {
             diagnostic->error = context.error;
@@ -520,12 +542,24 @@ static bool set_menu_props(struct ui_menu_node *menu,
                            const struct ui_node_desc *desc,
                            enum ui_view_error *error)
 {
+    bool same_submenus =
+        menu->menu.state.submenu == desc->props.menu.on_submenu &&
+        menu->menu.state.submenu_userdata == desc->props.menu.submenu_userdata;
     ui_menu_set_action_handler(&menu->menu, desc->on_action,
                                desc->action_userdata);
     ui_menu_set_submenu_provider(&menu->menu, desc->props.menu.on_submenu,
                                  desc->props.menu.submenu_userdata);
     ui_menu_set_hover_delay(&menu->menu, desc->props.menu.hover_delay_ms);
     ui_menu_layer_set_origin(&menu->layer, desc->props.menu.pos);
+    /* An open menu with the same items stays open. Its submenus stay only
+     * when the same provider gives them. */
+    if (ui_menu_is_open(&menu->menu) &&
+        ui_list_has_items(&menu->menu.levels[0].list, desc->props.menu.items,
+                          desc->props.menu.count)) {
+        if (!same_submenus)
+            ui_menu_close_submenus(&menu->menu);
+        return true;
+    }
     if (!desc->props.menu.count) {
         ui_menu_close(&menu->menu);
         return true;
@@ -738,9 +772,11 @@ static void log_out_of_memory(void)
 }
 
 /* Drops the nodes that a failed update created. A supplied widget goes back
- * to its caller, because the view does not adopt it. */
-static void discard_nodes(struct ui_surface *surface, struct ui_view_node *nodes,
-                          size_t count, const size_t *match)
+ * to its caller, because the view does not adopt it. A supplied widget that
+ * `view` still holds stays where it is. */
+static void discard_nodes(const struct ui_view *view, struct ui_surface *surface,
+                          struct ui_view_node *nodes, size_t count,
+                          const size_t *match)
 {
     for (size_t i = 0; i < count; i++) {
         if (match && match[i] != SIZE_MAX) {
@@ -752,7 +788,8 @@ static void discard_nodes(struct ui_surface *surface, struct ui_view_node *nodes
         if (!nodes[i].widget)
             continue;
         if (nodes[i].kind == UI_NODE_WIDGET) {
-            if (nodes[i].widget->parent)
+            if (nodes[i].widget->parent &&
+                !view_holds_widget(view, nodes[i].widget))
                 ui_widget_remove_child(nodes[i].widget->parent,
                                        nodes[i].widget);
         } else {
@@ -763,9 +800,11 @@ static void discard_nodes(struct ui_surface *surface, struct ui_view_node *nodes
     dispose_nodes(surface, nodes, count);
 }
 
-/* Drops the nodes that an update matched away. */
-static void retire_nodes(struct ui_surface *surface, struct ui_view_node *nodes,
-                         size_t count, const bool *kept)
+/* Drops the nodes that an update matched away. A supplied widget that moved
+ * to a new node of `view` stays alive. */
+static void retire_nodes(const struct ui_view *view, struct ui_surface *surface,
+                         struct ui_view_node *nodes, size_t count,
+                         const bool *kept)
 {
     for (size_t i = 0; i < count; i++) {
         if (kept[i]) {
@@ -775,10 +814,11 @@ static void retire_nodes(struct ui_surface *surface, struct ui_view_node *nodes,
             continue;
         }
         clear_bind_slots(&nodes[i]);
-        if (nodes[i].widget) {
+        if (nodes[i].widget &&
+            !(nodes[i].kind == UI_NODE_WIDGET &&
+              view_holds_widget(view, nodes[i].widget)))
             ui_widget_destroy(nodes[i].widget);
-            nodes[i].widget = NULL;
-        }
+        nodes[i].widget = NULL;
     }
     dispose_nodes(surface, nodes, count);
 }
@@ -821,6 +861,10 @@ void ui_view_destroy(struct ui_view *view)
 {
     if (!view)
         return;
+    if (view->updating) {
+        view->destroy_pending = true;
+        return;
+    }
     if (view->destroying)
         return;
     view->destroying = true;
@@ -871,6 +915,7 @@ const char *ui_view_error_message(enum ui_view_error error)
     case UI_VIEW_ERROR_DUPLICATE_KEY: return "Duplicate key";
     case UI_VIEW_ERROR_OUT_OF_MEMORY: return "Out of memory";
     case UI_VIEW_ERROR_INIT_FAILED: return "Widget initialization failed";
+    case UI_VIEW_ERROR_BUSY: return "View update is running";
     }
     return "Unknown error";
 }
@@ -950,20 +995,50 @@ static void match_nodes(const struct ui_view *view, const struct ui_view_node *p
     }
 }
 
-/* True when each container accepts the children of the plan. `failed` names
- * the first node that does not fit. */
-static bool child_limits_ok(const struct ui_view_node *nodes, size_t count,
-                            size_t *failed)
+/* True when one of `count` nodes holds `widget`. */
+static bool nodes_hold_widget(const struct ui_view_node *nodes, size_t count,
+                              const struct ui_widget *widget)
 {
+    for (size_t i = 0; i < count; i++)
+        if (nodes[i].widget == widget)
+            return true;
+    return false;
+}
+
+/* The children of `parent` that stay after the update and that the view
+ * does not place: the own children of a supplied widget, or the parts of a
+ * widget. The widgets of the view leave or move, so they do not count. */
+static size_t foreign_children(const struct ui_view *view,
+                               const struct ui_view_node *nodes, size_t count,
+                               const struct ui_widget *parent)
+{
+    size_t foreign = 0;
+    for (const struct ui_widget *c = parent->first_child; c; c = c->next_sibling)
+        if (!nodes_hold_widget(nodes, count, c) &&
+            !nodes_hold_widget(view->nodes, view->count, c))
+            foreign++;
+    return foreign;
+}
+
+/* True when the planned tree fits the child limit of each container. The
+ * check reads the plan and changes nothing, so call it before the update
+ * changes a kept widget. A container holds its planned children and its
+ * foreign children. `failed` names the first node that does not fit. */
+static bool placement_ok(const struct ui_view *view,
+                         const struct ui_view_node *nodes, size_t count,
+                         size_t *failed)
+{
+    *failed = 0;
     for (size_t p = 0; p < count; p++) {
-        const struct ui_widget *widget = nodes[p].widget;
-        if (!widget || !widget->ops || !widget->ops->child_limit)
+        const struct ui_widget *parent = nodes[p].widget;
+        size_t limit = parent && parent->ops ? parent->ops->child_limit : 0;
+        if (!limit)
             continue;
-        size_t children = 0;
-        for (size_t i = 1; i < count; i++) {
+        size_t children = foreign_children(view, nodes, count, parent);
+        for (size_t i = p + 1; i < count; i++) {
             if (nodes[i].parent != p)
                 continue;
-            if (++children > widget->ops->child_limit) {
+            if (++children > limit) {
                 *failed = i;
                 return false;
             }
@@ -972,42 +1047,96 @@ static bool child_limits_ok(const struct ui_view_node *nodes, size_t count,
     return true;
 }
 
-/* Places each node widget in descriptor order. A widget that stays in its
- * parent keeps its focus and its hover. */
-static bool place_nodes(struct ui_view_node *nodes, size_t count,
-                        size_t *failed)
+/* One change that place_nodes made to the tree, and how to undo it. With
+ * `remove` set, the undo removes `child` from its parent. Otherwise it puts
+ * `child` back in `parent` before `before`. */
+struct place_step {
+    struct ui_widget *child;
+    struct ui_widget *parent;
+    struct ui_widget *before;
+    bool remove;
+};
+
+struct place_log {
+    struct place_step *steps;
+    size_t count;
+};
+
+static void detach_logged(struct place_log *log, struct ui_widget *child)
+{
+    log->steps[log->count++] = (struct place_step){
+        .child = child, .parent = child->parent, .before = child->next_sibling,
+    };
+    ui_widget_remove_child(child->parent, child);
+}
+
+/* Undoes the steps in reverse order, so each widget goes back to its old
+ * parent at its old index. */
+static void undo_placement(struct place_log *log)
+{
+    while (log->count) {
+        const struct place_step *step = &log->steps[--log->count];
+        if (step->remove) {
+            if (step->child->parent)
+                ui_widget_remove_child(step->child->parent, step->child);
+        } else {
+            ui_widget_insert_child(step->parent, step->child, step->before);
+        }
+    }
+}
+
+/* Places each node widget in descriptor order, in two passes. The first pass
+ * detaches each widget that moves and each retired widget in a planned
+ * container. The second pass inserts the widgets. A widget that stays in its
+ * parent keeps its focus and its hover. Call placement_ok first. The log
+ * holds 2 * count + view->count steps. On a failure the call undoes its
+ * changes, and `failed` names the node. */
+static bool place_nodes(const struct ui_view *view, struct ui_view_node *nodes,
+                        size_t count, struct ui_widget **before,
+                        struct place_log *log, size_t *failed)
 {
     *failed = 0;
-    if (!child_limits_ok(nodes, count, failed))
-        return false;
-    if (count < 2)
-        return true;
-    struct ui_widget **before = calloc(count, sizeof(*before));
-    if (!before)
-        return false;
-    bool placed = true;
+    log->count = 0;
+    for (size_t i = 0; i < count; i++) {
+        struct ui_widget *child = nodes[i].widget;
+        if (!child || !child->parent)
+            continue;
+        /* The old root keeps the parent that its owner gave it. */
+        bool moves = i ? child->parent != nodes[nodes[i].parent].widget
+                       : child != view->root;
+        if (moves)
+            detach_logged(log, child);
+    }
+    for (size_t j = 0; j < view->count; j++) {
+        struct ui_widget *old = view->nodes[j].widget;
+        if (old && old->parent && !nodes_hold_widget(nodes, count, old) &&
+            nodes_hold_widget(nodes, count, old->parent))
+            detach_logged(log, old);
+    }
     for (size_t i = count; i-- > 1;) {
         uint32_t parent = nodes[i].parent;
         struct ui_widget *parent_widget = nodes[parent].widget;
         struct ui_widget *child = nodes[i].widget;
         *failed = i;
-        if (!parent_widget || !child) {
-            placed = false;
-            break;
-        }
-        if (child->parent && child->parent != parent_widget &&
-            !ui_widget_remove_child(child->parent, child)) {
-            placed = false;
-            break;
-        }
-        if (!ui_widget_insert_child(parent_widget, child, before[parent])) {
-            placed = false;
-            break;
-        }
+        if (!parent_widget || !child)
+            goto undo;
+        struct place_step step = { .child = child, .remove = true };
+        if (child->parent == parent_widget)
+            step = (struct place_step){
+                .child = child, .parent = parent_widget,
+                .before = child->next_sibling,
+            };
+        if (!ui_widget_insert_child(parent_widget, child, before[parent]))
+            goto undo;
+        log->steps[log->count++] = step;
         before[parent] = child;
     }
-    free(before);
-    return placed;
+    *failed = 0;
+    return true;
+
+undo:
+    undo_placement(log);
+    return false;
 }
 
 /* Applies the descriptor attributes to the supplied widgets, after all
@@ -1037,12 +1166,28 @@ static void apply_supplied_attributes(struct ui_view *view)
     }
 }
 
-bool ui_view_update_ex(struct ui_view *view, const struct ui_node_desc *root,
-                       struct ui_view_diagnostic *diagnostic)
+/* Points each kept widget back at the strings that the view holds. Call it
+ * on a failed update, before the copies of the update are freed. */
+static void restore_kept_strings(const struct ui_view *view,
+                                 const struct ui_view_node *nodes,
+                                 size_t count, const size_t *match)
 {
-    if (diagnostic)
-        *diagnostic = (struct ui_view_diagnostic){0};
-    if (!view || !root) {
+    for (size_t i = 0; i < count; i++) {
+        if (match[i] == SIZE_MAX || !nodes[i].widget)
+            continue;
+        const struct ui_view_node *held = &view->nodes[match[i]];
+        if (held->kind != UI_NODE_WIDGET && held->kind != UI_NODE_LIST)
+            ui_widget_set_style_identity(held->widget, held->class_name,
+                                         held->id_name, held->tag_name);
+        ui_widget_set_debug_key(held->widget, held->key);
+    }
+}
+
+/* Updates the view. The caller sets `updating`. */
+static bool view_update(struct ui_view *view, const struct ui_node_desc *root,
+                        struct ui_view_diagnostic *diagnostic)
+{
+    if (!root) {
         if (diagnostic) {
             diagnostic->error = UI_VIEW_ERROR_INVALID_ARGUMENT;
             diagnostic->node = root;
@@ -1052,7 +1197,7 @@ bool ui_view_update_ex(struct ui_view *view, const struct ui_node_desc *root,
     }
 
     size_t count = 0;
-    struct ui_view_node *plan = plan_nodes(root, &count, diagnostic);
+    struct ui_view_node *plan = plan_nodes(view, root, &count, diagnostic);
     if (!plan)
         return false;
 
@@ -1061,7 +1206,15 @@ bool ui_view_update_ex(struct ui_view *view, const struct ui_node_desc *root,
     size_t *match = malloc(count * sizeof(*match));
     bool *taken = calloc(view->count ? view->count : 1, sizeof(*taken));
     struct ui_view_node *next = calloc(count ? count : 1, sizeof(*next));
-    if (!match || !taken || !next) {
+    struct ui_widget **before = calloc(count ? count : 1, sizeof(*before));
+    /* Each node detaches and inserts at most once, and each retired node
+     * detaches at most once. */
+    struct place_log log = {
+        .steps = count <= (SIZE_MAX / sizeof(struct place_step) - view->count) / 2
+            ? calloc(2 * count + view->count, sizeof(struct place_step))
+            : NULL,
+    };
+    if (!match || !taken || !next || !before || !log.steps) {
         if (diagnostic) {
             diagnostic->error = UI_VIEW_ERROR_OUT_OF_MEMORY;
             diagnostic->node = root;
@@ -1070,37 +1223,52 @@ bool ui_view_update_ex(struct ui_view *view, const struct ui_node_desc *root,
         free(match);
         free(taken);
         free(next);
+        free(before);
+        free(log.steps);
         free(plan);
         return false;
     }
 
     enum ui_view_error error = UI_VIEW_ERROR_NONE;
     const struct ui_node_desc *failed = root;
+    bool kept_changed = false;
     match_nodes(view, plan, count, match, taken);
+    /* Create the new nodes and check the placement first. A failure here
+     * leaves each kept widget as it was. */
     for (size_t i = 0; i < count; i++) {
+        failed = plan[i].desc;
         if (match[i] == SIZE_MAX) {
             next[i].desc = plan[i].desc;
             next[i].kind = plan[i].kind;
             next[i].parent = plan[i].parent;
-            failed = plan[i].desc;
             if (!node_init(&next[i], &error))
                 goto fail;
             continue;
         }
-        struct ui_view_node *held = &view->nodes[match[i]];
-        next[i] = *held;
+        next[i] = view->nodes[match[i]];
         next[i].desc = plan[i].desc;
         next[i].bind = plan[i].desc->bind;
-        failed = plan[i].desc;
         if (!copy_node_strings(&next[i])) {
             error = UI_VIEW_ERROR_OUT_OF_MEMORY;
             goto fail;
         }
+    }
+    size_t bad = 0;
+    if (!placement_ok(view, next, count, &bad)) {
+        failed = plan[bad].desc;
+        error = UI_VIEW_ERROR_INVALID_CHILDREN;
+        goto fail;
+    }
+    /* The kept widgets change from here. Only a lack of memory fails now. */
+    kept_changed = true;
+    for (size_t i = 0; i < count; i++) {
+        if (match[i] == SIZE_MAX)
+            continue;
+        failed = plan[i].desc;
         if (!node_set_props(&next[i], &error))
             goto fail;
     }
-    size_t bad = 0;
-    if (!place_nodes(next, count, &bad)) {
+    if (!place_nodes(view, next, count, before, &log, &bad)) {
         failed = plan[bad].desc;
         error = UI_VIEW_ERROR_INVALID_CHILDREN;
         goto fail;
@@ -1121,9 +1289,11 @@ bool ui_view_update_ex(struct ui_view *view, const struct ui_node_desc *root,
     observe_widgets(view);
     for (size_t i = 0; i < count; i++)
         view->nodes[i].desc = NULL;
-    retire_nodes(surface, old, old_count, taken);
+    retire_nodes(view, surface, old, old_count, taken);
     free(match);
     free(taken);
+    free(before);
+    free(log.steps);
     free(plan);
     return true;
 
@@ -1134,10 +1304,51 @@ fail:
         diagnostic->node = failed;
         diagnostic->detail = ui_view_error_message(diagnostic->error);
     }
-    discard_nodes(surface, next, count, match);
+    if (kept_changed)
+        restore_kept_strings(view, next, count, match);
+    discard_nodes(view, surface, next, count, match);
     free(match);
     free(taken);
+    free(before);
+    free(log.steps);
     free(plan);
+    return false;
+}
+
+bool ui_view_update_ex(struct ui_view *view, const struct ui_node_desc *root,
+                       struct ui_view_diagnostic *diagnostic)
+{
+    if (diagnostic)
+        *diagnostic = (struct ui_view_diagnostic){0};
+    if (!view) {
+        if (diagnostic) {
+            diagnostic->error = UI_VIEW_ERROR_INVALID_ARGUMENT;
+            diagnostic->node = root;
+            diagnostic->detail = "View is NULL";
+        }
+        return false;
+    }
+    if (view->updating || view->destroying) {
+        if (diagnostic) {
+            diagnostic->error = UI_VIEW_ERROR_BUSY;
+            diagnostic->node = root;
+            diagnostic->detail = view->updating ? "View update is running"
+                                                : "View is being destroyed";
+        }
+        return false;
+    }
+    view->updating = true;
+    bool updated = view_update(view, root, diagnostic);
+    view->updating = false;
+    if (!view->destroy_pending)
+        return updated;
+    /* A handler destroyed the view during the update. */
+    if (diagnostic) {
+        diagnostic->error = UI_VIEW_ERROR_BUSY;
+        diagnostic->node = root;
+        diagnostic->detail = "View was destroyed during the update";
+    }
+    ui_view_destroy(view);
     return false;
 }
 
@@ -1161,7 +1372,12 @@ struct ui_view *ui_view_mount_ex(const struct ui_node_desc *root,
         }
         return NULL;
     }
-    if (!ui_view_update_ex(view, root, diagnostic)) {
+    if (diagnostic)
+        *diagnostic = (struct ui_view_diagnostic){0};
+    view->updating = true;
+    bool mounted = view_update(view, root, diagnostic);
+    view->updating = false;
+    if (!mounted || view->destroy_pending) {
         ui_view_destroy(view);
         return NULL;
     }

@@ -74,6 +74,10 @@ void ui_list_set_style_class(struct ui_list *l, const char *class_name);
 void ui_list_set_wrap_navigation(struct ui_list *l, bool wrap);
 void ui_list_pin_metrics(struct ui_list *l, const struct ui_list *like);
 
+/* True when ui_list_set_items with `items` and `n` would give the items that
+ * the list shows now. A label that is not valid UTF-8 never matches. */
+bool ui_list_has_items(const struct ui_list *l,
+                       const struct ui_list_item *items, int n);
 int ui_list_count(const struct ui_list *l);
 const struct ui_list_item *ui_list_item(const struct ui_list *l, int index);
 int ui_list_selected(const struct ui_list *l);
