@@ -9,6 +9,7 @@
 #include "session/session.h"
 #include "terminal/selection.h"
 #include "terminal/terminal.h"
+#include "ui/accessibility.h"
 #include "ui/widgets/menu.h"
 #include "ui/widgets/scrollview.h"
 #include "ui/widget_ops.h"
@@ -40,19 +41,24 @@ struct terminal_view {
     bool opening_link;
     bool blink_cells;
 
-    char *accessibility_text;
-    size_t accessibility_caret_offset;
-    size_t accessibility_selection_start;
-    size_t accessibility_selection_end;
-    uint64_t accessibility_version;
-    const struct wsap_vtcore *accessibility_term;
-    /* The time of the last text build, and the timer that sends the text
-     * that a burst of output left behind. */
-    uint64_t accessibility_built_ms;
-    uint64_t accessibility_timer;
+    /* The byte offset of each history line in the accessibility document,
+     * and the history row that starts it. The provider reads a range from
+     * the document and keeps no text. */
+    struct terminal_text_line {
+        size_t offset;
+        size_t row;
+    } *accessibility_lines;
+    size_t accessibility_line_count;
+    size_t accessibility_line_capacity;
+    /* The byte length of the history part, its history row count, and
+     * whether its last line continues below the view. */
+    size_t accessibility_history_length;
+    size_t accessibility_rows;
+    bool accessibility_open_line;
+    bool accessibility_valid;
+    struct ui_accessibility_text_provider accessibility_provider;
 
     struct terminal_preedit preedit;
-    bool accessibility_text_valid;
     bool blink_suppressed;
 };
 
