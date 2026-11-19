@@ -117,6 +117,29 @@ static input_command_id registry_free_id(const struct input_command_registry *re
     return INPUT_COMMAND_NONE;
 }
 
+/* The widget scopes that `input_command_scope_new()` gave out. Bit `n` is
+ * scope `n`. Bit 0 is the app scope, which no owner gets. */
+static uint32_t scopes_used = 1u;
+_Static_assert(INPUT_COMMAND_SCOPE_COUNT <= 32,
+               "the scope set needs one bit per scope");
+
+uint8_t input_command_scope_new(void)
+{
+    for (unsigned scope = 1; scope < INPUT_COMMAND_SCOPE_COUNT; scope++) {
+        if (!(scopes_used & (1u << scope))) {
+            scopes_used |= 1u << scope;
+            return (uint8_t)scope;
+        }
+    }
+    return INPUT_COMMAND_SCOPE_APP;
+}
+
+void input_command_scope_release(uint8_t scope)
+{
+    if (scope != INPUT_COMMAND_SCOPE_APP && scope < INPUT_COMMAND_SCOPE_COUNT)
+        scopes_used &= ~(1u << scope);
+}
+
 input_command_id input_command_add(struct input_command_registry *reg,
                                   uint8_t scope, const char *name,
                                   const char *label)

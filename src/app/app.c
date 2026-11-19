@@ -530,6 +530,10 @@ static void on_signal(void *ud, int signo)
     if (signo == SIGCHLD) {
         session_reap_exited();
     } else if (signo == SIGUSR1) {
+        /* input.conf is its own file, so it reloads also when the app
+         * config does not. */
+        for (int i = 0; i < a->host.count; i++)
+            window_reload_input(a->host.windows[i]);
         struct app_config reloaded = {0};
         char *path = NULL;
         if (opts_load(&app_config_spec, &reloaded, a->argc, a->argv, &path) != 0 ||

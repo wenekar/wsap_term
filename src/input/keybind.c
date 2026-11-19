@@ -70,6 +70,9 @@ static bool lookup_name(const struct name_entry *tab, size_t n,
     return false;
 }
 
+/* Finds the command that `s` names for scope `scope`. The function reads
+ * `reg` first, then the built-in app commands. A widget registry holds no app
+ * command, so a widget scope can still bind one. */
 static bool parse_action_in(const struct input_command_registry *reg,
                             uint8_t scope, const char *s,
                             input_command_id *out)
@@ -82,6 +85,9 @@ static bool parse_action_in(const struct input_command_registry *reg,
     }
     const struct input_command *cmd =
         input_command_find_name_scoped(reg, scope, s);
+    if (!cmd && reg != input_command_builtin())
+        cmd = input_command_find_name_scoped(input_command_builtin(),
+                                             INPUT_COMMAND_SCOPE_APP, s);
     if (!cmd)
         return false;
     *out = cmd->id;
@@ -302,6 +308,18 @@ void input_keymap_clear(struct input_keymap *km)
     }
 }
 
+void input_keymap_clear_scope(struct input_keymap *km, uint8_t scope)
+{
+    if (!km)
+        return;
+    size_t kept = 0;
+    for (size_t i = 0; i < km->n; i++)
+        if (km->binds[i].scope != scope)
+            km->binds[kept++] = km->binds[i];
+    km->n = kept;
+    km->hash_valid = false;
+}
+
 static uint32_t lower(uint32_t c)
 {
     return (c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c;
@@ -433,7 +451,7 @@ bool input_keymap_apply_spec_registry(struct input_keymap *km,
     if (!km || !spec || !reg || scope >= INPUT_COMMAND_SCOPE_COUNT)
         return false;
     if (!strcasecmp(spec, "clear")) {
-        input_keymap_clear(km);
+        input_keymap_clear_scope(km, scope);
         return true;
     }
     const char *eq = strrchr(spec, '=');
@@ -625,6 +643,12 @@ void input_keymap_reset(struct input_keymap *km, enum input_keybind_style style)
 {
     if (!km)
         return;
-    input_keymap_free(km);
-    input_keymap_defaults(km, &input_platform_shortcuts, style);
+    input_keymap_clear_scope(km, INPUT_COMMAND_SCOPE_APP);
+    struct input_keymap defaults;
+    input_keymap_defaults(&defaults, &input_platform_shortcuts, style);
+    for (size_t i = 0; i < defaults.n; i++) {
+        const struct input_keybind *b = &defaults.binds[i];
+        keymap_set(km, b->scope, b->mods, b->codepoint, b->key, b->action);
+    }
+    input_keymap_free(&defaults);
 }

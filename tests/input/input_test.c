@@ -264,6 +264,80 @@ static void widget_command_binding_test(void)
     input_command_registry_free(&three);
 }
 
+/* Each owner gets its own widget scope. Two registries in two given scopes
+ * never give the same ID. When every scope is taken, the call gives the app
+ * scope. A released scope can be given again. */
+static void scope_new_test(void)
+{
+    uint8_t scopes[INPUT_COMMAND_SCOPE_COUNT];
+    size_t n = 0;
+    for (;;) {
+        uint8_t scope = input_command_scope_new();
+        if (scope == INPUT_COMMAND_SCOPE_APP)
+            break;
+        assert(scope < INPUT_COMMAND_SCOPE_COUNT);
+        for (size_t i = 0; i < n; i++)
+            assert(scopes[i] != scope);
+        assert(n < INPUT_COMMAND_SCOPE_COUNT - 1);
+        scopes[n++] = scope;
+    }
+    assert(n == INPUT_COMMAND_SCOPE_COUNT - 1);
+
+    /* Two owners add their first commands. The IDs differ. */
+    struct input_command_registry a, b;
+    input_command_registry_init(&a);
+    input_command_registry_init(&b);
+    input_command_id id_a = input_command_add(&a, scopes[0], "find", "Find");
+    input_command_id id_b = input_command_add(&b, scopes[1], "save", "Save");
+    assert(id_a != INPUT_COMMAND_NONE && id_b != INPUT_COMMAND_NONE);
+    assert(id_a != id_b);
+    input_command_registry_free(&a);
+    input_command_registry_free(&b);
+
+    /* A scope out of range gets no command. */
+    struct input_command_registry c;
+    input_command_registry_init(&c);
+    assert(input_command_add(&c, 200, "x", "X") == INPUT_COMMAND_NONE);
+    input_command_registry_free(&c);
+
+    /* A released scope is free again. The app scope is never given. */
+    input_command_scope_release(INPUT_COMMAND_SCOPE_APP);
+    assert(input_command_scope_new() == INPUT_COMMAND_SCOPE_APP);
+    input_command_scope_release(scopes[3]);
+    assert(input_command_scope_new() == scopes[3]);
+    for (size_t i = 0; i < n; i++)
+        input_command_scope_release(scopes[i]);
+}
+
+/* A widget registry binds an app command in its own scope. The binding
+ * runs only in that scope. A widget command with the name of an app command
+ * wins in its scope. */
+static void widget_scope_binds_app_command_test(void)
+{
+    struct input_command_registry own;
+    input_command_registry_init(&own);
+    input_command_id find = input_command_add(&own, 4, "find", "Find");
+    input_command_id own_copy = input_command_add(&own, 4, "copy", "Copy Path");
+    assert(find != INPUT_COMMAND_NONE && own_copy != INPUT_COMMAND_NONE);
+
+    struct input_keymap km;
+    input_keymap_init(&km);
+    assert(input_keymap_apply_spec_registry(&km, &own, 4, "ctrl+w = close_tab"));
+    assert(input_keymap_apply_spec_registry(&km, &own, 4, "ctrl+f = find"));
+    assert(input_keymap_apply_spec_registry(&km, &own, 4, "ctrl+y = copy"));
+    assert(!input_keymap_apply_spec_registry(&km, &own, 4, "ctrl+q = no_such"));
+
+    struct input_key_event ctrl_w = { .codepoint = 'w', .mods = INPUT_MOD_CTRL };
+    struct input_key_event ctrl_f = { .codepoint = 'f', .mods = INPUT_MOD_CTRL };
+    struct input_key_event ctrl_y = { .codepoint = 'y', .mods = INPUT_MOD_CTRL };
+    assert(input_keymap_lookup_scoped(&km, &ctrl_w, 4) == INPUT_COMMAND_CLOSE_TAB);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_w, 0) == INPUT_COMMAND_NONE);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_f, 4) == find);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_y, 4) == own_copy);
+    input_keymap_free(&km);
+    input_command_registry_free(&own);
+}
+
 /* A binding above the 'style' line survives the load. The style applies to
  * the whole file. */
 static void config_style_order_test(void)
@@ -341,18 +415,119 @@ static void config_reload_style_test(void)
     unsetenv("WSAP_INPUT_CONFIG");
 }
 
+/* A reload replaces the app bindings and keeps the widget scope bindings.
+ * A stale app binding of the old file does not stay. */
+static void config_reload_keeps_widget_scope_test(void)
+{
+    char path[] = "/tmp/wsap-input-config-XXXXXX";
+    int fd = mkstemp(path);
+    assert(fd >= 0);
+    assert(close(fd) == 0);
+    write_input_config(path, "ctrl+k = new_tab\n");
+    assert(setenv("WSAP_INPUT_CONFIG", path, 1) == 0);
+    input_config_init(NULL);
+
+    struct input_command_registry own;
+    input_command_registry_init(&own);
+    input_command_id find = input_command_add(&own, 5, "find", "Find");
+    struct input_keymap km;
+    input_keymap_init(&km);
+    input_config_load(&km);
+    assert(input_keymap_apply_spec_registry(&km, &own, 5, "ctrl+f = find"));
+
+    struct input_key_event ctrl_f = { .codepoint = 'f', .mods = INPUT_MOD_CTRL };
+    struct input_key_event ctrl_j = { .codepoint = 'j', .mods = INPUT_MOD_CTRL };
+    struct input_key_event ctrl_k = { .codepoint = 'k', .mods = INPUT_MOD_CTRL };
+    struct input_key_event ctrl_c = { .codepoint = 'c', .mods = INPUT_MOD_CTRL };
+    assert(input_keymap_lookup(&km, &ctrl_k) == INPUT_COMMAND_NEW_TAB);
+
+    write_input_config(path, "style = legacy\nctrl+j = new_tab\n");
+    input_config_load(&km);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_f, 5) == find);
+    assert(input_keymap_lookup(&km, &ctrl_f) == INPUT_COMMAND_NONE);
+    assert(input_keymap_lookup(&km, &ctrl_j) == INPUT_COMMAND_NEW_TAB);
+    assert(input_keymap_lookup(&km, &ctrl_k) == INPUT_COMMAND_NONE);
+    assert(input_keymap_lookup(&km, &ctrl_c) == INPUT_COMMAND_NONE);
+
+    /* A second load of the same file gives the same keymap. */
+    size_t n = km.n;
+    input_config_load(&km);
+    assert(km.n == n);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_f, 5) == find);
+
+    input_keymap_free(&km);
+    input_command_registry_free(&own);
+    unlink(path);
+    unsetenv("WSAP_INPUT_CONFIG");
+}
+
+/* A widget owner drops the bindings of its scope, and the other scopes keep
+ * theirs. A clear spec and a clear line in input.conf drop the app scope
+ * only. */
+static void clear_scope_test(void)
+{
+    struct input_keymap km;
+    input_keymap_init(&km);
+    assert(input_keymap_apply_spec(&km, "ctrl+w = close_tab"));
+    assert(input_keymap_apply_spec_scoped(&km, 6, "ctrl+e = settings"));
+    assert(input_keymap_apply_spec_scoped(&km, 7, "ctrl+e = command_palette"));
+    struct input_key_event ctrl_w = { .codepoint = 'w', .mods = INPUT_MOD_CTRL };
+    struct input_key_event ctrl_e = { .codepoint = 'e', .mods = INPUT_MOD_CTRL };
+
+    input_keymap_clear_scope(&km, 6);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_e, 6) == INPUT_COMMAND_NONE);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_e, 7) == INPUT_COMMAND_COMMAND_PALETTE);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_w, 6) == INPUT_COMMAND_CLOSE_TAB);
+
+    /* A clear spec in a widget scope drops that scope only. */
+    assert(input_keymap_apply_spec_scoped(&km, 7, "clear"));
+    assert(input_keymap_lookup_scoped(&km, &ctrl_e, 7) == INPUT_COMMAND_NONE);
+    assert(input_keymap_lookup(&km, &ctrl_w) == INPUT_COMMAND_CLOSE_TAB);
+
+    /* A clear spec in the app scope keeps the widget scopes. */
+    assert(input_keymap_apply_spec_scoped(&km, 7, "ctrl+e = command_palette"));
+    assert(input_keymap_apply_spec(&km, "clear"));
+    assert(input_keymap_lookup(&km, &ctrl_w) == INPUT_COMMAND_NONE);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_e, 7) == INPUT_COMMAND_COMMAND_PALETTE);
+
+    /* A clear line in input.conf drops the defaults and keeps scope 7. */
+    char path[] = "/tmp/wsap-input-config-XXXXXX";
+    int fd = mkstemp(path);
+    assert(fd >= 0);
+    assert(close(fd) == 0);
+    write_input_config(path, "clear\nctrl+k = new_tab\n");
+    assert(setenv("WSAP_INPUT_CONFIG", path, 1) == 0);
+    input_config_init(NULL);
+    input_config_load(&km);
+    struct input_key_event ctrl_k = { .codepoint = 'k', .mods = INPUT_MOD_CTRL };
+    struct input_key_event ctrl_shift_c = {
+        .codepoint = 'c', .mods = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,
+    };
+    assert(input_keymap_lookup(&km, &ctrl_shift_c) == INPUT_COMMAND_NONE);
+    assert(input_keymap_lookup(&km, &ctrl_k) == INPUT_COMMAND_NEW_TAB);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_e, 7) == INPUT_COMMAND_COMMAND_PALETTE);
+
+    input_keymap_free(&km);
+    unlink(path);
+    unsetenv("WSAP_INPUT_CONFIG");
+}
+
 int main(void)
 {
     command_registry_test();
     default_chord_table_test();
     scoped_binding_wins_test();
     widget_command_binding_test();
+    scope_new_test();
+    widget_scope_binds_app_command_test();
     keymap_match_test();
     zero_modifier_binding_test();
     wide_codepoint_binding_test();
     keymap_grows_test();
     config_style_order_test();
     config_reload_style_test();
+    config_reload_keeps_widget_scope_test();
+    clear_scope_test();
     static const struct input_shortcut_policy lin = {
         .accel = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,
         .zoom = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,

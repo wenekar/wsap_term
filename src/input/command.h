@@ -98,14 +98,26 @@ _Static_assert(INPUT_COMMAND_APP_COUNT == 29, "app ID count moved");
  * A widget adds its commands in a scope above zero.
  * A command in a widget scope wins over an app command on the same chord.
  *
+ * Each widget scope has one registry and one owner.
+ * Two registries in the same scope can give the same ID, so do not share a
+ * scope. Get a free scope from `input_command_scope_new()`.
+ *
  * To add a command in a widget scope:
- * 1. Call `input_command_add()` with the scope, the name, and the label, and
+ * 1. Call `input_command_scope_new()`, and keep the scope that it returns.
+ * 2. Call `input_command_add()` with the scope, the name, and the label, and
  *    keep the ID that it returns.
- * 2. Bind the ID with `input_keymap_apply_spec_registry()` when the command
- *    has a chord. Pass the registry of the widget. A menu item needs no
- *    chord.
- * 3. Put the ID in the action of the widget, and read the label of a menu
+ * 3. Set the scope in the `command_scope` field of the widget.
+ * 4. When the command has a chord, bind it in each window with
+ *    `window_bind_scope()` from `ui/yasl/client.h`. Pass the registry of the
+ *    widget. For a keymap of your own, use
+ *    `input_keymap_apply_spec_registry()`. A menu item needs no chord. An
+ *    app command, such as `close_tab`, can bind in the widget scope too.
+ * 5. Put the ID in the action of the widget, and read the label of a menu
  *    item with `input_command_label()`.
+ * When the owner is destroyed, it calls `window_clear_scope()` for each
+ * window that it bound, or `input_keymap_clear_scope()` for a keymap of its
+ * own. Then it frees its registry and calls `input_command_scope_release()`.
+ * The UI core does not do this, because it owns no keymap.
  * A registry in one scope never gives an ID that a registry in another scope
  * gives.
  */
@@ -144,8 +156,25 @@ void input_command_registry_init(struct input_command_registry *reg);
 void input_command_registry_free(struct input_command_registry *reg);
 
 /*
+ * Gives a widget scope that no other owner holds.
+ * The caller owns the scope until it calls `input_command_scope_release()`.
+ * Call it from one thread only.
+ * Returns a scope from 1 to `INPUT_COMMAND_SCOPE_COUNT - 1`, or
+ * `INPUT_COMMAND_SCOPE_APP` when no scope is free.
+ */
+uint8_t input_command_scope_new(void);
+
+/*
+ * Gives back widget scope `scope`, so a later call to
+ * `input_command_scope_new()` can give it again.
+ * Call it only for a scope that you own, after you free its registry.
+ * The function ignores the app scope and a scope that is out of range.
+ */
+void input_command_scope_release(uint8_t scope);
+
+/*
  * Adds a command to scope `scope` of registry `reg` with `name` and `label`.
- * The scope must be above zero.
+ * The scope must be from 1 to `INPUT_COMMAND_SCOPE_COUNT - 1`.
  * The registry gives the command the first free ID in the band of `scope`,
  * at or above `INPUT_COMMAND_DYNAMIC_ID`.
  * A widget calls this for a command of its own scope.

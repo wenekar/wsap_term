@@ -9,6 +9,7 @@
 #include "font/font.h"
 #include "loop/latency_probe.h"
 #include "yasl/yasl.h"
+#include "ui/yasl/client.h"
 #include "ui/yasl/internal.h"
 #include "ui/yasl/gpu_surface.h"
 #include "ui/yasl/native_input.h"
@@ -750,6 +751,32 @@ const struct input_keyboard_state *window_keyboard(const struct window *w)
 const struct input_keymap *window_keymap(const struct window *w)
 {
     return w ? &w->keymap : NULL;
+}
+
+void window_reload_input(struct window *w)
+{
+    if (!w)
+        return;
+    input_config_load(&w->keymap);
+    /* A route that the old keymap gave must not apply to a key of the new
+     * keymap. */
+    w->sc_state = (struct input_shortcut_state){0};
+}
+
+bool window_bind_scope(struct window *w,
+                       const struct input_command_registry *reg,
+                       uint8_t scope, const char *spec)
+{
+    /* The app scope belongs to input.conf, and a reload replaces it. */
+    if (!w || scope == INPUT_COMMAND_SCOPE_APP)
+        return false;
+    return input_keymap_apply_spec_registry(&w->keymap, reg, scope, spec);
+}
+
+void window_clear_scope(struct window *w, uint8_t scope)
+{
+    if (w && scope != INPUT_COMMAND_SCOPE_APP)
+        input_keymap_clear_scope(&w->keymap, scope);
 }
 
 void window_copy(struct window *w, enum yasl_selection sel, const char *text)

@@ -77,4 +77,26 @@ struct ui_widget *window_ui_root(struct window *w);
 struct font_instance *window_ui_font(const struct window *w);
 void *window_ui_content(const struct window *w);
 
+/*
+ * Applies binding spec `spec`, such as "ctrl+k = find", in widget scope
+ * `scope` of the keymap of window `w`.
+ * The action name resolves in registry `reg`, then in the app commands.
+ * The binding stays when the window reloads input.conf.
+ * A key that is down keeps its route until its release. The new binding
+ * applies from the next press.
+ * Returns false on a bad spec, on the app scope, on a scope out of range, or
+ * on a memory shortage.
+ */
+bool window_bind_scope(struct window *w,
+                       const struct input_command_registry *reg,
+                       uint8_t scope, const char *spec);
+
+/*
+ * Drops the bindings of widget scope `scope` from the keymap of window `w`.
+ * The widget owner calls this for each window that it bound, before it
+ * releases its scope.
+ * The call ignores the app scope.
+ */
+void window_clear_scope(struct window *w, uint8_t scope);
+
 #endif
