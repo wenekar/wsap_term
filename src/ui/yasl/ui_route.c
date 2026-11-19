@@ -31,6 +31,17 @@ static bool widget_is_inside(const struct ui_widget *root,
     return false;
 }
 
+/* Returns the command scope of the nearest widget in the focus chain of
+ * `surface` that has one. The walk starts at the focused widget and ends at
+ * the root. Returns the app scope when no widget has a scope. */
+static uint8_t focus_command_scope(struct ui_surface *surface)
+{
+    for (struct ui_widget *w = ui_surface_focused(surface); w; w = w->parent)
+        if (w->command_scope != INPUT_COMMAND_SCOPE_APP)
+            return w->command_scope;
+    return INPUT_COMMAND_SCOPE_APP;
+}
+
 /* Returns the widget that draws the drop mark, or NULL when no widget draws
  * one. The mark follows the drop: a text drop goes to the focused widget, so
  * only a widget in the focused subtree draws a mark for it. Any other type
@@ -285,9 +296,12 @@ void window_ui_route(struct window *w, struct input_event *ev)
      * only for a key that no widget handles. */
     if (result == WINDOW_INPUT_UNHANDLED && ev->kind == INPUT_KEY &&
         !ev->key.ime_handled) {
-        enum input_key_route route = input_shortcut_route_key(
+        /* A widget scope in the focus chain wins over the app scope. The
+         * lookup reads that scope first and the app scope after it. */
+        enum input_key_route route = input_shortcut_route_key_scoped(
             window_keymap(w), &w->input, &w->sc_state, &ev->key,
-            input_key_id(&ev->key), NULL);
+            input_key_id(&ev->key),
+            focus_command_scope(window_ui_key_surface(w)), NULL);
         if (route == INPUT_KEY_DROPPED)
             fprintf(stderr, "shortcut queue is full\n");
     }

@@ -61,6 +61,7 @@ test_cases = [
     ['window-compose-test', files('ui/yasl/compose_test.c'), [ui_yasl_lib, render_lib, render_term_lib], deps],
     ['drop-mime-test', files('ui/yasl/drop_mime_test.c'), app_lib, deps],
     ['drop-route-test', files('ui/yasl/drop_route_test.c'), ui_yasl_lib, deps],
+    ['window-key-route-test', files('ui/yasl/key_route_test.c'), ui_yasl_lib, deps],
     ['window-host-veto-test', files('ui/yasl/host_veto_test.c'), ui_yasl_lib, deps],
     ['window-host-registry-test', files('ui/yasl/host_registry_test.c'), ui_yasl_lib, deps],
     ['window-text-menu-test', files('ui/yasl/text_menu_test.c'), ui_yasl_lib, deps],
