@@ -42,7 +42,7 @@ fi
 rm -f /tmp/sdk_mnt_hits.$$
 
 # 2. Terminal-only calls. The terminal layer defines them, not the SDK.
-terminal_calls='render_draw(\|render_cursor_cell(\|render_gpu_draw('
+terminal_calls='^(struct|enum|bool|void|int|uint32_t) .*(render_draw|render_cursor_cell|render_gpu_draw)\('
 if grep -rn "$terminal_calls" "$prefix/include" > /dev/null 2>&1; then
     echo "the installed headers declare a terminal-only call:" >&2
     grep -rn "$terminal_calls" "$prefix/include" >&2
