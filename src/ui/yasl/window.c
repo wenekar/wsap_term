@@ -227,12 +227,13 @@ static bool native_report(struct window_native *n, bool ok, const char *what, in
     return ok;
 }
 
-static void native_compose(struct window *w, struct window_native *n,
+void window_native_compose(struct window *w, struct window_native *n,
                            struct framebuffer target)
 {
     n->generation++;
-    /* Each frame is fresh for now, so the renderer paints every pixel. */
-    target.fresh = true;
+    /* A failed present lost the frame, so the next frame paints all. */
+    target.fresh = target.fresh || n->repaint;
+    n->repaint = false;
     target.history = &n->history;
     /* The frame goes to a drawable, whether the surface holds it already or
      * asks for it while the renderer encodes. */
@@ -265,7 +266,9 @@ static uint32_t *native_pixels(struct window_native *n, struct vector2i size)
     size_t cap = n->pixels_cap + n->pixels_cap / 2;
     if (cap < need)
         cap = need;
-    /* The old pixels are stale, so do not copy them with realloc. */
+    /* The old pixels are stale, so do not copy them with realloc. A new
+     * buffer has no pixels. A reallocation only happens when the size grew,
+     * and the surface key then repaints every pixel. */
     free(n->pixels);
     n->pixels = malloc(cap * sizeof(*n->pixels));
     n->pixels_cap = n->pixels ? cap : 0;
@@ -301,7 +304,7 @@ static void gpu_compose(const struct window_gpu_frame *f, void *ud)
     struct gpu_draw *d = ud;
     /* The frame carries no canvas. render_draw() asks for one only when the
      * CPU paints the frame, so a GPU frame keeps no pixels in the heap. */
-    native_compose(d->w, d->n, (struct framebuffer){
+    window_native_compose(d->w, d->n, (struct framebuffer){
         .size = f->size,
         .drawable = f->drawable,
         .acquire = f->acquire,
@@ -352,7 +355,8 @@ void window_native_draw(struct window *w, struct yasl_surface *s)
             struct vector2i size = {0};
             uint32_t *pixels = yasl_cpu_pixels(s, &size.x, &size.y);
             native_report(n, pixels != NULL, "yasl_cpu_pixels", errno);
-            native_compose(w, n, (struct framebuffer){
+            /* The canvas of yasl keeps the pixels of the last frame. */
+            window_native_compose(w, n, (struct framebuffer){
                 .pixels = pixels,
                 .size = size,
             });
@@ -362,9 +366,12 @@ void window_native_draw(struct window *w, struct yasl_surface *s)
         } else {
             n->cpu_direct = true;
             n->cpu_committed = false;
-            native_compose(w, n, (struct framebuffer){
+            /* The buffer of the display holds no pixels of ours, so every
+             * frame that draws into it starts fresh. */
+            window_native_compose(w, n, (struct framebuffer){
                 .pixels = cf.pixels,
                 .size = { .x = cf.pixel_width, .y = cf.pixel_height },
+                .fresh = true,
             });
             if (native_find(w, s) == n) {
                 if (n->cpu_direct && !n->cpu_committed)
@@ -645,8 +652,12 @@ bool window_present(struct window *w, struct window_frame *frame,
     status = yd_ptr
         ? yasl_cpu_present_damage(frame->surface, yd_ptr, yd_count)
         : yasl_cpu_present(frame->surface);
-    if (n)
+    if (n) {
         n->frame_submitted = status == 0;
+        /* The display did not take the canvas. Its damage is gone, so the
+         * next frame must present every pixel again. */
+        n->repaint = status != 0;
+    }
     return native_report(n, status == 0, "yasl_cpu_present", -status);
 }
 
