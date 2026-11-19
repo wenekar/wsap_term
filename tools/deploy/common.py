@@ -110,6 +110,14 @@ def stage_linux_payload(repo_root: Path, staging_usr: Path) -> None:
             if f.is_file() and f.name.endswith((".css", ".conf")):
                 shutil.copy2(f, themes_dest / f.name)
 
+    fonts_src = repo_root / "assets" / "fonts"
+    if fonts_src.is_dir():
+        fonts_dest = share_dir / "wsap_term" / "fonts"
+        fonts_dest.mkdir(parents=True, exist_ok=True)
+        for f in fonts_src.iterdir():
+            if f.is_file():
+                shutil.copy2(f, fonts_dest / f.name)
+
     shell_src = repo_root / "assets" / "shell"
     if shell_src.is_dir():
         shell_dest = share_dir / "wsap_term" / "shell"

@@ -125,6 +125,14 @@ test_env.set('DYLD_INSERT_LIBRARIES', '')
 test_env.set('WSAP_NO_PRELOAD', '1')
 bash = find_program('bash', native: true)
 
+# The deploy and CI tools ship in this tree, so their checks run here.
+test(
+    'deploy-fonts-test',
+    python,
+    args: files('tools/deploy_test.py'),
+    suite: ['unit'],
+)
+
 # Tests that call uninstrumented system libraries, such as fontconfig or the
 # system yyjson. The msan setup skips them: MSan reports false positives there.
 extlib_tests = [
