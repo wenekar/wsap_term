@@ -88,6 +88,9 @@ struct ui_widget {
     void *userdata;
     struct rect2f layout_bounds;
     struct vector2i measured_size;
+    /* The command scope of the widget. Zero is the app scope.
+     * The key route reads the binding of this scope before an app binding. */
+    uint8_t command_scope;
     struct {
         uint16_t style_pseudo;
         /* The hover and focus flags that the surface set last time. */

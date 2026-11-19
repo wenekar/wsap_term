@@ -362,11 +362,6 @@ enum input_key_route {
     INPUT_KEY_DROPPED,
 };
 
-/*
- * Matches key event `key` against keymap `km` and shortcut state `st`.
- * Enqueues shortcut events into `q` and writes matched action to `out_sc`.
- * Returns the routing action for the key event.
- */
 /* Returns the identifier that the shortcut state tracks for key `ev`. */
 unsigned input_key_id(const struct input_key_event *ev);
 
@@ -377,10 +372,30 @@ unsigned input_key_id(const struct input_key_event *ev);
 bool input_keymap_match(const struct input_keymap *km,
                         const struct input_key_event *ev);
 
+/*
+ * Matches key event `key` against keymap `km` and shortcut state `st`.
+ * The lookup reads the app scope only.
+ * Enqueues shortcut events into `q` and writes matched action to `out_sc`.
+ * Returns the routing action for the key event.
+ */
 enum input_key_route input_shortcut_route_key(const struct input_keymap *km,
         struct input_queue *q,
         struct input_shortcut_state *st,
         const struct input_key_event *key, unsigned key_id,
+        input_command_id *out_sc);
+
+/*
+ * Matches key event `key` against keymap `km` in command scope `scope` and
+ * shortcut state `st`. A widget passes its own scope here.
+ * The lookup reads `scope` first, then the app scope.
+ * Enqueues shortcut events into `q` and writes matched action to `out_sc`.
+ * Returns the routing action for the key event.
+ */
+enum input_key_route input_shortcut_route_key_scoped(
+        const struct input_keymap *km,
+        struct input_queue *q,
+        struct input_shortcut_state *st,
+        const struct input_key_event *key, unsigned key_id, uint8_t scope,
         input_command_id *out_sc);
 
 #endif

@@ -337,6 +337,17 @@ enum input_key_route input_shortcut_route_key(const struct input_keymap *km,
         const struct input_key_event *key, unsigned key_id,
         input_command_id *out_sc)
 {
+    return input_shortcut_route_key_scoped(km, q, st, key, key_id,
+                                           INPUT_COMMAND_SCOPE_APP, out_sc);
+}
+
+enum input_key_route input_shortcut_route_key_scoped(
+        const struct input_keymap *km,
+        struct input_queue *q,
+        struct input_shortcut_state *st,
+        const struct input_key_event *key, unsigned key_id, uint8_t scope,
+        input_command_id *out_sc)
+{
     if (out_sc) *out_sc = INPUT_COMMAND_NONE;
     if (!km || !q || !st || !key || key_id >= INPUT_SHORTCUT_KEY_COUNT)
         return INPUT_KEY_PASSTHROUGH;
@@ -360,7 +371,7 @@ enum input_key_route input_shortcut_route_key(const struct input_keymap *km,
         shortcut_set_route(st, key_id, SHORTCUT_KEY_PASSTHROUGH);
 
     input_command_id sc =
-        input_keymap_lookup(km, key);
+        input_keymap_lookup_scoped(km, key, scope);
     if (sc == INPUT_COMMAND_NONE)
         return key->action == INPUT_REPEAT
             ? INPUT_KEY_SWALLOWED : INPUT_KEY_PASSTHROUGH;
