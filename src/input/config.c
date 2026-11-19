@@ -27,8 +27,9 @@ static void write_default_input_config(const struct app_identity *identity,
     fprintf(f,
         "# %s input configuration.\n"
         "# Lines are 'chord = action'; everything here is commented out.\n\n"
-        "# 'style' picks the built-in copy and paste keys before any\n"
-        "# binding below. Both styles also bind ctrl+shift+c and ctrl+shift+v.\n"
+        "# 'style' picks the built-in copy and paste keys for the whole\n"
+        "# file, wherever the line is. Both styles also bind ctrl+shift+c\n"
+        "# and ctrl+shift+v.\n"
         "#   modern  (default) ctrl+c copies when text is selected, otherwise\n"
         "#           it reaches the shell (interrupt); ctrl+v pastes\n"
         "#   legacy  plain ctrl+c and ctrl+v always reach the shell\n"
@@ -68,10 +69,18 @@ static enum input_keybind_style config_style = INPUT_KEYBIND_MODERN;
 static char config_path[4096];
 static bool config_has_path;
 
+/* One parse of the configuration file. The init pass finds the style. The
+ * load pass keeps that style and applies the bindings. */
+struct input_config_pass {
+    struct input_keymap *km;
+    bool find_style;
+};
+
 static void input_config_line(void *ctx, const char *path, int line,
                               const char *chord, const char *val)
 {
-    struct input_keymap *km = ctx;
+    struct input_config_pass *pass = ctx;
+    struct input_keymap *km = pass->km;
     const char *tag = config_tag;
     if (!val) {
         if (!strcasecmp(chord, "clear")) {
@@ -86,8 +95,12 @@ static void input_config_line(void *ctx, const char *path, int line,
     if (!strcasecmp(chord, "style")) {
         enum input_keybind_style style;
         if (input_parse_keybind_style(val, &style)) {
-            config_style = style;
-            input_keymap_reset(km, style);
+            /* The style applies to the whole file, so a style line in the
+             * load pass must not erase the bindings above it. */
+            if (pass->find_style) {
+                config_style = style;
+                input_keymap_reset(km, style);
+            }
         } else
             fprintf(stderr, "[%s] %s:%d: invalid style '%s'\n",
                     tag, path, line, val);
@@ -108,7 +121,9 @@ void input_config_load(struct input_keymap *km)
     input_keymap_reset(km, config_style);
     if (!config_has_path)
         return;
-    if (!config_parse_file(config_path, input_config_line, km) && errno != ENOENT)
+    struct input_config_pass pass = { .km = km };
+    if (!config_parse_file(config_path, input_config_line, &pass) &&
+        errno != ENOENT)
         fprintf(stderr, "[%s] cannot read %s: %s\n", config_tag, config_path,
                 strerror(errno));
 }
@@ -135,10 +150,12 @@ void input_config_init(const struct app_identity *identity)
     if (access(config_path, R_OK) != 0 && errno == ENOENT)
         write_default_input_config(identity, config_path);
     /* The parse validates each line, and a 'style' line sets the style that
-     * each window then loads. The app keeps no keymap of its own. */
+     * each window then loads. The style applies to the whole file. The app
+     * keeps no keymap of its own. */
     struct input_keymap km;
     input_keymap_init(&km);
     input_keymap_defaults(&km, &input_platform_shortcuts, config_style);
-    config_parse_file(config_path, input_config_line, &km);
+    struct input_config_pass pass = { .km = &km, .find_style = true };
+    config_parse_file(config_path, input_config_line, &pass);
     input_keymap_free(&km);
 }
