@@ -32,9 +32,10 @@ static bool widget_is_inside(const struct ui_widget *root,
 }
 
 /* Returns the widget that draws the drop mark, or NULL when no widget draws
- * one. The mark follows the drop: a text or file drop goes to the focused
- * widget, and any other type goes to the widget at the position. Only the
- * widget that takes the drop draws a mark. */
+ * one. The mark follows the drop: a text drop goes to the focused widget, so
+ * only a widget in the focused subtree draws a mark for it. Any other type
+ * goes to the widget at the position. Only the widget that takes the drop
+ * draws a mark. */
 static struct ui_widget *drop_mark_target(struct ui_surface *surface,
                                           const char *mime,
                                           struct vector2i pos)
@@ -112,11 +113,14 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
             .pos = ev->drop_type.pos,
         };
         event = ui_event_drag(UI_EVENT_DROP, &drag, now_ms);
-        ui_surface_prepare(keys);
+        /* A drop position is in the coordinates of the window surface. A menu
+         * popup sits above that surface and takes no drop. */
+        struct ui_surface *screen = &ui_of(w)->screen;
+        ui_surface_prepare(screen);
         struct drop_hover *hover = &ui_of(w)->drop_hover;
         struct ui_widget *target = hover->target
             ? (struct ui_widget *)hover->target
-            : drop_mark_target(keys, drag.mime, drag.pos);
+            : drop_mark_target(screen, drag.mime, drag.pos);
         if (target)
             ui_widget_event(target, &event);
         return WINDOW_INPUT_HANDLED;
@@ -130,9 +134,10 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
             .mime = ev->drop_type.mime,
             .pos = ev->drop_type.pos,
         };
-        ui_surface_prepare(keys);
+        struct ui_surface *screen = &ui_of(w)->screen;
+        ui_surface_prepare(screen);
         struct ui_widget *target = ev->drop_type.leave
-            ? NULL : drop_mark_target(keys, drag.mime, drag.pos);
+            ? NULL : drop_mark_target(screen, drag.mime, drag.pos);
         /* A drag that stays on one widget gets ENTER once, then OVER. A drag
          * that leaves the widget gives it LEAVE. */
         if (drop_hover_retarget(hover, target)) {
