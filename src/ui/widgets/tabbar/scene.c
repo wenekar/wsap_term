@@ -19,6 +19,7 @@
 #define TB_PART_NEW    (1ULL << 32)
 #define TB_PART_DRAG   (2ULL << 32)
 #define TB_PART_DROP   (3ULL << 32)
+#define TB_PART_DROP_MARK (4ULL << 32)
 
 /* Returns the text that a tab shows. An empty label text uses the empty title
  * of the tab bar. */
@@ -609,6 +610,20 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
             .size = { .x = size.x, .y = 1 } },
             bar.has_border_color ? bar.border_color : bar_bg))
         return false;
+
+    if (ui_drop_indicator_active(&tb->state.drop)) {
+        struct css_style mark = tb_style(tb, p->drop_mark, CSS_PSEUDO_NONE);
+        uint32_t color = mark.has_bg_color ? mark.bg_color
+                                           : TB_DROP_MARK_COLOR;
+        color = ui_color_opacity(color, css_style_effective_opacity(&mark));
+        struct vector2i o = tb->widget.bounds.pos;
+        struct rect2i r = rect2i_translate(tb->state.drop.rect,
+                                           (struct vector2i){ -o.x, -o.y });
+        if (!ui_scene_begin_part(scene, TB_PART_DROP_MARK) ||
+            !ui_scene_rect(scene, r, color) ||
+            !ui_scene_end_scope(scene))
+            return false;
+    }
 
     if (bar_clip && !ui_scene_pop_clip(scene))
         return false;

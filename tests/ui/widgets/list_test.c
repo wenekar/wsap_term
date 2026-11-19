@@ -498,6 +498,70 @@ static void non_focusable_list_does_not_take_focus_test(void)
     teardown(&f);
 }
 
+static bool drag(struct ui_surface *s, struct ui_list *l,
+                 enum ui_event_kind kind, struct vector2i pos)
+{
+    const char *mimes[1] = { "text/uri-list" };
+    struct ui_drag_event d = { .mimes = mimes, .mime_count = 1, .pos = pos };
+    struct ui_event e = ui_event_drag(kind, &d, 0);
+    bool handled = ui_widget_event(ui_list_widget(l), &e);
+    ui_surface_prepare(s);
+    return handled;
+}
+
+/* A drag over a list shows a line between two rows, and it highlights the row
+ * that takes the drop. The mark follows the pointer and the leave clears it. */
+static void drop_indicator_follows_the_pointer_test(void)
+{
+    struct fixture f;
+    show_default(&f);
+    ui_surface_prepare(&f.surface);
+    struct rect2i r1 = ui_list_item_rect(&f.list, 1);
+    struct rect2i r2 = ui_list_item_rect(&f.list, 2);
+
+    /* The middle of a row takes the drop on that row. */
+    struct vector2i p = {
+        .x = r1.x + r1.width / 2, .y = r1.y + r1.height / 2,
+    };
+    assert(drag(&f.surface, &f.list, UI_EVENT_DRAG_OVER, p));
+    const struct ui_drop_indicator *mark = ui_list_drop_indicator(&f.list);
+    assert(mark);
+    assert(mark->mark == UI_DROP_MARK_ROW);
+    assert(ui_list_drop_into(&f.list) == 1);
+    assert(ui_list_drop_slot(&f.list) == 2);
+    assert(rect2i_eq(mark->rect, r1));
+
+    /* The top edge of the next row inserts before that row. */
+    p = (struct vector2i){ .x = r2.x + 8, .y = r2.y + 1 };
+    assert(drag(&f.surface, &f.list, UI_EVENT_DRAG_OVER, p));
+    mark = ui_list_drop_indicator(&f.list);
+    assert(mark);
+    assert(ui_list_drop_into(&f.list) == -1);
+    assert(ui_list_drop_slot(&f.list) == 2);
+    assert(mark->rect.y == r2.y);
+    /* No rule names the part in the default sheet, so the C fallback sets
+     * the thickness of the line. */
+    assert(mark->rect.height == 2);
+    assert(mark->rect.width == r2.width);
+
+    /* The C fallback paints the line in the accent color. */
+    build(&f);
+    bool painted = false;
+    for (int i = 0; i < f.scene.n_ops; i++) {
+        const struct ui_scene_op *op = &f.scene.ops[i];
+        if (op->kind == UI_SCENE_OP_RECT &&
+            rect2i_eq(op->rect, mark->rect) && op->color == 0xFF89B4FAu)
+            painted = true;
+    }
+    assert(painted);
+
+    assert(drag(&f.surface, &f.list, UI_EVENT_DRAG_LEAVE, p));
+    assert(ui_list_drop_indicator(&f.list) == NULL);
+    assert(ui_list_drop_into(&f.list) == -1);
+    assert(ui_list_drop_slot(&f.list) == -1);
+    teardown(&f);
+}
+
 int main(void)
 {
     label_and_shortcut_do_not_overlap_test();
@@ -516,6 +580,7 @@ int main(void)
     pinned_geometry_survives_theme_change_test();
     item_flags_pick_their_class_rule_test();
     non_focusable_list_does_not_take_focus_test();
+    drop_indicator_follows_the_pointer_test();
     puts("PASS: list tests");
     return 0;
 }
