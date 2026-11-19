@@ -124,7 +124,7 @@ jobs:
           sudo ldconfig
       - name: Build and test
         run: bash tools/ci/build.sh
-      - name: Build the framework SDK and the configure matrix
+      - name: Build the app configure matrix
         run: bash tools/ci/matrix.sh
       - name: Upload build and test logs
         if: always()
@@ -133,7 +133,6 @@ jobs:
           name: linux-logs
           path: |
             build/ci/meson-logs/
-            build/ci-framework/meson-logs/
             build/ci-x11/meson-logs/
             build/ci-cpu/meson-logs/
             build/ci-bench/meson-logs/

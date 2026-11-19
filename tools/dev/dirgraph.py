@@ -9,6 +9,14 @@ import sys
 import tempfile
 from pathlib import Path
 
+"""The terminal tree holds six libraries. The framework sources live in the
+`wsap-framework` subproject, and an include from either tree resolves against
+the same layer table."""
+
+TERMINAL_PREFIX = ""
+FRAMEWORK_PREFIX = "framework:"
+FRAMEWORK_SRC = Path("subprojects/wsap-framework/src")
+
 RANKS = {
     "util": 1,
     "platform": 1,
@@ -22,7 +30,6 @@ RANKS = {
     "theme": 10,
     "render": 11,
     "terminal/render": 12,
-    "render/term_frame.h": 12,
     "ui/yasl": 13,
     "terminal": 14,
     "runtime": 15,
@@ -49,7 +56,7 @@ LIBRARY_PATHS = {
     "ui": ("ui",),
     "theme": ("theme",),
     "render": ("render",),
-    "render_term": ("terminal/render", "render/term_frame.h"),
+    "render_term": ("terminal/render",),
     "ui_yasl": ("ui/yasl",),
     "terminal": ("terminal",),
     "runtime": ("runtime",),
@@ -99,16 +106,40 @@ def library_for(path: str) -> str | None:
             return library
     return None
 
-def resolve_include(source: Path, included: str, src: Path, headers: set[str]) -> str | None:
-    candidates = ((source.parent / included), (src / included))
+def collect_headers(roots: list[tuple[Path, str]]) -> set[tuple[str, str]]:
+    return {
+        (prefix, path.relative_to(root).as_posix())
+        for root, prefix in roots
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+def resolve_include(
+    source: Path,
+    included: str,
+    roots: list[tuple[Path, str]],
+    headers: set[tuple[str, str]],
+) -> tuple[str, str] | None:
+    candidates = [source.parent / included] + [root / included for root, _ in roots]
     for candidate in candidates:
-        try:
-            relative = candidate.resolve().relative_to(src.resolve()).as_posix()
-        except ValueError:
-            continue
-        if relative in headers:
-            return relative
+        resolved = candidate.resolve()
+        for root, prefix in roots:
+            try:
+                relative = resolved.relative_to(root.resolve()).as_posix()
+            except ValueError:
+                continue
+            if (prefix, relative) in headers:
+                return prefix, relative
     return None
+
+def framework_roots(src: Path) -> list[tuple[Path, str]]:
+    """The terminal sources, then the framework sources of the subproject."""
+    roots = [(src, TERMINAL_PREFIX)]
+    project = src.parent if src.name == "src" else src
+    framework = project / FRAMEWORK_SRC
+    if framework.is_dir():
+        roots.append((framework, FRAMEWORK_PREFIX))
+    return roots
 
 def is_private_violation(source: str, target: str) -> bool:
     parts = Path(target).parts
@@ -126,7 +157,8 @@ def is_private_violation(source: str, target: str) -> bool:
 
 def scan(src: Path) -> list[str]:
     errors: list[str] = []
-    headers = {p.relative_to(src).as_posix() for p in src.rglob("*") if p.is_file()}
+    roots = framework_roots(src)
+    headers = collect_headers(roots)
     for source in sorted(p for p in src.rglob("*") if p.is_file() and p.suffix in SOURCE_SUFFIXES):
         relative = source.relative_to(src).as_posix()
         source_layer = layer_for(relative)
@@ -140,9 +172,10 @@ def scan(src: Path) -> list[str]:
             if match.group(1).startswith(YASL_PREFIX) and library_for(relative) not in YASL_LIBRARIES:
                 owner = library_for(relative) or source_owner
                 errors.append(f"{relative}:{number}: {owner} may not include yasl: {match.group(1)}")
-            included = resolve_include(source, match.group(1), src, headers)
-            if included is None:
+            resolved = resolve_include(source, match.group(1), roots, headers)
+            if resolved is None:
                 continue
+            prefix, included = resolved
             target = layer_for(included)
             if target and target[0] > source_rank:
                 errors.append(
@@ -152,25 +185,29 @@ def scan(src: Path) -> list[str]:
             source_library = library_for(relative)
             target_library = library_for(included)
             if source_library and target_library and source_library != target_library and target_library not in ALLOWED_DEPENDENCIES[source_library]:
-                errors.append(f"{relative}:{number}: {source_library} may not use {target_library}: {included}")
+                shown = prefix + included if prefix else included
+                errors.append(f"{relative}:{number}: {source_library} may not use {target_library}: {shown}")
             if is_private_violation(relative, included):
                 errors.append(f"{relative}:{number}: includes private header {included}")
     return errors
 
 def scan_private_owner(src: Path, owner: str) -> list[str]:
     errors: list[str] = []
-    headers = {p.relative_to(src).as_posix() for p in src.rglob("*") if p.is_file()}
+    roots = framework_roots(src)
+    headers = collect_headers(roots)
     for source in sorted(p for p in src.rglob("*") if p.is_file() and p.suffix in SOURCE_SUFFIXES):
         relative = source.relative_to(src).as_posix()
         for number, line in enumerate(source.read_text(errors="replace").splitlines(), 1):
             match = INCLUDE.match(line)
-            included = resolve_include(source, match.group(1), src, headers) if match else None
+            resolved = resolve_include(source, match.group(1), roots, headers) if match else None
+            included = resolved[1] if resolved else None
             if included and included.startswith(owner + "/") and is_private_violation(relative, included):
                 errors.append(f"{relative}:{number}: includes private header {included}")
     return errors
 
 def find_cycles(src: Path) -> list[str]:
-    headers = {p.relative_to(src).as_posix() for p in src.rglob("*") if p.is_file()}
+    roots = framework_roots(src)
+    headers = collect_headers(roots)
     graph: dict[str, set[str]] = {}
     for source in sorted(p for p in src.rglob("*") if p.is_file() and p.suffix in SOURCE_SUFFIXES):
         relative = source.relative_to(src).as_posix()
@@ -179,7 +216,8 @@ def find_cycles(src: Path) -> list[str]:
             continue
         for line in source.read_text(errors="replace").splitlines():
             match = INCLUDE.match(line)
-            included = resolve_include(source, match.group(1), src, headers) if match else None
+            resolved = resolve_include(source, match.group(1), roots, headers) if match else None
+            included = resolved[1] if resolved else None
             source_library = library_for(relative)
             target_library = library_for(included) if included else None
             if source_library and target_library and target_library != source_library:

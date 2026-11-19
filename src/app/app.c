@@ -17,7 +17,7 @@
 #include "theme/look.h"
 #include "paint/scene.h"
 #include "render/render.h"
-#include "render/term_frame.h"
+#include "terminal/render/term_frame.h"
 #include "util/damage.h"
 #include "session/session.h"
 #include "app/tabs/tabs.h"
