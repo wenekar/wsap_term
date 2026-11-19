@@ -307,13 +307,13 @@ static void check_key_events(struct yasl_private_display *display, struct x11_su
     assert(key.key.action == YASL_KEY_RELEASE && key.key.text_input == YASL_KEY_TEXT_COMMIT);
     assert(key.key.text_id == 0 && key.key.consumed_mods == 0);
 
-    /* Alt does not consume the text, and it no longer suppresses it. */
+    /* An unconsumed Alt is a shortcut modifier. It inserts no text and sends
+     * no TEXT event, so the terminal encoder can prefix ESC to the letter. */
     key_press(s, a, Mod1Mask, false);
     key = next_type(display, YASL_PRIVATE_EVENT_KEY);
-    assert(key.key.mods & YASL_PRIVATE_MOD_ALT && key.key.text_input == YASL_KEY_TEXT_COMMIT);
-    assert(key.key.consumed_mods == 0);
-    text = next_type(display, YASL_PRIVATE_EVENT_TEXT);
-    assert(!strcmp(text.text.data, "a"));
+    assert(key.key.mods & YASL_PRIVATE_MOD_ALT && key.key.text_input == YASL_KEY_TEXT_NONE);
+    assert(key.key.text_id == 0 && key.key.consumed_mods == 0);
+    assert(!yasl_private_display_poll_event(display, &text));
     key_press(s, a, Mod1Mask, true);
     (void)next_type(display, YASL_PRIVATE_EVENT_KEY);
 

@@ -74,6 +74,33 @@ static void key(struct window *w, enum yasl_key code, unsigned mods,
     key_text(w, code, mods, label, shifted, value, action, YASL_EVENT_TEXT_EDIT);
 }
 
+/* Sends one key in the shape that the Wayland and X11 backends send it.
+ * A COMMIT key is followed by its TEXT event. A NONE key has no text event,
+ * because native text input inserted nothing. */
+static void native_key(struct window *w, enum yasl_key code, unsigned mods,
+                       uint32_t label, uint32_t shifted,
+                       enum yasl_key_text text_input, const char *value)
+{
+    static uint64_t text_id;
+    struct yasl_event event = {
+        .type = YASL_EVENT_KEY,
+        .action = YASL_KEY_PRESS,
+        .mods = mods,
+        .key = {
+            .key = code, .codepoint = label, .shifted = shifted,
+            .text_input = text_input,
+            .text_id = text_input == YASL_KEY_TEXT_COMMIT ? ++text_id : 0,
+        },
+    };
+    window_native_input(w, &event);
+    if (event.key.text_id)
+        commit(w, value, event.key.text_id, YASL_EVENT_TEXT);
+    event.action = YASL_KEY_RELEASE;
+    event.key.text_id = 0;
+    window_native_input(w, &event);
+    drain(w);
+}
+
 static void composing_key(struct window *w, enum yasl_key code, const char *value)
 {
     struct yasl_event event = {
@@ -119,6 +146,17 @@ int main(void)
     for (int i = 0; i < 2; i++)
         assert(fcntl(fds[i], F_SETFL, fcntl(fds[i], F_GETFL) | O_NONBLOCK) == 0);
     assert(session_write_queue_bind(&session->input_writer, session->loop, fds[1]));
+
+    /* An unconsumed Alt press carries no native text, and no TEXT event
+     * follows it. The Wayland and X11 backends both report it this way. The
+     * key label must reach the encoder, which sends ESC and the letter. */
+    native_key(w, YASL_KEY_A, YASL_MOD_ALT, 'a', 'A', YASL_KEY_TEXT_NONE, NULL);
+    expect(fds[0], "\033a");
+
+    /* A plain letter commits its text. The backends send the key as COMMIT
+     * and then one TEXT event. The shell gets the letter once. */
+    native_key(w, YASL_KEY_A, 0, 'a', 'A', YASL_KEY_TEXT_COMMIT, "a");
+    expect(fds[0], "a");
 
     key_text(w, YASL_KEY_A, 0, 'a', 'A', "a", YASL_KEY_PRESS, YASL_EVENT_TEXT);
     key(w, YASL_KEY_A, YASL_MOD_SHIFT, 'a', 'A', "A", YASL_KEY_PRESS);

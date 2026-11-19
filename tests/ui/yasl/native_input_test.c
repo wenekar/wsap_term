@@ -185,14 +185,49 @@ static void bound_key_reaches_widget_test(void)
     assert(!input_queue_take(&w.input, &out));
 }
 
-/* ALT changes the text of a key, but the text still arrives as a TEXT event.
- * The key event defers its own label so the widget does not insert it twice. */
-static void alt_key_text_deferred_test(void)
+/* An unconsumed Alt press inserts no native text, and no TEXT event comes.
+ * The key label must reach the terminal encoder, which adds ESC. */
+static void alt_key_label_test(void)
 {
     fresh_window();
-    struct input_key_event k = feed_key(YASL_KEY_A, 'a', 0xE5, YASL_MOD_ALT);
-    assert(k.text_deferred);
-    assert(ui_key_from_input(&k).text_deferred);
+    struct yasl_event e = { .type = YASL_EVENT_KEY, .action = YASL_KEY_PRESS,
+                            .mods = YASL_MOD_ALT };
+    e.key.key = YASL_KEY_A;
+    e.key.codepoint = 'a';
+    e.key.shifted = 'A';
+    e.key.text_input = YASL_KEY_TEXT_NONE;
+    window_native_input(&w, &e);
+    struct input_event out;
+    assert(input_queue_take(&w.input, &out));
+    assert(out.kind == INPUT_KEY);
+    assert(out.key.text == 'a');
+    assert(!out.key.text_deferred);
+}
+
+/* A key that native text input commits defers its label. The key goes out
+ * with the TEXT event that follows it, and that event carries the text. */
+static void commit_key_text_deferred_test(void)
+{
+    fresh_window();
+    struct yasl_event e = { .type = YASL_EVENT_KEY, .action = YASL_KEY_PRESS };
+    e.key.key = YASL_KEY_A;
+    e.key.codepoint = 'a';
+    e.key.shifted = 'A';
+    e.key.text_input = YASL_KEY_TEXT_COMMIT;
+    e.key.text_id = 7;
+    window_native_input(&w, &e);
+    struct input_event out;
+    assert(!input_queue_take(&w.input, &out));
+
+    struct yasl_event text = { .type = YASL_EVENT_TEXT, .text = "a", .length = 1,
+                               .ime = { .key_id = 7 } };
+    window_native_input(&w, &text);
+    assert(input_queue_take(&w.input, &out));
+    assert(out.kind == INPUT_KEY);
+    assert(out.key.text == 0);
+    assert(out.key.text_deferred);
+    assert(out.key.text_len == 1 && !memcmp(out.key.text_utf8, "a", 1));
+    input_event_release(&out);
 }
 
 /* Keypad Clear keeps its identity. */
@@ -412,7 +447,8 @@ int main(void)
     pen_contact_test();
     caps_lock_key_text_test();
     bound_key_reaches_widget_test();
-    alt_key_text_deferred_test();
+    alt_key_label_test();
+    commit_key_text_deferred_test();
     keypad_clear_test();
     image_drop_writes_no_file_test();
     text_drop_pastes_test();
