@@ -1,5 +1,6 @@
 #import <AppKit/AppKit.h>
 #include <common/private_native.h>
+#include <common/backend.h>
 #include <assert.h>
 #include <math.h>
 #include <string.h>
@@ -44,7 +45,10 @@ static void empty(struct yasl_surface *surface)
 
 static void set_types(struct yasl_surface *surface, const char *const *types, size_t count)
 {
-    assert(yasl_surface_set_drop_types(surface, types, count) == 0);
+    /* The test drives the view of a display that yasl_private_display_open
+     * made, so it uses the private call. The public call needs a display from
+     * yasl_init, and it reports ENODEV without one. */
+    assert(yasl_private_surface_set_drop_types(surface, types, count));
 }
 
 int main(void)

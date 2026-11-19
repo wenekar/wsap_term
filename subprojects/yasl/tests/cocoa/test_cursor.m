@@ -79,8 +79,11 @@ int main(void)
         assert([NSCursor currentCursor] == [NSCursor arrowCursor]);
 
         /* A locked pointer hides the cursor, keeps its position, and reports
-         * device movement. */
-        assert(yasl_surface_set_cursor(surface, YASL_CURSOR_LOCKED) == 0);
+         * device movement. The test drives the view of a display that
+         * yasl_private_display_open made, so it uses the private call. The
+         * public call needs a display from yasl_init, and it reports ENODEV
+         * without one. */
+        assert(yasl_private_surface_set_pointer_mode(surface, YASL_PRIVATE_POINTER_RELATIVE));
         assert(yasl_private_display_caps(display) & YASL_PRIVATE_CAP_RELATIVE_POINTER);
         [view cursorUpdate:cursor];
         assert([NSCursor currentCursor] == hidden);
@@ -99,7 +102,8 @@ int main(void)
         assert(fabs(event.pointer.delta.y + 2.0 * scale) < 1e-9);
 
         /* Unlocked motion reports the change of position again. */
-        assert(yasl_surface_set_cursor(surface, YASL_CURSOR_ARROW) == 0);
+        assert(yasl_private_surface_set_pointer_mode(surface, YASL_PRIVATE_POINTER_NORMAL));
+        yasl_private_surface_set_cursor(surface, YASL_PRIVATE_CURSOR_ARROW);
         sample.deltaX = 0;
         sample.deltaY = 0;
         sample.locationInWindow = NSMakePoint(40, 60);
