@@ -351,7 +351,9 @@ bool window_menu_open(struct window *w, const ui_menu_item *items, int n,
                       struct vector2i at, ui_action_fn fn,
                       ui_menu_submenu_fn submenu, void *userdata)
 {
-    if (!window_surface(w) || !window_ui_of(w))
+    /* A window with no native surface shows the menu inline. The menu layer
+     * is a widget of the window root, so the menu still opens and draws. */
+    if (!window_ui_of(w))
         return false;
     window_menu_close(w);
     int delay = window_host(w)->config->menu_hover_delay_ms;

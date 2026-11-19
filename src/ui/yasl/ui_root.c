@@ -1,4 +1,7 @@
+#include "input/command.h"
+#include "input/keybind.h"
 #include "platform/platform.h"
+#include "ui/widgets/input.h"
 #include "ui/yasl/internal.h"
 #include "ui/yasl/window.h"
 #include "util/app_identity.h"
@@ -35,6 +38,85 @@ static const struct ui_widget_ops WINDOW_ROOT_OPS = {
     .prepare = root_prepare,
     .accessibility = root_accessibility,
 };
+
+/*
+ * The commands of the text menu of a focused ui_input, in menu order.
+ * The ID `INPUT_COMMAND_NONE` gives a separator.
+ * The registry gives the label, so the window has no English text of its own.
+ */
+static const struct text_menu_command {
+    enum ui_edit_command edit;
+    input_command_id cmd;
+} text_menu_commands[] = {
+    {UI_EDIT_UNDO,       INPUT_COMMAND_UNDO},
+    {UI_EDIT_REDO,       INPUT_COMMAND_REDO},
+    {UI_EDIT_NONE,       INPUT_COMMAND_NONE},
+    {UI_EDIT_CUT,        INPUT_COMMAND_CUT},
+    {UI_EDIT_COPY,       INPUT_COMMAND_COPY},
+    {UI_EDIT_PASTE,      INPUT_COMMAND_PASTE},
+    {UI_EDIT_NONE,       INPUT_COMMAND_NONE},
+    {UI_EDIT_SELECT_ALL, INPUT_COMMAND_SELECT_ALL},
+};
+
+#define TEXT_MENU_MAX                                              \
+    (sizeof(text_menu_commands) / sizeof(text_menu_commands[0]))
+
+static bool text_menu_action(struct ui_widget *source,
+                             const struct ui_action *action, void *userdata)
+{
+    (void)source;
+    struct window *w = userdata;
+    struct ui_widget *target = ui_surface_context_target(&ui_of(w)->screen);
+    if (action->kind == UI_ACTION_ACTIVATE) {
+        window_menu_close(w);
+        if (target) {
+            ui_surface_focus(&ui_of(w)->screen, target);
+            ui_input_command(ui_container_of(target, struct ui_input, widget),
+                             (enum ui_edit_command)action->id);
+        }
+        return true;
+    }
+    if (action->kind == UI_ACTION_CLOSE)
+        ui_surface_set_context_target(&ui_of(w)->screen, NULL);
+    return false;
+}
+
+static bool root_action(struct ui_widget *source, const struct ui_action *action,
+                        void *userdata)
+{
+    struct ui_input *in = ui_input_of(source);
+    if (action->kind != UI_ACTION_MENU || !in)
+        return false;
+    struct window *w = userdata;
+    const struct input_command_registry *reg = input_command_builtin();
+    ui_menu_item items[TEXT_MENU_MAX];
+    char chords[TEXT_MENU_MAX][64];
+    int n = 0;
+    for (size_t i = 0; i < TEXT_MENU_MAX; i++) {
+        const struct text_menu_command *c = &text_menu_commands[i];
+        if (c->cmd == INPUT_COMMAND_NONE) {
+            items[n++] = UI_MENU_SEPARATOR;
+            continue;
+        }
+        /* A widget command has no chord in the app keymap. The item then
+         * shows its label alone. */
+        bool bound = input_keymap_format_action_chord(&w->keymap, c->cmd,
+                                                      chords[n],
+                                                      sizeof chords[n]);
+        items[n] = UI_MENU_ITEM(input_command_label(reg,
+                                 INPUT_COMMAND_SCOPE_APP, c->cmd),
+                                (int)c->edit,
+                                .shortcut = bound ? chords[n] : NULL);
+        if (!ui_input_can_command(in, c->edit))
+            items[n].flags |= UI_LIST_ITEM_DISABLED;
+        n++;
+    }
+    window_menu_close(w);
+    ui_surface_set_context_target(&ui_of(w)->screen, source);
+    if (!window_menu_open(w, items, n, action->pos, text_menu_action, NULL, w))
+        ui_surface_set_context_target(&ui_of(w)->screen, NULL);
+    return true;
+}
 
 static void window_ui_request_frame(void *userdata)
 {
@@ -128,6 +210,7 @@ void window_ui_arm(struct window *w, uint64_t now_ms)
 void window_ui_root_init(struct window *w)
 {
     ui_widget_init(&ui_of(w)->root, &WINDOW_ROOT_OPS, NULL);
+    ui_widget_set_action_handler(&ui_of(w)->root, root_action, w);
     ui_menu_init(&ui_of(w)->menu);
     ui_menu_layer_init(&ui_of(w)->menu_layer, &ui_of(w)->menu);
     ui_widget_add_child(&ui_of(w)->root, ui_menu_layer_widget(&ui_of(w)->menu_layer));
