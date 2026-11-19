@@ -566,6 +566,20 @@ void ui_surface_cancel_capture(struct ui_surface *surface)
         send(captured, (struct ui_event){ .kind = UI_EVENT_CAPTURE_LOST });
 }
 
+/* Returns true when `widget` or an ancestor of it up to `subtree` is being
+ * destroyed. */
+static bool destroying(const struct ui_widget *widget,
+                       const struct ui_widget *subtree)
+{
+    for (const struct ui_widget *w = widget; w; w = w->parent) {
+        if (w->impl.destroyed)
+            return true;
+        if (w == subtree)
+            break;
+    }
+    return false;
+}
+
 void ui_surface_forget(struct ui_surface *surface, struct ui_widget *subtree)
 {
     drop_overlays_in(surface, subtree);
@@ -579,9 +593,19 @@ void ui_surface_forget(struct ui_surface *surface, struct ui_widget *subtree)
     }
     struct drop_hover *drag = &surface->impl.drop_hover;
     if (drag->target && ui_widget_is_ancestor(subtree, drag->target)) {
+        struct ui_widget *target = drag->target;
+        bool active = drag->active;
         drag->target = NULL;
         drag->active = false;
         drag->entered = false;
+        /* The drag mark clears as on a LEAVE. A subtree that a destroy
+         * forgets gets no event. */
+        if (active && !destroying(target, subtree)) {
+            struct ui_drag_event leave_drag = {0};
+            struct ui_event leave_event =
+                ui_event_drag(UI_EVENT_DRAG_LEAVE, &leave_drag, 0);
+            ui_widget_bubble_to(target, subtree, &leave_event);
+        }
     }
     if (drag->previous && ui_widget_is_ancestor(subtree, drag->previous))
         drag->previous = NULL;

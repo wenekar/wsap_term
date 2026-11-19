@@ -21,6 +21,8 @@
  *   Hover state from an earlier drag does not give it.
  * - Drop hover state clears on leave, drop, cancel, and widget or surface
  *   teardown.
+ * - A drag target that is hidden or detached during a drag gets one LEAVE.
+ *   A drag target that is destroyed gets no event.
  * - A menu popup takes no drop. A drop event on a popup ends the drag and
  *   reaches no widget.
  *
@@ -500,6 +502,131 @@ static void refused_release_ends_the_drag_test(void)
     teardown(&f);
 }
 
+/* Sets up `p` as a probe at `r` in the frame of the window. */
+static void probe_at(struct probe *p, struct rect2i r)
+{
+    *p = (struct probe){0};
+    ui_widget_init(&p->widget, &PROBE_OPS, p);
+    ui_widget_set_fixed_size(&p->widget, r.size);
+    ui_widget_set_placement(&p->widget, (struct ui_placement){
+        .kind = UI_PLACE_AT, .anchor.pos = r.pos,
+    });
+}
+
+/* Opens a window that shows `root`. */
+static struct window *open_tree(struct ui_widget *root)
+{
+    static const struct window_config config = { .size = { .x = 320, .y = 200 } };
+    window_host_init(&host, NULL, &config, NULL);
+    struct window *w = window_create(&host, &(struct window_spec){0});
+    assert(w);
+    assert(window_ui_mount(w, &(struct window_ui_spec){ .root = root }));
+    ui_surface_resize(window_ui_key_surface(w),
+                      (struct vector2i){ .x = 320, .y = 200 });
+    ui_surface_prepare(window_ui_key_surface(w));
+    return w;
+}
+
+static void close_tree(struct window *w)
+{
+    window_destroy(w);
+    window_host_registry_remove(&host);
+    free(host.windows);
+    host = (struct window_host){0};
+}
+
+/* Sends one native drop event to `w`, then routes what it queued. */
+static void drop_on(struct window *w, enum yasl_drop_action action,
+                    const char *mime, const char *data, struct vector2i pos)
+{
+    struct yasl_event e = {
+        .type = YASL_EVENT_DROP, .action = action, .x = pos.x, .y = pos.y,
+        .text = data, .length = data ? strlen(data) : 0,
+    };
+    if (mime)
+        snprintf(e.drop.mime, sizeof e.drop.mime, "%s", mime);
+    window_native_input(w, &e);
+    struct input_event ev;
+    while (input_queue_take(&w->input, &ev)) {
+        window_ui_route(w, &ev);
+        input_event_release(&ev);
+    }
+}
+
+/* 16. A modal closes during a drag over a widget in it. That widget gets
+ * one LEAVE, so its drop mark clears. The next OVER reaches the widget
+ * below, and the release routes as usual. */
+static void modal_closes_during_a_drag_test(void)
+{
+    struct ui_widget root;
+    struct probe base, modal, child;
+    ui_widget_init(&root, NULL, NULL);
+    probe_at(&base, (struct rect2i){ .size = { .x = 320, .y = 200 } });
+    probe_at(&modal, (struct rect2i){ .pos = { .x = 100, .y = 50 },
+                                      .size = { .x = 100, .y = 50 } });
+    probe_at(&child, (struct rect2i){ .size = { .x = 100, .y = 50 } });
+    assert(ui_widget_add_child(&root, &base.widget));
+    assert(ui_widget_add_child(&base.widget, &modal.widget));
+    assert(ui_widget_add_child(&modal.widget, &child.widget));
+    ui_widget_set_modal(&modal.widget, true);
+    struct window *w = open_tree(&root);
+    struct vector2i in = { .x = 150, .y = 70 };
+    struct vector2i off = { .x = 20, .y = 20 };
+
+    drop_on(w, YASL_DROP_OVER, "image/png", NULL, in);
+    assert(child.enter == 1);
+    ui_widget_set_hidden(&modal.widget, true);
+    assert(child.leave == 1);
+    ui_surface_prepare(window_ui_key_surface(w));
+    drop_on(w, YASL_DROP_OVER, "image/png", NULL, off);
+    assert(child.enter == 1 && child.leave == 1);
+    assert(base.enter == 1 && base.leave == 0);
+    drop_on(w, YASL_DROP_RELEASE, "image/png", "PNG", off);
+    assert(base.drop == 1 && base.leave == 1 && child.drop == 0);
+    assert(!ui_surface_drag_target(window_ui_key_surface(w)));
+
+    close_tree(w);
+    ui_widget_destroy(&child.widget);
+    ui_widget_destroy(&modal.widget);
+    ui_widget_destroy(&base.widget);
+    ui_widget_destroy(&root);
+}
+
+/* 17. The drag hovers a widget, and its parent is destroyed during the
+ * drag. The destroy sends no LEAVE to the widget, and the storage is freed
+ * at once. The next OVER, LEAVE, and release must not touch it. ASan
+ * reports a use after free. */
+static void hover_destroyed_during_a_drag_test(void)
+{
+    struct ui_widget root;
+    ui_widget_init(&root, NULL, NULL);
+    struct probe *box = calloc(1, sizeof *box);
+    struct probe *leaf = calloc(1, sizeof *leaf);
+    assert(box && leaf);
+    probe_at(box, (struct rect2i){ .size = { .x = 320, .y = 200 } });
+    probe_at(leaf, (struct rect2i){ .pos = { .x = 100, .y = 50 },
+                                    .size = { .x = 100, .y = 50 } });
+    assert(ui_widget_add_child(&root, &box->widget));
+    assert(ui_widget_add_child(&box->widget, &leaf->widget));
+    struct window *w = open_tree(&root);
+    struct vector2i in = { .x = 150, .y = 70 };
+
+    drop_on(w, YASL_DROP_OVER, "image/png", NULL, in);
+    assert(leaf->enter == 1);
+    ui_widget_destroy(&box->widget);
+    assert(leaf->leave == 0 && box->leave == 0);
+    free(leaf);
+    free(box);
+    assert(!ui_surface_drag_target(window_ui_key_surface(w)));
+    drop_on(w, YASL_DROP_OVER, "image/png", NULL, in);
+    drop_on(w, YASL_DROP_LEAVE, NULL, NULL, in);
+    drop_on(w, YASL_DROP_OVER, "image/png", NULL, in);
+    drop_on(w, YASL_DROP_RELEASE, "image/png", "PNG", in);
+
+    close_tree(w);
+    ui_widget_destroy(&root);
+}
+
 int main(void)
 {
     static void (*const cases[])(void) = {
@@ -518,6 +645,8 @@ int main(void)
         drop_on_a_popup_reaches_no_widget_test,
         file_drop_on_a_popup_ends_the_drag_test,
         refused_release_ends_the_drag_test,
+        modal_closes_during_a_drag_test,
+        hover_destroyed_during_a_drag_test,
     };
     /* CASE=n runs one case, so a run reports each failure. */
     const char *pick = getenv("CASE");
