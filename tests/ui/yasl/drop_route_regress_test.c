@@ -533,6 +533,7 @@ static void close_tree(struct window *w)
     window_destroy(w);
     window_host_registry_remove(&host);
     free(host.windows);
+    input_keymap_free(&host.keymap);
     host = (struct window_host){0};
 }
 
