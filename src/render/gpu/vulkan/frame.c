@@ -410,6 +410,15 @@ static bool uploads_stage(struct render_gpu *g, struct frame_slot *slot)
 /*
  * Records buffer-to-image copies and shader read barriers for dirty textures.
  * Returns false when it ran out of memory.
+ *
+ * The copies write textures that every frame samples: the glyph atlas and
+ * the UI images. The barrier below changes each one from shader read to
+ * transfer write. Its source scope covers the fragment reads of every
+ * earlier submission on this queue, because all frames go to one queue in
+ * submission order. A frame that is still in flight thus finishes its reads
+ * before these writes start. A texture that changes size waits for idle in
+ * vulkan_texture_ensure(). The upload buffer belongs to the frame slot,
+ * whose fence is signaled before the slot comes back.
  */
 static bool uploads_record(struct render_gpu *g, struct frame_slot *slot)
 {
