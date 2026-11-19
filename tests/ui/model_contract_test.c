@@ -849,6 +849,58 @@ static void view_list_and_menu_node_test(void)
     ui_view_destroy(view);
 }
 
+/* A view frees the items of an open menu node when an update removes the
+ * node, and when the view is destroyed. Leak detection is the check. */
+static void view_menu_node_frees_its_items_test(void)
+{
+    const ui_menu_item items[] = {
+        { .label = "Open", .action = 10 },
+        { .label = "Quit", .action = 11 },
+    };
+    struct ui_menu *menu = NULL;
+    struct ui_node_desc child = {
+        .kind = UI_NODE_MENU, .key = "commands", .bind.menu = &menu,
+        .props.menu = { .items = items, .count = 2 },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root",
+        .children = &child, .child_count = 1,
+    };
+    struct ui_node_desc empty = { .kind = UI_NODE_COLUMN, .key = "root" };
+
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view && menu && ui_menu_is_open(menu));
+    assert(ui_view_update(view, &empty));
+    assert(menu == NULL);
+    assert(ui_view_update(view, &root));
+    assert(menu && ui_menu_is_open(menu));
+    ui_view_destroy(view);
+    assert(menu == NULL);
+}
+
+/* An update with no list items empties the list. */
+static void view_list_update_to_empty_test(void)
+{
+    const struct ui_list_item items[] = {
+        { .label = "One", .action = 1 },
+        { .label = "Two", .action = 2 },
+    };
+    struct ui_list *list = NULL;
+    struct ui_node_desc root = {
+        .kind = UI_NODE_LIST, .key = "choices", .bind.list = &list,
+        .props.list = { .items = items, .count = 2 },
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view && list && ui_list_count(list) == 2);
+
+    root.props.list.items = NULL;
+    root.props.list.count = 0;
+    assert(ui_view_update(view, &root));
+    assert(ui_list_count(list) == 0);
+    assert(ui_list_item(list, 0) == NULL);
+    ui_view_destroy(view);
+}
+
 int main(void)
 {
     view_diagnostic_test();
@@ -863,6 +915,8 @@ int main(void)
     view_update_from_a_handler_test();
     view_observer_clears_a_destroyed_widget_test();
     view_list_and_menu_node_test();
+    view_menu_node_frees_its_items_test();
+    view_list_update_to_empty_test();
     view_root_keyboard_test();
     hidden_child_takes_no_space_or_input_test();
     hidden_modal_restores_focus_test();
