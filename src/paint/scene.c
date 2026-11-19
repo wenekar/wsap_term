@@ -869,8 +869,6 @@ struct rect2i ui_scene_text_ink(const struct ui_scene *s,
 
 static bool op_visible(const struct ui_scene_op *op)
 {
-    if (op->kind == UI_SCENE_OP_IMAGE)
-        return op->image.src != NULL && op->alpha > 0;
     return ui_scene_op_draws(op);
 }
 
@@ -883,6 +881,10 @@ bool ui_scene_op_draws(const struct ui_scene_op *op)
     case UI_SCENE_OP_BLEND_RECT:
     case UI_SCENE_OP_CIRCLE:
         return op->alpha > 0;
+    case UI_SCENE_OP_IMAGE:
+        /* ui_scene_image() sets the tint to 0. The image draws by its source
+         * and its opacity, not by its colour. */
+        return op->image.src != NULL && op->alpha > 0;
     case UI_SCENE_OP_RECT:
         if (ui_scene_op_has_geom(op))
             return true;
