@@ -778,6 +778,15 @@ void window_clear_scope(struct window *w, uint8_t scope)
         input_keymap_clear_scope(&w->keymap, scope);
 }
 
+void window_host_release_scope(struct window_host *host, uint8_t scope)
+{
+    if (scope == INPUT_COMMAND_SCOPE_APP || scope >= INPUT_COMMAND_SCOPE_COUNT)
+        return;
+    for (int i = 0; host && i < host->count; i++)
+        input_keymap_clear_scope(&host->windows[i]->keymap, scope);
+    input_command_scope_release(scope);
+}
+
 void window_copy(struct window *w, enum yasl_selection sel, const char *text)
 {
     (void)w;

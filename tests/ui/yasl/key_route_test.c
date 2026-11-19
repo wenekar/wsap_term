@@ -21,8 +21,8 @@
  * A widget with no scope keeps the app binding.
  */
 
-#define SCOPE_A 2
-#define SCOPE_B 3
+/* The two scopes of the fixture. Each fixture takes them and releases them. */
+static uint8_t SCOPE_A, SCOPE_B;
 
 struct probe {
     struct ui_widget widget;
@@ -88,6 +88,9 @@ struct fixture {
 static void show(struct fixture *f)
 {
     *f = (struct fixture){0};
+    SCOPE_A = input_command_scope_new();
+    SCOPE_B = input_command_scope_new();
+    assert(SCOPE_A && SCOPE_B);
     /* The host borrows the config, so it must outlive the host. */
     static const struct window_config config = { .size = { .x = 320, .y = 200 } };
     window_host_init(&host, NULL, &config, NULL);
@@ -140,6 +143,8 @@ static void teardown(struct fixture *f)
     ui_widget_destroy(&f->root);
     input_command_registry_free(&f->reg_a);
     input_command_registry_free(&f->reg_b);
+    input_command_scope_release(SCOPE_A);
+    input_command_scope_release(SCOPE_B);
 }
 
 static void focus(struct fixture *f, struct probe *p)
@@ -331,16 +336,13 @@ static void scoped_text_chord_test(void)
 {
     struct fixture f;
     show(&f);
-    struct input_command_registry reg;
-    input_command_registry_init(&reg);
-    input_command_id id = input_command_add(&reg, SCOPE_A, "probe_a8", "A8");
-    assert(input_keymap_apply_spec_registry(&f.window->keymap, &reg, SCOPE_A,
+    input_command_id id = input_command_add(&f.reg_a, SCOPE_A, "probe_a8", "A8");
+    assert(input_keymap_apply_spec_registry(&f.window->keymap, &f.reg_a, SCOPE_A,
                                             "alt+8 = probe_a8"));
     focus(&f, &f.a);
     alt_text_key(&f, YASL_KEY_8, '8', "[");
     assert(f.a.shortcuts == 1 && f.a.last_action == (int)id);
     assert(f.a.texts == 0);
-    input_command_registry_free(&reg);
     teardown(&f);
 }
 
@@ -430,6 +432,52 @@ static void public_scope_workflow_test(void)
     teardown(&f);
 }
 
+/* The release path drops the chords of a scope in every window. A later
+ * owner of the same scope gets none of the old chords. */
+static void release_scope_test(void)
+{
+    struct fixture f;
+    show(&f);
+    int action = 0;
+    struct window *two = window_create(&host, &(struct window_spec){0});
+    assert(two);
+    uint8_t scope = input_command_scope_new();
+    assert(scope != INPUT_COMMAND_SCOPE_APP);
+    struct input_command_registry reg;
+    input_command_registry_init(&reg);
+    input_command_id old = input_command_add(&reg, scope, "probe_old", "Old");
+    assert(old != INPUT_COMMAND_NONE);
+    assert(window_bind_scope(f.window, &reg, scope, "ctrl+k = probe_old"));
+    assert(window_bind_scope(two, &reg, scope, "ctrl+k = probe_old"));
+    f.plain.widget.command_scope = scope;
+    focus(&f, &f.plain);
+    press(&f, 'k');
+    assert(take_shortcut(&f, &action) && action == old);
+
+    input_command_registry_free(&reg);
+    window_host_release_scope(&host, scope);
+    struct input_key_event ctrl_k = { .codepoint = 'k', .mods = INPUT_MOD_CTRL };
+    assert(input_keymap_lookup_scoped(window_keymap(two), &ctrl_k, scope) ==
+           INPUT_COMMAND_NONE);
+
+    /* A new owner takes the scope and adds a command. The old chord does
+     * not run it. */
+    uint8_t again = input_command_scope_new();
+    assert(again != INPUT_COMMAND_SCOPE_APP);
+    struct input_command_registry next;
+    input_command_registry_init(&next);
+    assert(input_command_add(&next, again, "probe_next", "Next") !=
+           INPUT_COMMAND_NONE);
+    f.plain.widget.command_scope = again;
+    press(&f, 'k');
+    assert(!take_shortcut(&f, &action));
+
+    input_command_registry_free(&next);
+    window_host_release_scope(&host, again);
+    window_destroy(two);
+    teardown(&f);
+}
+
 int main(void)
 {
     two_scopes_test();
@@ -441,5 +489,6 @@ int main(void)
     scoped_text_chord_test();
     taken_bound_key_keeps_text_test();
     public_scope_workflow_test();
+    release_scope_test();
     return 0;
 }

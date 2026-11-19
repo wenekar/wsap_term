@@ -16,6 +16,7 @@ struct ui_surface;
 struct ui_scene;
 struct ui_widget;
 struct window;
+struct window_host;
 struct window_ui;
 struct window_frame;
 struct yasl_surface;
@@ -98,5 +99,14 @@ bool window_bind_scope(struct window *w,
  * The call ignores the app scope.
  */
 void window_clear_scope(struct window *w, uint8_t scope);
+
+/*
+ * Releases widget scope `scope`. The call drops the bindings of the scope in
+ * every window of `host`, and then it calls `input_command_scope_release()`.
+ * The widget owner calls this once when it is destroyed, after it frees its
+ * registry. A later owner of the scope then gets none of its chords.
+ * The call ignores the app scope.
+ */
+void window_host_release_scope(struct window_host *host, uint8_t scope);
 
 #endif
