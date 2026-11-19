@@ -58,24 +58,32 @@ struct terminal_view {
 
     /* The byte offset of each logical history line in the accessibility
      * document, its byte length, and the history rows that it covers. The
-     * provider reads a range from the document and keeps no text. */
+     * provider reads a range from the document and keeps no text. The index
+     * lines are [line_first, line_count) of the store. When old lines leave
+     * the history, line_first and the origins move, and the other entries
+     * stay. An entry offset or row minus its origin gives the value in the
+     * current document. */
     struct terminal_text_line {
         size_t offset;
         size_t bytes;
         size_t row;
         size_t rows;
     } *accessibility_lines;
+    size_t accessibility_line_first;
     size_t accessibility_line_count;
     size_t accessibility_line_capacity;
+    size_t accessibility_offset_origin;
+    size_t accessibility_row_origin;
     /* The byte length of the history part, the history rows and the first
-     * line that it covers, its generation, width, and whether its last line
-     * continues into the screen. That open line keeps its trailing blanks in
-     * the index. open_blanks counts them: they drop when the rows below hold
-     * no text. */
+     * line that it covers, its generation, epoch, and width, and whether its
+     * last line continues into the screen. That open line keeps its trailing
+     * blanks in the index. open_blanks counts them: they drop when the rows
+     * below hold no text. */
     size_t accessibility_history_length;
     size_t accessibility_open_blanks;
     size_t accessibility_rows;
     uint64_t accessibility_generation;
+    uint64_t accessibility_epoch;
     uint64_t accessibility_first_line;
     int accessibility_cols;
     bool accessibility_open_line;

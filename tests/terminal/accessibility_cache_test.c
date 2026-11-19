@@ -134,6 +134,67 @@ static void cost(void)
     test_app_fini(&app);
 }
 
+static char *read_consistent(const struct ui_accessibility_node *node);
+
+static int compare_ms(const void *a, const void *b)
+{
+    double x = *(const double *)a, y = *(const double *)b;
+    return x < y ? -1 : x > y;
+}
+
+/* The cost of one new line at a full scrollback ring. Each new line evicts
+ * the oldest line. The provider lock must then drop that line from the
+ * index and add the new one, at a cost that does not grow with the history.
+ * A rebuild of the index reads the whole history, as a whole read does. The
+ * test compares the two in one process, so load and sanitizers change both
+ * alike. */
+static void full_ring_cost(void)
+{
+    struct test_app app;
+    test_app_init(&app, "sleep 60", (struct vector2i){ .x = 800, .y = 600 });
+    struct window *w = test_terminal_window(app.app);
+    assert(w && app_tabs_new(w));
+    struct terminal *content = app_tabs_active(w);
+    assert(content);
+    struct wsap_vtcore *term = terminal_session(content)->term;
+    assert(wsap_vtcore_set_scrollback_limit(term, 20000));
+    struct ui_accessibility_tree tree = {0};
+
+    feed(term, "\x1b[H\x1b[2J\x1b[3J");
+    feed_lines(term, 0, 21999);
+    const struct ui_accessibility_node *node = build_node(content, &tree);
+    const struct ui_accessibility_text_provider *text = node->text;
+    double whole_ms = 0, runs_ms = 0, run_avg_ms = 0;
+    publish_read(node, &whole_ms, &runs_ms, &run_avg_ms);
+
+    enum { REPS = 9 };
+    double lock_ms[REPS];
+    for (int i = 0; i < REPS; i++) {
+        feed_lines(term, 22000 + i, 22000 + i);
+        struct timespec start;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        text->lock(text->instance);
+        text->unlock(text->instance);
+        lock_ms[i] = elapsed_ms(&start);
+    }
+    qsort(lock_ms, REPS, sizeof(lock_ms[0]), compare_ms);
+    double lock_median = lock_ms[REPS / 2];
+
+    /* The document still holds the newest line. */
+    char *document = read_consistent(node);
+    assert(strstr(document, "cost 022008\n"));
+    assert(!strstr(document, "cost 000000"));
+    free(document);
+    printf("full ring of 20000 lines: lock after one new line %.3f ms "
+           "(median of %d), whole read %.1f ms\n", lock_median, REPS,
+           whole_ms);
+    fflush(stdout);
+    assert(lock_median < 0.05 * whole_ms);
+
+    ui_accessibility_tree_destroy(&tree);
+    test_app_fini(&app);
+}
+
 /* Adds one read of each shape under one lock and checks that all of them
  * return the same bytes. */
 static char *read_consistent(const struct ui_accessibility_node *node)
@@ -366,6 +427,7 @@ static void text_interval(void)
 int main(void)
 {
     cost();
+    full_ring_cost();
     lifetime();
     second_thread();
     same_thread_change();

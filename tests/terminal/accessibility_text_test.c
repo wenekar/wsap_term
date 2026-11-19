@@ -137,6 +137,23 @@ static void expect_document(struct fixture *f, const char *label)
     free(document);
 }
 
+/* The document must be the end of the fed text, from the start of a line:
+ * the oldest lines left the history. */
+static void expect_document_suffix(struct fixture *f, const char *label)
+{
+    size_t len = 0;
+    char *document = read_document(f, &len);
+    size_t start = f->expect_len - (len <= f->expect_len ? len : 0);
+    bool same = len <= f->expect_len &&
+                !memcmp(document, f->expect + start, len) &&
+                (start == 0 || f->expect[start - 1] == '\n');
+    printf("%s: document %zu bytes, the last %zu of %zu fed bytes%s\n", label,
+           len, len, f->expect_len, same ? "" : ": DIFFERENT");
+    fflush(stdout);
+    assert(same);
+    free(document);
+}
+
 /* A line continues from the last history row into the first view row. The
  * last column of the history row holds a blank, which separates two words. */
 static void blank_at_history_edge(void)
@@ -295,10 +312,56 @@ static void document_ignores_the_view_offset(void)
     fixture_fini(&f);
 }
 
+/* A full scrollback ring evicts the oldest line for each new line. The
+ * document drops the lines that left and keeps the rest. */
+static void eviction_keeps_the_document(void)
+{
+    struct fixture f;
+    fixture_init(&f, 80, 24);
+    assert(wsap_vtcore_set_scrollback_limit(f.term, 200));
+    uint64_t state = UINT64_C(0x4d) * UINT64_C(0x9e3779b97f4a7c15) + 1;
+    feed_wide_lines(&f, &state, 600, 120);
+    expect_document_suffix(&f, "full ring");
+    /* One line at a time, so the index drops many lines from its front. */
+    for (int i = 0; i < 300; i++) {
+        feed_wide_lines(&f, &state, 1, 30);
+        if (i % 25 == 0)
+            expect_document_suffix(&f, "one more line");
+        else
+            free(read_document(&f, &(size_t){0}));
+    }
+    feed_wide_lines(&f, &state, 77, 120);
+    expect_document_suffix(&f, "77 lines evicted between reads");
+    assert(wsap_vtcore_resize(f.term, (struct wsap_vtcore_vector2i){ .x = 61, .y = 24 }));
+    expect_document_suffix(&f, "full ring, rewrap to 61");
+    feed_wide_lines(&f, &state, 5, 120);
+    expect_document_suffix(&f, "full ring after the rewrap, 5 more");
+    /* A taller screen takes lines back from the history. New lines then
+     * push them out again. */
+    assert(wsap_vtcore_resize(f.term, (struct wsap_vtcore_vector2i){ .x = 61, .y = 34 }));
+    expect_document_suffix(&f, "taller screen");
+    feed_wide_lines(&f, &state, 40, 60);
+    expect_document_suffix(&f, "taller screen, 40 more");
+    /* A long line that wraps over the last history row. */
+    char line[512];
+    memset(line, 'w', 150);
+    feed(&f, line, 150);
+    expect_line(&f, line, 150);
+    f.expect[--f.expect_len] = '\0';
+    expect_document_suffix(&f, "open line at a full ring");
+    feed(&f, "\r\n", 2);
+    f.expect[f.expect_len++] = '\n';
+    f.expect[f.expect_len] = '\0';
+    feed_wide_lines(&f, &state, 3, 10);
+    expect_document_suffix(&f, "open line closed");
+    fixture_fini(&f);
+}
+
 int main(void)
 {
     blank_at_history_edge();
     text_does_not_depend_on_width();
     document_ignores_the_view_offset();
+    eviction_keeps_the_document();
     return 0;
 }

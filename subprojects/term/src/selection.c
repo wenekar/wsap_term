@@ -972,6 +972,28 @@ uint64_t wsap_vtcore_history_generation(struct wsap_vtcore *t)
     return generation;
 }
 
+uint64_t wsap_vtcore_history_epoch(struct wsap_vtcore *t)
+{
+    if (!t)
+        return 0;
+    wsap_vtcore_write_begin(t);
+    /* The index epoch changes on a clear, on a line taken back to the
+     * screen, and on a cut of the first or the open line. A new line, the
+     * growth of the open line, and an eviction of whole lines keep it. */
+    bool alternate = t->alternate;
+    if (t->hist.index_epoch != t->history_epoch_index ||
+        t->cols != t->history_epoch_cols ||
+        alternate != t->history_epoch_alternate || !t->history_epoch) {
+        t->history_epoch_index = t->hist.index_epoch;
+        t->history_epoch_cols = t->cols;
+        t->history_epoch_alternate = alternate;
+        t->history_epoch++;
+    }
+    uint64_t epoch = t->history_epoch;
+    wsap_vtcore_write_end(t);
+    return epoch;
+}
+
 uint64_t wsap_vtcore_history_first_line(const struct wsap_vtcore *t)
 {
     if (!t)

@@ -477,8 +477,18 @@ WSAP_VTCORE_API char *wsap_vtcore_history_text(struct wsap_vtcore *t, int max_ro
  * eviction, a clear, a rewrap, or a switch to or from the alternate screen.
  * The counter increases. A NULL terminal gives zero. */
 WSAP_VTCORE_API uint64_t wsap_vtcore_history_generation(struct wsap_vtcore *t);
+/* Return a counter that changes when the history changes in a way that new
+ * lines cannot explain: a clear, a line taken back to the screen, a cut
+ * line, a rewrap, or a switch to or from the alternate screen. A new line,
+ * the growth of the last line, and the eviction of whole lines keep it.
+ * While the epoch stays the same, only the oldest lines leave, and the other
+ * lines keep their ids and their text. A reader can then drop the lines that
+ * left from an index and add the new ones. The counter increases. A NULL
+ * terminal gives zero. */
+WSAP_VTCORE_API uint64_t wsap_vtcore_history_epoch(struct wsap_vtcore *t);
 /* Return the id of the oldest history line, or zero when the history is empty.
- * The id changes when a line leaves the history. */
+ * The id changes when a line leaves the history. The ids of the lines are
+ * consecutive, so the id grows by the count of the lines that left. */
 WSAP_VTCORE_API uint64_t wsap_vtcore_history_first_line(const struct wsap_vtcore *t);
 /* Return the text of history rows [first_row, first_row + row_count). Row zero
  * is the oldest history row. The view offset does not change the row count.

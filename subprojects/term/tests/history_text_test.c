@@ -461,12 +461,57 @@ static void wrapped_range_keeps_tail(void)
     wsap_vtcore_free(term);
 }
 
+/* The epoch stays while lines arrive and the oldest lines leave. Then the
+ * first line ID grows by the count of the lines that left. A clear, a line
+ * taken back to the screen, a rewrap, and the alternate screen change it. */
+static void history_epoch_follows_rewrites(void)
+{
+    struct wsap_vtcore *term = wsap_vtcore_new(&(struct wsap_vtcore_options){
+        .size = { .x = 10, .y = 4 },
+        .scrollback = 20,
+    });
+    assert(term);
+    feed(term, "a\r\nb\r\nc\r\nd\r\ne\r\n");
+    uint64_t epoch = wsap_vtcore_history_epoch(term);
+    assert(epoch);
+    assert(wsap_vtcore_history_epoch(term) == epoch);
+    for (int i = 0; i < 30; i++)
+        feed(term, "line\r\n");
+    assert(wsap_vtcore_history_epoch(term) == epoch);
+    uint64_t first = wsap_vtcore_history_first_line(term);
+    feed(term, "one\r\ntwo\r\nthree\r\n");
+    assert(wsap_vtcore_history_epoch(term) == epoch);
+    assert(wsap_vtcore_history_first_line(term) == first + 3);
+    /* A long line grows while it wraps into the screen. */
+    feed(term, "0123456789012345678901234567890123456789");
+    assert(wsap_vtcore_history_epoch(term) == epoch);
+    feed(term, "\r\n");
+
+    assert(wsap_vtcore_resize(term, (struct wsap_vtcore_vector2i){ .x = 10, .y = 8 }));
+    uint64_t taller = wsap_vtcore_history_epoch(term);
+    assert(taller != epoch);
+    assert(wsap_vtcore_resize(term, (struct wsap_vtcore_vector2i){ .x = 7, .y = 8 }));
+    uint64_t narrow = wsap_vtcore_history_epoch(term);
+    assert(narrow != taller);
+    feed(term, "\x1b[?1049h");
+    uint64_t alternate = wsap_vtcore_history_epoch(term);
+    assert(alternate != narrow);
+    feed(term, "\x1b[?1049l");
+    uint64_t primary = wsap_vtcore_history_epoch(term);
+    assert(primary != alternate);
+    feed(term, "\x1b[3J");
+    assert(wsap_vtcore_history_epoch(term) != primary);
+    assert(wsap_vtcore_history_epoch(NULL) == 0);
+    wsap_vtcore_free(term);
+}
+
 int main(void)
 {
     unicode_and_selection();
     limits_and_scrolled_view();
     wrapped_rows();
     wrapped_range_keeps_tail();
+    history_epoch_follows_rewrites();
     scrollback_limit();
     scrollback_zero_option();
     scrollback_small_option();

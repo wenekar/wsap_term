@@ -265,6 +265,7 @@ void terminal_set_window(struct terminal *t, struct window *window)
         yasl_surface_set_text_input(window_surface(old),
                                     &(struct yasl_text_input){0});
     /* The document rows belong to the old window. */
+    t->view.accessibility_line_first = 0;
     t->view.accessibility_line_count = 0;
     t->view.accessibility_history_length = 0;
     t->view.accessibility_rows = 0;
