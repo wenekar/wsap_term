@@ -106,13 +106,16 @@ struct ui_node_desc {
             void *submenu_userdata;
             uint32_t hover_delay_ms;
         } menu;
-        /* Supply an initialized, detached widget or subtree. An update can
-         * supply a widget that the view already holds, also when the view
-         * shows it. The widget can move to another parent node.
-         * On success, the view destroys its widget resources.
-         * Keep its enclosing storage alive until view destruction.
-         * On failure, the caller retains the detached widget.
-         * Descriptor children are added after existing widget children.
+        /* Supply an initialized widget or subtree. It must be detached, or
+         * this view must already hold it. A held widget can move to another
+         * parent node or become the view root, also when the view shows it.
+         * A successful mount or update adopts the widget. The view destroys
+         * its widget resources when an update drops the node or when the
+         * view is destroyed. Keep the enclosing storage alive until then.
+         * A failed mount or update does not adopt the widget and does not
+         * destroy it, and the widget stays where it was.
+         * Descriptor children are added after the own children of the widget.
+         * The own children count against the child limit of the widget.
          * Unset style fields and handlers preserve the widget values.
          * Set these descriptor fields to replace them. */
         struct ui_widget *widget;
@@ -156,19 +159,26 @@ struct ui_view *ui_view_mount(const struct ui_node_desc *root,
  * - A node without a key matches the node at the same child index.
  * The kind must be the same. A matched widget keeps its focus, its hover, and
  * its control state, and it takes the new text and the new style identity.
+ * A widget that moves to another parent loses its focus and its hover.
  * A node without a match gets a new widget. A mounted node without a match
  * loses its widget. The children follow the descriptor order.
  *
  * A supplied widget node keeps its widget only when the descriptor supplies
- * the same widget. A different widget replaces it.
+ * the same widget. A different widget replaces it. A held supplied widget
+ * that the descriptor puts under another parent moves there and stays alive.
  *
- * A failed update leaves the view as it was. The update checks the
- * descriptor tree and the placement before it changes a matched widget. After
- * that, only a lack of memory makes it fail. Then a matched widget can hold
- * some of the new properties, and the view stays valid. The view frees the
- * storage of a removed node after the surface is idle, so a handler can call
- * this function. The call fails while the surface is busy only when memory is
- * short.
+ * The child limit of a container counts the children that the descriptor
+ * gives it and the own children of a supplied widget. A child that leaves the
+ * container or that the update drops does not count.
+ *
+ * A failed update leaves the view as it was: the same widgets in the same
+ * places, the same bindings, and no widget destroyed. The update checks the
+ * descriptor tree, the new nodes, and the child limits before it changes a
+ * matched widget. After that, only a lack of memory makes it fail. Then a
+ * matched widget can hold some of the new properties, and the tree stays as it
+ * was. The view frees the storage of a removed node after the surface is idle,
+ * so a handler can call this function. The call fails while the surface is
+ * busy only when memory is short.
  *
  * An update can call a node handler, for example when it closes a menu. Such a
  * handler cannot update the view: the call fails with UI_VIEW_ERROR_BUSY. A

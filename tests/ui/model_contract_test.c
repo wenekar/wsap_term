@@ -1206,6 +1206,212 @@ static void view_update_keeps_a_supplied_widget_test(void)
     assert(destroyed == 1);
 }
 
+/* Supplied widgets that count their destroy calls. */
+struct supplied_set {
+    int destroyed[4];
+    struct supplied_control w[4];
+};
+
+static void supplied_set_init(struct supplied_set *set)
+{
+    for (int i = 0; i < 4; i++) {
+        set->destroyed[i] = 0;
+        set->w[i] = (struct supplied_control){ .destroyed = &set->destroyed[i] };
+        ui_widget_init(&set->w[i].widget, &SUPPLIED_CONTROL_OPS, NULL);
+    }
+}
+
+static int supplied_set_destroyed(const struct supplied_set *set)
+{
+    int total = 0;
+    for (int i = 0; i < 4; i++)
+        total += set->destroyed[i];
+    return total;
+}
+
+/* An update can rearrange the supplied widgets in any order. A failed
+ * update leaves them where they were, and destroys none of them. */
+static void view_update_rearranges_supplied_widgets_test(void)
+{
+    struct supplied_set set;
+    supplied_set_init(&set);
+    struct ui_widget *p = &set.w[0].widget;
+    struct ui_widget *c = &set.w[1].widget;
+    struct ui_widget *q = &set.w[2].widget;
+
+    /* Now root -> q -> p and root -> c. */
+    struct ui_node_desc p0 = { .kind = UI_NODE_WIDGET, .key = "p", .props.widget = p };
+    struct ui_node_desc k0[] = {
+        { .kind = UI_NODE_WIDGET, .key = "q", .props.widget = q,
+          .children = &p0, .child_count = 1 },
+        { .kind = UI_NODE_WIDGET, .key = "c", .props.widget = c },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .children = k0, .child_count = 2,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+    struct ui_widget *top = ui_view_root(view);
+    struct ui_surface surface;
+    show(&surface, top, (struct vector2i){ .x = 200, .y = 100 });
+
+    /* Then root -> p -> c -> n -> q, with a full container that fails. */
+    struct ui_node_desc q1 = { .kind = UI_NODE_WIDGET, .key = "q", .props.widget = q };
+    struct ui_node_desc n1 = {
+        .kind = UI_NODE_ROW, .key = "n", .children = &q1, .child_count = 1,
+    };
+    struct ui_node_desc c1 = {
+        .kind = UI_NODE_WIDGET, .key = "c", .props.widget = c,
+        .children = &n1, .child_count = 1,
+    };
+    struct ui_widget full = {0}, old_child = {0};
+    ui_widget_init(&full, &SINGLE_CHILD_OPS, NULL);
+    ui_widget_init(&old_child, NULL, NULL);
+    assert(ui_widget_add_child(&full, &old_child));
+    struct ui_node_desc inner = { .kind = UI_NODE_LABEL, .key = "inner" };
+    struct ui_node_desc k1[] = {
+        { .kind = UI_NODE_WIDGET, .key = "p", .props.widget = p,
+          .children = &c1, .child_count = 1 },
+        { .kind = UI_NODE_WIDGET, .key = "full", .props.widget = &full,
+          .children = &inner, .child_count = 1 },
+    };
+    struct ui_node_desc next = root;
+    next.children = k1;
+    next.child_count = 2;
+    assert(!ui_view_update(view, &next));
+    assert(q->parent == top && p->parent == q && c->parent == top);
+    assert(ui_widget_child_at(top, 0) == q && ui_widget_child_at(top, 1) == c);
+    assert(!full.parent);
+    assert(supplied_set_destroyed(&set) == 0);
+    ui_widget_destroy(&full);
+
+    /* Without the full container the same move succeeds. */
+    next.child_count = 1;
+    assert(ui_view_update(view, &next));
+    struct ui_widget *n = ui_view_widget(view, "n");
+    assert(p->parent == top && c->parent == p && n->parent == c &&
+           q->parent == n);
+    assert(supplied_set_destroyed(&set) == 0);
+
+    /* root -> w1 -> w2 -> w3 becomes root -> w3 -> w1 and root -> w2. */
+    struct ui_node_desc d3 = { .kind = UI_NODE_WIDGET, .key = "w3", .props.widget = q };
+    struct ui_node_desc d2 = {
+        .kind = UI_NODE_WIDGET, .key = "w2", .props.widget = c,
+        .children = &d3, .child_count = 1,
+    };
+    struct ui_node_desc d1 = {
+        .kind = UI_NODE_WIDGET, .key = "w1", .props.widget = p,
+        .children = &d2, .child_count = 1,
+    };
+    root = (struct ui_node_desc){
+        .kind = UI_NODE_COLUMN, .key = "root", .children = &d1, .child_count = 1,
+    };
+    assert(ui_view_update(view, &root));
+    assert(p->parent == top && c->parent == p && q->parent == c);
+    struct ui_node_desc e1 = { .kind = UI_NODE_WIDGET, .key = "w1", .props.widget = p };
+    struct ui_node_desc e[] = {
+        { .kind = UI_NODE_WIDGET, .key = "w3", .props.widget = q,
+          .children = &e1, .child_count = 1 },
+        { .kind = UI_NODE_WIDGET, .key = "w2", .props.widget = c },
+    };
+    root.children = e;
+    root.child_count = 2;
+    assert(ui_view_update(view, &root));
+    assert(q->parent == top && p->parent == q && c->parent == top);
+    assert(ui_widget_child_at(top, 0) == q && ui_widget_child_at(top, 1) == c);
+    assert(supplied_set_destroyed(&set) == 0);
+    ui_surface_prepare(&surface);
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+    assert(set.destroyed[0] == 1 && set.destroyed[1] == 1 &&
+           set.destroyed[2] == 1);
+    ui_widget_destroy(&set.w[3].widget);
+}
+
+/* A supplied widget that becomes the view root leaves its old parent, so
+ * the retired parent does not take it along. */
+static void view_update_makes_a_supplied_widget_the_root_test(void)
+{
+    int destroyed = 0;
+    struct supplied_control control = { .destroyed = &destroyed };
+    ui_widget_init(&control.widget, &SUPPLIED_CONTROL_OPS, NULL);
+    struct ui_node_desc w = {
+        .kind = UI_NODE_WIDGET, .key = "w", .props.widget = &control.widget,
+    };
+    struct ui_node_desc row = {
+        .kind = UI_NODE_ROW, .key = "c", .children = &w, .child_count = 1,
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .children = &row, .child_count = 1,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+
+    assert(ui_view_update(view, &w));
+    assert(ui_view_root(view) == &control.widget);
+    assert(!control.widget.parent);
+    assert(!destroyed);
+
+    assert(ui_view_update(view, &root));
+    assert(control.widget.parent == ui_view_widget(view, "c"));
+    assert(!destroyed);
+    ui_view_destroy(view);
+    assert(destroyed == 1);
+}
+
+/* The child limit counts the children that the update plans. A child that
+ * leaves or that the update retires does not count. */
+static void view_update_counts_only_planned_children_test(void)
+{
+    /* A supplied single-child container gives its child to the root and
+     * takes a new one. */
+    struct supplied_set set;
+    supplied_set_init(&set);
+    struct ui_widget box = {0};
+    ui_widget_init(&box, &SINGLE_CHILD_OPS, NULL);
+    struct ui_node_desc w = {
+        .kind = UI_NODE_WIDGET, .key = "w", .props.widget = &set.w[0].widget,
+    };
+    struct ui_node_desc k0[] = {
+        { .kind = UI_NODE_WIDGET, .key = "box", .props.widget = &box,
+          .children = &w, .child_count = 1 },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .children = k0, .child_count = 1,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+    struct ui_node_desc label = { .kind = UI_NODE_LABEL, .key = "label" };
+    struct ui_node_desc k1[] = {
+        { .kind = UI_NODE_WIDGET, .key = "box", .props.widget = &box,
+          .children = &label, .child_count = 1 },
+        w,
+    };
+    root.children = k1;
+    root.child_count = 2;
+    assert(ui_view_update(view, &root));
+    assert(set.w[0].widget.parent == ui_view_root(view));
+    assert(ui_widget_child_at(&box, 0) == ui_view_widget(view, "label"));
+    ui_view_destroy(view);
+    assert(set.destroyed[0] == 1);
+    for (int i = 1; i < 4; i++)
+        ui_widget_destroy(&set.w[i].widget);
+
+    /* A scrollview takes content of another kind. */
+    struct ui_node_desc a = { .kind = UI_NODE_LABEL, .props.label = { .text = "a" } };
+    struct ui_node_desc scroll = {
+        .kind = UI_NODE_SCROLLVIEW, .key = "sv", .children = &a, .child_count = 1,
+    };
+    view = ui_view_mount(&scroll, NULL);
+    assert(view);
+    struct ui_node_desc b = { .kind = UI_NODE_BUTTON, .key = "b",
+                              .props.button = { .text = "b" } };
+    scroll.children = &b;
+    assert(ui_view_update(view, &scroll));
+    assert(ui_view_widget(view, "b")->parent == ui_view_root(view));
+    ui_view_destroy(view);
+}
+
 int main(void)
 {
     view_diagnostic_test();
@@ -1227,6 +1433,9 @@ int main(void)
     view_destroy_from_an_update_test();
     view_update_keeps_an_open_menu_test();
     view_update_keeps_a_supplied_widget_test();
+    view_update_rearranges_supplied_widgets_test();
+    view_update_makes_a_supplied_widget_the_root_test();
+    view_update_counts_only_planned_children_test();
     view_root_keyboard_test();
     hidden_child_takes_no_space_or_input_test();
     hidden_modal_restores_focus_test();
