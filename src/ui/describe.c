@@ -28,6 +28,10 @@ struct ui_view_node {
     struct ui_widget *widget;
     /* The slots that the view wrote. It clears them when the node leaves. */
     struct ui_node_bindings bind;
+    /* The destroy observer that the caller set on a supplied widget. The
+     * view gives it back when it gives the widget back. */
+    void (*caller_observer)(struct ui_widget *widget, void *userdata);
+    void *caller_observer_userdata;
     enum ui_node_kind kind;
 };
 
@@ -37,7 +41,8 @@ struct ui_view {
     size_t capacity;
     struct ui_widget *root;
     bool committed;
-    /* The view destroys its own widgets, so it ignores its observer. */
+    /* The view destroys its widgets. Its observer only clears the node of
+     * each destroyed widget then. */
     bool destroying;
     /* An update runs. A handler that it calls cannot update the view, and a
      * destroy waits until the update ends. */
@@ -795,9 +800,11 @@ static void discard_nodes(const struct ui_view *view, struct ui_surface *surface
         if (!nodes[i].widget)
             continue;
         if (nodes[i].kind == UI_NODE_WIDGET) {
-            /* The caller gets the widget back without the view observer. */
+            /* The caller gets the widget back with its own observer. */
             if (!view_holds_widget(view, nodes[i].widget)) {
-                ui_widget_set_destroy_observer(nodes[i].widget, NULL, NULL);
+                ui_widget_set_destroy_observer(nodes[i].widget,
+                                               nodes[i].caller_observer,
+                                               nodes[i].caller_observer_userdata);
                 if (nodes[i].widget->parent)
                     ui_widget_remove_child(nodes[i].widget->parent,
                                            nodes[i].widget);
@@ -841,8 +848,16 @@ static void forget_logged_widget(struct place_log *log,
 static void view_widget_destroyed(struct ui_widget *widget, void *userdata)
 {
     struct ui_view *view = userdata;
-    if (!view || view->destroying)
+    if (!view)
         return;
+    if (view->destroying) {
+        /* A destroy hook of one widget can destroy and free another one
+         * that the view holds. The destroy loop then skips that node. */
+        for (size_t i = 0; i < view->count; i++)
+            if (view->nodes[i].widget == widget)
+                view->nodes[i].widget = NULL;
+        return;
+    }
     if (view->root == widget)
         view->root = NULL;
     for (size_t i = 0; i < view->count; i++) {
@@ -856,6 +871,20 @@ static void view_widget_destroyed(struct ui_widget *widget, void *userdata)
             view->pending[i].widget = NULL;
     if (view->pending_log)
         forget_logged_widget(view->pending_log, widget);
+}
+
+/* Sets the view observer on the widget of a new node. It keeps the observer
+ * that the caller set on a supplied widget. */
+static void observe_new_widget(struct ui_view *view, struct ui_view_node *node)
+{
+    struct ui_widget *widget = node->widget;
+    if (node->kind == UI_NODE_WIDGET &&
+        !(widget->impl.destroy_observer == view_widget_destroyed &&
+          widget->impl.destroy_observer_userdata == view)) {
+        node->caller_observer = widget->impl.destroy_observer;
+        node->caller_observer_userdata = widget->impl.destroy_observer_userdata;
+    }
+    ui_widget_set_destroy_observer(widget, view_widget_destroyed, view);
 }
 
 static void observe_widgets(struct ui_view *view)
@@ -898,8 +927,11 @@ void ui_view_destroy(struct ui_view *view)
     if (!view->committed) {
         for (size_t i = 0; i < view->count; i++) {
             struct ui_view_node *node = &view->nodes[i];
-            if (node->kind == UI_NODE_WIDGET && node->widget &&
-                node->widget->parent)
+            if (node->kind != UI_NODE_WIDGET || !node->widget)
+                continue;
+            ui_widget_set_destroy_observer(node->widget, node->caller_observer,
+                                           node->caller_observer_userdata);
+            if (node->widget->parent)
                 ui_widget_remove_child(node->widget->parent, node->widget);
         }
     }
@@ -1082,11 +1114,13 @@ static bool placement_ok(const struct ui_view *view,
 
 /* One change that place_nodes made to the tree, and how to undo it. With
  * `remove` set, the undo removes `child` from its parent. Otherwise it puts
- * `child` back in `parent` before `before`. */
+ * `child` back in `parent` at child index `index`. The step keeps an index
+ * and not a sibling, because a handler can free a sibling that the caller
+ * owns. */
 struct place_step {
     struct ui_widget *child;
     struct ui_widget *parent;
-    struct ui_widget *before;
+    size_t index;
     bool remove;
 };
 
@@ -1095,16 +1129,25 @@ struct place_log {
     size_t count;
 };
 
+/* The index of `child` among the children of its parent. */
+static size_t child_index(const struct ui_widget *child)
+{
+    size_t index = 0;
+    for (const struct ui_widget *c = child->prev_sibling; c; c = c->prev_sibling)
+        index++;
+    return index;
+}
+
 static void detach_logged(struct place_log *log, struct ui_widget *child)
 {
     log->steps[log->count++] = (struct place_step){
-        .child = child, .parent = child->parent, .before = child->next_sibling,
+        .child = child, .parent = child->parent, .index = child_index(child),
     };
     ui_widget_remove_child(child->parent, child);
 }
 
-/* Undoes the steps in reverse order, so each widget goes back to its old
- * parent at its old index. */
+/* Drops the steps that move `widget` or that put a widget in it. Call it
+ * when a handler destroys `widget`. */
 static void forget_logged_widget(struct place_log *log,
                                  const struct ui_widget *widget)
 {
@@ -1112,11 +1155,25 @@ static void forget_logged_widget(struct place_log *log,
         struct place_step *step = &log->steps[i];
         if (step->child == widget || step->parent == widget)
             step->child = NULL;
-        if (step->before == widget)
-            step->before = NULL;
     }
 }
 
+/* The child of `parent` at `index`, when `child` does not count, or NULL
+ * past the last child. */
+static struct ui_widget *sibling_at(struct ui_widget *parent,
+                                    const struct ui_widget *child, size_t index)
+{
+    for (struct ui_widget *c = parent->first_child; c; c = c->next_sibling) {
+        if (c == child)
+            continue;
+        if (!index--)
+            return c;
+    }
+    return NULL;
+}
+
+/* Undoes the steps in reverse order, so each widget goes back to its old
+ * parent at its old index. */
 static void undo_placement(struct place_log *log)
 {
     while (log->count) {
@@ -1128,7 +1185,11 @@ static void undo_placement(struct place_log *log)
             if (step->child->parent)
                 ui_widget_remove_child(step->child->parent, step->child);
         } else {
-            ui_widget_insert_child(step->parent, step->child, step->before);
+            /* A handler can remove children, so an index past the end puts
+             * the child last. */
+            ui_widget_insert_child(step->parent, step->child,
+                                   sibling_at(step->parent, step->child,
+                                              step->index));
         }
     }
 }
@@ -1172,7 +1233,7 @@ static bool place_nodes(const struct ui_view *view, struct ui_view_node *nodes,
         if (child->parent == parent_widget)
             step = (struct place_step){
                 .child = child, .parent = parent_widget,
-                .before = child->next_sibling,
+                .index = child_index(child),
             };
         if (!ui_widget_insert_child(parent_widget, child, before[parent]))
             goto undo;
@@ -1301,8 +1362,7 @@ static bool view_update(struct ui_view *view, const struct ui_node_desc *root,
             next[i].parent = plan[i].parent;
             if (!node_init(&next[i], &error))
                 goto fail;
-            ui_widget_set_destroy_observer(next[i].widget,
-                                           view_widget_destroyed, view);
+            observe_new_widget(view, &next[i]);
             continue;
         }
         next[i] = view->nodes[match[i]];

@@ -1754,6 +1754,206 @@ static void view_update_forgets_a_supplied_widget_that_a_handler_frees_test(void
     assert(destroyed == 1);
 }
 
+/* A widget that runs a hook when it loses the focus. */
+struct focus_out_hook {
+    struct ui_widget widget;
+    void (*fn)(struct focus_out_hook *hook);
+    struct ui_widget *victim;
+    struct ui_widget *container;
+    struct ui_widget *child;
+};
+
+static bool focus_out_hook_event(struct ui_widget *widget,
+                                 const struct ui_event *event)
+{
+    struct focus_out_hook *hook =
+        ui_container_of(widget, struct focus_out_hook, widget);
+    if (event->kind == UI_EVENT_FOCUS_OUT && hook->fn) {
+        void (*fn)(struct focus_out_hook *) = hook->fn;
+        hook->fn = NULL;
+        fn(hook);
+    }
+    return true;
+}
+
+static const struct ui_widget_ops FOCUS_OUT_HOOK_OPS = {
+    .name = "focus-out-hook",
+    .event = focus_out_hook_event,
+};
+
+/* Frees a widget of the caller, and fills a container so that the update
+ * fails. */
+static void free_victim_and_fill(struct focus_out_hook *hook)
+{
+    ui_widget_destroy(hook->victim);
+    free(hook->victim);
+    hook->victim = NULL;
+    assert(ui_widget_add_child(hook->container, hook->child));
+}
+
+/* The FOCUS_OUT of a dropped widget frees the next sibling, which the caller
+ * owns, and makes the update fail. The rollback puts the widget back at its
+ * old index. */
+static void view_rollback_survives_a_freed_foreign_sibling_test(void)
+{
+    struct focus_out_hook x = {0};
+    ui_widget_init(&x.widget, &FOCUS_OUT_HOOK_OPS, NULL);
+    ui_widget_set_focusable(&x.widget, true);
+    struct ui_widget owner = {0}, box = {0}, before = {0}, filler = {0};
+    ui_widget_init(&owner, NULL, NULL);
+    ui_widget_init(&box, &SINGLE_CHILD_OPS, NULL);
+    ui_widget_init(&before, NULL, NULL);
+    ui_widget_init(&filler, NULL, NULL);
+    struct ui_node_desc xd = {
+        .kind = UI_NODE_WIDGET, .key = "x", .props.widget = &x.widget,
+    };
+    struct ui_node_desc kids[] = {
+        { .kind = UI_NODE_WIDGET, .key = "owner", .props.widget = &owner,
+          .children = &xd, .child_count = 1 },
+        { .kind = UI_NODE_WIDGET, .key = "box", .props.widget = &box },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .children = kids, .child_count = 2,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+    /* The owner holds its own children around x. */
+    struct ui_widget *after = calloc(1, sizeof(*after));
+    assert(after);
+    ui_widget_init(after, NULL, NULL);
+    assert(ui_widget_insert_child(&owner, &before, &x.widget));
+    assert(ui_widget_add_child(&owner, after));
+    struct ui_surface surface;
+    show(&surface, ui_view_root(view), (struct vector2i){ .x = 200, .y = 100 });
+    ui_surface_focus(&surface, &x.widget);
+    assert(ui_surface_focused(&surface) == &x.widget);
+
+    /* The update drops x and puts a label in the box. */
+    x.fn = free_victim_and_fill;
+    x.victim = after;
+    x.container = &box;
+    x.child = &filler;
+    struct ui_node_desc in = { .kind = UI_NODE_LABEL, .key = "in" };
+    struct ui_node_desc k2[] = { kids[0], kids[1] };
+    k2[0].children = NULL;
+    k2[0].child_count = 0;
+    k2[1].children = &in;
+    k2[1].child_count = 1;
+    struct ui_node_desc next = root;
+    next.children = k2;
+    struct ui_view_diagnostic diagnostic;
+    assert(!ui_view_update_ex(view, &next, &diagnostic));
+    assert(diagnostic.error == UI_VIEW_ERROR_INVALID_CHILDREN);
+    assert(!x.victim);
+    assert(ui_widget_child_count(&owner) == 2);
+    assert(ui_widget_child_at(&owner, 0) == &before);
+    assert(ui_widget_child_at(&owner, 1) == &x.widget);
+    assert(ui_view_widget(view, "x") == &x.widget);
+
+    assert(ui_widget_remove_child(&box, &filler));
+    assert(ui_widget_remove_child(&owner, &before));
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+    ui_widget_destroy(&before);
+    ui_widget_destroy(&filler);
+}
+
+/* A widget whose destroy hook destroys and frees another widget. */
+struct destroy_hook {
+    struct ui_widget widget;
+    struct supplied_control *victim;
+};
+
+static void destroy_hook_destroy(struct ui_widget *widget)
+{
+    struct destroy_hook *hook =
+        ui_container_of(widget, struct destroy_hook, widget);
+    struct supplied_control *victim = hook->victim;
+    hook->victim = NULL;
+    if (victim) {
+        ui_widget_destroy(&victim->widget);
+        free(victim);
+    }
+}
+
+static const struct ui_widget_ops DESTROY_HOOK_OPS = {
+    .name = "destroy-hook",
+    .destroy = destroy_hook_destroy,
+};
+
+/* The destroy hook of one view widget frees another view widget. The view
+ * destroy does not touch the freed widget. */
+static void view_destroy_skips_a_widget_that_a_hook_frees_test(void)
+{
+    int destroyed = 0;
+    struct destroy_hook hook = {0};
+    ui_widget_init(&hook.widget, &DESTROY_HOOK_OPS, NULL);
+    hook.victim = calloc(1, sizeof(*hook.victim));
+    assert(hook.victim);
+    hook.victim->destroyed = &destroyed;
+    ui_widget_init(&hook.victim->widget, &SUPPLIED_CONTROL_OPS, NULL);
+    struct ui_node_desc kids[] = {
+        { .kind = UI_NODE_WIDGET, .key = "hook", .props.widget = &hook.widget },
+        { .kind = UI_NODE_WIDGET, .key = "victim",
+          .props.widget = &hook.victim->widget },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .children = kids, .child_count = 2,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+    ui_view_destroy(view);
+    assert(!hook.victim);
+    assert(destroyed == 1);
+}
+
+static void count_destroy(struct ui_widget *widget, void *userdata)
+{
+    (void)widget;
+    (*(int *)userdata)++;
+}
+
+/* A failed update gives a new supplied widget back with the destroy observer
+ * that the caller set. */
+static void view_failed_update_keeps_the_caller_observer_test(void)
+{
+    int destroyed = 0, observed = 0;
+    struct supplied_control control = { .destroyed = &destroyed };
+    ui_widget_init(&control.widget, &SUPPLIED_CONTROL_OPS, NULL);
+    ui_widget_set_destroy_observer(&control.widget, count_destroy, &observed);
+    struct ui_widget full = {0}, own = {0};
+    ui_widget_init(&full, &SINGLE_CHILD_OPS, NULL);
+    ui_widget_init(&own, NULL, NULL);
+    assert(ui_widget_add_child(&full, &own));
+    struct ui_node_desc kids[] = {
+        { .kind = UI_NODE_LABEL, .key = "l", .props.label = { .text = "1" } },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .children = kids, .child_count = 1,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+
+    /* The full container cannot take a child, so the update fails. */
+    struct ui_node_desc inner = { .kind = UI_NODE_LABEL, .key = "inner" };
+    struct ui_node_desc k2[] = {
+        kids[0],
+        { .kind = UI_NODE_WIDGET, .key = "w", .props.widget = &control.widget },
+        { .kind = UI_NODE_WIDGET, .key = "full", .props.widget = &full,
+          .children = &inner, .child_count = 1 },
+    };
+    struct ui_node_desc next = root;
+    next.children = k2;
+    next.child_count = 3;
+    assert(!ui_view_update(view, &next));
+    assert(!control.widget.parent && !destroyed && !observed);
+
+    ui_view_destroy(view);
+    ui_widget_destroy(&control.widget);
+    assert(destroyed == 1 && observed == 1);
+    ui_widget_destroy(&full);
+}
+
 int main(void)
 {
     view_diagnostic_test();
@@ -1784,6 +1984,9 @@ int main(void)
     view_update_reorders_parents_with_children_test();
     view_update_drops_a_widget_that_a_handler_destroys_test();
     view_update_forgets_a_supplied_widget_that_a_handler_frees_test();
+    view_rollback_survives_a_freed_foreign_sibling_test();
+    view_destroy_skips_a_widget_that_a_hook_frees_test();
+    view_failed_update_keeps_the_caller_observer_test();
     view_root_keyboard_test();
     hidden_child_takes_no_space_or_input_test();
     hidden_modal_restores_focus_test();

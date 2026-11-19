@@ -163,7 +163,18 @@ bool ui_widget_add_children(struct ui_widget *parent,
 /* Inserts `child` into `parent` immediately before `before`. */
 bool ui_widget_insert_child(struct ui_widget *parent, struct ui_widget *child,
                             struct ui_widget *before);
-/* Removes `child` from `parent`. */
+/* Removes `child` from `parent`.
+ *
+ * A call that takes a widget off its surface sends events to the subtree:
+ * this call, ui_widget_destroy, ui_widget_set_hidden, and an insert that
+ * moves a widget to another surface. The surface forgets the subtree, and
+ * the widgets that held the focus, the hover, the capture, or the drag get
+ * FOCUS_OUT, the pointer LEAVE, CAPTURE_LOST, or DRAG_LEAVE. A handler of these events can detach or
+ * destroy any widget, its own included. It must not free the storage of a
+ * widget in the subtree before the call returns. The call still reads the
+ * subtree after the events, and the handlers still use the surface of their
+ * widget. Free the storage after the call, or with ui_surface_post when the
+ * surface is busy. */
 bool ui_widget_remove_child(struct ui_widget *parent, struct ui_widget *child);
 /* Returns the count of immediate children in `widget`. */
 size_t ui_widget_child_count(const struct ui_widget *widget);
