@@ -805,6 +805,19 @@ struct ui_widget *ui_surface_hit_test(struct ui_surface *surface,
         ? ui_widget_hit_test(surface->impl.root, pos) : NULL;
 }
 
+struct ui_widget *ui_surface_drop_target(struct ui_surface *surface,
+                                         struct vector2i pos)
+{
+    struct ui_widget *hit = ui_surface_hit_test(surface, pos);
+    struct ui_widget *modal = hit ? surface_modal(surface) : NULL;
+    /* A modal masks the widgets below it, and the hit test gives the modal
+     * itself for a point that misses it. */
+    if (modal && (!ui_widget_is_ancestor(modal, hit) ||
+                  !rect2i_contains(modal->bounds, pos)))
+        return NULL;
+    return hit;
+}
+
 static bool dispatch_pointer(struct ui_surface *surface,
                              const struct ui_event *event)
 {

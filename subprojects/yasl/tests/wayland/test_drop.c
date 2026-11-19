@@ -1,7 +1,7 @@
 /* External drags, driven from the compositor end of a socketpair. A drag takes
  * the first type that the surface lists and the drag offers. A drag with no
  * such type is refused: the client accepts no type, asks for no data, and the
- * application gets no event. An accepted drag reports hover with its type, and
+ * application gets no event. A popup refuses every drag. An accepted drag reports hover with its type, and
  * its drop delivers the bytes of that type as one DROP event. */
 #include "platform/wayland/internal.h"
 #include "wire.h"
@@ -15,6 +15,7 @@
 /* Compositor events and client requests, by opcode from wayland.xml. */
 #define DEVICE_DATA_OFFER 0
 #define DEVICE_ENTER 1
+#define DEVICE_LEAVE 2
 #define DEVICE_MOTION 3
 #define DEVICE_DROP 4
 #define OFFER_OFFER 0
@@ -22,6 +23,8 @@
 #define OFFER_RECEIVE 1
 /* The first object that the compositor creates takes the first server-side id. */
 #define OFFER_ID 0xff000000u
+/* The second offer of a test that runs two drags. */
+#define OFFER2_ID (OFFER_ID + 1)
 /* Size of the image drop. It holds NUL bytes and is larger than one pipe buffer. */
 #define IMAGE_BYTES (300u * 1024)
 
@@ -90,28 +93,42 @@ static void set_types(struct drag *t, const char *const *types, size_t count)
     assert(yasl_private_surface_set_drop_types(&t->w.base, types, count));
 }
 
-/* The compositor starts a drag with these mime types. */
-static void offer(struct drag *t, const char *const *mimes, size_t count)
+/* The compositor starts a drag with offer `id` and these mime types. */
+static void offer_as(struct drag *t, uint32_t id, const char *const *mimes,
+                     size_t count)
 {
     uint8_t args[64];
-    wire_put_u32(args, OFFER_ID);
+    wire_put_u32(args, id);
     wire_event(t->server, t->device, DEVICE_DATA_OFFER, args, 4, -1);
     for (size_t i = 0; i < count; i++) {
         size_t n = wire_put_string(args, mimes[i]);
-        wire_event(t->server, OFFER_ID, OFFER_OFFER, args, n, -1);
+        wire_event(t->server, id, OFFER_OFFER, args, n, -1);
     }
+}
+
+/* The compositor starts a drag with these mime types. */
+static void offer(struct drag *t, const char *const *mimes, size_t count)
+{
+    offer_as(t, OFFER_ID, mimes, count);
+}
+
+/* The drag of offer `id` enters `surface` at (3, 4). */
+static void enter_on(struct drag *t, uint32_t serial, uint32_t surface,
+                     uint32_t id)
+{
+    uint8_t args[20];
+    wire_put_u32(args, serial);
+    wire_put_u32(args + 4, surface);
+    wire_put_u32(args + 8, (uint32_t)wl_fixed_from_int(3));
+    wire_put_u32(args + 12, (uint32_t)wl_fixed_from_int(4));
+    wire_put_u32(args + 16, id);
+    wire_event(t->server, t->device, DEVICE_ENTER, args, sizeof(args), -1);
 }
 
 /* The drag enters the surface at (3, 4). */
 static void enter(struct drag *t, uint32_t serial)
 {
-    uint8_t args[20];
-    wire_put_u32(args, serial);
-    wire_put_u32(args + 4, t->surface);
-    wire_put_u32(args + 8, (uint32_t)wl_fixed_from_int(3));
-    wire_put_u32(args + 12, (uint32_t)wl_fixed_from_int(4));
-    wire_put_u32(args + 16, OFFER_ID);
-    wire_event(t->server, t->device, DEVICE_ENTER, args, sizeof(args), -1);
+    enter_on(t, serial, t->surface, OFFER_ID);
 }
 
 /* The drag moves to (x, y) on the surface. */
@@ -129,14 +146,16 @@ static void drop(struct drag *t)
     wire_event(t->server, t->device, DEVICE_DROP, NULL, 0, -1);
 }
 
-/* Reads the mime type of the client's last accept. NULL means no type. */
-static bool accepted(const struct wire_inbox *in, const char **mime)
+/* Reads the mime type of the client's last accept of offer `id`. NULL means
+ * no type. */
+static bool accepted_by(const struct wire_inbox *in, uint32_t id,
+                        const char **mime)
 {
     struct wire_message m;
     size_t pos = 0;
     bool found = false;
     while (wire_next(in, &pos, &m)) {
-        if (m.object != OFFER_ID || m.opcode != OFFER_ACCEPT)
+        if (m.object != id || m.opcode != OFFER_ACCEPT)
             continue;
         size_t offset = 4; /* The serial comes first. */
         found = true;
@@ -145,20 +164,31 @@ static bool accepted(const struct wire_inbox *in, const char **mime)
     return found;
 }
 
-/* Reads the mime type of the client's last receive request. */
-static bool received(const struct wire_inbox *in, const char **mime)
+static bool accepted(const struct wire_inbox *in, const char **mime)
+{
+    return accepted_by(in, OFFER_ID, mime);
+}
+
+/* Reads the mime type of the client's last receive request for offer `id`. */
+static bool received_by(const struct wire_inbox *in, uint32_t id,
+                        const char **mime)
 {
     struct wire_message m;
     size_t pos = 0;
     bool found = false;
     while (wire_next(in, &pos, &m)) {
-        if (m.object != OFFER_ID || m.opcode != OFFER_RECEIVE)
+        if (m.object != id || m.opcode != OFFER_RECEIVE)
             continue;
         size_t offset = 0;
         found = true;
         *mime = wire_get_string(m.args, &offset);
     }
     return found;
+}
+
+static bool received(const struct wire_inbox *in, const char **mime)
+{
+    return received_by(in, OFFER_ID, mime);
 }
 
 /* Reads the next event, which must be a hover of `action` at (x, y). An OVER
@@ -337,6 +367,49 @@ static void test_uri_list_drop_uses_default(void)
     teardown(&t);
 }
 
+/* A popup takes no drop. A drag moves from the window onto its popup: the
+ * window gets one LEAVE. The popup refuses the drag. The client accepts no
+ * type and asks for no data, so no drop with popup coordinates reaches the
+ * window. */
+static void test_popup_refuses_the_drag(void)
+{
+    struct drag t;
+    setup(&t);
+    set_types(&t, image_types, 3);
+    struct wl_surface *proxy = (struct wl_surface *)
+        wl_proxy_create((struct wl_proxy *)t.display, &wl_surface_interface);
+    assert(proxy);
+    struct wayland_surface popup = {.base.display = &t.d.base, .conn = &t.d,
+        .scale_factor = 1, .surface = proxy, .parent = &t.w};
+    wl_surface_set_user_data(proxy, &popup);
+    uint32_t popup_id = wl_proxy_get_id((struct wl_proxy *)proxy);
+
+    const char *const mimes[] = {"text/uri-list"};
+    offer(&t, mimes, 1);
+    enter(&t, 11);
+    wire_pump(t.display);
+    expect_hover(&t, YASL_PRIVATE_DROP_OVER, "text/uri-list", 3, 4);
+    wire_event(t.server, t.device, DEVICE_LEAVE, NULL, 0, -1);
+    wire_pump(t.display);
+    expect_hover(&t, YASL_PRIVATE_DROP_LEAVE, NULL, 3, 4);
+
+    offer_as(&t, OFFER2_ID, mimes, 1);
+    enter_on(&t, 12, popup_id, OFFER2_ID);
+    wire_pump(t.display);
+    struct yasl_private_event ev;
+    assert(!yasl_private_display_poll_event(&t.d.base, &ev)); /* No hover. */
+    drop(&t);
+    wire_pump(t.display);
+    wire_read(t.server, &t.in);
+    const char *mime = "unset";
+    assert(accepted_by(&t.in, OFFER2_ID, &mime) && mime == NULL);
+    assert(!received_by(&t.in, OFFER2_ID, &mime));
+    assert(t.in.nfds == 0); /* The client asked for no data. */
+    assert(!wait_event(&t, &ev)); /* No DROP and no second LEAVE. */
+    wl_proxy_destroy((struct wl_proxy *)proxy);
+    teardown(&t);
+}
+
 int main(void)
 {
     fill_image();
@@ -345,5 +418,6 @@ int main(void)
     test_image_drop_keeps_bytes();
     test_text_drop_delivers_text();
     test_uri_list_drop_uses_default();
+    test_popup_refuses_the_drag();
     return 0;
 }

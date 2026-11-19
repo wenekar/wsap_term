@@ -9,13 +9,6 @@
 /* The drag and drop helpers of the window layer. A drop carries its type and
  * its data. It never becomes a file. */
 
-/* Returns true when `mime` names a text type. */
-bool drop_mime_is_text(const char *mime);
-
-/* Returns true when `mime` names a URI list. An empty type counts as one,
- * because yasl reports it that way. */
-bool drop_mime_is_uri_list(const char *mime);
-
 /* The old file path of a dropped image. A drop writes no file now, so it
  * returns NULL for every payload. Drop it when the native drop path sends a
  * MIME drop. Call it on the loop thread. */

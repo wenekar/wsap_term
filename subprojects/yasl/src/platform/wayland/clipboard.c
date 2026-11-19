@@ -366,10 +366,13 @@ static bool drop_type_is_text(const char *mime)
 
 /* Returns the type that a drag entering `surface` takes from `o`, or NULL to
  * refuse the drag. The drop types of the root surface decide, because a drop
- * goes to the root. Call it once, when the drag enters. */
+ * goes to the root. A popup takes no drop, so a drag on a popup is refused:
+ * the root gets no hover and no drop with popup coordinates. Call it once,
+ * when the drag enters. */
 static const char *drop_pick(struct wl_surface *surface, const struct offer *o)
 {
     struct wayland_surface *w = surface ? wl_surface_get_user_data(surface) : NULL;
+    if (w && w->parent) return NULL;
     struct wayland_surface *root = surface_root(w);
     if (!root || root->closed || root->destroyed) return NULL;
     return yasl_private_surface_pick_drop_type(&root->base,

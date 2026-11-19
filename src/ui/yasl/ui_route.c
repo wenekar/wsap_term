@@ -9,43 +9,17 @@
 
 #include "input/keybind.h"
 #include "ui/yasl/inspector.h"
-#include "ui/yasl/drop.h"
 #include "ui/yasl/ui_input.h"
 #include "ui/yasl/internal.h"
 
-/* Returns true when a drop of type `mime` stays inside the subtree of the
- * widget that takes the keys. A text type becomes a paste, and a paste
- * belongs to that widget. */
-static bool drop_mime_stays_in_key_target(const char *mime)
-{
-    return drop_mime_is_text(mime);
-}
-
-/* Returns true when `widget` is `root` or one of its descendants. */
-static bool widget_is_inside(const struct ui_widget *root,
-                             const struct ui_widget *widget)
-{
-    for (const struct ui_widget *p = widget; p; p = p->parent)
-        if (p == root)
-            return true;
-    return false;
-}
-
-/* Returns the widget that takes a drop of type `mime` at `pos`, or NULL when
- * no widget takes it. That widget also draws the drop mark. A drop goes to
- * the widget at its position. A text drop goes there only inside the subtree
- * of the widget that takes the keys: the focus, else the default focus. */
+/* Returns the widget that takes a drop at `pos`, or NULL when no widget
+ * takes it. That widget also draws the drop mark. Every type follows one
+ * rule: the drop goes to the widget at its position, and it bubbles up from
+ * there. While a modal is open, a drop outside the modal reaches nothing. */
 static struct ui_widget *drop_mark_target(struct ui_surface *surface,
-                                          const char *mime,
                                           struct vector2i pos)
 {
-    if (!surface)
-        return NULL;
-    struct ui_widget *hit = ui_surface_hit_test(surface, pos);
-    if (!hit || !drop_mime_stays_in_key_target(mime))
-        return hit;
-    struct ui_widget *keys = ui_surface_key_target(surface);
-    return keys && widget_is_inside(keys, hit) ? hit : NULL;
+    return surface ? ui_surface_drop_target(surface, pos) : NULL;
 }
 
 /* Ends the drag on the window surface before a release. The widget that the
@@ -68,17 +42,16 @@ static struct ui_surface *end_drag(struct window *w, struct vector2i pos,
     return screen;
 }
 
-/* Sends the event of a drop release of type `mime` to the widget at the
- * drop location `pos` on the window surface. The event bubbles up from that
+/* Sends the event of a drop release to the widget at the drop location
+ * `pos` on the window surface. The event bubbles up from that
  * widget. Hover state from the drag does not choose the widget, and the
  * focused widget is no fallback. When no widget on that path takes the
  * release, nothing takes it. */
-static void route_release(struct window *w, const char *mime,
-                          struct vector2i pos, const struct ui_event *event,
-                          uint64_t now_ms)
+static void route_release(struct window *w, struct vector2i pos,
+                          const struct ui_event *event, uint64_t now_ms)
 {
     struct ui_surface *screen = end_drag(w, pos, now_ms);
-    struct ui_widget *target = drop_mark_target(screen, mime, pos);
+    struct ui_widget *target = drop_mark_target(screen, pos);
     if (target)
         ui_widget_event(target, event);
 }
@@ -122,17 +95,16 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
     case INPUT_PASTE:
         event = ui_event_paste(ev->paste.data, ev->paste.len, now_ms);
         /* A paste goes to the focused widget. The release of a text drop
-         * goes only to its drop location, and only inside the subtree of the
-         * widget that takes the keys. */
+         * goes only to its drop location. */
         if (ev->paste.dropped)
-            route_release(w, "text/plain", ev->paste.pos, &event, now_ms);
+            route_release(w, ev->paste.pos, &event, now_ms);
         else
             ui_surface_dispatch(keys, &event);
         return WINDOW_INPUT_HANDLED;
     case INPUT_DROP_FILES:
         event = ui_event_drop_files(ev->drop.data, ev->drop.len, now_ms);
         /* The file drop goes only to the widget at its drop location. */
-        route_release(w, "text/uri-list", ev->drop.pos, &event, now_ms);
+        route_release(w, ev->drop.pos, &event, now_ms);
         return WINDOW_INPUT_HANDLED;
     case INPUT_DROP: {
         /* The drop goes to the widget at its drop location. */
@@ -148,7 +120,7 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
         event = ui_event_drag(UI_EVENT_DROP, &drag, now_ms);
         /* A drop position is in the coordinates of the window surface. A menu
          * popup sits above that surface and takes no drop. */
-        route_release(w, drag.mime, drag.pos, &event, now_ms);
+        route_release(w, drag.pos, &event, now_ms);
         return WINDOW_INPUT_HANDLED;
     }
     case INPUT_DRAG: {
@@ -163,7 +135,7 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
         struct ui_surface *screen = &ui_of(w)->screen;
         ui_surface_prepare(screen);
         struct ui_widget *target = ev->drop_type.leave
-            ? NULL : drop_mark_target(screen, drag.mime, drag.pos);
+            ? NULL : drop_mark_target(screen, drag.pos);
         /* A drag that stays on one widget gets ENTER once, then OVER. A drag
          * that leaves the widget gives it LEAVE. */
         bool enter = false;

@@ -19,8 +19,9 @@
  *   that path takes it, nothing takes it. This applies to text, file, and
  *   typed drops.
  * - Every release ends the drag.
- * - A text drop goes to, and marks, only a widget inside the subtree of the
- *   widget that takes the keys: the focus, else the default focus.
+ * - A text drop follows the same rule as a file drop. The focus and the
+ *   default focus do not limit it.
+ * - While a modal is open, a release outside the modal reaches nothing.
  *
  * The file drop case uses the order of a real backend: the drag enters, the
  * LEAVE comes, and then the release lands.
@@ -140,20 +141,19 @@ static void drop(struct fixture *f, const char *mime, struct vector2i pos)
     window_ui_route(f->window, &ev);
 }
 
-/* A text drop goes to the focused widget. A drag over another widget draws no
- * mark there, and the other widget takes no drop. */
-static void text_drag_marks_no_other_widget_test(void)
+/* A text drag over a widget outside the focus draws the mark there, and the
+ * drop goes to that widget. The focused pane gets nothing. */
+static void text_drag_marks_the_widget_at_its_position_test(void)
 {
     struct fixture f;
     show(&f);
     ui_surface_focus(window_ui_key_surface(f.window), &f.pane.widget);
     struct vector2i over_mark = { .x = 40, .y = 150 };
     drag(&f, INPUT_DRAG, "text/plain;charset=utf-8", over_mark);
-    assert(f.mark.enter == 0);
+    assert(f.mark.enter == 1);
     assert(f.pane.enter == 0);
-    /* The drop reaches no widget. The focused pane is no fallback. */
     drop(&f, "text/plain;charset=utf-8", over_mark);
-    assert(f.mark.drop == 0);
+    assert(f.mark.drop == 1);
     assert(f.pane.drop == 0);
     teardown(&f);
 }
@@ -268,15 +268,16 @@ static void declined_release_reaches_no_other_widget_test(void)
     teardown(&f);
 }
 
-/* A text drop outside the focused subtree reaches no widget. */
-static void text_release_outside_the_focus_reaches_no_widget_test(void)
+/* A text drop outside the focused subtree goes to the widget at its drop
+ * location. */
+static void text_release_outside_the_focus_reaches_the_widget_there_test(void)
 {
     struct fixture f;
     show(&f);
     ui_surface_focus(window_ui_key_surface(f.window), &f.pane.widget);
     struct vector2i over_mark = { .x = 40, .y = 150 };
     release_text(&f, over_mark);
-    assert(f.mark.drop == 0);
+    assert(f.mark.drop == 1);
     assert(f.pane.drop == 0);
     teardown(&f);
 }
@@ -294,8 +295,8 @@ static void text_release_on_the_focus_reaches_it_test(void)
 }
 
 /* Nothing has the focus, and the pane is the default focus. A text drop on
- * the pane reaches it. A text drop on the other widget reaches no widget. */
-static void text_release_follows_the_default_focus_test(void)
+ * each widget reaches that widget. */
+static void text_release_ignores_the_default_focus_test(void)
 {
     struct fixture f;
     show(&f);
@@ -305,20 +306,62 @@ static void text_release_follows_the_default_focus_test(void)
     assert(f.pane.drop == 1);
     release_text(&f, (struct vector2i){ .x = 40, .y = 150 });
     assert(f.pane.drop == 1);
-    assert(f.mark.drop == 0);
+    assert(f.mark.drop == 1);
+    teardown(&f);
+}
+
+/* Opens a modal dialog over the pane, at x 200..299 and y 20..69. */
+static void open_dialog(struct fixture *f, struct probe *dialog)
+{
+    *dialog = (struct probe){0};
+    ui_widget_init(&dialog->widget, &PROBE_OPS, dialog);
+    ui_widget_set_fixed_size(&dialog->widget,
+                             (struct vector2i){ .x = 100, .y = 50 });
+    ui_widget_set_placement(&dialog->widget, (struct ui_placement){
+        .kind = UI_PLACE_AT, .anchor.pos = { .x = 200, .y = 20 },
+    });
+    ui_widget_set_modal(&dialog->widget, true);
+    assert(ui_widget_add_child(&f->root, &dialog->widget));
+    ui_surface_prepare(window_ui_key_surface(f->window));
+    assert(ui_surface_has_modal(window_ui_key_surface(f->window)));
+}
+
+/* A modal is open. A text drop or a file drop on the modal reaches it. A
+ * drop outside the modal reaches nothing: not the modal, and not the widget
+ * under the point. */
+static void release_outside_a_modal_reaches_nothing_test(void)
+{
+    struct fixture f;
+    show(&f);
+    struct probe dialog;
+    open_dialog(&f, &dialog);
+    struct vector2i on_dialog = { .x = 250, .y = 40 };
+    struct vector2i off_dialog = { .x = 40, .y = 150 };
+    release_text(&f, on_dialog);
+    release_files(&f, on_dialog);
+    assert(dialog.drop == 2);
+    drag(&f, INPUT_DRAG, "text/uri-list", off_dialog);
+    assert(dialog.enter == 0 && f.mark.enter == 0);
+    release_text(&f, off_dialog);
+    release_files(&f, off_dialog);
+    drop(&f, "image/png", off_dialog);
+    assert(dialog.drop == 2);
+    assert(f.mark.drop == 0 && f.pane.drop == 0);
+    ui_widget_destroy(&dialog.widget);
     teardown(&f);
 }
 
 int main(void)
 {
-    text_drag_marks_no_other_widget_test();
+    text_drag_marks_the_widget_at_its_position_test();
     position_drop_goes_to_the_marked_widget_test();
     text_drag_marks_the_focused_widget_test();
     file_drop_goes_to_the_marked_widget_test();
     release_ends_the_drag_test();
     declined_release_reaches_no_other_widget_test();
-    text_release_outside_the_focus_reaches_no_widget_test();
+    text_release_outside_the_focus_reaches_the_widget_there_test();
     text_release_on_the_focus_reaches_it_test();
-    text_release_follows_the_default_focus_test();
+    text_release_ignores_the_default_focus_test();
+    release_outside_a_modal_reaches_nothing_test();
     return 0;
 }
