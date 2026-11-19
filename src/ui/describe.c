@@ -542,17 +542,24 @@ static bool set_menu_props(struct ui_menu_node *menu,
                            const struct ui_node_desc *desc,
                            enum ui_view_error *error)
 {
+    bool same_submenus =
+        menu->menu.state.submenu == desc->props.menu.on_submenu &&
+        menu->menu.state.submenu_userdata == desc->props.menu.submenu_userdata;
     ui_menu_set_action_handler(&menu->menu, desc->on_action,
                                desc->action_userdata);
     ui_menu_set_submenu_provider(&menu->menu, desc->props.menu.on_submenu,
                                  desc->props.menu.submenu_userdata);
     ui_menu_set_hover_delay(&menu->menu, desc->props.menu.hover_delay_ms);
     ui_menu_layer_set_origin(&menu->layer, desc->props.menu.pos);
-    /* An open menu with the same items stays open with its submenus. */
+    /* An open menu with the same items stays open. Its submenus stay only
+     * when the same provider gives them. */
     if (ui_menu_is_open(&menu->menu) &&
         ui_list_has_items(&menu->menu.levels[0].list, desc->props.menu.items,
-                          desc->props.menu.count))
+                          desc->props.menu.count)) {
+        if (!same_submenus)
+            ui_menu_close_submenus(&menu->menu);
         return true;
+    }
     if (!desc->props.menu.count) {
         ui_menu_close(&menu->menu);
         return true;

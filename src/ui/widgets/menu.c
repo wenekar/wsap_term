@@ -400,6 +400,12 @@ void ui_menu_close(struct ui_menu *m)
     emit(m, source, UI_ACTION_CLOSE, -1, -1);
 }
 
+void ui_menu_close_submenus(struct ui_menu *m)
+{
+    if (ui_menu_is_open(m))
+        close_above(m, 0);
+}
+
 bool ui_menu_is_open(const struct ui_menu *m)
 {
     return m && m->state.open;

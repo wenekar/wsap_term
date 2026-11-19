@@ -1108,6 +1108,14 @@ static void view_update_keeps_an_open_menu_test(void)
     assert(ui_menu_is_open(menu));
     assert(ui_menu_level_count(menu) == 2);
 
+    /* Another submenu provider closes the submenu, and the top level stays. */
+    int other_userdata = 0;
+    child.props.menu.submenu_userdata = &other_userdata;
+    assert(ui_view_update(view, &root));
+    assert(probe.closes == 0);
+    assert(ui_menu_is_open(menu));
+    assert(ui_menu_level_count(menu) == 1);
+
     /* Other items open the menu again. */
     child.props.menu.count = 1;
     assert(ui_view_update(view, &root));

@@ -87,6 +87,8 @@ void ui_menu_set_hover_delay(struct ui_menu *m, uint32_t ms);
 bool ui_menu_open(struct ui_menu *m, const ui_menu_item *items, int n);
 /* Closes all open levels of menu `m`. */
 void ui_menu_close(struct ui_menu *m);
+/* Closes the open submenus of menu `m`. The top level stays open. */
+void ui_menu_close_submenus(struct ui_menu *m);
 /* Returns true when menu `m` has any open levels. */
 bool ui_menu_is_open(const struct ui_menu *m);
 

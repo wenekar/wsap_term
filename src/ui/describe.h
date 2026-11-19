@@ -173,7 +173,8 @@ struct ui_view *ui_view_mount(const struct ui_node_desc *root,
  * An update can call a node handler, for example when it closes a menu. Such a
  * handler cannot update the view: the call fails with UI_VIEW_ERROR_BUSY. A
  * menu node with the same items as its open menu stays open and sends no
- * CLOSE. */
+ * CLOSE. Its submenus stay open only when the submenu provider and its
+ * userdata also stay the same. */
 bool ui_view_update_ex(struct ui_view *view, const struct ui_node_desc *root,
                        struct ui_view_diagnostic *diagnostic);
 bool ui_view_update(struct ui_view *view, const struct ui_node_desc *root);
