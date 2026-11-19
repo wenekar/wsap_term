@@ -137,9 +137,64 @@ static void plain_paste_reaches_the_terminal_test(void)
     test_app_fini(&a);
 }
 
+/* A text drop on the terminal bubbles up to the tabs root, which pastes it
+ * into the active tab. */
+static void text_drop_on_the_terminal_reaches_it_test(void)
+{
+    struct test_app a;
+    test_app_init(&a, "/bin/cat", viewport);
+    struct window *w = open_window(a.app);
+
+    drop_event(w, YASL_DROP_OVER, "text/plain", NULL, over_terminal);
+    drop_event(w, YASL_DROP_LEAVE, NULL, NULL, over_terminal);
+    drop_event(w, YASL_DROP_RELEASE, "text/plain", "td", over_terminal);
+    assert(pastes == 1 && !strcmp(last_paste, "td"));
+
+    window_close(w);
+    test_app_fini(&a);
+}
+
+/* A text drop on the tab bar lands outside the focused terminal. Nothing
+ * takes it, and the focused terminal is no fallback. */
+static void text_drop_on_the_tab_bar_reaches_nothing_test(void)
+{
+    struct test_app a;
+    test_app_init(&a, "/bin/cat", viewport);
+    struct window *w = open_window(a.app);
+    /* A second tab shows the tab bar. The bar slides in, so the test runs
+     * its animation to the end. */
+    assert(app_tabs_new(w));
+    struct ui_surface *surface = window_ui_surface(w);
+    uint64_t now = window_frame_time_ms(w);
+    for (uint64_t end = now + 2000; now < end;) {
+        ui_surface_tick(surface, now);
+        ui_surface_prepare(surface);
+        uint64_t next = ui_surface_next_deadline(surface);
+        if (!next)
+            break;
+        now = next > now ? next : now + 16;
+    }
+
+    struct ui_widget *bar = ui_tabbar_widget(&app_tabs_of(w)->tabbar);
+    struct vector2i over_bar = rect2i_center(bar->bounds);
+    assert(app_tabs_bar_height(w) > 0);
+    bool on_bar = false;
+    for (struct ui_widget *x = ui_surface_hit_test(surface, over_bar); x;
+         x = x->parent)
+        on_bar = on_bar || x == bar;
+    assert(on_bar);
+    drop_event(w, YASL_DROP_RELEASE, "text/plain", "tb", over_bar);
+    assert(pastes == 0);
+
+    window_close(w);
+    test_app_fini(&a);
+}
+
 int main(void)
 {
     palette_paste_after_a_lost_drag_test();
     plain_paste_reaches_the_terminal_test();
+    text_drop_on_the_terminal_reaches_it_test();
+    text_drop_on_the_tab_bar_reaches_nothing_test();
     return 0;
 }

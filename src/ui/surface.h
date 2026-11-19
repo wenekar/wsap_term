@@ -231,6 +231,10 @@ bool ui_surface_dispatch(struct ui_surface *surface,
 /* Set the widget that takes keyboard events when nothing is focused. */
 void ui_surface_set_default_focus(struct ui_surface *surface,
                                   struct ui_widget *widget);
+/* Returns the widget that takes keyboard events: the focused widget, else
+ * the modal, else the default focus, else the root. Returns NULL for a NULL
+ * surface or a surface with no root. */
+struct ui_widget *ui_surface_key_target(const struct ui_surface *surface);
 void ui_surface_keep_key_text(struct ui_surface *surface);
 bool ui_surface_key_text_kept(const struct ui_surface *surface);
 

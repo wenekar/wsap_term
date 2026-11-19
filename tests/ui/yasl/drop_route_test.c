@@ -14,7 +14,13 @@
  * - A paste always goes to the focused widget.
  * - Only a drop release goes to the drop target, and the drop location on the
  *   window surface gives it.
- * - A text drop marks only a widget inside the focused subtree.
+ * - A drop release goes to the widget at its drop location, and it bubbles up
+ *   from there. It never falls back to the focused widget. When no widget on
+ *   that path takes it, nothing takes it. This applies to text, file, and
+ *   typed drops.
+ * - Every release ends the drag.
+ * - A text drop goes to, and marks, only a widget inside the subtree of the
+ *   widget that takes the keys: the focus, else the default focus.
  *
  * The file drop case uses the order of a real backend: the drag enters, the
  * LEAVE comes, and then the release lands.
@@ -26,6 +32,8 @@ struct probe {
     int leave;
     int drop;
     struct vector2i drop_pos;
+    /* The widget declines every drop release. */
+    bool decline;
 };
 
 static struct window_host host;
@@ -50,6 +58,10 @@ static bool probe_event(struct ui_widget *widget, const struct ui_event *event)
     }
     if (event->kind == UI_EVENT_DROP_FILES || event->kind == UI_EVENT_PASTE)
         p->drop++;
+    if (p->decline && (event->kind == UI_EVENT_DROP ||
+                       event->kind == UI_EVENT_DROP_FILES ||
+                       event->kind == UI_EVENT_PASTE))
+        return false;
     /* The widget takes the drop, so it is the receiver of the drag. */
     return true;
 }
@@ -139,9 +151,10 @@ static void text_drag_marks_no_other_widget_test(void)
     drag(&f, INPUT_DRAG, "text/plain;charset=utf-8", over_mark);
     assert(f.mark.enter == 0);
     assert(f.pane.enter == 0);
-    /* The drop still goes to the focused pane. */
+    /* The drop reaches no widget. The focused pane is no fallback. */
     drop(&f, "text/plain;charset=utf-8", over_mark);
     assert(f.mark.drop == 0);
+    assert(f.pane.drop == 0);
     teardown(&f);
 }
 
@@ -216,6 +229,86 @@ static void release_ends_the_drag_test(void)
     teardown(&f);
 }
 
+static void release_files(struct fixture *f, struct vector2i pos)
+{
+    struct input_event ev = {
+        .kind = INPUT_DROP_FILES,
+        .drop = { .data = (char *)"file:///tmp/a\r\n", .len = 15,
+                  .pos = pos, .dropped = true },
+    };
+    window_ui_route(f->window, &ev);
+}
+
+static void release_text(struct fixture *f, struct vector2i pos)
+{
+    struct input_event ev = {
+        .kind = INPUT_PASTE,
+        .paste = { .data = (char *)"x", .len = 1, .pos = pos,
+                   .dropped = true },
+    };
+    window_ui_route(f->window, &ev);
+}
+
+/* The widget at the drop location declines the file drop. No other widget
+ * sees it, and the focused widget is no fallback. */
+static void declined_release_reaches_no_other_widget_test(void)
+{
+    struct fixture f;
+    show(&f);
+    ui_surface_focus(window_ui_key_surface(f.window), &f.pane.widget);
+    f.mark.decline = true;
+    struct vector2i over_mark = { .x = 40, .y = 150 };
+    drag(&f, INPUT_DRAG, "text/uri-list", over_mark);
+    release_files(&f, over_mark);
+    assert(f.mark.drop == 1);
+    assert(f.pane.drop == 0);
+    /* The release still ends the drag. */
+    assert(f.mark.leave == 1);
+    assert(!ui_surface_drag_target(window_ui_key_surface(f.window)));
+    teardown(&f);
+}
+
+/* A text drop outside the focused subtree reaches no widget. */
+static void text_release_outside_the_focus_reaches_no_widget_test(void)
+{
+    struct fixture f;
+    show(&f);
+    ui_surface_focus(window_ui_key_surface(f.window), &f.pane.widget);
+    struct vector2i over_mark = { .x = 40, .y = 150 };
+    release_text(&f, over_mark);
+    assert(f.mark.drop == 0);
+    assert(f.pane.drop == 0);
+    teardown(&f);
+}
+
+/* A text drop on the focused widget reaches it. */
+static void text_release_on_the_focus_reaches_it_test(void)
+{
+    struct fixture f;
+    show(&f);
+    ui_surface_focus(window_ui_key_surface(f.window), &f.pane.widget);
+    release_text(&f, (struct vector2i){ .x = 40, .y = 20 });
+    assert(f.pane.drop == 1);
+    assert(f.mark.drop == 0);
+    teardown(&f);
+}
+
+/* Nothing has the focus, and the pane is the default focus. A text drop on
+ * the pane reaches it. A text drop on the other widget reaches no widget. */
+static void text_release_follows_the_default_focus_test(void)
+{
+    struct fixture f;
+    show(&f);
+    ui_surface_set_default_focus(window_ui_key_surface(f.window),
+                                 &f.pane.widget);
+    release_text(&f, (struct vector2i){ .x = 40, .y = 20 });
+    assert(f.pane.drop == 1);
+    release_text(&f, (struct vector2i){ .x = 40, .y = 150 });
+    assert(f.pane.drop == 1);
+    assert(f.mark.drop == 0);
+    teardown(&f);
+}
+
 int main(void)
 {
     text_drag_marks_no_other_widget_test();
@@ -223,5 +316,9 @@ int main(void)
     text_drag_marks_the_focused_widget_test();
     file_drop_goes_to_the_marked_widget_test();
     release_ends_the_drag_test();
+    declined_release_reaches_no_other_widget_test();
+    text_release_outside_the_focus_reaches_no_widget_test();
+    text_release_on_the_focus_reaches_it_test();
+    text_release_follows_the_default_focus_test();
     return 0;
 }

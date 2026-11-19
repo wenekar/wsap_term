@@ -976,6 +976,11 @@ void ui_surface_set_default_focus(struct ui_surface *surface,
         surface->impl.default_focus = widget;
 }
 
+struct ui_widget *ui_surface_key_target(const struct ui_surface *surface)
+{
+    return surface ? keyboard_target(surface) : NULL;
+}
+
 void ui_surface_keep_key_text(struct ui_surface *surface)
 {
     if (surface)
