@@ -14,6 +14,7 @@
 #include "render/gpu/gpu.h"
 #include "render/render.h"
 #include "render/surface.h"
+#include "terminal/render/term_render.h"
 #include "util/damage.h"
 
 /*

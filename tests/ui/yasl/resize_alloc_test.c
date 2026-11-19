@@ -12,6 +12,7 @@
 #include "render/cpu/pool.h"
 #include "render/render.h"
 #include "render/term_frame.h"
+#include "terminal/render/term_render.h"
 #include "term_api.h"
 
 /*

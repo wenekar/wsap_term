@@ -52,7 +52,7 @@
  * none.c semantics
  * - render_gpu_new() returns NULL. render_gpu_native_device() returns NULL.
  *   So the window makes CPU surfaces, and no frame has a drawable.
- * - Every other call accepts NULL. render_gpu_draw() returns
+ * - Every other call accepts NULL. render_gpu_draw_view() returns
  *   RENDER_GPU_UNUSED. render_gpu_present() returns false.
  *   render_gpu_surface_free() does nothing.
  *
@@ -94,13 +94,6 @@ enum render_gpu_status render_gpu_draw_view(struct render_gpu *g, struct render_
                                             struct framebuffer *fb,
                                             const struct render_frame *frame,
                                             const struct render_grid_view *grid);
-
-/*
- * The test entry point. It is render_gpu_draw_view() with the grid resolved
- * from the terminal frame of `frame`. The terminal layer implements it.
- */
-enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surface *s,
-                                       struct framebuffer *fb, const struct render_frame *frame);
 
 /*
  * Uploads damaged CPU framebuffer pixels and submits the surface quad for presentation.
