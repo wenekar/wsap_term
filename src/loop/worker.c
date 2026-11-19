@@ -154,7 +154,7 @@ static void cancel_all(struct work_item *item)
 {
     while (item) {
         struct work_item *next = item->next;
-        item->work.cancel(item->work.arg);
+        item->work.cancel(item->work.arg, item->result);
         free(item);
         item = next;
     }

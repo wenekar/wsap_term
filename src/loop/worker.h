@@ -22,10 +22,12 @@ typedef void (*loop_work_done_fn)(void *arg, void *result);
 
 /*
  * Runs on the loop thread for work whose result is never delivered.
- * A destroy drops queued work and discards the result of running work.
+ * `result` is the pointer that `run` returned, or NULL when `run` did not
+ * start. Free a heap result here.
+ * A destroy drops queued work and calls this for each item that it drops.
  * It runs once for each such item.
  */
-typedef void (*loop_work_cancel_fn)(void *arg);
+typedef void (*loop_work_cancel_fn)(void *arg, void *result);
 
 struct loop_work {
     loop_work_fn run;

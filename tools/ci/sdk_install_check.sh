@@ -31,15 +31,15 @@ prefix=$(dirname "$(dirname "$pkg_dir")")
 
 echo "staging prefix: $prefix"
 
-# 1. Absolute source paths. A release build maps the source root to ".".
-if grep -rl "/mnt/" "$stage" --exclude='libaccesskit*' > /tmp/sdk_mnt_hits.$$ 2>/dev/null; then
-    echo "the installed tree holds absolute source paths:" >&2
-    cat /tmp/sdk_mnt_hits.$$ >&2
-    status=1
+# 1. Absolute paths of this machine. A release build maps the source root to
+#    ".". The staged tree must hold that mapping, not a path of this machine.
+if hits=$(bash "$(dirname "$0")/source_paths_check.sh" "$source_root" "$build_dir" "$stage"); then
+    echo "pass: the installed tree holds no path of this machine"
 else
-    echo "pass: the installed tree holds no /mnt path"
+    echo "the installed tree holds an absolute path of this machine:" >&2
+    printf '%s\n' "$hits" >&2
+    status=1
 fi
-rm -f /tmp/sdk_mnt_hits.$$
 
 # 2. Terminal-only calls. The terminal layer defines them, not the SDK.
 terminal_calls='^(struct|enum|bool|void|int|uint32_t) .*(render_draw|render_cursor_cell|render_gpu_draw)\('

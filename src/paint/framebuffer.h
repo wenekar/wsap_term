@@ -2,7 +2,7 @@
 #define WSAP_PAINT_FRAMEBUFFER_H
 
 /*
- * The canvas that render_draw() paints, and the renderer state of that
+ * The canvas that render_draw_view() paints, and the renderer state of that
  * canvas. One surface has one canvas and one history.
  */
 
@@ -17,7 +17,7 @@
  * - The window owns this struct. It keeps it while the surface lives.
  * - The renderer owns the memory that `data` points to.
  * - An all-zero history is valid. It holds no state.
- * - render_draw() sets `data` and `destroy` on first use.
+ * - render_draw_view() sets `data` and `destroy` on first use.
  * - One history belongs to one canvas. Do not share it between canvases.
  * - Call framebuffer_history_release() when the surface goes away.
  *   The renderer does not have to be alive at that time.
@@ -42,12 +42,12 @@ static inline void framebuffer_history_release(struct framebuffer_history *histo
  * - `pixels` holds size.x * size.y words in 0xAARRGGBB order, row after
  *   row. The row stride is size.x.
  * - NULL pixels with `acquire_pixels` mean: the CPU canvas comes on demand.
- *   render_draw() then calls `acquire_pixels` only when the CPU paints the
+ *   render_draw_view() then calls `acquire_pixels` only when the CPU paints the
  *   frame, and it writes the result to `pixels`. A frame that the GPU takes
  *   never needs the canvas, and the GPU reads no pixels.
  * - NULL pixels without `acquire_pixels`, or an empty size, paint nothing.
- *   render_draw() then reports full damage and forgets the surface state.
- * - `fresh` means: the pixels are not what render_draw() last drew with
+ *   render_draw_view() then reports full damage and forgets the surface state.
+ * - `fresh` means: the pixels are not what render_draw_view() last drew with
  *   this history. The renderer then paints every pixel. Set it on the first
  *   frame, after a reallocation, and after a failed present. False is the
  *   normal case. A size change also forces a full paint, so a resize does
@@ -64,7 +64,7 @@ static inline void framebuffer_history_release(struct framebuffer_history *histo
  *   again. NULL acquire means that `drawable` is the whole story.
  * - `transaction` means: present the drawable inside the Core Animation
  *   transaction of a live resize.
- * - `acquire_pixels` gives the CPU pixels of the frame. render_draw() calls
+ * - `acquire_pixels` gives the CPU pixels of the frame. render_draw_view() calls
  *   it at most once for a frame, and only after the GPU declares that it did
  *   not take the frame, or at once for a frame without a drawable or with
  *   cpu_only. A NULL result means that the memory is missing. NULL
