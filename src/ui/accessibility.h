@@ -192,7 +192,10 @@ void ui_accessibility_publish_set_destroy(
 bool ui_accessibility_tree_build(const struct ui_widget *root,
                                  struct ui_accessibility_tree *tree);
 /* Builds the tree of `surface`: the root, then each overlay that `surface`
- * holds. A modal overlay scopes the tree to its own subtree. */
+ * holds. An overlay node hangs off the root node. An overlay publishes a
+ * node only when its own widget tree has one: the palette and the dropdown
+ * panel do, and the tab preview does not. A modal overlay scopes the tree to
+ * its own subtree. */
 bool ui_accessibility_tree_build_surface(const struct ui_surface *surface,
                                          struct ui_accessibility_tree *tree);
 

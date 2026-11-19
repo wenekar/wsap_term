@@ -196,6 +196,18 @@ static bool pointer_is_local(const struct terminal *t)
                  terminal_pointer_selects_text(t->session.term));
 }
 
+/* Returns the byte that the shell expects for an edit command that the
+ * terminal cannot run, or NULL for a command that the app runs. */
+static const char *shortcut_key_byte(enum ui_edit_command edit)
+{
+    switch (edit) {
+    case UI_EDIT_UNDO: return "\x1a";
+    case UI_EDIT_REDO: return "\x19";
+    case UI_EDIT_CUT:  return "\x18";
+    default:           return NULL;
+    }
+}
+
 static bool view_event(struct ui_widget *widget, const struct ui_event *event)
 {
     struct terminal_view *view = view_of(widget);
@@ -218,6 +230,15 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
             return false;
         if (!key || !terminal_key(t, key))
             ui_surface_keep_key_text(ui_widget_surface(widget));
+        return true;
+    }
+    if (event->kind == UI_EVENT_SHORTCUT) {
+        /* The keymap took the key of a chord that no widget runs, such as
+         * undo in a terminal. The shell keeps the key it expects. */
+        const char *fallback = shortcut_key_byte(event->data.shortcut.edit);
+        if (!fallback)
+            return false;
+        terminal_send_input(t, fallback, 1);
         return true;
     }
     if (event->kind == UI_EVENT_TEXT) {

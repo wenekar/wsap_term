@@ -272,6 +272,17 @@ static void overlay_tree_and_modal_scope(void)
         &tree, ui_widget_accessibility_id(outside_widget)));
     assert(ui_accessibility_tree_find(
         &tree, ui_widget_accessibility_id(inside_widget)));
+    /* The overlay node hangs off the root node. Two roots make the accesskit
+     * consumer abort. */
+    size_t roots = 0;
+    for (size_t i = 0; i < tree.count; i++) {
+        const struct ui_accessibility_node *node = &tree.nodes[i];
+        if (!node->parent_id)
+            roots++;
+        else
+            assert(ui_accessibility_tree_find(&tree, node->parent_id));
+    }
+    assert(roots == 1);
     assert(ui_accessibility_dispatch_surface_action(&surface, &request));
     assert(calls == 1);
     ui_accessibility_tree_destroy(&tree);

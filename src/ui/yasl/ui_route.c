@@ -52,8 +52,11 @@ static struct ui_widget *drop_mark_target(struct ui_surface *surface,
 static enum ui_edit_command shortcut_edit(input_command_id action)
 {
     switch (action) {
+    case INPUT_COMMAND_CUT:        return UI_EDIT_CUT;
     case INPUT_COMMAND_COPY:       return UI_EDIT_COPY;
     case INPUT_COMMAND_PASTE:      return UI_EDIT_PASTE;
+    case INPUT_COMMAND_UNDO:       return UI_EDIT_UNDO;
+    case INPUT_COMMAND_REDO:       return UI_EDIT_REDO;
     case INPUT_COMMAND_SELECT_ALL: return UI_EDIT_SELECT_ALL;
     default:                        return UI_EDIT_NONE;
     }

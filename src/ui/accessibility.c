@@ -557,13 +557,15 @@ bool ui_accessibility_tree_build_surface(const struct ui_surface *surface,
     struct ui_accessibility_tree previous = *tree;
     *tree = (struct ui_accessibility_tree){0};
     const struct ui_widget *modal = surface_modal(surface);
-    /* The root and the overlays are siblings in the published tree, so they
-     * share one order. */
+    /* The overlays sit above the root, so they share its order counter and
+     * its parent node. A node without a parent gives accesskit two roots,
+     * and its consumer aborts. */
     uint32_t order = 0;
     bool built = build_widget(ui_surface_root(surface), 0, &order, tree,
                               &previous, modal);
+    uint64_t parent = tree->count ? tree->nodes[0].id : 0;
     for (size_t i = 0; built && i < ui_surface_overlay_count(surface); i++)
-        built = build_widget(ui_surface_overlay_at(surface, i), 0, &order,
+        built = build_widget(ui_surface_overlay_at(surface, i), parent, &order,
                              tree, &previous, modal);
     ui_accessibility_tree_destroy(&previous);
     if (!built)
