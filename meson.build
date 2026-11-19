@@ -290,7 +290,6 @@ endif
 has_vulkan = wsap_fw.get_variable('has_vulkan')
 if has_vulkan
     vulkan_dep = dependency('vulkan', version: '>=1.3.0')
-    glslc = find_program('glslc', native: true)
     backend_deps += [vulkan_dep.partial_dependency(compile_args: true, includes: true), dl_dep]
 endif
 lib_deps = base_deps + font_deps + backend_deps
