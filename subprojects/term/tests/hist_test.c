@@ -633,12 +633,15 @@ static void test_large_wide_count(void)
         wsap_vtcore_hist_push_row(&h, row, 4, true, NULL);
     wsap_vtcore_hist_close_open_line(&h);
     uint64_t exact = wsap_vtcore_hist_rows(&h, 3);
+    assert(exact > 254);
+    /* A row of a line with wide cells loses its last column when the next
+     * glyph does not fit, so the row count is exact only from a walk. */
+    assert(wsap_vtcore_hist_estimated_rows(&h, 3) == exact);
     wsap_vtcore_hist_prepare_rows(&h, 3);
-    assert(wsap_vtcore_hist_estimated_rows(&h, 3) < exact);
+    assert(wsap_vtcore_hist_estimated_rows(&h, 3) == exact);
     assert(wsap_vtcore_hist_view_sync(&view, &h, 3));
     wsap_vtcore_hist_view_scroll_to(&view, &h, 3, (struct line_pos){0}, INT_MAX);
     wsap_vtcore_hist_view_refine(&view, &h, 3, 3);
-    assert(exact > 254);
     assert(wsap_vtcore_hist_estimated_rows(&h, 3) == exact);
     for (int i = 0; i < 300; i++)
         wsap_vtcore_hist_push_ascii(&h, "x", 1, NULL, false);
