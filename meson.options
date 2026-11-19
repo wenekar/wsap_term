@@ -83,18 +83,6 @@ option(
 )
 
 option(
-    'app',
-    type: 'boolean',
-    value: true,
-    description: 'Build the wsap_term application',
-)
-option(
-    'framework',
-    type: 'boolean',
-    value: false,
-    description: 'Install the framework libraries, headers, and pkg-config files',
-)
-option(
     'dev_paths',
     type: 'boolean',
     value: true,

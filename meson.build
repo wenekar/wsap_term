@@ -55,10 +55,10 @@ if get_option('kitty_tests') and not get_option('tests')
     error('Kitty tests require tests=true')
 endif
 isa = get_option('isa')
-# An SDK build ships to other machines, so it never gets a native target by
-# default. A local app build keeps the native target for speed.
+# A local build keeps the native target for speed. A cross or package build
+# passes an explicit ISA.
 if isa == 'auto'
-    isa = get_option('app') ? 'native' : ''
+    isa = meson.is_cross_build() ? '' : 'native'
 endif
 if meson.is_cross_build() and isa == 'native'
     error('Cross builds must set -Disa= or an explicit target ISA')
@@ -84,13 +84,7 @@ if isa != ''
     endif
 endif
 
-# An SDK must not embed a path of this machine. The framework option turns
-# the development paths off, because an installed SDK is used on another host.
 dev_paths = get_option('dev_paths')
-if dev_paths and get_option('framework')
-    warning('The framework option turns dev_paths off. An SDK must not embed a source path.')
-    dev_paths = false
-endif
 
 dev_args = [
     '-DWSAP_DATADIR="' + (get_option('prefix') / get_option('datadir')) + '"',
@@ -172,15 +166,6 @@ if get_option('b_lto')
         cc.get_supported_arguments('-ffat-lto-objects'),
         language: project_languages,
     )
-    # A framework-only build ships its archives. LTO bytecode holds the source
-    # and build paths of this machine, and it needs the same compiler to read.
-    # A global argument also reaches the subprojects, whose archives install
-    # next to these.
-    if get_option('framework') and not get_option('app')
-        no_lto = cc.get_supported_arguments('-fno-lto')
-        add_global_arguments(no_lto, language: project_languages)
-        add_global_link_arguments(cc.get_supported_link_arguments('-fno-lto'), language: 'c')
-    endif
 endif
 
 if get_option('hardening') and get_option('b_sanitize') == 'none'
@@ -250,15 +235,35 @@ if system == 'darwin'
     platform_deps += [dependency('appleframeworks', modules: ['AppKit', 'CoreFoundation', 'Foundation', 'QuartzCore', 'Metal', 'UserNotifications', 'CoreText', 'CoreGraphics'])]
 endif
 base_deps = [thread_dep, m_dep, yyjson_dep] + platform_deps
-yasl_options = ['default_library=static']
-if backend == 'x11'
-    yasl_options += ['wayland=disabled', 'x11=enabled']
-endif
-yasl_dep = dependency(
-    'yasl',
-    fallback: 'yasl',
-    default_options: yasl_options,
+
+# The UI framework is the vendored subproject. It owns the base, input, paint,
+# font, ui, theme, render, and ui_yasl libraries and the yasl window system.
+# The options follow this build so that both halves agree.
+wsap_fw = subproject(
+    'wsap-framework',
+    default_options: [
+        'tests=false',
+        'benchmarks=false',
+        'window_backend=' + backend,
+        'font_backend=' + font_backend,
+        'vulkan_render=' + get_option('vulkan_render'),
+        'isa=' + isa,
+        'hardening=' + get_option('hardening').to_string(),
+        'dev_paths=' + dev_paths.to_string(),
+        'dev_themes_dir=' + (dev_paths
+            ? (meson.project_source_root() / 'assets' / 'themes')
+            : ''),
+    ],
 )
+wsap_base_dep = dependency('wsap-base')
+wsap_input_dep = dependency('wsap-input')
+wsap_paint_dep = dependency('wsap-paint')
+wsap_font_dep = dependency('wsap-font')
+wsap_ui_dep = dependency('wsap-ui')
+wsap_theme_dep = dependency('wsap-theme')
+wsap_render_dep = dependency('wsap-render')
+wsap_ui_yasl_dep = dependency('wsap-ui-yasl')
+yasl_dep = dependency('yasl')
 term_dep = dependency(
     'wsap_vtcore',
     fallback: 'term',
@@ -281,21 +286,20 @@ else
     backend_deps = []
 endif
 
-# The Vulkan backend needs Vulkan 1.3 and glslc, which compiles its shaders.
-# `auto` builds the CPU-only renderer when one of them is missing.
-has_vulkan = false
-vulkan_opt = get_option('vulkan_render')
-if vulkan_opt != 'disabled' and system != 'darwin'
-    vulkan_dep = dependency('vulkan', version: '>=1.3.0', required: vulkan_opt == 'enabled')
-    glslc = find_program('glslc', native: true, required: vulkan_opt == 'enabled')
-    if vulkan_dep.found() and glslc.found()
-        has_vulkan = true
-        backend_deps += [vulkan_dep.partial_dependency(compile_args: true, includes: true), dl_dep]
-    endif
+# The framework detects Vulkan and glslc once. The terminal reads that result.
+has_vulkan = wsap_fw.get_variable('has_vulkan')
+if has_vulkan
+    vulkan_dep = dependency('vulkan', version: '>=1.3.0')
+    glslc = find_program('glslc', native: true)
+    backend_deps += [vulkan_dep.partial_dependency(compile_args: true, includes: true), dl_dep]
 endif
 lib_deps = base_deps + font_deps + backend_deps
-deps = lib_deps + [yasl_dep]
-core_deps = deps
+wsap_deps = [
+    wsap_base_dep, wsap_input_dep, wsap_paint_dep, wsap_font_dep,
+    wsap_ui_dep, wsap_theme_dep, wsap_render_dep, wsap_ui_yasl_dep,
+]
+core_deps = wsap_deps + lib_deps + [yasl_dep, term_dep]
+deps = core_deps
 
 sanitizer_common = 'halt_on_error=1:abort_on_error=1:print_summary=1'
 ubsan_strict = sanitizer_common + ':print_stacktrace=1'
@@ -386,21 +390,15 @@ if system == 'darwin'
     exe_install_dir = app_contents / 'MacOS'
 endif
 
-if not get_option('app') and (get_option('tests') or get_option('benchmarks'))
-    error('A framework-only build needs -Dtests=false and -Dbenchmarks=false')
-endif
-
 subdir('src')
-if get_option('app')
-    subdir('bin')
-endif
+subdir('bin')
 if get_option('benchmarks')
     subdir('benchmarks')
 endif
 if get_option('tests')
     subdir('tests')
 endif
-if get_option('app') and system == 'linux' and get_option('install_desktop')
+if system == 'linux' and get_option('install_desktop')
     install_data(
         'assets/icons/wsap-term.svg',
         install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps',
@@ -410,7 +408,7 @@ if get_option('app') and system == 'linux' and get_option('install_desktop')
         install_dir: get_option('datadir') / 'applications',
     )
 endif
-if get_option('app') and system == 'darwin'
+if system == 'darwin'
     configure_file(
         input: 'assets/macos/Info.plist.in',
         output: 'Info.plist',
@@ -511,8 +509,8 @@ summary(
     {
         'Platform': system,
         'Backend': backend,
-        'App': get_option('app'),
-        'Framework': get_option('framework'),
+        'Framework': 'subproject (wsap-framework)',
+        'Vulkan': has_vulkan,
         'ISA': isa,
         'Hardening': get_option('hardening'),
         'Tests': get_option('tests'),
