@@ -214,25 +214,13 @@ static bool edit_key_for_shell(const struct terminal *t,
     }
 }
 
-/* Returns true when the view declined the press of held key `id`. */
-static bool declined_key_held(const struct terminal_view *view, unsigned id)
+/* The held keys whose press a terminal of this window declined. The host
+ * shares one set among the terminals of a window. */
+static struct input_key_set *declined_keys(struct terminal *t)
 {
-    return id < INPUT_SHORTCUT_KEY_COUNT &&
-           ((view->declined_keys[id / 64] >> (id % 64)) & 1);
-}
-
-/* Records whether the view declined the press of key `id`. Call it on each
- * press, and on the release of a declined key. */
-static void declined_key_set(struct terminal_view *view, unsigned id,
-                             bool declined)
-{
-    if (id >= INPUT_SHORTCUT_KEY_COUNT)
-        return;
-    uint64_t bit = UINT64_C(1) << (id % 64);
-    if (declined)
-        view->declined_keys[id / 64] |= bit;
-    else
-        view->declined_keys[id / 64] &= ~bit;
+    struct input_key_set *keys = t->host.declined_keys
+        ? t->host.declined_keys(t->host.ud, t) : NULL;
+    return keys ? keys : &t->view.declined_keys;
 }
 
 static bool view_event(struct ui_widget *widget, const struct ui_event *event)
@@ -260,23 +248,24 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
             /* A repeat or a release follows its press. The app copy clears
              * the selection, so a new decision would send the key of a copy
              * that already ran to the shell. */
-            if (key->action != INPUT_PRESS && declined_key_held(view, id)) {
+            struct input_key_set *declined = declined_keys(t);
+            if (key->action != INPUT_PRESS && input_key_set_has(declined, id)) {
                 if (key->action == INPUT_RELEASE)
-                    declined_key_set(view, id, false);
+                    input_key_set_put(declined, id, false);
                 return false;
             }
-            /* A press decides again. A repeat or a release that has no
-             * declined press decides by itself. This view can miss the
-             * press, for example after a tab switch while the chord is
-             * held. */
+            /* A press always decides again, so a stale record never takes
+             * a press. A repeat or a release that has no declined press
+             * decides by itself, for example when the press went to
+             * another widget. */
             input_command_id command = input_keymap_lookup_scoped(
                 window_keymap(w), key,
                 ui_surface_command_scope(ui_widget_surface(widget)));
-            bool declined = command != INPUT_COMMAND_NONE &&
-                            !edit_key_for_shell(t, command);
+            bool decline = command != INPUT_COMMAND_NONE &&
+                           !edit_key_for_shell(t, command);
             if (key->action == INPUT_PRESS)
-                declined_key_set(view, id, declined);
-            if (declined)
+                input_key_set_put(declined, id, decline);
+            if (decline)
                 return false;
         }
         if (!key || !terminal_key(t, key))
