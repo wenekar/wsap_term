@@ -9,7 +9,6 @@ The build requires these tools and libraries:
 - Ninja and pkg-config
 - Python 3.10 or later
 - HarfBuzz 7 or later
-- ICU
 - yyjson 0.12 or later
 
 ### Linux prerequisites
@@ -19,7 +18,6 @@ Linux builds require these additional packages:
 - Wayland development files (`libwayland-dev`, `wayland-protocols`)
 - FreeType and Fontconfig
 - xkbcommon development files (`libxkbcommon-dev`)
-- GIO and GLib 2.0 (`libglib2.0-dev`)
 
 For Vulkan GPU rendering, Linux builds also require:
 
@@ -33,7 +31,7 @@ If Vulkan 1.3 or `glslc` is missing, the build falls back to the CPU renderer.
 macOS builds require macOS 14 or later and Homebrew packages:
 
 ```sh
-brew install llvm meson ninja pkgconf yyjson harfbuzz icu4c rust
+brew install llvm meson ninja pkgconf yyjson harfbuzz rust
 ```
 
 ## AccessKit
