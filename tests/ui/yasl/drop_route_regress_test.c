@@ -276,6 +276,20 @@ static void file_drop_before_leave_goes_to_its_location_test(void)
     teardown(&f);
 }
 
+/* 7. A drag that hovered one widget and lost its LEAVE. The next drop lands
+ * on another widget. The drop location wins over the old hover state. */
+static void drop_goes_to_its_location_not_an_old_hover_test(void)
+{
+    struct fixture f;
+    show(&f);
+    focus(&f, &f.top.widget);
+    hover(&f, "image/png", over_bottom);
+    release(&f, "image/png", "PNG", over_top);
+    assert(f.top.drop == 1);
+    assert(f.bottom->drop == 0);
+    teardown(&f);
+}
+
 int main(void)
 {
     static void (*const cases[])(void) = {
@@ -285,6 +299,7 @@ int main(void)
         paste_after_a_binary_drop_goes_to_the_focus_test,
         file_drop_after_leave_goes_to_its_location_test,
         file_drop_before_leave_goes_to_its_location_test,
+        drop_goes_to_its_location_not_an_old_hover_test,
     };
     /* CASE=n runs one case, so a run reports each failure. */
     const char *pick = getenv("CASE");

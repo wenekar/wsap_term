@@ -115,7 +115,7 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
         ui_surface_dispatch(keys, &event);
         return WINDOW_INPUT_HANDLED;
     case INPUT_DROP: {
-        /* The drop goes to the widget that drew the mark. */
+        /* The drop goes to the widget at its drop location. */
         const char *mimes[1] = { ev->drop_type.mime };
         struct ui_drag_event drag = {
             .mimes = mimes,
@@ -128,16 +128,7 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
         event = ui_event_drag(UI_EVENT_DROP, &drag, now_ms);
         /* A drop position is in the coordinates of the window surface. A menu
          * popup sits above that surface and takes no drop. */
-        struct ui_surface *screen = &ui_of(w)->screen;
-        ui_surface_prepare(screen);
-        struct ui_widget *target = ui_surface_drag_target(screen);
-        if (!target)
-            target = drop_mark_target(screen, drag.mime, drag.pos);
-        if (target)
-            ui_widget_event(target, &event);
-        /* The drag ends with the drop, so the hover target is cleared. */
-        bool enter = false;
-        ui_surface_drag_hover(screen, NULL, &enter);
+        route_release(w, drag.mime, drag.pos, &event);
         return WINDOW_INPUT_HANDLED;
     }
     case INPUT_DRAG: {
