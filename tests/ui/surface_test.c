@@ -1025,6 +1025,71 @@ static void drop_target_clears_on_leave_test(void)
     ui_widget_destroy(&root);
 }
 
+struct pointer_probe {
+    int motions;
+    int leaves;
+};
+
+static bool pointer_probe_event(struct ui_widget *widget,
+                                const struct ui_event *event)
+{
+    struct pointer_probe *probe = widget->userdata;
+    if (event->kind != UI_EVENT_POINTER)
+        return false;
+    if (event->data.pointer.kind == UI_POINTER_MOTION)
+        probe->motions++;
+    if (event->data.pointer.kind == UI_POINTER_LEAVE)
+        probe->leaves++;
+    return true;
+}
+
+static const struct ui_widget_ops POINTER_PROBE_OPS = {
+    .name = "pointer-probe",
+    .event = pointer_probe_event,
+};
+
+/* A hovered child gets the pointer LEAVE when its parent leaves the surface,
+ * and none when its parent is destroyed. */
+static void hover_leave_skips_a_destroyed_subtree_test(void)
+{
+    for (int destroy = 0; destroy < 2; destroy++) {
+        struct ui_surface surface;
+        ui_surface_init(&surface, NULL, NULL);
+        struct ui_widget root, parent;
+        struct pointer_probe probe = {0};
+        struct ui_widget child;
+        ui_widget_init(&root, NULL, NULL);
+        ui_widget_init(&parent, NULL, NULL);
+        ui_widget_init(&child, &POINTER_PROBE_OPS, &probe);
+        ui_widget_set_fixed_size(&child, (struct vector2i){ .x = 40, .y = 40 });
+        assert(ui_widget_add_child(&root, &parent));
+        assert(ui_widget_add_child(&parent, &child));
+        assert(ui_surface_set_root(&surface, &root));
+        ui_surface_resize(&surface, (struct vector2i){ .x = 100, .y = 100 });
+        ui_surface_prepare(&surface);
+        struct ui_event move = ui_event_pointer((struct ui_pointer_event){
+            .kind = UI_POINTER_MOTION, .pos = { .x = 10, .y = 10 },
+        }, 0);
+        ui_surface_dispatch(&surface, &move);
+        assert(probe.motions == 1 && probe.leaves == 0);
+
+        if (destroy) {
+            ui_widget_destroy(&parent);
+            assert(probe.leaves == 0);
+        } else {
+            assert(ui_widget_remove_child(&root, &parent));
+            assert(probe.leaves == 1);
+        }
+        /* The surface holds no hover now, so a move sends no LEAVE. */
+        ui_surface_dispatch(&surface, &move);
+        assert(probe.leaves == (destroy ? 0 : 1));
+        assert(ui_surface_destroy(&surface));
+        ui_widget_destroy(&child);
+        ui_widget_destroy(&parent);
+        ui_widget_destroy(&root);
+    }
+}
+
 int main(void)
 {
     surface_post_runs_after_dispatch_test();
@@ -1046,5 +1111,6 @@ int main(void)
     zero_surface_test();
     drag_hover_leave_once_test();
     drop_target_clears_on_leave_test();
+    hover_leave_skips_a_destroyed_subtree_test();
     return 0;
 }
