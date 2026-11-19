@@ -355,6 +355,36 @@ int main(void)
     key(w, YASL_KEY_F2, 0, 0, 0, NULL, YASL_KEY_PRESS);
     expect(fds[0], "\033OQ");
 
+    /* A held copy chord with a selection copies once. The press clears the
+     * selection, but its repeats and its release still belong to the copy,
+     * so the shell gets no ^C. */
+    assert(input_keymap_apply_spec(&w->keymap, "ctrl+c = copy"));
+    assert(wsap_vtcore_feed(session->term, "copy me", 7, 0));
+    terminal_select_all(content);
+    assert(wsap_vtcore_has_selection(session->term));
+    raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_PRESS);
+    assert(!wsap_vtcore_has_selection(session->term));
+    raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_REPEAT);
+    raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_REPEAT);
+    raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_RELEASE);
+    expect(fds[0], "");
+
+    /* The next press, with no selection, belongs to the shell again. */
+    raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_PRESS);
+    raw_key(w, YASL_KEY_C, YASL_MOD_CTRL, 'c', 'C', YASL_KEY_RELEASE);
+    expect(fds[0], "\x03");
+
+    /* The kitty modes that report repeats and releases send no part of a
+     * copy that the app ran. */
+    assert(wsap_vtcore_feed(session->term, "\033[>3u", 5, 0));
+    terminal_select_all(content);
+    assert(wsap_vtcore_has_selection(session->term));
+    raw_key(w, YASL_KEY_F2, 0, 0, 0, YASL_KEY_PRESS);
+    raw_key(w, YASL_KEY_F2, 0, 0, 0, YASL_KEY_REPEAT);
+    raw_key(w, YASL_KEY_F2, 0, 0, 0, YASL_KEY_RELEASE);
+    expect(fds[0], "");
+    assert(wsap_vtcore_feed(session->term, "\033[<u", 4, 0));
+
     window_close(other);
     window_close(w);
     test_app_fini(&app);

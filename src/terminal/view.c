@@ -233,11 +233,30 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
          * declines it, so the keymap of the window in step 3 runs the
          * command. A key that the shell owns goes to the encoder, which
          * sends the key that the user pressed. */
-        input_command_id command = key
-            ? input_keymap_lookup(window_keymap(w), key)
-            : INPUT_COMMAND_NONE;
-        if (command != INPUT_COMMAND_NONE && !edit_key_for_shell(t, command))
-            return false;
+        if (key && key->action != INPUT_PRESS) {
+            /* A repeat or a release follows its press. The app copy clears
+             * the selection, so a new decision would send the key of a copy
+             * that already ran to the shell. */
+            unsigned id = input_key_id(key);
+            if (view->declined_key == id) {
+                if (key->action == INPUT_RELEASE)
+                    view->declined_key = 0;
+                return false;
+            }
+        } else if (key) {
+            input_command_id command =
+                input_keymap_lookup(window_keymap(w), key);
+            unsigned id = input_key_id(key);
+            if (command != INPUT_COMMAND_NONE &&
+                !edit_key_for_shell(t, command)) {
+                view->declined_key = id;
+                return false;
+            }
+            /* A new press of the declined key belongs to the shell. A press
+             * of another key keeps the record of a held declined key. */
+            if (view->declined_key == id)
+                view->declined_key = 0;
+        }
         if (!key || !terminal_key(t, key))
             ui_surface_keep_key_text(ui_widget_surface(widget));
         return true;

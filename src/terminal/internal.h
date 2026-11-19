@@ -52,6 +52,9 @@ struct terminal_view {
     bool drop_hover;
     bool opening_link;
     bool blink_cells;
+    /* The key ID of the press that the view declined to the app command, or
+     * 0. The repeats and the release of that key follow the press. */
+    unsigned declined_key;
 
     /* The byte offset of each logical history line in the accessibility
      * document, its byte length, and the history rows that it covers. The
