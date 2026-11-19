@@ -138,6 +138,12 @@ test(
     args: files('tools/sdk_source_paths_test.sh'),
     suite: ['unit'],
 )
+test(
+    'sdk-public-header-test',
+    python,
+    args: files('tools/sdk_public_header_test.py'),
+    suite: ['unit'],
+)
 
 # Tests that call uninstrumented system libraries, such as fontconfig or the
 # system yyjson. The msan setup skips them: MSan reports false positives there.
