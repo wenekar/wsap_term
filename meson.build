@@ -84,10 +84,18 @@ if isa != ''
     endif
 endif
 
+# An SDK must not embed a path of this machine. The framework option turns
+# the development paths off, because an installed SDK is used on another host.
+dev_paths = get_option('dev_paths')
+if dev_paths and get_option('framework')
+    warning('The framework option turns dev_paths off. An SDK must not embed a source path.')
+    dev_paths = false
+endif
+
 dev_args = [
     '-DWSAP_DATADIR="' + (get_option('prefix') / get_option('datadir')) + '"',
 ]
-if get_option('dev_paths')
+if dev_paths
     dev_args += [
         '-DWSAP_DEV_THEMES_DIR="' + (meson.project_source_root() / 'assets' / 'themes') + '"',
         '-DWSAP_DEV_FONTS_DIR="' + (meson.project_source_root() / 'assets' / 'fonts') + '"',
@@ -98,7 +106,7 @@ add_project_arguments(dev_args, language: project_languages)
 dev_terminfo_dir = meson.project_build_root() / 'terminfo'
 dev_terminfo_targets = []
 tic = find_program('tic', native: true, required: false)
-if get_option('dev_paths') and tic.found()
+if dev_paths and tic.found()
     dev_terminfo_targets += custom_target(
         'dev-terminfo',
         input: files('assets/terminfo/wsap_term.terminfo'),
@@ -511,7 +519,7 @@ summary(
         'Benchmarks': get_option('benchmarks'),
         'Integration tests': get_option('integration_tests'),
         'Kitty tests': subproject('term').get_variable('term_kitty_tests', false),
-        'Dev paths': get_option('dev_paths'),
+        'Dev paths': dev_paths,
         'Package format': pkg_format,
     },
     section: 'wsap_term',
