@@ -84,6 +84,10 @@ struct ui_accessibility_text_provider {
     /* Copies at most `capacity` bytes at `offset` to `out`. Returns the byte
      * count of the copy. */
     size_t (*read)(void *instance, size_t offset, char *out, size_t capacity);
+    /* Optional. The host takes the lock before the first read of a publish and
+     * releases it after the last read, so the reads see one document. */
+    void (*lock)(void *instance);
+    void (*unlock)(void *instance);
 };
 
 struct ui_accessibility_node {
