@@ -363,22 +363,25 @@ static bool uri_list_has_file(const struct yasl_event *in)
 
 /* Queues the payload of a DROP RELEASE by its data type. The drop keeps its
  * type. Only a text type becomes a paste. A uri list stays a uri list, and a
- * local file list stays a file list. */
-static void queue_drop_release(struct window *w, const struct yasl_event *in)
+ * local file list stays a file list. Returns false when the queue refuses the
+ * payload, for example a payload that is too large. */
+static bool queue_drop_release(struct window *w, const struct yasl_event *in)
 {
     const char *mime = in->drop.mime;
     struct vector2i pos = device_pos(w, in);
-    if (mime_is_text(mime)) {
-        input_queue_push_drop_text(&w->input, in->text, in->length, pos);
-    } else if (mime_is_uri_list(mime)) {
+    if (mime_is_text(mime))
+        return input_queue_push_drop_text(&w->input, in->text, in->length,
+                                          pos) != 0;
+    if (mime_is_uri_list(mime)) {
         if (uri_list_has_file(in))
-            input_queue_push_drop_files(&w->input, in->text, in->length, pos);
-        else
-            input_queue_push_drop(&w->input, "text/uri-list", in->text,
-                                  in->length, pos);
-    } else if (mime[0]) {
-        input_queue_push_drop(&w->input, mime, in->text, in->length, pos);
+            return input_queue_push_drop_files(&w->input, in->text,
+                                               in->length, pos) != 0;
+        return input_queue_push_drop(&w->input, "text/uri-list", in->text,
+                                     in->length, pos) != 0;
     }
+    return mime[0] &&
+           input_queue_push_drop(&w->input, mime, in->text, in->length,
+                                 pos) != 0;
 }
 
 void window_native_input(struct window *w, const struct yasl_event *in)
@@ -455,14 +458,17 @@ void window_native_input(struct window *w, const struct yasl_event *in)
          * router hit-tests the window surface. A menu popup takes no drop,
          * so a drop event on a popup leaves the window and drops nothing. */
         bool on_popup = popup_of(w, in->surface) != 0;
-        if (in->action == YASL_DROP_RELEASE && in->text && !on_popup)
-            queue_drop_release(w, in);
+        bool release = in->action == YASL_DROP_RELEASE;
+        bool queued = release && in->text && !on_popup &&
+                      queue_drop_release(w, in);
         /* Every release ends the drag, also with no LEAVE, so the hover
          * mark of the drag target clears. */
         if (w->drag_target && w->drag_target->drop_hover)
             w->drag_target->drop_hover(w, in->action == YASL_DROP_OVER &&
                                        !on_popup, w->drag_ud);
-        if (on_popup)
+        /* A queued release ends the drag when the router takes it. A
+         * release with no payload in the queue ends it with a LEAVE. */
+        if (on_popup || (release && !queued))
             input_queue_push_drag(&w->input, "", device_pos(w, in));
         else if (in->action == YASL_DROP_OVER || in->action == YASL_DROP_LEAVE)
             input_queue_push_drag(&w->input, in->drop.mime, device_pos(w, in));

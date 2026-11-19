@@ -11,6 +11,7 @@
 #include "ui/yasl/native_input.h"
 #include "ui/yasl/testing.h"
 #include "ui/yasl/window.h"
+#include "util/text_limit.h"
 
 /*
  * Decision of the codebase owner (2026-11-19):
@@ -472,6 +473,33 @@ static void file_drop_on_a_popup_ends_the_drag_test(void)
     teardown(&f);
 }
 
+/* 15. The queue refuses a release payload that is too large. The release
+ * still ends the drag: the widget under the drag gets one LEAVE, and no
+ * widget gets a drop. */
+static void refused_release_ends_the_drag_test(void)
+{
+    struct fixture f;
+    show(&f);
+    focus(&f, &f.top.widget);
+    hover(&f, "image/png", over_bottom);
+    assert(f.bottom->enter == 1);
+    size_t len = INPUT_TEXT_MAX + 1;
+    char *big = malloc(len);
+    assert(big);
+    memset(big, 'x', len);
+    struct yasl_event e = {
+        .type = YASL_EVENT_DROP, .action = YASL_DROP_RELEASE,
+        .x = over_bottom.x, .y = over_bottom.y, .text = big, .length = len,
+    };
+    snprintf(e.drop.mime, sizeof e.drop.mime, "image/png");
+    native(&f, &e);
+    free(big);
+    assert(f.bottom->leave == 1);
+    assert(f.bottom->drop == 0 && f.top.drop == 0);
+    assert(!ui_surface_drag_target(window_ui_key_surface(f.window)));
+    teardown(&f);
+}
+
 int main(void)
 {
     static void (*const cases[])(void) = {
@@ -489,6 +517,7 @@ int main(void)
         widget_freed_while_a_popup_is_open_test,
         drop_on_a_popup_reaches_no_widget_test,
         file_drop_on_a_popup_ends_the_drag_test,
+        refused_release_ends_the_drag_test,
     };
     /* CASE=n runs one case, so a run reports each failure. */
     const char *pick = getenv("CASE");

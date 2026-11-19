@@ -389,7 +389,7 @@ static void local_uri_list_drops_files_test(void)
 }
 
 /* A drop of another data type keeps that type. A drop with no payload
- * queues nothing. */
+ * queues no payload. It queues only a LEAVE, which ends the drag. */
 static void other_drops_keep_their_type_test(void)
 {
     static const char json[] = "{}";
@@ -403,6 +403,9 @@ static void other_drops_keep_their_type_test(void)
     e = drop_release("image/png", json, 0);
     window_native_input(&w, &e);
     struct input_event out;
+    assert(input_queue_take(&w.input, &out));
+    assert(out.kind == INPUT_DRAG && out.drop_type.leave);
+    input_event_release(&out);
     assert(!input_queue_take(&w.input, &out));
 }
 
