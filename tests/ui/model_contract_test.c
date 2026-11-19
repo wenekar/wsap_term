@@ -1412,6 +1412,58 @@ static void view_update_counts_only_planned_children_test(void)
     ui_view_destroy(view);
 }
 
+/* An owner puts the view root in a widget X. An update that supplies X
+ * inside the root fails before it changes a widget. */
+static void view_update_rejects_the_owner_of_the_root_test(void)
+{
+    for (int deep = 0; deep < 2; deep++) {
+        int destroyed = 0;
+        struct supplied_control owner = { .destroyed = &destroyed };
+        ui_widget_init(&owner.widget, &SUPPLIED_CONTROL_OPS, NULL);
+        static const ui_menu_item items[] = { { .label = "Open", .action = 1 } };
+        struct ui_label *label = NULL;
+        struct ui_menu *menu = NULL;
+        struct ui_node_desc kids[] = {
+            { .kind = UI_NODE_LABEL, .key = "l", .bind.label = &label,
+              .props.label = { .text = "Idle" } },
+            { .kind = UI_NODE_MENU, .key = "m", .bind.menu = &menu,
+              .props.menu = { .items = items, .count = 1 } },
+        };
+        struct ui_node_desc root = {
+            .kind = UI_NODE_COLUMN, .key = "root", .children = kids, .child_count = 2,
+        };
+        struct ui_view *view = ui_view_mount(&root, NULL);
+        assert(view && label && menu);
+        struct ui_widget *top = ui_view_root(view);
+        assert(ui_widget_add_child(&owner.widget, top));
+
+        struct ui_node_desc x = {
+            .kind = UI_NODE_WIDGET, .key = "x", .props.widget = &owner.widget,
+        };
+        struct ui_node_desc row = {
+            .kind = UI_NODE_ROW, .key = "row", .children = &x, .child_count = 1,
+        };
+        struct ui_node_desc k2[] = { kids[0], kids[1], deep ? row : x };
+        k2[0].props.label.text = "Busy";
+        k2[1].props.menu.count = 0;
+        struct ui_node_desc next = root;
+        next.children = k2;
+        next.child_count = 3;
+        struct ui_view_diagnostic diagnostic;
+        assert(!ui_view_update_ex(view, &next, &diagnostic));
+        assert(diagnostic.error == UI_VIEW_ERROR_INVALID_CHILDREN);
+        assert(ui_view_root(view) == top && top->parent == &owner.widget);
+        assert(!owner.widget.parent && !destroyed);
+        assert(!strcmp(ui_label_text(label), "Idle"));
+        assert(ui_menu_is_open(menu));
+        assert(ui_view_widget(view, "x") == NULL);
+        assert(ui_widget_child_count(top) == 2);
+        ui_view_destroy(view);
+        ui_widget_destroy(&owner.widget);
+        assert(destroyed == 1);
+    }
+}
+
 int main(void)
 {
     view_diagnostic_test();
@@ -1436,6 +1488,7 @@ int main(void)
     view_update_rearranges_supplied_widgets_test();
     view_update_makes_a_supplied_widget_the_root_test();
     view_update_counts_only_planned_children_test();
+    view_update_rejects_the_owner_of_the_root_test();
     view_root_keyboard_test();
     hidden_child_takes_no_space_or_input_test();
     hidden_modal_restores_focus_test();

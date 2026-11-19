@@ -1020,15 +1020,29 @@ static size_t foreign_children(const struct ui_view *view,
     return foreign;
 }
 
-/* True when the planned tree fits the child limit of each container. The
- * check reads the plan and changes nothing, so call it before the update
- * changes a kept widget. A container holds its planned children and its
- * foreign children. `failed` names the first node that does not fit. */
+/* True when the planned tree fits the child limit of each container, and
+ * no planned widget holds the kept root. The check reads the plan and changes
+ * nothing, so call it before the update changes a widget. A container holds
+ * its planned children and its foreign children. `failed` names the first
+ * node that does not fit. */
 static bool placement_ok(const struct ui_view *view,
                          const struct ui_view_node *nodes, size_t count,
                          size_t *failed)
 {
     *failed = 0;
+    /* The old root keeps the parent that its owner gave it, so a widget
+     * above it cannot go below it. */
+    if (count && nodes[0].widget && nodes[0].widget == view->root) {
+        for (const struct ui_widget *p = nodes[0].widget->parent; p;
+             p = p->parent) {
+            for (size_t i = 1; i < count; i++) {
+                if (nodes[i].widget == p) {
+                    *failed = i;
+                    return false;
+                }
+            }
+        }
+    }
     for (size_t p = 0; p < count; p++) {
         const struct ui_widget *parent = nodes[p].widget;
         size_t limit = parent && parent->ops ? parent->ops->child_limit : 0;
