@@ -197,14 +197,18 @@ static bool pointer_is_local(const struct terminal *t)
 }
 
 /* Returns true when the shell gets the key of a bound edit command. Undo,
- * redo, and cut belong to the shell. */
-static bool edit_key_for_shell(input_command_id command)
+ * redo, and cut belong to the shell. Copy belongs to the shell only when
+ * there is no selection. */
+static bool edit_key_for_shell(const struct terminal *t,
+                               input_command_id command)
 {
     switch (command) {
     case INPUT_COMMAND_UNDO:
     case INPUT_COMMAND_REDO:
     case INPUT_COMMAND_CUT:
         return true;
+    case INPUT_COMMAND_COPY:
+        return !wsap_vtcore_has_selection(t->session.term);
     default:
         return false;
     }
@@ -232,7 +236,7 @@ static bool view_event(struct ui_widget *widget, const struct ui_event *event)
         input_command_id command = key
             ? input_keymap_lookup(window_keymap(w), key)
             : INPUT_COMMAND_NONE;
-        if (command != INPUT_COMMAND_NONE && !edit_key_for_shell(command))
+        if (command != INPUT_COMMAND_NONE && !edit_key_for_shell(t, command))
             return false;
         if (!key || !terminal_key(t, key))
             ui_surface_keep_key_text(ui_widget_surface(widget));

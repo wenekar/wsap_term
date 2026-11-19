@@ -73,8 +73,6 @@ void terminal_handle_shortcut(struct terminal *t, input_command_id sc)
             wsap_vtcore_select_clear(t->session.term);
             if (w)
                 window_redraw(w);
-        } else {
-            terminal_send_input(t, "\x03", 1);
         }
         break;
     case INPUT_COMMAND_PASTE:

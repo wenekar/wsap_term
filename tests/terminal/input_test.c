@@ -349,6 +349,11 @@ int main(void)
     window_ui_test_route(w, &keyless);
     expect(fds[0], "");
 
+    /* f2 = copy with no selection sends the key, not SIGINT. */
+    assert(!wsap_vtcore_has_selection(session->term));
+    assert(input_keymap_apply_spec(&w->keymap, "f2 = copy"));
+    key(w, YASL_KEY_F2, 0, 0, 0, NULL, YASL_KEY_PRESS);
+    expect(fds[0], "\033OQ");
 
     window_close(other);
     window_close(w);
