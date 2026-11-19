@@ -266,6 +266,13 @@ int main(void)
         assert(input_keymap_lookup(&legacy, &ctrl_t) == INPUT_SHORTCUT_NONE);
         assert(input_keymap_lookup(&modern, &ctrl_shift_t) == INPUT_SHORTCUT_NEW_TAB);
         assert(input_keymap_lookup(&legacy, &ctrl_shift_t) == INPUT_SHORTCUT_NEW_TAB);
+        /* A zero modifier set binds nothing. The bare letters must reach the
+         * shell in both styles. */
+        struct input_key_event plain_c = { .codepoint = 'c' };
+        struct input_key_event plain_v = { .codepoint = 'v' };
+        assert(input_keymap_lookup(&modern, &plain_c) == INPUT_SHORTCUT_NONE);
+        assert(input_keymap_lookup(&legacy, &plain_c) == INPUT_SHORTCUT_NONE);
+        assert(input_keymap_lookup(&legacy, &plain_v) == INPUT_SHORTCUT_NONE);
     }
 #endif
 

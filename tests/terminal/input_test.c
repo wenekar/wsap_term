@@ -226,6 +226,11 @@ int main(void)
     expect(other_fds[0], "[");
     input_keymap_reset(&w->keymap, INPUT_KEYBIND_LEGACY);
 
+    /* The legacy style binds no bare letter, so the shell gets the letter. */
+    assert(wsap_vtcore_feed(session->term, "\033[<u", 5, 0));
+    native_key(w, YASL_KEY_C, 0, 'c', 'C', YASL_KEY_TEXT_COMMIT, "c");
+    expect(fds[0], "c");
+
     struct ui_surface *ui = window_ui_surface(w);
     ui_surface_set_scale(ui, (struct css_scale_context){
         .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,

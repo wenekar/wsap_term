@@ -526,6 +526,10 @@ void input_keymap_defaults(struct input_keymap *km,
     const unsigned accels[2] = {p->accel, p->accel_alt};
 #endif
     for (int i = 0; i < 2; i++) {
+        /* A policy with no alternate accel gives no binding. A zero modifier
+         * set would bind the bare letter. */
+        if (!accels[i])
+            continue;
         add_bind(km, accels[i], 'c', INPUT_KEY_NONE, INPUT_SHORTCUT_COPY);
         add_bind(km, accels[i], 'v', INPUT_KEY_NONE, INPUT_SHORTCUT_PASTE);
     }
