@@ -459,8 +459,14 @@ struct window *window_create(struct window_host *host, const struct window_spec 
     }
     w->host = host;
     /* The keymap of a window is complete at once, so a key that arrives
-     * before the first frame still runs an app command. */
-    input_config_load(&w->keymap);
+     * before the first frame still runs an app command. Every window copies
+     * the keymap of its host, so two windows never differ. */
+    if (!host->keymap_loaded) {
+        input_config_load(&host->keymap);
+        host->keymap_loaded = true;
+    }
+    for (uint8_t scope = 0; scope < INPUT_COMMAND_SCOPE_COUNT; scope++)
+        input_keymap_copy_scope(&w->keymap, &host->keymap, scope);
     w->stats = (struct frame_stats){
         .started_ns = yasl_time_ns(),
         .frame_min_ms = 1e18,
@@ -753,30 +759,45 @@ const struct input_keymap *window_keymap(const struct window *w)
     return w ? &w->keymap : NULL;
 }
 
-void window_reload_input(struct window *w)
+void window_host_reload_input(struct window_host *host)
 {
-    if (!w)
+    if (!host)
         return;
-    input_config_load(&w->keymap);
-    /* A route that the old keymap gave must not apply to a key of the new
-     * keymap. */
-    w->sc_state = (struct input_shortcut_state){0};
+    input_config_load(&host->keymap);
+    host->keymap_loaded = true;
+    /* The shortcut state of each window stays. A key that is down keeps the
+     * route of its press, so its repeats and its release do not reach the
+     * content. */
+    for (int i = 0; i < host->count; i++)
+        input_keymap_copy_scope(&host->windows[i]->keymap, &host->keymap,
+                                INPUT_COMMAND_SCOPE_APP);
 }
 
-bool window_bind_scope(struct window *w,
-                       const struct input_command_registry *reg,
-                       uint8_t scope, const char *spec)
+bool window_host_bind_scope(struct window_host *host,
+                            const struct input_command_registry *reg,
+                            uint8_t scope, const char *spec)
 {
     /* The app scope belongs to input.conf, and a reload replaces it. */
-    if (!w || scope == INPUT_COMMAND_SCOPE_APP)
+    if (!host || scope == INPUT_COMMAND_SCOPE_APP ||
+        !input_keymap_apply_spec_registry(&host->keymap, reg, scope, spec))
         return false;
-    return input_keymap_apply_spec_registry(&w->keymap, reg, scope, spec);
+    bool copied = true;
+    for (int i = 0; i < host->count; i++)
+        copied &= input_keymap_copy_scope(&host->windows[i]->keymap,
+                                          &host->keymap, scope);
+    return copied;
 }
 
-void window_clear_scope(struct window *w, uint8_t scope)
+void window_host_release_scope(struct window_host *host, uint8_t scope)
 {
-    if (w && scope != INPUT_COMMAND_SCOPE_APP)
-        input_keymap_clear_scope(&w->keymap, scope);
+    if (scope == INPUT_COMMAND_SCOPE_APP || scope >= INPUT_COMMAND_SCOPE_COUNT)
+        return;
+    if (host) {
+        input_keymap_clear_scope(&host->keymap, scope);
+        for (int i = 0; i < host->count; i++)
+            input_keymap_clear_scope(&host->windows[i]->keymap, scope);
+    }
+    input_command_scope_release(scope);
 }
 
 void window_copy(struct window *w, enum yasl_selection sel, const char *text)

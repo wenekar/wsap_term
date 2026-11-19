@@ -124,28 +124,31 @@ static void command_registry_test(void)
     assert(!input_parse_action("no_such_command", &id));
 
     /* A widget adds a command in its own scope. The registry gives the ID. */
+    uint8_t scope = input_command_scope_new();
+    assert(scope != INPUT_COMMAND_SCOPE_APP);
     struct input_command_registry own;
     input_command_registry_init(&own);
     input_command_id widget_id =
-        input_command_add(&own, 3, "widget_settings", "Widget Settings");
+        input_command_add(&own, scope, "widget_settings", "Widget Settings");
     assert(widget_id >= INPUT_COMMAND_DYNAMIC_ID);
-    const struct input_command *scoped = input_command_find(&own, 3, widget_id);
-    assert(scoped && scoped->scope == 3);
+    const struct input_command *scoped = input_command_find(&own, scope, widget_id);
+    assert(scoped && scoped->scope == scope);
     assert(!strcmp(scoped->label, "Widget Settings"));
-    assert(!strcmp(input_command_label(&own, 3, widget_id), "Widget Settings"));
-    assert(!strcmp(input_command_label(&own, 3, INPUT_COMMAND_COPY), ""));
+    assert(!strcmp(input_command_label(&own, scope, widget_id), "Widget Settings"));
+    assert(!strcmp(input_command_label(&own, scope, INPUT_COMMAND_COPY), ""));
     /* The app scope has no entry for the widget ID. */
     const struct input_command *app =
         input_command_find(&own, INPUT_COMMAND_SCOPE_APP, widget_id);
     assert(!app);
     /* A second command takes the next ID. */
     input_command_id other =
-        input_command_add(&own, 3, "widget_other", "Widget Other");
+        input_command_add(&own, scope, "widget_other", "Widget Other");
     assert(other == widget_id + 1);
     assert(input_command_add(&own, INPUT_COMMAND_SCOPE_COUNT,
                              "x", "X") == INPUT_COMMAND_NONE);
     input_command_registry_free(&own);
     assert(!own.cmds && !own.n);
+    input_command_scope_release(scope);
 }
 
 /* Every default chord gives the same command that its config word names.
@@ -226,35 +229,38 @@ static void scoped_binding_wins_test(void)
  * own registry. */
 static void widget_command_binding_test(void)
 {
+    uint8_t two_scope = input_command_scope_new();
+    uint8_t three_scope = input_command_scope_new();
+    assert(two_scope && three_scope && two_scope != three_scope);
     struct input_command_registry two, three;
     input_command_registry_init(&two);
     input_command_registry_init(&three);
     input_command_id id_two =
-        input_command_add(&two, 2, "widget_two", "Widget Two");
+        input_command_add(&two, two_scope, "widget_two", "Widget Two");
     input_command_id id_three =
-        input_command_add(&three, 3, "widget_three", "Widget Three");
+        input_command_add(&three, three_scope, "widget_three", "Widget Three");
     assert(id_two >= INPUT_COMMAND_DYNAMIC_ID);
     assert(id_three >= INPUT_COMMAND_DYNAMIC_ID);
     assert(id_two != id_three);
 
     struct input_keymap km;
     input_keymap_init(&km);
-    assert(input_keymap_apply_spec_registry(&km, &two, 2,
+    assert(input_keymap_apply_spec_registry(&km, &two, two_scope,
                                             "ctrl+j = widget_two"));
-    assert(input_keymap_apply_spec_registry(&km, &three, 3,
+    assert(input_keymap_apply_spec_registry(&km, &three, three_scope,
                                             "ctrl+j = widget_three"));
     /* A registry does not resolve a name that another scope holds. */
-    assert(!input_keymap_apply_spec_registry(&km, &three, 2,
+    assert(!input_keymap_apply_spec_registry(&km, &three, two_scope,
                                              "ctrl+k = widget_two"));
 
     struct input_key_event ctrl_j = { .key = INPUT_KEY_NONE, .codepoint = 'j',
                                      .mods = INPUT_MOD_CTRL };
-    assert(input_keymap_lookup_scoped(&km, &ctrl_j, 2) == id_two);
-    assert(input_keymap_lookup_scoped(&km, &ctrl_j, 3) == id_three);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_j, two_scope) == id_two);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_j, three_scope) == id_three);
     assert(input_keymap_lookup_scoped(&km, &ctrl_j, 0) == INPUT_COMMAND_NONE);
 
     char out[64];
-    assert(input_keymap_format_action_chord_scoped(&km, id_two, 2,
+    assert(input_keymap_format_action_chord_scoped(&km, id_two, two_scope,
                                                    out, sizeof(out)));
     assert(!strcmp(out, "Ctrl+J"));
     /* The app scope does not read a widget binding. */
@@ -262,6 +268,8 @@ static void widget_command_binding_test(void)
     input_keymap_free(&km);
     input_command_registry_free(&two);
     input_command_registry_free(&three);
+    input_command_scope_release(two_scope);
+    input_command_scope_release(three_scope);
 }
 
 /* Each owner gets its own widget scope. Two registries in two given scopes
@@ -309,33 +317,66 @@ static void scope_new_test(void)
         input_command_scope_release(scopes[i]);
 }
 
+/* A registry adds commands only in a scope that its owner took, and one
+ * scope has one registry. A second registry in the same scope gets no ID,
+ * so two registries never give the same ID. */
+static void scope_owner_test(void)
+{
+    struct input_command_registry a, b;
+    input_command_registry_init(&a);
+    input_command_registry_init(&b);
+    /* No owner took scope 1, so it holds no command. */
+    assert(input_command_add(&a, 1, "find", "Find") == INPUT_COMMAND_NONE);
+
+    uint8_t scope = input_command_scope_new();
+    assert(scope != INPUT_COMMAND_SCOPE_APP);
+    input_command_id id_a = input_command_add(&a, scope, "find", "Find");
+    input_command_id id_b = input_command_add(&b, scope, "save", "Save");
+    assert(id_a != INPUT_COMMAND_NONE);
+    assert(id_b == INPUT_COMMAND_NONE);
+    assert(input_command_add(&a, scope, "save", "Save") == id_a + 1);
+
+    /* The owner frees its registry and makes a new one in its scope. */
+    input_command_registry_free(&a);
+    assert(input_command_add(&b, scope, "save", "Save") != INPUT_COMMAND_NONE);
+
+    /* A released scope holds no new command. */
+    input_command_registry_free(&b);
+    input_command_scope_release(scope);
+    assert(input_command_add(&b, scope, "save", "Save") == INPUT_COMMAND_NONE);
+    input_command_registry_free(&b);
+}
+
 /* A widget registry binds an app command in its own scope. The binding
  * runs only in that scope. A widget command with the name of an app command
  * wins in its scope. */
 static void widget_scope_binds_app_command_test(void)
 {
+    uint8_t scope = input_command_scope_new();
+    assert(scope != INPUT_COMMAND_SCOPE_APP);
     struct input_command_registry own;
     input_command_registry_init(&own);
-    input_command_id find = input_command_add(&own, 4, "find", "Find");
-    input_command_id own_copy = input_command_add(&own, 4, "copy", "Copy Path");
+    input_command_id find = input_command_add(&own, scope, "find", "Find");
+    input_command_id own_copy = input_command_add(&own, scope, "copy", "Copy Path");
     assert(find != INPUT_COMMAND_NONE && own_copy != INPUT_COMMAND_NONE);
 
     struct input_keymap km;
     input_keymap_init(&km);
-    assert(input_keymap_apply_spec_registry(&km, &own, 4, "ctrl+w = close_tab"));
-    assert(input_keymap_apply_spec_registry(&km, &own, 4, "ctrl+f = find"));
-    assert(input_keymap_apply_spec_registry(&km, &own, 4, "ctrl+y = copy"));
-    assert(!input_keymap_apply_spec_registry(&km, &own, 4, "ctrl+q = no_such"));
+    assert(input_keymap_apply_spec_registry(&km, &own, scope, "ctrl+w = close_tab"));
+    assert(input_keymap_apply_spec_registry(&km, &own, scope, "ctrl+f = find"));
+    assert(input_keymap_apply_spec_registry(&km, &own, scope, "ctrl+y = copy"));
+    assert(!input_keymap_apply_spec_registry(&km, &own, scope, "ctrl+q = no_such"));
 
     struct input_key_event ctrl_w = { .codepoint = 'w', .mods = INPUT_MOD_CTRL };
     struct input_key_event ctrl_f = { .codepoint = 'f', .mods = INPUT_MOD_CTRL };
     struct input_key_event ctrl_y = { .codepoint = 'y', .mods = INPUT_MOD_CTRL };
-    assert(input_keymap_lookup_scoped(&km, &ctrl_w, 4) == INPUT_COMMAND_CLOSE_TAB);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_w, scope) == INPUT_COMMAND_CLOSE_TAB);
     assert(input_keymap_lookup_scoped(&km, &ctrl_w, 0) == INPUT_COMMAND_NONE);
-    assert(input_keymap_lookup_scoped(&km, &ctrl_f, 4) == find);
-    assert(input_keymap_lookup_scoped(&km, &ctrl_y, 4) == own_copy);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_f, scope) == find);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_y, scope) == own_copy);
     input_keymap_free(&km);
     input_command_registry_free(&own);
+    input_command_scope_release(scope);
 }
 
 /* A binding above the 'style' line survives the load. The style applies to
@@ -427,13 +468,15 @@ static void config_reload_keeps_widget_scope_test(void)
     assert(setenv("WSAP_INPUT_CONFIG", path, 1) == 0);
     input_config_init(NULL);
 
+    uint8_t scope = input_command_scope_new();
+    assert(scope != INPUT_COMMAND_SCOPE_APP);
     struct input_command_registry own;
     input_command_registry_init(&own);
-    input_command_id find = input_command_add(&own, 5, "find", "Find");
+    input_command_id find = input_command_add(&own, scope, "find", "Find");
     struct input_keymap km;
     input_keymap_init(&km);
     input_config_load(&km);
-    assert(input_keymap_apply_spec_registry(&km, &own, 5, "ctrl+f = find"));
+    assert(input_keymap_apply_spec_registry(&km, &own, scope, "ctrl+f = find"));
 
     struct input_key_event ctrl_f = { .codepoint = 'f', .mods = INPUT_MOD_CTRL };
     struct input_key_event ctrl_j = { .codepoint = 'j', .mods = INPUT_MOD_CTRL };
@@ -443,7 +486,7 @@ static void config_reload_keeps_widget_scope_test(void)
 
     write_input_config(path, "style = legacy\nctrl+j = new_tab\n");
     input_config_load(&km);
-    assert(input_keymap_lookup_scoped(&km, &ctrl_f, 5) == find);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_f, scope) == find);
     assert(input_keymap_lookup(&km, &ctrl_f) == INPUT_COMMAND_NONE);
     assert(input_keymap_lookup(&km, &ctrl_j) == INPUT_COMMAND_NEW_TAB);
     assert(input_keymap_lookup(&km, &ctrl_k) == INPUT_COMMAND_NONE);
@@ -453,10 +496,11 @@ static void config_reload_keeps_widget_scope_test(void)
     size_t n = km.n;
     input_config_load(&km);
     assert(km.n == n);
-    assert(input_keymap_lookup_scoped(&km, &ctrl_f, 5) == find);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_f, scope) == find);
 
     input_keymap_free(&km);
     input_command_registry_free(&own);
+    input_command_scope_release(scope);
     unlink(path);
     unsetenv("WSAP_INPUT_CONFIG");
 }
@@ -519,6 +563,7 @@ int main(void)
     scoped_binding_wins_test();
     widget_command_binding_test();
     scope_new_test();
+    scope_owner_test();
     widget_scope_binds_app_command_test();
     keymap_match_test();
     zero_modifier_binding_test();

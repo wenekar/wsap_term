@@ -400,24 +400,27 @@ int main(void)
         struct ui_surface *keys = window_ui_key_surface(w);
         struct ui_widget *target = ui_surface_key_target(keys);
         assert(target && target->parent);
+        uint8_t scope = input_command_scope_new();
+        assert(scope != INPUT_COMMAND_SCOPE_APP);
         struct input_command_registry reg;
         input_command_registry_init(&reg);
-        input_command_id id = input_command_add(&reg, 3, "probe_k", "Probe K");
+        input_command_id id = input_command_add(&reg, scope, "probe_k", "Probe K");
         assert(id != INPUT_COMMAND_NONE);
-        assert(input_keymap_apply_spec_registry(&w->keymap, &reg, 3,
+        assert(input_keymap_apply_spec_registry(&w->keymap, &reg, scope,
                                                 "ctrl+k = probe_k"));
         raw_key(w, YASL_KEY_K, YASL_MOD_CTRL, 'k', 'K', YASL_KEY_PRESS);
         raw_key(w, YASL_KEY_K, YASL_MOD_CTRL, 'k', 'K', YASL_KEY_RELEASE);
         expect(fds[0], "\x0b");
-        target->parent->command_scope = 3;
-        assert(ui_surface_command_scope(keys) == 3);
+        target->parent->command_scope = scope;
+        assert(ui_surface_command_scope(keys) == scope);
         raw_key(w, YASL_KEY_K, YASL_MOD_CTRL, 'k', 'K', YASL_KEY_PRESS);
         raw_key(w, YASL_KEY_K, YASL_MOD_CTRL, 'k', 'K', YASL_KEY_RELEASE);
         expect(fds[0], "");
         target->parent->command_scope = 0;
-        assert(input_keymap_apply_spec_registry(&w->keymap, &reg, 3,
+        assert(input_keymap_apply_spec_registry(&w->keymap, &reg, scope,
                                                 "ctrl+k = none"));
         input_command_registry_free(&reg);
+        input_command_scope_release(scope);
     }
 
     /* A repeat of the copy chord with no press in this view still belongs

@@ -40,6 +40,15 @@ _Static_assert(sizeof app_commands / sizeof app_commands[0] ==
                    INPUT_COMMAND_APP_COUNT - 1,
                "each app command ID needs one row in app_commands");
 
+/* The widget scopes that `input_command_scope_new()` gave out. Bit `n` is
+ * scope `n`. Bit 0 is the app scope, which no owner gets. */
+static uint32_t scopes_used = 1u;
+/* The registry that holds the commands of each given scope, or NULL before
+ * the first command. */
+static const struct input_command_registry *scope_registry[INPUT_COMMAND_SCOPE_COUNT];
+_Static_assert(INPUT_COMMAND_SCOPE_COUNT <= 32,
+               "the scope set needs one bit per scope");
+
 void input_command_registry_init(struct input_command_registry *reg)
 {
     if (reg)
@@ -50,6 +59,9 @@ void input_command_registry_free(struct input_command_registry *reg)
 {
     if (!reg)
         return;
+    for (unsigned scope = 1; scope < INPUT_COMMAND_SCOPE_COUNT; scope++)
+        if (scope_registry[scope] == reg)
+            scope_registry[scope] = NULL;
     free(reg->cmds);
     *reg = (struct input_command_registry){0};
 }
@@ -117,12 +129,6 @@ static input_command_id registry_free_id(const struct input_command_registry *re
     return INPUT_COMMAND_NONE;
 }
 
-/* The widget scopes that `input_command_scope_new()` gave out. Bit `n` is
- * scope `n`. Bit 0 is the app scope, which no owner gets. */
-static uint32_t scopes_used = 1u;
-_Static_assert(INPUT_COMMAND_SCOPE_COUNT <= 32,
-               "the scope set needs one bit per scope");
-
 uint8_t input_command_scope_new(void)
 {
     for (unsigned scope = 1; scope < INPUT_COMMAND_SCOPE_COUNT; scope++) {
@@ -136,8 +142,10 @@ uint8_t input_command_scope_new(void)
 
 void input_command_scope_release(uint8_t scope)
 {
-    if (scope != INPUT_COMMAND_SCOPE_APP && scope < INPUT_COMMAND_SCOPE_COUNT)
+    if (scope != INPUT_COMMAND_SCOPE_APP && scope < INPUT_COMMAND_SCOPE_COUNT) {
         scopes_used &= ~(1u << scope);
+        scope_registry[scope] = NULL;
+    }
 }
 
 input_command_id input_command_add(struct input_command_registry *reg,
@@ -145,11 +153,16 @@ input_command_id input_command_add(struct input_command_registry *reg,
                                   const char *label)
 {
     if (!reg || !name || !name[0] || scope == INPUT_COMMAND_SCOPE_APP ||
-        scope >= INPUT_COMMAND_SCOPE_COUNT)
+        scope >= INPUT_COMMAND_SCOPE_COUNT || !(scopes_used & (1u << scope)))
+        return INPUT_COMMAND_NONE;
+    /* One registry holds the commands of a scope, so two registries never
+     * give the same ID. */
+    if (scope_registry[scope] && scope_registry[scope] != reg)
         return INPUT_COMMAND_NONE;
     input_command_id id = registry_free_id(reg, scope);
     if (id == INPUT_COMMAND_NONE || !registry_add_at(reg, scope, id, name, label))
         return INPUT_COMMAND_NONE;
+    scope_registry[scope] = reg;
     return id;
 }
 

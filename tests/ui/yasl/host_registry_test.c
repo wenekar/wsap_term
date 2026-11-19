@@ -36,5 +36,7 @@ int main(void)
     window_destroy(wa);
     free(a.windows);
     free(b.windows);
+    input_keymap_free(&a.keymap);
+    input_keymap_free(&b.keymap);
     return 0;
 }

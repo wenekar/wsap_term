@@ -67,6 +67,7 @@ void window_host_destroy(struct window_host *host)
         fprintf(stderr, "window host: yasl_shutdown: %s\n", strerror(-status));
     window_host_registry_remove(host);
     free(host->windows);
+    input_keymap_free(&host->keymap);
     *host = (struct window_host){0};
 }
 

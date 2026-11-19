@@ -45,6 +45,14 @@ void input_keymap_free(struct input_keymap *km);
 void input_keymap_clear(struct input_keymap *km);
 
 /*
+ * Replaces the bindings of scope `scope` in keymap `dst` with the bindings of
+ * that scope in keymap `src`. The other scopes of `dst` stay.
+ * Returns false on a bad scope or a memory shortage.
+ */
+bool input_keymap_copy_scope(struct input_keymap *dst,
+                             const struct input_keymap *src, uint8_t scope);
+
+/*
  * Drops the bindings of scope `scope` from keymap `km`.
  * The bindings of other scopes stay.
  * A widget owner calls this for its scope when it is destroyed.
@@ -160,8 +168,8 @@ void input_config_init(const struct app_identity *identity);
  * Loads the input configuration into keymap `km`.
  * The load replaces the bindings of the app scope. The bindings of widget
  * scopes stay.
- * A window calls this in its init. The app calls it again for each open
- * window when it reloads its configuration.
+ * A window host calls this once for all its windows: before its first window
+ * and at each reload. Each window then copies the same result.
  */
 void input_config_load(struct input_keymap *km);
 
