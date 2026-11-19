@@ -45,6 +45,8 @@ static void write_default_input_config(const struct app_identity *identity,
         "#   kp_add kp_subtract kp_enter\n"
         "# actions:\n"
         "#   copy paste font_larger font_smaller scroll_up scroll_down\n"
+        "#   undo redo cut select_all command_palette settings\n"
+        "#   debug_overlay\n"
         "#   new_tab close_tab next_tab prev_tab last_tab tab_1 .. tab_8\n"
         "#   focus_tabs toggles focus for keyboard tab navigation\n"
         "#   kill_line (sends ^U)\n"

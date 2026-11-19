@@ -36,6 +36,9 @@ static const struct input_command app_commands[] = {
     {INPUT_COMMAND_SETTINGS,       "settings",        "Settings",           0},
     {INPUT_COMMAND_FOCUS_TABS,     "focus_tabs",      "Focus Tabs",         0},
 };
+_Static_assert(sizeof app_commands / sizeof app_commands[0] ==
+                   INPUT_COMMAND_APP_COUNT - 1,
+               "each app command ID needs one row in app_commands");
 
 void input_command_registry_init(struct input_command_registry *reg)
 {

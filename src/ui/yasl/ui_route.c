@@ -33,11 +33,13 @@ static bool widget_is_inside(const struct ui_widget *root,
 
 /* Returns the command scope of the nearest widget in the focus chain of
  * `surface` that has one. The walk starts at the focused widget and ends at
- * the root. Returns the app scope when no widget has a scope. */
+ * the root. A scope out of range counts as no scope. Returns the app scope
+ * when no widget has a scope. */
 static uint8_t focus_command_scope(struct ui_surface *surface)
 {
     for (struct ui_widget *w = ui_surface_focused(surface); w; w = w->parent)
-        if (w->command_scope != INPUT_COMMAND_SCOPE_APP)
+        if (w->command_scope != INPUT_COMMAND_SCOPE_APP &&
+            w->command_scope < INPUT_COMMAND_SCOPE_COUNT)
             return w->command_scope;
     return INPUT_COMMAND_SCOPE_APP;
 }
