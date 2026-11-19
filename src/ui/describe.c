@@ -1190,7 +1190,12 @@ static void restore_kept_strings(const struct ui_view *view,
         if (match[i] == SIZE_MAX || !nodes[i].widget)
             continue;
         const struct ui_view_node *held = &view->nodes[match[i]];
-        if (held->kind != UI_NODE_WIDGET && held->kind != UI_NODE_LIST)
+        if (!held->widget)
+            continue;
+        /* A list makes its style class from the node class name. */
+        if (held->kind == UI_NODE_LIST)
+            ui_list_set_style_class(held->storage, held->class_name);
+        else if (held->kind != UI_NODE_WIDGET)
             ui_widget_set_style_identity(held->widget, held->class_name,
                                          held->id_name, held->tag_name);
         ui_widget_set_debug_key(held->widget, held->key);
