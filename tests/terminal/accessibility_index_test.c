@@ -66,6 +66,26 @@ static char *read_document(const struct ui_accessibility_node *node, size_t *out
     return text;
 }
 
+/* Reads the document in 7-byte ranges. The result must hold the same bytes
+ * as a read of the whole document. */
+static char *read_chunked(const struct ui_accessibility_node *node, size_t *out_len)
+{
+    size_t length = ui_accessibility_node_text_length(node);
+    char *text = malloc(length + 1);
+    assert(text);
+    size_t got = 0;
+    while (got < length) {
+        size_t want = length - got > 7 ? 7 : length - got;
+        size_t n = ui_accessibility_node_text_read(node, got, text + got, want);
+        assert(n == want);
+        got += n;
+    }
+    text[got] = '\0';
+    if (out_len)
+        *out_len = got;
+    return text;
+}
+
 static size_t count(const char *text, const char *needle)
 {
     size_t n = 0;
@@ -181,6 +201,90 @@ int main(void)
     assert(count(after, "19") >= 1);
     check_history_prefix(content, node);
     free(chunked);
+    free(after);
+
+    /* A9: a soft-wrapped line has one shape. The view part and the history
+     * part join the rows of the line and keep the blanks of a joined row. */
+    assert(wsap_vtcore_resize(term, (struct wsap_vtcore_vector2i){ .x = 80, .y = 30 }));
+    feed(term, "\x1b[H\x1b[2J\x1b[3J");
+    char padded[128];
+    size_t padded_len = 0;
+    padded[padded_len++] = 'a';
+    for (int i = 0; i < 78; i++)
+        padded[padded_len++] = ' ';
+    memcpy(padded + padded_len, "bcdef", 5);
+    padded_len += 5;
+    assert(wsap_vtcore_feed(term, padded, padded_len, 0));
+    feed(term, "\r\n");
+    char padded_text[128];
+    memcpy(padded_text, padded, padded_len);
+    padded_text[padded_len] = '\0';
+    char run[256];
+    memset(run, 'x', 200);
+    run[200] = '\0';
+    char run_line[256];
+    memcpy(run_line, run, 200);
+    memcpy(run_line + 200, "\r\n", 2);
+    assert(wsap_vtcore_feed(term, run_line, 202, 0));
+
+    node = build_node(content, &tree);
+    after = read_document(node, &after_len);
+    chunked = read_chunked(node, NULL);
+    assert(strcmp(chunked, after) == 0);
+    free(chunked);
+    /* Both lines are in the view. Each line is one run of bytes. */
+    assert(strstr(after, padded_text) != NULL);
+    assert(strstr(after, run) != NULL);
+    size_t view_len = after_len;
+    free(after);
+
+    /* The same two lines in the history must keep the same bytes. */
+    feed_lines(term, 0, 39);
+    node = build_node(content, &tree);
+    struct timespec whole_start, whole_end, chunk_start, chunk_end;
+    clock_gettime(CLOCK_MONOTONIC, &whole_start);
+    after = read_document(node, &after_len);
+    clock_gettime(CLOCK_MONOTONIC, &whole_end);
+    clock_gettime(CLOCK_MONOTONIC, &chunk_start);
+    chunked = read_chunked(node, NULL);
+    clock_gettime(CLOCK_MONOTONIC, &chunk_end);
+    assert(strcmp(chunked, after) == 0);
+    free(chunked);
+    assert(strstr(after, padded_text) != NULL);
+    assert(strstr(after, run) != NULL);
+    check_history_prefix(content, node);
+    double whole_ms = (double)(whole_end.tv_sec - whole_start.tv_sec) * 1000.0 +
+                      (double)(whole_end.tv_nsec - whole_start.tv_nsec) / 1e6;
+    double chunk_ms = (double)(chunk_end.tv_sec - chunk_start.tv_sec) * 1000.0 +
+                      (double)(chunk_end.tv_nsec - chunk_start.tv_nsec) / 1e6;
+    printf("a9: view %zu bytes, history %zu bytes whole (%.3f ms) == "
+           "%zu bytes in 7-byte ranges (%.3f ms)\n",
+           view_len, after_len, whole_ms, after_len, chunk_ms);
+    free(after);
+
+    /* A10: a provider call does not write the snapshot of the renderer. */
+    feed(term, "\x1b[H\x1b[2J\x1b[3J");
+    feed_lines(term, 0, 4);
+    struct wsap_vtcore_snapshot *render_snapshot = content->snapshot;
+    assert(render_snapshot);
+    assert(wsap_vtcore_snapshot_update(render_snapshot, term));
+    uint64_t snapshot_version = wsap_vtcore_snapshot_view(render_snapshot)->version;
+    feed(term, "frame one\r\n");
+    node = build_node(content, &tree);
+    assert(wsap_vtcore_snapshot_view(render_snapshot)->version == snapshot_version);
+    size_t length_before = ui_accessibility_node_text_length(node);
+    char *frame_document = read_document(node, NULL);
+    assert(strstr(frame_document, "frame one") != NULL);
+    free(frame_document);
+    feed(term, "frame two\r\n");
+    size_t length_after = ui_accessibility_node_text_length(node);
+    assert(length_after > length_before);
+    assert(wsap_vtcore_snapshot_view(render_snapshot)->version == snapshot_version);
+    after = read_document(node, &after_len);
+    assert(strstr(after, "frame two") != NULL);
+    assert(wsap_vtcore_snapshot_view(render_snapshot)->version == snapshot_version);
+    printf("a10: render snapshot version %llu unchanged across provider calls\n",
+           (unsigned long long)snapshot_version);
     free(after);
 
     /* A6: a scroll moves the view. The rows above the view stay in the

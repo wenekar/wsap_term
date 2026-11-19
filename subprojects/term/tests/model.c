@@ -2627,6 +2627,7 @@ const struct model_cell *model_row(const struct model *m, int row)
         o->fg = c->fg;
         o->bg = c->bg;
         o->ul = c->ul;
+        o->pad = c->pad;
     }
     return mm->out[row];
 }

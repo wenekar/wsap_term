@@ -336,6 +336,9 @@ enum wsap_vtcore_attr {
     WSAP_VTCORE_ATTR_TEXT = 1u << 6,
     WSAP_VTCORE_ATTR_BLINK = 1u << 7,
     WSAP_VTCORE_ATTR_CONCEAL = 1u << 8,
+    /* A padding cell at the end of a row that a wide character pushed to the
+     * next row. It adds no text and no column. */
+    WSAP_VTCORE_ATTR_WRAP_PAD = 1u << 9,
     WSAP_VTCORE_ATTR_FAINT = 1u << 10,
     WSAP_VTCORE_ATTR_DOUBLE_UNDERLINE = 1u << 11,
     WSAP_VTCORE_ATTR_CURLY_UNDERLINE = 1u << 12,
@@ -449,6 +452,12 @@ enum wsap_vtcore_line_size {
  * at twice the height. A history row, an invalid row, and a NULL snapshot
  * give WSAP_VTCORE_LINE_SINGLE. A change of the line size changes the row key. */
 WSAP_VTCORE_API enum wsap_vtcore_line_size wsap_vtcore_snapshot_row_size(
+    const struct wsap_vtcore_snapshot *s, int y);
+
+/* Return true when logical row y joins the next row with no line break.
+ * A history row, a row that does not wrap, an invalid row, and a NULL
+ * snapshot give false. */
+WSAP_VTCORE_API bool wsap_vtcore_snapshot_row_wrapped(
     const struct wsap_vtcore_snapshot *s, int y);
 
 WSAP_VTCORE_API int wsap_vtcore_history_rows(const struct wsap_vtcore *t);

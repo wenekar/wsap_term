@@ -469,7 +469,8 @@ static int accessibility_cell_codepoints(const struct wsap_vtcore_snapshot *snap
 static bool accessibility_cell_blank(const struct wsap_vtcore_snapshot *snapshot,
                                      const struct wsap_vtcore_cell *cell)
 {
-    if (!cell || !cell->width || !cell->text || cell->text == ' ')
+    if (!cell || !cell->width || !cell->text || cell->text == ' ' ||
+        (cell->attrs & WSAP_VTCORE_ATTR_WRAP_PAD))
         return true;
     if (!(cell->text & WSAP_VTCORE_TEXT_CLUSTER))
         return false;
@@ -487,7 +488,7 @@ static bool accessibility_append_cell(struct accessibility_text_builder *b,
                                       const struct wsap_vtcore_snapshot *snapshot,
                                       const struct wsap_vtcore_cell *cell)
 {
-    if (!cell || !cell->width)
+    if (!cell || !cell->width || (cell->attrs & WSAP_VTCORE_ATTR_WRAP_PAD))
         return true;
     uint32_t cps[WSAP_VTCORE_GRAPHEME_MAX_LEN];
     int n = accessibility_cell_codepoints(snapshot, cell, cps);
@@ -664,7 +665,7 @@ static bool accessibility_rows_sync(struct terminal_view *view,
 static size_t accessibility_cell_bytes(const struct wsap_vtcore_snapshot *snapshot,
                                        const struct wsap_vtcore_cell *cell)
 {
-    if (!cell || !cell->width)
+    if (!cell || !cell->width || (cell->attrs & WSAP_VTCORE_ATTR_WRAP_PAD))
         return 0;
     uint32_t cps[WSAP_VTCORE_GRAPHEME_MAX_LEN];
     int count = accessibility_cell_codepoints(snapshot, cell, cps);
@@ -715,6 +716,29 @@ static size_t accessibility_row_bytes(const struct wsap_vtcore_snapshot *snapsho
     return bytes;
 }
 
+/* The accessibility document has one shape. A logical line is one or more
+ * rows joined at a soft wrap. A joined row keeps all of its cells, and a
+ * wrap pad cell adds no bytes. The last row of the line drops its trailing
+ * blank cells. One '\n' ends each logical line. The history part follows
+ * the same rule through wsap_vtcore_history_text_range(). */
+static int accessibility_line_end_row(const struct wsap_vtcore_snapshot *snapshot,
+                                      int y, int last_row)
+{
+    while (y < last_row && wsap_vtcore_snapshot_row_wrapped(snapshot, y))
+        y++;
+    return y;
+}
+
+/* The first column after the text of a view row. A joined row has the full
+ * width of the line. The last row of a line drops its trailing blanks. */
+static int accessibility_view_row_end_col(const struct wsap_vtcore_snapshot *snapshot,
+                                          int y, int last_row, int cols)
+{
+    if (y < last_row && wsap_vtcore_snapshot_row_wrapped(snapshot, y))
+        return cols;
+    return accessibility_row_end_col(snapshot, y, cols);
+}
+
 /* The last row that holds text, or the cursor row. */
 static int accessibility_last_row(const struct wsap_vtcore_snapshot *snapshot)
 {
@@ -752,12 +776,25 @@ static uint64_t accessibility_mix(uint64_t hash, uint64_t value)
     return (hash ^ value) * UINT64_C(1099511628211);
 }
 
+/* Takes a snapshot of the term for one provider call. The provider does not
+ * use terminal->snapshot: the render path owns that snapshot. */
+static struct wsap_vtcore_snapshot *accessibility_snapshot_take(struct wsap_vtcore *term)
+{
+    struct wsap_vtcore_snapshot *snapshot = wsap_vtcore_snapshot_new();
+    if (!snapshot)
+        return NULL;
+    if (!wsap_vtcore_snapshot_update(snapshot, term)) {
+        wsap_vtcore_snapshot_free(snapshot);
+        return NULL;
+    }
+    return snapshot;
+}
+
 static bool accessibility_document_measure(struct terminal_view *view,
-                                           struct terminal *terminal,
+                                           struct wsap_vtcore *term,
+                                           const struct wsap_vtcore_snapshot *snapshot,
                                            struct accessibility_document *doc)
 {
-    struct wsap_vtcore *term = terminal->session.term;
-    const struct wsap_vtcore_snapshot *snapshot = terminal->snapshot;
     const struct wsap_vtcore_view *term_view = wsap_vtcore_snapshot_view(snapshot);
     if (!accessibility_rows_sync(view, term))
         return false;
@@ -769,40 +806,47 @@ static bool accessibility_document_measure(struct terminal_view *view,
     int cursor_y = term_view->cursor.pos.y;
     int cursor_x = term_view->cursor.pos.x;
     size_t offset = doc->history_length;
-    for (int y = 0; y <= last_row; y++) {
-        int end_col = accessibility_row_end_col(snapshot, y, cols);
-        const struct wsap_vtcore_cell *cells = wsap_vtcore_snapshot_row(snapshot, y);
-        if (term_view->cursor.visible && y == cursor_y) {
-            int caret_col = cursor_x < 0 ? 0 : cursor_x > end_col
-                ? end_col : cursor_x;
-            doc->caret_offset = offset;
-            for (int x = 0; cells && x < caret_col; x++)
-                doc->caret_offset += accessibility_cell_bytes(snapshot, &cells[x]);
-        }
-        struct wsap_vtcore_span selection =
-            wsap_vtcore_snapshot_row_selection(snapshot, y);
-        if (selection.end > selection.begin) {
-            int begin = selection.begin < 0 ? 0 : selection.begin;
-            if (begin > end_col)
-                begin = end_col;
-            int limit = selection.end < begin ? begin : selection.end;
-            if (limit > end_col)
-                limit = end_col;
-            if (!doc->has_selection) {
-                doc->selection_start = offset;
-                for (int x = 0; cells && x < begin; x++)
-                    doc->selection_start +=
+    for (int y = 0; y <= last_row; ) {
+        int line_end = accessibility_line_end_row(snapshot, y, last_row);
+        for (int row = y; row <= line_end; row++) {
+            int end_col = accessibility_view_row_end_col(snapshot, row,
+                                                         last_row, cols);
+            const struct wsap_vtcore_cell *cells =
+                wsap_vtcore_snapshot_row(snapshot, row);
+            if (term_view->cursor.visible && row == cursor_y) {
+                int caret_col = cursor_x < 0 ? 0 : cursor_x > end_col
+                    ? end_col : cursor_x;
+                doc->caret_offset = offset;
+                for (int x = 0; cells && x < caret_col; x++)
+                    doc->caret_offset +=
                         accessibility_cell_bytes(snapshot, &cells[x]);
-                doc->has_selection = true;
             }
-            doc->selection_end = offset;
-            for (int x = 0; cells && x < limit; x++)
-                doc->selection_end +=
-                    accessibility_cell_bytes(snapshot, &cells[x]);
+            struct wsap_vtcore_span selection =
+                wsap_vtcore_snapshot_row_selection(snapshot, row);
+            if (selection.end > selection.begin) {
+                int begin = selection.begin < 0 ? 0 : selection.begin;
+                if (begin > end_col)
+                    begin = end_col;
+                int limit = selection.end < begin ? begin : selection.end;
+                if (limit > end_col)
+                    limit = end_col;
+                if (!doc->has_selection) {
+                    doc->selection_start = offset;
+                    for (int x = 0; cells && x < begin; x++)
+                        doc->selection_start +=
+                            accessibility_cell_bytes(snapshot, &cells[x]);
+                    doc->has_selection = true;
+                }
+                doc->selection_end = offset;
+                for (int x = 0; cells && x < limit; x++)
+                    doc->selection_end +=
+                        accessibility_cell_bytes(snapshot, &cells[x]);
+            }
+            offset += accessibility_row_bytes(snapshot, row, end_col);
         }
-        offset += accessibility_row_bytes(snapshot, y, end_col);
-        if (y < last_row)
+        if (line_end < last_row)
             offset += 1;
+        y = line_end + 1;
     }
     doc->length = offset;
     /* A provider node keeps its pointer, offset, and length, so the version
@@ -814,9 +858,12 @@ static bool accessibility_document_measure(struct terminal_view *view,
     version = accessibility_mix(version, doc->caret_offset);
     version = accessibility_mix(version, doc->selection_start);
     version = accessibility_mix(version, doc->selection_end);
-    for (int y = 0; y <= last_row; y++)
+    for (int y = 0; y <= last_row; y++) {
         version = accessibility_mix(version,
                                     wsap_vtcore_snapshot_row_key(snapshot, y));
+        version = accessibility_mix(version,
+                                    wsap_vtcore_snapshot_row_wrapped(snapshot, y));
+    }
     doc->version = version;
     return true;
 }
@@ -853,34 +900,41 @@ static void accessibility_provider_unlock(void *instance)
 static size_t accessibility_provider_length(void *instance)
 {
     struct terminal *terminal = instance;
-    if (!terminal || !terminal->session.term || !terminal->snapshot)
+    if (!terminal || !terminal->session.term)
         return 0;
-    wsap_vtcore_lock(terminal->session.term);
-    struct accessibility_document doc = {0};
-    bool measured = wsap_vtcore_snapshot_update(terminal->snapshot,
-                                                terminal->session.term) &&
-                    accessibility_document_measure(&terminal->view, terminal,
-                                                    &doc);
-    wsap_vtcore_unlock(terminal->session.term);
-    return measured ? doc.length : 0;
+    struct wsap_vtcore *term = terminal->session.term;
+    size_t length = 0;
+    wsap_vtcore_lock(term);
+    struct wsap_vtcore_snapshot *snapshot = accessibility_snapshot_take(term);
+    if (snapshot) {
+        struct accessibility_document doc = {0};
+        if (accessibility_document_measure(&terminal->view, term, snapshot,
+                                           &doc))
+            length = doc.length;
+        wsap_vtcore_snapshot_free(snapshot);
+    }
+    wsap_vtcore_unlock(term);
+    return length;
 }
 
 static size_t accessibility_provider_read(void *instance, size_t offset,
                                           char *out, size_t capacity)
 {
     struct terminal *terminal = instance;
-    if (!terminal || !terminal->session.term || !terminal->snapshot || !out ||
-        !capacity)
+    if (!terminal || !terminal->session.term || !out || !capacity)
         return 0;
     struct terminal_view *view = &terminal->view;
     struct wsap_vtcore *term = terminal->session.term;
-    const struct wsap_vtcore_snapshot *snapshot = terminal->snapshot;
-    const struct wsap_vtcore_view *term_view = wsap_vtcore_snapshot_view(snapshot);
+    struct wsap_vtcore_snapshot *snapshot = NULL;
+    const struct wsap_vtcore_view *term_view = NULL;
     size_t copied = 0;
     wsap_vtcore_lock(term);
+    snapshot = accessibility_snapshot_take(term);
+    if (!snapshot)
+        goto done;
+    term_view = wsap_vtcore_snapshot_view(snapshot);
     struct accessibility_document doc = {0};
-    if (!wsap_vtcore_snapshot_update(terminal->snapshot, term) ||
-        !accessibility_document_measure(view, terminal, &doc) ||
+    if (!accessibility_document_measure(view, term, snapshot, &doc) ||
         offset >= doc.length)
         goto done;
     while (copied < capacity && offset + copied < doc.length) {
@@ -916,22 +970,29 @@ static size_t accessibility_provider_read(void *instance, size_t offset,
         int last_row = accessibility_last_row(snapshot);
         int cols = term_view->size.x;
         bool found = false;
-        for (int y = 0; y <= last_row; y++) {
-            int end_col = accessibility_row_end_col(snapshot, y, cols);
-            size_t bytes = accessibility_row_bytes(snapshot, y, end_col) +
-                           (y < last_row ? 1 : 0);
-            if (at < base + bytes) {
+        for (int y = 0; y <= last_row && !found; ) {
+            int line_end = accessibility_line_end_row(snapshot, y, last_row);
+            size_t inside = at - base;
+            for (int row = y; row <= line_end && !found; row++) {
+                int end_col = accessibility_view_row_end_col(snapshot, row,
+                                                             last_row, cols);
+                bool newline = row == line_end && line_end < last_row;
+                size_t bytes = accessibility_row_bytes(snapshot, row, end_col) +
+                               (newline ? 1 : 0);
+                if (inside >= bytes) {
+                    inside -= bytes;
+                    continue;
+                }
                 struct accessibility_text_builder builder = {0};
                 const struct wsap_vtcore_cell *cells =
-                    wsap_vtcore_snapshot_row(snapshot, y);
+                    wsap_vtcore_snapshot_row(snapshot, row);
                 bool ok = true;
                 for (int x = 0; cells && x < end_col && ok; x++)
                     ok = accessibility_append_cell(&builder, snapshot,
                                                    &cells[x]);
-                if (ok && y < last_row)
+                if (ok && newline)
                     ok = accessibility_text_append(&builder, "\n", 1);
                 if (ok) {
-                    size_t inside = at - base;
                     size_t take = bytes - inside;
                     if (take > capacity - copied)
                         take = capacity - copied;
@@ -940,14 +1001,23 @@ static size_t accessibility_provider_read(void *instance, size_t offset,
                     found = take > 0;
                 }
                 free(builder.text);
-                break;
             }
-            base += bytes;
+            if (!found) {
+                for (int row = y; row <= line_end; row++) {
+                    int end_col = accessibility_view_row_end_col(
+                        snapshot, row, last_row, cols);
+                    base += accessibility_row_bytes(snapshot, row, end_col);
+                }
+                if (line_end < last_row)
+                    base += 1;
+            }
+            y = line_end + 1;
         }
         if (!found)
             break;
     }
 done:
+    wsap_vtcore_snapshot_free(snapshot);
     wsap_vtcore_unlock(term);
     return copied;
 }
@@ -956,12 +1026,18 @@ static bool terminal_view_accessibility_text(struct terminal_view *view,
                                              struct terminal *terminal,
                                              struct ui_accessibility_node_spec *out)
 {
-    if (!terminal->snapshot || !terminal->session.term)
+    struct wsap_vtcore *term = terminal->session.term;
+    if (!term)
+        return false;
+    struct wsap_vtcore_snapshot *snapshot = accessibility_snapshot_take(term);
+    if (!snapshot)
         return false;
     struct accessibility_document doc = {0};
-    if (!wsap_vtcore_snapshot_update(terminal->snapshot, terminal->session.term) ||
-        !accessibility_document_measure(view, terminal, &doc))
+    if (!accessibility_document_measure(view, term, snapshot, &doc)) {
+        wsap_vtcore_snapshot_free(snapshot);
         return false;
+    }
+    wsap_vtcore_snapshot_free(snapshot);
     view->accessibility_provider = (struct ui_accessibility_text_provider){
         .instance = terminal,
         .length = accessibility_provider_length,
