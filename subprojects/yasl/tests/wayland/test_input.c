@@ -32,6 +32,59 @@ static void test_ime_capability(void)
     assert(wayland_surface_update_text_input(&w));
 }
 
+/* A forward delete at the end of the surrounding window must stop at the
+ * window end. The snapshot text has no terminator, and the byte past the
+ * window holds stale data from an earlier commit in the same slot. */
+static void test_ime_forward_delete_at_window_end(void)
+{
+    struct wayland_surface w = {0};
+    struct seat seat = {.ime_focus = &w};
+    int sockets[2];
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    struct wl_display *wl = wl_display_connect_to_fd(sockets[0]);
+    assert(wl);
+    struct wayland_display display = {.wl = wl};
+    display.text_input_mgr = (struct zwp_text_input_manager_v3 *)&display;
+    seat.conn = &display;
+    seat.text_input = (struct zwp_text_input_v3 *)wl_proxy_create(
+            (struct wl_proxy *)wl, &zwp_text_input_v3_interface);
+    assert(seat.text_input);
+    w.conn = &display;
+    w.ime_seat = &seat;
+    w.base.text_input_active = true;
+
+    /* The caret at the end of a 3000-byte text starts the window at 1000, so
+     * the cursor 3000 is 2000, the window length. */
+    w.base.text_surrounding = calloc(3001, 1);
+    assert(w.base.text_surrounding);
+    memset(w.base.text_surrounding, 'a', 3000);
+    w.base.text_length = 3000;
+    w.base.text_begin = w.base.text_end = 3000;
+    assert(wayland_surface_update_text_input(&w));
+
+    struct ime_snapshot *snapshot = &seat.ime_snapshots[seat.ime_serial % IME_SNAPSHOT_COUNT];
+    assert(snapshot->serial == seat.ime_serial);
+    assert(snapshot->length == 2000 && snapshot->cursor == 2000);
+    /* An earlier, longer commit in this slot wrote a continuation byte here. */
+    snapshot->text[snapshot->length] = (char)0x80;
+
+    text_input_listener.delete_surrounding_text(&seat, seat.text_input, 0, 1);
+    text_input_listener.done(&seat, seat.text_input, seat.ime_serial);
+    struct yasl_private_event edit;
+    assert(input_queue_pop(&w.input, &edit));
+    assert(edit.type == YASL_PRIVATE_EVENT_TEXT_EDIT);
+    /* One byte after the caret goes; the stale byte is not in the window.
+     * The caret is at the end of the document, so the range is empty. */
+    assert(edit.text_edit.begin == 3000 && edit.text_edit.end == 3000);
+
+    free(seat.ime_snapshots);
+    wl_proxy_destroy((struct wl_proxy *)seat.text_input);
+    wl_display_disconnect(wl);
+    close(sockets[1]);
+    input_queue_clear(&w.input);
+    free(w.base.text_surrounding);
+}
+
 static void test_popup_bounds(void)
 {
     struct seat seat = {.input_serial = 1};
@@ -59,6 +112,7 @@ static void test_popup_bounds(void)
 int main(void)
 {
     test_ime_capability();
+    test_ime_forward_delete_at_window_end();
     test_popup_bounds();
     struct wayland_surface w = {0};
     struct seat seat = {.ime_focus = &w};
