@@ -1613,6 +1613,42 @@ static void view_update_places_before_handlers_run_test(void)
     ui_widget_destroy(&foreign);
 }
 
+/* An update that reorders the siblings keeps each kept child in its parent. */
+static void view_update_reorders_parents_with_children_test(void)
+{
+    struct ui_node_desc a_kids[] = {
+        { .kind = UI_NODE_LABEL, .key = "l1", .props.label = { .text = "1" } },
+        { .kind = UI_NODE_LABEL, .key = "l2", .props.label = { .text = "2" } },
+    };
+    struct ui_node_desc kids[] = {
+        { .kind = UI_NODE_ROW, .key = "a", .children = a_kids, .child_count = 2 },
+        { .kind = UI_NODE_ROW, .key = "b" },
+        { .kind = UI_NODE_ROW, .key = "c" },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .children = kids, .child_count = 3,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+    struct ui_widget *a = ui_view_widget(view, "a");
+    struct ui_widget *l1 = ui_view_widget(view, "l1");
+    struct ui_widget *l2 = ui_view_widget(view, "l2");
+
+    struct ui_node_desc reordered[] = { kids[2], kids[1], kids[0] };
+    root.children = reordered;
+    assert(ui_view_update(view, &root));
+    assert(ui_view_widget(view, "a") == a && ui_view_widget(view, "l1") == l1);
+    assert(l1->parent == a && l2->parent == a);
+    assert(ui_widget_child_at(a, 0) == l1 && ui_widget_child_at(a, 1) == l2);
+    assert(ui_widget_child_at(ui_view_root(view), 2) == a);
+    assert(ui_widget_child_count(ui_view_widget(view, "c")) == 0);
+
+    /* A second update finds the nodes under their new parents. */
+    assert(ui_view_update(view, &root));
+    assert(l1->parent == a && l2->parent == a);
+    ui_view_destroy(view);
+}
+
 int main(void)
 {
     view_diagnostic_test();
@@ -1640,6 +1676,7 @@ int main(void)
     view_update_rejects_the_owner_of_the_root_test();
     view_update_fails_when_a_handler_fills_a_container_test();
     view_update_places_before_handlers_run_test();
+    view_update_reorders_parents_with_children_test();
     view_root_keyboard_test();
     hidden_child_takes_no_space_or_input_test();
     hidden_modal_restores_focus_test();

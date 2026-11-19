@@ -1260,6 +1260,8 @@ static bool view_update(struct ui_view *view, const struct ui_node_desc *root,
             continue;
         }
         next[i] = view->nodes[match[i]];
+        /* The parent index points into the new node list. */
+        next[i].parent = plan[i].parent;
         next[i].desc = plan[i].desc;
         next[i].bind = plan[i].desc->bind;
         if (!copy_node_strings(&next[i])) {
