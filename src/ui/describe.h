@@ -114,6 +114,9 @@ struct ui_node_desc {
          * view is destroyed. Keep the enclosing storage alive until then.
          * A failed mount or update does not adopt the widget and does not
          * destroy it, and the widget stays where it was.
+         * The view sets its own destroy observer on the widget. A failed
+         * mount or update gives the widget back with the observer that the
+         * caller set.
          * Descriptor children are added after the own children of the widget.
          * The own children count against the child limit of the widget.
          * Unset style fields and handlers preserve the widget values.

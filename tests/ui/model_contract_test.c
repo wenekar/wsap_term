@@ -1907,6 +1907,53 @@ static void view_destroy_skips_a_widget_that_a_hook_frees_test(void)
     assert(destroyed == 1);
 }
 
+static void count_destroy(struct ui_widget *widget, void *userdata)
+{
+    (void)widget;
+    (*(int *)userdata)++;
+}
+
+/* A failed update gives a new supplied widget back with the destroy observer
+ * that the caller set. */
+static void view_failed_update_keeps_the_caller_observer_test(void)
+{
+    int destroyed = 0, observed = 0;
+    struct supplied_control control = { .destroyed = &destroyed };
+    ui_widget_init(&control.widget, &SUPPLIED_CONTROL_OPS, NULL);
+    ui_widget_set_destroy_observer(&control.widget, count_destroy, &observed);
+    struct ui_widget full = {0}, own = {0};
+    ui_widget_init(&full, &SINGLE_CHILD_OPS, NULL);
+    ui_widget_init(&own, NULL, NULL);
+    assert(ui_widget_add_child(&full, &own));
+    struct ui_node_desc kids[] = {
+        { .kind = UI_NODE_LABEL, .key = "l", .props.label = { .text = "1" } },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .children = kids, .child_count = 1,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+
+    /* The full container cannot take a child, so the update fails. */
+    struct ui_node_desc inner = { .kind = UI_NODE_LABEL, .key = "inner" };
+    struct ui_node_desc k2[] = {
+        kids[0],
+        { .kind = UI_NODE_WIDGET, .key = "w", .props.widget = &control.widget },
+        { .kind = UI_NODE_WIDGET, .key = "full", .props.widget = &full,
+          .children = &inner, .child_count = 1 },
+    };
+    struct ui_node_desc next = root;
+    next.children = k2;
+    next.child_count = 3;
+    assert(!ui_view_update(view, &next));
+    assert(!control.widget.parent && !destroyed && !observed);
+
+    ui_view_destroy(view);
+    ui_widget_destroy(&control.widget);
+    assert(destroyed == 1 && observed == 1);
+    ui_widget_destroy(&full);
+}
+
 int main(void)
 {
     view_diagnostic_test();
@@ -1939,6 +1986,7 @@ int main(void)
     view_update_forgets_a_supplied_widget_that_a_handler_frees_test();
     view_rollback_survives_a_freed_foreign_sibling_test();
     view_destroy_skips_a_widget_that_a_hook_frees_test();
+    view_failed_update_keeps_the_caller_observer_test();
     view_root_keyboard_test();
     hidden_child_takes_no_space_or_input_test();
     hidden_modal_restores_focus_test();

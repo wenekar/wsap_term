@@ -28,6 +28,10 @@ struct ui_view_node {
     struct ui_widget *widget;
     /* The slots that the view wrote. It clears them when the node leaves. */
     struct ui_node_bindings bind;
+    /* The destroy observer that the caller set on a supplied widget. The
+     * view gives it back when it gives the widget back. */
+    void (*caller_observer)(struct ui_widget *widget, void *userdata);
+    void *caller_observer_userdata;
     enum ui_node_kind kind;
 };
 
@@ -796,9 +800,11 @@ static void discard_nodes(const struct ui_view *view, struct ui_surface *surface
         if (!nodes[i].widget)
             continue;
         if (nodes[i].kind == UI_NODE_WIDGET) {
-            /* The caller gets the widget back without the view observer. */
+            /* The caller gets the widget back with its own observer. */
             if (!view_holds_widget(view, nodes[i].widget)) {
-                ui_widget_set_destroy_observer(nodes[i].widget, NULL, NULL);
+                ui_widget_set_destroy_observer(nodes[i].widget,
+                                               nodes[i].caller_observer,
+                                               nodes[i].caller_observer_userdata);
                 if (nodes[i].widget->parent)
                     ui_widget_remove_child(nodes[i].widget->parent,
                                            nodes[i].widget);
@@ -867,6 +873,20 @@ static void view_widget_destroyed(struct ui_widget *widget, void *userdata)
         forget_logged_widget(view->pending_log, widget);
 }
 
+/* Sets the view observer on the widget of a new node. It keeps the observer
+ * that the caller set on a supplied widget. */
+static void observe_new_widget(struct ui_view *view, struct ui_view_node *node)
+{
+    struct ui_widget *widget = node->widget;
+    if (node->kind == UI_NODE_WIDGET &&
+        !(widget->impl.destroy_observer == view_widget_destroyed &&
+          widget->impl.destroy_observer_userdata == view)) {
+        node->caller_observer = widget->impl.destroy_observer;
+        node->caller_observer_userdata = widget->impl.destroy_observer_userdata;
+    }
+    ui_widget_set_destroy_observer(widget, view_widget_destroyed, view);
+}
+
 static void observe_widgets(struct ui_view *view)
 {
     for (size_t i = 0; i < view->count; i++)
@@ -907,8 +927,11 @@ void ui_view_destroy(struct ui_view *view)
     if (!view->committed) {
         for (size_t i = 0; i < view->count; i++) {
             struct ui_view_node *node = &view->nodes[i];
-            if (node->kind == UI_NODE_WIDGET && node->widget &&
-                node->widget->parent)
+            if (node->kind != UI_NODE_WIDGET || !node->widget)
+                continue;
+            ui_widget_set_destroy_observer(node->widget, node->caller_observer,
+                                           node->caller_observer_userdata);
+            if (node->widget->parent)
                 ui_widget_remove_child(node->widget->parent, node->widget);
         }
     }
@@ -1339,8 +1362,7 @@ static bool view_update(struct ui_view *view, const struct ui_node_desc *root,
             next[i].parent = plan[i].parent;
             if (!node_init(&next[i], &error))
                 goto fail;
-            ui_widget_set_destroy_observer(next[i].widget,
-                                           view_widget_destroyed, view);
+            observe_new_widget(view, &next[i]);
             continue;
         }
         next[i] = view->nodes[match[i]];
