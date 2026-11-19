@@ -1,5 +1,6 @@
 option('wayland', type: 'feature', value: 'auto', description: 'Build the Wayland backend.')
 option('tests', type: 'boolean', value: true, description: 'Build and register tests.')
+option('benchmarks', type: 'boolean', value: false, description: 'Build and register benchmarks.')
 option('x11', type: 'feature', value: 'auto', description: 'Build the X11 backend.')
 option('dbus', type: 'feature', value: 'auto', description: 'Use the D-Bus session bus on Linux for notifications and desktop settings.')
 option('integration_tests', type: 'boolean', value: false, description: 'Test windows with Linux display servers or the native macOS display.')

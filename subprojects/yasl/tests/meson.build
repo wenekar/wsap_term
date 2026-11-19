@@ -143,3 +143,9 @@ if get_option('integration_tests')
         endforeach
     endif
 endif
+
+if get_option('benchmarks')
+    bench = executable('yasl-benchmark', 'benchmark.c',
+        include_directories: inc, dependencies: yasl_dep)
+    benchmark('core-bench', bench, timeout: 300)
+endif
