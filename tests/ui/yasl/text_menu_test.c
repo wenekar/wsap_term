@@ -33,9 +33,12 @@ static struct window *make_window(struct ui_input *in, const char *text)
     return w;
 }
 
-static void destroy_window(struct window *w)
+/* The window detaches its root and leaves it to the caller, so the input is
+ * destroyed after the window. */
+static void destroy_window(struct window *w, struct ui_input *in)
 {
     window_destroy(w);
+    ui_widget_destroy(&in->widget);
     window_host_registry_remove(&host);
     free(host.windows);
 }
@@ -94,7 +97,7 @@ static void text_menu_test(void)
     /* The menu remembers the input as its target. */
     struct ui_widget *target = ui_surface_context_target(&ui_of(w)->screen);
     assert(target == &in.widget);
-    destroy_window(w);
+    destroy_window(w, &in);
 }
 
 /* A command that the input cannot run is disabled. Paste stays enabled,
@@ -109,7 +112,7 @@ static void disabled_command_test(void)
     assert(undo && (undo->flags & UI_LIST_ITEM_DISABLED));
     const struct ui_list_item *paste = ui_list_item(list, 5);
     assert(paste && !(paste->flags & UI_LIST_ITEM_DISABLED));
-    destroy_window(w);
+    destroy_window(w, &in);
 }
 
 /* A shortcut that the keymap of the window sends runs the text command of the
@@ -137,7 +140,7 @@ static void edit_shortcut_runs_the_text_command_test(void)
     };
     window_ui_route(w, &redo);
     assert(!strcmp(ui_input_text(&in), "ab"));
-    destroy_window(w);
+    destroy_window(w, &in);
 }
 
 int main(void)
