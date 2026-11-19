@@ -107,10 +107,11 @@ static bool input_action(struct ui_widget *source, const struct ui_action *actio
 {
     (void)source;
     struct ui_palette *p = userdata;
-    if (action->kind == UI_ACTION_CHANGE) {
-        p->state.stale = true;
-        ui_widget_invalidate(&p->widget, UI_WIDGET_INVALIDATE_MEASURE);
-    }
+    /* A MENU action goes up to the parent, which opens the text menu. */
+    if (action->kind != UI_ACTION_CHANGE)
+        return false;
+    p->state.stale = true;
+    ui_widget_invalidate(&p->widget, UI_WIDGET_INVALIDATE_MEASURE);
     return true;
 }
 
