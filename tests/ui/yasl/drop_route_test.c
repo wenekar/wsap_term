@@ -21,7 +21,9 @@
  * - Every release ends the drag.
  * - A text drop follows the same rule as a file drop. The focus and the
  *   default focus do not limit it.
- * - While a modal is open, a release outside the modal reaches nothing.
+ * - While a modal is open, a release outside the modal reaches nothing. A
+ *   part of the modal outside its bounds takes a drop like the rest of the
+ *   modal.
  *
  * The file drop case uses the order of a real backend: the drag enters, the
  * LEAVE comes, and then the release lands.
@@ -351,6 +353,127 @@ static void release_outside_a_modal_reaches_nothing_test(void)
     teardown(&f);
 }
 
+/* Places `p` at `r` in the frame of its parent. */
+static void probe_place(struct probe *p, struct rect2i r)
+{
+    *p = (struct probe){0};
+    ui_widget_init(&p->widget, &PROBE_OPS, p);
+    ui_widget_set_fixed_size(&p->widget, r.size);
+    ui_widget_set_placement(&p->widget, (struct ui_placement){
+        .kind = UI_PLACE_AT, .anchor.pos = r.pos,
+    });
+}
+
+/* Opens a window that shows `root`. */
+static struct window *open_tree(struct ui_widget *root)
+{
+    static const struct window_config config = { .size = { .x = 320, .y = 200 } };
+    window_host_init(&host, NULL, &config, NULL);
+    struct window *w = window_create(&host, &(struct window_spec){0});
+    assert(w);
+    assert(window_ui_mount(w, &(struct window_ui_spec){ .root = root }));
+    ui_surface_resize(window_ui_key_surface(w),
+                      (struct vector2i){ .x = 320, .y = 200 });
+    ui_surface_prepare(window_ui_key_surface(w));
+    return w;
+}
+
+static void close_tree(struct window *w)
+{
+    window_destroy(w);
+    window_host_registry_remove(&host);
+    free(host.windows);
+    host = (struct window_host){0};
+}
+
+static void route(struct window *w, struct input_event ev)
+{
+    window_ui_route(w, &ev);
+}
+
+/* Sends a text, a file, and a typed release at `pos`. */
+static void release_all(struct window *w, struct vector2i pos)
+{
+    route(w, (struct input_event){ .kind = INPUT_PASTE,
+        .paste = { .data = (char *)"x", .len = 1, .pos = pos, .dropped = true } });
+    route(w, (struct input_event){ .kind = INPUT_DROP_FILES,
+        .drop = { .data = (char *)"file:///tmp/a\r\n", .len = 15, .pos = pos,
+                  .dropped = true } });
+    route(w, (struct input_event){ .kind = INPUT_DROP,
+        .drop_type = { .mime = (char *)"image/png", .data = (char *)"x",
+                       .len = 1, .pos = pos } });
+}
+
+/* Lays out a modal that hangs its first part 20 pixels below its own
+ * bounds, as a popup list of a dropdown does. */
+static void hanging_layout(struct ui_widget *widget, struct rect2i bounds)
+{
+    struct ui_widget *part = widget->first_child;
+    if (part && !ui_widget_is_hidden(part))
+        ui_widget_place(part, (struct rect2i){
+            .pos = { .x = bounds.x, .y = bounds.y + bounds.height + 20 },
+            .size = { .x = bounds.width, .y = 40 },
+        });
+}
+
+static struct vector2i hanging_measure(const struct ui_widget *widget,
+                                       struct ui_constraints constraints)
+{
+    (void)widget;
+    (void)constraints;
+    return (struct vector2i){ .x = 100, .y = 50 };
+}
+
+static const struct ui_widget_ops HANGING_OPS = {
+    .name = "drop-route-hanging-modal",
+    .event = probe_event,
+    .measure = hanging_measure,
+    .layout = hanging_layout,
+};
+
+/* A part of the modal sits outside the bounds of the modal. A drop on the
+ * part reaches the part, as a press does. A drop on a hidden part reaches
+ * the modal. */
+static void drop_on_a_modal_part_outside_its_bounds_test(void)
+{
+    struct ui_widget root;
+    struct probe base, modal, part, hidden;
+    ui_widget_init(&root, NULL, NULL);
+    probe_place(&base, (struct rect2i){ .size = { .x = 320, .y = 200 } });
+    modal = (struct probe){0};
+    ui_widget_init(&modal.widget, &HANGING_OPS, &modal);
+    ui_widget_set_fixed_size(&modal.widget, (struct vector2i){ .x = 100, .y = 50 });
+    ui_widget_set_placement(&modal.widget, (struct ui_placement){
+        .kind = UI_PLACE_AT, .anchor.pos = { .x = 100, .y = 50 },
+    });
+    /* The part hangs below the modal, at y 120..159 of the window. */
+    probe_place(&part, (struct rect2i){ .size = { .x = 100, .y = 40 } });
+    probe_place(&hidden, (struct rect2i){ .size = { .x = 100, .y = 50 } });
+    assert(ui_widget_add_child(&root, &base.widget));
+    assert(ui_widget_add_child(&root, &modal.widget));
+    assert(ui_widget_add_child(&modal.widget, &part.widget));
+    assert(ui_widget_add_child(&modal.widget, &hidden.widget));
+    ui_widget_set_hidden(&hidden.widget, true);
+    ui_widget_set_modal(&modal.widget, true);
+    struct window *w = open_tree(&root);
+    struct vector2i on_part = { .x = 150, .y = 140 };
+    assert(ui_surface_hit_test(window_ui_key_surface(w), on_part) ==
+           &part.widget);
+
+    release_all(w, on_part);
+    assert(part.drop == 3);
+    release_all(w, (struct vector2i){ .x = 150, .y = 70 });
+    assert(modal.drop == 3 && hidden.drop == 0);
+    assert(base.drop == 0);
+
+    close_tree(w);
+    ui_widget_destroy(&hidden.widget);
+    ui_widget_destroy(&part.widget);
+    ui_widget_destroy(&modal.widget);
+    ui_widget_destroy(&base.widget);
+    ui_widget_destroy(&root);
+}
+
 int main(void)
 {
     text_drag_marks_the_widget_at_its_position_test();
@@ -363,5 +486,6 @@ int main(void)
     text_release_on_the_focus_reaches_it_test();
     text_release_ignores_the_default_focus_test();
     release_outside_a_modal_reaches_nothing_test();
+    drop_on_a_modal_part_outside_its_bounds_test();
     return 0;
 }
