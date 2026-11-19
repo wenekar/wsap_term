@@ -9,6 +9,7 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -27,7 +28,9 @@ struct gate {
     _Atomic int release;
     _Atomic int done;
     _Atomic int cancelled;
+    _Atomic int released;
     _Atomic int ran;
+    bool release_result;
     void *result;
 };
 
@@ -68,10 +71,17 @@ static void on_done(void *userdata, void *result)
     atomic_store(&gate->done, 1);
 }
 
-static void on_cancel(void *userdata)
+static void on_cancel(void *userdata, void *result)
 {
     struct gate *gate = userdata;
     assert(pthread_equal(pthread_self(), loop_thread));
+    if (gate->release_result) {
+        assert(result == gate->result);
+        free(result);
+        atomic_store(&gate->released, 1);
+    } else {
+        assert(result == NULL);
+    }
     atomic_store(&gate->cancelled, 1);
 }
 
@@ -112,7 +122,8 @@ static void test_submit_does_not_block(void)
 }
 
 /* Queued work is cancelled at shutdown, and a completed result that the loop
- * did not deliver is cancelled too. The done callback never runs. */
+ * did not deliver is cancelled too. The done callback never runs. The cancel
+ * hook receives the result, so it can free a heap result. */
 static void test_cancel_at_shutdown(void)
 {
     yasl_loop *loop = yasl_loop_create();
@@ -121,6 +132,9 @@ static void test_cancel_at_shutdown(void)
     assert(worker);
     struct gate running = {0};
     struct gate queued = {0};
+    running.result = malloc(1);
+    assert(running.result);
+    running.release_result = true;
     struct loop_work first = work_for(&running, blocking_run);
     struct loop_work second = work_for(&queued, quick_run);
     assert(loop_worker_submit(worker, &first) == 0);
@@ -138,6 +152,7 @@ static void test_cancel_at_shutdown(void)
 
     assert(atomic_load(&running.cancelled));
     assert(atomic_load(&queued.cancelled));
+    assert(atomic_load(&running.released));
     assert(!atomic_load(&running.done));
     assert(!atomic_load(&queued.done));
     assert(!atomic_load(&queued.ran));
