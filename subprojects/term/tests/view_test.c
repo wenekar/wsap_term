@@ -573,8 +573,72 @@ static void view_dynamic_sizing(void)
     wsap_vtcore_free(t);
 }
 
+/* The first non-blank ASCII text of snapshot row y. */
+static void snapshot_row_text(const struct wsap_vtcore_snapshot *s, int y,
+                              char *buf, size_t cap)
+{
+    const struct wsap_vtcore_view *v = wsap_vtcore_snapshot_view(s);
+    const struct wsap_vtcore_cell *cells = wsap_vtcore_snapshot_row(s, y);
+    size_t n = 0;
+    for (int c = 0; cells && c < v->size.x && n + 1 < cap; c++) {
+        uint32_t cp = cells[c].text;
+        buf[n++] = !cp ? ' ' : cp < 0x80 ? (char)cp : '?';
+    }
+    while (n > 0 && buf[n - 1] == ' ')
+        n--;
+    buf[n] = 0;
+}
+
+/* A live snapshot holds the screen rows below the history, also while the
+ * view shows older rows. The view keeps its offset. */
+static void live_snapshot_ignores_the_view_offset(void)
+{
+    struct wsap_vtcore *t = small_history_term(12, 5, 100);
+    feed_lines(t, "L", 30);
+    tt_puts(t, "\x1b[2;3Hsel");
+    wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ .x = 2, .y = 1 }, false,
+                             WSAP_VTCORE_SELECT_CELL);
+    assert(wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = 4, .y = 1 }, false));
+    struct wsap_vtcore_snapshot *bottom = wsap_vtcore_snapshot_new();
+    struct wsap_vtcore_snapshot *live = wsap_vtcore_snapshot_new();
+    struct wsap_vtcore_snapshot *view = wsap_vtcore_snapshot_new();
+    assert(bottom && live && view);
+    assert(wsap_vtcore_snapshot_update(bottom, t));
+
+    wsap_vtcore_scroll(t, 7);
+    assert(wsap_vtcore_scrollback(t).offset == 7);
+    assert(wsap_vtcore_snapshot_update_live(live, t));
+    assert(wsap_vtcore_scrollback(t).offset == 7);
+    assert(wsap_vtcore_snapshot_update(view, t));
+    assert(wsap_vtcore_snapshot_view(view)->scroll_offset == 7);
+
+    struct wsap_vtcore_span selected = wsap_vtcore_snapshot_row_selection(bottom, 1);
+    assert(selected.begin == 2 && selected.end > 2);
+    const struct wsap_vtcore_view *b = wsap_vtcore_snapshot_view(bottom);
+    const struct wsap_vtcore_view *l = wsap_vtcore_snapshot_view(live);
+    assert(l->scroll_offset == 0);
+    assert(l->cursor.visible == b->cursor.visible);
+    assert(l->cursor.pos.x == b->cursor.pos.x && l->cursor.pos.y == b->cursor.pos.y);
+    for (int y = 0; y < b->size.y; y++) {
+        char want[VIEW_TEXT_CAP], got[VIEW_TEXT_CAP], shown[VIEW_TEXT_CAP];
+        snapshot_row_text(bottom, y, want, sizeof(want));
+        snapshot_row_text(live, y, got, sizeof(got));
+        snapshot_row_text(view, y, shown, sizeof(shown));
+        assert(!strcmp(got, want));
+        assert(strcmp(shown, want) || !*want);
+        struct wsap_vtcore_span bs = wsap_vtcore_snapshot_row_selection(bottom, y);
+        struct wsap_vtcore_span ls = wsap_vtcore_snapshot_row_selection(live, y);
+        assert(bs.begin == ls.begin && bs.end == ls.end);
+    }
+    wsap_vtcore_snapshot_free(bottom);
+    wsap_vtcore_snapshot_free(live);
+    wsap_vtcore_snapshot_free(view);
+    wsap_vtcore_free(t);
+}
+
 int main(void)
 {
+    live_snapshot_ignores_the_view_offset();
     view_dynamic_sizing();
     snapshots_keep_history_totals();
     row_keys_differ_between_terminals();

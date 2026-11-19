@@ -13,9 +13,13 @@
 #include "terminal/internal.h"
 #include "ui/accessibility.h"
 #include "ui/widget.h"
+#include "ui/yasl/window.h"
+#include <yasl/yasl.h>
 
 struct fixture {
     struct test_app app;
+    struct window *window;
+    uint64_t frame_ms;
     struct terminal *content;
     struct wsap_vtcore *term;
     struct ui_accessibility_tree tree;
@@ -30,6 +34,7 @@ static void fixture_init(struct fixture *f, int cols, int rows)
     test_app_init(&f->app, "sleep 60", (struct vector2i){ .x = 800, .y = 600 });
     struct window *w = test_terminal_window(f->app.app);
     assert(w && app_tabs_new(w));
+    f->window = w;
     f->content = app_tabs_active(w);
     assert(f->content);
     f->term = terminal_session(f->content)->term;
@@ -79,10 +84,21 @@ static void feed_line(struct fixture *f, const char *text, size_t len)
     feed(f, "\r\n", 2);
 }
 
-static char *read_document(struct fixture *f, size_t *out_len)
+/* Builds the tree in a host pass one second after the last one. The node
+ * then holds the values of the current term, not of an earlier build. */
+static void build_tree(struct fixture *f)
 {
+    struct window_host *host = window_host(f->window);
+    f->frame_ms = f->frame_ms ? f->frame_ms + 1000 : yasl_time_ns() / 1000000;
+    host->frame_ms = f->frame_ms;
     ui_accessibility_tree_destroy(&f->tree);
     assert(ui_accessibility_tree_build(&f->content->view.widget, &f->tree));
+    host->frame_ms = 0;
+}
+
+static char *read_document(struct fixture *f, size_t *out_len)
+{
+    build_tree(f);
     assert(f->tree.count > 0);
     const struct ui_accessibility_node *node = &f->tree.nodes[0];
     const struct ui_accessibility_text_provider *text = node->text;
@@ -221,9 +237,68 @@ static void text_does_not_depend_on_width(void)
     fixture_fini(&f);
 }
 
+/* The document is the history and the live screen at every view offset.
+ * The caret stays on the cursor, and a selection on a shown history row maps
+ * to its text. */
+static void document_ignores_the_view_offset(void)
+{
+    struct fixture f;
+    fixture_init(&f, 80, 24);
+    uint64_t state = UINT64_C(0x5b) * UINT64_C(0x9e3779b97f4a7c15) + 1;
+    feed_wide_lines(&f, &state, 400, 120);
+    expect_document(&f, "at the bottom");
+    assert(f.tree.nodes[0].caret_offset == f.expect_len);
+    wsap_vtcore_scroll(f.term, 37);
+    assert(wsap_vtcore_scrollback(f.term).offset == 37);
+    expect_document(&f, "scrolled 37");
+    assert(f.tree.nodes[0].caret_offset == f.expect_len);
+    assert(wsap_vtcore_resize(f.term, (struct wsap_vtcore_vector2i){ .x = 53, .y = 24 }));
+    assert(wsap_vtcore_scrollback(f.term).offset > 0);
+    expect_document(&f, "scrolled, rewrap to 53");
+    assert(f.tree.nodes[0].caret_offset == f.expect_len);
+    wsap_vtcore_scroll_to(f.term, 0);
+    expect_document(&f, "back at the bottom");
+
+    assert(wsap_vtcore_resize(f.term, (struct wsap_vtcore_vector2i){ .x = 80, .y = 24 }));
+    feeds(&f, "\x1b[H\x1b[2J\x1b[3J");
+    f.expect_len = 0;
+    char line[64];
+    for (int i = 0; i < 100; i++) {
+        int n = snprintf(line, sizeof(line), "line %03d", i);
+        feed_line(&f, line, (size_t)n);
+    }
+    /* The prompt has no line end, and its blank drops. */
+    feeds(&f, "$ ");
+    expect_line(&f, "$ ", 2);
+    f.expect[--f.expect_len] = '\0';
+    wsap_vtcore_scroll(f.term, 30);
+    wsap_vtcore_select_start(f.term, (struct wsap_vtcore_vector2i){ .x = 0, .y = 3 },
+                             false, WSAP_VTCORE_SELECT_CELL);
+    assert(wsap_vtcore_select_extend(f.term, (struct wsap_vtcore_vector2i){ .x = 7, .y = 3 },
+                                     false));
+    char *selected = wsap_vtcore_selection_text(f.term);
+    assert(selected && !strncmp(selected, "line ", 5));
+    size_t len = 0;
+    char *document = read_document(&f, &len);
+    assert(len == f.expect_len && !memcmp(document, f.expect, len));
+    const struct ui_accessibility_node *node = &f.tree.nodes[0];
+    printf("scrolled 30: caret %zu of %zu, selection %zu..%zu \"%s\"\n",
+           node->caret_offset, len, node->selection_start, node->selection_end,
+           selected);
+    fflush(stdout);
+    /* The cursor follows the prompt. The caret stops at the end of the text. */
+    assert(node->caret_offset == len);
+    assert(node->selection_end - node->selection_start == strlen(selected));
+    assert(!memcmp(document + node->selection_start, selected, strlen(selected)));
+    free(document);
+    wsap_vtcore_text_free(selected);
+    fixture_fini(&f);
+}
+
 int main(void)
 {
     blank_at_history_edge();
     text_does_not_depend_on_width();
+    document_ignores_the_view_offset();
     return 0;
 }

@@ -408,6 +408,13 @@ WSAP_VTCORE_API void wsap_vtcore_snapshot_free(struct wsap_vtcore_snapshot *s);
  * Do not update a snapshot while another thread reads or updates it.
  */
 WSAP_VTCORE_API bool wsap_vtcore_snapshot_update(struct wsap_vtcore_snapshot *s, struct wsap_vtcore *t);
+/* Copy the live screen: the rows that the view shows at scroll offset zero.
+ * The view keeps its offset. The cursor and the selection spans are those of
+ * the live screen. In all else, this is wsap_vtcore_snapshot_update(). Use a
+ * separate snapshot: a view snapshot and a live snapshot hold different
+ * rows. */
+WSAP_VTCORE_API bool wsap_vtcore_snapshot_update_live(struct wsap_vtcore_snapshot *s,
+                                                      struct wsap_vtcore *t);
 
 enum {
     WSAP_VTCORE_PALETTE_FG = 256,

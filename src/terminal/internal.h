@@ -69,7 +69,7 @@ struct terminal_view {
     size_t accessibility_line_capacity;
     /* The byte length of the history part, the history rows and the first
      * line that it covers, its generation, width, and whether its last line
-     * continues below the view. That open line keeps its trailing blanks in
+     * continues into the screen. That open line keeps its trailing blanks in
      * the index. open_blanks counts them: they drop when the rows below hold
      * no text. */
     size_t accessibility_history_length;
@@ -88,9 +88,9 @@ struct terminal_view {
      * lock depth and the cache change and are read only under the term
      * lock. The holder thread can still change the term, because the term
      * lock nests. A length or read call then compares the history
-     * generation and the history rows above the view with the values of
-     * the fill, and fills the cache again when one changed. A change of the
-     * view rows alone shows at the next provider lock. */
+     * generation and the history rows with the values of the fill, and
+     * fills the cache again when one changed. A change of the screen rows
+     * alone shows at the next provider lock. */
     struct wsap_vtcore_snapshot *accessibility_snapshot;
     struct accessibility_document accessibility_document;
     uint64_t accessibility_document_generation;
