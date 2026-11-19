@@ -108,11 +108,16 @@ enum input_push_result input_queue_add(struct input_queue *q,
 }
 
 static size_t push_data(struct input_queue *q, enum input_kind kind,
-                        const char *data, size_t len)
+                        const char *data, size_t len,
+                        const struct vector2i *drop_pos)
 {
     if (!q || !data || !len || len > INPUT_TEXT_MAX - q->text_bytes)
         return 0;
     struct input_event ev = { .kind = kind };
+    if (drop_pos) {
+        ev.paste.pos = *drop_pos;
+        ev.paste.dropped = true;
+    }
     ev.paste.data = malloc(len);
     if (!ev.paste.data) return 0;
     memcpy(ev.paste.data, data, len);
@@ -126,12 +131,18 @@ static size_t push_data(struct input_queue *q, enum input_kind kind,
 
 size_t input_queue_push_paste(struct input_queue *q, const char *data, size_t len)
 {
-    return push_data(q, INPUT_PASTE, data, len);
+    return push_data(q, INPUT_PASTE, data, len, NULL);
+}
+
+size_t input_queue_push_drop_text(struct input_queue *q, const char *data,
+                                  size_t len, struct vector2i pos)
+{
+    return push_data(q, INPUT_PASTE, data, len, &pos);
 }
 
 size_t input_queue_push_drop_files(struct input_queue *q, const char *uris, size_t len)
 {
-    return push_data(q, INPUT_DROP_FILES, uris, len);
+    return push_data(q, INPUT_DROP_FILES, uris, len, NULL);
 }
 
 size_t input_queue_push_drop(struct input_queue *q, const char *mime,

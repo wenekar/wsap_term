@@ -49,6 +49,18 @@ static struct ui_widget *drop_mark_target(struct ui_surface *surface,
     return focus && widget_is_inside(focus, hit) ? hit : NULL;
 }
 
+/* Sends the event of a drop release of type `mime` to the widget at the
+ * drop location `pos` on the window surface. Hover state from the drag does
+ * not choose the widget. Returns true when a widget takes the release. */
+static bool route_release(struct window *w, const char *mime,
+                          struct vector2i pos, const struct ui_event *event)
+{
+    struct ui_surface *screen = &ui_of(w)->screen;
+    ui_surface_prepare(screen);
+    struct ui_widget *target = drop_mark_target(screen, mime, pos);
+    return target && ui_widget_event(target, event);
+}
+
 static enum ui_edit_command shortcut_edit(input_command_id action)
 {
     switch (action) {
@@ -87,16 +99,18 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
         return WINDOW_INPUT_HANDLED;
     case INPUT_PASTE:
         event = ui_event_paste(ev->paste.data, ev->paste.len, now_ms);
-        /* The release of a drag goes to the widget that drew the mark. */
-        struct ui_widget *drop_target = ui_surface_drag_target(&ui_of(w)->screen);
-        if (drop_target && ui_widget_event(drop_target, &event))
+        /* A paste goes to the focused widget. Only the release of a text
+         * drop goes to its drop location, and only inside the focus. */
+        if (ev->paste.dropped &&
+            route_release(w, "text/plain", ev->paste.pos, &event))
             return WINDOW_INPUT_HANDLED;
         ui_surface_dispatch(keys, &event);
         return WINDOW_INPUT_HANDLED;
     case INPUT_DROP_FILES:
         event = ui_event_drop_files(ev->drop.data, ev->drop.len, now_ms);
         /* The file drop goes to the widget that drew the mark. */
-        drop_target = ui_surface_drag_target(&ui_of(w)->screen);
+        struct ui_widget *drop_target =
+            ui_surface_drag_target(&ui_of(w)->screen);
         if (drop_target && ui_widget_event(drop_target, &event))
             return WINDOW_INPUT_HANDLED;
         ui_surface_dispatch(keys, &event);
