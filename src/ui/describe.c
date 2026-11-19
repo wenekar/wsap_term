@@ -37,6 +37,10 @@ struct ui_view {
     bool committed;
     /* The view destroys its own widgets, so it ignores its observer. */
     bool destroying;
+    /* An update runs. A handler that it calls cannot update the view, and a
+     * destroy waits until the update ends. */
+    bool updating;
+    bool destroy_pending;
 };
 
 /* A menu and the layer that shows it. */
@@ -526,6 +530,11 @@ static bool set_menu_props(struct ui_menu_node *menu,
                                  desc->props.menu.submenu_userdata);
     ui_menu_set_hover_delay(&menu->menu, desc->props.menu.hover_delay_ms);
     ui_menu_layer_set_origin(&menu->layer, desc->props.menu.pos);
+    /* An open menu with the same items stays open with its submenus. */
+    if (ui_menu_is_open(&menu->menu) &&
+        ui_list_has_items(&menu->menu.levels[0].list, desc->props.menu.items,
+                          desc->props.menu.count))
+        return true;
     if (!desc->props.menu.count) {
         ui_menu_close(&menu->menu);
         return true;
@@ -821,6 +830,10 @@ void ui_view_destroy(struct ui_view *view)
 {
     if (!view)
         return;
+    if (view->updating) {
+        view->destroy_pending = true;
+        return;
+    }
     if (view->destroying)
         return;
     view->destroying = true;
@@ -871,6 +884,7 @@ const char *ui_view_error_message(enum ui_view_error error)
     case UI_VIEW_ERROR_DUPLICATE_KEY: return "Duplicate key";
     case UI_VIEW_ERROR_OUT_OF_MEMORY: return "Out of memory";
     case UI_VIEW_ERROR_INIT_FAILED: return "Widget initialization failed";
+    case UI_VIEW_ERROR_BUSY: return "View update is running";
     }
     return "Unknown error";
 }
@@ -1091,12 +1105,11 @@ static void restore_kept_strings(const struct ui_view *view,
     }
 }
 
-bool ui_view_update_ex(struct ui_view *view, const struct ui_node_desc *root,
-                       struct ui_view_diagnostic *diagnostic)
+/* Updates the view. The caller sets `updating`. */
+static bool view_update(struct ui_view *view, const struct ui_node_desc *root,
+                        struct ui_view_diagnostic *diagnostic)
 {
-    if (diagnostic)
-        *diagnostic = (struct ui_view_diagnostic){0};
-    if (!view || !root) {
+    if (!root) {
         if (diagnostic) {
             diagnostic->error = UI_VIEW_ERROR_INVALID_ARGUMENT;
             diagnostic->node = root;
@@ -1214,6 +1227,43 @@ fail:
     return false;
 }
 
+bool ui_view_update_ex(struct ui_view *view, const struct ui_node_desc *root,
+                       struct ui_view_diagnostic *diagnostic)
+{
+    if (diagnostic)
+        *diagnostic = (struct ui_view_diagnostic){0};
+    if (!view) {
+        if (diagnostic) {
+            diagnostic->error = UI_VIEW_ERROR_INVALID_ARGUMENT;
+            diagnostic->node = root;
+            diagnostic->detail = "View is NULL";
+        }
+        return false;
+    }
+    if (view->updating || view->destroying) {
+        if (diagnostic) {
+            diagnostic->error = UI_VIEW_ERROR_BUSY;
+            diagnostic->node = root;
+            diagnostic->detail = view->updating ? "View update is running"
+                                                : "View is being destroyed";
+        }
+        return false;
+    }
+    view->updating = true;
+    bool updated = view_update(view, root, diagnostic);
+    view->updating = false;
+    if (!view->destroy_pending)
+        return updated;
+    /* A handler destroyed the view during the update. */
+    if (diagnostic) {
+        diagnostic->error = UI_VIEW_ERROR_BUSY;
+        diagnostic->node = root;
+        diagnostic->detail = "View was destroyed during the update";
+    }
+    ui_view_destroy(view);
+    return false;
+}
+
 bool ui_view_update(struct ui_view *view, const struct ui_node_desc *root)
 {
     struct ui_view_diagnostic diagnostic;
@@ -1234,7 +1284,12 @@ struct ui_view *ui_view_mount_ex(const struct ui_node_desc *root,
         }
         return NULL;
     }
-    if (!ui_view_update_ex(view, root, diagnostic)) {
+    if (diagnostic)
+        *diagnostic = (struct ui_view_diagnostic){0};
+    view->updating = true;
+    bool mounted = view_update(view, root, diagnostic);
+    view->updating = false;
+    if (!mounted || view->destroy_pending) {
         ui_view_destroy(view);
         return NULL;
     }

@@ -125,6 +125,8 @@ enum ui_view_error {
     UI_VIEW_ERROR_DUPLICATE_KEY,
     UI_VIEW_ERROR_OUT_OF_MEMORY,
     UI_VIEW_ERROR_INIT_FAILED,
+    /* A handler called the view during an update or a destroy. */
+    UI_VIEW_ERROR_BUSY,
 };
 
 struct ui_view_diagnostic {
@@ -164,11 +166,19 @@ struct ui_view *ui_view_mount(const struct ui_node_desc *root,
  * some of the new properties, and the view stays valid. The view frees the
  * storage of a removed node after the surface is idle, so a handler can call
  * this function. The call fails while the surface is busy only when memory is
- * short. */
+ * short.
+ *
+ * An update can call a node handler, for example when it closes a menu. Such a
+ * handler cannot update the view: the call fails with UI_VIEW_ERROR_BUSY. A
+ * menu node with the same items as its open menu stays open and sends no
+ * CLOSE. */
 bool ui_view_update_ex(struct ui_view *view, const struct ui_node_desc *root,
                        struct ui_view_diagnostic *diagnostic);
 bool ui_view_update(struct ui_view *view, const struct ui_node_desc *root);
 
+/* Destroys the view and its widgets. A handler that an update calls can
+ * destroy the view. The view then goes when the update ends, and the update
+ * fails with UI_VIEW_ERROR_BUSY. Do not use the view after that update. */
 void ui_view_destroy(struct ui_view *view);
 
 /* Returns the widget of the descriptor root. */

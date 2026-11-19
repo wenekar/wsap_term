@@ -811,6 +811,39 @@ void ui_list_pin_metrics(struct ui_list *l, const struct ui_list *like)
     ui_widget_invalidate(&l->widget, UI_WIDGET_INVALIDATE_MEASURE);
 }
 
+bool ui_list_has_items(const struct ui_list *l,
+                       const struct ui_list_item *items, int n)
+{
+    if (!l || (n > 0 && !items) || (n > 0 ? n : 0) != l->state.n)
+        return false;
+    for (int i = 0; i < l->state.n; i++) {
+        const struct ui_list_item *shown = &l->state.items[i];
+        const struct ui_list_item *item = &items[i];
+        uint32_t flags = item->flags |
+                         (item->label ? 0 : UI_LIST_ITEM_SEPARATOR);
+        if (shown->action != item->action || shown->flags != flags)
+            return false;
+        if (!item->label || !shown->label) {
+            if (item->label != shown->label)
+                return false;
+            continue;
+        }
+        if (strcmp(shown->label, item->label))
+            return false;
+        if (flags & UI_LIST_ITEM_SEPARATOR)
+            continue;
+        char *shortcut = shortcut_text(&(struct ui_list_item){
+            .shortcut = item->shortcut, .flags = flags });
+        bool same = shortcut && shown->shortcut
+            ? !strcmp(shortcut, shown->shortcut)
+            : !shortcut && !shown->shortcut;
+        free(shortcut);
+        if (!same)
+            return false;
+    }
+    return true;
+}
+
 int ui_list_count(const struct ui_list *l)
 {
     return l ? l->state.n : 0;

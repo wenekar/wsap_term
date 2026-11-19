@@ -957,6 +957,167 @@ static void view_failed_update_keeps_widgets_test(void)
     ui_widget_destroy(&full);
 }
 
+/* A menu handler that updates or destroys the view when the menu closes. */
+struct menu_close_probe {
+    struct ui_view *view;
+    const struct ui_node_desc *next;
+    bool destroy;
+    int closes;
+    bool nested_ok;
+    struct ui_view_diagnostic nested;
+};
+
+static bool menu_close_action(struct ui_widget *source,
+                              const struct ui_action *action, void *userdata)
+{
+    (void)source;
+    struct menu_close_probe *probe = userdata;
+    if (action->kind != UI_ACTION_CLOSE)
+        return true;
+    probe->closes++;
+    struct ui_view *view = probe->view;
+    if (!view)
+        return true;
+    if (probe->destroy) {
+        probe->view = NULL;
+        ui_view_destroy(view);
+    } else {
+        probe->nested_ok = ui_view_update_ex(view, probe->next, &probe->nested);
+    }
+    return true;
+}
+
+static const ui_menu_item CLOSE_PROBE_ITEMS[] = {
+    { .label = "Open", .action = 10 },
+    { .label = "More", .action = 12, .flags = UI_LIST_ITEM_SUBMENU },
+};
+
+static const ui_menu_item CLOSE_PROBE_SUBMENU[] = {
+    { .label = "Alpha", .action = 21 },
+};
+
+static const ui_menu_item *close_probe_submenu(void *userdata, int action,
+                                               int *n)
+{
+    (void)userdata;
+    *n = action == 12 ? 1 : 0;
+    return action == 12 ? CLOSE_PROBE_SUBMENU : NULL;
+}
+
+/* A handler that runs during an update cannot update the view again. The
+ * menu sends CLOSE when an update closes it. */
+static void view_update_from_an_update_test(void)
+{
+    struct ui_menu *menu = NULL;
+    struct menu_close_probe probe = {0};
+    struct ui_node_desc child = {
+        .kind = UI_NODE_MENU, .key = "commands", .bind.menu = &menu,
+        .on_action = menu_close_action, .action_userdata = &probe,
+        .props.menu = { .items = CLOSE_PROBE_ITEMS, .count = 2 },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root",
+        .children = &child, .child_count = 1,
+    };
+    struct ui_node_desc other = {
+        .kind = UI_NODE_LABEL, .key = "status", .props.label = { .text = "x" },
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view && menu && ui_menu_is_open(menu));
+    struct ui_surface surface;
+    show(&surface, ui_view_root(view), (struct vector2i){ .x = 300, .y = 200 });
+    ui_surface_prepare(&surface);
+    probe.view = view;
+    probe.next = &other;
+
+    child.props.menu.count = 0;
+    assert(ui_view_update(view, &root));
+    assert(probe.closes == 1);
+    assert(!probe.nested_ok);
+    assert(probe.nested.error == UI_VIEW_ERROR_BUSY);
+    assert(menu && !ui_menu_is_open(menu));
+    assert(ui_view_menu(view, "commands") == menu);
+    assert(ui_view_widget(view, "status") == NULL);
+    ui_surface_prepare(&surface);
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+}
+
+/* A handler that destroys the view during an update destroys it when the
+ * update ends. The update then fails. */
+static void view_destroy_from_an_update_test(void)
+{
+    struct ui_menu *menu = NULL;
+    struct menu_close_probe probe = { .destroy = true };
+    struct ui_node_desc child = {
+        .kind = UI_NODE_MENU, .key = "commands", .bind.menu = &menu,
+        .on_action = menu_close_action, .action_userdata = &probe,
+        .props.menu = { .items = CLOSE_PROBE_ITEMS, .count = 2 },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root",
+        .children = &child, .child_count = 1,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view && menu);
+    probe.view = view;
+
+    child.props.menu.count = 0;
+    struct ui_view_diagnostic diagnostic;
+    assert(!ui_view_update_ex(view, &root, &diagnostic));
+    assert(diagnostic.error == UI_VIEW_ERROR_BUSY);
+    assert(probe.closes == 1);
+    assert(probe.view == NULL);
+    assert(menu == NULL);
+}
+
+/* An update with the same items keeps an open menu and its submenu. */
+static void view_update_keeps_an_open_menu_test(void)
+{
+    struct ui_menu *menu = NULL;
+    struct menu_close_probe probe = {0};
+    struct ui_node_desc child = {
+        .kind = UI_NODE_MENU, .key = "commands", .bind.menu = &menu,
+        .on_action = menu_close_action, .action_userdata = &probe,
+        .props.menu = { .items = CLOSE_PROBE_ITEMS, .count = 2,
+                        .on_submenu = close_probe_submenu },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root",
+        .children = &child, .child_count = 1,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view && menu);
+    struct ui_surface surface;
+    show(&surface, ui_view_root(view), (struct vector2i){ .x = 300, .y = 200 });
+    ui_surface_prepare(&surface);
+    struct ui_widget *top = ui_menu_level_widget(menu, 0);
+    assert(top && ui_widget_surface(top) == &surface);
+    ui_surface_focus(&surface, top);
+    const enum ui_key keys[] = { UI_KEY_END, UI_KEY_RIGHT };
+    for (size_t i = 0; i < sizeof keys / sizeof keys[0]; i++) {
+        struct ui_event key = ui_event_key((struct ui_key_event){
+            .key = keys[i],
+        }, 0);
+        ui_surface_dispatch(&surface, &key);
+    }
+    assert(ui_menu_level_count(menu) == 2);
+
+    assert(ui_view_update(view, &root));
+    assert(probe.closes == 0);
+    assert(ui_menu_is_open(menu));
+    assert(ui_menu_level_count(menu) == 2);
+
+    /* Other items open the menu again. */
+    child.props.menu.count = 1;
+    assert(ui_view_update(view, &root));
+    assert(probe.closes == 1);
+    assert(ui_menu_is_open(menu));
+    assert(ui_menu_level_count(menu) == 1);
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+}
+
 int main(void)
 {
     view_diagnostic_test();
@@ -974,6 +1135,9 @@ int main(void)
     view_menu_node_frees_its_items_test();
     view_list_update_to_empty_test();
     view_failed_update_keeps_widgets_test();
+    view_update_from_an_update_test();
+    view_destroy_from_an_update_test();
+    view_update_keeps_an_open_menu_test();
     view_root_keyboard_test();
     hidden_child_takes_no_space_or_input_test();
     hidden_modal_restores_focus_test();
