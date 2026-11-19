@@ -1464,6 +1464,155 @@ static void view_update_rejects_the_owner_of_the_root_test(void)
     }
 }
 
+/* A widget that adds a child to a container when it loses the focus. */
+struct focus_out_control {
+    struct ui_widget widget;
+    struct ui_widget *container;
+    struct ui_widget *child;
+    int added;
+};
+
+static bool focus_out_event(struct ui_widget *widget, const struct ui_event *event)
+{
+    struct focus_out_control *control =
+        ui_container_of(widget, struct focus_out_control, widget);
+    if (event->kind == UI_EVENT_FOCUS_OUT && control->container &&
+        ui_widget_add_child(control->container, control->child))
+        control->added++;
+    return false;
+}
+
+static const struct ui_widget_ops FOCUS_OUT_OPS = {
+    .name = "focus-out",
+    .event = focus_out_event,
+};
+
+/* A handler that fills a container while the update places the widgets
+ * makes the update fail. The update then changes no widget. */
+static void view_update_fails_when_a_handler_fills_a_container_test(void)
+{
+    struct focus_out_control control = {0};
+    ui_widget_init(&control.widget, &FOCUS_OUT_OPS, NULL);
+    ui_widget_set_focusable(&control.widget, true);
+    struct ui_widget box = {0}, foreign = {0};
+    ui_widget_init(&box, &SINGLE_CHILD_OPS, NULL);
+    ui_widget_init(&foreign, NULL, NULL);
+    struct ui_label *status = NULL;
+    struct ui_node_desc w = {
+        .kind = UI_NODE_WIDGET, .key = "w", .props.widget = &control.widget,
+    };
+    struct ui_node_desc a_kids[] = {
+        { .kind = UI_NODE_LABEL, .key = "l1", .props.label = { .text = "1" } },
+        w,
+    };
+    struct ui_node_desc kids[] = {
+        { .kind = UI_NODE_ROW, .key = "a", .children = a_kids, .child_count = 2 },
+        { .kind = UI_NODE_LABEL, .key = "status", .bind.label = &status,
+          .props.label = { .text = "Idle" } },
+        { .kind = UI_NODE_WIDGET, .key = "box", .props.widget = &box },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .children = kids, .child_count = 3,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view && status);
+    struct ui_widget *a = ui_view_widget(view, "a");
+    struct ui_surface surface;
+    show(&surface, ui_view_root(view), (struct vector2i){ .x = 200, .y = 100 });
+    ui_surface_focus(&surface, &control.widget);
+
+    /* The move takes the focus from w, and w fills the box. */
+    control.container = &box;
+    control.child = &foreign;
+    struct ui_node_desc k2[] = { kids[0], kids[1], kids[2] };
+    k2[0].child_count = 1;
+    k2[1].props.label.text = "Busy";
+    k2[2].children = &w;
+    k2[2].child_count = 1;
+    struct ui_node_desc next = root;
+    next.children = k2;
+    struct ui_view_diagnostic diagnostic;
+    assert(!ui_view_update_ex(view, &next, &diagnostic));
+    assert(diagnostic.error == UI_VIEW_ERROR_INVALID_CHILDREN);
+    assert(control.added == 1);
+    assert(control.widget.parent == a && ui_widget_child_at(a, 1) == &control.widget);
+    assert(!strcmp(ui_label_text(status), "Idle"));
+    assert(ui_widget_child_count(&box) == 1 && foreign.parent == &box);
+
+    /* Without the foreign child the update succeeds. */
+    control.container = NULL;
+    assert(ui_widget_remove_child(&box, &foreign));
+    assert(ui_view_update(view, &next));
+    assert(control.widget.parent == &box);
+    assert(!strcmp(ui_label_text(status), "Busy"));
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+    ui_widget_destroy(&foreign);
+}
+
+/* A menu handler that runs during an update finds the widgets placed. */
+struct fill_on_close {
+    struct ui_widget *container;
+    struct ui_widget *child;
+    int closes;
+    bool added;
+};
+
+static bool fill_on_close_action(struct ui_widget *source,
+                                 const struct ui_action *action, void *userdata)
+{
+    (void)source;
+    struct fill_on_close *probe = userdata;
+    if (action->kind == UI_ACTION_CLOSE) {
+        probe->closes++;
+        probe->added = ui_widget_add_child(probe->container, probe->child);
+    }
+    return true;
+}
+
+static void view_update_places_before_handlers_run_test(void)
+{
+    int destroyed = 0;
+    struct supplied_control control = { .destroyed = &destroyed };
+    ui_widget_init(&control.widget, &SUPPLIED_CONTROL_OPS, NULL);
+    struct ui_widget box = {0}, foreign = {0};
+    ui_widget_init(&box, &SINGLE_CHILD_OPS, NULL);
+    ui_widget_init(&foreign, NULL, NULL);
+    struct fill_on_close probe = { .container = &box, .child = &foreign };
+    static const ui_menu_item items[] = { { .label = "Open", .action = 1 } };
+    struct ui_node_desc w = {
+        .kind = UI_NODE_WIDGET, .key = "w", .props.widget = &control.widget,
+    };
+    struct ui_node_desc kids[] = {
+        w,
+        { .kind = UI_NODE_WIDGET, .key = "box", .props.widget = &box },
+        { .kind = UI_NODE_MENU, .key = "m", .on_action = fill_on_close_action,
+          .action_userdata = &probe,
+          .props.menu = { .items = items, .count = 1 } },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .children = kids, .child_count = 3,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view);
+
+    /* w moves into the box, and the menu closes. The CLOSE handler runs
+     * after the move, so the box is full and refuses the foreign child. */
+    struct ui_node_desc k2[] = { kids[1], kids[2] };
+    k2[0].children = &w;
+    k2[0].child_count = 1;
+    k2[1].props.menu.count = 0;
+    struct ui_node_desc next = root;
+    next.children = k2;
+    next.child_count = 2;
+    assert(ui_view_update(view, &next));
+    assert(probe.closes == 1 && !probe.added);
+    assert(control.widget.parent == &box && !foreign.parent);
+    ui_view_destroy(view);
+    assert(destroyed == 1);
+    ui_widget_destroy(&foreign);
+}
+
 int main(void)
 {
     view_diagnostic_test();
@@ -1489,6 +1638,8 @@ int main(void)
     view_update_makes_a_supplied_widget_the_root_test();
     view_update_counts_only_planned_children_test();
     view_update_rejects_the_owner_of_the_root_test();
+    view_update_fails_when_a_handler_fills_a_container_test();
+    view_update_places_before_handlers_run_test();
     view_root_keyboard_test();
     hidden_child_takes_no_space_or_input_test();
     hidden_modal_restores_focus_test();

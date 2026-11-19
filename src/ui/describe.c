@@ -1273,7 +1273,16 @@ static bool view_update(struct ui_view *view, const struct ui_node_desc *root,
         error = UI_VIEW_ERROR_INVALID_CHILDREN;
         goto fail;
     }
-    /* The kept widgets change from here. Only a lack of memory fails now. */
+    /* Place the widgets before a kept widget changes. A widget that moves
+     * loses the focus, and its handler can change the tree. Then an insert
+     * fails, and place_nodes undoes its changes. */
+    if (!place_nodes(view, next, count, before, &log, &bad)) {
+        failed = plan[bad].desc;
+        error = UI_VIEW_ERROR_INVALID_CHILDREN;
+        goto fail;
+    }
+    /* The kept widgets change from here. Only a lack of memory fails now.
+     * A handler that a kept widget calls finds the widgets placed. */
     kept_changed = true;
     for (size_t i = 0; i < count; i++) {
         if (match[i] == SIZE_MAX)
@@ -1281,11 +1290,6 @@ static bool view_update(struct ui_view *view, const struct ui_node_desc *root,
         failed = plan[i].desc;
         if (!node_set_props(&next[i], &error))
             goto fail;
-    }
-    if (!place_nodes(view, next, count, before, &log, &bad)) {
-        failed = plan[bad].desc;
-        error = UI_VIEW_ERROR_INVALID_CHILDREN;
-        goto fail;
     }
 
     /* The update succeeded. Take the new node list, and retire the nodes that
@@ -1318,8 +1322,12 @@ fail:
         diagnostic->node = failed;
         diagnostic->detail = ui_view_error_message(diagnostic->error);
     }
-    if (kept_changed)
+    /* Put the widgets back before discard_nodes destroys the new ones, so
+     * no moved widget goes with them. */
+    if (kept_changed) {
+        undo_placement(&log);
         restore_kept_strings(view, next, count, match);
+    }
     discard_nodes(view, surface, next, count, match);
     free(match);
     free(taken);
