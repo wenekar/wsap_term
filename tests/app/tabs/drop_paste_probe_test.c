@@ -38,6 +38,21 @@ static void wrap_paste(void *content, const char *text, size_t len)
     app_terminal_content_ops.paste(content, text, len);
 }
 
+static int file_drops;
+static bool hover_on;
+
+static void wrap_drop_files(void *content, const char *data, size_t len)
+{
+    file_drops++;
+    app_terminal_content_ops.drop_files(content, data, len);
+}
+
+static void wrap_drop_hover(void *content, bool over)
+{
+    hover_on = over;
+    app_terminal_content_ops.drop_hover(content, over);
+}
+
 static const struct vector2i viewport = { .x = 640, .y = 400 };
 static const struct vector2i over_terminal = { .x = 320, .y = 300 };
 
@@ -46,6 +61,8 @@ static struct window *open_window(struct app *app)
 {
     ops = app_terminal_content_ops;
     ops.paste = wrap_paste;
+    ops.drop_files = wrap_drop_files;
+    ops.drop_hover = wrap_drop_hover;
     struct window *w = window_create(&app->host, &(struct window_spec){0});
     assert(w);
     assert(app_tabs_mount(w, &(struct app_tabs_spec){
@@ -62,6 +79,8 @@ static struct window *open_window(struct app *app)
     ui_surface_prepare(window_ui_surface(w));
     pastes = 0;
     last_paste[0] = 0;
+    file_drops = 0;
+    hover_on = false;
     return w;
 }
 
@@ -190,11 +209,32 @@ static void text_drop_on_the_tab_bar_reaches_nothing_test(void)
     test_app_fini(&a);
 }
 
+/* A file drag over the terminal turns on its drop highlight. The release
+ * comes with no LEAVE, as when the LEAVE is lost. The release ends the drag,
+ * so the highlight turns off. */
+static void release_with_no_leave_clears_the_highlight_test(void)
+{
+    struct test_app a;
+    test_app_init(&a, "/bin/cat", viewport);
+    struct window *w = open_window(a.app);
+
+    drop_event(w, YASL_DROP_OVER, "text/uri-list", NULL, over_terminal);
+    assert(hover_on);
+    drop_event(w, YASL_DROP_RELEASE, "text/uri-list", "file:///tmp/a\r\n",
+               over_terminal);
+    assert(file_drops == 1);
+    assert(!hover_on);
+
+    window_close(w);
+    test_app_fini(&a);
+}
+
 int main(void)
 {
     palette_paste_after_a_lost_drag_test();
     plain_paste_reaches_the_terminal_test();
     text_drop_on_the_terminal_reaches_it_test();
     text_drop_on_the_tab_bar_reaches_nothing_test();
+    release_with_no_leave_clears_the_highlight_test();
     return 0;
 }

@@ -452,12 +452,13 @@ void window_native_input(struct window *w, const struct yasl_event *in)
          * router hit-tests the window surface. A menu popup takes no drop,
          * so a drop event on a popup leaves the window and drops nothing. */
         bool on_popup = popup_of(w, in->surface) != 0;
-        if (in->action == YASL_DROP_RELEASE && in->text && !on_popup) {
+        if (in->action == YASL_DROP_RELEASE && in->text && !on_popup)
             queue_drop_release(w, in);
-        } else if (w->drag_target && w->drag_target->drop_hover) {
+        /* Every release ends the drag, also with no LEAVE, so the hover
+         * mark of the drag target clears. */
+        if (w->drag_target && w->drag_target->drop_hover)
             w->drag_target->drop_hover(w, in->action == YASL_DROP_OVER &&
                                        !on_popup, w->drag_ud);
-        }
         if (on_popup)
             input_queue_push_drag(&w->input, "", device_pos(w, in));
         else if (in->action == YASL_DROP_OVER || in->action == YASL_DROP_LEAVE)
