@@ -13,6 +13,41 @@
 #include "ui/yasl/ui_input.h"
 #include "ui/yasl/internal.h"
 
+/* Returns true when a drop of type `mime` goes to the focused widget. A text
+ * type becomes a paste, and the focused widget takes a paste. Any other type
+ * goes to the widget at the drop position. */
+static bool drop_mime_routes_to_focus(const char *mime)
+{
+    return drop_mime_is_text(mime);
+}
+
+/* Returns true when `widget` is `root` or one of its descendants. */
+static bool widget_is_inside(const struct ui_widget *root,
+                             const struct ui_widget *widget)
+{
+    for (const struct ui_widget *p = widget; p; p = p->parent)
+        if (p == root)
+            return true;
+    return false;
+}
+
+/* Returns the widget that draws the drop mark, or NULL when no widget draws
+ * one. The mark follows the drop: a text or file drop goes to the focused
+ * widget, and any other type goes to the widget at the position. Only the
+ * widget that takes the drop draws a mark. */
+static struct ui_widget *drop_mark_target(struct ui_surface *surface,
+                                          const char *mime,
+                                          struct vector2i pos)
+{
+    if (!surface)
+        return NULL;
+    struct ui_widget *hit = ui_surface_hit_test(surface, pos);
+    if (!hit || !drop_mime_routes_to_focus(mime))
+        return hit;
+    struct ui_widget *focus = ui_surface_focused(surface);
+    return focus && widget_is_inside(focus, hit) ? hit : NULL;
+}
+
 static enum ui_edit_command shortcut_edit(input_command_id action)
 {
     switch (action) {
@@ -48,14 +83,25 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
         return WINDOW_INPUT_HANDLED;
     case INPUT_PASTE:
         event = ui_event_paste(ev->paste.data, ev->paste.len, now_ms);
+        /* The release of a drag goes to the widget that drew the mark. */
+        if (ui_of(w)->drop_hover.active &&
+            ui_of(w)->drop_hover.target &&
+            ui_widget_event((struct ui_widget *)ui_of(w)->drop_hover.target,
+                            &event))
+            return WINDOW_INPUT_HANDLED;
         ui_surface_dispatch(keys, &event);
         return WINDOW_INPUT_HANDLED;
     case INPUT_DROP_FILES:
         event = ui_event_drop_files(ev->drop.data, ev->drop.len, now_ms);
+        if (ui_of(w)->drop_hover.active &&
+            ui_of(w)->drop_hover.target &&
+            ui_widget_event((struct ui_widget *)ui_of(w)->drop_hover.target,
+                            &event))
+            return WINDOW_INPUT_HANDLED;
         ui_surface_dispatch(keys, &event);
         return WINDOW_INPUT_HANDLED;
     case INPUT_DROP: {
-        /* The drop goes to the widget at the drop position. */
+        /* The drop goes to the widget that drew the mark. */
         const char *mimes[1] = { ev->drop_type.mime };
         struct ui_drag_event drag = {
             .mimes = mimes,
@@ -67,14 +113,15 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
         };
         event = ui_event_drag(UI_EVENT_DROP, &drag, now_ms);
         ui_surface_prepare(keys);
-        struct ui_widget *target = ui_surface_hit_test(keys, drag.pos);
+        struct drop_hover *hover = &ui_of(w)->drop_hover;
+        struct ui_widget *target = hover->target
+            ? (struct ui_widget *)hover->target
+            : drop_mark_target(keys, drag.mime, drag.pos);
         if (target)
             ui_widget_event(target, &event);
         return WINDOW_INPUT_HANDLED;
     }
     case INPUT_DRAG: {
-        struct ui_widget *target = ev->drop_type.leave
-            ? NULL : ui_surface_hit_test(keys, ev->drop_type.pos);
         struct drop_hover *hover = &ui_of(w)->drop_hover;
         const char *mimes[1] = { ev->drop_type.mime };
         struct ui_drag_event drag = {
@@ -83,6 +130,9 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
             .mime = ev->drop_type.mime,
             .pos = ev->drop_type.pos,
         };
+        ui_surface_prepare(keys);
+        struct ui_widget *target = ev->drop_type.leave
+            ? NULL : drop_mark_target(keys, drag.mime, drag.pos);
         /* A drag that stays on one widget gets ENTER once, then OVER. A drag
          * that leaves the widget gives it LEAVE. */
         if (drop_hover_retarget(hover, target)) {
