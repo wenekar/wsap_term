@@ -361,26 +361,6 @@ void plan_frame(const struct plan_input *in, struct plan_output *out)
     plan_windows(&g, in, out);
 }
 
-static bool op_draws(const struct ui_scene_op *op)
-{
-    switch (op->kind) {
-    case UI_SCENE_OP_PUSH_CLIP:
-    case UI_SCENE_OP_POP_CLIP:
-        return false;
-    case UI_SCENE_OP_BLEND_RECT:
-    case UI_SCENE_OP_CIRCLE:
-        return op->alpha != 0;
-    case UI_SCENE_OP_IMAGE:
-        return true;
-    case UI_SCENE_OP_RECT:
-    case UI_SCENE_OP_ROUNDED_RECT:
-    case UI_SCENE_OP_SHADOW:
-    case UI_SCENE_OP_TEXT:
-        break;
-    }
-    return (op->color >> 24) != 0;
-}
-
 void plan_ui_ink(const struct ui_scene *scene, struct rect2i grid, int ch, int rows,
                  struct plan_span *out)
 {
@@ -411,7 +391,7 @@ void plan_ui_ink(const struct ui_scene *scene, struct rect2i grid, int ch, int r
                 clip = stack[depth];
             continue;
         }
-        if (!op_draws(op))
+        if (!ui_scene_op_draws(op))
             continue;
         struct rect2i ink = op->kind == UI_SCENE_OP_TEXT ? ui_scene_text_ink(scene, op) : op->rect;
         ink = rect2i_intersect(ink, clip);

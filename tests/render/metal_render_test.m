@@ -98,6 +98,15 @@
 
 enum { SHOTS_MAX = 8 };
 
+/* The exit status of a run that skipped every frame test. The test runner of
+ * meson and automake reads 77 as skipped. */
+#define TEST_SKIP_STATUS 77
+
+/* The number of frame tests that ran. A run with 0 of them is a skip, not a
+ * pass: such a run draws no frame, so it cannot find a defect in the frame
+ * path. */
+static int frame_tests_ran;
+
 /* One GPU, one render surface, and the drawables that the test reads. */
 struct fixture {
     id<MTLDevice> device;
@@ -116,6 +125,7 @@ static bool fixture_open(struct fixture *f, const char *title)
         return false;
     }
     f->device = [(id<MTLDevice>)render_gpu_native_device(f->g) retain];
+    frame_tests_ran++;
     return true;
 }
 
@@ -488,6 +498,38 @@ static void test_cpu_pixels(void)
 }
 
 /*
+ * A present that loses its drawable leaves the texture of the CPU pixels
+ * without pixels. The next present must load every pixel, not only the
+ * damage, so a texture that no frame received never reaches the screen.
+ */
+static void test_dropped_present(void)
+{
+    struct fixture f;
+    if (!fixture_open(&f, "dropped present"))
+        return;
+    const struct vector2i size = { .x = 64, .y = 48 };
+    size_t n = (size_t)size.x * (size_t)size.y;
+    uint32_t *pixels = malloc(n * sizeof(*pixels));
+    assert(pixels);
+    for (size_t i = 0; i < n; i++)
+        pixels[i] = 0xFF123456u;
+    /* No drawable: the texture comes to exist, and no command buffer runs. */
+    assert(draw_into(&f, NULL, pixels, NULL, nil, size) == RENDER_GPU_DROPPED);
+
+    TestDrawable *shot = fixture_shot(&f, size);
+    const struct rect2i r = { .x = 4, .y = 4, .width = 8, .height = 8 };
+    struct damage_list damage = { .any = true, .n = 1, .rects = { r }, .bounds = r };
+    assert(draw_into(&f, NULL, pixels, &damage, shot, size) == RENDER_GPU_PRESENTED);
+    fixture_finish(&f);
+
+    uint32_t *got = shot_pixels(shot);
+    assert(!memcmp(got, pixels, n * sizeof(*got)));
+    free(got);
+    free(pixels);
+    fixture_close(&f);
+}
+
+/*
  * A frame with a new image is dropped, because the window has no drawable.
  * Then the image goes away. The backend must not read its pixels later.
  * A sanitizer build shows a read of the freed pixels.
@@ -533,9 +575,14 @@ int main(void)
     test_same_frame_same_pixels();
     test_images();
     test_cpu_pixels();
+    test_dropped_present();
     test_dropped_frame_image();
     test_frame_helpers_fini();
     render_shutdown();
+    if (!frame_tests_ran) {
+        printf("metal_render_test: no frame test ran, skipped\n");
+        return TEST_SKIP_STATUS;
+    }
     printf("metal_render_test passed\n");
     return 0;
 }

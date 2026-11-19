@@ -13,6 +13,16 @@ struct frame_stats;
 struct json_writer;
 struct window;
 struct window_host;
+struct window_native;
+
+/*
+ * Composes one frame of native surface `n`. The caller fills `target`. Set
+ * `target.fresh` only when the pixels are not what the last frame drew:
+ * the first frame, a reallocation, or a failed present. A retained canvas
+ * keeps its pixels, so the renderer repaints only what changed.
+ */
+void window_native_compose(struct window *w, struct window_native *n,
+                           struct framebuffer target);
 
 struct window_config {
     char *font_family;

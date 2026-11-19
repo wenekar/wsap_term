@@ -50,6 +50,9 @@ struct window_native {
     bool frame_submitted;
     bool cpu_direct;
     bool cpu_committed;
+    /* The display did not take the last frame. The next frame of this
+     * surface paints every pixel. */
+    bool repaint;
     bool failing;
 };
 

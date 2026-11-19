@@ -287,6 +287,12 @@ static inline bool ui_scene_op_has_geom(const struct ui_scene_op *op)
 {
     return op->kind == UI_SCENE_OP_RECT && op->geom >= 0;
 }
+/*
+ * `op` puts ink on the canvas. The planner and the painter both use this
+ * rule. A float rect paints by its geom, whatever its colour: a gradient
+ * with no style has colour 0 and alpha 255.
+ */
+bool ui_scene_op_draws(const struct ui_scene_op *op);
 bool ui_scene_blend_rect(struct ui_scene *s, struct rect2i r,
                          uint32_t color, uint8_t alpha);
 bool ui_scene_rounded_rect(struct ui_scene *s, struct rect2i r,

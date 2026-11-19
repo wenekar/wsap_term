@@ -56,6 +56,7 @@ test_cases = [
     ['resize-alloc-test', files('ui/yasl/resize_alloc_test.c'), app_lib, deps],
     ['window-ui-input-test', files('ui/yasl/ui_input_test.c'), app_lib, deps],
     ['window-native-input-test', files('ui/yasl/native_input_test.c'), app_lib, deps],
+    ['window-compose-test', files('ui/yasl/compose_test.c'), [ui_yasl_lib, render_lib, render_term_lib], deps],
     ['drop-mime-test', files('ui/yasl/drop_mime_test.c'), app_lib, deps],
     ['window-host-veto-test', files('ui/yasl/host_veto_test.c'), ui_yasl_lib, deps],
     ['window-host-registry-test', files('ui/yasl/host_registry_test.c'), ui_yasl_lib, deps],
@@ -216,7 +217,7 @@ standalone_tests = [
     'render-gpu-build-test',
     'render-raster-test', 'render-damage-test', 'render-incremental-test',
     'anim-test', 'ui-scene-text-test', 'css-clipping-test',
-    'ui-input-oom-test', 'metal-render-test',
+    'ui-input-oom-test', 'metal-render-test', 'window-compose-test',
 ]
 
 # The window cadence test drives a real Cocoa window and its Metal layer. It
