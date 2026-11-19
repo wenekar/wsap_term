@@ -1422,6 +1422,69 @@ static void blend_rect_alpha_test(void)
     ui_scene_destroy(&scene);
 }
 
+/*
+ * The ink of a UI text op starts where the glyph raster puts it. Row 0 of a
+ * cell raster is the top of the cell, so the painter adds no row offset to
+ * the op top. This test uses the real font: a glyph with a row offset of 0
+ * cannot tell the two rules apart.
+ */
+static void scene_text_row_test(void)
+{
+    struct font_instance *fi = test_font();
+    const struct font_metrics *m = font_instance_metrics(fi);
+    const struct rect2i box = { .pos = { .x = 16, .y = 9 },
+                                .size = { .x = 4 * m->cell_w, .y = m->cell_h } };
+    const struct glyph *g = glyph_cache_fetch(fi, 'H', 0);
+    assert(g && g->alpha && g->width);
+    assert(g->y_offset > 0);
+    /* The first row of the raster that holds ink. */
+    int ink_row = -1;
+    for (int y = 0; y < g->height && ink_row < 0; y++)
+        for (int x = 0; x < g->width; x++)
+            if (g->alpha[y][x]) {
+                ink_row = y;
+                break;
+            }
+    assert(ink_row >= 0);
+
+    struct ui_scene scene = {0};
+    ui_scene_init(&scene);
+    assert(ui_scene_text_run(&scene, box,
+                             (struct ui_text_style){ .advance = m->cell_w,
+                                                     .cell_h = m->cell_h },
+                             0xFFFFFFFFu, "H", 1));
+    enum { W = 64, H = 48 };
+    uint32_t px[W * H];
+    for (int i = 0; i < W * H; i++)
+        px[i] = 0xFF000000u;
+    assert(ui_scene_paint(fi, px, W, H, &scene));
+    ui_scene_destroy(&scene);
+
+    int first = -1;
+    for (int y = 0; y < H && first < 0; y++)
+        for (int x = 0; x < W; x++)
+            if (px[y * W + x] != 0xFF000000u) {
+                first = y;
+                break;
+            }
+    TCHECK(first >= 0, "the text draws no ink");
+    TCHECK(first == box.y + ink_row,
+           "the ink starts at row %d, the raster puts it at row %d", first,
+           box.y + ink_row);
+
+    /* The last row shows ink too: the painter clips no bottom row. */
+    int last = -1;
+    for (int y = H - 1; y >= 0 && last < 0; y--)
+        for (int x = 0; x < W; x++)
+            if (px[y * W + x] != 0xFF000000u) {
+                last = y;
+                break;
+            }
+    TCHECK(last >= 0 && last < box.y + m->cell_h,
+           "the ink ends at row %d, the cell ends at row %d", last,
+           box.y + m->cell_h);
+}
+
 static void uninitialized_srgb_luts_test(void)
 {
     unsigned blended = blend_channel(255, 0, 128);
@@ -2023,6 +2086,7 @@ int main(int argc, char **argv)
         font_set_aa_mode(FONT_AA_GRAYSCALE);
         image_op_paints_and_clips_test();
         blend_rect_alpha_test();
+        scene_text_row_test();
         repaint_emits_damage_test();
         null_history_draw_test();
         pill_rounded_rect_symmetry_test();

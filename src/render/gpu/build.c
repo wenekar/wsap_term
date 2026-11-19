@@ -48,7 +48,6 @@ struct gpu_atlas_entry {
     uint16_t w;
     uint16_t rows;
     int16_t x_offset;
-    int16_t y_offset;
     uint8_t kind;
     bool used;
 };
@@ -356,7 +355,6 @@ static bool atlas_add_glyph(struct gpu_build *b, uint64_t id, uint64_t version,
         e.w = (uint16_t)w;
         e.rows = (uint16_t)rows;
         e.x_offset = gl->x_offset;
-        e.y_offset = gl->y_offset;
         for (int y = 0; y < rows; y++, dst += w) {
             switch (kind) {
             case KIND_ALPHA: {
@@ -847,8 +845,10 @@ static void scene_text(struct gpu_build *b, struct font_instance *fi, const stru
                 if (!c || !in)
                     return;
                 c->count++;
+                /* Row 0 of the raster is the top of the cell. See struct
+                 * glyph in font/font.h. */
                 rect_to_vec4((float)(tx + e.x_offset),
-                             (float)op->rect.y + (float)e.y_offset, (float)e.w,
+                             (float)op->rect.y, (float)e.w,
                              (float)rows, in->rect);
                 rect_to_vec4((float)e.x, (float)e.y, (float)(e.x + e.w), (float)(e.y + rows),
                              in->uv);
