@@ -6,6 +6,7 @@
 #include "paint/scene.h"
 #include "render/render.h"
 #include "render/term_frame.h"
+#include "terminal/render/term_render.h"
 #include <wsap_vtcore/wsap_vtcore.h>
 
 /* A window keeps one of these while it shows a tab preview. The struct holds

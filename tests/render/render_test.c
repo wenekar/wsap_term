@@ -19,6 +19,7 @@
 #include "paint/framebuffer.h"
 #include "render/term_frame.h"
 #include "render/scene_paint.h"
+#include "terminal/render/term_render.h"
 #include "term_api.h"
 #include "helpers/flood.h"
 

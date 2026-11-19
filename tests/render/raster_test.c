@@ -14,6 +14,7 @@
 
 #include "paint/blend.h"
 #include "render/cpu/isa.h"
+#include "terminal/render/term_render.h"
 
 static struct font_instance *font;
 

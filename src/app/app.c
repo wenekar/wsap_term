@@ -23,6 +23,7 @@
 #include "app/tabs/tabs.h"
 #include "app/tabs/terminal_content.h"
 #include "terminal/terminal.h"
+#include "terminal/render/term_render.h"
 #include "util/app_identity.h"
 #include "app/identity.h"
 

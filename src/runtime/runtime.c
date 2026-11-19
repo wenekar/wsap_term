@@ -8,6 +8,7 @@
 #endif
 
 #include "render/render.h"
+#include "terminal/render/term_render.h"
 #include "yasl/yasl.h"
 
 #define GPU_IDLE_RELEASE_MS 500u

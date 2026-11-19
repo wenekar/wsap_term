@@ -8,6 +8,7 @@
 #include "paint/framebuffer.h"
 #include "render/gpu/gpu.h"
 #include "render/render.h"
+#include "terminal/render/term_render.h"
 
 /*
  * Tests of the drawable that a GPU frame takes, and of the frame slot.

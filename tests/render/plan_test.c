@@ -9,6 +9,7 @@
 #include "render/term_frame.h"
 #include "term_api.h"
 #include "terminal/render/view.h"
+#include "terminal/render/term_render.h"
 
 /*
  * Tests of the frame planner (render/plan.h) and of the surface state
