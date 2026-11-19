@@ -447,15 +447,23 @@ void window_native_input(struct window *w, const struct yasl_event *in)
             input_queue_push_paste(&w->input, in->text, in->length);
         }
         break;
-    case YASL_EVENT_DROP:
-        if (in->action == YASL_DROP_RELEASE && in->text) {
+    case YASL_EVENT_DROP: {
+        /* A drop position is in the coordinates of its surface, and the
+         * router hit-tests the window surface. A menu popup takes no drop,
+         * so a drop event on a popup leaves the window and drops nothing. */
+        bool on_popup = popup_of(w, in->surface) != 0;
+        if (in->action == YASL_DROP_RELEASE && in->text && !on_popup) {
             queue_drop_release(w, in);
         } else if (w->drag_target && w->drag_target->drop_hover) {
-            w->drag_target->drop_hover(w, in->action == YASL_DROP_OVER, w->drag_ud);
+            w->drag_target->drop_hover(w, in->action == YASL_DROP_OVER &&
+                                       !on_popup, w->drag_ud);
         }
-        if (in->action == YASL_DROP_OVER || in->action == YASL_DROP_LEAVE)
+        if (on_popup)
+            input_queue_push_drag(&w->input, "", device_pos(w, in));
+        else if (in->action == YASL_DROP_OVER || in->action == YASL_DROP_LEAVE)
             input_queue_push_drag(&w->input, in->drop.mime, device_pos(w, in));
         break;
+    }
     case YASL_EVENT_DRAG:
         if (w->drag_target && w->drag_target->drag) {
             w->drag_target->drag(w, (enum yasl_drop_action)in->action,
