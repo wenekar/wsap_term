@@ -23,10 +23,11 @@
  * Tests of the Vulkan backend through render/gpu/gpu.h.
  *
  * The tests need a Vulkan device and a display. Without one of them, a test
- * prints a note and does nothing. The tests cannot read the pixels that the
- * GPU draws. They check the result of each call. Run them with the Khronos
- * validation layer to check the Vulkan calls too:
- * VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation.
+ * prints a note and does nothing. When no frame test runs, the program exits
+ * with 77, so the test runner reports a skip and not a pass. The tests
+ * cannot read the pixels that the GPU draws. They check the result of each
+ * call. Run them with the Khronos validation layer to check the Vulkan calls
+ * too: VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation.
  */
 
 /* One window with a Vulkan surface, and the renderer state of that window. */
@@ -39,6 +40,18 @@ struct fixture {
 
 /* main() opens the display one time, for all tests. */
 static bool have_display;
+
+/*
+ * The number of frame tests that ran. A run with 0 of them is a skip, not a
+ * pass: such a run draws no frame, so it cannot find a defect in the frame
+ * build. The lifecycle test needs no display and draws no frame, so it
+ * counts nothing.
+ */
+static int frame_tests_ran;
+
+/* The exit status of a run that skipped every frame test. The test runner of
+ * meson and automake reads 77 as skipped. */
+#define TEST_SKIP_STATUS 77
 
 static bool fixture_open(struct fixture *f, const char *title)
 {
@@ -61,6 +74,7 @@ static bool fixture_open(struct fixture *f, const char *title)
     }
     f->layer = window_gpu_attach(f->ys, render_gpu_native_device(f->g));
     assert(f->layer);
+    frame_tests_ran++;
     return true;
 }
 
@@ -458,6 +472,10 @@ int main(void)
     if (have_display)
         yasl_shutdown();
     render_shutdown();
+    if (!frame_tests_ran) {
+        printf("vulkan_render_test: no frame test ran, skipped\n");
+        return TEST_SKIP_STATUS;
+    }
     printf("vulkan_render_test passed\n");
     return 0;
 }
