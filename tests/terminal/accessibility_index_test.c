@@ -362,7 +362,8 @@ int main(void)
     free(before);
     free(after);
 
-    /* A7: a content change without a caret move publishes the node. */
+    /* A7: a content change without a caret move publishes the node. The
+     * text build interval delays a change within a burst, so wait for it. */
     feed(term, "\x1b[H\x1b[2J\x1b[3J");
     feed(term, "$ 10%\r");
     node = build_node(content, &tree);
@@ -370,6 +371,8 @@ int main(void)
     assert(ui_accessibility_tree_build(&content->view.widget, &previous));
     uint64_t terminal_id = tree.nodes[0].id;
     feed(term, "$ 20%\r");
+    struct timespec delay = { .tv_nsec = 110000000 };
+    nanosleep(&delay, NULL);
     node = build_node(content, &tree);
     struct ui_accessibility_publish_set set = {0};
     assert(ui_accessibility_publish_set_build(&previous, &tree, &set));

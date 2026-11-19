@@ -232,6 +232,9 @@ void terminal_destroy(struct terminal *t)
     session_fini(&t->session);
     font_instance_unref(t->font);
     free(t->menu_theme_items);
+    if (t->view.accessibility_timer && t->loop)
+        yasl_loop_del_timer(t->loop, t->view.accessibility_timer);
+    wsap_vtcore_snapshot_free(t->view.accessibility_snapshot);
     free(t->view.accessibility_lines);
     wsap_vtcore_snapshot_free(t->snapshot);
     free(t->applied_font_family);
@@ -267,6 +270,8 @@ void terminal_set_window(struct terminal *t, struct window *window)
     t->view.accessibility_rows = 0;
     t->view.accessibility_open_line = false;
     t->view.accessibility_valid = false;
+    /* The frame clock belongs to the old window. */
+    t->view.accessibility_text_valid = false;
     if (!window)
         return;
     t->loop = window_host(window)->loop;
