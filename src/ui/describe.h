@@ -214,7 +214,10 @@ struct ui_view *ui_view_mount(const struct ui_node_desc *root,
  * is not a node, for example an own child of a supplied widget. A failed
  * update puts each widget back at its old child index, or last when the
  * parent has fewer children now. A parent that the caller owns and that is
- * not a node must stay alive until the update returns.
+ * not a node must stay alive until the update returns. A widget that step 2
+ * detaches must stay alive until its detach returns, as
+ * ui_widget_remove_child states, so its FOCUS_OUT handler can destroy it but
+ * not free it.
  *
  * These changes stay, also when the update fails:
  * - The surface forgets each widget that step 2 detaches, and its subtree:
