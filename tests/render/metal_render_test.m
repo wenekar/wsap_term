@@ -98,6 +98,15 @@
 
 enum { SHOTS_MAX = 8 };
 
+/* The exit status of a run that skipped every frame test. The test runner of
+ * meson and automake reads 77 as skipped. */
+#define TEST_SKIP_STATUS 77
+
+/* The number of frame tests that ran. A run with 0 of them is a skip, not a
+ * pass: such a run draws no frame, so it cannot find a defect in the frame
+ * path. */
+static int frame_tests_ran;
+
 /* One GPU, one render surface, and the drawables that the test reads. */
 struct fixture {
     id<MTLDevice> device;
@@ -116,6 +125,7 @@ static bool fixture_open(struct fixture *f, const char *title)
         return false;
     }
     f->device = [(id<MTLDevice>)render_gpu_native_device(f->g) retain];
+    frame_tests_ran++;
     return true;
 }
 
@@ -536,6 +546,10 @@ int main(void)
     test_dropped_frame_image();
     test_frame_helpers_fini();
     render_shutdown();
+    if (!frame_tests_ran) {
+        printf("metal_render_test: no frame test ran, skipped\n");
+        return TEST_SKIP_STATUS;
+    }
     printf("metal_render_test passed\n");
     return 0;
 }

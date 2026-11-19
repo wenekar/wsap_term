@@ -26,6 +26,15 @@
  * a frame that finds every slot in use.
  */
 
+/* The exit status of a run that skipped every frame test. The test runner of
+ * meson and automake reads 77 as skipped. */
+#define TEST_SKIP_STATUS 77
+
+/* The number of frame tests that ran. A run with 0 of them is a skip, not a
+ * pass: such a run draws no frame, so it cannot find a defect in the frame
+ * slot rule. */
+static int frame_tests_ran;
+
 /* One texture that a frame can draw into, behind a drawable. */
 @interface TestDrawable : NSObject <CAMetalDrawable>
 - (instancetype)initWithDevice:(id<MTLDevice>)device size:(CGSize)size;
@@ -162,6 +171,7 @@ static struct framebuffer frame_of(struct fixture *f)
  * frame data is ready, and presents it. */
 static void test_late_acquire(struct fixture *f)
 {
+    frame_tests_ran++;
     struct framebuffer fb = frame_of(f);
     assert(!fb.drawable);
     assert(draw_in_slot(f, &fb) == RENDER_GPU_PRESENTED);
@@ -172,6 +182,7 @@ static void test_late_acquire(struct fixture *f)
 /* No drawable means no frame, and the slot goes back to the renderer. */
 static void test_no_drawable(struct fixture *f)
 {
+    frame_tests_ran++;
     struct framebuffer fb = frame_of(f);
     for (int attempt = 0; attempt < 2000; attempt++) {
         if (draw_with(f, &fb, NULL) == RENDER_GPU_DROPPED && f->acquires) {
@@ -191,6 +202,7 @@ static void test_no_drawable(struct fixture *f)
  * is presented, so the window asks again with the new size. */
 static void test_size_race(struct fixture *f)
 {
+    frame_tests_ran++;
     TestDrawable *wrong = [[TestDrawable alloc] initWithDevice:f->device
                                                           size:CGSizeMake(CANVAS * 2, CANVAS * 2)];
     assert(wrong);
@@ -223,6 +235,7 @@ static void test_size_race(struct fixture *f)
  */
 static void test_slot_pressure(struct fixture *f)
 {
+    frame_tests_ran++;
     struct framebuffer fb = frame_of(f);
     bool full = false;
     for (int attempt = 0; attempt < 400 && !full; attempt++) {
@@ -256,7 +269,7 @@ int main(void)
         render_gpu_free(gpu);
         if (!gpu && device)
             [device release];
-        return 0;
+        return TEST_SKIP_STATUS;
     }
     struct fixture f = {
         .device = device,
@@ -277,5 +290,9 @@ int main(void)
     [f.drawable release];
     render_gpu_free(f.gpu);
     [device release];
+    if (!frame_tests_ran) {
+        fprintf(stderr, "gpu_slot_test: no frame test ran, skipped\n");
+        return TEST_SKIP_STATUS;
+    }
     return 0;
 }
