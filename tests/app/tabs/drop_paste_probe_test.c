@@ -4,6 +4,9 @@
 #include <string.h>
 
 #include "app/tabs/internal.h"
+#include "session/session.h"
+#include "terminal/terminal.h"
+#include "ui/widgets/scrollview.h"
 #include "helpers/app_fixture.h"
 #include "helpers/terminal_window.h"
 #include "input/input.h"
@@ -12,6 +15,7 @@
 #include "ui/yasl/internal.h"
 #include "ui/yasl/native_input.h"
 #include "yasl/yasl.h"
+#include <wsap_vtcore/wsap_vtcore.h>
 
 /*
  * Paste and drop in the app window. The cases feed native events through
@@ -20,7 +24,9 @@
  * Decision of the codebase owner (2026-11-19):
  * - A paste always goes to the focused widget.
  * - A drop release goes to the widget at its drop location, and it bubbles up
- *   from there. It never falls back to the focused widget.
+ *   from there. It never falls back to the focused widget. A text drop
+ *   follows the same rule as a file drop.
+ * - While a modal is open, a release outside the modal reaches nothing.
  * - Every release ends the drag.
  *
  * The terminal content is wrapped, so the test sees what reaches the
@@ -84,6 +90,44 @@ static struct window *open_window(struct app *app)
     return w;
 }
 
+/* Runs the animations of the window to their end. */
+static void settle(struct window *w)
+{
+    struct ui_surface *surface = window_ui_surface(w);
+    uint64_t now = window_frame_time_ms(w);
+    for (uint64_t end = now + 2000; now < end;) {
+        ui_surface_tick(surface, now);
+        ui_surface_prepare(surface);
+        uint64_t next = ui_surface_next_deadline(surface);
+        if (!next)
+            break;
+        now = next > now ? next : now + 16;
+    }
+}
+
+/* Opens an app window with two terminal tabs, so the tab bar shows. */
+static struct window *open_two_tabs(struct app *app)
+{
+    struct window *w = open_window(app);
+    assert(app_tabs_new(w));
+    settle(w);
+    assert(app_tabs_bar_height(w) > 0);
+    return w;
+}
+
+/* Returns the center of the tab bar. The hit test there finds the bar. */
+static struct vector2i over_tab_bar(struct window *w)
+{
+    struct ui_widget *bar = ui_tabbar_widget(&app_tabs_of(w)->tabbar);
+    struct vector2i pos = rect2i_center(bar->bounds);
+    bool on_bar = false;
+    for (struct ui_widget *x = ui_surface_hit_test(window_ui_surface(w), pos);
+         x; x = x->parent)
+        on_bar = on_bar || x == bar;
+    assert(on_bar);
+    return pos;
+}
+
 static void drain(struct window *w)
 {
     struct input_event ev;
@@ -105,6 +149,28 @@ static void drop_event(struct window *w, enum yasl_drop_action action,
         snprintf(e.drop.mime, sizeof e.drop.mime, "%s", mime);
     window_native_input(w, &e);
     drain(w);
+}
+
+/* A text drop in the Wayland order: OVER, LEAVE, then the release. */
+static void text_drop(struct window *w, const char *data, struct vector2i pos)
+{
+    drop_event(w, YASL_DROP_OVER, "text/plain", NULL, pos);
+    drop_event(w, YASL_DROP_LEAVE, NULL, NULL, pos);
+    drop_event(w, YASL_DROP_RELEASE, "text/plain;charset=utf-8", data, pos);
+}
+
+/* Sets the keyboard focus of the app window. 0 is no focus, 1 is the tab
+ * bar, and 2 is the active terminal. */
+static void focus_state(struct window *w, int state)
+{
+    struct ui_surface *s = window_ui_surface(w);
+    struct ui_widget *widget = NULL;
+    if (state == 1)
+        widget = ui_tabbar_widget(&app_tabs_of(w)->tabbar);
+    else if (state == 2)
+        widget = terminal_input_widget(app_tabs_active(w));
+    ui_surface_focus(s, widget);
+    assert(ui_surface_focused(s) == widget);
 }
 
 static void clipboard(struct window *w, const char *text)
@@ -157,54 +223,109 @@ static void plain_paste_reaches_the_terminal_test(void)
 }
 
 /* A text drop on the terminal bubbles up to the tabs root, which pastes it
- * into the active tab. */
+ * into the active tab. The focus does not change this: no focus, the tab
+ * bar, or the terminal. */
 static void text_drop_on_the_terminal_reaches_it_test(void)
 {
     struct test_app a;
     test_app_init(&a, "/bin/cat", viewport);
-    struct window *w = open_window(a.app);
+    struct window *w = open_two_tabs(a.app);
 
-    drop_event(w, YASL_DROP_OVER, "text/plain", NULL, over_terminal);
-    drop_event(w, YASL_DROP_LEAVE, NULL, NULL, over_terminal);
-    drop_event(w, YASL_DROP_RELEASE, "text/plain", "td", over_terminal);
-    assert(pastes == 1 && !strcmp(last_paste, "td"));
+    for (int state = 0; state < 3; state++) {
+        focus_state(w, state);
+        pastes = 0;
+        text_drop(w, "td", over_terminal);
+        assert(pastes == 1 && !strcmp(last_paste, "td"));
+    }
 
     window_close(w);
     test_app_fini(&a);
 }
 
-/* A text drop on the tab bar lands outside the focused terminal. Nothing
- * takes it, and the focused terminal is no fallback. */
-static void text_drop_on_the_tab_bar_reaches_nothing_test(void)
+/* A text drop on the tab bar bubbles up to the tabs root, which pastes it
+ * into the active tab, with any focus. */
+static void text_drop_on_the_tab_bar_pastes_into_the_terminal_test(void)
+{
+    struct test_app a;
+    test_app_init(&a, "/bin/cat", viewport);
+    struct window *w = open_two_tabs(a.app);
+
+    for (int state = 0; state < 3; state++) {
+        focus_state(w, state);
+        pastes = 0;
+        text_drop(w, "tb", over_tab_bar(w));
+        assert(pastes == 1 && !strcmp(last_paste, "tb"));
+    }
+
+    window_close(w);
+    test_app_fini(&a);
+}
+
+/* The terminal has scrollback, so its scroll bar shows on the right edge. A
+ * text drop or a file drop on the bar reaches the active terminal. */
+static void drop_on_the_scroll_bar_reaches_the_terminal_test(void)
 {
     struct test_app a;
     test_app_init(&a, "/bin/cat", viewport);
     struct window *w = open_window(a.app);
-    /* A second tab shows the tab bar. The bar slides in, so the test runs
-     * its animation to the end. */
-    assert(app_tabs_new(w));
-    struct ui_surface *surface = window_ui_surface(w);
-    uint64_t now = window_frame_time_ms(w);
-    for (uint64_t end = now + 2000; now < end;) {
-        ui_surface_tick(surface, now);
-        ui_surface_prepare(surface);
-        uint64_t next = ui_surface_next_deadline(surface);
-        if (!next)
-            break;
-        now = next > now ? next : now + 16;
-    }
+    struct ui_surface *s = window_ui_surface(w);
+    struct terminal *term = app_tabs_active(w);
+    for (int i = 0; i < 200; i++)
+        wsap_vtcore_feed(terminal_session(term)->term, "line\r\n", 6, 0);
+    struct ui_scrollview *sv = (struct ui_scrollview *)terminal_widget(term);
+    ui_scrollview_flash(sv);
+    ui_surface_prepare(s);
+    assert(ui_scrollview_is_shown(sv));
+    struct vector2i on_bar = rect2i_center(sv->bar.bounds);
+    assert(ui_surface_hit_test(s, on_bar) == &sv->bar);
 
-    struct ui_widget *bar = ui_tabbar_widget(&app_tabs_of(w)->tabbar);
-    struct vector2i over_bar = rect2i_center(bar->bounds);
-    assert(app_tabs_bar_height(w) > 0);
-    bool on_bar = false;
-    for (struct ui_widget *x = ui_surface_hit_test(surface, over_bar); x;
-         x = x->parent)
-        on_bar = on_bar || x == bar;
-    assert(on_bar);
-    drop_event(w, YASL_DROP_RELEASE, "text/plain", "tb", over_bar);
+    for (int state = 0; state < 3; state += 2) {
+        focus_state(w, state);
+        pastes = 0;
+        text_drop(w, "sb", on_bar);
+        assert(pastes == 1 && !strcmp(last_paste, "sb"));
+    }
+    file_drops = 0;
+    drop_event(w, YASL_DROP_OVER, "text/uri-list", NULL, on_bar);
+    drop_event(w, YASL_DROP_LEAVE, NULL, NULL, on_bar);
+    drop_event(w, YASL_DROP_RELEASE, "text/uri-list", "file:///tmp/a\r\n",
+               on_bar);
+    assert(file_drops == 1);
+
+    window_close(w);
+    test_app_fini(&a);
+}
+
+/* The palette is open. A text drop on its input goes to the query. A drop
+ * outside the palette reaches nothing: no paste and no file drop reach the
+ * terminal under it. */
+static void drop_with_the_palette_open_test(void)
+{
+    struct test_app a;
+    test_app_init(&a, "/bin/cat", viewport);
+    struct window *w = open_window(a.app);
+    struct app_tabs *tabs = app_tabs_of(w);
+    struct ui_palette_cmd cmds[2] = {
+        { .label = "Alpha", .action = 1 }, { .label = "Beta", .action = 2 },
+    };
+    assert(ui_palette_open(&tabs->palette, cmds, 2));
+    ui_surface_prepare(window_ui_surface(w));
+    struct ui_widget *palette = ui_palette_widget(&tabs->palette);
+    assert(!rect2i_contains(palette->bounds, over_terminal));
+
+    text_drop(w, "pi", rect2i_center(ui_input_widget(&tabs->palette.input)
+                                     ->bounds));
+    assert(!strcmp(ui_palette_query(&tabs->palette), "pi"));
     assert(pastes == 0);
 
+    text_drop(w, "out", over_terminal);
+    drop_event(w, YASL_DROP_RELEASE, "text/uri-list", "file:///tmp/a\r\n",
+               over_terminal);
+    assert(!strcmp(ui_palette_query(&tabs->palette), "pi"));
+    assert(ui_palette_is_open(&tabs->palette));
+    assert(pastes == 0 && file_drops == 0);
+
+    ui_palette_close(&tabs->palette);
     window_close(w);
     test_app_fini(&a);
 }
@@ -234,7 +355,9 @@ int main(void)
     palette_paste_after_a_lost_drag_test();
     plain_paste_reaches_the_terminal_test();
     text_drop_on_the_terminal_reaches_it_test();
-    text_drop_on_the_tab_bar_reaches_nothing_test();
+    text_drop_on_the_tab_bar_pastes_into_the_terminal_test();
+    drop_on_the_scroll_bar_reaches_the_terminal_test();
+    drop_with_the_palette_open_test();
     release_with_no_leave_clears_the_highlight_test();
     return 0;
 }

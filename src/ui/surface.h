@@ -213,6 +213,11 @@ struct ui_widget *ui_surface_overlay_at(const struct ui_surface *surface,
  * a widget of the root tree. */
 struct ui_widget *ui_surface_hit_test(struct ui_surface *surface,
                                       struct vector2i pos);
+/* Returns the widget that takes a drop at `pos`. This is the widget under
+ * `pos`. While a modal is open, a point outside the modal gives NULL, so the
+ * drop reaches no widget. */
+struct ui_widget *ui_surface_drop_target(struct ui_surface *surface,
+                                         struct vector2i pos);
 
 void ui_surface_set_sheet(struct ui_surface *surface,
                           const struct css_sheet *sheet);

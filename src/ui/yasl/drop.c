@@ -3,20 +3,6 @@
 #include "ui/yasl/drop.h"
 
 #include <stdio.h>
-#include <strings.h>
-
-bool drop_mime_is_text(const char *mime)
-{
-    if (!mime)
-        return false;
-    return !strcasecmp(mime, "text/plain;charset=utf-8") ||
-           !strcasecmp(mime, "UTF8_STRING") || !strcasecmp(mime, "text/plain");
-}
-
-bool drop_mime_is_uri_list(const char *mime)
-{
-    return mime && (!mime[0] || !strcasecmp(mime, "text/uri-list"));
-}
 
 /* Images and other binary payloads stay in memory. A dropped image reaches
  * the widget as a DROP event of its own type, and the widget keeps or shows
