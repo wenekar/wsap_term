@@ -132,6 +132,12 @@ test(
     args: files('tools/deploy_test.py'),
     suite: ['unit'],
 )
+test(
+    'sdk-source-paths-test',
+    bash,
+    args: files('tools/sdk_source_paths_test.sh'),
+    suite: ['unit'],
+)
 
 # Tests that call uninstrumented system libraries, such as fontconfig or the
 # system yyjson. The msan setup skips them: MSan reports false positives there.
