@@ -90,11 +90,17 @@ static bool registry_add_at(struct input_command_registry *reg, uint8_t scope,
     return true;
 }
 
-/* Returns the first ID at or above `INPUT_COMMAND_DYNAMIC_ID` that `reg` does
- * not hold, or `INPUT_COMMAND_NONE` when the ID space is full. */
-static input_command_id registry_free_id(const struct input_command_registry *reg)
+/* Returns the first ID in the band of `scope` that `reg` does not hold, or
+ * `INPUT_COMMAND_NONE` when the band is full. */
+static input_command_id registry_free_id(const struct input_command_registry *reg,
+                                         uint8_t scope)
 {
-    for (unsigned id = INPUT_COMMAND_DYNAMIC_ID; id <= UINT16_MAX; id++) {
+    unsigned base = INPUT_COMMAND_DYNAMIC_ID +
+                    (unsigned)(scope - 1) * INPUT_COMMAND_SCOPE_ID_SPAN;
+    unsigned end = base + INPUT_COMMAND_SCOPE_ID_SPAN;
+    if (end > (unsigned)UINT16_MAX + 1)
+        end = (unsigned)UINT16_MAX + 1;
+    for (unsigned id = base; id < end; id++) {
         bool used = false;
         for (size_t i = 0; i < reg->n; i++) {
             if (reg->cmds[i].id == (input_command_id)id) {
@@ -112,9 +118,10 @@ input_command_id input_command_add(struct input_command_registry *reg,
                                   uint8_t scope, const char *name,
                                   const char *label)
 {
-    if (!reg || !name || !name[0] || scope >= INPUT_COMMAND_SCOPE_COUNT)
+    if (!reg || !name || !name[0] || scope == INPUT_COMMAND_SCOPE_APP ||
+        scope >= INPUT_COMMAND_SCOPE_COUNT)
         return INPUT_COMMAND_NONE;
-    input_command_id id = registry_free_id(reg);
+    input_command_id id = registry_free_id(reg, scope);
     if (id == INPUT_COMMAND_NONE || !registry_add_at(reg, scope, id, name, label))
         return INPUT_COMMAND_NONE;
     return id;
@@ -152,6 +159,25 @@ const struct input_command *input_command_find_name(const struct input_command_r
             match = cmd;
     }
     return match;
+}
+
+const struct input_command *input_command_find_name_scoped(const struct input_command_registry *reg,
+                                                           uint8_t scope,
+                                                           const char *name)
+{
+    if (!reg || !name || !name[0] || scope >= INPUT_COMMAND_SCOPE_COUNT)
+        return NULL;
+    const struct input_command *app = NULL;
+    for (size_t i = 0; i < reg->n; i++) {
+        const struct input_command *cmd = &reg->cmds[i];
+        if (strcasecmp(cmd->name, name))
+            continue;
+        if (cmd->scope == scope)
+            return cmd;
+        if (cmd->scope == INPUT_COMMAND_SCOPE_APP)
+            app = cmd;
+    }
+    return app;
 }
 
 const char *input_command_label(const struct input_command_registry *reg,

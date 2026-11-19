@@ -23,13 +23,28 @@ struct fixture {
     struct ui_scene scene;
     int activated;
     int closed;
+    int menu_opened;
 };
+
+static bool on_root_action(struct ui_widget *source,
+                           const struct ui_action *action, void *userdata)
+{
+    (void)source;
+    struct fixture *f = userdata;
+    if (action->kind != UI_ACTION_MENU)
+        return false;
+    f->menu_opened++;
+    return true;
+}
 
 static bool on_action(struct ui_widget *source, const struct ui_action *action,
                       void *userdata)
 {
     (void)source;
     struct fixture *f = userdata;
+    /* The palette does not take a MENU action, as in the app. */
+    if (action->kind == UI_ACTION_MENU)
+        return false;
     if (action->kind == UI_ACTION_ACTIVATE)
         f->activated = action->id;
     else if (action->kind == UI_ACTION_CLOSE)
@@ -44,6 +59,7 @@ static void setup(struct fixture *f, const struct css_sheet *sheet,
     ui_widget_init(&f->root, NULL, NULL);
     ui_button_init(&f->behind);
     ui_palette_init(&f->palette);
+    ui_widget_set_action_handler(&f->root, on_root_action, f);
     ui_widget_set_action_handler(ui_palette_widget(&f->palette), on_action, f);
     assert(ui_widget_add_child(&f->root, ui_button_widget(&f->behind)));
     assert(ui_widget_add_child(&f->root, ui_palette_widget(&f->palette)));
@@ -211,6 +227,21 @@ static void palette_keys_request_frame_test(void)
     key(&f, UI_KEY_ESCAPE, 0, 0);
     assert(!ui_palette_is_open(&f.palette));
     assert(ui_surface_frame_pending(&f.surface));
+    teardown(&f);
+}
+
+/* A right click on the query reaches the parent, which opens the text
+ * menu. The palette does not consume the MENU action. */
+static void right_click_opens_text_menu_test(void)
+{
+    struct fixture f;
+    open_palette(&f);
+    struct rect2i input = ui_input_widget(&f.palette.input)->bounds;
+    struct ui_event press = ui_event_pointer((struct ui_pointer_event){
+        .kind = UI_POINTER_PRESS, .button = 2,
+        .pos = { .x = input.x + 4, .y = input.y + input.height / 2 } }, 0);
+    assert(ui_surface_dispatch(&f.surface, &press));
+    assert(f.menu_opened == 1);
     teardown(&f);
 }
 
@@ -448,6 +479,7 @@ int main(void)
     escape_and_ctrl_c_close_test();
     keys_move_the_selection_test();
     palette_keys_request_frame_test();
+    right_click_opens_text_menu_test();
     pointer_test();
     paints_inside_its_panel_test();
     follows_parent_resize_test();

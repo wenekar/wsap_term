@@ -221,6 +221,49 @@ static void scoped_binding_wins_test(void)
     input_keymap_free(&km);
 }
 
+/* A widget command binds with the registry of its scope. Two registries in
+ * different scopes never give the same ID, and a name resolves only in its
+ * own registry. */
+static void widget_command_binding_test(void)
+{
+    struct input_command_registry two, three;
+    input_command_registry_init(&two);
+    input_command_registry_init(&three);
+    input_command_id id_two =
+        input_command_add(&two, 2, "widget_two", "Widget Two");
+    input_command_id id_three =
+        input_command_add(&three, 3, "widget_three", "Widget Three");
+    assert(id_two >= INPUT_COMMAND_DYNAMIC_ID);
+    assert(id_three >= INPUT_COMMAND_DYNAMIC_ID);
+    assert(id_two != id_three);
+
+    struct input_keymap km;
+    input_keymap_init(&km);
+    assert(input_keymap_apply_spec_registry(&km, &two, 2,
+                                            "ctrl+j = widget_two"));
+    assert(input_keymap_apply_spec_registry(&km, &three, 3,
+                                            "ctrl+j = widget_three"));
+    /* A registry does not resolve a name that another scope holds. */
+    assert(!input_keymap_apply_spec_registry(&km, &three, 2,
+                                             "ctrl+k = widget_two"));
+
+    struct input_key_event ctrl_j = { .key = INPUT_KEY_NONE, .codepoint = 'j',
+                                     .mods = INPUT_MOD_CTRL };
+    assert(input_keymap_lookup_scoped(&km, &ctrl_j, 2) == id_two);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_j, 3) == id_three);
+    assert(input_keymap_lookup_scoped(&km, &ctrl_j, 0) == INPUT_COMMAND_NONE);
+
+    char out[64];
+    assert(input_keymap_format_action_chord_scoped(&km, id_two, 2,
+                                                   out, sizeof(out)));
+    assert(!strcmp(out, "Ctrl+J"));
+    /* The app scope does not read a widget binding. */
+    assert(!input_keymap_format_action_chord(&km, id_two, out, sizeof(out)));
+    input_keymap_free(&km);
+    input_command_registry_free(&two);
+    input_command_registry_free(&three);
+}
+
 /* A binding above the 'style' line survives the load. The style applies to
  * the whole file. */
 static void config_style_order_test(void)
@@ -251,16 +294,65 @@ static void config_style_order_test(void)
     unsetenv("WSAP_INPUT_CONFIG");
 }
 
+/* Rewrites the input configuration at `path` with `text`. */
+static void write_input_config(const char *path, const char *text)
+{
+    FILE *f = fopen(path, "w");
+    assert(f);
+    fputs(text, f);
+    assert(fclose(f) == 0);
+}
+
+/* A reload reads the style again, so a style change needs no restart. A
+ * clear line wins over a style line in either order. */
+static void config_reload_style_test(void)
+{
+    char path[] = "/tmp/wsap-input-config-XXXXXX";
+    int fd = mkstemp(path);
+    assert(fd >= 0);
+    assert(close(fd) == 0);
+    write_input_config(path, "style = modern\n");
+    assert(setenv("WSAP_INPUT_CONFIG", path, 1) == 0);
+    input_config_init(NULL);
+
+    struct input_keymap km;
+    input_keymap_init(&km);
+    struct input_key_event ctrl_c = { .codepoint = 'c', .mods = INPUT_MOD_CTRL };
+    input_config_load(&km);
+    assert(input_keymap_lookup(&km, &ctrl_c) == INPUT_COMMAND_COPY);
+
+    /* Change the style line only. The next load uses the new style. */
+    write_input_config(path, "style = legacy\n");
+    input_config_load(&km);
+    assert(input_keymap_lookup(&km, &ctrl_c) == INPUT_COMMAND_NONE);
+
+    /* A clear line before a style line still clears the defaults. */
+    write_input_config(path, "clear\nstyle = modern\n");
+    input_config_load(&km);
+    assert(input_keymap_lookup(&km, &ctrl_c) == INPUT_COMMAND_NONE);
+
+    /* A clear line after a style line also clears the defaults. */
+    write_input_config(path, "style = legacy\nclear\n");
+    input_config_load(&km);
+    assert(input_keymap_lookup(&km, &ctrl_c) == INPUT_COMMAND_NONE);
+
+    input_keymap_free(&km);
+    unlink(path);
+    unsetenv("WSAP_INPUT_CONFIG");
+}
+
 int main(void)
 {
     command_registry_test();
     default_chord_table_test();
     scoped_binding_wins_test();
+    widget_command_binding_test();
     keymap_match_test();
     zero_modifier_binding_test();
     wide_codepoint_binding_test();
     keymap_grows_test();
     config_style_order_test();
+    config_reload_style_test();
     static const struct input_shortcut_policy lin = {
         .accel = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,
         .zoom = INPUT_MOD_CTRL | INPUT_MOD_SHIFT,

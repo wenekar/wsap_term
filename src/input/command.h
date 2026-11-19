@@ -43,19 +43,54 @@ enum input_command_app_id {
     INPUT_COMMAND_TAB_7,
     INPUT_COMMAND_TAB_8,
     INPUT_COMMAND_KILL_LINE,
-    INPUT_COMMAND_UNDO,
-    INPUT_COMMAND_REDO,
-    INPUT_COMMAND_CUT,
     INPUT_COMMAND_COMMAND_PALETTE,
     INPUT_COMMAND_DEBUG_OVERLAY,
     INPUT_COMMAND_SETTINGS,
     INPUT_COMMAND_FOCUS_TABS,
+    /* New commands go after this line, so no existing ID moves. */
+    INPUT_COMMAND_UNDO,
+    INPUT_COMMAND_REDO,
+    INPUT_COMMAND_CUT,
     INPUT_COMMAND_APP_COUNT,
 };
 
+/* A saved binding stores the number, so an ID must not move. */
+_Static_assert(INPUT_COMMAND_FONT_LARGER == 1, "font_larger ID moved");
+_Static_assert(INPUT_COMMAND_FONT_SMALLER == 2, "font_smaller ID moved");
+_Static_assert(INPUT_COMMAND_COPY == 3, "copy ID moved");
+_Static_assert(INPUT_COMMAND_PASTE == 4, "paste ID moved");
+_Static_assert(INPUT_COMMAND_SELECT_ALL == 5, "select_all ID moved");
+_Static_assert(INPUT_COMMAND_SCROLL_UP == 6, "scroll_up ID moved");
+_Static_assert(INPUT_COMMAND_SCROLL_DOWN == 7, "scroll_down ID moved");
+_Static_assert(INPUT_COMMAND_NEW_TAB == 8, "new_tab ID moved");
+_Static_assert(INPUT_COMMAND_CLOSE_TAB == 9, "close_tab ID moved");
+_Static_assert(INPUT_COMMAND_NEXT_TAB == 10, "next_tab ID moved");
+_Static_assert(INPUT_COMMAND_PREV_TAB == 11, "prev_tab ID moved");
+_Static_assert(INPUT_COMMAND_LAST_TAB == 12, "last_tab ID moved");
+_Static_assert(INPUT_COMMAND_TAB_1 == 13, "tab_1 ID moved");
+_Static_assert(INPUT_COMMAND_TAB_2 == 14, "tab_2 ID moved");
+_Static_assert(INPUT_COMMAND_TAB_3 == 15, "tab_3 ID moved");
+_Static_assert(INPUT_COMMAND_TAB_4 == 16, "tab_4 ID moved");
+_Static_assert(INPUT_COMMAND_TAB_5 == 17, "tab_5 ID moved");
+_Static_assert(INPUT_COMMAND_TAB_6 == 18, "tab_6 ID moved");
+_Static_assert(INPUT_COMMAND_TAB_7 == 19, "tab_7 ID moved");
+_Static_assert(INPUT_COMMAND_TAB_8 == 20, "tab_8 ID moved");
+_Static_assert(INPUT_COMMAND_KILL_LINE == 21, "kill_line ID moved");
+_Static_assert(INPUT_COMMAND_COMMAND_PALETTE == 22, "command_palette ID moved");
+_Static_assert(INPUT_COMMAND_DEBUG_OVERLAY == 23, "debug_overlay ID moved");
+_Static_assert(INPUT_COMMAND_SETTINGS == 24, "settings ID moved");
+_Static_assert(INPUT_COMMAND_FOCUS_TABS == 25, "focus_tabs ID moved");
+_Static_assert(INPUT_COMMAND_UNDO == 26, "undo ID moved");
+_Static_assert(INPUT_COMMAND_REDO == 27, "redo ID moved");
+_Static_assert(INPUT_COMMAND_CUT == 28, "cut ID moved");
+_Static_assert(INPUT_COMMAND_APP_COUNT == 29, "app ID count moved");
+
 /* The first ID that `input_command_add()` gives to a new command.
+ * Each scope gets a band of `INPUT_COMMAND_SCOPE_ID_SPAN` IDs from this
+ * value, so two registries in different scopes never give the same ID.
  * It is above every app ID, so a widget command never takes an app ID. */
 #define INPUT_COMMAND_DYNAMIC_ID 256
+#define INPUT_COMMAND_SCOPE_ID_SPAN 4096
 
 /*
  * A command scope groups the commands of one owner.
@@ -66,10 +101,13 @@ enum input_command_app_id {
  * To add a command in a widget scope:
  * 1. Call `input_command_add()` with the scope, the name, and the label, and
  *    keep the ID that it returns.
- * 2. Bind the ID with `input_keymap_apply_spec_scoped()` when the command has
- *    a chord. A menu item needs no chord.
+ * 2. Bind the ID with `input_keymap_apply_spec_registry()` when the command
+ *    has a chord. Pass the registry of the widget. A menu item needs no
+ *    chord.
  * 3. Put the ID in the action of the widget, and read the label of a menu
  *    item with `input_command_label()`.
+ * A registry in one scope never gives an ID that a registry in another scope
+ * gives.
  */
 enum input_command_scope {
     INPUT_COMMAND_SCOPE_APP = 0,
@@ -107,8 +145,9 @@ void input_command_registry_free(struct input_command_registry *reg);
 
 /*
  * Adds a command to scope `scope` of registry `reg` with `name` and `label`.
- * The registry gives the command the first free ID at or above
- * `INPUT_COMMAND_DYNAMIC_ID`.
+ * The scope must be above zero.
+ * The registry gives the command the first free ID in the band of `scope`,
+ * at or above `INPUT_COMMAND_DYNAMIC_ID`.
  * A widget calls this for a command of its own scope.
  * The name and the label must stay valid while the registry lives.
  * Returns the ID, or `INPUT_COMMAND_NONE` on a bad scope or a memory
@@ -134,6 +173,15 @@ const struct input_command *input_command_find(const struct input_command_regist
  */
 const struct input_command *input_command_find_name(const struct input_command_registry *reg,
                                                     const char *name);
+
+/*
+ * Finds the command that `name` names in scope `scope` of `reg`.
+ * The function reads `scope` first, then the app scope.
+ * Returns NULL when no command has that name.
+ */
+const struct input_command *input_command_find_name_scoped(const struct input_command_registry *reg,
+                                                           uint8_t scope,
+                                                           const char *name);
 
 /*
  * Returns the label of command `id` for scope `scope`, or an empty string

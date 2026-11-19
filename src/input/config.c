@@ -82,6 +82,17 @@ static void input_config_line(void *ctx, const char *path, int line,
     struct input_config_pass *pass = ctx;
     struct input_keymap *km = pass->km;
     const char *tag = config_tag;
+    if (pass->find_style) {
+        if (val && !strcasecmp(chord, "style")) {
+            enum input_keybind_style style;
+            if (input_parse_keybind_style(val, &style))
+                config_style = style;
+            else
+                fprintf(stderr, "[%s] %s:%d: invalid style '%s'\n",
+                        tag, path, line, val);
+        }
+        return;
+    }
     if (!val) {
         if (!strcasecmp(chord, "clear")) {
             input_keymap_clear(km);
@@ -93,17 +104,9 @@ static void input_config_line(void *ctx, const char *path, int line,
     }
 
     if (!strcasecmp(chord, "style")) {
-        enum input_keybind_style style;
-        if (input_parse_keybind_style(val, &style)) {
-            /* The style applies to the whole file, so a style line in the
-             * load pass must not erase the bindings above it. */
-            if (pass->find_style) {
-                config_style = style;
-                input_keymap_reset(km, style);
-            }
-        } else
-            fprintf(stderr, "[%s] %s:%d: invalid style '%s'\n",
-                    tag, path, line, val);
+        /* The style applies to the whole file, so the find pass already
+         * selected it. A style line here must not restore the defaults after
+         * a clear line. */
         return;
     }
 
@@ -114,10 +117,27 @@ static void input_config_line(void *ctx, const char *path, int line,
                 tag, path, line, chord, val);
 }
 
+/* Reads the style line of the file. A missing line keeps the current
+ * style. */
+static void input_config_find_style(void)
+{
+    if (!config_has_path)
+        return;
+    struct input_config_pass pass = { .km = NULL, .find_style = true };
+    if (!config_parse_file(config_path, input_config_line, &pass) &&
+        errno != ENOENT)
+        fprintf(stderr, "[%s] cannot read %s: %s\n", config_tag, config_path,
+                strerror(errno));
+}
+
 void input_config_load(struct input_keymap *km)
 {
     if (!km)
         return;
+    /* A load reads the style again, so a style change takes effect without
+     * a restart, as a binding change does. */
+    config_style = INPUT_KEYBIND_MODERN;
+    input_config_find_style();
     input_keymap_reset(km, config_style);
     if (!config_has_path)
         return;
@@ -149,13 +169,8 @@ void input_config_init(const struct app_identity *identity)
     config_has_path = true;
     if (access(config_path, R_OK) != 0 && errno == ENOENT)
         write_default_input_config(identity, config_path);
-    /* The parse validates each line, and a 'style' line sets the style that
-     * each window then loads. The style applies to the whole file. The app
-     * keeps no keymap of its own. */
-    struct input_keymap km;
-    input_keymap_init(&km);
-    input_keymap_defaults(&km, &input_platform_shortcuts, config_style);
-    struct input_config_pass pass = { .km = &km, .find_style = true };
-    config_parse_file(config_path, input_config_line, &pass);
-    input_keymap_free(&km);
+    /* The find pass selects the style that each window then loads. The
+     * style applies to the whole file. The app keeps no keymap of its own. */
+    config_style = INPUT_KEYBIND_MODERN;
+    input_config_find_style();
 }
