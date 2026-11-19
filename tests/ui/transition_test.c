@@ -71,12 +71,25 @@ static void box_hover_transition_test(void)
     ui_surface_dispatch(&surface, &motion);
     ui_surface_tick(&surface, 1000);
     assert(ui_surface_build_scene(&surface, &scene));
-    assert(ui_surface_next_deadline(&surface) == 1100);
-    ui_surface_tick(&surface, 1050);
-    assert(ui_surface_build_scene(&surface, &scene));
-    uint32_t middle = scene_top_color(&scene);
-
-    assert(middle != 0xFF202020 && middle != 0xFFE0E0E0);
+    /* The scheduler asks for the next step of the fade, not for its end. */
+    uint64_t deadline = ui_surface_next_deadline(&surface);
+    assert(deadline > 1000 && deadline < 1100);
+    int steps = 0;
+    bool blended = false;
+    /* A frame at each deadline the surface asks for. */
+    while (deadline && deadline < 1100) {
+        ui_surface_tick(&surface, deadline);
+        assert(ui_surface_build_scene(&surface, &scene));
+        uint32_t step = scene_top_color(&scene);
+        if (step != 0xFF202020 && step != 0xFFE0E0E0)
+            blended = true;
+        steps++;
+        uint64_t next = ui_surface_next_deadline(&surface);
+        assert(!next || next > deadline);
+        deadline = next;
+    }
+    assert(steps > 1);
+    assert(blended);
 
     /* The transition ends at its duration. */
     ui_surface_tick(&surface, 1100);
@@ -91,10 +104,20 @@ static void box_hover_transition_test(void)
     ui_surface_dispatch(&surface, &leave);
     ui_surface_tick(&surface, 1200);
     assert(ui_surface_build_scene(&surface, &scene));
-    ui_surface_tick(&surface, 1250);
-    assert(ui_surface_build_scene(&surface, &scene));
-    uint32_t back = scene_top_color(&scene);
-    assert(back != 0xFFE0E0E0);
+    deadline = ui_surface_next_deadline(&surface);
+    assert(deadline > 1200 && deadline < 1300);
+    blended = false;
+    while (deadline && deadline < 1300) {
+        ui_surface_tick(&surface, deadline);
+        assert(ui_surface_build_scene(&surface, &scene));
+        uint32_t step = scene_top_color(&scene);
+        if (step != 0xFF202020 && step != 0xFFE0E0E0)
+            blended = true;
+        uint64_t next = ui_surface_next_deadline(&surface);
+        assert(!next || next > deadline);
+        deadline = next;
+    }
+    assert(blended);
     ui_surface_tick(&surface, 1300);
     assert(ui_surface_build_scene(&surface, &scene));
     assert(scene_has_color(&scene, 0xFF202020));
