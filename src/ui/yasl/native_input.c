@@ -190,11 +190,20 @@ static enum pointer_button event_button(struct window *w, const struct yasl_even
     return held;
 }
 
+/* Returns true when a TEXT event follows the key and carries its text.
+ * NONE means that native text input inserted nothing and sends no TEXT event,
+ * so the key label must carry the text instead. */
+static bool key_text_from_event(const struct yasl_event *in)
+{
+    return in->key.text_input == YASL_KEY_TEXT_COMMIT ||
+           in->key.text_input == YASL_KEY_TEXT_COMPOSITION;
+}
+
 static enum input_key_route queue_key(struct window *w, const struct yasl_event *in,
                                       const char *text, size_t len)
 {
-    bool native_text = in->key.text_input != YASL_KEY_TEXT_UNSPECIFIED;
-    uint32_t label = native_text ? 0 : fallback_key_text(in);
+    bool text_event = key_text_from_event(in);
+    uint32_t label = text_event ? 0 : fallback_key_text(in);
     struct input_key_event ev = {
         .key = native_key(in->key.key),
         .keypad = is_keypad(in->key.key) ? native_key(in->key.key) : INPUT_KEY_NONE,
@@ -205,7 +214,7 @@ static enum input_key_route queue_key(struct window *w, const struct yasl_event 
         .base = us_base(in->key.key),
         .text = label,
         .consumed_mods = (unsigned)input_modifiers_from_yasl(in->key.consumed_mods),
-        .text_deferred = native_text || label != 0,
+        .text_deferred = text_event || (label != 0 && !(in->mods & YASL_MOD_ALT)),
         .ime_handled = in->key.text_input == YASL_KEY_TEXT_COMPOSITION,
     };
 

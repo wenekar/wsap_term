@@ -3651,16 +3651,23 @@ static void key_event(struct x11_surface *s, XKeyEvent *key, bool repeat)
             len = len > 0 ? len - 1 : 0; /* xkb includes the terminating NUL. */
         }
     }
-    /* Ctrl and Super keep their shortcut meaning and insert no text. Alt no
-     * longer suppresses text, so AltGr and layouts that use Alt can type. */
-    bool printable = len > 0 && text && (unsigned char)text[0] >= 0x20 && text[0] != 0x7f &&
-        !(d->mods & (YASL_PRIVATE_MOD_CTRL | YASL_PRIVATE_MOD_SUPER));
-    if (printable && text_input == YASL_KEY_TEXT_NONE) {
+    /* An Alt that did not change the produced character is a shortcut
+     * modifier. Ctrl and Super always are. A shortcut key inserts no text, so
+     * no TEXT event follows it, and the key label carries the key. AltGr and
+     * layouts that use Alt change the character, and those keys type. */
+    bool alt_changed_text = sym != base && sym != shifted;
+    bool ctrl_like = (d->mods & (YASL_PRIVATE_MOD_CTRL | YASL_PRIVATE_MOD_SUPER)) != 0;
+    bool shortcut = ctrl_like ||
+        ((d->mods & YASL_PRIVATE_MOD_ALT) && !alt_changed_text);
+    bool text_char = len > 0 && text && (unsigned char)text[0] >= 0x20 && text[0] != 0x7f;
+    bool typing = text_char && !shortcut;
+    if (typing && text_input == YASL_KEY_TEXT_NONE) {
         text_input = YASL_KEY_TEXT_COMMIT;
         /* Modifiers that changed the produced character are consumed by text
-         * input; Alt alone passes the base character through. */
+         * input. A modifier that keeps the base character stays available to
+         * the terminal encoder. */
         uint32_t text_mods = YASL_PRIVATE_MOD_ALT | YASL_PRIVATE_MOD_CTRL | YASL_PRIVATE_MOD_SUPER;
-        if (sym != base && sym != shifted) consumed_mods = d->mods & text_mods;
+        if (alt_changed_text) consumed_mods = d->mods & text_mods;
     }
     if (key->keycode < 256) {
         if (key->type == KeyRelease) {
@@ -3687,7 +3694,7 @@ static void key_event(struct x11_surface *s, XKeyEvent *key, bool repeat)
                 .action = key->type == KeyRelease ? YASL_KEY_RELEASE :
                           repeat ? YASL_KEY_REPEAT : YASL_KEY_PRESS},
     }, NULL, 0);
-    if (printable) {
+    if (typing || (text_char && !ctrl_like && text_input == YASL_KEY_TEXT_COMPOSITION)) {
         struct yasl_private_event event = {.type = YASL_PRIVATE_EVENT_TEXT};
         event.text.text_key_id = key_id;
         push(s, event, text, (size_t)len);
