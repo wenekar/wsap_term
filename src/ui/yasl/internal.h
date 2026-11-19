@@ -90,8 +90,6 @@ struct window_ui {
 
     struct ui_menu menu;
     struct ui_menu_layer menu_layer;
-    /* The widget that the drag is over. */
-    struct drop_hover drop_hover;
     struct window_ui_menu_popup *menu_popup;
     struct ui_damage_tracker ui_damage;
 

@@ -110,6 +110,19 @@ struct ui_surface_focus_frame {
     struct ui_widget *focus;
 };
 
+/* The widget that a drag is over. It sends one leave to a widget that the
+ * drag leaves, and none to a widget that it stays on. The surface clears the
+ * targets when their widget leaves it, so a later drag event cannot use freed
+ * memory. */
+struct drop_hover {
+    struct ui_widget *target;
+    /* The widget that the last retarget left, or NULL. It gets one leave. */
+    struct ui_widget *previous;
+    bool active;
+    /* True after the first event on `target`. The first one is the enter. */
+    bool entered;
+};
+
 struct ui_surface {
     struct {
         struct ui_surface_host host;
@@ -123,6 +136,8 @@ struct ui_surface {
         struct ui_widget *focused;
         struct ui_widget *captured;
         struct ui_widget *hovered;
+        /* The widget that a drag is over. */
+        struct drop_hover drop_hover;
         struct vector2i pointer;
         /* The topmost modal widget. It masks the widgets below it. */
         struct ui_widget *modal;
@@ -163,6 +178,19 @@ bool ui_surface_post(struct ui_surface *surface, ui_post_fn fn, void *userdata);
 /* True while the surface dispatches, ticks, or builds, and reads its stored
  * targets. Use ui_surface_post to free storage then. */
 bool ui_surface_busy(const struct ui_surface *surface);
+
+/* Sets the widget that a drag is over. Returns the widget that must get one
+ * leave: the drag moved to another widget, or it left the surface. A move
+ * within one widget returns NULL. Call it with `target` NULL when the drag
+ * leaves the surface. `*enter` is true when `target` gets its first event on a
+ * move to another widget. The surface clears the target when the widget
+ * leaves it. */
+struct ui_widget *ui_surface_drag_hover(struct ui_surface *surface,
+                                        struct ui_widget *target, bool *enter);
+
+/* Returns the widget that a drag is over, or NULL when the drag is not over
+ * the surface. */
+struct ui_widget *ui_surface_drag_target(const struct ui_surface *surface);
 
 bool ui_surface_set_root(struct ui_surface *surface, struct ui_widget *root);
 struct ui_widget *ui_surface_root(const struct ui_surface *surface);

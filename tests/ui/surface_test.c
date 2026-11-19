@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #include "ui/box.h"
 #include "ui/debug.h"
@@ -958,6 +959,72 @@ static void surface_post_runs_after_dispatch_test(void)
     ui_widget_destroy(&probe.widget);
 }
 
+static bool drop_over_event(struct ui_widget *widget,
+                            const struct ui_event *event, void *userdata)
+{
+    (void)widget;
+    (void)userdata;
+    return event->kind == UI_EVENT_DRAG_OVER;
+}
+
+/* A drag that moves within one widget sends no leave. A drag that moves to
+ * another widget, or off the surface, sends exactly one. */
+static void drag_hover_leave_once_test(void)
+{
+    struct ui_surface surface;
+    ui_surface_init(&surface, NULL, NULL);
+    struct ui_widget a = {0}, b = {0};
+    bool enter = false;
+    assert(!ui_surface_drag_hover(&surface, &a, &enter) && enter);
+    assert(!ui_surface_drag_hover(&surface, &a, &enter) && !enter);
+    assert(ui_surface_drag_target(&surface) == &a);
+    assert(ui_surface_drag_hover(&surface, &b, &enter) == &a && enter);
+    assert(ui_surface_drag_target(&surface) == &b);
+    assert(ui_surface_drag_hover(&surface, NULL, &enter) == &b);
+    assert(ui_surface_drag_target(&surface) == NULL);
+    /* The surface is already left, so a second leave sends nothing. */
+    assert(!ui_surface_drag_hover(&surface, NULL, &enter));
+    assert(ui_surface_destroy(&surface));
+}
+
+/* A drag stores the widget that it is over. The surface clears that widget
+ * when it leaves, so the next drag event cannot use freed memory. Run this
+ * test under ASan: the stored target is freed before the next event. */
+static void drop_target_clears_on_leave_test(void)
+{
+    struct ui_surface surface;
+    ui_surface_init(&surface, NULL, NULL);
+    struct ui_widget root;
+    ui_widget_init(&root, NULL, NULL);
+    assert(ui_surface_set_root(&surface, &root));
+
+    struct ui_widget *target = malloc(sizeof *target);
+    assert(target);
+    ui_widget_init(target, NULL, NULL);
+    ui_widget_set_event_handler(target, drop_over_event, NULL);
+    assert(ui_widget_add_child(&root, target));
+
+    /* The drag enters the target. This is the record that the input path
+     * keeps for the drag. */
+    bool enter = false;
+    assert(!ui_surface_drag_hover(&surface, target, &enter) && enter);
+    assert(ui_surface_drag_target(&surface) == target);
+
+    /* The widget leaves the surface during the drag. */
+    ui_widget_destroy(target);
+    free(target);
+
+    /* The next drag event must not touch the freed widget. */
+    struct ui_event over = { .kind = UI_EVENT_DRAG_OVER };
+    struct ui_widget *stale = ui_surface_drag_target(&surface);
+    if (stale)
+        ui_widget_event(stale, &over);
+    assert(ui_surface_drag_target(&surface) == NULL);
+
+    assert(ui_surface_destroy(&surface));
+    ui_widget_destroy(&root);
+}
+
 int main(void)
 {
     surface_post_runs_after_dispatch_test();
@@ -977,5 +1044,7 @@ int main(void)
     set_scale_rescales_styled_size_test();
     nested_scale_change_keeps_text_visible_test();
     zero_surface_test();
+    drag_hover_leave_once_test();
+    drop_target_clears_on_leave_test();
     return 0;
 }

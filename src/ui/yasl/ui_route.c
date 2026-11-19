@@ -75,7 +75,6 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
     case INPUT_DRAG: {
         struct ui_widget *target = ev->drop_type.leave
             ? NULL : ui_surface_hit_test(keys, ev->drop_type.pos);
-        struct drop_hover *hover = &ui_of(w)->drop_hover;
         const char *mimes[1] = { ev->drop_type.mime };
         struct ui_drag_event drag = {
             .mimes = mimes,
@@ -85,17 +84,16 @@ static enum window_input_result ui_input_dispatch(struct window *w, const struct
         };
         /* A drag that stays on one widget gets ENTER once, then OVER. A drag
          * that leaves the widget gives it LEAVE. */
-        if (drop_hover_retarget(hover, target)) {
-            struct ui_widget *left = (struct ui_widget *)hover->previous;
-            if (left) {
-                struct ui_event leave_event =
-                    ui_event_drag(UI_EVENT_DRAG_LEAVE, &drag, now_ms);
-                ui_widget_event(left, &leave_event);
-            }
+        bool enter = false;
+        struct ui_widget *left = ui_surface_drag_hover(keys, target, &enter);
+        if (left) {
+            struct ui_event leave_event =
+                ui_event_drag(UI_EVENT_DRAG_LEAVE, &drag, now_ms);
+            ui_widget_event(left, &leave_event);
         }
         if (target) {
-            event = ui_event_drag(hover->entered ? UI_EVENT_DRAG_OVER
-                                                 : UI_EVENT_DRAG_ENTER,
+            event = ui_event_drag(enter ? UI_EVENT_DRAG_ENTER
+                                        : UI_EVENT_DRAG_OVER,
                                   &drag, now_ms);
             ui_widget_event(target, &event);
         }

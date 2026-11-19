@@ -530,6 +530,31 @@ static void leave(struct ui_widget *widget)
         (struct ui_pointer_event){ .kind = UI_POINTER_LEAVE }, 0));
 }
 
+struct ui_widget *ui_surface_drag_hover(struct ui_surface *surface,
+                                        struct ui_widget *target, bool *enter)
+{
+    if (enter)
+        *enter = false;
+    if (!surface)
+        return NULL;
+    struct drop_hover *hover = &surface->impl.drop_hover;
+    struct ui_widget *previous = hover->target;
+    bool moved = previous != target;
+    bool left = hover->active && moved;
+    hover->previous = moved ? previous : NULL;
+    hover->entered = moved ? false : hover->active;
+    hover->target = target;
+    hover->active = target != NULL;
+    if (enter)
+        *enter = !hover->entered;
+    return left ? hover->previous : NULL;
+}
+
+struct ui_widget *ui_surface_drag_target(const struct ui_surface *surface)
+{
+    return surface ? surface->impl.drop_hover.target : NULL;
+}
+
 void ui_surface_cancel_capture(struct ui_surface *surface)
 {
     if (!surface)
@@ -551,6 +576,14 @@ void ui_surface_forget(struct ui_surface *surface, struct ui_widget *subtree)
         surface->impl.hovered = NULL;
         leave(hovered);
     }
+    struct drop_hover *drag = &surface->impl.drop_hover;
+    if (drag->target && ui_widget_is_ancestor(subtree, drag->target)) {
+        drag->target = NULL;
+        drag->active = false;
+        drag->entered = false;
+    }
+    if (drag->previous && ui_widget_is_ancestor(subtree, drag->previous))
+        drag->previous = NULL;
     for (int pass = 0; pass < 2; pass++) {
         struct ui_widget *focused = surface->impl.focused;
         if (!focused || !ui_widget_is_ancestor(subtree, focused))
