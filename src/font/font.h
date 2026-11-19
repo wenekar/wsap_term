@@ -154,6 +154,13 @@ bool font_instance_monospace(const struct font_instance *fi);
  * left edge of the baseline. `advance` is the pen step after the glyph.
  * A cell glyph covers its cell from the cell left and the cell top, so both
  * offsets are relative to the cell.
+ *
+ * The raster contract: for a cell glyph, row 0 of the raster is the top of
+ * the cell, and column 0 is column `x_offset` of the cell. The ink of the
+ * glyph thus already sits at its own row and column inside the raster. A
+ * painter that puts the raster at the cell top and the cell left plus
+ * `x_offset` draws the ink at the right place. A painter that adds
+ * `y_offset` moves the ink down twice.
  */
 struct glyph {
     uint64_t *row_masks;

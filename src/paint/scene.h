@@ -67,6 +67,7 @@ struct ui_scene_style {
  * The kinds of an op that has a geom entry. Such an op has the kind
  * UI_SCENE_OP_RECT: its geom holds the real geometry, and its rect is the
  * covering box. The UI planner and the debug tool thus need no new case.
+ * Read the `geom` field of an op only through ui_scene_op_has_geom().
  */
 #define UI_GEOM_RECT_F 1u
 #define UI_GEOM_PATH 2u
@@ -276,6 +277,16 @@ bool ui_scene_radial_gradient(struct ui_scene *s, struct rect2f r,
                               const struct ui_scene_style *style);
 const struct ui_scene_geom *ui_scene_op_geom(const struct ui_scene *s,
                                              const struct ui_scene_op *op);
+/*
+ * Returns true when `op` has a geom entry. Only a RECT op owns the `geom`
+ * field. The union of `op` shares that field with the text offsets, the
+ * blur radius, and the image of the other kinds, so an op of any other
+ * kind reads a value that is not an index.
+ */
+static inline bool ui_scene_op_has_geom(const struct ui_scene_op *op)
+{
+    return op->kind == UI_SCENE_OP_RECT && op->geom >= 0;
+}
 bool ui_scene_blend_rect(struct ui_scene *s, struct rect2i r,
                          uint32_t color, uint8_t alpha);
 bool ui_scene_rounded_rect(struct ui_scene *s, struct rect2i r,

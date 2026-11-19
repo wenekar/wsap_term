@@ -575,7 +575,9 @@ static void paint_glyph(const struct render_kernels *k, uint32_t *px,
     uint8_t buf[SCENE_CHUNK * 3];
 
     for (int y = 0; y < max_y; y++) {
-        int64_t py = (int64_t)y0 + g->y_offset + y;
+        /* Row 0 of the raster is the top of the cell, so the ink already
+         * sits at its own row. See struct glyph in font/font.h. */
+        int64_t py = (int64_t)y0 + y;
         if (py < clip.y || py >= (int64_t)clip.y + clip.height || py >= height)
             continue;
         uint32_t *row = px + (size_t)py * width + sx;
@@ -839,7 +841,7 @@ bool ui_scene_paint_clipped(struct font_instance *fi, uint32_t *px, int width, i
         case UI_SCENE_OP_RECT:
         case UI_SCENE_OP_BLEND_RECT:
             if (op_outside_clip(scene, op, clip)) break;
-            if (op->kind == UI_SCENE_OP_RECT && op->geom >= 0) {
+            if (ui_scene_op_has_geom(op)) {
                 paint_float_op(k, px, width, height, scene, op, clip);
                 break;
             }
