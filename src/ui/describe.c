@@ -1082,11 +1082,13 @@ static bool placement_ok(const struct ui_view *view,
 
 /* One change that place_nodes made to the tree, and how to undo it. With
  * `remove` set, the undo removes `child` from its parent. Otherwise it puts
- * `child` back in `parent` before `before`. */
+ * `child` back in `parent` at child index `index`. The step keeps an index
+ * and not a sibling, because a handler can free a sibling that the caller
+ * owns. */
 struct place_step {
     struct ui_widget *child;
     struct ui_widget *parent;
-    struct ui_widget *before;
+    size_t index;
     bool remove;
 };
 
@@ -1095,16 +1097,25 @@ struct place_log {
     size_t count;
 };
 
+/* The index of `child` among the children of its parent. */
+static size_t child_index(const struct ui_widget *child)
+{
+    size_t index = 0;
+    for (const struct ui_widget *c = child->prev_sibling; c; c = c->prev_sibling)
+        index++;
+    return index;
+}
+
 static void detach_logged(struct place_log *log, struct ui_widget *child)
 {
     log->steps[log->count++] = (struct place_step){
-        .child = child, .parent = child->parent, .before = child->next_sibling,
+        .child = child, .parent = child->parent, .index = child_index(child),
     };
     ui_widget_remove_child(child->parent, child);
 }
 
-/* Undoes the steps in reverse order, so each widget goes back to its old
- * parent at its old index. */
+/* Drops the steps that move `widget` or that put a widget in it. Call it
+ * when a handler destroys `widget`. */
 static void forget_logged_widget(struct place_log *log,
                                  const struct ui_widget *widget)
 {
@@ -1112,11 +1123,25 @@ static void forget_logged_widget(struct place_log *log,
         struct place_step *step = &log->steps[i];
         if (step->child == widget || step->parent == widget)
             step->child = NULL;
-        if (step->before == widget)
-            step->before = NULL;
     }
 }
 
+/* The child of `parent` at `index`, when `child` does not count, or NULL
+ * past the last child. */
+static struct ui_widget *sibling_at(struct ui_widget *parent,
+                                    const struct ui_widget *child, size_t index)
+{
+    for (struct ui_widget *c = parent->first_child; c; c = c->next_sibling) {
+        if (c == child)
+            continue;
+        if (!index--)
+            return c;
+    }
+    return NULL;
+}
+
+/* Undoes the steps in reverse order, so each widget goes back to its old
+ * parent at its old index. */
 static void undo_placement(struct place_log *log)
 {
     while (log->count) {
@@ -1128,7 +1153,11 @@ static void undo_placement(struct place_log *log)
             if (step->child->parent)
                 ui_widget_remove_child(step->child->parent, step->child);
         } else {
-            ui_widget_insert_child(step->parent, step->child, step->before);
+            /* A handler can remove children, so an index past the end puts
+             * the child last. */
+            ui_widget_insert_child(step->parent, step->child,
+                                   sibling_at(step->parent, step->child,
+                                              step->index));
         }
     }
 }
@@ -1172,7 +1201,7 @@ static bool place_nodes(const struct ui_view *view, struct ui_view_node *nodes,
         if (child->parent == parent_widget)
             step = (struct place_step){
                 .child = child, .parent = parent_widget,
-                .before = child->next_sibling,
+                .index = child_index(child),
             };
         if (!ui_widget_insert_child(parent_widget, child, before[parent]))
             goto undo;

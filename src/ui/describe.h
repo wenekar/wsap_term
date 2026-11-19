@@ -207,6 +207,12 @@ struct ui_view *ui_view_mount(const struct ui_node_desc *root,
  * not touch a destroyed widget again, so the owner of a supplied widget can
  * free its storage.
  *
+ * A handler can also destroy and free a widget that the caller owns and that
+ * is not a node, for example an own child of a supplied widget. A failed
+ * update puts each widget back at its old child index, or last when the
+ * parent has fewer children now. A parent that the caller owns and that is
+ * not a node must stay alive until the update returns.
+ *
  * These changes stay, also when the update fails:
  * - The surface forgets each widget that step 2 detaches, and its subtree:
  *   the focus, the hover, the pointer capture, the drop hover, the overlays,
