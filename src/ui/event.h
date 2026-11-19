@@ -111,23 +111,27 @@ struct ui_drag_event {
     struct vector2i pos;
 };
 
-/* Returns true when the drag offers type `mime`. A major type with a star,
- * such as "image/" "*", matches every type that starts with its major type. */
+/* Returns true when the drag offers type `mime`. An offer with a star for
+ * its subtype, such as "image/" "*", matches every type with that major
+ * type. An offer of "*" matches every type. */
 static inline bool ui_drag_offers(const struct ui_drag_event *drag, const char *mime)
 {
     if (!drag || !mime)
         return false;
-    size_t n = strlen(mime);
     for (size_t i = 0; i < drag->mime_count; i++) {
         const char *offer = drag->mimes[i];
         if (!offer)
             continue;
         if (!strcmp(offer, mime))
             return true;
-        if (n && offer[n] == '*' && !strncmp(offer, mime, n))
-            return true;
         if (offer[0] == '*' && !offer[1])
             return true;
+        size_t m = strlen(offer);
+        if (m >= 2 && offer[m - 1] == '*' && offer[m - 2] == '/') {
+            size_t n = strlen(mime);
+            if (n > m - 1 && !strncmp(offer, mime, m - 1))
+                return true;
+        }
     }
     return false;
 }
