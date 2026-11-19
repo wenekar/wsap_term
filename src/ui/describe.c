@@ -972,19 +972,57 @@ static bool child_limits_ok(const struct ui_view_node *nodes, size_t count,
     return true;
 }
 
-/* Places each node widget in descriptor order. A widget that stays in its
- * parent keeps its focus and its hover. */
-static bool place_nodes(struct ui_view_node *nodes, size_t count,
-                        size_t *failed)
+static bool widget_is_ancestor(const struct ui_widget *ancestor,
+                               const struct ui_widget *widget)
+{
+    for (const struct ui_widget *p = widget; p; p = p->parent)
+        if (p == ancestor)
+            return true;
+    return false;
+}
+
+/* True when place_nodes can insert each node widget in its parent. The check
+ * reads the tree and changes nothing, so call it before the update changes a
+ * kept widget. `failed` names the first node that does not fit. */
+static bool placement_ok(const struct ui_view_node *nodes, size_t count,
+                         size_t *failed)
 {
     *failed = 0;
     if (!child_limits_ok(nodes, count, failed))
         return false;
-    if (count < 2)
-        return true;
-    struct ui_widget **before = calloc(count, sizeof(*before));
-    if (!before)
-        return false;
+    for (size_t p = 0; p < count; p++) {
+        const struct ui_widget *parent = nodes[p].widget;
+        size_t limit = parent && parent->ops ? parent->ops->child_limit : 0;
+        size_t added = 0;
+        for (size_t i = 1; i < count; i++) {
+            if (nodes[i].parent != p)
+                continue;
+            const struct ui_widget *child = nodes[i].widget;
+            *failed = i;
+            if (!parent || !child || parent == child ||
+                parent->impl.destroyed || child->impl.destroyed)
+                return false;
+            if (child->parent == parent)
+                continue;
+            /* The insert adds a child. The widgets that the update retires
+             * leave after the insert, so they still count. */
+            if (widget_is_ancestor(child, parent))
+                return false;
+            added++;
+            if (limit && ui_widget_child_count(parent) + added > limit)
+                return false;
+        }
+    }
+    *failed = 0;
+    return true;
+}
+
+/* Places each node widget in descriptor order. A widget that stays in its
+ * parent keeps its focus and its hover. Call placement_ok first. */
+static bool place_nodes(struct ui_view_node *nodes, size_t count,
+                        struct ui_widget **before, size_t *failed)
+{
+    *failed = 0;
     bool placed = true;
     for (size_t i = count; i-- > 1;) {
         uint32_t parent = nodes[i].parent;
@@ -1006,7 +1044,6 @@ static bool place_nodes(struct ui_view_node *nodes, size_t count,
         }
         before[parent] = child;
     }
-    free(before);
     return placed;
 }
 
@@ -1037,6 +1074,23 @@ static void apply_supplied_attributes(struct ui_view *view)
     }
 }
 
+/* Points each kept widget back at the strings that the view holds. Call it
+ * on a failed update, before the copies of the update are freed. */
+static void restore_kept_strings(const struct ui_view *view,
+                                 const struct ui_view_node *nodes,
+                                 size_t count, const size_t *match)
+{
+    for (size_t i = 0; i < count; i++) {
+        if (match[i] == SIZE_MAX || !nodes[i].widget)
+            continue;
+        const struct ui_view_node *held = &view->nodes[match[i]];
+        if (held->kind != UI_NODE_WIDGET && held->kind != UI_NODE_LIST)
+            ui_widget_set_style_identity(held->widget, held->class_name,
+                                         held->id_name, held->tag_name);
+        ui_widget_set_debug_key(held->widget, held->key);
+    }
+}
+
 bool ui_view_update_ex(struct ui_view *view, const struct ui_node_desc *root,
                        struct ui_view_diagnostic *diagnostic)
 {
@@ -1061,7 +1115,8 @@ bool ui_view_update_ex(struct ui_view *view, const struct ui_node_desc *root,
     size_t *match = malloc(count * sizeof(*match));
     bool *taken = calloc(view->count ? view->count : 1, sizeof(*taken));
     struct ui_view_node *next = calloc(count ? count : 1, sizeof(*next));
-    if (!match || !taken || !next) {
+    struct ui_widget **before = calloc(count ? count : 1, sizeof(*before));
+    if (!match || !taken || !next || !before) {
         if (diagnostic) {
             diagnostic->error = UI_VIEW_ERROR_OUT_OF_MEMORY;
             diagnostic->node = root;
@@ -1070,37 +1125,51 @@ bool ui_view_update_ex(struct ui_view *view, const struct ui_node_desc *root,
         free(match);
         free(taken);
         free(next);
+        free(before);
         free(plan);
         return false;
     }
 
     enum ui_view_error error = UI_VIEW_ERROR_NONE;
     const struct ui_node_desc *failed = root;
+    bool kept_changed = false;
     match_nodes(view, plan, count, match, taken);
+    /* Create the new nodes and check the placement first. A failure here
+     * leaves each kept widget as it was. */
     for (size_t i = 0; i < count; i++) {
+        failed = plan[i].desc;
         if (match[i] == SIZE_MAX) {
             next[i].desc = plan[i].desc;
             next[i].kind = plan[i].kind;
             next[i].parent = plan[i].parent;
-            failed = plan[i].desc;
             if (!node_init(&next[i], &error))
                 goto fail;
             continue;
         }
-        struct ui_view_node *held = &view->nodes[match[i]];
-        next[i] = *held;
+        next[i] = view->nodes[match[i]];
         next[i].desc = plan[i].desc;
         next[i].bind = plan[i].desc->bind;
-        failed = plan[i].desc;
         if (!copy_node_strings(&next[i])) {
             error = UI_VIEW_ERROR_OUT_OF_MEMORY;
             goto fail;
         }
+    }
+    size_t bad = 0;
+    if (!placement_ok(next, count, &bad)) {
+        failed = plan[bad].desc;
+        error = UI_VIEW_ERROR_INVALID_CHILDREN;
+        goto fail;
+    }
+    /* The kept widgets change from here. Only a lack of memory fails now. */
+    kept_changed = true;
+    for (size_t i = 0; i < count; i++) {
+        if (match[i] == SIZE_MAX)
+            continue;
+        failed = plan[i].desc;
         if (!node_set_props(&next[i], &error))
             goto fail;
     }
-    size_t bad = 0;
-    if (!place_nodes(next, count, &bad)) {
+    if (!place_nodes(next, count, before, &bad)) {
         failed = plan[bad].desc;
         error = UI_VIEW_ERROR_INVALID_CHILDREN;
         goto fail;
@@ -1124,6 +1193,7 @@ bool ui_view_update_ex(struct ui_view *view, const struct ui_node_desc *root,
     retire_nodes(surface, old, old_count, taken);
     free(match);
     free(taken);
+    free(before);
     free(plan);
     return true;
 
@@ -1134,9 +1204,12 @@ fail:
         diagnostic->node = failed;
         diagnostic->detail = ui_view_error_message(diagnostic->error);
     }
+    if (kept_changed)
+        restore_kept_strings(view, next, count, match);
     discard_nodes(surface, next, count, match);
     free(match);
     free(taken);
+    free(before);
     free(plan);
     return false;
 }

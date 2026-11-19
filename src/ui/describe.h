@@ -158,8 +158,10 @@ struct ui_view *ui_view_mount(const struct ui_node_desc *root,
  * A supplied widget node keeps its widget only when the descriptor supplies
  * the same widget. A different widget replaces it.
  *
- * On failure the view keeps its mounted nodes. A matched widget can hold the
- * properties that the update applied before it failed. The view frees the
+ * A failed update leaves the view as it was. The update checks the
+ * descriptor tree and the placement before it changes a matched widget. After
+ * that, only a lack of memory makes it fail. Then a matched widget can hold
+ * some of the new properties, and the view stays valid. The view frees the
  * storage of a removed node after the surface is idle, so a handler can call
  * this function. The call fails while the surface is busy only when memory is
  * short. */

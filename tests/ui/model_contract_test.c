@@ -901,6 +901,62 @@ static void view_list_update_to_empty_test(void)
     ui_view_destroy(view);
 }
 
+/* A failed update leaves the kept widgets as they were. A full supplied
+ * container makes the update fail after the kept nodes are matched. */
+static void view_failed_update_keeps_widgets_test(void)
+{
+    struct ui_label *label = NULL;
+    struct ui_node_desc status = {
+        .kind = UI_NODE_LABEL, .key = "status", .class_name = "status-label",
+        .bind.label = &label, .props.label = { .text = "x" },
+    };
+    struct ui_node_desc root = {
+        .kind = UI_NODE_COLUMN, .key = "root", .class_name = "root-box",
+        .children = &status, .child_count = 1,
+    };
+    struct ui_view *view = ui_view_mount(&root, NULL);
+    assert(view && label);
+    struct ui_surface surface;
+    show(&surface, ui_view_root(view), (struct vector2i){ .x = 200, .y = 100 });
+    ui_surface_prepare(&surface);
+
+    struct ui_widget full = {0}, old_child = {0};
+    ui_widget_init(&full, &SINGLE_CHILD_OPS, NULL);
+    ui_widget_init(&old_child, NULL, NULL);
+    assert(ui_widget_add_child(&full, &old_child));
+    struct ui_node_desc inner = {
+        .kind = UI_NODE_LABEL, .key = "inner", .props.label = { .text = "y" },
+    };
+    struct ui_node_desc changed = status;
+    changed.class_name = "changed-label";
+    changed.props.label.text = "changed";
+    struct ui_node_desc kids[] = {
+        changed,
+        { .kind = UI_NODE_WIDGET, .key = "full", .props.widget = &full,
+          .children = &inner, .child_count = 1 },
+    };
+    struct ui_node_desc bad = root;
+    bad.class_name = "changed-box";
+    bad.children = kids;
+    bad.child_count = 2;
+    struct ui_view_diagnostic diagnostic;
+    assert(!ui_view_update_ex(view, &bad, &diagnostic));
+    assert(diagnostic.error == UI_VIEW_ERROR_INVALID_CHILDREN);
+    assert(diagnostic.node == &inner);
+
+    ui_surface_prepare(&surface);
+    struct ui_widget *view_root = ui_view_root(view);
+    assert(ui_debug_find(view_root, ".root-box") == view_root);
+    assert(ui_debug_find(view_root, ".status-label") == &label->widget);
+    assert(ui_debug_find(view_root, "@status") == &label->widget);
+    assert(!strcmp(ui_label_text(label), "x"));
+    assert(ui_view_widget(view, "full") == NULL);
+    assert(!full.parent && ui_widget_child_count(&full) == 1);
+    ui_surface_destroy(&surface);
+    ui_view_destroy(view);
+    ui_widget_destroy(&full);
+}
+
 int main(void)
 {
     view_diagnostic_test();
@@ -917,6 +973,7 @@ int main(void)
     view_list_and_menu_node_test();
     view_menu_node_frees_its_items_test();
     view_list_update_to_empty_test();
+    view_failed_update_keeps_widgets_test();
     view_root_keyboard_test();
     hidden_child_takes_no_space_or_input_test();
     hidden_modal_restores_focus_test();
