@@ -115,6 +115,7 @@ Character set mapping rules:
 `wsap_vtcore_snapshot_new()` creates a snapshot instance.
 `wsap_vtcore_snapshot_free()` releases a snapshot instance.
 `wsap_vtcore_snapshot_update()` captures current terminal state into the snapshot.
+`wsap_vtcore_snapshot_update_live()` captures the live screen: the rows that the view shows at scroll offset zero. The view keeps its offset. Use a separate snapshot for it.
 The function returns false for NULL arguments or memory allocation failures.
 View structures, row buffers, palettes, and selection spans belong to the snapshot.
 Pointers from snapshot getters remain valid until the next update call or snapshot destruction.
@@ -323,6 +324,10 @@ Functions returning heap-allocated strings (`wsap_vtcore_cwd`, `wsap_vtcore_poin
 - Do not pass returned pointers to standard `free()`.
 
 `wsap_vtcore_history_text(t, max_rows)` returns the last `max_rows` history rows above the viewport. Zero or negative `max_rows` returns an empty string.
+
+`wsap_vtcore_history_text_range()` returns the text of a range of history rows. A line drops its trailing blanks as one line. When the last row of the range wraps, the line goes on after the range, and that row keeps its trailing blanks.
+
+`wsap_vtcore_history_epoch()` changes on a clear, a line taken back to the screen, a cut line, a rewrap, and a switch of the screen. New lines and the eviction of the oldest lines keep it. While it stays the same, `wsap_vtcore_history_first_line()` grows by the count of the lines that left, and the other lines keep their text. An index of the history can then drop the lines that left and add the new ones.
 
 ## Invalid arguments
 
