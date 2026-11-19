@@ -43,15 +43,47 @@ enum input_command_app_id {
     INPUT_COMMAND_TAB_7,
     INPUT_COMMAND_TAB_8,
     INPUT_COMMAND_KILL_LINE,
-    INPUT_COMMAND_UNDO,
-    INPUT_COMMAND_REDO,
-    INPUT_COMMAND_CUT,
     INPUT_COMMAND_COMMAND_PALETTE,
     INPUT_COMMAND_DEBUG_OVERLAY,
     INPUT_COMMAND_SETTINGS,
     INPUT_COMMAND_FOCUS_TABS,
+    /* New commands go after this line, so no existing ID moves. */
+    INPUT_COMMAND_UNDO,
+    INPUT_COMMAND_REDO,
+    INPUT_COMMAND_CUT,
     INPUT_COMMAND_APP_COUNT,
 };
+
+/* A saved binding stores the number, so an ID must not move. */
+_Static_assert(INPUT_COMMAND_FONT_LARGER == 1, "font_larger ID moved");
+_Static_assert(INPUT_COMMAND_FONT_SMALLER == 2, "font_smaller ID moved");
+_Static_assert(INPUT_COMMAND_COPY == 3, "copy ID moved");
+_Static_assert(INPUT_COMMAND_PASTE == 4, "paste ID moved");
+_Static_assert(INPUT_COMMAND_SELECT_ALL == 5, "select_all ID moved");
+_Static_assert(INPUT_COMMAND_SCROLL_UP == 6, "scroll_up ID moved");
+_Static_assert(INPUT_COMMAND_SCROLL_DOWN == 7, "scroll_down ID moved");
+_Static_assert(INPUT_COMMAND_NEW_TAB == 8, "new_tab ID moved");
+_Static_assert(INPUT_COMMAND_CLOSE_TAB == 9, "close_tab ID moved");
+_Static_assert(INPUT_COMMAND_NEXT_TAB == 10, "next_tab ID moved");
+_Static_assert(INPUT_COMMAND_PREV_TAB == 11, "prev_tab ID moved");
+_Static_assert(INPUT_COMMAND_LAST_TAB == 12, "last_tab ID moved");
+_Static_assert(INPUT_COMMAND_TAB_1 == 13, "tab_1 ID moved");
+_Static_assert(INPUT_COMMAND_TAB_2 == 14, "tab_2 ID moved");
+_Static_assert(INPUT_COMMAND_TAB_3 == 15, "tab_3 ID moved");
+_Static_assert(INPUT_COMMAND_TAB_4 == 16, "tab_4 ID moved");
+_Static_assert(INPUT_COMMAND_TAB_5 == 17, "tab_5 ID moved");
+_Static_assert(INPUT_COMMAND_TAB_6 == 18, "tab_6 ID moved");
+_Static_assert(INPUT_COMMAND_TAB_7 == 19, "tab_7 ID moved");
+_Static_assert(INPUT_COMMAND_TAB_8 == 20, "tab_8 ID moved");
+_Static_assert(INPUT_COMMAND_KILL_LINE == 21, "kill_line ID moved");
+_Static_assert(INPUT_COMMAND_COMMAND_PALETTE == 22, "command_palette ID moved");
+_Static_assert(INPUT_COMMAND_DEBUG_OVERLAY == 23, "debug_overlay ID moved");
+_Static_assert(INPUT_COMMAND_SETTINGS == 24, "settings ID moved");
+_Static_assert(INPUT_COMMAND_FOCUS_TABS == 25, "focus_tabs ID moved");
+_Static_assert(INPUT_COMMAND_UNDO == 26, "undo ID moved");
+_Static_assert(INPUT_COMMAND_REDO == 27, "redo ID moved");
+_Static_assert(INPUT_COMMAND_CUT == 28, "cut ID moved");
+_Static_assert(INPUT_COMMAND_APP_COUNT == 29, "app ID count moved");
 
 /* The first ID that `input_command_add()` gives to a new command.
  * It is above every app ID, so a widget command never takes an app ID. */
