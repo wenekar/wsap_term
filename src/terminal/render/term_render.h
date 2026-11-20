@@ -30,9 +30,8 @@ struct terminal_frame;
  *   paint of the same frame.
  * - fb->pixels NULL with fb->acquire_pixels means: the canvas comes on
  *   demand. The renderer takes the canvas only when the CPU paints the
- *   frame, so a frame that the GPU takes makes no allocation.
- * - Without a history, it paints every pixel and keeps no state. It does
- *   not allocate for that case.
+ *   frame, so a frame that the GPU takes needs no canvas.
+ * - Without a history, it paints every pixel and keeps no state.
  * - The environment value WSAP_RENDER_FULL=1 makes every frame a fresh
  *   paint. It is a debug knob.
  * - The environment value WSAP_RENDER_SCROLL=move|paint|auto picks how a
@@ -48,15 +47,18 @@ struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
 /*
  * Paints the cells [span_begin, span_begin + span_cols) of the cursor row
  * of `tf` into `out`: span_cols * cell_w pixels wide, cell_h pixels high,
- * 0xAARRGGBB, row after row. `span_cols` is 1 or 2.
+ * 0xAARRGGBB, row after row. `span_cols` is 1 or 2. `out_w` and `out_h`
+ * receive the width and the height in pixels.
  *
  * The pixels are the same as the pixels of those cells in a CPU frame of
  * `tf` from render_draw(). `tf` gives the cursor: set it visible to get the
  * cells with the cursor on them.
  *
- * Returns false and writes nothing when `out` has less than `max_px`
- * pixels of room, when the row is not a single-size line, or when memory
- * is missing. Main thread, outside render_draw().
+ * Returns false and writes nothing when the frame has no grid, when the
+ * cursor position is outside the grid, when the row is not a single-size
+ * line, when `max_px` is less than the pixel count of the cells, when the
+ * span is outside the row, or when the font metrics or memory are missing.
+ * Main thread, outside render_draw().
  */
 bool render_cursor_cell(struct renderer *r, struct font_instance *font,
                         const struct terminal_frame *tf,

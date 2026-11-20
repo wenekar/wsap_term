@@ -14,13 +14,15 @@ struct renderer;
 
 struct app {
     struct app_config config;
-    /* The terminal palette of the active theme, over the configured one. */
+    /* The terminal palette: the configured palette with the `ansi` values of
+     * the active theme applied. */
     struct wsap_vtcore_theme palette;
     char *config_path;
     struct yasl_loop *loop;
     struct renderer *renderer;
-    /* The frame state above render and ui_yasl. It owns the renderer use
-     * that outlives one window. */
+    /* The frame state above render and ui_yasl for work that outlives one
+     * window: scene capture, thumbnails, and the GPU idle release. It borrows
+     * the renderer and the loop. */
     struct app_runtime *runtime;
     struct look *look;
     struct window_host host;
@@ -37,10 +39,9 @@ struct app {
 
 struct app *app_create(int argc, char **argv, int *status);
 /* Like app_create(), but it creates the GPU device right after it reads the
- * configuration. The driver load sets the peak RSS of the startup. At this
- * point the font system and the window are not resident yet. Use it only
- * when a window opens next. app_create() leaves the device to the first
- * window. */
+ * configuration. The driver load sets the peak RSS of startup, so the device
+ * starts before the font system and the window are resident. Use it only when
+ * a window opens next; app_create() leaves the device to the first window. */
 struct app *app_create_gpu_first(int argc, char **argv, int *status);
 void app_destroy(struct app *a);
 int app_run(struct app *a);

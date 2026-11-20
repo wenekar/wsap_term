@@ -12,12 +12,13 @@ bool terminal_mime_is_image(const char *mime);
  * or is too long. The caller frees the result. */
 char *terminal_quote_path(const char *path);
 
-/* Turns a local file uri list into quoted paths separated by spaces. Each
- * line must start with file://. The other lines are skipped. Returns NULL
- * when no line holds a path. The caller frees the result. */
+/* Turns a local file URI list into quoted paths separated by spaces. A line
+ * that does not start with file:// or names a host other than localhost is
+ * skipped. Percent escapes are decoded. Returns NULL when no line holds a
+ * path. The caller frees the result. */
 char *terminal_quote_uri_list(const char *data, size_t len);
 
-/* Joins the lines of a uri list with one space. It skips comment lines and
+/* Joins the lines of a URI list with one space. It skips comment lines and
  * blank lines, and it trims the spaces and tabs at the end of a line. Returns
  * NULL when no line holds text. The caller frees the result. */
 char *terminal_join_uri_lines(const char *data, size_t len);

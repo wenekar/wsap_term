@@ -19,7 +19,8 @@
 #include <string.h>
 #include <unistd.h>
 
-/* Configuration lines have a 1024 byte limit. */
+/* The 1024-byte limit of a saved configuration line; a value fits in a buffer
+ * of this size. */
 #define SETTINGS_VALUE_CAP 1024
 
 enum category { ALL, APPEARANCE, TEXT, CURSOR, TERMINAL, WINDOW, CATEGORY_COUNT };
@@ -274,7 +275,8 @@ static bool load_row(struct settings_form *form, struct settings_row *row,
                      const char *value, bool baseline, bool show)
 {
     bool ok = !show || set_row_value(row, value);
-    /* format_row limits a value to the baseline size. */
+    /* `value` fits the baseline buffer: both callers format into
+     * SETTINGS_VALUE_CAP bytes. */
     if (baseline)
         snprintf(row->baseline, sizeof(row->baseline), "%s", value);
     validate(form, row);
@@ -515,10 +517,10 @@ static bool build_choices(struct settings_row *row, struct look *look,
     return ok;
 }
 
-/* Each helper fills one descriptor from its few distinct fields.
- * All nodes take the empty tag name, except a label whose caller sets the tag.
- * A label wraps words, aligns left, and takes no bind unless the caller sets it.
- * A box stretches its children. */
+/* The node helpers fill one descriptor each. Every node takes an empty tag
+ * name, except a label, which takes the tag of its caller. A label wraps
+ * words, aligns left, and takes a bind only when the caller sets one. A box
+ * stretches its children. */
 struct label_spec {
     const char *key, *class_name, *id_name, *tag_name, *text, *link;
     struct ui_label **bind;

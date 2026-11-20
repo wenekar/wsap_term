@@ -9,10 +9,10 @@
 struct look;
 
 /*
- * A source tells the builder where the choice list of a setting comes from.
- * SETTINGS_CHOICE_SPEC reads the choices of the option key from the config
- * spec. SETTINGS_CHOICE_HINTING does the same, but drops the values that the
- * current antialiasing mode does not allow.
+ * The source of the choice list of a setting. SETTINGS_CHOICE_SPEC reads the
+ * choices of the option key from the config spec. SETTINGS_CHOICE_HINTING
+ * does the same, but drops the values that the current antialiasing mode does
+ * not allow.
  */
 enum settings_choice_source {
     SETTINGS_CHOICE_SPEC = 0,
@@ -23,9 +23,9 @@ enum settings_choice_source {
 };
 
 /*
- * A choice list owns the strings that a provider returned and the heading that
- * it synthesizes. Spec choice labels, theme labels, and literals stay borrowed
- * until ui_dropdown_set_items copies them.
+ * A choice list owns the font and locale strings that the platform lists, and
+ * the heading that the builder synthesizes. Spec labels, theme labels, and
+ * literals stay borrowed until ui_dropdown_set_items copies them.
  * The zero value is a valid empty list. settings_choices_destroy restores it.
  */
 struct settings_choices {

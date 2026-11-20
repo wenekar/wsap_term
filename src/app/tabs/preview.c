@@ -13,7 +13,6 @@ static bool paint_thumbnail(struct app_tabs *tabs, int index, int width,
         return false;
     if (title)
         *title = app_tab_title(entry);
-    /* An empty thumbnail on success means: show the title only. */
     tabs->preview_image = (struct ui_image){0};
     if (!entry->ops->thumbnail ||
         !entry->ops->thumbnail(entry->content,

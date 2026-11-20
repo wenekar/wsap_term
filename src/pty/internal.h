@@ -32,7 +32,7 @@ int pty_plan_env(struct pty_plan *plan, const struct pty_spec *spec,
                  int slave_fd, int pipe_wr, const char *sync_name);
 void pty_plan_free(struct pty_plan *plan);
 
-/* The fast-pipe preload library, when a platform has one. */
+/* Fast-pipe preload settings. The pipe is disabled by default on macOS. */
 #if defined(__APPLE__)
 #define PTY_PRELOAD_ENV "DYLD_INSERT_LIBRARIES"
 #define PTY_PRELOAD_LIB "libfastpty.dylib"

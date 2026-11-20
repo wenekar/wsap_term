@@ -251,7 +251,7 @@ static enum held_route held_route(struct held_records r, unsigned id)
     return HELD_UNKNOWN;
 }
 
-/* Records in both records where the press of key `id` went. HELD_UNKNOWN
+/* Records where the press of key `id` went in both records. HELD_UNKNOWN
  * forgets the key. */
 static void held_record(struct held_records r, unsigned id,
                         enum held_route route)
@@ -653,10 +653,10 @@ static void accessibility_lines_drop(struct terminal_view *view, size_t count)
     view->accessibility_row_origin = first->row;
 }
 
-/* Splits the text of `row_count` history rows that start at `row` into
- * logical lines. A soft-wrapped row joins the next row, so the text has no
- * newline between them. `wrapped[i]` is true when row `first_row + i` joins
- * the row after it. */
+/* Splits the text of the history rows [first_row, first_row + row_count)
+ * into logical lines. A soft-wrapped row joins the next row, so the text has
+ * no newline between them. `wrapped[i]` is true when row `first_row + i`
+ * joins the row after it. */
 static bool accessibility_lines_parse(struct terminal_view *view,
                                       const char *text, size_t text_len,
                                       const bool *wrapped, size_t first_row,
@@ -692,7 +692,6 @@ static bool accessibility_lines_parse(struct terminal_view *view,
     return true;
 }
 
-/* Rebuilds the index of the history rows. */
 static bool accessibility_index_rebuild(struct terminal_view *view,
                                         struct wsap_vtcore *term, size_t rows)
 {
@@ -763,7 +762,6 @@ static bool accessibility_index_append(struct terminal_view *view,
     return ok;
 }
 
-/* Returns the count of the history rows. */
 static int accessibility_history_rows(struct wsap_vtcore *term)
 {
     int total = wsap_vtcore_history_rows(term);
@@ -1482,7 +1480,7 @@ static void view_prepare(struct ui_widget *widget)
 
 /* Pastes the payload of a typed drop. The window keeps the type negotiation
  * and sends the type that it picked. An image saves to a file first, and the
- * paste holds its path. A uri list becomes one text line. Other types are
+ * paste holds its path. A URI list becomes one text line. Other types are
  * left to the framework. */
 static bool paste_drop(struct terminal *t, const struct ui_drag_event *drag)
 {

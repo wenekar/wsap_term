@@ -9,9 +9,9 @@
 #include "terminal/render/term_render.h"
 #include <wsap_vtcore/wsap_vtcore.h>
 
-/* A window keeps one of these while it shows a tab preview. The struct holds
- * only the small thumbnail: the full-resolution image is scratch that
- * app_runtime_thumbnail_capture() gives back before it returns. */
+/* A window keeps one of these for its tab preview. The struct holds only the
+ * small thumbnail; app_runtime_thumbnail_capture() frees the full-resolution
+ * image before it returns. */
 struct app_thumbnail {
     struct ui_image image;
     uint32_t *pixels;
@@ -145,9 +145,8 @@ bool app_runtime_thumbnail_capture(void *ud, void **state, struct font_instance 
     if (full_count > SIZE_MAX / sizeof(uint32_t))
         return false;
 
-    /* The full-resolution image is scratch. Render into it, resample it, and
-     * free it at once. The renderer keeps no surface state for a framebuffer
-     * with no history, so it paints every pixel of this memory. */
+    /* The framebuffer has no history, so the renderer paints every pixel of
+     * this scratch memory and keeps no surface state for it. */
     uint32_t *full = malloc(full_count * sizeof(*full));
     if (!full)
         return false;

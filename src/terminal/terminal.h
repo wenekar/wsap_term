@@ -81,8 +81,8 @@ struct terminal *terminal_create(struct window *window,
                                  const struct terminal_spec *spec);
 void terminal_destroy(struct terminal *terminal);
 /* Binds the content to another window. A null window is valid while the
- * content is in transfer. The bind sets the font scale and the native
- * targets before input resumes. */
+ * content is in transfer. The bind applies the font settings and the font
+ * scale of the new window before input resumes. */
 void terminal_set_window(struct terminal *terminal, struct window *window);
 
 /*
@@ -109,7 +109,8 @@ bool terminal_exited(const struct terminal *terminal);
 /* Resizes the session to the cell grid of the content widget. An unchanged
  * grid is a no-op. This is the only session resize of this layer. */
 void terminal_commit_geometry(struct terminal *terminal);
-/* Captures the terminal snapshot and cursor blink state for the current frame at `now_ms`. */
+/* Updates the snapshot for the current frame and notes whether any cell
+ * blinks. terminal_frame_source() reuses that update in the same frame. */
 void terminal_prepare(struct terminal *terminal, uint64_t now_ms);
 bool terminal_frame_source(struct terminal *terminal, uint64_t now_ms,
                            struct terminal_frame_source *out);
@@ -124,11 +125,8 @@ void terminal_adjust_font_size(struct terminal *terminal, int delta_pt);
 void terminal_focus(struct terminal *terminal, bool focused);
 /* Shows the scrollbar of the content for a moment. */
 void terminal_show_scrollbar(struct terminal *terminal);
-/* Hides the content scrollbar overlay. */
 void terminal_hide_scrollbar(struct terminal *terminal);
-/* True while the content shows its scrollbar. */
 bool terminal_scrollbar_visible(const struct terminal *terminal);
-/* Shows or hides the file drop highlight of the content. */
 void terminal_set_drop_hover(struct terminal *terminal, bool over);
 void terminal_paste(struct terminal *terminal, const char *text, size_t len);
 /* Runs the terminal commands of a shortcut. The owner runs the tab commands
@@ -155,16 +153,17 @@ struct terminal_cursor_overlay {
     int span_cols;
     uint64_t cell_key;
 };
-/* Fills `out` for the frame of `source`. Returns false when the frame must
- * draw the cursor in the grid: no focus, no blink, a preedit, a bell, or a
- * cursor that is not fully inside the grid. */
+/* Fills `out` for the frame of `source`. Returns false when the frame draws
+ * the cursor in the grid: no focus, a preedit, a drop highlight, blinking
+ * text, a bell, a hidden or non-blinking cursor, a wide row, or a cursor
+ * that is not fully inside the grid. */
 bool terminal_cursor_overlay_prepare(const struct terminal *terminal,
                                      const struct terminal_frame_source *source,
                                      struct vector2i canvas_size, uint64_t now_ms,
                                      struct terminal_cursor_overlay *out);
-/* Tells if the cursor blink is the only change that is due at `now_ms`.
- * If true, it gives the cursor state and the time of the next wake. If
- * false, the window needs a frame. */
+/* Returns true when the cursor blink is the only change due at `now_ms`, and
+ * writes the cursor state and the time of the next wake. Returns false when
+ * the window needs a frame. */
 bool terminal_cursor_blink_only(struct terminal *terminal, uint64_t now_ms,
                                 bool *out_visible, uint64_t *out_next_ms);
 

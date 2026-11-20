@@ -29,12 +29,6 @@ static enum render_line_size term_line_size(const void *source, int row)
     }
 }
 
-/*
- * The key of grid row `row` as the canvas shows it: a mix of the content
- * key, the selection span of the row, and the cursor x and style when the
- * cursor is on the row. It is never 0 for a row that the planner can keep
- * or move.
- */
 uint64_t render_term_row_key(const struct terminal_frame *f, int row)
 {
     uint64_t tk = terminal_frame_row_key(f, row);

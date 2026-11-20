@@ -29,8 +29,7 @@ static struct terminal_content_state *state_of(void *content)
     return terminal_content_state(content);
 }
 
-/* The terminal reports reach the tab code through the model. The tab code
- * finds the tab by the content identity. */
+/* The terminal reports reach the tab code through the model. */
 static void report_terminal(void *ud, struct terminal *t,
                             enum app_tab_content_report report)
 {
@@ -169,7 +168,7 @@ static void content_focus(void *content, bool focused)
 
 static void content_unmount(void *content)
 {
-    /* The content that leaves the UI keeps no scrollbar flash. */
+    /* A content that leaves the UI must not keep its scrollbar overlay. */
     terminal_hide_scrollbar(content);
 }
 

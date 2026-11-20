@@ -230,8 +230,6 @@ void session_write_queue_destroy(struct session_write_queue *q)
     *q = (struct session_write_queue){0};
 }
 
-/* Any thread. The bytes that the pty does not accept stay in the queue, and
- * the loop thread writes them when the pty has room. */
 bool session_write_queue_push_bytes(struct session_write_queue *q, const char *data, size_t len)
 {
     if (!q || !q->lock_ready || (!data && len)) {

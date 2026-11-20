@@ -33,8 +33,8 @@ static int is_terminal_dev(int fd)
     return st.st_rdev == tty_rdev;
 }
 
-/* Returns the wait for a sync ack in milliseconds. A value in the
- * environment from 1 to 60000 replaces the default. */
+/* Returns the sync ack timeout in milliseconds. An environment value from 1
+ * to 60000 replaces the default. */
 static int sync_timeout_ms(void)
 {
     const char *text = getenv(PTY_SYNC_TIMEOUT_ENV);

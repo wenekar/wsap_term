@@ -34,15 +34,15 @@ struct app_tabs {
      * app retires it at a safe loop boundary. */
     app_tab_id *ids;
     struct ui_tab_label *labels;
-    /* The content that the root holds, and its widget. */
+    /* The content mounted in the root and the widget that shows it. */
     void *mounted_content;
     struct ui_widget *mounted;
     struct ui_image preview_image;
     void *preview_state;
 
-    /* The held keys of the terminals of this window. They share it, so the
-     * repeats and the release of a key follow its press after a tab
-     * switch. */
+    /* The held keys of the terminals of this window. The terminals share the
+     * record, so the repeats and the release of a key follow its press after
+     * a tab switch. */
     struct terminal_held_keys held_keys;
 
     int count;
@@ -73,7 +73,7 @@ int app_tabs_live_count(const struct app_tabs *tabs);
 int app_tabs_index_of(const struct app_tabs *tabs, app_tab_id id);
 
 /*
- * Removes the tab at `index` from `window` while retaining it in the tab model.
+ * Removes the tab at `index` from `window` and keeps it in the tab model.
  * Returns the unlinked tab ID, or 0 on failure.
  */
 app_tab_id app_tabs_unbind(struct window *window, int index);
@@ -82,7 +82,8 @@ app_tab_id app_tabs_unbind(struct window *window, int index);
  * Returns true on success, or false if the tab cannot be bound.
  */
 bool app_tabs_bind(struct window *window, app_tab_id id, int slot);
-/* Unbinds all tabs from `tabs` and marks non-dragged entries for destruction. */
+/* Unbinds every tab from `tabs`. The tab that the running drag moves stays in
+ * the model; the rest are destroyed. */
 void app_tabs_release(struct app_tabs *tabs);
 
 /*
@@ -91,7 +92,7 @@ void app_tabs_release(struct app_tabs *tabs);
  */
 void app_tabs_content_report(struct app_tab_model *model, void *content,
                              enum app_tab_content_report report);
-/* Sends the labels and the selection of the entry array to the bar. */
+/* Sends the label and the active state of each entry to the bar. */
 void app_tabs_publish(struct app_tabs *tabs);
 /* Shows the active content in the root widget. */
 void app_tabs_mount_content(struct app_tabs *tabs);
@@ -114,7 +115,7 @@ bool app_tabs_drag_begin(struct window *window, int index,
 void app_tabs_drag(struct window *window, enum yasl_drop_action event,
                    struct vector2i pos, void *ud);
 void app_tabs_drop_hover(struct window *window, bool over, void *ud);
-/* Drops the references of the running drag to a window that goes. */
+/* Clears the drop target of the running drag before `window` is destroyed. */
 void app_tabs_drag_forget(struct app_tab_model *model, struct window *window);
 
 #endif

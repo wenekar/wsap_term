@@ -17,8 +17,8 @@
 #include "util/proc.h"
 #include "util/time.h"
 
-/* The terminal lock is released between pieces, so the loop thread can take a
- * snapshot of a flood without a long wait. */
+/* The terminal write lock is released between feed calls, so the loop thread
+ * can snapshot a flood without a long wait. */
 #define SESSION_FEED_PIECE (32u * 1024u)
 
 static struct session *live_sessions;
@@ -68,8 +68,8 @@ struct session_host_event {
 };
 
 /* Runs on the worker thread: it queues the payload for the loop thread and
- * never touches the host. The ring signals the loop thread, so a queued event
- * reaches it without a wait here. */
+ * never touches the host. pty_ring_wake() tells the loop thread that an event
+ * waits, so the worker does not block on the host. */
 static void host_event_push(struct session *s, enum session_host_event_kind kind,
                             char *text, char *body)
 {
@@ -123,8 +123,8 @@ static void host_event_apply(struct session *s, struct session_host_event *event
 }
 
 /* Runs on the loop thread. It applies every queued event in order, so the
- * host sees the title and the bell of the output before the end of the
- * session. */
+ * title and the bell of the last output reach the host before the exit
+ * callback. */
 static void host_events_dispatch(struct session *s)
 {
     pthread_mutex_lock(&s->host_lock);
@@ -241,7 +241,7 @@ static void on_ring_data(void *ud, int fd, const char *buf, size_t len)
 }
 
 /* Runs on the loop thread: it applies the queued host events and asks for a
- * frame. It parses no bytes and holds no budget. */
+ * frame. It parses no bytes. */
 static void on_ring_wake(void *ud)
 {
     struct session *s = ud;
@@ -286,8 +286,8 @@ static bool start_pty(struct session *s, const struct session_spec *spec)
 
     s->onlcr = pty_pipe_fd(&s->pty) >= 0;
 
-    /* The queue comes first: the worker can answer the terminal during its
-     * first read. */
+    /* The write queue comes first, so the worker can answer the terminal
+     * during its first read. */
     if (pty_master_fd(&s->pty) < 0 ||
         !session_write_queue_bind(&s->input_writer, s->loop, pty_master_fd(&s->pty)))
         return false;
@@ -356,7 +356,7 @@ void session_fini(struct session *s)
     unlink_live(s);
     if (s->pty_resize_timer)
         yasl_loop_del_timer(s->loop, s->pty_resize_timer);
-    /* Stop the worker before the terminal and the queue go away. */
+    /* Stop the worker before the terminal and the write queue are released. */
     pty_ring_stop(&s->ring);
     session_write_queue_destroy(&s->input_writer);
     host_events_free(s);
@@ -478,8 +478,7 @@ void session_reap_exited(void)
         if (!s->reaped)
             continue;
         s->reaped = false;
-        /* The worker drains the last output and then publishes the end. The
-         * exit callback runs on the loop thread after the last byte. */
+        /* The worker drains the last output and then publishes the end. */
         pty_ring_end(&s->ring);
     }
 }

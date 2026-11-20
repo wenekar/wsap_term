@@ -8,7 +8,8 @@
 /* The shell that a new session runs when the spec names no command. */
 const char *pty_default_shell(void);
 
-/* The working directory of pid, if this process can read it. */
+/* Copies the working directory of `pid` into `out`. Returns false when the
+ * directory is unavailable or does not fit. */
 bool pty_read_pid_cwd_buf(pid_t pid, char *out, size_t sz);
 
 #endif

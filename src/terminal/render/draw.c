@@ -3,13 +3,6 @@
 #include "terminal/render/term_frame.h"
 #include "terminal/render/view.h"
 
-/*
- * The public calls of the terminal grid renderer. They turn a terminal
- * frame into the generic render_grid_view and call the render library.
- * The GPU call here exists for the tests: they take a frame through the
- * backend without a renderer.
- */
-
 struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
                                  const struct render_frame *frame)
 {

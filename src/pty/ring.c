@@ -17,8 +17,8 @@
 #include <sys/ucred.h>
 #endif
 
-/* The bytes of one read from the pty. The worker parses each read into the
- * terminal at once, so this is also the size of its buffer. */
+/* The maximum number of bytes in one read from a source. The worker parses
+ * each chunk before the next read, so this is also the size of its buffer. */
 #define PTY_READ_SIZE PTY_CHUNK_MAX
 #define PTY_SPIN_ITERS 128
 #define PTY_SYNC_REQUEST_MS 100
@@ -60,7 +60,7 @@ static inline void cpu_relax(void)
 #endif
 }
 
-/* Wake the loop thread once for the content that waits. A signal that is
+/* Wakes the loop thread once for the content that waits. A signal that is
  * already pending covers this content too: the loop thread drains all the
  * content before it reads wake_pending again. */
 static void wake_consumer(struct pty_ring *r)
@@ -87,8 +87,8 @@ static void close_source(struct worker *w, unsigned i)
     w->pfd[i].fd = -1;
 }
 
-/* Read the pty into the terminal. Each chunk goes to the data callback before
- * the next read, so the parse keeps the pty buffer empty. */
+/* Reads one source into the terminal. Each chunk goes to the data callback
+ * before the next read, so the parse keeps the source buffer empty. */
 static enum pump_result pump(struct worker *w, unsigned i)
 {
     struct pty_ring *r = w->r;
@@ -129,8 +129,8 @@ static enum pump_result pump(struct worker *w, unsigned i)
             unsignaled = 0;
         }
     }
-    /* The source runs dry. The loop thread draws the content that waits, so it
-     * gets the signal that the batch holds back. */
+    /* The source runs dry. The loop thread draws the content that waits, so
+     * the pending batch gets its signal now. */
     if (unsignaled)
         wake_consumer(r);
     return result;
@@ -249,8 +249,7 @@ static void *pty_ring_worker(void *arg)
     return NULL;
 }
 
-/* Only drains the wake signal and tells the loop thread. It parses nothing and
- * it holds no budget. */
+/* Drains the wake signal and notifies the loop thread. It parses no data. */
 static void on_ring_event(void *ud, int fd, short revents)
 {
     (void)revents;

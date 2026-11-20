@@ -37,8 +37,8 @@ static void sync_preview_anchor(struct app_tabs *tabs, struct vector2i max_size)
                           (struct ui_constraints){ .max = max_size });
 }
 
-/* The origin follows the visible bar height. Keep the content size fixed
- * until the app releases the closing entry's bar reservation. */
+/* The animated bar height sets the content origin; the reserved height sets
+ * the content size and stays fixed until the app releases a closing entry. */
 static void root_layout(struct ui_widget *widget, struct rect2i bounds)
 {
     struct app_tabs *tabs = root_tabs(widget);
@@ -241,7 +241,8 @@ bool app_tabs_mount(struct window *w, const struct app_tabs_spec *spec)
         return false;
     tabs->window = w;
     tabs->spec = *spec;
-    /* The initial directory and the initial tab are only for this mount. */
+    /* The initial directory and the initial tab apply only to this mount, so
+     * clear them in the stored spec. */
     tabs->spec.cwd = NULL;
     tabs->spec.tab = 0;
     tabs->active = -1;
@@ -268,7 +269,6 @@ bool app_tabs_mount(struct window *w, const struct app_tabs_spec *spec)
     /* Drag events reach every window. The model owns the drag, so it is the
      * user data. */
     window_set_drag_target(w, &APP_TABS_DRAG_TARGET, spec->model);
-    /* Binds the initial tab or creates a new tab in the mounted window. */
     if (spec->tab)
         return app_tabs_bind(w, spec->tab, -1);
     if (spec->empty)

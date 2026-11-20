@@ -14,9 +14,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-/* The largest image that a drop saves. */
 #define DROP_IMAGE_MAX ((size_t)64 * 1024 * 1024)
-/* The number of names to try when a name is already taken. */
 #define DROP_NAME_TRIES 8
 /* Room for a file name: "drop-", a pid, a counter, an extension, and NUL. */
 #define DROP_NAME_MAX 80
@@ -26,7 +24,6 @@
 static char **saved;
 static size_t saved_count;
 static size_t saved_cap;
-/* The number that the next file name uses. */
 static unsigned long next_name;
 
 static const struct {
@@ -42,7 +39,6 @@ static const struct {
     { "image/svg+xml", "svg" },
 };
 
-/* Returns true when `mime` names an image type with a subtype. */
 bool terminal_mime_is_image(const char *mime)
 {
     return mime && !strncasecmp(mime, "image/", 6) && mime[6];
@@ -157,7 +153,6 @@ static int create_file(int dir, const char *ext, char name[DROP_NAME_MAX])
     return -1;
 }
 
-/* Writes all `len` bytes to `fd`. Returns false on an error. */
 static bool write_all(int fd, const char *data, size_t len)
 {
     while (len) {
@@ -212,7 +207,8 @@ char *terminal_save_dropped_image(const char *mime, const char *data,
         return NULL;
     static bool cleanup_registered;
     if (!cleanup_registered) {
-        /* The paths belong to the shell, so they stay until the exit. */
+        /* The shell keeps the paths after the paste, so the files stay until
+         * the exit. */
         atexit(terminal_drop_cleanup);
         cleanup_registered = true;
     }

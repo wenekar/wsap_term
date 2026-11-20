@@ -11,7 +11,7 @@
 
 #define PTY_PIPE_SIZE (1024 * 1024)
 
-/* Maximum number of bytes read from the pseudo-terminal in one call. */
+/* Maximum number of bytes per read from the pty or the fast pipe. */
 #define PTY_CHUNK_MAX (256u * 1024u)
 
 struct pty {
@@ -49,14 +49,20 @@ static inline int pty_sync_fd(const struct pty *p)
 
 /*
  * Spawns a child process in a new pseudo-terminal with specification `spec`.
- * Returns 0 on success, or -1 on failure.
+ * Returns 0 on success, or -1 on failure. On failure, `p` holds no
+ * descriptors.
  */
 int pty_spawn(struct pty *p, const struct pty_spec *spec);
 
-/* Closes pseudo-terminal descriptors and terminates the child process. */
+/*
+ * Closes pseudo-terminal descriptors and terminates the child process.
+ * If the child is still running, a detached thread reaps it and sends SIGKILL
+ * after a grace period, so the call normally does not wait for the child to
+ * exit.
+ */
 void pty_destroy(struct pty *p);
 
-/* Sets the window size of the pseudo-terminal to dimensions `grid`. */
+/* Sets the pseudo-terminal window size to `grid.x` columns and `grid.y` rows. */
 void pty_resize(struct pty *p, struct vector2i grid);
 
 #endif

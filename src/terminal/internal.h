@@ -210,7 +210,6 @@ void terminal_view_set_preedit(struct terminal *terminal, const char *text,
                                int cursor_begin, int cursor_end,
                                struct rect2i caret, uint32_t fg, uint32_t bg);
 
-/* The draw stage of the frame. */
 bool terminal_cursor_visible(const struct terminal *terminal, uint64_t now_ms);
 void terminal_update_ime(struct terminal *terminal,
                          const struct wsap_vtcore *term);

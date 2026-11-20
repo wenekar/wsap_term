@@ -7,7 +7,8 @@
 #include "font/glyph/intern.h"
 #include "render/scratch.h"
 
-/* A segment has at least two cells. A shorter row has no scratch to reserve. */
+/* The walk takes scratch only for a segment of two or more columns, so a
+ * narrower row needs no reservation. */
 bool render_walk_thread_reserve(int cols)
 {
     return cols < 2 ||
@@ -22,7 +23,6 @@ struct look {
     uint16_t flags;
 };
 
-/* The state of one row walk. */
 struct walk {
     struct font_instance *fi;
     const struct terminal_frame *f;
@@ -36,7 +36,7 @@ struct walk {
     void *ctx;
     struct look head;
 
-    /* Row policy. An empty span means that the row has none. */
+    /* The selection and cursor spans of the row. An empty span means none. */
     struct wsap_vtcore_span sel, cur;
     uint32_t sel_fg, sel_bg;
     int cols, c0, c1;
@@ -63,7 +63,6 @@ static inline uint16_t cell_style(const struct wsap_vtcore_cell *c)
                       (c->width == 2 ? FONT_STYLE_WIDE : 0));
 }
 
-/* The decoration kind of the attributes, as a RENDER_UNDERLINE_* value. */
 static inline enum render_underline underline_kind(uint16_t attrs)
 {
     switch (wsap_vtcore_attr_underline(attrs)) {
@@ -83,7 +82,6 @@ static inline enum render_underline underline_kind(uint16_t attrs)
     }
 }
 
-/* The decoration and link bits of the attributes. */
 static inline uint16_t decor_flags(uint16_t attrs)
 {
     if (!(attrs & ATTR_DECOR_BITS))
@@ -126,10 +124,9 @@ static inline bool same_segment(const struct wsap_vtcore_cell *a, const struct w
 }
 
 /*
- * A segment is a maximal run of shapeable cells with one raw fg, raw bg,
- * and variant. Any other cell is a segment of its own. Each column is in
- * exactly one segment, so the segment of a column does not depend on where
- * the walk starts.
+ * The start of the segment that holds column `c`. A cell that is not
+ * shapeable is a segment of its own. Each column is in exactly one segment,
+ * so the segment of a column does not depend on where the walk starts.
  */
 static int segment_start(const struct wsap_vtcore_cell *cells, int c)
 {
@@ -160,9 +157,9 @@ static inline struct look blank_look(uint16_t flags)
 }
 
 /*
- * The look of a cluster. It gets its glyph_intern() handle. The epoch reads
- * around the intern give a glyph id of 0 when handles were reused during
- * it. The id keeps the epoch read after the intern.
+ * The look of a cluster. When the epoch changes during the intern, handles
+ * were reused and the glyph id is 0, so no cell caches it. Otherwise the id
+ * keeps the epoch read after the intern.
  */
 static __attribute__((noinline)) struct look
 cluster_look(const struct walk *w, const struct wsap_vtcore_cell *c, uint16_t flags)
@@ -179,14 +176,13 @@ cluster_look(const struct walk *w, const struct wsap_vtcore_cell *c, uint16_t fl
     };
 }
 
-/* Conceal hides a cell. Blink hides it in the off phase. */
 static inline bool hidden_cell(const struct walk *w, const struct wsap_vtcore_cell *c)
 {
     return (c->attrs & WSAP_VTCORE_ATTR_CONCEAL) ||
            ((c->attrs & WSAP_VTCORE_ATTR_BLINK) && !w->f->blink_on);
 }
 
-/* The look of a cell that is not a wide tail and not a never-written cell. */
+/* The look of a cell that is neither a wide tail nor a never-written cell. */
 static inline __attribute__((always_inline)) struct look
 cell_look(const struct walk *w, const struct wsap_vtcore_cell *c)
 {
@@ -210,8 +206,8 @@ cell_look(const struct walk *w, const struct wsap_vtcore_cell *c)
     return l;
 }
 
-/* A never-written cell (text 0, width 1) has the default colors and no
- * attributes. */
+/* A never-written cell has text 0 and a nonzero width. The core gives it the
+ * default colors and no attributes. */
 static inline bool never_written(const struct wsap_vtcore_cell *c)
 {
     return c->width != 0 && c->text == 0;
@@ -317,7 +313,6 @@ walk_cell(struct walk *w, int col, bool plain)
     emit(w, col, &rc, &l, g);
 }
 
-/* A cell of a row outside the snapshot: blank, in the default colors. */
 static inline __attribute__((always_inline)) void
 walk_blank(const struct walk *w, int col, bool plain)
 {
@@ -467,9 +462,10 @@ walk_span_cell(const struct walk *w, const struct glyph_span *span, int first, i
 
 /*
  * Sends the shaped cells [from, end) of one span. Runs of cells with no
- * flag go to the span function, at most SPAN_RUN_MAX at a time. The cells
- * of a segment share their raw colors, so a run resolves them once. A
- * column that the span function does not draw goes to the cell function.
+ * decoration, faint, blink, or conceal attribute go to the span function, at
+ * most SPAN_RUN_MAX at a time. The cells of a segment share their raw colors,
+ * so a run resolves them once. A column that the span function does not draw
+ * goes to the cell function.
  */
 static inline __attribute__((always_inline)) void
 walk_span_runs(struct walk *w, const struct glyph_span *span, int first, int from, int end,
@@ -683,10 +679,6 @@ static void walk_row_policy(struct walk *w)
     walk_row(w, false);
 }
 
-/*
- * The columns that the cursor covers: its cell, and the other half when
- * that cell is half of a two-column glyph.
- */
 static struct wsap_vtcore_span cursor_span(const struct walk *w, int x)
 {
     struct wsap_vtcore_span s = { .begin = x, .end = x + 1 };

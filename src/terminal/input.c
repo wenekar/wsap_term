@@ -57,8 +57,6 @@ static void scroll_view_lines(struct terminal *t, int delta_lines)
         window_redraw(t->window);
 }
 
-/* The terminal commands. The owner runs the tab commands and leaves the
- * rest to this function. */
 void terminal_handle_shortcut(struct terminal *t, input_command_id sc)
 {
     if (!t)

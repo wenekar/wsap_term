@@ -4,9 +4,9 @@ subdir('terminal')
 subdir('runtime')
 subdir('app')
 
-# The six libraries of the terminal tree. The UI framework is the
-# `wsap-framework` subproject, and its `wsap-*` dependencies supply the base,
-# input, paint, font, ui, theme, render, and ui_yasl code.
+# The six libraries of the terminal tree. The `wsap-*` dependencies come from
+# the `wsap-framework` subproject, which supplies the base, input, paint, font,
+# ui, theme, render, and ui_yasl code.
 
 pty_lib = static_library(
     'wsap-pty',
@@ -25,8 +25,9 @@ session_lib = static_library(
     install: false,
 )
 
-# The terminal grid renderer. It turns a terminal frame into cells and draws
-# them through the framework renderer. The terminal content owns it.
+# The terminal grid renderer: it turns a terminal frame into cells and draws
+# them through the framework renderer. It is part of the terminal content, not
+# of the framework.
 render_term_lib = static_library(
     'wsap-render-term',
     render_term_src,
@@ -47,9 +48,8 @@ terminal_lib = static_library(
     install: false,
 )
 
-# The app runtime. It owns the renderer use that outlives one window: frame
-# composition helpers, scene capture, thumbnails, and the GPU idle release. It
-# sits above the framework renderer and ui_yasl, and the app owns it.
+# The app runtime: frame composition helpers, scene capture, thumbnails, and
+# the GPU idle release. Its work outlives one window, and the app owns it.
 runtime_lib = static_library(
     'wsap-runtime',
     runtime_src,

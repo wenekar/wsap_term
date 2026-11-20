@@ -24,14 +24,16 @@
  * (see render_run_fn, render_text_fn, and render_span_fn). The calls
  * together cover each column once, in increasing column order.
  *
- * - The walk clamps [c0, c1) to [0, f->cols). A row outside the snapshot
- *   gives blank cells in the default colors, after reverse video.
+ * - The walk clamps [c0, c1) to the columns of the row: f->cols, or half of
+ *   it for a row that is not single (at least one column). An empty range
+ *   walks nothing. A row outside the snapshot gives blank cells in the
+ *   default colors, after reverse video.
  * - The output for a column does not depend on c0 and c1. The walk shapes
  *   each whole segment that touches [c0, c1), also the part outside the
  *   range. It calls the sink only for the columns inside the range.
  * - A segment is a run of shapeable cells (text above ' ', no cluster,
  *   width 1, no cell-aligned symbol) with the same raw fg, raw bg, and
- *   font variant. This is the rule of the old renderer.
+ *   font variant.
  * - Inside a shaped span, `cell` runs inside the glyph_span emit callback.
  *   For other cells, `cell` runs right after the glyph fetch, or with no
  *   fetch in a peek walk.

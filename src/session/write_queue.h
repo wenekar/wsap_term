@@ -29,23 +29,36 @@ struct session_write_queue {
 };
 
 /*
- * Binds write queue `queue` to event loop `loop` and destination descriptor `fd`.
- * Returns true on success, or false on allocation failure.
+ * Binds write queue `queue` to event loop `loop` and destination `fd`, which
+ * must be non-blocking. Call it on the loop thread. A bind discards pending
+ * bytes and the watch of an earlier binding.
+ * Returns true on success, or false with errno set when `fd` is not
+ * non-blocking, or when a descriptor or watch cannot be created.
  */
 bool session_write_queue_bind(struct session_write_queue *queue, struct yasl_loop *loop, int fd);
 
-/* Releases buffer memory and unregisters event loop watches for `queue`. */
+/*
+ * Releases the bytes, the watches, and the eventfd of `queue`, destroys its
+ * lock, and zeroes the struct for a later binding. Call it on the loop thread.
+ * It also accepts a queue that was never bound.
+ */
 void session_write_queue_destroy(struct session_write_queue *queue);
 
 /*
- * Enqueues raw bytes `data` of length `len` into write queue `queue`.
- * Returns true on success, or false on allocation failure.
+ * Enqueues raw bytes `data` of length `len`. Any thread can push, and the queue
+ * copies the bytes. A push writes what the pty accepts now and keeps the rest
+ * for the loop thread.
+ * Returns true when the queue takes every byte. A failure returns false with
+ * errno set to ENOBUFS (queue full), EINVAL (no destination), or ENOMEM.
  */
 bool session_write_queue_push_bytes(struct session_write_queue *queue, const char *data, size_t len);
 
 /*
- * Enqueues clipboard `text` into `queue`, optionally wrapping with bracketed paste escapes.
- * Returns true on success, or false on allocation failure.
+ * Enqueues clipboard `text` of length `len` for the pty, with bracketed paste
+ * escapes when `bracketed` is set. The terminal core filters the text.
+ * Returns true when the queue takes every byte. It returns false when `len`
+ * exceeds INPUT_TEXT_MAX (EMSGSIZE), when `text` is NULL with a nonzero `len`
+ * (EINVAL), when the queue is unbound (EINVAL), or when the push fails.
  */
 bool session_write_queue_push_paste(struct session_write_queue *queue, const char *text, size_t len,
                         bool bracketed);

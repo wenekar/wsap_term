@@ -40,10 +40,9 @@ struct app_tabs_spec {
     /* The tab table of the app. It owns every content. The window holds tab
      * IDs only. */
     struct app_tab_model *model;
-    /* Creates the content of each new tab of the window. */
     app_tabs_create_content_fn create_content;
     void *create_ud;
-    /* The calls into the content of each new tab. */
+    /* The content calls that every tab of the window uses. */
     const struct app_tab_content_ops *content_ops;
     app_tabs_open_window_fn open_window;
     app_tabs_preview_release_fn preview_release;
@@ -54,7 +53,7 @@ struct app_tabs_spec {
     /* A tab of the model that no window holds. The window holds it only on
      * success. */
     app_tab_id tab;
-    /* When true, initializes tab model without creating an initial tab. */
+    /* When true, the mount creates no initial tab. */
     bool empty;
 };
 
@@ -63,10 +62,11 @@ bool app_tabs_is(const struct window *window);
 
 /* The active content, or NULL. The model owns it. */
 void *app_tabs_active(const struct window *window);
-/* Returns the count of live active tabs. */
+/* Returns the count of live tabs. */
 int app_tabs_count(const struct window *window);
 int app_tabs_active_index(const struct window *window);
-/* Returns the reserved tab bar height in pixels. */
+/* Returns the reserved tab bar height in pixels, or 0 when the bar is
+ * hidden. */
 int app_tabs_bar_height(const struct window *window);
 
 bool app_tabs_new(struct window *window);
@@ -89,7 +89,7 @@ struct window *app_tabs_detach(struct window *window, int index);
 
 void app_tabs_set_theme(struct window *window,
                         const struct wsap_vtcore_theme *theme);
-/* Executes tab management shortcuts for `window`. */
+/* Runs the tab management shortcut `sc` for `window`. */
 void app_tabs_shortcut(struct window *window, input_command_id sc);
 /*
  * Retires expired closing tabs in `model` relative to `now_ms`.

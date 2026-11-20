@@ -11,7 +11,6 @@ struct terminal_key_set {
     uint64_t bits[(INPUT_SHORTCUT_KEY_COUNT + 63) / 64];
 };
 
-/* Returns true when set `s` holds key ID `id`. */
 static inline bool terminal_key_set_has(const struct terminal_key_set *s,
                                         unsigned id)
 {

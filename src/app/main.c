@@ -8,7 +8,6 @@
 #include "ui/ui.h"
 #include "ui/yasl/drop.h"
 
-/* The app ID. The environment names it, and the product name is the default. */
 static const char *app_id_from_env(void)
 {
     const char *name = getenv("WSAP_APP_NAME");
@@ -38,9 +37,9 @@ int main(int argc, char **argv)
 
     int result = app_run(app);
     app_destroy(app);
-    /* Remove the image files that drops wrote. */
+    /* A drop writes no file, so this call removes nothing. */
     drop_cleanup();
-    /* The process owns the UI tables. Free them once, after the last app. */
+    /* The UI caches are process-wide. Free them once, after the last app. */
     ui_shutdown();
     return result;
 }

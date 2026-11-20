@@ -13,6 +13,8 @@
  * does not miss the ack. */
 #define PTY_SYNC_TIMEOUT_ENV "WSAP_SYNC_TIMEOUT_MS"
 #define PTY_SYNC_TIMEOUT_MS 200
+/* Sync request bytes. The preload sends `p` when it leaves the fast pipe and
+ * `t` when it leaves the terminal. */
 #define PTY_SYNC_LEAVE_PIPE 'p'
 #define PTY_SYNC_LEAVE_TTY 't'
 

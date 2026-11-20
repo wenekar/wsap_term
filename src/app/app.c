@@ -27,7 +27,6 @@
 #include "util/app_identity.h"
 #include "app/identity.h"
 
-/* The app ID. The app files read it for a config name or a log prefix. */
 const char *app_name(void)
 {
     const struct app_identity *identity = app_identity_current();
@@ -163,8 +162,8 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
         render.repaint = ui.repaint;
         struct terminal_frame_source source = {0};
         if (content && terminal_frame_source(content, now_ms, &source)) {
-            /* The theme has no selection colors. The zero selection colors
-             * of the frame give the built-in ones. */
+            /* The terminal theme has no selection colors, so the zero values
+             * from terminal_frame_init select the built-in ones. */
             if (main) {
                 update_cursor_overlay(a, w, content, &source, &ui,
                                       frame->target.size, now_ms, &grid);
@@ -213,8 +212,8 @@ static void style_window(struct app *a, struct window *w)
                         a->palette.bg);
 }
 
-/* The terminal palette keys of a theme data block. The theme module does not
-   know them. The terminal app reads the "ansi" block. */
+/* The `ansi` keys of a theme data block. The theme module is generic and
+   does not know them. */
 static const char *const ansi_keys[] = {
     "foreground", "background",
     "color0", "color1", "color2", "color3", "color4", "color5", "color6",
@@ -335,8 +334,8 @@ static void app_drop_unused_gpu(struct app *a, const struct window *w)
     renderer_drop_gpu(a->renderer);
 }
 
-/* Creates the terminal content of a new tab. The adapter owns the terminal
- * and the tab model owns the adapter. */
+/* Creates the terminal content of a new tab. The tab model owns the terminal,
+ * and the terminal keeps the adapter state. */
 static void *app_create_terminal_content(void *ud, struct window *window,
                                          const char *cwd,
                                          struct vector2i content_size,
@@ -530,8 +529,8 @@ static void on_signal(void *ud, int signo)
     if (signo == SIGCHLD) {
         session_reap_exited();
     } else if (signo == SIGUSR1) {
-        /* input.conf is its own file, so it reloads also when the app
-         * config does not. */
+        /* input.conf is a separate file, so it reloads even when the app
+         * config reload fails. */
         window_host_reload_input(&a->host);
         struct app_config reloaded = {0};
         char *path = NULL;

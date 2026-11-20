@@ -1,8 +1,8 @@
 subdir('config')
 subdir('tabs')
 
-# The app rules are data, and the app library embeds them in a generated
-# header. `app_inc` makes the header visible to style.c.
+# The app stylesheet is data. It becomes a generated header in `app_src`, and
+# `app_inc` makes that header visible to style.c.
 app_css = custom_target(
     'app-css',
     input: files('../../assets/ui/app.css'),

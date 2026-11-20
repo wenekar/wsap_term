@@ -147,8 +147,8 @@ void app_tabs_mount_content(struct app_tabs *tabs)
     ui_widget_invalidate(&tabs->root, UI_WIDGET_INVALIDATE_MEASURE);
 }
 
-/* Runs an optional content call. The content kinds give no such call when
- * it has no meaning for them. */
+/* Runs an optional content call. A content leaves a call NULL when it has no
+ * meaning for it. */
 static void content_call(const struct app_tab *entry,
                          void (*fn)(void *content))
 {
@@ -253,8 +253,8 @@ static struct vector2i new_content_size(const struct app_tabs *tabs)
     return size;
 }
 
-/* The model finds the tab of a content and the view of its window. A tab
- * that no window holds gets no view. */
+/* Finds the tab of `content` in `model` and returns the view of the window
+ * that holds it. A tab that no window holds has no view. */
 static struct app_tabs *holder_of(struct app_tab_model *model, void *content,
                                   struct app_tab **out)
 {
@@ -373,8 +373,8 @@ static void close_window_later(struct window *window)
         window_close(window);
         return;
     }
-    /* The window surface frees its storage, so the close must not run inside
-     * the dispatch. Without memory for the queue the window stays open. */
+    /* The close must not run inside the dispatch. Without memory for the
+     * queue the window stays open. */
     (void)ui_surface_post(surface, close_window_post, window);
 }
 
@@ -502,14 +502,13 @@ bool app_tabs_bind(struct window *window, app_tab_id id, int slot)
     struct app_tab *entry = tabs ? app_tab_model_get(tabs->spec.model, id) : NULL;
     if (!entry || entry->window)
         return false;
-    /* Rejects binding if the tab is closing or if its child process exited. */
     if (!app_tab_is_live(entry) || app_tab_exited(entry))
         return false;
     void *content = entry->content;
     int at = insert_entry(tabs, id, slot);
     if (at < 0)
         return false;
-    /* Set the destination native targets before input resumes. The host
+    /* Binds the content to its new window before input resumes. The host
      * stays the model, so the reports follow the tab. */
     if (entry->ops->set_window)
         entry->ops->set_window(content, window);
@@ -540,8 +539,8 @@ bool app_tabs_move(struct window *from, int index, struct window *to, int slot)
         return false;
     if (app_tabs_bind(to, id, slot))
         return true;
-    /* No window took the tab, so it goes back to the source. A tab that no
-     * window holds then goes. */
+    /* No window took the tab, so it returns to the source. The model destroys
+     * the tab when the source is closed or refuses it. */
     if (window_closed(from) || !app_tabs_bind(from, id, index))
         app_tab_model_destroy(model, id);
     return false;
@@ -559,8 +558,8 @@ struct window *app_tabs_detach(struct window *window, int index)
         ? tabs->spec.open_window(tabs->spec.ud, id, NULL, window_size(window))
         : NULL;
     if (!next && !app_tabs_bind(window, id, index)) {
-        /* No window took the tab and the source did not take it back. The
-         * tab then goes. */
+        /* No window took the tab and the source did not take it back, so the
+         * model destroys it. */
         app_tab_model_destroy(tabs->spec.model, id);
         return NULL;
     }

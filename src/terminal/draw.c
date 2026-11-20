@@ -73,7 +73,7 @@ void terminal_update_ime(struct terminal *t, const struct wsap_vtcore *term)
 }
 
 /* The blink scan reads every cell of the snapshot. Run it again only when
- * the snapshot view version changed. A new version covers new cells. */
+ * the snapshot view version changed: a change of any cell changes it. */
 void terminal_scan_blink(struct terminal_view *view,
                          const struct wsap_vtcore_snapshot *snap)
 {

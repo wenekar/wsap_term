@@ -20,7 +20,8 @@ static bool pipe_enabled(void)
     return PTY_FASTPIPE_DEFAULT;
 }
 
-/* A pipe that the child and this process share with a large buffer. */
+/* Creates the pipe that the child and this process share, with a buffer of
+ * `buf_size` bytes. macOS uses a socket pair to set that size. */
 static int pty_fastpipe_create(int fds[2], int buf_size)
 {
 #if defined(__APPLE__)

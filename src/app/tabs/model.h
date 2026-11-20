@@ -19,8 +19,9 @@ struct wsap_vtcore_theme;
  * once. */
 typedef uint32_t app_tab_id;
 
-/* The calls that a tab content provides. A content gives no window and no
- * session of its own. The tab code owns it and calls these functions.
+/* The calls that a tab content provides. The tab code gets no window and no
+ * session from the content; it uses these calls. The tab model owns the
+ * content.
  *
  * The calls are optional, and a content leaves a call NULL when it has no
  * meaning for it. A zero table with a `destroy` call is thus a valid
@@ -28,7 +29,8 @@ typedef uint32_t app_tab_id;
 struct app_tab_content_ops {
     /* Frees the content. Required. */
     void (*destroy)(void *content);
-    /* Binds the content to `window`. NULL means that a transfer holds it. */
+    /* Binds the content to `window`. A NULL `window` means that the content
+     * is in transfer. */
     void (*set_window)(void *content, struct window *window);
     /* The root widget of the content, or NULL. */
     struct ui_widget *(*widget)(void *content);
@@ -41,7 +43,7 @@ struct app_tab_content_ops {
     /* The font size of the content in points, or 0. A new tab takes the
      * size of the active tab. */
     int (*font_size)(const void *content);
-    /* True when the content ended. An ended tab does not bind. */
+    /* True when the content ended. An ended tab cannot bind to a window. */
     bool (*exited)(const void *content);
     /* Resizes the content to its laid out widget. */
     void (*resize)(void *content);
@@ -57,13 +59,13 @@ struct app_tab_content_ops {
     void (*drop_files)(void *content, const char *data, size_t len);
     /* Shows or hides the file drop highlight of the content. */
     void (*drop_hover)(void *content, bool over);
-    /* Runs the content commands of `sc`. Returns true when the content
-     * size may have changed. */
+    /* Runs the content command for `sc`. Returns true when the content size
+     * may have changed. */
     bool (*shortcut)(void *content, input_command_id sc);
     /* Scrolls the content to its end. */
     void (*scroll_bottom)(void *content);
-    /* Gives the working directory of the content. Returns false if it has
-     * none. */
+    /* Writes the working directory of the content to `out`. Returns false
+     * when it has none. */
     bool (*cwd)(void *content, char *out, size_t size);
     /*
      * Renders the preview thumbnail of the content. It fits in `max_size`
@@ -134,14 +136,14 @@ struct app_tab_model {
 
 /*
  * Adds `content` to `model` and assigns a new tab ID. `ops` gives the calls
- * of the content. Destroys `content` and returns 0 on allocation failure.
+ * of the content. Destroys `content` and returns 0 on failure.
  */
 app_tab_id app_tab_model_add(struct app_tab_model *model, void *content,
                              const struct app_tab_content_ops *ops);
-/* Finds the tab associated with `id` in `model`. Returns NULL if not found. */
+/* Returns the tab with `id`, or NULL. */
 struct app_tab *app_tab_model_get(const struct app_tab_model *model,
                                   app_tab_id id);
-/* Finds the tab that holds `content` in `model`. Returns NULL if not found. */
+/* Returns the tab that holds `content`, or NULL. */
 struct app_tab *app_tab_model_find(const struct app_tab_model *model,
                                    const void *content);
 /* Removes tab `id` from `model` and frees its content and label. */

@@ -6,8 +6,8 @@
 #include "input/keybind.h"
 #include "ui/surface.h"
 
-/* A palette row that is not a command has an action above the command ID
- * range, so a widget command ID cannot look like a tab row. */
+/* A palette row that has no command ID gets an action above the command ID
+ * range, so a widget command ID cannot select a tab. */
 enum palette_action {
     PALETTE_ACT_SCROLL_BOTTOM = 1 << 16,
     PALETTE_ACT_NEW_WINDOW,

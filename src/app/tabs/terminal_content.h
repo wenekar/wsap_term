@@ -14,7 +14,7 @@ typedef bool (*app_tabs_preview_capture_fn)(void *ud, void **state,
                                             struct wsap_vtcore *term, int width,
                                             struct ui_image *image);
 
-/* The terminal settings that the app gives to the tab content adapter. The
+/* The terminal settings that the app passes to the tab content adapter. The
  * adapter copies the structure. */
 struct app_terminal_content_spec {
     const struct terminal_config *config;
@@ -28,9 +28,9 @@ struct app_terminal_content_spec {
 extern const struct app_tab_content_ops app_terminal_content_ops;
 
 /*
- * Creates a terminal content. The model owns the result and gets the host
- * reports of the terminal. `font_size` is the size of the active tab, or 0.
- * Returns NULL on failure.
+ * Creates a terminal content. The tab model owns the result. The content sends
+ * its host reports through `model`. `font_size` is the size of the active tab,
+ * or 0. Returns NULL on failure.
  */
 void *app_terminal_content_create(struct window *window,
                                   struct app_tab_model *model, const char *cwd,

@@ -3,13 +3,10 @@
 
 /*
  * The terminal grid of one frame: a snapshot and the values that render
- * reads from it. The source is terminal/render/term_frame.c.
- *
- * - The frame has no position. The grid position is render_grid.rect.
- *   The renderer finds scrolled content through the row keys.
- * - `palette_gen` is the palette version of the view.
- * - The app sets selection_fg and selection_bg. Zero means the built-in
- *   colors below.
+ * reads from it. The frame has no position: the grid position is
+ * render_grid.rect, and the renderer finds scrolled content through the row
+ * keys. The app sets selection_fg and selection_bg; zero means the built-in
+ * colors below.
  */
 
 #include <stdbool.h>
@@ -17,13 +14,13 @@
 
 #include <wsap_vtcore/wsap_vtcore.h>
 
-/* The selection colors that a zero selection_fg or selection_bg means. */
+/* The built-in selection colors. */
 #define TERMINAL_FRAME_SELECTION_FG 0xFFFFFFFFu
 #define TERMINAL_FRAME_SELECTION_BG 0xFF585B70u
 
 /*
  * - `source` NULL means: no grid. terminal_frame_valid() is then false.
- * - `cols` and `rows` are the snapshot size.
+ * - `palette_gen` is the palette version of the snapshot view.
  * - `cursor_y` < 0 means: draw no cursor. terminal_frame_init() sets -1
  *   when the cursor is hidden or invisible.
  * - `cursor_style` is an enum wsap_vtcore_cursor_style value.
@@ -31,7 +28,6 @@
  *   rows skip the selection lookup.
  * - `blink_on` is the text blink phase. A false value hides cells with the
  *   blink attribute. The app sets it from its clock.
- * - The struct fills exactly one 64-byte cache line.
  */
 struct terminal_frame {
     const struct wsap_vtcore_snapshot *source;
@@ -51,8 +47,9 @@ _Static_assert(sizeof(struct terminal_frame) == 64,
                "terminal_frame must fit in exactly one 64-byte cache line");
 
 /*
- * Populates `frame` with grid dimensions, palette data, and cursor state from `snap`.
- * Sets an invalid frame when `snap` is NULL or empty.
+ * Fills `frame` from `snap`: the grid size, the palette values, reverse
+ * video, the row selection flag, and the cursor. The frame is invalid when
+ * `snap` is NULL or has an empty size.
  */
 void terminal_frame_init(struct terminal_frame *frame, const struct wsap_vtcore_snapshot *snap,
                          bool cursor_visible);
@@ -62,11 +59,12 @@ bool terminal_frame_valid(const struct terminal_frame *frame);
 const struct wsap_vtcore_cell *terminal_frame_row(const struct terminal_frame *frame, int row);
 /* The content key of one row. It is 0 when the row is outside the snapshot. */
 uint64_t terminal_frame_row_key(const struct terminal_frame *frame, int row);
-/* The line size of one row: single, double-width, or a double-height half. */
+/* The line size of one row. An invalid row gives WSAP_VTCORE_LINE_SINGLE. */
 enum wsap_vtcore_line_size terminal_frame_row_size(const struct terminal_frame *frame, int row);
 /*
  * The selected columns of one row as a half-open span [begin, end),
- * clipped to [0, cols). An empty span means no selection on this row.
+ * clipped to the columns that the row draws. An empty span means that the
+ * row has no selection.
  */
 struct wsap_vtcore_span terminal_frame_row_selection(const struct terminal_frame *frame, int row);
 /* Resolves a cell color through the palette of the frame. */

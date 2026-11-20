@@ -14,8 +14,8 @@ enum flight_end {
     FLIGHT_ABANDONED,
 };
 
-/* Takes the dragged tab out of its carry window. Returns the tab when no
- * window holds it then, or 0. */
+/* Takes the dragged tab out of its carry window. Returns the tab ID when no
+ * window holds the tab afterwards, or 0. */
 static app_tab_id flight_take(struct app_tab_model *m)
 {
     struct app_tab *entry = app_tab_model_get(m, m->flight.tab);
@@ -28,7 +28,8 @@ static app_tab_id flight_take(struct app_tab_model *m)
         app_tabs_index_of(app_tabs_of(carried), entry->id));
 }
 
-/* A tab whose process ended, or a closing tab, goes instead of a landing. */
+/* True for a closing tab, or for a tab whose process ended. Such a tab is
+ * destroyed instead of landed. */
 static bool spent(const struct app_tab *entry)
 {
     return !app_tab_is_live(entry) || app_tab_exited(entry);
