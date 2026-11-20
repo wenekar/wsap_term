@@ -472,9 +472,11 @@ static accesskit_tree_update *build_update(
     }
     qsort(children, snapshot->count, sizeof(*children), compare_children);
     bool full = !published;
+    /* Every update names the focused node, and AccessKit aborts when that node
+     * is not in the tree. A partial update can name a node that an earlier
+     * update published. */
     accesskit_tree_update *update = accesskit_tree_update_with_capacity_and_focus(
-        (full ? snapshot->count : published->count) + (size_t)text->count,
-        full || ui_accessibility_publish_set_has(published, focus) ? focus : 0);
+        (full ? snapshot->count : published->count) + (size_t)text->count, focus);
     accesskit_tree_info *info = accesskit_tree_info_new(root);
     accesskit_tree_info_set_toolkit_name(info, "wsap-ui");
     accesskit_tree_update_set_tree_info(update, info);
