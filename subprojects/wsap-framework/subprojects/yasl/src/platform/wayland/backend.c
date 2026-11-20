@@ -370,7 +370,8 @@ static struct yasl_surface *impl_surface_create_gl(struct yasl_private_display *
     return &w->base;
 }
 
-/* An EGL call failed: a lost context means the display is gone, anything else is a bad argument. */
+/* An EGL call failed: a lost context means the display is gone, anything else
+ * is a bad argument. */
 static int egl_failure_errno(void)
 {
     return wayland_egl_sym.eglGetError && wayland_egl_sym.eglGetError() == EGL_CONTEXT_LOST ? ENOTCONN : EINVAL;

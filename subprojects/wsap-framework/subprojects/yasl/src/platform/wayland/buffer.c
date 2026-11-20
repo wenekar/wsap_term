@@ -228,7 +228,8 @@ static int apply_pending_geometry_locked(struct wayland_surface *w)
             (YASL_PRIVATE_STATE_MAXIMIZED | YASL_PRIVATE_STATE_FULLSCREEN | YASL_PRIVATE_STATE_TILED));
     int free_w = floating && w->floating_width > 0 ? w->floating_width : w->logical_width;
     int free_h = floating && w->floating_height > 0 ? w->floating_height : w->logical_height;
-    /* Compositor-suggested sizes are raised to the minimum; application sizes are used as given. */
+    /* Compositor-suggested sizes are raised to the minimum; application sizes
+     * are used as given. */
     bool suggested_w = !w->parent && w->req_width > 0;
     bool suggested_h = !w->parent && w->req_height > 0;
     int logical_w = suggested_w ? w->req_width : free_w;

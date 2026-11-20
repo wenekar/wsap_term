@@ -55,8 +55,8 @@ int main(void)
     assert(conn_display_monitors(&display.base, info, 4) == 1);
     struct yasl_monitor_info *m = &info[0];
     assert(strcmp(m->name, "DP-1") == 0);
-    /* The bounds are logical, divide the mode size by the scale, and follow
-     * the transform: a monitor at 90 degrees is taller than it is wide. */
+    /* The bounds are logical: they divide the mode size by the scale and
+     * follow the transform, so a monitor at 90 degrees is taller than wide. */
     assert(m->x == 1920 && m->y == 100);
     assert(m->width == 1080 && m->height == 1920);
     assert(m->work_x == m->x && m->work_width == m->width);

@@ -72,7 +72,8 @@ enum {
 - (instancetype)initWithFrame:(NSRect)frameRect cpuLayer:(BOOL)cpuLayer;
 @end
 
-/* Fill the title bar from below. Do not pass its presses to the frame view. */
+/* A view that shows the window background behind the title bar. Do not pass its
+ * presses to the surface view. */
 @interface YaslChromeView : NSView
 @end
 
@@ -367,8 +368,8 @@ static void drag_end(struct cocoa_display *d, enum yasl_private_drag_end how)
 
 static void render_and_commit(struct cocoa_surface *w);
 
-/* The capacity to use when `need` units do not fit in `cap`. It grows by half,
- * so a live resize that moves one pixel at a time does not reallocate each step. */
+/* Grows by half, so a live resize that moves one pixel at a time does not
+ * reallocate each step. */
 static size_t grown_capacity(size_t cap, size_t need)
 {
     size_t grown = cap + cap / 2;
@@ -513,7 +514,8 @@ static uint64_t cpu_trim_timer_cb(void *ud, yasl_private_timer_id id, uint64_t i
 /* Frees the spare slots after the surface shows no new frame for
  * CPU_TRIM_IDLE_NS. A surface that draws keeps its spare slots, because the
  * window server holds the last frames for some time and the next frame needs
- * a free slot. A trim at each commit makes a surface for almost every frame. */
+ * a free slot. A trim at each commit would allocate an IOSurface for almost
+ * every frame. */
 static void schedule_cpu_trim(struct cocoa_surface *w)
 {
     if (!w || !w->use_iosurface || w->closed || w->destroyed || w->trim_timer)
@@ -690,7 +692,8 @@ static void sync_size(struct cocoa_surface *w, bool force)
     yasl_private_surface_notify_configure(&w->base, (struct yasl_private_geometry){
             .size = size, .scale_120 = scale_120,
         });
-    /* A child can stay on the same display when its parent changes scale. */
+    /* A popup takes its scale from the parent, which can change while the popup
+     * keeps its display. */
     if (rescaled)
         for (int i = 0; i < darwin_ctx.count; i++)
             if (darwin_ctx.windows[i]->parent == w)
@@ -737,7 +740,7 @@ static struct yasl_private_key_event cocoa_key_event(NSEvent *ev, enum yasl_key_
         .native_code = ev.keyCode,
         .text_input = YASL_KEY_TEXT_NONE,
     };
-    /* characters properties are invalid on flagsChanged events. */
+    /* The characters properties are valid only on key down and key up events. */
     if (ev.type == NSEventTypeKeyDown || ev.type == NSEventTypeKeyUp) {
         k.codepoint = cocoa_key_label([ev charactersByApplyingModifiers:0]);
         k.shifted = cocoa_key_label([ev charactersByApplyingModifiers:NSEventModifierFlagShift]);
@@ -1886,7 +1889,8 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
     /* A new preedit starts at no marked location until a text field gives one. */
     w->marked_utf16_location = 0;
     /* A dead key composes before the surface has a text field, so the preedit
-     * feedback does not depend on one. Only the range in the text does. */
+     * feedback does not depend on one. The range into the surrounding text is
+     * the only part that needs the text field. */
     if (w->base.text_input_active) {
         size_t range_begin, range_end;
         if (!text_edit_range(w, replacementRange, true, &range_begin, &range_end)) return;
@@ -2274,8 +2278,8 @@ bool cocoa_surface_present(struct cocoa_surface *w, const struct yasl_private_fr
                     toTexture:drawable.texture destinationSlice:0 destinationLevel:0
             destinationOrigin:MTLOriginMake(0, 0, 0)];
         [blit endEncoding];
-        /* The command reads the buffer from the commit on, and it returns the
-         * buffer when it completed. */
+        /* The command reads the buffer from the commit on and returns it when it
+         * completes. */
         software_stage_finish(w->software_stages, stage, command);
         if (w->transaction) {
             /* The layer presents with the Core Animation transaction of the live
@@ -3002,7 +3006,8 @@ void cocoa_surface_destroy(struct cocoa_surface *w)
     }
     w->buttons = 0;
     w->tablet_down = false;
-    /* A destroyed surface releases the pointer lock of the display. */
+    /* The mouse association is process-wide, so a destroyed surface must release
+     * the lock it holds. */
     if (w->pointer_locked) {
         w->pointer_locked = false;
         w->input.relative = false;

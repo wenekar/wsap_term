@@ -285,7 +285,8 @@ struct wayland_display {
     struct conn_drag drag;
     struct wayland_surface *surfaces;
     struct wayland_surface *dead;
-    /* While lost: retries a connection; stale marks objects of the dead one. */
+    /* Retries the connection while lost; stale records that the objects still
+     * belong to the dead connection until the retry releases them. */
     yasl_private_timer_id reconnect_timer;
     uint64_t reconnect_delay_ns;
     uint64_t next_tool_id;
@@ -375,7 +376,7 @@ struct wayland_surface {
     struct yasl_private_rect2i content;
     struct yasl_private_rect2i ime_caret;
     struct yasl_private_popup_spec popup_pending_spec;
-    /* Limits of the user's resize, in logical units; a zero axis is no limit. */
+    /* Size limits set by the application, in logical units; a zero axis is no limit. */
     struct yasl_private_vector2i min_size, max_size;
     uint32_t ime_delete_before, ime_delete_after;
     int ime_cursor_begin;
@@ -384,7 +385,8 @@ struct wayland_surface {
     int ime_shown_begin, ime_shown_end;
     int floating_width, floating_height;
     int cur;
-    /* Buffer holding the last presented frame, valid while has_shown is set. */
+    /* Index of the buffer that holds the last presented frame; valid while
+     * has_shown is set. */
     int shown;
     int width, height;
     int logical_width, logical_height;
@@ -493,7 +495,8 @@ void seat_bind(struct wayland_display *c, struct wl_registry *registry,
 bool seat_remove(struct wayland_display *c, uint32_t name);
 void seat_destroy(struct seat *s);
 void seat_note_input(struct seat *s, uint32_t serial);
-/* Serial of the latest press while a pointer button or tablet tip is still down, else 0. */
+/* Serial of the latest press while a pointer button, tablet tip, or touch
+ * contact is down, else 0. */
 uint32_t seat_held_press_serial(const struct seat *s);
 /* Locks the pointer through the seat that last delivered input, or any seat with a pointer. */
 void surface_lock_preferred(struct wayland_surface *w);

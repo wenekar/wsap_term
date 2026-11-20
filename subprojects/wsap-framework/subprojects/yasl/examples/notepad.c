@@ -13,7 +13,7 @@
  * - Word Wrap toggle (Ctrl+W) & Horizontal Scrolling
  * - Zoom In / Out / Reset (Ctrl+=, Ctrl+-, Ctrl+0)
  * - Mouse selection with click, drag, double-click (word), triple-click (line)
- * - Unsaved changes confirmation on exit
+ * - Quit (Ctrl+Q) without a prompt to save changes
  * - Real-time asynchronous background stats via a worker and yasl_wake()
  */
 
@@ -481,7 +481,6 @@ static void editor_new_file(struct editor *ed)
     editor_notify_worker(ed);
 }
 
-/* Selection helper */
 static void get_selection_bounds(const struct editor *ed, int *r0, int *c0, int *r1, int *c1)
 {
     if (!ed->has_selection) {
@@ -634,7 +633,6 @@ static void editor_find_next(struct editor *ed, const char *query, bool forward)
                 }
             }
         } else {
-            /* Backward search on line */
             int limit = (r == ed->cursor_row && step == 0) ? ed->cursor_col - qlen : len - qlen;
             for (int c = limit; c >= 0; c--) {
                 if (strncmp(line + c, query, (size_t)qlen) == 0) {
@@ -829,7 +827,6 @@ static void handle_backspace(struct editor *ed, bool ctrl)
     editor_save_undo(ed);
     char *line = ed->lines[ed->cursor_row];
     if (ctrl) {
-        /* Delete previous word */
         int prev_c = find_word_prev(line, ed->cursor_col);
         int deleted = ed->cursor_col - prev_c;
         if (deleted > 0) {
@@ -872,7 +869,6 @@ static void handle_delete(struct editor *ed, bool ctrl)
     char *line = ed->lines[ed->cursor_row];
     int len = (int)strlen(line);
     if (ctrl) {
-        /* Delete next word */
         int next_c = find_word_next(line, ed->cursor_col);
         int deleted = next_c - ed->cursor_col;
         if (deleted > 0) {
@@ -931,7 +927,6 @@ static void insert_date_time(struct editor *ed)
     insert_text(ed, buf, strlen(buf));
 }
 
-/* Prompt actions */
 static void prompt_execute(struct editor *ed)
 {
     switch (ed->prompt) {
@@ -1115,7 +1110,6 @@ static void on_event(struct editor *ed, const yasl_event *ev)
             bool ctrl = (ev->mods & (YASL_MOD_CTRL | YASL_MOD_SUPER)) != 0;
             bool shift = (ev->mods & YASL_MOD_SHIFT) != 0;
 
-            /* Interactive Prompt Mode */
             if (ed->prompt != PROMPT_NONE) {
                 if (ev->key.key == YASL_KEY_ESCAPE) {
                     ed->prompt = PROMPT_NONE;
@@ -1128,7 +1122,6 @@ static void on_event(struct editor *ed, const yasl_event *ev)
                 break;
             }
 
-            /* Function Keys */
             if (ev->key.key == YASL_KEY_F3) {
                 editor_find_next(ed, ed->search_query, !shift);
                 editor_request_render(ed);
@@ -1187,17 +1180,17 @@ static void on_event(struct editor *ed, const yasl_event *ev)
                     editor_set_status(ed, ed->word_wrap ? "Word Wrap: ON" : "Word Wrap: OFF");
                     editor_request_render(ed);
                     return;
-                case YASL_KEY_EQUAL: /* Zoom In */
+                case YASL_KEY_EQUAL:
                     if (ed->zoom_offset < 2) ed->zoom_offset++;
                     editor_set_status(ed, "Zoom In");
                     editor_request_render(ed);
                     return;
-                case YASL_KEY_MINUS: /* Zoom Out */
+                case YASL_KEY_MINUS:
                     if (ed->zoom_offset > -1) ed->zoom_offset--;
                     editor_set_status(ed, "Zoom Out");
                     editor_request_render(ed);
                     return;
-                case YASL_KEY_0: /* Zoom Reset */
+                case YASL_KEY_0:
                     ed->zoom_offset = 0;
                     editor_set_status(ed, "Zoom Reset");
                     editor_request_render(ed);
@@ -1244,7 +1237,6 @@ static void on_event(struct editor *ed, const yasl_event *ev)
                 }
             }
 
-            /* Tab key */
             if (ev->key.key == YASL_KEY_TAB) {
                 handle_tab(ed, shift);
                 editor_request_render(ed);
@@ -1443,15 +1435,12 @@ static void on_event(struct editor *ed, const yasl_event *ev)
 
     case YASL_EVENT_SCROLL:
         if (ev->mods & (YASL_MOD_CTRL | YASL_MOD_SUPER)) {
-            /* Ctrl + Wheel = Zoom */
             if (ev->scroll.lines_y > 0 && ed->zoom_offset < 2) ed->zoom_offset++;
             else if (ev->scroll.lines_y < 0 && ed->zoom_offset > -1) ed->zoom_offset--;
         } else if (ev->mods & YASL_MOD_SHIFT) {
-            /* Shift + Wheel = Horizontal scroll */
             ed->scroll_x -= (int)(ev->scroll.lines_y * 3.0);
             if (ed->scroll_x < 0) ed->scroll_x = 0;
         } else {
-            /* Normal vertical scroll */
             ed->scroll_y -= (int)(ev->scroll.lines_y * 3.0);
             if (ed->scroll_y < 0) ed->scroll_y = 0;
             if (ed->scroll_y >= ed->line_count) ed->scroll_y = ed->line_count - 1;
@@ -1510,20 +1499,17 @@ static void editor_render(struct editor *ed)
     uint32_t caret_col = 0xfff38ba8;
     uint32_t status_accent = 0xffa6e3a1;
 
-    /* 1. Clear background */
     fill_rect(pix, w, h, 0, 0, w, h, bg_main);
 
-    /* 2. Top Header Menu bar */
     fill_rect(pix, w, h, 0, 0, w, header_h, bg_header);
     char header_str[256];
     snprintf(header_str, sizeof(header_str),
              "^N New  ^O Open  ^S Save  ^F Find  ^H Repl  ^G Goto  ^Z Undo  F5 Time  ^W Wrap");
     draw_string(pix, w, h, 12 * scale, 6 * scale, header_str, text_header, scale);
 
-    /* 3. Gutter background */
     fill_rect(pix, w, h, 0, header_h, gutter_w, h - header_h - status_h, bg_gutter);
 
-    /* 4. Ensure cursor is in visible vertical and horizontal bounds */
+    /* Clamp the scroll so the caret stays visible. */
     int visible_lines = (h - header_h - status_h) / line_h;
     if (ed->cursor_row < ed->scroll_y) {
         ed->scroll_y = ed->cursor_row;
@@ -1543,25 +1529,21 @@ static void editor_render(struct editor *ed)
         ed->scroll_x = 0;
     }
 
-    /* 5. Active line highlight */
     int active_line_y = header_h + (ed->cursor_row - ed->scroll_y) * line_h;
     if (active_line_y >= header_h && active_line_y < h - status_h) {
         fill_rect(pix, w, h, gutter_w, active_line_y, w - gutter_w, line_h, bg_active_line);
     }
 
-    /* 6. Render lines, gutter, and selection */
     for (int i = 0; i < visible_lines; i++) {
         int line_idx = ed->scroll_y + i;
         if (line_idx >= ed->line_count) break;
 
         int y = header_h + i * line_h + 4 * scale;
 
-        /* Line number */
         char num_buf[16];
         snprintf(num_buf, sizeof(num_buf), "%3d", line_idx + 1);
         draw_string(pix, w, h, 8 * scale, y, num_buf, text_gutter, scale);
 
-        /* Text and selection highlighting */
         const char *line_text = ed->lines[line_idx];
         int text_x = gutter_w + 8 * scale;
         int col = ed->scroll_x;
@@ -1576,7 +1558,6 @@ static void editor_render(struct editor *ed)
         }
     }
 
-    /* 7. Caret */
     if (ed->caret_visible && active_line_y >= header_h && active_line_y < h - status_h) {
         int caret_x = gutter_w + 8 * scale + (ed->cursor_col - ed->scroll_x) * char_w;
         if (caret_x >= gutter_w && caret_x < w) {
@@ -1585,7 +1566,6 @@ static void editor_render(struct editor *ed)
         }
     }
 
-    /* 8. Bottom Status bar or Mini-buffer Prompt */
     int status_y = h - status_h;
     if (ed->prompt != PROMPT_NONE) {
         fill_rect(pix, w, h, 0, status_y, w, status_h, bg_prompt);

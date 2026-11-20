@@ -14,8 +14,6 @@ extern "C" {
 struct wl_display;
 struct wl_surface;
 
-/* Return borrowed Wayland handles (expire on display/surface destruction).
- * Return NULL if display/surface is not a Wayland object or NULL. */
 /**
  * Get the borrowed Wayland connection for an object of the matching backend.
  * @param d Live display, or NULL.

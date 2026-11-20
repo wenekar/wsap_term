@@ -21,7 +21,7 @@ double yasl_private_clock_link_period(double timestamp, double duration, double 
      * The gap to the target time is the fallback: it covers more than one
      * frame when the link skips frames. */
     double period = duration > 0.0 ? duration : target - timestamp;
-    /* Reject a missing value, and a NaN, at once. */
+    /* The negated comparisons also reject a NaN period. */
     if (!(period >= FRAME_MIN_S) || !(period <= FRAME_MAX_S))
         return 0.0;
     return period;

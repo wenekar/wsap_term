@@ -550,9 +550,9 @@ int keyboard_repeat_init(struct seat *s)
     return 0;
 }
 
-/* Modifier bits of the seat's current state. Key and pointer events both call
- * this, so one keyboard state gives one modifier set on either path. Bit i is
- * the YASL_PRIVATE_MOD_* value of input_mod_names[i]. */
+/* Returns the modifier bits of the seat's current state. Key and pointer
+ * events both call this, so one keyboard state gives one modifier set on
+ * either path. Bit i is the YASL_PRIVATE_MOD_* value of input_mod_names[i]. */
 int seat_modifiers(struct seat *s)
 {
     if (unlikely(!s || !s->xkb_state)) return 0;

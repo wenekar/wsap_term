@@ -143,7 +143,8 @@ static const struct wl_data_source_listener source_listener = {
     .action = source_action,
 };
 
-/* A seat whose press is still held over the origin window; its serial starts the drag. */
+/* Returns the seat whose press is still held over the origin window; its serial
+ * starts the drag. */
 static struct seat *drag_seat(struct wayland_display *c, struct wayland_surface *origin)
 {
     struct wayland_surface *root = surface_root(origin);

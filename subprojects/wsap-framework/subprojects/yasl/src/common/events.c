@@ -8,7 +8,7 @@
 #include <string.h>
 
 struct event_node {
-    /* CL 0: hot unregister and queue walk fields, plus event header. */
+    /* Cache line 0: hot unregister and queue walk fields, plus event header. */
     struct event_node *next;
     uint64_t queue_id;
     struct yasl_private_event event;
@@ -109,7 +109,6 @@ void yasl_private_events_close(struct yasl_private_display *d)
     d->events = NULL;
     dispose_list(state, state->head);
     dispose(state, state->last);
-    /* The dispose calls above filled the pool. Free the nodes now. */
     pool_clear(state);
     yasl_private_mutex_destroy(&state->mutex);
     free(state);

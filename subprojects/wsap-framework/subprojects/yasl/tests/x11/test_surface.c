@@ -70,7 +70,7 @@ static void test_raw_motion(void)
     assert(display.raw_valid);
     assert(display.raw_delta.x == 2 && display.raw_delta.y == 0);
 
-    /* Both axes keep their own index. */
+    /* Each axis reads the value at its own position among the set bits. */
     display.raw_valid = false;
     XISetMask(mask, 1);
     values[0] = 4;

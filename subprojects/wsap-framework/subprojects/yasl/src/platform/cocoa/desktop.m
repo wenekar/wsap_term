@@ -179,7 +179,8 @@ size_t desktop_default_locale(char *buf, size_t cap)
     return copy_str(buf, cap, name);
 }
 
-/* The Library folders of the user; the app folders sit under its own name. */
+/* Maps each kind of user directory to its macOS search path. The app
+ * directories sit under the app ID. */
 size_t desktop_user_dir(enum yasl_user_dir which, const char *app_id, char *buf, size_t cap)
 {
     @autoreleasepool {

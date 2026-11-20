@@ -1,8 +1,9 @@
 /* External drags, driven from the compositor end of a socketpair. A drag takes
- * the first type that the surface lists and the drag offers. A drag with no
- * such type is refused: the client accepts no type, asks for no data, and the
- * application gets no event. A popup refuses every drag. An accepted drag reports hover with its type, and
- * its drop delivers the bytes of that type as one DROP event. */
+ * the highest-ranked type that the surface lists and the drag offers. A drag
+ * with no such type is refused: the client accepts no type, asks for no data,
+ * and the application gets no event. A popup refuses every drag. An accepted
+ * drag reports hover with its type, and its drop delivers the bytes of that
+ * type as one DROP event. */
 #include "platform/wayland/internal.h"
 #include "wire.h"
 #include <assert.h>

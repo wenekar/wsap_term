@@ -3,12 +3,13 @@
  * Portable desktop surfaces, CPU drawing, input, and display dispatch.
  *
  * All calls and callbacks use the display's opening thread (the main thread on
- * Cocoa), unless explicitly documented otherwise. Userdata is borrowed; callback
- * tables and creation specs are copied. The display drives its loop: each
- * yasl_loop_step dispatches it. Do not recursively step or flush, or destroy a
- * display/loop while a step or a callback is active. Destroy child
- * popups before parents, surfaces before displays, displays before borrowed loops.
- * Surface destruction from its own callback is supported; stop using it immediately.
+ * Cocoa), unless explicitly documented otherwise. Userdata is borrowed until the
+ * callbacks are replaced or the object or drag ends; creation specs, strings,
+ * callback tables, and drag listeners are copied. The display drives its loop:
+ * each yasl_loop_step dispatches it. Do not recursively step or flush, or destroy
+ * a display/loop while a step or a callback is active. Destroy child popups before
+ * parents, surfaces before displays, displays before borrowed loops. Surface
+ * destruction from its own callback is supported; stop using it immediately.
  *
  * Zero-initialize option and callback structs before setting fields. Pointers to
  * destroyed objects are invalid, even for getters and destroy functions. NULL
@@ -22,8 +23,7 @@
  * positions, damage, IME carets, popup specs, and drag offsets use device pixels.
  * Coordinates have their origin at the upper left; x grows right and y grows down.
  * Scale is an integer ratio with YASL_PRIVATE_SCALE_UNIT (120) representing 1x.
- * See the application guide for the display-wide dispatch/poll/flush cycle
- * and backend limits.
+ * The examples show the display-wide event wait cycle.
  */
 #ifndef YASL_PRIVATE_H
 #define YASL_PRIVATE_H
@@ -80,8 +80,6 @@ struct yasl_private_rect2i {
 /** Backend minimum logical dimension used when constraining toplevel sizes. */
 #define YASL_PRIVATE_MIN_LOGICAL_PX 64
 
-/* Nearest integer, ties away from zero. Zero scale returns zero; finite
- * out-of-range results saturate. Non-finite logical coordinates return zero. */
 /** Convert a logical coordinate to device pixels, rounding ties away from zero.
  * @param logical Logical coordinate; non-finite values return zero.
  * @param scale_120 Scale numerator; zero returns zero.
@@ -346,7 +344,7 @@ struct yasl_private_pointer_pen {
     int8_t tilt_y;
 };
 
-/** Event tag. Each tag lists the union member it selects. */
+/** Event tag. A tag with a payload names the union member it selects. */
 enum yasl_private_event_type {
     YASL_PRIVATE_EVENT_NONE = 0,
 
@@ -412,7 +410,7 @@ enum yasl_private_scroll_valid { YASL_PRIVATE_SCROLL_LINES = 1u, YASL_PRIVATE_SC
  * mouse input. Track contact with DOWN/UP of the primary button, not pressure.
  * This is not a multi-contact touch API. */
 struct yasl_private_pointer_event {
-    /* CL 0: hot motion and button fields. */
+    /* Cache line 0: hot motion and button fields. */
     /** MOTION: device-pixel movement since the previous sample on this surface.
      * Unbounded under YASL_PRIVATE_POINTER_RELATIVE; zero after enter, leave, or reset. */
     struct yasl_private_vector2d delta;
@@ -438,7 +436,7 @@ struct yasl_private_pointer_event {
     uint8_t device;
     uint8_t scroll_valid, scroll_source, scroll_phase;
     bool scroll_momentum;
-    /* CL 1: scroll payloads. */
+    /* Cache line 1: scroll payloads. */
     struct yasl_private_vector2d pixel_scroll;
     /** SCROLL: fractional line offsets after system preferences; positive right/down. */
     struct yasl_private_vector2d scroll;
@@ -568,16 +566,6 @@ struct yasl_private_event {
     };
 };
 
-/* Ownership and threading
- * All calls and callbacks run on the display's opening thread (main thread on
- * Cocoa). Displays borrow supplied loops; destroy surfaces before displays,
- * popups before parents, and displays before their supplied loop.
- * Specs, strings, callback tables and drag listeners are copied during calls.
- * Userdata is borrowed until callbacks are removed or the object/drag ends.
- * Surface destruction is allowed from its callbacks; display/loop destruction
- * during dispatch or callbacks is not supported.
- */
-
 /* Callbacks */
 /** Internal CPU presenter callback, copied on installation. */
 struct yasl_private_window_cbs {
@@ -602,7 +590,6 @@ struct yasl_private_display_spec {
     enum yasl_private_backend backend;
 };
 
-/* Return NULL and set errno if the requested backend cannot open. */
 /**
  * Open a desktop connection and its event machinery.
  * @param loop Borrowed loop, or NULL to create a display-owned loop.
@@ -664,8 +651,6 @@ int yasl_private_display_modifiers(const struct yasl_private_display *d);
  */
 int yasl_private_display_double_click_ms(const struct yasl_private_display *d);
 
-/* A successful drag invokes the copied listener's non-NULL end once, including
- * cancel and display close. Failed starts do not invoke it. */
 /**
  * Start a surface drag from a recent pointer press.
  * @param d Display that owns origin.
@@ -806,11 +791,6 @@ void yasl_private_surface_set_title(struct yasl_surface *s, const char *title);
  * animate. Without YASL_PRIVATE_CAP_FRAME_PACING, throttle animation with a timer.
  */
 void yasl_private_surface_schedule_redraw(struct yasl_surface *s);
-/* Present exactly the target supplied to the current draw callback, at most
- * once. Targets expire when that callback returns or the surface is destroyed.
- * damage is required: n must be -1 or 0..YASL_PRIVATE_DAMAGE_MAX. Rectangles must have
- * nonnegative extents; they are clipped to the target. Invalid input returns
- * false without consuming the frame. See yasl/yasl.h for native rendering. */
 /**
  * Submit the current draw target at most once.
  * @param s Surface currently being drawn.
@@ -821,6 +801,7 @@ void yasl_private_surface_schedule_redraw(struct yasl_surface *s);
  * input does not consume the frame. All pixels must be initialized even with
  * partial damage. The backend may upload all pixels. Success records submission,
  * not confirmed scanout. The target expires when draw returns or s is destroyed.
+ * See yasl/yasl.h for native rendering.
  */
 bool yasl_private_surface_present(struct yasl_surface *s, const struct yasl_private_framebuffer *fb,
                                   const struct yasl_private_damage_list *damage);
@@ -943,7 +924,6 @@ bool yasl_private_clipboard_set(struct yasl_private_display *d, enum yasl_privat
  */
 uint64_t yasl_private_clipboard_request(struct yasl_surface *s, enum yasl_private_selection selection);
 
-/* Current device-pixel size and scale, matching the configure callback. */
 /**
  * Read current device-pixel size and scale together.
  * @param s Surface, or NULL.
@@ -959,16 +939,14 @@ struct yasl_private_geometry yasl_private_surface_geometry(const struct yasl_sur
  * reports suspension for a minimized window.
  */
 uint32_t yasl_private_surface_state(const struct yasl_surface *s);
-/* Timing uses monotonic nanoseconds. Check source before treating timestamps
- * as presentation confirmation. refresh/next_present are estimates. Without
- * YASL_PRIVATE_CAP_FRAME_PACING, redraws run on flush without display synchronization.
- * Tearing may bypass pacing even when the capability is present. */
 /**
  * Read frame timing estimates and their provenance.
  * @param s Surface, or NULL.
  * @return Current timing, or a zero-initialized result for NULL.
  * Timestamps use monotonic nanoseconds. Inspect source before treating a timestamp
  * as confirmation of presentation. Refresh and next-present values are estimates.
+ * Without YASL_PRIVATE_CAP_FRAME_PACING, redraws run on flush without display
+ * synchronization. Tearing may bypass pacing even when the capability is present.
  */
 struct yasl_private_timing yasl_private_surface_timing(const struct yasl_surface *s);
 /**
@@ -979,8 +957,6 @@ struct yasl_private_timing yasl_private_surface_timing(const struct yasl_surface
  * Use this to advance animations; it is not presentation feedback.
  */
 uint64_t yasl_private_surface_frame_time_ns(struct yasl_surface *s, uint64_t now);
-/* Set the mouse and tablet cursor for this surface, including future entries.
- * YASL_PRIVATE_CURSOR_HIDDEN stays hidden until another cursor is selected. */
 /**
  * Select the surface's system mouse and tablet cursor.
  * @param s Surface.
@@ -996,7 +972,6 @@ void yasl_private_surface_set_cursor(struct yasl_surface *s, enum yasl_private_c
  */
 void yasl_private_surface_set_background_color(struct yasl_surface *s, uint32_t bg);
 
-/* IME Support: preedit is borrowed until the next dispatch or destruction. */
 /**
  * Read the current uncommitted UTF-8 composition text.
  * @param s Surface, or NULL.

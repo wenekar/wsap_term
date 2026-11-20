@@ -63,14 +63,14 @@ static struct yasl_private_event take(struct wayland_surface *w, enum yasl_priva
     return ev;
 }
 
-/* Holds the real modifier that name maps to in the keymap. */
+/* Returns the real modifier that `name` maps to in the keymap. */
 static xkb_mod_mask_t real_mod(struct fixture *f, const char *name)
 {
     return 1u << xkb_keymap_mod_get_index(f->s.xkb_keymap, name);
 }
 
-/* Holds depressed modifiers, then checks the mods of a key press and of a
- * button press in that state. */
+/* Depresses modifiers, then checks the mods of a key press and of a button
+ * press in that state. */
 static void expect_mods(struct fixture *f, xkb_mod_mask_t depressed, unsigned expected)
 {
     keyboard_listener.modifiers(&f->s, NULL, 1, depressed, 0, 0, 0);

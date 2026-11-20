@@ -46,8 +46,8 @@ struct post {
     struct post *next;
 };
 
-/* Signals this loop watches. Each entry owns one slot in the process-wide
- * router below. */
+/* Signals this loop watches, with the slot each one holds in the
+ * process-wide table below. */
 struct signal_entry {
     int signo;
     int slot;
@@ -83,20 +83,21 @@ struct yasl_loop {
     int timer_capacity;
     int timer_firing_depth;
 #if defined(__linux__)
-    /* -1 while the loop uses poll(2), as it does for few descriptors. */
+    /* The epoll instance, or -1 while the loop waits with poll(2), as it does
+     * for few descriptors. */
     int epoll_fd;
     struct epoll_event *epoll_events;
 #endif
 
-    /* Set by yasl_loop_quit; run clears it when it returns. */
+    /* Set by yasl_loop_quit and cleared by yasl_loop_run before it returns. */
     bool quit;
     bool stepping;
     bool has_driver;
 };
 
-/* A signal can wake several loops. The handler walks a fixed slot table
- * without a lock, so every field is atomic. The mutex serializes the
- * process-wide sigaction and slot changes. */
+/* A signal can wake several loops, so the handler walks the fixed slot table
+ * for its signal without taking a lock; every slot field is atomic.
+ * signal_mutex serializes the process-wide sigaction state and slot changes. */
 #define SIGNAL_SLOTS 16
 
 struct signal_slot {
@@ -135,8 +136,8 @@ static void run_signals(struct yasl_loop *l)
 {
     struct signal_watch *w = l->signals;
     if (!w) return;
-    /* A callback may unwatch and free the watch, so keep the count local and
-     * copy each entry before the callback. */
+    /* yasl_loop_unwatch_signals() in a callback frees the watch, so the count
+     * is copied and each entry is copied before its callback runs. */
     int count = w->count;
     for (int i = 0; i < count; i++) {
         if (l->signals != w) return;
@@ -147,7 +148,8 @@ static void run_signals(struct yasl_loop *l)
     }
 }
 
-/* Only wakes the wait; the step runs posts and signals last. */
+/* Drains the wake pipe. Posts and signals run at the end of the step, so a
+ * wake only has to end the wait. */
 static void loop_wake_cb(void *ud, int fd, short revents)
 {
     (void)ud; (void)revents;
@@ -207,7 +209,7 @@ yasl_loop *yasl_loop_create(void)
 #endif
     l->wake_rfd = p[0];
     l->wake_wfd = p[1];
-    /* The first watch fits the initial capacity, so it cannot fail. */
+    /* The wake watch fits the initial capacity, so this call cannot fail. */
     l->wake_watch = yasl_loop_add_fd(l, l->wake_rfd, POLLIN, loop_wake_cb, l);
     return l;
 }
@@ -285,8 +287,9 @@ static void epoll_disable(struct yasl_loop *l)
     l->epoll_events = NULL;
 }
 
-/* A descriptor that epoll rejects (a regular file, or a duplicate) falls back
- * to poll for the whole loop, so behavior stays the same. */
+/* A descriptor that epoll rejects, such as a regular file or a second watch on
+ * one descriptor, makes the whole loop fall back to poll(2), which reports the
+ * same readiness. */
 static bool epoll_enable(struct yasl_loop *l)
 {
     int fd = epoll_create1(EPOLL_CLOEXEC);
@@ -413,7 +416,8 @@ short yasl_private_loop_revents(const yasl_loop *l, int id)
 
 static void wake_write(int fd)
 {
-    /* A full pipe already wakes the loop, so EAGAIN needs no retry. */
+    /* A full pipe already wakes the loop, so EAGAIN needs no retry. errno is
+     * restored because a signal handler calls this function. */
     int saved = errno;
     char b = 1;
     ssize_t n;
@@ -480,7 +484,7 @@ static bool signal_valid(int signo)
     return signo > 0 && signo < NSIG && signo != SIGKILL && signo != SIGSTOP;
 }
 
-/* Call with signal_mutex held. */
+/* The caller must hold signal_mutex. */
 static void release_signal_slot(int signo, int slot)
 {
     atomic_store_explicit(&signal_slots[signo][slot].active, false, memory_order_release);
@@ -621,7 +625,8 @@ uint64_t yasl_loop_add_timer(yasl_loop *l, uint64_t interval_ns,
         l->timers = new_timers;
         l->timer_capacity = new_cap;
     }
-    /* 64 bits never wrap in practice, so an ID never names a newer timer. */
+    /* A 64-bit counter does not wrap in practice, so a stale ID cannot name a
+     * newer timer. */
     uint64_t id = l->next_timer_id++;
     l->timers[l->timer_count++] = (struct timer_source){
         .fn = cb,
@@ -671,7 +676,7 @@ bool yasl_private_loop_stepping(const yasl_loop *l)
 }
 
 #if defined(__linux__)
-/* Fill pollfds[].revents from epoll before dispatch_fds reads them. */
+/* Waits on epoll, then fills pollfds[].revents for dispatch_fds(). */
 static int epoll_all(struct yasl_loop *l, int timeout_ms)
 {
     uint64_t deadline = timeout_ms > 0
@@ -696,7 +701,7 @@ static int epoll_all(struct yasl_loop *l, int timeout_ms)
 }
 #endif
 
-/* poll with an EINTR retry that keeps the deadline. */
+/* Waits with poll(2), retrying after EINTR without extending the deadline. */
 static int poll_all(struct yasl_loop *l, int timeout_ms)
 {
 #if defined(__linux__)
@@ -731,7 +736,8 @@ static int dispatch_fds(struct yasl_loop *l)
     memcpy(pcopy, l->pollfds, (size_t)count * sizeof(*pcopy));
     for (int i = 0; i < count; i++) {
         if (!pcopy[i].revents) continue;
-        /* A callback may have removed or moved this watch. */
+        /* An earlier callback may have removed this watch or moved it, so find
+         * its current index. */
         int j = i < l->count && l->fds[i].id == scopy[i].id ? i : fd_index(l, scopy[i].id);
         if (j < 0) continue;
         l->pollfds[j].revents = 0;
@@ -776,7 +782,8 @@ static int fire_timers(struct yasl_loop *l)
 
 static int step(struct yasl_loop *l, int timeout_ms)
 {
-    /* A driver cannot change during a step: its display cannot close then. */
+    /* A driver cannot change during a step: yasl_shutdown() refuses to close a
+     * display while the loop steps. */
     const struct yasl_private_loop_driver *d = l->has_driver ? &l->driver : NULL;
     if (d && d->prepare(d->ud))
         timeout_ms = 0;
@@ -786,20 +793,23 @@ static int step(struct yasl_loop *l, int timeout_ms)
     int r;
     if (d && d->wait) {
         r = d->wait(d->ud, timeout_ms);
-        /* The platform wait does not fill revents; read them now. */
+        /* The platform wait does not fill pollfds[].revents, so read
+         * readiness now. */
         if (r >= 0) r = poll_all(l, 0);
     } else {
         r = poll_all(l, timeout_ms);
     }
-    /* check closes what prepare opened, whatever the wait returned. */
+    /* The driver's check closes what prepare opened, whatever the wait
+     * returned. */
     if (d) d->check(d->ud);
     if (r < 0) return r;
     if (d && d->deliver) d->deliver(d->ud);
     int fds = dispatch_fds(l);
     if (fds < 0) return fds;
     int timers = fire_timers(l);
-    /* Last, so a signal sees what came with it: a child's final output is
-     * read before its exit is handled. */
+    /* Posts and signals run after descriptor callbacks and timers, so a signal
+     * sees what came with it: a child's final output is read before its exit
+     * is handled. */
     run_posts(l);
     run_signals(l);
     return fds + timers;
@@ -820,7 +830,7 @@ int yasl_loop_run(yasl_loop *l)
 {
     if (!l) return -EINVAL;
     if (!pthread_equal(l->owner, pthread_self())) return -EPERM;
-    /* A nested run must not consume the outer run's quit. */
+    /* A nested run would clear the quit of the run that contains it. */
     if (l->stepping) return -EBUSY;
     int r = 0;
     while (!l->quit) {

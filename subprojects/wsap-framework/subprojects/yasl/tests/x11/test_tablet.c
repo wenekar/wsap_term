@@ -1,4 +1,4 @@
-/* Exercise native XI2 samples through the backend and public input queue. */
+/* Runs synthetic XI2 samples through the backend without an X server. */
 #include "../../src/platform/x11/window.c"
 
 static struct yasl_private_event next(struct x11_surface *surface)
@@ -238,7 +238,6 @@ static void test_x11_gaps(struct x11_display *d, struct x11_surface *s)
     yasl_private_events_unregister(&s2.base);
     yasl_private_events_close(&d->base);
 
-    /* Clean up s2 */
     s->next = NULL;
     input_queue_clear(&s->input);
     input_queue_clear(&s2.input);

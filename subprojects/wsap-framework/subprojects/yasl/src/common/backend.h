@@ -20,7 +20,7 @@ void yasl_private_move_trace(const struct yasl_private_display *d,
     __attribute__((format(printf, 4, 5)));
 
 struct yasl_private_display {
-    /* CL 0: hot dispatch pointers. */
+    /* Cache line 0: hot dispatch pointers. */
     const struct yasl_private_backend_ops *ops;
     void *native_handle;
     struct yasl_loop *loop;
@@ -33,7 +33,7 @@ struct yasl_private_display {
      * to the application during the loop step. */
     bool (*pending)(struct yasl_private_display *d);
     void (*deliver)(struct yasl_private_display *d);
-    /* CL 1: flags and atomic offline marker. */
+    /* Cache line 1: flags and atomic offline marker. */
     /* Set by the backend while a native modal loop (macOS live resize) blocks the
      * event loop; refresh callbacks run only then. */
     bool modal;
@@ -48,7 +48,7 @@ struct yasl_private_display {
 };
 
 struct yasl_surface {
-    /* CL 0: hot surface identity, geometry, state, and flags. */
+    /* Cache line 0: hot surface identity, geometry, state, and flags. */
     struct yasl_private_display *display;
     uint64_t id;
     struct yasl_surface *event_next;
@@ -69,7 +69,7 @@ struct yasl_surface {
     bool cpu_direct;
     bool cpu_acquired;
 
-    /* CL 1: draw callbacks and frame pacing state. */
+    /* Cache line 1: draw callbacks and frame pacing state. */
     struct yasl_private_window_cbs callbacks;
     void *ud;
     struct yasl_private_frame *active_frame;
@@ -81,7 +81,7 @@ struct yasl_surface {
     /* When the last frame request was answered. */
     uint64_t frame_answered_ns;
 
-    /* CL 2+: handles, queues, and cold state. */
+    /* Cache line 2 and later: handles, queues, and cold state. */
     yasl_private_timer_id frame_timer;
     yasl_private_timer_id pacing_timer;
     void (*refresh)(struct yasl_surface *);

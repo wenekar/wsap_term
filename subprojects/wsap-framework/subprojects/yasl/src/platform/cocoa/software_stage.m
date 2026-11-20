@@ -93,7 +93,8 @@ void software_stage_finish(struct software_stages *stages, struct software_stage
         return;
     }
     /* The command holds one reference, so the ring can go away first. The block
-     * captures no object: the stage array stays where it is. */
+     * captures only C pointers, so no object is retained and the stage array
+     * stays where it is. */
     atomic_fetch_add(&stages->refs, 1);
     [(id<MTLCommandBuffer>)command addCompletedHandler:^(id<MTLCommandBuffer> done) {
         (void)done;

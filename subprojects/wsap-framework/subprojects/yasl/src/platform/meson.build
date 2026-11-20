@@ -1,5 +1,4 @@
-# Select OS support independently of the windowing backends. A future Win32
-# port supplies its own loop and yasl_platform_sync.h here.
+# OS support: the loop and the sync primitives that the windowing backends use.
 if system == 'linux' or system == 'darwin'
     subdir('posix')
 endif

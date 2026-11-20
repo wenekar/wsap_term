@@ -668,7 +668,7 @@ static bool x11_egl_load(void)
 #define TEXT_LIMIT (16 * 1024 * 1024)
 /* Largest drop payload, of any type. */
 #define DROP_LIMIT (64 * 1024 * 1024)
-/* Most offered types that one XdndEnter keeps. */
+/* Maximum number of offered types that one XdndEnter keeps. */
 #define XDND_MAX_TYPES 32
 #define PASTE_TIMEOUT_NS YASL_PRIVATE_MS_TO_NS(30000)
 
@@ -831,7 +831,7 @@ struct x11_display {
     /* One external drag. XdndEnter picks the type; accepts is true only with a pick. */
     struct {
         Window source;
-        Atom picked; /* The same type, by atom. */
+        Atom picked; /* The picked type, by atom. */
         struct x11_surface *surface;
         Time time;
         struct yasl_private_vector2i pos;
@@ -863,7 +863,7 @@ struct x11_display {
     int xi_opcode;
     /* RandR event code base, or zero when the server has no RandR. */
     int randr_event_base;
-    int popup_device; /* XI2 device holding that grab. */
+    int popup_device; /* XI2 device holding the popup grab. */
     int xkb_event;
     bool owns_loop;
     bool xi2;
@@ -1022,8 +1022,8 @@ static void display_unregister(struct x11_display *d)
     previous_io_handler = NULL;
 }
 
-/* Asynchronous errors (BadWindow, BadDrawable, BadMatch) on YASL displays are
- * suppressed during close, destruction races and speculative queries. */
+/* Ignores asynchronous errors (BadWindow, BadDrawable, BadMatch) on a YASL
+ * display. Close, destruction races, and speculative queries provoke them. */
 static int yasl_private_x11_error_handler(Display *native, XErrorEvent *event)
 {
     if (!display_for_native(event->display))
@@ -3380,7 +3380,7 @@ static void selection_notify(struct x11_display *d, XSelectionEvent *event)
     bool complete = false;
     size_t limit = receive_limit(r);
 
-    /* Read up to the limit in 64KB chunks to avoid huge single-request limits */
+    /* Reads up to the limit in 64 KB chunks to avoid huge single-request limits. */
     while (total < limit) {
         unsigned long chunk = 16384; /* 64 KB (in 32-bit multiples) */
         if (XGetWindowProperty(d->native, r->window, event->property,
@@ -3500,8 +3500,8 @@ static void refresh_keyboard(struct x11_display *d)
     XkbFreeKeyboard(keyboard, XkbAllComponentsMask, True);
 }
 
-/* The keys of an active composition. A dead key has no Unicode value, so the
- * preedit shows the mark that the key adds. */
+/* The mark that a dead key adds to a composition. A dead key has no Unicode
+ * value, so the preedit shows the mark instead of a character. */
 static const char *dead_key_text(xkb_keysym_t sym)
 {
     switch (sym) {
@@ -3543,10 +3543,11 @@ static void compose_append(struct x11_display *d, const char *text)
     d->compose_preedit[d->compose_len] = '\0';
 }
 
-/* The key releases no text while a compose sequence runs. Returns the compose
- * status that the caller must report. */
+/* The effect of feeding one key to the compose state. */
 enum compose_result { COMPOSE_NONE, COMPOSE_STARTED, COMPOSE_COMMITTED, COMPOSE_CANCELLED };
 
+/* The key releases no text while a compose sequence runs. Returns the compose
+ * status that the caller must report. */
 static enum compose_result compose_key(struct x11_surface *s, xkb_keysym_t sym,
                                        xkb_keysym_t *composed)
 {
@@ -4215,7 +4216,7 @@ static void flush(struct yasl_private_display *base)
     leave(d);
 }
 
-/* The connection is read in check(), before any callback. */
+/* The connection is read in check(), which the loop runs before the fd callbacks. */
 static void ready(void *ud, int fd, short events)
 {
     (void)ud; (void)fd; (void)events;
@@ -4258,7 +4259,9 @@ static void check(struct yasl_private_display *base)
 }
 
 #if YASL_HAS_XRANDR
-/* The frame interval of a mode: dotClock / (hTotal * vTotal) Hz. */
+/* The frame interval of a mode in nanoseconds: hTotal * vTotal / dotClock
+ * seconds. Zero when the mode is not usable or its interval is outside
+ * 2 ms to 100 ms. */
 static double mode_refresh_ns(const XRRScreenResources *resources, RRMode mode)
 {
     for (int i = 0; i < resources->nmode; i++) {
@@ -5179,7 +5182,7 @@ static bool show_window_menu(struct yasl_surface *base, struct yasl_private_vect
     return true;
 }
 
-/* Only a press can move a window under the pointer here; see the ESTALE rule. */
+/* Intended for a press-driven move; it does not check that a button is held. */
 static bool place_under_pointer(struct yasl_surface *base, struct yasl_private_vector2i at)
 {
     return place(base, at);

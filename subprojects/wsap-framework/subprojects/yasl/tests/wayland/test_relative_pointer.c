@@ -135,8 +135,8 @@ int main(void)
     event = next_event(&surface);
     assert(event.pointer.delta.x == 2000 && event.pointer.pos.x == 14);
 
-    /* The delta is the unaccelerated sample, which needs no compositor
-     * acceleration that the frozen position cannot show. */
+    /* The delta comes from the unaccelerated sample: the frozen absolute
+     * position cannot carry compositor acceleration. */
     relative_move(&seat, 9, 4, 1.5, -2.5);
     event = next_event(&surface);
     assert(event.pointer.delta.x == 3 && event.pointer.delta.y == -5);
@@ -169,7 +169,7 @@ int main(void)
     assert(unlocks == 2 && locks == 3 && locked_wl_pointer == other.pointer);
     assert(surface.lock_seat == &other && !surface.input.relative);
 
-    /* Surface destruction releases the lock through surface_unlock_pointer(). */
+    /* Unlocking releases the lock and clears its seat. */
     surface_unlock_pointer(&surface);
     assert(unlocks == 3 && !surface.lock_seat && !surface.pointer_lock);
     input_queue_clear(&surface.input);

@@ -211,8 +211,8 @@ uint32_t conn_output_scale_120(const struct wayland_display *c, uint64_t outputs
     return (uint32_t)scale * YASL_PRIVATE_SCALE_UNIT;
 }
 
-/* A compositor does not report the workarea, so it equals the bounds. It also
- * names no output as primary, and the common layer answers then. */
+/* A compositor reports no workarea, so the workarea equals the bounds. It marks
+ * no output as primary, so the common layer falls back to a lone monitor. */
 int conn_display_monitors(struct yasl_private_display *base, struct yasl_monitor_info *out, int capacity)
 {
     struct wayland_display *c = (struct wayland_display *)base;

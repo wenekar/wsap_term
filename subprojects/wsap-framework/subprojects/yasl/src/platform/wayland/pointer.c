@@ -660,7 +660,8 @@ static void seat_lock_surfaces(struct seat *s)
 void surface_lock_preferred(struct wayland_surface *w)
 {
     struct wayland_display *c = w->conn;
-    /* Prefer the seat that last delivered input; others lock once it goes away. */
+    /* Prefer the seat that last delivered input; another seat takes the lock
+     * when that seat loses its pointer. */
     struct seat *seat = c->active_seat && c->active_seat->pointer ? c->active_seat : NULL;
     for (struct seat *s = c->seats; s && !seat; s = s->next)
         if (s->pointer) seat = s;
@@ -1248,7 +1249,7 @@ static const struct zwp_tablet_v2_listener tablet_listener = {
     .done = tablet_done, .removed = tablet_removed, .bustype = tablet_bustype,
 };
 
-/* yasl does not use pad groups. The group proxy belongs to the client, so
+/* YASL does not use pad groups. The group proxy belongs to the client, so
  * destroy it here rather than leak it. */
 static void tablet_pad_group(void *data, struct zwp_tablet_pad_v2 *pad, struct zwp_tablet_pad_group_v2 *group) { (void)data; (void)pad; zwp_tablet_pad_group_v2_destroy(group); }
 static void tablet_pad_path(void *data, struct zwp_tablet_pad_v2 *pad, const char *path) { (void)data; (void)pad; (void)path; }
@@ -1337,9 +1338,9 @@ static const struct zwp_tablet_seat_v2_listener tablet_seat_listener = {
     .pad_added = tablet_seat_pad_added,
 };
 
-/* Ends a transfer. A paste completes its request. A drop becomes one DROP event
- * on the root surface, and the event carries the type and position that were
- * received. */
+/* Receives the result of a transfer. A paste completes its request. An accepted
+ * drop queues one DROP event on the root surface, carrying its type and its
+ * position in device pixels of that surface. */
 static void clipboard_received(const char *text, size_t len, const char *drop_mime,
                              struct wl_surface *on, struct yasl_private_vector2d drop_pos,
                              uint64_t request_id,

@@ -67,7 +67,8 @@ static void test_fifo_and_destroy(void)
     assert(!yasl_private_display_poll_event(&display, &event));
     yasl_private_events_close(&display);
 
-    /* Public event names remain the event stream consumed by applications. */
+    /* The public event names stay distinct, so applications can tell the
+     * events apart. */
     assert(YASL_EVENT_KEY != YASL_EVENT_TEXT);
 }
 

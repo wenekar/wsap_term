@@ -232,7 +232,9 @@ bool wayland_surface_popup_reposition(struct wayland_surface *w, const struct ya
     return true;
 }
 
-/* Apply the spec only after the matching repositioned event and configure. */
+/* Applies the pending spec once the matching repositioned event and the
+ * configure that follows it have arrived. Returns true when no spec is pending
+ * or the spec applies, and false when it fails. */
 bool popup_apply_pending_spec(struct wayland_surface *w)
 {
     if (!w->popup_spec_ready)

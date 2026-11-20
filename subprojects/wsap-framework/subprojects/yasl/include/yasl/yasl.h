@@ -49,10 +49,10 @@ struct yasl_options {
     void (*on_event)(void *userdata, const yasl_event *event);
     void *userdata;
 };
-/** Optional: the first surface initializes with defaults; NULL options too.
- * EINVAL when only one of loop and on_event is set; EPERM off the loop's
- * thread. EALREADY once initialized with the same options, EBUSY with others;
- * a failed initialization may be retried. */
+/** Optional: creating the first surface initializes YASL with the default
+ * options, as does a NULL argument. EINVAL when only one of loop and on_event
+ * is set; EPERM off the loop's thread. EALREADY once initialized with the same
+ * options, EBUSY with others; a failed initialization may be retried. */
 YASL_API int yasl_init(const struct yasl_options *options);
 /** Destroys every surface; on_event is not called again. EBUSY inside a loop
  * step or while a Vulkan surface exists. */
@@ -96,7 +96,7 @@ struct yasl_surface_options {
     void (*refresh)(yasl_surface *surface);
     struct yasl_gl_options gl;
 };
-/** Strings are copied. */
+/** The title string is copied. */
 YASL_API yasl_surface *yasl_surface_create(const struct yasl_surface_options *options);
 /** Also destroys its popups. NULL is a no-op. EBUSY while one has a Vulkan surface. */
 YASL_API int yasl_surface_destroy(yasl_surface *surface);
@@ -176,8 +176,7 @@ enum yasl_pacing {
 };
 /** Sets how often the surface draws. YASL_PACING_CONTINUOUS asks for a frame
  * each display interval, for a continuous render loop. YASL_PACING_ON_DEMAND
- * restores the default. Call it on the loop thread. Returns 0, or a negative
- * errno value. */
+ * restores the default. */
 YASL_API int yasl_surface_set_pacing(yasl_surface *surface, enum yasl_pacing pacing);
 
 enum yasl_cursor {
@@ -205,14 +204,14 @@ struct yasl_text_input {
 YASL_API int yasl_surface_set_text_input(yasl_surface *surface, const struct yasl_text_input *input);
 
 enum yasl_edge { YASL_EDGE_TOP = 1, YASL_EDGE_BOTTOM = 2, YASL_EDGE_LEFT = 4, YASL_EDGE_RIGHT = 8 };
-/** While a pointer or pen button is held: let the user move the window (edges 0)
- * or resize it from one edge or a corner (two adjacent edges). */
+/** Requires a held pointer or pen button: lets the user move the window (edges
+ * 0) or resize it from one edge or a corner (two adjacent edges). */
 YASL_API int yasl_surface_begin_move_resize(yasl_surface *surface, unsigned edges);
 YASL_API int yasl_surface_show_window_menu(yasl_surface *surface, double x, double y);
 YASL_API int yasl_surface_bell(yasl_surface *surface);
 /** Sets the surface background color. The bg value uses 0xAARRGGBB or
  * 0x00RRGGBB format. On macOS, this sets the window background color and
- * updates the titlebar. Returns 0 on success, or a negative errno on failure. */
+ * updates the titlebar. */
 YASL_API int yasl_surface_set_background_color(yasl_surface *surface, uint32_t bg);
 
 /* Popups */
@@ -222,7 +221,8 @@ enum yasl_popup_adjust {
 };
 /** Placed against an anchor rectangle in the parent: anchor picks a point on it
  * and gravity the direction the popup grows, both as YASL_EDGE_* bits (0 is the
- * center). adjust keeps it on screen; 0 flips, then slides. */
+ * center). adjust keeps it on screen; with 0, the platform flips the popup and
+ * then slides it. */
 struct yasl_popup_options {
     int width, height;
     double x, y, anchor_width, anchor_height;
@@ -263,7 +263,7 @@ YASL_API size_t yasl_drop_next_path(const char **cursor, char *out, size_t capac
  * with a star such as "image/" "*". A drag takes the first entry that it offers,
  * and DROP events report the offered type in drop.mime. A drag that offers no
  * entry is refused. Without a call, a surface takes "text/uri-list" only.
- * The list is copied; count 0 restores that default. Call it on the loop thread. */
+ * The list is copied; count 0 restores that default. */
 YASL_API int yasl_surface_set_drop_types(yasl_surface *surface, const char *const *types,
                                          size_t count);
 
@@ -335,7 +335,8 @@ enum yasl_key_text {
 };
 
 /** Physical key, layout labels (codepoint unshifted, shifted; 0 if none) and the
- * native code (evdev, X11 keycode or macOS virtual key). Type with TEXT, not this. */
+ * native code (evdev, X11 keycode or macOS virtual key). Insert typed text from
+ * a TEXT event, not from this one. */
 struct yasl_key_event {
     enum yasl_key key;
     uint32_t codepoint, shifted, native_code;
@@ -343,7 +344,8 @@ struct yasl_key_event {
     unsigned consumed_mods; /**< Modifiers used by native text input. */
     uint64_t text_id; /**< Nonzero matches ime.key_id on the text edit for this key. */
 };
-/** button changed on DOWN/UP; buttons are held YASL_BUTTON_BIT()s. */
+/** button is the button that changed on DOWN and UP; buttons holds the pressed
+ * YASL_BUTTON_BIT()s. */
 struct yasl_pointer_event {
     double dx, dy;
     unsigned button, buttons;
@@ -388,9 +390,10 @@ struct yasl_event {
     uint64_t time_ns;
     unsigned action, mods; /**< mods: YASL_MOD_* for KEY, POINTER and SCROLL. */
     double x, y;
-    const char *text; /**< NUL-terminated UTF-8 until the next wait or until
-                       * on_event returns, or NULL. A DROP RELEASE can hold
-                       * binary bytes of drop.mime; use length. */
+    const char *text; /**< NUL-terminated UTF-8, valid until the next wait or
+                       * until on_event returns; NULL when the event has no
+                       * text. A DROP RELEASE holds length bytes of drop.mime,
+                       * which can include NULs. */
     size_t length;
     union {
         struct yasl_surface_info window;
@@ -404,10 +407,10 @@ struct yasl_event {
     };
 };
 /** 1 with an event, 0 once timeout_ms passes or after yasl_wake. 0 polls and -1
- * waits forever. On failure out->type is NONE. EBUSY with on_event. */
+ * waits forever. On failure out->type is NONE. EBUSY when on_event is set. */
 YASL_API int yasl_wait_event(yasl_event *out, int timeout_ms);
-/** Makes a waiting, or the next, yasl_wait_event return 0 once no event is
- * pending. With on_event, wakes the loop. Thread-safe. */
+/** Makes a waiting yasl_wait_event return 0, or the next call when none waits,
+ * once no event is pending. With on_event, wakes the loop. Thread-safe. */
 YASL_API void yasl_wake(void);
 /** Queues YASL_EVENT_USER for the next wait or on_event, from any thread. A
  * NULL surface sends it to the display. payload is borrowed until release
@@ -450,10 +453,10 @@ YASL_API int yasl_loop_add_fd(yasl_loop *loop, int fd, short events,
 /** ENOENT for an unknown ID. Leaves the descriptor open. */
 YASL_API int yasl_loop_del_fd(yasl_loop *loop, int id);
 YASL_API int yasl_loop_set_fd_events(yasl_loop *loop, int id, short events);
-/** Calls callback after delay_ns, 0 meaning the next step. It returns the next
- * delay, or 0 to stop. Returns an ID that is never reused, or 0 with errno.
- * Loop thread only: another thread must post with yasl_loop_post and arm the
- * timer there. */
+/** Calls callback after delay_ns, 0 meaning the next step; callback returns
+ * the next delay, or 0 to stop. Returns an ID that is never reused, or 0 with
+ * errno. Loop thread only: another thread must post with yasl_loop_post and arm
+ * the timer there. */
 YASL_API uint64_t yasl_loop_add_timer(yasl_loop *loop, uint64_t delay_ns,
                                       uint64_t (*callback)(void *userdata, uint64_t id,
                                                            uint64_t delay_ns),
@@ -472,17 +475,19 @@ YASL_API int yasl_loop_watch_signals(yasl_loop *loop, const int *signals, int co
 YASL_API void yasl_loop_unwatch_signals(yasl_loop *loop);
 
 /* Rendering */
-/** CPU surfaces: the window's pixel_width * pixel_height premultiplied
- * 0xAARRGGBB pixels, rows tightly packed. They persist, and a resize keeps the
- * overlap and zeroes the rest. Valid until the next wait, the return of the
- * callback that got them, or the next yasl_cpu_ call. Present to show them;
- * the system may also show them when it redraws the window. */
+/** One rectangle of a CPU surface to redraw, in pixels. */
 struct yasl_damage {
     int x, y, width, height;
 };
+/** Returns the window's pixel_width * pixel_height premultiplied 0xAARRGGBB
+ * pixels, rows tightly packed. They persist, and a resize keeps the overlap and
+ * zeroes the rest. Valid until the next wait, the return of the callback that
+ * got them, or the next yasl_cpu_ call. Present to show them; the system may
+ * also show them when it redraws the window. */
 YASL_API uint32_t *yasl_cpu_pixels(yasl_surface *surface, int *pixel_width, int *pixel_height);
 YASL_API int yasl_cpu_present(yasl_surface *surface);
-/* Damage adds up across presents until the surface draws. A NULL list or count 0 means full damage, which stays full until the draw. */
+/** Presents the canvas with partial damage. Damage adds up across presents
+ * until the surface draws; a NULL list or count 0 marks the whole surface. */
 YASL_API int yasl_cpu_present_damage(yasl_surface *surface, const struct yasl_damage *damage, int count);
 
 struct yasl_cpu_frame {
@@ -493,15 +498,16 @@ struct yasl_cpu_frame {
 /** Acquires the backend CPU buffer directly without an intermediate canvas.
  * The caller must fill every pixel before yasl_cpu_commit(). Valid until
  * yasl_cpu_commit(), yasl_cpu_discard(), or the next wait. Returns 0 on success,
- * -EAGAIN when waiting for configure or a free buffer, or -ENOTSUP when direct
- * access is unavailable. */
+ * -EAGAIN when waiting for configure or a free buffer, -ENOTSUP when direct
+ * access is unavailable, or -EBUSY when a frame is already acquired. */
 YASL_API int yasl_cpu_acquire(yasl_surface *surface, struct yasl_cpu_frame *out);
 YASL_API int yasl_cpu_commit(yasl_surface *surface, const struct yasl_damage *damage, int count);
 YASL_API void yasl_cpu_discard(yasl_surface *surface);
 
 typedef void (*yasl_gl_proc)(void);
-/** These four may run on a rendering thread; synchronize them with destruction.
- * NULL detaches the calling thread's context, also after DISPLAY_LOST. */
+/** These four GL calls may run on a rendering thread; synchronize them with
+ * yasl_surface_destroy(). yasl_gl_make_current(NULL) detaches the calling
+ * thread's context, also after DISPLAY_LOST. */
 YASL_API int yasl_gl_make_current(yasl_surface *surface);
 YASL_API yasl_gl_proc yasl_gl_get_proc_address(const char *name);
 YASL_API int yasl_gl_set_swap_interval(yasl_surface *surface, int interval);
@@ -561,8 +567,7 @@ enum yasl_user_dir {
     YASL_DIR_HOME, YASL_DIR_DOCUMENTS, YASL_DIR_DOWNLOADS, YASL_DIR_DESKTOP
 };
 /** Returns the folder path length, or 0 with errno. Writes it with a NUL only
- * if capacity exceeds the length, and creates none of the folders. YASL does
- * not create them. Thread-safe. */
+ * if capacity exceeds the length. Creates none of the folders. Thread-safe. */
 YASL_API size_t yasl_get_user_dir(enum yasl_user_dir which, char *out, size_t capacity);
 /** Size in bytes and modification time in nanoseconds since the epoch. */
 struct yasl_file_info {
@@ -596,10 +601,12 @@ YASL_API int yasl_load_asset(const char *name, void **data, size_t *size);
 
 /* Desktop */
 enum yasl_appearance { YASL_APPEARANCE_DARK = 1, YASL_APPEARANCE_LIGHT = 2, YASL_APPEARANCE_HIGH_CONTRAST = 4 };
-/** Opens uri with its default application. Thread-safe. */
+/** Opens uri with its default application. May block briefly on the session
+ * bus. Thread-safe. */
 YASL_API int yasl_open_uri(const char *uri);
+/** May block briefly on the session bus. */
 YASL_API int yasl_notify(const char *title, const char *body);
-/** These two may block briefly on the session bus. 0 is no preference. */
+/** Returns 0 for no preference. */
 YASL_API unsigned yasl_get_appearance(void);
 /** Milliseconds; 400 when unknown. */
 YASL_API int yasl_get_double_click_ms(void);

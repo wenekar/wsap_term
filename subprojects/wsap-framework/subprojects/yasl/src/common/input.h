@@ -5,7 +5,7 @@
 
 /* Each queued string and the last successfully polled string are owned here. */
 struct input_queue {
-    /* CL 0: hot publish fields and ring buffer indices. */
+    /* Cache line 0: hot publish fields and ring buffer indices. */
     /* Installed by common code for display-wide publication. Standalone queues
      * retain their normal storage/pop semantics when publish is NULL. */
     bool (*publish)(const struct yasl_private_event *ev, void *ud);
@@ -22,7 +22,7 @@ struct input_queue {
     /* Set by backends whose pointer leave ends any press: no release follows. */
     bool leave_ends_press;
     bool reset_pending;
-    /* CL 1: cold pop and reset state. */
+    /* Cache line 1: cold pop and reset state. */
     char *last_text;
     struct yasl_surface *reset_surface;
 };

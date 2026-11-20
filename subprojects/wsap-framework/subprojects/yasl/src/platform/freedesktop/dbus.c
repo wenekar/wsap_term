@@ -14,12 +14,13 @@
 /* The portal may need activation on first use; bound how long a query blocks. */
 #define PORTAL_TIMEOUT_MS 1000
 
-/* One private connection serves every caller. The lock also serializes the
- * libdbus calls, because a DBusConnection is not safe for concurrent use. */
+/* One private connection serves every caller. The lock serializes the libdbus
+ * calls on it, along with its creation, replacement, and release. */
 static pthread_mutex_t bus_mutex = PTHREAD_MUTEX_INITIALIZER;
 static DBusConnection *bus;
 
-/* The session bus address, without libdbus's X11 autolaunch fallback. */
+/* Returns the session bus address for the caller to free, or NULL. It skips
+ * libdbus's X11 autolaunch fallback. */
 static char *session_address(void)
 {
     const char *env = getenv("DBUS_SESSION_BUS_ADDRESS");
@@ -50,8 +51,8 @@ static DBusConnection *session_bus_locked(void)
     }
     char *address = session_address();
     if (!address) return NULL;
-    /* Libdbus serializes its own shared state once this succeeds. The bus lock
-     * still serializes this connection, which libdbus also requires. */
+    /* Libdbus needs its default thread locks installed before threads share the
+     * library. This runs before the new connection reaches a caller. */
     if (!dbus_threads_init_default()) {
         free(address);
         return NULL;
@@ -125,7 +126,8 @@ bool bus_notify(const char *app, const char *title, const char *body)
     return ok;
 }
 
-/* Read an integer from it, unwrapping variants: Settings.Read nests one more. */
+/* Reads an integer through the iterator, unwrapping nested variants: a
+ * Settings.Read reply nests one more variant than ReadOne. */
 static bool iter_int(DBusMessageIter *it, int64_t *out)
 {
     DBusMessageIter inner[4];
@@ -167,7 +169,7 @@ bool portal_read_int(const char *ns, const char *key, int64_t *out)
     pthread_mutex_lock(&bus_mutex);
     DBusConnection *c = session_bus_locked();
     if (!c) goto done;
-    /* ReadOne is portal version 2; older portals only have Read. */
+    /* ReadOne needs Settings interface version 2; older portals offer only Read. */
     static const char *const methods[] = {"ReadOne", "Read"};
     for (int i = 0; i < 2; i++) {
         DBusMessage *msg = dbus_message_new_method_call("org.freedesktop.portal.Desktop",
@@ -237,8 +239,8 @@ bool portal_read_int(const char *ns, const char *key, int64_t *out)
 
 int portal_double_click_ms(void)
 {
-    /* kdeglobals holds only values the user changed, so a KDE answer is
-     * deliberate; the GNOME key can be a default from another portal backend. */
+    /* Prefer KDE: kdeglobals holds only values the user changed, while the
+     * GNOME key can hold a default from another portal backend. */
     int64_t ms;
     if (portal_read_int("org.kde.kdeglobals.KDE", "DoubleClickInterval", &ms) ||
         portal_read_int("org.gnome.desktop.peripherals.mouse", "double-click", &ms))

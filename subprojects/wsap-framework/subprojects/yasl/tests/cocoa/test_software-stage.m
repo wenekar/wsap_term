@@ -9,7 +9,7 @@
  * Tests of the staging buffers of the CPU pixels of a surface.
  *
  * A blit reads its buffer after the call that commits it returns. The ring
- * hands a buffer out again only after that command completed, so the CPU never
+ * hands a buffer out again only after that command completes, so the CPU never
  * writes a buffer that the GPU still reads. With every buffer in use a frame
  * gets none, and the frame comes back at the next display frame. The ring
  * outlives the surface, so a command that completes after the surface is gone
@@ -67,7 +67,7 @@ static void run(id<MTLCommandBuffer> command)
 
 /* The ring is bounded, and it is deep enough that a frame does not wait for the
  * frame before it. A buffer that a command reads comes back only when that
- * command completed. */
+ * command completes. */
 static void test_completion_owns(struct software_stages *stages, id<MTLDevice> device,
                                  id<MTLCommandQueue> queue)
 {
@@ -80,7 +80,7 @@ static void test_completion_owns(struct software_stages *stages, id<MTLDevice> d
             assert(software_stage_buffer(stage[j]) != software_stage_buffer(stage[count]));
         count++;
     }
-    /* One buffer for the frame and one that the GPU still reads. */
+    /* The current frame and a frame that the GPU may still read. */
     assert(count >= 2);
     /* The ring does not grow without limit. */
     assert(count < MAX);
@@ -103,7 +103,6 @@ static void test_completion_owns(struct software_stages *stages, id<MTLDevice> d
     software_stage_cancel(stages, back);
 }
 
-/* A larger frame gets a larger buffer. */
 static void test_grow(struct software_stages *stages)
 {
     struct software_stage *stage = software_stage_acquire(stages, LENGTH * 4);

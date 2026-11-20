@@ -30,7 +30,7 @@ int main(int argc, char **argv)
     int result = 0, frames = 0;
     bool online = true;
     for (bool running = true; running;) {
-        /* Drain events before each frame; while the display is gone, block until it returns. */
+        /* Draw only when no event is pending; block while the display is gone. */
         yasl_event e;
         int n = yasl_wait_event(&e, online ? 0 : -1);
         if (n < 0) {

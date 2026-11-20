@@ -17,8 +17,8 @@ struct yasl_private_frame_clock {
     enum yasl_private_timing_source source;
 };
 
-/* The frame interval in nanoseconds. A value outside the sane range gives the
- * interval of a 60 Hz display. */
+/* The frame interval in nanoseconds. A value outside 1 ms to 1 s gives the
+ * interval of a 60 Hz display, 16666667 ns. */
 uint64_t yasl_private_clock_refresh_ns(double refresh_ns);
 
 /* The period of the display frame of a display link invocation, in seconds.

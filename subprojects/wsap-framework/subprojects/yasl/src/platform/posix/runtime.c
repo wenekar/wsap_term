@@ -14,10 +14,10 @@ bool yasl_private_runtime_has_gl(void);
 bool yasl_private_runtime_has_vulkan(const char *surface_extension);
 
 /* Runtime probes for the optional graphics APIs. A compile-time header or
- * library check does not prove that the loader and a driver exist on the
- * machine that runs the program. Each probe loads only its own loader, and it
- * unloads the loader again before it returns. A caller that does not ask for a
- * feature maps nothing. */
+ * library check does not prove that the loader and the driver exist on the
+ * machine that runs the program. A probe runs on the first query for its own
+ * feature, loads only its own loader, and unloads that loader before it
+ * returns. A caller that does not ask for a feature maps nothing. */
 
 #if defined(__linux__)
 static pthread_once_t gl_once = PTHREAD_ONCE_INIT;
@@ -30,9 +30,9 @@ static void probe_gl(void)
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]) && !handle; i++)
         handle = dlopen(names[i], RTLD_LAZY | RTLD_LOCAL);
     if (!handle) return;
-    /* A loader with an entry point can start a GL surface. An EGL display
-     * would load the GL driver, which holds about 17 MB resident, so the probe
-     * does not make one. */
+    /* A loader that exports an EGL entry point can provide a display, and the
+     * display would in turn load the GL driver, which holds about 17 MB
+     * resident. The probe therefore only looks for the entry points. */
     gl_available = dlsym(handle, "eglGetDisplay") != NULL ||
                    dlsym(handle, "eglGetPlatformDisplay") != NULL ||
                    dlsym(handle, "eglGetPlatformDisplayEXT") != NULL;
@@ -53,9 +53,9 @@ bool yasl_private_runtime_has_gl(void)
 
 #if YASL_HAS_VULKAN
 static pthread_once_t vulkan_once = PTHREAD_ONCE_INIT;
-/* The instance extension list of every installed driver. The probe reads it
- * once and keeps it; the array is small. The loader itself does not stay
- * mapped. */
+/* The instance extension list of every installed driver. probe_vulkan()
+ * reads the list once and keeps it because the array is small; the loader
+ * itself does not stay mapped. */
 static VkExtensionProperties *vulkan_extensions;
 static uint32_t vulkan_extension_count;
 
@@ -91,8 +91,9 @@ static void probe_vulkan(void)
     dlclose(handle);
 }
 
-/* The loader lists the extensions of every installed ICD, so a surface
- * extension proves that a driver for this window system exists. */
+/* The list covers every installed driver (ICD), so VK_KHR_surface together
+ * with the caller's surface extension proves that a driver for this window
+ * system exists. A NULL extension returns false without probing. */
 bool yasl_private_runtime_has_vulkan(const char *surface_extension)
 {
     if (!surface_extension) return false;

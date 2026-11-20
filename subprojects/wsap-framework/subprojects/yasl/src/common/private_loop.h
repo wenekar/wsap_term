@@ -30,7 +30,8 @@ typedef uint64_t (*yasl_private_timer_cb)(void *ud, yasl_private_timer_id id, ui
 
 /**
  * How a display drives the loop it runs on. Each step runs prepare, the wait,
- * check, deliver, then descriptor callbacks and timers.
+ * and check, then deliver before descriptor callbacks, timers, posted work, and
+ * signal callbacks. A failed wait ends the step after check.
  * prepare: dispatch what the backend already holds, draw due surfaces, flush
  *   requests, and arm the read. True when progress is possible now, so the
  *   wait must not block.
@@ -58,7 +59,8 @@ short yasl_private_loop_revents(const yasl_loop *l, int id);
 
 /** Wake a waiting loop from any thread or a signal handler. Kicks coalesce. */
 void yasl_private_loop_kick(yasl_loop *l);
-/** Kick, but only from another thread: the owner's next step sees its own work. */
+/** Kick, but only from another thread: a call on the owning thread does
+ * nothing, because the owner's next step already sees its own work. */
 void yasl_private_loop_wake(yasl_loop *l);
 /**
  * Run fn on the loop's owning thread during a later step. Any thread, not a

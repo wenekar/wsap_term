@@ -23,7 +23,8 @@ static size_t copy_str(char *buf, size_t cap, const char *s)
     return len;
 }
 
-/* Find an executable in PATH, like execvp but before forking. */
+/* Find an executable in PATH as execvp would, but before forking, so a missing
+ * program fails the call. */
 static bool find_program(const char *name, char *out, size_t cap)
 {
     const char *path = getenv("PATH");
@@ -148,7 +149,8 @@ size_t desktop_default_locale(char *buf, size_t cap)
     return copy_str(buf, cap, "C.UTF-8");
 }
 
-/* An XDG folder, with its fallback under the home directory. */
+/* Resolve an XDG directory variable that holds an absolute path, or join the
+ * fallback onto the home directory. */
 static size_t xdg_dir(const char *variable, const char *fallback, char *buf, size_t cap)
 {
     const char *value = getenv(variable);
@@ -161,8 +163,9 @@ static size_t xdg_dir(const char *variable, const char *fallback, char *buf, siz
     return copy_str(buf, cap, path);
 }
 
-/* The app folders sit under the app ID. An ID with a separator could escape
- * them, so it adds no folder. */
+/* App folders nest under the app ID. An ID that starts with a dot or contains a
+ * separator could name a hidden folder or escape the parent, so app_dir() then
+ * uses the base folder alone. */
 static bool app_id_valid(const char *app_id)
 {
     if (!app_id || !*app_id || app_id[0] == '.') return false;

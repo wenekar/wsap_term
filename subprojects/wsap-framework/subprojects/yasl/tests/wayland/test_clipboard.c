@@ -266,7 +266,7 @@ static void test_text_targets(void)
     close(sockets[1]);
 }
 
-/* A paste larger than the old 256 KiB limit reaches the application whole. */
+/* A paste larger than 256 KiB reaches the application whole. */
 static void test_large_paste(void)
 {
     struct large_received got = {0};

@@ -126,7 +126,7 @@ static void test_callback_mode(enum yasl_backend backend)
         .title = "callback mode", .width = 96, .height = 64});
     assert(st.window);
 
-    /* Events reach on_event while the application only steps its loop. */
+    /* Events reach on_event during the step, where waiting and shutdown are refused. */
     step_until(&st, &st.refreshes, 1);
     assert(st.wait_result == -EBUSY && st.shutdown_result == -EBUSY);
 

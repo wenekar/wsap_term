@@ -24,7 +24,6 @@ struct yasl_private_resize_stats {
     long minflt;
 };
 
-/* Describes last_present_ns, not merely availability of an extension. */
 /** Provenance of last_present_ns; only PRESENTATION confirms compositor presentation. */
 enum yasl_private_timing_source {
     YASL_PRIVATE_TIMING_UNKNOWN = 0, /**< No timing sample yet. */

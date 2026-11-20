@@ -3,12 +3,14 @@
 #include "yasl/yasl.h"
 #include "common/backend.h"
 struct yasl_private_display *yasl_public_display(void);
-/* Initializes with defaults when needed; false with errno otherwise. */
+/* Creates the display with default options when none exists; false with errno
+ * set on failure. */
 bool yasl_public_initialize(void);
 bool yasl_public_owner(void);
-/* Validates a live surface on the owner thread; mutation also refuses inside a refresh callback. */
+/* Checks that s belongs to the live display on the owner thread; a mutation also fails
+ * with EBUSY inside a refresh callback. */
 bool yasl_public_surface(yasl_surface *, bool mutation);
-/* yasl_public_surface plus a connected display, for requests sent to the server. */
+/* yasl_public_surface plus a connected display, for requests that reach the server. */
 bool yasl_public_connected(yasl_surface *);
 bool yasl_public_fail(int error);
 int yasl_public_status(bool success);

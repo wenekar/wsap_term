@@ -14,8 +14,6 @@ extern "C" {
 
 typedef struct _XDisplay Display; /**< Opaque Xlib connection, compatible with Xlib.h. */
 
-/* Return borrowed X11 handles (expire on display/surface destruction).
- * Return NULL / 0 if display/surface is not an X11 object or NULL. */
 /**
  * Get the borrowed X11 Display for an object of the matching backend.
  * @param d Live display, or NULL.

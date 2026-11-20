@@ -100,7 +100,7 @@ static void test_xsettings(void)
         assert(!xsettings_int(b.bytes, b.len, "Net/DoubleClick", &ms));
         /* A string with that name is not an integer setting. */
         assert(!xsettings_int(b.bytes, b.len, "Net/ThemeName", &ms));
-        /* The value is last, so any truncation fails cleanly. */
+        /* The value is last, so a truncated blob fails the bounds checks. */
         for (size_t len = 0; len < b.len; len++)
             assert(!xsettings_int(b.bytes, len, "Net/DoubleClickTime", &ms));
     }

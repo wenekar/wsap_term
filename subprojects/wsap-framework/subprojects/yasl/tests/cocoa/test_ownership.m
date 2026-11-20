@@ -10,7 +10,6 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Polls every queued event and reports whether one matches. */
 static bool has_event(struct yasl_private_display *d, enum yasl_private_event_type type,
                       struct yasl_surface *surface)
 {

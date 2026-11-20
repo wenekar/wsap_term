@@ -337,7 +337,7 @@ void yasl_private_damage_union(struct yasl_private_damage_list *list,
         int64_t x1 = (int64_t)r.x + r.width, y1 = (int64_t)r.y + r.height;
         if (x1 > INT_MAX) x1 = INT_MAX;
         if (y1 > INT_MAX) y1 = INT_MAX;
-        if (x1 <= x0 || y1 <= y0) continue;   /* empty after the clip: skip it */
+        if (x1 <= x0 || y1 <= y0) continue;
         r = (struct yasl_private_rect2i){ (int)x0, (int)y0, (int)(x1 - x0), (int)(y1 - y0) };
         bool first = list->n == 0;
         list->bounds = first ? r : rect_union(list->bounds, r);

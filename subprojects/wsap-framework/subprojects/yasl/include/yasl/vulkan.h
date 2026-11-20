@@ -16,12 +16,14 @@ struct yasl_vulkan_requirements {
 /** Records the loader and reports the requirements, initializing YASL if needed.
  * Call before creating the instance. EBUSY while a Vulkan surface exists. */
 YASL_API int yasl_vulkan_init(PFN_vkGetInstanceProcAddr loader, struct yasl_vulkan_requirements *out);
-/** One surface per NATIVE window; returns the VkResult, with errno set on failure. */
+/** One surface per NATIVE window; returns the VkResult, with errno set when
+ * the result is not VK_SUCCESS. */
 YASL_API VkResult yasl_vulkan_create_surface(yasl_surface *surface, VkInstance instance,
                                              const VkAllocationCallbacks *allocator,
                                              VkSurfaceKHR *out);
 /** Destroy swapchains first. Also works after DISPLAY_LOST, or after YASL
- * released a surface whose window went away. No surface is a no-op. */
+ * released a surface whose window went away. A surface without a Vulkan
+ * surface is a no-op. */
 YASL_API int yasl_vulkan_destroy_surface(yasl_surface *surface);
 #ifdef __cplusplus
 }

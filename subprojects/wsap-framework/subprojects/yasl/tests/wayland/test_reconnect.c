@@ -92,8 +92,9 @@ int main(void)
     CHECK(yasl_cpu_present(cpu) == -ENOTCONN, "rejecting CPU presentation while offline");
     CHECK(yasl_gl_make_current(gl) == -ENOTCONN, "rejecting GL binding while offline");
     CHECK(yasl_gl_make_current(NULL) == 0, "detaching GL while offline");
-    /* The Vulkan surface stays live across the loss. YASL releases it when the
-     * old native window goes, so the application can build a new one. */
+    /* The Vulkan window stays live across the loss. YASL releases its
+     * VkSurfaceKHR when the old native window goes, so the application can
+     * build a new one. */
     CHECK(!yasl_surface_create(&(struct yasl_surface_options){.title="offline", .width=64, .height=64}), "refusing windows while offline");
     CHECK(errno == ENOTCONN, "reporting the disconnect");
     puts("lost");

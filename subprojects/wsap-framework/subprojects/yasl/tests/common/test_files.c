@@ -28,7 +28,7 @@ static void test_user_dirs(void)
     assert(yasl_get_user_dir(YASL_DIR_HOME, small, sizeof(small)) == len);
     assert(small[0] == 'x' && small[1] == 'x');
 
-    /* Preference, data, and cache are absolute too. */
+    /* Every user directory is absolute. */
     const enum yasl_user_dir dirs[] = {YASL_DIR_PREFERENCE, YASL_DIR_DATA, YASL_DIR_CACHE,
                                        YASL_DIR_DOCUMENTS};
     for (size_t i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++) {

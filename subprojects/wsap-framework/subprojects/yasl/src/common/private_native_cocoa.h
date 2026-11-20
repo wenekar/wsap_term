@@ -21,8 +21,6 @@ typedef struct objc_object NSView; /**< Opaque Cocoa view in plain C/C++. */
 extern "C" {
 #endif
 
-/* Return borrowed Cocoa handles (expire on display/surface destruction).
- * Return NULL / nil if display/surface is not a Cocoa object or NULL. */
 /**
  * Get the borrowed NSApplication for an object of the matching backend.
  * @param d Live display, or NULL.

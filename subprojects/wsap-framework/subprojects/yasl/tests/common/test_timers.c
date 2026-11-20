@@ -18,14 +18,13 @@ struct test_ctx {
     bool done;
 };
 
-/* 1. Single-shot timer: returns 0, fires exactly once. */
 static uint64_t oneshot_cb(void *ud, yasl_private_timer_id id, uint64_t interval_ns)
 {
     struct test_ctx *ctx = ud;
     assert(id == ctx->id);
     (void)interval_ns;
     ctx->count++;
-    return 0; /* Disarm */
+    return 0;
 }
 
 static uint64_t count_cb(void *ud, yasl_private_timer_id id, uint64_t interval_ns)
@@ -49,7 +48,6 @@ static uint64_t grow_cb(void *ud, yasl_private_timer_id id, uint64_t interval_ns
     return 0;
 }
 
-/* 2. Repeating timer: ticks N times, then returns 0. */
 static uint64_t repeat_cb(void *ud, yasl_private_timer_id id, uint64_t interval_ns)
 {
     struct test_ctx *ctx = ud;
@@ -58,12 +56,11 @@ static uint64_t repeat_cb(void *ud, yasl_private_timer_id id, uint64_t interval_
     ctx->count++;
     if (ctx->count >= 5) {
         ctx->done = true;
-        return 0; /* Disarm after 5 ticks */
+        return 0;
     }
-    return interval_ns; /* Repeat with same interval */
+    return interval_ns;
 }
 
-/* 3. Rescheduling timer: changes interval dynamically. */
 static uint64_t reschedule_cb(void *ud, yasl_private_timer_id id, uint64_t interval_ns)
 {
     struct test_ctx *ctx = ud;
@@ -71,16 +68,15 @@ static uint64_t reschedule_cb(void *ud, yasl_private_timer_id id, uint64_t inter
     ctx->count++;
     if (ctx->count == 1) {
         assert(interval_ns == 2000000ull);
-        return 5000000ull; /* Reschedule to 5ms */
+        return 5000000ull;
     } else if (ctx->count == 2) {
         assert(interval_ns == 5000000ull);
         ctx->done = true;
-        return 0; /* Done */
+        return 0;
     }
     return 0;
 }
 
-/* 4. Timer adding another timer from inside callback. */
 static uint64_t child_timer_cb(void *ud, yasl_private_timer_id id, uint64_t interval_ns)
 {
     (void)interval_ns;
@@ -101,7 +97,6 @@ static uint64_t parent_timer_cb(void *ud, yasl_private_timer_id id, uint64_t int
     return 0;
 }
 
-/* 5. Timer deleting another timer from inside callback. */
 static uint64_t victim_timer_cb(void *ud, yasl_private_timer_id id, uint64_t interval_ns)
 {
     (void)ud; (void)id; (void)interval_ns;
@@ -118,7 +113,6 @@ static uint64_t killer_timer_cb(void *ud, yasl_private_timer_id id, uint64_t int
     return 0;
 }
 
-/* 6. Millisecond convenience conversion uses the same timer callback. */
 static uint64_t ms_timer_cb(void *ud, yasl_private_timer_id id, uint64_t interval_ns)
 {
     struct test_ctx *ctx = ud;
@@ -145,7 +139,7 @@ static void test_loop_timers(void)
     assert(!yasl_loop_del_timer(l, 99999));
     assert(yasl_private_loop_next_timeout_ms(l) == -1);
 
-    /* Test 1: Single-shot */
+    /* A single-shot timer fires once and retires. */
     struct test_ctx ctx1 = { .loop = l };
     ctx1.id = yasl_loop_add_timer(l, 5000000ull, oneshot_cb, &ctx1);
     assert(ctx1.id > 0);
@@ -156,11 +150,10 @@ static void test_loop_timers(void)
         assert(handled >= 0);
     }
     assert(ctx1.count == 1);
-    /* Should be disarmed and removed */
     assert(!yasl_loop_del_timer(l, ctx1.id));
     assert(yasl_private_loop_next_timeout_ms(l) == -1);
 
-    /* Test 2: Repeating */
+    /* A repeating timer reschedules itself until it returns zero. */
     struct test_ctx ctx2 = { .loop = l };
     ctx2.id = yasl_loop_add_timer(l, 2000000ull, repeat_cb, &ctx2);
     assert(ctx2.id > 0);
@@ -170,7 +163,7 @@ static void test_loop_timers(void)
     assert(ctx2.count == 5);
     assert(!yasl_loop_del_timer(l, ctx2.id));
 
-    /* Test 3: Reschedule dynamically */
+    /* A callback can change its own interval. */
     struct test_ctx ctx3 = { .loop = l };
     ctx3.id = yasl_loop_add_timer(l, 2000000ull, reschedule_cb, &ctx3);
     assert(ctx3.id > 0);
@@ -179,17 +172,16 @@ static void test_loop_timers(void)
     }
     assert(ctx3.count == 2);
 
-    /* Test 4: Timer cancellation before firing */
+    /* A canceled timer never fires. */
     struct test_ctx ctx4 = { .loop = l };
     yasl_private_timer_id cancel_id = yasl_loop_add_timer(l, 5000000ull, oneshot_cb, &ctx4);
     assert(cancel_id > 0);
     assert(yasl_loop_del_timer(l, cancel_id));
     assert(!yasl_loop_del_timer(l, cancel_id));
-    /* Step for 10ms; timer should not fire */
     yasl_loop_step(l, 10);
     assert(ctx4.count == 0);
 
-    /* Test 5: Child timer added inside callback */
+    /* A callback can add a timer, which runs in a later step. */
     struct test_ctx ctx5 = { .loop = l };
     ctx5.id = yasl_loop_add_timer(l, 2000000ull, parent_timer_cb, &ctx5);
     while (ctx5.count < 11) {
@@ -197,7 +189,7 @@ static void test_loop_timers(void)
     }
     assert(ctx5.count == 11);
 
-    /* Test 6: Killer timer deletes victim timer before victim fires */
+    /* A callback can cancel another timer before it fires. */
     struct test_ctx ctx6 = { .loop = l };
     ctx6.id = yasl_loop_add_timer(l, 1000000ull, killer_timer_cb, &ctx6);
     ctx6.other_id = yasl_loop_add_timer(l, 10000000ull, victim_timer_cb, &ctx6);
@@ -207,8 +199,8 @@ static void test_loop_timers(void)
     assert(ctx6.count == 1);
     yasl_loop_step(l, 20);
 
-    /* Test 8: Zero delay runs in the next step without waiting, and IDs are
-     * never handed out again. */
+    /* Zero delay runs in the next step without waiting, and IDs are never
+     * handed out again. */
     int zero_runs = 0;
     yasl_private_timer_id zero = yasl_loop_add_timer(l, 0, count_cb, &zero_runs);
     assert(zero > 0 && yasl_private_loop_next_timeout_ms(l) == 0);
@@ -217,7 +209,7 @@ static void test_loop_timers(void)
     assert(next > zero);
     assert(!yasl_loop_del_timer(l, zero) && yasl_loop_del_timer(l, next));
 
-    /* Test 9: A callback that grows the timer array still reschedules itself. */
+    /* A callback that grows the timer array still reschedules itself. */
     struct yasl_loop *grown = yasl_loop_create();
     assert(grown);
     struct test_ctx ctx9 = { .loop = grown };
@@ -227,7 +219,7 @@ static void test_loop_timers(void)
     assert(!yasl_private_loop_timer_armed(grown, ctx9.id));
     assert(yasl_loop_destroy(grown) == 0);
 
-    /* Test 7: Millisecond conversion */
+    /* The millisecond conversion macro yields the interval the callback receives. */
     struct test_ctx ctx7 = { .loop = l };
     ctx7.id = yasl_loop_add_timer(l, YASL_PRIVATE_MS_TO_NS(5), ms_timer_cb, &ctx7);
     assert(ctx7.id > 0);
@@ -254,10 +246,9 @@ static uint64_t surface_suicide_cb(void *ud, yasl_private_timer_id id, uint64_t 
     (void)id; (void)interval_ns;
     struct test_ctx *ctx = ud;
     ctx->count++;
-    /* Destroy surface from within the timer callback */
     yasl_private_surface_destroy(ctx->surface);
     ctx->surface = NULL;
-    return 1000000ull; /* Even if it returns > 0, surface is destroyed */
+    return 1000000ull; /* The delay is ignored: the timer was deleted with the surface. */
 }
 
 static void test_surface_timers(void)
@@ -321,7 +312,6 @@ static void test_surface_timers(void)
     sctx2.id = yasl_private_surface_add_timer(s, 2000000ull, surface_timer_repeat_cb, &sctx2);
     assert(sctx2.id > 0);
     yasl_private_surface_destroy(s);
-    /* Step display/loop; timer must not fire on dead surface */
     yasl_loop_step(loop, 10);
     assert(sctx2.count == 0);
 

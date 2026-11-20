@@ -104,7 +104,7 @@ enum yasl_key {
     YASL_KEY_F23 = 0x136,
     YASL_KEY_F24 = 0x137,
     YASL_KEY_F25 = 0x138,
-    /* F26 to F35 keep a free block, so the keypad values do not move. */
+    /* F26 to F35 take values above the modifier and media keys, so the keypad block keeps 0x140. */
     YASL_KEY_F26 = 0x170,
     YASL_KEY_F27 = 0x171,
     YASL_KEY_F28 = 0x172,

@@ -10,7 +10,7 @@
 /* Drops can carry images, so they allow more bytes than a paste. */
 #define CLIPBOARD_DROP_MAX (64u * 1024 * 1024)
 #define CLIPBOARD_TRANSFER_TIMEOUT_NS (30ull * 1000000000ull)
-/* Most types that one offer keeps. Types past this count are ignored. */
+/* Most types that one offer keeps; types past this count are ignored. */
 #define OFFER_MIME_MAX 32
 
 struct offer {
@@ -282,7 +282,6 @@ static void offer_keep_mime(char **slot, const char *mime)
     *slot = copy;
 }
 
-/* Keeps a copy of a type that the offer lists. Types past OFFER_MIME_MAX are ignored. */
 static void offer_add_mime(struct offer *o, const char *mime)
 {
     if (o->mime_count == OFFER_MIME_MAX) return;

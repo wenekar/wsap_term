@@ -32,8 +32,8 @@ struct drop_log {
     size_t count;
 };
 
-/* The synthetic XDND source. It answers XdndStatus, XdndFinished and
- * SelectionRequest, and it writes INCR chunks on each property deletion. */
+/* The synthetic XDND source. It reads XdndStatus and XdndFinished, answers
+ * SelectionRequest, and writes INCR chunks on each property deletion. */
 struct source {
     Display *dpy;
     Window window, target;

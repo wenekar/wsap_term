@@ -63,7 +63,8 @@ int main(void)
     struct tablet_tool tool = {.seat = &seat};
     tool.proxy = (struct zwp_tablet_tool_v2 *)&tool;
 
-    /* The example selects hidden before either input device has entered. */
+    /* A hidden cursor chosen before either device entered applies when each
+     * device enters. */
     yasl_private_surface_set_cursor(&surface.base, YASL_PRIVATE_CURSOR_HIDDEN);
     assert(!pointer_hides && !tool_hides);
     pointer_enter(&seat, seat.pointer, 10, surface.surface, 0, 0);

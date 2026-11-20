@@ -5,12 +5,12 @@
 #include <stddef.h>
 
 /*
- * The staging buffers of the CPU pixels of one surface.
+ * Staging buffers for the CPU pixels of one surface.
  *
  * A blit reads its buffer after the call that commits it returns, so the next
  * frame must not write that buffer until the GPU is done with it. The ring owns
  * three buffers and hands out only a buffer that no started command reads. A
- * buffer comes back when its command completed. Then the GPU completion
+ * buffer comes back when its command completes. The GPU completion therefore
  * precedes the CPU reuse, and no frame waits for the GPU.
  *
  * The ring outlives the surface that owns it. A command that completes after

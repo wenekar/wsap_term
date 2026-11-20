@@ -588,8 +588,8 @@ int yasl_surface_set_drop_types(yasl_surface *s, const char *const *types, size_
         return yasl_public_error(errno);
     return 0;
 }
-/* True when `offered` is the type that `entry` names. An entry such as
- * "image/" "*" takes every subtype of its major type. */
+/* True when `offered` is the type that `entry` names. An entry ending in a
+ * slash and an asterisk takes every subtype of its major type. */
 static bool drop_type_matches(const char *entry, const char *offered)
 {
     size_t n = strlen(entry);
@@ -702,7 +702,8 @@ void yasl_private_surface_notify_refresh(yasl_surface *s)
 {
     if (!s || !s->display)
         return;
-    /* modal holds only inside the system's own loop, within the wait. */
+    /* A modal system loop runs no loop step, so the REFRESH cannot wait in the
+     * queue: call the application callback now. */
     if (s->refresh && s->display->modal && !refresh_depth) {
         ++refresh_depth;
         s->refresh(s);

@@ -35,8 +35,8 @@ void ime_reset(struct wayland_surface *w)
     show_preedit(w, NULL, -1, -1, w->base.text_revision, w->base.text_generation);
 }
 
-/* yasl's purposes are its own values. The protocol's values differ, so map
- * each one. Unknown values fall back to normal text. */
+/* YASL text purposes use their own values, so each maps to a protocol content
+ * purpose. An unknown purpose maps to normal text. */
 static uint32_t content_purpose(unsigned purpose)
 {
     switch (purpose) {
@@ -134,7 +134,9 @@ bool wayland_surface_update_text_input(struct wayland_surface *w)
             return false;
         }
     }
-    /* The protocol requires a matching done before pending state is sent. */
+    /* The protocol asks for pending state to follow a done event with a
+     * matching serial. The sync barrier also holds state until old snapshots
+     * can be pruned. */
     if (seat->ime_barrier || seat->ime_wait_matching) {
         seat->ime_deferred = true;
         return true;

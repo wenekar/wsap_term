@@ -16,8 +16,8 @@
 extern "C" {
 #endif
 
-/* Optional platform interoperability. All handles are borrowed and expire on
- * object destruction. Check yasl_private_display_backend() before casting:
+/* Native handle types by backend; check yasl_private_display_backend() before
+ * casting:
  *
  *              display                  surface
  * Wayland      struct wl_display *       struct wl_surface *
@@ -41,10 +41,6 @@ void *yasl_private_display_get_native_handle(struct yasl_private_display *d);
  */
 void *yasl_private_surface_get_native_handle(struct yasl_surface *s);
 
-/* Create a surface for application-managed native rendering. graphics_device
- * must be non-NULL; currently an id<MTLDevice> on Cocoa, retained by the surface.
- * Other backends return NULL with errno=ENOTSUP. CPU rendering uses the ordinary
- * yasl_private_surface_create_toplevel() and requires no native device. */
 /**
  * Create a toplevel for application-managed native rendering.
  * @param d Display with YASL_PRIVATE_CAP_NATIVE_GRAPHICS.
@@ -55,6 +51,8 @@ void *yasl_private_surface_get_native_handle(struct yasl_surface *s);
  * Cocoa retains the device. Query the drawable during draw, submit/present it,
  * then call yasl_private_surface_present() to record submission.
  * Callback ownership and timing follow yasl_private_surface_create_toplevel().
+ * CPU rendering uses the ordinary yasl_private_surface_create_toplevel() and
+ * requires no native device.
  */
 struct yasl_surface *yasl_private_surface_create_native(struct yasl_private_display *d,
         const struct yasl_private_window_spec *spec, void *graphics_device);
@@ -67,12 +65,7 @@ struct yasl_private_native_frame {
     bool transaction;
 };
 
-/* Query the current draw target's native drawable. Returns false for unsupported
- * backends, stale targets, or outside the draw callback. The result expires on
- * successful present, callback return, or surface destruction. Native renderers
- * submit/present the drawable, then call yasl_private_surface_present() to record it. */
-/**
- * Get the current draw target's native drawable.
+/** Get the current draw target's native drawable.
  * @param s Surface currently being drawn.
  * @param target Exact framebuffer identity supplied to this draw callback.
  * @param out Required output native frame.

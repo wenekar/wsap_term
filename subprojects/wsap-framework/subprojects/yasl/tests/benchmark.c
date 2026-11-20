@@ -44,7 +44,6 @@ static void print_bench_skipped(const char *name, const char *reason) {
 }
 
 #if YASL_HAS_WAYLAND
-/* Benchmark 1: Public Wayland Surface Handle Lookup */
 static void bench_surface_lookup(void) {
     const int num_surfaces = 16;
     const int lookups = 10000000;
@@ -88,7 +87,6 @@ static void bench_surface_lookup(void) {
     }
 }
 
-/* Benchmark 2: Public Surface Geometry & Refresh Timing */
 static void bench_output_follow(void) {
     const int iters = 10000000;
     struct yasl_private_display_spec spec = {
@@ -126,7 +124,6 @@ static void bench_output_follow(void) {
 }
 #endif
 
-/* Benchmark 3: Input Queue Resizing Throughput */
 static void bench_input_queue_resize(void) {
     const int batches = 50000;
     const int size = 2048;
@@ -151,7 +148,6 @@ static void bench_input_queue_resize(void) {
     print_bench_row("[3] input_queue_resize", per_cycle, ms, details);
 }
 
-/* Benchmark 4: Input Queue Push & Pop Throughput */
 static void bench_input_queue_push_pop(void) {
     const int rounds = 20000;
     const int events_per_round = 500;
@@ -168,7 +164,7 @@ static void bench_input_queue_push_pop(void) {
         }
         struct yasl_private_event out;
         while (input_queue_pop(&q, &out)) {
-            /* consume */
+            /* Discard the event; the loop times push and pop only. */
         }
     }
     uint64_t t1 = get_time_ns();
@@ -180,7 +176,6 @@ static void bench_input_queue_push_pop(void) {
     print_bench_row("[4] input_queue_push_pop", per_cycle, ms, details);
 }
 
-/* Benchmark 5: Event Loop Timers Add & Delete */
 static uint64_t timer_dummy_cb(void *ud, yasl_private_timer_id id, uint64_t interval_ns) {
     (void)ud; (void)id; (void)interval_ns;
     return 0;
@@ -204,7 +199,6 @@ static void bench_timers(void) {
     print_bench_row("[5] timers_add_del", per_cycle, ms, details);
 }
 
-/* Benchmark 6: Window Cold Create & Teardown */
 static void bench_window_cold_create(void) {
     const int iters = 200;
     struct yasl_private_display_spec dspec = { .app_id = "org.yasl.bench.cold" };
@@ -241,7 +235,6 @@ static void bench_window_cold_create(void) {
     print_bench_row("[6] window_cold_create", per_cycle, ms, details);
 }
 
-/* Benchmark 7: Window Warm Create */
 static void bench_window_warm_create(void) {
     const int iters = 2000;
     struct yasl_private_display_spec dspec = { .app_id = "org.yasl.bench.warm" };
@@ -274,7 +267,6 @@ static void bench_window_warm_create(void) {
     print_bench_row("[7] window_warm_create", per_cycle, ms, details);
 }
 
-/* Benchmark 8: Window Shutdown (Single) */
 static void bench_window_shutdown_single(void) {
     const int iters = 2000;
     struct yasl_private_display_spec dspec = { .app_id = "org.yasl.bench.shutdown_single" };
@@ -309,7 +301,6 @@ static void bench_window_shutdown_single(void) {
     print_bench_row("[8] window_shutdown_single", per_cycle, ms, details);
 }
 
-/* Benchmark 9: Window Shutdown (Bulk / All) */
 static void bench_window_shutdown_all(void) {
     const int batches = 50;
     const int batch_size = 64;
@@ -356,7 +347,6 @@ static void bench_window_shutdown_all(void) {
     print_bench_row("[9] window_shutdown_all", per_cycle, ms, details);
 }
 
-/* Benchmark 10: Window Titlebar Update */
 static void bench_window_title_update(void) {
     const int iters = 200000;
     struct yasl_private_display_spec dspec = { .app_id = "org.yasl.bench.title" };
@@ -398,7 +388,6 @@ static void bench_window_title_update(void) {
     print_bench_row("[10] window_titlebar_update", per_cycle, ms, details);
 }
 
-/* Benchmark 11: Window Resize / Dimension Reallocation */
 static void bench_window_resize(void) {
     const int iters = 2000;
     struct yasl_private_display_spec dspec = { .app_id = "org.yasl.bench.resize" };

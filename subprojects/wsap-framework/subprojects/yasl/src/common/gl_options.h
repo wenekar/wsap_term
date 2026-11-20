@@ -1,7 +1,8 @@
 #ifndef YASL_PRIVATE_GL_OPTIONS_H
 #define YASL_PRIVATE_GL_OPTIONS_H
 #include <stdbool.h>
-/* Attribute values are shared with the public GL bridge; not installed. */
+/* Private attribute keys for yasl_private_gl_parse_options(); each backend
+ * maps the parsed options to its own GL attributes. */
 enum {
     YASL_PRIVATE_GL_END = 0, YASL_PRIVATE_GL_MAJOR = 1, YASL_PRIVATE_GL_MINOR,
     YASL_PRIVATE_GL_PROFILE, YASL_PRIVATE_GL_DEBUG, YASL_PRIVATE_GL_FORWARD_COMPAT,
