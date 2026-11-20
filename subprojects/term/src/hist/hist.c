@@ -1384,15 +1384,16 @@ static inline uint64_t cheap_rows(uint64_t cells, uint64_t wide, int cols)
     return rows_narrow(cols == 1 ? cells - wide : cells, cols);
 }
 
-/* Counts the closed line at the end of the history. The cells alone give a
- * lower bound for a line with wide cells, so the count comes from the walk.
- * A wrong count moves the rows of every line that follows. */
-static inline void count_closed(struct hist *h, struct hline *first, uint64_t rows)
+/* Counts the closed line at the end of the history. flags are the flags of
+ * the whole line, which the caller has at hand. The cells alone give a lower
+ * bound for a line with wide cells, so a count of more than one row comes
+ * from the walk. A line that fits in one row needs no walk. A wrong count
+ * moves the rows of every line that follows. */
+static inline void count_closed(struct hist *h, struct hline *first, uint64_t rows,
+                                uint8_t flags)
 {
     if (rows && h->wrap_cols && h->rows_id == hist_end_id(h) - 1) {
-        if (h->wrap_cols > 1 &&
-            (wsap_vtcore_hist_line_flags(h, h->rows_id) &
-             (HLINE_HAS_WIDE | HLINE_HAS_CLUSTER)))
+        if (rows > 1 && h->wrap_cols > 1 && (flags & (HLINE_HAS_WIDE | HLINE_HAS_CLUSTER)))
             rows = (uint64_t)wsap_vtcore_hist_line_rows(h, h->rows_id, h->wrap_cols);
         first->wrap_rows = row_count_byte(rows);
         h->counted_rows += rows;
@@ -1443,7 +1444,7 @@ static bool push_line(struct hist *h, const struct cell *cells, int len, const c
     h->all_blank = false;
     h->runs.len = 0;
     if (h->wrap_cols)
-        count_closed(h, p, cheap_rows(e.cells, e.wide, h->wrap_cols));
+        count_closed(h, p, cheap_rows(e.cells, e.wide, h->wrap_cols), e.flags);
     return true;
 }
 
@@ -1478,7 +1479,7 @@ static inline bool push_uniform_line(struct hist *h, const struct cell *cells, i
     h->lines++;
     h->all_blank = false;
     if (h->wrap_cols)
-        count_closed(h, q, cheap_rows((uint64_t)len, 0, h->wrap_cols));
+        count_closed(h, q, cheap_rows((uint64_t)len, 0, h->wrap_cols), q->flags);
     return true;
 }
 
@@ -1533,9 +1534,11 @@ void wsap_vtcore_hist_close_open_line(struct hist *h)
         return;
     }
     uint64_t first = line_first(h, id);
-    uint64_t rows = first == h->head - 1
+    bool one_part = first == h->head - 1;
+    uint64_t rows = one_part
                     ? cheap_rows(p->cells, p->wide, cols)
                     : cheap_rows(wsap_vtcore_hist_line_cells(h, id), wsap_vtcore_hist_line_wide(h, id), cols);
+    uint8_t flags = one_part ? p->flags : wsap_vtcore_hist_line_flags(h, id);
     /* The walk of the open line has the exact count of its first rows. Walk
      * the rest of the line here, so the count of the closed line reads the
      * walk and does not walk the whole line again. */
@@ -1544,7 +1547,7 @@ void wsap_vtcore_hist_close_open_line(struct hist *h)
         if (!rows)
             rows = h->walk_rows;
     }
-    count_closed(h, part(h, first), rows);
+    count_closed(h, part(h, first), rows, flags);
     h->walk_on = false;
 }
 
@@ -1723,7 +1726,7 @@ void wsap_vtcore_hist_push_ascii(struct hist *h, const char *bytes, int n, const
             h->lines++;
             h->all_blank = false;
             if (h->wrap_cols)
-                count_closed(h, q, rows_narrow((uint64_t)n, h->wrap_cols));
+                count_closed(h, q, rows_narrow((uint64_t)n, h->wrap_cols), q->flags);
             return;
         }
         if (!wrapped && n <= HIST_PAGE_USABLE / 2 && push_line(h, NULL, n, bytes, pen, NULL))
@@ -1805,7 +1808,7 @@ void wsap_vtcore_hist_push_text(struct hist *h, const struct text_row *row, bool
             h->lines++;
             h->all_blank = false;
             if (h->wrap_cols)
-                count_closed(h, q, cheap_rows(row->cells, row->wide, h->wrap_cols));
+                count_closed(h, q, cheap_rows(row->cells, row->wide, h->wrap_cols), q->flags);
             return;
         }
         p = begin_line(h, (size_t)row->text_len + runs_need);
