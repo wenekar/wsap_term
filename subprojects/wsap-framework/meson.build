@@ -335,8 +335,18 @@ if get_option('tests')
     subdir('tests')
 endif
 
-# License files of the framework and of the third-party data that it ships.
-# The terminal installs its own license files.
+# The license texts of the third-party code and data that the framework ships.
+# An app that builds the framework as a subproject reads this variable and
+# installs the files with its own license, because its binary holds the code.
+third_party_licenses = files(
+    'LICENSES/OFL-1.1.txt',
+    'LICENSES/Unicode-3.0.txt',
+    'LICENSES/NOTICE.md',
+    'LICENSES/accesskit-c-MIT.txt',
+    'LICENSES/accesskit-c-APACHE-2.0.txt',
+    'LICENSES/accesskit-c-BSD-3-Clause-chromium.txt',
+    'LICENSES/accesskit-c-LGPL-2.1.txt',
+)
 if not meson.is_subproject()
     license_dir = get_option('datadir') / 'licenses' / meson.project_name()
     install_data('LICENSE', install_dir: license_dir)
@@ -344,16 +354,7 @@ if not meson.is_subproject()
         'assets/fonts/LICENSE',
         install_dir: license_dir,
     )
-    install_data(
-        'LICENSES/OFL-1.1.txt',
-        'LICENSES/Unicode-3.0.txt',
-        'LICENSES/NOTICE.md',
-        'LICENSES/accesskit-c-MIT.txt',
-        'LICENSES/accesskit-c-APACHE-2.0.txt',
-        'LICENSES/accesskit-c-BSD-3-Clause-chromium.txt',
-        'LICENSES/accesskit-c-LGPL-2.1.txt',
-        install_dir: license_dir,
-    )
+    install_data(third_party_licenses, install_dir: license_dir)
 endif
 
 summary(
