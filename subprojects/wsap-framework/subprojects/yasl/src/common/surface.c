@@ -232,6 +232,7 @@ static const struct {
     {YASL_PRIVATE_CAP_TABLET, YASL_FEATURE_TABLET},
     {YASL_PRIVATE_CAP_TEXT_INPUT, YASL_FEATURE_TEXT_INPUT},
     {YASL_PRIVATE_CAP_RELATIVE_POINTER, YASL_FEATURE_LOCKED_CURSOR},
+    {YASL_PRIVATE_CAP_TITLEBAR_OVERLAY, YASL_FEATURE_TITLEBAR_OVERLAY},
 };
 
 static bool display_has_feature(uint32_t caps, enum yasl_feature feature)
@@ -450,6 +451,7 @@ yasl_surface *yasl_surface_create(const struct yasl_surface_options *o)
     unsigned flags = (o->type == YASL_SURFACE_CPU ? YASL_PRIVATE_SURFACE_CPU : 0u) |
                      (o->undecorated ? YASL_PRIVATE_SURFACE_UNDECORATED : 0u) |
                      (o->fixed_size ? YASL_PRIVATE_SURFACE_FIXED_SIZE : 0u) |
+                     (o->titlebar_overlay ? YASL_PRIVATE_SURFACE_TITLEBAR_OVERLAY : 0u) |
                      (o->hidden ? YASL_PRIVATE_SURFACE_HIDDEN : 0u);
     int attrs[31];
     yasl_surface *share = o->type == YASL_SURFACE_GL ? o->gl.share : NULL;
@@ -511,19 +513,31 @@ int yasl_surface_destroy(yasl_surface *s)
     yasl_private_surface_destroy(s);
     return 0;
 }
+/* Returns the public form of a size, scale, state, and title bar. Call it
+ * for yasl_surface_get_info and for each WINDOW event. */
+static struct yasl_surface_info surface_info(struct yasl_private_vector2i size, uint32_t scale_120,
+                                             uint32_t state, struct yasl_private_titlebar titlebar)
+{
+    double scale = scale_120 ? scale_120 / 120.0 : 1.0;
+    return (struct yasl_surface_info){
+        .width = logical(size.x, scale),
+        .height = logical(size.y, scale),
+        .pixel_width = size.x,
+        .pixel_height = size.y,
+        .scale = scale,
+        .state = state,
+        .titlebar_height = titlebar.height,
+        .controls_x = titlebar.controls.x,
+        .controls_y = titlebar.controls.y,
+        .controls_width = titlebar.controls.width,
+        .controls_height = titlebar.controls.height,
+    };
+}
 struct yasl_surface_info yasl_surface_get_info(const yasl_surface *s)
 {
     if (!s || !yasl_public_surface((yasl_surface *)s, false))
         return (struct yasl_surface_info){.scale = 1.0};
-    double scale = scale_of(s);
-    return (struct yasl_surface_info){
-        .width = logical(s->size.x, scale),
-        .height = logical(s->size.y, scale),
-        .pixel_width = s->size.x,
-        .pixel_height = s->size.y,
-        .scale = scale,
-        .state = s->state,
-    };
+    return surface_info(s->size, s->scale_120, s->state, s->titlebar);
 }
 void *yasl_surface_get_userdata(const yasl_surface *s)
 {
@@ -825,6 +839,34 @@ int yasl_surface_begin_move_resize(yasl_surface *s, unsigned edges)
         return STATUS(yasl_private_surface_start_interactive_move(s));
     return STATUS(yasl_private_surface_start_interactive_resize(s, (enum yasl_private_resize_edge)edges));
 }
+int yasl_surface_set_titlebar_areas(yasl_surface *s, const struct yasl_rect *areas, size_t count)
+{
+    if (!yasl_public_surface(s, false))
+        return -errno;
+    if (s->popup || (count && !areas))
+        return yasl_public_error(EINVAL);
+    for (size_t i = 0; i < count; i++) {
+        const struct yasl_rect *a = &areas[i];
+        if (!isfinite(a->x) || !isfinite(a->y) || !isfinite(a->width) || !isfinite(a->height) ||
+            a->width < 0 || a->height < 0)
+            return yasl_public_error(EINVAL);
+    }
+    if (!(yasl_private_display_caps(display) & YASL_PRIVATE_CAP_TITLEBAR_OVERLAY))
+        return yasl_public_error(ENOTSUP);
+    struct yasl_private_area *copy = NULL;
+    if (count) {
+        copy = calloc(count, sizeof(*copy));
+        if (!copy)
+            return yasl_public_error(ENOMEM);
+        for (size_t i = 0; i < count; i++)
+            copy[i] = (struct yasl_private_area){areas[i].x, areas[i].y, areas[i].width,
+                                                 areas[i].height};
+    }
+    free(s->titlebar_areas);
+    s->titlebar_areas = copy;
+    s->titlebar_area_count = count;
+    return 0;
+}
 int yasl_surface_show_window_menu(yasl_surface *s, double x, double y)
 {
     struct yasl_private_rect2i r;
@@ -977,23 +1019,22 @@ static bool window_event(yasl_surface *s, struct yasl_private_vector2i size, uin
 {
     bool resized = size.x != s->reported_size.x || size.y != s->reported_size.y ||
                    scale_120 != s->reported_scale_120;
-    if (!resized && state == s->reported_state)
+    struct yasl_private_titlebar titlebar = s->titlebar, last = s->reported_titlebar;
+    /* The application lays out its title bar again, so it must draw again. */
+    bool retitled = titlebar.height != last.height || titlebar.controls.x != last.controls.x ||
+                    titlebar.controls.y != last.controls.y ||
+                    titlebar.controls.width != last.controls.width ||
+                    titlebar.controls.height != last.controls.height;
+    if (!resized && !retitled && state == s->reported_state)
         return false;
     s->reported_size = size;
     s->reported_scale_120 = scale_120;
     s->reported_state = state;
-    if (resized)
+    s->reported_titlebar = titlebar;
+    if (resized || retitled)
         s->refresh_owed = true;
-    double scale = scale_120 ? scale_120 / 120.0 : 1.0;
     e->type = YASL_EVENT_WINDOW;
-    e->window = (struct yasl_surface_info){
-        .width = logical(size.x, scale),
-        .height = logical(size.y, scale),
-        .pixel_width = size.x,
-        .pixel_height = size.y,
-        .scale = scale,
-        .state = state,
-    };
+    e->window = surface_info(size, scale_120, state, titlebar);
     return true;
 }
 static bool refresh_ready(yasl_surface *s)

@@ -128,6 +128,8 @@ enum yasl_private_display_cap : uint32_t {
     YASL_PRIVATE_CAP_RELATIVE_POINTER  = 1 << 9, /**< YASL_PRIVATE_POINTER_RELATIVE is available. */
     YASL_PRIVATE_CAP_VULKAN            = 1 << 10, /**< Hardware graphics support for Vulkan presentation. */
     YASL_PRIVATE_CAP_TEXT_INPUT        = 1 << 11, /**< Input method support. */
+    /** Support for YASL_PRIVATE_SURFACE_TITLEBAR_OVERLAY and title bar areas. */
+    YASL_PRIVATE_CAP_TITLEBAR_OVERLAY  = 1 << 12,
 };
 
 /** Independent selections. An unsupported selection never aliases the clipboard. */
@@ -274,6 +276,20 @@ struct yasl_private_drag_image {
 struct yasl_private_drag_listener {
     /** Called exactly once after a successful start, possibly synchronously on cancel/close. */
     void (*end)(void *ud, enum yasl_private_drag_end how);
+};
+
+/** The system title bar over a titlebar-overlay toplevel, in logical units
+ * from the top left of the content. All zero without the overlay. */
+struct yasl_private_titlebar {
+    /** Height of the system title bar. */
+    int height;
+    /** Area of the system window buttons. */
+    struct yasl_private_rect2i controls;
+};
+
+/** One title bar area in logical units from the top left of the content. */
+struct yasl_private_area {
+    double x, y, width, height;
 };
 
 /** Configured device-pixel content size and the corresponding display scale. */
@@ -525,7 +541,7 @@ struct yasl_private_user_event {
 };
 
 /** One tagged event; read only the union member selected by type. */
-enum yasl_private_surface_flags { YASL_PRIVATE_SURFACE_CPU = 1u, YASL_PRIVATE_SURFACE_HIDDEN = 2u, YASL_PRIVATE_SURFACE_UNDECORATED = 4u, YASL_PRIVATE_SURFACE_FIXED_SIZE = 8u };
+enum yasl_private_surface_flags { YASL_PRIVATE_SURFACE_CPU = 1u, YASL_PRIVATE_SURFACE_HIDDEN = 2u, YASL_PRIVATE_SURFACE_UNDECORATED = 4u, YASL_PRIVATE_SURFACE_FIXED_SIZE = 8u, YASL_PRIVATE_SURFACE_TITLEBAR_OVERLAY = 16u };
 enum yasl_private_pen_action { YASL_PRIVATE_PEN_ENTER, YASL_PRIVATE_PEN_LEAVE, YASL_PRIVATE_PEN_MOVE, YASL_PRIVATE_PEN_DOWN, YASL_PRIVATE_PEN_UP, YASL_PRIVATE_PEN_BUTTON, YASL_PRIVATE_PEN_CANCEL };
 enum yasl_private_pen_axis { YASL_PRIVATE_PEN_PRESSURE = 1u, YASL_PRIVATE_PEN_TILT = 2u, YASL_PRIVATE_PEN_ROTATION = 4u, YASL_PRIVATE_PEN_DISTANCE = 8u, YASL_PRIVATE_PEN_TANGENTIAL = 16u, YASL_PRIVATE_PEN_WHEEL = 32u };
 enum yasl_private_presenter { YASL_PRIVATE_PRESENTER_NONE, YASL_PRIVATE_PRESENTER_CPU, YASL_PRIVATE_PRESENTER_GL, YASL_PRIVATE_PRESENTER_VULKAN, YASL_PRIVATE_PRESENTER_METAL };

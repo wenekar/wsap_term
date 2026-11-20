@@ -2,6 +2,7 @@
 #include <yasl/yasl.h>
 #include "common/backend.h"
 #include <assert.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -391,6 +392,16 @@ int main(int argc, char **argv)
                .text = "ab", .length = 2, .selection_end = 3}) == -EINVAL);
     assert(yasl_surface_set_text_input(s, &(struct yasl_text_input){.caret_x = 1e300}) == -EOVERFLOW);
     assert(yasl_surface_set_text_input(s, NULL) == 0 || ime == -ENOTSUP);
+
+    /* Title bar areas. The window has no overlay, so it reports no title bar. */
+    struct yasl_surface_info plain = yasl_surface_get_info(s);
+    assert(!plain.titlebar_height && !plain.controls_width && !plain.controls_height);
+    assert(yasl_surface_set_titlebar_areas(s, NULL, 1) == -EINVAL);
+    assert(yasl_surface_set_titlebar_areas(s, &(struct yasl_rect){.width = -1}, 1) == -EINVAL);
+    assert(yasl_surface_set_titlebar_areas(s, &(struct yasl_rect){.x = NAN}, 1) == -EINVAL);
+    int areas = yasl_surface_set_titlebar_areas(s, &(struct yasl_rect){.width = 50, .height = 20}, 1);
+    assert(areas == ((features & YASL_FEATURE_TITLEBAR_OVERLAY) ? 0 : -ENOTSUP));
+    assert(yasl_surface_set_titlebar_areas(s, NULL, 0) == areas);
 
     /* Arguments are checked before the backend sees them. */
     assert(yasl_surface_begin_move_resize(s, YASL_EDGE_TOP | YASL_EDGE_BOTTOM) == -EINVAL);

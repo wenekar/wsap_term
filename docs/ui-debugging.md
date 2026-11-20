@@ -77,6 +77,20 @@ X11 reports the raw pixel coordinates of its configure events.
 Wayland does not expose global window positions.
 Its trace reports move requests and changes in size or scale.
 
+On Cocoa, these stages trace a drag from a title bar area:
+
+| Stage | Meaning |
+|---|---|
+| `titlebar-drag` | A primary press in a title bar area starts a window drag |
+| `refit` | AppKit moves the window to fit the screen that it entered |
+| `refit-skipped` | YASL skips that refit, because the primary button is still down |
+
+A `refit` line between `titlebar-drag` and the release means that the window can leave the pointer.
+Two system checks help with such a drag:
+
+- Start the app with the arguments `-NSScreenLoggingEnabled YES` to log the AppKit screen layout decisions.
+- Run `log show --last 10m --predicate 'eventMessage CONTAINS "without beginning"'` to find drags that AppKit started without a move start.
+
 ## Concepts
 
 ### Surfaces

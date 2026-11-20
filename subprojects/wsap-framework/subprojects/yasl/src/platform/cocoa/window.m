@@ -79,8 +79,14 @@ enum {
 @property (nonatomic, assign) struct cocoa_surface *surface;
 @end
 
-@interface YaslWindowController : NSWindowController <NSWindowDelegate>
+/* The delegate of a YASL window. It is a plain object, not an
+ * NSWindowController, because AppKit refits the frame of a window that a
+ * window controller owns when a drag takes it to another display.
+ * Note (2026-11-20): macOS 27.2 refits during the drag, so the window jumps
+ * away from the pointer. */
+@interface YaslWindowDelegate : NSObject <NSWindowDelegate>
 @property (nonatomic, assign) struct cocoa_surface *surface;
+@property (nonatomic, assign) NSWindow *window;
 @property (nonatomic, assign) BOOL fullscreenTransition;
 @end
 
@@ -99,7 +105,7 @@ struct cocoa_cpu_slot {
 struct cocoa_surface {
     struct yasl_surface base;
     YaslWindow *window;
-    YaslWindowController *controller;
+    YaslWindowDelegate *delegate;
     YaslView *view;
     CALayer *layer;
     CAMetalLayer *metal_layer;
@@ -186,6 +192,9 @@ struct cocoa_surface {
 
     /* Retained mouse-down of the press in progress, for interactive moves. */
     NSEvent *mouse_down;
+    /* The primary press in progress fell in a title bar area: YASL moves the
+     * window, and the press reaches the application as no event. */
+    bool titlebar_press;
     struct yasl_private_frame_clock clock;
 };
 
@@ -692,6 +701,81 @@ static void sync_size(struct cocoa_surface *w, bool force)
     if (w->base.presenter != YASL_PRIVATE_PRESENTER_CPU || w->view.inLiveResize)
         yasl_private_surface_notify_refresh(&w->base);
     darwin_ctx.depth--;
+}
+
+/* Reports the system title bar over the content of an overlay toplevel: its
+ * height and the area of the window buttons. Call it after a change of size,
+ * full screen state, or screen. */
+static void sync_titlebar(struct cocoa_surface *w)
+{
+    if (!w || w->destroyed || w->closed || w->is_popup || !w->view || !w->window)
+        return;
+    struct yasl_private_titlebar titlebar = {0};
+    NSWindow *window = w->window;
+    if ((window.styleMask & NSWindowStyleMaskFullSizeContentView) &&
+        !(window.styleMask & NSWindowStyleMaskFullScreen)) {
+        NSRect bounds = w->view.bounds;
+        NSRect layout = [w->view convertRect:window.contentLayoutRect fromView:nil];
+        CGFloat top = NSHeight(bounds);
+        titlebar.height = (int)lround(MAX(0.0, NSMaxY(bounds) - NSMaxY(layout)));
+        NSRect controls = NSZeroRect;
+        for (NSWindowButton kind = NSWindowCloseButton; kind <= NSWindowZoomButton; kind++) {
+            NSButton *button = [window standardWindowButton:kind];
+            if (button && !button.hidden)
+                controls = NSUnionRect(controls, [w->view convertRect:button.bounds
+                                                             fromView:button]);
+        }
+        if (!NSIsEmptyRect(controls)) {
+            int x0 = (int)floor(NSMinX(controls)), x1 = (int)ceil(NSMaxX(controls));
+            int y0 = (int)floor(top - NSMaxY(controls)), y1 = (int)ceil(top - NSMinY(controls));
+            titlebar.controls = (struct yasl_private_rect2i){
+                .x = x0, .y = y0, .width = x1 - x0, .height = y1 - y0,
+            };
+        }
+    }
+    darwin_ctx.depth++;
+    yasl_private_surface_notify_titlebar(&w->base, titlebar);
+    darwin_ctx.depth--;
+}
+
+/* Returns true when `event` is a primary press in a title bar area of a
+ * windowed toplevel. Call it for each press, and in acceptsFirstMouse:. A
+ * Control press is a secondary click, so it returns false. */
+static bool is_titlebar_press(const struct cocoa_surface *w, NSEvent *event)
+{
+    if (!w || w->is_popup || w->closed || !w->view || !w->window || !event ||
+        event.type != NSEventTypeLeftMouseDown ||
+        (event.modifierFlags & NSEventModifierFlagControl) ||
+        (w->window.styleMask & NSWindowStyleMaskFullScreen))
+        return false;
+    NSPoint p = [w->view convertPoint:event.locationInWindow fromView:nil];
+    return yasl_private_surface_in_titlebar_area(&w->base, p.x, NSHeight(w->view.bounds) - p.y);
+}
+
+/* Zooms, fills, or minimizes `window`, as the system setting for a double
+ * click on a title bar asks. Call it on the second press of a double click
+ * in a title bar area. */
+static void titlebar_double_click(NSWindow *window)
+{
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    NSString *action = [defaults stringForKey:@"AppleActionOnDoubleClick"];
+    if (!action && [defaults boolForKey:@"AppleMiniaturizeOnDoubleClick"])
+        action = @"Minimize";
+    if ([action isEqualToString:@"None"])
+        return;
+    if ([action isEqualToString:@"Minimize"]) {
+        if (window.styleMask & NSWindowStyleMaskMiniaturizable)
+            [window miniaturize:nil];
+        return;
+    }
+    if (!(window.styleMask & NSWindowStyleMaskResizable))
+        return;
+    /* "Fill" tiles the window to the screen. Only a private method does it. */
+    SEL fill = NSSelectorFromString(@"_zoomFill:");
+    if ([action isEqualToString:@"Fill"] && [window respondsToSelector:fill])
+        [window performSelector:fill withObject:nil];
+    else
+        [window zoom:nil];
 }
 
 static unsigned cocoa_mods(NSEventModifierFlags m)
@@ -1609,11 +1693,40 @@ static bool push_drop(struct cocoa_surface *w, NSPasteboard *pb, NSString *type,
     on_key_event(w, event, modifier_down(event) ? YASL_KEY_PRESS : YASL_KEY_RELEASE);
 }
 
+/* The view gets each press, also in the title bar band of an overlay window.
+ * The window server must not start a drag from the view by itself. If it
+ * does, the drag that YASL starts for the same press loses its move start,
+ * and AppKit then refits the frame at each move. AppKit asks the private
+ * method _opaqueRectForWindowMoveWhenInTitlebar which parts of the band the
+ * window server must leave to the view. */
+- (BOOL)mouseDownCanMoveWindow { return NO; }
+- (NSRect)_opaqueRectForWindowMoveWhenInTitlebar { return self.bounds; }
+
+/* A press in a title bar area moves an inactive window at once, as a press
+ * on a system title bar does. */
+- (BOOL)acceptsFirstMouse:(NSEvent *)event
+{
+    return is_titlebar_press(self.surface, event);
+}
+
 - (void)mouseDown:(NSEvent *)event
 {
     [self.window makeFirstResponder:self];
     /* Right and other buttons also arrive here. Keep the press for interactive moves. */
     struct cocoa_surface *w = self.surface;
+    if (w && event.type == NSEventTypeLeftMouseDown)
+        w->titlebar_press = is_titlebar_press(w, event);
+    if (w && w->titlebar_press) {
+        /* Start the drag while AppKit dispatches the press. It is the only
+         * drag, because the view keeps the window server out of the band. */
+        if (event.clickCount == 2) {
+            titlebar_double_click(w->window);
+        } else if (w->window.movable) {
+            trace_window_move(w, "titlebar-drag", NULL);
+            [w->window performWindowDragWithEvent:event];
+        }
+        return;
+    }
     if (w) {
         [event retain];
         [w->mouse_down release];
@@ -1627,6 +1740,10 @@ static bool push_drop(struct cocoa_surface *w, NSPasteboard *pb, NSString *type,
 - (void)mouseUp:(NSEvent *)event
 {
     struct cocoa_surface *w = self.surface;
+    if (w && w->titlebar_press && event.type == NSEventTypeLeftMouseUp) {
+        w->titlebar_press = false;
+        return;
+    }
     if (w) {
         [w->mouse_down release];
         w->mouse_down = nil;
@@ -1643,7 +1760,10 @@ static bool push_drop(struct cocoa_surface *w, NSPasteboard *pb, NSString *type,
 
 - (void)mouseDragged:(NSEvent *)event
 {
-    push_pointer(self.surface, event, YASL_PRIVATE_EVENT_POINTER_MOTION, 0);
+    struct cocoa_surface *w = self.surface;
+    if (w && w->titlebar_press)
+        return;
+    push_pointer(w, event, YASL_PRIVATE_EVENT_POINTER_MOTION, 0);
 }
 - (void)rightMouseDragged:(NSEvent *)event
 {
@@ -2027,7 +2147,7 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
 
 @end
 
-@implementation YaslWindowController
+@implementation YaslWindowDelegate
 
 - (void)windowDidBecomeKey:(NSNotification *)notification
 {
@@ -2097,6 +2217,7 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
     set_state(w, YASL_PRIVATE_STATE_MAXIMIZED, !fullscreen && self.window.isZoomed);
     set_state(w, YASL_PRIVATE_STATE_CSD, !(self.window.styleMask & NSWindowStyleMaskTitled));
     sync_size(w, false);
+    sync_titlebar(w);
     darwin_ctx.depth--;
 }
 
@@ -2132,6 +2253,7 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
     struct cocoa_surface *w = self.surface;
     trace_window_move(w, "screen-change", NULL);
     sync_size(w, false);
+    sync_titlebar(w);
     /* The link follows the window to its new screen. Wake it so it measures
      * the new cadence. A frame that already waits still waits for its tick. */
     if (w && !w->closed) {
@@ -2582,6 +2704,95 @@ static void dismiss_popup_press(const struct cocoa_surface *pressed)
     darwin_ctx.depth--;
 }
 
+/*
+ * AppKit's screen layout manager refits a window that a move takes to another
+ * display: _windowMoved: calls _setFrameAfterMove:, which calls
+ * _setFrame:fromAdjustmentToScreen:anchorIfNeeded:animate:. The refit moves
+ * the window to the frame that it last had on that display, or to a
+ * proportional place on it. A YASL window skips the refit of a move while
+ * the primary button is down, so a dragged window stays under the pointer.
+ * AppKit still refits at the release. It also refits when a display comes or
+ * goes, because that refit does not come from a move. With
+ * WSAP_TRACE_WINDOW_MOVE=1, each refit writes a trace line.
+ * Note (2026-11-20): macOS 27.2 runs the refit during a drag.
+ */
+typedef void (*frame_after_move_imp)(id, SEL, NSRect);
+typedef void (*frame_refit_imp)(id, SEL, NSRect, NSScreen *, const CGPoint *, BOOL);
+static frame_after_move_imp appkit_frame_after_move;
+static frame_refit_imp appkit_frame_refit;
+static int frame_after_move_depth;
+
+static void hook_frame_after_move(id self, SEL cmd, NSRect frame)
+{
+    frame_after_move_depth++;
+    @try {
+        appkit_frame_after_move(self, cmd, frame);
+    } @finally {
+        frame_after_move_depth--;
+    }
+}
+
+static void hook_frame_refit(id self, SEL cmd, NSRect frame, NSScreen *screen,
+                             const CGPoint *anchor, BOOL animate)
+{
+    bool dragging = frame_after_move_depth > 0 && (NSEvent.pressedMouseButtons & 1);
+    struct cocoa_surface *w = ((YaslWindow *)self).surface;
+    if (darwin_ctx.base.trace_moves && w) {
+        NSRect from = ((NSWindow *)self).frame;
+        yasl_private_move_trace(&darwin_ctx.base, &w->base, dragging ? "refit-skipped" : "refit",
+                "win=%ld screen=%u after-move=%d from=(%g,%g %gx%g) to=(%g,%g %gx%g)",
+                (long)((NSWindow *)self).windowNumber, screen_id(screen),
+                frame_after_move_depth > 0, NSMinX(from), NSMinY(from), NSWidth(from),
+                NSHeight(from), NSMinX(frame), NSMinY(frame), NSWidth(frame), NSHeight(frame));
+    }
+    if (!dragging)
+        appkit_frame_refit(self, cmd, frame, screen, anchor, animate);
+}
+
+/* Returns true when argument `index` of `method` has the type `type`,
+ * ignoring a const qualifier. install_refit_hooks calls it to check the
+ * AppKit signatures. */
+static bool argument_is(Method method, unsigned index, const char *type)
+{
+    char *arg = method_copyArgumentType(method, index);
+    const char *t = arg && arg[0] == 'r' ? arg + 1 : arg;
+    bool same = t && !strcmp(t, type);
+    free(arg);
+    return same;
+}
+
+/* Installs the refit hooks on YaslWindow. Call it at startup, before the
+ * first window opens. It installs nothing when AppKit lacks either method or
+ * the argument types differ, so a later macOS keeps its own behavior. */
+static void install_refit_hooks(void)
+{
+    static bool tried;
+    if (tried)
+        return;
+    tried = true;
+    SEL after_sel = NSSelectorFromString(@"_setFrameAfterMove:");
+    SEL refit_sel = NSSelectorFromString(@"_setFrame:fromAdjustmentToScreen:anchorIfNeeded:animate:");
+    Method after = class_getInstanceMethod([NSWindow class], after_sel);
+    Method refit = class_getInstanceMethod([NSWindow class], refit_sel);
+    char after_ret[4] = "", refit_ret[4] = "";
+    if (after)
+        method_getReturnType(after, after_ret, sizeof(after_ret));
+    if (refit)
+        method_getReturnType(refit, refit_ret, sizeof(refit_ret));
+    if (!after || !refit || strcmp(after_ret, "v") || strcmp(refit_ret, "v") ||
+        method_getNumberOfArguments(after) != 3 || method_getNumberOfArguments(refit) != 6 ||
+        !argument_is(after, 2, @encode(NSRect)) || !argument_is(refit, 2, @encode(NSRect)) ||
+        !argument_is(refit, 3, @encode(id)) || !argument_is(refit, 4, @encode(CGPoint *)) ||
+        !argument_is(refit, 5, @encode(BOOL)))
+        return;
+    appkit_frame_after_move = (frame_after_move_imp)method_getImplementation(after);
+    appkit_frame_refit = (frame_refit_imp)method_getImplementation(refit);
+    class_addMethod([YaslWindow class], after_sel, (IMP)hook_frame_after_move,
+                    method_getTypeEncoding(after));
+    class_addMethod([YaslWindow class], refit_sel, (IMP)hook_frame_refit,
+                    method_getTypeEncoding(refit));
+}
+
 static void app_init(const char *app_name)
 {
     /* finishLaunching runs once per process, even when the display reopens. */
@@ -2589,6 +2800,7 @@ static void app_init(const char *app_name)
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     NSWindow.allowsAutomaticWindowTabbing = NO;
+    install_refit_hooks();
     darwin_ctx.delegate = [[YaslAppDelegate alloc] init];
     NSApp.delegate = darwin_ctx.delegate;
 
@@ -2740,7 +2952,8 @@ uint32_t cocoa_display_caps(const struct cocoa_display *d)
                     YASL_PRIVATE_CAP_DRAG_CARRY | YASL_PRIVATE_CAP_PLACE_WINDOW |
                     YASL_PRIVATE_CAP_CSD | YASL_PRIVATE_CAP_NATIVE_GRAPHICS |
                     YASL_PRIVATE_CAP_FRAME_PACING | YASL_PRIVATE_CAP_TABLET |
-                    YASL_PRIVATE_CAP_RELATIVE_POINTER | YASL_PRIVATE_CAP_TEXT_INPUT;
+                    YASL_PRIVATE_CAP_RELATIVE_POINTER | YASL_PRIVATE_CAP_TEXT_INPUT |
+                    YASL_PRIVATE_CAP_TITLEBAR_OVERLAY;
     if (cocoa_vulkan_available())
         caps |= YASL_PRIVATE_CAP_VULKAN;
     return caps;
@@ -2789,9 +3002,13 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
             NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable;
         if (!(spec->flags & YASL_PRIVATE_SURFACE_FIXED_SIZE))
             style |= NSWindowStyleMaskResizable;
-        w->base.state = (style & NSWindowStyleMaskTitled) ? 0 : YASL_PRIVATE_STATE_CSD;
-        /* Leave the title bar to AppKit. A transparent title bar can lose its
-         * drag position when the pointer crosses displays. */
+        bool titled = (style & NSWindowStyleMaskTitled) != 0;
+        bool overlay = titled && (spec->flags & YASL_PRIVATE_SURFACE_TITLEBAR_OVERLAY);
+        w->base.state = titled ? 0 : YASL_PRIVATE_STATE_CSD;
+        /* The content of an overlay window covers the title bar, so the
+         * requested size includes it. */
+        if (overlay)
+            style |= NSWindowStyleMaskFullSizeContentView;
         w->window = [[YaslWindow alloc] initWithContentRect:NSMakeRect(0, 0, win_w, win_h)
                                                   styleMask:style
                                                     backing:NSBackingStoreBuffered
@@ -2800,14 +3017,22 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
         w->base.native_handle = (__bridge void *)w->window;
         w->base.size = w->size;
         w->base.scale_120 = w->scale_120;
-        w->controller = [[YaslWindowController alloc] initWithWindow:w->window];
-        w->controller.surface = w;
-        w->window.delegate = w->controller;
+        w->delegate = [[YaslWindowDelegate alloc] init];
+        w->delegate.window = w->window;
+        w->delegate.surface = w;
+        w->window.delegate = w->delegate;
         w->window.acceptsMouseMovedEvents = YES;
         w->window.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
         /* The full title: a byte-limited copy could split a UTF-8 sequence. */
         w->window.title = [NSString stringWithUTF8String:t] ?: @"YASL";
         w->window.colorSpace = [NSColorSpace sRGBColorSpace];
+        /* The application draws the title. The window menu, Mission Control,
+         * and the Dock still show it. */
+        if (overlay) {
+            w->window.titlebarAppearsTransparent = YES;
+            w->window.titleVisibility = NSWindowTitleHidden;
+            w->window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
+        }
 
         w->view = [[YaslView alloc] initWithFrame:w->window.contentView.bounds cpuLayer:w->use_iosurface];
         w->window.contentView = w->view;
@@ -2823,10 +3048,11 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
                 [device release];
                 if (!w->software_queue) {
                     w->window.delegate = nil;
-                    w->controller.surface = NULL;
+                    w->delegate.surface = NULL;
+                    w->delegate.window = nil;
                     [w->window close];
                     [w->view release];
-                    [w->controller release];
+                    [w->delegate release];
                     [w->window release];
                     free(w);
                     return NULL;
@@ -2850,6 +3076,7 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
         }
 
         sync_size(w, true);
+        sync_titlebar(w);
         if (spec->tearing) {
             if (w->metal_layer) w->metal_layer.displaySyncEnabled = NO;
             w->unpaced = true;
@@ -2872,7 +3099,7 @@ static void surface_free(struct cocoa_surface *w)
     software_stages_free(w->software_stages);
     [w->software_queue release];
     [w->view release];
-    [w->controller release];
+    [w->delegate release];
     [w->window release];
     free(w->preedit);
     free(w->pixels);
@@ -2932,7 +3159,8 @@ void cocoa_surface_destroy(struct cocoa_surface *w)
     if (w->window.inLiveResize)
         darwin_ctx.base.modal = false;
     w->window.delegate = nil;
-    w->controller.surface = NULL;
+    w->delegate.surface = NULL;
+    w->delegate.window = nil;
     w->window.surface = NULL;
     w->view.surface = NULL;
     if (!native_closed)
@@ -3369,9 +3597,10 @@ struct cocoa_surface *cocoa_surface_create_popup(struct cocoa_surface *parent,
         w->window.opaque = NO;
         w->window.backgroundColor = [NSColor clearColor];
         w->window.hasShadow = NO;
-        w->controller = [[YaslWindowController alloc] initWithWindow:w->window];
-        w->controller.surface = w;
-        w->window.delegate = w->controller;
+        w->delegate = [[YaslWindowDelegate alloc] init];
+        w->delegate.window = w->window;
+        w->delegate.surface = w;
+        w->window.delegate = w->delegate;
         w->window.acceptsMouseMovedEvents = YES;
         w->window.colorSpace = [NSColorSpace sRGBColorSpace];
 

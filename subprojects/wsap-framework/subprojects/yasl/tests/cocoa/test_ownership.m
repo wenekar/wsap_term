@@ -26,6 +26,7 @@ int main(void)
     struct yasl_private_display *d = yasl_private_display_open(NULL, NULL);
     assert(d);
     assert(yasl_private_display_caps(d) & YASL_PRIVATE_CAP_TEXT_INPUT);
+    assert(yasl_private_display_caps(d) & YASL_PRIVATE_CAP_TITLEBAR_OVERLAY);
     /* macOS has one system pasteboard and no primary selection. */
     assert(!(yasl_private_display_caps(d) & YASL_PRIVATE_CAP_PRIMARY_SELECTION));
     struct yasl_private_window_spec spec = {.title = "Ownership test", .size = {160, 100}};
@@ -42,7 +43,74 @@ int main(void)
     assert(!window.titlebarAppearsTransparent);
     assert(NSEqualSizes(view.bounds.size, NSMakeSize(160, 100)));
     assert(NSEqualRects([view convertRect:view.bounds toView:nil], window.contentLayoutRect));
+    /* AppKit refits the frame of a window that a window controller owns when
+     * a drag takes it to another display, so no controller owns a YASL window. */
+    assert(!window.windowController && ![window.delegate isKindOfClass:[NSWindowController class]]);
+    assert(!s->titlebar.height && !s->titlebar.controls.width);
     struct yasl_private_event event;
+    while (yasl_private_display_poll_event(d, &event)) {}
+
+    /* An overlay window: the content covers the title bar, and the requested
+     * size includes it. */
+    struct yasl_private_window_spec overlay_spec = {
+        .title = "Overlay test", .size = {320, 200}, .flags = YASL_PRIVATE_SURFACE_TITLEBAR_OVERLAY,
+    };
+    struct yasl_surface *overlay = yasl_private_surface_create_toplevel(d, &overlay_spec);
+    assert(overlay);
+    NSWindow *overlay_window = (NSWindow *)yasl_private_surface_get_native_handle(overlay);
+    NSView *overlay_view = yasl_private_cocoa_surface_get_view(overlay);
+    assert(overlay_window.styleMask & NSWindowStyleMaskFullSizeContentView);
+    assert(overlay_window.titlebarAppearsTransparent);
+    assert(overlay_window.titleVisibility == NSWindowTitleHidden);
+    assert(NSEqualSizes(overlay_view.bounds.size, NSMakeSize(320, 200)));
+    struct yasl_private_titlebar tb = overlay->titlebar;
+    assert(tb.height > 0 && tb.height < 100);
+    assert(tb.controls.width > 0 && tb.controls.height > 0 && tb.controls.x >= 0);
+    assert(tb.controls.y >= 0 && tb.controls.y + tb.controls.height <= tb.height);
+    assert(!(overlay->state & YASL_PRIVATE_STATE_CSD));
+    while (yasl_private_display_poll_event(d, &event)) {}
+
+    /* A press in the title bar band goes to the view, and a press on a window
+     * button goes to the button: NSWindow sends a press to the frame view's
+     * hit test result. */
+    NSView *frame_view = overlay_view.superview;
+    CGFloat band_y = 200 - tb.height / 2.0;
+    NSPoint band = [frame_view convertPoint:NSMakePoint(150, band_y) fromView:nil];
+    NSPoint button = [frame_view convertPoint:NSMakePoint(tb.controls.x + 6, band_y) fromView:nil];
+    assert([frame_view hitTest:band] == overlay_view);
+    assert([frame_view hitTest:button] != overlay_view);
+
+    /* A press in a title bar area reaches the application as no event; a
+     * double click does what the system setting asks, here nothing. */
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    [defaults setObject:@"None" forKey:@"AppleActionOnDoubleClick"];
+    struct yasl_private_area area = {.x = 200, .y = 0, .width = 120, .height = tb.height};
+    overlay->titlebar_areas = &area;
+    overlay->titlebar_area_count = 1;
+    @autoreleasepool {
+        NSEvent *outside = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
+            location:NSMakePoint(150, band_y) modifierFlags:0 timestamp:0
+            windowNumber:overlay_window.windowNumber context:nil eventNumber:0 clickCount:1 pressure:1];
+        NSEvent *inside = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
+            location:NSMakePoint(260, band_y) modifierFlags:0 timestamp:0
+            windowNumber:overlay_window.windowNumber context:nil eventNumber:0 clickCount:2 pressure:1];
+        NSEvent *release = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp
+            location:NSMakePoint(260, band_y) modifierFlags:0 timestamp:0
+            windowNumber:overlay_window.windowNumber context:nil eventNumber:0 clickCount:2 pressure:0];
+        assert(![overlay_view acceptsFirstMouse:outside]);
+        assert([overlay_view acceptsFirstMouse:inside]);
+        [overlay_view mouseDown:outside];
+        assert(has_event(d, YASL_PRIVATE_EVENT_POINTER_DOWN, overlay));
+        [overlay_view mouseDown:inside];
+        [overlay_view mouseUp:release];
+        while (yasl_private_display_poll_event(d, &event))
+            assert(event.surface != overlay || (event.type != YASL_PRIVATE_EVENT_POINTER_DOWN &&
+                                                event.type != YASL_PRIVATE_EVENT_POINTER_UP));
+    }
+    overlay->titlebar_areas = NULL;
+    overlay->titlebar_area_count = 0;
+    [defaults removeObjectForKey:@"AppleActionOnDoubleClick"];
+    yasl_private_surface_destroy(overlay);
     while (yasl_private_display_poll_event(d, &event)) {}
 
     struct yasl_private_window_spec gpu_spec = {

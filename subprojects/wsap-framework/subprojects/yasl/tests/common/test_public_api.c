@@ -37,6 +37,7 @@ int main(void)
     assert(yasl_surface_set_pacing(NULL, YASL_PACING_CONTINUOUS) == -ENODEV);
     assert(yasl_surface_set_text_input(NULL, NULL) == -ENODEV);
     assert(yasl_surface_begin_move_resize(NULL, 0) == -ENODEV);
+    assert(yasl_surface_set_titlebar_areas(NULL, NULL, 0) == -ENODEV);
     assert(yasl_surface_show_window_menu(NULL, 1, 1) == -ENODEV);
     assert(yasl_surface_bell(NULL) == -ENODEV);
     assert(yasl_surface_set_background_color(NULL, 0) == -ENODEV);

@@ -35,7 +35,8 @@ enum yasl_feature {
     YASL_FEATURE_POPUPS = 1, YASL_FEATURE_DRAG = 2, YASL_FEATURE_DRAG_CARRY = 4,
     YASL_FEATURE_PLACE_WINDOW = 8, YASL_FEATURE_PRIMARY_SELECTION = 16, YASL_FEATURE_TABLET = 32,
     YASL_FEATURE_TEXT_INPUT = 64, YASL_FEATURE_LOCKED_CURSOR = 128, YASL_FEATURE_OPENGL = 256,
-    YASL_FEATURE_VULKAN = 512
+    YASL_FEATURE_VULKAN = 512,
+    YASL_FEATURE_TITLEBAR_OVERLAY = 1024 /**< Support for titlebar_overlay and title bar areas. */
 };
 /** Zero is the default: AUTO, no app ID, and yasl_wait_event delivers events.
  * app_id is a reverse-DNS name for window grouping and notifications. Set loop
@@ -84,6 +85,13 @@ struct yasl_surface_options {
     int width, height; /**< Required. */
     enum yasl_surface_type type;
     bool undecorated, fixed_size, tearing;
+    /** Extends the content under a transparent system title bar
+     * (FEATURE_TITLEBAR_OVERLAY). The system keeps its window buttons and
+     * hides the title text; the application draws the rest of the title bar.
+     * width and height then include the title bar. yasl_surface_get_info
+     * reports the title bar height and the button area. Ignored where the
+     * feature is missing. */
+    bool titlebar_overlay;
     /** Ask for these states at creation; a WINDOW event reports the result. */
     bool fullscreen, maximized, hidden;
     void *userdata;
@@ -114,6 +122,13 @@ struct yasl_surface_info {
     int width, height, pixel_width, pixel_height;
     double scale;
     unsigned state; /**< YASL_STATE_* */
+    /** The height of the system title bar over the top of a titlebar_overlay
+     * window, and the area of its window buttons, in logical units from the
+     * top left of the content. Draw the title bar in that height and leave the
+     * button area clear. All zero without the overlay and in fullscreen. A
+     * WINDOW event reports each change. */
+    int titlebar_height;
+    int controls_x, controls_y, controls_width, controls_height;
 };
 /** Zero sizes and scale 1 for NULL. */
 YASL_API struct yasl_surface_info yasl_surface_get_info(const yasl_surface *surface);
@@ -207,6 +222,21 @@ enum yasl_edge { YASL_EDGE_TOP = 1, YASL_EDGE_BOTTOM = 2, YASL_EDGE_LEFT = 4, YA
 /** Requires a held pointer or pen button: lets the user move the window (edges
  * 0) or resize it from one edge or a corner (two adjacent edges). */
 YASL_API int yasl_surface_begin_move_resize(yasl_surface *surface, unsigned edges);
+/** A rectangle in logical units from the top left of the content. */
+struct yasl_rect {
+    double x, y, width, height;
+};
+/** Sets the parts of a toplevel that act as its title bar
+ * (FEATURE_TITLEBAR_OVERLAY). Call it after each layout change of the title
+ * bar that the application draws. A primary press in an area moves the
+ * window. A double click zooms or minimizes it, as the system setting asks.
+ * yasl consumes these presses, so the application gets no POINTER event for
+ * them. Motion, other buttons, a Control press, and presses in fullscreen
+ * still arrive. The list is copied and replaces the previous one; count 0
+ * clears it. EINVAL for a popup, or for a rectangle with a negative or
+ * non-finite value. */
+YASL_API int yasl_surface_set_titlebar_areas(yasl_surface *surface,
+                                             const struct yasl_rect *areas, size_t count);
 YASL_API int yasl_surface_show_window_menu(yasl_surface *surface, double x, double y);
 YASL_API int yasl_surface_bell(yasl_surface *surface);
 /** Sets the surface background color. The bg value uses 0xAARRGGBB or

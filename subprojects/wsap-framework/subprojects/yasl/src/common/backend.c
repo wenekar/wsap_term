@@ -279,10 +279,23 @@ void yasl_private_surface_destroy(struct yasl_surface *s)
 {
     if (!s || !s->display->ops->surface_destroy)
         return;
+    free(s->titlebar_areas);
+    s->titlebar_areas = NULL;
+    s->titlebar_area_count = 0;
     yasl_private_events_unregister(s);
     yasl_private_surface_clear_timers(s);
     input_queue_clear(&s->input);
     s->display->ops->surface_destroy(s);
+}
+
+bool yasl_private_surface_in_titlebar_area(const struct yasl_surface *s, double x, double y)
+{
+    for (size_t i = 0; s && i < s->titlebar_area_count; i++) {
+        const struct yasl_private_area *a = &s->titlebar_areas[i];
+        if (x >= a->x && y >= a->y && x < a->x + a->width && y < a->y + a->height)
+            return true;
+    }
+    return false;
 }
 
 struct yasl_private_display *yasl_private_surface_display(const struct yasl_surface *s)

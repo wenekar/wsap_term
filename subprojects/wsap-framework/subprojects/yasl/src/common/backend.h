@@ -102,7 +102,16 @@ struct yasl_surface {
     char **drop_types;
     size_t drop_type_count;
 
+    /* The system title bar of a titlebar-overlay toplevel. The backend sets
+     * it through yasl_private_surface_notify_titlebar. */
+    struct yasl_private_titlebar titlebar;
+    /* The areas that yasl_surface_set_titlebar_areas set. The backend reads
+     * them on a primary press. */
+    struct yasl_private_area *titlebar_areas;
+    size_t titlebar_area_count;
+
     /* Window values last reported through public WINDOW events. */
+    struct yasl_private_titlebar reported_titlebar;
     struct yasl_private_vector2i reported_size;
     uint32_t reported_scale_120, reported_state;
     uint32_t bg_color;
@@ -145,6 +154,13 @@ void yasl_private_surface_notify_refresh(struct yasl_surface *s);
 void yasl_private_surface_notify_frame_shown(struct yasl_surface *s);
 void yasl_private_surface_notify_close(struct yasl_surface *s);
 void yasl_private_surface_notify_state(struct yasl_surface *s, uint32_t state);
+/* Stores the system title bar of `s` and queues a WINDOW event when it
+ * changed. Backends call it after each change of size, state, or screen. */
+void yasl_private_surface_notify_titlebar(struct yasl_surface *s, struct yasl_private_titlebar titlebar);
+/* Returns true when the point at logical (x, y) from the top left of the
+ * content of `s` lies in one of its title bar areas. Backends call it on a
+ * primary press. */
+bool yasl_private_surface_in_titlebar_area(const struct yasl_surface *s, double x, double y);
 void yasl_private_surface_notify_drag(struct yasl_surface *s, enum yasl_private_drag_event ev, struct yasl_private_vector2i pos);
 void yasl_private_surface_notify_drop(struct yasl_surface *s, enum yasl_private_drop_event ev, struct yasl_private_vector2i pos);
 /* Queues a drop hover that reports `mime`, the type that a drop here would

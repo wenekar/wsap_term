@@ -345,6 +345,24 @@ void yasl_private_surface_notify_state(struct yasl_surface *s, uint32_t flags)
     yasl_private_events_push(s->display, s, &event);
 }
 
+static bool titlebar_equal(struct yasl_private_titlebar a, struct yasl_private_titlebar b)
+{
+    return a.height == b.height && a.controls.x == b.controls.x &&
+           a.controls.y == b.controls.y && a.controls.width == b.controls.width &&
+           a.controls.height == b.controls.height;
+}
+
+void yasl_private_surface_notify_titlebar(struct yasl_surface *s, struct yasl_private_titlebar titlebar)
+{
+    if (titlebar_equal(titlebar, s->titlebar))
+        return;
+    s->titlebar = titlebar;
+    /* A state event reports the current geometry, which holds the title bar. */
+    struct yasl_private_event event = {.type = YASL_PRIVATE_EVENT_WINDOW_STATE, .surface = s,
+                                       .state.flags = s->state};
+    yasl_private_events_push(s->display, s, &event);
+}
+
 void yasl_private_surface_notify_drag(struct yasl_surface *s, enum yasl_private_drag_event action, struct yasl_private_vector2i pos)
 {
     struct yasl_private_event event = {.type = YASL_PRIVATE_EVENT_DRAG, .surface = s, .drag = {action, pos}};
