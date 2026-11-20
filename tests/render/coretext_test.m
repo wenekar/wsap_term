@@ -229,22 +229,26 @@ static void test_coretext_glyph_orientation(void)
 
 static void test_coretext_hotswap(void)
 {
-    struct font_instance *fi = font_instance_default();
-    uint32_t gen0 = (uint32_t)font_instance_version(fi);
+    font_set_family("Menlo");
+    struct font_instance *fi = acquire_at(20, 240);
+    assert(fi);
+    struct glyph g = {0};
+    assert(font_instance_render_glyph(fi, 'M', 0, &g));
+    int rows = font_instance_metrics(fi)->cell_h;
+    assert(glyph_has_ink(&g, rows));
+    uint64_t menlo = glyph_pixels(&g, rows);
 
     font_set_family("Courier");
-    uint32_t gen1 = (uint32_t)font_generation();
-    assert(gen1 > gen0);
-
-    struct font_instance *fi_new = font_instance_default();
-    assert(fi_new != NULL);
-    assert(strcmp(font_get_family(), "Courier") == 0);
-
-    struct glyph g = {0};
+    struct font_instance *fi_new = acquire_at(20, 240);
+    assert(fi_new);
     assert(font_instance_render_glyph(fi_new, 'M', 0, &g));
-    assert(g.width > 0);
-    glyph_release(&g);
+    rows = font_instance_metrics(fi_new)->cell_h;
+    assert(glyph_has_ink(&g, rows));
+    assert(glyph_pixels(&g, rows) != menlo);
 
+    glyph_release(&g);
+    font_instance_unref(fi_new);
+    font_instance_unref(fi);
     font_set_family(FONT_DEFAULT_FAMILY);
 }
 

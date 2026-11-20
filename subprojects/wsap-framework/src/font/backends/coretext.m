@@ -19,8 +19,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define DEFAULT_FAMILY_LIST FONT_DEFAULT_FAMILY
-
 static bool register_bundled_fonts(bool include_extras);
 
 char **font_list_families(size_t *count)
@@ -450,7 +448,8 @@ static CTFontRef ct_match_named_font(const char *name, const char *norm, CGFloat
 static CTFontRef ct_load_base_font(const char *family_list, CGFloat pt)
 {
     char copy[256];
-    strncpy(copy, family_list && family_list[0] ? family_list : DEFAULT_FAMILY_LIST, sizeof(copy) - 1);
+    strncpy(copy, family_list && family_list[0] ? family_list : font_get_family(),
+            sizeof(copy) - 1);
     copy[sizeof(copy) - 1] = '\0';
 
     char *saveptr = NULL;
