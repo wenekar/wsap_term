@@ -14,8 +14,7 @@ static inline int ui_shadow_extent(int blur)
 {
     if (blur <= 0)
         return 0;
-    if (blur > UI_SHADOW_MAX_BLUR)
-        blur = UI_SHADOW_MAX_BLUR;
+    blur = geom_min_i(blur, UI_SHADOW_MAX_BLUR);
     return (blur * 3 + 1) / 2;
 }
 
@@ -28,12 +27,10 @@ struct ui_shadow_mask {
     const uint8_t *edge;
 };
 
-const struct ui_shadow_mask *ui_shadow_mask(int radius, int blur);
-
 /*
- * The same mask, built from paint/shape_math.h. The new renderer uses it,
- * so the CPU and the GPU agree. The cache is per thread. A mask stays
- * valid until the same thread builds four other masks.
+ * Builds a shadow mask from paint/shape_math.h so the CPU and GPU agree.
+ * The cache is per thread. A mask stays valid until the same thread builds
+ * four other masks.
  */
 const struct ui_shadow_mask *ui_shadow_mask_shape(int radius, int blur);
 

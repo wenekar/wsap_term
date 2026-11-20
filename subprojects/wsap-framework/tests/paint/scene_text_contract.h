@@ -54,24 +54,25 @@ static const struct glyph *scene_contract_glyph(uint32_t cp, uint16_t flags)
     return &scene_glyphs[cp == SCENE_RIGHT_CP];
 }
 
-static bool scene_cell_shows(const struct scene_backend *b, int cell,
-                             uint32_t cp)
+static bool scene_cell_has(const struct scene_backend *b, int cell, int want_col)
 {
-    int want = (int)(cp == SCENE_RIGHT_CP) ? SCENE_CELL_W - 1 : 0;
     for (int y = 0; y < SCENE_CELL_H; y++)
         for (int x = 0; x < SCENE_CELL_W; x++)
-            if (b->inked(b->ctx, cell * SCENE_CELL_W + x, y) != (x == want))
+            if (b->inked(b->ctx, cell * SCENE_CELL_W + x, y) != (x == want_col))
                 return false;
     return true;
 }
 
+static bool scene_cell_shows(const struct scene_backend *b, int cell,
+                             uint32_t cp)
+{
+    int want = cp == SCENE_RIGHT_CP ? SCENE_CELL_W - 1 : 0;
+    return scene_cell_has(b, cell, want);
+}
+
 static bool scene_cell_blank(const struct scene_backend *b, int cell)
 {
-    for (int y = 0; y < SCENE_CELL_H; y++)
-        for (int x = 0; x < SCENE_CELL_W; x++)
-            if (b->inked(b->ctx, cell * SCENE_CELL_W + x, y))
-                return false;
-    return true;
+    return scene_cell_has(b, cell, -1);
 }
 
 static void scene_text_run(struct ui_scene *s, const char *text, size_t len)

@@ -9,6 +9,13 @@
 #define HASH_SEED 1469598103934665603ULL
 #define HASH_PRIME 1099511628211ULL
 
+/* One entry of the scope stack. Only this file reads it. */
+struct ui_scene_frame {
+    int scope;
+    int clip_base;
+    struct vector2i origin;
+};
+
 void ui_scene_init(struct ui_scene *s)
 {
     if (!s)
@@ -126,7 +133,6 @@ static bool scope_push(struct ui_scene *s, uint64_t key, const void *owner,
         .key = key,
         .hash = hash_bytes(HASH_SEED, &ordinal, sizeof(ordinal)),
         .owner = owner,
-        .parent = parent,
         .depth = s->scope_depth,
         .first_op = s->n_ops,
         .end_op = s->n_ops,
@@ -737,16 +743,9 @@ bool ui_scene_shadow(struct ui_scene *s, struct rect2i box, int radius,
 {
     if (rect2i_is_empty(box) || !(color >> 24))
         return true;
-    if (blur > UI_SHADOW_MAX_BLUR)
-        blur = UI_SHADOW_MAX_BLUR;
-    if (radius < 0)
-        radius = 0;
-    if (radius > UI_SHADOW_MAX_RADIUS)
-        radius = UI_SHADOW_MAX_RADIUS;
-    if (radius > box.width / 2)
-        radius = box.width / 2;
-    if (radius > box.height / 2)
-        radius = box.height / 2;
+    blur = geom_min_i(blur, UI_SHADOW_MAX_BLUR);
+    radius = geom_clamp_i(radius, 0, geom_min_i(UI_SHADOW_MAX_RADIUS,
+        geom_min_i(box.width, box.height) / 2));
     if (blur <= 0)
         return ui_scene_rounded_rect(s, box, radius, color);
 

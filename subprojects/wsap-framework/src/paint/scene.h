@@ -183,17 +183,12 @@ struct ui_scene_scope {
     uint64_t hash;
     const void *owner;
     struct rect2i ink;
-    int parent;
     int depth;
     int first_op, end_op;
     int children;
 };
 
-struct ui_scene_frame {
-    int scope;
-    int clip_base;
-    struct vector2i origin;
-};
+struct ui_scene_frame;
 
 struct ui_scene {
     struct ui_scene_op *ops;

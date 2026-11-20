@@ -77,6 +77,17 @@ static inline uint8_t blend_correct_channel(int fg_c, int bg_c, uint8_t cov)
     return srgb_coverage(fg_c & 0xff, bg_c & 0xff, cov);
 }
 
+static inline unsigned blend_max3(unsigned a, unsigned b, unsigned c)
+{
+    unsigned m = a > b ? a : b;
+    return m > c ? m : c;
+}
+
+static inline unsigned blend_out_alpha(unsigned bg_a, unsigned a)
+{
+    return bg_a == 255 ? 255u : a + (bg_a * (255u - a) + 127u) / 255u;
+}
+
 static inline uint32_t blend_subpx(uint32_t fg, uint32_t bg,
                                    uint8_t subpx_r, uint8_t subpx_g, uint8_t subpx_b)
 {
@@ -97,11 +108,8 @@ static inline uint32_t blend_subpx(uint32_t fg, uint32_t bg,
     unsigned g = blend_channel(fg_g, bg_g, ag);
     unsigned b = blend_channel(fg_b, bg_b, ab);
 
-    unsigned bg_a = bg >> 24;
-    unsigned max_a = subpx_r > subpx_g ? (subpx_r > subpx_b ? subpx_r : subpx_b)
-                                       : (subpx_g > subpx_b ? subpx_g : subpx_b);
-    unsigned out_a = bg_a == 255 ? 255u
-        : max_a + (bg_a * (255u - max_a) + 127u) / 255u;
+    unsigned out_a = blend_out_alpha(bg >> 24,
+                                     blend_max3(subpx_r, subpx_g, subpx_b));
     return (out_a << 24) | (r << 16) | (g << 8) | b;
 }
 
@@ -146,9 +154,8 @@ static inline uint32_t blend_subpx_lut(const struct subpx_lut *lut,
     unsigned rgb = lut->r[subpx_r] | lut->g[subpx_g] | lut->b[subpx_b];
     if (bg_a == 255)
         return 0xFF000000u | rgb;
-    unsigned max_a = subpx_r > subpx_g ? (subpx_r > subpx_b ? subpx_r : subpx_b)
-                                       : (subpx_g > subpx_b ? subpx_g : subpx_b);
-    unsigned out_a = max_a + (bg_a * (255u - max_a) + 127u) / 255u;
+    unsigned out_a = blend_out_alpha(bg_a,
+                                     blend_max3(subpx_r, subpx_g, subpx_b));
     return (out_a << 24) | rgb;
 }
 
@@ -163,9 +170,7 @@ static inline uint32_t blend_px_lum(uint32_t fg, uint32_t bg,
     unsigned r = blend_channel((fg >> 16) & 0xff, (bg >> 16) & 0xff, a);
     unsigned g = blend_channel((fg >> 8) & 0xff, (bg >> 8) & 0xff, a);
     unsigned b = blend_channel(fg & 0xff, bg & 0xff, a);
-    unsigned bg_a = bg >> 24;
-    unsigned out_a = bg_a == 255 ? 255u
-        : a + (bg_a * (255u - a) + 127u) / 255u;
+    unsigned out_a = blend_out_alpha(bg >> 24, a);
     return (out_a << 24) | (r << 16) | (g << 8) | b;
 }
 
