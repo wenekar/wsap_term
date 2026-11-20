@@ -83,7 +83,7 @@ A weight of `FONT_WEIGHT_BOLD_MIN` or more adds `FONT_STYLE_BOLD` to every glyph
 
 The FreeType backend holds one family set for the process. The configured family list selects that set. A descriptor that names another family list sets the configured family list, as `font_set_family()` does. That call increments `font_generation()`, so every instance rebuilds at the next frame start.
 
-A per-instance family list needs one face table for each family set. The FreeType face table, the fallback machinery, and the face configuration snapshot are process state today. The CoreText backend holds a `CTFontRef` for each variant in its handle, so it does not have this limit.
+FreeType selects the family set process-wide. Each attached thread refreshes its face table when it observes the new FreeType face epoch. CoreText stores a `CTFontRef` for each variant in its own handle.
 
 ## Stale checks
 
@@ -169,7 +169,7 @@ Worker threads manage state during their lifecycle. A worker attaches backend st
 | `built_fg`, `built_bg` | Per instance | A rebuild writes current tile colors here. |
 | `run_stamp` | Per instance | Each run cache insertion increments this stamp. A cache hit updates the entry stamp. Cache eviction drops the entry with the oldest stamp. |
 | `ft_sync_epoch` | FreeType, global, atomic | Font family reloads, hinting changes, and backend shutdown increment this epoch. |
-| `applied_px` | FreeType, per face slot | `ft_size_faces()` writes the pixel size here. A face slot takes the size on first use and keeps it, so two sizes on one thread do not clobber each other. |
+| `applied_px` | FreeType, per face slot | `ft_size_faces()` updates the requested pixel size on each slot when the thread switches sizes. The raster cache distinguishes sizes in its key. |
 | `synced_epoch` | FreeType, per thread | Records the epoch when this thread loaded its font faces. When this value differs from `ft_sync_epoch`, the next backend call reloads thread faces. |
 | `fit_pass` | FreeType, per thread | Each run fit pass increments this counter. Raster cache entries for the current pass remain protected from eviction during that pass. CoreText uses `ct_use_pass` for identical protection. |
 | `slot_reuse` | FreeType, per face slot | Releasing a face slot increments this counter to invalidate older raster cache entries in that slot. |

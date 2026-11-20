@@ -1,9 +1,6 @@
 # PTY Drain Pacing
 
-> Superseded. The main thread no longer parses PTY output. The ring worker
-> thread parses each read into the terminal at once, so the drain budget, the
-> read chunk, and the wakeup threshold no longer exist. Keep this report as the
-> record of the pacing pass.
+> Historical report. The main thread's drain budget and adaptive read size no longer apply. The PTY worker parses each read and has its own wake threshold. See [fast PTY implementation notes](../docs/fastpty.md#reader-ownership-and-stream-ordering).
 
 This report covers the drain budget, the read chunk, and the reader wakeup
 threshold of the PTY path.

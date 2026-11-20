@@ -1,5 +1,7 @@
 # Documentation
 
+This index links to the guides for building and using the WSAP framework.
+
 | Guide | Contents |
 | --- | --- |
 | [Build](build.md) | Prerequisites, options, build, install, and pkg-config use. |

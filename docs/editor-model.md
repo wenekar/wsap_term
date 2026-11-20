@@ -1,9 +1,8 @@
 # Editor document model
 
-`src/editor/` is the document model of the code editor.
-It sits above base and below ui.
-It includes no `yasl/`, `wsap_vtcore`, or `ui/` header.
-`tools/dev/dirgraph.py` and `tests/ui/api_boundary_test.sh` check that rule.
+This design note describes the editor document model recorded in commit `e4894e0`. The editor and its tests are not part of `wsap_term` at commit `58c9d47`.
+
+The design places the document model above the base library and below the UI library. The model does not depend on yasl, the terminal core, or UI headers.
 
 ## Text buffer
 
@@ -83,4 +82,4 @@ This layer holds no huge-file mode, no chunked or `mmap` backing, no
 long-line viewport slicing, no binary detection, and no non-UTF-8 code page.
 It holds no syntax highlighting, diagnostics, folding, bracket matching, or
 multi-cursor editing.
-These features need the widget layer, which does not exist yet.
+The design leaves these features to a separate widget layer.

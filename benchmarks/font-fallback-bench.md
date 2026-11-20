@@ -1,13 +1,13 @@
 # Font Fallback Benchmark: Coverage Cache
 
-Run with:
+This benchmark measures the FreeType fallback coverage cache. From the repository root, configure a standalone framework build with benchmarks enabled:
 
 ```sh
-meson test -C build --benchmark font-fallback-bench --verbose
+meson setup build-framework subprojects/wsap-framework -Dbenchmarks=true -Dfont_backend=freetype
+meson test -C build-framework --benchmark font-fallback-bench --verbose
 ```
 
-The benchmark measures the FreeType fallback coverage cache.
-The CoreText build does not include it.
+A CoreText build does not include this benchmark.
 
 After font initialization, it does these steps:
 

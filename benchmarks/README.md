@@ -1,6 +1,6 @@
 # Benchmarks
 
-This directory contains benchmark programs, scripts, and investigation reports.
+This index links to benchmark programs, scripts, and investigation reports. Treat the reported measurements as results for the workloads and builds described in each report, not as performance guarantees for the current build.
 
 ## Running benchmarks
 
@@ -8,7 +8,6 @@ Run the live terminal benchmark:
 
 ```sh
 meson compile -C build term-live-bench
-build/benchmarks/term-live-bench
 ```
 
 Run headless terminal and renderer benchmarks:
@@ -21,7 +20,8 @@ meson test -C build --benchmark render-bench --verbose
 Run input latency and transport benchmarks:
 
 ```sh
-meson test -C build --benchmark input-latency-bench --verbose
+meson compile -C build input-latency-bench wsap_term
+./build/benchmarks/input-latency-bench
 meson test -C build --benchmark transport-bench --verbose
 ```
 
@@ -32,6 +32,7 @@ meson test -C build --benchmark transport-bench --verbose
 | Report | Topic |
 | --- | --- |
 | [termbench-throughput.md](termbench-throughput.md) | Full termbench throughput and comparisons. |
+| [csi-parser.md](csi-parser.md) | CSI parser throughput |
 | [termbench-csi.md](termbench-csi.md) | CSI sequence parsing and branch cost reduction. |
 | [termbench-investigation.md](termbench-investigation.md) | Profiler bottleneck investigation for termbench. |
 | [term-write-30gib.md](term-write-30gib.md) | 30 GiB write stress test and memory usage. |
@@ -48,7 +49,7 @@ meson test -C build --benchmark transport-bench --verbose
 | [term-ng-sync.md](term-ng-sync.md) | Terminal synchronization barrier performance. |
 | [lazy-rows.md](lazy-rows.md) | Lazy row allocation and generation tracking. |
 | [blank-rows.md](blank-rows.md) | Blank row detection and fast clears. |
-| [layout.md](layout.md) | Cell geometry and glyph layout caching. |
+| [layout.md](layout.md) | Library dependency and source layout checks |
 | [history-descriptors.md](history-descriptors.md) | Scrollback page descriptor indexing. |
 | [history-insertion.md](history-insertion.md) | Scrollback ring buffer append speed. |
 | [cursor-erase.md](cursor-erase.md) | Fast erase paths for cursor commands. |

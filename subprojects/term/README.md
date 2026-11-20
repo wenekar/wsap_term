@@ -54,7 +54,7 @@ Hot code paths provide AVX2, AVX-512, and NEON kernels.
 Kernels accelerate line feed bursts and scroll operations.
 The build requires no special flags:
 
-- On x86-64 with GCC or Clang, functions compile with target attributes for each level. The first call to `wsap_vtcore_new()` selects the highest supported CPU level: `base` (x86-64), `avx2` (x86-64-v3), or `avx512` (x86-64-v4 with VBMI and VBMI2). `wsap_vtcore_isa()` returns the active level name. The `WSAP_VTCORE_ISA` environment variable overrides this selection.
+- On x86-64 with GCC or Clang, functions compile with target attributes for each level. The first call to `wsap_vtcore_new()` selects the highest supported CPU level: `base` (x86-64), `avx2` (x86-64-v3), or `avx512` (x86-64-v4 with VBMI and VBMI2). `wsap_vtcore_isa()` returns the active level name. Set `WSAP_VTCORE_ISA` to select a lower level without going below the minimum target set at build time.
 - The `arch_flag` option (such as `-march=x86-64-v3`) sets the minimum target level. Checks at or below that level evaluate as compile-time constants and inline their kernels.
 - On aarch64, code always uses NEON without runtime selection.
 - On MSVC, builds enable only the levels specified by the `/arch` flag.

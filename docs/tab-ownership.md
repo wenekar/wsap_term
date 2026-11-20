@@ -20,8 +20,7 @@ The application uses public terminal headers.
 The terminal library includes no application header.
 The include graph enforces this separation.
 
-The tab bar public header is `src/app/tabs/tabbar.h`.
-Its private types and functions stay in `src/app/tabs/tabbar/internal.h`.
+The tab bar belongs to the UI framework. Its public header is `subprojects/wsap-framework/src/ui/widgets/tabbar.h`; its private declarations are in `subprojects/wsap-framework/src/ui/widgets/tabbar/internal.h`.
 Only the tab bar implementation can include that private header.
 
 ## Terminal-content interface

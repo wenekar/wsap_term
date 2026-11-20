@@ -89,11 +89,7 @@ The write path does not update the Fenwick index.
 Width changes assign the exact row count to every line with a wide cell or a cluster.
 The count comes from one walk of each such line.
 A frame at a fixed size reuses the stored count and walks no line.
-So `history_rows()`, the scrollback total, and the accessibility node length are exact.
-For a line with wide cells they are larger than the old estimate.
-A five-line cleanup of the range code was considered and skipped.
-It would treat the symptom in a second place.
-The exact count fixes the cause and keeps one rule for the row of a line.
+The history API, scrollback total, and accessibility node length use the same row counts. A wide glyph that cannot fit in the remaining columns starts a new row.
 
 ## Snapshot publication
 
@@ -103,7 +99,7 @@ A snapshot allows concurrent read access.
 Updating or freeing a snapshot requires exclusive access.
 Separate snapshot instances isolate independent reader threads.
 
-Row keys uniquely identify row contents for incremental presentation.
+Row keys help callers detect changes for incremental presentation. A zero key does not identify reusable contents.
 Scroll metadata reports vertical row movements to permit pixel shifting and selective repainting.
 The core provides text attributes and graphemes without rendering or shaping glyphs.
 The core never alters text layout or skips shaping state under write load.

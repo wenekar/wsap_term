@@ -350,7 +350,7 @@ The tree indexes IDs for fast lookup and duplicate detection.
 
 AccessKit maps the tree to AT-SPI on Linux.
 Its macOS adapter maps the tree to AppKit accessibility elements.
-The C adapter resides in `src/ui/yasl/accessibility/`.
+The C adapter resides in `subprojects/wsap-framework/src/ui/yasl/accessibility/`.
 The UI core has no AccessKit dependency.
 Keep native platform types in the surface provider.
 Keep the UI tree and provider interface platform neutral.
@@ -373,7 +373,7 @@ A terminal text update does not need to invalidate the UI scene.
 Removed or detached macOS elements return empty results.
 They cannot execute actions.
 A provider without an action sink is read-only.
-Text runs use the generated UAX #29 grapheme and word boundary tables in `src/ui/text_break.c`.
+Text runs use the generated UAX #29 grapheme and word boundary tables in `subprojects/wsap-framework/src/ui/text_break.c`.
 The adapter converts text selections between run character indices and UTF-8 byte offsets.
 AccessKit manages native events and platform text offsets.
 
@@ -402,14 +402,12 @@ The library does not provide a general proportional-text editor.
 Terminal cells remain a separate render input.
 The terminal engine and render backends do not depend on the screen API.
 
-Core contracts have behavioral tests in `tests/ui/`.
-The integrated screen test resides in `tests/ui/acceptance_test.c`.
-Window and UI binding tests reside in `tests/ui/yasl/`.
+The framework tests cover UI behavior in `subprojects/wsap-framework/tests/ui/`. The integrated screen test is `acceptance_test.c`; the `yasl/` test directory covers the window binding.
 
 ## Flex layout
 
 The UI flex layout calculates the bounds of boxes and default containers.
-The code lives in `src/ui/layout.c`.
+The code lives in `subprojects/wsap-framework/src/ui/layout.c`.
 The build does not download external code.
 Each layout pass allocates one node array and frees it when the pass ends.
 

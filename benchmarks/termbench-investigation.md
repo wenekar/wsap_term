@@ -7,7 +7,7 @@
    - Benchmark results (`term-write-bench`):
      - `fgbg-char`: rose from ~2880 MiB/s to **3623.45 MiB/s** (+25.7% speedup).
      - `fg-char`: rose from ~2640 MiB/s to **2934.05 MiB/s** (+11.1% speedup).
-     - `longline`: **6091.40 MiB/s** (~6.1 GB/s).
+     - `longline`: **6091.40 MiB/s** (~6.39 GB/s).
      - `ascii`: **5758.61 MiB/s**.
 
 2. **Transport and Live Redraw Profile**:

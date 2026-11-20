@@ -1,5 +1,7 @@
 # Build and install the WSAP framework
 
+This guide covers standalone builds, tests, installation, and linking against the framework SDK.
+
 ## Prerequisites
 
 - Meson 1.12 or later
@@ -22,7 +24,7 @@ macOS 14 or later needs Homebrew LLVM, HarfBuzz, yyjson, and Rust.
 ## Configure
 
 ```sh
-meson setup build -Dtests=false -Dbenchmarks=false
+meson setup build
 ```
 
 The default configuration builds only the framework libraries.
@@ -34,13 +36,12 @@ The default is `false`, so a release or SDK install embeds no source path.
 
 ## Build and test
 
+Build the SDK with `meson compile -C build`. To enable and run the framework tests in that build directory:
+
 ```sh
-ninja -C build
+meson configure build -Dtests=true
 meson test -C build --print-errorlogs
 ```
-
-The tests need `-Dtests=true`.
-The tests do not need a display server.
 
 ## Install
 

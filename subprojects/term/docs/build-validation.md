@@ -1,11 +1,13 @@
 # Build validation
 
+This guide covers the standalone terminal core build and its portability, package, and fuzz checks.
+
 ## Prerequisites
 
 The standalone build requires these tools and libraries:
 
 - A C11 compiler
-- Meson and Ninja
+- Meson 1.1 or later and Ninja
 - pkg-config
 - System math library (`libm`)
 - POSIX threads

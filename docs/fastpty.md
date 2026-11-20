@@ -1,5 +1,7 @@
 # Fastpty implementation notes
 
+This guide explains how `wsap_term` routes child output through the PTY and the optional fast pipe.
+
 ## Unicode environment
 
 Child shells receive `TERM=wsap_term-256color` and `TERM_PROGRAM=wsap_term`.
@@ -27,7 +29,7 @@ The fast pipe carries the bytes that the child wrote.
 The reader passes these bytes to the parser without a copy or scan.
 The pipe bypasses PTY output processing.
 The session reads `OPOST` and `ONLCR` from the PTY settings.
-If both flags are set, the session feeds the bytes with `TERM_FEED_ONLCR`.
+If both flags are set, the session feeds the bytes with `WSAP_VTCORE_FEED_ONLCR`.
 This feed flag makes LF return the cursor to column zero.
 
 Direct PTY output keeps kernel output processing.

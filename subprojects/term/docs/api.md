@@ -1,5 +1,7 @@
 # API guide
 
+This guide describes the public terminal core API, including ownership, callbacks, input, and snapshots.
+
 Include `<wsap_vtcore/wsap_vtcore.h>`.
 The public header compiles as C11 and C++.
 Functions use C linkage.
@@ -22,8 +24,7 @@ Zero-initialize `struct wsap_vtcore_options` before setting fields. Passing `NUL
 
 `wsap_vtcore_new()` creates a terminal instance.
 The function returns `NULL` for invalid options or memory allocation failures.
-The core copies configuration options except `callbacks.ud`.
-The host retains ownership of `callbacks.ud` pointer targets.
+The core copies configuration values, including the callback pointers. It does not copy the object referenced by `callbacks.ud`. The host must keep that object valid for any callback that uses it.
 `wsap_vtcore_free()` releases a terminal instance.
 Calling core functions on a freed terminal causes undefined behavior.
 

@@ -1,5 +1,7 @@
 # Security boundary
 
+This guide describes the terminal core's input boundary and the checks that belong to the host application.
+
 Treat terminal output as untrusted input.
 Remote programs can transmit control sequences, text, hyperlinks, clipboard payloads, window titles, and notification requests.
 The core parses these input bytes.
@@ -73,6 +75,6 @@ Include these details in reports:
 Remove sensitive credentials and private data from recorded terminal sessions.
 
 This project does not claim continuous third-party security audits.
-CI executes libFuzzer targets for ten minutes on each commit.
+The terminal-core CI workflow runs its libFuzzer job for ten minutes when changes trigger that workflow.
 See [testing.md](testing.md) for testing details.
 These tests identify defects but do not guarantee complete defect absence.

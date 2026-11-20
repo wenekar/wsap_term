@@ -3,8 +3,7 @@
 > The examples name a host application. Use your own program in its place.
 
 
-A terminal on a 120 Hz or 240 Hz display shows each change in one frame period.
-It processes input and output between frames.
+This guide explains how the window layer paces frames and reports presentation. The display refresh rate sets the frame interval; it does not guarantee that each input appears within one interval.
 
 ## Frame stages
 
@@ -22,7 +21,7 @@ The `--stats-ms` option prints one line for each interval:
 
     [stats   7.52s] frames=752 drop=2 submit=750 present=748 fps=99.8 dt(ms) ...
 
-- `frames` counts draw passes. This count shows the loop rate.
+- `frames` counts draw passes, including passes that could not start drawing. Those passes do not count as submitted or dropped.
 - `submit` counts passes accepted by the GPU or the surface.
 - `drop` counts passes that did not submit. A busy GPU or a missing drawable causes a drop. The window then requests the next frame.
 - `present` counts frames reported by the display. This count is zero on platforms without presentation feedback. The count updates when read, even when the window draws nothing. A report does not wait for a draw pass.

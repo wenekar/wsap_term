@@ -332,7 +332,7 @@ Configure a separate build directory with `--buildtype=debug` or `debugoptimized
 Use the inspector as the oracle for layout regression tests.
 Do not copy pixel positions from the implementation into tests.
 `tests/ui/widgets/list_test.c` builds a list and asserts `ui_debug_lint_scene() == 0`.
-`tests/ui/yasl/debug_server_test.c` covers the protocol.
+The parent application's `tests/app/debug_server_test.c` covers the socket protocol.
 `tests/ui/debug_test.c` covers selectors, hit testing, operation attribution, the lint, and overlay safety.
 
 ## Security

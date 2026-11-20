@@ -20,7 +20,7 @@ It does not contain the terminal application or the editor.
 | `wsap-ui-yasl` | Window system and UI binding. |
 | `yasl` | Subproject with desktop surfaces and input. |
 
-A library uses only the layers below it in this table.
+Libraries depend on specific lower layers, not every lower layer. The last row lists the native platform dependency separately.
 Run the include graph check after a source change:
 
 ```sh

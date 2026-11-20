@@ -1,13 +1,6 @@
 # Terminal grid renderer
 
-This directory turns a terminal snapshot into the generic grid view of
-`src/render/grid.h`, and draws it through `wsap-render` (the render
-library).
-
-The app calls `render_draw()`, `render_cursor_cell()`, and
-`render_gpu_draw()` here. Each call builds a `struct render_grid_view` and
-calls the render library once. The renderer keeps one frame and one draw
-call, as before.
+The terminal grid renderer adapts a terminal snapshot to the [framework grid interface](../../../subprojects/wsap-framework/src/render/grid.h). The app uses `render_draw()` for frames and `render_cursor_cell()` for the cursor overlay. Renderer tests can use `render_gpu_draw()` to exercise the GPU backend directly.
 
 The terminal content owns this library. It sits above `wsap-render` and
 below `wsap-terminal` in the include graph. `wsap-render` has no terminal
@@ -17,7 +10,7 @@ core dependency.
 
 | Path | Job |
 |---|---|
-| `term_frame.h` | Public terminal frame: the snapshot values of one frame. The old `render/term_frame.h` path forwards here. |
+| `term_frame.h` | Public terminal frame: the snapshot values of one frame |
 | `term_frame.c` | Adapts a terminal snapshot to the terminal frame. |
 | `walk.c/.h` | Applies the VT cell policy, segments text, shapes glyphs, and resolves each cell to a `render_cell`. |
 | `view.c/.h` | Builds the grid view, the row key, the line sizes, and the walk ops. |
@@ -27,7 +20,6 @@ core dependency.
 
 - The view points at the terminal frame and its snapshot only during the
   call. The renderer keeps no pointer after it returns.
-- The row key mix stays the same as the old `render_surface_row_key()`, so a
-  frame keeps the same row cache behavior.
+- The row key includes the source row key and the selection and cursor state that affect its pixels. A zero source key prevents row reuse.
 - The walk and the raster agree on the line size, the cursor, the selection,
   and the decoration kinds.

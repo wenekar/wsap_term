@@ -13,10 +13,10 @@ Three front ends share one implementation:
 
 The code has two layers:
 
-- `src/ui/debug.h` is part of the UI library. It reads a widget tree and
+- `subprojects/wsap-framework/src/ui/debug.h` is part of the UI library. It reads a widget tree and
   a built scene with its scopes. It writes JSON. It runs the alignment
   lint. It draws the overlay. It has no window or platform dependencies.
-- `src/ui/yasl/inspector.h` is the window layer with three components:
+- `subprojects/wsap-framework/src/ui/yasl/inspector.h` is the window layer with three components:
   `debug.c` stores the last scene of each window surface, the overlay,
   and injected input. `debug_cmd.c` runs protocol commands.
   `debug_server.c` serves the socket, answers frame waits, and creates
@@ -340,9 +340,9 @@ Configure a separate build directory with `--buildtype=debug` or `debugoptimized
 
 Use the inspector as the oracle for layout regression tests.
 Do not copy pixel positions from the implementation into tests.
-`tests/ui/widgets/list_test.c` builds a list and asserts `ui_debug_lint_scene() == 0`.
-`tests/ui/yasl/debug_server_test.c` covers the protocol.
-`tests/ui/debug_test.c` covers selectors, hit testing, operation attribution, the lint, and overlay safety.
+`subprojects/wsap-framework/tests/ui/widgets/list_test.c` builds a list and asserts `ui_debug_lint_scene() == 0`.
+`tests/app/debug_server_test.c` covers the protocol.
+`subprojects/wsap-framework/tests/ui/debug_test.c` covers selectors, hit testing, operation attribution, the lint, and overlay safety.
 
 ## Security
 

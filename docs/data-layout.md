@@ -1,5 +1,7 @@
 # Data layout
 
+This guide describes the terminal cell layout, PTY reader state, and terminal storage.
+
 ## Inspect a type
 
 To inspect structure layout, compile debug binaries and run `pahole`:
@@ -23,7 +25,9 @@ pahole -C pty_ring build/bin/wsap_term
 | `flags` | `uint16_t` | 12 |
 | `pad` | `uint16_t` | 14 |
 
-Each cell occupies 16 bytes. One 512-bit SIMD register stores four cells. Any change to this layout requires corresponding updates in SIMD kernels.
+**Cell size:** 16 bytes; four cells fit in a 512-bit SIMD register.
+
+Update the SIMD kernels if a change alters the cell layout.
 
 Color fields store ARGB values or palette indices directly without color conversion. The renderer resolves palette indices during frame painting. A palette change triggers a full canvas repaint.
 

@@ -1,5 +1,7 @@
 # Development notes
 
+This guide covers application architecture, input and frame flow, and development checks.
+
 For the UI API and a screen example, see [UI library](ui-library-state.md).
 
 ## Native windows
@@ -8,7 +10,7 @@ yasl owns native windows, the event loop, input, and frame pacing.
 `subprojects/yasl/include/yasl/yasl.h` provides its surface and event
 contracts.
 
-The window in `src/ui/yasl/window.c` makes one yasl surface for each
+The window in `subprojects/wsap-framework/src/ui/yasl/window.c` makes one yasl surface for each
 window. A menu popup gets a yasl popup surface of its own.
 The window keeps the framebuffer history of each surface.
 
@@ -51,7 +53,7 @@ Selectable labels support copy and select-all actions.
 ## Input flow
 
 The window turns yasl input events into `input_event` values
-(`src/ui/yasl/native_input.c`).
+(`subprojects/wsap-framework/src/ui/yasl/native_input.c`).
 The shortcut router queues shortcut events.
 It leaves ordinary key queueing to its caller.
 File drops carry `text/uri-list` bytes through `INPUT_DROP_FILES`.
@@ -82,14 +84,14 @@ A widget that takes the key gets its text.
 The router decides this when the key routes, so a focus change earlier in the batch counts.
 When the shortcut queue is full, the command is lost and the text is typed.
 The keymap reads the command scope of the key surface, `ui_surface_command_scope()`.
-The walk starts at the key target, `ui_surface_key_target()`, and ends at the root.
+The walk starts at `ui_surface_key_target()` and follows its widget parents until it finds a command scope.
 Focus loss clears held keys and the key text route.
 A tab change does not release held keys.
 
 Terminal content reads the active program's input modes.
-`term_input_encode_key()` and `term_input_encode_mouse()` only encode.
+`wsap_vtcore_input_encode_key()` and `wsap_vtcore_input_encode_mouse()` encode events without writing to the PTY.
 Their status distinguishes unhandled input, consumed input, bytes, and overflow.
-Only `TERM_INPUT_BYTES` permits use of the returned buffer slice.
+Only `WSAP_VTCORE_INPUT_BYTES` permits use of the returned buffer slice.
 Mouse encoding receives a cell position separately from the input event.
 `session_write_bytes()` sends encoded bytes in order.
 `session_paste()` filters text and applies bracketed-paste mode.
@@ -106,7 +108,7 @@ Paste and file-drop helpers accept the whole payload or return zero.
 The app has one loop, a `yasl_loop`. The app owns it.
 The sessions, the signal watch, the inspector socket, the host timers, and the yasl display all run on it.
 Each session has one worker thread that reads its pty and parses the output into the terminal.
-The loop thread only wakes and draws.
+The worker signals the loop thread when the terminal has new content or host events. The loop thread dispatches those events and draws the next frame.
 `app_run()` runs the loop with `yasl_loop_run()`.
 
 At the first `window_open()`, the window host gives yasl the loop and an event callback.
@@ -155,7 +157,7 @@ If a Wayland compositor restarts, windows wait for it to return.
 
 ## Unicode tables
 
-`src/util/unicode/` holds the base copy of the Unicode helpers.
+The framework copy of the Unicode helpers lives in `subprojects/wsap-framework/src/util/unicode/`.
 It holds the UTF-8 codec, the width and emoji tables, and the grapheme helpers.
 `unicode_utf8_printable_span()` replaces `wsap_vtcore_scan_printable_span()` for the framework libraries.
 `subprojects/term/include/wsap_vtcore/unicode/` holds a second copy.
