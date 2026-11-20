@@ -42,7 +42,8 @@ static unsigned raster_hash(int slot, uint32_t gid, unsigned style, unsigned cap
     return (unsigned)h & (cap - 1);
 }
 
-/* Rehashes thread-local raster cache into a power-of-two table of size `new_cap`. */
+/* Rehashes the thread-local raster cache into a table of `new_cap` slots,
+ * which must be a power of two. Invalid entries are dropped. */
 static bool raster_cache_rehash(unsigned new_cap)
 {
     struct raster_entry *next = calloc(new_cap, sizeof(*next));
@@ -166,8 +167,8 @@ static const struct raster_entry *raster_fetch(int slot, enum font_variant varia
     int load_flags = font_ft_load_flags();
     FT_Render_Mode render_mode = font_ft_render_mode();
 
-    /* A quarter-pixel phase moves the outline in the 26.6 pixel grid. Reset
-     * the delta for a phase-zero glyph, because the face keeps it. */
+    /* A quarter-pixel phase moves the outline in the 26.6 pixel grid. The face
+     * keeps the transform delta, so every load sets it, including phase zero. */
     FT_Vector delta = { .x = (FT_Pos)phase * 16, .y = 0 };
     FT_Set_Transform(face, NULL, &delta);
 
@@ -440,8 +441,8 @@ bool font_fit_single(const struct shaped_run *run, uint8_t phase, struct glyph *
     g->y_offset = (int16_t)box.y;
     g->advance = (int16_t)ri.advance;
 
-    /* A glyph that stays in its cell can use a cached tile. Draw it again on
-     * a canvas without the blank columns past the cell. */
+    /* A glyph that stays in its cell can use a cached tile. Redraw it on a
+     * canvas without the blank columns outside the cell. */
     struct box inked;
     if (!ft_blank_overhang(g, cols, &inked))
         return true;

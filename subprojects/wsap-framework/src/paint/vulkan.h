@@ -2,8 +2,8 @@
 #define WSAP_PAINT_VULKAN_H
 
 /*
- * Vulkan structures for window presentation.
- * This header connects the Vulkan renderer and the window layer.
+ * Vulkan structures for window presentation, shared by the Vulkan renderer
+ * and the window layer.
  */
 
 #include <stdbool.h>

@@ -881,8 +881,9 @@ bool ui_scene_op_draws(const struct ui_scene_op *op)
     case UI_SCENE_OP_CIRCLE:
         return op->alpha > 0;
     case UI_SCENE_OP_IMAGE:
-        /* ui_scene_image() sets the tint to 0. The image draws by its source
-         * and its opacity, not by its colour. */
+        /* ui_scene_image() leaves the tint 0, which means white, so the
+         * colour word does not say whether the image draws. The image draws
+         * by its source and its opacity. */
         return op->image.src != NULL && op->alpha > 0;
     case UI_SCENE_OP_RECT:
         if (ui_scene_op_has_geom(op))

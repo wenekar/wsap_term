@@ -17,9 +17,9 @@ const char *proc_home_dir(void);
 /*
  * A child process with one pipe for each standard stream.
  * A zero value means that no child belongs to the record.
- * The descriptors are valid while `pid` is above zero.
  * The parent writes to `in_fd` (the stdin of the child) and reads from
- * `out_fd` and `err_fd`. The pipes are nonblocking and close-on-exec.
+ * `out_fd` and `err_fd`. The pipes are nonblocking and close-on-exec, and a
+ * descriptor is -1 once it is closed.
  */
 struct proc_child {
     pid_t pid;
@@ -30,7 +30,8 @@ struct proc_child {
 
 /*
  * Starts argv with a pipe for stdin, stdout, and stderr.
- * The child gets the descriptors of the parent and no other pipe end.
+ * The child inherits the other descriptors of the parent and keeps no pipe end
+ * except its standard streams.
  * Returns 0, or -1 with errno. A failure leaves `child` zero.
  * The caller must reap the child, also when it exits early.
  * A write to a closed pipe raises SIGPIPE, as for any pipe. Ignore the
@@ -47,7 +48,8 @@ int proc_spawn(char *const argv[], struct proc_child *child);
 int proc_wait(struct proc_child *child, int *status);
 
 /*
- * Reaps the child without a block and stores the wait status in `*status`.
+ * Reaps the child without a block and stores the wait status in `*status` when
+ * it reaps the child.
  * Returns 1 when it reaped the child, 0 while the child runs, or -1 with
  * errno. It does not close the pipes.
  */

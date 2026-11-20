@@ -4,8 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* True when the glyph that is being rasterized fills a cell. A cell glyph
- * keeps the ink centred in the columns that its advance does not fill. */
+/* True when glyphs are drawn as cell glyphs. */
 __thread bool ft_cell_aligned = true;
 
 static inline uint8_t subpx_luma(unsigned a, unsigned b, unsigned c)
@@ -128,8 +127,9 @@ bool ft_prepare_canvas(struct glyph *g, struct box *ink, const struct box *inked
 
 /* An LCD bitmap has a margin for its filter. A scaled bitmap can have a clear
  * border. Either one can make the canvas wider than the cell, with columns
- * that have no ink. Find the columns that have ink, in cell coordinates.
- * Return true if a canvas cut to them is narrower. */
+ * that have no ink. Find the columns that have ink, in cell coordinates, and
+ * return true when a canvas cut to them is narrower than the current one.
+ * `*inked` is written only when it returns true. */
 bool ft_blank_overhang(const struct glyph *g, int cols, struct box *inked)
 {
     if (g->x_offset >= 0 && g->x_offset + g->width <= cols)

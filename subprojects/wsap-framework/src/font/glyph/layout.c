@@ -838,8 +838,9 @@ static bool fill_map(struct font_layout *l, hb_face_t *face, const struct analys
 
     for (int pass = 0; ok && pass < 2; pass++) {
         if (pass == 1) {
-            /* Only non-complex codepoints >= 128 need table entries; misses in
-               font_layout_entry_slow() already return LAYOUT_COMPLEX for cp. */
+            /* Only non-complex code points from U+0080 up need table entries.
+               A miss in font_layout_entry_slow() already returns
+               LAYOUT_COMPLEX. */
             uint32_t map_slots = hash_slots(mapped);
             if (map_slots) {
                 l->mask = map_slots - 1;

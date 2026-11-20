@@ -40,92 +40,56 @@ struct insets2i {
     };
 };
 
-/*
- * Selects the smaller of integer values `a` and `b`.
- * Returns the smaller value.
- */
 static inline int geom_min_i(int a, int b)
 {
     return a < b ? a : b;
 }
 
-/*
- * Selects the larger of integer values `a` and `b`.
- * Returns the larger value.
- */
 static inline int geom_max_i(int a, int b)
 {
     return a > b ? a : b;
 }
 
-/*
- * Clamps integer value `v` between `lo` and `hi`.
- * Returns the clamped value.
- */
 static inline int geom_clamp_i(int v, int lo, int hi)
 {
     return v < lo ? lo : v > hi ? hi : v;
 }
 
-/*
- * Saturates 64-bit integer `v` to 32-bit signed integer limits.
- * Returns the saturated value.
- */
+/* Saturates 64-bit `v` to the `int` range. */
 static inline int geom_sat_i(int64_t v)
 {
     return v > INT_MAX ? INT_MAX : v < INT_MIN ? INT_MIN : (int)v;
 }
 
-/*
- * Divides 64-bit integer `v` by two and rounds half up.
- * Returns the rounded value.
- */
+/* Divides `v` by two and rounds a half toward positive infinity. */
 static inline int64_t geom_half_up(int64_t v)
 {
     int64_t n = v + 1;
     return n >= 0 ? n / 2 : -((-n + 1) / 2);
 }
 
-/*
- * Adds two 2D integer vectors with saturation.
- * Returns the sum vector.
- */
+/* Adds two vectors, saturating each component. */
 static inline struct vector2i vector2i_add(struct vector2i a, struct vector2i b)
 {
     return (struct vector2i){ .x = geom_sat_i((int64_t)a.x + b.x), .y = geom_sat_i((int64_t)a.y + b.y) };
 }
 
-/*
- * Subtracts vector `b` from vector `a` with saturation.
- * Returns the difference vector.
- */
+/* Subtracts `b` from `a`, saturating each component. */
 static inline struct vector2i vector2i_sub(struct vector2i a, struct vector2i b)
 {
     return (struct vector2i){ .x = geom_sat_i((int64_t)a.x - b.x), .y = geom_sat_i((int64_t)a.y - b.y) };
 }
 
-/*
- * Computes the component-wise minimum of two vectors.
- * Returns the resulting vector.
- */
 static inline struct vector2i vector2i_min(struct vector2i a, struct vector2i b)
 {
     return (struct vector2i){ .x = a.x < b.x ? a.x : b.x, .y = a.y < b.y ? a.y : b.y };
 }
 
-/*
- * Computes the component-wise maximum of two vectors.
- * Returns the resulting vector.
- */
 static inline struct vector2i vector2i_max(struct vector2i a, struct vector2i b)
 {
     return (struct vector2i){ .x = a.x > b.x ? a.x : b.x, .y = a.y > b.y ? a.y : b.y };
 }
 
-/*
- * Clamps vector `v` component-wise between `lo` and `hi`.
- * Returns the clamped vector.
- */
 static inline struct vector2i vector2i_clamp(struct vector2i v,
                                              struct vector2i lo,
                                              struct vector2i hi)
@@ -133,85 +97,55 @@ static inline struct vector2i vector2i_clamp(struct vector2i v,
     return (struct vector2i){ .x = geom_clamp_i(v.x, lo.x, hi.x), .y = geom_clamp_i(v.y, lo.y, hi.y) };
 }
 
-/*
- * Sets both components of a vector to scalar value `v`.
- * Returns the new vector.
- */
 static inline struct vector2i vector2i_splat(int v)
 {
     return (struct vector2i){ .x = v, .y = v };
 }
 
-/*
- * Compares two vectors for equality.
- * Returns true if both coordinates match.
- */
 static inline bool vector2i_eq(struct vector2i a, struct vector2i b)
 {
     return a.x == b.x && a.y == b.y;
 }
 
-/*
- * Compares two rectangles for equality.
- * Returns true if positions and sizes match.
- */
 static inline bool rect2i_eq(struct rect2i a, struct rect2i b)
 {
     return vector2i_eq(a.pos, b.pos) && vector2i_eq(a.size, b.size);
 }
 
-/*
- * Checks if rectangle `r` has no area.
- * Returns true if width or height is zero or negative.
- */
+/* A rectangle with a zero or negative width or height is empty. */
 static inline bool rect2i_is_empty(struct rect2i r)
 {
     return r.width <= 0 || r.height <= 0;
 }
 
-/*
- * Computes the bottom-right corner point of rectangle `r`.
- * Returns the end position vector.
- */
 static inline struct vector2i rect2i_end(struct rect2i r)
 {
     return vector2i_add(r.pos, r.size);
 }
 
-/*
- * Tests if rectangle `r` contains point `p`.
- * Returns true if `p` lies inside the half-open rectangle bounds.
- */
+/* Tests the half-open bounds of `r`: a point on the right or bottom edge is
+ * outside. */
 static inline bool rect2i_contains(struct rect2i r, struct vector2i p)
 {
     struct vector2i end = rect2i_end(r);
     return p.x >= r.x && p.x < end.x && p.y >= r.y && p.y < end.y;
 }
 
-/*
- * Returns the center point of rectangle `r`.
- */
+/* Returns the center point. An odd width or height rounds down. */
 static inline struct vector2i rect2i_center(struct rect2i r)
 {
     return (struct vector2i){ .x = geom_sat_i((int64_t)r.x + r.width / 2),
                               .y = geom_sat_i((int64_t)r.y + r.height / 2) };
 }
 
-/*
- * Tests if rectangle `a` touches or overlaps rectangle `b`.
- * Returns true if the rectangles share at least one point.
- */
+/* True when `a` and `b` overlap or share an edge or a corner. */
 static inline bool rect2i_touches(struct rect2i a, struct rect2i b)
 {
     struct vector2i ae = rect2i_end(a), be = rect2i_end(b);
     return a.x <= be.x && b.x <= ae.x && a.y <= be.y && b.y <= ae.y;
 }
 
-/*
- * Creates a rectangle from top-left corner `start` and bottom-right corner `end`.
- * Clamps negative dimensions to zero.
- * Returns the rectangle.
- */
+/* Creates a rectangle from two corners and clamps a negative size to zero. */
 static inline struct rect2i rect2i_from_corners(struct vector2i start,
                                                 struct vector2i end)
 {
@@ -222,10 +156,6 @@ static inline struct rect2i rect2i_from_corners(struct vector2i start,
     };
 }
 
-/*
- * Translates rectangle `r` by vector `delta`.
- * Returns the shifted rectangle.
- */
 static inline struct rect2i rect2i_translate(struct rect2i r,
                                              struct vector2i delta)
 {
@@ -233,21 +163,16 @@ static inline struct rect2i rect2i_translate(struct rect2i r,
     return r;
 }
 
-/*
- * Computes the intersection of rectangles `a` and `b`.
- * Returns the overlapping rectangle area.
- */
+/* Returns the overlap of `a` and `b`; the result is empty when the two do not
+ * intersect. */
 static inline struct rect2i rect2i_intersect(struct rect2i a, struct rect2i b)
 {
     return rect2i_from_corners(vector2i_max(a.pos, b.pos),
                                vector2i_min(rect2i_end(a), rect2i_end(b)));
 }
 
-/*
- * Computes the bounding union of rectangles `a` and `b`.
- * Ignores empty rectangles.
- * Returns the minimal rectangle that encloses both rectangles.
- */
+/* Returns the bounding rectangle of `a` and `b`. An empty argument is ignored,
+ * and an edge beyond the `int` range saturates. */
 __attribute__((always_inline))
 static inline struct rect2i rect2i_union(struct rect2i a, struct rect2i b)
 {
@@ -267,11 +192,8 @@ static inline struct rect2i rect2i_union(struct rect2i a, struct rect2i b)
     };
 }
 
-/*
- * Clips rectangle `*r` against bounds from (0, 0) to `limit`.
- * Updates `*r` in place.
- * Returns true if the clipped rectangle is not empty.
- */
+/* Clips `*r` to the rectangle from (0, 0) to `limit`. Returns whether the
+ * result has area; a NULL or empty `r` returns false and is unchanged. */
 static inline bool rect2i_clip(struct rect2i *r, struct vector2i limit)
 {
     if (!r || rect2i_is_empty(*r))
@@ -283,11 +205,8 @@ static inline bool rect2i_clip(struct rect2i *r, struct vector2i limit)
     return !rect2i_is_empty(*r);
 }
 
-/*
- * Insets rectangle `r` by `inset` units on all four sides.
- * Clamps negative dimensions to zero.
- * Returns the inset rectangle.
- */
+/* Insets `r` by `inset` units on all four sides and clamps a negative size to
+ * zero. A negative `inset` grows the rectangle. */
 static inline struct rect2i rect2i_inset(struct rect2i r, int inset)
 {
     int64_t twice = (int64_t)inset * 2;
@@ -297,57 +216,36 @@ static inline struct rect2i rect2i_inset(struct rect2i r, int inset)
     return r;
 }
 
-/*
- * Sets all four margin insets to scalar value `v`.
- * Returns the insets structure.
- */
 static inline struct insets2i insets2i_splat(int v)
 {
     return (struct insets2i){ .top = v, .right = v, .bottom = v, .left = v };
 }
 
-/*
- * Sets vertical insets to `v` and horizontal insets to `h`.
- * Returns the symmetric insets structure.
- */
 static inline struct insets2i insets2i_sym(int v, int h)
 {
     return (struct insets2i){ .top = v, .right = h, .bottom = v, .left = h };
 }
 
-/*
- * Compares two margin insets for equality.
- * Returns true if all four edges match.
- */
 static inline bool insets2i_eq(struct insets2i a, struct insets2i b)
 {
     return a.top == b.top && a.right == b.right &&
            a.bottom == b.bottom && a.left == b.left;
 }
 
-/*
- * Extracts the left and top insets as a 2D vector.
- * Returns the offset vector.
- */
+/* Returns the left and top insets as a vector. */
 static inline struct vector2i insets2i_lead(struct insets2i i)
 {
     return (struct vector2i){ .x = i.left, .y = i.top };
 }
 
-/*
- * Computes total horizontal and vertical extents of insets `i`.
- * Returns the extent size vector.
- */
+/* Returns the total inset per axis: left + right and top + bottom. */
 static inline struct vector2i insets2i_extent(struct insets2i i)
 {
     return (struct vector2i){ .x = geom_sat_i((int64_t)i.left + i.right), .y = geom_sat_i((int64_t)i.top + i.bottom) };
 }
 
-/*
- * Applies margin `insets` to rectangle `r`.
- * Shifts the position by the top-left insets and reduces the size.
- * Returns the adjusted rectangle.
- */
+/* Shifts `r` by the left and top insets, reduces its size by the extents, and
+ * clamps a negative size to zero. */
 static inline struct rect2i rect2i_apply_insets(struct rect2i r, struct insets2i insets)
 {
     struct vector2i extent = insets2i_extent(insets);

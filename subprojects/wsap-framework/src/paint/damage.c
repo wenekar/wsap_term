@@ -11,7 +11,8 @@ void ui_damage_add(struct ui_damage *d, struct rect2i r)
 {
     if (!d || d->all || rect2i_is_empty(r))
         return;
-    /* A negative count marks a full list. No slot takes a rectangle then. */
+    /* A negative count is a sentinel that marks a list as holding no rects.
+     * ui_damage_add() never sets it. */
     if (d->n < 0)
         return;
     if (d->n > UI_DAMAGE_MAX_RECTS)

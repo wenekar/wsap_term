@@ -66,7 +66,8 @@ struct font_metrics ft_measure_cell(FT_Face face, int px, bool monospace);
 void face_snapshot_configured(void);
 void face_reload_configured(void);
 void ft_reload_family(const char *family_list);
-/* Returns true when the loaded family set is the one that `family_list` names. */
+/* Makes `family_list` the active family set and returns true when it is
+ * active. NULL or an empty list names the configured family list. */
 bool ft_family_ensure(const char *family_list);
 
 extern _Atomic bool fc_ready;

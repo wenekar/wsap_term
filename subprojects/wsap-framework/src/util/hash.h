@@ -7,8 +7,8 @@
 #define KNUTH_HASH_MULT UINT32_C(2654435761)
 
 /*
- * Mixes 32-bit `value` into running 64-bit `hash`.
- * Returns the updated hash value.
+ * Mixes 32-bit `value` into running 64-bit `hash` and returns the updated hash.
+ * Start a hash with HASH64_BASIS.
  */
 static inline uint64_t hash64_step(uint64_t hash, uint32_t value)
 {
@@ -17,10 +17,7 @@ static inline uint64_t hash64_step(uint64_t hash, uint32_t value)
     return hash ^ (hash >> 29);
 }
 
-/*
- * Finalizes 64-bit `hash` with an avalanche mixing step.
- * Returns the finalized hash value.
- */
+/* Finalizes the hash. Call it after the last hash64_step(). */
 static inline uint64_t hash64_finish(uint64_t hash)
 {
     hash ^= hash >> 32;

@@ -7,7 +7,8 @@
 #include "util/file.h"
 #include "util/app_identity.h"
 
-/* The log prefix of the file that parses now. Loading is one thread. */
+/* The diagnostic callback receives no log prefix, so it uses the last prefix
+   set by a theme load. Theme loading runs on one thread. */
 static const char *load_tag = "";
 
 static void css_warning(const struct css_diagnostic *diagnostic, void *userdata)
@@ -37,8 +38,8 @@ struct appearance *appearance_load(const struct app_identity *identity,
         appearance_unref(ap);
         return NULL;
     }
-    /* The theme rules layer over the toolkit and app rules that the caller
-       holds. The sheet holds no core rule. */
+    /* Deferred parsing keeps a var() unresolved until the caller appends this
+       sheet above its toolkit and app rules. */
     if (css_path) {
         char *text = util_read_file(css_path, load_tag);
         if (text && !css_parse_deferred(&ap->chrome, text, css_warning,

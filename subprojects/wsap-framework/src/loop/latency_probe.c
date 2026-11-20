@@ -57,10 +57,11 @@ static uint64_t stamps[LATENCY_STAGE_COUNT];
 static uint64_t pending;
 /* The worker thread reads the output on its own thread while the loop thread
  * records the other stages, so the stages and the marker state have one lock.
- * No callback and no parse runs while it is held. */
+ * No callback runs while it is held. */
 static pthread_mutex_t state_lock = PTHREAD_MUTEX_INITIALIZER;
 
-/* Synchronizes active request with atomic probe state under state_lock. */
+/* Adopts the sample of the current request. A new request clears the rendered
+ * sample and the stages. */
 static void sync_request_locked(void)
 {
     if (!probe) return;
@@ -72,7 +73,9 @@ static void sync_request_locked(void)
     }
 }
 
-/* Records latency stage timestamp under state_lock. */
+/* Records the first timestamp of `stage` for the current sample. RENDER_START
+ * needs PTY_READ and marks the sample rendered; a completed sample takes no
+ * more stages. */
 static void stage_locked(enum latency_stage stage)
 {
     if (!probe) return;
@@ -134,7 +137,8 @@ static uint64_t waiting_sample(void)
     sync_request_locked();
     uint64_t sample = 0;
     if (rendered) {
-        /* The store of presented publishes the record, so this load orders subsequent record reads. */
+        /* The release store of `presented` publishes the record, so this
+         * acquire load orders a later read of it. */
         if (atomic_load_explicit(&probe->presented, memory_order_acquire) != rendered)
             sample = rendered;
     }

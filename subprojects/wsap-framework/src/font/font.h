@@ -29,7 +29,6 @@ _Static_assert((unsigned)FONT_VARIANT_BOLD == (unsigned)FONT_STYLE_BOLD &&
                FONT_VARIANT_COUNT == FONT_STYLE_VARIANT_MASK + 1,
                "a font variant is the variant bits of a style");
 
-/* Extracts variant bits from style mask `style`. */
 static inline enum font_variant font_variant_of(uint16_t style)
 {
     return (enum font_variant)(style & FONT_STYLE_VARIANT_MASK);
@@ -70,9 +69,10 @@ enum font_slant {
 #define FONT_WEIGHT_BOLD_MIN 600
 
 /*
- * The request for a font instance. A zero field takes its configured
- * default. The backend can synthesize a face that the family does not
- * have.
+ * The request for a font instance. A zero field takes its default: the
+ * configured family list and point size, scale 120, FONT_WEIGHT_REGULAR,
+ * FONT_SLANT_NORMAL, or a monospace face. The backend can synthesize a face
+ * that the family does not have.
  */
 struct font_desc {
     /* Comma-separated family names. NULL uses the configured family list. */
@@ -88,7 +88,8 @@ struct font_desc {
     bool proportional;
 };
 
-/* Returns the weight of `desc` with the default filled in. */
+/* Returns the weight of `desc`, which is FONT_WEIGHT_REGULAR for zero and
+ * clamped to the FONT_WEIGHT_MIN..FONT_WEIGHT_MAX range. */
 static inline uint16_t font_desc_weight(const struct font_desc *desc)
 {
     if (!desc || !desc->weight)
@@ -119,29 +120,33 @@ struct font_metrics {
 
 struct font_instance;
 
-/* Acquires a font instance that matches font descriptor `desc`. */
+/* Acquires a reference to the font instance that matches font descriptor
+ * `desc`. Returns NULL for a NULL `desc` or when no face can be created. The
+ * caller releases the reference with font_instance_unref(). */
 struct font_instance *font_instance_acquire(const struct font_desc *desc);
-/* Increments the reference count of font instance `fi`. */
+/* Increments the reference count of `fi` and returns `fi`. */
 struct font_instance *font_instance_ref(struct font_instance *fi);
 /* Decrements the reference count of font instance `fi` and frees it on zero. */
 void font_instance_unref(struct font_instance *fi);
-/* Returns the default fallback font instance. */
+/* Returns a borrowed pointer to the default font instance. The pointer is NULL
+ * before font_system_init() succeeds and after font_system_shutdown(). */
 struct font_instance *font_instance_default(void);
-/* Returns the metrics pointer of font instance `fi`. */
+/* Returns the metrics of font instance `fi`. The pointer is valid for the
+ * lifetime of the instance, and a face reopen updates the values in place. */
 static inline const struct font_metrics *font_instance_metrics(
     const struct font_instance *fi)
 {
     return (const struct font_metrics *)fi;
 }
-/* Returns the point size of font instance `fi`. */
 int font_instance_size_pt(const struct font_instance *fi);
-/* Returns the fractional display scale factor of `fi` scaled by 120. */
+/* Returns the display scale of `fi` in 1/120 units, where 120 is scale 1. */
 uint32_t font_instance_scale_120(const struct font_instance *fi);
-/* Returns the generation version of font instance `fi`. */
+/* Returns a version value that changes when the instance identity or the font
+ * generation changes. */
 uint64_t font_instance_version(const struct font_instance *fi);
-/* Binds font rasterizer state of `fi` to the calling thread. */
+/* Sets the rasterization size and cell metrics of `fi` for the calling
+ * thread. */
 void font_bind_thread(const struct font_instance *fi);
-/* Returns the weight of font instance `fi`. */
 uint16_t font_instance_weight(const struct font_instance *fi);
 /* Returns true when font instance `fi` uses one advance for every glyph. */
 bool font_instance_monospace(const struct font_instance *fi);
@@ -149,18 +154,14 @@ bool font_instance_monospace(const struct font_instance *fi);
 #define FONT_RUN_MAX 32
 
 /*
- * One rasterized glyph. The raster covers `width` by `height` pixels. Pixel
- * (0, 0) sits at (`x_offset`, `y_offset`) from the pen origin, which is the
- * left edge of the baseline. `advance` is the pen step after the glyph.
- * A cell glyph covers its cell from the cell left and the cell top, so both
- * offsets are relative to the cell.
+ * One rasterized glyph. The raster holds `width` by `height` pixels, `advance`
+ * is the pen step after the glyph, and `x_offset` is the cell column of raster
+ * column 0.
  *
- * The raster contract: for a cell glyph, row 0 of the raster is the top of
- * the cell, and column 0 is column `x_offset` of the cell. The ink of the
- * glyph thus already sits at its own row and column inside the raster. A
- * painter that puts the raster at the cell top and the cell left plus
- * `x_offset` draws the ink at the right place. A painter that adds
- * `y_offset` moves the ink down twice.
+ * A cell glyph covers its cell: row 0 of the raster is the top of the cell, so
+ * the raster already holds each ink row at its own row of the cell. A painter
+ * places the raster at the cell top and at the cell left plus `x_offset`. It
+ * must not add `y_offset`, which would move the ink down twice.
  */
 struct glyph {
     uint64_t *row_masks;
@@ -186,13 +187,13 @@ struct glyph {
 
 _Static_assert(sizeof(struct glyph) == 64, "struct glyph fits in one cacheline");
 
-/* Returns the ink mask word pointer for row `y` of glyph `g`. */
+/* Returns the ink mask words of row `y` of glyph `g`. */
 static inline uint64_t *glyph_mask(const struct glyph *g, int y)
 {
     return g->row_masks + (size_t)y * g->mask_words;
 }
 
-/* Sets the ink mask bit at coordinates `(x, y)` in glyph `g`. */
+/* Sets the ink mask bit of column `x` in row `y` of glyph `g`. */
 static inline void glyph_mark(struct glyph *g, int y, int x)
 {
     glyph_mask(g, y)[x >> 6] |= UINT64_C(1) << (x & 63);
@@ -208,33 +209,39 @@ static inline bool glyph_row_inked(const struct glyph *g, int y)
     return false;
 }
 
-/* Returns true when pixel `(x, y)` in glyph `g` is inked. */
+/* Returns true when the pixel at column `x` of row `y` in glyph `g` is inked. */
 static inline bool glyph_inked(const struct glyph *g, int y, int x)
 {
     return (glyph_mask(g, y)[x >> 6] >> (x & 63)) & 1;
 }
 
-/* Returns the ARGB color pointer at pixel `(x, y)` in glyph `g`. */
+/* Returns a pointer to the ARGB pixel at column `x` of row `y` in glyph `g`. */
 static inline uint32_t *glyph_color_at(const struct glyph *g, int y, int x)
 {
     return g->color + (size_t)y * g->width + x;
 }
 
-/* Returns the subpixel RGB pointer at pixel `(x, y)` in glyph `g`. */
+/* Returns a pointer to the three subpixel alpha bytes at column `x` of row `y`
+ * in glyph `g`. */
 static inline const uint8_t *glyph_subpx_at(const struct glyph *g, int y, int x)
 {
     return g->subpx[y] + (size_t)x * 3;
 }
 
-/* Allocates the ARGB color plane for glyph `g`. */
+/* Allocates and clears the ARGB color plane of glyph `g` at its current size.
+ * Returns false when the allocation fails. */
 bool glyph_color_plane(struct glyph *g);
 
-/* Allocates the subpixel alpha plane for glyph `g`. */
+/* Allocates and clears the subpixel alpha plane of glyph `g` and marks the
+ * glyph as having subpixel ink. Returns false when `g` has zero width or the
+ * allocation fails. */
 bool glyph_subpx_plane(struct glyph *g);
 
-/* Frees allocated raster buffers in glyph `g`. */
+/* Frees the raster, color, and subpixel buffers of glyph `g` and zeroes it. */
 void glyph_release(struct glyph *g);
-/* Prepares raster buffers of glyph `g` for pixel size `width` by `rows`. */
+/* Prepares the raster of glyph `g` for `width` columns and `rows` rows and
+ * clears it. Returns false when `g` is NULL, an extent is zero or too large, or
+ * allocation fails. */
 bool glyph_prepare(struct glyph *g, unsigned width, unsigned rows);
 
 enum font_shape_result {
@@ -243,14 +250,18 @@ enum font_shape_result {
     FONT_SHAPE_SHAPED,
 };
 
-/* Renders glyph `g` for code point `cp` with `style` using font instance `fi`. */
+/* Renders glyph `g` for code point `cp` with `style` from font instance `fi`.
+ * The caller owns `g` and releases it with glyph_release(); a later render into
+ * the same glyph reuses its buffers. Returns false when `fi` or `g` is NULL or
+ * the buffers cannot be allocated. */
 bool font_instance_render_glyph(const struct font_instance *fi, uint32_t cp,
                                 uint16_t style, struct glyph *g);
 /*
- * Renders glyph `g` for code point `cp` with `style` at `phase` quarter
- * pixels to the right of the pen origin. A phase other than zero places the
- * outline on a subpixel grid. The glyph cache keys such a glyph apart from
- * the phase-zero glyph.
+ * Renders glyph `g` for code point `cp` with `style` at `phase` quarter pixels
+ * to the right of the pen origin. `phase` is a value from 0 to 3. A nonzero
+ * phase places the outline on a subpixel grid. The glyph cache keys the phase
+ * with the code point and the style, so a placed glyph does not share the
+ * entry of the phase-zero glyph.
  */
 bool font_instance_render_glyph_at(const struct font_instance *fi, uint32_t cp,
                                    uint16_t style, uint8_t phase, struct glyph *g);
@@ -278,31 +289,42 @@ enum font_aa_mode {
     FONT_AA_MONO,
 };
 
-/* Sets the font outline hinting style. */
+/* Sets the outline hinting style. FONT_HINT_AUTO takes the system value, and a
+ * change in rendering increments the font generation. */
 void font_set_hint_style(enum font_hint_style style);
-/* Sets the font antialiasing mode. */
+/* Sets the antialiasing mode. FONT_AA_AUTO takes the system value, and a change
+ * in rendering increments the font generation. */
 void font_set_aa_mode(enum font_aa_mode aa);
 #if defined(__APPLE__) && !defined(WSAP_USE_FREETYPE)
-/* Enables or disables subpixel font smoothing. */
+/* Enables or disables subpixel font smoothing. A change increments the font
+ * generation. */
 void font_set_smoothing(bool enabled);
 #endif
-/* Parses a font hinting style name into `out`. */
+/* Parses hinting style name `str` into `out`. Returns false for an unknown name
+ * and leaves `out` unchanged. */
 bool font_parse_hint_style(const char *str, enum font_hint_style *out);
-/* Parses a font antialiasing mode name into `out`. */
+/* Parses antialiasing mode name `str` into `out`. Returns false for an unknown
+ * name and leaves `out` unchanged. */
 bool font_parse_aa_mode(const char *str, enum font_aa_mode *out);
-/* Returns the canonical name string of hinting style `style`. */
+/* Returns the name of hinting style `style` for the current backend, or "auto"
+ * when the backend offers no name for the value. */
 const char *font_hint_style_name(enum font_hint_style style);
-/* Returns the canonical name string of antialiasing mode `aa`. */
+/* Returns the name of antialiasing mode `aa` for the current backend, or
+ * "auto" when the backend offers no name for the value. */
 const char *font_aa_mode_name(enum font_aa_mode aa);
-/* Sets the primary font family name list. */
+/* Sets the configured family name list. A NULL or empty `name` restores
+ * FONT_DEFAULT_FAMILY. The font generation changes, so instances reopen their
+ * faces at the next rebuild. */
 void font_set_family(const char *name);
-/* Returns the configured font family name list. */
+/* Returns the configured family name list, which is never NULL. */
 const char *font_get_family(void);
-/* Returns an array of available font family names and writes count to `count`. */
+/* Returns the installed font family names and writes their count to `count`.
+ * Each family appears once. The caller frees every name and the array. Returns
+ * NULL and writes 0 to `count` when the query fails. */
 char **font_list_families(size_t *count);
-/* Sets the default font point size. */
+/* Sets the default point size for instances that are acquired later. The clamp
+ * to FONT_MIN_SIZE_PT..FONT_MAX_SIZE_PT happens at acquisition. */
 void font_set_configured_size(int size_pt);
-/* Returns the configured default font point size. */
 int font_configured_size(void);
 
 /* Resolves unset dimensions in `size` to configured defaults. */
@@ -321,23 +343,23 @@ struct font_settings {
     enum font_aa_mode antialias;
     bool smoothing;
 };
-/* Applies differences between `prev` and `next` font settings. */
+/* Applies the differences between `prev` and `next` font settings. A NULL
+ * `prev` applies every setting. */
 void font_apply_settings(const struct font_settings *prev,
                          const struct font_settings *next);
 
-/* Initializes the platform font rendering backend. */
+/* Initializes the platform font rendering backend. Returns false when it cannot
+ * initialize. */
 bool font_backend_init(void);
-/* Shuts down the platform font rendering backend. */
 void font_backend_shutdown(void);
 
-/* Attaches the calling thread to the font backend. */
+/* Attaches the calling thread to the font backend. Returns false when the
+ * backend cannot prepare the thread. */
 bool font_thread_attach(void);
-/* Detaches the calling thread from the font backend. */
 void font_thread_detach(void);
 
 /* Returns the font configuration change counter. */
 uint64_t font_generation(void);
-/* Increments the font configuration change counter. */
 void font_bump_generation(void);
 
 #endif

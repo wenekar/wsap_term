@@ -11,9 +11,9 @@
  * The term subproject builds alone, so each side keeps its own copy.
  * The term copy is the output of subprojects/term/tools/generate_unicode.py.
  * After a regeneration, apply the same data here.
- * Rename the wsap_vtcore_ prefix to unicode_, and give each table the
- * unicode_table_ prefix.
- * tests/util/unicode_parity_test.c checks that the two copies agree.
+ * Rename the wsap_vtcore_ prefix to unicode_. A table here replaces that prefix
+ * with unicode_table_, and wsap_vtcore_unicode_wide becomes unicode_table_wide.
+ * tests/terminal/unicode_parity_test.c checks that the two copies agree.
  */
 
 struct unicode_range {

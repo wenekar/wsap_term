@@ -4,7 +4,12 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-/* The XDG base directories of this user, without a trailing file name. */
+/*
+ * The XDG config and cache directories of this user, without a trailing file
+ * name. A variable that is unset or not an absolute path falls back to the home
+ * directory. Returns false when the directory is not available or does not fit
+ * `out`.
+ */
 bool xdg_config_home(char *out, size_t sz);
 bool xdg_cache_home(char *out, size_t sz);
 

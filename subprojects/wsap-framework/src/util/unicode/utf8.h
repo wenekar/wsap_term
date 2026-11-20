@@ -207,8 +207,9 @@ static inline char *unicode_utf8_sanitize_dup(const char *src)
     return dst;
 }
 
-/* Counts the leading bytes in [0x20, hi). This is the fast path for a run of
- * printable ASCII text. A null buffer or hi at or below 0x20 gives 0. */
+/* Returns the length of the leading run of bytes in [0x20, hi). This is the
+ * fast path for a run of printable ASCII text. A null buffer or hi at or below
+ * 0x20 gives 0. */
 size_t unicode_utf8_printable_span(const char *buf, size_t len, unsigned char hi);
 
 #define UNICODE_UTF8_MAX_BYTES 4

@@ -55,7 +55,8 @@ void latency_probe_fullscreen(bool fullscreen);
  * sample.
  */
 
-/* Returns the active probe sample ID pending presentation, or 0 if none is pending. */
+/* Returns the sample of the current request that waits for a presentation, or 0
+ * when no frame waits. */
 uint64_t latency_probe_frame_target(void);
 
 /*

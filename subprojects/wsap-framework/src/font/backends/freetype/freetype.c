@@ -110,7 +110,7 @@ static bool ft_init(void)
     return true;
 }
 
-/* Owned list of the family set that the face tables hold. */
+/* Owned copy of the active family list. */
 static char *active_family;
 
 /* True when the last face open asked for a cell font. The embedded playing
@@ -123,16 +123,17 @@ bool ft_cell_mode(void)
     return cell_mode;
 }
 
-/* Returns the family list that `list` names, with the configured default filled in. */
+/* Returns `list` when it names a family list, or the configured family list
+ * when `list` is NULL or empty. The result is borrowed. */
 static const char *family_or_default(const char *list)
 {
     return list && list[0] ? list : font_get_family();
 }
 
 /*
- * Makes `family_list` the loaded family set. The backend holds one set for
- * the process. A caller that needs another set reloads the face tables of
- * every thread.
+ * The backend holds one family set for the process, so replacing it affects
+ * every thread. Other threads reload their face tables at their next backend
+ * call, when they see the incremented ft_sync_epoch.
  */
 bool ft_family_ensure(const char *family_list)
 {
@@ -388,7 +389,9 @@ static enum font_run_result ft_shape_run(font_handle_t *face, const struct font_
     return FONT_RUN_UNAVAILABLE;
 }
 
-/* Ensures the calling thread is attached before scanning run coverage. */
+/* Runs the coverage scan on an attached thread. When the thread cannot
+ * attach, returns zero coverage and marks the first code point of a non-empty
+ * run dead. */
 static uint64_t ft_backend_scan_run(const uint32_t *cps, int len, uint16_t style,
                                     uint64_t *hash, int *dead_at)
 {

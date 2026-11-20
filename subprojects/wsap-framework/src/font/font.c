@@ -19,7 +19,7 @@ __thread struct font_metrics font_thread_metrics = {
     .baseline = FONT_DEFAULT_PIXEL_SIZE,
     .pixel_size = FONT_DEFAULT_PIXEL_SIZE,
 };
-/* Owned family list of the configured default. Replaced, never edited. */
+/* Owned copy of the configured family list. Replaced, never edited. */
 static char *configured_family;
 static int configured_size_pt = FONT_DEFAULT_SIZE_PT;
 static _Atomic uint64_t font_generation_counter = 1;
@@ -29,7 +29,8 @@ const char *font_get_family(void)
     return configured_family ? configured_family : FONT_DEFAULT_FAMILY;
 }
 
-/* Prepares `g` for one glyph of a font with metrics `m`. */
+/* Resets `g` to the cell size of metrics `m`; a wide style doubles the
+ * width. */
 static bool reset_glyph(const struct font_metrics *m, struct glyph *g, uint16_t style)
 {
     if (!g)
@@ -84,8 +85,8 @@ bool font_instance_render_glyph_at(const struct font_instance *fi, uint32_t cp,
     uint32_t base = cps[0];
     if (unicode_grapheme_regional_indicator(base) && !(style & FONT_STYLE_EMOJI))
         base = 'A' + (base - 0x1F1E6);
-    /* A cell symbol and the 5x7 fallback belong to the cell path. A
-     * proportional font draws every glyph from its own faces. */
+    /* A cell symbol and the 5x7 fallback belong to the cell path, so only a
+     * monospace instance uses them. */
     bool cell_aligned = !fi->proportional;
     if (cell_aligned && draw_cell_aligned_symbol(base, g))
         return true;

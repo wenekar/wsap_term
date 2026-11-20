@@ -2,7 +2,9 @@
 #define WSAP_PAINT_SHAPE_MATH_H
 
 /*
- * Shape coverage math. It is shared by the CPU renderer and the GPU one.
+ * Shape coverage math for the CPU renderer and the Metal shader, which both
+ * include this header. The Vulkan shape shader repeats the same expressions
+ * in render/gpu/vulkan/shaders/shape.frag, so keep the copies in step.
  *
  * This header is a subset of C that is also valid Metal Shading Language.
  * Keep it that way:

@@ -19,7 +19,8 @@ enum ui_scene_op_kind : uint8_t {
 };
 
 /*
- * The blend mode of an op. All source colors are straight ARGB words.
+ * The blend mode of an op. Source and destination colors are ARGB words in
+ * 0xAARRGGBB order.
  *
  * The modes are defined on 8-bit sRGB channels. They are the reference for
  * the GPU backends: the CPU rule is one integer expression, and the GPU
@@ -31,8 +32,10 @@ enum ui_scene_op_kind : uint8_t {
  *            ALPHA, not PREMUL.
  *   ALPHA    The source channels are straight. Scale them by src.a, then
  *            blend as PREMUL. For an opaque color PREMUL and ALPHA agree.
- *   ADDITIVE The result is min (255, src + dst). The alpha adds too.
- *   MULTIPLY The result is src * dst / 255. The alpha blends as PREMUL.
+ *   ADDITIVE The source channels are straight. Scale them by src.a, then
+ *            the result is min (255, src + dst). The alpha adds too.
+ *   MULTIPLY The source channels are straight. Scale them by src.a, then
+ *            the result is src * dst / 255. The alpha blends as PREMUL.
  *   NONE     The source replaces the destination. The alpha replaces too.
  */
 enum ui_scene_blend : uint8_t {
@@ -56,7 +59,7 @@ struct ui_scene_point {
     float x, y;
 };
 
-/* The style of a float op: its color, its blend mode, and its transform. */
+/* The style of a float op. */
 struct ui_scene_style {
     uint32_t color;
     enum ui_scene_blend blend;
@@ -64,10 +67,10 @@ struct ui_scene_style {
 };
 
 /*
- * The kinds of an op that has a geom entry. Such an op has the kind
- * UI_SCENE_OP_RECT: its geom holds the real geometry, and its rect is the
- * covering box. The UI planner and the debug tool thus need no new case.
- * Read the `geom` field of an op only through ui_scene_op_has_geom().
+ * The geom flags. An op with a geom entry has the kind UI_SCENE_OP_RECT:
+ * its geom holds the real geometry, and its rect is the covering box. The
+ * UI planner and the debug tool thus need no new case. Read the `geom`
+ * field of an op only through ui_scene_op_has_geom().
  */
 #define UI_GEOM_RECT_F 1u
 #define UI_GEOM_PATH 2u
@@ -82,7 +85,9 @@ struct ui_scene_style {
  * The float geometry of an op. The op holds its index in `geom`.
  * `rect` is the float bounds before the transform. `width` is the stroke
  * width of a path. `point_off` and `point_len` name the points in
- * `ui_scene.points`. A gradient holds its two colors and its axis.
+ * `ui_scene.points`. A gradient holds its two colors and its axis: `from`
+ * and `to` for a linear gradient, `from` (the center) and `radius` for a
+ * radial one.
  */
 struct ui_scene_geom {
     struct rect2f rect;
@@ -120,11 +125,13 @@ struct ui_image {
 #define UI_IMAGE_LINEAR 1u
 
 /*
- * The parts of an image op that are not its rectangle. A zero struct draws
- * the whole image, one texel for each pixel, opaque, and with no tint.
+ * The parts of an image op that are not its rectangle. A zero struct
+ * samples the whole image with a nearest sample, at full opacity, and with
+ * no tint.
  */
 struct ui_image_options {
-    /* The source texel rect. A zero size samples the whole image. */
+    /* The source texel rect, clipped to the image. An empty rect samples
+     * the whole image. */
     struct rect2i uv;
     /* A straight tint color. 0 is white. Its alpha scales the opacity. */
     uint32_t tint;
@@ -134,7 +141,7 @@ struct ui_image_options {
     uint16_t flags;
 };
 
-/* The source of an image op: the image and the texel rect of its quad. */
+/* The source of an image op: the image and the texel rect that it samples. */
 struct ui_image_draw {
     const struct ui_image *src;
     struct rect2i uv;
@@ -156,7 +163,6 @@ struct ui_text_style {
 struct ui_scene_op {
     enum ui_scene_op_kind kind;
     uint8_t alpha;
-    /* The blend mode of the op. See enum ui_scene_blend. */
     enum ui_scene_blend blend;
     /* The image flags of an image op. Zero for every other kind. */
     uint16_t flags;
@@ -217,11 +223,15 @@ bool ui_scene_copy(struct ui_scene *dst, const struct ui_scene *src);
 bool ui_scene_push_clip(struct ui_scene *s, struct rect2i r);
 bool ui_scene_pop_clip(struct ui_scene *s);
 bool ui_scene_rect(struct ui_scene *s, struct rect2i r, uint32_t color);
-/* Emits four non-overlapping edge rectangles to outline `box`. */
+/*
+ * Outlines `box` with non-overlapping rectangles of `width` pixels. A box
+ * with no inner rect gives one filled rect. A width of zero or less, an
+ * empty box, or a transparent color emits nothing.
+ */
 bool ui_scene_rect_stroke(struct ui_scene *s, struct rect2i box, int width,
                           uint32_t color);
 
-/* The width of each side of a border. Zero draws no side. */
+/* The width of each side of a border. Zero or less draws no side. */
 struct ui_scene_border_width {
     int left, top, right, bottom;
 };
@@ -232,20 +242,24 @@ struct ui_scene_border_width {
 bool ui_scene_rect_border(struct ui_scene *s, struct rect2i box,
                           struct ui_scene_border_width width, uint32_t color);
 /*
- * Emits a wavy underline. The wave is a triangle staircase of the `amplitude`
- * rows below `run.y`, with one period of `period` columns. `thickness` is the
- * height of each step. The run starts at `run.x` and takes `run.width`
- * columns. The steps do not overlap.
+ * Emits a wavy underline. The wave is a triangle staircase of at most
+ * `amplitude` rows below `run.y`, and an `amplitude` below 1 counts as 1.
+ * The requested `period` rounds down to an even number of columns, at least
+ * 2. `thickness` is the height of each step, and a `thickness` below 1
+ * counts as 1. The run starts at `run.x` and takes `run.width` columns. The
+ * steps do not overlap.
  */
 bool ui_scene_wavy_underline(struct ui_scene *s, struct rect2i run,
                              int amplitude, int period, int thickness,
                              uint32_t color);
 /*
- * The float ops. `ui_scene_rect_f` fills the transformed rect with its
- * center inside the rect. The path ops stroke lines of `width` pixels, and
- * a closed filled path covers the polygon of its points. A gradient paints
- * the rect of the last argument. A zero `style` gives the identity
- * transform and UI_SCENE_BLEND_PREMUL.
+ * The float ops. `ui_scene_rect_f` fills each pixel whose center is inside
+ * the transformed rect. The path ops stroke a band of `width` pixels around
+ * each segment, or 1 when `width` is zero or less; a filled path covers the
+ * polygon of its points, closed or not. A gradient paints its rect from
+ * `color0` at `from` to `color1` at `to`, or at `radius` from `from` for a
+ * radial gradient. A zero `style` gives the identity transform,
+ * UI_SCENE_BLEND_PREMUL, and color 0, so only a gradient can show.
  */
 bool ui_scene_rect_f(struct ui_scene *s, struct rect2f r,
                      const struct ui_scene_style *style);
@@ -283,9 +297,10 @@ static inline bool ui_scene_op_has_geom(const struct ui_scene_op *op)
     return op->kind == UI_SCENE_OP_RECT && op->geom >= 0;
 }
 /*
- * `op` puts ink on the canvas. The planner and the painter both use this
- * rule. A float rect paints by its geom, whatever its colour: a gradient
- * with no style has colour 0 and alpha 255.
+ * Returns true when `op` counts as ink for the planner. plan_ui_ink() uses
+ * this rule. An op with a geom counts whatever its colour, because its geom
+ * may paint: a gradient with no style has colour 0 and takes its alpha from
+ * `color0`.
  */
 bool ui_scene_op_draws(const struct ui_scene_op *op);
 bool ui_scene_blend_rect(struct ui_scene *s, struct rect2i r,

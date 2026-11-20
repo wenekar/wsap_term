@@ -17,8 +17,9 @@ struct damage_list {
 };
 
 /*
- * Adds damage rectangle `r` to damage list `d`.
- * Merges adjacent rectangles or records overflow.
+ * Adds damage rectangle `r` to damage list `d`. `r` merges into the last
+ * rectangle when the two touch. When the list is full, `n` becomes -1 and
+ * `bounds` alone covers the damage.
  */
 static inline void damage_add(struct damage_list *d, struct rect2i r)
 {
@@ -36,9 +37,6 @@ static inline void damage_add(struct damage_list *d, struct rect2i r)
         d->n = -1;
 }
 
-/*
- * Marks damage list `d` as completely damaged.
- */
 static inline void damage_add_all(struct damage_list *d)
 {
     d->any = true;

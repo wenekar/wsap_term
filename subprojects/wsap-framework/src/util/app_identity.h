@@ -23,8 +23,12 @@ struct app_identity {
 };
 
 /*
- * Fills `out` for `app_id`. The config, cache, and data directories all end
- * with the app ID. Returns false when `app_id` or a directory overflows.
+ * Fills `out` for `app_id` and zeroes it first. The config and cache
+ * directories end with the app ID. The data directory is the installed data of
+ * the app, and it is empty when neither the executable nor the build prefix
+ * provides it. Returns false for a NULL or empty `app_id`, an app ID or a
+ * directory that does not fit, or a config or cache directory that the system
+ * does not give.
  */
 bool app_identity_init(struct app_identity *out, const char *app_id);
 
@@ -50,9 +54,10 @@ bool app_identity_data_path(const struct app_identity *identity, char *out,
                             size_t sz, const char *rel);
 
 /*
- * Stores the identity of this process. The application calls this once at
- * startup, before it opens a window. The pointer must stay valid for the life
- * of the process.
+ * Stores the identity of this process. The application calls this at startup,
+ * before a module reads the identity. It borrows `identity` and does not copy
+ * it. A later call replaces the pointer, so the last identity set must stay
+ * valid for the life of the process.
  */
 void app_identity_set_current(const struct app_identity *identity);
 

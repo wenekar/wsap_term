@@ -145,8 +145,8 @@ struct glyph_fill_ctx {
     uint8_t phase;
 };
 
-/* The cache slot layer passes the code point and the style. The phase and
- * the instance travel in the fill context. */
+/* The fill context carries what the slot API does not pass: the instance and
+ * the subpixel phase. The style arrives as the `flags` argument. */
 static inline void glyph_fill_args(uint16_t flags, void *ctx, uint8_t *phase,
                                    struct font_instance **fi)
 {
@@ -214,7 +214,7 @@ struct cache_slot *slot_cache_ensure(_Atomic(struct cache_slot *) *ptr, int coun
     return cache;
 }
 
-/* Returns the cached glyph of code point `cp` at subpixel `phase`. */
+/* Returns the borrowed glyph of code point `cp` at subpixel `phase`. */
 const struct glyph *glyph_cache_fetch_at(struct font_instance *fi, uint32_t cp,
                                          uint16_t style, uint8_t phase)
 {

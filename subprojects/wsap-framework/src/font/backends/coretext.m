@@ -236,9 +236,10 @@ static void ct_open_hb(struct font_handle *face, enum font_variant variant,
     face->hb_font[variant] = hb;
 }
 
-/* The bundled fonts register in two steps: the regular files, then the bold
- * and italic files. A start that shows only regular text loads no styled
- * file. `bundled_lock` guards the two flags. */
+/* The bundled fonts register in two steps: the regular files first, then the
+ * extra-style files, which are bold, italic, and oblique. One flag per step
+ * lets a caller run only the regular step and leave the extras step for
+ * later. `bundled_lock` guards both flags. */
 static bool bundled_regular_done;
 static bool bundled_extras_done;
 static pthread_mutex_t bundled_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -270,8 +271,10 @@ static void register_urls(CFArrayRef urls)
         });
 }
 
-/* Registers the steps of one directory that are not done. The caller holds
- * `bundled_lock`. */
+/* Registers the font files of one directory for the regular step when that
+ * step has not run, and for the extras step when `include_extras` is set.
+ * The caller holds `bundled_lock` and sets `include_extras` only while the
+ * extras step is pending. */
 static void register_font_dir(NSString *dir, bool include_extras)
 {
     if (!dir)
@@ -300,8 +303,9 @@ static void register_font_dir(NSString *dir, bool include_extras)
             else
                 CFArrayAppendValue(regular_urls, (__bridge CFURLRef)url);
         }
-        /* A directory with no regular file gives its styled files to the
-         * regular step. The styled step then has nothing left to register. */
+        /* A directory with no regular file registers its extra-style files
+         * in the regular step, so the extras step has nothing left to add
+         * here. */
         bool styled_only = CFArrayGetCount(regular_urls) == 0;
         if (!bundled_regular_done)
             register_urls(styled_only ? extra_urls : regular_urls);
@@ -313,8 +317,9 @@ static void register_font_dir(NSString *dir, bool include_extras)
 }
 
 /* Registers the bundled fonts: the regular files, and with `include_extras`
- * also the bold and italic files. Returns true if this call registered a
- * step. A font lookup by name can then give a new result. */
+ * also the extra-style files. Returns true when this call ran a step that
+ * had not run before. A later lookup by name can then return a different
+ * face. */
 static bool register_bundled_fonts(bool include_extras)
 {
     pthread_mutex_lock(&bundled_lock);
@@ -463,9 +468,10 @@ static CTFontRef ct_load_base_font(const char *family_list, CGFloat pt)
         char norm[128];
         normalize_name(name, norm, sizeof(norm));
 
-        /* Look among the installed fonts first. Register a bundled step
-         * only when the name is still not found, and look again only when
-         * that step added fonts. */
+        /* Try the lookup before any registration. Run the regular step, then
+         * the extras step, only after a failed lookup. Repeat the lookup only
+         * when the step ran, because a step that has already run adds no
+         * font. */
         CTFontRef font = ct_match_named_font(name, norm, pt);
         if (!font && register_bundled_fonts(false))
             font = ct_match_named_font(name, norm, pt);
@@ -543,8 +549,8 @@ static bool ct_face_metrics(font_handle_t *face, struct font_metrics *out)
     CGFloat leading = CTFontGetLeading(f) * face->scale;
 
     /* A monospace face has one advance for every glyph, so the advance of
-     * 'M' is the cell width. A proportional face has no such glyph; use the
-     * advance of '0' as the cell width unit. */
+     * 'M' is the cell width. A proportional face has no shared advance; the
+     * advance of '0' sets its cell width. */
     UniChar m = face->monospace ? 'M' : '0';
     CGGlyph glyph = 0;
     CTFontGetGlyphsForCharacters(f, &m, &glyph, 1);
@@ -739,7 +745,9 @@ static void ct_scratch_destroy(struct ct_scratch *scratch)
     memset(scratch, 0, sizeof(*scratch));
 }
 
-/* Draw one vector glyph via CoreGraphics so CoreText skips per-font language exemplar caches. */
+/* CTFontDrawGlyphs makes CoreText build per-face language exemplar caches, so
+ * draw a face without color glyphs through its CGFont. Color glyphs need
+ * CTFontDrawGlyphs. */
 static void ct_draw_single_glyph(CGContextRef ctx, CTFontRef font, CGGlyph gid)
 {
     CGPoint pos = CGPointZero;
@@ -789,8 +797,9 @@ static bool ct_rasterize_ink(CTFontRef font, CGGlyph gid, CTLineRef line,
         dst_x = (cols - (int)ceil(ink_w * scale)) / 2;
         dst_y = (rows - (int)ceil(ink_h * scale)) / 2;
     } else {
-        /* The pen fixes the ink position. A narrow glyph is not moved to
-         * the middle of its columns. */
+        /* The pen sets the x position at the natural size, so a glyph
+         * narrower than its columns stays where text places it. Only a
+         * scaled or color glyph is centered. */
         if (dst_y < 0) dst_y = 0;
         if (dst_y + ink_h > rows) dst_y = rows - ink_h;
     }
@@ -832,7 +841,9 @@ static bool ct_rasterize_ink(CTFontRef font, CGGlyph gid, CTLineRef line,
     CGContextTranslateCTM(ctx, (dst_x - span_l) - left * scale,
                           rows - dst_y - above * scale);
     CGContextScaleCTM(ctx, scale * units, scale * units);
-    /* A quarter-pixel phase moves the outline on the subpixel grid. */
+    /* One phase step moves the outline a quarter of a device pixel, so the
+     * rasterizer computes new coverage instead of shifting the phase-zero
+     * raster. */
     if (phase)
         CGContextTranslateCTM(ctx, phase * 0.25, 0);
     if (line) {

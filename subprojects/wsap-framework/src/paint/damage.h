@@ -4,8 +4,9 @@
 #include "util/geom.h"
 #include <stdbool.h>
 
-/* The most damage rectangles of one frame. The merge in ui_damage_add()
- * holds the list below this bound, so a large frame keeps its detail. */
+/* The maximum number of damage rectangles in one frame. The merge in
+ * ui_damage_add() keeps the list at or below this bound, so a large frame
+ * keeps its detail. */
 #define UI_DAMAGE_MAX_RECTS 32
 
 struct ui_damage {

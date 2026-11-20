@@ -41,12 +41,14 @@ static inline void framebuffer_history_release(struct framebuffer_history *histo
  *
  * - `pixels` holds size.x * size.y words in 0xAARRGGBB order, row after
  *   row. The row stride is size.x.
- * - NULL pixels with `acquire_pixels` mean: the CPU canvas comes on demand.
- *   render_draw_view() then calls `acquire_pixels` only when the CPU paints the
- *   frame, and it writes the result to `pixels`. A frame that the GPU takes
- *   never needs the canvas, and the GPU reads no pixels.
- * - NULL pixels without `acquire_pixels`, or an empty size, paint nothing.
- *   render_draw_view() then reports full damage and forgets the surface state.
+ * - NULL `pixels` with `acquire_pixels` means that the CPU canvas comes on
+ *   demand. render_draw_view() then calls `acquire_pixels` only when the CPU
+ *   paints the frame, and it writes the result to `pixels`. A frame that the
+ *   GPU takes never needs the canvas, and the GPU reads no pixels.
+ * - `pixels` NULL without `acquire_pixels` paints nothing, unless the frame
+ *   has a drawable and no `cpu_only`. An empty `size` paints nothing.
+ *   render_draw_view() then reports full damage and marks the surface state
+ *   invalid.
  * - `fresh` means: the pixels are not what render_draw_view() last drew with
  *   this history. The renderer then paints every pixel. Set it on the first
  *   frame, after a reallocation, and after a failed present. False is the
@@ -54,8 +56,8 @@ static inline void framebuffer_history_release(struct framebuffer_history *histo
  *   not need `fresh`.
  * - `history` NULL means: paint everything and keep no state. Use it for
  *   one-shot images, such as thumbnails and drag images.
- * - `drawable` is the GPU drawable of this frame, or NULL. NULL means a CPU
- *   canvas that the window presents itself.
+ * - `drawable` is the GPU drawable of this frame, or NULL. NULL without
+ *   `acquire` means a CPU canvas that the window presents itself.
  * - `acquire` asks for the drawable of a frame that the GPU draws, and it
  *   writes `drawable`. The renderer calls it after it builds the frame data
  *   and before it encodes the frame, so the drawable stays out of the pool

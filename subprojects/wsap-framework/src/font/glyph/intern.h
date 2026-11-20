@@ -5,9 +5,10 @@
 
 uint32_t glyph_intern(const uint32_t *cps, int len);
 int glyph_intern_expand(uint32_t c, uint32_t *out, size_t out_cap);
-/* Changes each time interned handles are reused. Starts at 0.
- * Read it before you expand or draw a handle. A later change then shows
- * that the handle can name a different cluster. */
+/* Returns the epoch of the interned cluster table. The epoch starts at 0 and
+ * changes each time a handle is reused for another cluster. Read it before
+ * expanding a handle; a later change means the handle can name a different
+ * cluster. */
 uint32_t glyph_intern_epoch(void);
 
 #endif

@@ -9,7 +9,7 @@ struct yasl_loop;
  * One worker thread for slow work that must not block the loop.
  * A submit queues the work and returns. The worker runs it, and the loop
  * thread then calls the done callback with the result.
- * The worker wakes the loop through an eventfd, so a late result starts the
+ * The worker wakes the loop through a descriptor, so a late result starts the
  * next wait.
  */
 struct loop_worker;
@@ -37,7 +37,8 @@ struct loop_work {
 };
 
 /*
- * Creates a worker for `loop`. It returns NULL with errno on failure.
+ * Creates a worker for `loop`. It returns NULL on failure, with errno set when
+ * a system call failed.
  * The loop must outlive the worker. Destroy the worker before the loop.
  */
 struct loop_worker *loop_worker_create(struct yasl_loop *loop);
@@ -52,8 +53,9 @@ void loop_worker_destroy(struct loop_worker *worker);
 
 /*
  * Queues work and wakes the worker. It does not wait for the work.
- * Any thread may call it. Returns 0, or -1 with EINVAL for a bad item, or
- * ESHUTDOWN when the worker stops. `run` must not be NULL.
+ * Any thread may call it. Returns 0, or -1 with EINVAL for a NULL worker or an
+ * item whose `run`, `done`, or `cancel` is NULL, or ESHUTDOWN when the worker
+ * stops.
  */
 int loop_worker_submit(struct loop_worker *worker, const struct loop_work *work);
 

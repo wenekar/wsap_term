@@ -12,7 +12,6 @@
 /* Cell metrics of the font that the calling thread rasterizes with. */
 extern __thread struct font_metrics font_thread_metrics;
 
-/* Returns the raster rows of glyph `g`. */
 static inline int glyph_rows(const struct glyph *g)
 {
     return g->height;

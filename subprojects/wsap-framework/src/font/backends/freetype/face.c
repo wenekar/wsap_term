@@ -38,7 +38,8 @@ static void faces_tls_key_init(void)
     faces_tls_ready = pthread_key_create(&faces_tls_key, free) == 0;
 }
 
-/* Grows the per-thread face table on demand up to MAX_FACES. */
+/* Grows the per-thread face table to hold at least `need` slots. Returns false
+ * when `need` exceeds MAX_FACES or the table cannot grow. */
 static bool faces_ensure(int need)
 {
     if (need <= faces_cap)
@@ -141,7 +142,6 @@ static bool valid_font_stat(const struct stat *st)
            (uintmax_t)st->st_size <= (uintmax_t)LONG_MAX;
 }
 
-/* Unlinks `b` from the active blob cache when `blob_mu` is held. */
 static void blob_unlink_locked(struct ft_font_blob *b)
 {
     if (!b->active)
@@ -154,7 +154,8 @@ static void blob_unlink_locked(struct ft_font_blob *b)
     b->active = false;
 }
 
-/* Returns a shared read-only mapped buffer for `path`, creating it on cache miss. */
+/* Returns a reference to a shared read-only mapping of `path`, or NULL. The
+ * caller must release the reference with ft_blob_release(). */
 static struct ft_font_blob *ft_blob_acquire(const char *path)
 {
     struct stat st;
@@ -513,15 +514,16 @@ static FT_Face load_style_face(int slot_idx, const struct ft_face_slot *f,
     return styled;
 }
 
-/* Returns the pixel size that the face table of this thread uses. Zero
- * before the first ft_size_faces() call. */
+/* Returns the pixel size applied to the faces of this thread. Zero when the
+ * thread has no faces or no size has been applied. */
 int ft_face_px(void)
 {
     return num_faces ? faces[0].applied_px : 0;
 }
 
-/* Sizes `face` for the pixel size of slot `f`. A slot without a size yet
- * keeps the face unsized until the next ft_size_faces() call. */
+/* Sizes `face` to the pixel size in `f`. A zero size leaves the face unsized
+ * until the next ft_size_faces() call. Returns false when the face is NULL or
+ * cannot take the size. */
 static bool slot_size_face(const struct ft_face_slot *f, FT_Face face)
 {
     if (!face)

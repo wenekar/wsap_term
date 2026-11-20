@@ -2,8 +2,9 @@
 
 #include <errno.h>
 
-/* The FSEvents (macOS) and kqueue (BSD) backends go here. Both deliver the
- * same event bits through fs_watch_report and fs_watch_flush. */
+/* The backend for a platform without a file watcher: every watch fails with
+ * ENOTSUP. An FSEvents (macOS) or kqueue (BSD) backend replaces this file and
+ * reports through fs_watch_report and fs_watch_flush. */
 
 int fs_watch_platform_open(struct fs_watch *watch)
 {
