@@ -1,56 +1,38 @@
 # wsap_term
 
-wsap_term is a terminal emulator for Linux and macOS.
-Linux supports Wayland with Vulkan GPU rendering and a CPU rendering fallback.
-macOS uses Cocoa and Metal GPU rendering.
+wsap_term is a terminal emulator for Linux and macOS. It supports tabs and lets you change fonts, colors, and themes from the Settings window.
 
-## Build
+| Platform | Window system | Rendering |
+|---|---|---|
+| Linux | Wayland | Vulkan with CPU fallback |
+| macOS 14 or later | Cocoa | Metal |
 
-See [Build instructions](docs/build.md) for prerequisites and configuration options.
+## Build and run
 
-### Linux
+Install the prerequisites for your platform from the [build guide](docs/build.md), then run `make` from the repository root.
 
-Run these commands to build and start the app:
+| Platform | Launch command |
+|---|---|
+| Linux | `./build/bin/wsap_term` |
+| macOS | `./build-homebrew/bin/wsap_term` |
 
-```sh
-make
-./build/bin/wsap_term
-```
+**Local installation:** `make install` installs under `~/.local` by default. The [installation guide](docs/build.md#installation) explains where to launch the installed app.
 
-### macOS
+## Using the terminal
 
-Install dependencies with Homebrew:
-
-```sh
-brew install llvm meson ninja pkgconf yyjson harfbuzz icu4c rust
-```
-
-Build and start the app:
-
-```sh
-make
-./build-homebrew/bin/wsap_term
-```
-
-Run `make install` to install files under `~/.local`.
-
-## Usage
-
-Run `wsap_term --help` to show command-line options.
-Press `Ctrl+Shift+,` on Linux or `Cmd+,` on macOS to open Settings.
-See [Settings](docs/settings.md) and [SSH setup](docs/ssh.md).
+| Task | Shortcut or guide |
+|---|---|
+| Open Settings | Linux: `Ctrl+Shift+,`; macOS: `Cmd+,` |
+| Change fonts, colors, or themes | [Settings guide](docs/settings.md) |
+| List command-line options | `wsap_term --help` |
+| Set up terminal capabilities on a remote host | [SSH guide](docs/ssh.md) |
 
 ## Development
 
-Run the test suite:
+**Test suite:** `make test`
 
-```sh
-make test
-```
-
-See [Development](docs/development.md), [CI](docs/ci.md), and the
-[documentation index](docs/README.md).
+Start with the [development guide](docs/development.md) for the source layout and test workflow. The [documentation index](docs/README.md) links to the architecture notes, debugging tools, and CI setup.
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE)
