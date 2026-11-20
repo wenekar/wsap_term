@@ -17,7 +17,6 @@ on:
       - '.clangd'
       - '.gitignore'
       - 'LICENSE'
-      - 'Makefile'
   pull_request:
     paths-ignore:
       - '**.md'
@@ -33,7 +32,6 @@ on:
       - '.clangd'
       - '.gitignore'
       - 'LICENSE'
-      - 'Makefile'
   workflow_dispatch:
 
 permissions:
@@ -62,6 +60,10 @@ jobs:
           HOMEBREW_NO_INSTALL_CLEANUP: "1"
         run: |
           brew install llvm meson ninja pkgconf yyjson harfbuzz icu4c rust
+      - name: Build the LTO release
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
+        run: make release
       - name: Build and test
         run: bash tools/ci/build.sh
       - name: Upload build and test logs
@@ -69,7 +71,9 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: macos-logs
-          path: build/ci/meson-logs/
+          path: |
+            build-homebrew/meson-logs/
+            build/ci/meson-logs/
           if-no-files-found: ignore
           retention-days: 7
 

@@ -27,7 +27,8 @@ It installs these Homebrew packages:
 brew install llvm meson ninja pkgconf yyjson harfbuzz icu4c rust
 ```
 
-The build script selects Homebrew LLVM and its archive tools.
+The macOS job runs `make release` with LTO before the regular tests.
+Both builds use Homebrew LLVM and its archive tools.
 Metal tests use the Apple Silicon GPU on the runner.
 The signing test uses temporary Keychains.
 It checks that changed builds keep the same certificate-bound identity.

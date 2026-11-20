@@ -158,14 +158,6 @@ if get_option('b_lto')
         cc.get_supported_arguments('-fno-ipa-cp-clone'),
         language: project_languages,
     )
-    # Fat LTO objects hold the machine code next to the LTO bytecode. An
-    # installed archive then links with clang and with another GCC version,
-    # which cannot read the GCC LTO bytecode. The project's own link still
-    # uses LTO.
-    add_project_arguments(
-        cc.get_supported_arguments('-ffat-lto-objects'),
-        language: project_languages,
-    )
 endif
 
 if get_option('hardening') and get_option('b_sanitize') == 'none'
