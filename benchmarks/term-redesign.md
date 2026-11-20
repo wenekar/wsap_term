@@ -96,7 +96,7 @@ All other cases stay within 3% of the baseline. The first full run showed
 longline at -32%; three repeats measured 15002 to 15209 MiB/s, which is the
 baseline.
 
-The line-feed burst cases are slower, and the cause is not known yet. These
+The line-feed burst cases were slower in this phase. The measurements did not establish a cause. These
 changes did not remove the difference:
 
 - The benchmark harness does the same work as before.
@@ -245,9 +245,7 @@ turn. The table shows the medians.
 
 The gate (every case within 3%) fails. The CR LF cases gain because a
 SIMD scan replaced a scalar loop. The text cases lose because every line
-that scrolls off now goes into the compact history. The cost and the open
-decision were in the deleted plan. Run `git log -- docs/term-redesign.md`
-and check out its last commit to read them.
+that scrolls off now goes into the compact history. A full performance summary appears in Phase 7.
 
 `hist-bench` (per pushed line or row):
 
@@ -333,7 +331,7 @@ Ten selected tests passed with ASan and UBSan after the large-count cache fix.
 The run included LeakSanitizer outside the sandbox.
 The fuzz check passed in 306.67 seconds.
 LeakSanitizer could not inspect processes under the sandbox tracing rules.
-A later scroll wrapper change also needs final verification.
+The checks at this step do not cover the later scroll wrapper change.
 
 The history view tests keep text through output, eviction, and rewrap.
 The model test visits every retained row before it checks the exact row total.

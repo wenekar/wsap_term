@@ -1,7 +1,7 @@
 # Build a window screen
 
 Use this guide to add a small screen to an app window.
-It uses the screen API in `src/ui/` and the window binding in `src/ui/yasl/`.
+It uses the framework screen API (`ui/ui.h`) and the window binding (`ui/yasl/client.h`).
 The UI core does not use yasl headers.
 Only app code opens windows and mounts window content.
 

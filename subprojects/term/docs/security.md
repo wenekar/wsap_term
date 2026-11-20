@@ -32,7 +32,7 @@ The parser enforces these implementation resource limits:
 | Control string buffer | 16 MiB | Drops excess bytes. |
 | Decoded OSC 52 clipboard payload | 100 KiB | Discards oversized payload. |
 | Hyperlink URI length | 4096 bytes | Discards oversized URI. |
-| Hyperlink table capacity | 8192 entries | Replaces oldest entries. |
+| Hyperlink table capacity | 8192 entries | Reclaims unreferenced links; refuses a new link if none can be reclaimed |
 | Window title length | 4096 bytes | Truncates title to limit. |
 | Saved window title stack | 10 titles | Discards oldest saved title. |
 | Working directory path length | 4096 bytes | Discards oversized path. |

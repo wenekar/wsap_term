@@ -2,8 +2,9 @@
 
 The core includes multiple test layers.
 Each layer detects a different class of defect.
-Run all suites before each release.
-CI runs all suites on each change to the core.
+Run the applicable suites before releasing the core. The [terminal-core CI workflow](../../../.github/workflows/term.yml) selects suites and toolchains per job.
+
+This standalone command runs the default tests without the optional Kitty suite:
 
 ```sh
 meson setup build -Dkitty=disabled

@@ -115,5 +115,4 @@ The address and undefined-behavior sanitizer suite passed 101 of 101 tests.
 The layer gate reported zero violations and zero cycles.
 The UI inspector reported no lint findings on five screens.
 
-macOS build checks, native tests, and Metal benchmarks are deferred.
-The user will run them after implementation.
+This comparison does not include macOS build checks, native tests, or Metal benchmarks.

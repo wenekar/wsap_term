@@ -21,9 +21,13 @@ compositor named by `WAYLAND_DISPLAY`, so the bench can run against a private
 headless Sway without touching the desktop session:
 
 ```sh
-XDG_RUNTIME_DIR=$(mktemp -d) WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
+export XDG_RUNTIME_DIR=$(mktemp -d)
+WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
     WLR_RENDERER=pixman sway --unsupported-gpu -c /dev/null &
-WSAP_LATENCY_INJECTOR=wayland ./build/benchmarks/input-latency-bench 300 20
+# Wait for Sway to create its Wayland socket, then use that socket name.
+ls "$XDG_RUNTIME_DIR"
+WAYLAND_DISPLAY=wayland-1 WSAP_LATENCY_INJECTOR=wayland \
+    ./build/benchmarks/input-latency-bench 300 20
 ```
 
 This path skips evdev and libinput, so its injection stage is shorter than
@@ -38,10 +42,7 @@ frequency estimates, or inferred core-cycle counts are involved.
 - **Injection → submission:** immediately before the first synthetic input
   event write until the present call for the matching frame returns.
 - **Injection → presentation:** the timestamp of the frame that a display
-  reported, when the window layer gives presentation feedback. On Wayland that
-  is the matching commit's `wp_presentation_feedback.presented` timestamp when
-  the compositor reports vsync; in async mode the benchmark uses the local time
-  when it receives the feedback event. On macOS the Metal drawable reports
+  reported, when the window layer gives presentation feedback. On macOS the Metal drawable reports
   `presentedTime`, which is the time of the display commit. When the frame is
   not paced, the benchmark uses the local time of the presented callback.
   That time is an upper bound on presentation completion. It can overstate
@@ -84,9 +85,7 @@ benchmark's line-discipline echo workload or an interactive shell prompt.
 
 The probe recognizes the complete sequence marker and its following printable character
 after VT parsing, including markers split across PTY reads, on both direct-read and ring-buffer paths.
-Only a render following that response can publish the sample. Each Wayland
-feedback object carries the corresponding sample number, and the macOS Metal
-presented handler copies it before the frame leaves the loop. Unrelated
+Only a render following that response can publish the sample. The Metal presentation handler captures the corresponding sample number before the frame leaves the loop. Unrelated
 redraws, old responses, and delayed feedback from earlier samples cannot
 complete the current request. Release/acquire publication makes each result
 immutable until the next request. One request is outstanding at a time.
@@ -153,6 +152,4 @@ on an AMD Ryzen 7 9700X. It completed 100 samples after 20 warmup samples.
 Injection → submission measured p50 0.356 ms, p99 0.469 ms, and max 0.487 ms.
 Presentation was unavailable.
 
-No run on macOS with presentation feedback is recorded yet. The macOS path
-needs a display that presents to the session, and the current build session has
-none. Run the benchmark on a local desktop session and keep the CSV.
+This report contains no macOS run with presentation feedback. To measure it, run the benchmark in a local desktop session with an active display and keep the CSV.

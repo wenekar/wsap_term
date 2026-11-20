@@ -57,7 +57,7 @@ Configure to resized, in milliseconds:
 | CPU, empty scrollback    |      0.193 |     0.143 |      0.904 |     0.359 |
 | CPU, 50000 lines         |      0.209 |     0.170 |      0.969 |     0.409 |
 
-Tick to shown, in milliseconds:
+Drag tick to Wayland commit, in milliseconds (not display presentation):
 
 | Configuration            | p50 before | p50 after | p99 before | p99 after |
 |--------------------------|-----------:|----------:|-----------:|----------:|

@@ -1,7 +1,6 @@
 # Compatibility
 
-The current version is 0.1.0.
-This version does not give a 1.0 compatibility guarantee.
+This guide describes source and binary compatibility for the terminal core. The `0.1` release series does not promise a stable ABI.
 
 Public headers expose struct layouts, enums, constants, and inline functions.
 A changed struct layout breaks binary compatibility.

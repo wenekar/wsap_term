@@ -1,8 +1,5 @@
 # Build a window screen
 
-> The examples name a host application. Use your own program in its place.
-
-
 Use this guide to add a small screen to an app window.
 It uses the screen API in `src/ui/` and the window binding in `src/ui/yasl/`.
 The UI core does not use yasl headers.
@@ -104,7 +101,7 @@ bool example_mount(struct window *window)
 The app calls `example_mount()` after `window_open()` succeeds.
 If mounting fails, the app closes the window.
 The app sets the window theme after mounting.
-See `open_settings()` and `style_window()` in `src/app/app.c` for the complete app path.
+In the `wsap_term` host, `open_settings()` and `style_window()` in `src/app/app.c` show the complete app path. This file belongs to the host, not the framework SDK.
 
 The view copies the descriptor strings during `ui_view_mount_ex()`.
 The local descriptor and its child array can then go away.

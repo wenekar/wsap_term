@@ -35,7 +35,7 @@ A window uses one of two pacing modes:
 
 - With vsync enabled, the window requests a frame from the surface.
   The window layer answers at the next display callback.
-  Without a callback, it answers after one refresh period.
+  On Cocoa, a fallback timer can answer when no display tick arrives.
   Drawing waits for the display.
   The window cannot draw faster than the display refresh rate.
   The request only schedules that callback.
@@ -44,16 +44,15 @@ A window uses one of two pacing modes:
 - With `vsync = false`, drawing starts immediately.
   The display does not pace the frame.
   Screen tearing can occur.
-  If no drawable is free, presentation blocks until the display frees one.
+  If no drawable is free, acquisition can block or fail, depending on the backend.
 
 The display link of a macOS window measures its own refresh period.
 On a ProMotion display, this period varies with the system refresh rate.
 A frame request uses this period for its fallback timer.
 
-## Behavior by refresh rate
+## Cocoa pacing by refresh rate
 
-The table states the behavior of the code.
-It is not a measurement.
+The table describes Cocoa behavior. The tick intervals are nominal, not measured frame times.
 
 | Case | 60 Hz fixed | 120 Hz fixed | 240 Hz fixed | 120 Hz variable (ProMotion) |
 | --- | --- | --- | --- | --- |
@@ -62,19 +61,10 @@ It is not a measurement.
 | Monitor move | The link tracks the new display and measures its period. | Same. | Same. | The link measures the new refresh rate after the move. |
 | Scale change | `drawableSize` changes to points × scale. A frame with a mismatched drawable size drops and redraws. | Same. | Same. | Same. |
 | Live resize | The frame draws immediately and presents in the Core Animation transaction without waiting for a tick. | Same. | Same. | Same. |
-| Flood output | The worker thread parses output. The render loop receives CPU time at every refresh rate. | Same. | Same. | Same. |
 | Idle, then wake | The link pauses after 8 idle frames. A wake event triggers an immediate draw. | Same. | Same. | Same. |
 | Occluded | The window suspends drawing while occluded. It resumes drawing when visible. | Same. | Same. | Same. |
 
-Two limits do not depend on the refresh rate:
-
-- The GPU queue holds three frame slots.
-  If all slots are full, the engine drops the frame immediately.
-  The window then requests the next frame.
-- PTY parsing runs on the worker thread.
-  This offloads parsing work from the main thread.
-  The worker parses data in 32 KiB chunks.
-  Snapshot capture waits for at most one chunk.
+Metal has three frame slots. When all are busy, the renderer drops the frame and the window requests another. In `wsap_term`, a separate worker parses PTY output. Snapshot capture can wait for that worker to release the terminal writer lock.
 
 ## Presentation feedback on macOS
 

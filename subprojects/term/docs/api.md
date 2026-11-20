@@ -139,7 +139,7 @@ Cells with `text & WSAP_VTCORE_TEXT_CLUSTER` hold cluster handles instead of sca
 The function returns total cluster length, even when capacity is smaller.
 A normal cell returns one code point.
 The function returns zero for invalid handles or NULL snapshot pointers.
-`wsap_vtcore_snapshot_cluster_direct()` returns a direct pointer to cluster code points and sets cluster length.
+`wsap_vtcore_snapshot_cluster_direct()` returns a borrowed pointer to the cluster code points and writes the length. It returns `NULL` when the cell does not contain a cluster or the cluster is invalid.
 Cluster handles belong only to the current snapshot version.
 Do not retain cluster handles across snapshot updates.
 
@@ -256,7 +256,7 @@ Concealed cells preserve underlying text characters.
 The array provides one color value per column.
 `WSAP_VTCORE_COLOR_NONE` indicates that the cell has no custom underline color.
 Underlines without custom colors use the foreground color of the cell.
-A NULL return indicates that no cell in the row uses an underline color.
+The function returns `NULL` for a null snapshot, an invalid row, or a row without custom underline colors.
 Returned pointers follow getter lifetime rules.
 
 DECSCA protection controls cell preservation during selective erases (DECSED, DECSEL, DECSERA).

@@ -1,6 +1,6 @@
 # macOS Metal backend
 
-The renderer uses native Metal commands. Cocoa owns the window and input.
+This report records the Metal and Cocoa implementation measured on 2026-10-02. Its implementation notes describe that build, not the current backend.
 
 ## Event loop
 
@@ -46,9 +46,7 @@ the frame. Only the display reports a presentation.
 `render_gpu_draw` takes the drawable after it builds the frame data. A
 drawable whose texture has another size than the frame is a resize race,
 so the frame is dropped and drawn again at the next tick. With no free
-frame slot the frame is dropped at once. The main thread never waits for
-a slot or for a drawable, but `[CAMetalLayer nextDrawable]` itself blocks
-when the pool is empty.
+frame slot the frame is dropped at once. The renderer does not wait for a free frame slot. Drawable acquisition through `[CAMetalLayer nextDrawable]` can block when the pool is empty.
 
 `window_gpu_draw` attaches one presented handler to the drawable of
 each frame. It captures the sample of the latency probe at that moment,
@@ -129,7 +127,7 @@ atlas only" is the renderer before the ASCII atlas. "First ASCII
 atlas" is the ASCII atlas with a split state array, the glyph cache
 call on every main atlas lookup, and one command check per quad.
 
-| Case | Main atlas only | First ASCII atlas | Now |
+| Case | Main atlas only | First ASCII atlas | Single-command atlas path |
 | --- | ---: | ---: | ---: |
 | ASCII, every row changes | 250 µs | 184 µs | 113 µs |
 | ASCII, no row changes | 120 µs | 115 µs | 48 µs |

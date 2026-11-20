@@ -142,7 +142,7 @@ the median of the three per-run medians:
 | tab-open | 45.02 | 49 | 3.98 |
 | menu-20 | 79.48 | 164 | 84.52 |
 
-The menu-20 median is about 7 us lower than the pre-index baseline. The
+The menu-20 median is about 69 µs lower than the pre-index baseline and about 7 µs lower than the earlier indexed runs. The
 other scenarios match the earlier numbers. All four limits pass in all
 three runs.
 

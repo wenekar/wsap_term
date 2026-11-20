@@ -9,10 +9,10 @@ It separates application tabs from terminal content.
 | --- | --- |
 | `src/app/tabs/` | Manages the tab model and tab views. `src/app/tabs/model.c` owns each terminal handle and the native drag. Each window view holds tab order, selection, close state, the tab bar, previews, and the command palette. |
 | `src/terminal/` | Manages one session and its terminal widgets, snapshot, font, zoom, selection, scroll state, and terminal input. |
-| `src/app/tabs/tabbar/` | Keeps tab bar style, geometry, scene drawing, and interaction state in separate files. It sends tab bar actions to the application. |
-| `src/ui/yasl/` | Manages native windows, surfaces, input routing, scale, and frame scheduling. Each host pass calls the service step of the owner. It contains no tab policy. |
+| `subprojects/wsap-framework/src/ui/widgets/tabbar/` | Keeps tab bar style, geometry, scene drawing, and interaction state in separate files. It sends tab bar actions to the application. |
+| `subprojects/wsap-framework/src/ui/yasl/` | Manages native windows, surfaces, input routing, scale, and frame scheduling. Each host pass calls the service step of the owner. It contains no tab policy. |
 | `src/session/` | Manages the term core, PTY, input queue, and PTY size notifications. |
-| `src/app/app.c` | Creates windows and composes frames. It alone calls the renderer. It owns the tab model. Its host hook runs the tab service step. |
+| `src/app/app.c` | Creates windows and composes the main window frames. It owns the tab model. Its host hook runs the tab service step. |
 
 A terminal handle has no tab array and no active-tab index.
 It has no tab-bar, palette, preview, or window-transfer state.
@@ -109,7 +109,7 @@ The application provides the model to each tab view in `app_tabs_spec`.
 Windows hold tab IDs and borrow content widgets.
 The window view keeps tab IDs in tab-bar order and tracks the active index.
 A window never destroys a terminal.
-Only `src/app/tabs/model.c` calls `terminal_destroy()`.
+The model destroys terminal content through the content adapter in `src/app/tabs/terminal_content.c`.
 When a window closes, its destroy hook returns its tab IDs to the model.
 The model then destroys those tabs.
 The host reaps closed windows at the start of each host pass.
@@ -255,8 +255,6 @@ The tab architecture provides these guarantees:
 
 - Tab creation inherits current working directory and zoom level.
 - Tab reorder, native drag, detach, and move operations preserve terminal sessions.
-- Theme reload, settings, clipboard, IME, accessibility, and key encoding operate correctly.
-- Tab previews and the command palette operate correctly.
 - Process exit closes the correct tab after its final output.
 - The application renderer and native windows maintain their established ownership.
 
@@ -273,6 +271,6 @@ The automated test suite verifies these behaviors:
 Verification tools enforce architecture rules:
 
 - `python3 tools/dev/dirgraph.py build` validates the include graph with zero violations and zero cycles.
-- The UI inspector lint reports zero findings.
+- Run the UI inspector lint on each affected screen and resolve its findings.
 - Live resize tests verify both shell row counts and view bounds.
 - Screenshots alone do not verify PTY grid correctness.

@@ -141,8 +141,7 @@ call.
 | lf-burst | 164216 | 161577 | -1.6% |
 | dch | 614.8 | 601.7 | -2.1% |
 
-ManyLine instruction count fell from 6.249 to 5.816 per byte. It is now
-4.5 times the cost per byte of LongLine at 0.510.
+ManyLine instruction count fell from 6.249 to 5.816 per byte. At 5.816 instructions per byte, it still costs about 11.4 times as many instructions per byte as LongLine (0.510).
 
 The UTF-8 and CJK gains come from the copy change, not the history change.
 The short losses come from the same change. Cases that copy outside 16 to
@@ -258,7 +257,7 @@ alternately, then compare the medians.
 tools/ab.sh manyline 7 build/ab/base build/ab/full
 ```
 
-Instruction counts are exact and need no repetitions:
+Inspect instruction counts with `perf stat`. Repeat the measurement if the result varies or the counters multiplex:
 
 ```sh
 perf stat -e cycles,instructions,branch-misses,cache-misses \

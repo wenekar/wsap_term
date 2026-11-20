@@ -50,7 +50,7 @@ The other cases changed by less than 3%. `term-resize-bench` and
   width: 1 for LF in newline mode, 2 for CRLF. In other modes, "text\r\n"
   gives the same screen and history as "text\n" in newline mode.
 - `scan_ascii_crlf` finds CRLF line ends. The AVX-512, AVX2, and NEON loops
-  compare the CR mask, moved up one byte, with the LF mask. A carry moves a
+  shift the CR mask by one bit to align each CR with the next input byte, then compare it with the LF mask. A carry moves a
   CR in the last byte of a block to the next block. A lone CR or LF stops the
   scan.
 - The history LF push and its row kernels take the terminator width.

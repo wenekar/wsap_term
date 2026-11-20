@@ -23,9 +23,9 @@ Linux uses `perf record` with DWARF call graphs and writes:
 - `benchmarks/term-live-bench.perf.txt`: symbolized output from `perf script`.
 - `benchmarks/term-live-bench.perf.annotated.txt`: annotated hot path report.
 
-## Throughput Comparison
+## Headless throughput comparison
 
-Local measurements below are medians of five runs with `-O3 -march=native`, alternating
+These `term-write-bench` results measure core input throughput, not the live profiler. The values are medians of five runs with `-O3 -march=native`, alternating
 baseline and updated executables using the same benchmark harness:
 
 | Input | Baseline MiB/s | Updated MiB/s | Change |

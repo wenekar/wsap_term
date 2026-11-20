@@ -373,7 +373,7 @@ A terminal text update does not need to invalidate the UI scene.
 Removed or detached macOS elements return empty results.
 They cannot execute actions.
 A provider without an action sink is read-only.
-Text runs use ICU grapheme and word boundaries.
+Text runs use the UAX #29 grapheme and word boundary tables in `src/ui/text_break.c`.
 The adapter converts text selections between run character indices and UTF-8 byte offsets.
 AccessKit manages native events and platform text offsets.
 
