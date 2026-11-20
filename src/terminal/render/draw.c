@@ -1,15 +1,34 @@
-#include "render/core.h"
-#include "render/gpu/gpu.h"
 #include "terminal/render/term_frame.h"
+#include "terminal/render/term_render.h"
 #include "terminal/render/view.h"
+
+static struct renderer_frame resolve_frame(const struct render_frame *frame,
+                                           struct render_grid_view *grid)
+{
+    bool has_grid = render_term_grid_view(frame->grid.frame, grid);
+    if (has_grid) {
+        grid->font = frame->grid.font;
+        grid->rect = frame->grid.rect;
+    }
+    return (struct renderer_frame){
+        .grid = has_grid ? grid : NULL,
+        .ui = frame->ui,
+        .ui_font = frame->ui_font,
+        .ui_damage = frame->ui_damage,
+        .base = frame->base,
+        .repaint = frame->repaint,
+        .cpu_only = frame->cpu_only,
+    };
+}
 
 struct render_result render_draw(struct renderer *r, struct framebuffer *fb,
                                  const struct render_frame *frame)
 {
+    if (!frame)
+        return (struct render_result){0};
     struct render_grid_view grid;
-    const struct render_grid_view *view =
-        frame && render_term_grid_view(frame->grid.frame, &grid) ? &grid : NULL;
-    return render_draw_view(r, fb, frame, view);
+    struct renderer_frame resolved = resolve_frame(frame, &grid);
+    return renderer_draw(r, fb, &resolved);
 }
 
 bool render_cursor_cell(struct renderer *r, struct font_instance *font,
@@ -24,15 +43,17 @@ bool render_cursor_cell(struct renderer *r, struct font_instance *font,
     struct render_grid_view grid;
     if (!render_term_grid_view(tf, &grid))
         return false;
-    return renderer_cursor_band(r, font, &grid, tf->cursor_y, span_begin, span_cols,
+    grid.font = font;
+    return renderer_cursor_band(r, &grid, tf->cursor_y, span_begin, span_cols,
                                 out, max_px, out_w, out_h);
 }
 
 enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surface *s,
                                        struct framebuffer *fb, const struct render_frame *frame)
 {
+    if (!frame)
+        return RENDER_GPU_UNUSED;
     struct render_grid_view grid;
-    const struct render_grid_view *view =
-        frame && render_term_grid_view(frame->grid.frame, &grid) ? &grid : NULL;
-    return render_gpu_draw_view(g, s, fb, frame, view);
+    struct renderer_frame resolved = resolve_frame(frame, &grid);
+    return render_gpu_draw_frame(g, s, fb, &resolved);
 }

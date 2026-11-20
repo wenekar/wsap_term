@@ -38,18 +38,18 @@ project_languages = ['c']
 if system == 'darwin'
     project_languages += ['objc']
 endif
-backend = get_option('window_backend')
-if backend == 'auto'
-    backend = system == 'linux' ? 'wayland' : 'metal'
+window_system = get_option('window_system')
+if window_system == 'auto'
+    window_system = system == 'linux' ? 'wayland' : 'cocoa'
 endif
-if backend != 'metal' and system != 'linux'
-    error('The @0@ backend requires Linux'.format(backend))
+if window_system != 'cocoa' and system != 'linux'
+    error('The @0@ window system requires Linux'.format(window_system))
 endif
-if backend == 'metal' and system != 'darwin'
-    error('The Metal backend is macOS-only; Linux builds use Wayland or X11')
+if window_system == 'cocoa' and system != 'darwin'
+    error('Cocoa requires macOS; Linux builds use Wayland or X11')
 endif
-if get_option('integration_tests') and (backend != 'wayland' or not get_option('tests'))
-    error('Integration tests require tests=true and the Wayland backend')
+if get_option('integration_tests') and (window_system != 'wayland' or not get_option('tests'))
+    error('Integration tests require tests=true and Wayland')
 endif
 if get_option('kitty_tests') and not get_option('tests')
     error('Kitty tests require tests=true')
@@ -236,7 +236,7 @@ wsap_fw = subproject(
     default_options: [
         'tests=false',
         'benchmarks=false',
-        'window_backend=' + backend,
+        'window_system=' + window_system,
         'font_backend=' + font_backend,
         'vulkan_render=' + get_option('vulkan_render'),
         'isa=' + isa,
@@ -270,21 +270,15 @@ term_dep = dependency(
 )
 term_test_dep = dependency('wsap_vtcore-test', fallback: 'term')
 
-if backend == 'wayland'
-    backend_deps = [
-        dl_dep,
-    ]
-else
-    backend_deps = []
-endif
+graphics_deps = window_system == 'wayland' ? [dl_dep] : []
 
 # The framework detects Vulkan and glslc once. The terminal reads that result.
 has_vulkan = wsap_fw.get_variable('has_vulkan')
 if has_vulkan
     vulkan_dep = dependency('vulkan', version: '>=1.3.0')
-    backend_deps += [vulkan_dep.partial_dependency(compile_args: true, includes: true), dl_dep]
+    graphics_deps += [vulkan_dep.partial_dependency(compile_args: true, includes: true), dl_dep]
 endif
-lib_deps = base_deps + font_deps + backend_deps
+lib_deps = base_deps + font_deps + graphics_deps
 wsap_deps = [
     wsap_base_dep, wsap_input_dep, wsap_paint_dep, wsap_font_dep,
     wsap_ui_dep, wsap_theme_dep, wsap_render_dep, wsap_ui_yasl_dep,
@@ -502,7 +496,7 @@ meson.add_dist_script(
 summary(
     {
         'Platform': system,
-        'Backend': backend,
+        'Window system': window_system,
         'Framework': 'subproject (wsap-framework)',
         'Vulkan': has_vulkan,
         'ISA': isa,

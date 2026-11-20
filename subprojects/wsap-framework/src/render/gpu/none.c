@@ -26,15 +26,14 @@ void *render_gpu_native_device(struct render_gpu *g)
     return NULL;
 }
 
-enum render_gpu_status render_gpu_draw_view(struct render_gpu *g, struct render_surface *s,
-                                       struct framebuffer *fb, const struct render_frame *frame,
-                                       const struct render_grid_view *grid)
+enum render_gpu_status render_gpu_draw_frame(struct render_gpu *g, struct render_surface *s,
+                                             struct framebuffer *fb,
+                                             const struct renderer_frame *frame)
 {
     (void)g;
     (void)s;
     (void)fb;
     (void)frame;
-    (void)grid;
     return RENDER_GPU_UNUSED;
 }
 

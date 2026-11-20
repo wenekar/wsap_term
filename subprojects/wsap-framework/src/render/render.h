@@ -1,30 +1,17 @@
 #ifndef RENDER_H
 #define RENDER_H
 
-/*
- * The public renderer API of this library.
- *
- * render_draw_view() (render/core.h) draws a frame that the caller has
- * already resolved into a render_grid_view. The terminal layer above this
- * library wraps it in render_draw(), which adds the terminal frame. The
- * rules below hold for both calls.
- *
- * The app owns one renderer. Only the app calls render_draw(). The test
- * oracle for a full paint is a second renderer that draws a frame with no
- * history.
- */
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #include "paint/framebuffer.h"
+#include "render/isa.h"
 #include "util/damage.h"
-#include "util/geom.h"
 
 struct font_instance;
 struct renderer;
-struct terminal_frame;
+struct render_grid_view;
 struct ui_damage;
 struct ui_scene;
 
@@ -38,14 +25,13 @@ struct ui_scene;
  * Renderer settings. An all-zero struct, or a NULL pointer, gives the
  * defaults.
  *
- * - `isa`: an enum render_isa value (render/cpu/isa.h). 0 is
- *   RENDER_ISA_AUTO: the WSAP_RENDER_ISA environment value, else the best
- *   level that the CPU has. A level that the CPU does not have falls back
- *   as render_isa_resolve() decides. renderer_isa() tells the result.
+ * - `isa`: an enum render_isa value. RENDER_ISA_AUTO reads WSAP_RENDER_ISA
+ *   or selects the best level that the CPU supports. Unsupported requests
+ *   fall back to a supported level. renderer_isa() returns the chosen level.
  * - `threads`: worker threads in addition to the main thread.
  *   0: the WSAP_RENDER_THREADS environment value, else min(nproc - 1, 3).
  *   RENDER_NONE: no workers. The main thread does all the work.
- *   N > 0: N workers, up to POOL_WORKERS_MAX (render/cpu/pool.h).
+ *   A positive value requests that many workers, subject to the pool limit.
  * - `cache_bytes`: the byte budget of the composited cell cache.
  *   0: RENDER_CACHE_DEFAULT_BYTES. RENDER_NONE: no cell cache.
  *   A budget too small for the cell size also gives no cache.
@@ -62,45 +48,25 @@ struct render_options {
 };
 
 /*
- * The terminal grid of a frame.
+ * Scene, optional cell grid, and paint options for one frame.
  *
- * - `frame` NULL, or an invalid frame, means: no grid. The base color and
- *   the UI then cover `rect`.
- * - `font` NULL means font_instance_default().
- * - `rect` is the grid area in canvas pixels. render_draw() clips it to the
- *   canvas. An empty rect, or a rect with a negative origin, draws no grid.
- * - The cells start at rect.pos. Visible columns are
- *   min(frame->cols, width / cell_w), and visible rows are
- *   min(frame->rows, height / cell_h), after the clip.
- * - The rest of the rect is margin. The margin is frame->default_bg in
- *   both video modes: reverse video swaps the colors of the cells only.
- */
-struct render_grid {
-    const struct terminal_frame *frame;
-    struct font_instance *font;
-    struct rect2i rect;
-};
-
-/*
- * One frame.
- *
+ * - `grid` NULL omits the grid.
  * - `base` fills every canvas pixel outside the grid, under the UI.
  *   It can be translucent. Popups use base 0.
  * - `ui` NULL means an empty scene.
  * - `ui_font` NULL means font_instance_default().
  * - `ui_damage` lists the canvas rects where this scene can differ from the
- *   scene of the last render_draw() with this history. NULL means: all of
+ *   scene of the last renderer_draw() with this history. NULL means: all of
  *   the UI changed.
  * - `repaint` means: forget the surface state and paint every pixel.
  * - `cpu_only` means: do not draw on the GPU. Screenshots set it, because
  *   they need the pixels in the canvas. A frame with a drawable still
  *   presents through the GPU, from the CPU pixels.
  *
- * Every pointer must stay valid during render_draw(). render_draw() keeps
- * no pointer after it returns. It holds no font reference.
+ * The renderer borrows the frame data until renderer_draw() returns.
  */
-struct render_frame {
-    struct render_grid grid;
+struct renderer_frame {
+    const struct render_grid_view *grid;
     const struct ui_scene *ui;
     struct font_instance *ui_font;
     const struct ui_damage *ui_damage;
@@ -110,7 +76,7 @@ struct render_frame {
 };
 
 /*
- * The result of one render_draw().
+ * The result of one renderer_draw().
  *
  * - `damage` lists the canvas pixels that changed. Its coordinates are
  *   canvas pixels. damage.any false means: no pixel changed.
@@ -155,6 +121,12 @@ void renderer_drop_gpu(struct renderer *r);
 bool renderer_idle_gpu(struct renderer *r);
 /* The enum render_isa level that the renderer uses. Never RENDER_ISA_AUTO. */
 int renderer_isa(const struct renderer *r);
+
+/* Draws into `fb`. With a history, repaints only the damage; without one,
+ * paints the entire frame. A NULL argument returns an empty result without
+ * drawing. Call on the main thread. */
+struct render_result renderer_draw(struct renderer *r, struct framebuffer *fb,
+                                   const struct renderer_frame *frame);
 
 /*
  * Starts and stops the font system and builds the sRGB tables. The calls

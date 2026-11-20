@@ -8,7 +8,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--build-root', type=Path, default=Path('build/matrix'))
 parser.add_argument('--isas', nargs='*', default=None,
                     help='ISA targets; each must be supported by the compiler and CPU')
-parser.add_argument('--window-backend', choices=['auto', 'wayland', 'metal'], default='auto')
+parser.add_argument('--window-system', choices=['auto', 'wayland', 'x11', 'cocoa'], default='auto')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 isas = args.isas if args.isas is not None else (
@@ -18,7 +18,7 @@ for index, isa in enumerate(['native', *isas]):
     build = args.build_root.resolve() / ('native' if index == 0 else f'isa-{index}')
     setup = ['meson', 'setup', str(build), str(root), '--buildtype=debugoptimized',
              '-Doptimization=1', '-Db_lto=false', '-Db_lundef=false', '-Db_sanitize=address,undefined',
-             f'-Disa={isa}', f'-Dwindow_backend={args.window_backend}']
+             f'-Disa={isa}', f'-Dwindow_system={args.window_system}']
     if (build / 'meson-private/coredata.dat').exists():
         setup.append('--reconfigure')
     print(f'=== Testing {isa} ===', flush=True)

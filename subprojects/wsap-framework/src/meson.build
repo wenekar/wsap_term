@@ -7,6 +7,7 @@ subdir('font')
 subdir('ui')
 subdir('theme')
 subdir('render')
+subdir('desktop')
 
 base_lib = static_library(
     'wsap-base',
@@ -82,8 +83,17 @@ ui_yasl_lib = static_library(
     install: not meson.is_subproject(),
 )
 
+desktop_lib = static_library(
+    'wsap-desktop',
+    desktop_src,
+    link_with: [ui_yasl_lib, ui_lib, render_lib],
+    include_directories: inc,
+    dependencies: [yasl_dep],
+    install: not meson.is_subproject(),
+)
+
 wsap_libs = [base_lib, input_lib, paint_lib, font_lib, ui_lib, theme_lib,
-             render_lib, ui_yasl_lib]
+             render_lib, ui_yasl_lib, desktop_lib]
 
 # Each library gets a dependency that a subproject or an installed pkg-config
 # consumer can use.
@@ -168,6 +178,15 @@ framework_specs = [
         'private': [],
         'private_libs': ['-pthread', '-ldl', '-lm'],
         'external': core_deps + [accesskit_dep],
+    },
+    {
+        'name': 'wsap-desktop',
+        'lib': desktop_lib,
+        'description': 'Default desktop window runner and frame composer',
+        'uses': ['wsap-ui-yasl', 'wsap-ui', 'wsap-render'],
+        'private': [],
+        'private_libs': [],
+        'external': [yasl_dep],
     },
 ]
 

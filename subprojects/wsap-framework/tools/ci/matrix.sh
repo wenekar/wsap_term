@@ -29,7 +29,7 @@ meson setup --wipe build/ci-x11 \
     --buildtype=release \
     -Disa= \
     -Db_lto=false \
-    -Dwindow_backend=x11 \
+    -Dwindow_system=x11 \
     -Dvulkan_render=disabled \
     -Dtests=false \
     -Dbenchmarks=false

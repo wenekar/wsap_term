@@ -1,23 +1,15 @@
 #ifndef RENDER_GRID_H
 #define RENDER_GRID_H
 
-/*
- * The grid view of one frame. It is the generic input of the grid path: the
- * visible size, the colors, the row keys, and the walk that resolves the
- * cells. The renderer names no terminal type.
- *
- * The terminal layer builds a view from its frame and passes it to
- * render_draw_view(). A NULL view means: no grid.
- */
-
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "render/cell.h"
 #include "util/geom.h"
 
 /*
- * The terminal-specific part of a grid.
+ * Callbacks that resolve grid rows from caller-owned data.
  * - `walk` resolves the cells of one row into render_cell values.
  * - `line_size` gives the shape of one row.
  * - `row_key` gives the content key of one row. It is never 0 for a row
@@ -25,8 +17,8 @@
  * - `reserve_walk` makes room for the walk scratch of one thread. It runs
  *   on the main thread and on each pool thread.
  *
- * The functions read `source` and the terminal frame that it points at.
- * They must not change either during a frame.
+ * The renderer can call these functions from worker threads. The source
+ * must stay readable and unchanged until the frame finishes.
  */
 struct render_grid_ops {
     void (*walk)(struct font_instance *font, const void *source, int row,
@@ -37,16 +29,20 @@ struct render_grid_ops {
 };
 
 /*
- * - `cells` is the full terminal size, not the visible size. A reflow keeps
- *   the row keys of rows that it rewraps.
- * - `selection_fg` and `selection_bg` are resolved. A zero value means the
- *   built-in selection colors, as the terminal frame defines them.
- * - `palette_gen`, `default_fg`, `default_bg`, `cursor_color`,
- *   `reverse_video`, and `blink_on` come from the terminal frame.
+ * A cell grid resolved by the caller for one frame.
+ *
+ * - `ops` and its callbacks are required when the renderer draws the grid.
+ * - `rect` is the grid area in canvas pixels. An empty rectangle or a
+ *   negative origin omits the grid. The renderer clips it to the canvas.
+ * - `font` NULL selects the default font.
+ * - `cells` is the full grid size in columns and rows, before clipping.
+ * - `selection_fg` and `selection_bg` are the resolved selection colors.
  */
 struct render_grid_view {
     const struct render_grid_ops *ops;
     const void *source;
+    struct font_instance *font;
+    struct rect2i rect;
     struct vector2i cells;
     uint64_t palette_gen;
     uint32_t default_fg, default_bg;
@@ -55,5 +51,18 @@ struct render_grid_view {
     bool reverse_video;
     bool blink_on;
 };
+
+struct renderer;
+
+/* Paints one or two columns starting at `span_begin` on a single-size row
+ * into `out` as packed 0xAARRGGBB pixels. Uses the grid data but not its
+ * placement. `max_px` is the output capacity in pixels. Returns false if
+ * the span is invalid, the buffer is too small, or the renderer cannot
+ * allocate its working storage. Writes pixels, `out_w`, and `out_h` on
+ * success. Call on the main thread, outside renderer_draw(). */
+bool renderer_cursor_band(struct renderer *r, const struct render_grid_view *grid, int row,
+                          int span_begin, int span_cols,
+                          uint32_t *out, size_t max_px,
+                          int *out_w, int *out_h);
 
 #endif

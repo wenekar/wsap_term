@@ -21,6 +21,7 @@ RANKS = {
     "theme": 10,
     "render": 11,
     "ui/yasl": 13,
+    "desktop": 14,
 }
 
 PRIVATE_OWNERS = {
@@ -42,6 +43,7 @@ LIBRARY_PATHS = {
     "theme": ("theme",),
     "render": ("render",),
     "ui_yasl": ("ui/yasl",),
+    "desktop": ("desktop",),
 }
 ALLOWED_DEPENDENCIES = {
     "base": set(),
@@ -52,9 +54,10 @@ ALLOWED_DEPENDENCIES = {
     "theme": {"ui", "base"},
     "render": {"paint", "font", "base"},
     "ui_yasl": {"paint", "input", "ui", "font", "base"},
+    "desktop": {"base", "render", "ui", "ui_yasl"},
 }
 # Libraries that may include yasl headers.
-YASL_LIBRARIES = {"base", "ui_yasl"}
+YASL_LIBRARIES = {"base", "ui_yasl", "desktop"}
 YASL_PREFIX = "yasl/"
 INCLUDE = re.compile(r'^\s*#\s*include\s*["<]([^">]+)[">]')
 SOURCE_SUFFIXES = {".c", ".h", ".m", ".mm"}

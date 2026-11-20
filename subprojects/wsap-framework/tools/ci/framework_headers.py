@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Print the framework SDK header paths relative to the source root.
 
-The framework SDK ships the public headers of the toolkit layers and the
-window binding. Internal headers and font backend headers stay private.
-A header named `*internal.h` is private. The include graph check in
-`tools/dev/dirgraph.py` uses the same rule.
+The framework SDK ships the public headers of the toolkit, window binding,
+and desktop runner. Internal headers, font backends, and source-tree test
+hooks are not installed.
 """
 
 from __future__ import annotations
@@ -22,11 +21,23 @@ SDK_DIRS = (
     "ui",
     "theme",
     "render",
+    "desktop",
 )
-PRIVATE_DIRS = ("ui/yasl/accessibility", "font/backends")
+PRIVATE_DIRS = ("ui/yasl/accessibility", "font/backends", "render/cpu", "render/gpu")
+SDK_EXCLUDED_HEADERS = {
+    "font/backend.h",
+    "font/font5x7.h",
+    "font/glyph/layout.h",
+    "render/plan.h",
+    "render/surface.h",
+    "ui/yasl/native_input.h",
+    "ui/yasl/testing.h",
+}
 
 
 def is_public(relative: str) -> bool:
+    if relative in SDK_EXCLUDED_HEADERS:
+        return False
     if relative.rsplit("/", 1)[-1].endswith("internal.h"):
         return False
     if "/internal/" in "/" + relative:

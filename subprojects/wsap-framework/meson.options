@@ -1,9 +1,9 @@
 option(
-    'window_backend',
+    'window_system',
     type: 'combo',
-    choices: ['auto', 'wayland', 'x11', 'metal'],
+    choices: ['auto', 'wayland', 'x11', 'cocoa'],
     value: 'auto',
-    description: 'Window backend (Wayland and X11 are Linux-only, Metal is macOS-only)',
+    description: 'Window system: Wayland or X11 on Linux, Cocoa on macOS',
 )
 option(
     'vulkan_render',

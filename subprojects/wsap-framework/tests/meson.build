@@ -46,7 +46,6 @@ test_cases = [
     ['render-kernels-test', files('render/cpu/kernels_test.c'), render_lib],
     ['render-pool-test', files('render/cpu/pool_test.c'), render_lib],
     ['render-scene-test', files('render/scene_test.c'), render_lib],
-    ['render-gpu-build-test', files('render/gpu_build_test.c'), render_lib],
     ['render-plan-ink-test', files('render/plan_ink_test.c'), render_lib],
     ['ui-yasl-drop-route-test', files('ui/yasl/drop_route_test.c'), ui_yasl_lib],
     ['ui-yasl-key-route-test', files('ui/yasl/key_route_test.c'), ui_yasl_lib],
@@ -59,6 +58,10 @@ test_cases = [
     ['ui-yasl-host-registry-test', files('ui/yasl/host_registry_test.c'), ui_yasl_lib],
     ['ui-yasl-ui-input-test', files('ui/yasl/ui_input_test.c'), ui_yasl_lib],
 ]
+
+if has_vulkan or system == 'darwin'
+    test_cases += [['render-gpu-build-test', files('render/gpu_build_test.c'), render_lib]]
+endif
 
 scene_tests = [
     ['anim-test', files('ui/anim_test.c'), [ui_lib, render_lib]],
@@ -131,6 +134,23 @@ latency_probe_test = executable(
     override_options: ['b_lto=false'],
 )
 test('latency-probe-test', latency_probe_test, env: test_env, suite: 'unit')
+
+if window_system == 'wayland'
+    sway = find_program('sway', required: false)
+    swaymsg = find_program('swaymsg', required: false)
+    grim = find_program('grim', required: false)
+    if sway.found() and swaymsg.found() and grim.found()
+        show_pixels = executable(
+            'show-pixels-example',
+            '../examples/show_pixels.c',
+            dependencies: framework_deps['wsap-desktop'],
+        )
+        test('desktop-show-pixels-test', python,
+             args: [files('desktop/show_pixels_test.py'), show_pixels,
+                    sway.full_path(), swaymsg.full_path(), grim.full_path()],
+             env: test_env, suite: 'integration')
+    endif
+endif
 
 # The SDK tools ship in this tree, so their checks run here.
 test(

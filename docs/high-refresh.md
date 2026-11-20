@@ -117,7 +117,7 @@ Out-of-order feedback cannot complete a different sample.
   The project does not claim 240 Hz performance.
 - A display that does not present output provides no presentation feedback.
   Remote or occluded sessions report submissions only.
-- The Wayland window backend provides no presentation feedback to the probe.
+- The Wayland integration provides no presentation feedback to the probe.
   Wayland sessions report submissions only.
 - `presentedTime` measures display commit time.
   It does not measure panel scanout or physical pixel response time.

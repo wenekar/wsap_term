@@ -34,6 +34,7 @@ The UI framework lives in `subprojects/wsap-framework`. Its `src/` tree provides
 | Paint (`subprojects/wsap-framework/src/paint/`) | Paint data shared by the UI and renderer |
 | UI core (`subprojects/wsap-framework/src/ui/`) | Widget toolkit without a yasl dependency |
 | Window binding (`wsap-ui-yasl`) | Window system and UI integration in `subprojects/wsap-framework/src/ui/yasl/` |
+| Desktop runner (`wsap-desktop`) | Default window lifecycle and widget frame composition in `subprojects/wsap-framework/src/desktop/` |
 | Terminal grid renderer (`src/terminal/render/`) | Adapter from terminal frames to the framework renderer |
 | App runtime (`src/runtime/`) | Frame composition helpers, scene capture, thumbnails, and GPU idle release |
 
@@ -44,7 +45,7 @@ A library can use its declared lower layers. Run the include graph check after c
 | Check | Command or constraint |
 |---|---|
 | Include graph | `python3 tools/dev/dirgraph.py build` |
-| Libraries allowed to include `yasl/` headers | `base`, `pty`, `session`, `ui_yasl`, `terminal`, `runtime`, and `app` |
+| Libraries allowed to include `yasl/` headers | `base`, `pty`, `session`, `ui_yasl`, `desktop`, `terminal`, `runtime`, and `app` |
 | Window binding | No render headers |
 
 ### Terminal core
@@ -63,7 +64,7 @@ The terminal core builds, tests, and benchmarks independently. It does not inclu
 Yasl (`subprojects/yasl`) provides the platform layer. The window binding keeps pacing, presentation, input, clipboard, drag, and input method handling in the same library as the window host, popup menus, accessibility, and inspector server. Keep them together: splitting the library would require reversing the dependency between the window and its UI.
 
 - Keep window content in its own subsystem directory, such as `src/terminal/`. The content supplies its root widget and frame data to the app. Open app windows and mount their root widgets with `window_ui_mount()` from `src/app/`.
-- The app owns one renderer. The window tracks framebuffer history for each native surface and presents the frame with its damage region. App code calls `render_draw()` for window frames; the app runtime also calls it for scene captures and thumbnails.
+- The app owns one renderer. The window tracks framebuffer history for each native surface and presents the frame with its damage region. The terminal app calls its `render_draw()` adapter for window frames and thumbnails, and calls the framework's `renderer_draw()` directly for scene captures. Standalone widget apps can use `wsap-desktop` to run the loop and compose frames.
 - Keep shared GPU frame preparation in `subprojects/wsap-framework/src/render/gpu/build.c`. It builds instance lists, draw commands, the atlas, and UI image slots without calling a GPU API. The Metal and Vulkan backends contain API-specific code. Do not duplicate frame preparation in a backend.
 
 | Interface or resource | Location or owner |

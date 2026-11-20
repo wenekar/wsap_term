@@ -21,7 +21,7 @@ if system == 'linux' or system == 'darwin'
     if system == 'darwin'
         latency_deps += [dependency('appleframeworks', modules: ['ApplicationServices'])]
     endif
-    if backend == 'wayland'
+    if window_system == 'wayland'
         wayland_scanner = find_program('wayland-scanner', native: true)
         vk_xml = files('protocols/virtual-keyboard-unstable-v1.xml')
         latency_src += custom_target(

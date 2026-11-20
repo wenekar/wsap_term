@@ -8,7 +8,6 @@
 #endif
 
 #include "render/render.h"
-#include "terminal/render/term_render.h"
 #include "yasl/yasl.h"
 
 #define GPU_IDLE_RELEASE_MS 500u
@@ -102,12 +101,12 @@ bool app_runtime_paint_scene(void *ud, struct font_instance *font,
         .size = size,
         .fresh = true,
     };
-    struct render_frame frame = {
+    struct renderer_frame frame = {
         .ui = scene,
         .ui_font = font,
         .repaint = true,
         .cpu_only = true,
     };
-    (void)render_draw(rt->renderer, &target, &frame);
+    (void)renderer_draw(rt->renderer, &target, &frame);
     return true;
 }

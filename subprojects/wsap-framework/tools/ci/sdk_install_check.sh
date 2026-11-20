@@ -16,9 +16,9 @@ status=0
 
 DESTDIR="$stage" meson install -C "$build_dir" > /dev/null
 
-pc_file=$(find "$stage" -name 'wsap-render.pc' -print -quit)
+pc_file=$(find "$stage" -name 'wsap-desktop.pc' -print -quit)
 if [ -z "$pc_file" ]; then
-    echo "no wsap-render.pc in the staging prefix" >&2
+    echo "no wsap-desktop.pc in the staging prefix" >&2
     exit 1
 fi
 pkg_dir=$(dirname "$pc_file")
@@ -41,9 +41,9 @@ rm -f /tmp/sdk_mnt_hits.$$
 # 2. Terminal-only calls. The terminal layer defines them, not the SDK, so
 #    the pattern below lists the calls by name.
 terminal_calls='^(struct|enum|bool|void|int|uint32_t) .*(render_draw|render_cursor_cell|render_gpu_draw)\('
-if grep -rn "$terminal_calls" "$prefix/include" > /dev/null 2>&1; then
+if grep -Ern "$terminal_calls" "$prefix/include" > /dev/null 2>&1; then
     echo "the installed headers declare a terminal-only call:" >&2
-    grep -rn "$terminal_calls" "$prefix/include" >&2
+    grep -Ern "$terminal_calls" "$prefix/include" >&2
     status=1
 else
     echo "pass: the installed headers declare no terminal-only call"
@@ -69,8 +69,8 @@ for compiler_name in cc clang; do
     # shellcheck disable=SC2046
     if ! "$compiler" -std=c17 -o "$out_dir/sdk-consumer-$compiler_name" \
         "$source_root/tools/ci/sdk_consumer.c" \
-        $(pkg-config --static --cflags wsap-render wsap-ui) \
-        $(pkg-config --static --libs wsap-render wsap-ui); then
+        $(pkg-config --static --cflags wsap-desktop) \
+        $(pkg-config --static --libs wsap-desktop); then
         echo "fail: $compiler_name did not link the consumer" >&2
         status=1
         continue

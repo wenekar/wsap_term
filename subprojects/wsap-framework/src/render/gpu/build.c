@@ -418,14 +418,15 @@ struct grid_geometry {
     int rows;
 };
 
-/* The clip, cell size, and visible cell count follow render_draw_view(). */
-static bool grid_geometry_of(const struct render_frame *frame,
-                             const struct render_grid_view *grid, struct vector2i canvas,
+/* Use the same clip and cell dimensions as the CPU renderer. */
+static bool grid_geometry_of(const struct render_grid_view *grid, struct vector2i canvas,
                              struct grid_geometry *out)
 {
-    struct font_instance *font = frame->grid.font ? frame->grid.font : font_instance_default();
-    struct rect2i rect = frame->grid.rect;
-    if (!grid || !font || rect.x < 0 || rect.y < 0 || !rect2i_clip(&rect, canvas))
+    if (!grid)
+        return false;
+    struct font_instance *font = grid->font ? grid->font : font_instance_default();
+    struct rect2i rect = grid->rect;
+    if (!font || rect.x < 0 || rect.y < 0 || !rect2i_clip(&rect, canvas))
         return false;
     const struct font_metrics *m = font_instance_metrics(font);
     if (m->cell_w <= 0 || m->cell_h <= 0)
@@ -1007,14 +1008,14 @@ static bool build_scene(struct gpu_build *b, struct font_instance *ufont,
 }
 
 /* One try to build the frame. False with atlas.full set means: no room. */
-static bool build_frame(struct gpu_build *b, const struct render_frame *frame,
-                        const struct render_grid_view *grid, struct vector2i canvas)
+static bool build_frame(struct gpu_build *b, const struct renderer_frame *frame,
+                        struct vector2i canvas)
 {
     begin_build(b);
     const struct rect2i canvas_rect = { .size = canvas };
 
     struct grid_geometry geo;
-    if (grid_geometry_of(frame, grid, canvas, &geo)) {
+    if (grid_geometry_of(frame->grid, canvas, &geo)) {
         if (!build_grid(b, &geo))
             return false;
         cmd_whole_stream(b, GPU_CMD_GLYPH, GPU_ST_BG, canvas_rect);
@@ -1062,18 +1063,18 @@ void gpu_build_release(struct gpu_build *b)
     *b = (struct gpu_build){0};
 }
 
-bool gpu_build_frame(struct gpu_build *b, const struct render_frame *frame,
-                     const struct render_grid_view *grid, struct vector2i canvas)
+bool gpu_build_frame(struct gpu_build *b, const struct renderer_frame *frame,
+                     struct vector2i canvas)
 {
     b->frame++;
-    bool built = build_frame(b, frame, grid, canvas);
+    bool built = build_frame(b, frame, canvas);
     if (!built && b->atlas.full) {
         /* A full atlas gets one retry: it forgets every glyph and doubles
          * its size, up to the maximum. */
         if (b->atlas.size < GPU_ATLAS_MAX_SIZE)
             b->atlas.size *= 2;
         atlas_clear(&b->atlas);
-        built = build_frame(b, frame, grid, canvas);
+        built = build_frame(b, frame, canvas);
     }
     glyph_cache_flush_frame();
     if (!built)

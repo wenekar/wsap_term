@@ -67,7 +67,7 @@ bool render_surface_key_eq(const struct render_surface_key *a,
  * - `gpu`: per-surface GPU state, owned by render/gpu/. NULL without a GPU.
  *   render_surface_release() frees it with render_gpu_surface_free().
  * - `ui_font_version`: font_instance_version() of the UI font of the last
- *   frame, or 0. render_draw_view() sets it. A different UI font changes
+ *   frame, or 0. renderer_draw() sets it. A different UI font changes
  *   the UI pixels but not the scene ops, so the call then repaints all of
  *   the UI. The other functions in this header do not touch it.
  */
@@ -86,7 +86,7 @@ struct render_surface {
 /*
  * The surface state of a history. The first call allocates it and sets
  * history->data and history->destroy. Returns NULL when the memory is
- * missing, or when another owner put data in the history. render_draw_view()
+ * missing, or when another owner put data in the history. renderer_draw()
  * then paints like a draw without history.
  */
 struct render_surface *render_surface_of(struct framebuffer_history *history);

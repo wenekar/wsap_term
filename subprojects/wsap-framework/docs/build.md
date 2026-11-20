@@ -28,8 +28,13 @@ meson setup build
 ```
 
 The default configuration builds only the framework libraries.
-`-Dwindow_backend=x11` selects X11 on Linux.
-`-Dvulkan_render=disabled` selects the CPU renderer.
+
+| Layer | Implementations | Build option |
+|---|---|---|
+| Window system | Wayland or X11 on Linux; Cocoa on macOS | `-Dwindow_system=x11` selects X11 instead of Wayland |
+| Render backend | CPU, Vulkan, or Metal | `-Dvulkan_render=disabled` builds without Vulkan on Linux |
+| Font backend | FreeType and Fontconfig, or CoreText | `-Dfont_backend=freetype` selects the FreeType backend |
+
 `-Disa=` uses the compiler default CPU target.
 `-Ddev_paths=true` makes the font code read the source fonts.
 The default is `false`, so a release or SDK install embeds no source path.
@@ -56,6 +61,10 @@ The install contains these files:
 - `include/wsap/**`
 - `include/yasl/**`
 - `lib/pkgconfig/*.pc`
+
+[`tools/ci/framework_headers.py`](../tools/ci/framework_headers.py) lists the
+headers that ship. CPU and GPU implementation headers, font backend headers,
+and source-tree test hooks are not part of the SDK.
 
 ## Check a pkg-config consumer
 

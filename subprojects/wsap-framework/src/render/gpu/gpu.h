@@ -52,7 +52,7 @@
  * none.c semantics
  * - render_gpu_new() returns NULL. render_gpu_native_device() returns NULL.
  *   So the window makes CPU surfaces, and no frame has a drawable.
- * - Every other call accepts NULL. render_gpu_draw_view() returns
+ * - Every other call accepts NULL. render_gpu_draw_frame() returns
  *   RENDER_GPU_UNUSED. render_gpu_present() returns false.
  *   render_gpu_surface_free() does nothing.
  *
@@ -63,9 +63,8 @@
 
 struct damage_list;
 struct framebuffer;
-struct render_frame;
+struct renderer_frame;
 struct render_gpu;
-struct render_grid_view;
 struct render_surface;
 
 enum render_gpu_status {
@@ -94,10 +93,9 @@ void *render_gpu_native_device(struct render_gpu *g);
  * RENDER_GPU_DROPPED when the frame cannot be presented now, or
  * RENDER_GPU_UNUSED when the CPU must paint the frame.
  */
-enum render_gpu_status render_gpu_draw_view(struct render_gpu *g, struct render_surface *s,
-                                            struct framebuffer *fb,
-                                            const struct render_frame *frame,
-                                            const struct render_grid_view *grid);
+enum render_gpu_status render_gpu_draw_frame(struct render_gpu *g, struct render_surface *s,
+                                             struct framebuffer *fb,
+                                             const struct renderer_frame *frame);
 
 /*
  * Uploads the CPU pixels of `fb` and presents them into the drawable.

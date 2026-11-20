@@ -26,15 +26,12 @@ uint64_t ui_widget_tick(struct ui_widget *widget, uint64_t now_ms);
  * CSS style. Returns the time of the next step of a transition, no later than
  * the end of that transition, or 0 when nothing moves. */
 uint64_t ui_widget_animate_style(struct ui_widget *widget, uint64_t now_ms);
-void ui_widget_clear_invalidation(struct ui_widget *widget, unsigned flags);
 const struct css_sheet *ui_widget_sheet(const struct ui_widget *widget);
 
 void ui_widget_part_cache_stale(struct ui_widget *widget);
 void ui_widget_part_cache_stale_subtree(struct ui_widget *widget);
 void ui_widget_part_cache_free(struct ui_widget *widget);
 
-bool ui_widget_build_scene(const struct ui_widget *root,
-                           struct ui_scene *scene);
 bool ui_widget_append_scene(const struct ui_widget *root,
                             struct ui_scene *scene);
 

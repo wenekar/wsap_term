@@ -182,12 +182,3 @@ bool ui_widget_append_scene(const struct ui_widget *root,
     paint_tree(root, scene);
     return ui_scene_ok(scene);
 }
-
-bool ui_widget_build_scene(const struct ui_widget *root,
-                           struct ui_scene *scene)
-{
-    if (!scene)
-        return false;
-    ui_scene_init(scene);
-    return ui_widget_append_scene(root, scene) && ui_scene_is_valid(scene);
-}

@@ -23,7 +23,7 @@
  * The Metal backend. See render/gpu/gpu.h for the rules of a backend, and
  * render/gpu/build.h for the frame data that it draws.
  *
- * One frame is one command buffer. render_gpu_draw_view() builds the frame
+ * One frame is one command buffer. render_gpu_draw_frame() builds the frame
  * data on the CPU. A blit pass then copies any new glyph pixels into the
  * atlas texture, and one render pass draws the commands of the frame in
  * order. A frame holds one of three slots, and each slot has an instance
@@ -371,9 +371,9 @@ static bool encode_frame(struct render_gpu *g, struct frame_slot *slot, struct f
     return true;
 }
 
-enum render_gpu_status render_gpu_draw_view(struct render_gpu *g, struct render_surface *s,
-                                       struct framebuffer *fb, const struct render_frame *frame,
-                                       const struct render_grid_view *grid)
+enum render_gpu_status render_gpu_draw_frame(struct render_gpu *g, struct render_surface *s,
+                                             struct framebuffer *fb,
+                                             const struct renderer_frame *frame)
 {
     (void)s;
     if (!g || !fb || !frame || (!fb->drawable && !fb->acquire) || fb->size.x <= 0 ||
@@ -384,7 +384,7 @@ enum render_gpu_status render_gpu_draw_view(struct render_gpu *g, struct render_
         return RENDER_GPU_DROPPED;
     enum render_gpu_status status = RENDER_GPU_UNUSED;
     @autoreleasepool {
-        if (gpu_build_frame(&g->build, frame, grid, fb->size)) {
+        if (gpu_build_frame(&g->build, frame, fb->size)) {
             size_t offsets[GPU_ST_COUNT];
             if (frame_stage(g, slot, offsets)) {
                 id<CAMetalDrawable> drawable = frame_drawable(fb);

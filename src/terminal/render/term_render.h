@@ -4,9 +4,8 @@
 /*
  * The terminal grid entry points of the renderer. `struct terminal_frame`
  * is terminal content, so these calls stay in the terminal layer and the
- * framework SDK does not ship them. A consumer of the SDK uses
- * render_draw_view() and renderer_cursor_band() from render/core.h, which
- * take a render_grid_view.
+ * framework SDK does not ship them. renderer_draw() accepts a generic
+ * grid view instead.
  *
  * The definitions are in terminal/render/draw.c.
  */
@@ -20,6 +19,24 @@
 
 struct font_instance;
 struct terminal_frame;
+
+struct render_grid {
+    const struct terminal_frame *frame;
+    struct font_instance *font;
+    struct rect2i rect;
+};
+
+/* Terminal content and UI for one app frame. See struct renderer_frame for
+ * the UI fields. The grid is empty if its terminal frame is NULL or invalid. */
+struct render_frame {
+    struct render_grid grid;
+    const struct ui_scene *ui;
+    struct font_instance *ui_font;
+    const struct ui_damage *ui_damage;
+    uint32_t base;
+    bool repaint;
+    bool cpu_only;
+};
 
 /*
  * Draws one frame into `fb`.
@@ -67,8 +84,8 @@ bool render_cursor_cell(struct renderer *r, struct font_instance *font,
                         int *out_w, int *out_h);
 
 /*
- * The test entry point. It is render_gpu_draw_view() with the grid resolved
- * from the terminal frame of `frame`.
+ * Draws directly through the GPU backend for tests, resolving the grid
+ * from the terminal frame.
  */
 enum render_gpu_status render_gpu_draw(struct render_gpu *g, struct render_surface *s,
                                        struct framebuffer *fb,

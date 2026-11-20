@@ -59,12 +59,11 @@ static void test_scene_kinds_build(void)
 
     struct gpu_build b = {0};
     assert(gpu_build_init(&b));
-    struct render_frame frame = {
-        .grid = { .font = font_instance_default() },
+    struct renderer_frame frame = {
         .ui = &scene,
         .ui_font = font_instance_default(),
     };
-    assert(gpu_build_frame(&b, &frame, NULL,
+    assert(gpu_build_frame(&b, &frame,
                            (struct vector2i){ .x = CANVAS_W, .y = CANVAS_H }));
 
     /* The shadow made one shape, the image made one slot, the text made quads. */
@@ -89,11 +88,11 @@ static void test_float_rect_still_fails(void)
 
     struct gpu_build b = {0};
     assert(gpu_build_init(&b));
-    struct render_frame frame = {
+    struct renderer_frame frame = {
         .ui = &scene,
         .ui_font = font_instance_default(),
     };
-    assert(!gpu_build_frame(&b, &frame, NULL,
+    assert(!gpu_build_frame(&b, &frame,
                             (struct vector2i){ .x = CANVAS_W, .y = CANVAS_H }));
     gpu_build_release(&b);
     ui_scene_destroy(&scene);
@@ -118,11 +117,11 @@ static void test_text_rows(void)
 
     struct gpu_build b = {0};
     assert(gpu_build_init(&b));
-    struct render_frame frame = {
+    struct renderer_frame frame = {
         .ui = &scene,
         .ui_font = font_instance_default(),
     };
-    assert(gpu_build_frame(&b, &frame, NULL,
+    assert(gpu_build_frame(&b, &frame,
                            (struct vector2i){ .x = CANVAS_W, .y = CANVAS_H }));
     const struct gpu_glyph_inst *in = ui_glyph(&b, 0);
     assert(in);

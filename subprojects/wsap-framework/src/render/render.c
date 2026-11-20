@@ -17,7 +17,7 @@
 #include "render/cpu/isa.h"
 #include "render/cpu/kernels.h"
 #include "render/cpu/pool.h"
-#include "render/core.h"
+#include "render/grid.h"
 #include "render/cpu/raster.h"
 #include "render/gpu/gpu.h"
 #include "render/plan.h"
@@ -26,8 +26,8 @@
 #include "render/surface.h"
 
 /*
- * render_draw_view() runs one frame in the order of src/render/README.md,
- * "Frame order in render_draw_view". This file owns no pixel math. It plans,
+ * renderer_draw() runs one frame in the order described in render/README.md.
+ * This file owns no pixel math. It plans,
  * moves rows, starts the row raster on the pool, and paints the UI.
  */
 
@@ -275,8 +275,7 @@ bool renderer_idle_gpu(struct renderer *r)
  * block of (x1 - x0) * ch pixels that starts at origin + x0, and a buffer
  * with x0 more pixels holds it.
  */
-bool renderer_cursor_band(struct renderer *r, struct font_instance *font,
-                          const struct render_grid_view *grid, int row,
+bool renderer_cursor_band(struct renderer *r, const struct render_grid_view *grid, int row,
                           int span_begin, int span_cols,
                           uint32_t *out, size_t max_px,
                           int *out_w, int *out_h)
@@ -286,7 +285,7 @@ bool renderer_cursor_band(struct renderer *r, struct font_instance *font,
         span_begin + span_cols > grid->cells.x || row < 0 || row >= grid->cells.y ||
         grid->ops->line_size(grid->source, row) != RENDER_LINE_SINGLE)
         return false;
-    struct font_instance *gfont = font ? font : font_instance_default();
+    struct font_instance *gfont = grid->font ? grid->font : font_instance_default();
     if (!gfont)
         return false;
     glyph_cache_refresh(gfont);
@@ -337,7 +336,7 @@ bool renderer_cursor_band(struct renderer *r, struct font_instance *font,
         .row = row, .x0 = x0, .x1 = x0 + width, .reach = rf.width,
     };
     (void)grid->ops->reserve_walk(grid->cells.x);
-    /* The raster runs in parallel mode, as in render_draw_view(). No worker
+    /* The raster runs in parallel mode, as in renderer_draw(). No worker
      * runs here, so the flush is safe. */
     glyph_cache_set_parallel(true);
     (void)r->row(&rf, r->cursor_worker, &job);
@@ -563,7 +562,7 @@ static void phase_run(void *ctx, int worker, int begin, int end)
     }
 }
 
-/* ---- render_draw_view ------------------------------------------------ */
+/* ---- Frame rendering ------------------------------------------------- */
 
 static struct render_result result_all(void)
 {
@@ -582,9 +581,8 @@ static bool pixels_ensure(struct framebuffer *fb)
     return fb->pixels != NULL;
 }
 
-struct render_result render_draw_view(struct renderer *r, struct framebuffer *fb,
-                                      const struct render_frame *frame,
-                                      const struct render_grid_view *grid_view)
+struct render_result renderer_draw(struct renderer *r, struct framebuffer *fb,
+                                   const struct renderer_frame *frame)
 {
     if (!r || !fb || !frame)
         return (struct render_result){0};
@@ -605,7 +603,9 @@ struct render_result render_draw_view(struct renderer *r, struct framebuffer *fb
 
     /* 1. Fonts. A refresh can rebuild, so it comes before any fetch and
      * before the metrics are read. */
-    struct font_instance *gfont = frame->grid.font ? frame->grid.font : font_instance_default();
+    const struct render_grid_view *grid_view = frame->grid;
+    struct font_instance *gfont = grid_view && grid_view->font
+        ? grid_view->font : font_instance_default();
     struct font_instance *ufont = frame->ui_font ? frame->ui_font : font_instance_default();
     if (gfont)
         glyph_cache_refresh(gfont);
@@ -613,7 +613,7 @@ struct render_result render_draw_view(struct renderer *r, struct framebuffer *fb
         glyph_cache_refresh(ufont);
 
     /* 2. The grid, the surface key, the row keys, and the UI ink. */
-    struct rect2i grid = frame->grid.rect;
+    struct rect2i grid = grid_view ? grid_view->rect : (struct rect2i){0};
     int cw = 0, ch = 0, cols = 0, rows = 0;
     bool has_grid = grid_view && gfont && grid.x >= 0 && grid.y >= 0 &&
                     rect2i_clip(&grid, canvas);
@@ -688,7 +688,7 @@ struct render_result render_draw_view(struct renderer *r, struct framebuffer *fb
     /* 4. The GPU draws a whole frame or nothing. A frame with no drawable yet
      * asks for one inside the backend, after it builds the frame data. */
     if (gpu_first) {
-        switch (render_gpu_draw_view(renderer_gpu_ensure(r), s, fb, frame, grid_view)) {
+        switch (render_gpu_draw_frame(renderer_gpu_ensure(r), s, fb, frame)) {
         case RENDER_GPU_PRESENTED: {
             render_surface_invalidate(s);
             struct render_result res = result_all();

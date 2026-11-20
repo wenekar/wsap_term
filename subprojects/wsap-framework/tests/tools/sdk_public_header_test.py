@@ -1,8 +1,4 @@
-"""The installed paint headers name no terminal render call.
-
-paint/framebuffer.h ships to SDK consumers. The terminal renderer is not part
-of the SDK, so the header must not name its draw calls.
-"""
+"""The SDK ships the desktop and renderer APIs without terminal or test hooks."""
 
 from __future__ import annotations
 
@@ -11,7 +7,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TERMINAL_CALLS = ("render_draw(", "render_cursor_cell(", "render_gpu_draw(")
+TERMINAL_API = ("struct terminal_frame", "render_draw(", "render_cursor_cell(",
+                "render_gpu_draw(")
+REQUIRED = {"desktop/window.h", "render/render.h", "render/grid.h", "render/isa.h"}
+SOURCE_ONLY = {"render/cpu/kernels.h", "render/gpu/build.h", "ui/yasl/testing.h"}
 
 
 def public_headers() -> list[str]:
@@ -26,17 +25,18 @@ def public_headers() -> list[str]:
 
 
 def main() -> None:
-    bad = []
-    for relative in public_headers():
-        if not relative.startswith("paint/"):
+    paths = set(public_headers())
+    bad = [f"missing SDK header: {path}" for path in sorted(REQUIRED - paths)]
+    bad += [f"installed source-only header: {path}" for path in sorted(SOURCE_ONLY & paths)]
+    for relative in sorted(paths):
+        if not relative.endswith(".h"):
             continue
         text = (ROOT / "src" / relative).read_text()
-        for call in TERMINAL_CALLS:
-            if call in text:
-                bad.append(f"{relative}: {call[:-1]}")
+        for symbol in TERMINAL_API:
+            if symbol in text:
+                bad.append(f"{relative} names terminal API: {symbol.rstrip('(')}")
     if bad:
-        print("the installed paint headers name a terminal render call:",
-              *bad, sep="\n  ", file=sys.stderr)
+        print(*bad, sep="\n", file=sys.stderr)
         raise SystemExit(1)
 
 

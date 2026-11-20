@@ -18,9 +18,10 @@ It does not contain the terminal application or the editor.
 | `wsap-theme` | Theme catalog and appearance data. |
 | `wsap-render` | CPU and GPU scene renderer. |
 | `wsap-ui-yasl` | Window system and UI binding. |
+| `wsap-desktop` | Default window runner and frame composer. |
 | `yasl` | Subproject with desktop surfaces and input. |
 
-Libraries depend on specific lower layers, not every lower layer. The last row lists the native platform dependency separately.
+Libraries depend on specific lower layers, not every lower layer. Yasl is a separate native platform dependency.
 Run the include graph check after a source change:
 
 ```sh
@@ -69,11 +70,13 @@ export PKG_CONFIG_SYSROOT_DIR="$PWD/STAGE"
 cc app.c $(pkg-config --cflags --libs wsap-ui)
 ```
 
-`tools/ci/pkgconfig_consumer.c` is a small example.
-It includes `ui/ui.h`, uses a label, and needs no display server.
+Use `wsap-ui` for widgets without a display server. Use `wsap-desktop` to
+open a window without writing a native event loop or frame composer. See
+[Run a desktop window](docs/desktop.md) for an example that displays pixels.
 
 ## Documentation
 
+- [Run a desktop window](docs/desktop.md)
 - [Build and install](docs/build.md)
 - [Font API](docs/font-api.md)
 - [UI library](docs/ui-library-state.md)

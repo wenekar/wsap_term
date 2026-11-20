@@ -37,15 +37,15 @@ if system == 'darwin'
     project_languages += ['objc']
 endif
 
-backend = get_option('window_backend')
-if backend == 'auto'
-    backend = system == 'linux' ? 'wayland' : 'metal'
+window_system = get_option('window_system')
+if window_system == 'auto'
+    window_system = system == 'linux' ? 'wayland' : 'cocoa'
 endif
-if backend != 'metal' and system != 'linux'
-    error('The @0@ backend requires Linux'.format(backend))
+if window_system != 'cocoa' and system != 'linux'
+    error('The @0@ window system requires Linux'.format(window_system))
 endif
-if backend == 'metal' and system != 'darwin'
-    error('The Metal backend is macOS-only; Linux builds use Wayland or X11')
+if window_system == 'cocoa' and system != 'darwin'
+    error('Cocoa requires macOS; Linux builds use Wayland or X11')
 endif
 
 isa = get_option('isa')
@@ -218,7 +218,7 @@ yasl_options = [
     'default_library=static',
     'install=' + (not meson.is_subproject()).to_string(),
 ]
-if backend == 'x11'
+if window_system == 'x11'
     yasl_options += ['wayland=disabled', 'x11=enabled']
 endif
 yasl_dep = dependency(
@@ -227,11 +227,7 @@ yasl_dep = dependency(
     default_options: yasl_options,
 )
 
-if backend == 'wayland'
-    backend_deps = [dl_dep]
-else
-    backend_deps = []
-endif
+graphics_deps = window_system == 'wayland' ? [dl_dep] : []
 
 # The Vulkan backend needs Vulkan 1.3 and glslc, which compiles its shaders.
 # `auto` builds the CPU-only renderer when one of them is missing.
@@ -242,10 +238,10 @@ if vulkan_opt != 'disabled' and system != 'darwin'
     glslc = find_program('glslc', native: true, required: vulkan_opt == 'enabled')
     if vulkan_dep.found() and glslc.found()
         has_vulkan = true
-        backend_deps += [vulkan_dep.partial_dependency(compile_args: true, includes: true), dl_dep]
+        graphics_deps += [vulkan_dep.partial_dependency(compile_args: true, includes: true), dl_dep]
     endif
 endif
-lib_deps = base_deps + font_deps + backend_deps
+lib_deps = base_deps + font_deps + graphics_deps
 core_deps = lib_deps + [yasl_dep]
 
 sanitizer_common = 'halt_on_error=1:abort_on_error=1:print_summary=1'
@@ -360,7 +356,7 @@ endif
 summary(
     {
         'Platform': system,
-        'Backend': backend,
+        'Window system': window_system,
         'Font backend': font_backend,
         'ISA': isa,
         'Hardening': get_option('hardening'),

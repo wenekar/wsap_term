@@ -3,7 +3,8 @@
 Use this guide to add a small screen to an app window.
 It uses the screen API in `src/ui/` and the window binding in `src/ui/yasl/`.
 The UI core does not use yasl headers.
-Only app code opens windows and mounts window content.
+Only app code opens windows and mounts window content. For a standalone
+window with the default loop and composer, see [Run a desktop window](desktop.md).
 
 ## Create and mount the screen
 

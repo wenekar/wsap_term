@@ -605,9 +605,9 @@ static bool frame_resizes(const struct gpu_surface *gs, const struct framebuffer
     return fb->transaction || !vector2i_eq(gs->request_size, fb->size);
 }
 
-enum render_gpu_status render_gpu_draw_view(struct render_gpu *g, struct render_surface *s,
-                                       struct framebuffer *fb, const struct render_frame *frame,
-                                       const struct render_grid_view *grid)
+enum render_gpu_status render_gpu_draw_frame(struct render_gpu *g, struct render_surface *s,
+                                             struct framebuffer *fb,
+                                             const struct renderer_frame *frame)
 {
     if (!g || !s || !fb || !frame || (!fb->drawable && !fb->acquire) || fb->size.x <= 0 ||
         fb->size.y <= 0)
@@ -619,7 +619,7 @@ enum render_gpu_status render_gpu_draw_view(struct render_gpu *g, struct render_
     struct frame_slot *slot = slot_acquire(g, resizing ? RESIZE_WAIT_NS : 0);
     if (!slot)
         return RENDER_GPU_DROPPED;
-    if (!gpu_build_frame(&g->build, frame, grid, fb->size))
+    if (!gpu_build_frame(&g->build, frame, fb->size))
         return RENDER_GPU_UNUSED;
     enum render_gpu_status status =
         draw_built(g, gs, slot, fb, frame->base, resizing ? RESIZE_WAIT_NS : ACQUIRE_WAIT_NS);

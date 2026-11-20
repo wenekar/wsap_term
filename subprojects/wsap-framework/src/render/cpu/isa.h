@@ -1,6 +1,8 @@
 #ifndef WSAP_RENDER_CPU_ISA_H
 #define WSAP_RENDER_CPU_ISA_H
 
+#include "render/isa.h"
+
 /*
  * Run-time ISA selection for the CPU pixel kernels.
  *
@@ -42,15 +44,6 @@
 #define RENDER_KERNEL_NEON 1
 #endif
 
-/* AUTO is the zero value: a zeroed option means "use the default". */
-enum render_isa {
-    RENDER_ISA_AUTO = 0,
-    RENDER_ISA_SCALAR,
-    RENDER_ISA_AVX2,
-    RENDER_ISA_AVX512,
-    RENDER_ISA_NEON,
-};
-
 /* The best level this CPU supports. Thread-safe. Cheap after the first call. */
 int render_isa_best(void);
 
@@ -63,8 +56,5 @@ int render_isa_best(void);
  * render_isa_best(). SCALAR is always valid.
  */
 int render_isa_resolve(int requested);
-
-/* "auto", "scalar", "avx2", "avx512", "neon", or "unknown". */
-const char *render_isa_name(int isa);
 
 #endif

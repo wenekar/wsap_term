@@ -70,7 +70,7 @@ if system == 'darwin'
     )
 endif
 
-if backend == 'wayland'
+if window_system == 'wayland'
     wayland_scanner = find_program('wayland-scanner', native: true)
 endif
 
@@ -260,7 +260,7 @@ foreach entry : test_cases
     endif
 endforeach
 
-if backend == 'wayland'
+if window_system == 'wayland'
     fastpty_helper = executable(
         'fastpty-exec-test',
         'pty/fastpty_exec_test.c',
@@ -305,7 +305,7 @@ if get_option('integration_tests')
     integration_env = environment()
     integration_env.set('BIN', program.full_path())
     integration_env.set('WSAP_NO_PRELOAD', '0')
-    if backend == 'wayland'
+    if window_system == 'wayland'
         vptr_xml = files('helpers/wlr-virtual-pointer-unstable-v1.xml')
         vptr = executable(
             'virtual-pointer',

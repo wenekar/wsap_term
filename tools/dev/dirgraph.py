@@ -31,6 +31,7 @@ RANKS = {
     "render": 11,
     "terminal/render": 12,
     "ui/yasl": 13,
+    "desktop": 14,
     "terminal": 14,
     "runtime": 15,
     "app": 16,
@@ -58,6 +59,7 @@ LIBRARY_PATHS = {
     "render": ("render",),
     "render_term": ("terminal/render",),
     "ui_yasl": ("ui/yasl",),
+    "desktop": ("desktop",),
     "terminal": ("terminal",),
     "runtime": ("runtime",),
     "app": ("app",),
@@ -74,13 +76,14 @@ ALLOWED_DEPENDENCIES = {
     "render": {"paint", "font", "base"},
     "render_term": {"render", "paint", "font", "base"},
     "ui_yasl": {"paint", "input", "ui", "font", "base"},
+    "desktop": {"base", "render", "ui", "ui_yasl"},
     "terminal": {"ui_yasl", "session", "ui", "input", "font", "paint", "base", "render_term"},
     "runtime": {"base", "paint", "font", "ui", "render", "render_term", "ui_yasl"},
     "app": {"base", "pty", "session", "input", "paint", "font", "ui", "theme", "render", "render_term", "ui_yasl", "terminal", "runtime"},
 }
 # Libraries that may include yasl headers. The pure toolkit libraries have no
 # window system dependency.
-YASL_LIBRARIES = {"base", "pty", "session", "ui_yasl", "terminal", "runtime", "app"}
+YASL_LIBRARIES = {"base", "pty", "session", "ui_yasl", "desktop", "terminal", "runtime", "app"}
 YASL_PREFIX = "yasl/"
 INCLUDE = re.compile(r'^\s*#\s*include\s*["<]([^">]+)[">]')
 SOURCE_SUFFIXES = {".c", ".h", ".m", ".mm"}

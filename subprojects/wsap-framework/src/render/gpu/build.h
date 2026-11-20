@@ -54,7 +54,7 @@
 struct damage_list;
 struct decor_cache;
 struct framebuffer;
-struct render_frame;
+struct renderer_frame;
 
 /* The side of the atlas texture, in texels: the first size and the largest
  * that a doubled atlas reaches. */
@@ -257,8 +257,8 @@ void gpu_build_release(struct gpu_build *b);
  * more. Returns false when the CPU must paint the frame; the builder has
  * then cleared its atlas state.
  */
-bool gpu_build_frame(struct gpu_build *b, const struct render_frame *frame,
-                     const struct render_grid_view *grid, struct vector2i canvas);
+bool gpu_build_frame(struct gpu_build *b, const struct renderer_frame *frame,
+                     struct vector2i canvas);
 /* Clears the staged atlas uploads after the backend copied them into its
  * texture, and marks the UI images of the frame as loaded. */
 void gpu_build_commit(struct gpu_build *b);

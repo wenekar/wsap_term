@@ -992,12 +992,6 @@ void ui_widget_invalidate(struct ui_widget *widget, unsigned flags)
         ui_surface_request_frame(widget->impl.surface);
 }
 
-void ui_widget_clear_invalidation(struct ui_widget *widget, unsigned flags)
-{
-    if (widget)
-        widget->impl.invalidation &= ~flags;
-}
-
 const struct css_sheet *ui_widget_sheet(const struct ui_widget *widget)
 {
     const struct ui_surface *surface = ui_widget_surface(widget);
