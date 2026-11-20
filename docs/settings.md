@@ -1,8 +1,12 @@
 # Settings window
 
-Open **Settings** from the command palette or the terminal context menu.
-On Linux, press `Ctrl+Shift+,`.
-On macOS, press `Cmd+,`.
+This guide explains how to edit and save terminal preferences in the “Settings” window.
+
+| Entry point | Action |
+|---|---|
+| Command palette or terminal context menu | Choose “Settings” |
+| Linux shortcut | `Ctrl+Shift+,` |
+| macOS shortcut | `Cmd+,` |
 The settings form opens in a dedicated window.
 Subsequent requests reuse that window.
 The settings window stays in windowed mode when terminals start fullscreen.
@@ -41,10 +45,7 @@ Click **Font help** or **Color help** to open documentation in your browser.
 
 Edits remain in the form until you save them.
 Invalid fields show an error and disable **Save**.
-Save updates only changed keys in the configuration file loaded at startup.
-It preserves comments, unknown keys, and unchanged settings.
-It updates duplicate keys and option aliases.
-It writes a temporary file and renames it over the configuration file.
+When you choose “Save,” the app updates changed keys in the configuration file it loaded at startup. The app updates duplicate keys and option aliases, and preserves comments, unknown keys, and unchanged settings. It writes a temporary file and renames the temporary file over the configuration file.
 A failed write leaves the existing configuration file and runtime settings intact.
 The form shows the error and keeps the draft.
 

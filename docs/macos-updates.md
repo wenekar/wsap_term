@@ -1,12 +1,14 @@
 # macOS release updates
 
-## Current support
+This guide distinguishes local source updates from the requirements for a public macOS updater.
+
+## Local installation and release status
 
 `make install` updates the local source build.
 It reuses a local signing certificate to keep the application identity stable.
 See [Build and install](build.md#macos-updates).
 
-The application has no network update client.
+**Release status at commit `1bcf755`:** The application has no network update client.
 The packaging tool can sign packages with `MACOS_SIGN_IDENTITY`.
 It does not notarize packages or publish an update feed.
 The application bundle uses `org.wsap.wsap-term` as its identifier.

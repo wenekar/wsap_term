@@ -1,9 +1,12 @@
 # SSH setup
 
-The `wsap-ssh` wrapper installs remote terminfo on the first connection.
-It uses `TERM=xterm-ghostty` for remote color detection.
-It falls back to `xterm-256color` if terminfo installation fails.
-The local terminal sets `TERM=wsap_term-256color`.
+This guide explains how `wsap-ssh` sets up terminal capabilities for SSH sessions. The wrapper tries to install terminfo in the remote user's home directory unless it has cached a successful installation for the same destination and source. The remote host needs `tic` to compile the entry.
+
+| Terminal setting | Value |
+|---|---|
+| Local `TERM` | `wsap_term-256color` |
+| Remote `TERM` with the default terminfo entry | `xterm-ghostty` |
+| Remote fallback when terminfo setup fails, is unavailable, or is disabled | `xterm-256color` |
 
 ## Enable the wrapper
 
@@ -28,22 +31,21 @@ The wrapper calls standard `ssh` outside supported terminal sessions.
 ## Remote color support
 
 Remote SSH servers often discard `COLORTERM` and `TERM_PROGRAM`.
-The wrapper sends both variables using `SendEnv`.
-To accept these variables, add this line to the remote `/etc/ssh/sshd_config` or user SSH configuration:
+The wrapper asks SSH to forward both variables. To accept them, configure `AcceptEnv` on the remote SSH server, not in your local client configuration:
 
 ```text
 AcceptEnv COLORTERM TERM_PROGRAM
 ```
 
 Alternatively, run `WSAP_SSH_FORCE_ENV=1 ssh host` for an interactive session.
-Run `WSAP_SSH_SETUP_RC=1 ssh host` to save `COLORTERM` in the remote shell configuration.
+Run `WSAP_SSH_SETUP_RC=1 ssh host` to add `COLORTERM` to existing remote shell startup files. This modifies those files on the remote host.
 
 ## Environment
 
 | Variable | Effect |
 | --- | --- |
 | `WSAP_SSH=0` | Use ordinary SSH. |
-| `WSAP_SSH_TERMINFO=0` | Skip terminfo setup. |
+| `WSAP_SSH_TERMINFO=0` | Skip terminfo setup and use the fallback `TERM` |
 | `WSAP_SSH_TERM` | Remote terminfo entry name. Default: `xterm-ghostty`. |
 | `WSAP_SSH_TERMINFO_SRC` | Path to a source terminfo file if not found locally. |
 | `WSAP_SSH_FORCE_ENV=1` | Force `COLORTERM` through the remote login shell. |

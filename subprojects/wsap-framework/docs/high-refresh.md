@@ -120,7 +120,7 @@ Out-of-order feedback cannot complete a different sample.
 - `wsap_term --stats-ms 1000` prints the four frame counters.
 - `WSAP_LATENCY_PROBE` with `benchmarks/input-latency-bench` measures input-to-presentation latency.
   This benchmark requires a physical display that presents output.
-  See [input latency](../benchmarks/input-latency-bench.md).
+  See [input latency measurements in `wsap_term`](../../../benchmarks/input-latency-bench.md).
 - `render-bench` measures the CPU render path only.
   It reports no presentation data.
 

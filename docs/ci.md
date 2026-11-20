@@ -1,13 +1,16 @@
 # GitHub Actions CI
 
-The workflow is in `.github/workflows/ci.yml`.
-It runs on pushes to `main`, on pull requests, and on manual starts.
-It skips changes that touch only files that CI does not read.
-The `paths-ignore` list in the workflow names these files.
-Add a path there only if the build and regular tests do not read it.
-Start CI manually from **Actions > CI > Run workflow**.
-The jobs run on GitHub-hosted runners.
-The checkout step does not keep GitHub credentials.
+This guide describes the GitHub Actions workflow that builds and tests `wsap_term`.
+
+| Item | Value |
+|---|---|
+| Workflow | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) |
+| Triggers | Pushes to `main`, pull requests, and manual runs |
+| Manual run | “Actions” → “CI” → “Run workflow” |
+| Runners | GitHub-hosted |
+| Checkout credentials | Not retained |
+
+Add a path to `paths-ignore` only if the build and regular tests do not read it.
 
 Each job runs `bash tools/ci/build.sh`.
 The script configures a release build in `build/ci`.

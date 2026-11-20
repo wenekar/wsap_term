@@ -1,5 +1,7 @@
 # Documentation
 
+This index links to the user and developer guides for `wsap_term` and its libraries.
+
 | Guide | Contents |
 | --- | --- |
 | [Build](build.md) | Prerequisites, targets, options, and installation. |
@@ -28,7 +30,8 @@ The [benchmarks](../benchmarks/README.md) directory contains performance reports
 | `assets/` | Runtime assets: scripts, themes, stylesheets, fonts, icons, and terminfo. |
 | `tests/` | Tests grouped by source subsystem. |
 | `subprojects/term/` | Standalone terminal core and core tests. |
-| `subprojects/yasl/` | Native platform library. |
+| [`subprojects/wsap-framework/`](../subprojects/wsap-framework/README.md) | UI toolkit, renderer, and window binding |
+| `subprojects/yasl/` | Symlink to the native platform library vendored inside `wsap-framework` |
 | `benchmarks/` | Benchmark programs and measurement reports. |
 | `scripts/` | Inspector and debug clients. |
 | `tools/` | Build, install, package, and maintenance tools. |

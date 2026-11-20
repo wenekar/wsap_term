@@ -1,10 +1,12 @@
 # Build and install
 
+This guide covers building `wsap_term` from source and installing it on Linux or macOS.
+
 ## Prerequisites
 
 The build requires these tools and libraries:
 
-- A C23 compiler (GCC 14 or later, or Clang 18 or later)
+- A compiler with C23 support (GCC 14 or later, or Clang 18 or later)
 - Meson 1.12 or later
 - Ninja and pkg-config
 - Python 3.10 or later
@@ -53,14 +55,14 @@ Use `--wrap-mode=nofallback` to require the system package.
 | Command | Result |
 | --- | --- |
 | `make` | Build the application, tests, and benchmarks. |
-| `make release` | Build installed programs. |
+| `make release` | Build the application and other install targets without installing them |
+| `make test` | Build and run tests in a separate build directory |
 | `make install` | Build and install programs after confirmation. |
 | `make PREFIX=/usr/local install` | Install under a different prefix. |
 | `make dist` | Build and test a source archive from a clean Git tree. |
 | `make dist-local` | Build a source archive without archive tests. |
 
-Source archives contain the latest commit.
-They do not include uncommitted changes.
+`make dist` packages the checked-out commit. `make dist-local` allows a dirty working tree, but the archive still excludes uncommitted changes.
 
 ## Configuration
 
