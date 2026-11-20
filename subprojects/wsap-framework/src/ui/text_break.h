@@ -7,16 +7,16 @@
 
 #include "ui/keys.h"
 
-/* Caret movement, click mapping, selection, and cutting for UI text.
- * Widgets call these functions and do not step through text bytes
- * themselves. All offsets are byte offsets into UTF-8 text. */
+/* Caret movement, click mapping, selection, word wrapping, and measurement
+ * for UI text. All offsets are byte offsets into UTF-8 text. */
 
 typedef bool (*ui_text_grapheme_fn)(size_t start, size_t end, void *userdata);
 typedef bool (*ui_text_word_fn)(size_t start, size_t end, bool is_word,
                                 void *userdata);
 
-/* Calls `fn` with the range of each character. `fn` returns false to stop.
- * Call it to build a list of character boundaries, as accessibility does. */
+/* Calls `fn` with the range of each grapheme cluster. `fn` returns false to
+ * stop. Call it to build a list of cluster boundaries, as accessibility
+ * does. */
 void ui_text_each_grapheme(const char *text, size_t len,
                            ui_text_grapheme_fn fn, void *userdata);
 

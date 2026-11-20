@@ -56,19 +56,15 @@ struct ui_widget_ops {
     bool width_sensitive;
 };
 
-/* Marks the layout or measure state of `widget` and its ancestors as invalid.
- * The paint flag asks for a frame; paint is not a stored state. */
+/* Marks `widget` and its ancestors dirty for measure or layout, and requests
+ * a frame when `widget` is on a surface. Paint has no stored state. */
 void ui_widget_invalidate(struct ui_widget *widget, unsigned flags);
 
-/* Sets whether `widget` can receive keyboard focus. */
 void ui_widget_set_focusable(struct ui_widget *widget, bool focusable);
-/* Returns true when `widget` can receive keyboard focus. */
 bool ui_widget_is_focusable(const struct ui_widget *widget);
-/* Sets whether a press on `widget` keeps the current focus. */
 void ui_widget_set_keeps_press_focus(struct ui_widget *widget, bool keeps);
-/* Updates the CSS pseudo-class state flags of `widget`. */
+/* Sets the CSS pseudo-class state flags of `widget`. */
 void ui_widget_set_style_pseudo(struct ui_widget *widget, unsigned pseudo_flags);
-/* Returns the CSS pseudo-class state flags of `widget`. */
 unsigned ui_widget_style_pseudo(const struct ui_widget *widget);
 /* Marks the resolved style of `widget` stale, so the next frame resolves it
  * again. This call requests no frame and starts no layout pass. The caller
@@ -79,20 +75,16 @@ void ui_widget_restyle(struct ui_widget *widget);
 /* Dispatches `action` up the widget hierarchy until handled. */
 bool ui_widget_notify(struct ui_widget *source, struct ui_action action);
 
-/* Gives keyboard focus to `widget`. */
 void ui_widget_focus(struct ui_widget *widget);
-/* Returns true when `widget` currently holds keyboard focus. */
 bool ui_widget_has_focus(const struct ui_widget *widget);
-/* Captures subsequent pointer events to `widget`. */
 void ui_widget_capture_pointer(struct ui_widget *widget);
-/* Releases an active pointer capture held by `widget`. */
 void ui_widget_release_pointer(struct ui_widget *widget);
-/* Returns true when `widget` holds pointer capture. */
 bool ui_widget_is_captured(const struct ui_widget *widget);
 
-/* Returns true when `widget` left `surface`, or is destroyed or hidden. A
- * handler can do any of these during a dispatch. Test a stored widget pointer
- * with this function before each use. */
+/* Returns true when `widget` is NULL, was destroyed, is hidden either itself
+ * or below a hidden ancestor, or no longer belongs to `surface`. A handler can
+ * do any of these during a dispatch. Test a stored widget pointer with this
+ * function before each use. */
 bool ui_widget_stale(const struct ui_surface *surface,
                      const struct ui_widget *widget);
 /* Gives pointer `event` to the widget under the pointer in the subtree of
@@ -105,17 +97,18 @@ bool ui_widget_route_pointer(struct ui_widget *root,
 /* Computes the desired layout size of `widget` within `constraints`. */
 struct vector2i ui_widget_measure(struct ui_widget *widget,
                                   struct ui_constraints constraints);
-/* Positions and sizes `widget` into rectangle `bounds`. */
+/* Positions and sizes `widget` in rectangle `bounds`. */
 void ui_widget_place(struct ui_widget *widget, struct rect2i bounds);
-/* Positions floating `child` relative to `parent_bounds`. */
+/* Positions a floating `child` in `parent_bounds` from its placement. A
+ * hidden `child` keeps its previous bounds. */
 void ui_widget_place_child(struct ui_widget *child, struct rect2i parent_bounds);
 
-/* Resolves CSS styles for sub-part `class_name` of `widget`. */
+/* Resolves the style of the sub-part `class_name` of `widget`. */
 struct css_style ui_widget_part_style(const struct ui_widget *widget,
                                       const char *class_name,
                                       unsigned pseudo_flags);
 
-/* Resolves cached CSS styles for built-in sub-part `part` of `widget`. */
+/* Resolves the cached style of the built-in sub-part `part` of `widget`. */
 struct css_style ui_widget_part(const struct ui_widget *widget,
                                 ui_part_id part, unsigned pseudo_flags);
 

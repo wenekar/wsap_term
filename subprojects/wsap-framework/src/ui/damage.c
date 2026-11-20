@@ -50,7 +50,8 @@ static void remember(struct ui_damage_tracker *t, const struct ui_scene *s)
         return;
     }
     t->n = s->n_scopes;
-    /* An empty scene has no slots, and the table stays unallocated. */
+    /* An empty scene has no records. Skipping the clear keeps a tracker that
+     * never saw a record from clearing an unallocated table. */
     if (t->n > 0)
         memset(t->slots, 0, (size_t)t->slot_cap * sizeof(*t->slots));
     for (int i = 0; i < s->n_scopes; i++) {

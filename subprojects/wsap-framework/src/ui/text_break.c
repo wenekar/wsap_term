@@ -1656,7 +1656,8 @@ size_t ui_text_cluster_next(const char *text, size_t len, size_t pos,
         return len;
     }
 
-    /* Fast path: a printable ASCII byte before an ASCII byte is one cluster of one cell. */
+    /* Fast path: a printable ASCII byte followed by an ASCII byte or the end
+     * is one cluster of one cell. */
     unsigned char b0 = (unsigned char)text[pos];
     if (b0 >= 0x20 && b0 <= 0x7E &&
         (pos + 1 == len || (unsigned char)text[pos + 1] < 0x80)) {

@@ -660,7 +660,7 @@ static struct ui_widget *surface_modal(struct ui_surface *surface)
     return ui_widget_modal(surface->impl.root);
 }
 
-/* True when `widget` still hangs from the root or from an overlay. */
+/* True when `widget` is the root of `surface` or one of its overlays. */
 static bool surface_holds(const struct ui_surface *surface,
                           const struct ui_widget *widget)
 {
@@ -674,7 +674,8 @@ static bool surface_holds(const struct ui_surface *surface,
     return false;
 }
 
-/* True while `widget` is a modal of `surface` that holds its focus. */
+/* True while `widget` is a modal of `surface` and its tree hangs from the root
+ * or an overlay of `surface`. */
 static bool modal_live(const struct ui_surface *surface,
                        const struct ui_widget *widget)
 {

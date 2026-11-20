@@ -407,9 +407,9 @@ static inline size_t slab_cost(const struct cell_class *k)
 }
 
 /*
- * The largest class other than `k` that stays at least as large as `k`
- * after it gives `need` bytes to `k`. `has` is the size of `k`. NULL when
- * there is none.
+ * The largest class other than `k`, when it can give one slab and stay at
+ * least as large as `k` with `need` more bytes. `has` is the size of `k`.
+ * NULL when there is none.
  */
 static struct cell_class *class_donor(const struct cell_cache *c, const struct cell_class *k,
                                       size_t has, size_t need)

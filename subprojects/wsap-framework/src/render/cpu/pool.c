@@ -224,7 +224,7 @@ static void wait_done(struct pool *p, int n)
 /*
  * Claims and runs chunks until none is left. Returns the items that it
  * ran. When it ran some, *n gets the item count of the job. A worker
- * passes `job` to do the per-job font calls on its first valid claim.
+ * passes `job` to make the per-job font calls on its first valid claim.
  */
 static int drain(struct pool *p, int id, uint64_t *job, int *n)
 {
@@ -421,8 +421,8 @@ struct pool *pool_create(int workers)
             p->workers++;
     }
     pthread_sigmask(SIG_SETMASK, &old, NULL);
-    /* A font setting that the main thread changes after this call then
-     * races with no worker start. */
+    /* Return only after every worker attached, so a font setting that the
+     * main thread changes after this call cannot race with a worker start. */
     wait_ready(p, p->workers);
     return p;
 }

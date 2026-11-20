@@ -120,7 +120,7 @@ struct ui_node_desc {
          * Descriptor children are added after the own children of the widget.
          * The own children count against the child limit of the widget.
          * Unset style fields and handlers preserve the widget values.
-         * Set these descriptor fields to replace them. */
+         * A descriptor field that is set replaces the widget value. */
         struct ui_widget *widget;
     } props;
 };
@@ -148,8 +148,9 @@ struct ui_view_diagnostic {
 /* Returns a static description of an error. */
 const char *ui_view_error_message(enum ui_view_error error);
 
-/* On failure, diagnostic identifies the descriptor that caused the error.
- * The node pointer stays valid only while the descriptor tree stays valid. */
+/* On failure, `diagnostic` describes the error. Its node names the descriptor
+ * that caused the error when one applies, and that pointer stays valid only
+ * while the descriptor tree stays valid. */
 struct ui_view *ui_view_mount_ex(const struct ui_node_desc *root,
                                  struct ui_view_diagnostic *diagnostic);
 

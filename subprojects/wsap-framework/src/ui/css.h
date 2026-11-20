@@ -67,7 +67,7 @@ enum css_flex_wrap : uint8_t {
    - ch: cell widths.
    - grow: the free space of the parent.
    - auto, fit: the size of the content. fit is an alias of auto.
-   - none: the property is not set. */
+   - none: no value parsed, so the declaration is invalid. */
 enum css_unit_type {
     CSS_UNIT_AUTO = 0,
     CSS_UNIT_PX,
@@ -144,7 +144,7 @@ struct css_style {
 
     struct css_box padding;
     struct css_box margin;
-    /* Per-edge border widths. A unit of NONE uses `border_width`. */
+    /* Per-edge border widths. A unit of NONE or AUTO uses `border_width`. */
     struct css_box border_edges;
 
     struct css_value gap;
@@ -329,8 +329,9 @@ typedef void (*css_diagnostic_fn)(const struct css_diagnostic *diagnostic,
 
 const char *css_diagnostic_message(enum css_diagnostic_kind kind);
 
-/* Report invalid CSS and continue parsing. Return false on allocation failure.
- * Pass NULL as report to ignore diagnostics. */
+/* Parses CSS text and reports invalid CSS through `report`. Returns false when
+ * `sheet` or `css_text` is NULL, or on allocation failure. A NULL `report`
+ * ignores diagnostics. */
 bool css_parse_with_diagnostics(struct css_sheet *sheet, const char *css_text,
                                 css_diagnostic_fn report, void *userdata);
 
@@ -343,7 +344,7 @@ bool css_parse_deferred(struct css_sheet *sheet, const char *css_text,
                         css_diagnostic_fn report, void *userdata);
 /* Appends rules from `src` to `dst`. */
 bool css_sheet_append(struct css_sheet *dst, const struct css_sheet *src);
-/* Releases all rules from `sheet`. */
+/* Releases the rules, the index, and the variables of `sheet`. */
 void css_sheet_clear(struct css_sheet *sheet);
 
 /* Populates `sheet` with the UI core rules of assets/ui/core.css. */
@@ -356,7 +357,8 @@ const struct css_sheet *css_default_sheet(void);
 /* Clears the shared default sheet. */
 void css_shutdown(void);
 
-/* Resolves styling properties matching selector names and pseudo-class flags. */
+/* Resolves the style of an element from its class, id, and tag names and the
+ * pseudo-class flags. */
 void css_style_resolve(const struct css_sheet *sheet,
                        const char *class_name,
                        const char *id_name,
@@ -391,7 +393,7 @@ static inline float ui_positive_or(float v, float fallback)
     return isfinite(v) && v > 0.0f ? v : fallback;
 }
 
-/* Returns `dpi_scale` as a scale of one or more. */
+/* Returns `dpi_scale` when it is finite and positive, else 1.0. */
 static inline float ui_dpi_scale(float dpi_scale)
 {
     return ui_positive_or(dpi_scale, 1.0f);
@@ -410,7 +412,7 @@ static inline int ui_ctx_px(const struct css_scale_context *ctx, int px)
     return ui_px(ctx ? ctx->dpi_scale : 0.0f, px);
 }
 
-/* Stores `v` in `dst` and returns true only when `v` is above zero. */
+/* Stores finite `v` in `dst` and returns true when `v` is above zero. */
 static inline bool ui_set_if_positive(float *dst, float v)
 {
     if (!dst || !isfinite(v) || v <= 0.0f)
@@ -419,8 +421,8 @@ static inline bool ui_set_if_positive(float *dst, float v)
     return true;
 }
 
-/* Sets the scale fields of `ctx` that `dpi_scale`, `cell_w`, and `cell_h`
-   hold a positive value for. */
+/* Stores each of `dpi_scale`, `cell_w`, and `cell_h` in `ctx` when the value
+ * is finite and positive. */
 static inline void ui_scale_ctx_set(struct css_scale_context *ctx,
                                     float dpi_scale, float cell_w, float cell_h)
 {
@@ -458,8 +460,8 @@ static inline uint32_t ui_color_opacity(uint32_t color, float opacity)
    of its two edges, so its size follows from the rounded edges. Two touching
    rectangles keep a shared edge, and no gap or overlap appears. */
 
-/* Returns `v` as a whole number, clamped to the int range. A nonnegative
-   result is zero or more. */
+/* Returns `v` as a whole number, clamped to the int range. With `nonnegative`,
+   a negative result becomes zero. */
 static inline int ui_float_to_int(float v, bool nonnegative)
 {
     if (!isfinite(v))
@@ -497,7 +499,7 @@ static inline struct insets2i ui_css_resolve_insets(struct css_box box,
 }
 
 /* Resolves CSS value `v` to whole pixels, with `fallback` when the result is
-   not positive. */
+   not positive or does not fit an int. */
 static inline int ui_ctx_size(const struct css_scale_context *ctx,
                               struct css_value v, float fallback)
 {
@@ -574,8 +576,9 @@ static inline float ui_css_font_size(const struct css_style *style,
         ? css_value_resolve(style->font_size, 0, fallback, scale) : fallback;
 }
 
-/* The line height in pixels. `normal` and a unitless value use the font
-   size. `fallback` is the cell height of the widget. */
+/* Returns the line height of `style` in pixels. A percentage, including a
+ * unitless value, is a share of the font size. `normal` and an unset property
+ * use `fallback`, which is the cell height of the widget. */
 static inline float ui_css_line_height(const struct css_style *style,
                                        const struct css_scale_context *scale,
                                        float fallback)

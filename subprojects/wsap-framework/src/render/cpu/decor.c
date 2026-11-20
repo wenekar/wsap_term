@@ -112,7 +112,7 @@ static void shape_fill(uint8_t *cov, const struct decor_geom *g, enum shape shap
         ya = g->u;
         yb = g->u + t;
     }
-    /* count[x] for the pixel columns of one row, built over sub-columns. */
+    /* Counts the samples of each pixel column of one row. */
     for (int y = ya; y < yb; y++) {
         for (int x = 0; x < cw; x++) {
             unsigned count = 0;

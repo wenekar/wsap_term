@@ -2,8 +2,8 @@ subdir('widgets')
 subdir('yasl')
 
 # The default stylesheet is data, and the UI library embeds it in a generated
-# header. The header is not in the source tree, so a CSS edit always reaches
-# the build. `ui_inc` makes it visible to css.c.
+# header. The custom target depends on the stylesheet, so a CSS edit always
+# regenerates the header. `ui_inc` makes the header visible to css.c.
 ui_css_headers = [
     custom_target(
         'ui-core-css',

@@ -8,8 +8,8 @@
 #include "ui/keys.h"
 #include "util/geom.h"
 
-/* The pointer moves less than this many pixels for a press to repeat the
- * click before it. */
+/* The pointer may move at most this many pixels on each axis and still repeat
+ * the click before it, or still count as a click rather than a drag. */
 #define UI_TEXT_SELECT_DRAG_PX 4
 
 /* Caret, anchor, and click gesture state of one text widget.
@@ -44,8 +44,8 @@ void ui_text_select_clear(struct ui_text_select *sel);
 void ui_text_select_end(struct ui_text_select *sel);
 /* Moves the caret to `offset`. Without `extend` it drops the selection. */
 void ui_text_select_to(struct ui_text_select *sel, size_t offset, bool extend);
-/* Moves the caret by one `unit`. Without `extend` it first collapses the
- * selection to the edge at the start of the move. */
+/* Moves the caret by one `unit`. Without `extend`, a character move with a
+ * selection collapses it to the edge at the start of the move. */
 void ui_text_select_move(struct ui_text_select *sel, const char *text,
                          size_t len, enum ui_edit_unit unit, bool backward,
                          bool extend);
@@ -55,8 +55,9 @@ void ui_text_select_all(struct ui_text_select *sel, size_t len);
  * A collapsed request (`start == end`) moves the caret to `caret`. */
 void ui_text_select_apply(struct ui_text_select *sel, const char *text,
                           size_t len, size_t start, size_t end, size_t caret);
-/* Handles a primary-button press. A press that repeats within the interval
- * selects the word under the pointer. A third press selects the line. */
+/* Handles a primary-button press. A second press within the interval and the
+ * threshold selects the word under the pointer, and a third selects the line.
+ * A press with `selects` false moves the caret only. */
 void ui_text_select_press(struct ui_text_select *sel, const char *text,
                           size_t len, const struct ui_text_select_click *click);
 /* Extends the selection to `offset` while the button stays down.
@@ -66,7 +67,8 @@ bool ui_text_select_drag(struct ui_text_select *sel, const char *text,
                          int threshold_px);
 /* Ends the press. Keeps the click count for the next press. */
 void ui_text_select_release(struct ui_text_select *sel);
-/* Returns the selection. It returns false when the selection is empty. */
+/* Returns true and sets `start` and `end` to the selection when it is not
+ * empty. Either output may be NULL. */
 bool ui_text_select_range(const struct ui_text_select *sel, size_t *start,
                           size_t *end);
 

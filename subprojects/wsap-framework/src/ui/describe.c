@@ -232,7 +232,8 @@ static bool node_props_valid(const struct ui_node_desc *desc,
         }
         return true;
     case UI_NODE_WIDGET:
-        /* The view placed its own widget, so that widget can be attached. */
+        /* A widget may have a parent or a surface only when the mounted view
+         * holds it, because the view placed it. */
         if (!desc->props.widget ||
             !ui_widget_accessibility_id(desc->props.widget) ||
             desc->props.widget->impl.destroyed ||
@@ -423,8 +424,8 @@ static void free_node_strings(struct ui_view_node *node)
 }
 
 /* Frees the strings and the storage of `node`. Call it after the node widget
- * is destroyed. The layer of a menu node holds only the shown levels, so the
- * menu destroys its other levels here. */
+ * is destroyed. The layer widget of a menu node holds only the shown levels,
+ * so ui_menu_destroy destroys the level widgets that stay detached. */
 static void free_node(struct ui_view_node *node)
 {
     free_node_strings(node);
@@ -539,7 +540,7 @@ static bool set_list_props(struct ui_list *list,
     const struct ui_node_desc *desc = node;
     ui_list_set_style_class(list, desc->class_name);
     ui_list_set_wrap_navigation(list, desc->props.list.wrap_navigation);
-    /* No items empty the list. */
+    /* An item count of zero empties the list. */
     if (!ui_list_set_items(list, desc->props.list.items,
                            desc->props.list.count)) {
         *error = UI_VIEW_ERROR_OUT_OF_MEMORY;

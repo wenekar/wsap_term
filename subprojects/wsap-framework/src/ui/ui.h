@@ -21,7 +21,8 @@
 #include "ui/widgets/spinner.h"
 #include "ui/widgets/toggle.h"
 
-/* Releases global UI caches including the default stylesheet and interned parts. */
+/* Releases the global UI caches: the default stylesheet, the interned parts,
+ * and the accessibility id sequence. */
 void ui_shutdown(void);
 
 #endif

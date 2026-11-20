@@ -3,8 +3,8 @@
 
 /*
  * The row raster. It paints one grid row of the canvas through a clip
- * window [x0, x1), in two passes. It consumes the output of
- * its walk (render/grid.h) and nothing else of the terminal.
+ * window [x0, x1), in two passes. It consumes the output of its walk
+ * (render/grid.h) and nothing else of the terminal.
  *
  * Coordinates: x is a grid-local pixel column. 0 is grid.rect.x. The cell
  * area is [0, cols * cw). The right margin is [cols * cw, width).
@@ -24,7 +24,7 @@
  * - The cell span is [col * cw, col * cw + cw). Each half of a wide glyph is
  *   one cell. The right half composes the glyph with an origin offset of
  *   -cw. So each half has its own tile.
- * - The right margin fills with frame->default_bg.
+ * - The right margin fills with the default bg of the grid.
  * - Compose copies the spill of the cell into the spill list. The spill is
  *   the ink outside the span of the glyph: [0, cw) for a one-column glyph,
  *   [0, 2cw) for a wide glyph. An italic overhang or a wide icon spills.
@@ -47,9 +47,6 @@
  * stored reach. It walks the columns that cover [x0 - reach, x1 + reach)
  * and clips every write to [x0, x1). The result is the same as a full row
  * paint inside the window.
- *
- * This replaces bg_ready, ink_end, the restart, and lazy backgrounds of the
- * old row painter.
  *
  * ISA levels. raster.c has one always-inline body. It has one NOINLINE
  * wrapper per level, for the row and for the walk callback, marked with

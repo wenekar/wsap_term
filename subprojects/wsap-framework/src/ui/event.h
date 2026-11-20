@@ -81,8 +81,7 @@ struct ui_ime_text_event {
     uint64_t revision;
 };
 
-/* The longest type that a drag carries. yasl uses the same limit, so a type
- * that fits here fits a native drop too. */
+/* The maximum length of one MIME type in a drag event. */
 #define UI_DRAG_MIME_MAX 64
 
 /* The source of a drag. A target asks it for a type, and it answers with the
@@ -99,8 +98,9 @@ struct ui_drop_source {
 
 /* One drag over one surface. `pos` is the pointer position in surface
  * coordinates. `mimes` lists the offered types, best first, and `mime_count`
- * counts them. The target writes `mime` to ask for a type. `data` is the
- * payload of that type, or NULL when the source refused it. */
+ * counts them. `mime` is the type that the event names, and `data` holds the
+ * payload of that type for a native drop, or NULL. A target asks the source for
+ * the payload of another type with ui_drag_event_read. */
 struct ui_drag_event {
     const char *const *mimes;
     size_t mime_count;
@@ -131,8 +131,8 @@ static inline size_t ui_mime_major_length(const char *type, size_t len)
     return n;
 }
 
-/* Compares two type parts without case. The letters of a type match without
- * case, as RFC 6838 says. */
+/* Compares the type parts `a` and `b` without case. RFC 6838 matches type and
+ * subtype names without case. */
 static inline bool ui_mime_part_eq(const char *a, size_t alen, const char *b,
                                    size_t blen)
 {
@@ -152,9 +152,9 @@ static inline bool ui_mime_part_eq(const char *a, size_t alen, const char *b,
 
 /* Returns true when one offer matches type `mime`. A parameter and the spaces
  * before it are not part of the type, so they do not count. The letters match
- * without case. An offer of "*" matches every type. An offer with a star for
- * its subtype, such as "image/" "*", matches every type with that major
- * type. An offer of "*" "/" "*" matches every type too. */
+ * without case. A lone star offer matches every type. An offer whose subtype
+ * is a star matches every type with that major type and a non-empty subtype,
+ * and a star major type with a star subtype matches every type too. */
 static inline bool ui_mime_offer_matches(const char *offer, const char *mime)
 {
     size_t on = ui_mime_type_length(offer);
@@ -168,7 +168,6 @@ static inline bool ui_mime_offer_matches(const char *offer, const char *mime)
     bool major_star = om == 1 && offer[0] == '*';
     if (!major_star && !ui_mime_part_eq(offer, om, mime, mm))
         return false;
-    /* A star major type with a star subtype matches every type. */
     if (major_star && on == om + 2 && offer[om + 1] == '*')
         return true;
     /* A type with no subtype matches a type with no subtype only. */
@@ -196,10 +195,9 @@ static inline bool ui_drag_offers(const struct ui_drag_event *drag, const char *
 }
 
 /* Asks the source of the drag for the type `mime`. A target calls it from a
- * DRAG_ENTER, DRAG_OVER, or DROP handler, and writes the type to `mime` so the
- * payload travels with the DROP. Returns true when the source has the type;
- * then `data` and `len` hold its payload. Returns false on a refusal, and the
- * target then takes no drop. */
+ * DRAG_ENTER, DRAG_OVER, or DROP handler. Returns true when the source has the
+ * type; then `data` and `len` hold its payload. Returns false on a refusal,
+ * and the target then takes no drop. */
 static inline bool ui_drag_event_read(const struct ui_drag_event *drag,
                                       const char *mime, const char **data,
                                       size_t *len)

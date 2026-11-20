@@ -64,7 +64,6 @@ enum ui_accessibility_action {
     UI_ACCESSIBILITY_ACTION_DECREMENT = 1u << 5,
 };
 
-/* The text direction of the text of a node. */
 enum ui_accessibility_text_direction {
     UI_ACCESSIBILITY_TEXT_DIRECTION_UNKNOWN = 0,
     UI_ACCESSIBILITY_TEXT_DIRECTION_LEFT_TO_RIGHT,
@@ -115,8 +114,8 @@ struct ui_accessibility_node {
      * document. */
     size_t text_length;
     enum ui_accessibility_text_direction text_direction;
-    /* Changes when the provider document changes. A provider compares this
-     * value because its pointer, offset, and length stay the same. */
+    /* Changes when the provider document changes. The publish compares this
+     * value, because the provider pointer, offset, and length stay the same. */
     uint64_t text_version;
     /* The number of nodes that name this node as their parent. */
     uint32_t child_count;

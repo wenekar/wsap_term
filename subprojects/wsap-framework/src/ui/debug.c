@@ -780,7 +780,7 @@ static bool rect_contains_text_start(struct rect2i r, struct rect2i box)
     return rect2i_contains(r, c);
 }
 
-/* Tests if rectangle `a` holds all of rectangle `b`. */
+/* Returns true when rectangle `a` holds all of rectangle `b`. */
 static bool rect_covers(struct rect2i a, struct rect2i b)
 {
     struct vector2i ae = rect2i_end(a), be = rect2i_end(b);

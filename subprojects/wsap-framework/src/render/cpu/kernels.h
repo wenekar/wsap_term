@@ -31,9 +31,9 @@
  * CPU (Zen 5), where a gather costs more per element than a scalar load:
  * - compose_alpha_lut and compose_subpx_lut use scalar loads at every level.
  * - blend_any_subpx at AVX2 runs the scalar reference.
- * - blend_any and blend_any_subpx run the scalar reference for n <= 8. A
- *   block with at most RENDER_SCALAR_LANES pixels that need the blend
- *   formula runs those pixels with the scalar form.
+ * - blend_any and blend_any_subpx run the scalar reference for n <= 8.
+ *   blend_any runs the scalar form on the pixels that need the blend
+ *   formula in a block with at most RENDER_SCALAR_LANES of them.
  * - The NEON variants of the blend kernels run the scalar reference.
  */
 
@@ -1538,7 +1538,7 @@ static inline void render_blit_tile_neon(uint32_t *dst, size_t dst_stride_px,
     }
 }
 
-/* The blend kernels have no NEON math yet. They run the scalar reference. */
+/* These kernels have no NEON math. They run the scalar reference. */
 static inline void render_compose_alpha_lut_neon(uint32_t *dst, const uint8_t *cov, int n,
                                                  const uint32_t *lut256)
 {

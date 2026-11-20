@@ -12,17 +12,16 @@
  * - t = max(1, (pixel_size * 3 + 32) / 64). That is about 1/21 of the em.
  *   struct font_metrics has no underline thickness or position, so decor
  *   takes them from pixel_size and baseline.
- * - single underline: rows [u, u + t), u = min(ch - t, baseline + (ch - baseline) / 2).
+ * - single underline: rows [u, u + t), u = clamp(baseline + (ch - baseline) / 2, 0, ch - t).
  * - double underline: two lines of t rows with a gap of t rows. The lower
  *   line ends at min(ch, u + 2t).
- * - curly underline: an antialiased wave, t thick, centered on row u + t / 2.
- *   Its amplitude is max(1, t) rows.
+ * - curly underline: an antialiased wave, t thick, centered on row u + t / 2,
+ *   moved so that the wave stays inside the cell. Its amplitude is max(1, t) rows.
  * - dotted underline: rows of the single underline, dots and gaps of equal
  *   length.
  * - dashed underline: rows of the single underline, dashes longer than the
  *   gaps.
- * - strike: rows [(ch - t + 1) / 2, (ch - t + 1) / 2 + t). At t = 1 this is row ch / 2,
- *   as in the old renderer.
+ * - strike: rows [(ch - t + 1) / 2, (ch - t + 1) / 2 + t). At t = 1 this is row ch / 2.
  * - overline: rows [min(1, ch - t), min(1, ch - t) + t).
  * - cursor bar: columns [0, min(cw, 2t)), all rows.
  * - cursor underline: rows [ch - min(ch, 2t), ch), all columns.
@@ -33,8 +32,9 @@
  * cells, across both halves of a wide glyph, and across cached tiles.
  *
  * Draw order inside a cell: glyph, then underline, strike, overline, then
- * the cursor marks. The decorations use the cell fg. The cursor marks use
- * render_grid_view.cursor_color and are never faint.
+ * the cursor marks. The decorations use the cell fg, and an underline whose
+ * cell has RENDER_CELL_UL_COLOR uses the cell underline color. The cursor
+ * marks use render_grid_view.cursor_color and are never faint.
  *
  * Math: integer or fixed point. Build each set once. Do not use the FPU in
  * a way that can change between ISA levels.

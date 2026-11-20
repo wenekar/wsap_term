@@ -19,7 +19,7 @@
 #include <math.h>
 
 /*
- * The scene painter of the new renderer.
+ * The scene painter.
  *
  * Rows go through the pixel kernels at the level that
  * render_isa_resolve(RENDER_ISA_AUTO) gives. The painter has no mutable
@@ -73,7 +73,7 @@ static void scene_luts_key_init(void)
     scene_luts_key_ok = pthread_key_create(&scene_luts_key, scene_luts_destroy) == 0;
 }
 
-/* Allocates one pair LUT table per thread on first glyph span blend. */
+/* Allocates the pair LUT cache of this thread on its first glyph blend. */
 static struct pair_lut *scene_luts_get(void)
 {
     if (scene_luts_tls)
@@ -740,7 +740,7 @@ static bool paint_image(uint32_t *px, int width, int height, const struct ui_sce
     if (dst.width <= 0 || dst.height <= 0)
         return true;
 
-    /* A zero tint is white, and an opacity of 0 or 255 keeps the image. */
+    /* A zero tint is white, and a white tint at full opacity keeps the image. */
     uint32_t tint = op->color ? op->color : 0xFFFFFFFFu;
     bool plain = op->alpha >= 255 && tint == 0xFFFFFFFFu;
     uint32_t tint_alpha = (tint >> 24) * op->alpha;

@@ -4,9 +4,9 @@
 /*
  * A per-worker cache of blend tables for (fg, bg) color pairs.
  *
- * The row raster and the scene painter share it. A table turns coverage into a final pixel for a known bg. Compose uses it
- * when the pixels under a glyph all have one color: a cell bg, or a uniform
- * run under UI text.
+ * The row raster and the scene painter share it. A table turns coverage
+ * into a final pixel for a known bg. Compose uses it when the pixels under
+ * a glyph all have one color: a cell bg, or a uniform run under UI text.
  *
  * Two-hit rule: the first request for a pair returns NULL and records the
  * pair. The second request builds the table and returns it. A pair seen

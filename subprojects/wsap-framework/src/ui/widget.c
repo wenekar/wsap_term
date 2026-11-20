@@ -883,7 +883,7 @@ uint64_t ui_widget_tick(struct ui_widget *widget, uint64_t now_ms)
  * step. */
 #define UI_STYLE_ANIM_STEP_MS 16
 
-/* The color of one channel of the resolved style of `widget`. */
+/* The color of one channel of `style`. */
 static uint32_t style_channel(const struct css_style *style, enum ui_style_channel ch)
 {
     switch (ch) {

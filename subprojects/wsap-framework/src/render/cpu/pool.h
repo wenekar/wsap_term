@@ -51,8 +51,11 @@
 struct pool;
 
 /*
- * Runs `fn` over items [0, n) partitioned into chunks of size `grain`.
- * Dispatches chunks across worker threads and calling thread.
+ * Runs `fn` over items [0, n) in chunks of `grain`. Items can run on the
+ * calling thread and on the pool workers at the same time. In
+ * `fn(ctx, worker, begin, end)`, `worker` is the thread index: 0 for the
+ * calling thread and one id per worker. Returns after every item ran. A
+ * call from a worker thread runs its items on that thread.
  */
 typedef void (*pool_fn)(void *ctx, int worker, int begin, int end);
 void pool_run(struct pool *p, int n, int grain, pool_fn fn, void *ctx);
@@ -64,21 +67,25 @@ void pool_run(struct pool *p, int n, int grain, pool_fn fn, void *ctx);
 typedef void (*pool_each_fn)(void *ctx, int worker);
 void pool_each(struct pool *p, pool_each_fn fn, void *ctx);
 
-/*
- * Creates a worker pool with up to `workers` threads.
- * Returns a pointer to the created pool, or NULL on allocation failure.
- */
+/* Creates a pool of up to `workers` worker threads. A count below 0 counts
+ * as 0, and POOL_WORKERS_MAX bounds a larger count. Returns the pool, or
+ * NULL when it cannot be allocated or initialized. A pool whose threads
+ * failed to start is valid and has fewer workers; pool_workers() gives the
+ * count. */
 struct pool *pool_create(int workers);
 
 /* Stops and joins all worker threads in pool `p` and frees pool memory. */
 void pool_destroy(struct pool *p);
 
-/* Returns the number of worker threads in pool `p`. */
+/* Returns the number of worker threads in pool `p`, or 0 for NULL. */
 int pool_workers(const struct pool *p);
 
 /*
- * Computes default worker thread count from environment or processor count.
- * Returns the resolved worker count.
+ * Returns the default worker count. WSAP_RENDER_THREADS sets it when it
+ * holds a non-negative integer; a larger value is clamped to
+ * POOL_WORKERS_MAX. An invalid value prints one warning and is ignored.
+ * Else the count is one less than the online processor count, at most 3
+ * and at least 0.
  */
 int pool_default_workers(void);
 

@@ -402,7 +402,7 @@ static float child_gap(const struct ui_box_params *params, size_t count)
     return count > 1 ? (float)params->gap * (float)(count - 1) : 0.0f;
 }
 
-/* Returns the max size inside the padding of `params`. */
+/* Stores the space inside the padding of `params` in `out`. */
 static void content_extent(const struct ui_box_params *params,
                            const float available[2], float out[2])
 {

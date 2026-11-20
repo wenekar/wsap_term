@@ -27,7 +27,7 @@ struct ui_paint_box_style {
 };
 
 /* Resolves the drop shadow of `style` into `out`. Returns false when the
- * style has no shadow. */
+ * style has no visible shadow. */
 bool ui_paint_shadow_style_of(const struct css_style *style,
                               const struct css_scale_context *scale,
                               int radius, struct ui_paint_box_style *out);
@@ -36,10 +36,11 @@ bool ui_paint_shadow_style_of(const struct css_style *style,
 bool ui_paint_box_shadow(struct ui_paint_context *paint, struct rect2i local,
                          const struct ui_paint_box_style *style);
 
-/* Resolves box paint colors, border width, and corner radius from CSS. */
+/* Resolves the paint fields of a box, including the drop shadow, from CSS. */
 struct ui_paint_box_style ui_paint_box_style_of(
     const struct css_style *style, const struct css_scale_context *scale);
-/* Paints a border and inset fill box. Writes the inner fill rect to `out_fill`. */
+/* Paints the border and the fill of a box. Writes the inset fill rectangle to
+ * `out_fill`, when it is not NULL and the rectangle is not empty. */
 bool ui_paint_box(struct ui_paint_context *paint, struct rect2i local,
                   const struct ui_paint_box_style *style,
                   struct rect2i *out_fill);

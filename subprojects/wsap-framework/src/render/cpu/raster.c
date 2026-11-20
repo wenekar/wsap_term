@@ -221,7 +221,7 @@ static inline RENDER_ALWAYS_INLINE void tile_blit(int isa, uint32_t *dst, size_t
     render_kernel_blit_tile(isa, dst, ds, tile, cw, ch);
 }
 
-/* Copies a cell of cw x ch pixels, row stride cw, into the window. */
+/* Copies a cell of w x ch pixels, row stride w, into the window. */
 static inline RENDER_ALWAYS_INLINE void put_tile_w(int isa, const struct row_ctx *c, int sx0,
                                                    const uint32_t *tile, int w)
 {
@@ -330,8 +330,9 @@ static inline RENDER_ALWAYS_INLINE void mask_blend_scaled(int isa, uint32_t *dst
 /*
  * Composes one cell into dst (row stride ds): the bg, the glyph inside the
  * cell span, the decorations, and the cursor marks. A cell with an
- * underline color has no cache tile. Every other cell depends only on the
- * cell key, so a tile and a direct compose give the same pixels.
+ * underline color has no cache tile, because the key does not hold that
+ * color. For every other cell, the tile and a direct compose give the same
+ * pixels.
  */
 static inline RENDER_ALWAYS_INLINE void compose(int isa, struct row_ctx *c, uint32_t *dst,
                                                 size_t ds, const struct render_cell *cell,

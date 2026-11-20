@@ -418,9 +418,10 @@ struct prop_info {
     (offsetof(struct css_style, shadow_color) + sizeof(uint32_t) - \
      offsetof(struct css_style, shadow_x))
 
-/* A duration bitfield has no address, so it has no offset. The sentinel is
- * unique: a `var()` of this property then keeps its place among the other
- * `var()` declarations of the rule. */
+/* A duration bitfield has no address, so its entry holds a sentinel offset
+ * rather than the offset of a field. The sentinel matches no field offset, so
+ * a `var()` of `ripple-duration` drops only the earlier `var()` declarations
+ * of that property. */
 #define PROP_RIPPLE_DURATION(n, has_m) { \
     .name = (n), .offset = offsetof(struct css_style, ripple_color) + 1, \
     .kind = P_RIPPLE_DURATION, .has_bit = HAS_##has_m, \
@@ -524,8 +525,8 @@ static_assert(CSS_SHADOW_SIZE <= UINT8_MAX,
 static_assert(HAS_NONE == 0 && HAS_has_z_index <= UINT8_MAX,
               "Zero has_bit must mean no presence flag");
 
-/* The rule mask has one bit per property. It grows with the property table,
-   so a new property cannot overflow it. */
+/* The rule mask has one bit per property. Its word count follows the property
+   table, so a new property cannot overflow the mask. */
 
 static uint32_t prop_mask_words(void)
 {
@@ -661,7 +662,9 @@ static int find_prop_idx(const char *key)
     return -1;
 }
 
-/* Reads a time in milliseconds. A suffix of `s` multiplies by 1000. */
+/* Reads a time in milliseconds. A suffix of `s`, but not `ms`, gives seconds,
+   which the function multiplies by 1000. The result stays between 0 and
+   3600000. Returns false when the text holds no finite number. */
 static bool parse_duration_ms(const char *val, float *out)
 {
     const char *s = val;
@@ -1053,8 +1056,9 @@ static bool parse_pseudo_name(const char *s, enum css_pseudo *out)
     return true;
 }
 
-/* Splits the compound `part` into its class names and its key kind. A part
-   that names no class name, or an empty one, matches no element. */
+/* Splits the compound `part` into its class names and its key kind. An empty
+   part or an empty class name matches no element. A lone point matches any
+   class list. */
 static bool rule_compile_part(struct css_rule *r, struct css_selector_part *part)
 {
     const char *text = r->selector + part->offset;
@@ -1516,7 +1520,8 @@ static enum css_var_status expand_var_text(const struct css_sheet *sheet,
         char *fb_copy = dup_range(fb, flen);
         if (!fb_copy)
             return CSS_VAR_OOM;
-        /* Pop v->name before expanding the caller's fallback so sibling retries work. */
+        /* The fallback expands without `v->name` on the stack, so a later use
+           of that name is not a cycle. */
         enum css_var_status st = expand_var_text(sheet, fb_copy, stack,
                                                  stack_len, depth + 1, out, ctx);
         free(fb_copy);
@@ -1720,8 +1725,9 @@ const char *css_diagnostic_message(enum css_diagnostic_kind kind)
     return "CSS error";
 }
 
-/* Expands `val` and applies it to `rule`. Returns false when the expansion or
-   the value fails, and `out_st` says which. */
+/* Expands `val` and applies it to `rule`. Returns false when the expansion
+   fails or `val` is not a value of the property; `out_st` reports the
+   expansion and `out_res` the declaration. */
 static bool try_expand_and_apply(const struct css_sheet *sheet,
                                  struct css_rule *rule, size_t prop_idx,
                                  const char *val,
@@ -2389,7 +2395,8 @@ static void apply_candidates(const struct css_sheet *sheet,
 }
 
 /* Applies the rules that the rule index selects for `element`. Returns false
-   when the candidate list needs heap storage. */
+   when the candidate list overflows the stack buffer, so the caller falls
+   back to a full scan. */
 static bool apply_indexed(const struct css_sheet *sheet,
                           const struct css_element *element, unsigned pseudo_flags,
                           const struct css_element *ancestors,

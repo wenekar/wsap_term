@@ -165,8 +165,9 @@ static inline bool ui_ripple_eval(const struct ui_ripple *r, uint64_t now_ms,
     return true;
 }
 
-/* Draws `ripple` into `scene`, clipped to `clip`. Returns false when the
-   scene is full. */
+/* Draws `ripple` into `scene`, clipped to `clip`. Nothing is drawn at a
+   `now_ms` of 0 or while the ripple is inactive. Returns false when the scene
+   is full. */
 static inline bool ui_scene_ripple(struct ui_scene *scene, struct rect2i clip,
                                    const struct ui_ripple *ripple,
                                    uint64_t now_ms)

@@ -3,7 +3,8 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-/* The slot of a pair. A direct map: the hash picks one slot. */
+/* The slot of a pair. One hash picks the slot, so a collision replaces the
+ * pair that the slot holds. */
 static unsigned pair_slot(uint32_t fg, uint32_t bg, bool faint)
 {
     uint64_t tag = ((uint64_t)fg << 32) | bg;

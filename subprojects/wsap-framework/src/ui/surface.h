@@ -82,7 +82,8 @@ struct ui_surface_post {
     void *userdata;
 };
 
-/* What a handler may do while the surface dispatches, ticks, or builds.
+/* What a handler may do while the surface dispatches, ticks, builds, or
+ * prepares.
  *
  * A handler can detach or destroy any widget, itself included. It must not
  * free the storage of a widget or a surface while the surface is busy: the
@@ -167,16 +168,17 @@ struct ui_surface {
 
 void ui_surface_init(struct ui_surface *surface,
                      const struct ui_surface_host *host, void *host_userdata);
-/* Releases the root, the overlays, and the styles of `surface`. Returns false
- * when the surface is busy, and asserts in a debug build. */
+/* Releases the root, the overlays, and the styles of `surface`, and runs the
+ * queued posts. Returns false when the surface is busy, and asserts in a
+ * debug build. */
 bool ui_surface_destroy(struct ui_surface *surface);
 /* Queues `fn` to run after the outermost busy section of `surface` ends, or
  * runs it now when the surface is idle. A function that runs then may post
- * again. Returns false only when memory is short. */
+ * again. Returns false when `fn` is NULL or memory is short. */
 bool ui_surface_post(struct ui_surface *surface, ui_post_fn fn, void *userdata);
 
-/* True while the surface dispatches, ticks, or builds, and reads its stored
- * targets. Use ui_surface_post to free storage then. */
+/* True while the surface prepares, dispatches, ticks, or builds, and reads
+ * its stored targets. Use ui_surface_post to free storage then. */
 bool ui_surface_busy(const struct ui_surface *surface);
 
 /* Sets the widget that a drag is over. Returns the widget that must get one
@@ -197,9 +199,11 @@ struct ui_widget *ui_surface_root(const struct ui_surface *surface);
 
 /* Adds `overlay` above the root, or above the overlays already there. The
  * surface places it with its ui_placement against the viewport, tests hits on
- * it before the root, and paints it after the root. The widget must be
- * detached. The list grows, so the surface takes any number of overlays.
- * Returns false only when memory is short. */
+ * it before the root, and paints it after the root. `overlay` must have no
+ * parent and must not belong to another surface. The list grows, so the
+ * surface takes any number of overlays. Returns false for a NULL surface or
+ * widget, a destroyed widget, a widget with a parent or another surface, and
+ * when memory is short. */
 bool ui_surface_add_overlay(struct ui_surface *surface,
                             struct ui_widget *overlay);
 /* Removes `overlay` from the list and detaches it from the surface. */
@@ -209,8 +213,8 @@ size_t ui_surface_overlay_count(const struct ui_surface *surface);
 /* The overlay at `index`, counted from the bottom up. */
 struct ui_widget *ui_surface_overlay_at(const struct ui_surface *surface,
                                         size_t index);
-/* Returns the widget under `pos`: the topmost overlay that covers it, or else
- * a widget of the root tree. */
+/* Returns the widget under `pos`: a widget of the topmost overlay that takes
+ * the point, or else a widget of the root tree. */
 struct ui_widget *ui_surface_hit_test(struct ui_surface *surface,
                                       struct vector2i pos);
 /* Returns the widget that takes a drop at `pos`. This is the widget under
@@ -239,20 +243,22 @@ struct vector2i ui_surface_viewport(const struct ui_surface *surface);
 bool ui_surface_dispatch(struct ui_surface *surface,
                          const struct ui_event *event);
 
-/* Set the widget that takes keyboard events when nothing is focused. */
+/* Sets the widget that takes key events when the surface has no focused
+ * widget and no modal. */
 void ui_surface_set_default_focus(struct ui_surface *surface,
                                   struct ui_widget *widget);
 
 /* Returns the widget that gets the key events of `surface`. This is the
  * focused widget, or else the modal, or else the default focus, or else the
- * root. Returns NULL when `surface` is NULL or has no root. */
+ * root. Returns NULL when `surface` is NULL, or when none of those widgets
+ * exists. */
 struct ui_widget *ui_surface_key_target(const struct ui_surface *surface);
 
 /* Returns the command scope that the keys of `surface` read. The walk starts
- * at the key target and ends at the root. The first widget with a valid
- * scope above zero gives the scope. Returns the app scope when no widget
- * gives one. Call it to look up a key in the keymap, so that every reader
- * of a key reads the same scope. */
+ * at the key target and follows its parents to the top of its tree. The first
+ * widget with a valid scope above zero gives the scope. Returns the app scope
+ * when no widget gives one. Call it to look up a key in the keymap, so that
+ * every reader of a key reads the same scope. */
 uint8_t ui_surface_command_scope(const struct ui_surface *surface);
 
 void ui_surface_keep_key_text(struct ui_surface *surface);

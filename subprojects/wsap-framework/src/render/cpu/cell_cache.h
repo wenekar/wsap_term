@@ -4,8 +4,7 @@
 /*
  * The composited cell cache. A tile is one cell, fully composed: its bg,
  * its part of the glyph, its decorations, and its cursor marks. It has
- * cw * ch opaque pixels with a row stride of cw. The cache generalizes the
- * old default-color tiles of the font to any color pair.
+ * cw * ch opaque pixels with a row stride of cw.
  *
  * Pixels never depend on the cache. A hit blits the tile that a miss would
  * compose. The parity tests check this with a small budget, a cold cache,
@@ -16,9 +15,10 @@
  *   key array, a stamp array, and an index.
  * - One byte budget covers all classes. When a class needs room and the
  *   budget is full, the least recently used other class is freed first.
- *   Only a class that no frame used in the last 8 frames is freed so. Else
- *   the class takes slabs from the largest other class, while that class
- *   stays at least as large. After that, the class evicts its own tiles.
+ *   Only a class that no frame used in the last 8 frames is freed that
+ *   way. Else the class takes slabs from the largest other class, while
+ *   that class stays at least as large. After that, the class evicts its
+ *   own tiles.
  * - A class grows by whole slabs. A slab never moves, so a tile pointer
  *   stays valid until its slot is evicted.
  * - A class needs room for at least CELL_CACHE_MIN_TILES tiles. Else
@@ -33,14 +33,12 @@
  *    - It picks the class of the cell size. It clears the L0 tables of the
  *      class when the L0 domain changed (see below).
  *    - It fills the free list up to max(the claims that the last frame
- *      asked for, CELL_CACHE_REFILL_MIN). The first refill of a class
- *      fills it up to the cell count of the frame, when that is more. It
- *      takes never-used slots first, and it grows the class within the
- *      budget. Then it evicts by clock, but only up to the claims that the
- *      last frame asked for. A slot used in the last frame is never
- *      evicted. So an idle frame evicts nothing. A claim that found the
- *      free list empty still counts as asked. "The last frame" is the last
- *      frame of this class.
+ *      asked for, CELL_CACHE_REFILL_MIN). It takes never-used slots first,
+ *      and it grows the class within the budget. Then it evicts by clock,
+ *      but only up to the claims that the last frame asked for. A slot
+ *      used in the last frame is never evicted. So an idle frame evicts
+ *      nothing. A claim that found the free list empty still counts as
+ *      asked. "The last frame" is the last frame of this class.
  *    - It resets each worker: pending table, hit log, claim count.
  * 2. Workers, during the phase: cell_cache_find(), cell_cache_claim().
  *    - The index, the keys, the stamps, the L0 tables, and the published
@@ -177,7 +175,8 @@ struct cell_l0 {
 
 /*
  * Finds the cached tile for ASCII code point `cp` and `style` in L0 cache.
- * Returns the matching tile pixels and spill bit.
+ * `cp` must be below CELL_CACHE_L0_CPS. Returns the matching tile pixels
+ * and spill bit.
  */
 static inline struct cell_tile cell_l0_find(const struct cell_l0 *l0, uint32_t cp, uint16_t style)
 {
@@ -253,8 +252,10 @@ struct cell_tile cell_cache_find(const struct cell_class *k, struct cell_cache_w
                                  const struct cell_key *key);
 
 /*
- * Allocates a worker cache slot for missing `key` and records `spill` status.
- * Returns a pointer to the destination tile buffer, or NULL when unadmitted.
+ * Claims a free cache slot for the missing `key` and records its `spill`
+ * flag. Returns the destination tile buffer, which the caller fills with
+ * cw * ch pixels, or NULL when the key is not yet admitted, the pending
+ * table is full, or no slot is free.
  */
 uint32_t *cell_cache_claim(struct cell_class *k, struct cell_cache_worker *w,
                            const struct cell_key *key, bool spill);

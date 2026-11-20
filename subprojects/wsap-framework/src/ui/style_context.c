@@ -252,8 +252,8 @@ static struct css_element *element_list_items(struct css_element_list *list)
     return list->heap ? list->heap : list->stack;
 }
 
-/* Collects `widget` and its ancestors, root first. Returns false when the
-   tree is deeper than the list can hold. */
+/* Collects `widget` and its ancestors, root first. Returns false when memory
+   is short. */
 static bool element_list_fill(struct css_element_list *list,
                               const struct ui_widget *widget)
 {
@@ -308,8 +308,9 @@ struct part_table {
 };
 
 static struct part_table part_table;
-/* A stale handle can point at the wrong name after a restart of the table, or
- * abort ui_part_name(). The epoch lets each cache of handles see the restart. */
+/* A stale handle can name the wrong part after a restart of the table, or
+ * make ui_part_name() abort. The epoch lets each cache of handles see the
+ * restart. */
 static uint32_t part_epoch = 1;
 
 static uint32_t part_hash(const char *name)
