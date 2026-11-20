@@ -1,6 +1,8 @@
 test_c_args = ['-UNDEBUG']
 # The framework tests live in the `wsap-framework` subproject. These cases
-# cover the terminal, the app, and the terminal grid renderer.
+# cover the terminal, the app, and the terminal grid renderer. They also hold
+# the framework tests that need the term core or the app: font and glyph
+# interning over term cells, Unicode parity, and the shipped themes.
 test_cases = [
     ['selection-test', files('terminal/selection_test.c'), [terminal_lib], deps],
     ['terminal-input-test', files('terminal/input_test.c'), [app_lib], deps],
@@ -45,7 +47,28 @@ test_cases = [
     ['render-damage-test', files('render/damage_test.c'), [render_term_lib], deps],
     ['render-incremental-test', files('render/incremental_test.c'), [render_term_lib], deps],
     ['render-cpu-canvas-test', files('render/cpu_canvas_test.c'), [render_term_lib], deps],
+    ['resize-alloc-test', files('render/resize_alloc_test.c'), [render_term_lib], deps],
+    ['window-compose-test', files('render/compose_test.c'), [render_term_lib], deps],
+    font_backend == 'coretext'
+        ? ['font-coretext-test', files('render/coretext_test.m'), [render_term_lib], deps]
+        : ['font-test', files('render/font_test.c'), [render_term_lib], deps],
+    ['glyph-intern-test', files('render/glyph_intern_test.c'), [render_term_lib], deps],
+    ['unicode-parity-test', files('terminal/unicode_parity_test.c'), [terminal_lib], deps],
+    ['window-debug-server-test', files('app/debug_server_test.c'), [app_lib], deps],
+    ['ui-tabbar-test', files('app/tabs/tabbar_test.c'), [app_lib], deps],
+    ['ui-tab-preview-test', files('app/tabs/tab_preview_test.c'), [app_lib], deps],
+    ['look-test', files('app/look_test.c'), [app_lib], deps],
 ]
+
+if system == 'darwin'
+    test(
+        'macos-signing-test',
+        python,
+        args: files('tools/macos_signing_test.py'),
+        suite: ['unit'],
+        timeout: 120,
+    )
+endif
 
 if backend == 'wayland'
     wayland_scanner = find_program('wayland-scanner', native: true)
@@ -73,6 +96,11 @@ test(
 # Tests that call uninstrumented system libraries, such as fontconfig or the
 # system yyjson. The msan setup skips them: MSan reports false positives there.
 extlib_tests = [
+    'font-test',
+    'font-coretext-test',
+    'resize-alloc-test',
+    'ui-tab-preview-test',
+    'window-debug-server-test',
     'render-test',
     'render-plan-test',
     'render-decor-test',
@@ -107,6 +135,8 @@ extlib_tests = [
 ]
 
 isa_tests = [
+    'font-test',
+    'font-coretext-test',
     'render-test',
     'render-plan-test',
     'render-decor-test',
@@ -118,7 +148,8 @@ isa_tests = [
 ]
 
 standalone_tests = [
-    'pty-fast-test', 'render-test',
+    'pty-fast-test', 'render-test', 'font-test', 'font-coretext-test',
+    'resize-alloc-test', 'window-compose-test',
     'render-plan-test', 'render-decor-test', 'render-cache-test',
     'render-raster-test', 'render-damage-test', 'render-incremental-test',
 ]
@@ -126,9 +157,10 @@ standalone_tests = [
 # The window cadence test drives a real Cocoa window and its Metal layer. It
 # builds on its own, because the link group renames main for C sources only.
 if system == 'darwin'
+    test_cases += [['window-pacing-test', files('app/window_pacing_test.m'), [app_lib], deps]]
     test_cases += [['render-gpu-slot-test', files('render/gpu_slot_test.m'), [render_term_lib], deps]]
     test_cases += [['metal-render-test', files('render/metal_render_test.m'), [render_term_lib], deps]]
-    standalone_tests += ['render-gpu-slot-test']
+    standalone_tests += ['window-pacing-test', 'render-gpu-slot-test']
 endif
 if has_vulkan
     test_cases += [['vulkan-render-test', files('render/vulkan_render_test.c'), [render_term_lib], deps]]
@@ -273,6 +305,192 @@ if get_option('integration_tests')
     integration_env = environment()
     integration_env.set('BIN', program.full_path())
     integration_env.set('WSAP_NO_PRELOAD', '0')
+    if backend == 'wayland'
+        vptr_xml = files('helpers/wlr-virtual-pointer-unstable-v1.xml')
+        vptr = executable(
+            'virtual-pointer',
+            'helpers/virtual_pointer.c',
+            custom_target(
+                'wlr-virtual-pointer-client-header',
+                output: 'wlr-virtual-pointer-unstable-v1-client-protocol.h',
+                input: vptr_xml,
+                command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+            ),
+            custom_target(
+                'wlr-virtual-pointer-code',
+                output: 'wlr-virtual-pointer-unstable-v1-protocol.c',
+                input: vptr_xml,
+                command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+            ),
+            dependencies: dependency('wayland-client'),
+        )
+        test(
+            'tab-drag-test',
+            bash,
+            args: files('app/integration/tab_drag_test.sh'),
+            depends: [program, preload, vptr],
+            env: {
+                'BIN': program.full_path(),
+                'VPTR': vptr.full_path(),
+                'WSAP_NO_PRELOAD': '0',
+            },
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 120,
+        )
+        vkbd_xml = files('helpers/virtual-keyboard-unstable-v1.xml')
+        vkbd = executable(
+            'virtual-keyboard',
+            'helpers/virtual_keyboard.c',
+            custom_target(
+                'virtual-keyboard-client-header',
+                output: 'virtual-keyboard-unstable-v1-client-protocol.h',
+                input: vkbd_xml,
+                command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+            ),
+            custom_target(
+                'virtual-keyboard-code',
+                output: 'virtual-keyboard-unstable-v1-protocol.c',
+                input: vkbd_xml,
+                command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+            ),
+            dependencies: [dependency('wayland-client'), dependency('xkbcommon')],
+        )
+        foreach case : ['repeat', 'paste']
+            test(
+                case == 'repeat' ? 'key-repeat-test' : 'clipboard-paste-test',
+                python,
+                args: [files('app/integration/display_wake_test.py'), case],
+                depends: [program, vkbd],
+                env: {'BIN': program.full_path(), 'VKEYBOARD': vkbd.full_path()},
+                suite: 'integration',
+                is_parallel: false,
+                timeout: 60,
+            )
+        endforeach
+        test(
+            'frame-pacing-test',
+            python,
+            args: files('app/integration/frame_pacing_test.py'),
+            depends: [program],
+            env: {'BIN': program.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 60,
+        )
+        test(
+            'popup-dismiss-test',
+            python,
+            args: files('app/integration/popup_dismiss_test.py'),
+            depends: [program, vptr],
+            env: {'BIN': program.full_path(), 'VPOINTER': vptr.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 60,
+        )
+        test(
+            'popup-submenu-preview-test',
+            python,
+            args: files('app/integration/popup_submenu_preview_test.py'),
+            depends: [program, vptr],
+            env: {'BIN': program.full_path(), 'VPOINTER': vptr.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 60,
+        )
+        test(
+            'popup-scale-test',
+            python,
+            args: files('app/integration/popup_scale_test.py'),
+            depends: [program, vptr],
+            env: {'BIN': program.full_path(), 'VPOINTER': vptr.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 60,
+        )
+        test(
+            'popup-key-test',
+            python,
+            args: files('app/integration/popup_key_test.py'),
+            depends: [program, vptr],
+            env: {'BIN': program.full_path(), 'VPOINTER': vptr.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 120,
+        )
+        test(
+            'popup-nested-close-test',
+            python,
+            args: files('app/integration/popup_nested_close_test.py'),
+            depends: [program, vptr],
+            env: {'BIN': program.full_path(), 'VPOINTER': vptr.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 120,
+        )
+        test(
+            'tab-rows-test',
+            python,
+            args: files('app/integration/tab_rows_test.py'),
+            depends: [program],
+            env: {'BIN': program.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 60,
+        )
+        test(
+            'exit-test',
+            python,
+            args: files('app/integration/exit_test.py'),
+            depends: [program],
+            env: {'BIN': program.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 60,
+        )
+        test(
+            'debug-half-close-test',
+            python,
+            args: files('app/integration/debug_half_close_test.py'),
+            depends: [program],
+            env: {'BIN': program.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 60,
+        )
+        test(
+            'display-lost-test',
+            python,
+            args: files('app/integration/display_lost_test.py'),
+            depends: [program],
+            env: {'BIN': program.full_path()},
+            suite: 'integration',
+            is_parallel: false,
+            timeout: 60,
+        )
+        if has_vulkan
+            test(
+                'x11-vulkan-test',
+                python,
+                args: files('app/integration/x11_vulkan_test.py'),
+                depends: [program],
+                env: {'BIN': program.full_path()},
+                suite: 'integration',
+                is_parallel: false,
+                timeout: 60,
+            )
+        endif
+    endif
+    test(
+        'accessibility-atspi-test',
+        python,
+        args: files('app/integration/accessibility_test.py'),
+        depends: [program],
+        env: {'BIN': program.full_path()},
+        suite: 'integration',
+        is_parallel: false,
+        timeout: 120,
+    )
     test(
         'pty-order-test',
         python,

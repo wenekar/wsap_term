@@ -49,6 +49,7 @@ wsap_vtcore_tests = [
   ['api-args-test', files('api_args_test.c'), [], []],
   ['public-helpers-test', files('public_helpers_test.c'), [], []],
   ['snapshot-lifetime-test', files('snapshot_lifetime_test.c'), [], []],
+  ['color-test', files('color_test.c'), [m_dep], []],
 ]
 test_helpers_inc = include_directories('helpers')
 
