@@ -256,7 +256,8 @@ static inline WSAP_VTCORE_ALWAYS_INLINE uint64_t convert_word(uint64_t in)
     if (WSAP_VTCORE_LIKELY((in & fast_mask) == 0))
         return in | (1ull << 48);
 
-    const uint64_t keep = 0xFFFFFFFFu | ((uint64_t)(uint16_t)~(CELL_WIDE | CELL_TRAIL | CELL_WRAP_PAD) << 32);
+    // A wrap pad keeps its flag: CELL_WRAP_PAD is WSAP_VTCORE_ATTR_WRAP_PAD.
+    const uint64_t keep = 0xFFFFFFFFu | ((uint64_t)(uint16_t)~(CELL_WIDE | CELL_TRAIL) << 32);
     const uint64_t ext = (uint64_t)(WSAP_VTCORE_ATTR_BLINK | WSAP_VTCORE_ATTR_CONCEAL) << 32;
     uint64_t wide = (in >> 39) & 1, trail = (in >> 40) & 1;
     uint64_t width = trail ? 0 : (1 + wide);
@@ -311,7 +312,7 @@ static inline WSAP_VTCORE_ALWAYS_INLINE bool convert_cell(struct arena_out *a, c
         .text = text,
         .fg = c->fg,
         .bg = c->bg,
-        .attrs = (uint16_t)((f & ~(CELL_WIDE | CELL_TRAIL | CELL_WRAP_PAD)) |
+        .attrs = (uint16_t)((f & ~(CELL_WIDE | CELL_TRAIL)) |
                             ((c->pad >> CELL_EXT_ATTR_SHIFT) &
                              (WSAP_VTCORE_ATTR_BLINK | WSAP_VTCORE_ATTR_CONCEAL))),
         .width = (f & CELL_TRAIL) ? 0 : (f & CELL_WIDE) ? 2 : 1,
@@ -565,7 +566,7 @@ static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, c
     }
     if (has_sizes || s->has_sizes || p->all) {
         for (int y = 0; y < rows; y++) {
-            uint8_t size = (uint8_t)(p->sizes[y] >> RF_LINE_SHIFT);
+            uint8_t size = p->sizes[y];
             if (p->all || size != s->row_size[y])
                 changed = true;
             s->row_size[y] = size;
@@ -601,12 +602,14 @@ static void apply(struct wsap_vtcore_snapshot *s, const struct wsap_vtcore *t, c
         s->view.version++;
 }
 
-static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, struct wsap_vtcore *t)
+static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, struct wsap_vtcore *t,
+                                              bool live)
 {
     if (!s || !t)
         return false;
     int cols = t->cols, rows = t->rows;
     bool ok = false;
+    bool hide_anchor = false;
     bool resized = s->view.size.x != cols || s->view.size.y != rows;
     bool all = resized || s->source != t->serial;
     int scrolled = 0;
@@ -642,6 +645,11 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
             t->view.last_cells = t->hist.lines ? wsap_vtcore_hist_line_cells(&t->hist, hist_end_id(&t->hist) - 1) : 0;
         }
     }
+    // A live copy reads the screen rows as the view shows them at offset
+    // zero. The anchor comes back at the end, so the view does not move.
+    hide_anchor = live && t->view.anchor.active;
+    if (hide_anchor)
+        t->view.anchor.active = false;
     wsap_vtcore_screen_view_row_keys(t, new_keys, sizes);
 
     // Find a scroll. Compare each new key with the old key k rows lower.
@@ -767,6 +775,8 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
     ok = true;
 
 done:
+    if (hide_anchor)
+        t->view.anchor.active = true;
     return ok;
 }
 
@@ -775,7 +785,17 @@ bool wsap_vtcore_snapshot_update(struct wsap_vtcore_snapshot *s, struct wsap_vtc
     if (!s || !t)
         return false;
     wsap_vtcore_write_begin(t);
-    bool ok = wsap_vtcore_snapshot_update_inner(s, t);
+    bool ok = wsap_vtcore_snapshot_update_inner(s, t, false);
+    wsap_vtcore_write_end(t);
+    return ok;
+}
+
+bool wsap_vtcore_snapshot_update_live(struct wsap_vtcore_snapshot *s, struct wsap_vtcore *t)
+{
+    if (!s || !t)
+        return false;
+    wsap_vtcore_write_begin(t);
+    bool ok = wsap_vtcore_snapshot_update_inner(s, t, true);
     wsap_vtcore_write_end(t);
     return ok;
 }
@@ -803,7 +823,14 @@ enum wsap_vtcore_line_size wsap_vtcore_snapshot_row_size(const struct wsap_vtcor
 {
     if (!s || y < 0 || y >= s->view.size.y)
         return WSAP_VTCORE_LINE_SINGLE;
-    return (enum wsap_vtcore_line_size)s->row_size[y];
+    return (enum wsap_vtcore_line_size)((s->row_size[y] & RF_LINE_SIZE) >> RF_LINE_SHIFT);
+}
+
+bool wsap_vtcore_snapshot_row_wrapped(const struct wsap_vtcore_snapshot *s, int y)
+{
+    if (!s || y < 0 || y >= s->view.size.y)
+        return false;
+    return (s->row_size[y] & ROW_FLAG_WRAPPED) != 0;
 }
 
 const wsap_vtcore_color *wsap_vtcore_snapshot_row_underline_colors(const struct wsap_vtcore_snapshot *s, int y)

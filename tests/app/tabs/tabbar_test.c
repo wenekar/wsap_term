@@ -9,7 +9,8 @@
 #include "paint/scene.h"
 #include "ui/ui.h"
 #include "ui/widget_ops.h"
-#include "app/tabs/tabbar.h"
+#include "app/style.h"
+#include "ui/widgets/tabbar.h"
 #include <wsap_vtcore/unicode/utf8.h>
 
 #ifdef __APPLE__
@@ -79,27 +80,19 @@ static bool on_action(struct ui_widget *source, const struct ui_action *action,
     return true;
 }
 
-/* The tab bar is an app widget, so the app stylesheet holds its rules. */
-static struct css_sheet app_sheet;
-
-static const struct css_sheet *app_rules(void)
-{
-    if (!app_sheet.rule_count) {
-        css_init_default(&app_sheet);
-        assert(css_parse_app(&app_sheet));
-    }
-    return &app_sheet;
-}
-
 static void setup_with(struct fixture *f, const struct css_sheet *sheet,
                        struct vector2i viewport, struct vector2i origin)
 {
     *f = (struct fixture){ .origin = origin };
     ui_widget_init(&f->root, &ROOT_OPS, f);
     ui_tabbar_init(&f->tb);
+    /* The app names the fallback title and the shortcut key of the platform.
+       The tab bar holds no default text. */
+    ui_tabbar_set_empty_title(&f->tb, "shell");
+    ui_tabbar_set_shortcut_prefix(&f->tb, TAB_BADGE);
     assert(ui_widget_add_child(&f->root, ui_tabbar_widget(&f->tb)));
     ui_widget_set_action_handler(ui_tabbar_widget(&f->tb), on_action, f);
-    ui_surface_set_sheet(&f->surface, sheet ? sheet : app_rules());
+    ui_surface_set_sheet(&f->surface, sheet ? sheet : app_style_sheet());
     ui_surface_set_scale(&f->surface, SCALE);
     ui_surface_set_root(&f->surface, &f->root);
     ui_surface_resize(&f->surface, viewport);
@@ -362,8 +355,7 @@ static bool near(int a, int b)
 static void css_theme_drives_layout_and_scene(void)
 {
     struct css_sheet sheet = {0};
-    css_init_default(&sheet);
-    assert(css_parse_app(&sheet));
+    assert(css_sheet_append(&sheet, app_style_sheet()));
     assert(css_parse(&sheet,
         ".tab-bar { height: 24px; padding: 2px 6px; gap: 4px;"
         " background: #101820; border-color: #304050; }"
@@ -544,7 +536,9 @@ static void close_hover_crossfade_is_visible(void)
     motion(&f, center(close_rect(&f, 0)), 1000);
     assert(last(&f, UI_ACTION_HIGHLIGHT)->index == 0);
     assert(tick(&f, 1075));
-    assert(!tick(&f, 1200));
+    /* The close mark crossfades and the tab background fades. */
+    assert(tick(&f, 1200));
+    assert(!tick(&f, 1300));
     scene = build(&f);
     assert(find_text(scene, CLOSE_MARK));
     assert(!find_text(scene, TAB_BADGE "1"));
@@ -553,11 +547,74 @@ static void close_hover_crossfade_is_visible(void)
     motion(&f, (struct vector2i){ .x = 100, .y = 200 }, 2000);
     assert(last(&f, UI_ACTION_HIGHLIGHT)->index == -1);
     assert(tick(&f, 2075));
-    assert(!tick(&f, 2200));
+    assert(tick(&f, 2200));
+    assert(!tick(&f, 2300));
     scene = build(&f);
     assert(find_text(scene, TAB_BADGE "1"));
     assert(!find_text(scene, CLOSE_MARK));
     teardown(&f);
+}
+
+/* The hover color of a tab fades in over the transition-duration of the tab
+ * part. */
+static void tab_hover_fades_over_the_transition(void)
+{
+    struct css_sheet sheet = {0};
+    assert(css_parse(&sheet,
+        ".tab-bar { height: 24px; padding: 4px; gap: 4px; }"
+        ".tab { background: #202020; transition-duration: 200ms; }"
+        ".tab:hover { background: #E0E0E0; }"));
+    struct fixture f;
+    setup_with(&f, &sheet, (struct vector2i){ .x = 400, .y = 100 },
+               (struct vector2i){0});
+    show(&f, 2, 0);
+
+    motion(&f, center(tab_rect(&f, 1)), 1000);
+    /* The fade asks for the next frame. */
+    assert(tick(&f, 1000));
+    const struct ui_scene *scene = build(&f);
+    assert(!scene_has_color(scene, 0xFFE0E0E0));
+
+    /* Halfway, the tab paints a color between the two. */
+    assert(tick(&f, 1100));
+    scene = build(&f);
+    bool blended = false;
+    for (int i = 0; i < scene->n_ops; i++) {
+        uint32_t c = scene->ops[i].color;
+        if (scene->ops[i].kind != UI_SCENE_OP_ROUNDED_RECT ||
+            (c >> 24) != 0xFF)
+            continue;
+        uint32_t r = (c >> 16) & 0xFF;
+        if (r > 0x20 && r < 0xE0)
+            blended = true;
+    }
+    assert(blended);
+
+    /* The fade ends at the duration. */
+    assert(!tick(&f, 1200));
+    scene = build(&f);
+    assert(scene_has_color(scene, 0xFFE0E0E0));
+
+    /* A tab that the pointer leaves fades back over the same duration. The
+     * background must not snap to the idle color, so the tab keeps a color
+     * between the hover color and the idle color. */
+    struct rect2i hot = tab_rect(&f, 1);
+    motion(&f, (struct vector2i){ .x = 2, .y = 90 }, 1200);
+    assert(tick(&f, 1200));
+    assert(tick(&f, 1300));
+    scene = build(&f);
+    uint32_t fresh = 0;
+    for (int i = 0; i < scene->n_ops; i++) {
+        const struct ui_scene_op *op = &scene->ops[i];
+        if (op->kind == UI_SCENE_OP_ROUNDED_RECT &&
+            rect2i_contains(op->rect, (struct vector2i){
+                .x = hot.x + hot.width / 2, .y = hot.y + hot.height / 2 }))
+            fresh = op->color;
+    }
+    uint32_t red = (fresh >> 16) & 0xFF;
+    assert(red > 0x20 && red < 0xE0);
+    teardown(&f);
+    css_sheet_clear(&sheet);
 }
 
 static void hover_and_active_styling_in_scene(void)
@@ -571,6 +628,8 @@ static void hover_and_active_styling_in_scene(void)
     motion(&f, center(tab_rect(&f, 1)), 1000);
     assert(f.n_log == 1 && f.log[0].kind == UI_ACTION_HIGHLIGHT &&
            f.log[0].index == 1);
+    /* The hover color fades in over the 300 ms of the default sheet. */
+    assert(!tick(&f, 1300));
 
     const struct ui_scene *scene = build(&f);
     assert(scene_has_color(scene, 0xFF45475Au));
@@ -1095,7 +1154,7 @@ static void detach_drag_chip_bounds_test(void)
     setup_with(&f, NULL, (struct vector2i){ .x = 1000, .y = 700 },
                (struct vector2i){0});
     const struct ui_tab_label labels[] = {
-        {.text = "/mnt/HDD/GitHub/clernen_pi - fish", .active = true},
+        {.text = "/home/berke/src/clernen_pi - fish", .active = true},
         {.text = "tab1", .active = false},
         {.text = "tab2", .active = false},
     };
@@ -1413,7 +1472,7 @@ static void chrome_glyphs_are_vertically_centered(void)
     assert(lint(&f) == 0);
 
     motion(&f, center(close), 1000);
-    assert(!tick(&f, 1200));
+    assert(!tick(&f, 1300));
     scene = build(&f);
     const struct ui_scene_op *mark = find_text(scene, CLOSE_MARK);
     assert(mark);
@@ -1904,7 +1963,8 @@ static void press_ripple_ticks_until_done_and_uses_css(void)
     struct css_sheet sheet = {0};
     assert(css_parse(&sheet,
         ".tab-bar { height: 24px; padding: 4px; gap: 4px; }"
-        ".tab { ripple-color: #11223344; transition-duration: 200ms; }"));
+        ".tab { ripple-color: #11223344; ripple-duration: 200ms;"
+        "        transition-duration: 900ms; }"));
     struct fixture f;
     setup_with(&f, &sheet, (struct vector2i){ .x = 400, .y = 100 },
                (struct vector2i){0});
@@ -1986,9 +2046,9 @@ static void long_title_ends_with_a_marker(void)
     struct fixture f;
     setup(&f, 2, 400);
     struct ui_tab_label labels[] = {
-        { .text = "/mnt/HDD/GitHub/terminal_proj/wsap_term - fish",
+        { .text = "/home/berke/src/terminal_proj/wsap_term - fish",
           .active = true },
-        { .text = "/mnt/HDD/GitHub/terminal_proj/wsap_term - vim",
+        { .text = "/home/berke/src/terminal_proj/wsap_term - vim",
           .active = false },
     };
     set_tabs(&f, labels, 2);
@@ -2083,10 +2143,127 @@ static void hovered_tab_clears_on_tab_mutations_test(void)
     teardown(&f);
 }
 
+/* The tab bar shows the empty title that the caller sets. With no empty title,
+ * an empty label paints no title. */
+static void empty_title_is_caller_supplied(void)
+{
+    struct fixture f;
+    setup(&f, 2, 400);
+    set_tabs(&f, NULL, 2);
+    assert(find_text(build(&f), "shell"));
+
+    ui_tabbar_set_empty_title(&f.tb, NULL);
+    assert(!find_text(build(&f), "shell"));
+
+    ui_tabbar_set_empty_title(&f.tb, "untitled");
+    assert(find_text(build(&f), "untitled"));
+    teardown(&f);
+}
+
+static bool drag_event(struct fixture *f, enum ui_event_kind kind,
+                      struct vector2i pos)
+{
+    const char *mimes[1] = { "text/uri-list" };
+    struct ui_drag_event drag = {
+        .mimes = mimes,
+        .mime_count = 1,
+        .pos = pos,
+    };
+    struct ui_event event = ui_event_drag(kind, &drag, 100);
+    bool handled = ui_widget_event(ui_tabbar_widget(&f->tb), &event);
+    ui_surface_prepare(&f->surface);
+    return handled;
+}
+
+/* A drag from outside the app marks the insert position between two tabs.
+ * The mark moves with the pointer, and a leave removes it. */
+static void drag_mark_follows_the_pointer_test(void)
+{
+    struct fixture f;
+    setup(&f, 3, 900);
+    struct rect2i t0 = tab_rect(&f, 0);
+    struct rect2i t1 = tab_rect(&f, 1);
+    struct vector2i p0 = at(t0, t0.width / 4, t0.height / 2);
+    assert(drag_event(&f, UI_EVENT_DRAG_ENTER, p0));
+    const struct ui_drop_indicator *mark = ui_tabbar_drop_indicator(&f.tb);
+    assert(mark);
+    assert(mark->mark == UI_DROP_MARK_TAB);
+    assert(mark->rect.height == t0.height);
+    assert(mark->rect.width > 0);
+    assert(ui_tabbar_drop_slot(&f.tb) == 0);
+    assert(mark->rect.x == t0.x);
+    /* The app sheet gives the mark its width. */
+    assert(mark->rect.width == 3);
+    int first_x = mark->rect.x;
+
+    /* The left quarter of the second tab inserts before that tab. */
+    struct vector2i p1 = at(t1, t1.width / 4, t1.height / 2);
+    assert(drag_event(&f, UI_EVENT_DRAG_OVER, p1));
+    mark = ui_tabbar_drop_indicator(&f.tb);
+    assert(mark && mark->mark == UI_DROP_MARK_TAB);
+    assert(ui_tabbar_drop_slot(&f.tb) == 1);
+    assert(mark->rect.x != first_x);
+    assert(mark->rect.x <= t1.x && mark->rect.x + mark->rect.width >= t1.x);
+
+    /* The mark is in the scene in the accent color of the sheet. */
+    assert(ui_surface_build_scene(&f.surface, &f.scene));
+    bool painted = false;
+    for (int i = 0; i < f.scene.n_ops; i++) {
+        const struct ui_scene_op *op = &f.scene.ops[i];
+        if (op->kind == UI_SCENE_OP_RECT &&
+            rect2i_eq(op->rect, mark->rect) && op->color == 0xFF89B4FAu)
+            painted = true;
+    }
+    assert(painted);
+    struct rect2i part;
+    assert(find_part(&f, "drop-mark", -1, &part));
+    assert(rect2i_eq(part, mark->rect));
+    assert(lint(&f) == 0);
+
+    assert(drag_event(&f, UI_EVENT_DRAG_LEAVE, p1));
+    assert(ui_tabbar_drop_indicator(&f.tb) == NULL);
+    assert(ui_tabbar_drop_slot(&f.tb) == -1);
+    teardown(&f);
+}
+
+/* A drop on the bar removes the mark and goes on to the parent. The bar has
+ * no drop payload handler, so it does not take the drop. */
+static void drop_clears_the_mark_and_passes_to_the_parent_test(void)
+{
+    struct fixture f;
+    setup(&f, 3, 900);
+    struct rect2i t1 = tab_rect(&f, 1);
+    struct vector2i p = at(t1, t1.width / 4, t1.height / 2);
+    assert(drag_event(&f, UI_EVENT_DRAG_OVER, p));
+    assert(ui_tabbar_drop_indicator(&f.tb));
+    clear_log(&f);
+    assert(!drag_event(&f, UI_EVENT_DROP, p));
+    assert(ui_tabbar_drop_indicator(&f.tb) == NULL);
+    assert(ui_tabbar_drop_slot(&f.tb) == -1);
+    teardown(&f);
+}
+
+/* A drop at the center of the first tab on a bar that reserves the incoming
+ * slot inserts before that tab. The dragged tab has left the bar, so one tab
+ * remains. */
+static void drop_at_a_tab_center_inserts_before_it_test(void)
+{
+    struct fixture f;
+    setup(&f, 2, 700);
+    show(&f, 2, 0);
+    struct rect2i t0 = tab_rect(&f, 0);
+    struct vector2i p = at(t0, t0.width / 2, t0.height / 2);
+    show(&f, 1, 0);
+    ui_tabbar_set_external_drag(&f.tb, true, p);
+    assert(ui_tabbar_external_slot(&f.tb) == 0);
+    teardown(&f);
+}
+
 int main(void)
 {
     title_change_damages_only_its_tab();
     labels_grow_and_shrink();
+    empty_title_is_caller_supplied();
     long_title_ends_with_a_marker();
     css_theme_drives_layout_and_scene();
     tabbar_edge_cases();
@@ -2094,6 +2271,7 @@ int main(void)
     tabbar_keyboard_navigation_test();
     tabbar_key_requests_frame_test();
     close_hover_crossfade_is_visible();
+    tab_hover_fades_over_the_transition();
     hover_and_active_styling_in_scene();
     height_scales_with_dpi();
     restyled_bar_repaints_test();
@@ -2106,6 +2284,9 @@ int main(void)
     tab_actions_stay_out_of_the_core_kinds();
     sideways_exit_detaches_test();
     external_drag_reveals_single_tab_target_test();
+    drag_mark_follows_the_pointer_test();
+    drop_clears_the_mark_and_passes_to_the_parent_test();
+    drop_at_a_tab_center_inserts_before_it_test();
     incoming_tab_has_translucent_drop_preview();
     bar_away_from_the_origin_uses_surface_space();
     tabbar_build_drag_preview_test();

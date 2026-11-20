@@ -3,7 +3,6 @@
 #include <string.h>
 
 #include "app/tabs/internal.h"
-#include "terminal/drop.h"
 #include "ui/surface.h"
 #include "util/json.h"
 
@@ -66,8 +65,9 @@ static void root_layout(struct ui_widget *widget, struct rect2i bounds)
 static void root_prepare(struct ui_widget *widget)
 {
     struct app_tabs *tabs = root_tabs(widget);
-    struct terminal *content = app_tabs_active_entry(tabs);
-    uint32_t bg = content ? terminal_background(content)
+    const struct app_tab *entry = app_tabs_entry(tabs, tabs->active);
+    uint32_t bg = entry && entry->content && entry->ops->background
+        ? entry->ops->background(entry->content)
         : tabs->spec.theme ? tabs->spec.theme->bg : 0;
     ui_tabbar_set_bg_color(&tabs->tabbar, bg);
     if (tabs->window)
@@ -79,33 +79,28 @@ static bool root_event(struct ui_widget *widget, const struct ui_event *event)
     struct app_tabs *tabs = root_tabs(widget);
     switch (event->kind) {
     case UI_EVENT_PASTE: {
-        struct terminal *content = app_tabs_active_entry(tabs);
-        if (content)
-            terminal_paste(content, event->data.text.data,
-                           event->data.text.len);
+        const struct app_tab *entry = app_tabs_entry(tabs, tabs->active);
+        if (entry && entry->content && entry->ops->paste)
+            entry->ops->paste(entry->content, event->data.text.data,
+                              event->data.text.len);
         return true;
     }
     case UI_EVENT_DROP_FILES: {
-        struct terminal *content = app_tabs_active_entry(tabs);
-        if (!content)
-            return true;
-        char *text = terminal_quote_uri_list(event->data.text.data,
-                                             event->data.text.len);
-        if (text) {
-            terminal_paste(content, text, strlen(text));
-            free(text);
-        }
+        const struct app_tab *entry = app_tabs_entry(tabs, tabs->active);
+        if (entry && entry->content && entry->ops->drop_files)
+            entry->ops->drop_files(entry->content, event->data.text.data,
+                                   event->data.text.len);
         return true;
     }
     case UI_EVENT_SHORTCUT:
         app_tabs_shortcut(tabs->window,
-                          (enum input_shortcut)event->data.shortcut.action);
+                          (input_command_id)event->data.shortcut.action);
         return true;
     case UI_EVENT_WINDOW_FOCUS: {
         bool focused = event->data.window_focused;
-        struct terminal *content = app_tabs_active_entry(tabs);
-        if (content)
-            terminal_focus(content, focused);
+        const struct app_tab *entry = app_tabs_entry(tabs, tabs->active);
+        if (entry && entry->content && entry->ops->focus)
+            entry->ops->focus(entry->content, focused);
         if (!focused)
             ui_palette_close(&tabs->palette);
         return true;
@@ -142,6 +137,13 @@ static void widgets_init(struct app_tabs *tabs)
 {
     ui_widget_init(&tabs->root, &TABS_ROOT_OPS, NULL);
     ui_tabbar_init(&tabs->tabbar);
+    ui_tabbar_set_empty_title(&tabs->tabbar, "shell");
+    /* The shortcut badge names the platform key that selects a tab. */
+#ifdef __APPLE__
+    ui_tabbar_set_shortcut_prefix(&tabs->tabbar, "\xe2\x8c\x98");
+#else
+    ui_tabbar_set_shortcut_prefix(&tabs->tabbar, "^");
+#endif
     ui_tab_preview_init(&tabs->preview);
     ui_tab_preview_set_managed_anchor(&tabs->preview, true);
     ui_palette_init(&tabs->palette);
@@ -200,11 +202,8 @@ static void op_debug_state(struct window *w, struct json_writer *j)
     json_key(j, "tabbar_height"); json_int(j, app_tabs_bar_height(w));
     json_key(j, "tab_titles");
     json_arr_begin(j);
-    for (int i = 0; i < tabs->count; i++) {
-        struct terminal *content = app_tabs_content(tabs, i);
-        if (content)
-            json_str(j, terminal_title(content));
-    }
+    for (int i = 0; i < tabs->count; i++)
+        json_str(j, app_tab_title(app_tabs_entry(tabs, i)));
     json_arr_end(j);
     json_key(j, "palette_open"); json_bool(j, ui_palette_is_open(&tabs->palette));
     if (ui_palette_is_open(&tabs->palette)) {
@@ -234,7 +233,8 @@ static void op_destroy(struct window *w)
 
 bool app_tabs_mount(struct window *w, const struct app_tabs_spec *spec)
 {
-    if (!w || !spec || !spec->config || !spec->model || window_ui_of(w))
+    if (!w || !spec || !spec->create_content || !spec->content_ops ||
+        !spec->model || window_ui_of(w))
         return false;
     struct app_tabs *tabs = calloc(1, sizeof(*tabs));
     if (!tabs)

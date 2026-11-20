@@ -1384,9 +1384,16 @@ static inline uint64_t cheap_rows(uint64_t cells, uint64_t wide, int cols)
     return rows_narrow(cols == 1 ? cells - wide : cells, cols);
 }
 
+/* Counts the closed line at the end of the history. The cells alone give a
+ * lower bound for a line with wide cells, so the count comes from the walk.
+ * A wrong count moves the rows of every line that follows. */
 static inline void count_closed(struct hist *h, struct hline *first, uint64_t rows)
 {
     if (rows && h->wrap_cols && h->rows_id == hist_end_id(h) - 1) {
+        if (h->wrap_cols > 1 &&
+            (wsap_vtcore_hist_line_flags(h, h->rows_id) &
+             (HLINE_HAS_WIDE | HLINE_HAS_CLUSTER)))
+            rows = (uint64_t)wsap_vtcore_hist_line_rows(h, h->rows_id, h->wrap_cols);
         first->wrap_rows = row_count_byte(rows);
         h->counted_rows += rows;
         h->rows_id++;
@@ -1529,12 +1536,16 @@ void wsap_vtcore_hist_close_open_line(struct hist *h)
     uint64_t rows = first == h->head - 1
                     ? cheap_rows(p->cells, p->wide, cols)
                     : cheap_rows(wsap_vtcore_hist_line_cells(h, id), wsap_vtcore_hist_line_wide(h, id), cols);
-    if (!rows && h->walk_on) {
+    /* The walk of the open line has the exact count of its first rows. Walk
+     * the rest of the line here, so the count of the closed line reads the
+     * walk and does not walk the whole line again. */
+    if (h->walk_on) {
         walk_advance(h);
-        rows = h->walk_rows;
+        if (!rows)
+            rows = h->walk_rows;
     }
-    h->walk_on = false;
     count_closed(h, part(h, first), rows);
+    h->walk_on = false;
 }
 
 static struct hline *open_room(struct hist *h, struct hline *p, size_t text_need,
@@ -2686,8 +2697,9 @@ uint8_t wsap_vtcore_hist_line_flags(const struct hist *h, uint64_t id)
     return flags;
 }
 
-static int line_rows_walk(const struct hist *h, uint64_t first, uint64_t end, int cols)
+static int line_rows_walk(struct hist *h, uint64_t first, uint64_t end, int cols)
 {
+    h->walk_calls++;
     int rows = 1, col = 0;
     for (uint64_t s = first; s < end; s++) {
         const struct hline *p = part(h, s);
@@ -2729,7 +2741,9 @@ int wsap_vtcore_hist_line_rows(const struct hist *h, uint64_t id, int cols)
     if (cells <= (uint64_t)cols ||
         !(wsap_vtcore_hist_line_flags(h, id) & (HLINE_HAS_WIDE | HLINE_HAS_CLUSTER)))
         return (int)rows_narrow(cells, cols);
-    return line_rows_walk(h, first, line_end(h, first), cols);
+    /* The walk count is a test hook, so this read function updates it. The
+     * history object is mutable even when the caller holds a const view. */
+    return line_rows_walk((struct hist *)h, first, line_end(h, first), cols);
 }
 
 static void walk_advance(struct hist *h)
@@ -3183,29 +3197,51 @@ uint64_t wsap_vtcore_hist_line_estimate(const struct hist *h, uint64_t id, int c
             return first->wrap_rows != ROWS_UNKNOWN ? first->wrap_rows :
                    h->exact_rows[line_first(h, id) & h->ring_mask];
     }
+    /* A row of a line with wide cells wastes its last column when the next
+     * glyph does not fit, so rows_narrow() is a lower bound there. A reader
+     * maps a row number back to a segment of the line, so the count is the
+     * walk result. */
+    if (cols > 1 &&
+        (wsap_vtcore_hist_line_flags(h, id) & (HLINE_HAS_WIDE | HLINE_HAS_CLUSTER)))
+        return (uint64_t)wsap_vtcore_hist_line_rows(h, id, cols);
     uint64_t cells = wsap_vtcore_hist_line_cells(h, id);
     if (cols == 1)
         cells -= wsap_vtcore_hist_line_wide(h, id);
     return rows_narrow(cells, cols);
 }
 
+/* Stores the row count of a line as exact. A count of ROWS_UNKNOWN or more
+ * does not fit in wrap_rows, so it goes in the wide table. False means that
+ * the table does not fit in memory and the count stays a computed value. */
+static bool rows_store_exact(struct hist *h, uint64_t id, uint64_t rows)
+{
+    uint64_t seq = line_first(h, id);
+    struct hline *first = part(h, seq);
+    if (rows >= ROWS_UNKNOWN) {
+        if (!h->exact_rows) {
+            h->exact_rows = calloc((size_t)h->ring_mask + 1, sizeof(*h->exact_rows));
+            if (!h->exact_rows) {
+                /* The byte cannot hold this count. Clear the flag and the
+                 * value, so no reader returns the count of the old width. */
+                first->flags &= (uint8_t)~HLINE_ROWS_EXACT;
+                first->wrap_rows = ROWS_UNKNOWN;
+                return false;
+            }
+        }
+        h->exact_rows[seq & h->ring_mask] = (uint32_t)rows;
+    }
+    first->wrap_rows = row_count_byte(rows);
+    first->flags |= HLINE_ROWS_EXACT;
+    return true;
+}
+
 void wsap_vtcore_hist_refine_rows(struct hist *h, uint64_t id, int cols, int rows)
 {
     if (cols != h->wrap_cols || id >= h->rows_id || id < h->base_id)
         return;
-    uint64_t seq = line_first(h, id);
     uint64_t old = wsap_vtcore_hist_line_estimate(h, id, cols);
-    if (rows >= ROWS_UNKNOWN) {
-        if (!h->exact_rows) {
-            h->exact_rows = calloc((size_t)h->ring_mask + 1, sizeof(*h->exact_rows));
-            if (!h->exact_rows)
-                return;
-        }
-        h->exact_rows[seq & h->ring_mask] = (uint32_t)rows;
-    }
-    struct hline *first = part(h, seq);
-    first->flags |= HLINE_ROWS_EXACT;
-    first->wrap_rows = row_count_byte((uint64_t)rows);
+    if (!rows_store_exact(h, id, (uint64_t)rows))
+        return;
     h->counted_rows = h->counted_rows - old + (uint64_t)rows;
 }
 
@@ -3217,11 +3253,8 @@ void wsap_vtcore_hist_prepare_rows(struct hist *h, int cols)
     for (; h->rows_id < stop; h->rows_id++) {
         uint64_t rows = wsap_vtcore_hist_line_estimate(h, h->rows_id, cols);
         struct hline *first = part(h, line_first(h, h->rows_id));
-        first->wrap_rows = row_count_byte(rows);
         first->flags &= (uint8_t)~HLINE_ROWS_EXACT;
-        if (rows < ROWS_UNKNOWN &&
-            (!(wsap_vtcore_hist_line_flags(h, h->rows_id) & HLINE_HAS_WIDE) || cols == 1))
-            first->flags |= HLINE_ROWS_EXACT;
+        rows_store_exact(h, h->rows_id, rows);
         h->counted_rows += rows;
     }
 }
@@ -3235,6 +3268,12 @@ uint64_t wsap_vtcore_hist_estimated_rows(const struct hist *h, int cols)
     for (uint64_t id = first; id < hist_end_id(h); id++)
         total += wsap_vtcore_hist_line_estimate(h, id, cols);
     return total;
+}
+
+/* Test hook: the number of exact row walks of one line since init. */
+uint64_t wsap_vtcore_hist_walk_calls(const struct hist *h)
+{
+    return h ? h->walk_calls : 0;
 }
 
 uint64_t wsap_vtcore_hist_rows(const struct hist *h, int cols)

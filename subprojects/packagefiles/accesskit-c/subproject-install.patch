@@ -1,0 +1,76 @@
+diff --git a/meson.build b/meson.build
+index b055f15..470ea20 100644
+--- a/meson.build
++++ b/meson.build
+@@ -22,6 +22,9 @@ project('accesskit-c',
+         ]
+ )
+ 
++# A parent project links the library statically and installs nothing of it.
++accesskit_install = not meson.is_subproject()
++
+ host_system = host_machine.system()
+ apple_systems = ['darwin', 'ios', 'tvos', 'visionos', 'watchos']
+ non_macos_apple_systems = ['ios', 'tvos', 'visionos', 'watchos']
+@@ -308,7 +311,7 @@ if rustup.found() and cbindgen.found() and clang_format.found()
+     command: [clang_format, '@INPUT@'],
+     capture: true,
+     build_by_default: false,
+-    install: true,
++    install: accesskit_install,
+     install_dir: generated_headers_directory,
+     install_tag: ['generated-headers'],
+   )
+@@ -318,10 +321,12 @@ includes = files(
+     generated_headers_directory / 'accesskit.h'
+ )
+ 
+-install_headers(
+-    includes,
+-    subdir: '@0@'.format(accesskit_c_lib_name),
+-)
++if accesskit_install
++  install_headers(
++      includes,
++      subdir: '@0@'.format(accesskit_c_lib_name),
++  )
++endif
+ 
+ rust_artifacts = custom_target(
+   'accesskit-c',
+@@ -447,7 +452,7 @@ if get_option('default_library') in ['shared', 'both']
+       dependencies: library_dependencies,
+       include_directories: [includeinc],
+       vs_module_defs: symbol_list,
+-      install: true,
++      install: accesskit_install,
+     )
+   else
+     accesskit_c_shared_lib = shared_library(
+@@ -459,7 +464,7 @@ if get_option('default_library') in ['shared', 'both']
+       dependencies: library_dependencies,
+       include_directories: [includeinc],
+       vs_module_defs: symbol_list,
+-      install: true,
++      install: accesskit_install,
+       version: project_version,
+     )
+   endif
+@@ -481,7 +486,7 @@ if get_option('default_library') in ['static', 'both']
+       '@INPUT0@',
+       '@OUTPUT0@'
+     ],
+-    install: true,
++    install: accesskit_install,
+     install_dir: get_option('libdir'),
+     install_tag: ['devel'],
+   )
+@@ -513,7 +518,7 @@ foreach i : library_dependencies_sole
+   endif
+ endforeach
+ 
+-if has_pkgconfig_dependencies
++if has_pkgconfig_dependencies and accesskit_install
+   accesskit_c_pc = pkg.generate(
+     name: 'accesskit-c',
+     filebase: accesskit_c_lib_name,

@@ -225,14 +225,20 @@ uint64_t wsap_vtcore_screen_view_row_key(const struct wsap_vtcore *t, int y)
     return mix64(row->uid ^ ((uint64_t)row->version << 32) ^ mix64(t->serial));
 }
 
-static uint8_t view_row_size(const struct wsap_vtcore *t, int y)
+static uint8_t view_row_flags(const struct wsap_vtcore *t, int y)
 {
     struct hist_view_pos pos;
-    if (wsap_vtcore_hist_view_row_pos(&t->view, &t->hist, t->cols, t->rows, screen_top_line(t), y, &pos))
-        return 0;
+    if (wsap_vtcore_hist_view_row_pos(&t->view, &t->hist, t->cols, t->rows, screen_top_line(t), y, &pos)) {
+        int rows = wsap_vtcore_hist_line_rows(&t->hist, pos.id, t->cols);
+        bool open = pos.id + 1 == hist_end_id(&t->hist) && hist_is_open(&t->hist);
+        bool wrapped = pos.seg + 1 < rows || (open && pos.seg + 1 == rows);
+        return wrapped ? ROW_FLAG_WRAPPED : 0;
+    }
     if (pos.screen_y < 0 || pos.screen_y >= t->rows)
         return 0;
-    return t->scr.slot[phys_row(t, pos.screen_y)].flags & RF_LINE_SIZE;
+    const struct srow *row = &t->scr.slot[phys_row(t, pos.screen_y)];
+    return (uint8_t)((row->flags & RF_LINE_SIZE) |
+                     ((row->flags & RF_WRAPPED) ? ROW_FLAG_WRAPPED : 0));
 }
 
 /* Keep this out of line. Inlined into the snapshot update, it moved the row
@@ -243,7 +249,7 @@ void wsap_vtcore_screen_view_row_keys(const struct wsap_vtcore *t, uint64_t *key
     if (t->view.anchor.active) {
         for (int y = 0; y < t->rows; y++) {
             keys[y] = wsap_vtcore_screen_view_row_key(t, y);
-            sizes[y] = view_row_size(t, y);
+            sizes[y] = view_row_flags(t, y);
         }
         return;
     }
@@ -253,7 +259,8 @@ void wsap_vtcore_screen_view_row_keys(const struct wsap_vtcore *t, uint64_t *key
     for (int y = 0; y < t->rows; y++) {
         const struct srow *row = &t->scr.slot[phys_row(t, y)];
         keys[y] = mix64(row->uid ^ ((uint64_t)row->version << 32) ^ serial_mix);
-        sizes[y] = row->flags & RF_LINE_SIZE;
+        sizes[y] = (uint8_t)((row->flags & RF_LINE_SIZE) |
+                             ((row->flags & RF_WRAPPED) ? ROW_FLAG_WRAPPED : 0));
     }
 }
 

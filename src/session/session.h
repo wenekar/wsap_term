@@ -25,6 +25,8 @@ struct session_host {
 };
 
 struct session_spec {
+    /* The app ID that a log line shows. */
+    const char *app_id;
     const char *command;
     const char *cwd;
     const char *locale;
@@ -37,6 +39,8 @@ struct session_spec {
 };
 
 struct session {
+    /* The app ID that a log line shows. It belongs to the caller. */
+    const char *app_id;
     alignas(64) struct pty_ring ring;
     /* The newline mode of the bytes that the worker reads, and the stream that
      * they came from. */

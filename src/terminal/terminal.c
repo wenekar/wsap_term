@@ -5,6 +5,7 @@
 
 #include "terminal/internal.h"
 #include "platform/platform.h"
+#include "util/app_identity.h"
 #include "util/time.h"
 
 static const char *content_title(const struct terminal *t)
@@ -114,7 +115,10 @@ static bool fit_font(struct terminal *t, int size_pt)
     }
     if (size_pt < 1)
         return false;
-    struct font_instance *fi = font_instance_acquire(size_pt, scale);
+    const struct font_desc desc = {
+        .size = { .pt = size_pt, .scale_120 = scale },
+    };
+    struct font_instance *fi = font_instance_acquire(&desc);
     if (!fi)
         return false;
     font_instance_unref(t->font);
@@ -189,7 +193,9 @@ struct terminal *terminal_create(struct window *window,
     if (px.x <= 0 || px.y <= 0)
         px = default_content_size(window);
     struct vector2i grid = content_grid(terminal_font_metrics(t), px);
+    const struct app_identity *identity = app_identity_current();
     const struct session_spec session_spec = {
+        .app_id = identity ? identity->id : "",
         .command = spec->config->command,
         .cwd = spec->cwd,
         .locale = locale,
@@ -222,16 +228,28 @@ void terminal_destroy(struct terminal *t)
 {
     if (!t)
         return;
-    if (t->view.accessibility_timer && t->loop)
-        yasl_loop_del_timer(t->loop, t->view.accessibility_timer);
     ui_widget_destroy(&t->scrollview.widget);
     session_fini(&t->session);
     font_instance_unref(t->font);
     free(t->menu_theme_items);
-    free(t->view.accessibility_text);
+    if (t->view.accessibility_timer && t->loop)
+        yasl_loop_del_timer(t->loop, t->view.accessibility_timer);
+    wsap_vtcore_snapshot_free(t->view.accessibility_snapshot);
+    free(t->view.accessibility_lines);
     wsap_vtcore_snapshot_free(t->snapshot);
     free(t->applied_font_family);
     free(t);
+}
+
+void *terminal_content_state(const struct terminal *t)
+{
+    return t ? t->content_state : NULL;
+}
+
+void terminal_set_content_state(struct terminal *t, void *state)
+{
+    if (t)
+        t->content_state = state;
 }
 
 void terminal_set_window(struct terminal *t, struct window *window)
@@ -246,12 +264,15 @@ void terminal_set_window(struct terminal *t, struct window *window)
     if (!window && old && window_surface(old))
         yasl_surface_set_text_input(window_surface(old),
                                     &(struct yasl_text_input){0});
-    /* An accessibility timer belongs to the loop of the old window. */
-    if (t->view.accessibility_timer && t->loop) {
-        yasl_loop_del_timer(t->loop, t->view.accessibility_timer);
-        t->view.accessibility_timer = 0;
-        t->view.accessibility_text_valid = false;
-    }
+    /* The document rows belong to the old window. */
+    t->view.accessibility_line_first = 0;
+    t->view.accessibility_line_count = 0;
+    t->view.accessibility_history_length = 0;
+    t->view.accessibility_rows = 0;
+    t->view.accessibility_open_line = false;
+    t->view.accessibility_valid = false;
+    /* The frame clock belongs to the old window. */
+    t->view.accessibility_text_valid = false;
     if (!window)
         return;
     t->loop = window_host(window)->loop;

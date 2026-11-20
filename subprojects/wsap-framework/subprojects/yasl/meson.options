@@ -1,0 +1,8 @@
+option('wayland', type: 'feature', value: 'auto', description: 'Build the Wayland backend.')
+option('tests', type: 'boolean', value: true, description: 'Build and register tests.')
+option('benchmarks', type: 'boolean', value: false, description: 'Build and register benchmarks.')
+option('x11', type: 'feature', value: 'auto', description: 'Build the X11 backend.')
+option('dbus', type: 'feature', value: 'auto', description: 'Use the D-Bus session bus on Linux for notifications and desktop settings.')
+option('integration_tests', type: 'boolean', value: false, description: 'Test windows with Linux display servers or the native macOS display.')
+option('x11_tablet_tests', type: 'boolean', value: false, description: 'Test native pressure drawing with Xorg dummy and inputtest drivers (no tablet hardware required).')
+option('install', type: 'boolean', value: true, description: 'Install the library, the headers, and the pkg-config file.')

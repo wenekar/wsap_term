@@ -86,6 +86,10 @@ enum {
     RF_MARKS = RF_PROMPT | RF_OUTPUT,
 };
 
+/* One byte for each view row holds the RF_LINE_SIZE bits and this flag.
+ * The snapshot keeps the byte, so a reader sees the soft wrap. */
+enum { ROW_FLAG_WRAPPED = 1 };
+
 struct srow {
     struct cell *cells;
     uint8_t *ascii;
@@ -218,6 +222,15 @@ struct wsap_vtcore {
     struct screen spare;
     struct resize_scratch resize;
     struct hist hist;
+    /* The history generation and the stamp that it was computed from. */
+    uint64_t history_generation;
+    uint64_t history_stamp;
+    /* The history epoch and the values that it was computed from: the
+     * index epoch of the history, the width, and the screen. */
+    uint64_t history_epoch;
+    uint64_t history_epoch_index;
+    int history_epoch_cols;
+    bool history_epoch_alternate;
     struct hist_view view;
     struct wsap_vtcore_sel_point sel_start, sel_end;
     struct wsap_vtcore_sel_point sel_anchor_first, sel_anchor_last;

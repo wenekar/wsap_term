@@ -86,8 +86,14 @@ Relative scrolling traverses lines from the viewport anchor.
 Absolute scrolling indexes rows with a circular Fenwick tree of wrapped row counts.
 Snapshot capture constructs this index on the first history query.
 The write path does not update the Fenwick index.
-Width changes assign estimated row counts to wide lines.
-Snapshot capture resolves exact counts for lines visible in the view.
+Width changes assign the exact row count to every line with a wide cell or a cluster.
+The count comes from one walk of each such line.
+A frame at a fixed size reuses the stored count and walks no line.
+So `history_rows()`, the scrollback total, and the accessibility node length are exact.
+For a line with wide cells they are larger than the old estimate.
+A five-line cleanup of the range code was considered and skipped.
+It would treat the symptom in a second place.
+The exact count fixes the cause and keeps one rule for the row of a line.
 
 ## Snapshot publication
 

@@ -6,7 +6,8 @@
 #include "paint/scene.h"
 #include "ui/ui.h"
 #include "ui/widget_ops.h"
-#include "app/tabs/tab_preview.h"
+#include "app/style.h"
+#include "ui/widgets/tab_preview.h"
 #include "util/json.h"
 
 static uint32_t pixels[400 * 300];
@@ -65,18 +66,6 @@ static bool capture(void *userdata, int index, int width, int max_height,
     return true;
 }
 
-/* The tab preview is an app widget, so the app stylesheet holds its rules. */
-static struct css_sheet app_sheet;
-
-static const struct css_sheet *app_rules(void)
-{
-    if (!app_sheet.rule_count) {
-        css_init_default(&app_sheet);
-        assert(css_parse_app(&app_sheet));
-    }
-    return &app_sheet;
-}
-
 static void setup(struct fixture *f, const char *css)
 {
     *f = (struct fixture){ .tabs = 4 };
@@ -88,7 +77,7 @@ static void setup(struct fixture *f, const char *css)
         .capture = capture, .userdata = f,
     });
     assert(ui_widget_add_child(&f->root, ui_tab_preview_widget(&f->card)));
-    ui_surface_set_sheet(&f->surface, css ? &f->sheet : app_rules());
+    ui_surface_set_sheet(&f->surface, css ? &f->sheet : app_style_sheet());
     ui_surface_set_scale(&f->surface, (struct css_scale_context){
         .dpi_scale = 1, .cell_w = 8, .cell_h = 16,
     });
@@ -159,8 +148,8 @@ static void hover_shows_card_below_tab_after_delay_test(void)
 
     assert(ui_surface_build_scene(&f.surface, &f.scene));
     const struct ui_scene_op *image = find_op(&f.scene, UI_SCENE_OP_IMAGE);
-    assert(image && image->image->pixels == f.image.pixels);
-    assert(vector2i_eq(image->image->size, f.image.size));
+    assert(image && image->image.src->pixels == f.image.pixels);
+    assert(vector2i_eq(image->image.src->size, f.image.size));
     struct ui_debug_parts parts = {0};
     ui_debug_collect_parts(ui_tab_preview_widget(&f.card), &parts);
     const struct ui_debug_part *title = find_part(&parts, "title");
@@ -356,7 +345,7 @@ static void unchanged_refresh_requests_no_redraw_test(void)
     assert(card_dirty(&f) == CARD_CLEAN);
     assert(ui_surface_build_scene(&f.surface, &f.scene));
     const struct ui_scene_op *image = find_op(&f.scene, UI_SCENE_OP_IMAGE);
-    assert(image && image->image->gen == (uint64_t)f.captures);
+    assert(image && image->image.src->gen == (uint64_t)f.captures);
 
     /* A taller picture relayouts the card. */
     assert(ui_surface_build_scene(&f.surface, &f.scene));

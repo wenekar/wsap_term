@@ -336,6 +336,9 @@ enum wsap_vtcore_attr {
     WSAP_VTCORE_ATTR_TEXT = 1u << 6,
     WSAP_VTCORE_ATTR_BLINK = 1u << 7,
     WSAP_VTCORE_ATTR_CONCEAL = 1u << 8,
+    /* A padding cell at the end of a row that a wide character pushed to the
+     * next row. It adds no text and no column. */
+    WSAP_VTCORE_ATTR_WRAP_PAD = 1u << 9,
     WSAP_VTCORE_ATTR_FAINT = 1u << 10,
     WSAP_VTCORE_ATTR_DOUBLE_UNDERLINE = 1u << 11,
     WSAP_VTCORE_ATTR_CURLY_UNDERLINE = 1u << 12,
@@ -405,6 +408,13 @@ WSAP_VTCORE_API void wsap_vtcore_snapshot_free(struct wsap_vtcore_snapshot *s);
  * Do not update a snapshot while another thread reads or updates it.
  */
 WSAP_VTCORE_API bool wsap_vtcore_snapshot_update(struct wsap_vtcore_snapshot *s, struct wsap_vtcore *t);
+/* Copy the live screen: the rows that the view shows at scroll offset zero.
+ * The view keeps its offset. The cursor and the selection spans are those of
+ * the live screen. In all else, this is wsap_vtcore_snapshot_update(). Use a
+ * separate snapshot: a view snapshot and a live snapshot hold different
+ * rows. */
+WSAP_VTCORE_API bool wsap_vtcore_snapshot_update_live(struct wsap_vtcore_snapshot *s,
+                                                      struct wsap_vtcore *t);
 
 enum {
     WSAP_VTCORE_PALETTE_FG = 256,
@@ -451,12 +461,47 @@ enum wsap_vtcore_line_size {
 WSAP_VTCORE_API enum wsap_vtcore_line_size wsap_vtcore_snapshot_row_size(
     const struct wsap_vtcore_snapshot *s, int y);
 
+/* Return true when logical row y joins the next row with no line break.
+ * A history row in a scrolled view gives its wrap flag too. A row that does
+ * not wrap, an invalid row, and a NULL snapshot give false. */
+WSAP_VTCORE_API bool wsap_vtcore_snapshot_row_wrapped(
+    const struct wsap_vtcore_snapshot *s, int y);
+
 WSAP_VTCORE_API int wsap_vtcore_history_rows(const struct wsap_vtcore *t);
 /* Return text of the last max_rows history rows above viewport.
  * Zero or negative max_rows returns an empty string.
  * NULL means a NULL terminal or an allocation failure. Free with wsap_vtcore_text_free.
  */
 WSAP_VTCORE_API char *wsap_vtcore_history_text(struct wsap_vtcore *t, int max_rows);
+/* Return a counter that changes when the history changes: on a new line, an
+ * eviction, a clear, a rewrap, or a switch to or from the alternate screen.
+ * The counter increases. A NULL terminal gives zero. */
+WSAP_VTCORE_API uint64_t wsap_vtcore_history_generation(struct wsap_vtcore *t);
+/* Return a counter that changes when the history changes in a way that new
+ * lines cannot explain: a clear, a line taken back to the screen, a cut
+ * line, a rewrap, or a switch to or from the alternate screen. A new line,
+ * the growth of the last line, and the eviction of whole lines keep it.
+ * While the epoch stays the same, only the oldest lines leave, and the other
+ * lines keep their ids and their text. A reader can then drop the lines that
+ * left from an index and add the new ones. The counter increases. A NULL
+ * terminal gives zero. */
+WSAP_VTCORE_API uint64_t wsap_vtcore_history_epoch(struct wsap_vtcore *t);
+/* Return the id of the oldest history line, or zero when the history is empty.
+ * The id changes when a line leaves the history. The ids of the lines are
+ * consecutive, so the id grows by the count of the lines that left. */
+WSAP_VTCORE_API uint64_t wsap_vtcore_history_first_line(const struct wsap_vtcore *t);
+/* Return the text of history rows [first_row, first_row + row_count). Row zero
+ * is the oldest history row. The view offset does not change the row count.
+ * The rows of a soft-wrapped line join with no newline. Each hard line end
+ * gets one '\n'. A line drops its trailing blanks. When the last row of the
+ * range joins the next row, the line goes on after the range, and that row
+ * keeps its trailing blanks. wrapped[i] is true when row i joins the next
+ * row. Pass NULL to skip it. row_count is clamped to the history. NULL means
+ * a NULL terminal or an allocation failure. Free with wsap_vtcore_text_free. */
+WSAP_VTCORE_API char *wsap_vtcore_history_text_range(struct wsap_vtcore *t,
+                                                     int first_row,
+                                                     int row_count,
+                                                     bool *wrapped);
 WSAP_VTCORE_API struct wsap_vtcore_span wsap_vtcore_snapshot_row_selection(const struct wsap_vtcore_snapshot *s, int y);
 
 /* Direct access to the snapshot row store. The store is a ring.

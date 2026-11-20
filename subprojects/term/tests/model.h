@@ -16,6 +16,8 @@ struct model_cell {
     wsap_vtcore_color fg, bg;
     /* WSAP_VTCORE_COLOR_NONE when the cell has no underline color. */
     wsap_vtcore_color ul;
+    /* A padding cell at a soft wrap. */
+    bool pad;
 };
 
 struct model;

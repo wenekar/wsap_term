@@ -40,6 +40,7 @@ wsap_vtcore_tests = [
   ['gstore-test', files('gstore_test.c'), [], []],
   ['hist-test', files('hist_test.c'), [], []],
   ['history-text-test', files('history_text_test.c'), [thread_dep], []],
+  ['row-walk-test', files('row_walk_test.c'), [], []],
   ['snapshot-scroll-arena-test', files('snapshot_scroll_arena_test.c'), [], []],
   ['view-test', files('view_test.c'), [], []],
   ['resize-property-test', files('resize_property_test.c'), [], []],
@@ -48,6 +49,7 @@ wsap_vtcore_tests = [
   ['api-args-test', files('api_args_test.c'), [], []],
   ['public-helpers-test', files('public_helpers_test.c'), [], []],
   ['snapshot-lifetime-test', files('snapshot_lifetime_test.c'), [], []],
+  ['color-test', files('color_test.c'), [m_dep], []],
 ]
 test_helpers_inc = include_directories('helpers')
 
@@ -157,6 +159,19 @@ if cc.has_link_argument('-Wl,--wrap=realloc') and cc.has_link_argument('-Wl,--wr
     dependencies: [wsap_vtcore_internal_dep],
   )
   test('term-resize-failure-test', resize_failure_test,
+    env: test_env,
+    suite: 'unit',
+  )
+endif
+
+if cc.has_link_argument('-Wl,--wrap=calloc')
+  rows_exact_failure_test = executable('rows-exact-failure-test',
+    'rows_exact_failure_test.c',
+    c_args: test_c_args,
+    link_args: ['-Wl,--wrap=calloc'],
+    dependencies: [wsap_vtcore_internal_dep],
+  )
+  test('rows-exact-failure-test', rows_exact_failure_test,
     env: test_env,
     suite: 'unit',
   )

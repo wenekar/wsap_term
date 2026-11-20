@@ -664,8 +664,14 @@ static bool text_reserve(char **text, size_t *cap, size_t need)
     return true;
 }
 
+/* The text of the selection, or of the cells in bounds. A row that joins the
+ * next row keeps all of its cells. A line drops its trailing blanks, also the
+ * blanks of a joined row when the rows after it hold no text. The text of a
+ * line then does not depend on the width. With keep_tail, the last row of the
+ * range keeps its blanks, because its line continues after the range. */
 static char *range_text_inner(const struct wsap_vtcore *t,
-                              const struct wsap_vtcore_sel_point *bounds)
+                              const struct wsap_vtcore_sel_point *bounds,
+                              bool keep_tail)
 {
     if (!t || (!bounds && !t->selection)) return NULL;
     struct lines L;
@@ -687,6 +693,7 @@ static char *range_text_inner(const struct wsap_vtcore *t,
     enum { BATCH_SEGS = 64 };
     struct cell *batch_cells = text ? malloc((size_t)BATCH_SEGS * (size_t)t->cols * sizeof(struct cell)) : NULL;
     for (uint64_t id = start.line_id; text && id <= end.line_id; id++) {
+        size_t line_start = n;
         int nsegs = line_total_segs(&L, id);
         int start_seg = 0;
         if (id == start.line_id) {
@@ -767,7 +774,8 @@ static char *range_text_inner(const struct wsap_vtcore *t,
                 continue;
             bool is_last = id == end.line_id && (end.cell_off < seg_end || seg == nsegs - 1);
             bool wrapped = !is_last && row_wrapped;
-            if (!wrapped)
+            bool line_end = !wrapped && !(is_last && keep_tail);
+            if (line_end)
                 while (c1 >= c0 && cells[c1].c <= ' ')
                     c1--;
 
@@ -813,6 +821,12 @@ static char *range_text_inner(const struct wsap_vtcore *t,
                         n += (size_t)wsap_vtcore_utf8_encode(cps[k], text + n);
                 }
             }
+            /* A blank row at the end of a line leaves the blanks of the
+             * joined row before it. A blank cell gives one byte at or below
+             * a space, and no UTF-8 sequence holds such a byte. */
+            if (text && line_end)
+                while (n > line_start && (unsigned char)text[n - 1] <= ' ')
+                    n--;
             if (text && !is_last && !wrapped && text_reserve(&text, &cap, n + 2))
                 text[n++] = '\n';
         }
@@ -821,6 +835,48 @@ static char *range_text_inner(const struct wsap_vtcore *t,
     if (text)
         text[n] = 0;
     lines_free(&L);
+    return text;
+}
+
+/* The text of history rows [begin_row, end_row) and the wrap flag of the
+ * last row. A last row that wraps keeps its trailing blanks: its line goes
+ * on after the range. The caller holds the write lock and prepared the
+ * view. */
+static char *history_range_text(struct wsap_vtcore *t, int begin_row, int end_row,
+                                bool *last_wrapped)
+{
+    struct lines L;
+    if (!lines_init(&L, t)) {
+        lines_free(&L);
+        return NULL;
+    }
+    struct wsap_vtcore_sel_point bounds[2] = {0};
+    int first_seg, last_seg;
+    char *text = NULL;
+    bool wrapped = false;
+    if (wsap_vtcore_hist_view_find_row(&t->view, &t->hist, begin_row, t->cols,
+                           &bounds[0].line_id, &first_seg) &&
+        wsap_vtcore_hist_view_find_row(&t->view, &t->hist, end_row - 1, t->cols,
+                           &bounds[1].line_id, &last_seg)) {
+        bounds[0].cell_off = line_seg_start_off(&L, bounds[0].line_id, first_seg);
+        uint32_t last_start = line_seg_start_off(&L, bounds[1].line_id, last_seg);
+        const struct cell *cells = line_seg_cells(&L, bounds[1].line_id,
+                                                   last_seg, NULL, &wrapped);
+        bounds[1].cell_off = last_start +
+            (uint32_t)seg_display_cols(t->cols, cells, wrapped) - 1;
+        text = range_text_inner(t, bounds, wrapped);
+        if (text && !wrapped) {
+            size_t n = strlen(text);
+            size_t cap = n + 1;
+            if (text_reserve(&text, &cap, n + 2)) {
+                text[n] = '\n';
+                text[n + 1] = '\0';
+            }
+        }
+    }
+    lines_free(&L);
+    if (last_wrapped)
+        *last_wrapped = wrapped;
     return text;
 }
 
@@ -840,46 +896,119 @@ char *wsap_vtcore_history_text(struct wsap_vtcore *t, int max_rows)
         return wsap_vtcore_strdup("");
     }
     int begin_row = end_row > max_rows ? end_row - max_rows : 0;
-    struct lines L;
-    if (!lines_init(&L, t)) {
-        lines_free(&L);
+    char *text = history_range_text(t, begin_row, end_row, NULL);
+    wsap_vtcore_write_end(t);
+    return text;
+}
+
+char *wsap_vtcore_history_text_range(struct wsap_vtcore *t, int first_row,
+                                     int row_count, bool *wrapped)
+{
+    if (!t)
+        return NULL;
+    wsap_vtcore_write_begin(t);
+    wsap_vtcore_hist_prepare_rows(&t->hist, t->cols);
+    if (!wsap_vtcore_hist_view_sync(&t->view, &t->hist, t->cols)) {
         wsap_vtcore_write_end(t);
         return NULL;
     }
-    struct wsap_vtcore_sel_point bounds[2] = {0};
-    int first_seg, last_seg;
-    char *text = NULL;
-    if (wsap_vtcore_hist_view_find_row(&t->view, &t->hist, begin_row, t->cols,
-                           &bounds[0].line_id, &first_seg) &&
-        wsap_vtcore_hist_view_find_row(&t->view, &t->hist, end_row - 1, t->cols,
-                           &bounds[1].line_id, &last_seg)) {
-        bounds[0].cell_off = line_seg_start_off(&L, bounds[0].line_id, first_seg);
-        uint32_t last_start = line_seg_start_off(&L, bounds[1].line_id, last_seg);
-        bool wrapped = false;
-        const struct cell *cells = line_seg_cells(&L, bounds[1].line_id,
-                                                   last_seg, NULL, &wrapped);
-        bounds[1].cell_off = last_start +
-            (uint32_t)seg_display_cols(t->cols, cells, wrapped) - 1;
-        text = range_text_inner(t, bounds);
-        if (text && !wrapped) {
-            size_t n = strlen(text);
-            size_t cap = n + 1;
-            if (text_reserve(&text, &cap, n + 2)) {
-                text[n] = '\n';
-                text[n + 1] = '\0';
+    int total = wsap_vtcore_screen_history_rows(t);
+    if (first_row < 0)
+        first_row = 0;
+    int end_row = first_row + (row_count > 0 ? row_count : 0);
+    if (end_row > total)
+        end_row = total;
+    if (end_row < first_row)
+        end_row = first_row;
+    if (end_row <= first_row) {
+        wsap_vtcore_write_end(t);
+        return wsap_vtcore_strdup("");
+    }
+    char *text = history_range_text(t, first_row, end_row, NULL);
+    if (text && wrapped) {
+        uint64_t last_id = UINT64_MAX;
+        int line_rows = 0;
+        bool open = false;
+        for (int row = first_row; row < end_row; row++) {
+            uint64_t id = 0;
+            int seg = 0;
+            if (!wsap_vtcore_hist_view_find_row(&t->view, &t->hist, row,
+                                                t->cols, &id, &seg)) {
+                wrapped[row - first_row] = false;
+                continue;
             }
+            if (id != last_id) {
+                last_id = id;
+                line_rows = wsap_vtcore_hist_line_rows(&t->hist, id, t->cols);
+                open = id + 1 == hist_end_id(&t->hist) && hist_is_open(&t->hist);
+            }
+            wrapped[row - first_row] = seg + 1 < line_rows ||
+                                       (open && seg + 1 == line_rows);
         }
     }
-    lines_free(&L);
     wsap_vtcore_write_end(t);
     return text;
+}
+
+uint64_t wsap_vtcore_history_generation(struct wsap_vtcore *t)
+{
+    if (!t)
+        return 0;
+    wsap_vtcore_write_begin(t);
+    const struct hist *h = &t->hist;
+    uint64_t stamp = h->head * UINT64_C(0x9E3779B97F4A7C15);
+    stamp ^= h->tail + UINT64_C(0x517CC1B727220A95) + (stamp << 6) + (stamp >> 2);
+    stamp ^= h->base_id * UINT64_C(0xC2B2AE3D27D4EB4F);
+    stamp ^= h->index_epoch * UINT64_C(0x165667B19E3779F9);
+    stamp ^= (uint64_t)h->wrap_cols << 40;
+    stamp ^= (uint64_t)(t->alternate != 0) << 63;
+    stamp ^= (uint64_t)(unsigned)t->cols << 16;
+    if (stamp != t->history_stamp) {
+        t->history_stamp = stamp;
+        t->history_generation++;
+    }
+    uint64_t generation = t->history_generation;
+    wsap_vtcore_write_end(t);
+    return generation;
+}
+
+uint64_t wsap_vtcore_history_epoch(struct wsap_vtcore *t)
+{
+    if (!t)
+        return 0;
+    wsap_vtcore_write_begin(t);
+    /* The index epoch changes on a clear, on a line taken back to the
+     * screen, and on a cut of the first or the open line. A new line, the
+     * growth of the open line, and an eviction of whole lines keep it. */
+    bool alternate = t->alternate;
+    if (t->hist.index_epoch != t->history_epoch_index ||
+        t->cols != t->history_epoch_cols ||
+        alternate != t->history_epoch_alternate || !t->history_epoch) {
+        t->history_epoch_index = t->hist.index_epoch;
+        t->history_epoch_cols = t->cols;
+        t->history_epoch_alternate = alternate;
+        t->history_epoch++;
+    }
+    uint64_t epoch = t->history_epoch;
+    wsap_vtcore_write_end(t);
+    return epoch;
+}
+
+uint64_t wsap_vtcore_history_first_line(const struct wsap_vtcore *t)
+{
+    if (!t)
+        return 0;
+    wsap_vtcore_write_begin((struct wsap_vtcore *)t);
+    uint64_t id = screen_has_history(t) && t->hist.lines ? hist_first_id(&t->hist) : 0;
+    wsap_vtcore_write_end((struct wsap_vtcore *)t);
+    return id;
 }
 
 char *wsap_vtcore_selection_text(const struct wsap_vtcore *t)
 {
     if (!t) return NULL;
     wsap_vtcore_write_begin((struct wsap_vtcore *)t);
-    char *text = range_text_inner(t, NULL);
+    char *text = range_text_inner(t, NULL, false);
     wsap_vtcore_write_end((struct wsap_vtcore *)t);
     return text;
 }

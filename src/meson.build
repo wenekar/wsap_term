@@ -1,125 +1,74 @@
-
-subdir('util')
-subdir('platform')
-subdir('loop')
 subdir('pty')
 subdir('session')
-subdir('input')
-subdir('paint')
-subdir('font')
-subdir('ui')
-subdir('theme')
-subdir('render')
 subdir('terminal')
+subdir('runtime')
 subdir('app')
 
-base_lib = static_library(
-    'wsap-base',
-    util_src + platform_src + loop_src,
-    include_directories: inc,
-    dependencies: [thread_dep, dl_dep, yyjson_dep, yasl_dep] + platform_deps,
-    install: false,
-)
+# The six libraries of the terminal tree. The UI framework is the
+# `wsap-framework` subproject, and its `wsap-*` dependencies supply the base,
+# input, paint, font, ui, theme, render, and ui_yasl code.
 
 pty_lib = static_library(
     'wsap-pty',
     pty_src,
-    link_with: [base_lib],
     include_directories: inc,
-    dependencies: [thread_dep, dl_dep, yasl_dep] + platform_deps,
+    dependencies: [wsap_base_dep, yasl_dep, thread_dep, dl_dep] + platform_deps,
     install: false,
 )
 
 session_lib = static_library(
     'wsap-session',
     session_src,
-    link_with: [base_lib, pty_lib],
+    link_with: [pty_lib],
     include_directories: inc,
-    dependencies: core_deps + [yasl_dep] + [term_dep],
+    dependencies: [wsap_base_dep, yasl_dep, term_dep],
     install: false,
 )
 
-input_lib = static_library(
-    'wsap-input',
-    input_src,
-    link_with: base_lib,
-    include_directories: inc,
-    dependencies: [term_dep],
-    install: false,
-)
-
-paint_lib = static_library(
-    'wsap-paint',
-    paint_src,
-    link_with: [base_lib],
+# The terminal grid renderer. It turns a terminal frame into cells and draws
+# them through the framework renderer. The terminal content owns it.
+render_term_lib = static_library(
+    'wsap-render-term',
+    render_term_src,
     include_directories: inc,
     c_args: ['-ffp-contract=off'],
-    dependencies: [thread_dep, m_dep] + [term_dep],
-    install: false,
-)
-
-font_lib = static_library(
-    'wsap-font',
-    font_src,
-    link_with: [base_lib, paint_lib],
-    include_directories: inc,
-    dependencies: font_deps + [m_dep] + platform_deps + [term_dep],
-    install: false,
-)
-
-ui_lib = static_library(
-    'wsap-ui',
-    ui_src,
-    link_with: [base_lib, paint_lib],
-    include_directories: [inc, ui_inc],
-    dependencies: [m_dep, yyjson_dep] + [term_dep],
-    install: false,
-)
-
-theme_lib = static_library(
-    'wsap-theme',
-    theme_src,
-    link_with: [base_lib, ui_lib],
-    include_directories: inc,
-    dependencies: lib_deps + [term_dep],
-    install: false,
-)
-
-render_lib = static_library(
-    'wsap-render',
-    render_src,
-    link_with: [base_lib, font_lib, paint_lib],
-    include_directories: [inc] + render_inc,
-    c_args: ['-ffp-contract=off'],
-    dependencies: lib_deps + [term_dep],
-    install: false,
-)
-
-ui_yasl_lib = static_library(
-    'wsap-ui-yasl',
-    ui_yasl_src,
-    link_with: [base_lib, input_lib, font_lib, ui_lib, paint_lib],
-    include_directories: inc,
-    dependencies: core_deps + [yasl_dep, term_dep, accesskit_dep],
+    dependencies: [wsap_render_dep, wsap_font_dep, wsap_paint_dep,
+                   wsap_base_dep, term_dep],
     install: false,
 )
 
 terminal_lib = static_library(
     'wsap-terminal',
     terminal_src,
-    link_with: [base_lib, ui_yasl_lib, session_lib, font_lib, ui_lib, paint_lib],
+    link_with: [session_lib, render_term_lib],
     include_directories: inc,
-    dependencies: core_deps + [yasl_dep] + [term_dep],
+    dependencies: [wsap_ui_yasl_dep, wsap_ui_dep, wsap_font_dep,
+                   wsap_paint_dep, wsap_base_dep, yasl_dep, term_dep],
+    install: false,
+)
+
+# The app runtime. It owns the renderer use that outlives one window: frame
+# composition helpers, scene capture, thumbnails, and the GPU idle release. It
+# sits above the framework renderer and ui_yasl, and the app owns it.
+runtime_lib = static_library(
+    'wsap-runtime',
+    runtime_src,
+    link_with: [render_term_lib],
+    include_directories: inc,
+    dependencies: [wsap_render_dep, wsap_font_dep, wsap_paint_dep,
+                   wsap_base_dep, wsap_ui_yasl_dep, yasl_dep, term_dep],
     install: false,
 )
 
 app_lib = static_library(
     'wsap-app',
     app_src,
-    link_with: [base_lib, terminal_lib, ui_yasl_lib, session_lib, font_lib, ui_lib, pty_lib, paint_lib, theme_lib, render_lib],
-    include_directories: inc,
-    dependencies: core_deps + [yasl_dep] + [term_dep],
+    link_with: [runtime_lib, terminal_lib, session_lib, pty_lib, render_term_lib],
+    include_directories: [inc, app_inc],
+    dependencies: [wsap_ui_yasl_dep, wsap_theme_dep, wsap_render_dep,
+                   wsap_ui_dep, wsap_font_dep, wsap_paint_dep, wsap_input_dep,
+                   wsap_base_dep, yasl_dep, term_dep],
     install: false,
 )
 
-wsap_libs = [base_lib, pty_lib, session_lib, input_lib, paint_lib, font_lib, ui_lib, theme_lib, render_lib, ui_yasl_lib, terminal_lib, app_lib]
+wsap_libs = [pty_lib, session_lib, render_term_lib, terminal_lib, runtime_lib, app_lib]

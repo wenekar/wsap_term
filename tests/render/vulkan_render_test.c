@@ -13,7 +13,8 @@
 #include "render/gpu/gpu.h"
 #include "render/render.h"
 #include "render/surface.h"
-#include "render/term_frame.h"
+#include "terminal/render/term_frame.h"
+#include "terminal/render/term_render.h"
 #include "ui/yasl/gpu_surface.h"
 #include "util/damage.h"
 #include "yasl/yasl.h"
@@ -23,10 +24,11 @@
  * Tests of the Vulkan backend through render/gpu/gpu.h.
  *
  * The tests need a Vulkan device and a display. Without one of them, a test
- * prints a note and does nothing. The tests cannot read the pixels that the
- * GPU draws. They check the result of each call. Run them with the Khronos
- * validation layer to check the Vulkan calls too:
- * VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation.
+ * prints a note and does nothing. When no frame test runs, the program exits
+ * with 77, so the test runner reports a skip and not a pass. The tests
+ * cannot read the pixels that the GPU draws. They check the result of each
+ * call. Run them with the Khronos validation layer to check the Vulkan calls
+ * too: VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation.
  */
 
 /* One window with a Vulkan surface, and the renderer state of that window. */
@@ -39,6 +41,18 @@ struct fixture {
 
 /* main() opens the display one time, for all tests. */
 static bool have_display;
+
+/*
+ * The number of frame tests that ran. A run with 0 of them is a skip, not a
+ * pass: such a run draws no frame, so it cannot find a defect in the frame
+ * build. The lifecycle test needs no display and draws no frame, so it
+ * counts nothing.
+ */
+static int frame_tests_ran;
+
+/* The exit status of a run that skipped every frame test. The test runner of
+ * meson and automake reads 77 as skipped. */
+#define TEST_SKIP_STATUS 77
 
 static bool fixture_open(struct fixture *f, const char *title)
 {
@@ -61,6 +75,7 @@ static bool fixture_open(struct fixture *f, const char *title)
     }
     f->layer = window_gpu_attach(f->ys, render_gpu_native_device(f->g));
     assert(f->layer);
+    frame_tests_ran++;
     return true;
 }
 
@@ -341,9 +356,10 @@ static void test_atlas_growth(void)
 }
 
 /*
- * The backend keeps a small number of UI images. A frame with more gives
- * the frame to the CPU, and it never draws one image in place of another.
- * A frame that fits works again after that.
+ * The backend keeps one texture for each UI image of a frame. A frame with
+ * more images than the backend started with adds textures, and a full pool
+ * of descriptors adds a bigger pool. Every image of that frame still
+ * presents, and no image takes the texture of another.
  */
 static void test_image_slots(void)
 {
@@ -354,25 +370,38 @@ static void test_image_slots(void)
     struct wsap_vtcore *term = text_terminal(&grid);
     struct render_frame rf = frame_for(&f, &grid);
 
-    enum { IMAGES = GPU_IMAGES + 1, SIDE = 8 };
+    /* More images than the 64 descriptor sets of the first pool give. */
+    enum { IMAGES = 70, SIDE = 8 };
     static uint32_t pixels[IMAGES][SIDE * SIDE];
     struct ui_image images[IMAGES];
     for (int i = 0; i < IMAGES; i++) {
         for (int p = 0; p < SIDE * SIDE; p++)
-            pixels[i][p] = 0xFF000000u | (uint32_t)(i * 40);
+            pixels[i][p] = 0xFF000000u | (uint32_t)(i * 3);
         images[i] = (struct ui_image){
             .size = { .x = SIDE, .y = SIDE }, .pixels = pixels[i], .gen = 1,
         };
     }
-    for (int n = 1; n <= IMAGES; n++) {
+    for (int n = 1; n <= IMAGES; n += 23) {
         struct ui_scene scene = {0};
         ui_scene_init(&scene);
         for (int i = 0; i < n; i++)
-            assert(ui_scene_image(&scene, (struct vector2i){ .x = 10 + i * 12, .y = 10 },
+            assert(ui_scene_image(&scene, (struct vector2i){ .x = 10 + i % 10 * 10,
+                                                            .y = 10 + i / 10 * 10 },
                                   &images[i]));
         rf.ui = &scene;
-        enum render_gpu_status want = n <= GPU_IMAGES ? RENDER_GPU_PRESENTED : RENDER_GPU_UNUSED;
-        assert(draw(&f, &rf, false) == want);
+        assert(draw(&f, &rf, false) == RENDER_GPU_PRESENTED);
+        ui_scene_destroy(&scene);
+    }
+    {
+        /* The last frame holds every image at once. */
+        struct ui_scene scene = {0};
+        ui_scene_init(&scene);
+        for (int i = 0; i < IMAGES; i++)
+            assert(ui_scene_image(&scene, (struct vector2i){ .x = 10 + i % 10 * 10,
+                                                            .y = 10 + i / 10 * 10 },
+                                  &images[i]));
+        rf.ui = &scene;
+        assert(draw(&f, &rf, false) == RENDER_GPU_PRESENTED);
         ui_scene_destroy(&scene);
     }
 
@@ -444,6 +473,10 @@ int main(void)
     if (have_display)
         yasl_shutdown();
     render_shutdown();
+    if (!frame_tests_ran) {
+        printf("vulkan_render_test: no frame test ran, skipped\n");
+        return TEST_SKIP_STATUS;
+    }
     printf("vulkan_render_test passed\n");
     return 0;
 }

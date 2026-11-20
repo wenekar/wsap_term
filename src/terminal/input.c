@@ -59,35 +59,33 @@ static void scroll_view_lines(struct terminal *t, int delta_lines)
 
 /* The terminal commands. The owner runs the tab commands and leaves the
  * rest to this function. */
-void terminal_handle_shortcut(struct terminal *t, enum input_shortcut sc)
+void terminal_handle_shortcut(struct terminal *t, input_command_id sc)
 {
     if (!t)
         return;
     struct window *w = t->window;
     switch (sc) {
-    case INPUT_SHORTCUT_FONT_LARGER:  terminal_adjust_font_size(t, 1); break;
-    case INPUT_SHORTCUT_FONT_SMALLER: terminal_adjust_font_size(t, -1); break;
-    case INPUT_SHORTCUT_COPY:
+    case INPUT_COMMAND_FONT_LARGER:  terminal_adjust_font_size(t, 1); break;
+    case INPUT_COMMAND_FONT_SMALLER: terminal_adjust_font_size(t, -1); break;
+    case INPUT_COMMAND_COPY:
         if (t->session.term && wsap_vtcore_has_selection(t->session.term)) {
             terminal_copy(t);
             wsap_vtcore_select_clear(t->session.term);
             if (w)
                 window_redraw(w);
-        } else {
-            terminal_send_input(t, "\x03", 1);
         }
         break;
-    case INPUT_SHORTCUT_PASTE:
+    case INPUT_COMMAND_PASTE:
         if (w)
             window_paste(w, YASL_CLIPBOARD);
         break;
-    case INPUT_SHORTCUT_SELECT_ALL:   terminal_select_all(t); break;
-    case INPUT_SHORTCUT_KILL_LINE:    terminal_send_input(t, "\x15", 1); break;
-    case INPUT_SHORTCUT_SCROLL_UP:    scroll_view_lines(t, 15); break;
-    case INPUT_SHORTCUT_SCROLL_DOWN:  scroll_view_lines(t, -15); break;
-    case INPUT_SHORTCUT_SETTINGS:
+    case INPUT_COMMAND_SELECT_ALL:   terminal_select_all(t); break;
+    case INPUT_COMMAND_KILL_LINE:    terminal_send_input(t, "\x15", 1); break;
+    case INPUT_COMMAND_SCROLL_UP:    scroll_view_lines(t, 15); break;
+    case INPUT_COMMAND_SCROLL_DOWN:  scroll_view_lines(t, -15); break;
+    case INPUT_COMMAND_SETTINGS:
         if (w)
-            window_host_command(w, INPUT_SHORTCUT_SETTINGS);
+            window_host_command(w, INPUT_COMMAND_SETTINGS);
         break;
     default:
         break;

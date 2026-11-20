@@ -1,7 +1,7 @@
 #include <stdlib.h>
 
 #include "app/tabs/internal.h"
-#include "app/tabs/tabbar.h"
+#include "ui/widgets/tabbar.h"
 #include "ui/yasl/window.h"
 
 /* The model owns the drag in `model->flight`. The dragged tab stays in the
@@ -31,7 +31,7 @@ static app_tab_id flight_take(struct app_tab_model *m)
 /* A tab whose process ended, or a closing tab, goes instead of a landing. */
 static bool spent(const struct app_tab *entry)
 {
-    return !app_tab_is_live(entry) || terminal_exited(entry->content);
+    return !app_tab_is_live(entry) || app_tab_exited(entry);
 }
 
 static bool land(struct app_tab_model *m, struct window *w, app_tab_id id,
@@ -255,12 +255,21 @@ void app_tabs_drag(struct window *w, enum yasl_drop_action event,
     }
 }
 
+/* A drag over the window highlights the active tab only. The active tab can
+ * change during the drag, so every other tab loses its highlight, and the
+ * end of the drag clears every tab. */
 void app_tabs_drop_hover(struct window *w, bool over, void *ud)
 {
     (void)ud;
-    struct terminal *content = app_tabs_active(w);
-    if (content)
-        terminal_set_drop_hover(content, over);
+    struct app_tabs *tabs = app_tabs_of(w);
+    if (!tabs)
+        return;
+    for (int i = 0; i < tabs->count; i++) {
+        const struct app_tab *entry = app_tabs_entry(tabs, i);
+        if (!entry || !entry->content || !entry->ops->drop_hover)
+            continue;
+        entry->ops->drop_hover(entry->content, over && i == tabs->active);
+    }
 }
 
 void app_tabs_drag_forget(struct app_tab_model *m, struct window *w)

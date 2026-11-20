@@ -1,0 +1,1343 @@
+#include "ui/widgets/tabbar/internal.h"
+
+#include "ui/debug.h"
+#include "ui/paint.h"
+#include "ui/surface.h"
+#include "ui/widget_ops.h"
+
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+
+enum drag_finish {
+    FINISH_NONE = 0,
+    FINISH_REORDER,
+    FINISH_DETACH,
+};
+
+static bool tb_ensure_capacity(struct ui_tabbar *tb, int n)
+{
+    if (!tb || n <= tb->state.capacity)
+        return true;
+    int cap = tb->state.capacity ? tb->state.capacity * 2 : 8;
+    while (cap < n)
+        cap *= 2;
+
+    struct ui_tab_state *tabs = realloc(tb->state.tabs, (size_t)cap * sizeof(*tabs));
+    if (!tabs)
+        return false;
+
+    memset(&tabs[tb->state.capacity], 0, (size_t)(cap - tb->state.capacity) * sizeof(*tabs));
+    tb->state.tabs = tabs;
+    tb->state.capacity = cap;
+    return true;
+}
+
+bool tb_ensure_tabs(struct ui_tabbar *tb, int n)
+{
+    if (!tb || n < 0)
+        return false;
+    if (n > tb->state.capacity && !tb_ensure_capacity(tb, n))
+        return false;
+    if (n > tb->state.tab_cap) {
+        memset(&tb->state.tabs[tb->state.tab_cap], 0, (size_t)(n - tb->state.tab_cap) * sizeof(*tb->state.tabs));
+        for (int i = tb->state.tab_cap; i < n; i++) {
+            tb->state.tabs[i].open.value = 1.0f;
+            tb->state.tabs[i].open.to = 1.0f;
+            tb->state.tabs[i].accessibility_id =
+                ui_widget_accessibility_id_allocate();
+        }
+        tb->state.tab_cap = n;
+    }
+    for (int i = 0; i < n; i++)
+        if (!tb->state.tabs[i].accessibility_id)
+            tb->state.tabs[i].accessibility_id =
+                ui_widget_accessibility_id_allocate();
+    return true;
+}
+
+static void ripple(struct ui_tabbar *tb, int n_tabs, struct vector2i size,
+                   int index, struct vector2i click_pos, uint64_t now_ms)
+{
+    if (!tb || index < 0 || index >= tb->state.tab_cap)
+        return;
+    struct rect2i r;
+    if (!tb_tab_rect_at(tb, n_tabs, size, index, &r))
+        return;
+    struct css_style tab = tb_style(tb, tb_part()->tab, CSS_PSEUDO_NONE);
+    uint32_t color = tab.has_ripple_color ? tab.ripple_color : 0;
+    if ((color >> 24) > 0) {
+        uint32_t duration = tab.has_ripple_duration
+            ? tab.ripple_duration_ms : 0;
+        ui_ripple_start(&tb->state.tabs[index].ripple, r, click_pos, color,
+                        now_ms, duration);
+        ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
+    }
+}
+
+static void set_hover(struct ui_tabbar *tb, int hover_tab, int hover_close, uint64_t now_ms)
+{
+    if (!tb)
+        return;
+    tb->state.hover_tab = hover_tab;
+    tb->state.hover_close = hover_close;
+    int top = hover_tab > hover_close ? hover_tab : hover_close;
+    if (top >= 0 && top >= tb->state.tab_cap)
+        tb_ensure_tabs(tb, top + 1);
+    for (int i = 0; i < tb->state.tab_cap; i++) {
+        float target = (i == hover_close) ? 1.0f : 0.0f;
+        ui_hover_anim_set_target(&tb->state.tabs[i].close_hover, target, now_ms);
+        float bg_target = (i == hover_tab) ? 1.0f : 0.0f;
+        ui_hover_anim_set_target(&tb->state.tabs[i].hover_bg, bg_target,
+                                 now_ms);
+    }
+}
+
+static void set_hover_new(struct ui_tabbar *tb, bool hover_new, uint64_t now_ms)
+{
+    if (!tb)
+        return;
+    tb->state.hover_new = hover_new;
+    ui_hover_anim_set_target(&tb->state.new_hover, hover_new ? 1.0f : 0.0f, now_ms);
+}
+
+static void clear_hover(struct ui_tabbar *tb, uint64_t now_ms)
+{
+    if (!tb)
+        return;
+    set_hover(tb, -1, -1, now_ms);
+    set_hover_new(tb, false, now_ms);
+}
+
+static bool bar_tick(struct ui_tabbar *tb, struct vector2i size, uint64_t now_ms)
+{
+    (void)size;
+    if (!tb)
+        return false;
+    tb->state.last_tick_ms = now_ms;
+    bool animating = false;
+
+    struct css_style tab = tb_style(tb, tb_part()->tab, CSS_PSEUDO_NONE);
+    uint32_t fade_ms = tab.has_transition_duration &&
+                       tab.transition_duration >= 1.0f
+        ? (uint32_t)tab.transition_duration : 0;
+    for (int i = 0; i < tb->state.tab_cap; i++) {
+        if (ui_hover_anim_tick(&tb->state.tabs[i].close_hover, now_ms,
+                               UI_TABBAR_ANIM_DURATION_MS,
+                               UI_EASE_OUT_CUBIC))
+            animating = true;
+        if (ui_hover_anim_tick(&tb->state.tabs[i].hover_bg, now_ms, fade_ms,
+                               UI_EASE_OUT_CUBIC))
+            animating = true;
+        struct ui_ripple *rp = &tb->state.tabs[i].ripple;
+        if (rp->active) {
+            if (ui_ripple_eval(rp, now_ms, NULL, NULL))
+                animating = true;
+            else
+                rp->active = false;
+        }
+    }
+
+    for (int i = 0; i < tb->state.tab_cap; i++) {
+        if (ui_hover_anim_tick(&tb->state.tabs[i].slide, now_ms,
+                               UI_TABBAR_SLIDE_ANIM_MS,
+                               UI_EASE_OUT_CUBIC))
+            animating = true;
+    }
+    if (ui_hover_anim_tick(&tb->state.new_hover, now_ms,
+                           UI_TABBAR_ANIM_DURATION_MS, UI_EASE_OUT_CUBIC))
+        animating = true;
+
+    if (tb->state.reveal.start_ms) {
+
+        int effective = tb_live_tabs(tb, tb->state.tab_cap);
+        float want = effective >= 2 || tb->state.external_drag ? 1.0f : 0.0f;
+        if (tb->state.reveal.to != want)
+            ui_hover_anim_set_target(&tb->state.reveal, want, now_ms);
+        if (ui_hover_anim_tick(&tb->state.reveal, now_ms,
+                               UI_TABBAR_RESIZE_ANIM_MS,
+                               UI_EASE_IN_OUT_CUBIC))
+            animating = true;
+        if (tb->state.reveal.value == tb->state.reveal.to)
+            tb->state.reveal.start_ms = 0;
+    }
+
+    for (int i = 0; i < tb->state.tab_cap; i++) {
+        struct ui_tab_state *tab = &tb->state.tabs[i];
+        if (!tab->closing) {
+            if (tab->open.value <= 0.0f && tab->open.to <= 0.0f) {
+                tab->open.value = 1.0f;
+                tab->open.to = 1.0f;
+                continue;
+            }
+            if (tab->open.to != 1.0f)
+                ui_hover_anim_set_target(&tab->open, 1.0f, now_ms);
+            if (ui_hover_anim_tick(&tab->open, now_ms,
+                                   UI_TABBAR_RESIZE_ANIM_MS,
+                                   UI_EASE_IN_OUT_CUBIC))
+                animating = true;
+            continue;
+        }
+        if (ui_hover_anim_tick(&tab->open, now_ms,
+                               UI_TABBAR_RESIZE_ANIM_MS,
+                               UI_EASE_IN_OUT_CUBIC))
+            animating = true;
+    }
+    return animating;
+}
+
+bool ui_tabbar_begin_close(struct ui_tabbar *tb, int index, uint64_t now_ms)
+{
+    if (!tb || index < 0 || index >= tb->state.tab_cap)
+        return false;
+    struct ui_tab_state *tab = &tb->state.tabs[index];
+    if (tab->closing)
+        return true;
+    tab->closing = true;
+    if (tb->state.hover_tab == index || tb->state.hover_close == index)
+        set_hover(tb, -1, -1, now_ms);
+    if (tab->open.value <= 0.0f)
+        tab->open.value = 1.0f;
+    ui_hover_anim_set_target(&tab->open, 0.0f, now_ms);
+
+    if (tb_live_tabs(tb, tb->state.tab_cap) <= 1) {
+        if (!tb->state.reveal.start_ms) {
+            tb->state.reveal.value = 1.0f;
+            tb->state.reveal.to = 1.0f;
+        }
+        ui_hover_anim_set_target(&tb->state.reveal, 0.0f, now_ms);
+    }
+    ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
+    return true;
+}
+
+bool ui_tabbar_begin_open(struct ui_tabbar *tb, int index, uint64_t now_ms)
+{
+    if (!tb || index < 0 || index >= tb->state.tab_cap)
+        return false;
+    struct ui_tab_state *tab = &tb->state.tabs[index];
+    if (tab->closing)
+        return false;
+    tab->open.value = 0.0f;
+    tab->open.from = 0.0f;
+    tab->open.to = 0.0f;
+    ui_hover_anim_set_target(&tab->open, 1.0f, now_ms);
+
+    if (tb->state.tab_cap == 2 && !tb->state.reveal.start_ms) {
+        tb->state.reveal.value = 0.0f;
+        tb->state.reveal.to = 0.0f;
+    }
+    if (tb->state.tab_cap == 2)
+        ui_hover_anim_set_target(&tb->state.reveal, 1.0f, now_ms);
+    ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
+    return true;
+}
+
+bool ui_tabbar_is_closing(const struct ui_tabbar *tb, int index)
+{
+    return tb && index >= 0 && index < tb->state.tab_cap &&
+           tb->state.tabs[index].closing;
+}
+
+int ui_tabbar_closing_tab(const struct ui_tabbar *tb)
+{
+    if (!tb)
+        return -1;
+    for (int i = 0; i < tb->state.tab_cap; i++)
+        if (tb->state.tabs[i].closing)
+            return i;
+    return -1;
+}
+
+bool ui_tabbar_closing_done(const struct ui_tabbar *tb)
+{
+    int i = ui_tabbar_closing_tab(tb);
+    if (i < 0)
+        return false;
+    return tb->state.tabs[i].open.value <= 0.0f;
+}
+
+static void tb_slide_reset(struct ui_tab_state *t)
+{
+    t->slide.value = 0.0f;
+    t->slide.from = 0.0f;
+    t->slide.to = 0.0f;
+    t->slide.start_ms = 0;
+}
+
+static void tb_slide_tabs_to(struct ui_tabbar *tb, int n_tabs,
+                                  int lo, int hi, float disp)
+{
+    if (!tb_ensure_tabs(tb, n_tabs))
+        return;
+
+    uint64_t now = tb->state.last_tick_ms ? tb->state.last_tick_ms : 1;
+    for (int i = 0; i < n_tabs; i++)
+        ui_hover_anim_set_target(&tb->state.tabs[i].slide,
+                                 (i >= lo && i < hi) ? disp : 0.0f, now);
+}
+
+static void drag_start(struct ui_tabbar *tb, int index, struct vector2i click_pos, struct rect2i tab_rect)
+{
+    if (!tb || index < 0)
+        return;
+    tb->state.drag_state = UI_TAB_DRAG_PENDING;
+    tb->state.drag_tab = index;
+    tb->state.drag_target_slot = index;
+    tb->state.drag_origin = click_pos;
+    tb->state.drag_pos = click_pos;
+    tb->state.drag_grab_x = click_pos.x - tab_rect.x;
+    for (int i = 0; i < tb->state.tab_cap; i++) {
+        tb_slide_reset(&tb->state.tabs[i]);
+    }
+}
+
+static bool drag_motion(struct ui_tabbar *tb, int n_tabs,
+                        struct vector2i size, struct vector2i p)
+{
+    if (!tb || tb->state.drag_state == UI_TAB_DRAG_NONE || n_tabs < 1)
+        return false;
+    tb->state.drag_pos = p;
+    int dx = p.x - tb->state.drag_origin.x;
+    int dy = p.y - tb->state.drag_origin.y;
+
+    if (tb->state.drag_state == UI_TAB_DRAG_PENDING) {
+        if (dx * dx + dy * dy < 25)
+            return false;
+        tb->state.drag_state = UI_TAB_DRAG_REORDER;
+    }
+
+    int h = tb_bar_height(tb, tb_css_height(tb), n_tabs);
+    if (p.y > h + 25 || p.y < -25 || p.x > size.x + 25 || p.x < -25) {
+        tb->state.drag_state = UI_TAB_DRAG_DETACH;
+    } else {
+        tb->state.drag_state = UI_TAB_DRAG_REORDER;
+    }
+
+    struct tb_layout l = tb_layout_for(tb, n_tabs, size);
+    int stride = l.tab_width + l.gap;
+
+    if (tb->state.drag_state == UI_TAB_DRAG_REORDER) {
+        int tab_center_x = p.x - tb->state.drag_grab_x + l.tab_width / 2;
+        int rel_x = tab_center_x - l.pad.l;
+        int slot = stride > 0 ? (rel_x + stride / 2) / stride : 0;
+        if (slot < 0) slot = 0;
+        if (slot >= n_tabs) slot = n_tabs - 1;
+        tb->state.drag_target_slot = slot;
+
+        int lo = 0, hi = 0;
+        float disp = 0.0f;
+        if (tb->state.drag_tab < slot) {
+            lo = tb->state.drag_tab + 1;
+            hi = slot + 1;
+            disp = -(float)stride;
+        } else if (tb->state.drag_tab > slot) {
+            lo = slot;
+            hi = tb->state.drag_tab;
+            disp = +(float)stride;
+        }
+        tb_slide_tabs_to(tb, n_tabs, lo, hi, disp);
+    } else if (tb->state.drag_state == UI_TAB_DRAG_DETACH) {
+        tb_slide_tabs_to(tb, n_tabs, tb->state.drag_tab + 1, n_tabs, -(float)stride);
+    }
+    return true;
+}
+
+static enum drag_finish drag_finish(struct ui_tabbar *tb, int *out_target_slot)
+{
+    if (!tb || tb->state.drag_state == UI_TAB_DRAG_NONE) {
+        if (out_target_slot) *out_target_slot = -1;
+        return FINISH_NONE;
+    }
+    enum ui_tab_drag_state st = tb->state.drag_state;
+    int target = tb->state.drag_target_slot;
+    int dragged = tb->state.drag_tab;
+
+    tb->state.drag_state = UI_TAB_DRAG_NONE;
+    tb->state.drag_tab = -1;
+    tb->state.drag_target_slot = -1;
+    for (int i = 0; i < tb->state.tab_cap; i++) {
+        tb_slide_reset(&tb->state.tabs[i]);
+    }
+
+    if (st == UI_TAB_DRAG_DETACH) {
+        if (out_target_slot) *out_target_slot = dragged;
+        return FINISH_DETACH;
+    }
+    if (st == UI_TAB_DRAG_REORDER) {
+        if (out_target_slot) *out_target_slot = target;
+        return FINISH_REORDER;
+    }
+    if (out_target_slot) *out_target_slot = -1;
+    return FINISH_NONE;
+}
+
+static void drag_cancel(struct ui_tabbar *tb)
+{
+    if (!tb) return;
+    tb->state.drag_state = UI_TAB_DRAG_NONE;
+    tb->state.drag_tab = -1;
+    tb->state.drag_target_slot = -1;
+    for (int i = 0; i < tb->state.tab_cap; i++) {
+        tb_slide_reset(&tb->state.tabs[i]);
+    }
+}
+
+bool ui_tabbar_is_dragging(const struct ui_tabbar *tb)
+{
+    return tb && (tb->state.drag_state == UI_TAB_DRAG_REORDER || tb->state.drag_state == UI_TAB_DRAG_DETACH);
+}
+
+/* Returns the insert slot of the point `p`, which is in widget space, or -1
+ * when `p` is off the bar. */
+static int tb_slot_at(const struct ui_tabbar *tb, int n_tabs,
+                      struct vector2i size, struct vector2i p)
+{
+    if (!tb || n_tabs < 1)
+        return -1;
+    int h = tb_drop_height(tb, n_tabs);
+    if (p.x < 0 || p.x >= size.x || p.y < 0 || p.y >= h)
+        return -1;
+    struct tb_layout l = tb_layout_for(tb, n_tabs, size);
+    int slot = 0;
+    float base_x = (float)l.pad.l;
+    for (int i = 0; i < n_tabs; i++) {
+        int width = tb_tab_width_at(tb, &l, i);
+        int x = (int)roundf(base_x);
+        base_x += tb_tab_width_f(tb, &l, i) +
+                  (float)l.gap * tb_open_progress(tb, i);
+        /* The midpoint belongs to the left half. A drop at the center of a
+         * tab must insert before it, not after it. */
+        if (p.x - x <= width / 2)
+            break;
+        slot = i + 1;
+    }
+    return slot;
+}
+
+static void external_drag_at(struct ui_tabbar *tb, bool active,
+                             struct vector2i p, int n_tabs,
+                             struct vector2i size)
+{
+    if (!tb) return;
+    int h = tb_drop_height(tb, n_tabs);
+    if (!active || n_tabs < 1 || p.x < 0 || p.x >= size.x ||
+        p.y < 0 || p.y >= h) {
+        tb->state.external_drag = false;
+        tb->state.external_slot = -1;
+
+        uint64_t now = tb->state.last_tick_ms ? tb->state.last_tick_ms : 1;
+        for (int i = 0; i < tb->state.tab_cap; i++)
+            ui_hover_anim_set_target(&tb->state.tabs[i].slide, 0.0f, now);
+        return;
+    }
+    bool was_external = tb->state.external_drag;
+    tb->state.external_drag = false;
+    tb->state.external_drag = true;
+    if (n_tabs == 1 && !was_external) {
+        uint64_t now = tb->state.last_tick_ms ? tb->state.last_tick_ms : 1;
+        ui_hover_anim_set_target(&tb->state.reveal, 1.0f, now);
+    }
+    struct tb_layout l = tb_layout_for(tb, n_tabs, size);
+    int slot = tb_slot_at(tb, n_tabs, size, p);
+    if (slot < 0)
+        slot = 0;
+    tb->state.external_slot = slot;
+    tb_slide_tabs_to(tb, n_tabs, slot, n_tabs, (float)(l.tab_width + l.gap));
+}
+
+static struct ui_tabbar *tb_of(const struct ui_widget *widget)
+{
+    return ui_container_of((struct ui_widget *)widget, struct ui_tabbar, widget);
+}
+
+/* Sends an action to the handler of the bar. `kind` is a core kind or one of
+ * the UI_TAB_ACTION_* kinds. */
+static void notify(struct ui_tabbar *tb, int kind, int id, int index, int arg,
+                   struct vector2i pos)
+{
+    ui_widget_notify(&tb->widget, (struct ui_action){
+        .kind = (enum ui_action_kind)kind, .id = id, .index = index,
+        .arg = arg, .pos = pos,
+    });
+}
+
+static void clear_drop(struct ui_tabbar *tb)
+{
+    if (tb->state.drag_slot < 0 &&
+        !ui_drop_indicator_active(&tb->state.drop))
+        return;
+    tb->state.drop = (struct ui_drop_indicator){0};
+    tb->state.drag_slot = -1;
+    ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
+}
+
+/* Marks insert slot `slot` with a vertical mark at the gap between two tabs. */
+static void show_drop(struct ui_tabbar *tb, int n_tabs, int slot)
+{
+    if (!tb || slot < 0 || n_tabs < 1) {
+        if (tb)
+            clear_drop(tb);
+        return;
+    }
+    struct tb_layout l = tb_layout_for(tb, n_tabs, tb->state.size);
+    const struct css_scale_context *ctx = tb_ctx(tb);
+    struct css_style mark = tb_style(tb, tb_part()->drop_mark, CSS_PSEUDO_NONE);
+    int width = ui_ctx_size(ctx, mark.width, (float)ui_ctx_px(ctx, 3));
+    float base_x = (float)l.pad.l;
+    for (int i = 0; i < slot; i++) {
+        base_x += tb_tab_width_f(tb, &l, i);
+        base_x += (float)l.gap * tb_open_progress(tb, i);
+    }
+    int x = (int)roundf(base_x) - width / 2;
+    if (x < l.pad.l)
+        x = l.pad.l;
+    int max_x = tb->state.size.x - l.pad.r - width;
+    if (x > max_x)
+        x = max_x;
+    int y = l.pad.t + (l.height - l.pad.t - l.pad.b - l.tab_height) / 2;
+    struct ui_drop_indicator next = {
+        .rect = { .pos = { .x = x, .y = y },
+                  .size = { .x = width, .y = l.tab_height } },
+        .mark = UI_DROP_MARK_TAB,
+    };
+    if (rect2i_is_empty(next.rect)) {
+        clear_drop(tb);
+        return;
+    }
+    /* The model holds surface coordinates. */
+    next.rect = rect2i_translate(next.rect, tb->widget.bounds.pos);
+    if (rect2i_eq(next.rect, tb->state.drop.rect) &&
+        next.mark == tb->state.drop.mark && tb->state.drag_slot == slot)
+        return;
+    tb->state.drop = next;
+    tb->state.drag_slot = slot;
+    ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
+}
+
+static int active_tab(const struct ui_tabbar *tb)
+{
+    for (int i = 0; tb && i < tb->state.n_tabs; i++)
+        if (tb->state.labels[i].active)
+            return i;
+    return 0;
+}
+
+static void focus_item(struct ui_tabbar *tb, int index, bool activate)
+{
+    int n = tb->state.n_tabs;
+    if (n <= 0)
+        return;
+    if (index < 0)
+        index = 0;
+    if (index > n)
+        index = n;
+    if (tb->state.keyboard_index != index) {
+        tb->state.keyboard_index = index;
+        ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
+    }
+    if (activate && index == n)
+        notify(tb, UI_ACTION_ACTIVATE, UI_TABBAR_NEW_TAB, -1, 0,
+               (struct vector2i){0});
+    else if (activate)
+        notify(tb, UI_ACTION_ACTIVATE, 0, index, 0, (struct vector2i){0});
+}
+
+static bool tabbar_key(struct ui_tabbar *tb, const struct ui_key_event *key)
+{
+    int n = tb->state.n_tabs;
+    if (n <= 0 || key->action == UI_KEY_RELEASE)
+        return false;
+
+    switch (key->key) {
+    case UI_KEY_LEFT:
+    case UI_KEY_RIGHT: {
+        int count = n + 1;
+        int index = tb->state.keyboard_index;
+        if (index < 0 || index >= count)
+            index = active_tab(tb);
+        index = (index + (key->key == UI_KEY_RIGHT ? 1 : count - 1)) % count;
+        focus_item(tb, index, false);
+        return true;
+    }
+    case UI_KEY_HOME:
+        if (key->action != UI_KEY_PRESS)
+            return true;
+        focus_item(tb, 0, false);
+        return true;
+    case UI_KEY_END:
+        if (key->action != UI_KEY_PRESS)
+            return true;
+        focus_item(tb, n - 1, false);
+        return true;
+    case UI_KEY_ENTER:
+        if (key->action != UI_KEY_PRESS)
+            return true;
+        focus_item(tb, tb->state.keyboard_index, true);
+        return true;
+    case UI_KEY_ESCAPE:
+        ui_surface_focus(ui_widget_surface(&tb->widget), NULL);
+        return true;
+    case UI_KEY_CHAR:
+        if (key->text == ' ' && key->action == UI_KEY_PRESS) {
+            focus_item(tb, tb->state.keyboard_index, true);
+            return true;
+        }
+        if (key->text == '+' && key->action == UI_KEY_PRESS) {
+            notify(tb, UI_ACTION_ACTIVATE, UI_TABBAR_NEW_TAB, -1, 0,
+                   (struct vector2i){0});
+            return true;
+        }
+        return false;
+    case UI_KEY_DELETE:
+        if (key->action == UI_KEY_PRESS) {
+            int index = tb->state.keyboard_index;
+            if (index == n)
+                return true;
+            if (index < 0 || index > n)
+                index = active_tab(tb);
+            notify(tb, UI_ACTION_CLOSE, 0, index, 0, (struct vector2i){0});
+        }
+        return true;
+    default:
+        return false;
+    }
+}
+
+static struct vector2i grab_point(const struct ui_tabbar *tb)
+{
+    struct rect2i tab = {0};
+    tb_tab_rect_at(tb, tb->state.n_tabs, tb->state.size, tb->state.drag_tab,
+                   &tab);
+    return (struct vector2i){ .x = tb->state.drag_grab_x,
+                              .y = tb->state.drag_origin.y - tab.y };
+}
+
+static void hover(struct ui_tabbar *tb, struct tb_hit hit, uint64_t now_ms)
+{
+    int tab = hit.index;
+    int close = hit.on_close ? hit.index : -1;
+    if (tab == tb->state.hover_tab && close == tb->state.hover_close &&
+        hit.on_new == tb->state.hover_new)
+        return;
+    bool tab_changed = tab != tb->state.hover_tab;
+    set_hover(tb, tab, close, now_ms);
+    set_hover_new(tb, hit.on_new, now_ms);
+    ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
+    if (tab_changed)
+        notify(tb, UI_ACTION_HIGHLIGHT, 0, tab, 0, (struct vector2i){0});
+}
+
+static void cancel_drag(struct ui_tabbar *tb)
+{
+    if (tb->state.drag_state == UI_TAB_DRAG_NONE)
+        return;
+    int tab = tb->state.drag_tab;
+    bool reported = tb->state.drag_state != UI_TAB_DRAG_PENDING;
+    drag_cancel(tb);
+    ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
+    if (reported)
+        notify(tb, UI_TAB_ACTION_DRAG, UI_TAB_DRAG_NONE, tab, 0,
+               (struct vector2i){0});
+}
+
+static bool drag_moved(struct ui_tabbar *tb, struct vector2i local,
+                       struct vector2i pos)
+{
+    int n = tb->state.n_tabs;
+    drag_motion(tb, n, tb->state.size, local);
+    ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
+    int tab = tb->state.drag_tab;
+    enum ui_tab_drag_state state = tb->state.drag_state;
+    if (state == UI_TAB_DRAG_PENDING)
+        return true;
+    if (state == UI_TAB_DRAG_DETACH) {
+        struct ui_action tear = {
+            .kind = (enum ui_action_kind)UI_TAB_ACTION_TEAR_OFF,
+            .index = tab,
+            .pos = grab_point(tb),
+        };
+        if (ui_widget_notify(&tb->widget, tear)) {
+            drag_cancel(tb);
+            ui_widget_release_pointer(&tb->widget);
+            return true;
+        }
+    }
+    notify(tb, UI_TAB_ACTION_DRAG, state, tab, 0, pos);
+    return true;
+}
+
+static bool drag_released(struct ui_tabbar *tb)
+{
+    int tab = tb->state.drag_tab;
+    struct vector2i grab = grab_point(tb);
+    int slot = -1;
+    enum drag_finish finish = drag_finish(tb, &slot);
+    ui_widget_release_pointer(&tb->widget);
+    ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
+    if (finish == FINISH_REORDER)
+        notify(tb, UI_TAB_ACTION_MOVE, 0, tab, slot, (struct vector2i){0});
+    else if (finish == FINISH_DETACH)
+        notify(tb, UI_TAB_ACTION_MOVE, 0, tab, -1, grab);
+    return true;
+}
+
+static bool pressed(struct ui_tabbar *tb, const struct ui_pointer_event *pe,
+                    struct vector2i local, uint64_t now_ms)
+{
+    int n = tb->state.n_tabs;
+    struct vector2i size = tb->state.size;
+    struct tb_hit hit = tb_hit_at(tb, n, size, local);
+    if (hit.on_new) {
+        if (pe->button == 0)
+            notify(tb, UI_ACTION_ACTIVATE, UI_TABBAR_NEW_TAB, -1, 0,
+                   (struct vector2i){0});
+        return true;
+    }
+    if (hit.index < 0)
+        return false;
+    if (pe->button == 1 || (pe->button == 0 && hit.on_close)) {
+        notify(tb, UI_ACTION_CLOSE, 0, hit.index, 0, (struct vector2i){0});
+        return true;
+    }
+    if (pe->button != 0)
+        return true;
+    tb->state.pressed_tab = hit.index;
+    struct rect2i tab_r;
+    if (tb_tab_rect_at(tb, n, size, hit.index, &tab_r)) {
+        drag_start(tb, hit.index, local, tab_r);
+        ui_widget_capture_pointer(&tb->widget);
+    }
+    ripple(tb, n, size, hit.index, local, now_ms);
+    notify(tb, UI_ACTION_ACTIVATE, 0, hit.index, 0, (struct vector2i){0});
+    return true;
+}
+
+static bool over_bar(const struct ui_tabbar *tb, const struct ui_widget *widget,
+                     struct vector2i pos)
+{
+    struct vector2i local = ui_widget_to_local(widget, pos);
+    int h = tb_bar_height(tb, tb_css_height(tb), tb->state.n_tabs);
+    return local.y >= 0 && local.y < h;
+}
+
+static bool tb_event(struct ui_widget *widget, const struct ui_event *event)
+{
+    struct ui_tabbar *tb = tb_of(widget);
+    if (event->kind == UI_EVENT_FOCUS_IN) {
+        tb->state.keyboard_index = active_tab(tb);
+        ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
+        return true;
+    }
+    if (event->kind == UI_EVENT_FOCUS_OUT) {
+        ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
+        return true;
+    }
+    if (event->kind == UI_EVENT_KEY)
+        return tabbar_key(tb, &event->data.key);
+    if (event->kind == UI_EVENT_DRAG_ENTER ||
+        event->kind == UI_EVENT_DRAG_OVER) {
+        if (tb->state.n_tabs < 1) {
+            clear_drop(tb);
+            return false;
+        }
+        int slot = tb_slot_at(tb, tb->state.n_tabs, tb->state.size,
+                              ui_widget_to_local(widget, event->data.drag.pos));
+        show_drop(tb, tb->state.n_tabs, slot);
+        return slot >= 0;
+    }
+    if (event->kind == UI_EVENT_DRAG_LEAVE) {
+        clear_drop(tb);
+        return true;
+    }
+    if (event->kind == UI_EVENT_DROP) {
+        /* The bar marks the insert slot, but it has no handler for the
+         * payload. Let the drop bubble to a parent. A tab drag does not use
+         * this path. It uses the drag target. */
+        clear_drop(tb);
+        return false;
+    }
+    /* The native drag owns the pointer. A pointer event means that the drag
+     * is over and that no leave event can come. */
+    if (event->kind == UI_EVENT_POINTER)
+        clear_drop(tb);
+    if (event->kind == UI_EVENT_CAPTURE_LOST) {
+        tb->state.pressed_tab = -1;
+        cancel_drag(tb);
+        clear_drop(tb);
+        return true;
+    }
+    if (event->kind != UI_EVENT_POINTER)
+        return false;
+    const struct ui_pointer_event *pe = &event->data.pointer;
+    if (pe->kind == UI_POINTER_RELEASE && tb->state.pressed_tab >= 0) {
+        tb->state.pressed_tab = -1;
+        ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
+    }
+    struct vector2i local = ui_widget_to_local(widget, pe->pos);
+    int h = tb_bar_height(tb, tb_css_height(tb), tb->state.n_tabs);
+    bool on_bar = local.y >= 0 && local.y < h;
+    switch (pe->kind) {
+    case UI_POINTER_LEAVE:
+        hover(tb, (struct tb_hit){ .index = -1 }, event->time_ms);
+        if (!ui_widget_is_captured(widget))
+            cancel_drag(tb);
+        return true;
+    case UI_POINTER_MOTION:
+        if (tb->state.drag_state != UI_TAB_DRAG_NONE)
+            return drag_moved(tb, local, pe->pos);
+        hover(tb, tb_hit_at(tb, tb->state.n_tabs, tb->state.size, local),
+              event->time_ms);
+        return over_bar(tb, widget, pe->pos);
+    case UI_POINTER_PRESS:
+        if (!on_bar)
+            return false;
+        {
+            struct tb_hit hit = tb_hit_at(tb, tb->state.n_tabs,
+                                          tb->state.size, local);
+            if (hit.index >= 0 || hit.on_new) {
+                focus_item(tb, hit.on_new ? tb->state.n_tabs : hit.index,
+                           false);
+            }
+        }
+        return pressed(tb, pe, local, event->time_ms);
+    case UI_POINTER_RELEASE:
+        if (pe->button == 0 && tb->state.drag_state != UI_TAB_DRAG_NONE)
+            return drag_released(tb);
+        return on_bar;
+    default:
+        return on_bar;
+    }
+}
+
+static bool tb_hit_test(const struct ui_widget *widget, struct vector2i pos)
+{
+    const struct ui_tabbar *tb = tb_of(widget);
+    if (ui_tabbar_is_dragging(tb))
+        return true;
+    struct tb_hit hit = tb_hit_at(tb, tb->state.n_tabs, tb->state.size,
+                                  ui_widget_to_local(widget, pos));
+    return hit.index >= 0 || hit.on_new;
+}
+
+static enum ui_cursor tb_cursor(const struct ui_widget *widget,
+                                struct vector2i pos)
+{
+    const struct ui_tabbar *tb = tb_of(widget);
+    struct tb_hit hit = tb_hit_at(tb, tb->state.n_tabs, tb->state.size,
+                                  ui_widget_to_local(widget, pos));
+    if (hit.on_close || hit.on_new)
+        return UI_CURSOR_POINTER;
+    return hit.index >= 0 ? UI_CURSOR_DEFAULT : UI_CURSOR_AUTO;
+}
+
+static uint64_t tb_tick(struct ui_widget *widget, uint64_t now_ms)
+{
+    struct ui_tabbar *tb = tb_of(widget);
+    int css_height = tb_css_height(tb);
+    int before = tb_bar_height(tb, css_height, tb->state.n_tabs);
+    bool animating = bar_tick(tb, tb->state.size, now_ms);
+    if (tb_bar_height(tb, css_height, tb->state.n_tabs) != before)
+        ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_MEASURE);
+    else if (animating)
+        ui_widget_invalidate(widget, UI_WIDGET_INVALIDATE_PAINT);
+    return animating ? now_ms : 0;
+}
+
+static struct vector2i tb_measure(const struct ui_widget *widget,
+                                  struct ui_constraints constraints)
+{
+    const struct ui_tabbar *tb = tb_of(widget);
+    return ui_constraints_clamp(constraints, (struct vector2i){
+        .x = constraints.min.x,
+        .y = tb_bar_height(tb, tb_css_height(tb), tb->state.n_tabs),
+    });
+}
+
+static void tb_layout(struct ui_widget *widget, struct rect2i bounds)
+{
+    tb_of(widget)->state.size = bounds.size;
+}
+
+static void tb_paint(const struct ui_widget *widget,
+                     struct ui_paint_context *paint)
+{
+    struct ui_tabbar *tb = tb_of(widget);
+    if (tb->state.n_tabs > 0) {
+        tb_scene_emit(tb, tb->state.labels, tb->state.n_tabs, tb->state.size,
+                      paint->scene, tb->state.last_tick_ms);
+    }
+}
+
+static void tb_debug_parts(const struct ui_widget *widget,
+                           struct ui_debug_parts *out)
+{
+    struct ui_tabbar *tb = tb_of(widget);
+    int n = tb->state.n_tabs;
+    struct vector2i size = tb->state.size;
+    int h = tb_bar_height(tb, tb_css_height(tb), n);
+    if (h <= 0)
+        return;
+    struct vector2i o = widget->bounds.pos;
+    ui_debug_part(out, "bar", -1, rect2i_translate((struct rect2i){
+        .size = { .x = size.x, .y = h },
+    }, o));
+    struct rect2i r;
+    for (int i = 0; i < n; i++) {
+        if (tb_tab_rect_at(tb, n, size, i, &r))
+            ui_debug_part(out, "tab", i, rect2i_translate(r, o));
+        if (tb_close_rect_at(tb, n, size, i, &r))
+            ui_debug_part(out, "tab-close", i, rect2i_translate(r, o));
+    }
+    struct tb_layout l = tb_layout_for(tb, n, size);
+    if (tb_drop_rect(tb, &l, size, &r))
+        ui_debug_part(out, "drop-preview", -1, rect2i_translate(r, o));
+    if (ui_drop_indicator_active(&tb->state.drop))
+        ui_debug_part(out, "drop-mark", -1, tb->state.drop.rect);
+    if (tb_new_tab_rect_at(tb, n, size, &r))
+        ui_debug_part(out, "tab-new", -1, rect2i_translate(r, o));
+    if (tb_drag_rect(tb, &l, n, size, &r))
+        ui_debug_part(out, "tab-drag", -1, rect2i_translate(r, o));
+}
+
+static void free_labels(struct ui_tabbar *tb)
+{
+    for (int i = 0; i < tb->state.labels_cap; i++)
+        free((char *)tb->state.labels[i].text);
+    free(tb->state.labels);
+    tb->state.labels = NULL;
+    tb->state.labels_cap = 0;
+}
+
+static void tb_destroy(struct ui_widget *widget)
+{
+    struct ui_tabbar *tb = tb_of(widget);
+    free_labels(tb);
+    free(tb->state.tabs);
+    tb->state.tabs = NULL;
+    tb->state.tab_cap = tb->state.capacity = 0;
+}
+
+static bool tabbar_accessibility(const struct ui_widget *widget,
+                                 struct ui_accessibility_node_spec *out)
+{
+    const struct ui_tabbar *tb = tb_of(widget);
+    if (tb->state.n_tabs < 1 || rect2i_is_empty(widget->bounds))
+        return false;
+    out->role = UI_ACCESSIBILITY_ROLE_TAB_LIST;
+    return true;
+}
+
+static size_t tabbar_accessibility_child_count(const struct ui_widget *widget)
+{
+    const struct ui_tabbar *tb = tb_of(widget);
+    if (tb->state.n_tabs < 1 || rect2i_is_empty(widget->bounds))
+        return 0;
+    return (size_t)tb->state.n_tabs + 1;
+}
+
+static bool tabbar_accessibility_child(const struct ui_widget *widget,
+                                       size_t index,
+                                       struct ui_accessibility_node_spec *out)
+{
+    const struct ui_tabbar *tb = tb_of(widget);
+    if (index < (size_t)tb->state.n_tabs) {
+        int tab_index = (int)index;
+        struct rect2i bounds;
+        if (!tb->state.tabs || tab_index >= tb->state.tab_cap ||
+            !tb->state.labels || tab_index >= tb->state.labels_cap ||
+            !ui_tabbar_tab_rect(tb, tab_index, &bounds) ||
+            rect2i_is_empty(bounds))
+            return false;
+        out->id = tb->state.tabs[tab_index].accessibility_id;
+        out->role = UI_ACCESSIBILITY_ROLE_TAB;
+        out->name = tb->state.labels[tab_index].text;
+        out->bounds = bounds;
+        if (tb->state.labels[tab_index].active)
+            out->states |= UI_ACCESSIBILITY_STATE_SELECTED;
+        if (ui_widget_has_focus(widget) &&
+            tb->state.keyboard_index == tab_index)
+            out->states |= UI_ACCESSIBILITY_STATE_FOCUSED;
+        out->actions |= UI_ACCESSIBILITY_ACTION_INVOKE;
+        if (ui_widget_is_focusable(widget)) {
+            out->states |= UI_ACCESSIBILITY_STATE_FOCUSABLE;
+            out->actions |= UI_ACCESSIBILITY_ACTION_FOCUS;
+        }
+        return out->id != 0;
+    }
+    if (index != (size_t)tb->state.n_tabs ||
+        !tb->state.new_accessibility_id)
+        return false;
+    struct rect2i bounds;
+    if (!ui_tabbar_new_tab_rect(tb, &bounds) || rect2i_is_empty(bounds))
+        return false;
+    out->id = tb->state.new_accessibility_id;
+    out->role = UI_ACCESSIBILITY_ROLE_BUTTON;
+    out->name = "New tab";
+    out->bounds = bounds;
+    if (ui_widget_has_focus(widget) &&
+        tb->state.keyboard_index == tb->state.n_tabs)
+        out->states |= UI_ACCESSIBILITY_STATE_FOCUSED;
+    out->actions |= UI_ACCESSIBILITY_ACTION_INVOKE;
+    if (ui_widget_is_focusable(widget)) {
+        out->states |= UI_ACCESSIBILITY_STATE_FOCUSABLE;
+        out->actions |= UI_ACCESSIBILITY_ACTION_FOCUS;
+    }
+    return true;
+}
+
+static bool tabbar_accessibility_action(
+    struct ui_widget *widget, uint64_t node_id,
+    const struct ui_accessibility_action_request *request)
+{
+    struct ui_tabbar *tb = tb_of(widget);
+    if (node_id == tb->state.new_accessibility_id) {
+        if (request->action == UI_ACCESSIBILITY_ACTION_FOCUS &&
+            ui_widget_is_focusable(widget)) {
+            ui_widget_focus(widget);
+            focus_item(tb, tb->state.n_tabs, false);
+            return true;
+        }
+        if (request->action == UI_ACCESSIBILITY_ACTION_INVOKE) {
+            if (ui_widget_is_focusable(widget))
+                ui_widget_focus(widget);
+            focus_item(tb, tb->state.n_tabs, true);
+            return true;
+        }
+        return false;
+    }
+    int n = tb->state.n_tabs < tb->state.tab_cap
+        ? tb->state.n_tabs : tb->state.tab_cap;
+    for (int i = 0; i < n; i++) {
+        if (tb->state.tabs[i].accessibility_id != node_id)
+            continue;
+        if (request->action == UI_ACCESSIBILITY_ACTION_FOCUS &&
+            ui_widget_is_focusable(widget)) {
+            ui_widget_focus(widget);
+            focus_item(tb, i, false);
+            return true;
+        }
+        if (request->action == UI_ACCESSIBILITY_ACTION_INVOKE) {
+            if (ui_widget_is_focusable(widget))
+                ui_widget_focus(widget);
+            focus_item(tb, i, true);
+            return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+static const struct ui_widget_ops TABBAR_OPS = {
+    .name = "tabbar",
+    .measure = tb_measure,
+    .layout = tb_layout,
+    .event = tb_event,
+    .hit_test = tb_hit_test,
+    .cursor = tb_cursor,
+    .tick = tb_tick,
+    .paint = tb_paint,
+    .debug_parts = tb_debug_parts,
+    .destroy = tb_destroy,
+    .accessibility = tabbar_accessibility,
+    .accessibility_child_count = tabbar_accessibility_child_count,
+    .accessibility_child = tabbar_accessibility_child,
+    .accessibility_action = tabbar_accessibility_action,
+};
+
+void ui_tabbar_init(struct ui_tabbar *tb)
+{
+    if (!tb)
+        return;
+    *tb = (struct ui_tabbar){
+        .state.hover_tab = -1,
+        .state.hover_close = -1,
+        .state.drag_tab = -1,
+        .state.drag_target_slot = -1,
+        .state.drag_slot = -1,
+        .state.pressed_tab = -1,
+        .state.external_slot = -1,
+    };
+    ui_widget_init(&tb->widget, &TABBAR_OPS, NULL);
+    tb->state.new_accessibility_id = ui_widget_accessibility_id_allocate();
+    ui_widget_set_style_identity(&tb->widget, NULL, NULL, "tab-bar");
+}
+
+void ui_tabbar_set_empty_title(struct ui_tabbar *tb, const char *text)
+{
+    if (!tb)
+        return;
+    tb->state.empty_title = text;
+}
+
+void ui_tabbar_set_shortcut_prefix(struct ui_tabbar *tb, const char *text)
+{
+    if (!tb)
+        return;
+    tb->state.shortcut_prefix = text;
+}
+
+/* Tests if the tab bar holds this label set already. A NULL label set names
+ * the tabs and leaves their text empty. */
+static bool same_labels(const struct ui_tabbar *tb,
+                        const struct ui_tab_label *tabs, int n)
+{
+    if (tb->state.n_tabs != n)
+        return false;
+    for (int i = 0; i < n; i++) {
+        const char *have = tb->state.labels[i].text ? tb->state.labels[i].text : "";
+        const char *want = "";
+        bool want_active = false;
+        if (tabs) {
+            want = tabs[i].text ? tabs[i].text : "";
+            want_active = tabs[i].active;
+        }
+        if (tb->state.labels[i].active != want_active || strcmp(have, want))
+            return false;
+    }
+    return true;
+}
+
+static bool reserve_labels(struct ui_tabbar *tb, int n)
+{
+    size_t have = tb->state.labels ? (size_t)tb->state.labels_cap : 0;
+    if ((size_t)n <= have)
+        return true;
+    size_t want = (size_t)n < 8 ? 8 : (size_t)n;
+    struct ui_tab_label *labels = calloc(want, sizeof(*labels));
+    if (!labels)
+        return false;
+    if (have)
+        memcpy(labels, tb->state.labels, have * sizeof(*labels));
+    free(tb->state.labels);
+    tb->state.labels = labels;
+    tb->state.labels_cap = (int)want;
+    return true;
+}
+
+void ui_tabbar_set_tabs(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
+                        int n_tabs)
+{
+    if (!tb)
+        return;
+    int n = n_tabs > 0 ? n_tabs : 0;
+    /* The bar takes focus only when it holds more than one tab. A label set
+     * that matches still ends a bar that dropped to one tab. */
+    ui_widget_set_focusable(&tb->widget, n >= 2);
+    if (same_labels(tb, tabs, n))
+        return;
+    if (!reserve_labels(tb, n))
+        return;
+    /* Take the array once. The loop writes the entries that it holds. */
+    struct ui_tab_label *labels = tb->state.labels;
+    for (int i = 0; i < n && labels; i++) {
+        const char *text = "";
+        bool active = false;
+        if (tabs) {
+            text = tabs[i].text ? tabs[i].text : "";
+            active = tabs[i].active;
+        }
+        struct ui_tab_label *l = &labels[i];
+        if (!l->text || strcmp(l->text, text)) {
+            char *copy = strdup(text);
+            /* A failed copy keeps the old text and leaves no NULL label. */
+            if (!copy && !l->text)
+                l->text = calloc(1, 1);
+            if (copy) {
+                free((char *)l->text);
+                l->text = copy;
+            }
+        }
+        l->active = active;
+    }
+    int prev_n = tb->state.n_tabs;
+    bool count_changed = prev_n != n;
+    tb->state.n_tabs = n;
+    tb_ensure_tabs(tb, n);
+    if (n < prev_n)
+        clear_hover(tb, 0);
+    if (n > 0) {
+        if (ui_widget_has_focus(&tb->widget))
+            tb->state.keyboard_index = active_tab(tb);
+        else if (tb->state.keyboard_index >= n)
+            tb->state.keyboard_index = n - 1;
+    } else {
+        tb->state.keyboard_index = 0;
+    }
+    ui_widget_invalidate(&tb->widget, count_changed
+        ? UI_WIDGET_INVALIDATE_MEASURE : UI_WIDGET_INVALIDATE_PAINT);
+}
+
+void ui_tabbar_set_bg_color(struct ui_tabbar *tb, uint32_t bg)
+{
+    if (!tb || tb->state.bg_color == bg)
+        return;
+    tb->state.bg_color = bg;
+    ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
+}
+
+bool ui_tabbar_insert_tab(struct ui_tabbar *tb, int slot)
+{
+    if (!tb || slot < 0 || slot > tb->state.tab_cap ||
+        !tb_ensure_capacity(tb, tb->state.tab_cap + 1))
+        return false;
+    memmove(&tb->state.tabs[slot + 1], &tb->state.tabs[slot],
+            (size_t)(tb->state.tab_cap - slot) * sizeof(*tb->state.tabs));
+    tb->state.tabs[slot] = (struct ui_tab_state){
+        .accessibility_id = ui_widget_accessibility_id_allocate(),
+        .open = { .value = 1.0f, .to = 1.0f },
+    };
+    tb->state.tab_cap++;
+    if (slot <= tb->state.keyboard_index)
+        tb->state.keyboard_index++;
+    clear_hover(tb, 0);
+    ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
+    return true;
+}
+
+bool ui_tabbar_remove_tab(struct ui_tabbar *tb, int index)
+{
+    if (!tb || index < 0 || index >= tb->state.tab_cap)
+        return false;
+    if (tb->state.drag_state != UI_TAB_DRAG_NONE) {
+        drag_cancel(tb);
+        ui_widget_release_pointer(&tb->widget);
+    }
+    memmove(&tb->state.tabs[index], &tb->state.tabs[index + 1],
+            (size_t)(tb->state.tab_cap - index - 1) * sizeof(*tb->state.tabs));
+    tb->state.tab_cap--;
+    tb->state.tabs[tb->state.tab_cap] = (struct ui_tab_state){0};
+    /* The label count can not exceed the tab states. A stale count would
+     * make the bar height wrong until the next label update. */
+    if (tb->state.n_tabs > tb->state.tab_cap)
+        tb->state.n_tabs = tb->state.tab_cap;
+    if (tb->state.keyboard_index > index)
+        tb->state.keyboard_index--;
+    else if (tb->state.keyboard_index == index &&
+             tb->state.keyboard_index >= tb->state.tab_cap)
+        tb->state.keyboard_index = tb->state.tab_cap > 0
+            ? tb->state.tab_cap - 1 : 0;
+    clear_hover(tb, 0);
+    ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
+    return true;
+}
+
+void ui_tabbar_move_tab(struct ui_tabbar *tb, int from, int to)
+{
+    if (!tb || from == to || from < 0 || to < 0 ||
+        from >= tb->state.tab_cap || to >= tb->state.tab_cap)
+        return;
+    struct ui_tab_state st = tb->state.tabs[from];
+    if (from < to)
+        memmove(&tb->state.tabs[from], &tb->state.tabs[from + 1],
+                (size_t)(to - from) * sizeof(*tb->state.tabs));
+    else
+        memmove(&tb->state.tabs[to + 1], &tb->state.tabs[to],
+                (size_t)(from - to) * sizeof(*tb->state.tabs));
+    tb->state.tabs[to] = st;
+    if (tb->state.keyboard_index == from)
+        tb->state.keyboard_index = to;
+    else if (from < to && tb->state.keyboard_index > from &&
+             tb->state.keyboard_index <= to)
+        tb->state.keyboard_index--;
+    else if (from > to && tb->state.keyboard_index >= to &&
+             tb->state.keyboard_index < from)
+        tb->state.keyboard_index++;
+    clear_hover(tb, 0);
+    ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
+}
+
+int ui_tabbar_height(const struct ui_tabbar *tb)
+{
+    if (!tb)
+        return 0;
+    return tb_bar_height(tb, tb_css_height(tb), tb->state.n_tabs);
+}
+
+int ui_tabbar_steady_height(const struct ui_tabbar *tb)
+{
+    if (!tb)
+        return 0;
+    return tb_steady_height(tb, tb->state.n_tabs);
+}
+
+int ui_tabbar_bar_height(const struct ui_tabbar *tb)
+{
+    if (!tb)
+        return 0;
+    return tb_css_height(tb);
+}
+
+static bool to_surface(const struct ui_tabbar *tb, bool ok, struct rect2i *out)
+{
+    if (ok)
+        *out = ui_widget_rect_to_surface(&tb->widget, *out);
+    return ok;
+}
+
+bool ui_tabbar_tab_rect(const struct ui_tabbar *tb, int index,
+                        struct rect2i *out)
+{
+    if (!tb)
+        return false;
+    return to_surface(tb, tb_tab_rect_at(tb, tb->state.n_tabs,
+                                         tb->state.size, index, out), out);
+}
+
+bool ui_tabbar_close_rect(const struct ui_tabbar *tb, int index,
+                          struct rect2i *out)
+{
+    if (!tb)
+        return false;
+    return to_surface(tb, tb_close_rect_at(tb, tb->state.n_tabs,
+                                           tb->state.size, index, out), out);
+}
+
+bool ui_tabbar_new_tab_rect(const struct ui_tabbar *tb, struct rect2i *out)
+{
+    if (!tb)
+        return false;
+    return to_surface(tb, tb_new_tab_rect_at(tb, tb->state.n_tabs,
+                                             tb->state.size, out), out);
+}
+
+void ui_tabbar_set_external_drag(struct ui_tabbar *tb, bool active,
+                                 struct vector2i pos)
+{
+    if (!tb)
+        return;
+    bool was_drag = tb->state.external_drag;
+    int was_slot = tb->state.external_slot;
+    external_drag_at(tb, active, ui_widget_to_local(&tb->widget, pos),
+                     tb->state.n_tabs, tb->state.size);
+    if (tb->state.external_drag != was_drag)
+        ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_MEASURE);
+    else if (tb->state.external_slot != was_slot)
+        ui_widget_invalidate(&tb->widget, UI_WIDGET_INVALIDATE_PAINT);
+}
+
+int ui_tabbar_external_slot(const struct ui_tabbar *tb)
+{
+    return tb && tb->state.external_drag ? tb->state.external_slot : -1;
+}
+
+const struct ui_drop_indicator *ui_tabbar_drop_indicator(
+    const struct ui_tabbar *tb)
+{
+    return tb && ui_drop_indicator_active(&tb->state.drop)
+        ? &tb->state.drop : NULL;
+}
+
+int ui_tabbar_drop_slot(const struct ui_tabbar *tb)
+{
+    return tb ? tb->state.drag_slot : -1;
+}
+
+int ui_tabbar_hovered_tab(const struct ui_tabbar *tb)
+{
+    if (!tb || tb->state.hover_tab < 0 || tb->state.hover_tab >= tb->state.n_tabs ||
+        tb->state.hover_tab >= tb->state.tab_cap ||
+        tb->state.tabs[tb->state.hover_tab].closing)
+        return -1;
+    return tb->state.hover_tab;
+}

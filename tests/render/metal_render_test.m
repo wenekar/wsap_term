@@ -14,6 +14,7 @@
 #include "render/gpu/gpu.h"
 #include "render/render.h"
 #include "render/surface.h"
+#include "terminal/render/term_render.h"
 #include "util/damage.h"
 
 /*
@@ -97,6 +98,15 @@
 
 enum { SHOTS_MAX = 8 };
 
+/* The exit status of a run that skipped every frame test. The test runner of
+ * meson and automake reads 77 as skipped. */
+#define TEST_SKIP_STATUS 77
+
+/* The number of frame tests that ran. A run with 0 of them is a skip, not a
+ * pass: such a run draws no frame, so it cannot find a defect in the frame
+ * path. */
+static int frame_tests_ran;
+
 /* One GPU, one render surface, and the drawables that the test reads. */
 struct fixture {
     id<MTLDevice> device;
@@ -115,6 +125,7 @@ static bool fixture_open(struct fixture *f, const char *title)
         return false;
     }
     f->device = [(id<MTLDevice>)render_gpu_native_device(f->g) retain];
+    frame_tests_ran++;
     return true;
 }
 
@@ -382,9 +393,10 @@ static bool shows_image(const uint32_t *px, int stride, struct vector2i pos, con
 }
 
 /*
- * An image draws as an opaque copy of its pixels. An image that changes in
+ * An image draws its opaque pixels as they are. An image that changes in
  * place shows its new pixels. A frame with more images than the backend
- * keeps goes to the CPU, and a frame that fits works again after it.
+ * started with adds textures and still presents. This test cannot run on
+ * Linux, so the Vulkan test checks the same behavior there.
  */
 static void test_images(void)
 {
@@ -397,10 +409,10 @@ static void test_images(void)
     TestDrawable *first = fixture_shot(&f, size);
     TestDrawable *changed = fixture_shot(&f, size);
 
-    /* Translucent source pixels: the copy is opaque. */
+    /* Opaque source pixels: the draw copies them. */
     uint32_t pixels[SIDE * SIDE], first_pixels[SIDE * SIDE];
     for (int i = 0; i < SIDE * SIDE; i++)
-        pixels[i] = 0x80000000u | (uint32_t)(i * 2654435761u >> 8);
+        pixels[i] = 0xFF000000u | (uint32_t)(i * 2654435761u >> 8);
     memcpy(first_pixels, pixels, sizeof(pixels));
     struct ui_image image = { .size = { .x = SIDE, .y = SIDE }, .pixels = pixels, .gen = 1 };
     struct ui_scene scene = {0};
@@ -414,7 +426,8 @@ static void test_images(void)
     assert(draw(&f, &rf, changed, size) == RENDER_GPU_PRESENTED);
     ui_scene_destroy(&scene);
 
-    enum { IMAGES = GPU_IMAGES + 1 };
+    /* More images than the backend has slots for at its start. */
+    enum { IMAGES = 70 };
     static uint32_t many_pixels[IMAGES][8 * 8];
     struct ui_image many[IMAGES];
     for (int i = 0; i < IMAGES; i++) {
@@ -425,14 +438,13 @@ static void test_images(void)
         };
     }
     TestDrawable *scratch = fixture_shot(&f, size);
-    for (int n = IMAGES; n >= GPU_IMAGES; n--) {
+    for (int n = IMAGES; n >= 1; n -= 23) {
         ui_scene_init(&scene);
         for (int i = 0; i < n; i++)
-            assert(ui_scene_image(&scene, (struct vector2i){ .x = 10 + i * 12, .y = 10 },
-                                  &many[i]));
+            assert(ui_scene_image(&scene, (struct vector2i){ .x = 10 + i % 10 * 10,
+                                                            .y = 10 + i / 10 * 10 }, &many[i]));
         rf.ui = &scene;
-        enum render_gpu_status want = n <= GPU_IMAGES ? RENDER_GPU_PRESENTED : RENDER_GPU_UNUSED;
-        assert(draw(&f, &rf, scratch, size) == want);
+        assert(draw(&f, &rf, scratch, size) == RENDER_GPU_PRESENTED);
         ui_scene_destroy(&scene);
     }
     fixture_finish(&f);
@@ -486,6 +498,38 @@ static void test_cpu_pixels(void)
 }
 
 /*
+ * A present that loses its drawable leaves the texture of the CPU pixels
+ * without pixels. The next present must load every pixel, not only the
+ * damage, so a texture that no frame received never reaches the screen.
+ */
+static void test_dropped_present(void)
+{
+    struct fixture f;
+    if (!fixture_open(&f, "dropped present"))
+        return;
+    const struct vector2i size = { .x = 64, .y = 48 };
+    size_t n = (size_t)size.x * (size_t)size.y;
+    uint32_t *pixels = malloc(n * sizeof(*pixels));
+    assert(pixels);
+    for (size_t i = 0; i < n; i++)
+        pixels[i] = 0xFF123456u;
+    /* No drawable: the texture comes to exist, and no command buffer runs. */
+    assert(draw_into(&f, NULL, pixels, NULL, nil, size) == RENDER_GPU_DROPPED);
+
+    TestDrawable *shot = fixture_shot(&f, size);
+    const struct rect2i r = { .x = 4, .y = 4, .width = 8, .height = 8 };
+    struct damage_list damage = { .any = true, .n = 1, .rects = { r }, .bounds = r };
+    assert(draw_into(&f, NULL, pixels, &damage, shot, size) == RENDER_GPU_PRESENTED);
+    fixture_finish(&f);
+
+    uint32_t *got = shot_pixels(shot);
+    assert(!memcmp(got, pixels, n * sizeof(*got)));
+    free(got);
+    free(pixels);
+    fixture_close(&f);
+}
+
+/*
  * A frame with a new image is dropped, because the window has no drawable.
  * Then the image goes away. The backend must not read its pixels later.
  * A sanitizer build shows a read of the freed pixels.
@@ -531,9 +575,14 @@ int main(void)
     test_same_frame_same_pixels();
     test_images();
     test_cpu_pixels();
+    test_dropped_present();
     test_dropped_frame_image();
     test_frame_helpers_fini();
     render_shutdown();
+    if (!frame_tests_ran) {
+        printf("metal_render_test: no frame test ran, skipped\n");
+        return TEST_SKIP_STATUS;
+    }
     printf("metal_render_test passed\n");
     return 0;
 }

@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "app/tabs/tabs.h"
+#include "app/tabs/terminal_content.h"
 #include "helpers/app_fixture.h"
 #include "session/session.h"
 #include "ui/yasl/window.h"
@@ -18,6 +19,17 @@ struct fixture {
     struct window *opened;
 };
 
+static void *create_content(void *ud, struct window *window, const char *cwd,
+                            struct vector2i content_size, int font_size)
+{
+    struct fixture *f = ud;
+    return app_terminal_content_create(window, &f->app.app->tabs, cwd,
+        content_size, font_size, &(struct app_terminal_content_spec){
+            .config = &f->app.app->config.terminal,
+            .theme = &f->app.app->palette,
+        });
+}
+
 static struct window *open_window(void *ud, app_tab_id tab, const char *cwd,
                                   struct vector2i size)
 {
@@ -26,10 +38,12 @@ static struct window *open_window(void *ud, app_tab_id tab, const char *cwd,
                                      &(struct window_spec){ .size = size });
     assert(w);
     assert(app_tabs_mount(w, &(struct app_tabs_spec){
-        .config = &f->app.app->config.terminal,
         .model = &f->app.app->tabs,
         .tab = tab,
         .cwd = cwd,
+        .create_content = create_content,
+        .create_ud = f,
+        .content_ops = &app_terminal_content_ops,
         .open_window = open_window,
         .ud = f,
     }));

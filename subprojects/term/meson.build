@@ -63,30 +63,33 @@ wsap_vtcore_test_dep = declare_dependency(
 )
 meson.override_dependency('wsap_vtcore-test', wsap_vtcore_test_dep)
 
-install_headers(
-  'include/wsap_vtcore/wsap_vtcore.h',
-  'include/wsap_vtcore/wsap_vtcore_input.h',
-  'include/wsap_vtcore/wsap_vtcore_types.h',
-  subdir: 'wsap_vtcore',
-)
+# A parent project links the library statically and installs nothing of it.
+if not meson.is_subproject()
+  install_headers(
+    'include/wsap_vtcore/wsap_vtcore.h',
+    'include/wsap_vtcore/wsap_vtcore_input.h',
+    'include/wsap_vtcore/wsap_vtcore_types.h',
+    subdir: 'wsap_vtcore',
+  )
 
-install_headers(
-  'include/wsap_vtcore/unicode/grapheme.h',
-  'include/wsap_vtcore/unicode/unicode.h',
-  'include/wsap_vtcore/unicode/unicode_data.inc',
-  'include/wsap_vtcore/unicode/utf8.h',
-  'include/wsap_vtcore/unicode/width.h',
-  subdir: 'wsap_vtcore/unicode',
-)
+  install_headers(
+    'include/wsap_vtcore/unicode/grapheme.h',
+    'include/wsap_vtcore/unicode/unicode.h',
+    'include/wsap_vtcore/unicode/unicode_data.inc',
+    'include/wsap_vtcore/unicode/utf8.h',
+    'include/wsap_vtcore/unicode/width.h',
+    subdir: 'wsap_vtcore/unicode',
+  )
 
-pkg = import('pkgconfig')
-pkg.generate(
-  wsap_vtcore_lib.get_shared_lib(),
-  name: 'wsap_vtcore',
-  description: 'Headless terminal emulator core library',
-  version: meson.project_version(),
-  subdirs: ['.'],
-)
+  pkg = import('pkgconfig')
+  pkg.generate(
+    wsap_vtcore_lib.get_shared_lib(),
+    name: 'wsap_vtcore',
+    description: 'Headless terminal emulator core library',
+    version: meson.project_version(),
+    subdirs: ['.'],
+  )
+endif
 
 if get_option('tests')
   # meson test --setup NAME needs the setup in each project with tests. The

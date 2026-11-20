@@ -1,9 +1,9 @@
 option(
     'window_backend',
     type: 'combo',
-    choices: ['auto', 'wayland', 'metal'],
+    choices: ['auto', 'wayland', 'x11', 'metal'],
     value: 'auto',
-    description: 'Window backend (Wayland is Linux-only, Metal is macOS-only)',
+    description: 'Window backend (Wayland and X11 are Linux-only, Metal is macOS-only)',
 )
 option(
     'vulkan_render',
@@ -22,8 +22,8 @@ option(
 option(
     'isa',
     type: 'string',
-    value: 'native',
-    description: 'Compiler -march target; empty uses the compiler default. The term core picks its SIMD level at run time, at or above this target',
+    value: 'auto',
+    description: 'Compiler -march target. auto uses native for an app build and the compiler default for a framework-only build; empty uses the compiler default; native forces the native target. The term core picks its SIMD level at run time, at or above this target',
 )
 option(
     'tests',
@@ -80,4 +80,29 @@ option(
     type: 'string',
     value: '',
     description: 'Directory that receives wsap_term.app on macOS; empty picks ~/Applications for a prefix under $HOME, else /Applications',
+)
+
+option(
+    'dev_paths',
+    type: 'boolean',
+    value: true,
+    description: 'Read themes and terminfo from the source tree in a development build',
+)
+option(
+    'install_desktop',
+    type: 'boolean',
+    value: true,
+    description: 'Install the application icon and the desktop entry',
+)
+option(
+    'install_shell',
+    type: 'boolean',
+    value: true,
+    description: 'Install wsap-ssh and the shell integration scripts',
+)
+option(
+    'fastpty',
+    type: 'boolean',
+    value: true,
+    description: 'Build and install the libfastpty preload helper',
 )

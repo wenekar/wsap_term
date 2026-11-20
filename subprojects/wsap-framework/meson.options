@@ -1,0 +1,63 @@
+option(
+    'window_backend',
+    type: 'combo',
+    choices: ['auto', 'wayland', 'x11', 'metal'],
+    value: 'auto',
+    description: 'Window backend (Wayland and X11 are Linux-only, Metal is macOS-only)',
+)
+option(
+    'vulkan_render',
+    type: 'combo',
+    choices: ['auto', 'enabled', 'disabled'],
+    value: 'auto',
+    description: 'Vulkan GPU rendering backend (Linux default when Vulkan 1.3 and glslc are available)',
+)
+option(
+    'font_backend',
+    type: 'combo',
+    choices: ['auto', 'coretext', 'freetype'],
+    value: 'auto',
+    description: 'Font rasterization and discovery backend (CoreText is macOS-only)',
+)
+option(
+    'isa',
+    type: 'string',
+    value: '',
+    description: 'Compiler -march target for the shipped SDK; empty uses the compiler default',
+)
+option(
+    'tests',
+    type: 'boolean',
+    value: false,
+    description: 'Build and register the framework tests',
+)
+option(
+    'test_link_groups',
+    type: 'boolean',
+    value: true,
+    description: 'Share links for tests without stubs or allocation overrides',
+)
+option(
+    'benchmarks',
+    type: 'boolean',
+    value: false,
+    description: 'Build and register the framework benchmarks',
+)
+option(
+    'hardening',
+    type: 'boolean',
+    value: true,
+    description: 'Compile-time memory safety hardening (fortify, stack protector, RELRO)',
+)
+option(
+    'dev_paths',
+    type: 'boolean',
+    value: false,
+    description: 'Embed the source font directory in the libraries for a development build',
+)
+option(
+    'dev_themes_dir',
+    type: 'string',
+    value: '',
+    description: 'Theme directory that the theme catalog scans in a development build; empty scans none',
+)

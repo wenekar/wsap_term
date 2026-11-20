@@ -13,6 +13,7 @@ struct window;
 struct font_instance;
 struct ui_widget;
 struct wsap_vtcore_snapshot;
+struct terminal_held_keys;
 
 struct terminal;
 
@@ -53,6 +54,11 @@ struct terminal_host {
     void (*output)(void *ud, struct terminal *terminal);
     void (*title_changed)(void *ud, struct terminal *terminal);
     void (*exited)(void *ud, struct terminal *terminal);
+    /* The held keys of the window of `terminal`, or NULL. Every terminal
+     * of one window shares them, so the repeats and the release of a key
+     * follow its press after a tab switch. Each terminal also keeps its
+     * own record, which follows the terminal to another window. */
+    struct terminal_held_keys *(*held_keys)(void *ud, struct terminal *terminal);
     void *ud;
 };
 
@@ -78,6 +84,14 @@ void terminal_destroy(struct terminal *terminal);
  * content is in transfer. The bind sets the font scale and the native
  * targets before input resumes. */
 void terminal_set_window(struct terminal *terminal, struct window *window);
+
+/*
+ * The tab content adapter state of the terminal. The terminal keeps the
+ * pointer and frees nothing. A tab content adapter stores its state here,
+ * so the content of the tab is the terminal itself.
+ */
+void *terminal_content_state(const struct terminal *terminal);
+void terminal_set_content_state(struct terminal *terminal, void *state);
 
 /* The widget that shows the content. The owner places it in its UI. Its laid
  * out size is the one source of the terminal geometry. */
@@ -119,7 +133,7 @@ void terminal_set_drop_hover(struct terminal *terminal, bool over);
 void terminal_paste(struct terminal *terminal, const char *text, size_t len);
 /* Runs the terminal commands of a shortcut. The owner runs the tab commands
  * and leaves the rest to this function. */
-void terminal_handle_shortcut(struct terminal *terminal, enum input_shortcut sc);
+void terminal_handle_shortcut(struct terminal *terminal, input_command_id sc);
 
 /*
  * The cursor as a window overlay. The window then shows and hides the

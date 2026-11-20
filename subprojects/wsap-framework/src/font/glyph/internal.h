@@ -1,0 +1,173 @@
+#ifndef FONT_GLYPH_INTERNAL_H
+#define FONT_GLYPH_INTERNAL_H
+
+#include "font/glyph_cache.h"
+#include "font/font.h"
+#include "font/backend.h"
+
+#include <stddef.h>
+#include <stdatomic.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+#define LATIN_CACHE_SIZE 4096
+#define CJK_CACHE_SIZE   4096
+#define RUN_CACHE_SETS_BITS 8
+#define RUN_CACHE_WAYS   4
+#define RUN_CACHE_SIZE   ((1 << RUN_CACHE_SETS_BITS) * RUN_CACHE_WAYS)
+#define RUN_CACHE_MAX    FONT_RUN_MAX
+#define TILE_CACHE_BITS  11
+#define TILE_CACHE_SIZE  (1 << TILE_CACHE_BITS)
+
+#define GLYPH_KEY_CP_BITS 21
+#define GLYPH_KEY_CP_MAX  0x10FFFFu
+#define GLYPH_KEY_PHASE_BITS 2
+#define GLYPH_KEY_PHASE_MAX  ((1u << GLYPH_KEY_PHASE_BITS) - 1)
+#define GLYPH_KEY_PHASE_SHIFT (32 - GLYPH_KEY_PHASE_BITS)
+
+_Static_assert(((uint64_t)FONT_STYLE_WIDE << GLYPH_KEY_CP_BITS) <=
+               (UINT64_C(1) << GLYPH_KEY_PHASE_SHIFT),
+               "glyph_key() style bits reach the phase bits");
+
+/* Returns the cache key of code point `cp` with `style` at `phase` quarter
+ * pixels. A zero phase is the cell glyph. */
+static inline uint32_t glyph_key_at(uint32_t cp, uint16_t style, uint8_t phase)
+{
+    return cp | ((uint32_t)style << GLYPH_KEY_CP_BITS) |
+           ((uint32_t)(phase & GLYPH_KEY_PHASE_MAX) << GLYPH_KEY_PHASE_SHIFT);
+}
+
+static inline uint32_t glyph_key(uint32_t cp, uint16_t style)
+{
+    return glyph_key_at(cp, style, 0);
+}
+
+static inline uint16_t glyph_style(uint16_t style)
+{
+    return style & (FONT_STYLE_BOLD | FONT_STYLE_ITALIC | FONT_STYLE_EMOJI |
+                    FONT_STYLE_TEXT | FONT_STYLE_WIDE);
+}
+
+struct bufhead {
+    alignas(max_align_t) struct bufhead *next;
+    uint32_t key;
+    uint32_t cap : 29;
+    uint32_t kind : 3;
+};
+enum { BK_GLYPH_ARR, BK_PIX, BK_RUN_DATA };
+
+_Static_assert(sizeof(struct bufhead) == 16, "struct bufhead fits in one 16-byte block");
+_Static_assert(BK_RUN_DATA <= 7, "buffer kinds fit in 3 bits");
+
+extern _Atomic bool cache_parallel;
+
+void *buf_new(uint8_t kind, uint32_t cap, size_t size);
+void buf_retire(void *p);
+void buf_retire_run(void *p);
+
+struct cache_slot {
+    _Atomic(void *) payload;
+};
+
+static inline void *cache_slot_lookup(struct cache_slot *slot, uint32_t key)
+{
+    void *p = atomic_load_explicit(&slot->payload, memory_order_acquire);
+    if (__builtin_expect(p && ((const struct bufhead *)p - 1)->key == key, 1))
+        return p;
+    return NULL;
+}
+
+struct slot_fill_ops {
+    void *(*produce)(uint32_t cp, uint16_t flags, void *old, void *ctx);
+    void *(*slow)(uint32_t cp, uint16_t flags, void *ctx);
+    void *ctx;
+};
+
+void *cache_slot_fill(struct cache_slot *slot, uint32_t key, uint32_t cp, uint16_t flags,
+                      const struct slot_fill_ops *ops);
+
+struct run_data {
+    uint64_t hash;
+    struct glyph *cells;
+    uint32_t *tiles;
+    uint32_t codepoints[RUN_CACHE_MAX];
+    uint32_t script;
+    enum font_run_result result;
+    uint16_t flags;
+    uint8_t count;
+    uint8_t core, core_len;
+};
+
+struct run_slot {
+    _Atomic(struct run_data *) data;
+    _Atomic uint64_t stamp;
+};
+
+struct font_instance {
+    struct font_metrics m;
+    int size_pt;
+    uint32_t scale_120;
+    uint16_t weight;
+    uint16_t base_style;
+    uint32_t id;
+    uint8_t slant;
+    bool proportional;
+    int refs;
+    _Atomic uint32_t built_fg;
+    struct font_instance *next;
+    font_handle_t *face;
+    _Atomic uint64_t built_gen;
+    _Atomic(struct cache_slot *) cjk;
+    _Atomic uint64_t run_stamp;
+    _Atomic(struct font_layout *) layouts[FONT_VARIANT_COUNT];
+    _Atomic uint32_t built_bg;
+
+    _Alignas(64) struct cache_slot ascii[128];
+    struct cache_slot ascii_italic[128];
+    _Atomic(struct cache_slot *) latin;
+    _Atomic(struct cache_slot *) tiles;
+    _Alignas(64) struct run_slot runs[RUN_CACHE_SIZE];
+};
+
+_Static_assert(offsetof(struct font_instance, ascii) % 64 == 0,
+               "cache arrays start on a 64-byte boundary");
+_Static_assert(offsetof(struct font_instance, runs) % 64 == 0,
+               "run cache sets align on 64-byte boundaries");
+_Static_assert(sizeof(struct run_slot) * RUN_CACHE_SIZE <= 16u * 1024u,
+               "run cache stays within 16 KiB per font instance");
+
+/* Returns the style bits that the descriptor of `fi` adds to every glyph. */
+static inline uint16_t instance_base_style(const struct font_instance *fi)
+{
+    return fi ? fi->base_style : 0;
+}
+
+/* Returns the style that `fi` uses for a glyph requested with `style`. */
+static inline uint16_t instance_style(const struct font_instance *fi, uint16_t style)
+{
+    return glyph_style(style) | instance_base_style(fi);
+}
+
+static inline size_t tile_pixels(const struct font_instance *fi)
+{
+    return (size_t)fi->m.cell_w * (size_t)fi->m.cell_h;
+}
+
+void build_default_lut(void);
+void glyph_tile_set_colors(uint32_t fg, uint32_t bg);
+uint32_t glyph_tile_fg(void);
+uint32_t glyph_tile_bg(void);
+bool glyph_tile_eligible(const struct font_instance *fi, const struct glyph *g);
+void fill_tile(const struct font_instance *fi, uint32_t *px, const struct glyph *g);
+bool fill_run_tiles(const struct font_instance *fi, uint32_t *tiles,
+                    const struct glyph *cells, int count);
+struct cache_slot *slot_cache_ensure(_Atomic(struct cache_slot *) *ptr, int count);
+void tile_worker_cleanup(void);
+
+void run_worker_cleanup(void);
+void instance_drop_layouts(struct font_instance *fi);
+
+void release_glyphs(struct glyph *gs, int n);
+const struct glyph *glyph_scratch_fill(const struct font_instance *fi, uint32_t cp, uint16_t style);
+
+#endif

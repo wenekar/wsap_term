@@ -317,7 +317,7 @@ A stopped process does not render frames.
 The server therefore rejects input injection, `frame`, and `screenshot`.
 `ui-tree` and `ui-widget` only read memory.
 They also work on core dump files.
-They start from `window_ui_host_last`.
+They start from the first host in `window_host_registry`.
 They walk `first_child` only, so they do not show the surface overlays.
 Use `ui-cmd tree` or `scripts/wsap-debug tree` for the overlay list.
 

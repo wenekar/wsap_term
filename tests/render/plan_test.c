@@ -6,7 +6,10 @@
 #include "paint/scene.h"
 #include "render/plan.h"
 #include "render/surface.h"
+#include "terminal/render/term_frame.h"
 #include "term_api.h"
+#include "terminal/render/view.h"
+#include "terminal/render/term_render.h"
 
 /*
  * Tests of the frame planner (render/plan.h) and of the surface state
@@ -304,7 +307,15 @@ struct model_op {
     struct rect2i clip;
     bool clipped;
     bool invisible;
+    /* The op is an image. ui_scene_image() gives it no tint colour. */
+    bool image;
     uint32_t id;
+};
+
+static const uint32_t model_image_pixel = 0xFFFFFFFFu;
+static const struct ui_image model_image = {
+    .pixels = &model_image_pixel,
+    .size = { .x = 1, .y = 1 },
 };
 
 #define MODEL_OPS 8
@@ -341,7 +352,9 @@ static void scene_build(const struct model_scene *sc, struct ui_scene *s)
         const struct model_op *op = &sc->ops[i];
         if (op->clipped)
             assert(ui_scene_push_clip(s, op->clip));
-        if (op->invisible)
+        if (op->image)
+            assert(ui_scene_image_rect(s, op->rect, &model_image, NULL));
+        else if (op->invisible)
             assert(ui_scene_blend_rect(s, op->rect, 0xFF000000u | op->id, 0));
         else
             assert(ui_scene_rect(s, op->rect, 0xFF000000u | op->id));
@@ -501,7 +514,8 @@ static void model_check(struct fixture *f, const struct model_scene *old_sc,
 static bool op_eq(const struct model_op *a, const struct model_op *b)
 {
     return rect2i_eq(a->rect, b->rect) && rect2i_eq(a->clip, b->clip) &&
-           a->clipped == b->clipped && a->invisible == b->invisible && a->id == b->id;
+           a->clipped == b->clipped && a->invisible == b->invisible &&
+           a->image == b->image && a->id == b->id;
 }
 
 static void damage_scene_change(struct ui_damage *d, const struct model_scene *a,
@@ -796,6 +810,29 @@ static void vanished_overlay_test(void)
     fixture_free(f);
 }
 
+static void vanished_image_test(void)
+{
+    /* ui_scene_image() sets no tint colour. The planner must read the image
+     * op, not the colour. If it does not, the rows under a removed image stay
+     * kept, and a retained CPU canvas keeps a ghost of the image. */
+    struct fixture *f = standard(10);
+    keys_idle(f);
+    struct model_scene image = { .n = 1, .ops = { { .rect = rect(30, 45, 20, 30),
+                                                    .image = true,
+                                                    .id = 3 } } };
+    damage_scene_change(&f->ui_damage, &image, &no_scene);
+    model_check(f, &image, &no_scene);
+    for (int r = 0; r < 10; r++)
+        assert(f->out.rows[r].op == PLAN_KEEP);
+    assert(f->out.ui.n == 1 && rect2i_eq(f->out.ui.rects[0], rect(30, 40, 20, 40)));
+    assert(f->out.n_windows == 4);
+    for (int i = 0; i < 4; i++)
+        assert(f->out.windows[i].row == 2 + i && f->out.windows[i].x.x0 == 20 &&
+               f->out.windows[i].x.x1 == 40);
+    assert(f->out.damage.n == 1 && rect2i_eq(f->out.damage.rects[0], rect(30, 45, 20, 30)));
+    fixture_free(f);
+}
+
 static void new_overlay_needs_no_restore_test(void)
 {
     struct fixture *f = standard(10);
@@ -928,16 +965,18 @@ static void null_ui_damage_test(void)
 
 static void damage_overflow_test(void)
 {
-    struct fixture *f = standard(20);
+    /* More non-touching bands than the list holds, so it merges them. */
+    int rows = 2 * (DAMAGE_RECTS_MAX + 2);
+    struct fixture *f = standard(rows);
     keys_idle(f);
-    for (int r = 1; r < 20; r += 2)
+    for (int r = 1; r < rows; r += 2)
         f->new_keys[r] = 500 + (uint64_t)r;
     plan_run(f);
     assert(f->out.damage.any && !f->out.damage.all);
     assert(f->out.damage.n == 1);
     assert(rect2i_eq(f->out.damage.rects[0], f->out.damage.bounds));
-    assert(rect2i_eq(f->out.damage.bounds, band(f, 1, 20)));
-    assert(f->out.ui.n == 10);
+    assert(rect2i_eq(f->out.damage.bounds, band(f, 1, rows)));
+    assert(f->out.ui.n == DAMAGE_RECTS_MAX + 2);
     model_check(f, &no_scene, &no_scene);
     fixture_free(f);
 }
@@ -1131,6 +1170,20 @@ static void ui_ink_test(void)
     assert(ui_scene_rect(&s, rect(12, 21, 3, 3), 0xFFFFFFFF));
     plan_ui_ink(&s, rect(10, 20, 80, 6), 10, 0, ink);
     assert(ink[0].x0 == 2 && ink[0].x1 == 5);
+
+    /* A gradient without a style has no op colour, but its geom paints.
+     * The painter shows its ink, so the planner must count it. */
+    ui_scene_init(&s);
+    assert(ui_scene_linear_gradient(&s,
+                                    (struct rect2f){ .pos = { .x = 20.0f, .y = 32.0f },
+                                                     .size = { .x = 30.0f, .y = 6.0f } },
+                                    (struct ui_scene_point){ .x = 20.0f, .y = 32.0f },
+                                    (struct ui_scene_point){ .x = 50.0f, .y = 38.0f },
+                                    0xFFFF0000u, 0xFF0000FFu, NULL));
+    plan_ui_ink(&s, grid, 10, 10, ink);
+    assert(plan_span_empty(ink[0]));
+    assert(ink[1].x0 == 10 && ink[1].x1 == 40);
+    assert(plan_span_empty(ink[2]));
     ui_scene_destroy(&s);
 }
 
@@ -1340,52 +1393,52 @@ static void row_key_test(void)
 
     uint64_t plain[ROWS];
     for (int r = 0; r < ROWS; r++) {
-        plain[r] = render_surface_row_key(&f, r);
+        plain[r] = render_term_row_key(&f, r);
         assert(plain[r] != 0);
-        assert(render_surface_row_key(&f, r) == plain[r]);
+        assert(render_term_row_key(&f, r) == plain[r]);
         for (int q = 0; q < r; q++)
             assert(plain[q] != plain[r] || plain[r] == 0);
     }
 
     /* A row with an unknown content key keeps key 0. */
-    assert(render_surface_row_key(&f, ROWS) == 0);
+    assert(render_term_row_key(&f, ROWS) == 0);
 
     /* The selection span of a row is part of its key. */
     tt_select(t, 1, 2, 2, 2);
     assert(wsap_vtcore_snapshot_update(snap, t));
-    assert(render_surface_row_key(&f, 2) == plain[2]); /* has_selection is false */
+    assert(render_term_row_key(&f, 2) == plain[2]); /* has_selection is false */
     terminal_frame_init(&f, snap, false);
-    uint64_t sel = render_surface_row_key(&f, 2);
+    uint64_t sel = render_term_row_key(&f, 2);
     assert(sel != plain[2] && sel != 0);
-    assert(render_surface_row_key(&f, 1) == plain[1]);
+    assert(render_term_row_key(&f, 1) == plain[1]);
     tt_select(t, 1, 2, 3, 2);
     assert(wsap_vtcore_snapshot_update(snap, t));
-    assert(render_surface_row_key(&f, 2) != sel);
+    assert(render_term_row_key(&f, 2) != sel);
     wsap_vtcore_select_clear(t);
     assert(wsap_vtcore_snapshot_update(snap, t));
-    assert(render_surface_row_key(&f, 2) == plain[2]);
+    assert(render_term_row_key(&f, 2) == plain[2]);
 
     /* The cursor x and style are part of the key of the cursor row only. */
     f.cursor_y = 4;
     f.cursor_x = 7;
-    uint64_t cur = render_surface_row_key(&f, 4);
+    uint64_t cur = render_term_row_key(&f, 4);
     assert(cur != plain[4] && cur != 0);
     f.cursor_y = ROWS;
-    assert(render_surface_row_key(&f, ROWS) == 0); /* The cursor does not make it known. */
+    assert(render_term_row_key(&f, ROWS) == 0); /* The cursor does not make it known. */
     f.cursor_y = 4;
-    assert(render_surface_row_key(&f, 3) == plain[3]);
+    assert(render_term_row_key(&f, 3) == plain[3]);
     f.cursor_x = 8;
-    assert(render_surface_row_key(&f, 4) != cur);
+    assert(render_term_row_key(&f, 4) != cur);
     f.cursor_x = 7;
     f.cursor_style = WSAP_VTCORE_CURSOR_BAR;
-    assert(render_surface_row_key(&f, 4) != cur);
+    assert(render_term_row_key(&f, 4) != cur);
     f.cursor_y = -1;
-    assert(render_surface_row_key(&f, 4) == plain[4]);
+    assert(render_term_row_key(&f, 4) == plain[4]);
 
     /* The key follows the content when the content moves. */
     tt_puts(t, "\033[5S");
     assert(wsap_vtcore_snapshot_update(snap, t));
-    assert(render_surface_row_key(&f, 1) == plain[6]);
+    assert(render_term_row_key(&f, 1) == plain[6]);
 
     wsap_vtcore_snapshot_free(snap);
     wsap_vtcore_free(t);
@@ -1402,6 +1455,7 @@ int main(void)
     competing_shifts_test();
     moved_row_under_overlay_test();
     vanished_overlay_test();
+    vanished_image_test();
     new_overlay_needs_no_restore_test();
     bottom_margin_test();
     ui_regions_snap_to_rows_test();

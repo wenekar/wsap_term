@@ -17,8 +17,9 @@
 #include "font/font.h"
 #include "font/glyph_cache.h"
 #include "paint/framebuffer.h"
-#include "render/term_frame.h"
+#include "terminal/render/term_frame.h"
 #include "render/scene_paint.h"
+#include "terminal/render/term_render.h"
 #include "term_api.h"
 #include "helpers/flood.h"
 
@@ -168,6 +169,21 @@ static bool thread_count_settles(int want)
 }
 
 /*
+ * A frame with enough work makes the pool start its workers. A worker that
+ * fails to start is left out (renderer_create), so the count can grow by
+ * less than the number that the renderer asks for.
+ */
+static bool thread_count_grows(int base)
+{
+    for (int i = 0; i < 200; i++) {
+        if (live_thread_count() > base)
+            return true;
+        nanosleep(&(struct timespec){ .tv_nsec = 10 * 1000 * 1000 }, NULL);
+    }
+    return false;
+}
+
+/*
  * The thread count after the joined threads of earlier tests leave /proc.
  * The count only goes down while they leave, so it is settled when it
  * stays the same for 100 ms.
@@ -185,13 +201,26 @@ static int settled_thread_count(void)
 }
 #endif
 
-/* Each renderer owns its workers: first CPU frame starts them, destroy joins them. */
+/*
+ * Each renderer owns its workers. The first frame with enough work starts
+ * them, and destroy joins every one of them.
+ *
+ * The pool starts at the first frame that has more than POOL_SERIAL_CELLS
+ * dirty cells (render/cpu/pool.h), not at renderer_create(). So the frame
+ * below is large enough for the parallel path, and the thread count of the
+ * process shows the state of the pool:
+ * - renderer_create() adds no thread;
+ * - the frame adds the workers, and they stay while the renderer lives;
+ * - renderer_destroy() joins them, so the count comes back to the baseline.
+ * A renderer that does not join its workers keeps the count above the
+ * baseline, and thread_count_settles() times out.
+ */
 static void worker_pool_lifecycle_test(void)
 {
-    struct wsap_vtcore *t = tt_new(8, 10);
+    struct wsap_vtcore *t = tt_new(80, 30);
     assert(t);
     feed(t, "\033[?25lParallel rendering lifecycle test");
-    int w = 8 * CELL_W, h = 10 * CELL_H;
+    int w = 80 * CELL_W, h = 30 * CELL_H;
     size_t bytes = (size_t)w * h * sizeof(uint32_t);
     uint32_t *want = malloc(bytes), *got = malloc(bytes);
     assert(want && got);
@@ -207,10 +236,10 @@ static void worker_pool_lifecycle_test(void)
 #endif
         memset(got, 0x5a, bytes);
         test_renderer_paint(r, got, w, h, t, true);
-#ifdef __linux__
-        assert(live_thread_count() == before + 3);
-#endif
         assert(!memcmp(want, got, bytes));
+#ifdef __linux__
+        assert(thread_count_grows(before));
+#endif
         test_renderer_destroy(r);
 #ifdef __linux__
         assert(thread_count_settles(before));
@@ -223,6 +252,10 @@ static void worker_pool_lifecycle_test(void)
 #endif
     test_renderer_paint(r, got, w, h, t, true);
     assert(!memcmp(want, got, bytes));
+#ifdef __linux__
+    /* RENDER_NONE paints the same large frame with no worker. */
+    assert(live_thread_count() == before);
+#endif
     test_renderer_destroy(r);
     free(want);
     free(got);
@@ -252,8 +285,10 @@ static void scale_respawn_test(void)
     assert(!memcmp(px, want, bytes));
 
     int before = settled_thread_count();
-    struct font_instance *big = font_instance_acquire(
-        font_instance_size_pt(font_instance_default()), 180);
+    const struct font_desc desc = {
+        .size = { .pt = font_instance_size_pt(font_instance_default()), .scale_120 = 180 },
+    };
+    struct font_instance *big = font_instance_acquire(&desc);
     assert(big && big != font_instance_default());
     for (int i = 0; i < 8; i++) {
         (void)draw_grid(r, px, size, &history, false, &frame, big);
@@ -645,9 +680,11 @@ static void surface_histories_are_independent_test(void)
     assert(!memcmp(pb, eb, bytes));
 
     /* A gets a new size and a new font. B is still current. */
-    struct font_instance *other = font_instance_acquire(
-        font_instance_size_pt(test_font()) + 2,
-        font_instance_scale_120(test_font()));
+    const struct font_desc other_desc = {
+        .size = { .pt = font_instance_size_pt(test_font()) + 2,
+                  .scale_120 = font_instance_scale_120(test_font()) },
+    };
+    struct font_instance *other = font_instance_acquire(&other_desc);
     const int rw = w + 7, rh = h + 5;
     struct vector2i rsize = { .x = rw, .y = rh };
     size_t resized_bytes = (size_t)rw * rh * sizeof(uint32_t);
@@ -1386,6 +1423,69 @@ static void blend_rect_alpha_test(void)
     ui_scene_destroy(&scene);
 }
 
+/*
+ * The ink of a UI text op starts where the glyph raster puts it. Row 0 of a
+ * cell raster is the top of the cell, so the painter adds no row offset to
+ * the op top. This test uses the real font: a glyph with a row offset of 0
+ * cannot tell the two rules apart.
+ */
+static void scene_text_row_test(void)
+{
+    struct font_instance *fi = test_font();
+    const struct font_metrics *m = font_instance_metrics(fi);
+    const struct rect2i box = { .pos = { .x = 16, .y = 9 },
+                                .size = { .x = 4 * m->cell_w, .y = m->cell_h } };
+    const struct glyph *g = glyph_cache_fetch(fi, 'H', 0);
+    assert(g && g->alpha && g->width);
+    assert(g->y_offset > 0);
+    /* The first row of the raster that holds ink. */
+    int ink_row = -1;
+    for (int y = 0; y < g->height && ink_row < 0; y++)
+        for (int x = 0; x < g->width; x++)
+            if (g->alpha[y][x]) {
+                ink_row = y;
+                break;
+            }
+    assert(ink_row >= 0);
+
+    struct ui_scene scene = {0};
+    ui_scene_init(&scene);
+    assert(ui_scene_text_run(&scene, box,
+                             (struct ui_text_style){ .advance = m->cell_w,
+                                                     .cell_h = m->cell_h },
+                             0xFFFFFFFFu, "H", 1));
+    enum { W = 64, H = 48 };
+    uint32_t px[W * H];
+    for (int i = 0; i < W * H; i++)
+        px[i] = 0xFF000000u;
+    assert(ui_scene_paint(fi, px, W, H, &scene));
+    ui_scene_destroy(&scene);
+
+    int first = -1;
+    for (int y = 0; y < H && first < 0; y++)
+        for (int x = 0; x < W; x++)
+            if (px[y * W + x] != 0xFF000000u) {
+                first = y;
+                break;
+            }
+    TCHECK(first >= 0, "the text draws no ink");
+    TCHECK(first == box.y + ink_row,
+           "the ink starts at row %d, the raster puts it at row %d", first,
+           box.y + ink_row);
+
+    /* The last row shows ink too: the painter clips no bottom row. */
+    int last = -1;
+    for (int y = H - 1; y >= 0 && last < 0; y--)
+        for (int x = 0; x < W; x++)
+            if (px[y * W + x] != 0xFF000000u) {
+                last = y;
+                break;
+            }
+    TCHECK(last >= 0 && last < box.y + m->cell_h,
+           "the ink ends at row %d, the cell ends at row %d", last,
+           box.y + m->cell_h);
+}
+
 static void uninitialized_srgb_luts_test(void)
 {
     unsigned blended = blend_channel(255, 0, 128);
@@ -1481,7 +1581,7 @@ static bool bench_want(const char *only, const char *name)
     return !only || !strcmp(only, name);
 }
 
-enum bench_kind { BENCH_PLAIN, BENCH_OVERLAY, BENCH_STALE };
+enum bench_kind { BENCH_PLAIN, BENCH_OVERLAY, BENCH_IMAGES, BENCH_STALE };
 
 /* One bench case. The step function changes the terminal before each frame. */
 struct bench_case {
@@ -1585,6 +1685,28 @@ static void bench_run(const struct bench_case *c)
         assert(ok);
         (void)ok;
     }
+    /* The image case: one preview picture and a row of icons, as a tab
+     * preview draws them. The op paints them in every frame. The scene
+     * borrows the images, so they live in `bench_images` for the run. */
+    enum { ICONS = 8, ICON = 24, PIC_W = 240, PIC_H = 160 };
+    static uint32_t pic_px[PIC_W * PIC_H], icon_px[ICONS][ICON * ICON];
+    static struct ui_image pic, icons[ICONS];
+    if (c->kind == BENCH_IMAGES) {
+        for (int i = 0; i < PIC_W * PIC_H; i++)
+            pic_px[i] = 0xFF000000u | ((uint32_t)i * 2654435761u >> 8);
+        for (int n = 0; n < ICONS; n++)
+            for (int i = 0; i < ICON * ICON; i++)
+                icon_px[n][i] = 0xFF000000u | ((uint32_t)(i * 40503u + (unsigned)n) >> 8);
+        pic = (struct ui_image){ .pixels = pic_px, .size = { .x = PIC_W, .y = PIC_H }, .gen = 1 };
+        assert(ui_scene_image(&scene, (struct vector2i){ .x = 40, .y = 40 }, &pic));
+        for (int n = 0; n < ICONS; n++) {
+            icons[n] = (struct ui_image){
+                .pixels = icon_px[n], .size = { .x = ICON, .y = ICON }, .gen = 1,
+            };
+            assert(ui_scene_image(&scene, (struct vector2i){ .x = 40 + n * (ICON + 8),
+                                                             .y = 220 }, &icons[n]));
+        }
+    }
 
     struct framebuffer_history history = {0};
     double total = 0, worst = 0;
@@ -1602,10 +1724,10 @@ static void bench_run(const struct bench_case *c)
         };
         struct render_frame frame = test_grid_frame(&grid, w, h);
         frame.ui_damage = &no_ui_damage;
-        if (c->kind == BENCH_OVERLAY) {
+        if (c->kind == BENCH_OVERLAY || c->kind == BENCH_IMAGES) {
             frame.ui = &scene;
             /* The overlay changes only in the first frame. NULL means every UI pixel changed. */
-            frame.ui_damage = f ? &no_ui_damage : NULL;
+            frame.ui_damage = f && c->kind == BENCH_OVERLAY ? &no_ui_damage : NULL;
         }
         double begin = now();
         (void)render_draw(r, &target, &frame);
@@ -1647,6 +1769,7 @@ static void benchmark(void)
         { "idle", NULL, true, BENCH_PLAIN, bench_step_idle },
         { "scroll-region", "\033[5;45r\033[45;1H", true, BENCH_PLAIN, bench_step_region },
         { "overlay-scroll", "\033[50;1H", true, BENCH_OVERLAY, bench_step_scroll },
+        { "image", NULL, true, BENCH_IMAGES, bench_step_idle },
         { "italic", "\033[3m", false, BENCH_PLAIN, bench_step_italic },
         { "cjk-emoji", NULL, false, BENCH_PLAIN, bench_step_cjk },
         { "fresh-every-frame", NULL, true, BENCH_STALE, bench_step_typing },
@@ -1853,8 +1976,10 @@ static void double_size_rows_test(void)
 /* The tests that run again with a font at 1.5 times the scale. */
 static void scaled_font_pass(void)
 {
-    test_font_override = font_instance_acquire(
-        font_instance_size_pt(font_instance_default()), 180);
+    const struct font_desc override_desc = {
+        .size = { .pt = font_instance_size_pt(font_instance_default()), .scale_120 = 180 },
+    };
+    test_font_override = font_instance_acquire(&override_desc);
     assert(test_font_override);
     explicit_theme_colors_test(FONT_AA_GRAYSCALE);
     explicit_theme_colors_test(FONT_AA_RGB);
@@ -1962,6 +2087,7 @@ int main(int argc, char **argv)
         font_set_aa_mode(FONT_AA_GRAYSCALE);
         image_op_paints_and_clips_test();
         blend_rect_alpha_test();
+        scene_text_row_test();
         repaint_emits_damage_test();
         null_history_draw_test();
         pill_rounded_rect_symmetry_test();

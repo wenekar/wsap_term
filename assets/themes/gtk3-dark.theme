@@ -1,0 +1,27 @@
+# Theme metadata. The label names the theme in the picker.
+# The polarity is dark or light.
+# The terminal app reads the [ansi] block. Other blocks are
+# available to an application that knows them.
+
+label = GTK3 Dark
+polarity = dark
+
+[ansi]
+foreground = #D3D7CF
+background = #2E3436
+color0 = #40484B
+color1 = #F80000
+color2 = #4E9A06
+color3 = #C4A000
+color4 = #457DC4
+color5 = #986C9F
+color6 = #06989A
+color7 = #D3D7CF
+color8 = #797C77
+color9 = #EF2929
+color10 = #8AE234
+color11 = #FCE94F
+color12 = #729FCF
+color13 = #AD7FA8
+color14 = #34E2E2
+color15 = #EEEEEC

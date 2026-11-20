@@ -77,8 +77,12 @@ Each text event records its source.
 All chunks from that key keep the same source.
 A key release does not change its text route.
 `INPUT_TEXT_COMMIT` is independent of the key route.
-`INPUT_TEXT_SHORTCUT` is text from a consumed shortcut.
-The window drops that text.
+The window drops the text of a key that runs a command.
+A widget that takes the key gets its text.
+The router decides this when the key routes, so a focus change earlier in the batch counts.
+When the shortcut queue is full, the command is lost and the text is typed.
+The keymap reads the command scope of the key surface, `ui_surface_command_scope()`.
+The walk starts at the key target, `ui_surface_key_target()`, and ends at the root.
 Focus loss clears held keys and the key text route.
 A tab change does not release held keys.
 
@@ -148,6 +152,19 @@ Only then does the tab close.
 
 When the display is lost and cannot reconnect, the app quits.
 If a Wayland compositor restarts, windows wait for it to return.
+
+## Unicode tables
+
+`src/util/unicode/` holds the base copy of the Unicode helpers.
+It holds the UTF-8 codec, the width and emoji tables, and the grapheme helpers.
+`unicode_utf8_printable_span()` replaces `wsap_vtcore_scan_printable_span()` for the framework libraries.
+`subprojects/term/include/wsap_vtcore/unicode/` holds a second copy.
+The term subproject builds alone, so it does not include the base headers.
+`subprojects/term/tools/generate_unicode.py` writes the term copy.
+The term copy is the source of truth.
+After a regeneration, apply the same data to the base copy.
+Rename the `wsap_vtcore_` prefix to `unicode_`, and give each table the `unicode_table_` prefix.
+`unicode-parity-test` compares the two copies and fails when they disagree.
 
 ## Tests
 

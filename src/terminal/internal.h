@@ -7,8 +7,10 @@
 #include "input/input.h"
 #include "input/keybind.h"
 #include "session/session.h"
+#include "terminal/key_set.h"
 #include "terminal/selection.h"
 #include "terminal/terminal.h"
+#include "ui/accessibility.h"
 #include "ui/widgets/menu.h"
 #include "ui/widgets/scrollview.h"
 #include "ui/widget_ops.h"
@@ -29,6 +31,18 @@ struct terminal_preedit {
     uint32_t bg;
 };
 
+/* The byte lengths and the offsets of the accessibility document. A node
+ * reports the whole document, and a read starts at its own range. */
+struct accessibility_document {
+    size_t history_length;
+    size_t length;
+    size_t caret_offset;
+    size_t selection_start;
+    size_t selection_end;
+    uint64_t version;
+    bool has_selection;
+};
+
 struct terminal_view {
     struct ui_widget widget;
     /* The snapshot view version of the scan that set blink_cells. */
@@ -39,20 +53,72 @@ struct terminal_view {
     bool drop_hover;
     bool opening_link;
     bool blink_cells;
+    /* The held keys whose press this view decided. The record follows the
+     * terminal when its tab moves to another window. */
+    struct terminal_held_keys held_keys;
 
-    char *accessibility_text;
+    /* The byte offset of each logical history line in the accessibility
+     * document, its byte length, and the history rows that it covers. The
+     * provider reads a range from the document and keeps no text. The index
+     * lines are [line_first, line_count) of the store. When old lines leave
+     * the history, line_first and the origins move, and the other entries
+     * stay. An entry offset or row minus its origin gives the value in the
+     * current document. */
+    struct terminal_text_line {
+        size_t offset;
+        size_t bytes;
+        size_t row;
+        size_t rows;
+    } *accessibility_lines;
+    size_t accessibility_line_first;
+    size_t accessibility_line_count;
+    size_t accessibility_line_capacity;
+    size_t accessibility_offset_origin;
+    size_t accessibility_row_origin;
+    /* The byte length of the history part, the history rows and the first
+     * line that it covers, its generation, epoch, and width, and whether its
+     * last line continues into the screen. That open line keeps its trailing
+     * blanks in the index. open_blanks counts them: they drop when the rows
+     * below hold no text. */
+    size_t accessibility_history_length;
+    size_t accessibility_open_blanks;
+    size_t accessibility_rows;
+    uint64_t accessibility_generation;
+    uint64_t accessibility_epoch;
+    uint64_t accessibility_first_line;
+    int accessibility_cols;
+    bool accessibility_open_line;
+    bool accessibility_valid;
+    struct ui_accessibility_text_provider accessibility_provider;
+    /* The document cache of one provider publish. The first lock call takes
+     * one snapshot and one measure, and every length and read call reuses
+     * them. The unlock at depth zero frees them. The term lock is held for
+     * the whole cache life, so other threads cannot change the term. The
+     * lock depth and the cache change and are read only under the term
+     * lock. The holder thread can still change the term, because the term
+     * lock nests. A length or read call then compares the history
+     * generation and the history rows with the values of the fill, and
+     * fills the cache again when one changed. A change of the screen rows
+     * alone shows at the next provider lock. */
+    struct wsap_vtcore_snapshot *accessibility_snapshot;
+    struct accessibility_document accessibility_document;
+    uint64_t accessibility_document_generation;
+    int accessibility_document_rows;
+    int accessibility_lock_depth;
+    bool accessibility_document_valid;
+    /* The time of the last text build, the timer that sends the text of a
+     * burst, and the node values of that build. A build runs at most once
+     * each ACCESSIBILITY_TEXT_INTERVAL_MS. */
+    uint64_t accessibility_built_ms;
+    uint64_t accessibility_timer;
+    uint64_t accessibility_text_version;
     size_t accessibility_caret_offset;
     size_t accessibility_selection_start;
     size_t accessibility_selection_end;
-    uint64_t accessibility_version;
-    const struct wsap_vtcore *accessibility_term;
-    /* The time of the last text build, and the timer that sends the text
-     * that a burst of output left behind. */
-    uint64_t accessibility_built_ms;
-    uint64_t accessibility_timer;
+    struct wsap_vtcore *accessibility_text_term;
+    bool accessibility_text_valid;
 
     struct terminal_preedit preedit;
-    bool accessibility_text_valid;
     bool blink_suppressed;
 };
 
@@ -77,6 +143,10 @@ struct terminal {
     const struct terminal_config *config;
     struct terminal_host host;
     struct font_instance *font;
+
+    /* The state of the tab content adapter of the app. A terminal that no
+     * tab owns leaves it NULL. */
+    void *content_state;
 
     struct wsap_vtcore_theme theme;
     struct terminal_theme_picker theme_picker;

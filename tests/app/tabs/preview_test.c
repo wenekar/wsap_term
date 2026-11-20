@@ -4,7 +4,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "app/style.h"
 #include "app/tabs/tabs.h"
+#include "app/tabs/terminal_content.h"
 #include "app/thumbnail.h"
 #include "helpers/app_fixture.h"
 #include "paint/scene.h"
@@ -22,14 +24,29 @@ struct preview_fixture {
     struct ui_scene scene;
 };
 
+static void *create_preview_content(void *ud, struct window *window,
+                                    const char *cwd,
+                                    struct vector2i content_size, int font_size)
+{
+    struct app *app = ud;
+    return app_terminal_content_create(window, &app->tabs, cwd, content_size,
+        font_size, &(struct app_terminal_content_spec){
+            .config = &app->config.terminal,
+            .theme = &app->palette,
+            .preview_capture = app_thumbnail_capture,
+            .preview_ud = app,
+        });
+}
+
 static struct window *create_preview_window(struct app *app)
 {
     struct window *w = window_create(&app->host, &(struct window_spec){0});
     assert(w);
     assert(app_tabs_mount(w, &(struct app_tabs_spec){
-        .config = &app->config.terminal,
         .model = &app->tabs,
-        .preview_capture = app_thumbnail_capture,
+        .create_content = create_preview_content,
+        .create_ud = app,
+        .content_ops = &app_terminal_content_ops,
         .preview_release = app_thumbnail_release,
         .preview_ud = app,
         .empty = true,
@@ -45,8 +62,9 @@ static void setup_fixture(struct preview_fixture *f, struct vector2i size,
     f->w = create_preview_window(f->app.app);
     /* The tab preview is an app screen, so its rules come from the theme
        sheet, as in app.c. */
-    window_ui_set_style(f->w, look_sheet(f->app.app->look),
-                        look_palette(f->app.app->look)->bg);
+    window_ui_set_style(f->w, app_style_sheet(),
+                        look_sheet(f->app.app->look),
+                        f->app.app->palette.bg);
     ui_surface_set_scale(window_ui_surface(f->w), (struct css_scale_context){
         .dpi_scale = 1.0f, .cell_w = 8.0f, .cell_h = 16.0f,
     });
@@ -176,10 +194,19 @@ static void show_hovered_preview(struct preview_fixture *f, int index)
 {
     struct ui_surface *ui = window_ui_surface(f->w);
     hover_tab(f->w, index);
-    uint64_t due = ui_surface_next_deadline(ui);
-    assert(due > 0);
-    ui_surface_tick(ui, due);
-    ui_surface_prepare(ui);
+    /* The window asks for a frame at each animation step, such as the hover
+     * fade of the tab bar. Draw them until the preview shows. */
+    uint64_t now = window_frame_time_ms(f->w);
+    for (int frame = 0; frame < 200; frame++) {
+        uint64_t due = ui_surface_next_deadline(ui);
+        if (!due)
+            break;
+        now = due > now ? due : now + 16;
+        ui_surface_tick(ui, now);
+        ui_surface_prepare(ui);
+        if (preview_shown(f->w))
+            break;
+    }
     render_and_lint(f);
     assert(preview_shown(f->w));
 }
@@ -215,8 +242,8 @@ static void height_budget_and_anchor_refresh_test(void)
     show_hovered_preview(&f, 0);
 
     const struct ui_scene_op *op = find_image_op(&f.scene);
-    assert(op && op->image);
-    struct vector2i full_thumb = op->image->size;
+    assert(op && op->image.src);
+    struct vector2i full_thumb = op->image.src->size;
     struct rect2i tab0 = bar_part_rect(f.w, "tab", 0);
     assert(full_thumb.x > 0 && full_thumb.y > 0);
     assert(preview->bounds.y >= rect2i_end(tab0).y);
@@ -227,8 +254,8 @@ static void height_budget_and_anchor_refresh_test(void)
     render_and_lint(&f);
     assert(preview_shown(f.w));
     op = find_image_op(&f.scene);
-    assert(op && op->image);
-    assert(op->image->size.x < full_thumb.x && op->image->size.y < full_thumb.y);
+    assert(op && op->image.src);
+    assert(op->image.src->size.x < full_thumb.x && op->image.src->size.y < full_thumb.y);
     assert(rect2i_end(preview->bounds).y <= short_h);
 
     /* Tiny max_height (< 24dp) drops sliver thumbnail to title-only card. */

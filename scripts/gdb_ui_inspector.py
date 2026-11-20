@@ -30,9 +30,13 @@ if gdb:
         return ui
 
     def default_root():
-        reg = gdb.parse_and_eval("window_ui_host_last")
-        if not int(reg):
+        try:
+            count = int(gdb.parse_and_eval("window_host_registry_count"))
+        except gdb.error:
+            count = 0
+        if count <= 0:
             raise gdb.GdbError("no window registry; pass a widget expression")
+        reg = gdb.parse_and_eval("window_host_registry[0]")
         win = reg["primary"]
         if not int(win) and int(reg["count"]) > 0:
             win = reg["windows"][0]

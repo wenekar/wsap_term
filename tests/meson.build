@@ -1,100 +1,70 @@
 test_c_args = ['-UNDEBUG']
-ui_test_deps = [m_dep, thread_dep, yyjson_dep]
+# The framework tests live in the `wsap-framework` subproject. These cases
+# cover the terminal, the app, and the terminal grid renderer. They also hold
+# the framework tests that need the term core or the app: font and glyph
+# interning over term cells, Unicode parity, and the shipped themes.
 test_cases = [
-    ['input-test', files('input/input_test.c'), input_lib, [m_dep]],
-    ['glyph-intern-test', files('font/glyph/intern_test.c'), font_lib, [m_dep]],
-    ['selection-test', files('terminal/selection_test.c'), terminal_lib, deps],
-    ['terminal-input-test', files('terminal/input_test.c'), app_lib, deps],
-    ['terminal-lifecycle-test', files('terminal/lifecycle_test.c'), app_lib, deps],
-    ['terminal-scrolling-test', files('terminal/scrolling_test.c'), app_lib, deps],
-    ['color-test', files('util/color_test.c'), base_lib, [m_dep]],
-    ['json-test', files('util/json_test.c'), base_lib, [yyjson_dep]],
-    ['geom-test', files('util/geom_test.c'), base_lib, [m_dep]],
-    ['proc-test', files('util/proc_test.c'), base_lib, [thread_dep, dl_dep]],
-    ['paste-test', files('session/write_queue_test.c'), [session_lib, input_lib], deps],
-    ['session-cwd-test', files('session/cwd_test.c'), session_lib, deps],
-    ['session-exit-order-test', files('session/exit_order_test.c'), session_lib, deps],
-    ['session-drain-flood-test', files('session/drain_flood_test.c'), session_lib, deps],
-    ['app-reload-test', files('app/reload_test.c'), app_lib, deps],
-    ['drop-test', files('terminal/drop_test.c'), app_lib, deps],
-    ['terminal-kind-test', files('app/tabs/kind_test.c'), app_lib, deps],
-    ['terminal-bell-close-test', files('app/tabs/exit_close_test.c'), app_lib, deps],
-    ['app-tabs-rows-test', files('app/tabs/rows_test.c'), app_lib, deps],
-    ['app-tabs-cwd-test', files('app/tabs/cwd_test.c'), app_lib, deps],
-    ['app-tabs-transfer-test', files('app/tabs/transfer_test.c'), app_lib, deps],
-    ['app-tabs-service-test', files('app/tabs/service_test.c'), app_lib, deps],
-    ['app-tabs-preview-test', files('app/tabs/preview_test.c'), app_lib, deps],
-    ['stats-test', files('ui/yasl/stats_test.c'), ui_yasl_lib, deps],
-    ['pty-fast-test', files('pty/pty_test.c'), pty_lib, [thread_dep, dl_dep]],
-    ['pty-destroy-test', files('pty/pty_destroy_test.c'), pty_lib, [thread_dep, dl_dep]],
-    ['pty-ring-wake-test', files('pty/ring_wake_test.c'), pty_lib, [thread_dep, dl_dep]],
-    ['settings-test', files('app/config_test.c'), app_lib, deps],
-    ['thumbnail-test', files('app/thumbnail_test.c'), app_lib, deps],
-    ['settings-window-test', files('app/config/window_test.c'), app_lib, deps],
-    ['window-ui-hosts-test', files('app/tabs/ui_hosts_test.c'), app_lib, deps],
-    ['window-ui-tree-test', files('app/tabs/ui_tree_test.c'), app_lib, deps],
-    ['window-debug-server-test', files('ui/yasl/debug_server_test.c'), app_lib, deps],
-    ['render-test', files('render/render_test.c'), [render_lib, ui_lib], deps],
-    ['render-kernels-test', files('render/cpu/kernels_test.c'), render_lib, [m_dep, thread_dep]],
-    ['render-pool-test', files('render/cpu/pool_test.c'), render_lib, deps],
-    ['render-plan-test', files('render/plan_test.c'), render_lib, deps],
-    ['render-decor-test', files('render/decor_test.c'), render_lib, deps],
-    ['render-cache-test', files('render/cache_test.c'), render_lib, deps],
-    ['render-scene-test', files('render/scene_test.c'), render_lib, deps],
-    ['render-raster-test', files('render/raster_test.c'), render_lib, deps],
-    ['render-damage-test', files('render/damage_test.c'), render_lib, deps],
-    ['render-incremental-test', files('render/incremental_test.c'), render_lib, deps],
-    ['render-cpu-canvas-test', files('render/cpu_canvas_test.c'), render_lib, deps],
-    ['resize-alloc-test', files('ui/yasl/resize_alloc_test.c'), app_lib, deps],
-    ['window-ui-input-test', files('ui/yasl/ui_input_test.c'), app_lib, deps],
-    ['window-native-input-test', files('ui/yasl/native_input_test.c'), app_lib, deps],
+    ['selection-test', files('terminal/selection_test.c'), [terminal_lib], deps],
+    ['terminal-input-test', files('terminal/input_test.c'), [app_lib], deps],
+    ['terminal-lifecycle-test', files('terminal/lifecycle_test.c'), [app_lib], deps],
+    ['terminal-scrolling-test', files('terminal/scrolling_test.c'), [app_lib], deps],
+    ['pty-shell-test', files('pty/shell_test.c'), [pty_lib], [thread_dep, dl_dep]],
+    ['paste-test', files('session/write_queue_test.c'), [session_lib], deps],
+    ['session-cwd-test', files('session/cwd_test.c'), [session_lib], deps],
+    ['session-exit-order-test', files('session/exit_order_test.c'), [session_lib], deps],
+    ['session-drain-flood-test', files('session/drain_flood_test.c'), [session_lib], deps],
+    ['app-reload-test', files('app/reload_test.c'), [app_lib], deps],
+    ['app-input-reload-test', files('app/input_reload_test.c'), [app_lib], deps],
+    ['drop-test', files('terminal/drop_test.c'), [app_lib], deps],
+    ['terminal-drop-content-test', files('terminal/drop_content_test.c'), [app_lib], deps],
+    ['terminal-accessibility-test', files('terminal/accessibility_test.c'), [app_lib], deps],
+    ['terminal-accessibility-index-test', files('terminal/accessibility_index_test.c'), [app_lib], deps],
+    ['terminal-accessibility-cache-test', files('terminal/accessibility_cache_test.c'), [app_lib], deps],
+    ['terminal-accessibility-text-test', files('terminal/accessibility_text_test.c'), [app_lib], deps],
+    ['terminal-kind-test', files('app/tabs/kind_test.c'), [app_lib], deps],
+    ['terminal-bell-close-test', files('app/tabs/exit_close_test.c'), [app_lib], deps],
+    ['app-tabs-rows-test', files('app/tabs/rows_test.c'), [app_lib], deps],
+    ['app-tabs-cwd-test', files('app/tabs/cwd_test.c'), [app_lib], deps],
+    ['app-tabs-transfer-test', files('app/tabs/transfer_test.c'), [app_lib], deps],
+    ['app-tabs-content-model-test', files('app/tabs/content_model_test.c'), [app_lib], deps],
+    ['app-tabs-service-test', files('app/tabs/service_test.c'), [app_lib], deps],
+    ['app-tabs-preview-test', files('app/tabs/preview_test.c'), [app_lib], deps],
+    ['pty-fast-test', files('pty/pty_test.c'), [pty_lib], [thread_dep, dl_dep]],
+    ['pty-destroy-test', files('pty/pty_destroy_test.c'), [pty_lib], [thread_dep, dl_dep]],
+    ['pty-ring-wake-test', files('pty/ring_wake_test.c'), [pty_lib], [thread_dep, dl_dep]],
+    ['settings-test', files('app/config_test.c'), [app_lib], deps],
+    ['thumbnail-test', files('app/thumbnail_test.c'), [app_lib], deps],
+    ['settings-window-test', files('app/config/window_test.c'), [app_lib], deps],
+    ['settings-drop-test', files('app/config/drop_test.c'), [app_lib], deps],
+    ['window-ui-hosts-test', files('app/tabs/ui_hosts_test.c'), [app_lib], deps],
+    ['window-ui-tree-test', files('app/tabs/ui_tree_test.c'), [app_lib], deps],
+    ['drop-paste-probe-test', files('app/tabs/drop_paste_probe_test.c'), [app_lib], deps],
+    ['render-test', files('render/render_test.c'), [render_term_lib], deps],
+    ['render-plan-test', files('render/plan_test.c'), [render_term_lib], deps],
+    ['render-decor-test', files('render/decor_test.c'), [render_term_lib], deps],
+    ['render-cache-test', files('render/cache_test.c'), [render_term_lib], deps],
+    ['render-raster-test', files('render/raster_test.c'), [render_term_lib], deps],
+    ['render-damage-test', files('render/damage_test.c'), [render_term_lib], deps],
+    ['render-incremental-test', files('render/incremental_test.c'), [render_term_lib], deps],
+    ['render-cpu-canvas-test', files('render/cpu_canvas_test.c'), [render_term_lib], deps],
+    ['resize-alloc-test', files('render/resize_alloc_test.c'), [render_term_lib], deps],
+    ['window-compose-test', files('render/compose_test.c'), [render_term_lib], deps],
     font_backend == 'coretext'
-        ? ['font-coretext-test', files('font/coretext_test.m'), font_lib, font_deps + [m_dep] + platform_deps]
-        : ['font-test', files('font/font_test.c'), font_lib, font_deps + [m_dep]],
-    ['anim-test', files('ui/anim_test.c', 'ui/stubs/scene_paint_deps.c'), [ui_lib, render_lib], deps],
-    ['ui-scene-test', files('paint/scene_test.c'), ui_lib, ui_test_deps],
-    ['ui-widget-test', files('ui/widget_test.c'), ui_lib, ui_test_deps],
-    ['ui-accessibility-test', files('ui/accessibility_test.c'), ui_lib, ui_test_deps],
-    ['ui-focus-test', files('ui/focus_test.c'), ui_lib, ui_test_deps],
-    ['ui-dispatch-test', files('ui/dispatch_test.c'), ui_lib, ui_test_deps],
-    ['ui-box-test', files('ui/box_test.c'), ui_lib, ui_test_deps],
-    ['ui-typed-widgets-test', files('ui/typed_widgets_test.c'), ui_lib, ui_test_deps],
-    ['ui-style-context-test', files('ui/style_context_test.c'), ui_lib, ui_test_deps],
-    ['ui-part-handle-test', files('ui/part_handle_test.c'), ui_lib, ui_test_deps],
-    ['ui-paint-test', files('ui/paint_test.c'), ui_lib, ui_test_deps],
-    ['ui-surface-test', files('ui/surface_test.c'), ui_lib, ui_test_deps],
-    ['ui-core-contract-test', files('ui/core_contract_test.c'), ui_lib, ui_test_deps],
-    ['ui-model-contract-test', files('ui/model_contract_test.c'), ui_lib, ui_test_deps],
-    ['ui-scrollview-test', files('ui/widgets/scrollview_test.c'), ui_lib, ui_test_deps],
-    ['ui-scene-text-test', files('paint/scene_text_test.c', 'ui/stubs/scene_paint_deps.c'), [ui_lib, render_lib], deps],
-    ['ui-tabbar-test', files('app/tabs/tabbar_test.c'), app_lib, ui_test_deps],
-    ['ui-menu-test', files('ui/widgets/menu_test.c'), ui_lib, ui_test_deps],
-    ['anchor-test', files('ui/anchor_test.c'), ui_lib, ui_test_deps],
-    ['ui-palette-test', files('app/tabs/palette_test.c'), app_lib, ui_test_deps],
-    ['ui-list-test', files('ui/widgets/list_test.c'), ui_lib, ui_test_deps],
-    ['ui-input-test', files('ui/widgets/input_test.c'), ui_lib, ui_test_deps],
-    ['ui-input-oom-test', files('ui/widgets/input_oom_test.c'), ui_lib, ui_test_deps + [dl_dep]],
-    ['ui-label-test', files('ui/widgets/label_test.c'), ui_lib, ui_test_deps],
-    ['ui-dropdown-test', files('ui/widgets/dropdown_test.c'), ui_lib, ui_test_deps],
-    ['ui-tab-preview-test', files('app/tabs/tab_preview_test.c'), app_lib, ui_test_deps],
-    ['ui-acceptance-test', files('ui/acceptance_test.c'), ui_lib, ui_test_deps],
-    ['ui-debug-test', files('ui/debug_test.c'), ui_lib, ui_test_deps],
-    ['ui-text-break-test', files('ui/text_break_test.c'), ui_lib, [m_dep, thread_dep, yyjson_dep]],
-    ['ui-text-select-test', files('ui/text_select_test.c'), ui_lib, ui_test_deps],
-    ['look-test', files('theme/look_test.c'), theme_lib, deps],
-    ['css-parser-test', files('ui/css/parser_test.c'), ui_lib, ui_test_deps],
-    ['css-clipping-test', files('ui/css/clipping_test.c', 'ui/stubs/scene_paint_deps.c'), [ui_lib, render_lib], deps],
-    ['css-selector-test', files('ui/css/selector_test.c'), ui_lib, ui_test_deps],
-    ['css-lookup-test', files('ui/css/lookup_test.c'), ui_lib, ui_test_deps],
+        ? ['font-coretext-test', files('render/coretext_test.m'), [render_term_lib], deps]
+        : ['font-test', files('render/font_test.c'), [render_term_lib], deps],
+    ['glyph-intern-test', files('render/glyph_intern_test.c'), [render_term_lib], deps],
+    ['unicode-parity-test', files('terminal/unicode_parity_test.c'), [terminal_lib], deps],
+    ['window-debug-server-test', files('app/debug_server_test.c'), [app_lib], deps],
+    ['ui-tabbar-test', files('app/tabs/tabbar_test.c'), [app_lib], deps],
+    ['ui-tab-preview-test', files('app/tabs/tab_preview_test.c'), [app_lib], deps],
+    ['look-test', files('app/look_test.c'), [app_lib], deps],
 ]
-
-# metal-render-bench is off. It is not ported to the current renderer.
 
 if system == 'darwin'
     test(
         'macos-signing-test',
         python,
-        args: files('platform/macos_signing_test.py'),
+        args: files('tools/macos_signing_test.py'),
         suite: ['unit'],
         timeout: 120,
     )
@@ -104,39 +74,53 @@ if backend == 'wayland'
     wayland_scanner = find_program('wayland-scanner', native: true)
 endif
 
-test_common_deps = [yasl_dep, term_dep, term_test_dep]
+test_common_deps = [
+    wsap_ui_yasl_dep, wsap_ui_dep, wsap_font_dep, wsap_paint_dep,
+    wsap_theme_dep, wsap_render_dep, wsap_input_dep, wsap_base_dep,
+    yasl_dep, term_dep, term_test_dep,
+]
 test_env = environment()
 test_env.set('LD_PRELOAD', '')
 test_env.set('DYLD_INSERT_LIBRARIES', '')
 test_env.set('WSAP_NO_PRELOAD', '1')
 bash = find_program('bash', native: true)
 
+# The deploy tool ships in this tree, so its check runs here.
+test(
+    'deploy-fonts-test',
+    python,
+    args: files('tools/deploy_test.py'),
+    suite: ['unit'],
+)
+
 # Tests that call uninstrumented system libraries, such as fontconfig or the
 # system yyjson. The msan setup skips them: MSan reports false positives there.
 extlib_tests = [
     'font-test',
     'font-coretext-test',
+    'resize-alloc-test',
+    'ui-tab-preview-test',
+    'window-debug-server-test',
     'render-test',
     'render-plan-test',
     'render-decor-test',
     'render-cache-test',
-    'render-scene-test',
     'render-raster-test',
     'render-damage-test',
     'render-incremental-test',
-    'render-pool-test',
-    'resize-alloc-test',
     'render-cpu-canvas-test',
     'vulkan-render-test',
-    'json-test',
-    'ui-debug-test',
-    'ui-tab-preview-test',
     'terminal-input-test',
     'terminal-lifecycle-test',
     'terminal-scrolling-test',
+    'terminal-drop-content-test',
+    'terminal-accessibility-test',
+    'terminal-accessibility-cache-test',
+    'terminal-accessibility-text-test',
     'terminal-kind-test',
     'terminal-bell-close-test',
     'app-reload-test',
+    'app-input-reload-test',
     'app-tabs-rows-test',
     'app-tabs-cwd-test',
     'app-tabs-transfer-test',
@@ -144,72 +128,42 @@ extlib_tests = [
     'app-tabs-preview-test',
     'thumbnail-test',
     'settings-window-test',
+    'settings-drop-test',
     'window-ui-hosts-test',
     'window-ui-tree-test',
-    'window-debug-server-test',
+    'drop-paste-probe-test',
 ]
 
 isa_tests = [
     'font-test',
     'font-coretext-test',
     'render-test',
-    'render-kernels-test',
     'render-plan-test',
     'render-decor-test',
     'render-cache-test',
-    'render-scene-test',
     'render-raster-test',
     'render-damage-test',
     'render-incremental-test',
     'pty-fast-test',
 ]
 
-msan_safe_tests = [
-    'ui-scene-test',
-    'ui-widget-test',
-    'ui-focus-test',
-    'ui-box-test',
-    'ui-typed-widgets-test',
-    'ui-style-context-test',
-    'ui-paint-test',
-    'ui-surface-test',
-    'ui-core-contract-test',
-    'ui-model-contract-test',
-    'ui-scrollview-test',
-    'ui-tabbar-test',
-    'ui-menu-test',
-    'anchor-test',
-    'ui-palette-test',
-    'ui-list-test',
-    'ui-input-test',
-    'ui-input-oom-test',
-    'ui-acceptance-test',
-    'css-parser-test',
-    'css-clipping-test',
-    'css-selector-test',
-    'ui-text-break-test',
-    'ui-text-select-test',
-]
-
 standalone_tests = [
-    'pty-fast-test', 'font-test',
-    'font-coretext-test', 'render-test', 'render-kernels-test', 'resize-alloc-test',
-    'render-plan-test', 'render-decor-test', 'render-cache-test', 'render-scene-test',
+    'pty-fast-test', 'render-test', 'font-test', 'font-coretext-test',
+    'resize-alloc-test', 'window-compose-test',
+    'render-plan-test', 'render-decor-test', 'render-cache-test',
     'render-raster-test', 'render-damage-test', 'render-incremental-test',
-    'anim-test', 'ui-scene-text-test', 'css-clipping-test',
-    'ui-input-oom-test', 'metal-render-test',
 ]
 
 # The window cadence test drives a real Cocoa window and its Metal layer. It
 # builds on its own, because the link group renames main for C sources only.
 if system == 'darwin'
-    test_cases += [['window-pacing-test', files('ui/yasl/window_pacing_test.m'), app_lib, deps]]
-    test_cases += [['render-gpu-slot-test', files('render/gpu_slot_test.m'), render_lib, deps]]
-    test_cases += [['metal-render-test', files('render/metal_render_test.m'), render_lib, deps]]
+    test_cases += [['window-pacing-test', files('app/window_pacing_test.m'), [app_lib], deps]]
+    test_cases += [['render-gpu-slot-test', files('render/gpu_slot_test.m'), [render_term_lib], deps]]
+    test_cases += [['metal-render-test', files('render/metal_render_test.m'), [render_term_lib], deps]]
     standalone_tests += ['window-pacing-test', 'render-gpu-slot-test']
 endif
 if has_vulkan
-    test_cases += [['vulkan-render-test', files('render/vulkan_render_test.c'), [render_lib, ui_yasl_lib], deps]]
+    test_cases += [['vulkan-render-test', files('render/vulkan_render_test.c'), [render_term_lib], deps]]
     standalone_tests += ['vulkan-render-test']
 endif
 test_groups = {}
@@ -225,11 +179,11 @@ foreach entry : test_cases
             dependencies: entry[3] + test_common_deps,
         )}
     else
-        libraries = [entry[2]]
+        libraries = entry[2]
         if entry[0] == 'paste-test'
             group = session_lib.name()
         else
-            group = entry[2].name()
+            group = entry[2][0].name()
         endif
         symbol = 'test_' + entry[0].underscorify()
         obj = static_library(
@@ -293,9 +247,6 @@ foreach entry : test_cases
     if entry[0] in extlib_tests
         suites += ['extlib']
     endif
-    if entry[0] in msan_safe_tests
-        suites += ['msan-safe']
-    endif
     test(
         entry[0],
         exe,
@@ -306,8 +257,6 @@ foreach entry : test_cases
     )
     if entry[0] == 'render-test'
         benchmark('render-bench', exe, args: ['--bench'], timeout: 300)
-    elif entry[0] == 'render-kernels-test'
-        benchmark('render-kernels-bench', exe, args: ['--bench'], timeout: 300)
     endif
 endforeach
 
@@ -323,6 +272,9 @@ if backend == 'wayland'
     fastpty_env.set('LD_PRELOAD', '')
     fastpty_env.set('DYLD_INSERT_LIBRARIES', '')
     fastpty_env.set('WSAP_NO_PRELOAD', '0')
+    # The preload waits this long for a sync ack. The default of 200 ms is
+    # too short on a loaded machine, and the transport check then fails.
+    fastpty_env.set('WSAP_SYNC_TIMEOUT_MS', '5000')
     test(
         'fastpty-test',
         python,
@@ -336,7 +288,7 @@ if backend == 'wayland'
         'pty/pty_route_test.c',
         c_args: test_c_args,
         link_with: pty_lib,
-        dependencies: [thread_dep, dl_dep, yasl_dep],
+        dependencies: [thread_dep, dl_dep, yasl_dep, wsap_base_dep],
         include_directories: inc,
     )
     test(
@@ -349,19 +301,10 @@ if backend == 'wayland'
     )
 endif
 
-test(
-    'ui-api-boundary-test',
-    bash,
-    args: [files('ui/api_boundary_test.sh'), meson.project_source_root()],
-    suite: 'unit',
-)
-
 if get_option('integration_tests')
     integration_env = environment()
     integration_env.set('BIN', program.full_path())
     integration_env.set('WSAP_NO_PRELOAD', '0')
-    integration_tests = [
-    ]
     if backend == 'wayland'
         vptr_xml = files('helpers/wlr-virtual-pointer-unstable-v1.xml')
         vptr = executable(
@@ -384,7 +327,7 @@ if get_option('integration_tests')
         test(
             'tab-drag-test',
             bash,
-            args: files('ui/yasl/tab_drag_test.sh'),
+            args: files('app/integration/tab_drag_test.sh'),
             depends: [program, preload, vptr],
             env: {
                 'BIN': program.full_path(),
@@ -417,7 +360,7 @@ if get_option('integration_tests')
             test(
                 case == 'repeat' ? 'key-repeat-test' : 'clipboard-paste-test',
                 python,
-                args: [files('ui/yasl/display_wake_test.py'), case],
+                args: [files('app/integration/display_wake_test.py'), case],
                 depends: [program, vkbd],
                 env: {'BIN': program.full_path(), 'VKEYBOARD': vkbd.full_path()},
                 suite: 'integration',
@@ -428,7 +371,7 @@ if get_option('integration_tests')
         test(
             'frame-pacing-test',
             python,
-            args: files('ui/yasl/frame_pacing_test.py'),
+            args: files('app/integration/frame_pacing_test.py'),
             depends: [program],
             env: {'BIN': program.full_path()},
             suite: 'integration',
@@ -438,7 +381,7 @@ if get_option('integration_tests')
         test(
             'popup-dismiss-test',
             python,
-            args: files('ui/yasl/popup_dismiss_test.py'),
+            args: files('app/integration/popup_dismiss_test.py'),
             depends: [program, vptr],
             env: {'BIN': program.full_path(), 'VPOINTER': vptr.full_path()},
             suite: 'integration',
@@ -448,7 +391,7 @@ if get_option('integration_tests')
         test(
             'popup-submenu-preview-test',
             python,
-            args: files('ui/yasl/popup_submenu_preview_test.py'),
+            args: files('app/integration/popup_submenu_preview_test.py'),
             depends: [program, vptr],
             env: {'BIN': program.full_path(), 'VPOINTER': vptr.full_path()},
             suite: 'integration',
@@ -458,7 +401,7 @@ if get_option('integration_tests')
         test(
             'popup-scale-test',
             python,
-            args: files('ui/yasl/popup_scale_test.py'),
+            args: files('app/integration/popup_scale_test.py'),
             depends: [program, vptr],
             env: {'BIN': program.full_path(), 'VPOINTER': vptr.full_path()},
             suite: 'integration',
@@ -468,7 +411,7 @@ if get_option('integration_tests')
         test(
             'popup-key-test',
             python,
-            args: files('ui/yasl/popup_key_test.py'),
+            args: files('app/integration/popup_key_test.py'),
             depends: [program, vptr],
             env: {'BIN': program.full_path(), 'VPOINTER': vptr.full_path()},
             suite: 'integration',
@@ -478,7 +421,7 @@ if get_option('integration_tests')
         test(
             'popup-nested-close-test',
             python,
-            args: files('ui/yasl/popup_nested_close_test.py'),
+            args: files('app/integration/popup_nested_close_test.py'),
             depends: [program, vptr],
             env: {'BIN': program.full_path(), 'VPOINTER': vptr.full_path()},
             suite: 'integration',
@@ -488,7 +431,7 @@ if get_option('integration_tests')
         test(
             'tab-rows-test',
             python,
-            args: files('ui/yasl/tab_rows_test.py'),
+            args: files('app/integration/tab_rows_test.py'),
             depends: [program],
             env: {'BIN': program.full_path()},
             suite: 'integration',
@@ -498,7 +441,7 @@ if get_option('integration_tests')
         test(
             'exit-test',
             python,
-            args: files('ui/yasl/exit_test.py'),
+            args: files('app/integration/exit_test.py'),
             depends: [program],
             env: {'BIN': program.full_path()},
             suite: 'integration',
@@ -508,7 +451,7 @@ if get_option('integration_tests')
         test(
             'debug-half-close-test',
             python,
-            args: files('ui/yasl/debug_half_close_test.py'),
+            args: files('app/integration/debug_half_close_test.py'),
             depends: [program],
             env: {'BIN': program.full_path()},
             suite: 'integration',
@@ -518,7 +461,7 @@ if get_option('integration_tests')
         test(
             'display-lost-test',
             python,
-            args: files('ui/yasl/display_lost_test.py'),
+            args: files('app/integration/display_lost_test.py'),
             depends: [program],
             env: {'BIN': program.full_path()},
             suite: 'integration',
@@ -529,7 +472,7 @@ if get_option('integration_tests')
             test(
                 'x11-vulkan-test',
                 python,
-                args: files('ui/yasl/x11_vulkan_test.py'),
+                args: files('app/integration/x11_vulkan_test.py'),
                 depends: [program],
                 env: {'BIN': program.full_path()},
                 suite: 'integration',
@@ -541,25 +484,13 @@ if get_option('integration_tests')
     test(
         'accessibility-atspi-test',
         python,
-        args: files('ui/yasl/accessibility_test.py'),
+        args: files('app/integration/accessibility_test.py'),
         depends: [program],
         env: {'BIN': program.full_path()},
         suite: 'integration',
         is_parallel: false,
         timeout: 120,
     )
-    foreach it : integration_tests
-        test(
-            it[0],
-            bash,
-            args: it[1],
-            depends: [program, preload],
-            env: integration_env,
-            suite: 'integration',
-            is_parallel: false,
-            timeout: 180,
-        )
-    endforeach
     test(
         'pty-order-test',
         python,
@@ -571,29 +502,3 @@ if get_option('integration_tests')
         timeout: 180,
     )
 endif
-
-options_test = executable(
-    'options-test',
-    files(
-        'util/options_test.c',
-        '../src/util/options.c',
-        '../src/util/config.c',
-        '../src/util/fs.c',
-        '../src/util/path.c',
-        '../src/util/proc.c',
-        '../src/util/name.c',
-    ),
-    c_args: test_c_args,
-    include_directories: inc,
-)
-test('options-test', options_test, env: test_env, suite: ['unit'], timeout: 180)
-
-latency_probe_test = executable(
-    'latency-probe-test',
-    files('loop/latency_probe_test.c'),
-    c_args: test_c_args,
-    include_directories: inc,
-    link_with: base_lib,
-    dependencies: [thread_dep],
-)
-test('latency-probe-test', latency_probe_test, env: test_env, suite: ['unit'])

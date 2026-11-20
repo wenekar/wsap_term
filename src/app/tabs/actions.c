@@ -4,27 +4,30 @@
 
 #include "app/tabs/internal.h"
 #include "input/keybind.h"
-#include "session/session.h"
 #include "ui/surface.h"
 
+/* A palette row that is not a command has an action above the command ID
+ * range, so a widget command ID cannot look like a tab row. */
 enum palette_action {
-    PALETTE_ACT_SCROLL_BOTTOM = INPUT_SHORTCUT_COUNT,
+    PALETTE_ACT_SCROLL_BOTTOM = 1 << 16,
     PALETTE_ACT_NEW_WINDOW,
-    PALETTE_ACT_TAB_BASE = INPUT_SHORTCUT_COUNT + 16,
+    PALETTE_ACT_TAB_BASE,
 };
 
-static void fmt_shortcut(enum input_shortcut sc, char *out, size_t sz)
+static void fmt_shortcut(const struct window *w, input_command_id sc,
+                         char *out, size_t sz)
 {
     out[0] = '\0';
-    struct input_keymap *km = input_keymap_active();
+    const struct input_keymap *km = window_keymap(w);
     if (km)
         input_keymap_format_action_chord(km, sc, out, sz);
 }
 
 static int add_cmd(struct ui_palette_cmd *cmds, char (*sc)[64], int n,
-                   const char *label, int action, enum input_shortcut sc_of)
+                   const struct window *w, const char *label, int action,
+                   input_command_id sc_of)
 {
-    fmt_shortcut(sc_of, sc[n], sizeof(sc[n]));
+    fmt_shortcut(w, sc_of, sc[n], sizeof(sc[n]));
     cmds[n] = (struct ui_palette_cmd){
         .label = label,
         .shortcut = sc[n][0] ? sc[n] : NULL,
@@ -52,48 +55,48 @@ static void palette_toggle(struct app_tabs *tabs)
     char *tab_labels[TAB_CMDS] = {0};
     int n = 0;
 
-    n = add_cmd(cmds, sc, n, "New Tab", INPUT_SHORTCUT_NEW_TAB,
-                INPUT_SHORTCUT_NEW_TAB);
-    n = add_cmd(cmds, sc, n, "Close Tab", INPUT_SHORTCUT_CLOSE_TAB,
-                INPUT_SHORTCUT_CLOSE_TAB);
-    n = add_cmd(cmds, sc, n, "Next Tab", INPUT_SHORTCUT_NEXT_TAB,
-                INPUT_SHORTCUT_NEXT_TAB);
-    n = add_cmd(cmds, sc, n, "Previous Tab", INPUT_SHORTCUT_PREV_TAB,
-                INPUT_SHORTCUT_PREV_TAB);
-    n = add_cmd(cmds, sc, n, "Last Tab", INPUT_SHORTCUT_LAST_TAB,
-                INPUT_SHORTCUT_LAST_TAB);
+    n = add_cmd(cmds, sc, n, w, "New Tab", INPUT_COMMAND_NEW_TAB,
+                INPUT_COMMAND_NEW_TAB);
+    n = add_cmd(cmds, sc, n, w, "Close Tab", INPUT_COMMAND_CLOSE_TAB,
+                INPUT_COMMAND_CLOSE_TAB);
+    n = add_cmd(cmds, sc, n, w, "Next Tab", INPUT_COMMAND_NEXT_TAB,
+                INPUT_COMMAND_NEXT_TAB);
+    n = add_cmd(cmds, sc, n, w, "Previous Tab", INPUT_COMMAND_PREV_TAB,
+                INPUT_COMMAND_PREV_TAB);
+    n = add_cmd(cmds, sc, n, w, "Last Tab", INPUT_COMMAND_LAST_TAB,
+                INPUT_COMMAND_LAST_TAB);
 
     int listed = 0;
     for (int i = 0; i < tabs->count && listed < TAB_CMDS; i++) {
-        struct terminal *content = app_tabs_content(tabs, i);
-        if (!content)
+        const struct app_tab *entry = app_tabs_entry(tabs, i);
+        if (!entry || !entry->content)
             continue;
         if (asprintf(&tab_labels[listed], "Switch to Tab %d: %s", listed + 1,
-                     terminal_title(content)) < 0) {
+                     app_tab_title(entry)) < 0) {
             tab_labels[listed] = NULL;
             continue;
         }
-        n = add_cmd(cmds, sc, n, tab_labels[listed],
-                    PALETTE_ACT_TAB_BASE + i, INPUT_SHORTCUT_NONE);
+        n = add_cmd(cmds, sc, n, w, tab_labels[listed],
+                    PALETTE_ACT_TAB_BASE + i, INPUT_COMMAND_NONE);
         listed++;
     }
 
-    n = add_cmd(cmds, sc, n, "Copy", INPUT_SHORTCUT_COPY,
-                INPUT_SHORTCUT_COPY);
-    n = add_cmd(cmds, sc, n, "Paste", INPUT_SHORTCUT_PASTE,
-                INPUT_SHORTCUT_PASTE);
-    n = add_cmd(cmds, sc, n, "Select All", INPUT_SHORTCUT_SELECT_ALL,
-                INPUT_SHORTCUT_SELECT_ALL);
-    n = add_cmd(cmds, sc, n, "Zoom In", INPUT_SHORTCUT_FONT_LARGER,
-                INPUT_SHORTCUT_FONT_LARGER);
-    n = add_cmd(cmds, sc, n, "Zoom Out", INPUT_SHORTCUT_FONT_SMALLER,
-                INPUT_SHORTCUT_FONT_SMALLER);
-    n = add_cmd(cmds, sc, n, "Scroll to Bottom", PALETTE_ACT_SCROLL_BOTTOM,
-                INPUT_SHORTCUT_NONE);
-    n = add_cmd(cmds, sc, n, "New Window", PALETTE_ACT_NEW_WINDOW,
-                INPUT_SHORTCUT_NONE);
-    n = add_cmd(cmds, sc, n, "Settings", INPUT_SHORTCUT_SETTINGS,
-                INPUT_SHORTCUT_SETTINGS);
+    n = add_cmd(cmds, sc, n, w, "Copy", INPUT_COMMAND_COPY,
+                INPUT_COMMAND_COPY);
+    n = add_cmd(cmds, sc, n, w, "Paste", INPUT_COMMAND_PASTE,
+                INPUT_COMMAND_PASTE);
+    n = add_cmd(cmds, sc, n, w, "Select All", INPUT_COMMAND_SELECT_ALL,
+                INPUT_COMMAND_SELECT_ALL);
+    n = add_cmd(cmds, sc, n, w, "Zoom In", INPUT_COMMAND_FONT_LARGER,
+                INPUT_COMMAND_FONT_LARGER);
+    n = add_cmd(cmds, sc, n, w, "Zoom Out", INPUT_COMMAND_FONT_SMALLER,
+                INPUT_COMMAND_FONT_SMALLER);
+    n = add_cmd(cmds, sc, n, w, "Scroll to Bottom", PALETTE_ACT_SCROLL_BOTTOM,
+                INPUT_COMMAND_NONE);
+    n = add_cmd(cmds, sc, n, w, "New Window", PALETTE_ACT_NEW_WINDOW,
+                INPUT_COMMAND_NONE);
+    n = add_cmd(cmds, sc, n, w, "Settings", INPUT_COMMAND_SETTINGS,
+                INPUT_COMMAND_SETTINGS);
 
     ui_palette_open(&tabs->palette, cmds, n);
     for (int i = 0; i < TAB_CMDS; i++)
@@ -115,16 +118,15 @@ static bool palette_action(struct ui_widget *source,
         app_tabs_select(w, id - PALETTE_ACT_TAB_BASE);
         return true;
     }
-    if (id >= 0 && id < INPUT_SHORTCUT_COUNT) {
-        app_tabs_shortcut(w, (enum input_shortcut)id);
+    if (id > INPUT_COMMAND_NONE && id < INPUT_COMMAND_APP_COUNT) {
+        app_tabs_shortcut(w, (input_command_id)id);
         return true;
     }
     switch (id) {
     case PALETTE_ACT_SCROLL_BOTTOM: {
-        struct session *session =
-            terminal_session(app_tabs_active_entry(tabs));
-        if (session && session->term) {
-            wsap_vtcore_scroll_to(session->term, 0);
+        const struct app_tab *entry = app_tabs_entry(tabs, tabs->active);
+        if (entry && entry->content && entry->ops->scroll_bottom) {
+            entry->ops->scroll_bottom(entry->content);
             if (window_surface(w))
                 window_redraw(w);
         }
@@ -149,7 +151,7 @@ static bool palette_swallow(struct ui_widget *widget,
     case UI_EVENT_DROP_FILES:
         return true;
     case UI_EVENT_SHORTCUT:
-        return event->data.shortcut.action != INPUT_SHORTCUT_COMMAND_PALETTE;
+        return event->data.shortcut.action != INPUT_COMMAND_COMMAND_PALETTE;
     default:
         return false;
     }
@@ -250,44 +252,44 @@ static int last_live(const struct app_tabs *tabs)
     return -1;
 }
 
-void app_tabs_shortcut(struct window *w, enum input_shortcut sc)
+void app_tabs_shortcut(struct window *w, input_command_id sc)
 {
     struct app_tabs *tabs = app_tabs_of(w);
     if (!tabs)
         return;
     int live = app_tabs_live_count(tabs);
     switch (sc) {
-    case INPUT_SHORTCUT_NEW_TAB:
+    case INPUT_COMMAND_NEW_TAB:
         (void)app_tabs_new(w);
         return;
-    case INPUT_SHORTCUT_CLOSE_TAB:
+    case INPUT_COMMAND_CLOSE_TAB:
         app_tabs_close(w, tabs->active);
         return;
-    case INPUT_SHORTCUT_NEXT_TAB:
+    case INPUT_COMMAND_NEXT_TAB:
         if (live > 1)
             app_tabs_select(w, next_live(tabs, tabs->active));
         return;
-    case INPUT_SHORTCUT_PREV_TAB:
+    case INPUT_COMMAND_PREV_TAB:
         if (live > 1)
             app_tabs_select(w, previous_live(tabs, tabs->active));
         return;
-    case INPUT_SHORTCUT_LAST_TAB:
+    case INPUT_COMMAND_LAST_TAB:
         app_tabs_select(w, last_live(tabs));
         return;
-    case INPUT_SHORTCUT_TAB_1:
-    case INPUT_SHORTCUT_TAB_2:
-    case INPUT_SHORTCUT_TAB_3:
-    case INPUT_SHORTCUT_TAB_4:
-    case INPUT_SHORTCUT_TAB_5:
-    case INPUT_SHORTCUT_TAB_6:
-    case INPUT_SHORTCUT_TAB_7:
-    case INPUT_SHORTCUT_TAB_8:
-        app_tabs_select(w, (int)sc - INPUT_SHORTCUT_TAB_1);
+    case INPUT_COMMAND_TAB_1:
+    case INPUT_COMMAND_TAB_2:
+    case INPUT_COMMAND_TAB_3:
+    case INPUT_COMMAND_TAB_4:
+    case INPUT_COMMAND_TAB_5:
+    case INPUT_COMMAND_TAB_6:
+    case INPUT_COMMAND_TAB_7:
+    case INPUT_COMMAND_TAB_8:
+        app_tabs_select(w, (int)sc - INPUT_COMMAND_TAB_1);
         return;
-    case INPUT_SHORTCUT_COMMAND_PALETTE:
+    case INPUT_COMMAND_COMMAND_PALETTE:
         palette_toggle(tabs);
         return;
-    case INPUT_SHORTCUT_FOCUS_TABS: {
+    case INPUT_COMMAND_FOCUS_TABS: {
         if (live > 1) {
             struct ui_widget *bar = ui_tabbar_widget(&tabs->tabbar);
             struct ui_surface *surface = window_ui_surface(w);
@@ -299,10 +301,8 @@ void app_tabs_shortcut(struct window *w, enum input_shortcut sc)
     default:
         break;
     }
-    struct terminal *content = app_tabs_active_entry(tabs);
-    if (content) {
-        terminal_handle_shortcut(content, sc);
-        if (sc == INPUT_SHORTCUT_FONT_LARGER || sc == INPUT_SHORTCUT_FONT_SMALLER)
-            app_tabs_relayout(w);
-    }
+    const struct app_tab *entry = app_tabs_entry(tabs, tabs->active);
+    if (entry && entry->content && entry->ops->shortcut &&
+        entry->ops->shortcut(entry->content, sc))
+        app_tabs_relayout(w);
 }

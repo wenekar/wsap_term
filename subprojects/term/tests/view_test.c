@@ -488,6 +488,67 @@ static void row_keys_follow_scrolled_content(void)
     wsap_vtcore_free(t);
 }
 
+static void view_rows_report_soft_wraps(void)
+{
+    const int cols = 10, rows = 10;
+    struct wsap_vtcore *t = tt_new(cols, rows);
+    assert(t);
+    /* Row 0 is full, so 'k' starts row 1. */
+    tt_puts(t, "abcdefghijk\r\n");
+    /* The wide character does not fit at the last column. The term pads row 2
+     * with one wrap-pad cell and wraps. */
+    tt_puts(t, "123456789");
+    tt_puts(t, "\xe4\xb8\xad");
+    tt_puts(t, "\r\n");
+    /* Row 4 ends with a written space. It is not a wrap pad. */
+    tt_puts(t, "abcdefghi j\r\n");
+
+    struct wsap_vtcore_snapshot *snap = wsap_vtcore_snapshot_new();
+    assert(snap && wsap_vtcore_snapshot_update(snap, t));
+    assert(wsap_vtcore_snapshot_row_wrapped(snap, 0));
+    assert(!wsap_vtcore_snapshot_row_wrapped(snap, 1));
+    assert(wsap_vtcore_snapshot_row_wrapped(snap, 2));
+    assert(!wsap_vtcore_snapshot_row_wrapped(snap, 3));
+    assert(wsap_vtcore_snapshot_row_wrapped(snap, 4));
+    assert(!wsap_vtcore_snapshot_row_wrapped(snap, 5));
+    assert(!wsap_vtcore_snapshot_row_wrapped(snap, -1));
+    assert(!wsap_vtcore_snapshot_row_wrapped(snap, rows));
+    assert(!wsap_vtcore_snapshot_row_wrapped(NULL, 0));
+
+    const struct wsap_vtcore_cell *pad_row = wsap_vtcore_snapshot_row(snap, 2);
+    const struct wsap_vtcore_cell *text_row = wsap_vtcore_snapshot_row(snap, 0);
+    const struct wsap_vtcore_cell *blank_row = wsap_vtcore_snapshot_row(snap, 4);
+    assert(pad_row && text_row && blank_row);
+    for (int x = 0; x + 1 < cols; x++) {
+        assert(!(pad_row[x].attrs & WSAP_VTCORE_ATTR_WRAP_PAD));
+        assert(!(text_row[x].attrs & WSAP_VTCORE_ATTR_WRAP_PAD));
+    }
+    assert(pad_row[cols - 1].attrs & WSAP_VTCORE_ATTR_WRAP_PAD);
+    assert(blank_row[cols - 1].text == ' ');
+    assert(blank_row[cols - 1].width == 1);
+    assert(!(blank_row[cols - 1].attrs & WSAP_VTCORE_ATTR_WRAP_PAD));
+
+    /* The rows keep their flags when they become history rows in the view. */
+    for (int i = 0; i < 20; i++)
+        tt_puts(t, "filler\r\n");
+    int history = tt_history(t);
+    assert(history > rows);
+    wsap_vtcore_scroll_to(t, history);
+    assert(wsap_vtcore_snapshot_update(snap, t));
+    assert(wsap_vtcore_snapshot_row_wrapped(snap, 0));
+    assert(!wsap_vtcore_snapshot_row_wrapped(snap, 1));
+    assert(wsap_vtcore_snapshot_row_wrapped(snap, 2));
+    assert(!wsap_vtcore_snapshot_row_wrapped(snap, 3));
+    assert(wsap_vtcore_snapshot_row_wrapped(snap, 4));
+    assert(!(wsap_vtcore_snapshot_row(snap, 4)[cols - 1].attrs &
+             WSAP_VTCORE_ATTR_WRAP_PAD));
+    assert(wsap_vtcore_snapshot_row(snap, 2)[cols - 1].attrs &
+           WSAP_VTCORE_ATTR_WRAP_PAD);
+
+    wsap_vtcore_snapshot_free(snap);
+    wsap_vtcore_free(t);
+}
+
 static void view_dynamic_sizing(void)
 {
     struct wsap_vtcore *t = small_history_term(20, 5, 100);
@@ -512,8 +573,72 @@ static void view_dynamic_sizing(void)
     wsap_vtcore_free(t);
 }
 
+/* The first non-blank ASCII text of snapshot row y. */
+static void snapshot_row_text(const struct wsap_vtcore_snapshot *s, int y,
+                              char *buf, size_t cap)
+{
+    const struct wsap_vtcore_view *v = wsap_vtcore_snapshot_view(s);
+    const struct wsap_vtcore_cell *cells = wsap_vtcore_snapshot_row(s, y);
+    size_t n = 0;
+    for (int c = 0; cells && c < v->size.x && n + 1 < cap; c++) {
+        uint32_t cp = cells[c].text;
+        buf[n++] = !cp ? ' ' : cp < 0x80 ? (char)cp : '?';
+    }
+    while (n > 0 && buf[n - 1] == ' ')
+        n--;
+    buf[n] = 0;
+}
+
+/* A live snapshot holds the screen rows below the history, also while the
+ * view shows older rows. The view keeps its offset. */
+static void live_snapshot_ignores_the_view_offset(void)
+{
+    struct wsap_vtcore *t = small_history_term(12, 5, 100);
+    feed_lines(t, "L", 30);
+    tt_puts(t, "\x1b[2;3Hsel");
+    wsap_vtcore_select_start(t, (struct wsap_vtcore_vector2i){ .x = 2, .y = 1 }, false,
+                             WSAP_VTCORE_SELECT_CELL);
+    assert(wsap_vtcore_select_extend(t, (struct wsap_vtcore_vector2i){ .x = 4, .y = 1 }, false));
+    struct wsap_vtcore_snapshot *bottom = wsap_vtcore_snapshot_new();
+    struct wsap_vtcore_snapshot *live = wsap_vtcore_snapshot_new();
+    struct wsap_vtcore_snapshot *view = wsap_vtcore_snapshot_new();
+    assert(bottom && live && view);
+    assert(wsap_vtcore_snapshot_update(bottom, t));
+
+    wsap_vtcore_scroll(t, 7);
+    assert(wsap_vtcore_scrollback(t).offset == 7);
+    assert(wsap_vtcore_snapshot_update_live(live, t));
+    assert(wsap_vtcore_scrollback(t).offset == 7);
+    assert(wsap_vtcore_snapshot_update(view, t));
+    assert(wsap_vtcore_snapshot_view(view)->scroll_offset == 7);
+
+    struct wsap_vtcore_span selected = wsap_vtcore_snapshot_row_selection(bottom, 1);
+    assert(selected.begin == 2 && selected.end > 2);
+    const struct wsap_vtcore_view *b = wsap_vtcore_snapshot_view(bottom);
+    const struct wsap_vtcore_view *l = wsap_vtcore_snapshot_view(live);
+    assert(l->scroll_offset == 0);
+    assert(l->cursor.visible == b->cursor.visible);
+    assert(l->cursor.pos.x == b->cursor.pos.x && l->cursor.pos.y == b->cursor.pos.y);
+    for (int y = 0; y < b->size.y; y++) {
+        char want[VIEW_TEXT_CAP], got[VIEW_TEXT_CAP], shown[VIEW_TEXT_CAP];
+        snapshot_row_text(bottom, y, want, sizeof(want));
+        snapshot_row_text(live, y, got, sizeof(got));
+        snapshot_row_text(view, y, shown, sizeof(shown));
+        assert(!strcmp(got, want));
+        assert(strcmp(shown, want) || !*want);
+        struct wsap_vtcore_span bs = wsap_vtcore_snapshot_row_selection(bottom, y);
+        struct wsap_vtcore_span ls = wsap_vtcore_snapshot_row_selection(live, y);
+        assert(bs.begin == ls.begin && bs.end == ls.end);
+    }
+    wsap_vtcore_snapshot_free(bottom);
+    wsap_vtcore_snapshot_free(live);
+    wsap_vtcore_snapshot_free(view);
+    wsap_vtcore_free(t);
+}
+
 int main(void)
 {
+    live_snapshot_ignores_the_view_offset();
     view_dynamic_sizing();
     snapshots_keep_history_totals();
     row_keys_differ_between_terminals();
@@ -530,6 +655,7 @@ int main(void)
     view_follows_the_alternate_screen();
     view_offset_has_one_owner();
     view_scrolls_a_line_that_needs_several_parts();
+    view_rows_report_soft_wraps();
     view_returns_to_bottom_on_erase();
     printf("PASS: scrollback view tests\n");
     return 0;

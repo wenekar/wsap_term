@@ -496,7 +496,7 @@ static bool root_event(struct ui_widget *widget, const struct ui_event *event,
     struct settings_form *form = userdata;
     (void)widget;
     if (event->kind == UI_EVENT_SHORTCUT &&
-        event->data.shortcut.action == INPUT_SHORTCUT_CLOSE_TAB) {
+        event->data.shortcut.action == INPUT_COMMAND_CLOSE_TAB) {
         window_close(form->window);
         return true;
     }
