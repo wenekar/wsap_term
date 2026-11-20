@@ -32,7 +32,7 @@ wsap_vtcore_lib = both_libraries('wsap_vtcore', wsap_vtcore_sources,
                     ? ['b_lundef=false'] : [],
   version: meson.project_version(),
   soversion: wsap_vtcore_soversion,
-  install: true
+  install: not meson.is_subproject(),
 )
 
 if get_option('fuzzing')
