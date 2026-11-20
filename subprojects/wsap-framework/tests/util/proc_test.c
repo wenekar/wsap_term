@@ -21,7 +21,6 @@ static uint64_t now_ms(void)
     return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
 }
 
-/* Reads until the pipe reports the end of the stream. */
 static size_t read_all(int fd, char *out, size_t capacity)
 {
     size_t used = 0;

@@ -10,8 +10,9 @@
 
 /*
  * The worker pool (render/cpu/pool.h).
- * - pool_each() calls its function once on each thread of the pool, each
- *   time on another thread, and returns after the last call.
+ * - pool_each() calls its function once on the calling thread and once on
+ *   each worker thread, with no two calls on one thread, and returns after
+ *   the last call.
  * - Any order of pool_each() and pool_run() calls loses no wake: each call
  *   returns, and each pool_run() covers every item once. Some rounds wait
  *   until the workers sleep, so both the poll and the sleep paths run.

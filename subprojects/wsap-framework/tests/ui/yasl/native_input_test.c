@@ -169,8 +169,9 @@ static struct input_key_event feed_key(enum yasl_key key, uint32_t codepoint,
     return out.key;
 }
 
-/* A key that the global map binds still reaches the focused widget. Step 1
- * queues the key only, so the widget sees the key before the app command. */
+/* A key that the global map binds still reaches the focused widget. Step 1 of
+ * the input path queues the key only, so the widget sees the key before the
+ * app command. */
 static void bound_key_reaches_widget_test(void)
 {
     fresh_window();
@@ -373,7 +374,7 @@ static void web_uri_list_stays_a_uri_list_test(void)
     expect_drop("text/uri-list", list, sizeof list - 1);
 }
 
-/* A uri list with a local file queues the list as a file drop, as before. */
+/* A uri list with a local file queues the list as a file drop. */
 static void local_uri_list_drops_files_test(void)
 {
     fresh_window();

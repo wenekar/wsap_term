@@ -140,7 +140,7 @@ static void fixture_init(struct fixture *f)
     f->next.children = f->next_kids;
 }
 
-/* True when each kept widget has its old style identity. */
+/* True when each kept widget has its old style identity and debug key. */
 static bool identity_is_old(struct ui_view *view)
 {
     const struct ui_widget *root = ui_view_root(view);

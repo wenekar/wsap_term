@@ -70,7 +70,8 @@ int main(void)
     assert(file_events.bits & FS_WATCH_MODIFIED);
     assert(strcmp(file_events.last, file) == 0);
 
-    /* A burst of writes that waits in the kernel coalesces into one event. */
+    /* A burst of writes that the loop has not yet delivered coalesces into one
+     * event. */
     int before = file_events.count;
     for (int i = 0; i < 32; i++)
         assert(write(fd, "x", 1) == 1);
@@ -106,8 +107,8 @@ int main(void)
     assert(strcmp(directory_events.last, created) == 0);
     fs_watch_remove(directory_watch);
 
-    /* A callback can remove its own watch. The watch is freed, so a later
-     * change must not reach it. */
+    /* A callback can remove its own watch. The flush frees the watch after the
+     * callback returns, so a later change must not reach it. */
     struct capture one_shot = {.remove_on_first = true};
     one_shot.watch = fs_watch_add(loop, file, on_change, &one_shot);
     assert(one_shot.watch);

@@ -20,8 +20,7 @@ static input_command_id shortcut(struct input_key_event ev,
 }
 #define SC(p, ...) shortcut((struct input_key_event){ __VA_ARGS__ }, p)
 
-/* A bound key matches without the queue. The widget path uses the test to
- * tell an app command from terminal input. */
+/* A bound key matches without the queue. */
 static void keymap_match_test(void)
 {
     static const struct input_shortcut_policy lin = {
@@ -41,7 +40,7 @@ static void keymap_match_test(void)
     input_keymap_free(&km);
 }
 
-/* A binding with no modifier runs from a bare key. */
+/* A binding with no modifier matches a bare key. */
 static void zero_modifier_binding_test(void)
 {
     struct input_keymap km;
@@ -54,8 +53,9 @@ static void zero_modifier_binding_test(void)
     input_keymap_free(&km);
 }
 
-/* A key token and a codepoint do not share a bit. A codepoint above 0x7fff
- * stays distinct, and a codepoint above 0xffff is not truncated. */
+/* A key token and a codepoint occupy separate token ranges, so a non-ASCII
+ * codepoint does not collide with a key token. A codepoint above 0xffff is
+ * not truncated. */
 static void wide_codepoint_binding_test(void)
 {
     struct input_keymap km;
@@ -74,7 +74,7 @@ static void wide_codepoint_binding_test(void)
     input_keymap_free(&km);
 }
 
-/* The map grows past the old 128-binding limit. */
+/* The map holds more than 128 bindings. */
 static void keymap_grows_test(void)
 {
     struct input_keymap km;
@@ -102,8 +102,8 @@ static void keymap_grows_test(void)
 }
 
 
-/* The built-in registry names every app command. The name and the label
- * agree with the ID in both directions. */
+/* The built-in registry holds every app command with a name and a label. A
+ * config word resolves back to the command ID. */
 static void command_registry_test(void)
 {
     const struct input_command_registry *reg = input_command_builtin();
@@ -123,7 +123,7 @@ static void command_registry_test(void)
     assert(input_parse_action("none", &id) && id == INPUT_COMMAND_NONE);
     assert(!input_parse_action("no_such_command", &id));
 
-    /* A widget adds a command in its own scope. The registry gives the ID. */
+    /* A widget adds a command in its own scope. The registry assigns the ID. */
     uint8_t scope = input_command_scope_new();
     assert(scope != INPUT_COMMAND_SCOPE_APP);
     struct input_command_registry own;
@@ -151,8 +151,8 @@ static void command_registry_test(void)
     input_command_scope_release(scope);
 }
 
-/* Every default chord gives the same command that its config word names.
- * The table reads the default keymap, so a new default binding is covered. */
+/* Every default chord returns the command that its config word names. The
+ * table reads the default keymap, so a new default binding is covered. */
 static void default_chord_table_test(void)
 {
     static const struct input_shortcut_policy policies[] = {
@@ -188,7 +188,6 @@ static void default_chord_table_test(void)
         input_keymap_free(&km);
     }
     assert(checked > 20);
-    /* The registry names every app command. */
     for (input_command_id id = INPUT_COMMAND_FONT_LARGER;
          id < INPUT_COMMAND_APP_COUNT; id++) {
         const struct input_command *cmd =
@@ -212,7 +211,7 @@ static void scoped_binding_wins_test(void)
     assert(input_keymap_lookup_scoped(&km, &ev, 0) == INPUT_COMMAND_CLOSE_TAB);
     assert(input_keymap_lookup_scoped(&km, &ev, 5) == INPUT_COMMAND_CLOSE_TAB);
 
-    /* A widget unbinds its own chord. The app chord still runs there. */
+    /* A widget unbinds its own chord. The app chord still applies there. */
     assert(input_keymap_apply_spec_scoped(&km, 2, "ctrl+w = none"));
     assert(input_keymap_lookup_scoped(&km, &ev, 2) == INPUT_COMMAND_CLOSE_TAB);
 
@@ -225,8 +224,8 @@ static void scoped_binding_wins_test(void)
 }
 
 /* A widget command binds with the registry of its scope. Two registries in
- * different scopes never give the same ID, and a name resolves only in its
- * own registry. */
+ * different scopes never return the same ID, and a widget command name
+ * resolves only in the registry of its scope. */
 static void widget_command_binding_test(void)
 {
     uint8_t two_scope = input_command_scope_new();
@@ -272,9 +271,9 @@ static void widget_command_binding_test(void)
     input_command_scope_release(three_scope);
 }
 
-/* Each owner gets its own widget scope. Two registries in two given scopes
- * never give the same ID. When every scope is taken, the call gives the app
- * scope. A released scope can be given again. */
+/* Each owner gets its own widget scope. Registries in different scopes never
+ * return the same ID. The call returns the app scope when every widget scope
+ * is taken. A released scope can be taken again. */
 static void scope_new_test(void)
 {
     uint8_t scopes[INPUT_COMMAND_SCOPE_COUNT];
@@ -302,13 +301,14 @@ static void scope_new_test(void)
     input_command_registry_free(&a);
     input_command_registry_free(&b);
 
-    /* A scope out of range gets no command. */
+    /* An out-of-range scope takes no command. */
     struct input_command_registry c;
     input_command_registry_init(&c);
     assert(input_command_add(&c, 200, "x", "X") == INPUT_COMMAND_NONE);
     input_command_registry_free(&c);
 
-    /* A released scope is free again. The app scope is never given. */
+    /* A released widget scope is free again. The app scope is the result when
+     * no widget scope is free. */
     input_command_scope_release(INPUT_COMMAND_SCOPE_APP);
     assert(input_command_scope_new() == INPUT_COMMAND_SCOPE_APP);
     input_command_scope_release(scopes[3]);
@@ -317,9 +317,9 @@ static void scope_new_test(void)
         input_command_scope_release(scopes[i]);
 }
 
-/* A registry adds commands only in a scope that its owner took, and one
- * scope has one registry. A second registry in the same scope gets no ID,
- * so two registries never give the same ID. */
+/* A registry adds commands only in a scope that its owner took, and a scope
+ * has one registry. A second registry in the same scope returns no ID, so two
+ * registries never return the same ID. */
 static void scope_owner_test(void)
 {
     struct input_command_registry a, b;
@@ -336,7 +336,7 @@ static void scope_owner_test(void)
     assert(id_b == INPUT_COMMAND_NONE);
     assert(input_command_add(&a, scope, "save", "Save") == id_a + 1);
 
-    /* The owner frees its registry and makes a new one in its scope. */
+    /* The owner frees its registry, and another registry takes the scope. */
     input_command_registry_free(&a);
     assert(input_command_add(&b, scope, "save", "Save") != INPUT_COMMAND_NONE);
 
@@ -348,7 +348,7 @@ static void scope_owner_test(void)
 }
 
 /* A widget registry binds an app command in its own scope. The binding
- * runs only in that scope. A widget command with the name of an app command
+ * applies only in that scope. A widget command with the name of an app command
  * wins in its scope. */
 static void widget_scope_binds_app_command_test(void)
 {
@@ -409,7 +409,6 @@ static void config_style_order_test(void)
     unsetenv("WSAP_INPUT_CONFIG");
 }
 
-/* Rewrites the input configuration at `path` with `text`. */
 static void write_input_config(const char *path, const char *text)
 {
     FILE *f = fopen(path, "w");
@@ -456,8 +455,8 @@ static void config_reload_style_test(void)
     unsetenv("WSAP_INPUT_CONFIG");
 }
 
-/* A reload replaces the app bindings and keeps the widget scope bindings.
- * A stale app binding of the old file does not stay. */
+/* A reload replaces the app bindings and keeps the widget scope bindings, so
+ * a stale app binding from the old file does not stay. */
 static void config_reload_keeps_widget_scope_test(void)
 {
     char path[] = "/tmp/wsap-input-config-XXXXXX";
@@ -492,7 +491,7 @@ static void config_reload_keeps_widget_scope_test(void)
     assert(input_keymap_lookup(&km, &ctrl_k) == INPUT_COMMAND_NONE);
     assert(input_keymap_lookup(&km, &ctrl_c) == INPUT_COMMAND_NONE);
 
-    /* A second load of the same file gives the same keymap. */
+    /* A second load of the same file leaves the keymap unchanged. */
     size_t n = km.n;
     input_config_load(&km);
     assert(km.n == n);

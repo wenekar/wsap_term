@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The SDK path check must find the paths of this machine in a staged tree.
+# The SDK path check must detect paths from this machine in a staged tree.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")/../.." && pwd)

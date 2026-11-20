@@ -857,8 +857,8 @@ static void nested_modal_focus_test(void)
     assert(!ui_surface_has_modal(&surface));
 
     /* A modal can close below the top one. The focus stays in the top modal.
-     * The stored target of the closed modal is stale, so the bottom frame
-     * gives the focus back to the widget below the first modal. */
+     * Its stored target lived in the closed modal, so the bottom frame gives
+     * the focus back to the widget below the first modal. */
     assert(ui_surface_add_overlay(&surface, &first_modal));
     assert(ui_surface_focused(&surface) == &first_row.widget);
     ui_surface_focus(&surface, &last_row.widget);
@@ -908,7 +908,8 @@ static bool post_press(struct ui_widget *widget, const struct ui_event *event)
     struct post_probe *probe = widget->userdata;
     if (event->kind != UI_EVENT_KEY)
         return false;
-    /* A handler frees nothing while the surface is busy; it posts. */
+    /* The surface is busy during dispatch, so a handler posts its work
+     * instead of freeing a widget. */
     assert(ui_surface_busy(ui_widget_surface(widget)));
     assert(ui_surface_post(ui_widget_surface(widget), post_run, probe));
     return true;
@@ -948,7 +949,8 @@ static void surface_post_runs_after_dispatch_test(void)
     assert(ui_surface_post(&surface, post_run, &probe));
     assert(probe.runs == 2);
 
-    /* A handler that runs during dispatch posts its free. */
+    /* A post from the dispatch runs when the dispatch ends, so the surface is
+     * idle again. */
     ui_widget_set_event_handler(&probe.widget, post_handler, &probe);
     assert(ui_surface_dispatch(&surface, &key));
     assert(ui_surface_busy(&surface) == false);

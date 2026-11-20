@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Prints the files in a staged tree that hold an absolute path of this machine.
+# Prints the files in a staged tree that hold an absolute path to the source
+# root or the build directory.
 #
 # Usage: source_paths_check.sh SOURCE_ROOT BUILD_DIR STAGE
 # Exit status: 0 when the tree holds no such path, 1 when it holds one.
-# The staged tree must not hold the source root or the build dir. A release
-# build maps the source root to ".". A leak keeps the real path.
+# A release build maps the source root to ".", so a hit is a leaked path.
 set -euo pipefail
 
 source_root=$(cd "$1" && pwd -P)

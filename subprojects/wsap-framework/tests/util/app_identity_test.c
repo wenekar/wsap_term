@@ -14,7 +14,6 @@
 #include "util/app_identity.h"
 
 #if defined(__linux__)
-/* Copies the image of this process to `dest`. */
 static void copy_self(const char *dest)
 {
     char self[PATH_MAX];

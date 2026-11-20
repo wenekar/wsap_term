@@ -1,14 +1,13 @@
 #define _POSIX_C_SOURCE 200809L
 /*
- * Tests of the scene painter of the new renderer. They go through
+ * Tests of the scene painter in render/scene_paint.h. They go through
  * ui_scene_paint and ui_scene_paint_clipped only.
  *
  * The test supplies the glyph cache hooks and the sRGB tables with the stub
- * that the UI tests use. So the test also checks the link contract of the
- * painter.
+ * that the UI tests use, so it also checks the link contract of the painter.
  *
- * Cross-ISA parity: the painter resolves its ISA once. So the test runs
- * its own binary twice, with WSAP_RENDER_ISA=scalar and with the best
+ * Cross-ISA parity: the painter resolves its ISA once. The test therefore
+ * runs its own binary twice, with WSAP_RENDER_ISA=scalar and with the best
  * level, and compares the hash of the pixels.
  */
 #include "../ui/stubs/scene_paint_deps.c"
@@ -634,7 +633,8 @@ static void test_node_draws_under_clip(void)
 #define PW_ 96
 #define PH_ 64
 
-/* One scene that uses every op. Returns an FNV-1a hash of the pixels. */
+/* One scene that combines many op kinds. Returns an FNV-1a hash of the
+ * pixels. */
 static uint64_t parity_hash(void)
 {
     scene_paint_glyph_hook = tg_hook;
@@ -766,7 +766,8 @@ static void test_blend_modes(void)
 }
 
 /* The reference of the blend modes: 8-bit sRGB channel values, no linear
- * conversion. It mirrors the rule of paint/scene.h and blend_mode_px(). */
+ * conversion. It mirrors the rule in paint/scene.h and blend_mode_px() in
+ * render/cpu/scene.c. */
 static uint32_t blend_ref(enum ui_scene_blend mode, uint32_t src, uint32_t dst)
 {
     unsigned sa = src >> 24;

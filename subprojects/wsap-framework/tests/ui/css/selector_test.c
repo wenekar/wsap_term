@@ -125,7 +125,8 @@ static void test_ancestor_id_and_tag_match(void)
     css_sheet_clear(&s);
 }
 
-/* A deep tree still matches a selector at its root. */
+/* A tree of 200 ancestors matches a selector at its root and a descendant
+ * selector. */
 static void test_deep_tree_matches_root_selector(void)
 {
     struct css_sheet s = {0};

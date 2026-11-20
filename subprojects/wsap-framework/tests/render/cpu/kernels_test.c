@@ -61,9 +61,10 @@ static int rnd_below(int n)
     return (int)(rnd() % (uint64_t)n);
 }
 
-/* ---- Reference formulas (paint/blend.h and render.c) ----------------- */
+/* ---- Reference formulas (paint/blend.h and render/cpu/kernels.h) ------ */
 
-/* The color glyph formula of src/render/render.c blend_premul_glyph_px(). */
+/* The color glyph formula of render_blend_premul_px() in
+ * render/cpu/kernels.h. */
 static uint32_t ref_premul(uint32_t premul, uint32_t bg, bool faint)
 {
     unsigned a = premul >> 24;
@@ -550,7 +551,7 @@ static void sweep_check(const char *what, int isa, int n, uint32_t fg)
               render_isa_name(isa), i, fg, sweep_init[i], sweep_dst[i], sweep_want[i]);
 }
 
-/* blend_any over every bg RGB value, so every lane sees every bg luminance. */
+/* blend_any over every bg RGB value, so every value reaches a lane. */
 static void sweep_blend_any_bg(void)
 {
     for (uint32_t base = 0; base < (1u << 24); base += SWEEP_ROW) {
@@ -634,7 +635,8 @@ static void sweep_compose_color(void)
     }
 }
 
-/* Every coverage 0..255 for a set of fg and bg pairs on kernels 6-8. */
+/* Every coverage 0..255 for a set of fg and bg pairs on blend_any,
+ * blend_any_subpx, and blend_rect. */
 static void exhaustive_pairs(void)
 {
     enum { PAIRS = 400 };
@@ -794,8 +796,8 @@ static uint8_t bench_cov(void)
 }
 
 /*
- * The bench rotates through a pool of different rows. Then the branch
- * predictor cannot learn one row, as it cannot in a real frame.
+ * The bench rotates through a pool of rows, so the branch predictor cannot
+ * learn one row, as in a real frame.
  */
 #define BENCH_POOL_PX (64 * 1280)
 

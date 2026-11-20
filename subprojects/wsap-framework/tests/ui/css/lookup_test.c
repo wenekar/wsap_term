@@ -123,7 +123,8 @@ static void append_rule(size_t *len, const char *fmt, ...)
     *len += (size_t)n;
 }
 
-/* A sheet with more rules than one group holds keeps the same apply order. */
+/* A sheet with hundreds of rules keeps the apply order across selector
+ * kinds. */
 static void wide_sheet_mixed_selectors_test(void)
 {
     size_t len = 0;

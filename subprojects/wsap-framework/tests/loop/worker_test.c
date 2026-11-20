@@ -91,8 +91,8 @@ static struct loop_work work_for(struct gate *gate, loop_work_fn run)
         .run = run, .done = on_done, .cancel = on_cancel, .arg = gate};
 }
 
-/* A long submit must not hold the loop. The job blocks until the helper
- * releases it, so a submit that waits for the job exceeds the bound. */
+/* A submit of a long job must not hold the loop. The job blocks until the
+ * helper releases it, so a submit that waits for the job exceeds the bound. */
 static void test_submit_does_not_block(void)
 {
     yasl_loop *loop = yasl_loop_create();

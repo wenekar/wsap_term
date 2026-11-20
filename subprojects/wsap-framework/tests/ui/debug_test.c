@@ -140,8 +140,9 @@ static void overlay_paths_and_selectors_test(void)
     assert(ui_debug_find(&root.widget, "~") == NULL);
     assert(ui_debug_find(&root.widget, "~x") == NULL);
     assert(ui_debug_find(&root.widget, "@float") == &child.widget);
-    /* The probe takes no pointer, so the surface hit test finds the overlay
-     * but no widget inside it. The debug walk then reports the overlay. */
+    /* The probes take no pointer, so the surface hit test returns no widget.
+     * The debug walk then skips the overlays and reports the root that
+     * occupies the point. */
     assert(ui_debug_widget_at(&root.widget, (struct vector2i){ .x = 10, .y = 10 })
            == &root.widget);
 

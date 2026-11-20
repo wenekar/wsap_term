@@ -297,7 +297,8 @@ static void long_paste_undo_and_alias_test(void)
     ui_input_select_all(&f.in);
     size_t start, end;
     assert(ui_input_selection(&f.in, &start, &end));
-    /* The buffer holds one byte. Only the length guard runs. */
+    /* A length above INT_MAX fails the length guard, which runs before the
+     * bytes are read. */
     event = ui_event_paste("x", SIZE_MAX, 0);
     assert(!ui_surface_dispatch(&f.surface, &event));
     assert(ui_input_selection(&f.in, NULL, NULL));
@@ -790,7 +791,8 @@ static void paste_stops_at_nul_test(void)
     teardown(&f);
 }
 
-/* A host without a clipboard offers no copy, cut, or paste command. */
+/* The host decides the clipboard commands: a paste callback alone enables
+ * paste, and a copy callback adds copy and cut for a selection. */
 static void clipboard_commands_follow_the_host_test(void)
 {
     const struct ui_surface_host host = { .paste_text = paste_text };

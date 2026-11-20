@@ -116,8 +116,8 @@ static void disabled_command_test(void)
     destroy_window(w, &in);
 }
 
-/* A shortcut that the keymap of the window sends runs the text command of the
- * focused input. The words undo, redo, and cut must reach the input. */
+/* A shortcut from the keymap of the window runs the text command of the
+ * focused input: undo clears the typed text, and redo restores it. */
 static void edit_shortcut_runs_the_text_command_test(void)
 {
     struct ui_input in;

@@ -15,8 +15,9 @@
 #include <unistd.h>
 #include "loop/latency_probe.h"
 
-/* The tests wait for threads, and the suite runs many tests at once. A count of
- * spins is not a time then, so every wait below has a deadline. */
+/* The tests wait for threads while the suite runs many tests at once. A spin
+ * count cannot bound a wait under that load, so every wait below has a
+ * deadline. */
 static uint64_t test_now_ns(void)
 {
     struct timespec ts;
@@ -24,8 +25,8 @@ static uint64_t test_now_ns(void)
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
-/* One request of the benchmark: the loop reads the response of a key, starts a
- * frame for it, and completes that frame. */
+/* One request of the benchmark: the loop records the key and terminal stages,
+ * reads the response, and starts a frame for it. */
 static void start_sample(struct latency_probe_shm *p, unsigned long long id)
 {
     atomic_store_explicit(&p->request, id, memory_order_release);
@@ -38,10 +39,10 @@ static void start_sample(struct latency_probe_shm *p, unsigned long long id)
     latency_probe_stage(LATENCY_STAGE_RENDER_START);
 }
 
-/* One display thread that reports one sample: the values of a single reporter.
- * They belong together, so a record of two reporters is visibly mixed. */
+/* The values that one display thread reports for one sample. Each reporter
+ * uses distinct values, so a record that mixes two reporters is detectable. */
 struct reporter {
-    /* Both reporters leave the gate together. */
+    /* All reporters wait for the gate to open. */
     _Atomic int *ready;
     uint64_t sample;
     uint64_t presented_ns;
@@ -52,7 +53,8 @@ struct reporter {
 #define REPORTERS 8
 
 /* The reporters report the same sample at the same time, so a record that is
- * not serialized interleaves. The gate only starts them; it measures no time. */
+ * not serialized would interleave. The gate only starts them; it measures no
+ * time. */
 static void *report(void *ud)
 {
     struct reporter *r = ud;
@@ -80,9 +82,9 @@ static bool record_of(const struct latency_probe_shm *p, const struct reporter *
 
 /*
  * A display thread that reports an older sample in a loop, as a display reports
- * a late frame while the benchmark starts the next sample. It pauses on no gate,
- * so some of its reports are between the check of the request and the lock that
- * publishes a record when the next request begins.
+ * a late frame while the benchmark starts the next sample. It takes no gate
+ * between reports, so some reports fall between the request check and the lock
+ * that publishes a record when the next request begins.
  */
 struct late_report {
     _Atomic int *go;
@@ -145,10 +147,10 @@ static void *read_record(void *ud)
 
 /*
  * The display can report an older sample after the benchmark started the next
- * one. That report changes nothing, also when it passed the check of the current
- * request before the next request began: the check repeats under the lock that
- * publishes a record. A reader takes the record of the newer sample while the
- * late reports run.
+ * one. That report changes nothing, even when it passed the check of the
+ * current request before the next request began: the check repeats under the
+ * lock that publishes a record. A reader takes the record of the newer sample
+ * while the late reports run.
  */
 static void late_reports_across_requests(struct latency_probe_shm *p)
 {
@@ -190,7 +192,7 @@ static void late_reports_across_requests(struct latency_probe_shm *p)
                  (unsigned long)LATE_REPORTERS * 64;)
             sched_yield();
         /* The next request begins, and its frame publishes at once, so a late
-         * report can still carry its decision of the older request. */
+         * report can still carry its earlier decision about the older request. */
         atomic_store_explicit(&p->request, cur, memory_order_release);
         latency_probe_presented(cur, 4000000, 4001000, 4166667, LATENCY_PRESENTATION_VSYNC);
         assert(atomic_load_explicit(&p->presented, memory_order_acquire) == cur);
@@ -281,8 +283,8 @@ int main(void)
     assert(atomic_load_explicit(&p->completed, memory_order_acquire) == 2);
 
     /* A frame carries the sample that waits for a presentation. The submission
-     * of the frame is separate: it retires nothing, so the sample still waits
-     * after the loop submitted a frame of it. */
+     * does not retire the sample, so the sample still waits after the loop
+     * submits a frame of it. */
     assert(latency_probe_frame_target() == 2);
     start_sample(p, 3);
     assert(latency_probe_frame_target() == 3);
@@ -355,7 +357,7 @@ int main(void)
     assert(p->presentation_flags == 0);
     assert(latency_probe_frame_target() == 0);
 
-    /* A report without a sample does nothing. */
+    /* A report without a sample publishes no record. */
     latency_probe_presented(0, 1, 2, 3, 0);
     assert(atomic_load_explicit(&p->presented, memory_order_acquire) == 5);
     assert(p->presentation_ns == 80000);

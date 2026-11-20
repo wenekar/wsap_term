@@ -71,7 +71,8 @@ static bool probe_event(struct ui_widget *widget, const struct ui_event *event)
                             event->kind == UI_EVENT_DRAG_OVER ||
                             event->kind == UI_EVENT_DRAG_LEAVE))
         return false;
-    /* The widget takes the drop, so it is the receiver of the drag. */
+    /* The widget accepts the drop and the drag events, so it is the receiver
+     * of the drag. */
     return true;
 }
 

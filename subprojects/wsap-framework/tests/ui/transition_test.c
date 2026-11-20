@@ -62,8 +62,8 @@ static void box_hover_transition_test(void)
     assert(ui_surface_build_scene(&surface, &scene));
     assert(scene_has_color(&scene, 0xFF202020));
 
-    /* A pointer over the box starts the transition. The first frame shows a
-     * color between the two, and the deadline asks for the next frame. */
+    /* A pointer over the box starts the transition. The deadline asks for the
+     * next frame before the end. */
     struct ui_event motion = ui_event_pointer((struct ui_pointer_event){
         .kind = UI_POINTER_MOTION, .pos = { .x = 10, .y = 10 },
     }, 0);

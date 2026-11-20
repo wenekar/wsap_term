@@ -262,7 +262,8 @@ static void unknown_handles_abort_test(void)
     expect_abort(part_unknown_handle);
 }
 
-/* Fills the part cache of each widget, and closes the surface. */
+/* Fills the part cache of each widget through one scene, then releases the
+ * surface and the widgets. */
 static void fill_part_caches(const struct css_sheet *sheet)
 {
     struct ui_surface surface = {0};

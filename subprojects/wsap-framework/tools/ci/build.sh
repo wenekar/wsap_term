@@ -24,7 +24,7 @@ fi
 
 unset LD_PRELOAD DYLD_INSERT_LIBRARIES
 
-# With LTO, each test binary gets a whole-program link. Test without LTO.
+# With LTO, each test binary gets a whole-program link.
 meson setup --wipe build/ci \
     --buildtype=release \
     -Disa= \

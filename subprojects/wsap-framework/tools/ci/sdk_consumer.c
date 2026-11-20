@@ -1,10 +1,9 @@
 /*
- * A consumer of the installed framework SDK. It calls one render API and one
- * UI API, so a missing definition fails at link time. The build of this file
- * is the relocatability check of the SDK: an installed archive must link with
- * the compiler of the consumer, and the program must run.
- *
- * It links through the wsap-render and wsap-ui pkg-config files only.
+ * A consumer of the installed framework SDK. It calls the paint scene API and
+ * the render API, so a missing definition fails at link time. The build uses
+ * the installed headers and archives alone, through the wsap-render and
+ * wsap-ui pkg-config files. tools/ci/sdk_install_check.sh builds and runs
+ * this file.
  */
 
 #include <stdint.h>

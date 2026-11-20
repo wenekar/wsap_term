@@ -81,8 +81,8 @@ if get_option('dev_paths')
         '-DWSAP_DEV_FONTS_DIR="' + (meson.project_source_root() / 'assets' / 'fonts') + '"',
     ]
 endif
-# A parent project passes its own theme directory. The macro then points at the
-# themes of the parent source tree, not at the themes of this project.
+# A parent project passes its own theme source directory, because this project
+# ships no theme files. The macro then points at the parent source tree.
 if get_option('dev_themes_dir') != ''
     dev_args += [
         '-DWSAP_DEV_THEMES_DIR="' + get_option('dev_themes_dir') + '"',

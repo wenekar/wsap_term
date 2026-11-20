@@ -21,7 +21,7 @@ static void frame(struct frame_stats *st, uint64_t hold_ns)
     render_end_and_count_frame(st);
 }
 
-/* The line of one report, in `line`. */
+/* Captures one frame_stats_print report into `line`. */
 static void print_line(struct frame_stats *st, char *line, size_t size)
 {
     fflush(stdout);
@@ -88,8 +88,8 @@ int main(void)
     assert(reported(line, "submit") == 3);
     assert(reported(line, "present") == 2);
 
-    /* A presentation that the display reports counts once, and a watch outlives
-     * the window reference that created it. */
+    /* Each presentation that the display reports adds one count, and a
+     * reference keeps the watch alive after the creator unrefs it. */
     struct present_watch *watch = present_watch_new();
     assert(watch);
     assert(present_watch_take_presented(watch) == 0);

@@ -39,7 +39,9 @@ static inline struct bench_stats bench_stats(double *samples, int n)
     };
 }
 
-/* Run one warmup batch and seven timed batches. Keep the inner loop inline. */
+/* Runs one warmup batch, then times seven batches. The macro expands the
+ * measured body at the call site, so the timed code runs without a harness
+ * callback. Each batch time is divided by operations and reported in ns/op. */
 #define BENCH_RUN(name, operations, ...) do { \
     double bench_samples_[7]; \
     for (int bench_sample_ = -1; bench_sample_ < 7; bench_sample_++) { \

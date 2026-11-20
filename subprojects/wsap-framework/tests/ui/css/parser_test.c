@@ -415,7 +415,9 @@ static void test_property_spellings_share_a_field(void)
     css_sheet_clear(&sheet);
 }
 
-/* Verify :root custom properties, var() expansion, fallbacks, and overrides. */
+/* A var() resolves against the final :root block, and an explicit value that
+ * follows a var() declaration wins. Updating :root re-resolves the rules that
+ * use a var(). */
 static void test_root_variables_and_var_expansion(void)
 {
     struct css_sheet sheet = {0};
@@ -467,7 +469,7 @@ static void test_root_variables_and_var_expansion(void)
     css_style_resolve(&sheet, "over", NULL, NULL, CSS_PSEUDO_NONE, &st);
     assert(st.has_text_color && st.text_color == 0xFF123456u);
 
-    /* css_init_default rules also re-resolve cleanly on :root override. */
+    /* The rules of css_init_default re-resolve on a :root override too. */
     css_sheet_clear(&sheet);
     css_init_default(&sheet);
     assert(css_parse_with_diagnostics(&sheet,
@@ -481,7 +483,9 @@ static void test_root_variables_and_var_expansion(void)
     css_sheet_clear(&sheet);
 }
 
-/* Verify missing vars, cycles, and malformed var() syntax emit diagnostics cleanly. */
+/* An invalid or non-custom :root declaration, a missing var(), a cycle, and
+ * a malformed var() each report a diagnostic. A rule keeps its earlier valid
+ * value. */
 static void test_var_diagnostics_and_guards(void)
 {
     struct css_sheet sheet = {0};
@@ -516,7 +520,8 @@ static void test_var_diagnostics_and_guards(void)
     assert(!st.has_text_color);
     css_sheet_clear(&sheet);
 
-    /* Updating an active :root variable to an invalid value reports and preserves prior style. */
+    /* An :root variable that turns invalid reports one diagnostic, and the
+     * style keeps its prior value. */
     messages = (struct css_messages){0};
     assert(css_parse_with_diagnostics(&sheet,
         ":root { --c: #112233; }\n.ok { color: var(--c); }",
@@ -526,7 +531,7 @@ static void test_var_diagnostics_and_guards(void)
         ":root { --c: bogus; }",
         record_css_message, &messages));
     assert(messages.count == 1 && messages.kind[0] == CSS_DIAGNOSTIC_INVALID_VALUE);
-    /* The diagnostic names the declaration line and the variable that failed. */
+    /* The diagnostic names the property and the value that failed. */
     assert(!strcmp(messages.property[0], "color"));
     assert(!strcmp(messages.value[0], "var(--c)"));
     css_style_resolve(&sheet, "ok", NULL, NULL, CSS_PSEUDO_NONE, &st);
@@ -534,15 +539,16 @@ static void test_var_diagnostics_and_guards(void)
     css_sheet_clear(&sheet);
 }
 
-/* Verify that a value waits for a later :root block, that a broken variable
- * reports once, and that the caps hold. */
+/* A var() waits for a later :root block, a broken variable reports once, and
+ * the fallback and byte-cap rules hold. */
 static void test_var_edge_cases(void)
 {
     struct css_sheet sheet = {0};
     struct css_messages messages = {0};
     struct css_style st;
 
-    /* A pending var() does not erase an earlier valid var() unless it resolves. */
+    /* A pending var() does not erase an earlier valid value unless it
+     * resolves. */
     assert(css_parse_with_diagnostics(&sheet,
         ":root { --good: #112233; }\n"
         ".keep { color: var(--good); color: var(--missing); }\n"
@@ -565,7 +571,8 @@ static void test_var_edge_cases(void)
     assert(st.has_text_color && st.text_color == 0xFF778899u);
     css_sheet_clear(&sheet);
 
-    /* A broken variable reports the declaration once; a later edit stays quiet. */
+    /* A broken variable reports its declaration once; a later edit stays
+     * quiet. */
     messages = (struct css_messages){0};
     assert(css_parse_with_diagnostics(&sheet,
         ":root { --a: 4px; --b: 8px; --c: #112233; }\n"
@@ -603,7 +610,9 @@ static void test_var_edge_cases(void)
     assert(messages.count == 1 && !strcmp(messages.property[0], "padding"));
     css_sheet_clear(&sheet);
 
-    /* Fallback expansion pops v->name, while self-fallback cycles still fail. */
+    /* A fallback expands without the variable that it belongs to, so
+     * var(--a, var(--a, #112233)) reaches the inner fallback. A fallback that
+     * refers to its own variable still fails. */
     messages = (struct css_messages){0};
     assert(css_parse_with_diagnostics(&sheet,
         ":root { --a: var(--missing); }\n"
@@ -622,7 +631,8 @@ static void test_var_edge_cases(void)
     assert(!st.has_text_color);
     css_sheet_clear(&sheet);
 
-    /* Exponential variable expansion hits the byte cap cleanly without failing OOM. */
+    /* Exponential variable expansion stops at the byte cap and reports one
+     * invalid value. The parse succeeds, and the earlier width stays. */
     messages = (struct css_messages){0};
     assert(css_parse_with_diagnostics(&sheet,
         ":root {\n"
@@ -644,7 +654,8 @@ static void test_var_edge_cases(void)
     assert(st.width.unit == CSS_UNIT_PX && st.width.val == 10.0f);
     css_sheet_clear(&sheet);
 
-    /* Preserving saw_dirty across missing fallback emits diagnostics when broken. */
+    /* A value that resolved through a fallback keeps its color when its
+     * variable turns invalid, and the invalid edit reports once. */
     messages = (struct css_messages){0};
     assert(css_parse_with_diagnostics(&sheet,
         ":root { --a: #112233; }\n"
@@ -666,7 +677,8 @@ static void test_var_edge_cases(void)
     assert(messages.count == 0);
     css_sheet_clear(&sheet);
 
-    /* Appending rules with no :root block evaluates against dst's existing :root. */
+    /* An appended sheet with no :root block resolves against the :root of the
+     * destination sheet. */
     struct css_sheet dst = {0};
     struct css_sheet src = {0};
     assert(css_parse(&dst, ":root { --accent: #89b4fa; }"));
@@ -774,9 +786,9 @@ static void test_border_shorthand(void)
     css_sheet_clear(&sheet);
 }
 
-/* The UI core sheet holds the rules of the core widgets and no app rule. A
- * sheet that a client appends holds the app rules, and the variables of the
- * core sheet reach them. */
+/* The UI core sheet holds the rules of the core widgets and no rule of the
+ * app classes. A rule that an app adds to that sheet resolves its var()
+ * against the core variables. */
 static void test_appended_sheet_holds_app_rules(void)
 {
     static const char *const app_classes[] = {
@@ -792,7 +804,7 @@ static void test_appended_sheet_holds_app_rules(void)
         assert(!st.has_bg_color && !st.has_text_color && !st.has_border_color);
         assert(!st.has_cursor && st.width.unit == CSS_UNIT_AUTO);
     }
-    /* The promoted widgets carry their own default rules. */
+    /* The core sheet also holds the rules of the tab widgets. */
     struct css_style bar;
     css_style_resolve(&paper, "tab-bar", NULL, NULL, CSS_PSEUDO_NONE, &bar);
     assert(bar.height.unit == CSS_UNIT_EM && bar.height.val == 2.2f);

@@ -102,9 +102,8 @@ static void drag_offers_star_test(void)
     assert(!ui_drag_offers(&drag, "text/uri-list"));
 }
 
-/* The star offers match any major type, the parameters do not count, and the
- * letters match without case. A foreign drag from a file manager offers
- * "*" "*", and a text editor offers "text/plain". */
+/* A star-star offer matches every type, and a parameter does not count. The
+ * letters match without case, in the offer and in the requested type. */
 static void drag_offers_star_star_test(void)
 {
     static const char *const any[] = { "*/*" };
@@ -133,7 +132,7 @@ static void drag_offers_star_star_test(void)
     assert(ui_drag_offers(&drag, "Text/Plain"));
 }
 
-/* A list of the accepted types answers for each one. */
+/* A star-star offer matches every type in the accepted list. */
 static void drag_offers_foreign_types_test(void)
 {
     static const char *const offers[] = { "*/*" };

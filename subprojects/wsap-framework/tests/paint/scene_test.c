@@ -211,8 +211,8 @@ static void scene_clip_damage_test(void)
     assert(damage_covers(&d, r_at(50, 0, 50, 100)));
 }
 
-/* A scene without scopes builds no key table. The next scene with scopes
-   must find no record and must damage every scope. */
+/* A scene without scopes records no key. The next scene with scopes must
+ * find no record and therefore damage every scope. */
 static void scene_damage_empty_scene_test(void)
 {
     static int owner;
@@ -234,8 +234,8 @@ static void scene_damage_empty_scene_test(void)
     ui_damage_tracker_destroy(&t);
 }
 
-/* A new part before a node moves the scene position of every later node,
-   but not their pixels. The tracker must match those nodes by key. */
+/* A new part before a node moves the scene position of every later node, but
+ * not their pixels. The tracker must match those nodes by key. */
 static void scene_damage_shifted_scope_test(void)
 {
     static int parent, part, later;
@@ -280,8 +280,8 @@ static void emit_row(struct ui_scene *s, int *owners, int n, int omit, int moved
 }
 
 /* The tracker indexes its records by key. A scene that outgrows the first
-   table size must still match every record, and a node that goes away must
-   shift the lookup of every later node. */
+ * table size must still match every record, and the match must not depend on
+ * the scene position of a node when an earlier node goes away. */
 static void scene_damage_many_scopes_test(void)
 {
     static int owners[MANY_SCOPES];
@@ -334,7 +334,8 @@ static void damage_bounds_test(void)
 }
 
 /* A full damage list merges its rectangles and never writes out of bounds.
- * A negative count, the overflow mark, adds nothing. */
+ * A negative count marks a list with no rectangles, and an add changes
+ * nothing. */
 static void damage_overflow_test(void)
 {
     struct ui_damage d = {0};

@@ -13,7 +13,8 @@ compile_commands.json
 __pycache__/
 *.pyc
 
-# Subproject sources unpacked from the wrapdb and Cargo crates.
+# What Meson writes for the subproject wrap: the unpacked source, the
+# download cache, and the lock it holds while resolving the wrap.
 /subprojects/accesskit-c-0.23.2/
 /subprojects/packagecache/
 /subprojects/.wraplock

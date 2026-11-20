@@ -214,7 +214,7 @@ static void live_actions_and_modal_scope(void)
 }
 
 /* A synthetic document of many lines. The provider counts each read, so a
- * test sees how much text a publish builds. */
+ * test can check how much text a publish or a text build reads. */
 struct synthetic_document {
     char *bytes;
     size_t length;
@@ -332,8 +332,8 @@ static double elapsed_ms(struct timespec *start)
 }
 
 /* A 100k-line document stays in the provider. A publish of a one-line change
- * reads one viewport of text, not the document. The test also measures the
- * cost of a whole-value copy for the same document. */
+ * builds no text, and the text build reads one viewport, not the document.
+ * The test also measures the cost of a whole-value copy of the document. */
 static void large_document_ranges(void)
 {
     struct synthetic_document document = {0};

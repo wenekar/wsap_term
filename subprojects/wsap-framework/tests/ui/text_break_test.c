@@ -302,7 +302,6 @@ static void test_cluster_next_and_fit(void)
     assert(ui_text_fit(family, 18, ui_text_run_cells(family, 18) - 1) == 0);
 }
 
-/* A wrap opportunity comes after a space run or a hyphen. */
 static void test_break_before(void)
 {
     const char *word = "alpha beta";

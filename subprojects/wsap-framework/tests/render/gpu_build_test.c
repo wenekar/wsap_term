@@ -4,12 +4,12 @@
  * gpu_build_frame() calls no GPU API, so the tests run with no display and
  * no device. They check the frame data that a backend reads.
  *
- * Two defects drove these tests:
- * - The build failed for every scene with a text, a shadow, or an image op.
- *   The builder read the `geom` union field of every op kind. The union
- *   shares that field with the text offsets, the blur radius, and the image.
- * - UI text landed too low. The builder added the glyph row offset to the
- *   op top a second time. Row 0 of a cell raster is the cell top already.
+ * Two builder rules have regression coverage:
+ * - Text, shadow, and image ops build. The builder must not read the `geom`
+ *   field of an op kind that has none: text offsets, the blur radius, and the
+ *   image share that field.
+ * - UI text starts at the top of its op box. Row 0 of a cell raster is the
+ *   cell top, so the builder must not add the row offset a second time.
  */
 #include <assert.h>
 #include <stdio.h>
@@ -22,7 +22,7 @@
 
 enum { CANVAS_W = 200, CANVAS_H = 100 };
 
-/* The first glyph instance of the UI stream, or NULL. */
+/* The glyph instance at index `i` of the UI stream, or NULL. */
 static const struct gpu_glyph_inst *ui_glyph(const struct gpu_build *b, uint32_t i)
 {
     const struct gpu_stream *s = &b->streams[GPU_ST_UI];
@@ -44,11 +44,7 @@ static void text_scene(struct ui_scene *s, struct rect2i box, const char *text)
                              0xFFFFFFFFu, text, strlen(text)));
 }
 
-/*
- * A scene with text, a shadow, an image, and a float rect builds. The
- * float rect still fails the build on purpose: the GPU draws no float
- * geometry, and the CPU paints that frame.
- */
+/* A scene with text, a shadow, and an image builds. */
 static void test_scene_kinds_build(void)
 {
     struct ui_scene scene = {0};
@@ -82,7 +78,8 @@ static void test_scene_kinds_build(void)
     puts("PASS: a GPU frame with text, a shadow, and an image builds");
 }
 
-/* A float rect waits for its GPU instances, so the build fails on purpose. */
+/* A float rect has no GPU instance path, so the build fails on purpose and
+ * the CPU painter draws that frame. */
 static void test_float_rect_still_fails(void)
 {
     struct ui_scene scene = {0};

@@ -101,8 +101,9 @@ foreach entry : test_cases
     test(name, exe, env: test_env, suite: 'unit', timeout: 180)
 endforeach
 
-# The options parser reads files and processes. The test needs the sources of
-# the parser alone, so it compiles them without the rest of the base library.
+# The options parser reads files and the process environment. The test needs
+# only the parser sources, so it compiles them without the rest of the base
+# library.
 options_test = executable(
     'options-test',
     files(
