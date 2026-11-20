@@ -23,11 +23,11 @@
  * The Metal backend. See render/gpu/gpu.h for the rules of a backend, and
  * render/gpu/build.h for the frame data that it draws.
  *
- * One frame is one command buffer. render_gpu_draw() builds the frame data
- * on the CPU. Then a blit pass copies the new glyph pixels into the atlas
- * texture, and one render pass draws the commands of the frame in order.
- * The frame owns a slot of three: its instance buffer, its upload buffer,
- * and a semaphore that the command buffer signals.
+ * One frame is one command buffer. render_gpu_draw_view() builds the frame
+ * data on the CPU. A blit pass then copies any new glyph pixels into the
+ * atlas texture, and one render pass draws the commands of the frame in
+ * order. A frame holds one of three slots, and each slot has an instance
+ * buffer, an upload buffer, and a semaphore that the command buffer signals.
  *
  * Textures. The atlas is one texture, and each UI image slot of the builder
  * has one. A command buffer keeps the textures that it uses, so a texture
@@ -37,9 +37,9 @@
  * gpu_build_abort(). The frame is then RENDER_GPU_UNUSED and the CPU paints
  * it, or it is RENDER_GPU_DROPPED and the window asks again.
  *
- * Blending. All pipelines write premultiplied color and blend in the
- * sRGB space of the drawable. Subpixel glyphs draw in three passes, one for
- * each color write mask.
+ * Blending. A draw writes premultiplied color, except that a BLEND_NONE draw
+ * replaces the pixel with a straight color. Subpixel glyphs draw in three
+ * passes, one for each color write mask.
  */
 
 #define FRAME_SLOTS 3
@@ -67,11 +67,13 @@ struct render_gpu {
     struct frame_slot slots[FRAME_SLOTS];
 
     struct gpu_build build;
-    /* The atlas texture, and the texture of each image slot of the builder. */
+    /* The glyph atlas. textures_sync() replaces it when the builder changes
+     * the atlas size. */
     id<MTLTexture> atlas;
-    /* One texture for each image slot of the builder. The slots grow. */
+    /* One texture for each image slot of the builder. The array grows. */
     id<MTLTexture> *images;
     int images_cap;
+    /* The slot that slot_acquire() tries first. */
     unsigned next_slot;
 };
 
@@ -97,9 +99,9 @@ static id<MTLTexture> texture_new(struct render_gpu *g, struct vector2i size,
 }
 
 /*
- * Makes each texture of the frame fit what the builder asks for: an atlas
- * of the size of the builder, and the pixels of each new image. In-flight
- * frames keep the textures that they use.
+ * Makes the textures of the frame fit what the builder asks for: the atlas of
+ * `atlas.size` texels on each side, and the pixels of each new image. An
+ * in-flight frame keeps the textures that it uses.
  */
 static bool textures_sync(struct render_gpu *g)
 {
@@ -161,11 +163,10 @@ static bool ensure_buffer(struct render_gpu *g, id<MTLBuffer> *buffer, size_t by
 
 /* ---- Frame slots and submission ----------------------------------------- */
 
-/* Takes a slot, or returns NULL when the GPU still reads every slot. The main
- * thread never waits for one: three slots mean that a free slot exists unless
- * the GPU is three frames behind, and a wait cannot catch up then. The window
- * drops the frame and asks again at its next display tick, so a busy GPU costs
- * no input or PTY time. */
+/* Takes a free frame slot, or returns NULL when the GPU still reads every
+ * slot. It never waits: a slot is free unless the GPU is three frames behind,
+ * and waiting then would only take time from input and PTY reads. The window
+ * asks for the dropped frame again at its next display tick. */
 static struct frame_slot *slot_acquire(struct render_gpu *g)
 {
     for (int i = 0; i < FRAME_SLOTS; i++) {
@@ -180,14 +181,16 @@ static struct frame_slot *slot_acquire(struct render_gpu *g)
 }
 
 /*
- * Commits the command buffer and shows the drawable. In a live resize the
- * layer presents with the transaction of Core Animation. Then the drawable
- * must present after the command is scheduled, or the frame does not
- * appear with the new size.
+ * Commits the command buffer and shows the drawable. A live resize presents
+ * the drawable inside the Core Animation transaction that carries the new
+ * size, so this call commits, waits until the command buffer is scheduled,
+ * and then presents. Otherwise the command buffer presents the drawable when
+ * it commits.
  *
  * The completed handler frees the frame slot. It reports GPU completion, not
  * presentation: a display reports the presentation later, through the handler
- * that the window attaches in window_gpu_draw().
+ * that the window attaches when it acquires the drawable in
+ * window_gpu_draw().
  */
 static void commit_and_present(id<MTLCommandBuffer> cb, id<CAMetalDrawable> drawable,
                                dispatch_semaphore_t ready, bool transaction)
@@ -221,7 +224,6 @@ static bool stage_uploads(struct render_gpu *g, struct frame_slot *slot)
     return true;
 }
 
-/* Encodes the staged glyph uploads into the atlas. */
 static bool encode_uploads(struct render_gpu *g, struct frame_slot *slot, id<MTLCommandBuffer> cb)
 {
     const struct gpu_atlas *a = &g->build.atlas;
@@ -259,8 +261,9 @@ static void set_scissor(id<MTLRenderCommandEncoder> enc, struct rect2i r)
         (NSUInteger)r.x, (NSUInteger)r.y, (NSUInteger)r.width, (NSUInteger)r.height }];
 }
 
-/* The drawable holds the pixels of `size`. A resize between the build of the
- * frame and the drawable gives a mismatch, and the frame is dropped. */
+/* True when the texture of `drawable` has the size of `fb`. A resize between
+ * the build of the frame and the acquisition of the drawable gives a
+ * mismatch, and the caller drops the frame. */
 static bool drawable_size_ok(const struct framebuffer *fb, id<CAMetalDrawable> drawable)
 {
     id<MTLTexture> texture = drawable.texture;
@@ -268,8 +271,11 @@ static bool drawable_size_ok(const struct framebuffer *fb, id<CAMetalDrawable> d
            texture.height == (NSUInteger)fb->size.y;
 }
 
-/* The drawable of the frame. It takes the drawable from the layer when the
- * frame data is ready, so the drawable pool is held for the encode alone. */
+/* The drawable of the frame, or NULL when the layer gives none. The caller
+ * asks after it builds the frame data, so the layer keeps one drawable out of
+ * its pool until the frame is encoded. The acquire callback of the window
+ * waits inside `[CAMetalLayer nextDrawable]` while every drawable of the pool
+ * is in use. */
 static id<CAMetalDrawable> frame_drawable(struct framebuffer *fb)
 {
     if (!fb->drawable && fb->acquire)
@@ -293,7 +299,8 @@ static bool frame_stage(struct render_gpu *g, struct frame_slot *slot,
     return true;
 }
 
-/* Ensures `g->queue` is available; recreated lazily after idle release. */
+/* Returns the command queue, and makes it again after render_gpu_idle()
+ * released it. */
 static id<MTLCommandQueue> ensure_queue(struct render_gpu *g)
 {
     if (!g->queue && g->device)
@@ -422,8 +429,10 @@ static bool surface_texture(struct render_gpu *g, struct gpu_surface *gs, struct
     return true;
 }
 
-/* The texture of the CPU pixels holds no pixels, so the next present loads
- * every pixel. The blit never ran, or no drawable took the frame. */
+/* Forgets the size of the CPU pixel texture after a failed present. The next
+ * present then makes a new texture and loads every pixel, because this frame
+ * may not have reached the texture or the display. The caller returns false.
+ */
 static bool present_failed(struct gpu_surface *gs)
 {
     gs->size = (struct vector2i){0};
@@ -533,9 +542,10 @@ void render_gpu_surface_free(void *gpu_surface)
 /* ---- Creation and teardown ---------------------------------------------- */
 
 /*
- * The blend state of `blend` (-1 for no blend). It gives the same 8-bit sRGB
- * expression as blend_mode_px() in render/cpu/scene.c. An 8-bit attachment
- * clamps the result, so ADDITIVE needs no clamp in the shader.
+ * Creates the pipeline of `blend` (-1 for no blend) with the color write mask
+ * `mask`. The blend state gives the same 8-bit sRGB expression as
+ * blend_mode_px() in render/cpu/scene.c. An 8-bit attachment clamps the
+ * result, so ADDITIVE needs no clamp in the shader.
  */
 static id<MTLRenderPipelineState> make_pipeline(id<MTLDevice> device, id<MTLLibrary> lib,
                                                 NSString *vertex_name, NSString *fragment_name,

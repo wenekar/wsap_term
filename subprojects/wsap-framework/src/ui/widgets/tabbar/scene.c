@@ -30,9 +30,9 @@ static const char *tb_tab_text(const struct ui_tabbar *tb, const char *text)
     return tb->state.empty_title ? tb->state.empty_title : "";
 }
 
-/* Paints a tab title at `at`. Cuts it to `cap` cells. A cut title ends with
- * a marker. The marker takes one of the `cap` cells. When no cell fits, the
- * title paints nothing. */
+/* Emits the title text at `at`, cut to `cap` cells. A cut title ends with a
+ * marker that takes one of the `cap` cells. Emits nothing when `cap` or
+ * `advance` is not positive. */
 static bool tb_title(struct ui_scene *scene, struct vector2i at, int advance,
                      int text_h, uint32_t color, bool bold, const char *label,
                      int cap)

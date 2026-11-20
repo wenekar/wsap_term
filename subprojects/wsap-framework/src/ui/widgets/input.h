@@ -42,8 +42,8 @@ bool ui_input_selection(const struct ui_input *in, size_t *start, size_t *end);
 
 /* Replace the text without sending an action.
  * Clear undo history and selection. Move the caret to the end.
- * Remove invalid UTF-8 bytes, control characters, and the first NUL byte
- * and what follows it.
+ * Remove invalid UTF-8 bytes, ASCII control characters, and the first NUL
+ * byte and what follows it.
  * Pass NULL to set an empty string.
  * Return false on allocation failure or if text exceeds INT_MAX bytes.
  * A failed call keeps the previous text and edit state. */
@@ -55,7 +55,7 @@ void ui_input_select_all(struct ui_input *in);
 void ui_input_clear(struct ui_input *in);
 /* Insert at the caret. Remove the selection first.
  * Authored text ends at the first NUL byte. Pasted text may hold invalid
- * bytes and control characters. They are removed. */
+ * bytes and ASCII control characters. They are removed. */
 bool ui_input_insert_text(struct ui_input *in, const char *utf8);
 
 bool ui_input_command(struct ui_input *in, enum ui_edit_command command);

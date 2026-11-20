@@ -56,8 +56,12 @@ struct decor_cache;
 struct framebuffer;
 struct render_frame;
 
+/* The side of the atlas texture, in texels: the first size and the largest
+ * that a doubled atlas reaches. */
 #define GPU_ATLAS_START_SIZE 512
 #define GPU_ATLAS_MAX_SIZE 4096
+/* The most shelves of the atlas packer. A frame that needs more shelves sets
+ * atlas.full. */
 #define GPU_SHELVES_MAX 1024
 /* Each stream starts at a multiple of this in the instance buffer. */
 #define GPU_STREAM_ALIGN 256
@@ -88,6 +92,8 @@ enum gpu_glyph_mode {
     GPU_MODE_IMAGE_LINEAR = 5,
 };
 
+/* The shape modes. The shaders of each backend use the same numbers, and 0
+ * is not a mode: a shader that reads any other value draws a shadow. */
 enum gpu_shape_mode {
     GPU_SHAPE_ROUNDED = 1,
     GPU_SHAPE_CIRCLE = 2,
@@ -183,7 +189,8 @@ struct gpu_upload {
     size_t offset;
 };
 
-/* The backend reads `size`, `stage`, `stage_used`, `uploads`, and `n_uploads`. */
+/* The backend reads `size`, `stage`, `stage_used`, `uploads`, and
+ * `n_uploads`. The rest is private to build.c. */
 struct gpu_atlas {
     uint8_t *stage;
     size_t stage_used;
@@ -212,21 +219,19 @@ struct gpu_image {
     bool dirty;
 };
 
-/*
- * The UI image slots of the builder. A slot with `frame == build.frame` is
- * drawn by this frame. The backend keeps one texture for each slot, so it
- * reads `images` and `n_images`.
- */
+/* The frame builder of one GPU backend. */
 struct gpu_build {
     struct gpu_stream streams[GPU_ST_COUNT];
     struct gpu_cmd *cmds;
     uint32_t n_cmds;
     uint32_t cap_cmds;
     struct gpu_atlas atlas;
+    /* The image slots of this build. See "Images" at the top of this file. */
     struct gpu_image *images;
     int n_images;
     int cap_images;
-    /* The number of the frame that gpu_build_frame() built last. */
+    /* The number of the last gpu_build_frame() call. It advances even when
+     * that build fails. */
     uint64_t frame;
 
     /* The rest is private to build.c. */
@@ -238,31 +243,40 @@ struct gpu_build {
     bool failed;
 };
 
-/* Initializes builder streams, atlas, and command storage. Returns true on success. */
+/* Creates the atlas tables and the decoration cache of builder `b`. `b`
+ * must be zeroed first. Returns false when an allocation fails;
+ * gpu_build_release() then frees what was created. */
 bool gpu_build_init(struct gpu_build *b);
 /* Releases all memory allocated by builder `b`. */
 void gpu_build_release(struct gpu_build *b);
 
 /*
- * Generates instance streams and draw commands from `frame` for `canvas`.
- * Returns true on success, or false on allocation failure.
+ * Generates the instance streams and draw commands of `frame` for
+ * `canvas`, with the glyphs staged for the atlas. A full atlas is cleared
+ * and doubled when it is below GPU_ATLAS_MAX_SIZE, and the build runs once
+ * more. Returns false when the CPU must paint the frame; the builder has
+ * then cleared its atlas state.
  */
 bool gpu_build_frame(struct gpu_build *b, const struct render_frame *frame,
                      const struct render_grid_view *grid, struct vector2i canvas);
-/* Commits staged atlas glyphs and advances the builder frame counter. */
+/* Clears the staged atlas uploads after the backend copied them into its
+ * texture, and marks the UI images of the frame as loaded. */
 void gpu_build_commit(struct gpu_build *b);
-/* Clears staged atlas glyphs and resets atlas state after an unsubmitted frame. */
+/* Forgets every atlas entry and drops the staged uploads when the backend did
+ * not take the frame, so that no entry points to pixels that were never
+ * uploaded. */
 void gpu_build_abort(struct gpu_build *b);
 
-/* Checks whether image slot `index` requires texture upload for the current frame. */
+/* Returns true when the backend must load the pixels of slot `index` before
+ * it draws this frame. */
 static inline bool gpu_image_needs_upload(const struct gpu_build *b, int index)
 {
     return b->images[index].frame == b->frame && b->images[index].dirty;
 }
 
 /*
- * Calculates aligned byte offsets for all instance streams in `b`.
- * Populates `offsets` and returns total aligned instance buffer size in bytes.
+ * Calculates the aligned byte offset of each stream in the instance buffer,
+ * and returns the buffer size, at least GPU_STREAM_ALIGN bytes.
  */
 size_t gpu_build_instance_layout(const struct gpu_build *b, size_t offsets[GPU_ST_COUNT]);
 /* Copies instance data from all streams into contiguous buffer `dst` using `offsets`. */
@@ -286,15 +300,19 @@ static inline void gpu_color(uint32_t argb, float opacity, float out[4])
 }
 
 /*
- * Computes clipped damage rectangles and required upload byte size for `fb`.
- * When `whole` is true, covers entire framebuffer area.
- * Returns the count of rectangles in `rects` and writes total byte size to `bytes`.
+ * Clips the rects of `damage` to `fb->size` and measures the pixels that they
+ * cover. `whole`, a NULL list, or an all-damage list gives the whole
+ * framebuffer as one rect. `rects` must hold DAMAGE_RECTS_MAX entries.
+ * Returns the number of rects and writes the total byte count to `bytes`.
  */
 int gpu_pixels_rects(const struct framebuffer *fb, const struct damage_list *damage, bool whole,
                      struct rect2i *rects, size_t *bytes);
-/* Packs rectangle pixel spans from `fb` into contiguous destination buffer `dst`. */
+/* Copies the pixels of the `n` rects of gpu_pixels_rects() from `fb` into
+ * `dst`, row by row without gaps, in rect order. `dst` must hold the byte
+ * count that gpu_pixels_rects() wrote. */
 void gpu_pixels_pack(const struct framebuffer *fb, const struct rect2i *rects, int n, void *dst);
-/* Generates a textured fullscreen quad covering dimensions `size`. */
+/* Builds the quad that draws a texture of `size` texels over `size` pixels
+ * of the canvas. */
 void gpu_pixels_quad(struct vector2i size, struct gpu_glyph_inst *quad);
 
 #endif

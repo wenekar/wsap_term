@@ -160,7 +160,8 @@ static int vote_shift(int rows, const uint64_t *old_keys, const uint64_t *new_ke
         }
     }
 
-    /* Smaller |shift| first, the negative one first: ties go to the first. */
+    /* A larger vote wins. A tie goes to the smaller |shift|, and the
+     * negative shift of a pair is tested before the positive one. */
     int best = 0, votes = 0;
     for (int d = 1; d < rows; d++) {
         int up = scratch[rows - 1 - d].x.x0;

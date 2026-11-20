@@ -11,11 +11,9 @@ enum ui_toggle_kind {
     UI_TOGGLE_SWITCH,
 };
 
-/* A checkbox, a radio button, or a switch. They share one state model:
- * a label, a checked flag, and a disabled flag.
-
- * A radio button does not clear itself. Its group does. For that, set the
- * checked flag of the group members. */
+/* A checkbox, a radio button, or a switch. All three share one state model:
+ * a label, a checked flag, and a disabled flag. A radio button never clears
+ * itself; to switch a radio group, set the checked flag of each member. */
 struct ui_toggle {
     struct ui_widget widget;
     struct {

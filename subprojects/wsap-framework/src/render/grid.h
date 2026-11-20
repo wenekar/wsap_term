@@ -26,7 +26,7 @@
  *   on the main thread and on each pool thread.
  *
  * The functions read `source` and the terminal frame that it points at.
- * They do not change it during a frame.
+ * They must not change either during a frame.
  */
 struct render_grid_ops {
     void (*walk)(struct font_instance *font, const void *source, int row,

@@ -44,9 +44,10 @@ struct window_native {
     /* A draw of this surface is due in the next host pass. Each native surface
      * has its own intent, so a popup refresh draws only that popup. */
     bool needs_draw;
-    /* The frame of the last draw went to a drawable, and the GPU or the surface
-     * submitted it. A drawable frame that did not submit is asked for again. */
+    /* The frame of the last draw went to a drawable. */
     bool frame_drawable;
+    /* The GPU or the surface submitted the frame. A drawable frame that did not
+     * submit is asked for again. */
     bool frame_submitted;
     bool cpu_direct;
     bool cpu_committed;
@@ -122,8 +123,8 @@ struct window {
 
     struct window_native natives[WINDOW_NATIVE_MAX];
     struct input_keyboard_state keyboard;
-    /* The key bindings of this window. Each window loads its own copy, so a
-     * change to one window never changes another. */
+    /* The key bindings of this window. Each window holds its own copy of the
+     * host keymap, so a change to one window never changes another. */
     struct input_keymap keymap;
     struct input_queue input;
     struct input_shortcut_state sc_state;

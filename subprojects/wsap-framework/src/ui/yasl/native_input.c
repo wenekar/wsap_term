@@ -164,8 +164,9 @@ static uint32_t held_bit(enum pointer_button button)
 
 /* Keeps the drag button on a button that yasl still reports held. `down`
  * is the yasl mask after the event. The drag keeps its button while that
- * button stays down. Otherwise the primary button takes over, then the
- * lowest held button. Returns POINTER_BUTTON_NONE when no button is down. */
+ * button stays down. Otherwise the lowest held button takes over, which is
+ * the primary button when it is held. Returns POINTER_BUTTON_NONE when no
+ * button is down. */
 static enum pointer_button update_drag_button(struct window *w, uint32_t down)
 {
     if (held_bit(w->held_button) & down)
@@ -418,17 +419,17 @@ void window_native_input(struct window *w, const struct yasl_event *in)
             ? INPUT_TEXT_KEY : INPUT_TEXT_COMMIT;
         if (in->ime.key_id && in->ime.key_id == w->native_key.key.text_id &&
             in->surface == w->native_key.surface) {
-            /* The text belongs to the key. The router drops it when the
-             * key runs a command. It reads the scope when the key routes,
-             * so an earlier event that moves the focus counts. */
+            /* The text belongs to the key: the router drops it when the key
+             * runs a command, or when the widget that takes the key replaces
+             * its text. The key routes at its own event, so an earlier event
+             * that moves the focus selects the command scope of the key. */
             queue_key(w, &w->native_key, in->text, in->length);
             source = INPUT_TEXT_KEY;
             w->native_key = (struct yasl_event){0};
         }
         input_queue_push_text(&w->input, in->text, in->length, source);
         /* A host that sent surrounding text gets the range and the revision
-         * of the replaced text too. A widget that reads the edit returns
-         * true, so the plain text does not reach it again. */
+         * of the replaced text too. */
         if (in->type == YASL_EVENT_TEXT_EDIT && in->ime.revision)
             input_queue_push_ime(&w->input, in->text, in->length,
                                  (int)in->ime.begin, (int)in->ime.end,

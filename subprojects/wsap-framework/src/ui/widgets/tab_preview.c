@@ -63,7 +63,8 @@ static struct ui_tab_preview_skin skin_of(const struct ui_widget *widget,
     struct ui_paint_box_style box = ui_paint_box_style_of(&card, scale);
     box.bg_color = ui_color_opacity(box.bg_color, widget_opacity);
     box.border_color = ui_color_opacity(box.border_color, widget_opacity);
-    /* The box paints the shadow, so the card shares its path. */
+    /* The box painter draws the shadow, so its color takes the widget opacity
+     * like the fill and the border. */
     box.shadow_color = ui_color_opacity(box.shadow_color, widget_opacity);
     return (struct ui_tab_preview_skin){
         .box = box,
@@ -298,9 +299,9 @@ static enum capture_result capture_budget(struct ui_tab_preview *p, int index,
     if (!src->capture(src->userdata, index, b->width, b->max_height,
                       p->state.dragging, &title, &image))
         return CAPTURE_FAILED;
-    /* The source owns the pixels and it can write them again in place. Keep a
-     * copy of the thumbnail here, so the comparison below reads the values of
-     * the last capture. */
+    /* Copy the image descriptor by value: the source owns the pixels and can
+     * write them again in place, so the comparison below must use the values
+     * that the last capture returned. */
     struct ui_image shot = {0};
     if (b->max_height > 0 && image && image->pixels &&
         image->size.x > 0 && image->size.y > 0 &&

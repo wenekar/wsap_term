@@ -8,7 +8,8 @@
 
 /* The state of one surface: its swapchain and the texture of its CPU pixels. */
 
-/* Destroys swapchain semaphores, image views, and handle. */
+/* Destroys the semaphores, the image views, and the handle of `c`. The
+ * caller must ensure that no submitted frame uses `c`. */
 static void chain_destroy(struct render_gpu *g, struct vulkan_swapchain *c)
 {
     VkDevice device = g->dev.device;
@@ -66,7 +67,6 @@ void render_gpu_surface_free(void *gpu_surface)
     free(gs);
 }
 
-/* Clears cached surface query results for `gs`. */
 static void traits_reset(struct gpu_surface *gs)
 {
     memset(&gs->traits, 0, sizeof(gs->traits));
@@ -75,7 +75,9 @@ static void traits_reset(struct gpu_surface *gs)
     gs->trait_fifo_relaxed = false;
 }
 
-/* Queries and caches surface formats and present modes supported by physical device. */
+/* Queries the formats and present modes of `surface` and caches them in
+ * `gs`. Returns false when the device cannot present to `surface` in
+ * TEXEL_FORMAT, or when a query fails. */
 static bool traits_ensure(struct render_gpu *g, struct gpu_surface *gs, VkSurfaceKHR surface)
 {
     if (gs->traits.surface == surface)
@@ -165,7 +167,8 @@ static VkPresentModeKHR present_mode_of(const struct gpu_surface *gs, bool teari
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
-/* Records requested surface dimensions and presentation flags for `gs`. */
+/* Records the swapchain extent and pacing, and asks for a surface query
+ * when `size` differs from that extent. */
 static void record_request(struct gpu_surface *gs, struct vector2i size, bool tearing)
 {
     gs->request_size = (struct vector2i){ .x = (int)gs->extent.width,
@@ -293,15 +296,16 @@ bool vulkan_swapchain_acquire(struct render_gpu *g, struct gpu_surface *gs,
             bool ensured = vulkan_swapchain_ensure(g, gs, surface, size, tearing, false);
             if (ensured && gs->chain.handle == before)
                 return true;
-            /* The image belongs to a retired swapchain. The semaphore holds
-             * its signal, so the next acquire needs a new one. */
+            /* The image is not presented. The semaphore was signaled for it,
+             * so the next acquire needs a new one. */
             if (!vulkan_slot_renew_semaphore(g, slot) || !ensured)
                 return false;
         } else if (vr == VK_ERROR_OUT_OF_DATE_KHR && !attempt) {
             if (!vulkan_swapchain_ensure(g, gs, surface, size, tearing, true))
                 return false;
         } else {
-            /* VK_TIMEOUT and VK_NOT_READY: no image is free. The frame is dropped. */
+            /* VK_TIMEOUT, VK_NOT_READY, and errors: no image is free. The
+             * frame is dropped. */
             return false;
         }
     }

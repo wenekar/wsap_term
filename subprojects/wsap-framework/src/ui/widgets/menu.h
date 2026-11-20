@@ -66,24 +66,28 @@ struct ui_menu_desc {
     uint32_t hover_delay_ms;
 };
 
-/* Opens and positions `menu` inside `layer` described by `desc`. */
+/* Opens `menu` with the items, callbacks, and hover delay of `desc`. When
+ * `layer` is not NULL, sets its origin to `desc->pos`. */
 bool ui_menu_show(struct ui_menu *menu, struct ui_menu_layer *layer,
                   const struct ui_menu_desc *desc);
 
-/* Initializes menu `m`. */
 void ui_menu_init(struct ui_menu *m);
-/* Destroys menu `m` and releases child menu lists. */
+/* Destroys the level widgets of `m` and the lists they hold. */
 void ui_menu_destroy(struct ui_menu *m);
-/* Sets the action callback handler for menu item selection. */
+/* Sets the handler for the actions that the menu emits. `source` is the level
+ * widget that emitted the action. */
 void ui_menu_set_action_handler(struct ui_menu *m, ui_action_fn fn,
                                 void *userdata);
-/* Sets the submenu item provider callback for `m`. */
+/* Sets the callback that supplies the items of a submenu for an item action.
+ * A NULL callback disables submenus. */
 void ui_menu_set_submenu_provider(struct ui_menu *m, ui_menu_submenu_fn fn,
                                   void *userdata);
-/* Sets the hover delay before submenu popup in milliseconds. */
+/* Sets the delay in milliseconds before a hovered submenu opens. A value of
+ * 0 uses the default delay. */
 void ui_menu_set_hover_delay(struct ui_menu *m, uint32_t ms);
 
-/* Opens the root menu with `n` items from `items`. */
+/* Opens the root menu with `n` items from `items`. Returns false when `items`
+ * is NULL, `n` is not positive, or the items cannot be copied. */
 bool ui_menu_open(struct ui_menu *m, const ui_menu_item *items, int n);
 /* Closes all open levels of menu `m`. */
 void ui_menu_close(struct ui_menu *m);
@@ -92,18 +96,23 @@ void ui_menu_close_submenus(struct ui_menu *m);
 /* Returns true when menu `m` has any open levels. */
 bool ui_menu_is_open(const struct ui_menu *m);
 
-/* Returns the mutation generation counter of `m`. */
+/* Returns a counter that increases each time the open levels change. */
 uint32_t ui_menu_generation(const struct ui_menu *m);
-/* Returns the number of currently open submenu levels. */
+/* Returns the number of open levels, including the root level. */
 int ui_menu_level_count(const struct ui_menu *m);
-/* Returns the widget of the submenu level at `depth`. */
+/* Returns the widget of the level at `depth`, or NULL when the level is not
+ * open. */
 struct ui_widget *ui_menu_level_widget(struct ui_menu *m, int depth);
-/* Calculates the anchor rectangle for the submenu level at `depth`. */
+/* Returns the anchor rectangle of the level at `depth`: the row rectangle of
+ * its parent item, moved up by the list edge padding. Returns a zero rect for
+ * the root level and for a level that is not open. */
 struct rect2i ui_menu_level_anchor(const struct ui_menu *m, int depth);
-/* Calculates the shadow margin insets for the submenu level at `depth`. */
+/* Returns the shadow insets of the level at `depth`, or zero insets when the
+ * level is not open. */
 struct insets2i ui_menu_level_shadow(const struct ui_menu *m, int depth);
 
-/* Updates submenu hover timers and state at timestamp `now_ms`. */
+/* Updates the hover and aim timers of `m` to `now_ms` and returns the next
+ * deadline, or 0 when no timer is pending. */
 uint64_t ui_menu_tick(struct ui_menu *m, uint64_t now_ms);
 
 struct ui_menu_layer {
@@ -117,9 +126,8 @@ struct ui_menu_layer {
     } state;
 };
 
-/* Initializes menu layer widget `layer` associated with `menu`. */
 void ui_menu_layer_init(struct ui_menu_layer *layer, struct ui_menu *menu);
-/* Sets the screen origin position of `layer`. */
+/* Sets the origin of the root level in the coordinates of `layer`. */
 void ui_menu_layer_set_origin(struct ui_menu_layer *layer,
                               struct vector2i origin);
 /* Sets the lowest menu depth level rendered by `layer`. */

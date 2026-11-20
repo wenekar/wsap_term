@@ -306,7 +306,7 @@ static void layer_prepare(struct ui_widget *widget)
     }
 }
 
-/* Return false when a clipping ancestor scrolled the button out of sight. */
+/* Returns false when a clipping ancestor hides the center of the button. */
 static bool anchor_visible(const struct ui_dropdown *d)
 {
     struct vector2i at = rect2i_center(d->widget.bounds);

@@ -73,7 +73,8 @@ bool render_surface_reserve(struct render_surface *s, int rows)
         return true;
     int cap = rows > s->cap ? rows : s->cap;
     size_t n = cap > 0 ? (size_t)cap : 1;
-    /* Each array that grows is at least cap long, so a failure keeps cap true. */
+    /* Every array that grew holds at least `cap` entries, so `cap` stays a
+     * valid bound after a failure. */
     uint64_t *keys = realloc(s->keys, n * sizeof(*keys));
     if (!keys)
         goto fail;

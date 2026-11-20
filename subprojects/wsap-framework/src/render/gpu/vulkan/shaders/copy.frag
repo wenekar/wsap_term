@@ -1,8 +1,9 @@
 #version 450
 
 /*
- * Copy fragment shader for presenting CPU pixels in Vulkan backend.
- * Directly outputs the pixel without blending.
+ * Presents CPU pixels: fetches the texel of each pixel and writes it without
+ * blending. The copy pipeline pairs this shader with glyph.vert, and the
+ * quad's uv rect is the whole texture, so one texel maps to one pixel.
  */
 
 layout(set = 0, binding = 0) uniform sampler2D pixels;

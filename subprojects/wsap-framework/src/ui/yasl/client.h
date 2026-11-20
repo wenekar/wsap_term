@@ -84,7 +84,8 @@ void *window_ui_content(const struct window *w);
  * window that opens later, such as a torn-off tab, gets it too. A reload of
  * input.conf keeps it.
  * The action name resolves in registry `reg`, then in the app commands.
- * The spec "clear" drops the bindings of the scope, and keeps the scope.
+ * The spec "clear" drops the bindings of the scope and keeps the scope
+ * registered.
  * A key that is down keeps its route until its release. The new binding
  * applies from the next press.
  * Returns false on a bad spec, on the app scope, on a scope out of range, or
@@ -100,7 +101,7 @@ bool window_host_bind_scope(struct window_host *host,
  * `input_command_scope_release()`.
  * The widget owner calls this once when it is destroyed, after it frees its
  * registry. A later owner of the scope then gets none of its chords.
- * The call ignores the app scope.
+ * The call ignores the app scope and a scope out of range.
  */
 void window_host_release_scope(struct window_host *host, uint8_t scope);
 

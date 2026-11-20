@@ -32,8 +32,9 @@ static const struct ui_widget_ops POPUP_ROOT_OPS = {
     .child_limit = 1,
 };
 
-/* Frees the popup array when it holds no popup. A busy popup is inside a
- * dispatch, whose caller still reads its surface, so it keeps the array. */
+/* Frees the popup array when it holds no popup. A popup that is marked for
+ * closing keeps the array until window_menu_reap() destroys it. The loop
+ * asserts that no popup is inside a dispatch. */
 static void menu_popup_maybe_free(struct window_ui *ui)
 {
     if (!ui->menu_popup || ui->menu_popups > 0)
@@ -111,7 +112,6 @@ static void close_popup(struct window *w, int depth)
     close_popup_now(w, depth);
 }
 
-/* Closes the popup at depth and frees its storage. */
 static void close_popup_now(struct window *w, int depth)
 {
     struct window_ui *ui = ui_of(w);

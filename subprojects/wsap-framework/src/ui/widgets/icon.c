@@ -185,7 +185,6 @@ void ui_icon_init(struct ui_icon *icon)
     *icon = (struct ui_icon){0};
     ui_widget_init(&icon->widget, &ICON_OPS, NULL);
     ui_widget_set_style_identity(&icon->widget, "icon", NULL, "icon");
-    /* A press on the icon must not move the keyboard focus. */
     ui_widget_set_keeps_press_focus(&icon->widget, true);
 }
 

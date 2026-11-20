@@ -2,7 +2,7 @@
 #include "render/gpu/vulkan/internal.h"
 #include "util/app_identity.h"
 
-/* The app names the log lines of this backend. */
+/* The app identity gives the tag that this backend puts on its log lines. */
 static const char *log_tag(void)
 {
     const struct app_identity *identity = app_identity_current();
@@ -80,8 +80,8 @@ static bool desc_pool_add(struct render_gpu *g)
 /*
  * Allocates one descriptor set with the layout of the device. The set comes
  * from the newest pool that has room. When every pool is full, a new pool
- * of twice the sets takes it. Returns false and reports the reason when the
- * device gives no set.
+ * of twice the sets takes it. Returns false when no pool gives a set; a
+ * failure of the new pool is reported.
  */
 static bool desc_set_alloc(struct render_gpu *g, VkDescriptorSet *set, VkDescriptorPool *pool)
 {
@@ -122,7 +122,8 @@ static uint32_t memory_type(struct render_gpu *g, uint32_t type_bits, VkMemoryPr
     return UINT32_MAX;
 }
 
-/* Allocates device memory matching required memory properties. */
+/* Allocates memory of a type with `want`. With `any`, a type without those
+ * properties is acceptable when no other type fits. */
 static bool memory_allocate(struct render_gpu *g, const VkMemoryRequirements *reqs,
                             VkMemoryPropertyFlags want, bool any, VkDeviceMemory *out)
 {
@@ -139,7 +140,8 @@ static bool memory_allocate(struct render_gpu *g, const VkMemoryRequirements *re
     return g->vk.AllocateMemory(g->dev.device, &info, NULL, out) == VK_SUCCESS;
 }
 
-/* Destroys image and memory handles of texture `t` and preserves descriptor set. */
+/* Destroys the image, the view, and the memory of texture `t` and keeps its
+ * descriptor set. */
 static void texture_drop_image(struct render_gpu *g, struct vulkan_texture *t)
 {
     VkDevice device = g->dev.device;
@@ -422,7 +424,6 @@ static VkPipeline pipeline_make(struct render_gpu *g, const struct pipeline_spec
         .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
     };
-    /* The blend state of the instance blend mode. */
     VkPipelineColorBlendAttachmentState attachment = blend_attachment(spec->blend);
     attachment.colorWriteMask = spec->mask;
     VkPipelineColorBlendStateCreateInfo blend = {
@@ -839,7 +840,8 @@ static bool device_create(struct render_gpu *g, bool software_ok)
     return true;
 }
 
-/* Creates command pools, descriptor layouts, samplers, and per-frame slot resources. */
+/* Creates the command pool, the descriptor and pipeline layouts, the
+ * sampler, the pipeline cache, and the resources of every frame slot. */
 static bool objects_create(struct render_gpu *g)
 {
     VkDevice device = g->dev.device;
@@ -883,7 +885,8 @@ static bool objects_create(struct render_gpu *g)
         VK_SUCCESS)
         return false;
 
-    /* The shaders fetch whole texels, so the filter never runs. */
+    /* The shaders read with texelFetch, so no filter runs; the combined
+     * descriptor still needs a sampler. */
     VkSamplerCreateInfo sampler = {
         .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
         .magFilter = VK_FILTER_NEAREST,
@@ -896,7 +899,8 @@ static bool objects_create(struct render_gpu *g)
     if (g->vk.CreateSampler(device, &sampler, NULL, &g->sampler) != VK_SUCCESS)
         return false;
 
-    /* The cache only makes the pipelines faster to build. */
+    /* The cache only makes the pipelines faster to build, so a failure
+     * leaves no cache and is no error. */
     VkPipelineCacheCreateInfo cache = { .sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO };
     if (g->vk.CreatePipelineCache(device, &cache, NULL, &g->pipeline_cache) != VK_SUCCESS)
         g->pipeline_cache = VK_NULL_HANDLE;
@@ -923,7 +927,8 @@ static bool objects_create(struct render_gpu *g)
 
 /* ---- Driver memory ------------------------------------------------------- */
 
-/* Each kernel GPU driver and the loader manifest names of its Vulkan drivers. */
+/* The kernel GPU driver names, and the loader manifest patterns of their
+ * Vulkan drivers. */
 static const struct {
     const char *kernel;
     const char *manifests;
@@ -942,6 +947,8 @@ static const struct {
     { "v3d", "*broadcom*" },
 };
 
+/* Appends the manifest patterns of `kernel` to `out`. Returns false for an
+ * unknown kernel or when the patterns do not fit. */
 static bool append_manifests(char *out, size_t cap, const char *kernel)
 {
     for (size_t i = 0; i < sizeof(driver_manifests) / sizeof(driver_manifests[0]); i++) {
@@ -960,8 +967,8 @@ static bool append_manifests(char *out, size_t cap, const char *kernel)
 /* Makes the loader filter for the Vulkan drivers of the GPUs in the machine.
  * The loader opens every driver it finds to ask for devices. Each driver
  * that has no device still maps its library and its dependencies, and that
- * raises the peak RSS. Returns false if a user setting or an unknown kernel
- * driver means the full list must stay. */
+ * raises the peak RSS. Returns false if a user setting, an unknown kernel
+ * driver, or a failed scan means the full list must stay. */
 static bool driver_filter(char *out, size_t cap)
 {
     static const char *const user_settings[] = {
@@ -1045,7 +1052,10 @@ static struct render_gpu *gpu_open(enum gpu_choice choice, const char *drivers)
         render_gpu_free(g);
         return NULL;
     }
-    /* Skip Mesa software rasterizer probing unless software mode was requested. */
+    /* Skip Mesa software rasterizer probing unless a driver filter is in
+     * use, software mode was requested, or the user set
+     * VK_LOADER_DRIVERS_DISABLE. The loader reads these settings when it
+     * creates the instance. */
     bool hide_lvp = !drivers && choice == GPU_HARDWARE && !getenv("VK_LOADER_DRIVERS_DISABLE");
     if (drivers)
         setenv("VK_LOADER_DRIVERS_SELECT", drivers, 1);
@@ -1144,5 +1154,6 @@ void *render_gpu_native_device(struct render_gpu *g)
 bool render_gpu_idle(struct render_gpu *g)
 {
     (void)g;
+    /* The backend keeps no transient state that it releases when idle. */
     return true;
 }

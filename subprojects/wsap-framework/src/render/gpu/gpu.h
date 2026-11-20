@@ -22,14 +22,14 @@
  * - The GPU draws a whole frame or nothing. It decides before it changes
  *   any state: it checks the atlas capacity first, and it delays refcount
  *   drops until commit.
- * - On a failure it marks its own grid fully dirty and returns
- *   RENDER_GPU_UNUSED. The CPU then paints the frame and
- *   render_gpu_present() shows the pixels.
- * - With no free frame slot it returns RENDER_GPU_DROPPED: nothing drawn,
- *   nothing presented, no state changed. It does not wait for the GPU or
- *   for the display without a limit, so the main thread keeps its time for
- *   input and PTY reads. A backend can wait a few milliseconds when a
- *   dropped frame costs more, as in a resize. It states each such wait.
+ * - On a failure it returns RENDER_GPU_UNUSED and presents nothing. The CPU
+ *   then paints the frame and render_gpu_present() shows the pixels.
+ * - With no free frame slot, or with a drawable that it cannot use, it
+ *   returns RENDER_GPU_DROPPED: nothing drawn, nothing presented. It does
+ *   not wait for the GPU or for the display without a limit, so the main
+ *   thread keeps its time for input and PTY reads. A backend can wait a few
+ *   milliseconds when a dropped frame costs more, as in a resize. It states
+ *   each such wait.
  * - It asks for the drawable of the frame after it builds the frame data, so
  *   the drawable is held for the shortest time. `framebuffer.drawable` holds
  *   the drawable that it acquired.
@@ -74,21 +74,25 @@ enum render_gpu_status {
     RENDER_GPU_DROPPED,
 };
 
-/* Creates and initializes a GPU backend context. Returns NULL when unavailable. */
+/* Creates and initializes a GPU backend context. Returns NULL when the
+ * backend is unavailable or cannot initialize. */
 struct render_gpu *render_gpu_new(void);
 /* Waits for idle GPU execution and frees all backend resources. */
 void render_gpu_free(struct render_gpu *g);
-/* Releases transient idle command queues when no GPU frame is in flight.
- * Returns true if the backend is idle. */
+/* Releases idle GPU resources. Returns true when no frame is in flight,
+ * false when the GPU still runs one. */
 bool render_gpu_idle(struct render_gpu *g);
-/* Returns a pointer to the platform native device handle, or NULL when disabled. */
+/* Returns the native device that the window layer makes its surfaces with:
+ * a struct vulkan_device (paint/vulkan.h), or an id<MTLDevice>. NULL when
+ * the backend is off. */
 void *render_gpu_native_device(struct render_gpu *g);
 
 /*
  * Builds, uploads, and draws `frame` to the target surface of `fb`. `grid`
  * is the terminal grid view of the frame, or NULL for no grid.
  * Returns RENDER_GPU_PRESENTED on successful submission,
- * RENDER_GPU_DROPPED when slots are busy, or RENDER_GPU_UNUSED on fallback.
+ * RENDER_GPU_DROPPED when the frame cannot be presented now, or
+ * RENDER_GPU_UNUSED when the CPU must paint the frame.
  */
 enum render_gpu_status render_gpu_draw_view(struct render_gpu *g, struct render_surface *s,
                                             struct framebuffer *fb,
@@ -96,13 +100,16 @@ enum render_gpu_status render_gpu_draw_view(struct render_gpu *g, struct render_
                                             const struct render_grid_view *grid);
 
 /*
- * Uploads damaged CPU framebuffer pixels and submits the surface quad for presentation.
- * Returns true on submission success, or false on error or missing drawable.
+ * Uploads the CPU pixels of `fb` and presents them into the drawable.
+ * Requires fb->pixels. `damage` holds what changed since the last present
+ * of the surface; the first present and a size change upload every pixel.
+ * Returns true when the GPU took the frame.
  */
 bool render_gpu_present(struct render_gpu *g, struct render_surface *s, struct framebuffer *fb,
                         const struct damage_list *damage);
 
-/* Frees surface GPU state allocated in `gpu_surface`. Ignores NULL pointers. */
+/* Frees the per-surface state in `gpu_surface`, which is
+ * render_surface.gpu. Ignores NULL. */
 void render_gpu_surface_free(void *gpu_surface);
 
 #endif

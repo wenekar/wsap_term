@@ -8,11 +8,13 @@
  * The frames of one window. Four counts stay apart, because they answer
  * different questions:
  *
- * - `frames_drawn` counts the draw passes. It is the rate of the loop.
+ * - `frames_drawn` counts the draw passes, including a pass that the layer
+ *   could not start. Such a pass is neither submitted nor dropped, because it
+ *   drew no frame.
  * - `frames_submitted` counts the passes that the GPU or the surface took.
  *   A submitted frame is not on screen yet.
- * - `frames_dropped` counts the passes that did not submit: a busy GPU, no
- *   free drawable, or a failed present. The window asks for the next frame.
+ * - `frames_dropped` counts the attempted passes that submitted nothing: a
+ *   busy GPU or a failed present. The window asks for the next frame.
  * - `frames_presented` counts the frames that a display reported as shown.
  *   Only a platform with presentation feedback reports it.
  */

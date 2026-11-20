@@ -214,7 +214,8 @@ static const struct gpu_atlas_entry *atlas_find(const struct gpu_atlas *a, uint6
     }
 }
 
-/* Rehashes the atlas lookup table to `new_cap` slots (a power of two). */
+/* Rehashes the open-addressed atlas table into `new_cap` slots, a power of
+ * two. Returns false when the allocation fails. */
 static bool atlas_rehash(struct gpu_atlas *a, uint32_t new_cap)
 {
     struct gpu_atlas_entry *next = calloc(new_cap, sizeof(*next));
@@ -255,7 +256,10 @@ static bool atlas_insert(struct gpu_atlas *a, const struct gpu_atlas_entry *entr
     return true;
 }
 
-/* Finds room for w by h texels. Rows of nearly one height share a shelf. */
+/* Finds room for a w by h texel rect. A shelf takes the rect when its
+ * remaining width holds w and its height is at least h and at most 1.5
+ * times h rounded up to a multiple of 4. Returns false when the shelves or
+ * the atlas height are full. */
 static bool atlas_place(struct gpu_atlas *a, int w, int h, uint16_t *x, uint16_t *y)
 {
     int quantized = (h + 3) & ~3;
@@ -338,8 +342,8 @@ static enum glyph_kind glyph_kind_of(const struct glyph *gl)
 
 /*
  * Puts a glyph in the atlas. With `cache` the map keeps it. Without, the
- * entry is for this one use. Returns false when the frame must stop. The
- * `out` entry is a copy that stays valid.
+ * entry is for this one use. Returns false when the glyph cannot be staged.
+ * The `out` entry is a copy that stays valid.
  */
 static bool atlas_add_glyph(struct gpu_build *b, uint64_t id, uint64_t version,
                             enum atlas_space space, const struct glyph *gl, bool cache,
@@ -414,7 +418,7 @@ struct grid_geometry {
     int rows;
 };
 
-/* The same rules as render_draw(): clip, cell size, and visible cells. */
+/* The clip, cell size, and visible cell count follow render_draw_view(). */
 static bool grid_geometry_of(const struct render_frame *frame,
                              const struct render_grid_view *grid, struct vector2i canvas,
                              struct grid_geometry *out)
@@ -434,7 +438,6 @@ static bool grid_geometry_of(const struct render_frame *frame,
     return true;
 }
 
-/* The state of the row walk. */
 struct grid_walk {
     struct gpu_build *b;
     const struct grid_geometry *geo;
@@ -594,6 +597,11 @@ static void emit_mask(struct grid_walk *w, int col, const struct decor_mask *m, 
     rect_to_vec4((float)e.x, (float)e.y, (float)(e.x + geo->cw), (float)(e.y + rows), in->uv);
 }
 
+/*
+ * The atlas ids of the masks that are not underlines. They must stay clear
+ * of the underline ids, which are the enum values below
+ * DECOR_UNDERLINE_KINDS: the atlas key holds the id only.
+ */
 enum {
     MASK_STRIKE = 16,
     MASK_OVERLINE,
@@ -693,6 +701,7 @@ static bool build_grid(struct gpu_build *b, const struct grid_geometry *geo)
     for (int row = 0; row < geo->rows && !b->failed && !b->atlas.full; row++) {
         w.row = row;
         w.line_size = grid->ops->line_size(grid->source, row);
+        /* A double-width row draws half as many cells, each two cells wide. */
         int cols = (w.line_size != RENDER_LINE_SINGLE)
             ? (geo->cols / 2 > 0 ? geo->cols / 2 : 1) : geo->cols;
         grid->ops->walk(geo->font, grid->source, row, 0, cols, RENDER_WALK_PEEK, &sink);

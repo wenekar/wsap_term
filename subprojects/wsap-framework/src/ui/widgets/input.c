@@ -78,7 +78,6 @@ static struct ui_input_history *history_snapshot(const struct ui_input *in)
     return entry;
 }
 
-/* Drop the edit history. An edit that cannot record history still applies. */
 static void history_drop(struct ui_input *in)
 {
     history_free(&in->state.undo);
@@ -93,6 +92,7 @@ static void history_record(struct ui_input *in, int group)
         in->state.select.caret != in->state.select.anchor) {
         struct ui_input_history *entry = history_snapshot(in);
         if (!entry) {
+            /* The edit still applies when it cannot record history. */
             history_drop(in);
             return;
         }
@@ -161,7 +161,9 @@ static void delete_range(struct ui_input *in, size_t lo, size_t hi)
     changed(in);
 }
 
-/* Copy valid UTF-8. Input values omit ASCII control characters. */
+/* Copies the valid UTF-8 in `text` and drops each invalid byte. With `value`,
+ * also drops ASCII control characters. Stops at the first NUL byte. Returns
+ * false when `len` exceeds INT_MAX or the copy fails. */
 static bool copy_text(const char *text, size_t len, bool value,
                       char **out, size_t *out_len)
 {
@@ -480,7 +482,7 @@ enum input_cmd_flag {
     CMD_REDO     = 1 << 4,
 };
 
-/* Maps an edit command to its handler and range behavior. */
+/* One row of the edit command table. */
 struct input_cmd {
     bool (*run)(struct ui_input *in, const struct input_cmd *cmd);
     enum ui_edit_command command;
@@ -577,6 +579,7 @@ static bool cmd_transpose(struct ui_input *in, const struct input_cmd *cmd)
     return true;
 }
 
+/* Maps each edit command to its handler and range behavior. */
 static const struct input_cmd INPUT_CMDS[] = {
     { .command = UI_EDIT_UNDO,           .run = cmd_history },
     { .command = UI_EDIT_REDO,           .run = cmd_history,    .flags = CMD_REDO },
@@ -610,8 +613,8 @@ bool ui_input_command(struct ui_input *in, enum ui_edit_command command)
     return false;
 }
 
-/* Runs one edit command. Both event fields of a key call it.
- * `extend` keeps the selection on a caret move. */
+/* Runs one edit command from a key or shortcut event. `extend` keeps the
+ * selection when the caret moves. */
 static bool input_edit(struct ui_input *in, enum ui_edit_command command,
                        bool extend)
 {

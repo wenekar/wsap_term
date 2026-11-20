@@ -1,8 +1,8 @@
 #version 450
 
 /*
- * Glyph vertex shader for Vulkan backend.
- * Generates quad vertices from gl_VertexIndex and maps instance to screen NDC.
+ * Maps the instance rect of a glyph or copy quad to NDC. gl_VertexIndex
+ * selects one of the four corners, and uv follows the same corner.
  */
 
 layout(push_constant) uniform PushConstants {

@@ -1,8 +1,8 @@
 #version 450
 
 /*
- * Shape vertex shader for Vulkan backend.
- * Generates quads for rounded rects, circles, and drop shadows.
+ * Maps the quad of a shape instance to NDC. gl_VertexIndex selects one of
+ * the four corners; the fragment shader evaluates the coverage.
  */
 
 layout(push_constant) uniform PushConstants {

@@ -309,7 +309,6 @@ void window_ui_route(struct window *w, struct input_event *ev)
         window_ui_update_cursor(w);
 }
 
-/* Takes the pointer state of one input event into the window. */
 static void track_pointer(struct window *w, struct input_mouse_event *m)
 {
     if (m->kind == PTR_LEAVE) {

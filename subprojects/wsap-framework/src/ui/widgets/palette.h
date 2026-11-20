@@ -29,14 +29,11 @@ struct ui_palette {
     } state;
 };
 
-/* Initializes command palette widget `p`. */
 void ui_palette_init(struct ui_palette *p);
-/* Opens palette `p` populated with `n` command descriptors from `cmds`. */
+/* Opens `p` with `n` commands from `cmds`. Copies each label and shortcut. */
 bool ui_palette_open(struct ui_palette *p, const struct ui_palette_cmd *cmds,
                      int n);
-/* Closes command palette `p`. */
 void ui_palette_close(struct ui_palette *p);
-/* Returns true when command palette `p` is open. */
 bool ui_palette_is_open(const struct ui_palette *p);
 /* Returns the current search filter string in palette `p`. */
 const char *ui_palette_query(const struct ui_palette *p);

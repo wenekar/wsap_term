@@ -18,11 +18,13 @@ struct present_watch;
  *
  * - `size` is the canvas in pixels: the size of the next drawable of the
  *   layer. It is known before a drawable is taken.
- * - `drawable` is NULL while the surface prepares the frame. `acquire` asks
- *   the layer for the drawable after the frame data is ready, and it writes
- *   `drawable`. The layer holds a drawable for the shortest time this way.
- * - `transaction` means: present inside the platform transaction of a live
- *   resize.
+ * - `drawable` is the drawable of the frame, or NULL while the layer has none.
+ *   A layer that knows its target fills it before the draw. `acquire` asks the
+ *   layer for the drawable after the frame data is ready, and it writes
+ *   `drawable`, so the drawable leaves the pool for the shortest time.
+ * - `transaction` marks a frame of a size change or a live resize. Metal
+ *   presents it inside the Core Animation transaction of the resize. Vulkan
+ *   asks the swapchain for an unpaced present mode.
  */
 struct window_gpu_frame {
     void *drawable;
@@ -51,11 +53,12 @@ void *window_gpu_attach(struct yasl_surface *s, void *device);
 void window_gpu_detach(void *layer, struct yasl_surface *s);
 
 /*
- * Prepares and submits one frame. `draw` runs once. It sees no drawable, and it
- * calls `frame->acquire` when it needs the drawable. A layer of zero size runs
- * no draw. Returns true when the layer had a size, so the frame was attempted;
- * a missing drawable is not an error, and the surface asks for the next
- * frame. `watch` says how the display reports the presentation of the frame.
+ * Prepares and submits one frame. `draw` runs once. It sees the drawable that
+ * the layer filled already, if any, and it calls `frame->acquire` when it needs
+ * one. A layer of zero size runs no draw. Returns true when the layer had a
+ * size, so the frame was attempted; a missing drawable is not an error, and
+ * the surface asks for the next frame. `watch` says how the display reports
+ * the presentation of the frame.
  */
 bool window_gpu_draw(void *layer, struct yasl_surface *s,
                      struct window_gpu_watch watch,

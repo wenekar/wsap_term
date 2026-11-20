@@ -7,7 +7,7 @@
 #define PROGRESS_CELLS 12
 #define PROGRESS_H 6
 #define PROGRESS_TICK_MS 80
-/* The share of the track that the moving fill of a busy bar takes. */
+/* The busy fill takes one part in this many parts of the track. */
 #define PROGRESS_BUSY_SHARE 4
 
 static struct ui_progress *progress_of(struct ui_widget *widget)

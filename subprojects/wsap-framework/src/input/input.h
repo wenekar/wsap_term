@@ -128,10 +128,11 @@ struct input_key_event {
     uint32_t shifted;
     uint32_t base;
     uint32_t text;
-    /* Queued events own these UTF-8 bytes. */
+    /* A queued event owns this UTF-8 text, and `text_len` counts its bytes. */
     char *text_utf8;
     size_t text_len;
-    /* Keep the raw modifiers for shortcuts. */
+    /* The modifiers that native text input consumed. A keymap lookup matches
+     * the raw `mods`, and the terminal encoder removes these modifiers. */
     unsigned consumed_mods;
     bool text_deferred;
     bool ime_handled;
@@ -165,7 +166,8 @@ enum input_kind {
     INPUT_PASTE,
     INPUT_DROP_FILES,
     /* A drop of one type. `mime` names the type, and `data` holds the
-     * payload. It never becomes text. */
+     * payload. The event stays a drop: the queue does not turn it into a
+     * paste or text event. */
     INPUT_DROP,
     /* A drag moved over the window, or left it. `mime` names the type that
      * the drag offers, and it is empty on a leave. */
@@ -240,25 +242,35 @@ enum input_push_result {
 };
 
 /*
- * Adds event `ev` to queue `q`.
- * Merges consecutive pointer motion or scroll events when possible.
- * Evicts older pointer motion events when the queue is full.
- * Returns the queue push status.
+ * Enqueues a copy of event `ev` in queue `q`. The queue holds at most
+ * `INPUT_QUEUE_SIZE - 1` events and `INPUT_TEXT_MAX` bytes of text in its
+ * `INPUT_PASTE`, `INPUT_DROP_FILES`, and `INPUT_KEY` events.
+ * A motion event replaces the last queued event when both are motion events
+ * with the same button and modifiers. A scroll event merges into the last
+ * queued event when both are scroll events with the same modifiers, popup,
+ * and axis.
+ * A full queue evicts its oldest event when that event is a pointer motion;
+ * otherwise the call drops `ev`.
+ * The queue owns the dynamic buffers of `ev`, unless the call returns
+ * `INPUT_PUSH_DROPPED`; then the caller keeps them.
+ * Returns `INPUT_PUSH_OK`, `INPUT_PUSH_EVICTED_MOTION` after an eviction, or
+ * `INPUT_PUSH_DROPPED` when the queue holds no copy of `ev`.
  */
 enum input_push_result input_queue_add(struct input_queue *q,
                                         const struct input_event *ev);
 
 /*
  * Enqueues a file drop event containing URI list `uris` of length `len`,
- * released at device pixel position `pos`.
+ * dropped at device pixel position `pos`.
  * Returns the number of bytes queued, or 0 on failure.
  */
 size_t input_queue_push_drop_files(struct input_queue *q, const char *uris,
                                   size_t len, struct vector2i pos);
 
 /*
- * Enqueues a paste event for a text drop of `data` of length `len`, released
- * at device pixel position `pos`.
+ * Enqueues a text drop of `data` and `len` as a paste event with the drop
+ * position `pos`, in device pixels. The event has `dropped` set, so the paste
+ * goes only to the widget at `pos`.
  * Returns the number of bytes queued, or 0 on failure.
  */
 size_t input_queue_push_drop_text(struct input_queue *q, const char *data,
@@ -266,7 +278,7 @@ size_t input_queue_push_drop_text(struct input_queue *q, const char *data,
 
 /*
  * Enqueues a drop event of type `mime` with payload `data` of length `len`,
- * at device pixel position `pos`.
+ * at device pixel position `pos`. An empty `mime` or payload fails.
  * The queue owns its copies of both strings.
  * Returns the number of bytes queued, or 0 on failure.
  */
@@ -277,7 +289,7 @@ size_t input_queue_push_drop(struct input_queue *q, const char *mime,
 /*
  * Enqueues a drag event at `pos` that offers type `mime`. An empty `mime`
  * reports that the drag left the window. The queue owns its copy of `mime`.
- * Returns the number of bytes queued, or 0 on failure.
+ * Returns the byte length of `mime`, or 1 for a leave, and 0 on failure.
  */
 size_t input_queue_push_drag(struct input_queue *q, const char *mime,
                              struct vector2i pos);
@@ -287,13 +299,15 @@ size_t input_queue_push_drag(struct input_queue *q, const char *mime,
  * `begin` and `end` are the byte offsets of the cursor of a preedit, or the
  * replaced range of a text edit. `revision` names the text that the host
  * sent. `edit` selects a text edit over a preedit.
- * Returns the number of bytes queued, or 0 on failure.
+ * Returns the number of bytes queued, or 0 on failure. An empty event is
+ * still queued, so a return of 0 does not always report a failure.
  */
 size_t input_queue_push_ime(struct input_queue *q, const char *data, size_t len,
                             int begin, int end, uint64_t revision, bool edit);
 
 /*
- * Enqueues a paste event containing clipboard `data` of length `len`.
+ * Enqueues a paste event containing clipboard `data` of length `len`. The
+ * event has `dropped` false, so the paste goes to the focused widget.
  * Returns the number of bytes queued, or 0 on failure.
  */
 size_t input_queue_push_paste(struct input_queue *q, const char *data,
@@ -313,8 +327,10 @@ static inline int input_scroll_clamp(int lines)
 }
 
 /*
- * Splits UTF-8 text into chunks and enqueues them as text input events.
- * Returns the total number of bytes enqueued.
+ * Splits UTF-8 text into chunks that fit one event each and enqueues them as
+ * text input events. A chunk boundary never splits a UTF-8 sequence.
+ * Returns the number of bytes enqueued; the call stops early when the queue
+ * refuses an event.
  */
 size_t input_queue_push_text(struct input_queue *q, const char *text,
                            size_t len, enum input_text_source source);
@@ -322,6 +338,8 @@ size_t input_queue_push_text(struct input_queue *q, const char *text,
 /*
  * Removes the next event from queue `q` and copies it to `out`.
  * Merges consecutive scroll events into `out`.
+ * The caller owns the dynamic buffers of `out` and releases them with
+ * `input_event_release()`.
  * Returns true when an event is retrieved, or false when the queue is empty.
  */
 bool input_queue_take(struct input_queue *q, struct input_event *out);
@@ -329,7 +347,8 @@ bool input_queue_take(struct input_queue *q, struct input_event *out);
 /* Clears all events from queue `q` and releases their dynamic buffers. */
 void input_queue_reset(struct input_queue *q);
 
-/* Releases dynamically allocated memory owned by input event `ev`. */
+/* Releases dynamically allocated memory owned by input event `ev` and clears
+ * the pointers and lengths, so a second call frees nothing. */
 void input_event_release(struct input_event *ev);
 
 struct input_keyboard_state {
@@ -344,8 +363,8 @@ void input_keyboard_update(struct input_keyboard_state *s,
                            const struct input_key_event *ev);
 
 /*
- * Checks whether key `key` is currently pressed in state `s`.
- * Returns true if the key is down, or false otherwise.
+ * Returns true when key `key` is down in state `s`. Returns false for a NULL
+ * state and for a key that is out of range.
  */
 static inline bool input_keyboard_key_down(
         const struct input_keyboard_state *s, enum input_key key)
@@ -376,21 +395,29 @@ enum input_key_route {
     INPUT_KEY_DROPPED,
 };
 
-/* Returns the identifier that the shortcut state tracks for key `ev`. */
+/*
+ * Returns the identifier that the key route functions track for key `ev`.
+ * A named key uses its `INPUT_KEY_*` value, and a character key uses
+ * `512 + base`, where a base of 256 or more counts as 0. A NULL event gives 0.
+ */
 unsigned input_key_id(const struct input_key_event *ev);
 
 /*
- * Returns true when keymap `km` binds key event `ev`.
- * The function reads the map only. It queues no event.
+ * Returns true when keymap `km` binds key event `ev` in the app scope. The
+ * call queues no event and changes no binding.
  */
 bool input_keymap_match(const struct input_keymap *km,
                         const struct input_key_event *ev);
 
 /*
- * Matches key event `key` against keymap `km` and shortcut state `st`.
+ * Routes key event `key` in keymap `km` and shortcut state `st`, and returns
+ * its route. `key_id` is the identifier from `input_key_id()`, and `st` keeps
+ * the route of a press for its repeats and its release.
  * The lookup reads the app scope only.
- * Enqueues shortcut events into `q` and writes matched action to `out_sc`.
- * Returns the routing action for the key event.
+ * When the call enqueues a shortcut event, it writes the command to `out_sc`;
+ * `out_sc` is `INPUT_COMMAND_NONE` otherwise.
+ * The call returns `INPUT_KEY_DROPPED` when the queue refuses the shortcut
+ * event.
  */
 enum input_key_route input_shortcut_route_key(const struct input_keymap *km,
         struct input_queue *q,
@@ -399,11 +426,14 @@ enum input_key_route input_shortcut_route_key(const struct input_keymap *km,
         input_command_id *out_sc);
 
 /*
- * Matches key event `key` against keymap `km` in command scope `scope` and
- * shortcut state `st`. A widget passes its own scope here.
+ * Routes key event `key` in keymap `km` in command scope `scope` and shortcut
+ * state `st`, and returns its route. A widget passes its own scope here, and
+ * `key_id` comes from `input_key_id()`.
  * The lookup reads `scope` first, then the app scope.
- * Enqueues shortcut events into `q` and writes matched action to `out_sc`.
- * Returns the routing action for the key event.
+ * When the call enqueues a shortcut event, it writes the command to `out_sc`;
+ * `out_sc` is `INPUT_COMMAND_NONE` otherwise.
+ * The call returns `INPUT_KEY_DROPPED` when the queue refuses the shortcut
+ * event.
  */
 enum input_key_route input_shortcut_route_key_scoped(
         const struct input_keymap *km,

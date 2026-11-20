@@ -466,8 +466,8 @@ static void sync_bar(struct ui_scrollview *sv)
     if (sv->widget.last_child != &sv->bar)
         ui_widget_insert_child(&sv->widget, &sv->bar, NULL);
     struct bar g = {0};
-    /* The bar takes the pointer where the track is, also when it hides. A
-     * hover over the track then shows it again. */
+    /* The bar takes the pointer where the track is, also while the overlay
+     * bar auto-hides. A hover over the track then shows it again. */
     bool placed = bar_geometry(sv, sv->state.bar_state, &g);
     ui_widget_set_hidden(&sv->bar, !placed);
     if (placed)
@@ -555,7 +555,7 @@ static void scrollview_ensure_init(struct ui_scrollview *sv)
     ui_widget_set_accessibility_ignored(&sv->bar, true);
     ui_widget_set_hidden(&sv->bar, true);
     ui_widget_set_style_identity(&sv->widget, "scrollview", NULL, "scrollview");
-    /* The bar holds one child slot. The content takes the other. */
+    /* The bar takes one child slot now. The content takes the other. */
     ui_widget_add_child(&sv->widget, &sv->bar);
 }
 

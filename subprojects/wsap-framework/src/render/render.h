@@ -2,7 +2,12 @@
 #define RENDER_H
 
 /*
- * The public renderer API.
+ * The public renderer API of this library.
+ *
+ * render_draw_view() (render/core.h) draws a frame that the caller has
+ * already resolved into a render_grid_view. The terminal layer above this
+ * library wraps it in render_draw(), which adds the terminal frame. The
+ * rules below hold for both calls.
  *
  * The app owns one renderer. Only the app calls render_draw(). The test
  * oracle for a full paint is a second renderer that draws a frame with no
@@ -67,8 +72,8 @@ struct render_options {
  * - The cells start at rect.pos. Visible columns are
  *   min(frame->cols, width / cell_w), and visible rows are
  *   min(frame->rows, height / cell_h), after the clip.
- * - The rest of the rect is margin. The margin is frame->default_bg, also
- *   in reverse video, as today.
+ * - The rest of the rect is margin. The margin is frame->default_bg in
+ *   both video modes: reverse video swaps the colors of the cells only.
  */
 struct render_grid {
     const struct terminal_frame *frame;
@@ -123,15 +128,16 @@ struct render_result {
 /*
  * Creates a renderer. `opt` NULL means the defaults. The renderer owns its
  * worker threads, its cell cache, and its GPU device. Returns NULL when the
- * memory is missing. A worker thread that fails to start is left out.
- * Call render_init() first.
+ * memory is missing. When the worker pool cannot start, the main thread
+ * does all of the work. Call render_init() first.
  */
 struct renderer *renderer_create(const struct render_options *opt);
 /* Joins the workers and frees the renderer. NULL does nothing. */
 void renderer_destroy(struct renderer *r);
 /*
- * The GPU device for native surfaces, or NULL. NULL means: give the window
- * a CPU surface. The CPU-only build (render/gpu/none.c) always gives NULL.
+ * The GPU device for native surfaces, or NULL. The first call creates the
+ * device. NULL means: give the window a CPU surface. The CPU-only build
+ * (render/gpu/none.c) always gives NULL.
  */
 void *renderer_device(struct renderer *r);
 /*
@@ -140,9 +146,12 @@ void *renderer_device(struct renderer *r);
  * tried. Returns true if a device exists.
  */
 bool renderer_start_gpu(struct renderer *r);
-/* Releases the GPU device when no surface uses GPU presentation. */
+/* Releases the GPU device. Call it after every surface stops presenting
+ * through the GPU. */
 void renderer_drop_gpu(struct renderer *r);
-/* Releases transient idle GPU queues when no GPU work is in flight. */
+/* Releases idle GPU resources when no GPU work is in flight. Returns true
+ * when nothing is in flight, also without a renderer or a GPU; a false
+ * result says that the caller tries again later. */
 bool renderer_idle_gpu(struct renderer *r);
 /* The enum render_isa level that the renderer uses. Never RENDER_ISA_AUTO. */
 int renderer_isa(const struct renderer *r);

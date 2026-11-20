@@ -63,18 +63,19 @@ static void write_default_input_config(const struct app_identity *identity,
     fclose(f);
 }
 
-/* The log prefix of the file that loads now. Initialization is one thread. */
+/* The log prefix of input configuration messages, from the app identity. */
 static const char *config_tag = "";
 
-/* The style and the path of the app configuration. The app sets them once,
- * before it opens a window. The window host then reads the file once for
- * all its windows, before its first window and at each reload. */
+/* The style and the path of the input configuration. `input_config_init()`
+ * sets them before any window opens. The window host loads the file for all
+ * its windows before its first window and at each reload. */
 static enum input_keybind_style config_style = INPUT_KEYBIND_MODERN;
 static char config_path[4096];
 static bool config_has_path;
 
-/* One parse of the configuration file. The init pass finds the style. The
- * load pass keeps that style and applies the bindings. */
+/* One parse of the configuration file. A pass with `find_style` set selects
+ * the style. The other pass applies the bindings over the defaults of the
+ * selected style. */
 struct input_config_pass {
     struct input_keymap *km;
     bool find_style;
@@ -99,8 +100,8 @@ static void input_config_line(void *ctx, const char *path, int line,
     }
     if (!val) {
         if (!strcasecmp(chord, "clear")) {
-            /* The file holds app bindings, so a clear line keeps the
-             * bindings of the widget scopes. */
+            /* The file holds app bindings, so a clear line drops only the
+             * app scope. */
             input_keymap_clear_scope(km, INPUT_COMMAND_SCOPE_APP);
             return;
         }
@@ -110,9 +111,8 @@ static void input_config_line(void *ctx, const char *path, int line,
     }
 
     if (!strcasecmp(chord, "style")) {
-        /* The style applies to the whole file, so the find pass already
-         * selected it. A style line here must not restore the defaults after
-         * a clear line. */
+        /* The find pass selected the style for the whole file. Applying a
+         * style line here would restore the defaults after a clear line. */
         return;
     }
 
@@ -123,8 +123,8 @@ static void input_config_line(void *ctx, const char *path, int line,
                 tag, path, line, chord, val);
 }
 
-/* Reads the style line of the file. A missing line keeps the current
- * style. */
+/* Reads the style lines of the file. Each valid line replaces the current
+ * style, so the last line wins. A file with no valid line keeps the style. */
 static void input_config_find_style(void)
 {
     if (!config_has_path)
@@ -176,8 +176,9 @@ void input_config_init(const struct app_identity *identity)
     config_has_path = true;
     if (access(config_path, R_OK) != 0 && errno == ENOENT)
         write_default_input_config(identity, config_path);
-    /* The find pass selects the style that each window then loads. The
-     * style applies to the whole file. The app keeps no keymap of its own. */
+    /* The find pass reads the style now; `input_config_load()` reads it again
+     * before it applies the bindings. The style applies to the whole file.
+     * The app keeps no keymap of its own. */
     config_style = INPUT_KEYBIND_MODERN;
     input_config_find_style();
 }

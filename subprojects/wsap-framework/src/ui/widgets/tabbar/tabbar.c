@@ -1077,8 +1077,8 @@ void ui_tabbar_set_shortcut_prefix(struct ui_tabbar *tb, const char *text)
     tb->state.shortcut_prefix = text;
 }
 
-/* Tests if the tab bar holds this label set already. A NULL label set names
- * the tabs and leaves their text empty. */
+/* Tests if the tab bar holds this label set already. A NULL label set stands
+ * for `n` tabs with empty text. */
 static bool same_labels(const struct ui_tabbar *tb,
                         const struct ui_tab_label *tabs, int n)
 {
@@ -1121,14 +1121,14 @@ void ui_tabbar_set_tabs(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
     if (!tb)
         return;
     int n = n_tabs > 0 ? n_tabs : 0;
-    /* The bar takes focus only when it holds more than one tab. A label set
-     * that matches still ends a bar that dropped to one tab. */
+    /* The bar is focusable only with two or more tabs. Set this before the
+     * early return, so a bar that dropped to one tab loses focus even when its
+     * labels did not change. */
     ui_widget_set_focusable(&tb->widget, n >= 2);
     if (same_labels(tb, tabs, n))
         return;
     if (!reserve_labels(tb, n))
         return;
-    /* Take the array once. The loop writes the entries that it holds. */
     struct ui_tab_label *labels = tb->state.labels;
     for (int i = 0; i < n && labels; i++) {
         const char *text = "";
@@ -1140,7 +1140,8 @@ void ui_tabbar_set_tabs(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
         struct ui_tab_label *l = &labels[i];
         if (!l->text || strcmp(l->text, text)) {
             char *copy = strdup(text);
-            /* A failed copy keeps the old text and leaves no NULL label. */
+            /* A failed copy keeps the old text. A tab that had none falls
+             * back to an empty string. */
             if (!copy && !l->text)
                 l->text = calloc(1, 1);
             if (copy) {

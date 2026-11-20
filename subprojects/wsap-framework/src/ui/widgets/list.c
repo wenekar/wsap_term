@@ -257,7 +257,6 @@ static void list_paint(const struct ui_widget *widget,
     int max_radius = l->state.metrics.edge_pad;
     if (box.radius > max_radius)
         box.radius = max_radius;
-    /* The shared painter draws the shadow of the resolved box style. */
     if (!insets2i_eq(l->state.metrics.shadow, (struct insets2i){0}))
         ui_paint_box_shadow(paint, bounds, &box);
     ui_paint_box(paint, bounds, &box, NULL);
@@ -477,7 +476,7 @@ static void drop_clear(struct ui_list *l)
     ui_widget_invalidate(&l->widget, UI_WIDGET_INVALIDATE_PAINT);
 }
 
-/* Returns the mark rect of the line at the top of `row`. */
+/* Returns the mark rect of the line at the top or bottom edge of `row`. */
 static struct rect2i drop_line(const struct ui_list *l, const struct rect2i *row,
                                int thickness, bool bottom)
 {
@@ -490,9 +489,9 @@ static struct rect2i drop_line(const struct ui_list *l, const struct rect2i *row
     };
 }
 
-/* Marks the place where a drop on the list would land. A point near the edge
- * of a row gives a line between two rows. A point in the middle of a row
- * gives that row. */
+/* Marks the place where a drop on the list would land. A point near the top
+ * or bottom edge of a row gives a line between two rows. A point in the middle
+ * of a row gives that row. */
 static void drop_at(struct ui_list *l, struct vector2i pos)
 {
     if (l->state.n < 1 || !rect2i_contains(l->widget.bounds, pos)) {

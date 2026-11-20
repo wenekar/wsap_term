@@ -4,11 +4,12 @@
  * Glyph fragment shader for Vulkan backend.
  * Renders solid fills, alpha glyphs, color glyphs, images, and subpixel text.
  *
- * Every mode writes premultiplied color, except for BLEND_NONE, which
- * writes the straight color. An image keeps the premultiplied color of its
- * texels, scaled by the tint and the opacity of the instance. The blend
- * state of the draw is the one of BLEND_NONE or of the mode, so the result
- * is the expression of blend_mode_px() in render/cpu/scene.c.
+ * A draw writes premultiplied color, except that BLEND_NONE writes the
+ * straight color of a solid or color glyph; the pipeline of BLEND_NONE has
+ * no blending. An image keeps the premultiplied color of its texels, scaled
+ * by the tint and the opacity of the instance. For every other mode the
+ * pipeline supplies the blend state of the mode, so the result is the
+ * expression of blend_mode_px() in render/cpu/scene.c.
  */
 
 layout(push_constant) uniform PushConstants {
@@ -46,9 +47,9 @@ vec4 texel_in(ivec2 uv, ivec2 lo, ivec2 hi)
  * The sample rule of an image op: destination pixel i of n samples the
  * source coordinate (i + 0.5) * src / n. A nearest sample takes the texel
  * that holds the coordinate. A linear sample mixes four texels by the rest
- * of the way between their centers. The CPU painter uses the same rule.
- * Every tap stays inside the uv sub-rect, so a texel of the image next to
- * the sub-rect cannot bleed into the sample.
+ * of the way between their centers. paint_image() in render/cpu/scene.c
+ * uses the same rule. Every tap stays inside the uv sub-rect, so a texel of
+ * the image next to the sub-rect cannot bleed into the sample.
  */
 vec4 image_sample(vec2 uv, bool linear, vec4 uv_rect)
 {
@@ -71,7 +72,7 @@ void main()
     if (in_color.a <= 0.0 && in_mode != MODE_SOLID)
         discard;
 
-    /* A NONE draw replaces the pixel, so it writes a straight color. */
+    /* A NONE solid draw replaces the pixel, so it writes a straight color. */
     float dim = in_blend == BLEND_NONE ? 1.0 : in_color.a;
 
     if (in_mode == MODE_SOLID) {

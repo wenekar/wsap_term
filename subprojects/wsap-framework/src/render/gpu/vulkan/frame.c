@@ -118,7 +118,9 @@ static VkImageMemoryBarrier2 image_barrier(VkImage image, VkImageLayout from, Vk
     return barrier;
 }
 
-/* Appends an image layout transition barrier for texture `t` to `to`. */
+/* Appends the transition of `t` to `to` and updates `t->layout` before the
+ * barrier runs. A caller that does not flush the batch must reset the
+ * layout. */
 static void barriers_add(struct barriers *bs, struct vulkan_texture *t, VkImageLayout to)
 {
     if (t->layout == to || bs->failed)
@@ -144,7 +146,8 @@ static void barriers_add(struct barriers *bs, struct vulkan_texture *t, VkImageL
     t->layout = to;
 }
 
-/* Records the layout changes of `bs`. Returns false when it ran out of memory. */
+/* Records the batch in `cmd` and clears it. Returns false when an earlier
+ * add ran out of memory. */
 static bool barriers_flush(struct render_gpu *g, VkCommandBuffer cmd, struct barriers *bs)
 {
     if (bs->failed)
@@ -189,10 +192,6 @@ static void set_scissor(struct render_gpu *g, VkCommandBuffer cmd, struct rect2i
     g->vk.CmdSetScissor(cmd, 0, 1, &scissor);
 }
 
-/*
- * Begins recording commands in the command buffer of `slot`.
- * Returns true on success, or false on failure.
- */
 static bool frame_begin(struct render_gpu *g, struct frame_slot *slot)
 {
     VkCommandBufferBeginInfo info = {
@@ -203,15 +202,16 @@ static bool frame_begin(struct render_gpu *g, struct frame_slot *slot)
 }
 
 /*
- * Begins dynamic rendering into swapchain image `image_index`.
- * Transitions image layout, binds rendering attachments, and sets viewport.
- * Clears attachment color when `clear` is non-NULL.
+ * Begins dynamic rendering into swapchain image `image_index`, with the
+ * viewport and push constants of `canvas`. Clears the attachment when
+ * `clear` is non-NULL.
  */
 static void pass_begin(struct render_gpu *g, VkCommandBuffer cmd, const struct gpu_surface *gs,
                        uint32_t image_index, struct vector2i canvas,
                        const VkClearColorValue *clear)
 {
-    /* The image is in use from the stage that waits for the acquire semaphore. */
+    /* The submit waits for the acquire semaphore at color output, so the
+     * transition starts in that stage. */
     VkImageMemoryBarrier2 to_target = image_barrier(gs->chain.images[image_index],
                                                     VK_IMAGE_LAYOUT_UNDEFINED,
                                                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -254,8 +254,11 @@ static void pass_begin(struct render_gpu *g, VkCommandBuffer cmd, const struct g
 }
 
 /*
- * Ends rendering, submits recorded commands to the queue, and presents `image_index`.
- * Returns true on success, or false on submission failure.
+ * Ends rendering, submits the recorded commands, and presents
+ * `image_index`. A failed queue submission creates a fresh signaled fence,
+ * because no submit signals the old one, and returns false. A present
+ * result that reports an out-of-date or suboptimal swapchain sets the flags
+ * of `gs`; the return value reports only the submission.
  */
 static bool frame_submit(struct render_gpu *g, struct gpu_surface *gs, struct frame_slot *slot,
                          uint32_t image_index)
@@ -327,8 +330,9 @@ static bool frame_submit(struct render_gpu *g, struct gpu_surface *gs, struct fr
 }
 
 /*
- * Aborts frame rendering after image acquisition.
- * Renews the acquired semaphore of `slot` and marks swapchain `gs` out of date.
+ * Abandons a frame after its image was acquired: renews the semaphore of
+ * `slot` and marks the swapchain out of date, because the image is never
+ * presented and the swapchain cannot reuse it.
  */
 static void frame_abandon(struct render_gpu *g, struct gpu_surface *gs, struct frame_slot *slot)
 {
@@ -340,8 +344,8 @@ static void frame_abandon(struct render_gpu *g, struct gpu_surface *gs, struct f
 
 /*
  * Makes room in `g` for `n` image textures. A frame with more images than
- * the device has slots adds textures. A new texture holds no image. On
- * failure the device keeps its earlier count.
+ * the backend has textures grows the table. A new texture holds no image.
+ * On failure the device keeps its earlier count.
  */
 static bool images_reserve(struct render_gpu *g, int n)
 {
@@ -361,7 +365,8 @@ static bool images_reserve(struct render_gpu *g, int n)
     return true;
 }
 
-/* Allocates or resizes the glyph atlas and UI image textures for the frame. */
+/* Allocates or resizes the atlas and the textures of the images that this
+ * frame draws. */
 static bool textures_sync(struct render_gpu *g)
 {
     const struct gpu_build *b = &g->build;
@@ -375,7 +380,8 @@ static bool textures_sync(struct render_gpu *g)
     return true;
 }
 
-/* Copies pending glyph atlas and UI image pixels into the slot upload buffer. */
+/* Stages the pending atlas and UI image pixels in the upload buffer of
+ * `slot` and records the offset of each image in `g->image_offsets`. */
 static bool uploads_stage(struct render_gpu *g, struct frame_slot *slot)
 {
     const struct gpu_build *b = &g->build;
@@ -411,14 +417,14 @@ static bool uploads_stage(struct render_gpu *g, struct frame_slot *slot)
  * Records buffer-to-image copies and shader read barriers for dirty textures.
  * Returns false when it ran out of memory.
  *
- * The copies write textures that every frame samples: the glyph atlas and
- * the UI images. The barrier below changes each one from shader read to
- * transfer write. Its source scope covers the fragment reads of every
- * earlier submission on this queue, because all frames go to one queue in
- * submission order. A frame that is still in flight thus finishes its reads
- * before these writes start. A texture that changes size waits for idle in
- * vulkan_texture_ensure(). The upload buffer belongs to the frame slot,
- * whose fence is signaled before the slot comes back.
+ * The copies write textures that a submitted frame can still sample: the
+ * glyph atlas and the UI images. A texture in shader read moves to transfer
+ * write, and the source scope of that barrier covers the fragment reads of
+ * every earlier submission on this queue, because all frames go to one
+ * queue in submission order. A frame that is still in flight thus finishes
+ * its reads before these writes start. A texture that changes size waits
+ * for idle in vulkan_texture_ensure(). The upload buffer belongs to the
+ * frame slot, whose fence is signaled before the slot comes back.
  */
 static bool uploads_record(struct render_gpu *g, struct frame_slot *slot)
 {
@@ -472,7 +478,8 @@ static bool uploads_record(struct render_gpu *g, struct frame_slot *slot)
     return ok;
 }
 
-/* Resets texture layouts to undefined when recorded uploads are not submitted. */
+/* Resets the tracked texture layouts to undefined when the recorded uploads
+ * are not submitted, because barriers_add() already updated them. */
 static void uploads_forget(struct render_gpu *g)
 {
     const struct gpu_build *b = &g->build;
@@ -482,7 +489,8 @@ static void uploads_forget(struct render_gpu *g)
             g->images[i].layout = VK_IMAGE_LAYOUT_UNDEFINED;
 }
 
-/* Records draw commands and pipeline state for frame instances. */
+/* Records a draw for each command, with the pipeline, descriptor set, and
+ * bindings that it needs. */
 static void commands_record(struct render_gpu *g, struct frame_slot *slot,
                             const size_t offsets[GPU_ST_COUNT], struct vector2i bounds)
 {
@@ -542,13 +550,13 @@ static void commands_record(struct render_gpu *g, struct frame_slot *slot,
     }
 }
 
-/* Uploads resources, records render passes, and presents built frame instances. */
+/* Stages the frame resources, records the draws, and presents the frame. */
 static enum render_gpu_status draw_built(struct render_gpu *g, struct gpu_surface *gs,
                                          struct frame_slot *slot, struct framebuffer *fb,
                                          uint32_t base, uint64_t wait_ns)
 {
-    /* Everything that can fail on memory comes first. Up to the drawable,
-     * a failure gives the frame to the CPU. */
+    /* Everything that can fail on memory comes first. Before the drawable
+     * is requested, a failure gives the frame to the CPU. */
     size_t offsets[GPU_ST_COUNT];
     size_t instance_bytes = gpu_build_instance_layout(&g->build, offsets);
     if (!textures_sync(g) ||
@@ -590,7 +598,8 @@ static enum render_gpu_status draw_built(struct render_gpu *g, struct gpu_surfac
     return RENDER_GPU_PRESENTED;
 }
 
-/* Checks whether framebuffer `fb` resizes swapchain surface `gs`. */
+/* True when the frame is a resize: a live resize transaction, or a canvas
+ * size that the swapchain has not checked yet. */
 static bool frame_resizes(const struct gpu_surface *gs, const struct framebuffer *fb)
 {
     return fb->transaction || !vector2i_eq(gs->request_size, fb->size);

@@ -5,8 +5,9 @@
 
 #include "ui/widget.h"
 
-/* A horizontal slider. The value stays inside the range and on the step. It
- * sends UI_ACTION_CHANGE with the value in thousandths in `arg`. */
+/* A horizontal slider. The value stays inside the range. A positive step
+ * quantizes it. The slider sends UI_ACTION_CHANGE with the value in
+ * thousandths in `arg`. */
 struct ui_slider {
     struct ui_widget widget;
     struct {
@@ -19,8 +20,8 @@ struct ui_slider {
 };
 
 void ui_slider_init(struct ui_slider *slider);
-/* Set the range. The minimum comes first. The value is clamped after the
- * call. */
+/* Set the range. The arguments swap when the maximum is smaller than the
+ * minimum. The value is clamped to the new range. */
 void ui_slider_set_range(struct ui_slider *slider, float min, float max);
 void ui_slider_set_step(struct ui_slider *slider, float step);
 /* Clamp the value to the range and the step. Sends no action. */

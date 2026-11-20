@@ -26,7 +26,7 @@ struct tb_parts {
     ui_part_id tab_preview;
 };
 
-/* The pixel metrics of the bar and its tab slots for one width.
+/* The pixel metrics of the bar and its tab slots for one tab count and width.
  * geometry.c fills the record from the part styles. scene.c and tabbar.c
  * read it. */
 struct tb_layout {
@@ -64,9 +64,7 @@ static inline const struct css_scale_context *tb_ctx(const struct ui_tabbar *tb)
 }
 
 /* style.c */
-/* Returns the interned part handles of the bar. */
 const struct tb_parts *tb_part(void);
-/* Returns the style of `part` of the bar in state `pseudo`. */
 struct css_style tb_style(const struct ui_tabbar *tb, ui_part_id part,
                           unsigned pseudo);
 /* Returns the CSS height of the bar in device pixels. */
@@ -77,7 +75,7 @@ int tb_css_height(const struct ui_tabbar *tb);
 float tb_open_progress(const struct ui_tabbar *tb, int index);
 /* Returns the slide offset of the tab at `index` in pixels. */
 float tb_tab_offset(const struct ui_tabbar *tb, int index);
-/* Fills the bar and tab metrics for `n_tabs` tabs at width `size.x`. */
+/* Returns the bar and tab metrics for `n_tabs` tabs at width `size.x`. */
 struct tb_layout tb_layout_for(const struct ui_tabbar *tb, int n_tabs,
                                struct vector2i size);
 /* Returns the fractional width of the tab at `index`. */
@@ -86,16 +84,16 @@ float tb_tab_width_f(const struct ui_tabbar *tb,
 /* Returns the rounded width of the tab at `index`, or 0. */
 int tb_tab_width_at(const struct ui_tabbar *tb,
                     const struct tb_layout *l, int index);
-/* Returns the close button rectangle of the tab rectangle `tab_r`. */
 struct rect2i tb_close_box(struct rect2i tab_r, int close_w, int close_h,
                            int close_pad);
-/* Fills the drop preview rectangle. False when no preview is visible. */
+/* Fills the drop preview rectangle. Returns false when no preview is
+ * visible. */
 bool tb_drop_rect(const struct ui_tabbar *tb, const struct tb_layout *l,
                   struct vector2i size, struct rect2i *out);
-/* Fills the visible span of the tab at `index`. False when it has no span. */
+/* Fills the visible span of the tab at `index`. Returns false when the tab
+ * has no span. */
 bool tb_tab_span(const struct ui_tabbar *tb, const struct tb_layout *l,
                  int n_tabs, int width, int index, int *x, int *w);
-/* Fills the rectangle of the tab that the pointer drags. */
 bool tb_drag_rect(const struct ui_tabbar *tb, const struct tb_layout *l,
                   int n_tabs, struct vector2i size, struct rect2i *out);
 /* Counts the tabs that stay after the close animations end. */
@@ -104,15 +102,12 @@ int tb_live_tabs(const struct ui_tabbar *tb, int n_tabs);
 int tb_bar_height(const struct ui_tabbar *tb, int css_height, int n_tabs);
 /* Returns the resting height of the bar. */
 int tb_steady_height(const struct ui_tabbar *tb, int n_tabs);
-/* Returns the full height of the bar while an external drag is over it. */
+/* Returns the full CSS height of the bar when it holds `n_tabs` tabs. */
 int tb_drop_height(const struct ui_tabbar *tb, int n_tabs);
-/* Fills the rectangle of the tab at `index`. */
 bool tb_tab_rect_at(const struct ui_tabbar *tb, int n_tabs,
                     struct vector2i size, int index, struct rect2i *out);
-/* Fills the rectangle of the close button of the tab at `index`. */
 bool tb_close_rect_at(const struct ui_tabbar *tb, int n_tabs,
                       struct vector2i size, int index, struct rect2i *out);
-/* Fills the rectangle of the new tab button. */
 bool tb_new_tab_rect_at(const struct ui_tabbar *tb, int n_tabs,
                         struct vector2i size, struct rect2i *out);
 /* Hit-tests the point `p` in widget space. */
@@ -126,7 +121,8 @@ bool tb_scene_emit(struct ui_tabbar *tb, const struct ui_tab_label *tabs,
                    uint64_t now_ms);
 
 /* tabbar.c */
-/* Grows the tab list to `n` entries and starts their open animation. */
+/* Grows the tab state array to `n` entries. New entries start open and get an
+ * accessibility id. */
 bool tb_ensure_tabs(struct ui_tabbar *tb, int n);
 
 #endif

@@ -46,7 +46,7 @@ static struct css_style label_part(const struct ui_label *label, ui_part_id part
                           ui_widget_style_pseudo(&label->widget));
 }
 
-/* Walks the text of one label and looks for the end of each line. */
+/* The position of the line scan in one label text. */
 struct label_scan {
     const char *text;
     size_t len, off, end, next;
@@ -55,13 +55,14 @@ struct label_scan {
     bool segment, done;
 };
 
-/* The lines of one label, walked in order. */
+/* The position of the walk over the cached lines of one label. */
 struct label_iter {
     const struct label_lines *lines;
     size_t index;
 };
 
-/* Returns the end of the text that fits `cap` cells from `start`. */
+/* Returns the offset where the text between `start` and `end` stops fitting
+ * in `cap` cells, and stores the cells used in `cells`. */
 static size_t fit_end(const char *text, size_t start, size_t end, int cap,
                       int *cells)
 {
@@ -145,9 +146,9 @@ static bool lines_reserve(struct label_lines *lines, size_t count)
     return true;
 }
 
-/* Returns the lines of `label` for `width` pixels. Builds them again when the
- * text, the width, the wrap mode, or the cell size changed. The cache belongs
- * to the label, so a caller with a const label only reads it. */
+/* Returns the lines of `label` at `width` pixels, and rebuilds them when the
+ * text, the width, the wrap mode, or the cell size changed. The line buffer
+ * belongs to the label and a later call may reallocate it. */
 static const struct label_lines *lines_for(const struct ui_label *label, int width)
 {
     struct label_lines *lines = &((struct ui_label *)label)->state.lines;
@@ -480,8 +481,8 @@ static bool label_accessibility_action(
     }
     return false;
 }
-/* Runs one edit command. Both event fields of a key call it.
- * `extend` keeps the selection on a caret move. */
+/* Runs one edit command from a key or shortcut event. `extend` keeps the
+ * selection when the caret moves. */
 static bool label_edit(struct ui_label *label, enum ui_edit_command command,
                        bool extend)
 {

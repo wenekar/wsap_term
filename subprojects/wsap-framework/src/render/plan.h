@@ -152,14 +152,16 @@ struct plan_output {
 };
 
 /*
- * Computes row paint operations, block moves, UI dirty regions, and damage bounds.
- * Reads keys and UI spans from `in` and writes plan directives to `out`.
+ * Computes the row operations, block moves, UI regions, and damage of one
+ * frame from `in`. The arrays of `out` must have at least the sizes that
+ * struct plan_output gives.
  */
 void plan_frame(const struct plan_input *in, struct plan_output *out);
 
 /*
- * Calculates horizontal UI pixel coverage spans for each grid row in `scene`.
- * Writes `rows + 1` spans to `out`, including bottom margin coverage.
+ * Calculates the x-span, in grid-local pixels, of the UI ink of each grid
+ * row and of the bottom margin. `out` must hold rows + 1 spans. A NULL or
+ * invalid scene gives empty spans.
  */
 void plan_ui_ink(const struct ui_scene *scene, struct rect2i grid, int ch, int rows,
                  struct plan_span *out);

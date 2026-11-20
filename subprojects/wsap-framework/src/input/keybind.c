@@ -70,9 +70,10 @@ static bool lookup_name(const struct name_entry *tab, size_t n,
     return false;
 }
 
-/* Finds the command that `s` names for scope `scope`. The function reads
- * `reg` first, then the built-in app commands. A widget registry holds no app
- * command, so a widget scope can still bind one. */
+/* Returns the command ID that name `s` has in scope `scope` of `reg`. The
+ * lookup reads `scope` and then the app scope of `reg`, and falls back to the
+ * built-in app commands, so a widget scope can bind an app command. The name
+ * `none` gives `INPUT_COMMAND_NONE`. */
 static bool parse_action_in(const struct input_command_registry *reg,
                             uint8_t scope, const char *s,
                             input_command_id *out)
@@ -326,7 +327,7 @@ static uint32_t lower(uint32_t c)
 }
 
 /* The token of a key is above every Unicode codepoint, and the token of a
- * character is the codepoint itself. No token is zero. */
+ * character is the codepoint itself. A valid binding has a nonzero token. */
 static inline uint32_t chord_token(uint32_t codepoint, uint16_t key)
 {
     return key != INPUT_KEY_NONE ? 0x110000u + key : lower(codepoint);
@@ -512,7 +513,9 @@ bool input_keymap_apply_spec_registry(struct input_keymap *km,
     return keymap_set(km, scope, mods, codepoint, key, (uint16_t)action);
 }
 
-/* Looks up the chord of `ev` in one scope of `km`. */
+/* Looks up the chord of `ev` in one scope of `km`. It tries the key, the
+ * keypad key, the codepoint, the shifted character, and the base character of
+ * `ev`, in that order. */
 static bool lookup_scope(const struct input_keymap *km, uint8_t scope,
                          unsigned mods, const struct input_key_event *ev,
                          input_command_id *out)

@@ -121,8 +121,9 @@ static void cpu_release(struct renderer *r)
     r->pool_failed = false;
 }
 
-/* Starts the main-thread CPU state on the first CPU frame; the worker pool
- * waits until a frame reaches POOL_SERIAL_CELLS. */
+/* Starts the main-thread CPU state at the first CPU frame. The worker pool
+ * starts separately, when a frame has POOL_SERIAL_CELLS cells or more
+ * (cpu_pool_ensure()). */
 static bool cpu_ensure(struct renderer *r)
 {
     if (r->cpu_initialized)
@@ -701,8 +702,8 @@ struct render_result render_draw_view(struct renderer *r, struct framebuffer *fb
         }
     }
 
-    /* 5. The CPU paints the frame now, so it takes the canvas and starts the
-     * CPU state if they are not there yet. */
+    /* 5. The CPU paints the frame, so it takes the canvas and starts the CPU
+     * state when they do not exist yet. */
     if (!pixels_ensure(fb) || !cpu_ensure(r)) {
         render_surface_invalidate(s);
         return result_all();
@@ -749,6 +750,8 @@ struct render_result render_draw_view(struct renderer *r, struct framebuffer *fb
         r->jobs[n_jobs++] = (struct raster_job){
             .row = win->row, .x0 = win->x.x0, .x1 = win->x.x1, .reach = s->reach[src],
         };
+        /* A window job reads the spill reach on both sides of its window
+         * (render/cpu/raster.h, "Spill reach"). */
         cells += (win->x.x1 - win->x.x0 + 2 * s->reach[src]) / cw + 2;
     }
     if (n_jobs) {

@@ -254,8 +254,8 @@ void window_native_compose(struct window *w, struct window_native *n,
  * would otherwise free and allocate a whole canvas.
  *
  * The renderer asks for these pixels only when the CPU paints the frame.
- * A frame that the GPU takes needs no canvas, so a GPU window keeps no
- * canvas in the heap while the GPU draws its frames.
+ * A frame that the GPU takes needs no canvas, so a window whose frames the
+ * GPU draws allocates no canvas.
  */
 static uint32_t *native_pixels(struct window_native *n, struct vector2i size)
 {
@@ -303,8 +303,8 @@ static uint32_t *gpu_cpu_pixels(void *ud, struct vector2i size)
 static void gpu_compose(const struct window_gpu_frame *f, void *ud)
 {
     struct gpu_draw *d = ud;
-    /* The frame carries no canvas. render_draw() asks for one only when the
-     * CPU paints the frame, so a GPU frame keeps no pixels in the heap. */
+    /* The frame carries no canvas. The renderer asks for one only when the
+     * CPU paints the frame. */
     window_native_compose(d->w, d->n, (struct framebuffer){
         .size = f->size,
         .drawable = f->drawable,
@@ -460,7 +460,7 @@ struct window *window_create(struct window_host *host, const struct window_spec 
     w->host = host;
     /* The keymap of a window is complete at once, so a key that arrives
      * before the first frame still runs an app command. Every window copies
-     * the keymap of its host, so two windows never differ. */
+     * the keymap of its host, so the windows start with the same bindings. */
     if (!host->keymap_loaded) {
         input_config_load(&host->keymap);
         host->keymap_loaded = true;
@@ -688,9 +688,8 @@ struct yasl_surface *window_surface(const struct window *w)
 
 /*
  * Moves the reports that the display sent since the last read into the counts
- * of the window. A report arrives on a thread of the display, at any time, so a
- * count that a report would otherwise wait for another draw to collect is
- * current when it is read.
+ * of the window. A report arrives on a thread of the display at any time, so a
+ * read of the stats includes a report that arrived since the last draw.
  */
 static void stats_collect_presented(struct window *w)
 {

@@ -18,7 +18,7 @@ enum {
 
 /* Gap between the indicator and the label, in text cells. */
 #define TOGGLE_GAP_CELLS 1
-/* The indicator is as high as one text cell and as wide as one cell. */
+/* The indicator width of a checkbox or a radio button, in text cells. */
 #define TOGGLE_INDICATOR_CELLS 1
 
 static const char *const TOGGLE_CLASSES[3] = {

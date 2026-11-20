@@ -255,7 +255,6 @@ struct render_walk_sink {
     void *ctx;
 };
 
-/* Walk flags. */
 enum render_walk_flags {
     /* Do not fetch unshaped glyphs before the callback. The callback asks
      * with render_glyph_get() only when it needs the glyph, such as on a

@@ -2,15 +2,18 @@
 using namespace metal;
 
 /*
- * The shaders of the Metal backend. render.m builds this source at run time.
- * tools/embed_metal.py puts the file, with its quoted includes, in a string.
+ * The shaders of the Metal backend. tools/embed_metal.py puts this source,
+ * with its quoted includes, in a string in a generated header, and render.m
+ * builds the shader library from that string at run time.
  *
- * Every pipeline writes premultiplied color, except for BLEND_NONE, which
- * writes the straight color. The blend is
+ * Every pipeline writes premultiplied color, except that a BLEND_NONE draw
+ * writes a straight color and the blend state replaces the pixel. For the
+ * other modes the blend state of the draw is
  * out = src + dst * (1 - src.a).
  *
- * The structs below must match the structs of render.m. Each draw is one
- * quad of six vertices for each instance.
+ * The structs below must match struct uniforms in render.m and the instance
+ * structs of render/gpu/build.h. Each draw is one quad of six vertices for
+ * each instance.
  */
 
 #define SHAPE_FN static inline
@@ -27,7 +30,8 @@ using namespace metal;
 /* An image that samples four texels. */
 #define MODE_IMAGE_LINEAR 5u
 
-/* The blend mode of a draw. It matches enum gpu_blend. */
+/* GPU_BLEND_NONE of enum gpu_blend. It is the one blend mode that the shader
+ * tests; the blend state of the pipeline applies the others. */
 #define BLEND_NONE 4u
 
 /* The shape instance modes. */
@@ -48,6 +52,7 @@ static inline float2 quad_corner(uint vertex_id)
     return corners[vertex_id];
 }
 
+/* Converts a pixel position, with y down, to clip space. */
 static inline float4 pixel_to_ndc(float2 pos, float2 viewport)
 {
     return float4(pos.x / (viewport.x * 0.5f) - 1.0f,
@@ -91,18 +96,20 @@ vertex GlyphVertexOut glyph_vertex(uint vertex_id [[vertex_id]],
     return out;
 }
 
-/*
- * The sample rule of an image op: destination pixel i of n samples the
- * source coordinate (i + 0.5) * src / n. A nearest sample takes the texel
- * that holds the coordinate. A linear sample mixes four texels by the rest
- * of the way. The CPU painter uses the same rule. Every tap stays inside
- * the uv sub-rect, so a texel next to the sub-rect cannot bleed in.
- */
+/* The texel `uv`, clamped to the texel rect of `lo` to `hi`. */
 static inline float4 image_texel(texture2d<float, access::read> image, int2 uv, int2 lo, int2 hi)
 {
     return image.read(uint2(max(min(uv, hi), lo)));
 }
 
+/*
+ * Samples the image at the texel coordinate `uv`, inside the texel rect
+ * `uv_rect`. The sample rule of an image op: destination pixel i of n samples
+ * the source coordinate (i + 0.5) * src / n. A nearest sample takes the texel
+ * that holds the coordinate. A linear sample mixes four texels by the rest of
+ * the way. The CPU painter uses the same rule. Every tap stays inside the uv
+ * sub-rect, so a texel next to the sub-rect cannot bleed in.
+ */
 static inline float4 image_sample(texture2d<float, access::read> image, float2 uv, bool linear,
                                   float4 uv_rect)
 {
@@ -199,7 +206,9 @@ vertex ShapeVertexOut shape_vertex(uint vertex_id [[vertex_id]],
     return out;
 }
 
-/* The shadow of a straight edge, as the CPU mask table holds it. */
+/* The shadow coverage at pixel offset `p` from a straight edge, extended past
+ * the mask the way ui_shadow_edge_at() extends it: 0 beyond -extent and 255
+ * beyond extent. */
 static inline int shadow_edge_at(int p, int extent, float sigma)
 {
     if (p < -extent)
@@ -216,7 +225,13 @@ static inline int shadow_slab(int p, int len, int extent, float sigma)
     return near_edge + far_edge > 255 ? near_edge + far_edge - 255 : 0;
 }
 
-/* The coverage of one pixel of a shadow. This is ui_shadow_coverage(). */
+/*
+ * The coverage of one pixel of a shadow, as ui_shadow_coverage() computes it.
+ * `painted` is the shadow rect, which includes `extent` pixels of blur on each
+ * side, and `pixel` is a pixel index. A rounded rect that has room for the
+ * corner tile uses the tile path; the other pixels use one straight edge on
+ * each axis.
+ */
 static inline int shadow_coverage(int2 pixel, float4 painted, int radius, int blur)
 {
     float sigma = float(blur) * 0.5f;

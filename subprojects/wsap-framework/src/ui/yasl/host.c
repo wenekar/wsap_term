@@ -9,7 +9,8 @@
 #include "yasl/yasl.h"
 
 /* The live hosts of the process. The debugger reads this array, so it must
- * stay a plain static. A host enters on init and leaves on destroy. */
+ * stay a global array with external linkage. A host enters on init and leaves
+ * on destroy. */
 #define WINDOW_HOST_REGISTRY_MAX 8
 struct window_host *window_host_registry[WINDOW_HOST_REGISTRY_MAX];
 int window_host_registry_count;

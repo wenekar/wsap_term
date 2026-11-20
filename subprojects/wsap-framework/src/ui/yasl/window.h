@@ -18,9 +18,10 @@ struct window_native;
 
 /*
  * Composes one frame of native surface `n`. The caller fills `target`. Set
- * `target.fresh` only when the pixels are not what the last frame drew:
- * the first frame, a reallocation, or a failed present. A retained canvas
- * keeps its pixels, so the renderer repaints only what changed.
+ * `target.fresh` only when the pixels are not what the last frame drew: the
+ * first frame or a reallocation. A retained canvas keeps its pixels, so the
+ * renderer repaints only what changed. A failed present makes the next frame
+ * repaint every pixel.
  */
 void window_native_compose(struct window *w, struct window_native *n,
                            struct framebuffer target);
@@ -149,12 +150,13 @@ struct window *window_create(struct window_host *host, const struct window_spec 
 bool window_has_gpu(const struct window *w);
 void window_compose_frame(struct window *w, struct window_frame *frame);
 /*
- * Shows the canvas of `frame`. `damage` lists the canvas pixels that
- * changed. NULL, full damage, or an empty list presents the whole canvas.
- * An overflowed list presents its bounds. `presented` is the GPU result
- * for a drawable frame. For a drawable frame it means that the GPU submitted
- * the frame, not that a display showed it. Returns true when the surface took
- * the frame. Only a display report counts as a presentation.
+ * Presents the canvas of `frame`, or records the result of a drawable frame.
+ * `damage` lists the canvas pixels that changed. NULL, full damage, or an
+ * empty list presents the whole canvas. An overflowed list presents its
+ * bounds. `presented` reports the GPU result of a drawable frame: true when
+ * the GPU submitted the frame, not when a display showed it. Returns true
+ * when the surface took the frame. Only a display report proves that a frame
+ * was shown.
  */
 bool window_present(struct window *w, struct window_frame *frame,
                     const struct damage_list *damage, bool presented);
@@ -177,7 +179,7 @@ void window_set_drag_target(struct window *w, const struct window_drag_target *t
  * a pass, it is the current time. */
 uint64_t window_frame_time_ms(struct window *w);
 uint32_t window_scale_120(const struct window *w);
-/* The scale of `w` as a factor of one, where 1.0 is a scale of 120. */
+/* Returns the scale factor of `w`, where a scale of 120 is 1.0. */
 double window_scale(const struct window *w);
 #define WINDOW_DEFAULT_COLS 132
 #define WINDOW_DEFAULT_ROWS 42
@@ -207,8 +209,8 @@ struct window_pointer window_pointer(const struct window *w);
 void window_repaint_all(struct window *w);
 bool window_take_repaint(struct window *w);
 const struct input_keyboard_state *window_keyboard(const struct window *w);
-/* Returns the keymap of window `w`. The window copies it from its host at
- * creation and in window_host_reload_input(). */
+/* Returns the keymap of window `w`. The window copies every scope of its host
+ * keymap at creation, and window_host_reload_input() replaces its app scope. */
 const struct input_keymap *window_keymap(const struct window *w);
 void window_copy(struct window *w, enum yasl_selection sel, const char *text);
 void window_paste(struct window *w, enum yasl_selection sel);
@@ -234,8 +236,9 @@ int window_ime_preedit_end(const struct window *w);
  *   0xAARRGGBB values, or it is NULL for a rect of `color`.
  * - `key` names `pixels`. The window keeps the last pixels when the key is
  *   the same. Key 0 never matches: the window takes the pixels again.
- * - window_set_cursor_overlay() returns true when the layer shows the
- *   cursor. The frame must then draw no cursor of its own.
+ * - window_set_cursor_overlay() returns true when the layer takes the
+ *   cursor, also while the cursor is hidden. The frame must then draw no
+ *   cursor of its own.
  */
 struct window_cursor_overlay {
     bool active;

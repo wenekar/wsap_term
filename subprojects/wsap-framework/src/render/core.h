@@ -2,9 +2,9 @@
 #define RENDER_CORE_H
 
 /*
- * The renderer calls that the terminal layer uses. The public calls of
- * render.h adapt a terminal frame to a render_grid_view and then call
- * these.
+ * The renderer calls that the terminal layer uses. The terminal layer above
+ * this library adapts a terminal frame to a render_grid_view and passes it
+ * to these calls, from its render_draw() and render_cursor_cell().
  *
  * A NULL `grid` means that the frame has no grid.
  */

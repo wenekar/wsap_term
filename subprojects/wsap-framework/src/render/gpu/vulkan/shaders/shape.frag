@@ -3,6 +3,10 @@
 /*
  * Shape fragment shader for Vulkan backend.
  * Evaluates coverage for rounded boxes, circles, and drop shadows.
+ *
+ * The functions below repeat paint/shape_math.h and the mask lookup of
+ * paint/shadow.h, because GLSL cannot include a C header. A coverage value
+ * must match the mask that ui_shadow_mask_shape() builds on the CPU.
  */
 
 layout(location = 0) flat in vec4 in_rect;
@@ -67,8 +71,6 @@ float shape_phi(float z)
     return z < 0.0 ? cdf : 1.0 - cdf;
 }
 
-/* The same functions as paint/shape_math.h. A coverage value must match
- * the CPU mask table, which that header builds. */
 int shape_shadow_edge(int p, float sigma)
 {
     return shape_quantize(shape_phi((float(p) + 0.5) / sigma));

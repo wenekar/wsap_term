@@ -4,8 +4,7 @@
 
 #include "input/command.h"
 
-/* The app commands. The name is the config word. The label is the menu text.
- * The order does not matter. */
+/* The app commands. The order of the rows does not matter. */
 static const struct input_command app_commands[] = {
     {INPUT_COMMAND_FONT_LARGER,    "font_larger",     "Zoom In",            0},
     {INPUT_COMMAND_FONT_SMALLER,   "font_smaller",    "Zoom Out",           0},

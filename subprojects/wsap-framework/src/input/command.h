@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 /*
- * A command ID. Zero runs no command.
+ * A command ID. `INPUT_COMMAND_NONE` is zero and runs no command.
  * A key binding, a menu item, and an action event hold this value.
  * The IDs of the app commands are stable, so a saved binding stays valid.
  * A widget command gets its ID from `input_command_add()`.
@@ -85,10 +85,10 @@ _Static_assert(INPUT_COMMAND_REDO == 27, "redo ID moved");
 _Static_assert(INPUT_COMMAND_CUT == 28, "cut ID moved");
 _Static_assert(INPUT_COMMAND_APP_COUNT == 29, "app ID count moved");
 
-/* The first ID that `input_command_add()` gives to a new command.
- * Each scope gets a band of `INPUT_COMMAND_SCOPE_ID_SPAN` IDs from this
- * value, so two registries in different scopes never give the same ID.
- * It is above every app ID, so a widget command never takes an app ID. */
+/* The base of the ID bands of the widget scopes. The first command in scope 1
+ * gets this ID. Each scope gets a band of `INPUT_COMMAND_SCOPE_ID_SPAN` IDs
+ * from this base, so two registries in different scopes never give the same
+ * ID. It is above every app ID, so a widget command never takes an app ID. */
 #define INPUT_COMMAND_DYNAMIC_ID 256
 #define INPUT_COMMAND_SCOPE_ID_SPAN 4096
 
@@ -100,8 +100,8 @@ _Static_assert(INPUT_COMMAND_APP_COUNT == 29, "app ID count moved");
  *
  * Each widget scope has one registry and one owner.
  * Get a free scope from `input_command_scope_new()`.
- * `input_command_add()` refuses a scope that no owner took, and a second
- * registry in a scope.
+ * `input_command_add()` refuses a scope that no owner took, and it refuses a
+ * second registry in a scope.
  *
  * To add a command in a widget scope:
  * 1. Call `input_command_scope_new()`, and keep the scope that it returns.
@@ -110,7 +110,7 @@ _Static_assert(INPUT_COMMAND_APP_COUNT == 29, "app ID count moved");
  * 3. Set the scope in the `command_scope` field of the widget.
  * 4. When the command has a chord, bind it with `window_host_bind_scope()`
  *    from `ui/yasl/client.h`. Pass the registry of the widget. The binding
- *    applies in every window of the host, also in a window that opens later.
+ *    applies in every window of the host, and in a window that opens later.
  *    For a keymap of your own, use `input_keymap_apply_spec_registry()`. A
  *    menu item needs no chord. An app command, such as `close_tab`, can bind
  *    in the widget scope too.
@@ -123,19 +123,17 @@ _Static_assert(INPUT_COMMAND_APP_COUNT == 29, "app ID count moved");
  * For a keymap of your own, call `input_keymap_clear_scope()` and then
  * `input_command_scope_release()`.
  * The UI core does not do this, because it owns no keymap.
- * A registry in one scope never gives an ID that a registry in another scope
- * gives.
  */
 enum input_command_scope {
     INPUT_COMMAND_SCOPE_APP = 0,
-    /* One scope more than this value is invalid. */
+    /* A scope at or above this value is invalid. */
     INPUT_COMMAND_SCOPE_COUNT = 16,
 };
 
 /*
  * A command has a stable ID, a name, and a label.
- * The ID never changes, so a saved binding stays valid.
- * The name is the word that a config line uses for the command.
+ * An app command ID never changes, so a saved binding stays valid.
+ * The name is the word that a binding spec or a config line uses.
  * The label is the text of a menu item or a palette row.
  */
 struct input_command {
@@ -147,18 +145,24 @@ struct input_command {
 
 #define INPUT_COMMAND_INITIAL_CAP 8
 
-/* A set of commands. A registry owns its entries. */
+/*
+ * A set of commands. A registry owns its array of entries, not the name and
+ * label strings. A pointer that `input_command_find()` or a name lookup
+ * returns stays valid until the next `input_command_add()` or
+ * `input_command_registry_free()` on the registry.
+ */
 struct input_command_registry {
     struct input_command *cmds;
     size_t n;
     size_t cap;
 };
 
-/* Prepares empty registry `reg`. */
+/* Prepares registry `reg` with no commands. Pass a registry that holds no
+ * storage: the call does not free it. */
 void input_command_registry_init(struct input_command_registry *reg);
 
-/* Releases the storage of registry `reg`. The names and labels stay. The
- * scopes that `reg` held take a new registry. */
+/* Releases the array of registry `reg` and leaves it empty. The name and label
+ * strings stay. A scope that `reg` held can then take a new registry. */
 void input_command_registry_free(struct input_command_registry *reg);
 
 /*
@@ -182,15 +186,16 @@ void input_command_scope_release(uint8_t scope);
 
 /*
  * Adds a command to scope `scope` of registry `reg` with `name` and `label`.
- * The scope must come from `input_command_scope_new()`. The first registry
- * that adds a command in the scope holds it until the registry is freed or
- * the scope is released.
- * The registry gives the command the first free ID in the band of `scope`,
- * at or above `INPUT_COMMAND_DYNAMIC_ID`.
+ * The scope must come from `input_command_scope_new()`.
+ * The first registry that adds a command in the scope holds it until the
+ * registry is freed or the scope is released.
+ * The registry gives the command the first free ID in the band of `scope`, at
+ * or above `INPUT_COMMAND_DYNAMIC_ID`.
  * A widget calls this for a command of its own scope.
  * The name and the label must stay valid while the registry lives.
- * Returns the ID, or `INPUT_COMMAND_NONE` on a scope that no owner took, on
- * a scope that another registry holds, or on a memory shortage.
+ * Returns the ID, or `INPUT_COMMAND_NONE` when the call adds no command: on
+ * the app scope, on a scope that no owner took or another registry holds, on
+ * a NULL or empty name, on a full ID band, or on a memory shortage.
  */
 input_command_id input_command_add(struct input_command_registry *reg,
                                   uint8_t scope, const char *name,
@@ -207,7 +212,7 @@ const struct input_command *input_command_find(const struct input_command_regist
 
 /*
  * Finds the command that `name` names in any scope of `reg`.
- * A widget scope wins over the app scope.
+ * A widget scope wins over the app scope. The name comparison ignores case.
  * Returns NULL when no command has that name.
  */
 const struct input_command *input_command_find_name(const struct input_command_registry *reg,
@@ -215,7 +220,8 @@ const struct input_command *input_command_find_name(const struct input_command_r
 
 /*
  * Finds the command that `name` names in scope `scope` of `reg`.
- * The function reads `scope` first, then the app scope.
+ * The function reads `scope` first, then the app scope. The name comparison
+ * ignores case.
  * Returns NULL when no command has that name.
  */
 const struct input_command *input_command_find_name_scoped(const struct input_command_registry *reg,
@@ -230,7 +236,8 @@ const struct input_command *input_command_find_name_scoped(const struct input_co
 const char *input_command_label(const struct input_command_registry *reg,
                                uint8_t scope, input_command_id id);
 
-/* Returns the built-in command registry. The app and the tests read it. */
+/* Returns the built-in command registry. It holds every app command and stays
+ * valid for the process. */
 const struct input_command_registry *input_command_builtin(void);
 
 #endif
