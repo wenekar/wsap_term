@@ -53,8 +53,9 @@ static void __attribute__((format(printf, 1, 2))) putf(const char *fmt, ...)
 
 #define PICK(list) (list)[rn((int)(sizeof(list) / sizeof((list)[0])))]
 
-/* Emit sequences that the model does not implement: OSC 8 links and
- * XTGETTCAP at buffer-edge lengths. The model test leaves this off.
+/* Emit sequences that the model does not implement: OSC 8 links, XTGETTCAP,
+ * DECCIR, left and right margins, the title stack, and modes 2031 and 2048.
+ * The model test leaves this off.
  */
 static bool gen_unmodeled;
 

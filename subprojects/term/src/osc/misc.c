@@ -67,7 +67,8 @@ void wsap_vtcore_title_set(struct wsap_vtcore *t, const char *title)
 {
     if (!t->cb.title)
         return;
-    /* On allocation failure, a later push saves an empty title. */
+    /* On allocation failure, the core keeps no title, so a later push saves an
+     * empty title. */
     free(t->title);
     t->title = title_copy(title);
     t->cb.title(t->cb.ud, title);

@@ -30,6 +30,7 @@ static inline void wsap_vtcore_mutex_unlock(wsap_vtcore_mutex *m)
 
 static inline void wsap_vtcore_mutex_destroy(wsap_vtcore_mutex *m)
 {
+    /* SRW locks need no destruction. */
     (void)m;
 }
 

@@ -15,14 +15,15 @@ static const char *const level_names[] = { "base", "avx2", "avx512" };
 
 static int cpu_level(void)
 {
-    /* Clang's CPU builtins need libgcc symbols on the MSVC target. */
-    /* Read CPU features and OS vector state through native intrinsics. */
+    /* Clang's CPU builtins need libgcc symbols on the MSVC target, so read the
+     * CPU features and the OS vector state through intrinsics. */
     int regs[4];
     wsap_vtcore_cpuid(regs, 0);
     if (regs[0] < 7)
         return WSAP_VTCORE_ISA_BASE;
     wsap_vtcore_cpuidex(regs, 1, 0);
-    /* SSE3, SSSE3, FMA, CX16, SSE4, MOVBE, POPCNT, XSAVE, OSXSAVE, AVX, F16C. */
+    /* Leaf 1 ECX: SSE3, SSSE3, FMA, CMPXCHG16B, SSE4.1, SSE4.2, MOVBE, POPCNT,
+     * XSAVE, OSXSAVE, AVX, F16C. */
     const uint32_t leaf1 = (1u << 0) | (1u << 9) | (1u << 12) | (1u << 13) |
         (1u << 19) | (1u << 20) | (1u << 22) | (1u << 23) | (1u << 26) |
         (1u << 27) | (1u << 28) | (1u << 29);
@@ -70,6 +71,8 @@ static int cpu_level(void)
 static int pick_level(void)
 {
     int level = cpu_level();
+    /* WSAP_VTCORE_ISA can only lower the level, never below the floor set by the
+     * compiler flags. A name that is not a level leaves the detected level. */
     const char *want = getenv("WSAP_VTCORE_ISA");
     for (int i = WSAP_VTCORE_ISA_FLOOR; want && i < level; i++)
         if (!strcmp(want, level_names[i]))

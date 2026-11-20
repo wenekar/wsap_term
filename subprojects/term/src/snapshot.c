@@ -18,9 +18,10 @@ struct wsap_vtcore_snapshot {
     uint32_t *row_clusters;
     // For each physical row: the arena offset of its underline colors, or ROW_NO_UL.
     uint32_t *row_ul;
-    // One span for each logical row.
+    // The selection span of each logical row.
     struct wsap_vtcore_span *selection;
-    // The line size of each logical row (enum wsap_vtcore_line_size).
+    // For each logical row: the RF_LINE_SIZE bits (enum
+    // wsap_vtcore_line_size) and ROW_FLAG_WRAPPED.
     uint8_t *row_size;
     uint32_t *arena;
     int top;
@@ -30,7 +31,8 @@ struct wsap_vtcore_snapshot {
     // Scratch rows for the staged path. NULL, or cell_cap cells.
     struct wsap_vtcore_cell *stage;
     size_t cell_cap;
-    // Scratch buffers for plan setup to avoid stack pressure and heap allocation.
+    // Per-row plan buffers, resized only when the row count grows. They
+    // avoid stack pressure and a heap allocation on each update.
     void *plan_buf;
     uint64_t *plan_keys;
     uint32_t *plan_words;
@@ -211,7 +213,8 @@ static bool arena_add(struct arena_out *a, const struct gstore *g, uint32_t hand
 #define ROW_NO_UL UINT32_MAX
 
 /* Add the underline colors of a row to the arena: one word for each column.
- * Set *ul_off to ROW_NO_UL when no cell has an underline color. */
+ * Sets *ul_off to their arena offset when a cell has an underline color, and
+ * leaves it unchanged otherwise. */
 static WSAP_VTCORE_NOINLINE bool convert_underline(struct arena_out *a, const struct wsap_vtcore_styles *st,
                                                    const struct cell *src, int cols, uint32_t *ul_off)
 {
@@ -267,8 +270,8 @@ static inline WSAP_VTCORE_ALWAYS_INLINE uint64_t convert_word(uint64_t in)
 #define CONVERT_WORDS 0
 #endif
 
-/* Map a control code to a space or a blank, and a cluster handle of the
- * terminal to a handle of the snapshot. */
+/* Map a C0 control code to a space (NUL stays 0) and a cluster handle of the
+ * terminal to a cluster handle of the snapshot. */
 static inline WSAP_VTCORE_ALWAYS_INLINE bool convert_text(struct arena_out *a, const struct gstore *g,
                                                           uint32_t *text)
 {
@@ -462,7 +465,7 @@ struct plan {
     // For each new staged row: the arena offset of its underline colors.
     uint32_t *ul;
     const int *c0, *c1;
-    // For each logical row: the RF_LINE_SIZE bits of the row.
+    // For each logical row: the RF_LINE_SIZE bits and ROW_FLAG_WRAPPED.
     const uint8_t *sizes;
     int scrolled;
     uint32_t arena_len;
@@ -746,7 +749,6 @@ static bool wsap_vtcore_snapshot_update_inner(struct wsap_vtcore_snapshot *s, st
     if (t->styles)
         cell_words += 1;
     uint64_t worst = (uint64_t)p.staged * (uint64_t)cols * cell_words;
-    // A full update takes the staged path. The direct path was not faster for it.
     if (worst <= DIRECT_MAX_WORDS && arena_reserve(&a, a.len + worst)) {
         p.direct = true;
     } else {

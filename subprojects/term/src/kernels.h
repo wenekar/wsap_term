@@ -473,6 +473,11 @@ static int scan_ascii_lf_neon(const char *buf, int len, uint16_t *ends)
 }
 #endif
 
+/* Scans printable ASCII and LF bytes and stops at the first other byte.
+ * ends[0] is zero, and each LF appends the offset after it. Returns the number
+ * of LFs. len must not exceed UINT16_MAX, and ends needs room for len + 1
+ * offsets because the vector paths store whole blocks.
+ */
 static WSAP_VTCORE_NOINLINE WSAP_VTCORE_MAYBE_UNUSED int scan_ascii_lf(const char *buf, int len, uint16_t *ends)
 {
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
@@ -492,9 +497,10 @@ static WSAP_VTCORE_NOINLINE WSAP_VTCORE_MAYBE_UNUSED int scan_ascii_lf(const cha
 }
 
 /* CRLF lines hold printable ASCII and end with "\r\n". ends[] holds the offset
- * after each LF, as for scan_ascii_lf. A lone CR or LF stops the scan. The
- * vector loops check that the CR mask, moved up one byte, equals the LF mask.
- * The carry moves a CR in the last byte of a block to the next block.
+ * after each LF, as for scan_ascii_lf, with the same len limit and capacity.
+ * A lone CR or LF stops the scan. Each vector loop checks that the LF mask
+ * equals the CR mask shifted left one bit. The carry moves a CR in the last
+ * byte of a block to the next block.
  */
 static inline int scan_ascii_crlf_tail(const char *buf, int i, int len, uint16_t *ends, int count)
 {

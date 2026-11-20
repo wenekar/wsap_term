@@ -8,8 +8,9 @@
 #include "simd.h"
 
 void wsap_vtcore_screen_scroll_region(struct wsap_vtcore *t, int top, int bottom, int count, bool down, bool history);
-/* Scroll the cells of columns left to right in rows top to bottom. The cells
- * outside these columns do not move. No row goes into the history.
+/* Scroll the cells between columns left and right in the rows from top to
+ * bottom. The cells outside these columns stay in place, and no row enters
+ * the history.
  */
 void wsap_vtcore_screen_scroll_rect(struct wsap_vtcore *t, int top, int bottom, int left, int right,
                                     int count, bool down);
@@ -78,7 +79,9 @@ static inline int lr_left_limit(const struct wsap_vtcore *t)
     return t->lr_margin_mode && t->cursor_x >= t->left_margin ? t->left_margin : 0;
 }
 
-/* The column of a carriage return. In origin mode it is the left margin. */
+/* The column of a carriage return. Without DECLRMM it is column 0. With
+ * DECLRMM it is the left margin in origin mode or when the cursor is at or
+ * right of the left margin; otherwise it is column 0. */
 static inline int lr_cr_column(const struct wsap_vtcore *t)
 {
     if (WSAP_VTCORE_EXPECT(!t->lr_margin_mode, 1))
@@ -117,8 +120,7 @@ static inline int cursor_last_col(const struct wsap_vtcore *t)
 }
 
 /* Keep the cursor on the columns that its row shows. Call this after the
- * cursor moves to another row, or after another row moves under it. Other
- * code can then trust that the cursor is on a visible column. */
+ * cursor moves to another row, or after a scroll moves another row under it. */
 static inline void line_clamp_cursor(struct wsap_vtcore *t)
 {
     int last = line_last_col(t->cols);
@@ -456,8 +458,7 @@ static inline void erase_span(struct wsap_vtcore *t, int p, int from, int to)
     int len = row->len;
     int width = to;
     if (to > WSAP_VTCORE_MAX_COLS) to = WSAP_VTCORE_MAX_COLS;
-    /* A whole-row erase removes the marks of the row. This includes an
-     * empty row: its marks are all that it has. */
+    /* A whole-row erase removes the row marks, even when the row is empty. */
     if (from == 0 && width >= len)
         row->flags &= (uint8_t)~RF_MARKS;
     if (pristine && to > len) to = len;

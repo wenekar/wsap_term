@@ -368,7 +368,7 @@ static bool run(const struct workload *w, long n, bool rest)
     bool hit = failed;
 
     if (t && s) {
-        /* Memory is back. The terminal must recover with a full reset. */
+        /* Memory is back. The recovery input starts with a full reset (RIS). */
         struct wsap_vtcore_theme theme;
         wsap_vtcore_theme_high_contrast(&theme);
         wsap_vtcore_set_theme(t, &theme);

@@ -196,8 +196,8 @@ static void test_alternate_screen_clusters_survive_sweep(void)
     static const char alternate[] = "\033[?1049h";
     assert(wsap_vtcore_feed(t, alternate, sizeof(alternate) - 1, 0));
 
-    /* 1026 different clusters cross the sweep threshold once. The sweep runs
-     * before the last cluster is stored. */
+    /* 1026 distinct clusters cross the sweep threshold once. The sweep runs
+     * before the last two clusters are stored. */
     for (unsigned i = 0; i < 1026; i++) {
         char cell[8];
         int n = 0;
@@ -226,7 +226,7 @@ static void test_alternate_screen_clusters_survive_sweep(void)
                 newest = true;
         }
     }
-    /* All but the newest cluster were on the screen when the sweep ran. */
+    /* All but the newest two clusters were on the screen when the sweep ran. */
     assert(clusters >= 24);
     assert(newest);
 

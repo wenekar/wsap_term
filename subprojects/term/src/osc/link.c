@@ -108,8 +108,9 @@ static void links_mark_id(uint16_t id, uint64_t *mark, uint16_t cap)
         mark[(id - 1) >> 6] |= 1ull << ((id - 1) & 63);
 }
 
-/* Cells refer to links through the style table. Collect the unused styles
- * first. Then keep the links of the styles that stay and of the pen. */
+/* Cells reach their links through the style table. First release the unused
+ * styles, which marks the links that the remaining styles use. Then keep the
+ * marked links, including the link of the pen. */
 static void links_gc(struct wsap_vtcore *t, struct wsap_vtcore_links *l)
 {
     uint64_t mark[WSAP_VTCORE_LINK_MAX / 64] = { 0 };

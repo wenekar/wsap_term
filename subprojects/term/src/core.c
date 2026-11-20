@@ -104,9 +104,9 @@ void wsap_vtcore_sc_print_glyph(struct wsap_vtcore *t, uint32_t cp, int width, u
     int cx = t->cursor_x;
     int cols = t->cols;
     int right = t->lr_margin_mode ? lr_right_limit(t) : cols - 1;
-    /* A double-size row ignores the left and right margins. Only DECLRMM
-     * resets the rows to single width, so the alternate screen can still
-     * bring one back. */
+    /* A double-size row ignores the left and right margins. Only setting
+     * DECLRMM resets rows to single width, and it resets the current screen
+     * alone, so a screen switch can bring a double-size row back. */
     if (WSAP_VTCORE_EXPECT(srow->flags & RF_LINE_SIZE, 0)) {
         right = line_last_col(cols);
         if (cx > right)
@@ -117,8 +117,8 @@ void wsap_vtcore_sc_print_glyph(struct wsap_vtcore *t, uint32_t cp, int width, u
         wsap_vtcore_row_fill_gap(srow, cx);
         clear_wide_edges(row, cx, right + 1, srow->len);
         row[cx] = (struct cell){ ' ', WSAP_VTCORE_COLOR_FG, WSAP_VTCORE_COLOR_BG, CELL_WRAP_PAD, 0 };
-        /* The pad is at the right margin. Cells after it keep their state:
-         * a longer length would show stale cells past the margin. */
+        /* The pad sits at the right margin. It joins the row, and the cells
+         * after it keep their state. */
         if (srow->len < cx + 1)
             srow->len = (uint16_t)(cx + 1);
         srow->version++;
@@ -149,8 +149,9 @@ void wsap_vtcore_sc_print_glyph(struct wsap_vtcore *t, uint32_t cp, int width, u
         int move = right + 1 - cx - span;
         if (move > 0)
             memmove(&row[cx + span], &row[cx], (size_t)move * sizeof(struct cell));
-        /* Cells move only up to the right margin. Past it, the row keeps its
-         * length, so stale cells after the length stay hidden. */
+        /* Cells move only up to the right margin. A row that already ends
+         * past the margin keeps its length, and the cells beyond it do not
+         * move. */
         if (srow->len <= right) {
             int new_len = srow->len + span;
             srow->len = (uint16_t)(new_len > right + 1 ? right + 1 : new_len);
@@ -408,7 +409,7 @@ static inline void tab_clamp_margins(struct wsap_vtcore *t, int before)
 }
 
 /* Reverse wraparound, as xterm CursorBack does it. Each step moves one
- * column left. A step from the left limit goes to the right margin of the
+ * column left. A step from the left limit goes to the right limit of the
  * previous row. A pending wrap uses the first step. Mode 45 enters only a row
  * that wrapped into the current row. Mode 1045 enters any row, and it goes
  * from the top margin to the bottom margin. The cursor never leaves the
@@ -422,7 +423,8 @@ void wsap_vtcore_sc_cursor_back(struct wsap_vtcore *t, int n)
     int top = t->scroll_top, bottom = t->scroll_bottom;
     int x = t->cursor_x, y = t->cursor_y;
     int64_t count = (int64_t)n - (t->pending_wrap ? 1 : 0);
-    /* In mode 1045, one turn through the margins comes back to the same cell. */
+    /* In mode 1045, one turn through the scroll region comes back to the same
+     * cell. */
     int64_t turn = (int64_t)(bottom - top + 1) * (right - left + 1);
     while (count > x - left) {
         int prev;
@@ -863,7 +865,8 @@ static void flush_orig_rows(struct wsap_vtcore *t, struct screen *s,
                 uint8_t flags = row->flags;
                 bool wrapped = (flags & RF_WRAPPED) != 0;
                 size_t next_span = span + (size_t)row->len + (wrapped ? 0 : (size_t)term);
-                /* A row with marks takes the row push, which keeps them. */
+                /* A row with marks takes the per-row path below, which keeps
+                 * them. */
                 if (row->kind != ROW_ASCII || (flags & RF_MARKS) ||
                     (uintptr_t)row->text.text != base + span ||
                     next_span > max_span) break;
@@ -1779,8 +1782,8 @@ size_t wsap_vtcore_sc_bulk_ascii_lines(struct wsap_vtcore *t, const char *buf, s
 {
     if (WSAP_VTCORE_EXPECT(t->scr.rows > 256, 0)) return 0;
     /* The bulk paths write new rows over the empty cursor row. A shell mark
-     * on that row must stay. The base path keeps it, and a later line takes
-     * the bulk path. */
+     * on that row must stay, so such a write goes to the general path; a later
+     * line takes the bulk path. */
     if (WSAP_VTCORE_EXPECT(!t->pending_wrap && (t->scr.slot[phys_row(t, t->cursor_y)].flags & RF_MARKS), 0))
         return 0;
     if (len >= 1024 && using_default_colors(t) && !wsap_vtcore_flags_pad(t)) {

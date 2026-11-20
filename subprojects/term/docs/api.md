@@ -6,15 +6,19 @@ Functions use C linkage.
 
 ## Create and free
 
-Zero-initialize `struct wsap_vtcore_options`.
-Passing `NULL` selects default options.
-A zero width or height selects 80 columns and 24 rows.
-Zero scrollback selects `WSAP_VTCORE_SCROLLBACK_DEFAULT`.
-`WSAP_VTCORE_SCROLLBACK_MAX` is the maximum scrollback limit.
-Zero theme selects built-in colors.
-A NULL or empty name selects `wsap_vtcore`.
-Zero cursor style selects a block cursor (`WSAP_VTCORE_CURSOR_BLOCK`).
-The reserved field requires zero initialization.
+Zero-initialize `struct wsap_vtcore_options` before setting fields. Passing `NULL` is equivalent to passing a zero-initialized options struct.
+
+| Option | Zero or unset value |
+|---|---|
+| Width | 80 columns |
+| Height | 24 rows |
+| `scrollback` | History disabled |
+| Theme | Built-in colors |
+| Name | `wsap_vtcore` for `NULL` or an empty string |
+| Cursor style | Block cursor (`WSAP_VTCORE_CURSOR_BLOCK`) |
+| Reserved field | Must be zero-initialized |
+
+**Supported scrollback range:** `0` through `WSAP_VTCORE_SCROLLBACK_MAX` rows. Set `scrollback` explicitly to `WSAP_VTCORE_SCROLLBACK_DEFAULT` to use the predefined capacity.
 
 `wsap_vtcore_new()` creates a terminal instance.
 The function returns `NULL` for invalid options or memory allocation failures.

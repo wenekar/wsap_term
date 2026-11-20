@@ -15,6 +15,10 @@
 #include <arm_neon.h>
 #endif
 
+/* The highest level whose features the compiler flags already enable. A check
+ * for a level at or below the floor is a compile-time constant, and the
+ * WSAP_VTCORE_ISA override cannot lower the level below the floor.
+ */
 #if defined(__AVX512F__) && defined(__AVX512BW__) && defined(__AVX512CD__) && \
     defined(__AVX512DQ__) && defined(__AVX512VL__) && defined(__AVX512VBMI__) && \
     defined(__AVX512VBMI2__) && defined(__AVX2__) && defined(__BMI2__)
@@ -55,8 +59,12 @@
 
 enum { WSAP_VTCORE_ISA_BASE, WSAP_VTCORE_ISA_AVX2, WSAP_VTCORE_ISA_AVX512 };
 
+/* The level that wsap_vtcore_isa_init() selects; zero, the base level, before
+ * that call. */
 extern int wsap_vtcore_isa_level;
 
+/* Picks the level on the first call. Concurrent callers wait until the choice
+ * is published. */
 void wsap_vtcore_isa_init(void);
 
 static inline bool wsap_vtcore_use_avx2(void)
@@ -82,6 +90,7 @@ static inline bool wsap_vtcore_use_avx512(void)
 }
 
 #if defined(__aarch64__)
+/* Packs the 16 byte lanes of a comparison mask into a 16-bit mask. */
 static inline uint16_t wsap_vtcore_lane_bits(uint8x16_t m)
 {
     const uint8x16_t idx = {1, 2, 4, 8, 16, 32, 64, 128,

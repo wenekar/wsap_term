@@ -106,11 +106,10 @@ void wsap_vtcore_sc_decera(struct wsap_vtcore *t, const struct csi *csi)
     }
 }
 
-/* Write the cells of src to columns x0 to x1 of a row. The source has ext
- * cells. The cells after them read as blank, because the source row ends
- * before them. The row length grows only over written cells, and shrinks when
- * the blank cells reach the end of the row.
- */
+/* Write ext cells of src to columns x0 through x1 of a row. The cells after
+ * them become blank, since the source ends there. When the row ends inside
+ * the range, its length becomes x0 + ext, so the blank cells do not extend
+ * it. */
 static void area_put_cells(struct srow *dst, int x0, int x1, const struct cell *src, int ext)
 {
     int old_len = dst->len;
@@ -149,10 +148,11 @@ static void deccra_row(struct wsap_vtcore *t, int sy, int sx, int dy, int dx, in
     area_put_cells(drow, dx, dx + width - 1, tmp, ext);
     if (ext > 0)
         drow->flags |= content;
-    /* A row that now ends earlier does not continue on the next row. */
+    /* A row that became shorter no longer continues on the next row. */
     if (drow->len < old_len)
         row_set_wrapped(drow, false);
-    /* A wide character cut by a source edge loses its other half. */
+    /* A wide character cut by an edge of the copied cells loses its other
+     * half. */
     repair_wide_row(dst, dx - 1, dx + width + 1, t->cols, drow->len);
     drow->version++;
 }
@@ -162,7 +162,8 @@ void wsap_vtcore_sc_deccra(struct wsap_vtcore *t, const struct csi *csi)
     struct area src;
     if (!wsap_vtcore_area_parse(t, csi, 0, &src))
         return;
-    /* Parameters 4 and 7 select pages. The core has one page. */
+    /* Ps5 and Ps8 select pages. The core has one page, so the destination
+     * comes from Ps6 and Ps7. */
     int row1 = area_max_row(t), col1 = area_max_col(t);
     int64_t top = area_min_row(t), left = area_min_col(t);
     int v;
@@ -172,7 +173,7 @@ void wsap_vtcore_sc_deccra(struct wsap_vtcore *t, const struct csi *csi)
         left += v - 1;
     if (top > row1 || left > col1)
         return;
-    /* The destination keeps the size of the source, clipped like it. */
+    /* The destination keeps the source size, clipped the same way. */
     int height = src.bottom - src.top + 1, width = src.right - src.left + 1;
     if (height > row1 - top + 1)
         height = row1 - (int)top + 1;
@@ -189,7 +190,8 @@ void wsap_vtcore_sc_deccra(struct wsap_vtcore *t, const struct csi *csi)
 
 void wsap_vtcore_screen_shift_cols(struct wsap_vtcore *t, int x, int count, bool insert)
 {
-    /* Each row changes as ICH or DCH at column x changes it. */
+    /* Reuse ICH and DCH for each row, so every row changes as it would there;
+     * the cursor is restored below. */
     int cx = t->cursor_x, cy = t->cursor_y;
     for (int y = t->scroll_top; y <= t->scroll_bottom; y++) {
         t->cursor_x = x;

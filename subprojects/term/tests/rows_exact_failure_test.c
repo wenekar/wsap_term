@@ -1,6 +1,7 @@
 /* A line of 30000 cells takes 375 rows at 80 columns. The count does not fit
- * in the line byte, so it goes in the exact-row table. When that table cannot
- * be allocated, the line must still report the count of the new width. */
+ * in the 8-bit row count of the line, so it goes in the exact-row table. When
+ * that table cannot be allocated, the line must still report the count of the
+ * new width. */
 #include "internal.h"
 
 #include <assert.h>
@@ -43,7 +44,7 @@ int main(void)
     }
 
     /* Count the rows at 200 columns. The line takes 150 rows, so it fits in
-     * the line byte and it has an exact count of the old width. */
+     * the 8-bit row count and it has an exact count of the old width. */
     struct wsap_vtcore_snapshot *snapshot = wsap_vtcore_snapshot_new();
     assert(snapshot);
     assert(wsap_vtcore_snapshot_update(snapshot, term));

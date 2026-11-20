@@ -166,8 +166,6 @@ static inline void wsap_vtcore_cpu_relax(void)
 #endif
 }
 
-// Mutex types and functions are defined in platform/mutex.h.
-
 static inline char *wsap_vtcore_strdup(const char *s)
 {
     size_t n = strlen(s) + 1;
@@ -179,7 +177,11 @@ static inline char *wsap_vtcore_strdup(const char *s)
 
 static inline bool wsap_vtcore_has_prefix_ci(const char *s, const char *prefix)
 {
-    // Fast path: safe word comparison for 7-byte file:// prefix.
+    // Fast path for a literal "file://" prefix. Two overlapping 4-byte loads
+    // cover the seven bytes and fold the case of the four letters, so they
+    // accept the same strings as the byte loop below. The 4 KiB offset check
+    // sends a string near a page boundary to the byte loop, so no load crosses
+    // the page. A NUL cannot match either load.
     if (WSAP_VTCORE_CONSTANT_P(prefix) && strcmp(prefix, "file://") == 0) {
         if (WSAP_VTCORE_EXPECT(((uintptr_t)s & 4095) <= 4096 - 8, 1)) {
             uint32_t head;

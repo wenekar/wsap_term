@@ -5,8 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Time wsap_vtcore_snapshot_update alone. Each step changes the terminal, and
- * then one update copies the change. The feed time is not in the result. */
+/* Times wsap_vtcore_snapshot_update alone. A step edits the terminal, or main
+ * alternates the source terminal, before the timer starts; idle does neither.
+ * The feed time, the initial update, and the warm-up rep are not timed. */
 
 enum { COLS = 120, ROWS = 40 };
 
@@ -20,7 +21,7 @@ static void feed(struct wsap_vtcore *t, const char *s)
     wsap_vtcore_feed(t, s, strlen(s), 0);
 }
 
-// One new line: the snapshot scrolls by one row.
+// One new line scrolls the screen by one row, so the update copies one new row.
 static void step_scroll(struct wsap_vtcore **terms, int i)
 {
     char line[96];
@@ -28,7 +29,7 @@ static void step_scroll(struct wsap_vtcore **terms, int i)
     feed(terms[0], line);
 }
 
-// One new line with clusters in it.
+// One new line with clusters, so the update also copies cluster text.
 static void step_scroll_clusters(struct wsap_vtcore **terms, int i)
 {
     char line[96];
@@ -36,7 +37,7 @@ static void step_scroll_clusters(struct wsap_vtcore **terms, int i)
     feed(terms[0], line);
 }
 
-// No change.
+// No change: the update compares the rows and copies none of them.
 static void step_idle(struct wsap_vtcore **terms, int i)
 {
     (void)terms;
@@ -54,7 +55,8 @@ static void step_repaint(struct wsap_vtcore **terms, int i)
     }
 }
 
-// The snapshot follows another terminal. Each update copies all rows.
+// No change per step: main alternates the source between two terminals, so an
+// update that changes source copies all rows.
 static void step_switch(struct wsap_vtcore **terms, int i)
 {
     (void)terms;
@@ -92,7 +94,7 @@ int main(int argc, char **argv)
             });
             if (!terms[k])
                 return EXIT_FAILURE;
-            // Fill the screen and some history.
+            // Fill the screen and add ROWS rows of history.
             for (int i = 0; i < 2 * ROWS; i++)
                 step_scroll(&terms[k], i);
         }

@@ -12,8 +12,8 @@ static inline uint32_t style_hash(uint16_t link, uint32_t ul)
     return (uint32_t)hash64_finish(hash64_step(hash64_step(HASH64_BASIS, link), ul));
 }
 
-/* The slot table has twice as many slots as there are ids, so a free slot
- * always stops the probe. */
+/* The slot table has twice as many slots as there are ids, so there is always
+ * a free slot to stop the probe. */
 static void style_slot_insert(struct wsap_vtcore_styles *s, uint16_t id)
 {
     const struct style_entry *e = &s->entry[id];

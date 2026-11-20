@@ -11,14 +11,15 @@ struct area {
 };
 
 /* Read the rectangle in the CSI parameters first to first + 3 (Pt, Pl, Pb,
- * Pr). A zero or missing parameter selects the edge of the screen. In origin
- * mode (DECOM), row 1 and column 1 are at the margins, and the margins clip
- * the rectangle. Return false when the rectangle is empty.
+ * Pr). A zero or missing parameter selects the default edge: top or left for
+ * Pt and Pl, bottom or right for Pb and Pr. In origin mode (DECOM), row 1 is at
+ * the top scroll margin, and with DECLRMM column 1 is at the left margin; the
+ * margins clip the rectangle. Return false when the rectangle is empty.
  */
 bool wsap_vtcore_area_parse(const struct wsap_vtcore *t, const struct csi *csi, int first,
                             struct area *a);
 
-/* Give the columns of row y that an attribute change covers. With DECSACE 2,
+/* Return the columns of row y that an attribute change covers. With DECSACE 2,
  * this is the rectangle. Otherwise it is the character stream from the first
  * cell of the area to its last cell.
  */

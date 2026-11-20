@@ -37,7 +37,8 @@ static inline uint64_t hash64_finish(uint64_t hash)
 
 #define KEYBOARD_STACK_SIZE 32
 #define TITLE_STACK_SIZE 10
-/* XTSAVE keeps one value for each mode. The core knows fewer modes. */
+/* XTSAVE keeps one value for each mode. The core recognizes fewer modes than
+ * this bound. */
 #define SAVED_MODES_MAX 64
 
 struct keyboard_mode {
@@ -279,7 +280,8 @@ struct wsap_vtcore {
     bool normal_cursor_blink;
     bool custom_tabs;
     uint8_t decsace;
-    /* The intermediate byte of the designator that ST_CHARSET reads. */
+    /* The intermediate byte of the designator that ST_CHARSET reads, or 0x7f
+     * when there is none. */
     char charset_inter;
     char charset_designation;
     uint8_t title_depth;
@@ -315,8 +317,8 @@ static inline void reset_sgr(struct wsap_vtcore *t)
     t->inverse = false;
     t->pen_ext = false;
     t->cur_ul = 0;
-    /* Plain SGR 0 must stay one masked store. Touch cur_pad only when it
-     * holds more than the base. */
+    /* Keep SGR 0 cheap: copy base_pad to cur_pad only when they differ, which
+     * the pen_ext bit records. */
     if (WSAP_VTCORE_EXPECT(ext, 0))
         t->cur_pad = t->base_pad;
 }
@@ -445,7 +447,7 @@ static inline uint16_t wsap_vtcore_current_flags(const struct wsap_vtcore *t)
         f |= wsap_vtcore_ul_flags[t->underline];
     if (t->strike) f |= CELL_STRIKE;
     if (t->overline) f |= CELL_OVERLINE;
-    /* The style of the link alone has an id exactly when the pen has a link. */
+    /* base_pad holds a style id exactly when the pen has a link. */
     if (t->base_pad & CELL_EXT_ID) f |= CELL_LINK;
     return f;
 }

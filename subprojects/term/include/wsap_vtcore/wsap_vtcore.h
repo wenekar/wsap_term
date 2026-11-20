@@ -31,7 +31,7 @@ typedef uint32_t wsap_vtcore_color;
 #define WSAP_VTCORE_COLOR_SLOT_INDEX 0x1FFu
 #define WSAP_VTCORE_COLOR_FG (WSAP_VTCORE_COLOR_SLOT | 0x100u)
 #define WSAP_VTCORE_COLOR_BG (WSAP_VTCORE_COLOR_SLOT | 0x101u)
-/* No color is set. The core never gives this value for a set color. */
+/* No color is set. The core never sets a color to this value. */
 #define WSAP_VTCORE_COLOR_NONE 0u
 
 static inline wsap_vtcore_color wsap_vtcore_color_index(int n)
@@ -89,8 +89,8 @@ enum wsap_vtcore_mouse_encoding {
     WSAP_VTCORE_MOUSE_ENC_SGR_PIXELS = 1016,
 };
 
-/* The states of a progress report (OSC 9;4). The values are the states of
- * the sequence. */
+/* The states of a progress report (OSC 9;4). The values match the state
+ * numbers in the sequence. */
 enum wsap_vtcore_progress {
     WSAP_VTCORE_PROGRESS_REMOVE = 0,
     WSAP_VTCORE_PROGRESS_NORMAL = 1,
@@ -103,7 +103,8 @@ enum wsap_vtcore_progress {
  * Payload pointers are valid only until the callback returns.
  * Do not feed, resize, free, or otherwise change the terminal in a callback.
  * Queue that work until the enclosing call returns. Do not wait for another
- * thread that needs this terminal. The lock alone does not make parser re-entry safe.
+ * thread that needs this terminal. Nesting the lock on one thread does not
+ * make parser re-entry safe.
  */
 struct wsap_vtcore_callbacks {
     void *ud;
@@ -119,9 +120,12 @@ struct wsap_vtcore_callbacks {
     void (*user_var)(void *ud, const char *name, const char *value, size_t len);
 };
 
-/* Zero-initialize options. A zero size selects 80 by 24; zero scrollback
- * selects WSAP_VTCORE_SCROLLBACK_DEFAULT; zero theme selects built-in colors.
- * A null name selects "wsap_vtcore". Other zero fields select defaults.
+/* Zero-initialize options. A zero size component selects 80 columns or 24
+ * rows. Zero scrollback disables history. A zero-initialized theme selects
+ * the built-in colors. A null or empty name selects "wsap_vtcore"; other
+ * names must hold at most 63 printable ASCII bytes. A zero cursor style
+ * selects WSAP_VTCORE_CURSOR_BLOCK, and a false cursor_steady selects a
+ * blinking cursor. The reserved words must be zero.
  */
 struct wsap_vtcore_options {
     struct wsap_vtcore_vector2i size;
@@ -131,9 +135,9 @@ struct wsap_vtcore_options {
     bool cursor_steady;
     const char *name;
     struct wsap_vtcore_callbacks callbacks;
-    /* The progress and user_var callbacks use the first reserved words. The
-     * size and the field offsets before them stay the same for each pointer
-     * size. */
+    /* The progress and user_var callbacks overlay the first words that earlier
+     * versions reserved, so the struct keeps its size and the earlier fields
+     * keep their offsets for every pointer size. */
     uint32_t reserved[8 - 2 * sizeof(void *) / sizeof(uint32_t)];
 };
 
@@ -158,7 +162,8 @@ WSAP_VTCORE_API const char *wsap_vtcore_isa(void);
 
 /* Creates a new terminal instance from options.
  * Returns NULL for invalid options or allocation failure.
- * Copies options theme, callbacks, and name.
+ * Copies the theme, the callbacks, and the name; the callback user data
+ * pointer stays caller-owned.
  */
 WSAP_VTCORE_API struct wsap_vtcore *wsap_vtcore_new(const struct wsap_vtcore_options *opt);
 /* NULL is allowed. Stop all users before freeing the terminal. */
@@ -181,9 +186,9 @@ WSAP_VTCORE_API void wsap_vtcore_set_theme(struct wsap_vtcore *t, const struct w
 WSAP_VTCORE_API void wsap_vtcore_set_cursor_default(struct wsap_vtcore *t, enum wsap_vtcore_cursor_style style, bool steady);
 
 /* Set the size of one cell in pixels: x is the width, y is the height.
- * Size reports use it. A zero or negative component means unknown; reports
- * then give zero pixels. With mode 2048 set, a change sends a size report.
- * NULL is allowed.
+ * Size reports use it. If either component is zero or negative, both are
+ * unknown, and reports give zero pixels. With mode 2048 set, a change sends a
+ * size report. NULL is allowed.
  */
 WSAP_VTCORE_API void wsap_vtcore_set_cell_pixels(struct wsap_vtcore *t, struct wsap_vtcore_vector2i size);
 
@@ -211,7 +216,9 @@ enum wsap_vtcore_feed_flags {
 WSAP_VTCORE_API bool wsap_vtcore_feed(struct wsap_vtcore *t, const char *bytes, size_t len, unsigned flags);
 
 WSAP_VTCORE_API void wsap_vtcore_focus(struct wsap_vtcore *t, bool focused);
-/* Zero disables history. Reject invalid limits. Keep state on allocation failure. */
+/* Zero disables history. Valid limits are 0 to WSAP_VTCORE_SCROLLBACK_MAX.
+ * Return false for any other limit or an allocation failure; keep the old
+ * state on failure. */
 WSAP_VTCORE_API bool wsap_vtcore_set_scrollback_limit(struct wsap_vtcore *t, int lines);
 
 struct wsap_vtcore_modes {
@@ -273,7 +280,7 @@ WSAP_VTCORE_API char *wsap_vtcore_cwd(const struct wsap_vtcore *t);
  * Returns NULL when unset or on allocation failure.
  */
 WSAP_VTCORE_API char *wsap_vtcore_pointer_shape(const struct wsap_vtcore *t);
-/* Releases string memory returned by wsap_vtcore_cwd() or wsap_vtcore_pointer_shape(). */
+/* Releases a string that this API allocates. NULL is allowed. */
 WSAP_VTCORE_API void wsap_vtcore_text_free(char *text);
 
 struct wsap_vtcore_scrollback {
@@ -302,13 +309,15 @@ WSAP_VTCORE_API char *wsap_vtcore_link_at(const struct wsap_vtcore *t, struct ws
 /* Shell integration (OSC 133). Rows are view rows, as in the selection
  * calls: row 0 is the top row of the view. A negative row is above the view.
  * A row at or after the view height is below the view.
- * wsap_vtcore_scroll(t, -row) moves a row to the top of the view. The values
- * are valid until the next change to the terminal or its view.
- * On the alternate screen, these calls find nothing.
+ * wsap_vtcore_scroll(t, -row) moves that row to the top unless the view
+ * reaches the newest row first. A row number refers to the current view and
+ * goes stale when the terminal or the view changes. On the alternate screen,
+ * these calls return false.
  */
 
 /* Find the first row of the nearest prompt above row (dir < 0) or below row
- * (dir > 0). Return false when there is none or when dir is zero. */
+ * (dir > 0). Return false when there is none, when dir is zero, or for a NULL
+ * pointer. */
 WSAP_VTCORE_API bool wsap_vtcore_find_prompt(const struct wsap_vtcore *t, int row, int dir, int *found);
 
 /* A command starts at a prompt row and ends before the next prompt row. */
@@ -323,7 +332,8 @@ struct wsap_vtcore_command {
 };
 
 /* Describe the command that contains row. Return false when no prompt
- * starts at or above row, or for invalid arguments. */
+ * starts at or above row, or for invalid arguments. On false, all fields are
+ * zero. */
 WSAP_VTCORE_API bool wsap_vtcore_command_at(const struct wsap_vtcore *t, int row, struct wsap_vtcore_command *cmd);
 
 enum wsap_vtcore_attr {
@@ -362,7 +372,8 @@ enum wsap_vtcore_underline {
 
 static inline enum wsap_vtcore_underline wsap_vtcore_attr_underline(uint16_t attrs)
 {
-    /* Use count trailing zeros for branchless style decoding. */
+    /* The extra underline styles occupy bits 11 to 14, so the count of
+     * trailing zeros minus 9 is the enum value. */
     uint32_t adv = attrs & (WSAP_VTCORE_ATTR_DOUBLE_UNDERLINE | WSAP_VTCORE_ATTR_CURLY_UNDERLINE |
                             WSAP_VTCORE_ATTR_DOTTED_UNDERLINE | WSAP_VTCORE_ATTR_DASHED_UNDERLINE);
 #if defined(__GNUC__) || defined(__clang__)
@@ -440,8 +451,8 @@ WSAP_VTCORE_API uint64_t wsap_vtcore_snapshot_row_key(const struct wsap_vtcore_s
 /* Return the underline colors (SGR 58) of logical row y: one color for each
  * column. WSAP_VTCORE_COLOR_NONE means that the cell has no underline color.
  * Draw its underline in the foreground color of the cell. NULL means that no
- * cell of the row has an underline color. The pointer stays valid until the
- * next update or free. */
+ * cell of the row has an underline color. An invalid row and a NULL snapshot
+ * return NULL. The pointer stays valid until the next update or free. */
 WSAP_VTCORE_API const wsap_vtcore_color *wsap_vtcore_snapshot_row_underline_colors(
     const struct wsap_vtcore_snapshot *s, int y);
 
@@ -455,27 +466,31 @@ enum wsap_vtcore_line_size {
 
 /* Return the line size of logical row y. On a row that is not single, draw
  * only the first size.x / 2 cells (at least one), each two columns wide. The
- * other cells are blank. A double-height row shows the top or the bottom half of each glyph
- * at twice the height. A history row, an invalid row, and a NULL snapshot
- * give WSAP_VTCORE_LINE_SINGLE. A change of the line size changes the row key. */
+ * other cells are blank. A double-height row shows the top or the bottom half
+ * of each glyph at twice the height. A history row, an invalid row, and a NULL
+ * snapshot return WSAP_VTCORE_LINE_SINGLE. A change of the line size changes
+ * the row key. */
 WSAP_VTCORE_API enum wsap_vtcore_line_size wsap_vtcore_snapshot_row_size(
     const struct wsap_vtcore_snapshot *s, int y);
 
 /* Return true when logical row y joins the next row with no line break.
- * A history row in a scrolled view gives its wrap flag too. A row that does
- * not wrap, an invalid row, and a NULL snapshot give false. */
+ * A history row in a scrolled view returns its wrap flag too. A row that does
+ * not wrap, an invalid row, and a NULL snapshot return false. */
 WSAP_VTCORE_API bool wsap_vtcore_snapshot_row_wrapped(
     const struct wsap_vtcore_snapshot *s, int y);
 
 WSAP_VTCORE_API int wsap_vtcore_history_rows(const struct wsap_vtcore *t);
-/* Return text of the last max_rows history rows above viewport.
+/* Return the text of the last max_rows history rows above the viewport.
  * Zero or negative max_rows returns an empty string.
- * NULL means a NULL terminal or an allocation failure. Free with wsap_vtcore_text_free.
+ * NULL means a NULL terminal or an allocation failure. Free with
+ * wsap_vtcore_text_free.
  */
 WSAP_VTCORE_API char *wsap_vtcore_history_text(struct wsap_vtcore *t, int max_rows);
-/* Return a counter that changes when the history changes: on a new line, an
- * eviction, a clear, a rewrap, or a switch to or from the alternate screen.
- * The counter increases. A NULL terminal gives zero. */
+/* Return a counter that changes with the history row index: on a new line, a
+ * row added to the open line, an eviction, a clear, a rewrap, a cut line, a
+ * line taken back to the screen, and a switch to or from the alternate
+ * screen. A change to cells in existing rows keeps it. The counter increases.
+ * A NULL terminal returns zero. */
 WSAP_VTCORE_API uint64_t wsap_vtcore_history_generation(struct wsap_vtcore *t);
 /* Return a counter that changes when the history changes in a way that new
  * lines cannot explain: a clear, a line taken back to the screen, a cut
@@ -484,7 +499,7 @@ WSAP_VTCORE_API uint64_t wsap_vtcore_history_generation(struct wsap_vtcore *t);
  * While the epoch stays the same, only the oldest lines leave, and the other
  * lines keep their ids and their text. A reader can then drop the lines that
  * left from an index and add the new ones. The counter increases. A NULL
- * terminal gives zero. */
+ * terminal returns zero. */
 WSAP_VTCORE_API uint64_t wsap_vtcore_history_epoch(struct wsap_vtcore *t);
 /* Return the id of the oldest history line, or zero when the history is empty.
  * The id changes when a line leaves the history. The ids of the lines are
@@ -507,26 +522,30 @@ WSAP_VTCORE_API struct wsap_vtcore_span wsap_vtcore_snapshot_row_selection(const
 /* Direct access to the snapshot row store. The store is a ring.
  * Logical row y is physical row (top + y) % size.y. cells holds size.y rows of size.x cells.
  * keys holds size.y row keys. The pointers stay valid until the next update or free.
- * A NULL snapshot gives an all-zero value. */
+ * A NULL snapshot returns an all-zero value. */
 struct wsap_vtcore_snapshot_rows {
     const struct wsap_vtcore_cell *cells;
     const uint64_t *keys;
     int top;
 };
 WSAP_VTCORE_API struct wsap_vtcore_snapshot_rows wsap_vtcore_snapshot_rows(const struct wsap_vtcore_snapshot *s);
-/* Return size.y selection spans in logical row order. A NULL snapshot gives NULL. */
+/* Return size.y selection spans in logical row order. A NULL snapshot returns
+ * NULL. */
 WSAP_VTCORE_API const struct wsap_vtcore_span *wsap_vtcore_snapshot_selections(const struct wsap_vtcore_snapshot *s);
 
 /* Return the full code point count. Copy at most cap code points to cps.
  * Use NULL and zero capacity to query the count. Invalid handles return zero.
- * Cluster handles belong to one snapshot capture. Do not retain them across updates.
+ * wsap_vtcore_snapshot_cluster_direct() returns the code points in place and
+ * sets out_len. It returns NULL and sets out_len to zero for a handle that is
+ * not a cluster. The pointer stays valid until the next update or free.
+ * Cluster handles belong to one snapshot capture. Do not retain them across
+ * updates.
  */
 WSAP_VTCORE_API int wsap_vtcore_snapshot_cluster(const struct wsap_vtcore_snapshot *s, uint32_t text, uint32_t *cps, int cap);
 WSAP_VTCORE_API const uint32_t *wsap_vtcore_snapshot_cluster_direct(const struct wsap_vtcore_snapshot *s, uint32_t text, int *out_len);
 
-/* Literal colors pass through unchanged. Invalid slots or a missing palette
- * resolve to zero.
- */
+/* Literal colors pass through unchanged. A slot index outside the palette and
+ * a missing palette resolve to zero. */
 static inline uint32_t wsap_vtcore_view_color(const struct wsap_vtcore_view *v, wsap_vtcore_color c)
 {
     if (!wsap_vtcore_color_is_slot(c))

@@ -185,9 +185,9 @@ struct hist {
 
     uint64_t rows_id;
     uint64_t counted_rows;
-    /* Exact row walks of one line since init. The tests read this count to
-     * prove that a width change walks each wide line once and that a frame
-     * at a fixed size walks none. */
+    /* Exact row walks since init. The tests read this count to prove that a
+     * width change walks each wide line once and that a frame at a fixed
+     * size walks none. */
     uint64_t walk_calls;
     uint64_t walk_seq;
     uint64_t base_cell_id, base_cell;
@@ -218,8 +218,9 @@ void wsap_vtcore_hist_push_ascii(struct hist *h, const char *bytes, int n,
                      const struct pen_attr *pen, bool wrapped);
 void wsap_vtcore_hist_push_ascii_lines(struct hist *h, const struct hist_ascii_line *lines,
                            int count, const struct pen_attr *pen);
-/* Push complete lines. Line j is bytes[ends[j]] up to the terminator of term
- * bytes that ends before ends[j + 1]: 1 for LF, 2 for CRLF.
+/* Push complete lines. ends holds count + 1 offsets. Line j is the text at
+ * bytes + ends[j] without the term bytes that end at ends[j + 1]: 1 for LF,
+ * 2 for CRLF.
  */
 void wsap_vtcore_hist_push_ascii_lf(struct hist *h, const char *bytes, const uint16_t *ends, int count,
                                     int term);

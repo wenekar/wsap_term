@@ -3,7 +3,8 @@
 
 /* Run independent test seeds on several threads. A seed function must keep its
  * state in local or thread-local storage. WSAP_VTCORE_TEST_THREADS sets the
- * thread count. The default is one thread for each online CPU. */
+ * thread count. The default is one thread for each online CPU, up to
+ * SEEDS_MAX_THREADS. */
 
 #include <limits.h>
 #include <pthread.h>
@@ -29,7 +30,7 @@ static void *seed_worker(void *arg)
     struct seed_pool *pool = arg;
     for (;;) {
         int seed = atomic_fetch_add(&pool->next, 1);
-        // Seeds start in order. Seeds below a failed seed always run to the end.
+        // Seeds are taken in order. Seeds below a failure always run to the end.
         if (seed >= pool->end || seed > atomic_load(&pool->failed))
             return NULL;
         if (pool->fn(seed))

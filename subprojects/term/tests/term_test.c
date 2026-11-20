@@ -1875,7 +1875,7 @@ static void test_saved_modes(void)
     write_seq(t, "\033[?1004h\033[?1004;2027;9999r\033[?1004$p");
     assert(logged(&rl, "\033[?1004;1$y"));
 
-    /* The reports 2031 and 2048 work too. */
+    /* XTSAVE and XTRESTORE cover modes 2031 and 2048 too. */
     write_seq(t, "\033[?2048;2031s\033[?2031h\033[?2048h");
     assert(logged(&rl, "\033[48;4;20;0;0t"));
     write_seq(t, "\033[?2048;2031r\033[?2048$p\033[?2031$p");
@@ -1932,7 +1932,8 @@ static void test_mode_reports(void)
     write_seq(t, "\033[?2027l\033[?2027$p");
     assert(logged(&rl, "\033[?2027;3$y"));
 
-    /* Mode 1048 has no value. Unknown modes report zero. */
+    /* Mode 1048 is a command, so DECRQM reports it reset. Unknown modes report
+     * zero. */
     write_seq(t, "\033[?1048h\033[?1048$p\033[?9999$p\033[9999$p");
     assert(logged(&rl, "\033[?1048;2$y\033[?9999;0$y\033[9999;0$y"));
 
@@ -3174,7 +3175,7 @@ static void test_margin_wide_wrap_hides_erased_cells(void)
 }
 
 /* Fill a 6 by 4 screen with abcdef, ghijkl, mnopqr, stuvwx and set the left
- * and right margins to columns 2 to 4 (1-based). */
+ * and right margins to 1-based columns 2 to 4 (0-based 1 to 3). */
 static struct wsap_vtcore *margin_grid(void)
 {
     struct wsap_vtcore *t = tt_new(6, 4);
@@ -3274,8 +3275,8 @@ static void test_digit_saturation(void)
 {
     struct wsap_vtcore *t = tt_new_opts(80, 24, &reply_cb);
 
-    /* DECRQM reports requested mode number back.
-     * Verify numbers 2147483640..2147483647 do not prematurely saturate to INT_MAX (2147483647). */
+    /* DECRQM returns the requested mode number. Values from 2147483640 to
+     * INT_MAX pass the parameter parser unchanged. */
     response_len = 0;
     write_seq(t, "\033[2147483640$p");
     assert(!strcmp(response, "\033[2147483640;0$y"));
@@ -3284,7 +3285,7 @@ static void test_digit_saturation(void)
     write_seq(t, "\033[2147483647$p");
     assert(!strcmp(response, "\033[2147483647;0$y"));
 
-    /* Number >= 2147483648 saturates to INT_MAX */
+    /* A larger number saturates to INT_MAX. */
     response_len = 0;
     write_seq(t, "\033[2147483648$p");
     assert(!strcmp(response, "\033[2147483647;0$y"));
@@ -3297,7 +3298,7 @@ static void test_resize_tabs_and_custom_tabs(void)
     struct wsap_vtcore *t = tt_new(80, 24);
     assert(t);
 
-    /* Set custom tab stop at col 20 only. */
+    /* Set a custom tab stop at 0-based column 20 only. */
     write_seq(t, "\033[3g\033[21G\033H\r");
     write_seq(t, "\t");
     assert(tt_cursor_x(t) == 20);
@@ -3336,7 +3337,7 @@ static void test_margin_dch_ich(void)
     write_seq(t, "abcdefghijklmnopqrst");
     assert(row_is(t, 0, "abcdefghijklmnopqrst"));
 
-    /* Left margin col 4, right margin col 14 (1-based: 5 to 15). */
+    /* Left and right margins at 1-based columns 5 to 15 (0-based 4 to 14). */
     write_seq(t, "\033[?69h\033[5;15s");
 
     /* Cursor at col 6 ('g'). Delete 2 chars inside margin. */
@@ -3680,7 +3681,8 @@ static void test_word_selection_classes(void)
 }
 
 /* Selection text reads a wrapped line on a terminal wider than the stack
- * buffer. The first row holds a wrap pad before a wide character. */
+ * buffer. The first row ends with a wrap pad, and the wide character starts
+ * the next row. */
 static void test_selection_wide_wrapped_large(void)
 {
     struct wsap_vtcore *t = tt_new(600, 4);

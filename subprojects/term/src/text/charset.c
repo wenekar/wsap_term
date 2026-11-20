@@ -183,8 +183,8 @@ uint32_t wsap_vtcore_charset_map(struct wsap_vtcore *t, uint32_t cp)
         cs->ss = 0;
         wsap_vtcore_charset_sync(t);
     }
-    /* SP and DEL are not in a 94-character set. In GL, a 96-character set
-     * also keeps them. */
+    /* SP and DEL are not in a 94-character set, and a 96-character set keeps
+     * them too. */
     if (cp - 0x21u > 0x7eu - 0x21u)
         return cp;
     switch (set) {

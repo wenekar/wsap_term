@@ -87,8 +87,8 @@ void wsap_vtcore_osc52(struct wsap_vtcore *t, const char *params)
         return;
     }
     size_t enc_len = strlen(pd);
-    // Limit clipboard payload to 100 KiB (102400 bytes).
-    // This prevents memory exhaustion and UI thread locking.
+    // A payload limit of 100 KiB (102400 bytes) bounds the decode buffer and
+    // the data handed to the clipboard callback while the terminal is locked.
     if (enc_len > WSAP_VTCORE_OSC52_MAX_ENCODED)
         return;
     char stack_buf[4096];

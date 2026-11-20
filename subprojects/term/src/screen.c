@@ -621,9 +621,9 @@ void wsap_vtcore_screen_erase(struct wsap_vtcore *t, int mode)
             tail_clean = false;
         }
         if (last_active >= 0 && !t->alternate) {
-            /* ED does not move the cursor. The scroll can bring a double-size
-             * row under it. The erase below makes all rows single width, so
-             * keep the column and do not clamp it here. */
+            /* ED does not move the cursor, but the scroll can put a
+             * double-size row under it. The erase below makes all rows single
+             * width, so restore the column instead of clamping it. */
             int cursor_x = t->cursor_x;
             wsap_vtcore_screen_scroll_region(t, 0, rows - 1, last_active + 1, false, true);
             t->cursor_x = cursor_x;
@@ -660,9 +660,9 @@ void wsap_vtcore_screen_erase(struct wsap_vtcore *t, int mode)
     }
 }
 
-/* Erase the cells from to `to` of physical row p that DECSCA did not
- * protect. Each run of erasable cells takes the path of EL, so the run gets
- * the same blanks. The cells after the row length are not protected. */
+/* Erase the cells from `from` to `to` of physical row p, except those that
+ * DECSCA protected. Each run of erasable cells goes to erase_span, so it gets
+ * the same blanks as EL. Cells past the row length carry no protection. */
 static void erase_span_selective(struct wsap_vtcore *t, int p, int from, int to)
 {
     struct srow *row = &t->scr.slot[p];
@@ -685,8 +685,8 @@ static void erase_span_selective(struct wsap_vtcore *t, int p, int from, int to)
         int run = x;
         while (x < end && !(cells[x].pad & CELL_EXT_PROTECTED))
             x++;
-        /* Only the last run can reach the row length. Only it can make the
-         * row shorter. A run that starts after the length also ends here. */
+        /* Only the last run reaches the row length, so only it can shorten
+         * the row. */
         if (x >= end)
             x = to;
         erase_span(t, p, run, x);
@@ -761,7 +761,9 @@ static void wipe_cells(struct wsap_vtcore *t, int y, int x0, int x1)
 
 void wsap_vtcore_screen_selective_erase_rect(struct wsap_vtcore *t, const struct csi *csi)
 {
-    /* In origin mode, the coordinates count from the margins and stop at them. */
+    /* In origin mode, the rows count from the scroll margins and stop at
+     * them. With DECLRMM, the columns count from the left and right margins
+     * and stop at them. */
     bool lr = t->origin_mode && t->lr_margin_mode;
     int top_limit = t->origin_mode ? t->scroll_top : 0;
     int bottom_limit = t->origin_mode ? t->scroll_bottom : t->rows - 1;
@@ -952,12 +954,13 @@ void wsap_vtcore_screen_scroll_region(struct wsap_vtcore *t, int top, int bottom
                                       bool down, bool history)
 {
     scroll_region(t, top, bottom, count, down, history);
-    /* A double-size row can move under the cursor. */
+    /* A double-size row can move under the cursor, so clamp the column again. */
     line_clamp_cursor(t);
 }
 
-/* Copy columns left to right of src into dst. Cells after the source length
- * read as blank. The row keeps its cells outside the columns.
+/* Copy the cells between columns left and right from src into dst. Cells
+ * past the source length become blank. The row keeps its cells outside the
+ * columns.
  */
 static void rect_copy_row(struct srow *dst, const struct srow *src, int left, int right)
 {
@@ -978,7 +981,8 @@ static void rect_copy_row(struct srow *dst, const struct srow *src, int left, in
     }
 }
 
-/* Blank columns left to right of a row with the current background. */
+/* Blank the cells between columns left and right with the current
+ * background. */
 static void rect_blank_row(struct wsap_vtcore *t, struct srow *row, int left, int right)
 {
     int old_len = row->len;
@@ -1007,9 +1011,9 @@ void wsap_vtcore_screen_scroll_rect(struct wsap_vtcore *t, int top, int bottom, 
     if (count > height)
         count = height;
 
-    /* Split the wide characters that cross the edges first. A row is then
-     * free to take cells from any other row. The rows no longer continue
-     * each other, so no row stays wrapped. */
+    /* Split the wide characters that cross the edges first, so that a copy
+     * between rows cannot separate half of a character. The rows no longer
+     * continue each other, so none stays wrapped. */
     for (int y = top; y <= bottom; y++) {
         int p = phys_row(t, y);
         struct cell *cells = row_cells(t, p);
@@ -1286,13 +1290,13 @@ struct reflow_target {
     int count;
     int out_cap;
     int cursor_x, cursor_y, saved_x, saved_y, prompt_y;
-    /* The marks of the row in progress, and the marks of the next cell that
-     * the reflow places. A mark stays on the row of the first cell of its
-     * source row. */
+    /* The marks of the rows in progress, and the marks that wait for the next
+     * source row. A mark joins the row that holds the first cell of its source
+     * row. */
     struct mark_info mark, mark_next;
     bool cursor_set, saved_set, prompt_set, pending_wrap;
-    /* The line size (RF_LINE_SIZE bits) of the row that the next end
-     * finishes. */
+    /* The line size (RF_LINE_SIZE bits) of the row that the next call to
+     * reflow_target_end_row finishes. */
     uint8_t size;
 };
 
@@ -1738,8 +1742,8 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
             mark_merge(&r.mark_next, wsap_vtcore_marks_row(t, src));
 
         /* Rows from the prompt on keep their cells. A double-size row also
-         * stays one row: reflow moves no cells into it or out of it. It
-         * still continues a wrapped row before it. */
+         * stays one row, and it takes no cells from the row after it. It still
+         * continues a wrapped row before it. */
         bool keep_row = t->prompt_y >= 0 && y >= t->prompt_y;
         uint8_t size = src->flags & RF_LINE_SIZE;
         if (keep_row || size) {
@@ -1817,7 +1821,8 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
             wsap_vtcore_marks_hist_drop(t, open_id);
         }
     }
-    /* The new rows get new uids. The output rows carry the prompt states. */
+    /* The new rows get new uids. Their marks come from the output rows of
+     * the reflow. */
     wsap_vtcore_marks_rows_clear(t);
     wsap_vtcore_hist_set_width(&t->hist, cols);
 
@@ -1839,7 +1844,7 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
                 len = line_visible_len(out, len, cols);
             }
             /* A double-size row keeps its visible length. Other wrapped rows
-             * get blank padding, as before. */
+             * pad to the full width, as a scroll does. */
             int push_len = (r.out[i].wrapped && len < cols && !r.out[i].size) ? cols : len;
             struct mark_at at = wsap_vtcore_marks_hist_at(&t->hist);
             wsap_vtcore_hist_push_row(&t->hist, out, push_len, r.out[i].wrapped, t->gstore);

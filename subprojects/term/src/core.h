@@ -33,7 +33,8 @@ static inline void sc_print_cell(struct wsap_vtcore *t, uint32_t cp, int width, 
         struct srow *srow = wsap_vtcore_row(t, t->cursor_y);
         int cx = t->cursor_x;
         int len = srow->len;
-        /* A double-size row wraps at half the width. The slow path knows it. */
+        /* A double-size row wraps at half the width, so writes to it take the
+         * slow path. */
         if (WSAP_VTCORE_EXPECT(srow->kind == ROW_CELLS && !(srow->flags & RF_LINE_SIZE) &&
                                cx <= len, 1)) {
             struct cell *row = srow->cells;
@@ -76,7 +77,8 @@ static inline void sc_linefeed(struct wsap_vtcore *t, size_t n)
             line_clamp_cursor(t);
             return;
         }
-        /* With left and right margins, a scroll moves only the cells inside them. */
+        /* With left and right margins, a scroll moves only the cells between
+         * the margins, so the general path handles it. */
         if (WSAP_VTCORE_EXPECT(!t->lr_margin_mode, 1)) {
             t->pending_wrap = false;
             wsap_vtcore_row(t, t->cursor_y)->version++;

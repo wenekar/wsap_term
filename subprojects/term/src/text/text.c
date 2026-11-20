@@ -98,8 +98,9 @@ void wsap_vtcore_text_ground(struct wsap_vtcore *t, unsigned char ch)
     }
 }
 
-/* The bulk line paths also cover autowrap off. They take only lines that fit the width.
- * The wrapped-run stream in wsap_vtcore_sc_bulk_ascii_lines still requires autowrap. */
+/* The bulk line paths also run with autowrap off, and they take only lines
+ * that fit the width. The wrapped-run stream in
+ * wsap_vtcore_sc_bulk_ascii_lines still requires autowrap. */
 static inline bool can_stream_bottom(const struct wsap_vtcore *t)
 {
     return t->state == ST_GROUND && !t->translate && !t->insert_mode &&
@@ -226,7 +227,8 @@ static void wsap_vtcore_feed_inner(struct wsap_vtcore *t, const char *buf, size_
                  (i + (size_t)run < len &&
                   (buf[i + run] == '\r' || buf[i + run] == '\n')))) {
                 struct srow *raw_row = &t->scr.slot[phys_row(t, t->cursor_y)];
-                /* The line streams fill rows to the full width. */
+                /* The line streams write whole rows, so they start only at a
+                 * row boundary. */
                 if (!(raw_row->flags & RF_LINE_SIZE) &&
                     (t->pending_wrap ||
                      (t->cursor_x == 0 && raw_row->len == 0) ||

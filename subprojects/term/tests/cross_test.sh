@@ -51,7 +51,6 @@ status=0
 for target in aarch64-linux-gnu x86_64-macos aarch64-macos x86_64-windows-gnu; do
     mkdir -p "$out/$target"
     objs=()
-    # Compile each source file.
     for src in "${sources[@]}"; do
         obj="$out/$target/$(basename "$src" .c).o"
         zig cc -target "$target" -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror \
@@ -71,7 +70,6 @@ for target in aarch64-linux-gnu x86_64-macos aarch64-macos x86_64-windows-gnu; d
         zig cc -target "$target" "${objs[@]}" "$out/$target/main.o" ${link_libs[@]+"${link_libs[@]}"} -o "$out/$target/test.exe" ||
             { echo "$target: link fails" >&2; status=1; }
     fi
-    # Compile the amalgamation.
     zig cc -target "$target" -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror \
         -c "$out/amalgamation/wsap_vtcore.c" -o "$out/$target/amalgam.o" ||
         { echo "$target: the amalgamation fails" >&2; status=1; }

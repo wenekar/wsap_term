@@ -11,8 +11,8 @@
  * uses the row uid as its key. A history row with marks has an entry in the
  * line ring. The ring is sorted by line and cell.
  *
- * Output controls the number of marks, so both tables have a limit. When a
- * table is full, it drops its oldest entry.
+ * Terminal output can add a mark on every row, so both tables have a limit.
+ * When a table is full, it drops its oldest entry.
  */
 
 #define MARKS_LINES_MAX 65536u
@@ -91,8 +91,8 @@ static void rows_prune(struct wsap_vtcore *t)
     m->nrows = kept;
 }
 
-/* Only OSC 133;D may prune: during a resize, the new rows are not on the
- * screen yet. */
+/* Only OSC 133;D enables pruning. A reflow records marks for rows that are
+ * not on the screen yet, and a prune would drop their entries. */
 static void rows_set(struct wsap_vtcore *t, uint64_t uid, uint8_t state, int32_t status, bool prune)
 {
     struct wsap_vtcore_marks *m = marks_get(t);
@@ -197,7 +197,8 @@ void wsap_vtcore_marks_hist_add(struct wsap_vtcore *t, struct mark_at at, struct
     const struct hist *h = &t->hist;
     if (!(info.flags & RF_MARKS))
         return;
-    /* The push did not store the row when the line count is wrong. */
+    /* The push stored the row only if history gained exactly one line, id,
+     * and that line is still retained. */
     uint64_t end = hist_end_id(h);
     uint64_t id = at.open ? at.end - 1 : at.end;
     if (end != id + 1 || id < hist_first_id(h))
@@ -234,7 +235,7 @@ void wsap_vtcore_marks_hist_drop(struct wsap_vtcore *t, uint64_t id)
         m->count--;
 }
 
-/* The index of the first entry of a line after id - 1. */
+/* The index of the first entry whose line id is at least id. */
 static uint32_t lines_lower(const struct wsap_vtcore_marks *m, uint64_t id)
 {
     uint32_t lo = 0, hi = m ? m->count : 0;
@@ -283,9 +284,9 @@ void wsap_vtcore_marks_pull(struct wsap_vtcore *t, uint64_t id, int first, struc
 void wsap_vtcore_marks_set(struct wsap_vtcore *t, uint8_t flag)
 {
     struct srow *row = &t->scr.slot[phys_row(t, t->cursor_y)];
-    /* A mark changes no cell. Do not bump the row version, because a snapshot
-     * update then keeps the row. */
-    /* A new prompt starts a new command. Its command has no state yet. */
+    /* A mark changes no cell. A version bump would make the next snapshot
+     * update rebuild the row, so leave the version alone. A new prompt
+     * starts a new command: drop the state recorded for the row. */
     if (flag & RF_PROMPT)
         rows_drop(t, row->uid);
     row->flags |= flag;
@@ -299,8 +300,8 @@ void wsap_vtcore_marks_finish(struct wsap_vtcore *t, bool has_status, int32_t st
     for (int y = t->cursor_y; y >= 0; y--) {
         const struct srow *row = &t->scr.slot[phys_row(t, y)];
         if (row->flags & RF_PROMPT) {
-            /* A later D with no prompt before it belongs to no command. Do
-             * not change a command that is already done. */
+            /* A later D with no new prompt belongs to no command. Leave a
+             * finished command unchanged. */
             if (wsap_vtcore_marks_row(t, row).state & MARK_DONE)
                 return;
             rows_set(t, row->uid, state, status, true);
@@ -444,7 +445,7 @@ static inline struct mpos entry_pos(const struct mark_query *q, const struct mar
 }
 
 
-/* Find the nearest row with flag before p (dir < 0) or after p (dir > 0).
+/* Find the nearest row with flag above p (dir < 0) or below p (dir > 0).
  * With at, p itself counts. */
 static bool find_mark(const struct mark_query *q, struct mpos p, int dir, uint8_t flag, bool at,
                       struct mpos *out, struct mark_info *info)
@@ -559,8 +560,8 @@ static bool command_at(const struct mark_query *q, int row, struct wsap_vtcore_c
     cmd->finished = has_next || (info.state & MARK_DONE);
     cmd->has_exit_status = (info.state & MARK_STATUS) != 0;
     cmd->exit_status = cmd->has_exit_status ? info.status : 0;
-    /* A C mark on the prompt row belongs to the command before it: a
-     * command without output ends on the row where the next prompt starts. */
+    /* A C mark on the row where the next prompt starts belongs to the
+     * command before it: a command without output ends on that row. */
     if (!find_mark(q, a, 1, RF_OUTPUT, false, &out, NULL) || (has_next && pos_cmp(out, next) >= 0))
         return true;
     int64_t first = pos_dist(q, top, out), last;

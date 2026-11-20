@@ -192,9 +192,8 @@ static const char *compare(struct model *m, struct wsap_vtcore *t, struct wsap_v
                 int n = row[x].text ? wsap_vtcore_snapshot_cluster(snap, row[x].text, cps,
                                                             WSAP_VTCORE_GRAPHEME_MAX_LEN) : 0;
                 wsap_vtcore_color ul = uls ? uls[x] : WSAP_VTCORE_COLOR_NONE;
-                /* The term marks the unwritten tail of a wrapped row as wrap
-                 * pads. The model marks only the pad cell that a wide
-                 * character made, so a model pad must be a term pad. */
+                /* A model pad must be a term pad. The term marks more cells as
+                 * wrap pads, so the test checks one direction only. */
                 uint16_t attrs = (uint16_t)(row[x].attrs & ~WSAP_VTCORE_ATTR_WRAP_PAD);
                 bool pad = (row[x].attrs & WSAP_VTCORE_ATTR_WRAP_PAD) != 0;
                 if (n == e->n && row[x].width == e->width && attrs == e->attrs &&

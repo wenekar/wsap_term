@@ -108,7 +108,7 @@ static inline const char *parse_byte_delim2(const char *s, const char *end, char
 }
 
 #if defined(__x86_64__) || defined(_M_X64)
-/* Parse a number of len 1 to 3 digits at p. p can read 3 bytes. Clear *ok if a
+/* Parse a 1- to 3-digit number at p. p can read 3 bytes. Clear *ok when a
  * byte is not a digit. */
 WSAP_VTCORE_ALWAYS_INLINE
 static inline uint32_t parse_num_123(const char *p, int len, bool *ok)
@@ -183,7 +183,8 @@ static inline const char *parse_256color(const char *p, const char *end, uint32_
     return s;
 }
 
-/* Test for "38;2;", "38;5;", "48;2;", or "48;5;" at p. lead is '3', '4', or 0 for either. */
+/* Test for "38;2;", "38;5;", "48;2;", or "48;5;" at p. A lead of '3' or '4'
+ * requires that first byte; 0 accepts either. */
 static inline bool is_ext_color(const char *p, const char *end, char lead)
 {
     return p + 5 <= end && (lead ? p[0] == lead : (p[0] == '3' || p[0] == '4')) &&
@@ -207,9 +208,9 @@ static const char *parse_ext_color(const char *p, const char *end, uint32_t *col
     return s;
 }
 
-/* Scans the rest of a printable run of 16 bytes or more. The vector scan
- * stays out of the fast path, so the fast path keeps its size whatever the
- * inlining of the whole program decides. */
+/* Scan the rest of a printable run of 16 bytes or more. The separate call
+ * keeps the vector scan out of the fast path, whatever the compiler decides
+ * to inline. */
 WSAP_VTCORE_NOINLINE
 static int scan_long_ascii_run(const char *p, int len)
 {
@@ -341,7 +342,8 @@ int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
                 int cx = t->cursor_x;
                 struct srow *row = wsap_vtcore_row(t, t->cursor_y);
                 if (row->kind == ROW_TEXT && cx == row->text.cells && cx > 0 && cx + 1 < cols) {
-                    // The general path prints the last column, which sets pending_wrap.
+                    // Stop before the last column, where the general path prints and
+                    // sets pending_wrap.
                     struct text_row *tr = &row->text;
                     uint8_t *text = tr->text;
                     int text_len = tr->text_len;
@@ -502,7 +504,8 @@ int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
             p += p[0] == 'm' ? 1 : 2;
         } else if (p + 2 <= end && (p[0] == '0' || p[0] == '1') && p[1] == ';' &&
                    is_ext_color(p + 2, end, 0)) {
-            // "0;" or "1;" before the colors. Parse all colors before a change.
+            // "0;" or "1;" before the colors. Parse the colors before the change,
+            // so a failure leaves the state alone.
             uint32_t nfg = p[0] == '0' ? WSAP_VTCORE_COLOR_FG : fg;
             uint32_t nbg = p[0] == '0' ? WSAP_VTCORE_COLOR_BG : bg;
             const char *next = parse_sgr_colors(p + 2, end, &nfg, &nbg);
@@ -721,8 +724,10 @@ int wsap_vtcore_try_fast_csi(struct wsap_vtcore *t, const char *buf, size_t rem)
                             j += 2;
                         } else if (j + 1 < nparams && pv[j + 1] == 2 &&
                                    j + 4 < nparams) {
-                            /* Parameters stop at six digits here, but the base parser keeps
-                             * all digits and the color keeps the low byte. Let it decide. */
+                            /* This parser stops accumulating a parameter at six
+                             * digits, but the base parser keeps all digits and the
+                             * color keeps the low byte. Let the base parser apply a
+                             * parameter that reached 100000. */
                             if ((pv[j + 2] | pv[j + 3] | pv[j + 4]) >= 100000) {
                                 p = esc;
                                 goto done;

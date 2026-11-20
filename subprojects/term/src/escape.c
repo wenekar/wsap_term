@@ -285,7 +285,8 @@ static void restore_deccir(struct wsap_vtcore *t, const char *p, const char *end
     if ((flag & 0xf0) != 0x40) return;
     t->autowrap = (flag & 8) != 0;
     t->origin_mode = (flag & 1) != 0;
-    /* Like xterm, apply each field before the next one is read. */
+    /* Like xterm, apply each field before the next one is read, so a malformed
+     * tail keeps the fields before it. */
     struct charset_state *cs = &t->charsets;
     cs->ss = (flag & 4) ? 3 : (flag & 2) ? 2 : 0;
     wsap_vtcore_charset_sync(t);
@@ -562,7 +563,8 @@ static inline void handle_sgr(struct wsap_vtcore *t, const struct csi *csi)
 
 /* The DECRQM value of a mode that the core always applies: DECANM (no VT52
  * mode), alternate screen switches (1046), and grapheme clusters (2027).
- * The ANSI mode SRM is set because the core never echoes input. */
+ * ANSI mode 12 (SRM) reports this value too, because the core never echoes
+ * input. */
 #define MODE_PERMANENT 3
 
 #define WSAP_VTCORE_ANSI_MODE_FIELDS(X) \
@@ -701,7 +703,8 @@ static WSAP_VTCORE_NOINLINE void report_cursor(struct wsap_vtcore *t, bool dec)
     send_response(t, reply);
 }
 
-/* Window operations (CSI Ps ; Ps t). Unknown cell pixels report zero. */
+/* Window operations (CSI Ps ; Ps t). With an unknown cell size, pixel reports
+ * give zero. */
 static WSAP_VTCORE_NOINLINE void window_op(struct wsap_vtcore *t, const struct csi *csi)
 {
     char reply[64];
@@ -1361,7 +1364,8 @@ size_t wsap_vtcore_escape_str(struct wsap_vtcore *t, const char *buf, size_t len
             memcpy(wsap_vtcore_osc_tail(t), buf, take);
             t->osc_len += (int)take;
         } else if (take) {
-            /* A full buffer drops only bytes that arrive, not the terminator. */
+            /* A full buffer drops the data bytes, but the terminator still
+             * ends the sequence. */
             t->str_truncated = true;
         }
     } else {

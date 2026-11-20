@@ -71,7 +71,7 @@ void wsap_vtcore_select_clear(struct wsap_vtcore *t)
     }
 }
 
-// Classify codepoint into word selection classes.
+// The word selection class of a code point.
 // Class 0: whitespace.
 // Class 1: letters, digits, and word characters.
 // Class 2: punctuation and symbols.
@@ -821,9 +821,9 @@ static char *range_text_inner(const struct wsap_vtcore *t,
                         n += (size_t)wsap_vtcore_utf8_encode(cps[k], text + n);
                 }
             }
-            /* A blank row at the end of a line leaves the blanks of the
-             * joined row before it. A blank cell gives one byte at or below
-             * a space, and no UTF-8 sequence holds such a byte. */
+            /* A line that ends in blank rows keeps the blank cells of its
+             * joined rows. Each gives one byte at or below a space, and no
+             * UTF-8 sequence holds such a byte, so trim them by byte. */
             if (text && line_end)
                 while (n > line_start && (unsigned char)text[n - 1] <= ' ')
                     n--;

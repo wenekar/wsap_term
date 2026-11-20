@@ -148,8 +148,9 @@ struct wsap_vtcore_sgr_entry {
     uint8_t val;
 };
 
-/* Table maps SGR codes 0 through 109 to actions.
- * It provides O(1) dispatch and avoids branch ladders. */
+/* The table maps SGR codes 0 through 109 to actions. An unset entry or a code
+ * above 109 does nothing, and a table keeps the hot loop free of a branch
+ * ladder. */
 static const struct wsap_vtcore_sgr_entry wsap_vtcore_sgr_actions[110] = {
     [0] = { SGR_ACT_RESET, 0, 0, 0 },
     [1] = { SGR_ACT_ATTR, 0, PEN_ATTR_BOLD, 0 },

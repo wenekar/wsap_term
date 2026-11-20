@@ -213,8 +213,8 @@ static void rewrite_rows(struct wsap_vtcore *term, int first, int count)
     }
 }
 
-/* A wide screen has more new cells than the direct path takes. Change some
- * rows, then most rows, while the ring start is not zero. */
+/* Change some rows, then most rows, on a wide screen while the ring start is
+ * not zero. */
 static void test_snapshot_rows_after_large_updates(void)
 {
     struct wsap_vtcore_options options = { .size = { .x = 200, .y = 40 }, .scrollback = 100 };

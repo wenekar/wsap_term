@@ -256,8 +256,9 @@ static inline void page_drop_n(struct hist *h, uint32_t pg, uint32_t n)
 }
 
 #if defined(WSAP_VTCORE_KERNEL_AVX512)
-/* Check count lines from p, a multiple of 4. Each line must be one closed part with
- * known rows, and each text line must be on page. Blank lines can be anywhere. */
+/* Check count lines from p, where count is a multiple of 4. Each line must
+ * be one closed part with known rows, and each text line must be on page.
+ * Blank lines can be anywhere. */
 WSAP_VTCORE_TARGET_AVX512
 static inline bool same_page_rows_avx512(const struct hline *p, int count, uint32_t page,
                                          uint32_t *text_count, uint32_t *row_count)
@@ -2874,7 +2875,7 @@ int wsap_vtcore_hist_line_rows(const struct hist *h, uint64_t id, int cols)
         !(wsap_vtcore_hist_line_flags(h, id) & (HLINE_HAS_WIDE | HLINE_HAS_CLUSTER)))
         return (int)rows_narrow(cells, cols);
     /* The walk count is a test hook, so this read function updates it. The
-     * history object is mutable even when the caller holds a const view. */
+     * history object can change even when the caller has a const pointer. */
     return line_rows_walk((struct hist *)h, first, line_end(h, first), cols);
 }
 
@@ -3333,8 +3334,9 @@ uint64_t wsap_vtcore_hist_line_estimate(const struct hist *h, uint64_t id, int c
 }
 
 /* Stores the row count of a line as exact. A count of ROWS_UNKNOWN or more
- * does not fit in wrap_rows, so it goes in the wide table. False means that
- * the table does not fit in memory and the count stays a computed value. */
+ * does not fit in wrap_rows, so it goes in the wide table. Returns false
+ * when the table cannot be allocated; the count then stays a computed
+ * value. */
 static bool rows_store_exact(struct hist *h, uint64_t id, uint64_t rows)
 {
     uint64_t seq = line_first(h, id);
@@ -3343,8 +3345,8 @@ static bool rows_store_exact(struct hist *h, uint64_t id, uint64_t rows)
         if (!h->exact_rows) {
             h->exact_rows = calloc((size_t)h->ring_mask + 1, sizeof(*h->exact_rows));
             if (!h->exact_rows) {
-                /* The byte cannot hold this count. Clear the flag and the
-                 * value, so no reader returns the count of the old width. */
+                /* wrap_rows cannot hold this count. Clear the flag and the
+                 * value, so no reader returns a count from the old width. */
                 first->flags &= (uint8_t)~HLINE_ROWS_EXACT;
                 first->wrap_rows = ROWS_UNKNOWN;
                 return false;
@@ -3392,7 +3394,7 @@ uint64_t wsap_vtcore_hist_estimated_rows(const struct hist *h, int cols)
     return total;
 }
 
-/* Test hook: the number of exact row walks of one line since init. */
+/* Test hook: the number of exact row walks since init. */
 uint64_t wsap_vtcore_hist_walk_calls(const struct hist *h)
 {
     return h ? h->walk_calls : 0;

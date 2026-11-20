@@ -12,9 +12,10 @@
  * link and underline color once. Id zero means no link and no underline
  * color, so a plain cell needs no table lookup.
  *
- * Cells, text rows, and history runs copy the pad field without a change.
- * Thus history and reflow keep the style. A full table collects the ids
- * that no cell uses. The link table collects its links the same way. */
+ * Cells, text rows, and history runs copy the pad field unchanged, so history
+ * and reflow keep the style. A sweep reclaims the ids that no cell, text row,
+ * history line, or pen uses. It also marks the links of the kept styles, so
+ * that the link table can release the rest. */
 
 struct wsap_vtcore;
 
@@ -32,7 +33,7 @@ struct wsap_vtcore_styles {
     uint16_t cap, next, free_count;
 };
 
-/* Return the entry of the style id in pad. Return NULL for id zero. */
+/* Return the entry of the style id in pad, or NULL when the table has none. */
 static inline const struct style_entry *wsap_vtcore_style_entry(const struct wsap_vtcore_styles *s,
                                                                 uint16_t pad)
 {
@@ -43,13 +44,13 @@ static inline const struct style_entry *wsap_vtcore_style_entry(const struct wsa
 }
 
 /* Set cur_pad and base_pad from cur_link, cur_ul, and the flags in cur_pad.
- * When the table cannot take a new style, the pen loses its underline color
- * first, and then its link. */
+ * When the table cannot intern the pair, the pen keeps the link and drops the
+ * underline color; when it cannot intern the link, the pen drops the link. */
 void wsap_vtcore_style_update(struct wsap_vtcore *t);
 
 /* Release the styles that no cell, text row, history line, or pen uses.
  * When link_mark is not NULL, also set the bit of each link that a kept
- * style uses. Bit id - 1 stands for link id; link_cap limits the ids. */
+ * style uses. Bit (id - 1) stands for link id, and link_cap limits the ids. */
 void wsap_vtcore_style_gc(struct wsap_vtcore *t, uint64_t *link_mark, uint16_t link_cap);
 
 void wsap_vtcore_style_free(struct wsap_vtcore *t);

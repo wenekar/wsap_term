@@ -573,7 +573,8 @@ static void view_dynamic_sizing(void)
     wsap_vtcore_free(t);
 }
 
-/* The first non-blank ASCII text of snapshot row y. */
+/* Copy row y as ASCII text without trailing blanks. A non-ASCII code point
+ * becomes '?'. */
 static void snapshot_row_text(const struct wsap_vtcore_snapshot *s, int y,
                               char *buf, size_t cap)
 {
@@ -589,8 +590,8 @@ static void snapshot_row_text(const struct wsap_vtcore_snapshot *s, int y,
     buf[n] = 0;
 }
 
-/* A live snapshot holds the screen rows below the history, also while the
- * view shows older rows. The view keeps its offset. */
+/* A live snapshot holds the live screen while the view shows older rows. The
+ * view keeps its offset. */
 static void live_snapshot_ignores_the_view_offset(void)
 {
     struct wsap_vtcore *t = small_history_term(12, 5, 100);

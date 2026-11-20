@@ -45,8 +45,8 @@ struct pen {
     bool prot;
 };
 
-/* A designated set: the final byte, the intermediate byte shifted left by
- * 8, and SCS_96 for a 96-character set. 'B' is ASCII. */
+/* A flag for a 96-character set. A designated set holds the final byte, the
+ * intermediate byte shifted left by 8, and this flag. 'B' is ASCII. */
 #define SCS_96 0x10000
 
 struct saved {
@@ -139,8 +139,8 @@ static struct row *row_new(int cols)
     return r;
 }
 
-/* A double-size row shows its first line_cols(cols) cells. The other cells
- * stay in the row, hidden. */
+/* A double-size row shows half of the columns, but at least one. The other
+ * cells stay in the row, hidden. */
 static int line_cols(int cols)
 {
     return cols > 1 ? cols / 2 : 1;
@@ -415,7 +415,7 @@ static void erase_line(struct model *m, int mode)
 }
 
 /* Erase the cells that DECSCA did not protect. Each run of erasable cells
- * takes the path of EL. The cells after the row length are not protected. */
+ * takes the path of EL. Cells past the row length count as unprotected. */
 static void erase_cells_selective(struct model *m, int y, int from, int to)
 {
     struct row *r = m->scr[y];
@@ -861,7 +861,8 @@ static void delete_chars(struct model *m, int n)
     struct row *r = m->scr[m->y];
     int x = m->x, cols = m->cols;
     int right = row_last(m, r) + 1;
-    /* DECDC can put the column past the visible cells. They do not move. */
+    /* The cursor can be past the visible cells of a double-size row.
+     * Deleting there changes nothing. */
     if (x >= right) return;
     if (n > right - x) n = right - x;
     int len = r->len;
@@ -1144,8 +1145,8 @@ static int arg(const struct model *m, int i)
 }
 
 /* The rectangle in parameters first to first + 3, in screen rows and
- * columns. Origin mode moves row 1 to the top margin and clips at the
- * margins. */
+ * columns. Origin mode moves row 1 to the top margin and limits the rows to
+ * the margins. */
 static bool area(const struct model *m, int first, int *top, int *left, int *bottom, int *right)
 {
     long long row0 = top_limit(m), row1 = bottom_limit(m);
@@ -1353,12 +1354,13 @@ struct reflow {
     bool cursor_set, saved_set, prompt_set;
     int cursor_x, cursor_y, saved_x, saved_y, prompt;
     bool pending;
-    /* The line size of the row that the next end finishes. */
+    /* The line size for the row that the next reflow_end_row call finishes. */
     uint8_t size;
-    /* The next row must not get blank padding in the history. */
+    /* The row that the next reflow_end_row call finishes must not get blank
+     * padding in the history. */
     bool no_pad;
-    /* The mark of the row that the next end finishes, and the mark of the
-     * next cell that the reflow places. */
+    /* The mark of the row that the next end finishes. mark_next holds a mark
+     * until the next append places it on the row that it starts. */
     bool mark, mark_next;
 };
 

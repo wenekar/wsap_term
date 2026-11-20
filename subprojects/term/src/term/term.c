@@ -100,8 +100,8 @@ static unsigned term_luma(uint32_t argb)
     return 299u * ((argb >> 16) & 0xff) + 587u * ((argb >> 8) & 0xff) + 114u * (argb & 0xff);
 }
 
-/* The host scheme, or else light when the theme background is brighter
- * than the theme foreground. */
+/* Return the host color scheme, or light when the theme background is
+ * brighter than the theme foreground. */
 static enum wsap_vtcore_color_scheme term_color_scheme(const struct wsap_vtcore *t)
 {
     if (t->color_scheme)

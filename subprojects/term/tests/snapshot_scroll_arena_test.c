@@ -15,17 +15,15 @@ int main(void)
         assert(wsap_vtcore_snapshot_update(s, t));
     }
 
-    /* Observable behavior: history is bounded by scrollback limit. */
     assert(wsap_vtcore_history_rows(t) == 5);
 
-    /* Observable behavior: snapshot view size matches screen dimensions. */
     const struct wsap_vtcore_view *view = wsap_vtcore_snapshot_view(s);
     assert(view && view->size.x == 8 && view->size.y == 24);
 
-    /* Observable behavior: each visible row holds the fed text.
-     * The line is "e" followed by U+0301, and that is one grapheme. The newline
-     * after the line scrolls, so the cursor row is the bottom row. Every row
-     * above the cursor row starts with the grapheme. The cursor row is blank. */
+    /* Each visible row holds the fed text. The line is "e" followed by
+     * U+0301, and that is one grapheme. The newline after the line scrolls, so
+     * the cursor row is the bottom row. Every row above the cursor row starts
+     * with the grapheme. The cursor row is blank. */
     for (int y = 0; y < view->size.y; y++) {
         const struct wsap_vtcore_cell *row = wsap_vtcore_snapshot_row(s, y);
         assert(row);
@@ -38,13 +36,13 @@ int main(void)
         }
     }
 
-    /* Observable behavior: row keys are distinct for different logical rows. */
+    /* Different logical rows have different keys. */
     uint64_t first_key = wsap_vtcore_snapshot_row_key(s, 0);
     uint64_t last_key = wsap_vtcore_snapshot_row_key(s, view->size.y - 1);
     assert(first_key != last_key);
 
-    /* Observable behavior: snapshot remains valid after many updates.
-     * The same scrollback produces consistent snapshots. */
+    /* The snapshot stays valid after many updates. A second snapshot of the
+     * same terminal has the same view size. */
     struct wsap_vtcore_snapshot *s2 = wsap_vtcore_snapshot_new();
     assert(s2 && wsap_vtcore_snapshot_update(s2, t));
     const struct wsap_vtcore_view *view2 = wsap_vtcore_snapshot_view(s2);

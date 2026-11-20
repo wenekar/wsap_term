@@ -359,7 +359,7 @@ static void test_osc8_sweep_compaction(void)
     }
     assert_link(t, 0, 0, "https://test.link/49");
 
-    /* Fill beyond link limit to force GC and compaction */
+    /* Pass the 8192-link limit to force a sweep and compaction. */
     for (int i = 50; i < 8300; i++) {
         char seq[64];
         int n = snprintf(seq, sizeof(seq), "\033]8;;https://test.link/%d\033\\Y\010", i);
@@ -784,7 +784,7 @@ static void test_osc_marks(void)
     write_seq(t, "\r\n");
     assert_output(t, 7, 3, 5, 6);
 
-    /* The forms of D. */
+    /* The accepted and rejected forms of D, with the exit status of each. */
     static const struct { const char *d; bool has; int status; } forms[] = {
         { "D", false, 0 }, { "D;", false, 0 }, { "D;abc", false, 0 }, { "D;-2", true, -2 },
         { "D;7;aid=1", true, 7 }, { "D;2147483647", true, 2147483647 },
@@ -812,7 +812,8 @@ static void test_osc_marks(void)
     wsap_vtcore_free(t);
 }
 
-/* Each command prints its prompt, then lines output lines. */
+/* Each command prints a prompt and command row, then the given number of
+ * output rows. */
 static void run_commands(struct wsap_vtcore *t, int count, int lines)
 {
     char seq[128];

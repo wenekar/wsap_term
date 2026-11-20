@@ -63,7 +63,8 @@ wsap_vtcore_test_dep = declare_dependency(
 )
 meson.override_dependency('wsap_vtcore-test', wsap_vtcore_test_dep)
 
-# A parent project links the library statically and installs nothing of it.
+# A parent project links the static library and installs neither its headers nor
+# its pkg-config file.
 if not meson.is_subproject()
   install_headers(
     'include/wsap_vtcore/wsap_vtcore.h',
