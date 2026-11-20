@@ -118,6 +118,18 @@ static void ui_resize(struct window *w, struct vector2i size)
     window_redraw(w);
 }
 
+void window_ui_titlebar_changed(struct window *w)
+{
+    struct window_ui *ui = window_ui_of(w);
+    if (!ui)
+        return;
+    /* The viewport does not change, so mark the root for layout here. A new
+     * size comes through window_ui_configure. */
+    if (ui->spec.root)
+        ui_widget_invalidate(ui->spec.root, UI_WIDGET_INVALIDATE_MEASURE);
+    ui_resize(w, ui_surface_viewport(&ui->screen));
+}
+
 void window_ui_relayout(struct window *w)
 {
     if (!window_ui_of(w))

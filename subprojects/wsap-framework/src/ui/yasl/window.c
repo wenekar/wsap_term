@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include <errno.h>
+#include <math.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +14,7 @@
 #include "ui/yasl/internal.h"
 #include "ui/yasl/gpu_surface.h"
 #include "ui/yasl/native_input.h"
+#include "ui/yasl/testing.h"
 #include "util/app_identity.h"
 
 static struct window_native *native_find(struct window *w, const struct yasl_surface *s);
@@ -491,6 +493,7 @@ void window_destroy(struct window *w)
     input_keymap_free(&w->keymap);
     free(w->inject.ev);
     free(w->ime_preedit);
+    free(w->titlebar_areas);
     free(w->title);
     free(w);
 }
@@ -556,6 +559,7 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
         /* Vsync is on unless the configuration asks for tearing. The platform
          * permits unpaced presentation only when this is set. */
         .tearing = config->tearing,
+        .titlebar_overlay = spec->titlebar_overlay,
     };
     w->surface = window_surface_create(&options);
     w->unpaced = config->tearing;
@@ -579,6 +583,7 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
 
     struct yasl_surface_info info = yasl_surface_get_info(w->surface);
     w->scale_120 = window_scale_120_of(info.scale);
+    w->titlebar = window_titlebar_of(&info);
 
     w->suspended = (info.state & YASL_STATE_SUSPENDED) != 0;
     w->focused = (info.state & YASL_STATE_ACTIVATED) != 0;
@@ -592,6 +597,84 @@ struct window *window_open(struct window_host *host, const struct window_spec *s
 fail:
     window_destroy(w);
     return NULL;
+}
+
+struct window_titlebar window_titlebar_of(const struct yasl_surface_info *info)
+{
+    double scale = info->scale > 0 ? info->scale : 1.0;
+    int x0 = (int)lround(info->controls_x * scale);
+    int y0 = (int)lround(info->controls_y * scale);
+    int x1 = (int)lround((info->controls_x + info->controls_width) * scale);
+    int y1 = (int)lround((info->controls_y + info->controls_height) * scale);
+    return (struct window_titlebar){
+        .height = (int)lround(info->titlebar_height * scale),
+        .controls = { .x = x0, .y = y0, .width = x1 - x0, .height = y1 - y0 },
+    };
+}
+
+static bool titlebar_equal(struct window_titlebar a, struct window_titlebar b)
+{
+    return a.height == b.height && rect2i_eq(a.controls, b.controls);
+}
+
+struct window_titlebar window_titlebar(const struct window *w)
+{
+    return w ? w->titlebar : (struct window_titlebar){0};
+}
+
+void window_apply_titlebar(struct window *w, struct window_titlebar titlebar)
+{
+    if (!w || titlebar_equal(w->titlebar, titlebar))
+        return;
+    w->titlebar = titlebar;
+    window_ui_titlebar_changed(w);
+}
+
+void window_test_set_titlebar(struct window *w, struct window_titlebar titlebar)
+{
+    window_apply_titlebar(w, titlebar);
+}
+
+bool window_set_titlebar_areas(struct window *w, const struct rect2i *areas, int count)
+{
+    if (!w || count < 0 || (count && !areas))
+        return false;
+    bool same = count == w->titlebar_area_count;
+    for (int i = 0; same && i < count; i++)
+        same = rect2i_eq(areas[i], w->titlebar_areas[i]);
+    if (same)
+        return true;
+    struct rect2i *copy = NULL;
+    if (count) {
+        copy = malloc((size_t)count * sizeof(*copy));
+        if (!copy)
+            return false;
+        memcpy(copy, areas, (size_t)count * sizeof(*copy));
+    }
+    free(w->titlebar_areas);
+    w->titlebar_areas = copy;
+    w->titlebar_area_count = count;
+    if (!w->surface)
+        return false;
+    double scale = window_scale(w);
+    struct yasl_rect *logical = count ? malloc((size_t)count * sizeof(*logical)) : NULL;
+    if (count && !logical)
+        return false;
+    for (int i = 0; i < count; i++)
+        logical[i] = (struct yasl_rect){
+            .x = areas[i].x / scale, .y = areas[i].y / scale,
+            .width = areas[i].width / scale, .height = areas[i].height / scale,
+        };
+    bool set = yasl_surface_set_titlebar_areas(w->surface, logical, (size_t)count) == 0;
+    free(logical);
+    return set;
+}
+
+const struct rect2i *window_titlebar_areas(const struct window *w, int *count)
+{
+    if (count)
+        *count = w ? w->titlebar_area_count : 0;
+    return w ? w->titlebar_areas : NULL;
 }
 
 bool window_has_gpu(const struct window *w)

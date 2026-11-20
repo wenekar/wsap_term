@@ -205,6 +205,96 @@ static void layout_places_children_test(void)
     close_terminal_window(w, &a);
 }
 
+/* Returns true when no title bar area of `w` meets `r`. */
+static bool areas_avoid(struct window *w, struct rect2i r)
+{
+    int n;
+    const struct rect2i *areas = window_titlebar_areas(w, &n);
+    for (int i = 0; i < n; i++)
+        if (!rect2i_is_empty(rect2i_intersect(areas[i], r)))
+            return false;
+    return true;
+}
+
+/* Returns true when a title bar area of `w` holds `p`. */
+static bool areas_hold(struct window *w, struct vector2i p)
+{
+    int n;
+    const struct rect2i *areas = window_titlebar_areas(w, &n);
+    for (int i = 0; i < n; i++)
+        if (rect2i_contains(areas[i], p))
+            return true;
+    return false;
+}
+
+/* A window whose content covers the system title bar draws a title bar strip:
+ * the window title while one tab is open, then the tab bar right of the window
+ * buttons. The strip is a title bar area except where the tabs and the new tab
+ * button take presses. Without the overlay, the window removes the strip and
+ * its areas. */
+static void titlebar_overlay_strip_test(void)
+{
+    struct test_app a;
+    struct vector2i viewport = { .x = 1200, .y = 800 };
+    struct window *w = open_terminal_window(&a, viewport);
+    assert(app_tabs_new(w));
+    settle_tabbar(w, viewport);
+    struct app_tabs *tabs = app_tabs_of(w);
+    struct window_titlebar tb = {
+        .height = 56, .controls = { .x = 14, .y = 16, .width = 108, .height = 24 },
+    };
+    window_test_set_titlebar(w, tb);
+    ui_surface_prepare(window_ui_surface(w));
+
+    int strip = app_tabs_bar_height(w);
+    assert(strip >= tb.height);
+    struct ui_widget *content = terminal_widget(app_tabs_active(w));
+    assert(content->bounds.y == strip && content->bounds.height == viewport.y - strip);
+    struct ui_widget *title = ui_label_widget(&tabs->title);
+    assert(!ui_widget_is_hidden(title));
+    assert(title->bounds.y >= 0 && title->bounds.y + title->bounds.height <= strip);
+    int n;
+    const struct rect2i *areas = window_titlebar_areas(w, &n);
+    assert(n == 1 && rect2i_eq(areas[0], (struct rect2i){ .width = viewport.x, .height = strip }));
+
+    assert(app_tabs_new(w));
+    settle_tabbar(w, viewport);
+    ui_surface_prepare(window_ui_surface(w));
+    assert(app_tabs_bar_height(w) == strip);
+    assert(ui_widget_is_hidden(title));
+    content = terminal_widget(app_tabs_active(w));
+    assert(content->bounds.y == strip && content->bounds.height == viewport.y - strip);
+    int inset = tb.controls.x * 2 + tb.controls.width;
+    struct rect2i r;
+    int right = 0;
+    for (int i = 0; i < 2; i++) {
+        assert(ui_tabbar_tab_rect(&tabs->tabbar, i, &r));
+        assert(r.x >= inset && r.y >= 0 && r.y + r.height <= strip);
+        assert(areas_avoid(w, r));
+        right = geom_max_i(right, r.x + r.width);
+    }
+    assert(ui_tabbar_new_tab_rect(&tabs->tabbar, &r) && areas_avoid(w, r));
+    right = geom_max_i(right, r.x + r.width);
+    /* The window buttons, the gap before the tabs, and the empty strip end
+     * move the window. */
+    assert(areas_hold(w, (struct vector2i){ .x = 1, .y = 1 }));
+    assert(areas_hold(w, (struct vector2i){ .x = inset - 1, .y = strip / 2 }));
+    assert(areas_hold(w, (struct vector2i){ .x = right + 1, .y = strip / 2 }));
+    assert(areas_hold(w, (struct vector2i){ .x = viewport.x - 1, .y = strip - 1 }));
+    assert(!areas_hold(w, (struct vector2i){ .x = viewport.x / 2, .y = strip }));
+
+    window_test_set_titlebar(w, (struct window_titlebar){0});
+    ui_surface_prepare(window_ui_surface(w));
+    int bar = app_tabs_bar_height(w);
+    assert(bar > 0 && bar == ui_tabbar_bar_height(&tabs->tabbar));
+    assert(ui_tabbar_widget(&tabs->tabbar)->bounds.x == 0);
+    assert(terminal_widget(app_tabs_active(w))->bounds.y == bar);
+    window_titlebar_areas(w, &n);
+    assert(n == 0);
+
+    close_terminal_window(w, &a);
+}
+
 static void tabbar_scene_in_chrome_test(void)
 {
     struct test_app a;
@@ -712,10 +802,12 @@ static void chrome_is_in_widget_tree_test(void)
     struct ui_widget *palette = ui_palette_widget(&tabs->palette);
     assert(rebuild_child(window_ui_root(w), w, 0) == root);
     struct ui_widget *sv = terminal_widget(content);
-    assert(rebuild_child(root, w, 0) == sv);
-    assert(rebuild_child(root, w, 1) == ui_tabbar_widget(&tabs->tabbar));
+    /* The title bar strip shows the title label, which stays hidden here. */
+    assert(rebuild_child(root, w, 0) == ui_label_widget(&tabs->title));
+    assert(rebuild_child(root, w, 1) == sv);
+    assert(rebuild_child(root, w, 2) == ui_tabbar_widget(&tabs->tabbar));
     assert(rebuild_child(sv, w, 0) == terminal_input_widget(content));
-    assert(ui_widget_child_count(root) == 2);
+    assert(ui_widget_child_count(root) == 3);
     /* The tab preview and the palette float above the root. The surface
      * places, paints, and hit-tests them. */
     struct ui_surface *screen = window_ui_surface(w);
@@ -734,7 +826,7 @@ static void chrome_is_in_widget_tree_test(void)
     struct terminal *first = app_tabs_active(w);
     assert(first != content);
     assert(rebuild_child(sv, w, 0) == terminal_input_widget(content));
-    struct ui_widget *swapped = rebuild_child(root, w, 0);
+    struct ui_widget *swapped = rebuild_child(root, w, 1);
     assert(swapped == terminal_widget(first));
     assert(swapped != sv);
 
@@ -997,6 +1089,7 @@ int main(void)
     composed_root_exists_test();
     chrome_is_in_widget_tree_test();
     layout_places_children_test();
+    titlebar_overlay_strip_test();
     tabbar_scene_in_chrome_test();
     scrollbar_scene_in_chrome_test();
     palette_scene_at_rect_test();

@@ -135,6 +135,9 @@ struct window {
 
     struct window_pointer pointer;
     uint32_t bg;
+    struct window_titlebar titlebar;
+    struct rect2i *titlebar_areas;
+    int titlebar_area_count;
 
     int native_count;
     /* The button that owns the mouse drag. It counts only while yasl
@@ -199,6 +202,16 @@ enum window_input_result {
 void window_ui_route(struct window *w, struct input_event *ev);
 void window_ui_configure(struct window *w, struct window_geometry g);
 void window_ui_state_changed(struct window *w);
+/* Stores the system title bar of `w`. When it changed, the mounted UI lays
+ * out again and its resize hook runs. Call it from the WINDOW event of the
+ * main surface. */
+void window_apply_titlebar(struct window *w, struct window_titlebar titlebar);
+/* Returns the title bar in `info` in device pixels. Call it with each new
+ * surface info. */
+struct window_titlebar window_titlebar_of(const struct yasl_surface_info *info);
+/* Lays out the mounted UI of `w` again and calls its resize hook.
+ * window_apply_titlebar() calls it when the title bar changes. */
+void window_ui_titlebar_changed(struct window *w);
 void window_ui_closing(struct window *w);
 void window_ui_destroy(struct window *w);
 void window_ui_restyle(struct window *w);

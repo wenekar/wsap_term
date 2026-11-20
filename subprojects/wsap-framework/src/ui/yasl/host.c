@@ -306,6 +306,7 @@ static void window_geometry_event(struct window *w, const struct yasl_event *ev)
         if (window_mounted(w))
             window_ui_state_changed(w);
     }
+    window_apply_titlebar(w, window_titlebar_of(&ev->window));
     if (window_mounted(w)) {
         window_ui_configure(w, g);
     } else {

@@ -64,8 +64,9 @@ void *app_tabs_active(const struct window *window);
 /* Returns the count of live tabs. */
 int app_tabs_count(const struct window *window);
 int app_tabs_active_index(const struct window *window);
-/* Returns the reserved tab bar height in pixels, or 0 when the bar is
- * hidden. */
+/* Returns the height in pixels that the window reserves above the content:
+ * the title bar strip of a window whose content covers the system title bar,
+ * or else the tab bar, which is 0 while the bar is hidden. */
 int app_tabs_bar_height(const struct window *window);
 
 bool app_tabs_new(struct window *window);

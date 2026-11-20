@@ -128,6 +128,16 @@ struct window_geometry {
     uint32_t scale_120;
 };
 
+/* The system title bar over the top of a window that has a title bar
+ * overlay, in device pixels from the top left of the window. All zero
+ * without the overlay, in fullscreen, and on a platform without it. */
+struct window_titlebar {
+    /* The height of the band that the system title bar covers. */
+    int height;
+    /* The area of the system window buttons in the band. */
+    struct rect2i controls;
+};
+
 typedef void (*window_frame_composer)(struct window *w,
                                       struct window_frame *frame,
                                       void *ud);
@@ -143,6 +153,10 @@ struct window_spec {
     void *compose_ud;
     struct vector2i size;
     bool windowed;
+    /* Asks the platform to extend the content under a transparent system
+     * title bar. The window then draws its own title bar: see
+     * window_titlebar(). The size includes the title bar. */
+    bool titlebar_overlay;
 };
 
 struct window *window_open(struct window_host *host, const struct window_spec *spec);
@@ -221,6 +235,26 @@ struct window_logical_point {
 struct window_logical_point window_logical(const struct window *w,
                                            struct vector2i device);
 bool window_place_under_pointer(struct window *w, struct window_logical_point at);
+
+/* Returns the system title bar of `w`. Read it during layout: the window
+ * lays out its UI again and calls the resize hook of the mounted UI when the
+ * title bar changes. */
+struct window_titlebar window_titlebar(const struct window *w);
+/*
+ * Sets the parts of `w` that act as its title bar, in device pixels from the
+ * top left of the window. A primary press there moves the window, and a
+ * double click zooms or minimizes it as the system setting asks. These
+ * presses reach the UI as no event. The window copies `areas`. A list equal
+ * to the current one changes nothing, so the UI can call this after each
+ * layout. Returns false on a memory shortage, or when the platform has no
+ * title bar areas; the window then keeps the list for
+ * window_titlebar_areas().
+ */
+bool window_set_titlebar_areas(struct window *w, const struct rect2i *areas, int count);
+/* Returns the title bar areas of `w` and stores their count in `count`. Call
+ * it to check the areas, for example in a test. The array stays valid until
+ * the next window_set_titlebar_areas() call. */
+const struct rect2i *window_titlebar_areas(const struct window *w, int *count);
 bool window_drag_carry(struct window *w, struct window_logical_point at);
 
 const char *window_ime_preedit(const struct window *w);

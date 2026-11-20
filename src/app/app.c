@@ -351,10 +351,13 @@ struct window *app_open_terminal(struct app *a, app_tab_id tab,
                                  const char *cwd, struct vector2i size)
 {
     bool cpu_mode = app_wants_cpu(a);
+    /* The tab bar and the title share the system title bar band where the
+     * platform has an overlay title bar. */
     struct window *w = window_open(&a->host, &(struct window_spec){
         .size = size,
         .acquire_device = cpu_mode ? NULL : app_acquire_device, .device_ud = a,
         .compose = app_compose_frame, .compose_ud = a,
+        .titlebar_overlay = true,
     });
     if (!w)
         return NULL;

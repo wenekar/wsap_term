@@ -37,18 +37,60 @@ static void sync_preview_anchor(struct app_tabs *tabs, struct vector2i max_size)
                           (struct ui_constraints){ .max = max_size });
 }
 
+/* Places the tab bar and the window title in the title bar strip of a window
+ * whose content covers the system title bar. root_layout calls it when the
+ * window has a strip. Both start right of the window buttons, with the margin
+ * that the buttons have on their left. */
+static void layout_strip(struct app_tabs *tabs, struct rect2i bounds, int strip_h)
+{
+    struct window_titlebar tb = window_titlebar(tabs->window);
+    int inset = tb.controls.width > 0 ? tb.controls.x * 2 + tb.controls.width : 0;
+    inset = geom_min_i(inset, bounds.width);
+    tabs->strip = (struct rect2i){
+        .pos = bounds.pos, .size = { .x = bounds.width, .y = strip_h },
+    };
+    int css_h = geom_min_i(ui_tabbar_bar_height(&tabs->tabbar), strip_h);
+    ui_widget_place(ui_tabbar_widget(&tabs->tabbar), (struct rect2i){
+        .x = bounds.x + inset, .y = bounds.y + (strip_h - css_h) / 2,
+        .width = bounds.width - inset,
+        .height = geom_min_i(ui_tabbar_height(&tabs->tabbar), css_h),
+    });
+    struct ui_widget *title = ui_label_widget(&tabs->title);
+    if (ui_widget_is_hidden(title))
+        return;
+    /* The title centers on the window, so it keeps clear of the buttons on
+     * both sides. */
+    struct vector2i size = ui_widget_measure(title, (struct ui_constraints){
+        .max = { .x = geom_max_i(0, bounds.width - 2 * inset), .y = strip_h },
+    });
+    ui_widget_place(title, (struct rect2i){
+        .x = bounds.x + (bounds.width - size.x) / 2,
+        .y = bounds.y + (strip_h - size.y) / 2,
+        .width = size.x, .height = size.y,
+    });
+}
+
 /* The animated bar height sets the content origin; the reserved height sets
- * the content size and stays fixed until the app releases a closing entry. */
+ * the content size and stays fixed until the app releases a closing entry. A
+ * title bar strip reserves its full height at once. */
 static void root_layout(struct ui_widget *widget, struct rect2i bounds)
 {
     struct app_tabs *tabs = root_tabs(widget);
     struct ui_widget *tabbar = ui_tabbar_widget(&tabs->tabbar);
-    int bar_h = geom_min_i(ui_tabbar_bar_height(&tabs->tabbar), bounds.height);
+    struct ui_widget *title = ui_label_widget(&tabs->title);
+    int strip_h = geom_min_i(app_tabs_strip_height(tabs), bounds.height);
     int reserve = geom_min_i(app_tabs_bar_height(tabs->window), bounds.height);
-    int offset = geom_min_i(ui_tabbar_height(&tabs->tabbar), reserve);
-    ui_widget_place(tabbar, (struct rect2i){
-        .pos = bounds.pos, .size = { .x = bounds.width, .y = bar_h },
-    });
+    int offset = reserve;
+    tabs->strip = (struct rect2i){0};
+    if (strip_h) {
+        layout_strip(tabs, bounds, strip_h);
+    } else {
+        int bar_h = geom_min_i(ui_tabbar_bar_height(&tabs->tabbar), bounds.height);
+        offset = geom_min_i(ui_tabbar_height(&tabs->tabbar), reserve);
+        ui_widget_place(tabbar, (struct rect2i){
+            .pos = bounds.pos, .size = { .x = bounds.width, .y = bar_h },
+        });
+    }
     if (tabs->mounted)
         ui_widget_place(tabs->mounted, (struct rect2i){
             .pos = { .x = bounds.x, .y = bounds.y + offset },
@@ -57,9 +99,81 @@ static void root_layout(struct ui_widget *widget, struct rect2i bounds)
     /* Sync the preview anchor after tab bar placement. */
     sync_preview_anchor(tabs, bounds.size);
     for (struct ui_widget *c = widget->first_child; c; c = c->next_sibling) {
-        if (c != tabbar && c != tabs->mounted)
+        if (c != tabbar && c != title && c != tabs->mounted)
             ui_widget_place_child(c, bounds);
     }
+}
+
+/* Appends `r` to `areas` when it is not empty. */
+static void add_area(struct rect2i *areas, int *n, struct rect2i r)
+{
+    if (r.width > 0 && r.height > 0)
+        areas[(*n)++] = r;
+}
+
+/* Orders rectangles by their left edge, for qsort. */
+static int compare_x(const void *a, const void *b)
+{
+    const struct rect2i *ra = a, *rb = b;
+    return (ra->x > rb->x) - (ra->x < rb->x);
+}
+
+/*
+ * Sets the title bar areas of the window. root_prepare calls it each frame,
+ * because the tabs move while they animate. The areas cover the strip except
+ * the tabs and the new tab button, which keep their presses. The tabs stand
+ * in one row, so the areas are the gaps between them across the full strip
+ * height, and the margins above and below each of them. A window without a
+ * strip, or with the palette open over it, has no areas.
+ */
+static void sync_titlebar_areas(struct app_tabs *tabs)
+{
+    struct rect2i strip = tabs->strip;
+    if (rect2i_is_empty(strip) || ui_palette_is_open(&tabs->palette)) {
+        window_set_titlebar_areas(tabs->window, NULL, 0);
+        return;
+    }
+    /* The buffer holds the parts after room for their areas: each part
+     * yields at most three areas, and the strip end one more. */
+    int parts_cap = tabs->count + 1;
+    int areas_max = 3 * parts_cap + 1;
+    if (areas_max + parts_cap > tabs->areas_cap) {
+        int cap = areas_max + parts_cap;
+        struct rect2i *grown = realloc(tabs->areas, (size_t)cap * sizeof(*grown));
+        if (!grown)
+            return;
+        tabs->areas = grown;
+        tabs->areas_cap = cap;
+    }
+    struct rect2i *areas = tabs->areas, *parts = tabs->areas + areas_max;
+    int count = 0;
+    struct rect2i r;
+    if (ui_tabbar_height(&tabs->tabbar) > 0) {
+        for (int i = 0; i < tabs->count; i++)
+            if (ui_tabbar_tab_rect(&tabs->tabbar, i, &r) &&
+                !rect2i_is_empty(r = rect2i_intersect(r, strip)))
+                parts[count++] = r;
+        if (ui_tabbar_new_tab_rect(&tabs->tabbar, &r) &&
+            !rect2i_is_empty(r = rect2i_intersect(r, strip)))
+            parts[count++] = r;
+    }
+    qsort(parts, (size_t)count, sizeof(*parts), compare_x);
+    int n = 0, x = strip.x, bottom = strip.y + strip.height;
+    for (int i = 0; i < count; i++) {
+        struct rect2i p = parts[i];
+        add_area(areas, &n, (struct rect2i){ .x = x, .y = strip.y,
+                                             .width = p.x - x, .height = strip.height });
+        add_area(areas, &n, (struct rect2i){ .x = p.x, .y = strip.y,
+                                             .width = p.width, .height = p.y - strip.y });
+        add_area(areas, &n, (struct rect2i){ .x = p.x, .y = p.y + p.height,
+                                             .width = p.width,
+                                             .height = bottom - (p.y + p.height) });
+        x = geom_max_i(x, p.x + p.width);
+    }
+    add_area(areas, &n, (struct rect2i){ .x = x, .y = strip.y,
+                                         .width = strip.x + strip.width - x,
+                                         .height = strip.height });
+    window_set_titlebar_areas(tabs->window, areas, n);
 }
 
 static void root_prepare(struct ui_widget *widget)
@@ -72,6 +186,10 @@ static void root_prepare(struct ui_widget *widget)
     ui_tabbar_set_bg_color(&tabs->tabbar, bg);
     if (tabs->window)
         window_set_background(tabs->window, bg);
+    /* The strip shows the window title while the tab bar is hidden. */
+    ui_widget_set_hidden(ui_label_widget(&tabs->title),
+                         !app_tabs_strip_height(tabs) || app_tabs_live_count(tabs) >= 2);
+    sync_titlebar_areas(tabs);
 }
 
 static bool root_event(struct ui_widget *widget, const struct ui_event *event)
@@ -136,6 +254,11 @@ static const struct ui_widget_ops TABS_ROOT_OPS = {
 static void widgets_init(struct app_tabs *tabs)
 {
     ui_widget_init(&tabs->root, &TABS_ROOT_OPS, NULL);
+    ui_label_init(&tabs->title);
+    ui_label_set_wrap(&tabs->title, UI_LABEL_ELLIPSIS);
+    ui_label_set_align(&tabs->title, UI_LABEL_ALIGN_CENTER);
+    ui_widget_set_style_identity(ui_label_widget(&tabs->title), "window-title", NULL, NULL);
+    ui_widget_set_hidden(ui_label_widget(&tabs->title), true);
     ui_tabbar_init(&tabs->tabbar);
     ui_tabbar_set_empty_title(&tabs->tabbar, "shell");
     /* The shortcut badge names the platform key that selects a tab. */
@@ -147,6 +270,8 @@ static void widgets_init(struct app_tabs *tabs)
     ui_tab_preview_init(&tabs->preview);
     ui_tab_preview_set_managed_anchor(&tabs->preview, true);
     ui_palette_init(&tabs->palette);
+    /* The tab bar comes after the title, so it paints over it while it opens. */
+    ui_widget_add_child(&tabs->root, ui_label_widget(&tabs->title));
     ui_widget_add_child(&tabs->root, ui_tabbar_widget(&tabs->tabbar));
     app_tabs_actions_init(tabs);
 }
@@ -200,6 +325,7 @@ static void op_debug_state(struct window *w, struct json_writer *j)
     json_key(j, "tabs"); json_int(j, app_tabs_live_count(tabs));
     json_key(j, "active_tab"); json_int(j, tabs->active);
     json_key(j, "tabbar_height"); json_int(j, app_tabs_bar_height(w));
+    json_key(j, "titlebar_strip"); json_int(j, app_tabs_strip_height(tabs));
     json_key(j, "tab_titles");
     json_arr_begin(j);
     for (int i = 0; i < tabs->count; i++)
@@ -228,6 +354,7 @@ static void op_destroy(struct window *w)
     ui_widget_destroy(ui_tab_preview_widget(&tabs->preview));
     ui_widget_destroy(ui_palette_widget(&tabs->palette));
     ui_widget_destroy(&tabs->root);
+    free(tabs->areas);
     free(tabs);
 }
 
