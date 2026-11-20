@@ -8,7 +8,7 @@
 #include <time.h>
 #include <stdio.h>
 #if YASL_HAS_COCOA
-void yasl_test_frame_tick(struct yasl_surface *surface);
+void yasl_test_live_resize(yasl_surface *surface, int width, int height);
 #endif
 static int user_released;
 static void release_user(void *payload)
@@ -203,7 +203,7 @@ static void test_callback_mode(enum yasl_backend backend)
     /* A lost event ends the session: on_event hears it as a final loss. A
      * string event with no text cannot be queued. */
     struct yasl_private_event broken = {.type = YASL_PRIVATE_EVENT_PASTE, .surface = st.window,
-                                        .text = {NULL, 1}};
+                                        .text = {.len = 1}};
     assert(!yasl_private_events_push(st.window->display, st.window, &broken));
     step_until(&st, &st.final_losses, 1);
 
@@ -269,7 +269,7 @@ int main(int argc, char **argv)
     assert(yasl_get_backend() == backend);
     unsigned features = yasl_get_features();
     yasl_surface *s = yasl_surface_create(
-        &(struct yasl_surface_options){.title = "CPU contract", .width = 96, .height = 80});
+        &(struct yasl_surface_options){.title = "CPU contract", .width = 96, .height = 80, .refresh = refresh});
     if (!s) {
         fprintf(stderr, "surface: %s\n", strerror(errno));
         return 1;
@@ -440,7 +440,8 @@ int main(int argc, char **argv)
            e.action == YASL_POINTER_DOWN && e.x == 10 && e.y == 5 && e.mods == YASL_MOD_CTRL &&
            e.pointer.button == YASL_BUTTON_SECONDARY && e.pointer.buttons == 4);
     s->scale_120 = real_scale;
-    push(s, (struct yasl_private_event){.type = YASL_PRIVATE_EVENT_TEXT, .text = {"owned", 5}});
+    push(s, (struct yasl_private_event){.type = YASL_PRIVATE_EVENT_TEXT,
+                                        .text = {.data = "owned", .len = 5}});
     assert(yasl_wait_event(&e, 0) == 1 && e.type == YASL_EVENT_TEXT);
     assert(e.length == 5 && !strcmp(e.text, "owned"));
     push(s, (struct yasl_private_event){
@@ -456,7 +457,7 @@ int main(int argc, char **argv)
     while (yasl_wait_event(&e, 0) > 0)
         assert(e.type != YASL_EVENT_INPUT_RESET);
     push(s, (struct yasl_private_event){.type = YASL_PRIVATE_EVENT_DROP_HOVER,
-                                        .drop = {YASL_PRIVATE_DROP_LEAVE, {0, 0}}});
+                                        .drop = {.action = YASL_PRIVATE_DROP_LEAVE}});
     assert(yasl_wait_event(&e, 0) == 1 && e.type == YASL_EVENT_DROP && e.action == YASL_DROP_LEAVE);
 
     /* A resize keeps the overlap of the pixels and zeroes the rest. */
@@ -494,23 +495,30 @@ int main(int argc, char **argv)
         assert(yasl_cpu_present(s) == 0);
     }
 
-    /* The refresh callback is reserved for modal loops; ordinary waits deliver REFRESH. */
-    s->refresh = refresh;
-    for (int i = 0; i < 5; i++) {
-        assert(yasl_cpu_pixels(s, &w, &h) && yasl_cpu_present(s) == 0);
+    /* A frame request outside a modal loop delivers a REFRESH event. */
+    drain();
+    assert(yasl_surface_request_frame(s) == 0);
+    uint64_t deadline = yasl_time_ns() + 2000000000ull;
+    do {
         assert(yasl_wait_event(&e, 20) >= 0);
-    }
-    assert(refreshes == 0);
+    } while (e.type != YASL_EVENT_REFRESH && yasl_time_ns() < deadline);
+    assert(e.type == YASL_EVENT_REFRESH && e.surface == s && refreshes == 0);
 #if YASL_HAS_COCOA
-    s->display->modal = true;
-    yasl_test_frame_tick(s);
-    uint64_t deadline = yasl_private_loop_now_ns() + 3000000000ull;
-    while (!refreshes && yasl_private_loop_now_ns() < deadline)
-        assert(yasl_wait_event(&e, 20) >= 0);
+    /* Live resize draws synchronously, before the event loop runs again. */
+    yasl_test_live_resize(s, 120, 100);
     assert(refreshes > 0);
-    s->display->modal = false;
+    info = yasl_surface_get_info(s);
+    assert(info.width == 120 && info.height == 100);
+    int callbacks = refreshes;
+    deadline = yasl_time_ns() + 2000000000ull;
+    bool resized = false;
+    do {
+        assert(yasl_wait_event(&e, 20) >= 0);
+        resized = e.type == YASL_EVENT_WINDOW && e.surface == s &&
+                  e.window.width == 120 && e.window.height == 100;
+    } while (!resized && yasl_time_ns() < deadline);
+    assert(resized && refreshes == callbacks);
 #endif
-    s->refresh = NULL;
 
     /* Direct CPU acquire/commit/discard and restoring canvas mode via yasl_cpu_pixels. */
     struct yasl_cpu_frame direct = {0};

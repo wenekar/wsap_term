@@ -136,7 +136,7 @@ int main(void)
         assert(event.text_edit.text_key_id == key_id);
         empty(surface);
 
-        NSString *symbols[] = {@"|", @"[", @"]", @"ä😀"};
+        NSString *symbols[] = {@"|", @"[", @"]", @"a\u0308😀"};
         NSString *labels[] = {@"<", @"8", @"9", @"a"};
         unsigned short codes[] = {10, 28, 25, 0};
         for (int i = 0; i < 4; i++) {
@@ -187,7 +187,8 @@ int main(void)
         assert(event.key.text_input == YASL_KEY_TEXT_COMMIT && event.key.text_id);
         key_id = event.key.text_id;
         event = next(surface, YASL_PRIVATE_EVENT_TEXT);
-        assert(event.text.text_key_id == key_id && !strcmp(event.text.data, "ä😀"));
+        assert(event.text.text_key_id == key_id);
+        assert(event.text.len == strlen("a\u0308😀") && !strcmp(event.text.data, "a\u0308😀"));
         empty(surface);
 
         /* A dead key shows its preedit before the surface has a text field. */
