@@ -95,8 +95,26 @@ def start_a11y_bus():
                 break
     if launcher is None:
         raise RuntimeError('at-spi-bus-launcher is not installed')
-    return subprocess.Popen([launcher, '--launch-immediately'],
-                            env=os.environ, start_new_session=True)
+    process = subprocess.Popen([launcher, '--launch-immediately'],
+                               env=os.environ, start_new_session=True)
+    # D-Bus activation is off, so a call to org.a11y.Bus fails until the
+    # launcher owns the name. Wait for the name before the first call.
+    connection = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    deadline = time.monotonic() + 10.0
+    while True:
+        reply = connection.call_sync(
+            'org.freedesktop.DBus', '/org/freedesktop/DBus',
+            'org.freedesktop.DBus', 'NameHasOwner',
+            GLib.Variant('(s)', ('org.a11y.Bus',)),
+            GLib.VariantType('(b)'), Gio.DBusCallFlags.NONE, 1000, None)
+        if reply.unpack()[0]:
+            return process
+        if process.poll() is not None:
+            raise RuntimeError(f'at-spi-bus-launcher exited with {process.returncode}')
+        if time.monotonic() > deadline:
+            stop_session(process)
+            raise RuntimeError('at-spi-bus-launcher did not own org.a11y.Bus in 10 s')
+        time.sleep(0.02)
 
 
 def run_session():
@@ -255,6 +273,9 @@ def main():
     env = dict(os.environ)
     env.pop('AT_SPI_BUS_ADDRESS', None)
     env.pop('WSAP_ACCESSIBILITY', None)
+    # With DISPLAY set, the bus launcher writes the bus address to the root
+    # window of the user's X server. The app runs in headless sway.
+    env.pop('DISPLAY', None)
     env['GSETTINGS_BACKEND'] = 'memory'
     env['ATSPI_DBUS_IMPLEMENTATION'] = 'dbus-daemon'
     with tempfile.TemporaryDirectory(prefix='wsap-dbus-') as tmp:
