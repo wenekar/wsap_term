@@ -207,6 +207,28 @@ static const char *parse_ext_color(const char *p, const char *end, uint32_t *col
     return s;
 }
 
+/* Scans the rest of a printable run of 16 bytes or more. The vector scan
+ * stays out of the fast path, so the fast path keeps its size whatever the
+ * inlining of the whole program decides. */
+WSAP_VTCORE_NOINLINE
+static int scan_long_ascii_run(const char *p, int len)
+{
+    return scan_ascii_run(p, len);
+}
+
+/* Returns the length of the printable run at p, which starts with a printable
+ * byte. A run after an SGR is often one character before the next escape, so
+ * a scalar check of the first bytes avoids the vector scan for it. */
+static inline int tail_ascii_run(const char *p, int limit)
+{
+    int run = 1;
+    while (run < limit && run < 16 && (unsigned char)(p[run] - 0x20) < 0x5f)
+        run++;
+    if (run == 16 && run < limit)
+        run += scan_long_ascii_run(p + run, limit - run);
+    return run;
+}
+
 /* Parse the colors at p up to the 'm' that ends the sequence: one color, or one
  * foreground and one background color. Write them only if the parse succeeds. */
 WSAP_VTCORE_NOINLINE
@@ -801,7 +823,7 @@ tail:
             t->cur_bg = bg;
             int avail = cols - t->cursor_x;
             int limit = end - p < (ptrdiff_t)avail ? (int)(end - p) : avail;
-            int run = scan_ascii_run(p, limit);
+            int run = tail_ascii_run(p, limit);
             if (WSAP_VTCORE_EXPECT(!flags_ok, 0)) {
                 flags_pad = wsap_vtcore_flags_pad(t);
                 flags_ok = true;
