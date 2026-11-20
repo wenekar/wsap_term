@@ -163,6 +163,10 @@ the input or render hot paths:
   not pace resizes to the refresh, so the numbers show the response of the
   app, not the display.
 
+- `scripts/wsap-kitty-keys` shows the key reports of the kitty keyboard
+  protocol. Run it inside the terminal and press keys. It is a manual
+  check, so it is not a meson test.
+
 - The UI inspector (`src/ui/debug.h`, `src/ui/yasl/inspector.h`) is the tool for
   layout and alignment work. `docs/ui-debugging.md` has the full reference.
   - Start the app with `--debug-socket PATH` or `WSAP_DEBUG_SOCKET=PATH`.

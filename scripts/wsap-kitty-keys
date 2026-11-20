@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""Usage: wsap-kitty-keys
+
+Show the key reports of the kitty keyboard protocol. Run it inside the
+terminal. It asks for all progressive enhancements (flags 31), prints each
+chunk that the terminal sends as Python bytes, and ends on Escape, Ctrl+C,
+or 60 s without input. It is a manual check, not an automated test.
+"""
 import os
 import select
 import termios
