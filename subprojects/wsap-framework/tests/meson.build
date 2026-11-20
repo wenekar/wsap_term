@@ -35,6 +35,7 @@ test_cases = [
     ['ui-drag-event-test', files('ui/drag_event_test.c'), ui_lib],
     ['ui-label-test', files('ui/widgets/label_test.c'), ui_lib],
     ['ui-dropdown-test', files('ui/widgets/dropdown_test.c'), ui_lib],
+    ['ui-palette-test', files('ui/widgets/palette_test.c'), ui_lib],
     ['ui-acceptance-test', files('ui/acceptance_test.c'), ui_lib],
     ['ui-debug-test', files('ui/debug_test.c'), ui_lib],
     ['ui-text-break-test', files('ui/text_break_test.c'), ui_lib],
@@ -53,6 +54,10 @@ test_cases = [
     ['ui-yasl-native-input-test', files('ui/yasl/native_input_test.c'), ui_yasl_lib],
     ['ui-yasl-text-menu-test', files('ui/yasl/text_menu_test.c'), ui_yasl_lib],
     ['ui-yasl-window-present-test', files('ui/yasl/window_present_test.c'), ui_yasl_lib],
+    ['ui-yasl-stats-test', files('ui/yasl/stats_test.c'), ui_yasl_lib],
+    ['ui-yasl-host-veto-test', files('ui/yasl/host_veto_test.c'), ui_yasl_lib],
+    ['ui-yasl-host-registry-test', files('ui/yasl/host_registry_test.c'), ui_yasl_lib],
+    ['ui-yasl-ui-input-test', files('ui/yasl/ui_input_test.c'), ui_yasl_lib],
 ]
 
 scene_tests = [

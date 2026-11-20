@@ -134,7 +134,7 @@ yasl_lib = both_libraries(
     include_directories: inc,
     dependencies: deps,
     gnu_symbol_visibility: 'hidden',
-    install: true,
+    install: get_option('install'),
 )
 
 # An uninstalled subproject consumer gets the Vulkan headers too. A
@@ -149,20 +149,22 @@ yasl_dep = declare_dependency(
 )
 meson.override_dependency('yasl', yasl_dep)
 
-install_headers('include/yasl/yasl.h', 'include/yasl/keycodes.h', subdir: 'yasl')
-if has_vulkan
-    install_headers('include/yasl/vulkan.h', subdir: 'yasl')
+if get_option('install')
+    install_headers('include/yasl/yasl.h', 'include/yasl/keycodes.h', subdir: 'yasl')
+    if has_vulkan
+        install_headers('include/yasl/vulkan.h', subdir: 'yasl')
+    endif
+    pkgconfig = import('pkgconfig')
+    # yasl calls no Vulkan entry point. The application supplies the loader and
+    # links it. A consumer of <yasl/vulkan.h> still needs <vulkan/vulkan.h>, so the
+    # private pkg-config requirement supplies the Vulkan Cflags.
+    vulkan_pc_requirement = (has_vulkan and vulkan_dep.type_name() == 'pkgconfig') ? 'vulkan' : []
+    pkgconfig.generate(yasl_lib, name: 'yasl',
+        description: 'Desktop surfaces for application-owned rendering',
+        requires_private: vulkan_pc_requirement,
+        libraries_private: deps,
+    )
 endif
-pkgconfig = import('pkgconfig')
-# yasl calls no Vulkan entry point. The application supplies the loader and
-# links it. A consumer of <yasl/vulkan.h> still needs <vulkan/vulkan.h>, so the
-# private pkg-config requirement supplies the Vulkan Cflags.
-vulkan_pc_requirement = (has_vulkan and vulkan_dep.type_name() == 'pkgconfig') ? 'vulkan' : []
-pkgconfig.generate(yasl_lib, name: 'yasl',
-    description: 'Desktop surfaces for application-owned rendering',
-    requires_private: vulkan_pc_requirement,
-    libraries_private: deps,
-)
 
 
 hello_example = executable(

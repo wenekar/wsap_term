@@ -212,7 +212,12 @@ if system == 'darwin'
     platform_deps += [dependency('appleframeworks', modules: ['AppKit', 'CoreFoundation', 'Foundation', 'QuartzCore', 'Metal', 'UserNotifications', 'CoreText', 'CoreGraphics'])]
 endif
 base_deps = [thread_dep, m_dep, yyjson_dep] + platform_deps
-yasl_options = ['default_library=static']
+# An app that builds the framework as a subproject links yasl statically and
+# installs nothing of it. The standalone SDK installs yasl for its consumers.
+yasl_options = [
+    'default_library=static',
+    'install=' + (not meson.is_subproject()).to_string(),
+]
 if backend == 'x11'
     yasl_options += ['wayland=disabled', 'x11=enabled']
 endif
