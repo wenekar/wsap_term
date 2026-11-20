@@ -37,7 +37,9 @@ int main(void)
     assert(yasl_private_cocoa_surface_get_window(s) == window);
     NSView *view = yasl_private_cocoa_surface_get_view(s);
     assert([window isKindOfClass:[NSWindow class]] && view.window == window);
-    assert(window.titlebarAppearsTransparent);
+    assert(window.styleMask & NSWindowStyleMaskTitled);
+    assert(!(window.styleMask & NSWindowStyleMaskFullSizeContentView));
+    assert(!window.titlebarAppearsTransparent);
     assert(NSEqualSizes(view.bounds.size, NSMakeSize(160, 100)));
     assert(NSEqualRects([view convertRect:view.bounds toView:nil], window.contentLayoutRect));
     struct yasl_private_event event;

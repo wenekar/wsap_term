@@ -72,16 +72,6 @@ enum {
 - (instancetype)initWithFrame:(NSRect)frameRect cpuLayer:(BOOL)cpuLayer;
 @end
 
-/* A view that shows the window background behind the title bar. Do not pass its
- * presses to the surface view. */
-@interface YaslChromeView : NSView
-@end
-
-@implementation YaslChromeView
-- (BOOL)isOpaque { return YES; }
-- (BOOL)mouseDownCanMoveWindow { return NO; }
-@end
-
 @interface YaslAppDelegate : NSObject <NSApplicationDelegate>
 @end
 
@@ -1982,44 +1972,6 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
 
 @implementation YaslWindow
 
-/* Start a native drag from the title bar, but not from its buttons. */
-- (BOOL)beginTitlebarDrag:(NSEvent *)event
-{
-    if (!self.surface || !(self.styleMask & NSWindowStyleMaskFullSizeContentView) ||
-        (self.styleMask & NSWindowStyleMaskFullScreen))
-        return NO;
-    NSPoint point = event.locationInWindow;
-    CGFloat titlebar_y = NSMaxY(self.contentLayoutRect);
-    if (point.y >= titlebar_y - 8)
-        yasl_private_move_trace(&darwin_ctx.base, &self.surface->base, "chrome-press",
-                "win=%ld point=(%g,%g) titlebar-y=%g clicks=%ld movable=%d",
-                (long)self.windowNumber, point.x, point.y,
-                titlebar_y, (long)event.clickCount, self.movable);
-    if (point.y < titlebar_y || event.clickCount != 1 || !self.movable)
-        return NO;
-    /* Leave the top edge and both corners to AppKit's resize handler. */
-    if (self.styleMask & NSWindowStyleMaskResizable) {
-        NSRect frame = [self convertRectFromScreen:self.frame];
-        if (!NSPointInRect(point, NSInsetRect(frame, 12, 8)))
-            return NO;
-    }
-    for (NSWindowButton kind = NSWindowCloseButton; kind <= NSWindowZoomButton; kind++) {
-        NSButton *button = [self standardWindowButton:kind];
-        if (button && !button.hidden &&
-            NSPointInRect(point, [button convertRect:button.bounds toView:nil]))
-            return NO;
-    }
-    darwin_ctx.depth++;
-    @try {
-        dismiss_popup_press(self.surface);
-        trace_window_move(self.surface, "titlebar-drag", NULL);
-        [self performWindowDragWithEvent:event];
-    } @finally {
-        darwin_ctx.depth--;
-    }
-    return YES;
-}
-
 - (NSRect)constrainFrameRect:(NSRect)frame toScreen:(NSScreen *)screen
 {
     NSRect result = [super constrainFrameRect:frame toScreen:screen];
@@ -2659,14 +2611,7 @@ static void app_init(const char *app_name)
     [menu release];
 
     darwin_ctx.event_monitor = [NSEvent addLocalMonitorForEventsMatchingMask:
-        NSEventMaskLeftMouseDown | NSEventMaskKeyUp handler:^NSEvent *(NSEvent *event) {
-            if (event.type == NSEventTypeLeftMouseDown) {
-                NSWindow *window = event.window;
-                if ([window isKindOfClass:[YaslWindow class]] &&
-                    [(YaslWindow *)window beginTitlebarDrag:event])
-                    return nil;
-                return event;
-            }
+        NSEventMaskKeyUp handler:^NSEvent *(NSEvent *event) {
             if (!(event.modifierFlags & NSEventModifierFlagCommand) || !event.window)
                 return event;
             [event.window sendEvent:event];
@@ -2844,18 +2789,10 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
             NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable;
         if (!(spec->flags & YASL_PRIVATE_SURFACE_FIXED_SIZE))
             style |= NSWindowStyleMaskResizable;
-        /* The system draws the title bar of a titled window. A borderless window
-         * has none, so the application draws the frame. */
-        bool titled = (style & NSWindowStyleMaskTitled) != 0;
-        w->base.state = titled ? 0 : YASL_PRIVATE_STATE_CSD;
-        NSRect content = NSMakeRect(0, 0, win_w, win_h);
-        if (titled) {
-            /* The requested size excludes the title bar. */
-            NSRect frame = [NSWindow frameRectForContentRect:content styleMask:style];
-            style |= NSWindowStyleMaskFullSizeContentView;
-            content = [NSWindow contentRectForFrameRect:frame styleMask:style];
-        }
-        w->window = [[YaslWindow alloc] initWithContentRect:content
+        w->base.state = (style & NSWindowStyleMaskTitled) ? 0 : YASL_PRIVATE_STATE_CSD;
+        /* Leave the title bar to AppKit. A transparent title bar can lose its
+         * drag position when the pointer crosses displays. */
+        w->window = [[YaslWindow alloc] initWithContentRect:NSMakeRect(0, 0, win_w, win_h)
                                                   styleMask:style
                                                     backing:NSBackingStoreBuffered
                                                       defer:NO];
@@ -2868,41 +2805,12 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
         w->window.delegate = w->controller;
         w->window.acceptsMouseMovedEvents = YES;
         w->window.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
-        /* Use full-size content with a transparent title bar. AppKit can
-         * jump between displays if only the transparency is set. */
-        if (titled)
-            w->window.titlebarAppearsTransparent = YES;
         /* The full title: a byte-limited copy could split a UTF-8 sequence. */
         w->window.title = [NSString stringWithUTF8String:t] ?: @"YASL";
         w->window.colorSpace = [NSColorSpace sRGBColorSpace];
 
-        NSView *root = w->window.contentView;
-        if (titled) {
-            YaslChromeView *chrome = [[YaslChromeView alloc] initWithFrame:root.bounds];
-            chrome.wantsLayer = YES;
-            chrome.layer.opaque = YES;
-            chrome.layer.backgroundColor = w->window.backgroundColor.CGColor;
-            w->window.contentView = chrome;
-            root = chrome;
-            [chrome release];
-        }
-        NSRect view_frame = titled ? w->window.contentLayoutRect : root.bounds;
-        w->view = [[YaslView alloc] initWithFrame:view_frame cpuLayer:w->use_iosurface];
-        if (titled) {
-            /* Keep the drawable and its input below the native controls. */
-            NSLayoutGuide *layout = w->window.contentLayoutGuide;
-            [root addSubview:w->view];
-            w->view.translatesAutoresizingMaskIntoConstraints = NO;
-            [NSLayoutConstraint activateConstraints:@[
-                [w->view.leftAnchor constraintEqualToAnchor:layout.leftAnchor],
-                [w->view.rightAnchor constraintEqualToAnchor:layout.rightAnchor],
-                [w->view.topAnchor constraintEqualToAnchor:layout.topAnchor],
-                [w->view.bottomAnchor constraintEqualToAnchor:layout.bottomAnchor],
-            ]];
-            [root layoutSubtreeIfNeeded];
-        } else {
-            w->window.contentView = w->view;
-        }
+        w->view = [[YaslView alloc] initWithFrame:w->window.contentView.bounds cpuLayer:w->use_iosurface];
+        w->window.contentView = w->view;
         w->layer = w->view.layer;
         w->metal_layer = w->use_iosurface ? nil : (CAMetalLayer *)w->view.layer;
         if (w->metal_layer) {
@@ -2942,8 +2850,6 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
         }
 
         sync_size(w, true);
-        if (titled)
-            trace_window_move(w, "chrome-ready", NULL);
         if (spec->tearing) {
             if (w->metal_layer) w->metal_layer.displaySyncEnabled = NO;
             w->unpaced = true;
@@ -3071,12 +2977,7 @@ static bool impl_surface_set_size(struct yasl_surface *surface, struct yasl_priv
         return false;
     }
     trace_window_move(w, "app-resize", NULL);
-    NSSize content = NSMakeSize(size.x, size.y);
-    if (w->window.styleMask & NSWindowStyleMaskFullSizeContentView)
-        content.height += NSHeight(w->window.contentView.bounds) -
-                          NSHeight(w->window.contentLayoutRect);
-    [w->window setContentSize:content];
-    [w->window.contentView layoutSubtreeIfNeeded];
+    [w->window setContentSize:NSMakeSize(size.x, size.y)];
     errno = 0;
     return true;
 }
@@ -3129,11 +3030,7 @@ void cocoa_surface_set_background_color(struct cocoa_surface *w, uint32_t bg)
         double r = ((bg >> 16) & 0xff) / 255.0;
         double g = ((bg >> 8) & 0xff) / 255.0;
         double b = (bg & 0xff) / 255.0;
-        NSColor *color = [NSColor colorWithSRGBRed:r green:g blue:b alpha:1.0];
-        w->window.backgroundColor = color;
-        NSView *root = w->window.contentView;
-        if ([root isKindOfClass:[YaslChromeView class]])
-            root.layer.backgroundColor = color.CGColor;
+        w->window.backgroundColor = [NSColor colorWithSRGBRed:r green:g blue:b alpha:1.0];
         bool dark = 0.299 * r + 0.587 * g + 0.114 * b < 0.5;
         w->window.appearance = [NSAppearance appearanceNamed:
             dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];

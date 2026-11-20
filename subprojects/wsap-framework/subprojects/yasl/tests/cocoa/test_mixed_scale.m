@@ -121,8 +121,8 @@ static void test_popup(yasl_surface *parent, NSScreen *major, NSScreen *minor)
     NSRect content = NSMakeRect(seam.x - 180 - 130 * direction.x,
                                seam.y - 140 - 100 * direction.y, 360, 280);
     [window setFrameOrigin:center(major)];
-    NSWindowStyleMask style = window.styleMask & ~NSWindowStyleMaskFullSizeContentView;
-    [window setFrame:[NSWindow frameRectForContentRect:content styleMask:style] display:NO];
+    [window setFrame:[NSWindow frameRectForContentRect:content styleMask:window.styleMask]
+            display:NO];
     if (!NSEqualRects(window.screen.frame, major.frame)) {
         fprintf(stderr, "Parent %s on %s, expected %s\n",
                 NSStringFromRect(window.frame).UTF8String,
