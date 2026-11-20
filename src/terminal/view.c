@@ -1564,9 +1564,8 @@ void terminal_view_attach(struct terminal *t)
     ui_widget_set_event_handler(&t->scrollview.widget, view_drop_event, t);
 }
 
-void terminal_view_drop_hover(struct terminal *t, bool over, void *ud)
+void terminal_set_drop_hover(struct terminal *t, bool over)
 {
-    (void)ud;
     if (!t || t->view.drop_hover == over)
         return;
     t->view.drop_hover = over;

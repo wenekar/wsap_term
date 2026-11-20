@@ -46,7 +46,6 @@ struct app_tabs_spec {
     const struct app_tab_content_ops *content_ops;
     app_tabs_open_window_fn open_window;
     app_tabs_preview_release_fn preview_release;
-    void *preview_ud;
     app_tabs_scene_paint_fn scene_paint;
     void *scene_paint_ud;
     void *ud;

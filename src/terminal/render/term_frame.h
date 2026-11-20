@@ -67,8 +67,6 @@ enum wsap_vtcore_line_size terminal_frame_row_size(const struct terminal_frame *
  * row has no selection.
  */
 struct wsap_vtcore_span terminal_frame_row_selection(const struct terminal_frame *frame, int row);
-/* Resolves a cell color through the palette of the frame. */
-uint32_t terminal_frame_color(const struct terminal_frame *frame, wsap_vtcore_color c);
 /*
  * Converts cell text to glyph text: a code point, or a glyph_intern()
  * handle for a cluster. A cluster that the snapshot cannot expand gives ' '.

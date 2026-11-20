@@ -36,11 +36,6 @@ struct wsap_vtcore_span terminal_frame_row_selection(const struct terminal_frame
     return span;
 }
 
-uint32_t terminal_frame_color(const struct terminal_frame *frame, wsap_vtcore_color c)
-{
-    return wsap_vtcore_view_color(wsap_vtcore_snapshot_view(frame->source), c);
-}
-
 uint32_t terminal_frame_glyph(const struct terminal_frame *frame, uint32_t text)
 {
     if (!(text & WSAP_VTCORE_TEXT_CLUSTER))

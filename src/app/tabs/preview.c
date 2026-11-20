@@ -41,11 +41,11 @@ void app_tabs_preview_init(struct app_tabs *tabs)
                               });
 }
 
-bool app_tabs_preview_capture(struct app_tabs *tabs, int index, bool dragging)
+bool app_tabs_preview_capture(struct app_tabs *tabs, int index)
 {
     const struct ui_image *image = NULL;
     return paint_thumbnail(tabs, index,
-                           ui_tab_preview_image_width(&tabs->preview, dragging),
+                           ui_tab_preview_image_width(&tabs->preview, true),
                            INT_MAX, NULL, &image) && image != NULL;
 }
 

@@ -123,8 +123,7 @@ struct terminal_view {
 };
 
 enum ctx_action {
-    CTX_ACTION_NONE = 0,
-    CTX_ACTION_COPY,
+    CTX_ACTION_COPY = 1,
     CTX_ACTION_PASTE,
     CTX_ACTION_SELECT_ALL,
     CTX_ACTION_OPEN_LINK,
@@ -205,7 +204,6 @@ struct rect2i terminal_view_rect(const struct terminal *terminal);
 struct vector2i terminal_cell_at(const struct terminal *terminal,
                                  struct vector2i pos);
 bool terminal_pointer_selects_text(const struct wsap_vtcore *t);
-void terminal_view_drop_hover(struct terminal *terminal, bool over, void *ud);
 void terminal_view_set_preedit(struct terminal *terminal, const char *text,
                                int cursor_begin, int cursor_end,
                                struct rect2i caret, uint32_t fg, uint32_t bg);

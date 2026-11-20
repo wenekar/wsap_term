@@ -106,7 +106,7 @@ static uint32_t *drag_image_pixels(struct window *w, int index,
 {
     struct app_tabs *tabs = app_tabs_of(w);
     const struct ui_image *thumb =
-        app_tabs_preview_capture(tabs, index, true)
+        app_tabs_preview_capture(tabs, index)
             ? &tabs->preview_image : NULL;
     struct ui_scene scene = {0};
     struct vector2i size, hotspot;

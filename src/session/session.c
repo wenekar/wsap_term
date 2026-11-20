@@ -213,12 +213,11 @@ static void sync_transport_newline(struct session *s, int fd)
     if (master_fd < 0)
         return;
 
-    bool from_master = fd == master_fd;
-    if (from_master) {
+    if (fd == master_fd) {
         s->onlcr = false;
         return;
     }
-    if (!from_master && fd != pty_pipe_fd(&s->pty))
+    if (fd != pty_pipe_fd(&s->pty))
         return;
 
     struct termios tio;

@@ -108,7 +108,7 @@ void app_tabs_actions_init(struct app_tabs *tabs);
 void app_tabs_preview_init(struct app_tabs *tabs);
 void app_tabs_preview_hover(struct app_tabs *tabs, int index);
 void app_tabs_preview_drag(struct app_tabs *tabs, const struct ui_action *action);
-bool app_tabs_preview_capture(struct app_tabs *tabs, int index, bool dragging);
+bool app_tabs_preview_capture(struct app_tabs *tabs, int index);
 
 bool app_tabs_drag_begin(struct window *window, int index,
                          struct vector2i grab);

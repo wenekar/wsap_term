@@ -138,7 +138,6 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
     if (content) {
         struct rect2i settled = terminal_input_widget(content)->bounds;
         if (!rect2i_eq(content_bounds, settled)) {
-            content_bounds = settled;
             terminal_commit_geometry(content);
             terminal_prepare(content, now_ms);
             if (!window_ui_build_frame(w, frame->surface, now_ms, &ui))
@@ -164,12 +163,8 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
         if (content && terminal_frame_source(content, now_ms, &source)) {
             /* The terminal theme has no selection colors, so the zero values
              * from terminal_frame_init select the built-in ones. */
-            if (main) {
-                update_cursor_overlay(a, w, content, &source, &ui,
-                                      frame->target.size, now_ms, &grid);
-            } else {
-                terminal_frame_init(&grid, source.snapshot, source.cursor_visible);
-            }
+            update_cursor_overlay(a, w, content, &source, &ui,
+                                  frame->target.size, now_ms, &grid);
             grid.blink_on = source.text_blink_on;
             render.grid = (struct render_grid){
                 .frame = &grid,
@@ -370,7 +365,7 @@ struct window *app_open_terminal(struct app *a, app_tab_id tab,
             .theme = &a->palette,
             .create_content = app_create_terminal_content, .create_ud = a,
             .content_ops = &app_terminal_content_ops,
-            .preview_release = app_thumbnail_release, .preview_ud = a,
+            .preview_release = app_thumbnail_release,
             .scene_paint = app_runtime_paint_scene, .scene_paint_ud = a->runtime,
             .open_window = open_window, .ud = a })) {
         window_close(w);

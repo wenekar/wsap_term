@@ -480,12 +480,6 @@ bool terminal_scrollbar_visible(const struct terminal *t)
     return t && ui_scrollview_is_shown(&t->scrollview);
 }
 
-void terminal_set_drop_hover(struct terminal *t, bool over)
-{
-    if (t)
-        terminal_view_drop_hover(t, over, NULL);
-}
-
 void terminal_paste(struct terminal *t, const char *text, size_t len)
 {
     if (!t || !session_paste(&t->session, text, len))

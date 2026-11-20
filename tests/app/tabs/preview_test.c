@@ -48,7 +48,6 @@ static struct window *create_preview_window(struct app *app)
         .create_ud = app,
         .content_ops = &app_terminal_content_ops,
         .preview_release = app_thumbnail_release,
-        .preview_ud = app,
         .empty = true,
     }));
     return w;

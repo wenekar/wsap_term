@@ -114,13 +114,10 @@ struct settings_form {
     struct settings_host host;
     struct window *window;
     struct ui_view *view;
-    struct ui_widget *root;
-    struct ui_box *layout, *header, *body, *sidebar, *fields, *footer;
     struct ui_input *search;
     struct ui_scrollview *scroll;
-    struct ui_label *title, *status, *empty, *section[CATEGORY_COUNT];
-    struct ui_label *font_help, *color_help;
-    struct ui_button *nav[CATEGORY_COUNT], *save, *cancel, *reset, *config;
+    struct ui_label *status, *empty, *section[CATEGORY_COUNT];
+    struct ui_button *nav[CATEGORY_COUNT], *save;
     struct settings_row *rows;
     struct ui_node_desc *field_nodes;
     size_t field_node_count, count;
@@ -629,23 +626,6 @@ static struct ui_node_desc box_node(enum ui_node_kind kind, const char *key,
     };
 }
 
-static struct ui_node_desc scrollview_node(const char *key, const char *class_name,
-                                           struct ui_scrollview **bind,
-                                           const struct ui_node_desc *children,
-                                           size_t child_count, bool scrollbar)
-{
-    return (struct ui_node_desc){
-        .kind = UI_NODE_SCROLLVIEW,
-        .key = key,
-        .class_name = class_name,
-        .tag_name = "",
-        .bind.scrollview = bind,
-        .children = children,
-        .child_count = child_count,
-        .props.scrollview = { .scrollbar = scrollbar },
-    };
-}
-
 static bool init_row(struct settings_row *row, size_t index, struct look *look)
 {
     if (!opts_option_at(&app_config_spec, index, &row->option)) return false;
@@ -750,19 +730,19 @@ static bool mount_form(struct settings_form *form)
     struct ui_node_desc header_nodes[] = {
         label_node((struct label_spec){
             .key = "title", .class_name = "settings-title", .tag_name = "",
-            .bind = &form->title, .text = "Settings" }),
+            .text = "Settings" }),
         button_node((struct button_spec){
             .key = "config-link", .class_name = "settings-button settings-link",
-            .id_name = "config-link", .bind = &form->config,
+            .id_name = "config-link",
             .text = "Config file", .action_id = OPEN_CONFIG }),
         label_node((struct label_spec){
             .key = "font-link", .class_name = "settings-button settings-link",
-            .id_name = "font-link", .tag_name = "", .bind = &form->font_help,
+            .id_name = "font-link", .tag_name = "",
             .text = "Font help",
             .link = "https://www.freedesktop.org/wiki/Software/fontconfig/" }),
         label_node((struct label_spec){
             .key = "color-link", .class_name = "settings-button settings-link",
-            .id_name = "color-link", .tag_name = "", .bind = &form->color_help,
+            .id_name = "color-link", .tag_name = "",
             .text = "Color help",
             .link = "https://en.wikipedia.org/wiki/ANSI_escape_code#Colors" }),
     };
@@ -773,13 +753,19 @@ static bool mount_form(struct settings_form *form)
             .id_name = category_ids[i], .bind = &form->nav[i],
             .text = categories[i], .action_id = CATEGORY_BASE + i });
     struct ui_node_desc sidebar = box_node(UI_NODE_COLUMN, "sidebar",
-        "settings-sidebar", NULL, &form->sidebar, nav_nodes, CATEGORY_COUNT);
+        "settings-sidebar", NULL, NULL, nav_nodes, CATEGORY_COUNT);
     struct ui_node_desc scroll_child = box_node(UI_NODE_COLUMN, "fields",
-        "settings-fields", NULL, &form->fields, form->field_nodes,
-        form->field_node_count);
-    struct ui_node_desc scroll_children[] = { scroll_child };
-    struct ui_node_desc scroll = scrollview_node("scroll", "settings-scroll",
-        &form->scroll, scroll_children, 1, true);
+        "settings-fields", NULL, NULL, form->field_nodes, form->field_node_count);
+    struct ui_node_desc scroll = {
+        .kind = UI_NODE_SCROLLVIEW,
+        .key = "scroll",
+        .class_name = "settings-scroll",
+        .tag_name = "",
+        .bind.scrollview = &form->scroll,
+        .children = &scroll_child,
+        .child_count = 1,
+        .props.scrollview = { .scrollbar = true },
+    };
     struct ui_node_desc body_nodes[] = { sidebar, scroll };
     struct ui_node_desc footer_nodes[] = {
         label_node((struct label_spec){
@@ -788,11 +774,11 @@ static bool mount_form(struct settings_form *form)
             .text = "", .selectable = true }),
         button_node((struct button_spec){
             .key = "reset", .class_name = "settings-button",
-            .id_name = "settings-reset", .bind = &form->reset,
+            .id_name = "settings-reset",
             .text = "Reset all", .action_id = RESET }),
         button_node((struct button_spec){
             .key = "cancel", .class_name = "settings-button",
-            .id_name = "settings-cancel", .bind = &form->cancel,
+            .id_name = "settings-cancel",
             .text = "Cancel", .action_id = CANCEL }),
         button_node((struct button_spec){
             .key = "save", .class_name = "settings-button settings-primary",
@@ -800,20 +786,20 @@ static bool mount_form(struct settings_form *form)
             .text = "Save", .action_id = SAVE }),
     };
     struct ui_node_desc layout_nodes[] = {
-        box_node(UI_NODE_ROW, "header", "settings-header", NULL, &form->header,
+        box_node(UI_NODE_ROW, "header", "settings-header", NULL, NULL,
             header_nodes, sizeof(header_nodes) / sizeof(header_nodes[0])),
         input_node((struct input_spec){
             .key = "search", .class_name = "text-input settings-search",
             .id_name = "settings-search", .bind = &form->search,
             .placeholder = "Search settings... (Ctrl+F)",
             .accessible_name = "Search settings" }),
-        box_node(UI_NODE_ROW, "body", "settings-body", NULL, &form->body,
+        box_node(UI_NODE_ROW, "body", "settings-body", NULL, NULL,
             body_nodes, sizeof(body_nodes) / sizeof(body_nodes[0])),
-        box_node(UI_NODE_ROW, "footer", "settings-footer", NULL, &form->footer,
+        box_node(UI_NODE_ROW, "footer", "settings-footer", NULL, NULL,
             footer_nodes, sizeof(footer_nodes) / sizeof(footer_nodes[0])),
     };
     struct ui_node_desc root_children[] = {
-        box_node(UI_NODE_COLUMN, "layout", "settings-form", NULL, &form->layout,
+        box_node(UI_NODE_COLUMN, "layout", "settings-form", NULL, NULL,
             layout_nodes, sizeof(layout_nodes) / sizeof(layout_nodes[0])),
     };
     struct ui_node_desc root = box_node(UI_NODE_STACK, "root", "settings-root",
@@ -834,7 +820,6 @@ static bool mount_form(struct settings_form *form)
         return false;
     }
 
-    form->root = ui_view_root(form->view);
     for (size_t i = 0; i < form->count; i++) {
         struct settings_row *row = &form->rows[i];
         settings_choices_destroy(&row->choices);
