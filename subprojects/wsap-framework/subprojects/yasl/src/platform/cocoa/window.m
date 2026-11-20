@@ -72,6 +72,15 @@ enum {
 - (instancetype)initWithFrame:(NSRect)frameRect cpuLayer:(BOOL)cpuLayer;
 @end
 
+/* Fill the title bar from below. Do not pass its presses to the frame view. */
+@interface YaslChromeView : NSView
+@end
+
+@implementation YaslChromeView
+- (BOOL)isOpaque { return YES; }
+- (BOOL)mouseDownCanMoveWindow { return NO; }
+@end
+
 @interface YaslAppDelegate : NSObject <NSApplicationDelegate>
 @end
 
@@ -125,6 +134,7 @@ struct cocoa_surface {
     const struct yasl_private_window_cbs *cbs;
     void *ud;
     uint64_t frames_skipped;
+    uint64_t move_trace_ns, place_trace_ns;
 
     char *preedit;
     size_t preedit_begin, preedit_end;
@@ -195,7 +205,7 @@ struct cocoa_display {
     int capacity;
     char *app_id;
     struct yasl_loop *loop;
-    id key_up_monitor;
+    id event_monitor;
     NSCursor *hidden_cursor;
     /* Diagonal resize cursors, made on first use. */
     NSCursor *diagonal_cursors[2];
@@ -207,15 +217,14 @@ struct cocoa_display {
         bool active;
         struct cocoa_surface *origin;
         struct cocoa_surface *carried;
-        struct yasl_private_vector2i carry_offset;
+        NSPoint carry_offset;
         struct cocoa_surface *hover;
         struct yasl_private_vector2i hover_pos;
         struct yasl_private_drag_listener listener;
         void *ud;
         NSImage *image;
         NSWindow *image_window;
-        struct yasl_private_vector2i image_size;
-        struct yasl_private_vector2i image_hotspot;
+        NSPoint image_hotspot;
     } drag;
     int depth;
     bool open;
@@ -224,6 +233,63 @@ struct cocoa_display {
 };
 
 static struct cocoa_display darwin_ctx;
+
+static unsigned screen_id(NSScreen *screen)
+{
+    return [screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue];
+}
+
+static void trace_move_screens(void)
+{
+    if (!darwin_ctx.base.trace_moves)
+        return;
+    for (NSScreen *screen in NSScreen.screens) {
+        NSRect frame = screen.frame;
+        NSRect visible = screen.visibleFrame;
+        yasl_private_move_trace(&darwin_ctx.base, NULL, "screen",
+                "id=%u scale=%g frame=(%g,%g %gx%g) visible=(%g,%g %gx%g)",
+                screen_id(screen), screen.backingScaleFactor,
+                NSMinX(frame), NSMinY(frame), NSWidth(frame), NSHeight(frame),
+                NSMinX(visible), NSMinY(visible), NSWidth(visible), NSHeight(visible));
+    }
+}
+
+static bool move_trace_sample(uint64_t *last)
+{
+    uint64_t now = yasl_private_loop_now_ns();
+    if (*last && now - *last < 40000000)
+        return false;
+    *last = now;
+    return true;
+}
+
+struct move_request {
+    NSPoint mouse, grab, origin;
+};
+
+static void trace_window_move(struct cocoa_surface *w, const char *stage,
+                              const struct move_request *request)
+{
+    if (!darwin_ctx.base.trace_moves || !w || !w->window || w->destroyed || w->closed)
+        return;
+    NSWindow *win = w->window;
+    NSRect frame = win.frame;
+    NSEvent *event = NSApp.currentEvent;
+    NSInteger subtype = event.type == NSEventTypeAppKitDefined ? event.subtype : 0;
+    NSPoint mouse = request ? request->mouse : NSEvent.mouseLocation;
+    char placement[160] = "";
+    if (request)
+        snprintf(placement, sizeof(placement), " requested=(%g,%g) grab=(%g,%g)",
+                 request->origin.x, request->origin.y, request->grab.x, request->grab.y);
+    yasl_private_move_trace(&darwin_ctx.base, &w->base, stage,
+            "win=%ld screen=%u backing=%g scale120=%u mouse=(%g,%g) frame=(%g,%g %gx%g) "
+            "event=%lu subtype=%ld event_win=%ld held=%lu carry=%d%s",
+            (long)win.windowNumber, screen_id(win.screen), win.backingScaleFactor,
+            w->scale_120, mouse.x, mouse.y, NSMinX(frame), NSMinY(frame),
+            NSWidth(frame), NSHeight(frame), (unsigned long)event.type,
+            (long)subtype, (long)event.windowNumber, (unsigned long)NSEvent.pressedMouseButtons,
+            darwin_ctx.drag.carried == w, placement);
+}
 
 /* The wait of the fallback that answers a frame intent when no display tick
  * comes. Two frame periods is longer than one tick, so a live link always
@@ -270,6 +336,8 @@ static void drag_end(struct cocoa_display *d, enum yasl_private_drag_end how)
     void *ud = d->drag.ud;
     struct cocoa_surface *hover = d->drag.hover;
     struct yasl_private_vector2i pos = d->drag.hover_pos;
+    trace_window_move(d->drag.carried ? d->drag.carried : d->drag.origin,
+                      how == YASL_PRIVATE_DRAG_DROPPED ? "drag-drop" : "drag-end", NULL);
 
     d->drag.active = false;
     d->drag.listener = (struct yasl_private_drag_listener){0};
@@ -311,6 +379,7 @@ static void reap_dead(struct cocoa_display *d);
 static void push_pen(struct cocoa_surface *w, NSEvent *event, unsigned action, bool contact);
 static void apply_pointer_lock(struct cocoa_surface *w);
 static void dismiss_popup_press(const struct cocoa_surface *pressed);
+static bool place_under_pointer(struct cocoa_surface *w, NSPoint at);
 
 static void set_state(struct cocoa_surface *w, uint32_t bit, bool on)
 {
@@ -579,15 +648,21 @@ static void cpu_commit_slot(struct cocoa_surface *w, int idx)
     schedule_cpu_trim(w);
 }
 
+static CGFloat surface_scale(const struct cocoa_surface *w)
+{
+    return w && w->scale_120 ? (CGFloat)w->scale_120 / YASL_PRIVATE_SCALE_UNIT : 1.0;
+}
+
 static void sync_size(struct cocoa_surface *w, bool force)
 {
     if (!w || w->destroyed || w->closed || !w->view || !w->window)
         return;
     uint64_t start = yasl_private_loop_now_ns();
     NSRect bounds = w->view.bounds;
-    CGFloat scale = w->window.backingScaleFactor;
-    if (scale < 1.0)
-        scale = 1.0;
+    /* The popup uses its parent's pixel coordinates, even if AppKit puts
+     * the popup on another display. Use that scale for its buffer and input. */
+    CGFloat scale = w->parent ? surface_scale(w->parent)
+                              : MAX(1.0, w->window.backingScaleFactor);
     struct yasl_private_vector2i size = {
         .x = (int)lround(bounds.size.width * scale),
         .y = (int)lround(bounds.size.height * scale),
@@ -595,13 +670,18 @@ static void sync_size(struct cocoa_surface *w, bool force)
     uint32_t scale_120 = (uint32_t)lround(scale * YASL_PRIVATE_SCALE_UNIT);
     bool rescaled = force || scale_120 != w->scale_120;
     bool resized = force || (size.x != w->size.x || size.y != w->size.y);
-    if (!rescaled && !resized)
+    bool layer_rescaled = w->layer && w->layer.contentsScale != scale;
+    if (!rescaled && !resized && !layer_rescaled)
         return;
     darwin_ctx.depth++;
+    if (layer_rescaled)
+        w->layer.contentsScale = scale;
+    if (!rescaled && !resized) {
+        darwin_ctx.depth--;
+        return;
+    }
     w->size = size;
     w->scale_120 = scale_120;
-    if (w->layer)
-        w->layer.contentsScale = scale;
     if (w->metal_layer)
         w->metal_layer.drawableSize = CGSizeMake(size.x, size.y);
     cpu_trim_stale_slots(w);
@@ -610,8 +690,12 @@ static void sync_size(struct cocoa_surface *w, bool force)
     yasl_private_surface_notify_configure(&w->base, (struct yasl_private_geometry){
             .size = size, .scale_120 = scale_120,
         });
-    /* During a live resize the refresh callback draws the new size here. The
-     * callback draws and presents the frame. A second draw would only repeat it. */
+    /* A child can stay on the same display when its parent changes scale. */
+    if (rescaled)
+        for (int i = 0; i < darwin_ctx.count; i++)
+            if (darwin_ctx.windows[i]->parent == w)
+                sync_size(darwin_ctx.windows[i], false);
+    /* During a live resize the refresh callback draws and presents the frame. */
     if (w->base.presenter != YASL_PRIVATE_PRESENTER_CPU || w->view.inLiveResize)
         yasl_private_surface_notify_refresh(&w->base);
     darwin_ctx.depth--;
@@ -712,9 +796,7 @@ static int cocoa_button(NSInteger number)
 static struct yasl_private_vector2i event_pos(struct cocoa_surface *w, NSEvent *ev)
 {
     NSPoint p = [w->view convertPoint:ev.locationInWindow fromView:nil];
-    CGFloat scale = w->window.backingScaleFactor;
-    if (scale < 1.0)
-        scale = 1.0;
+    CGFloat scale = surface_scale(w);
     return (struct yasl_private_vector2i){
         .x = (int)floor(p.x * scale),
         .y = (int)floor((w->view.bounds.size.height - p.y) * scale),
@@ -725,9 +807,7 @@ static struct yasl_private_vector2i event_pos(struct cocoa_surface *w, NSEvent *
  * the deltas in points with y up; the surface y grows down. */
 static struct yasl_private_vector2d locked_delta(struct cocoa_surface *w, NSEvent *ev)
 {
-    CGFloat scale = w->window ? w->window.backingScaleFactor : 1.0;
-    if (scale < 1.0)
-        scale = 1.0;
+    CGFloat scale = surface_scale(w);
     return (struct yasl_private_vector2d){ .x = ev.deltaX * scale, .y = -ev.deltaY * scale };
 }
 
@@ -776,8 +856,7 @@ static void update_drag_hover(struct cocoa_display *d, NSPoint screenPoint)
                 NSPoint winPoint = [candidate->window convertPointFromScreen:screenPoint];
                 NSPoint viewPoint = [candidate->view convertPoint:winPoint fromView:nil];
                 if (NSPointInRect(viewPoint, candidate->view.bounds)) {
-                    CGFloat scale = candidate->window.backingScaleFactor;
-                    if (scale < 1.0) scale = 1.0;
+                    CGFloat scale = surface_scale(candidate);
                     pos.x = (int)floor(viewPoint.x * scale);
                     pos.y = (int)floor((candidate->view.bounds.size.height - viewPoint.y) * scale);
                     target = candidate;
@@ -791,8 +870,7 @@ static void update_drag_hover(struct cocoa_display *d, NSPoint screenPoint)
                     NSPoint winPoint = [s->window convertPointFromScreen:screenPoint];
                     NSPoint viewPoint = [s->view convertPoint:winPoint fromView:nil];
                     if (NSPointInRect(viewPoint, s->view.bounds)) {
-                        CGFloat scale = s->window.backingScaleFactor;
-                        if (scale < 1.0) scale = 1.0;
+                        CGFloat scale = surface_scale(s);
                         pos.x = (int)floor(viewPoint.x * scale);
                         pos.y = (int)floor((s->view.bounds.size.height - viewPoint.y) * scale);
                         target = s;
@@ -876,8 +954,7 @@ static void push_pen(struct cocoa_surface *w, NSEvent *event, unsigned action, b
     if (event) {
         if (w->view && [event respondsToSelector:@selector(locationInWindow)]) {
             NSPoint point = [w->view convertPoint:event.locationInWindow fromView:nil];
-            CGFloat scale = w->window.backingScaleFactor;
-            if (scale < 1.0) scale = 1.0;
+            CGFloat scale = surface_scale(w);
             pen.x = point.x * scale;
             pen.y = (w->view.bounds.size.height - point.y) * scale;
         }
@@ -1023,16 +1100,13 @@ static void push_pointer(struct cocoa_surface *w, NSEvent *ev, enum yasl_private
     }
     if (type == YASL_PRIVATE_EVENT_POINTER_MOTION && darwin_ctx.drag.active) {
         if (darwin_ctx.drag.carried) {
-            cocoa_surface_place_under_pointer(darwin_ctx.drag.carried, darwin_ctx.drag.carry_offset);
+            place_under_pointer(darwin_ctx.drag.carried, darwin_ctx.drag.carry_offset);
         } else if (darwin_ctx.drag.image_window) {
-            CGFloat scale = darwin_ctx.drag.origin && darwin_ctx.drag.origin->window
-                ? darwin_ctx.drag.origin->window.backingScaleFactor : 1.0;
-            if (scale < 1.0) scale = 1.0;
+            NSWindow *window = darwin_ctx.drag.image_window;
             NSPoint mouse = [NSEvent mouseLocation];
-            CGFloat pt_h = darwin_ctx.drag.image_size.y / scale;
-            [darwin_ctx.drag.image_window setFrameOrigin:NSMakePoint(
-                mouse.x - darwin_ctx.drag.image_hotspot.x / scale,
-                mouse.y - pt_h + darwin_ctx.drag.image_hotspot.y / scale)];
+            NSPoint hotspot = darwin_ctx.drag.image_hotspot;
+            [window setFrameOrigin:NSMakePoint(mouse.x - hotspot.x,
+                mouse.y - NSHeight(window.frame) + hotspot.y)];
         }
         update_drag_hover(&darwin_ctx, [NSEvent mouseLocation]);
     } else if (type == YASL_PRIVATE_EVENT_POINTER_UP && darwin_ctx.drag.active) {
@@ -1141,6 +1215,7 @@ static void apply_pointer_lock(struct cocoa_surface *w)
 - (void)applicationDidChangeScreenParameters:(NSNotification *)notification
 {
     (void)notification;
+    trace_move_screens();
     for (int i = 0; i < darwin_ctx.count; i++) {
         struct cocoa_surface *w = darwin_ctx.windows[i];
         if (w->destroyed || w->closed)
@@ -1156,9 +1231,7 @@ static void apply_pointer_lock(struct cocoa_surface *w)
 static struct yasl_private_vector2i dragging_pos(YaslView *view, id<NSDraggingInfo> sender)
 {
     NSPoint p = [view convertPoint:[sender draggingLocation] fromView:nil];
-    NSWindow *win = view.window;
-    CGFloat scale = win ? win.backingScaleFactor : 1.0;
-    if (scale < 1.0) scale = 1.0;
+    CGFloat scale = surface_scale(view.surface);
     return (struct yasl_private_vector2i){
         .x = (int)floor(p.x * scale),
         .y = (int)floor((view.bounds.size.height - p.y) * scale),
@@ -1395,6 +1468,7 @@ static bool push_drop(struct cocoa_surface *w, NSPasteboard *pb, NSString *type,
 - (void)viewDidChangeBackingProperties
 {
     [super viewDidChangeBackingProperties];
+    trace_window_move(self.surface, "backing-change", NULL);
     sync_size(self.surface, false);
 }
 
@@ -1613,8 +1687,7 @@ static bool push_drop(struct cocoa_surface *w, NSPasteboard *pb, NSString *type,
     if (!w) return;
     double dx = -event.scrollingDeltaX, dy = -event.scrollingDeltaY;
     bool precise = event.hasPreciseScrollingDeltas;
-    CGFloat scale = w->window.backingScaleFactor;
-    if (scale < 1.0) scale = 1.0;
+    CGFloat scale = surface_scale(w);
     /* A precise device reports pixels; every device reports line offsets. */
     struct yasl_private_vector2d pixels = {dx * scale, dy * scale};
     unsigned valid = YASL_PRIVATE_SCROLL_LINES;
@@ -1893,8 +1966,7 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
     (void)range; (void)actualRange;
     struct cocoa_surface *w = self.surface;
     if (!w || !w->window) return NSZeroRect;
-    CGFloat scale = w->window.backingScaleFactor;
-    if (scale < 1.0) scale = 1.0;
+    CGFloat scale = surface_scale(w);
     NSRect r = NSMakeRect(w->ime_caret.x / scale,
         self.bounds.size.height - (w->ime_caret.y + w->ime_caret.height) / scale,
         w->ime_caret.width / scale, w->ime_caret.height / scale);
@@ -1905,6 +1977,58 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
 @end
 
 @implementation YaslWindow
+
+/* Start a native drag from the title bar, but not from its buttons. */
+- (BOOL)beginTitlebarDrag:(NSEvent *)event
+{
+    if (!self.surface || !(self.styleMask & NSWindowStyleMaskFullSizeContentView) ||
+        (self.styleMask & NSWindowStyleMaskFullScreen))
+        return NO;
+    NSPoint point = event.locationInWindow;
+    CGFloat titlebar_y = NSMaxY(self.contentLayoutRect);
+    if (point.y >= titlebar_y - 8)
+        yasl_private_move_trace(&darwin_ctx.base, &self.surface->base, "chrome-press",
+                "win=%ld point=(%g,%g) titlebar-y=%g clicks=%ld movable=%d",
+                (long)self.windowNumber, point.x, point.y,
+                titlebar_y, (long)event.clickCount, self.movable);
+    if (point.y < titlebar_y || event.clickCount != 1 || !self.movable)
+        return NO;
+    /* Leave the top edge and both corners to AppKit's resize handler. */
+    if (self.styleMask & NSWindowStyleMaskResizable) {
+        NSRect frame = [self convertRectFromScreen:self.frame];
+        if (!NSPointInRect(point, NSInsetRect(frame, 12, 8)))
+            return NO;
+    }
+    for (NSWindowButton kind = NSWindowCloseButton; kind <= NSWindowZoomButton; kind++) {
+        NSButton *button = [self standardWindowButton:kind];
+        if (button && !button.hidden &&
+            NSPointInRect(point, [button convertRect:button.bounds toView:nil]))
+            return NO;
+    }
+    darwin_ctx.depth++;
+    @try {
+        dismiss_popup_press(self.surface);
+        trace_window_move(self.surface, "titlebar-drag", NULL);
+        [self performWindowDragWithEvent:event];
+    } @finally {
+        darwin_ctx.depth--;
+    }
+    return YES;
+}
+
+- (NSRect)constrainFrameRect:(NSRect)frame toScreen:(NSScreen *)screen
+{
+    NSRect result = [super constrainFrameRect:frame toScreen:screen];
+    if (darwin_ctx.base.trace_moves && self.surface && !NSEqualRects(frame, result)) {
+        NSPoint mouse = NSEvent.mouseLocation;
+        yasl_private_move_trace(&darwin_ctx.base, &self.surface->base, "constrain",
+                "win=%ld screen=%u mouse=(%g,%g) in=(%g,%g %gx%g) out=(%g,%g %gx%g)",
+                (long)self.windowNumber, screen_id(screen), mouse.x, mouse.y,
+                NSMinX(frame), NSMinY(frame), NSWidth(frame), NSHeight(frame),
+                NSMinX(result), NSMinY(result), NSWidth(result), NSHeight(result));
+    }
+    return result;
+}
 
 - (void)sendEvent:(NSEvent *)event
 {
@@ -2032,10 +2156,25 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
         [self syncWindowState];
 }
 
+- (void)windowWillMove:(NSNotification *)notification
+{
+    (void)notification;
+    trace_window_move(self.surface, "will-move", NULL);
+}
+
+- (void)windowDidMove:(NSNotification *)notification
+{
+    (void)notification;
+    struct cocoa_surface *w = self.surface;
+    if (darwin_ctx.base.trace_moves && w && move_trace_sample(&w->move_trace_ns))
+        trace_window_move(w, "did-move", NULL);
+}
+
 - (void)windowDidChangeScreen:(NSNotification *)notification
 {
     (void)notification;
     struct cocoa_surface *w = self.surface;
+    trace_window_move(w, "screen-change", NULL);
     sync_size(w, false);
     /* The link follows the window to its new screen. Wake it so it measures
      * the new cadence. A frame that already waits still waits for its tick. */
@@ -2515,8 +2654,15 @@ static void app_init(const char *app_name)
     NSApp.mainMenu = menu;
     [menu release];
 
-    darwin_ctx.key_up_monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyUp
-        handler:^NSEvent *(NSEvent *event) {
+    darwin_ctx.event_monitor = [NSEvent addLocalMonitorForEventsMatchingMask:
+        NSEventMaskLeftMouseDown | NSEventMaskKeyUp handler:^NSEvent *(NSEvent *event) {
+            if (event.type == NSEventTypeLeftMouseDown) {
+                NSWindow *window = event.window;
+                if ([window isKindOfClass:[YaslWindow class]] &&
+                    [(YaslWindow *)window beginTitlebarDrag:event])
+                    return nil;
+                return event;
+            }
             if (!(event.modifierFlags & NSEventModifierFlagCommand) || !event.window)
                 return event;
             [event.window sendEvent:event];
@@ -2572,9 +2718,9 @@ void cocoa_display_close(struct cocoa_display *d)
     drag_end(d, YASL_PRIVATE_DRAG_CANCELLED);
     assert(!d->count && "destroy every surface before its display");
     reap_dead(d);
-    if (d->key_up_monitor) {
-        [NSEvent removeMonitor:d->key_up_monitor];
-        d->key_up_monitor = nil;
+    if (d->event_monitor) {
+        [NSEvent removeMonitor:d->event_monitor];
+        d->event_monitor = nil;
     }
     if (d->owns_loop && d->loop) {
         yasl_loop_destroy(d->loop);
@@ -2661,6 +2807,8 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
     if (!d || !d->open || !spec)
         return NULL;
     @autoreleasepool {
+        if (darwin_ctx.count == 0)
+            trace_move_screens();
         if (darwin_ctx.count >= darwin_ctx.capacity) {
             int cap = darwin_ctx.capacity ? darwin_ctx.capacity * 2 : 16;
             struct cocoa_surface **wins = realloc(darwin_ctx.windows, (size_t)cap * sizeof(*wins));
@@ -2694,8 +2842,16 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
             style |= NSWindowStyleMaskResizable;
         /* The system draws the title bar of a titled window. A borderless window
          * has none, so the application draws the frame. */
-        w->base.state = (style & NSWindowStyleMaskTitled) ? 0 : YASL_PRIVATE_STATE_CSD;
-        w->window = [[YaslWindow alloc] initWithContentRect:NSMakeRect(0, 0, win_w, win_h)
+        bool titled = (style & NSWindowStyleMaskTitled) != 0;
+        w->base.state = titled ? 0 : YASL_PRIVATE_STATE_CSD;
+        NSRect content = NSMakeRect(0, 0, win_w, win_h);
+        if (titled) {
+            /* The requested size excludes the title bar. */
+            NSRect frame = [NSWindow frameRectForContentRect:content styleMask:style];
+            style |= NSWindowStyleMaskFullSizeContentView;
+            content = [NSWindow contentRectForFrameRect:frame styleMask:style];
+        }
+        w->window = [[YaslWindow alloc] initWithContentRect:content
                                                   styleMask:style
                                                     backing:NSBackingStoreBuffered
                                                       defer:NO];
@@ -2708,15 +2864,41 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
         w->window.delegate = w->controller;
         w->window.acceptsMouseMovedEvents = YES;
         w->window.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
-        w->window.titlebarAppearsTransparent = YES;
-        if ([w->window respondsToSelector:@selector(setTitlebarSeparatorStyle:)])
-            w->window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
+        /* Use full-size content with a transparent title bar. AppKit can
+         * jump between displays if only the transparency is set. */
+        if (titled)
+            w->window.titlebarAppearsTransparent = YES;
         /* The full title: a byte-limited copy could split a UTF-8 sequence. */
         w->window.title = [NSString stringWithUTF8String:t] ?: @"YASL";
         w->window.colorSpace = [NSColorSpace sRGBColorSpace];
 
-        w->view = [[YaslView alloc] initWithFrame:w->window.contentView.bounds cpuLayer:w->use_iosurface];
-        w->window.contentView = w->view;
+        NSView *root = w->window.contentView;
+        if (titled) {
+            YaslChromeView *chrome = [[YaslChromeView alloc] initWithFrame:root.bounds];
+            chrome.wantsLayer = YES;
+            chrome.layer.opaque = YES;
+            chrome.layer.backgroundColor = w->window.backgroundColor.CGColor;
+            w->window.contentView = chrome;
+            root = chrome;
+            [chrome release];
+        }
+        NSRect view_frame = titled ? w->window.contentLayoutRect : root.bounds;
+        w->view = [[YaslView alloc] initWithFrame:view_frame cpuLayer:w->use_iosurface];
+        if (titled) {
+            /* Keep the drawable and its input below the native controls. */
+            NSLayoutGuide *layout = w->window.contentLayoutGuide;
+            [root addSubview:w->view];
+            w->view.translatesAutoresizingMaskIntoConstraints = NO;
+            [NSLayoutConstraint activateConstraints:@[
+                [w->view.leftAnchor constraintEqualToAnchor:layout.leftAnchor],
+                [w->view.rightAnchor constraintEqualToAnchor:layout.rightAnchor],
+                [w->view.topAnchor constraintEqualToAnchor:layout.topAnchor],
+                [w->view.bottomAnchor constraintEqualToAnchor:layout.bottomAnchor],
+            ]];
+            [root layoutSubtreeIfNeeded];
+        } else {
+            w->window.contentView = w->view;
+        }
         w->layer = w->view.layer;
         w->metal_layer = w->use_iosurface ? nil : (CAMetalLayer *)w->view.layer;
         if (w->metal_layer) {
@@ -2756,6 +2938,8 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
         }
 
         sync_size(w, true);
+        if (titled)
+            trace_window_move(w, "chrome-ready", NULL);
         if (spec->tearing) {
             if (w->metal_layer) w->metal_layer.displaySyncEnabled = NO;
             w->unpaced = true;
@@ -2881,7 +3065,13 @@ static bool impl_surface_set_size(struct yasl_surface *surface, struct yasl_priv
         errno = EINVAL;
         return false;
     }
-    [w->window setContentSize:NSMakeSize(size.x, size.y)];
+    trace_window_move(w, "app-resize", NULL);
+    NSSize content = NSMakeSize(size.x, size.y);
+    if (w->window.styleMask & NSWindowStyleMaskFullSizeContentView)
+        content.height += NSHeight(w->window.contentView.bounds) -
+                          NSHeight(w->window.contentLayoutRect);
+    [w->window setContentSize:content];
+    [w->window.contentView layoutSubtreeIfNeeded];
     errno = 0;
     return true;
 }
@@ -2934,7 +3124,11 @@ void cocoa_surface_set_background_color(struct cocoa_surface *w, uint32_t bg)
         double r = ((bg >> 16) & 0xff) / 255.0;
         double g = ((bg >> 8) & 0xff) / 255.0;
         double b = (bg & 0xff) / 255.0;
-        w->window.backgroundColor = [NSColor colorWithSRGBRed:r green:g blue:b alpha:1.0];
+        NSColor *color = [NSColor colorWithSRGBRed:r green:g blue:b alpha:1.0];
+        w->window.backgroundColor = color;
+        NSView *root = w->window.contentView;
+        if ([root isKindOfClass:[YaslChromeView class]])
+            root.layer.backgroundColor = color.CGColor;
         bool dark = 0.299 * r + 0.587 * g + 0.114 * b < 0.5;
         w->window.appearance = [NSAppearance appearanceNamed:
             dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
@@ -2954,18 +3148,28 @@ void cocoa_surface_set_cursor(struct cocoa_surface *w, enum yasl_private_cursor 
         apply_cursor(w);
 }
 
-bool cocoa_surface_place_under_pointer(struct cocoa_surface *w, struct yasl_private_vector2i at)
+static bool place_under_pointer(struct cocoa_surface *w, NSPoint at)
 {
     if (!w || w->closed || !w->window) return false;
-    CGFloat scale = w->window.backingScaleFactor;
-    if (scale < 1.0) scale = 1.0;
     NSPoint mouse = [NSEvent mouseLocation];
-    NSRect content = [w->window contentRectForFrameRect:w->window.frame];
-    NSPoint origin = NSMakePoint(mouse.x - at.x / scale,
-                                 mouse.y - content.size.height + at.y / scale);
-    [w->window setFrameOrigin:[w->window frameRectForContentRect:
-        (NSRect){ .origin = origin, .size = content.size }].origin];
+    NSRect bounds = w->view.bounds;
+    NSPoint top = [w->view convertPoint:NSMakePoint(NSMinX(bounds), NSMaxY(bounds))
+                                 toView:nil];
+    top = [w->window convertPointToScreen:top];
+    NSPoint origin = w->window.frame.origin;
+    origin.x += mouse.x - (top.x + at.x);
+    origin.y += mouse.y - (top.y - at.y);
+    [w->window setFrameOrigin:origin];
+    if (darwin_ctx.base.trace_moves && move_trace_sample(&w->place_trace_ns))
+        trace_window_move(w, "place", &(struct move_request){ .mouse = mouse,
+                                                            .grab = at, .origin = origin });
     return true;
+}
+
+bool cocoa_surface_place_under_pointer(struct cocoa_surface *w, struct yasl_private_vector2i at)
+{
+    CGFloat scale = surface_scale(w);
+    return place_under_pointer(w, NSMakePoint(at.x / scale, at.y / scale));
 }
 
 void cocoa_surface_set_ime_caret(struct cocoa_surface *w, struct yasl_private_rect2i caret)
@@ -3122,10 +3326,10 @@ static CGFloat popup_axis_overflow(CGFloat min, CGFloat max, CGFloat visible_min
 }
 
 static NSRect popup_frame_explicit(struct cocoa_surface *parent,
-        const struct yasl_private_popup_spec *spec, unsigned anchor, unsigned gravity)
+        const struct yasl_private_popup_spec *spec, unsigned anchor, unsigned gravity,
+        NSPoint *screen_anchor)
 {
-    CGFloat scale = parent->window.backingScaleFactor;
-    if (scale < 1.0) scale = 1.0;
+    CGFloat scale = surface_scale(parent);
     CGFloat parent_x = (parent->is_popup ? parent->content_offset.x : 0) / scale;
     CGFloat parent_y = (parent->is_popup ? parent->content_offset.y : 0) / scale;
     CGFloat ax = spec->anchor.x / scale - parent_x;
@@ -3144,37 +3348,44 @@ static NSRect popup_frame_explicit(struct cocoa_surface *parent,
                            popup_edge_has_left(gravity) ? anchor_x - content_w : anchor_x - content_w * 0.5;
     CGFloat content_top = popup_edge_has_bottom(gravity) ? anchor_y :
                           popup_edge_has_top(gravity) ? anchor_y - content_h : anchor_y - content_h * 0.5;
-    CGFloat top_left_x = content_left - offset_x;
-    CGFloat top_left_y = content_top - offset_y;
-
-    CGFloat view_h = parent->view.bounds.size.height;
-    NSPoint in_view = NSMakePoint(top_left_x, view_h - top_left_y);
+    NSPoint in_view = NSMakePoint(anchor_x, NSHeight(parent->view.bounds) - anchor_y);
     NSPoint in_window = [parent->view convertPoint:in_view toView:nil];
-    NSPoint screen_top_left = [parent->window convertPointToScreen:in_window];
+    NSPoint on_screen = [parent->window convertPointToScreen:in_window];
+    if (screen_anchor)
+        *screen_anchor = on_screen;
     CGFloat width = spec->size.x / scale;
     CGFloat height = spec->size.y / scale;
-    return NSMakeRect(screen_top_left.x, screen_top_left.y - height, width, height);
+    return NSMakeRect(on_screen.x + (content_left - anchor_x) - offset_x,
+                      on_screen.y - (content_top - anchor_y) + offset_y - height,
+                      width, height);
 }
 
 static NSRect popup_calc_frame(struct cocoa_surface *parent, const struct yasl_private_popup_spec *spec)
 {
-
-    NSRect frame = popup_frame_explicit(parent, spec, spec->anchor_edges, spec->gravity);
+    NSPoint anchor;
+    NSRect frame = popup_frame_explicit(parent, spec, spec->anchor_edges, spec->gravity, &anchor);
     NSScreen *screen = parent->window.screen ?: [NSScreen mainScreen];
+    /* The parent can span screens. Keep the popup on the anchor's screen. */
+    for (NSScreen *candidate in NSScreen.screens) {
+        if (NSPointInRect(anchor, candidate.frame)) {
+            screen = candidate;
+            break;
+        }
+    }
     if (!screen) return frame;
     NSRect visible = screen.visibleFrame;
     unsigned constraints = spec->constraints;
 
     if (constraints & POPUP_CONSTRAINT_FLIP_X) {
         NSRect flipped = popup_frame_explicit(parent, spec,
-            popup_flip_x_edge(spec->anchor_edges), popup_flip_x_edge(spec->gravity));
+            popup_flip_x_edge(spec->anchor_edges), popup_flip_x_edge(spec->gravity), NULL);
         if (popup_axis_overflow(flipped.origin.x, NSMaxX(flipped), NSMinX(visible), NSMaxX(visible)) <
             popup_axis_overflow(frame.origin.x, NSMaxX(frame), NSMinX(visible), NSMaxX(visible)))
             frame = NSMakeRect(flipped.origin.x, frame.origin.y, flipped.size.width, frame.size.height);
     }
     if (constraints & POPUP_CONSTRAINT_FLIP_Y) {
         NSRect flipped = popup_frame_explicit(parent, spec,
-            popup_flip_y_edge(spec->anchor_edges), popup_flip_y_edge(spec->gravity));
+            popup_flip_y_edge(spec->anchor_edges), popup_flip_y_edge(spec->gravity), NULL);
         if (popup_axis_overflow(flipped.origin.y, NSMaxY(flipped), NSMinY(visible), NSMaxY(visible)) <
             popup_axis_overflow(frame.origin.y, NSMaxY(frame), NSMinY(visible), NSMaxY(visible)))
             frame = NSMakeRect(frame.origin.x, flipped.origin.y, frame.size.width, flipped.size.height);
@@ -3312,6 +3523,7 @@ bool cocoa_surface_start_interactive_move(struct cocoa_surface *s)
         errno = ESTALE;
         return false;
     }
+    trace_window_move(s, "interactive-move", NULL);
     [s->window performWindowDragWithEvent:s->mouse_down];
     return true;
 }
@@ -3360,6 +3572,7 @@ bool cocoa_display_drag_start(struct cocoa_display *d, struct cocoa_surface *ori
         errno = ESTALE;
         return false;
     }
+    trace_window_move(origin, "drag-start", NULL);
     d->drag.active = true;
     d->drag.origin = origin;
     d->drag.carried = NULL;
@@ -3376,11 +3589,10 @@ bool cocoa_display_drag_start(struct cocoa_display *d, struct cocoa_surface *ori
     }
     if (image && image->pixels && image->size.x > 0 && image->size.y > 0) {
         d->drag.image = image_from_pixels(image->pixels, image->size.x, image->size.y);
-        d->drag.image_size = image->size;
-        d->drag.image_hotspot = image->hotspot;
         if (d->drag.image) {
-            CGFloat scale = origin->window ? origin->window.backingScaleFactor : 1.0;
-            if (scale < 1.0) scale = 1.0;
+            CGFloat scale = surface_scale(origin);
+            d->drag.image_hotspot = NSMakePoint(image->hotspot.x / scale,
+                                               image->hotspot.y / scale);
             CGFloat pt_w = image->size.x / scale;
             CGFloat pt_h = image->size.y / scale;
             NSWindow *win = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, pt_w, pt_h)
@@ -3400,8 +3612,8 @@ bool cocoa_display_drag_start(struct cocoa_display *d, struct cocoa_surface *ori
             [iv release];
             d->drag.image_window = win;
             NSPoint mouse = [NSEvent mouseLocation];
-            [win setFrameOrigin:NSMakePoint(mouse.x - image->hotspot.x / scale,
-                                            mouse.y - pt_h + image->hotspot.y / scale)];
+            [win setFrameOrigin:NSMakePoint(mouse.x - d->drag.image_hotspot.x,
+                                           mouse.y - pt_h + d->drag.image_hotspot.y)];
             [win orderFront:nil];
         }
     }
@@ -3419,8 +3631,11 @@ bool cocoa_surface_drag_carry(struct cocoa_surface *w, struct yasl_private_vecto
         darwin_ctx.drag.image_window = nil;
     }
     darwin_ctx.drag.carried = w;
-    darwin_ctx.drag.carry_offset = offset;
-    return cocoa_surface_place_under_pointer(w, offset);
+    /* Keep the grab point stable when the window changes backing scale. */
+    CGFloat scale = surface_scale(w);
+    darwin_ctx.drag.carry_offset = NSMakePoint(offset.x / scale, offset.y / scale);
+    trace_window_move(w, "carry-start", NULL);
+    return place_under_pointer(w, darwin_ctx.drag.carry_offset);
 }
 
 bool cocoa_surface_start_interactive_resize(struct cocoa_surface *s, enum yasl_private_resize_edge edge)
@@ -3913,6 +4128,6 @@ NSWindow *yasl_private_cocoa_surface_get_window(struct yasl_surface *s)
 
 NSView *yasl_private_cocoa_surface_get_view(struct yasl_surface *s)
 {
-    NSWindow *w = yasl_private_cocoa_surface_get_window(s);
-    return w ? w.contentView : nil;
+    YaslWindow *w = (YaslWindow *)yasl_private_cocoa_surface_get_window(s);
+    return w.surface ? w.surface->view : nil;
 }

@@ -36,8 +36,11 @@ int main(void)
     assert(yasl_private_cocoa_display_get_application(d) == NSApp);
     NSWindow *window = (NSWindow *)yasl_private_surface_get_native_handle(s);
     assert(yasl_private_cocoa_surface_get_window(s) == window);
-    assert(yasl_private_cocoa_surface_get_view(s) == window.contentView);
-    assert([window isKindOfClass:[NSWindow class]] && window.contentView);
+    NSView *view = yasl_private_cocoa_surface_get_view(s);
+    assert([window isKindOfClass:[NSWindow class]] && view.window == window);
+    assert(window.titlebarAppearsTransparent);
+    assert(NSEqualSizes(view.bounds.size, NSMakeSize(160, 100)));
+    assert(NSEqualRects([view convertRect:view.bounds toView:nil], window.contentLayoutRect));
     struct yasl_private_event event;
     while (yasl_private_display_poll_event(d, &event)) {}
 
@@ -53,7 +56,7 @@ int main(void)
     CAMetalLayer *metal = (CAMetalLayer *)d->ops->surface_get_metal_layer(gpu);
     assert(metal && [metal isKindOfClass:[CAMetalLayer class]] && !metal.device);
     NSWindow *hidden = (NSWindow *)yasl_private_surface_get_native_handle(gpu);
-    assert(!hidden.isVisible && hidden.styleMask == NSWindowStyleMaskBorderless);
+    assert(!hidden.isVisible && !(hidden.styleMask & NSWindowStyleMaskTitled));
     /* A titled window keeps its system title bar. An undecorated window has
      * none, so the application draws the frame. */
     assert(!(s->state & YASL_PRIVATE_STATE_CSD));
@@ -64,6 +67,7 @@ int main(void)
            !d->ops->gl_get_proc_address && !d->ops->gl_swap_interval && !d->ops->gl_swap_buffers);
 
     assert(yasl_private_surface_set_size(s, (struct yasl_private_vector2i){180, 110}));
+    assert(NSEqualSizes(view.bounds.size, NSMakeSize(180, 110)));
     assert(yasl_private_surface_set_fullscreen(s, false));
     assert(yasl_private_surface_set_maximized(s, false));
     assert(!yasl_private_surface_set_size(s, (struct yasl_private_vector2i){0, 100}));

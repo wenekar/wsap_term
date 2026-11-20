@@ -80,6 +80,7 @@ int yasl_surface_set_position(yasl_surface *s, int x, int y)
         return -errno;
     if (!s->display->ops->surface_set_position)
         return yasl_public_error(ENOTSUP);
+    yasl_private_move_trace(s->display, s, "position-request", "logical=(%d,%d)", x, y);
     errno = 0;
     return yasl_public_status(s->display->ops->surface_set_position(
                                   s, (struct yasl_private_vector2i){x, y}) ||

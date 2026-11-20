@@ -14,6 +14,11 @@
 struct yasl_private_backend_ops;
 struct yasl_private_event_state;
 
+void yasl_private_move_trace(const struct yasl_private_display *d,
+                             const struct yasl_surface *s, const char *stage,
+                             const char *format, ...)
+    __attribute__((format(printf, 4, 5)));
+
 struct yasl_private_display {
     /* CL 0: hot dispatch pointers. */
     const struct yasl_private_backend_ops *ops;
@@ -36,6 +41,7 @@ struct yasl_private_display {
     bool reconnects;
     /* The drag in progress dropped on one of the display's surfaces. */
     bool drag_dropped;
+    bool trace_moves;
     /* Connection lost; native handles are unusable until it is restored. Read by GL
      * rendering threads, so it is atomic. */
     atomic_bool offline;

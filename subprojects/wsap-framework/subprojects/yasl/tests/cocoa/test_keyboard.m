@@ -1,5 +1,6 @@
 #import <AppKit/AppKit.h>
 #include <common/private_native.h>
+#include <common/private_native_cocoa.h>
 #include <common/backend.h>
 #include <assert.h>
 #include <math.h>
@@ -70,7 +71,7 @@ int main(void)
         surface->text_generation = 3;
         assert(display->ops->surface_update_text_input(surface));
         NSWindow *window = (NSWindow *)yasl_private_surface_get_native_handle(surface);
-        NSView<NSTextInputClient> *view = (id)window.contentView;
+        NSView<NSTextInputClient> *view = (id)yasl_private_cocoa_surface_get_view(surface);
         struct yasl_private_event event;
         while (yasl_private_display_poll_event(yasl_private_surface_display(surface), &event)) {}
 

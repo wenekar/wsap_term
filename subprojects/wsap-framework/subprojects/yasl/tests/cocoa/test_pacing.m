@@ -57,9 +57,9 @@ static void pump(struct state *state)
 /* Answers the pending frame intent the way the screen does. */
 static void tick_once(struct yasl_surface *surface)
 {
-    NSWindow *window = (NSWindow *)yasl_private_cocoa_surface_get_window(surface);
-    assert(window && window.contentView);
-    [window.contentView displayLinkFired:nil];
+    NSView *view = yasl_private_cocoa_surface_get_view(surface);
+    assert(view);
+    [view displayLinkFired:nil];
 }
 
 /* Steps the loop until the surface stops drawing, so a later frame comes from

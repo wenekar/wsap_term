@@ -3918,7 +3918,12 @@ static void dispatch(struct yasl_private_display *base)
                 s->want_draw = true;
             break;
         case ConfigureNotify: {
-            struct yasl_private_vector2i size = {event.xconfigure.width, event.xconfigure.height};
+            XConfigureEvent *configure = &event.xconfigure;
+            yasl_private_move_trace(&d->base, &s->base, "x11-configure",
+                                    "win=%lu pos_px=(%d,%d) size_px=%dx%d synthetic=%d",
+                                    s->window, configure->x, configure->y,
+                                    configure->width, configure->height, configure->send_event);
+            struct yasl_private_vector2i size = {configure->width, configure->height};
             if (size.x == s->size.x && size.y == s->size.y) break;
             if (resize(s, size))
                 yasl_private_surface_notify_configure(&s->base,

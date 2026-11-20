@@ -931,6 +931,7 @@ int yasl_drag_start(yasl_surface *s, const struct yasl_drag_image *source)
             .size = {source->pixel_width, source->pixel_height},
             .hotspot = {source->hotspot_x, source->hotspot_y}};
     display->drag_dropped = false;
+    yasl_private_move_trace(display, s, "drag-request", "image=%d", source != NULL);
     const struct yasl_private_drag_listener listener = {.end = drag_ended};
     return STATUS(yasl_private_display_drag_start(display, s, source ? &image : NULL, &listener,
                                                   (void *)(uintptr_t)s->id));

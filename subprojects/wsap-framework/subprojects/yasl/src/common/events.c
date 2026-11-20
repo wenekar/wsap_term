@@ -322,6 +322,8 @@ void *yasl_private_surface_userdata(const struct yasl_surface *s) { return s ? s
 void yasl_private_surface_notify_configure(struct yasl_surface *s, struct yasl_private_geometry geometry)
 {
     uint32_t previous_scale = s->reported_scale;
+    yasl_private_move_trace(s->display, s, "configure", "size_px=%dx%d scale120=%u old_scale120=%u",
+                            geometry.size.x, geometry.size.y, geometry.scale_120, previous_scale);
     s->reported_scale = geometry.scale_120;
     s->size = geometry.size;
     s->scale_120 = geometry.scale_120;
@@ -347,6 +349,9 @@ void yasl_private_surface_notify_state(struct yasl_surface *s, uint32_t flags)
 void yasl_private_surface_notify_drag(struct yasl_surface *s, enum yasl_private_drag_event action, struct yasl_private_vector2i pos)
 {
     struct yasl_private_event event = {.type = YASL_PRIVATE_EVENT_DRAG, .surface = s, .drag = {action, pos}};
+    if (action != YASL_PRIVATE_DRAG_OVER)
+        yasl_private_move_trace(s->display, s, "drag-target", "action=%u pos_px=(%d,%d)",
+                                (unsigned)action, pos.x, pos.y);
     if (action == YASL_PRIVATE_DRAG_DROP)
         s->display->drag_dropped = true;
     yasl_private_events_push(s->display, s, &event);

@@ -83,6 +83,9 @@ static struct yasl_private_display *open_backend(enum yasl_private_backend backe
         errno = error;
         return NULL;
     }
+    const char *trace = getenv("WSAP_TRACE_WINDOW_MOVE");
+    d->trace_moves = trace && strcmp(trace, "1") == 0;
+    yasl_private_move_trace(d, NULL, "enabled", "window movement trace");
     return d;
 }
 
@@ -515,6 +518,8 @@ void yasl_private_surface_set_ime_caret(struct yasl_surface *s, struct yasl_priv
 
 bool yasl_private_surface_start_interactive_move(struct yasl_surface *s)
 {
+    if (s)
+        yasl_private_move_trace(s->display, s, "move-request", "interactive");
     OPTIONAL_OP(s, surface_start_interactive_move, s);
 }
 
@@ -527,6 +532,8 @@ bool yasl_private_surface_start_interactive_resize(struct yasl_surface *s, enum 
         errno = EINVAL;
         return false;
     }
+    if (s)
+        yasl_private_move_trace(s->display, s, "resize-request", "edge=%u", (unsigned)edge);
     OPTIONAL_OP(s, surface_start_interactive_resize, s, edge);
 }
 
@@ -537,11 +544,16 @@ bool yasl_private_surface_show_window_menu(struct yasl_surface *s, struct yasl_p
 
 bool yasl_private_surface_drag_carry(struct yasl_surface *s, struct yasl_private_vector2i offset)
 {
+    if (s)
+        yasl_private_move_trace(s->display, s, "carry-request", "grab_px=(%d,%d)",
+                                offset.x, offset.y);
     OPTIONAL_OP(s, surface_drag_carry, s, offset);
 }
 
 bool yasl_private_surface_place_under_pointer(struct yasl_surface *s, struct yasl_private_vector2i at)
 {
+    if (s)
+        yasl_private_move_trace(s->display, s, "place-request", "grab_px=(%d,%d)", at.x, at.y);
     OPTIONAL_OP(s, surface_place_under_pointer, s, at);
 }
 

@@ -65,6 +65,18 @@ Native popups require an input seat.
 For this reason, menus open inline on a headless compositor.
 Use a desktop session to inspect native popups with `-p LEVEL`.
 
+## Window movement trace
+
+Set `WSAP_TRACE_WINDOW_MOVE=1` before starting the app.
+YASL writes lines that start with `[wsap-move]` to standard error.
+The lines include the backend, time in milliseconds, and surface ID when available.
+Trace output is off by default.
+
+Cocoa reports window and pointer positions in Cocoa points.
+X11 reports the raw pixel coordinates of its configure events.
+Wayland does not expose global window positions.
+Its trace reports move requests and changes in size or scale.
+
 ## Concepts
 
 ### Surfaces

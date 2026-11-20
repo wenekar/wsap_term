@@ -1,5 +1,6 @@
 #import <AppKit/AppKit.h>
 #include <common/private_native.h>
+#include <common/private_native_cocoa.h>
 #include <common/backend.h>
 #include <assert.h>
 #include <math.h>
@@ -60,7 +61,7 @@ int main(void)
         struct yasl_surface *surface = yasl_private_surface_create_toplevel(display, &spec);
         assert(surface);
         NSWindow *window = (NSWindow *)yasl_private_surface_get_native_handle(surface);
-        NSView *view = window.contentView;
+        NSView *view = yasl_private_cocoa_surface_get_view(surface);
         struct yasl_private_event event;
         while (yasl_private_display_poll_event(display, &event)) {}
 
