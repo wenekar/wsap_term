@@ -464,8 +464,11 @@ install_subdir(
     install_dir: get_option('datadir') / 'wsap_term' / 'themes',
     strip_directory: true,
 )
+# The binary links the framework, accesskit, and the embedded font data, so
+# their license texts go with the license of the terminal.
 install_data(
     'LICENSE',
+    wsap_fw.get_variable('third_party_licenses'),
     install_dir: get_option('datadir') / 'licenses' / 'wsap_term',
 )
 if system == 'darwin'

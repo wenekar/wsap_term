@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "install"))
 
 from macos_signing import sign_bundle
-from common import PackageMetadata, compile_terminfo, find_built_binary
+from common import PackageMetadata, compile_terminfo, copy_licenses, find_built_binary
 
 def _built_info_plist(repo_root: Path) -> Path:
     meson_build = os.environ.get("MESON_BUILD_ROOT")
@@ -106,7 +106,7 @@ def build_package(
     resources_dir = contents / "Resources"
     macos_dir.mkdir(parents=True, exist_ok=True)
     resources_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(repo_root / "LICENSE", resources_dir / "LICENSE")
+    copy_licenses(repo_root, resources_dir / "licenses")
 
     target_bin = find_built_binary(repo_root, "wsap_term")
     dest_bin = macos_dir / "wsap_term"

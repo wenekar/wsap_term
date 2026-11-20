@@ -1,4 +1,4 @@
-"""The Linux package payload holds the bundled fonts and their licence."""
+"""The Linux package payload holds the bundled fonts and all license texts."""
 
 from __future__ import annotations
 
@@ -26,6 +26,10 @@ def main() -> None:
         (repo / "LICENSE").write_text("license\n")
         (fonts / "FiraCodeNerdFontMono-Regular.ttf").write_bytes(b"font")
         (fonts / "LICENSE").write_text("OFL\n")
+        third_party = repo / "subprojects" / "wsap-framework" / "LICENSES"
+        third_party.mkdir(parents=True)
+        (third_party / "NOTICE.md").write_text("notices\n")
+        (third_party / "accesskit-c-MIT.txt").write_text("MIT\n")
 
         stage = Path(tmp) / "stage"
         old = os.environ.get("MESON_BUILD_ROOT")
@@ -42,6 +46,9 @@ def main() -> None:
         assert (staged / "FiraCodeNerdFontMono-Regular.ttf").is_file(), \
             "the payload has no bundled font"
         assert (staged / "LICENSE").is_file(), "the payload has no font licence"
+        licenses = stage / "share" / "licenses" / "wsap_term"
+        for name in ("LICENSE", "NOTICE.md", "accesskit-c-MIT.txt"):
+            assert (licenses / name).is_file(), f"the payload has no {name}"
 
 
 if __name__ == "__main__":

@@ -42,7 +42,7 @@ AutoReqProv:    yes
 
 %files
 /usr/bin/wsap_term
-%license /usr/share/licenses/wsap_term/LICENSE
+%license /usr/share/licenses/wsap_term/
 %ghost /usr/bin/libfastpty.so
 /usr/bin/wsap-ssh
 /usr/share/applications/wsap_term.desktop

@@ -69,15 +69,29 @@ def compile_terminfo(repo_root: Path, dest: Path) -> None:
             stderr=subprocess.DEVNULL,
         )
 
+# The license texts of the third-party code and data in the binary.
+THIRD_PARTY_LICENSES = Path("subprojects") / "wsap-framework" / "LICENSES"
+
+
+def copy_licenses(repo_root: Path, dest: Path) -> None:
+    """Copies the license of wsap_term and the third-party license texts to dest."""
+    dest.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(repo_root / "LICENSE", dest / "LICENSE")
+    source = repo_root / THIRD_PARTY_LICENSES
+    if not source.is_dir():
+        raise FileNotFoundError(f"Third-party licenses not found at {source}.")
+    for f in sorted(source.iterdir()):
+        if f.is_file():
+            shutil.copy2(f, dest / f.name)
+
+
 def stage_linux_payload(repo_root: Path, staging_usr: Path) -> None:
     bin_dir = staging_usr / "bin"
     share_dir = staging_usr / "share"
     bin_dir.mkdir(parents=True, exist_ok=True)
     share_dir.mkdir(parents=True, exist_ok=True)
 
-    license_dir = share_dir / "licenses" / "wsap_term"
-    license_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(repo_root / "LICENSE", license_dir / "LICENSE")
+    copy_licenses(repo_root, share_dir / "licenses" / "wsap_term")
 
     wsap_term_bin = find_built_binary(repo_root, "wsap_term")
     shutil.copy2(wsap_term_bin, bin_dir / "wsap_term")
