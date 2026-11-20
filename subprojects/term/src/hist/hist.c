@@ -2700,26 +2700,155 @@ uint8_t wsap_vtcore_hist_line_flags(const struct hist *h, uint64_t id)
     return flags;
 }
 
+/* Narrow text is UTF-8, and every glyph that needs a width decision starts
+ * with a prefix byte of PREFIX_WIDE or more, which UTF-8 never uses. A narrow
+ * run kernel returns the bytes before the first prefix byte and counts the
+ * glyphs in them: the bytes that start a UTF-8 sequence. */
+static inline size_t narrow_run_scalar(const uint8_t *s, size_t len, size_t *glyphs)
+{
+    size_t i = 0, n = 0;
+    for (; i < len && s[i] < PREFIX_WIDE; i++)
+        n += (int8_t)s[i] >= -64;
+    *glyphs = n;
+    return i;
+}
+
+#if defined(WSAP_VTCORE_KERNEL_AVX512)
+WSAP_VTCORE_TARGET_AVX512
+static size_t narrow_run_avx512(const uint8_t *s, size_t len, size_t *glyphs)
+{
+    const __m512i stop = _mm512_set1_epi8((char)PREFIX_WIDE);
+    const __m512i cont = _mm512_set1_epi8(-65);
+    size_t i = 0, n = 0;
+    for (; i < len; i += 64) {
+        __mmask64 valid = len - i >= 64 ? ~(__mmask64)0 : ((__mmask64)1 << (len - i)) - 1;
+        __m512i v = _mm512_maskz_loadu_epi8(valid, s + i);
+        __mmask64 lead = _mm512_mask_cmpgt_epi8_mask(valid, v, cont);
+        __mmask64 end = _mm512_mask_cmpge_epu8_mask(valid, v, stop);
+        if (end) {
+            unsigned k = (unsigned)wsap_vtcore_ctz64(end);
+            n += (size_t)wsap_vtcore_popcount64(lead & (((__mmask64)1 << k) - 1));
+            *glyphs = n;
+            return i + k;
+        }
+        n += (size_t)wsap_vtcore_popcount64(lead);
+    }
+    *glyphs = n;
+    return len;
+}
+#endif
+
+#if defined(WSAP_VTCORE_KERNEL_AVX2)
+WSAP_VTCORE_TARGET_AVX2
+static size_t narrow_run_avx2(const uint8_t *s, size_t len, size_t *glyphs)
+{
+    /* An unsigned compare is a signed compare of the bytes with bit 7 flipped. */
+    const __m256i flip = _mm256_set1_epi8((char)0x80);
+    const __m256i stop = _mm256_set1_epi8((char)((PREFIX_WIDE ^ 0x80) - 1));
+    const __m256i cont = _mm256_set1_epi8(-65);
+    size_t i = 0, n = 0;
+    for (; i + 32 <= len; i += 32) {
+        __m256i v = _mm256_loadu_si256((const __m256i *)(const void *)(s + i));
+        uint32_t lead = (uint32_t)_mm256_movemask_epi8(_mm256_cmpgt_epi8(v, cont));
+        uint32_t end = (uint32_t)_mm256_movemask_epi8(
+            _mm256_cmpgt_epi8(_mm256_xor_si256(v, flip), stop));
+        if (end) {
+            unsigned k = (unsigned)wsap_vtcore_ctz32(end);
+            n += (size_t)wsap_vtcore_popcount32(lead & ((1u << k) - 1));
+            *glyphs = n;
+            return i + k;
+        }
+        n += (size_t)wsap_vtcore_popcount32(lead);
+    }
+    size_t tail;
+    i += narrow_run_scalar(s + i, len - i, &tail);
+    *glyphs = n + tail;
+    return i;
+}
+#endif
+
+#if defined(__aarch64__)
+static size_t narrow_run_neon(const uint8_t *s, size_t len, size_t *glyphs)
+{
+    const uint8x16_t stop = vdupq_n_u8(PREFIX_WIDE);
+    const int8x16_t cont = vdupq_n_s8(-65);
+    const uint8x16_t one = vdupq_n_u8(1);
+    size_t i = 0, n = 0;
+    for (; i + 16 <= len; i += 16) {
+        uint8x16_t v = vld1q_u8(s + i);
+        if (vmaxvq_u8(vcgeq_u8(v, stop)))
+            break;
+        uint8x16_t lead = vcgtq_s8(vreinterpretq_s8_u8(v), cont);
+        n += vaddvq_u8(vandq_u8(lead, one));
+    }
+    size_t tail;
+    i += narrow_run_scalar(s + i, len - i, &tail);
+    *glyphs = n + tail;
+    return i;
+}
+#endif
+
+static inline size_t narrow_run(const uint8_t *s, size_t len, size_t *glyphs)
+{
+#if defined(WSAP_VTCORE_KERNEL_AVX512)
+    if (len >= 64 && wsap_vtcore_use_avx512())
+        return narrow_run_avx512(s, len, glyphs);
+#endif
+#if defined(WSAP_VTCORE_KERNEL_AVX2)
+    if (len >= 32 && wsap_vtcore_use_avx2())
+        return narrow_run_avx2(s, len, glyphs);
+#endif
+#if defined(__aarch64__)
+    if (len >= 16)
+        return narrow_run_neon(s, len, glyphs);
+#endif
+    return narrow_run_scalar(s, len, glyphs);
+}
+
+/* Advances a row walk at width cols over the text [t, end). col is the column
+ * after the last glyph, and it can equal cols: the next glyph then starts a
+ * row. A wide glyph that does not fit in the row also starts one. A narrow run
+ * of n glyphs from column c starts (c + n - 1) / cols rows, so the walk decodes
+ * only the prefixed glyphs. */
+static inline void walk_text(const uint8_t *t, const uint8_t *end, uint32_t cols,
+                             uint32_t *colp, uint32_t *rowsp)
+{
+    uint32_t col = *colp, rows = *rowsp;
+    while (t < end) {
+        size_t n;
+        t += narrow_run(t, (size_t)(end - t), &n);
+        if (n) {
+            uint64_t pos = (uint64_t)col + n;
+            uint64_t wraps = (pos - 1) / cols;
+            rows += (uint32_t)wraps;
+            col = (uint32_t)(pos - wraps * cols);
+        }
+        if (t >= end)
+            break;
+        uint32_t w = text_width(t) == 2 && cols > 1 ? 2 : 1;
+        t = text_skip(t, end);
+        if (col == cols || (w == 2 && col + 2 > cols)) {
+            rows++;
+            col = 0;
+        }
+        col += w;
+    }
+    *colp = col;
+    *rowsp = rows;
+}
+
 static int line_rows_walk(struct hist *h, uint64_t first, uint64_t end, int cols)
 {
     h->walk_calls++;
-    int rows = 1, col = 0;
+    uint32_t rows = 1, col = 0;
     for (uint64_t s = first; s < end; s++) {
         const struct hline *p = part(h, s);
-        if (!p->text_len)
-            continue;
-        const uint8_t *t = part_text(h, p), *end = t + p->text_len;
-        while (t < end) {
-            int w = text_width(t) == 2 && cols > 1 ? 2 : 1;
-            t = text_skip(t, end);
-            if (col == cols || (w == 2 && col + 2 > cols)) {
-                rows++;
-                col = 0;
-            }
-            col += w;
+        if (p->text_len) {
+            const uint8_t *t = part_text(h, p);
+            walk_text(t, t + p->text_len, (uint32_t)cols, &col, &rows);
         }
     }
-    return rows;
+    return (int)rows;
 }
 
 int wsap_vtcore_hist_line_rows(const struct hist *h, uint64_t id, int cols)
@@ -2762,20 +2891,10 @@ static void walk_advance(struct hist *h)
     for (;;) {
         const struct hline *p = part(h, h->walk_seq);
         if (p->text_len) {
-            const uint8_t *t0 = part_text(h, p), *t = t0 + h->walk_off, *end = t0 + p->text_len;
-            uint32_t col = h->walk_col, rows = h->walk_rows;
-            while (t < end) {
-                uint32_t w = text_width(t) == 2 && cols > 1 ? 2 : 1;
-                t = text_skip(t, end);
-                if (col == (uint32_t)cols || (w == 2 && col + 2 > (uint32_t)cols)) {
-                    rows++;
-                    col = 0;
-                }
-                col += w;
-            }
-            h->walk_col = col;
-            h->walk_rows = rows;
-            h->walk_off = (uint32_t)(t - t0);
+            const uint8_t *t0 = part_text(h, p);
+            walk_text(t0 + h->walk_off, t0 + p->text_len, (uint32_t)cols,
+                      &h->walk_col, &h->walk_rows);
+            h->walk_off = p->text_len;
         }
         if (h->walk_seq + 1 >= h->head)
             break;
