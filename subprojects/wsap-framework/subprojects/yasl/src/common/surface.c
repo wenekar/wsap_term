@@ -839,6 +839,20 @@ int yasl_surface_begin_move_resize(yasl_surface *s, unsigned edges)
         return STATUS(yasl_private_surface_start_interactive_move(s));
     return STATUS(yasl_private_surface_start_interactive_resize(s, (enum yasl_private_resize_edge)edges));
 }
+int yasl_surface_set_titlebar_style(yasl_surface *s, enum yasl_titlebar_style style)
+{
+    if (!yasl_public_surface(s, false))
+        return -errno;
+    if ((unsigned)style > YASL_TITLEBAR_BUTTONS)
+        return yasl_public_error(EINVAL);
+    if (!(yasl_private_display_caps(display) & YASL_PRIVATE_CAP_TITLEBAR_OVERLAY) ||
+        !s->display->ops->surface_set_titlebar_style)
+        return yasl_public_error(ENOTSUP);
+    if (s->popup || !s->display->ops->surface_set_titlebar_style(
+                        s, (enum yasl_private_titlebar_style)style))
+        return yasl_public_error(EINVAL);
+    return 0;
+}
 int yasl_surface_set_titlebar_areas(yasl_surface *s, const struct yasl_rect *areas, size_t count)
 {
     if (!yasl_public_surface(s, false))

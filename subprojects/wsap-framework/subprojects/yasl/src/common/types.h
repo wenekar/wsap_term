@@ -287,6 +287,14 @@ struct yasl_private_titlebar {
     struct yasl_private_rect2i controls;
 };
 
+/** The parts of its title bar that the system draws over a titlebar-overlay
+ * toplevel. The values match enum yasl_titlebar_style. */
+enum yasl_private_titlebar_style {
+    YASL_PRIVATE_TITLEBAR_SYSTEM,
+    YASL_PRIVATE_TITLEBAR_TRANSPARENT,
+    YASL_PRIVATE_TITLEBAR_BUTTONS,
+};
+
 /** One title bar area in logical units from the top left of the content. */
 struct yasl_private_area {
     double x, y, width, height;

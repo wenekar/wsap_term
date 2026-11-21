@@ -263,6 +263,9 @@ struct yasl_private_backend_ops {
     uint64_t (*surface_frame_time_ns)(struct yasl_surface *s, uint64_t now);
     void (*surface_set_cursor)(struct yasl_surface *s, enum yasl_private_cursor cursor);
     void (*surface_set_background_color)(struct yasl_surface *s, uint32_t bg);
+    /* Optional; NULL means ENOTSUP. Returns false for a toplevel without the
+     * title bar overlay. */
+    bool (*surface_set_titlebar_style)(struct yasl_surface *s, enum yasl_private_titlebar_style style);
     const char *(*surface_ime_preedit)(const struct yasl_surface *s);
     bool (*surface_ime_preedit_cursor)(const struct yasl_surface *s, int *begin, int *end);
     void (*surface_set_ime_caret)(struct yasl_surface *s, struct yasl_private_rect2i caret);

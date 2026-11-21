@@ -50,8 +50,13 @@ int main(void)
     struct yasl_private_event event;
     while (yasl_private_display_poll_event(d, &event)) {}
 
+    /* A window without the overlay has no title bar style to change. */
+    assert(!d->ops->surface_set_titlebar_style(s, YASL_PRIVATE_TITLEBAR_TRANSPARENT));
+    assert(!window.titlebarAppearsTransparent);
+
     /* An overlay window: the content covers the title bar, and the requested
-     * size includes it. */
+     * size includes it. The system draws its title bar until the application
+     * makes it transparent. */
     struct yasl_private_window_spec overlay_spec = {
         .title = "Overlay test", .size = {320, 200}, .flags = YASL_PRIVATE_SURFACE_TITLEBAR_OVERLAY,
     };
@@ -60,8 +65,8 @@ int main(void)
     NSWindow *overlay_window = (NSWindow *)yasl_private_surface_get_native_handle(overlay);
     NSView *overlay_view = yasl_private_cocoa_surface_get_view(overlay);
     assert(overlay_window.styleMask & NSWindowStyleMaskFullSizeContentView);
-    assert(overlay_window.titlebarAppearsTransparent);
-    assert(overlay_window.titleVisibility == NSWindowTitleHidden);
+    assert(!overlay_window.titlebarAppearsTransparent);
+    assert(overlay_window.titleVisibility == NSWindowTitleVisible);
     assert(NSEqualSizes(overlay_view.bounds.size, NSMakeSize(320, 200)));
     struct yasl_private_titlebar tb = overlay->titlebar;
     assert(tb.height > 0 && tb.height < 100);
@@ -70,15 +75,28 @@ int main(void)
     assert(!(overlay->state & YASL_PRIVATE_STATE_CSD));
     while (yasl_private_display_poll_event(d, &event)) {}
 
-    /* A press in the title bar band goes to the view, and a press on a window
-     * button goes to the button: NSWindow sends a press to the frame view's
-     * hit test result. */
+    /* NSWindow sends a press to the frame view's hit test result. The opaque
+     * system title bar takes the presses in its band. A transparent title bar
+     * leaves the band right of its title text to the view, and a title bar
+     * with only buttons leaves the view all of the band but the buttons. The
+     * title bar keeps its height with every style. */
     NSView *frame_view = overlay_view.superview;
     CGFloat band_y = 200 - tb.height / 2.0;
     NSPoint band = [frame_view convertPoint:NSMakePoint(150, band_y) fromView:nil];
+    NSPoint band_end = [frame_view convertPoint:NSMakePoint(300, band_y) fromView:nil];
     NSPoint button = [frame_view convertPoint:NSMakePoint(tb.controls.x + 6, band_y) fromView:nil];
+    assert([frame_view hitTest:band_end] != overlay_view);
+    assert(d->ops->surface_set_titlebar_style(overlay, YASL_PRIVATE_TITLEBAR_TRANSPARENT));
+    assert(overlay_window.titlebarAppearsTransparent);
+    assert(overlay_window.titleVisibility == NSWindowTitleVisible);
+    assert([frame_view hitTest:band_end] == overlay_view);
+    assert([frame_view hitTest:button] != overlay_view);
+    assert(d->ops->surface_set_titlebar_style(overlay, YASL_PRIVATE_TITLEBAR_BUTTONS));
+    assert(overlay_window.titlebarAppearsTransparent);
+    assert(overlay_window.titleVisibility == NSWindowTitleHidden);
     assert([frame_view hitTest:band] == overlay_view);
     assert([frame_view hitTest:button] != overlay_view);
+    assert(overlay->titlebar.height == tb.height);
 
     /* A press in a title bar area reaches the application as no event; a
      * double click does what the system setting asks, here nothing. */

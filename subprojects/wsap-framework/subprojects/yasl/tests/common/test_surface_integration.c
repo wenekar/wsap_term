@@ -402,6 +402,9 @@ int main(int argc, char **argv)
     int areas = yasl_surface_set_titlebar_areas(s, &(struct yasl_rect){.width = 50, .height = 20}, 1);
     assert(areas == ((features & YASL_FEATURE_TITLEBAR_OVERLAY) ? 0 : -ENOTSUP));
     assert(yasl_surface_set_titlebar_areas(s, NULL, 0) == areas);
+    assert(yasl_surface_set_titlebar_style(s, (enum yasl_titlebar_style)3) == -EINVAL);
+    int style = yasl_surface_set_titlebar_style(s, YASL_TITLEBAR_TRANSPARENT);
+    assert(style == ((features & YASL_FEATURE_TITLEBAR_OVERLAY) ? -EINVAL : -ENOTSUP));
 
     /* Arguments are checked before the backend sees them. */
     assert(yasl_surface_begin_move_resize(s, YASL_EDGE_TOP | YASL_EDGE_BOTTOM) == -EINVAL);

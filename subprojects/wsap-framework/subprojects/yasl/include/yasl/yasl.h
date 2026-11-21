@@ -85,12 +85,12 @@ struct yasl_surface_options {
     int width, height; /**< Required. */
     enum yasl_surface_type type;
     bool undecorated, fixed_size, tearing;
-    /** Extends the content under a transparent system title bar
-     * (FEATURE_TITLEBAR_OVERLAY). The system keeps its window buttons and
-     * hides the title text; the application draws the rest of the title bar.
-     * width and height then include the title bar. yasl_surface_get_info
-     * reports the title bar height and the button area. Ignored where the
-     * feature is missing. */
+    /** Extends the content under the system title bar
+     * (FEATURE_TITLEBAR_OVERLAY). width and height then include the title
+     * bar. The system draws its title bar over the content, as on a window
+     * without the overlay, until yasl_surface_set_titlebar_style changes it.
+     * yasl_surface_get_info reports the title bar height and the button area.
+     * Ignored where the feature is missing. */
     bool titlebar_overlay;
     /** Ask for these states at creation; a WINDOW event reports the result. */
     bool fullscreen, maximized, hidden;
@@ -226,6 +226,24 @@ YASL_API int yasl_surface_begin_move_resize(yasl_surface *surface, unsigned edge
 struct yasl_rect {
     double x, y, width, height;
 };
+/** The parts of its title bar that the system draws over a titlebar_overlay
+ * window. */
+enum yasl_titlebar_style {
+    /** The whole title bar, opaque, as on a window without the overlay. It
+     * takes the presses in its height. The style at creation. */
+    YASL_TITLEBAR_SYSTEM,
+    /** The title text and the window buttons. The background and separator
+     * are transparent, so the content shows through, and the content gets the
+     * presses outside the title text and the buttons. */
+    YASL_TITLEBAR_TRANSPARENT,
+    /** The window buttons only. The content shows through and gets the
+     * presses outside the buttons; the application draws the title. */
+    YASL_TITLEBAR_BUTTONS
+};
+/** Sets the parts of its title bar that the system draws over a
+ * titlebar_overlay window (FEATURE_TITLEBAR_OVERLAY). EINVAL for an unknown
+ * style, a popup, or a window without the overlay. */
+YASL_API int yasl_surface_set_titlebar_style(yasl_surface *surface, enum yasl_titlebar_style style);
 /** Sets the parts of a toplevel that act as its title bar
  * (FEATURE_TITLEBAR_OVERLAY). Call it after each layout change of the title
  * bar that the application draws. A primary press in an area moves the

@@ -195,6 +195,10 @@ struct cocoa_surface {
     /* The primary press in progress fell in a title bar area: YASL moves the
      * window, and the press reaches the application as no event. */
     bool titlebar_press;
+    /* The content covers the system title bar, which draws the parts that
+     * titlebar_style names. */
+    bool titlebar_overlay;
+    enum yasl_private_titlebar_style titlebar_style;
     struct yasl_private_frame_clock clock;
 };
 
@@ -776,6 +780,20 @@ static void titlebar_double_click(NSWindow *window)
         [window performSelector:fill withObject:nil];
     else
         [window zoom:nil];
+}
+
+/* Draws the parts of the system title bar of an overlay toplevel that its
+ * style names. A transparent title bar shows the content, which covers it,
+ * behind the title text and the buttons. The window menu, Mission Control,
+ * and the Dock show the title with every style. */
+static void apply_titlebar_style(struct cocoa_surface *w)
+{
+    bool system = w->titlebar_style == YASL_PRIVATE_TITLEBAR_SYSTEM;
+    bool title = w->titlebar_style != YASL_PRIVATE_TITLEBAR_BUTTONS;
+    w->window.titlebarAppearsTransparent = !system;
+    w->window.titleVisibility = title ? NSWindowTitleVisible : NSWindowTitleHidden;
+    w->window.titlebarSeparatorStyle = system ? NSTitlebarSeparatorStyleAutomatic
+                                              : NSTitlebarSeparatorStyleNone;
 }
 
 static unsigned cocoa_mods(NSEventModifierFlags m)
@@ -1693,12 +1711,13 @@ static bool push_drop(struct cocoa_surface *w, NSPasteboard *pb, NSString *type,
     on_key_event(w, event, modifier_down(event) ? YASL_KEY_PRESS : YASL_KEY_RELEASE);
 }
 
-/* The view gets each press, also in the title bar band of an overlay window.
- * The window server must not start a drag from the view by itself. If it
- * does, the drag that YASL starts for the same press loses its move start,
- * and AppKit then refits the frame at each move. AppKit asks the private
- * method _opaqueRectForWindowMoveWhenInTitlebar which parts of the band the
- * window server must leave to the view. */
+/* While the title bar of an overlay window is transparent, the view gets each
+ * press in its band outside the title text and the window buttons. The window server must not start a drag from the view
+ * by itself: YASL starts the drag for a press in a title bar area, and two
+ * drags for one press lose the move start. AppKit asks the private method
+ * _opaqueRectForWindowMoveWhenInTitlebar which parts of the band the window
+ * server must leave to the view. An opaque title bar takes the presses in its
+ * band, and AppKit drags the window from it as from any title bar. */
 - (BOOL)mouseDownCanMoveWindow { return NO; }
 - (NSRect)_opaqueRectForWindowMoveWhenInTitlebar { return self.bounds; }
 
@@ -3069,13 +3088,9 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
         /* The full title: a byte-limited copy could split a UTF-8 sequence. */
         w->window.title = [NSString stringWithUTF8String:t] ?: @"YASL";
         w->window.colorSpace = [NSColorSpace sRGBColorSpace];
-        /* The application draws the title. The window menu, Mission Control,
-         * and the Dock still show it. */
-        if (overlay) {
-            w->window.titlebarAppearsTransparent = YES;
-            w->window.titleVisibility = NSWindowTitleHidden;
-            w->window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
-        }
+        /* The title bar of an overlay window stays opaque until the
+         * application makes it transparent. */
+        w->titlebar_overlay = overlay;
 
         w->view = [[YaslView alloc] initWithFrame:w->window.contentView.bounds cpuLayer:w->use_iosurface];
         w->window.contentView = w->view;
@@ -4025,6 +4040,20 @@ static bool impl_surface_set_pointer_mode(struct yasl_surface *s, enum yasl_priv
     return true;
 }
 
+static bool impl_surface_set_titlebar_style(struct yasl_surface *s,
+                                            enum yasl_private_titlebar_style style)
+{
+    struct cocoa_surface *w = (struct cocoa_surface *)s;
+    if (!w->titlebar_overlay || w->is_popup)
+        return false;
+    if (w->titlebar_style == style)
+        return true;
+    w->titlebar_style = style;
+    if (w->window && !w->closed && !w->destroyed)
+        apply_titlebar_style(w);
+    return true;
+}
+
 static void impl_surface_set_background_color(struct yasl_surface *s, uint32_t bg)
 {
     cocoa_surface_set_background_color((struct cocoa_surface *)s, bg);
@@ -4273,6 +4302,7 @@ const struct yasl_private_backend_ops yasl_private_cocoa_backend = {
     .surface_set_cursor = impl_surface_set_cursor,
     .surface_set_pointer_mode = impl_surface_set_pointer_mode,
     .surface_set_background_color = impl_surface_set_background_color,
+    .surface_set_titlebar_style = impl_surface_set_titlebar_style,
     .surface_ime_preedit = impl_surface_ime_preedit,
     .surface_ime_preedit_cursor = impl_surface_ime_preedit_cursor,
     .surface_set_ime_caret = impl_surface_set_ime_caret,
