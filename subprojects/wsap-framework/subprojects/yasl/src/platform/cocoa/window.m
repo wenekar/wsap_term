@@ -2705,92 +2705,135 @@ static void dismiss_popup_press(const struct cocoa_surface *pressed)
 }
 
 /*
- * AppKit's screen layout manager refits a window that a move takes to another
- * display: _windowMoved: calls _setFrameAfterMove:, which calls
- * _setFrame:fromAdjustmentToScreen:anchorIfNeeded:animate:. The refit moves
- * the window to the frame that it last had on that display, or to a
- * proportional place on it. A YASL window skips the refit of a move while
- * the primary button is down, so a dragged window stays under the pointer.
- * AppKit still refits at the release. It also refits when a display comes or
- * goes, because that refit does not come from a move. With
- * WSAP_TRACE_WINDOW_MOVE=1, each refit writes a trace line.
- * Note (2026-11-20): macOS 27.2 runs the refit during a drag.
+ * AppKit's screen layout manager adjusts the frame of a window that a move
+ * takes to another display. _windowMoved: calls _setFrameAfterMove: with the
+ * frame that the window server reports. When the best screen for that frame
+ * differs from the screen of the window, _setFrameAfterMove: asks
+ * _adjustWindowFrame:forMoveFromScreen:toScreen:location: (or the variant
+ * without a location) for a frame on the new display: the frame that the
+ * window last had there, or a proportional place on it. A frame equal to the
+ * reported one goes through _setFrameCommon:display:fromServer:, which only
+ * records it. Any other frame goes to
+ * _setFrame:fromAdjustmentToScreen:anchorIfNeeded:animate:, which moves the
+ * window there, away from the pointer of a drag.
+ *
+ * While the primary button is down, a YASL window answers the adjustment with
+ * the reported frame. AppKit then records the move as one within a display:
+ * the window stays under the pointer, and AppKit updates its screen and
+ * backing scale. The refit itself must not be skipped instead: AppKit would
+ * keep the frame from before the move, and the window would keep the scale of
+ * the display that it left. A move after the release, and a display that
+ * comes or goes, keep the AppKit adjustment. With WSAP_TRACE_WINDOW_MOVE=1,
+ * each kept adjustment writes a trace line.
+ * Note (2026-11-21): macOS 27.2 adjusts during a drag.
  */
 typedef void (*frame_after_move_imp)(id, SEL, NSRect);
-typedef void (*frame_refit_imp)(id, SEL, NSRect, NSScreen *, const CGPoint *, BOOL);
+typedef void (*adjust_at_imp)(id, SEL, NSRect *, NSScreen *, NSScreen *, CGPoint);
+typedef BOOL (*adjust_imp)(id, SEL, NSRect *, NSScreen *, NSScreen *);
 static frame_after_move_imp appkit_frame_after_move;
-static frame_refit_imp appkit_frame_refit;
+static adjust_at_imp appkit_adjust_at;
+static adjust_imp appkit_adjust;
+/* The frame of the innermost _setFrameAfterMove: call in progress. */
+static NSRect frame_after_move;
 static int frame_after_move_depth;
 
 static void hook_frame_after_move(id self, SEL cmd, NSRect frame)
 {
+    NSRect outer = frame_after_move;
+    frame_after_move = frame;
     frame_after_move_depth++;
     @try {
         appkit_frame_after_move(self, cmd, frame);
     } @finally {
         frame_after_move_depth--;
+        frame_after_move = outer;
     }
 }
 
-static void hook_frame_refit(id self, SEL cmd, NSRect frame, NSScreen *screen,
-                             const CGPoint *anchor, BOOL animate)
+/* Returns true when an adjustment of `window` from `from` to `to` comes from
+ * a drag, and stores the reported frame of the move in `frame`. Writes a
+ * trace line for each adjustment. */
+static bool drag_adjustment(id window, NSRect *frame, NSScreen *from, NSScreen *to)
 {
     bool dragging = frame_after_move_depth > 0 && (NSEvent.pressedMouseButtons & 1);
-    struct cocoa_surface *w = ((YaslWindow *)self).surface;
-    if (darwin_ctx.base.trace_moves && w) {
-        NSRect from = ((NSWindow *)self).frame;
-        yasl_private_move_trace(&darwin_ctx.base, &w->base, dragging ? "refit-skipped" : "refit",
-                "win=%ld screen=%u after-move=%d from=(%g,%g %gx%g) to=(%g,%g %gx%g)",
-                (long)((NSWindow *)self).windowNumber, screen_id(screen),
-                frame_after_move_depth > 0, NSMinX(from), NSMinY(from), NSWidth(from),
-                NSHeight(from), NSMinX(frame), NSMinY(frame), NSWidth(frame), NSHeight(frame));
-    }
-    if (!dragging)
-        appkit_frame_refit(self, cmd, frame, screen, anchor, animate);
+    struct cocoa_surface *w = ((YaslWindow *)window).surface;
+    if (darwin_ctx.base.trace_moves && w)
+        yasl_private_move_trace(&darwin_ctx.base, &w->base, dragging ? "adjust-skipped" : "adjust",
+                "win=%ld from-screen=%u to-screen=%u after-move=%d frame=(%g,%g %gx%g)",
+                (long)((NSWindow *)window).windowNumber, screen_id(from), screen_id(to),
+                frame_after_move_depth > 0, NSMinX(frame_after_move), NSMinY(frame_after_move),
+                NSWidth(frame_after_move), NSHeight(frame_after_move));
+    if (dragging && frame)
+        *frame = frame_after_move;
+    return dragging;
 }
 
-/* Returns true when argument `index` of `method` has the type `type`,
- * ignoring a const qualifier. install_refit_hooks calls it to check the
- * AppKit signatures. */
-static bool argument_is(Method method, unsigned index, const char *type)
+static void hook_adjust_at(id self, SEL cmd, NSRect *frame, NSScreen *from, NSScreen *to,
+                           CGPoint location)
 {
-    char *arg = method_copyArgumentType(method, index);
-    const char *t = arg && arg[0] == 'r' ? arg + 1 : arg;
-    bool same = t && !strcmp(t, type);
-    free(arg);
-    return same;
+    if (!drag_adjustment(self, frame, from, to))
+        appkit_adjust_at(self, cmd, frame, from, to, location);
 }
 
-/* Installs the refit hooks on YaslWindow. Call it at startup, before the
- * first window opens. It installs nothing when AppKit lacks either method or
- * the argument types differ, so a later macOS keeps its own behavior. */
-static void install_refit_hooks(void)
+static BOOL hook_adjust(id self, SEL cmd, NSRect *frame, NSScreen *from, NSScreen *to)
+{
+    if (drag_adjustment(self, frame, from, to))
+        return YES;
+    return appkit_adjust(self, cmd, frame, from, to);
+}
+
+/* Returns true when `method` returns `ret` and takes the argument types in
+ * `args`, after self and _cmd, ignoring const qualifiers. */
+static bool method_is(Method method, const char *ret, const char *const *args, unsigned count)
+{
+    char r[8] = "";
+    if (!method)
+        return false;
+    method_getReturnType(method, r, sizeof(r));
+    if (strcmp(r, ret) || method_getNumberOfArguments(method) != count + 2)
+        return false;
+    for (unsigned i = 0; i < count; i++) {
+        char *arg = method_copyArgumentType(method, i + 2);
+        const char *t = arg && arg[0] == 'r' ? arg + 1 : arg;
+        bool same = t && !strcmp(t, args[i]);
+        free(arg);
+        if (!same)
+            return false;
+    }
+    return true;
+}
+
+/* Installs the move hooks on YaslWindow. Call it at startup, before the first
+ * window opens. It installs nothing when AppKit lacks one of the methods or
+ * their types differ, so a later macOS keeps its own behavior. */
+static void install_move_hooks(void)
 {
     static bool tried;
     if (tried)
         return;
     tried = true;
+    Class cls = [NSWindow class];
     SEL after_sel = NSSelectorFromString(@"_setFrameAfterMove:");
-    SEL refit_sel = NSSelectorFromString(@"_setFrame:fromAdjustmentToScreen:anchorIfNeeded:animate:");
-    Method after = class_getInstanceMethod([NSWindow class], after_sel);
-    Method refit = class_getInstanceMethod([NSWindow class], refit_sel);
-    char after_ret[4] = "", refit_ret[4] = "";
-    if (after)
-        method_getReturnType(after, after_ret, sizeof(after_ret));
-    if (refit)
-        method_getReturnType(refit, refit_ret, sizeof(refit_ret));
-    if (!after || !refit || strcmp(after_ret, "v") || strcmp(refit_ret, "v") ||
-        method_getNumberOfArguments(after) != 3 || method_getNumberOfArguments(refit) != 6 ||
-        !argument_is(after, 2, @encode(NSRect)) || !argument_is(refit, 2, @encode(NSRect)) ||
-        !argument_is(refit, 3, @encode(id)) || !argument_is(refit, 4, @encode(CGPoint *)) ||
-        !argument_is(refit, 5, @encode(BOOL)))
+    SEL adjust_at_sel = NSSelectorFromString(@"_adjustWindowFrame:forMoveFromScreen:toScreen:location:");
+    SEL adjust_sel = NSSelectorFromString(@"_adjustWindowFrame:forMoveFromScreen:toScreen:");
+    Method after = class_getInstanceMethod(cls, after_sel);
+    Method adjust_at = class_getInstanceMethod(cls, adjust_at_sel);
+    Method adjust = class_getInstanceMethod(cls, adjust_sel);
+    const char *after_args[] = {@encode(NSRect)};
+    const char *adjust_args[] = {@encode(NSRect *), @encode(id), @encode(id), @encode(CGPoint)};
+    if (!method_is(after, @encode(void), after_args, 1) ||
+        !method_is(adjust_at, @encode(void), adjust_args, 4) ||
+        !method_is(adjust, @encode(BOOL), adjust_args, 3))
         return;
     appkit_frame_after_move = (frame_after_move_imp)method_getImplementation(after);
-    appkit_frame_refit = (frame_refit_imp)method_getImplementation(refit);
+    appkit_adjust_at = (adjust_at_imp)method_getImplementation(adjust_at);
+    appkit_adjust = (adjust_imp)method_getImplementation(adjust);
     class_addMethod([YaslWindow class], after_sel, (IMP)hook_frame_after_move,
                     method_getTypeEncoding(after));
-    class_addMethod([YaslWindow class], refit_sel, (IMP)hook_frame_refit,
-                    method_getTypeEncoding(refit));
+    class_addMethod([YaslWindow class], adjust_at_sel, (IMP)hook_adjust_at,
+                    method_getTypeEncoding(adjust_at));
+    class_addMethod([YaslWindow class], adjust_sel, (IMP)hook_adjust,
+                    method_getTypeEncoding(adjust));
 }
 
 static void app_init(const char *app_name)
@@ -2800,7 +2843,7 @@ static void app_init(const char *app_name)
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     NSWindow.allowsAutomaticWindowTabbing = NO;
-    install_refit_hooks();
+    install_move_hooks();
     darwin_ctx.delegate = [[YaslAppDelegate alloc] init];
     NSApp.delegate = darwin_ctx.delegate;
 
