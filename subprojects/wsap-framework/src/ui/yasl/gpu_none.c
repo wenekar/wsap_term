@@ -23,12 +23,13 @@ void window_gpu_detach(void *layer, struct yasl_surface *s)
 }
 
 bool window_gpu_draw(void *layer, struct yasl_surface *s,
-                     struct window_gpu_watch watch,
+                     struct window_gpu_watch watch, bool transaction,
                      window_gpu_draw_fn draw, void *ud)
 {
     (void)layer;
     (void)s;
     (void)watch;
+    (void)transaction;
     (void)draw;
     (void)ud;
     return false;

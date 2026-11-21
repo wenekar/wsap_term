@@ -106,7 +106,7 @@ static void *acquire_vulkan_drawable(void *ud)
 }
 
 bool window_gpu_draw(void *layer, struct yasl_surface *s,
-                     struct window_gpu_watch watch,
+                     struct window_gpu_watch watch, bool transaction,
                      window_gpu_draw_fn draw, void *ud)
 {
     struct window_vulkan *wv = layer;
@@ -120,7 +120,7 @@ bool window_gpu_draw(void *layer, struct yasl_surface *s,
     if (w && w->surface == s)
         wv->drawable.unpaced = w->unpaced;
     /* A size change starts a resize transaction. */
-    bool transaction = wv->has_size && !vector2i_eq(wv->last_size, size);
+    transaction = transaction || (wv->has_size && !vector2i_eq(wv->last_size, size));
     wv->last_size = size;
     wv->has_size = true;
     wv->presents = watch.presents;

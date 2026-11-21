@@ -358,7 +358,7 @@ static void test_drawable_lifetime(void *device)
     assert(layer);
     struct drawn_frame f = {0};
     if (!window_gpu_draw(layer, window_surface(p.w),
-                         (struct window_gpu_watch){0}, dropping_compose, &f)) {
+                         (struct window_gpu_watch){0}, false, dropping_compose, &f)) {
         printf("window: no drawable in this session; the drawable check is skipped\n");
         close_window(&p);
         return;

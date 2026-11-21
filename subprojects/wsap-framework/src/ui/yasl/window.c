@@ -344,7 +344,7 @@ void window_native_draw(struct window *w, struct yasl_surface *s)
                                  .presents = n->watch,
                                  .sample = main,
                              },
-                             gpu_compose, &d)) {
+                             w->refreshing, gpu_compose, &d)) {
             native_report(n, false, "gpu drawable", 0);
             attempted = false;
         }
@@ -414,11 +414,13 @@ static void host_on_event(void *userdata, const yasl_event *ev)
 }
 
 /*
- * yasl calls this only while the platform blocks the loop, as during a macOS
- * live resize. No host pass runs then. The draw runs a modal service step
- * first, so the owner still applies its due changes. The step and the frame
- * use one time. yasl refuses to create or destroy a surface here, so the
- * modal step opens and closes no window.
+ * yasl calls this while the platform blocks the loop, as during a macOS live
+ * resize, and when the window changes scale. No host pass runs then. The draw
+ * runs a modal service step first, so the owner still applies its due
+ * changes. The step and the frame use one time. yasl refuses to create or
+ * destroy a surface here, so the modal step opens and closes no window. The
+ * frame presents inside the Core Animation transaction of the change, so the
+ * new size or scale and its frame show together.
  */
 static void on_refresh(yasl_surface *s)
 {
@@ -435,7 +437,9 @@ static void on_refresh(yasl_surface *s)
         struct yasl_surface_info info = yasl_surface_get_info(s);
         window_apply_geometry(w, &info);
     }
+    w->refreshing = true;
     window_native_draw(w, s);
+    w->refreshing = false;
     host->frame_ms = outer_ms;
 }
 

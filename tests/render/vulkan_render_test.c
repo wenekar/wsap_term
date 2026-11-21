@@ -150,7 +150,7 @@ static enum render_gpu_status draw(struct fixture *f, const struct render_frame 
 {
     struct draw_call call = { .f = f, .frame = frame, .unpaced = unpaced };
     for (int attempt = 0; attempt < 200; attempt++) {
-        bool drawn = window_gpu_draw(f->layer, f->ys, (struct window_gpu_watch){0}, draw_cb,
+        bool drawn = window_gpu_draw(f->layer, f->ys, (struct window_gpu_watch){0}, false, draw_cb,
                                      &call);
         assert(drawn);
         if (call.status != RENDER_GPU_DROPPED)
@@ -292,7 +292,7 @@ static void test_cpu_pixels(void)
     for (size_t i = 0; i < sizeof(damages) / sizeof(damages[0]); i++) {
         struct draw_call call = { .f = &f, .pixels = pixels, .damage = damages[i] };
         for (int attempt = 0; attempt < 200 && !call.presented; attempt++) {
-            assert(window_gpu_draw(f.layer, f.ys, (struct window_gpu_watch){0}, draw_cb,
+            assert(window_gpu_draw(f.layer, f.ys, (struct window_gpu_watch){0}, false, draw_cb,
                                    &call));
             assert(vector2i_eq(call.size, size));
             if (!call.presented)
@@ -444,7 +444,7 @@ static void test_dropped_frame_image(void)
     rf.ui = &scene;
 
     struct draw_call dropped = { .f = &f, .frame = &rf, .no_drawable = true };
-    assert(window_gpu_draw(f.layer, f.ys, (struct window_gpu_watch){0}, draw_cb, &dropped));
+    assert(window_gpu_draw(f.layer, f.ys, (struct window_gpu_watch){0}, false, draw_cb, &dropped));
     assert(dropped.status == RENDER_GPU_DROPPED);
 
     free(image_pixels);

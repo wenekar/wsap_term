@@ -58,10 +58,12 @@ void window_gpu_detach(void *layer, struct yasl_surface *s);
  * one. A layer of zero size runs no draw. Returns true when the layer had a
  * size, so the frame was attempted; a missing drawable is not an error, and
  * the surface asks for the next frame. `watch` says how the display reports
- * the presentation of the frame.
+ * the presentation of the frame. Set `transaction` for a frame that must show
+ * together with a change of the native surface, as in the refresh callback of
+ * yasl; a live resize and a size change set it too.
  */
 bool window_gpu_draw(void *layer, struct yasl_surface *s,
-                     struct window_gpu_watch watch,
+                     struct window_gpu_watch watch, bool transaction,
                      window_gpu_draw_fn draw, void *ud);
 
 /* Platform overlay sublayer for idle cursor blinking without frame redraws. */

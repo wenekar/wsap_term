@@ -156,7 +156,7 @@ static void *acquire_drawable(void *ud)
 }
 
 bool window_gpu_draw(void *layer, struct yasl_surface *s,
-                       struct window_gpu_watch watch,
+                       struct window_gpu_watch watch, bool transaction,
                        window_gpu_draw_fn draw, void *ud)
 {
     CAMetalLayer *metal = (CAMetalLayer *)layer;
@@ -164,7 +164,7 @@ bool window_gpu_draw(void *layer, struct yasl_surface *s,
     struct vector2i canvas = { .x = (int)size.width, .y = (int)size.height };
     if (canvas.x <= 0 || canvas.y <= 0)
         return false;
-    bool transaction = in_live_resize(s);
+    transaction = transaction || in_live_resize(s);
     @autoreleasepool {
         metal.presentsWithTransaction = transaction;
         /* The frame data is built against the size of the next drawable. The

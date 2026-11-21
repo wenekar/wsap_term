@@ -139,6 +139,9 @@ struct window {
     uint32_t bg;
     struct window_titlebar titlebar;
     enum yasl_titlebar_style titlebar_style;
+    /* The yasl refresh callback is drawing: its frame shows together with the
+     * change of the native surface that asked for it. */
+    bool refreshing;
     struct rect2i *titlebar_areas;
     int titlebar_area_count;
 
