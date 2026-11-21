@@ -66,10 +66,19 @@ static int bar_css_height(const struct app_tabs *tabs)
     return tabs ? ui_tabbar_bar_height(&tabs->tabbar) : 0;
 }
 
-int app_tabs_strip_height(const struct app_tabs *tabs)
+/* Returns the height of the title bar strip of `tabs` with or without the
+ * tab bar, or 0 without a strip. */
+static int strip_height(const struct app_tabs *tabs, bool tabbar)
 {
     int titlebar = tabs ? window_titlebar(tabs->window).height : 0;
-    return titlebar > 0 ? geom_max_i(titlebar, bar_css_height(tabs)) : 0;
+    if (titlebar <= 0)
+        return 0;
+    return tabbar ? geom_max_i(titlebar, bar_css_height(tabs)) : titlebar;
+}
+
+int app_tabs_strip_height(const struct app_tabs *tabs)
+{
+    return strip_height(tabs, tabs && tabs->count >= 2);
 }
 
 int app_tabs_bar_height(const struct window *w)
@@ -94,7 +103,6 @@ void app_tabs_update_title(struct app_tabs *tabs)
         return;
     struct app_tab *entry = app_tabs_entry(tabs, tabs->active);
     window_set_title(tabs->window, app_tab_title(entry));
-    ui_label_set_text(&tabs->title, window_title(tabs->window));
 }
 
 void app_tabs_publish(struct app_tabs *tabs)
@@ -256,8 +264,9 @@ void app_tabs_relayout(struct window *w)
 static struct vector2i new_content_size(const struct app_tabs *tabs)
 {
     struct vector2i size = window_size(tabs->window);
-    int reserve = app_tabs_strip_height(tabs);
-    if (!reserve && tabs->count + 1 >= 2)
+    bool tabbar = tabs->count + 1 >= 2;
+    int reserve = strip_height(tabs, tabbar);
+    if (!reserve && tabbar)
         reserve = bar_css_height(tabs);
     size.y -= reserve;
     if (size.y < 1)

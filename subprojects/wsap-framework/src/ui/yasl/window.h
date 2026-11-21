@@ -240,6 +240,17 @@ bool window_place_under_pointer(struct window *w, struct window_logical_point at
  * lays out its UI again and calls the resize hook of the mounted UI when the
  * title bar changes. */
 struct window_titlebar window_titlebar(const struct window *w);
+/* Sets the parts of its title bar that the system draws over a window opened
+ * with titlebar_overlay. With YASL_TITLEBAR_SYSTEM the system draws an opaque
+ * title bar and the UI leaves its height empty. With the other styles, the UI
+ * shows through the title bar and draws its background, and the UI also draws
+ * the title with YASL_TITLEBAR_BUTTONS. The style is YASL_TITLEBAR_SYSTEM
+ * when the window opens. A request equal to the current one changes nothing,
+ * so the UI can call this after each layout. Platforms without the overlay
+ * ignore the request. */
+void window_set_titlebar_style(struct window *w, enum yasl_titlebar_style style);
+/* Returns the last request of window_set_titlebar_style() for `w`. */
+enum yasl_titlebar_style window_titlebar_style(const struct window *w);
 /*
  * Sets the parts of `w` that act as its title bar, in device pixels from the
  * top left of the window. A primary press there moves the window, and a

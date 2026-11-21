@@ -37,10 +37,10 @@ static void sync_preview_anchor(struct app_tabs *tabs, struct vector2i max_size)
                           (struct ui_constraints){ .max = max_size });
 }
 
-/* Places the tab bar and the window title in the title bar strip of a window
- * whose content covers the system title bar. root_layout calls it when the
- * window has a strip. Both start right of the window buttons, with the margin
- * that the buttons have on their left. */
+/* Places the tab bar in the title bar strip of a window whose content covers
+ * the system title bar. root_layout calls it when the window has a strip. The
+ * tab bar starts right of the window buttons, with the margin that the
+ * buttons have on their left, and centers in the strip. */
 static void layout_strip(struct app_tabs *tabs, struct rect2i bounds, int strip_h)
 {
     struct window_titlebar tb = window_titlebar(tabs->window);
@@ -55,19 +55,6 @@ static void layout_strip(struct app_tabs *tabs, struct rect2i bounds, int strip_
         .width = bounds.width - inset,
         .height = geom_min_i(ui_tabbar_height(&tabs->tabbar), css_h),
     });
-    struct ui_widget *title = ui_label_widget(&tabs->title);
-    if (ui_widget_is_hidden(title))
-        return;
-    /* The title centers on the window, so it keeps clear of the buttons on
-     * both sides. */
-    struct vector2i size = ui_widget_measure(title, (struct ui_constraints){
-        .max = { .x = geom_max_i(0, bounds.width - 2 * inset), .y = strip_h },
-    });
-    ui_widget_place(title, (struct rect2i){
-        .x = bounds.x + (bounds.width - size.x) / 2,
-        .y = bounds.y + (strip_h - size.y) / 2,
-        .width = size.x, .height = size.y,
-    });
 }
 
 /* The animated bar height sets the content origin; the reserved height sets
@@ -77,7 +64,6 @@ static void root_layout(struct ui_widget *widget, struct rect2i bounds)
 {
     struct app_tabs *tabs = root_tabs(widget);
     struct ui_widget *tabbar = ui_tabbar_widget(&tabs->tabbar);
-    struct ui_widget *title = ui_label_widget(&tabs->title);
     int strip_h = geom_min_i(app_tabs_strip_height(tabs), bounds.height);
     int reserve = geom_min_i(app_tabs_bar_height(tabs->window), bounds.height);
     int offset = reserve;
@@ -99,7 +85,7 @@ static void root_layout(struct ui_widget *widget, struct rect2i bounds)
     /* Sync the preview anchor after tab bar placement. */
     sync_preview_anchor(tabs, bounds.size);
     for (struct ui_widget *c = widget->first_child; c; c = c->next_sibling) {
-        if (c != tabbar && c != title && c != tabs->mounted)
+        if (c != tabbar && c != tabs->mounted)
             ui_widget_place_child(c, bounds);
     }
 }
@@ -186,9 +172,17 @@ static void root_prepare(struct ui_widget *widget)
     ui_tabbar_set_bg_color(&tabs->tabbar, bg);
     if (tabs->window)
         window_set_background(tabs->window, bg);
-    /* The strip shows the window title while the tab bar is hidden. */
-    ui_widget_set_hidden(ui_label_widget(&tabs->title),
-                         !app_tabs_strip_height(tabs) || app_tabs_live_count(tabs) >= 2);
+    /* The strip shows through the system title bar, so the title bar takes
+     * the terminal background. While the tab bar is hidden, the system draws
+     * the window title; the tab bar takes its place while it shows. In
+     * fullscreen, the window has no strip and the system title bar that slides
+     * in stays opaque. */
+    if (tabs->window) {
+        enum yasl_titlebar_style style = YASL_TITLEBAR_SYSTEM;
+        if (app_tabs_strip_height(tabs))
+            style = tabs->count >= 2 ? YASL_TITLEBAR_BUTTONS : YASL_TITLEBAR_TRANSPARENT;
+        window_set_titlebar_style(tabs->window, style);
+    }
     sync_titlebar_areas(tabs);
 }
 
@@ -254,11 +248,6 @@ static const struct ui_widget_ops TABS_ROOT_OPS = {
 static void widgets_init(struct app_tabs *tabs)
 {
     ui_widget_init(&tabs->root, &TABS_ROOT_OPS, NULL);
-    ui_label_init(&tabs->title);
-    ui_label_set_wrap(&tabs->title, UI_LABEL_ELLIPSIS);
-    ui_label_set_align(&tabs->title, UI_LABEL_ALIGN_CENTER);
-    ui_widget_set_style_identity(ui_label_widget(&tabs->title), "window-title", NULL, NULL);
-    ui_widget_set_hidden(ui_label_widget(&tabs->title), true);
     ui_tabbar_init(&tabs->tabbar);
     ui_tabbar_set_empty_title(&tabs->tabbar, "shell");
     /* The shortcut badge names the platform key that selects a tab. */
@@ -270,8 +259,6 @@ static void widgets_init(struct app_tabs *tabs)
     ui_tab_preview_init(&tabs->preview);
     ui_tab_preview_set_managed_anchor(&tabs->preview, true);
     ui_palette_init(&tabs->palette);
-    /* The tab bar comes after the title, so it paints over it while it opens. */
-    ui_widget_add_child(&tabs->root, ui_label_widget(&tabs->title));
     ui_widget_add_child(&tabs->root, ui_tabbar_widget(&tabs->tabbar));
     app_tabs_actions_init(tabs);
 }

@@ -138,6 +138,7 @@ struct window {
     struct window_pointer pointer;
     uint32_t bg;
     struct window_titlebar titlebar;
+    enum yasl_titlebar_style titlebar_style;
     struct rect2i *titlebar_areas;
     int titlebar_area_count;
 

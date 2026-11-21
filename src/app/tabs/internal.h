@@ -3,7 +3,6 @@
 
 #include "app/tabs/tabs.h"
 #include "terminal/key_set.h"
-#include "ui/widgets/label.h"
 #include "ui/widgets/palette.h"
 #include "ui/widgets/tab_preview.h"
 #include "ui/widgets/tabbar.h"
@@ -30,8 +29,6 @@ struct app_tabs {
     struct ui_tabbar tabbar;
     struct ui_tab_preview preview;
     struct ui_palette palette;
-    /* The window title in the title bar strip, while the tab bar is hidden. */
-    struct ui_label title;
     /* The title bar strip of a window whose content covers the system title
      * bar, in surface pixels. Empty without the overlay. */
     struct rect2i strip;
@@ -62,10 +59,10 @@ struct app_tabs {
 };
 
 struct app_tabs *app_tabs_of(const struct window *window);
-/* Returns the height of the title bar strip of `tabs`: the system title bar
- * or the tab bar, whichever is taller. Call it to size the space above the
- * content. Returns 0 when the window content does not cover the system title
- * bar. */
+/* Returns the height of the title bar strip of `tabs`: the system title bar,
+ * or the tab bar while it shows and is taller. Call it to size the space
+ * above the content. Returns 0 when the window content does not cover the
+ * system title bar. */
 int app_tabs_strip_height(const struct app_tabs *tabs);
 
 extern const int app_tabs_kind;

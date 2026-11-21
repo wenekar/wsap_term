@@ -11,9 +11,6 @@
 }
 
 .terminal-drop-target { background: var(--drop-bg); border-color: var(--accent); border-width: 2px; }
-/* The window title in the title bar strip of a window whose content covers
-   the system title bar. The strip shows it while the tab bar is hidden. */
-.window-title { color: var(--tab-fg); }
 .settings-root { align-items: stretch; }
 .settings-form { flex-direction: column; padding: 1.2em 2ch; gap: 0.8em; align-items: stretch; color: var(--fg); }
 .settings-header { align-items: center; gap: 2ch; }

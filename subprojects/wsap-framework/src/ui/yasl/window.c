@@ -660,6 +660,20 @@ void window_test_set_titlebar(struct window *w, struct window_titlebar titlebar)
         }, true);
 }
 
+void window_set_titlebar_style(struct window *w, enum yasl_titlebar_style style)
+{
+    if (!w || w->titlebar_style == style)
+        return;
+    w->titlebar_style = style;
+    if (w->surface)
+        yasl_surface_set_titlebar_style(w->surface, style);
+}
+
+enum yasl_titlebar_style window_titlebar_style(const struct window *w)
+{
+    return w ? w->titlebar_style : YASL_TITLEBAR_SYSTEM;
+}
+
 bool window_set_titlebar_areas(struct window *w, const struct rect2i *areas, int count)
 {
     if (!w || count < 0 || (count && !areas))
