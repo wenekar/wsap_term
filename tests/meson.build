@@ -154,13 +154,14 @@ standalone_tests = [
     'render-raster-test', 'render-damage-test', 'render-incremental-test',
 ]
 
-# The window cadence test drives a real Cocoa window and its Metal layer. It
-# builds on its own, because the link group renames main for C sources only.
+# The Objective-C tests build on their own: a link group renames main through
+# c_args, which an Objective-C source does not receive. The window cadence test
+# drives a real Cocoa window and its Metal layer.
 if system == 'darwin'
     test_cases += [['window-pacing-test', files('app/window_pacing_test.m'), [app_lib], deps]]
     test_cases += [['render-gpu-slot-test', files('render/gpu_slot_test.m'), [render_term_lib], deps]]
     test_cases += [['metal-render-test', files('render/metal_render_test.m'), [render_term_lib], deps]]
-    standalone_tests += ['window-pacing-test', 'render-gpu-slot-test']
+    standalone_tests += ['window-pacing-test', 'render-gpu-slot-test', 'metal-render-test']
 endif
 if has_vulkan
     test_cases += [['vulkan-render-test', files('render/vulkan_render_test.c'), [render_term_lib], deps]]
