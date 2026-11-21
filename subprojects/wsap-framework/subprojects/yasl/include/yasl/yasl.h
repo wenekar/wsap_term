@@ -96,11 +96,13 @@ struct yasl_surface_options {
     bool fullscreen, maximized, hidden;
     void *userdata;
     /** Called when the window needs drawing while the system blocks the event
-     * loop, as during a macOS live resize; draw and present before returning.
-     * REFRESH events cover every other case. Events stay queued meanwhile, so
-     * apply the size from yasl_surface_get_info, already current here; one
-     * WINDOW event reports the final size once the system's loop returns.
-     * Waiting, creating and destroying fail with EBUSY. */
+     * loop, as during a macOS live resize, and when the window changes scale
+     * while the application waits for events; draw and present before
+     * returning. The system then shows the frame together with the new size
+     * or scale. REFRESH events cover every other case. Events stay queued
+     * meanwhile, so apply the size and scale from yasl_surface_get_info,
+     * already current here; one WINDOW event reports them once the callback
+     * returns. Waiting, creating and destroying fail with EBUSY. */
     void (*refresh)(yasl_surface *surface);
     struct yasl_gl_options gl;
 };

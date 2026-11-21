@@ -712,18 +712,34 @@ int yasl_surface_set_background_color(yasl_surface *s, uint32_t bg)
     yasl_private_surface_set_background_color(s, bg);
     return 0;
 }
+/* Calls the refresh callback of `s`. Returns false when `s` has none or a
+ * refresh callback runs already. */
+static bool refresh_now(yasl_surface *s)
+{
+    if (!s->refresh || refresh_depth)
+        return false;
+    ++refresh_depth;
+    s->refresh(s);
+    --refresh_depth;
+    return true;
+}
+
 void yasl_private_surface_notify_refresh(yasl_surface *s)
 {
     if (!s || !s->display)
         return;
     /* A modal system loop runs no loop step, so the REFRESH cannot wait in the
      * queue: call the application callback now. */
-    if (s->refresh && s->display->modal && !refresh_depth) {
-        ++refresh_depth;
-        s->refresh(s);
-        --refresh_depth;
+    if (s->display->modal && refresh_now(s))
         return;
-    }
+    struct yasl_private_event ev = {.type = YASL_PRIVATE_EVENT_REFRESH, .surface = s};
+    yasl_private_events_push(s->display, s, &ev);
+}
+
+void yasl_private_surface_draw_now(yasl_surface *s)
+{
+    if (!s || !s->display || refresh_now(s))
+        return;
     struct yasl_private_event ev = {.type = YASL_PRIVATE_EVENT_REFRESH, .surface = s};
     yasl_private_events_push(s->display, s, &ev);
 }

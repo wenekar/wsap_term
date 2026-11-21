@@ -673,6 +673,7 @@ static void sync_size(struct cocoa_surface *w, bool force)
         .y = (int)lround(bounds.size.height * scale),
     };
     uint32_t scale_120 = (uint32_t)lround(scale * YASL_PRIVATE_SCALE_UNIT);
+    bool new_scale = !force && w->scale_120 && scale_120 != w->scale_120;
     bool rescaled = force || scale_120 != w->scale_120;
     bool resized = force || (size.x != w->size.x || size.y != w->size.y);
     bool layer_rescaled = w->layer && w->layer.contentsScale != scale;
@@ -701,8 +702,16 @@ static void sync_size(struct cocoa_surface *w, bool force)
         for (int i = 0; i < darwin_ctx.count; i++)
             if (darwin_ctx.windows[i]->parent == w)
                 sync_size(darwin_ctx.windows[i], false);
-    /* During a live resize the refresh callback draws and presents the frame. */
-    if (w->base.presenter != YASL_PRIVATE_PRESENTER_CPU || w->view.inLiveResize)
+    /* The layer has its new contentsScale and drawable size, and its contents
+     * keep their size in pixels, because the gravity is top left. The old
+     * frame would show at twice or half its size until the next frame. When
+     * the application waits for events, it draws the frame of the new scale
+     * now, and the frame commits in the same Core Animation transaction.
+     * During a live resize the refresh callback draws and presents the frame
+     * too. */
+    if (new_scale && darwin_ctx.pumping)
+        yasl_private_surface_draw_now(&w->base);
+    else if (w->base.presenter != YASL_PRIVATE_PRESENTER_CPU || w->view.inLiveResize)
         yasl_private_surface_notify_refresh(&w->base);
     darwin_ctx.depth--;
 }

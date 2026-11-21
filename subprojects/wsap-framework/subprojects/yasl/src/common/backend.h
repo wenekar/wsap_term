@@ -150,6 +150,12 @@ bool yasl_private_events_push(struct yasl_private_display *d, struct yasl_surfac
                       const struct yasl_private_event *event);
 void yasl_private_surface_notify_configure(struct yasl_surface *s, struct yasl_private_geometry geometry);
 void yasl_private_surface_notify_refresh(struct yasl_surface *s);
+/* Asks the application to draw `s` before this call returns, through its
+ * refresh callback, so that the frame shows together with a change that the
+ * backend made to the native surface, such as a new scale. Without a callback,
+ * or inside one, it queues a REFRESH. Call it only while the application
+ * waits for events: the callback must not run inside an application call. */
+void yasl_private_surface_draw_now(struct yasl_surface *s);
 /* The system showed the surface's last frame; answers a pending frame request. */
 void yasl_private_surface_notify_frame_shown(struct yasl_surface *s);
 void yasl_private_surface_notify_close(struct yasl_surface *s);
