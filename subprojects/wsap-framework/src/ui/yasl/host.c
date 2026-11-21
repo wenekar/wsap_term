@@ -279,12 +279,6 @@ static struct window *window_of_surface(struct window_host *host,
 
 static void window_geometry_event(struct window *w, const struct yasl_event *ev)
 {
-    uint32_t scale_120 = window_scale_120_of(ev->window.scale);
-    w->scale_120 = scale_120;
-    struct window_geometry g = {
-        .size = { .x = ev->window.pixel_width, .y = ev->window.pixel_height },
-        .scale_120 = scale_120,
-    };
     latency_probe_fullscreen((ev->window.state & YASL_STATE_FULLSCREEN) != 0);
     bool focused = (ev->window.state & YASL_STATE_ACTIVATED) != 0;
     if (focused != w->focused) {
@@ -306,13 +300,7 @@ static void window_geometry_event(struct window *w, const struct yasl_event *ev)
         if (window_mounted(w))
             window_ui_state_changed(w);
     }
-    window_apply_titlebar(w, window_titlebar_of(&ev->window));
-    if (window_mounted(w)) {
-        window_ui_configure(w, g);
-    } else {
-        window_repaint_all(w);
-        window_redraw(w);
-    }
+    window_apply_geometry(w, &ev->window);
 }
 
 static void dispatch_event(struct window_host *host, const struct yasl_event *ev)

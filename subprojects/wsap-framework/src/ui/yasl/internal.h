@@ -82,6 +82,8 @@ struct window_ui {
     const struct css_sheet *sheet;
     const struct css_sheet *theme_sheet;
     struct font_instance *ui_font;
+    /* The scale that ui_font and the UI style were built for. */
+    uint32_t styled_scale_120;
     struct window_debug *debug;
     struct window_accessibility *accessibility;
     struct ui_scene *scene_scratch;
@@ -200,18 +202,19 @@ enum window_input_result {
     WINDOW_INPUT_REPLACE_TEXT,
 };
 void window_ui_route(struct window *w, struct input_event *ev);
-void window_ui_configure(struct window *w, struct window_geometry g);
+/* Lays out the mounted UI of `w` for the size and scale in `g`, and calls its
+ * resize hook. A scale other than the one that the UI fonts were built for
+ * restyles the UI first. Set `retitled` when the title bar changed; the UI
+ * then lays out even at the same size. Without a change, it does nothing. */
+void window_ui_configure(struct window *w, struct window_geometry g, bool retitled);
 void window_ui_state_changed(struct window *w);
-/* Stores the system title bar of `w`. When it changed, the mounted UI lays
- * out again and its resize hook runs. Call it from the WINDOW event of the
- * main surface. */
-void window_apply_titlebar(struct window *w, struct window_titlebar titlebar);
+/* Applies the size, scale, and title bar in `info` to `w` and lays out its
+ * mounted UI once. Call it with each WINDOW event of the main surface and
+ * before each draw of it. */
+void window_apply_geometry(struct window *w, const struct yasl_surface_info *info);
 /* Returns the title bar in `info` in device pixels. Call it with each new
  * surface info. */
 struct window_titlebar window_titlebar_of(const struct yasl_surface_info *info);
-/* Lays out the mounted UI of `w` again and calls its resize hook.
- * window_apply_titlebar() calls it when the title bar changes. */
-void window_ui_titlebar_changed(struct window *w);
 void window_ui_closing(struct window *w);
 void window_ui_destroy(struct window *w);
 void window_ui_restyle(struct window *w);

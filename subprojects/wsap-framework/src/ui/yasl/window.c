@@ -51,10 +51,12 @@ struct vector2i window_default_size(const struct window_config *config)
 
 uint32_t window_scale_120(const struct window *w)
 {
-    if (!w || !w->surface)
+    if (!w)
         return YASL_SCALE_UNIT;
     if (w->scale_120)
         return w->scale_120;
+    if (!w->surface)
+        return YASL_SCALE_UNIT;
     return window_scale_120_of(yasl_surface_get_info(w->surface).scale);
 }
 
@@ -428,16 +430,10 @@ static void on_refresh(yasl_surface *s)
     host->frame_ms = yasl_time_ns() / 1000000;
     window_host_run_service(host, host->frame_ms, true);
     if (!w->closed && s == w->surface && window_mounted(w)) {
+        /* The system can draw before the WINDOW event reports a new size or
+         * scale. Without a change, the call lays out nothing. */
         struct yasl_surface_info info = yasl_surface_get_info(s);
-        struct window_geometry g = {
-            .size = { .x = info.pixel_width, .y = info.pixel_height },
-            .scale_120 = window_scale_120_of(info.scale),
-        };
-        if (!vector2i_eq(g.size, ui_surface_viewport(&w->ui.screen)) ||
-            g.scale_120 != w->scale_120) {
-            w->scale_120 = g.scale_120;
-            window_ui_configure(w, g);
-        }
+        window_apply_geometry(w, &info);
     }
     window_native_draw(w, s);
     host->frame_ms = outer_ms;
@@ -622,17 +618,46 @@ struct window_titlebar window_titlebar(const struct window *w)
     return w ? w->titlebar : (struct window_titlebar){0};
 }
 
-void window_apply_titlebar(struct window *w, struct window_titlebar titlebar)
+/* Stores `titlebar` as the system title bar of `w`. Returns true when it
+ * changed. */
+static bool store_titlebar(struct window *w, struct window_titlebar titlebar)
 {
-    if (!w || titlebar_equal(w->titlebar, titlebar))
-        return;
+    if (titlebar_equal(w->titlebar, titlebar))
+        return false;
     w->titlebar = titlebar;
-    window_ui_titlebar_changed(w);
+    return true;
+}
+
+void window_apply_geometry(struct window *w, const struct yasl_surface_info *info)
+{
+    struct window_geometry g = {
+        .size = { .x = info->pixel_width, .y = info->pixel_height },
+        .scale_120 = window_scale_120_of(info->scale),
+    };
+    w->scale_120 = g.scale_120;
+    /* A new scale also changes the title bar in device pixels. Store it
+     * without a layout of its own: window_ui_configure lays out once for
+     * all three, after it builds the fonts for the new scale. */
+    bool retitled = store_titlebar(w, window_titlebar_of(info));
+    if (window_mounted(w)) {
+        window_ui_configure(w, g, retitled);
+    } else {
+        window_repaint_all(w);
+        window_redraw(w);
+    }
+}
+
+void window_test_apply_geometry(struct window *w, const struct yasl_surface_info *info)
+{
+    window_apply_geometry(w, info);
 }
 
 void window_test_set_titlebar(struct window *w, struct window_titlebar titlebar)
 {
-    window_apply_titlebar(w, titlebar);
+    if (store_titlebar(w, titlebar) && window_mounted(w))
+        window_ui_configure(w, (struct window_geometry){
+            .size = ui_surface_viewport(&w->ui.screen), .scale_120 = w->scale_120,
+        }, true);
 }
 
 bool window_set_titlebar_areas(struct window *w, const struct rect2i *areas, int count)

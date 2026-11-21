@@ -295,6 +295,50 @@ static void titlebar_overlay_strip_test(void)
     close_terminal_window(w, &a);
 }
 
+/* A move to a display of another scale reports the new size, scale, and
+ * title bar in one WINDOW event. The title bar keeps its height in logical
+ * units, so its height in device pixels changes too. The UI fonts follow the
+ * new scale, and the content stays below the strip. */
+static void scale_change_with_titlebar_test(void)
+{
+    struct test_app a;
+    struct window *w = open_terminal_window(&a, (struct vector2i){ .x = 1200, .y = 800 });
+    assert(app_tabs_new(w));
+    struct yasl_surface_info info = {
+        .width = 600, .height = 400, .pixel_width = 1200, .pixel_height = 800, .scale = 2.0,
+        .titlebar_height = 32,
+        .controls_x = 9, .controls_y = 9, .controls_width = 60, .controls_height = 14,
+    };
+    window_test_apply_geometry(w, &info);
+    ui_surface_prepare(window_ui_surface(w));
+    float cell_2x = window_ui_scale(w).cell_h;
+    assert(window_titlebar(w).height == 64);
+
+    info.pixel_width = 600;
+    info.pixel_height = 400;
+    info.scale = 1.0;
+    window_test_apply_geometry(w, &info);
+    ui_surface_prepare(window_ui_surface(w));
+    assert(ui_surface_scale(window_ui_surface(w)).dpi_scale == 1.0f);
+    float cell_1x = window_ui_scale(w).cell_h;
+    assert(cell_1x > 0 && cell_1x * 1.5f < cell_2x);
+    assert(window_titlebar(w).height == 32);
+    int strip = app_tabs_bar_height(w);
+    assert(strip >= 32);
+    struct ui_widget *content = terminal_widget(app_tabs_active(w));
+    assert(content->bounds.y == strip && content->bounds.height == 400 - strip);
+
+    info.pixel_width = 1200;
+    info.pixel_height = 800;
+    info.scale = 2.0;
+    window_test_apply_geometry(w, &info);
+    ui_surface_prepare(window_ui_surface(w));
+    assert(window_ui_scale(w).cell_h == cell_2x);
+    assert(window_titlebar(w).height == 64);
+
+    close_terminal_window(w, &a);
+}
+
 static void tabbar_scene_in_chrome_test(void)
 {
     struct test_app a;
@@ -1090,6 +1134,7 @@ int main(void)
     chrome_is_in_widget_tree_test();
     layout_places_children_test();
     titlebar_overlay_strip_test();
+    scale_change_with_titlebar_test();
     tabbar_scene_in_chrome_test();
     scrollbar_scene_in_chrome_test();
     palette_scene_at_rect_test();

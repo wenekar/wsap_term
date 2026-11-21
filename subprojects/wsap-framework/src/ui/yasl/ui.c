@@ -74,6 +74,7 @@ void window_ui_restyle(struct window *w)
     if (!ui)
         return;
     update_ui_font(w);
+    ui->styled_scale_120 = window_scale_120(w);
     struct css_scale_context scale = window_ui_scale(w);
     ui_surface_set_scale(&ui->screen, scale);
     struct yasl_surface *surface = window_surface(w);
@@ -118,18 +119,6 @@ static void ui_resize(struct window *w, struct vector2i size)
     window_redraw(w);
 }
 
-void window_ui_titlebar_changed(struct window *w)
-{
-    struct window_ui *ui = window_ui_of(w);
-    if (!ui)
-        return;
-    /* The viewport does not change, so mark the root for layout here. A new
-     * size comes through window_ui_configure. */
-    if (ui->spec.root)
-        ui_widget_invalidate(ui->spec.root, UI_WIDGET_INVALIDATE_MEASURE);
-    ui_resize(w, ui_surface_viewport(&ui->screen));
-}
-
 void window_ui_relayout(struct window *w)
 {
     if (!window_ui_of(w))
@@ -140,19 +129,26 @@ void window_ui_relayout(struct window *w)
         ui_resize(w, window_size(w));
 }
 
-void window_ui_configure(struct window *w, struct window_geometry g)
+void window_ui_configure(struct window *w, struct window_geometry g, bool retitled)
 {
     struct window_ui *ui = ui_of(w);
-    float scale = (float)g.scale_120 / YASL_SCALE_UNIT;
-    float old = ui_surface_scale(&ui->screen).dpi_scale;
-    if (old == scale && vector2i_eq(g.size, ui_surface_viewport(&ui->screen)))
+    /* Compare with the scale of the fonts, not of the UI surface: a layout
+     * since the scale changed can have set the surface scale already. */
+    uint32_t old = ui->styled_scale_120;
+    bool rescaled = g.scale_120 != old;
+    if (!rescaled && !retitled && vector2i_eq(g.size, ui_surface_viewport(&ui->screen)))
         return;
-    if (old != scale) {
-        if (old > 0)
+    /* A new title bar changes the layout even when the viewport stays. */
+    if (retitled && ui->spec.root)
+        ui_widget_invalidate(ui->spec.root, UI_WIDGET_INVALIDATE_MEASURE);
+    if (rescaled) {
+        if (old > 0) {
+            float ratio = (float)g.scale_120 / (float)old;
             ui->menu_at = (struct vector2i){
-                .x = (int)((float)ui->menu_at.x * scale / old + 0.5f),
-                .y = (int)((float)ui->menu_at.y * scale / old + 0.5f),
+                .x = (int)((float)ui->menu_at.x * ratio + 0.5f),
+                .y = (int)((float)ui->menu_at.y * ratio + 0.5f),
             };
+        }
         window_ui_restyle(w);
     }
     ui_resize(w, g.size);

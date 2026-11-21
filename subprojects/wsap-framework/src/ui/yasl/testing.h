@@ -21,5 +21,8 @@ void window_ui_test_route(struct window *w, struct input_event *ev);
 /* Applies `titlebar` to `w` as a WINDOW event of the platform would. Call it
  * to test a title bar overlay on a platform that has none. */
 void window_test_set_titlebar(struct window *w, struct window_titlebar titlebar);
+/* Applies the size, scale, and title bar in `info` to `w` as a WINDOW event
+ * of the platform would. */
+void window_test_apply_geometry(struct window *w, const struct yasl_surface_info *info);
 
 #endif
