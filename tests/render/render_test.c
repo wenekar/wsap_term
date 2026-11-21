@@ -1426,8 +1426,12 @@ static void blend_rect_alpha_test(void)
 /*
  * The ink of a UI text op starts where the glyph raster puts it. Row 0 of a
  * cell raster is the top of the cell, so the painter adds no row offset to
- * the op top. This test uses the real font: a glyph with a row offset of 0
- * cannot tell the two rules apart.
+ * the op top. A painter that adds `y_offset` draws the ink lower only when
+ * the glyph has a nonzero row offset, so this test uses the real font: the
+ * FreeType backend writes the row of the ink to `y_offset`, and font-test
+ * checks that it does. The CoreText backend leaves `y_offset` at 0. Both
+ * rules then draw the same pixels, and the test checks only where the ink
+ * starts and ends.
  */
 static void scene_text_row_test(void)
 {
@@ -1437,7 +1441,6 @@ static void scene_text_row_test(void)
                                 .size = { .x = 4 * m->cell_w, .y = m->cell_h } };
     const struct glyph *g = glyph_cache_fetch(fi, 'H', 0);
     assert(g && g->alpha && g->width);
-    assert(g->y_offset > 0);
     /* The first row of the raster that holds ink. */
     int ink_row = -1;
     for (int y = 0; y < g->height && ink_row < 0; y++)
