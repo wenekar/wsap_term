@@ -197,7 +197,8 @@ static void wsap_vtcore_feed_inner(struct wsap_vtcore *t, const char *buf, size_
         while (t->state != ST_GROUND) {
             if (t->state == ST_CSI)
                 i += wsap_vtcore_escape_csi(t, buf + i, len - i);
-            else if (t->state == ST_OSC || t->state == ST_DCS || t->state == ST_IGNORE)
+            else if (t->state == ST_OSC || t->state == ST_DCS || t->state == ST_IGNORE ||
+                     t->state == ST_APC)
                 i += wsap_vtcore_escape_str(t, buf + i, len - i);
             else
                 wsap_vtcore_escape_byte(t, (unsigned char)buf[i++]);

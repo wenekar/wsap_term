@@ -900,7 +900,7 @@ static void scene_rect(struct gpu_build *b, struct rect2i rect, struct rect2i cl
 }
 
 static bool build_scene(struct gpu_build *b, struct font_instance *ufont,
-                        const struct ui_scene *scene, struct rect2i canvas_rect)
+                        const struct ui_scene *scene, struct rect2i canvas_rect, struct rect2i clip)
 {
     struct rect2i inline_stack[16];
     struct rect2i *stack = inline_stack;
@@ -919,7 +919,6 @@ static bool build_scene(struct gpu_build *b, struct font_instance *ufont,
         stack_cap = b->cap_clips;
     }
     int depth = 0;
-    struct rect2i clip = canvas_rect;
 
     for (int i = 0; i < scene->n_ops && !b->failed && !b->atlas.full; i++) {
         const struct ui_scene_op *op = &scene->ops[i];
@@ -1025,12 +1024,15 @@ static bool build_frame(struct gpu_build *b, const struct renderer_frame *frame,
             .pos = geo.rect.pos, .size = { .x = geo.cols * geo.cw, .y = geo.rows * geo.ch } });
         cmd_whole_stream(b, GPU_CMD_GLYPH, GPU_ST_DECO, (struct rect2i){
             .pos = geo.rect.pos, .size = { .x = geo.cols * geo.cw, .y = geo.rows * geo.ch } });
+        if (frame->graphics && ui_scene_is_valid(frame->graphics) &&
+            !build_scene(b, geo.font, frame->graphics, canvas_rect, geo.rect))
+            return false;
     }
     const struct ui_scene *scene = frame->ui;
     if (scene && ui_scene_is_valid(scene)) {
         struct font_instance *ufont =
             frame->ui_font ? frame->ui_font : font_instance_default();
-        if (ufont && !build_scene(b, ufont, scene, canvas_rect))
+        if (ufont && !build_scene(b, ufont, scene, canvas_rect, canvas_rect))
             return false;
     }
     return !b->failed && !b->atlas.full;

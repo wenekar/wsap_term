@@ -151,7 +151,8 @@ struct wsap_vtcore {
     uint32_t utf8_state;
     uint32_t utf8_codep;
     enum { ST_GROUND, ST_ESC, ST_CSI, ST_OSC, ST_DCS, ST_STR_ESC, ST_CHARSET,
-           ST_DCS_ESC, ST_IGNORE, ST_IGNORE_ESC, ST_DOCS, ST_DECALN } state;
+           ST_DCS_ESC, ST_IGNORE, ST_IGNORE_ESC, ST_DOCS, ST_DECALN,
+           ST_APC_START, ST_APC, ST_APC_ESC } state;
     int prompt_y;
     int left_margin, right_margin;
     /* The pad field of new cells: the style id of cur_link and cur_ul, and
@@ -242,6 +243,9 @@ struct wsap_vtcore {
     size_t osc_heap_cap;
     char *dcs_buf;
     size_t dcs_cap;
+    wsap_vtcore_graphics_fn graphics_receive;
+    void *graphics_ud;
+    struct wsap_vtcore_kitty_upload *kitty_upload;
     void *links;
     struct wsap_vtcore_styles *styles;
     char *cwd;
@@ -274,6 +278,7 @@ struct wsap_vtcore {
     struct saved_mode saved_modes[SAVED_MODES_MAX];
 
     /* Cold 1-byte fields and string buffers. */
+    bool dcs_graphics_disabled;
     bool alt_allocated;
     bool normal_cursor_visible;
     uint8_t normal_cursor_style;

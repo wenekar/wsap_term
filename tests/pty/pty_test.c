@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -119,6 +120,23 @@ static void test_spawn_term_env(void)
     expect_env("printenv TERMINFO_DIRS", "terminfo", NULL);
     expect_env("printenv TERM", "wsap_term-256color", "xterm-256color");
 #endif
+}
+
+static void test_window_pixels(void)
+{
+    struct pty p = {0};
+    const struct vector2i cell = {.x = 8, .y = 16};
+    assert(pty_spawn(&p, &(struct pty_spec){
+        .grid = {.x = 80, .y = 24}, .cell_pixels = cell, .command = "/bin/cat",
+    }) == 0);
+    struct winsize size;
+    int master = pty_master_fd(&p);
+    assert(ioctl(master, TIOCGWINSZ, &size) == 0);
+    assert(size.ws_xpixel == 640 && size.ws_ypixel == 384);
+    pty_resize(&p, (struct vector2i){.x = 120, .y = 40}, cell);
+    assert(ioctl(master, TIOCGWINSZ, &size) == 0);
+    assert(size.ws_xpixel == 960 && size.ws_ypixel == 640);
+    pty_destroy(&p);
 }
 
 static void test_spec_env_overrides(void)
@@ -375,6 +393,7 @@ int main(int argc, char **argv)
     test_spawn_locale_env();
     test_spawn_term_env();
     test_spec_env_overrides();
+    test_window_pixels();
     test_master_fd_is_cloexec();
     test_priv_cmd_spelling_no_fast_pipe();
     test_command_quoting();

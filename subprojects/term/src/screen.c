@@ -1,4 +1,5 @@
 #include "screen.h"
+#include "graphics/graphics.h"
 #include "marks.h"
 #include "osc/osc.h"
 #include <errno.h>
@@ -223,6 +224,35 @@ uint64_t wsap_vtcore_screen_view_row_key(const struct wsap_vtcore *t, int y)
     if (!row)
         return 0;
     return mix64(row->uid ^ ((uint64_t)row->version << 32) ^ mix64(t->serial));
+}
+
+void wsap_vtcore_graphics_rows(const struct wsap_vtcore *t, bool live,
+                             int first, int count, uint64_t *out)
+{
+    if (!out || count <= 0)
+        return;
+    if (!t) {
+        memset(out, 0, (size_t)count * sizeof(*out));
+        return;
+    }
+    struct wsap_vtcore *locked = (struct wsap_vtcore *)t;
+    wsap_vtcore_lock(locked);
+    for (int i = 0; i < count; i++) {
+        int64_t y = (int64_t)first + i;
+        out[i] = 0;
+        if (y < 0 || y >= t->rows)
+            continue;
+        if (!live && t->view.anchor.active) {
+            struct hist_view_pos pos;
+            if (wsap_vtcore_hist_view_row_pos(&t->view, &t->hist, t->cols, t->rows,
+                                             screen_top_line(t), (int)y, &pos))
+                continue;
+            y = pos.screen_y;
+        }
+        const struct srow *row = screen_row_at(&t->scr, (int)y);
+        if (row) out[i] = row->uid;
+    }
+    wsap_vtcore_unlock(locked);
 }
 
 static uint8_t view_row_flags(const struct wsap_vtcore *t, int y)
@@ -599,6 +629,8 @@ void wsap_vtcore_screen_erase(struct wsap_vtcore *t, int mode)
         return;
     }
     if (mode == 2) {
+        if (t->graphics_receive)
+            wsap_vtcore_graphics_erase(t, 0, 0, t->cols, t->rows);
         int last_active = -1;
         bool tail_clean = using_default_colors(t);
         int rows = t->rows;
@@ -641,7 +673,7 @@ void wsap_vtcore_screen_erase(struct wsap_vtcore *t, int mode)
         bool pristine = using_default_colors(t);
         for (int r = t->cursor_y + 1; r < t->rows; r++) {
             int p = phys_row(t, r);
-            if (pristine && row_erased(t, p))
+            if (!t->graphics_receive && pristine && row_erased(t, p))
                 continue;
             erase_row(t, p);
         }
@@ -650,7 +682,7 @@ void wsap_vtcore_screen_erase(struct wsap_vtcore *t, int mode)
         bool pristine = using_default_colors(t);
         for (int r = 0; r < t->cursor_y; r++) {
             int p = phys_row(t, r);
-            if (pristine && row_erased(t, p))
+            if (!t->graphics_receive && pristine && row_erased(t, p))
                 continue;
             erase_row(t, p);
         }
@@ -1084,6 +1116,8 @@ void wsap_vtcore_screen_set_alternate(struct wsap_vtcore *t, bool enabled)
         wsap_vtcore_select_clear(t);
         t->full_gen++;
     } else {
+        if (t->graphics_receive)
+            wsap_vtcore_graphics_discard_screen(t);
         int cols = t->cols;
         int rows = t->rows;
         struct screen tmp_scr = t->scr;
@@ -1255,6 +1289,7 @@ void wsap_vtcore_free(struct wsap_vtcore *t)
     free(t->view_row_scratch);
     free(t->tabs);
     wsap_vtcore_osc_cleanup(t);
+    wsap_vtcore_kitty_abort(t);
     wsap_vtcore_marks_free(t);
     wsap_vtcore_style_free(t);
     wsap_vtcore_gstore_free(t->gstore);
@@ -1263,6 +1298,8 @@ void wsap_vtcore_free(struct wsap_vtcore *t)
 }
 
 struct reflow_out {
+    uint64_t uid;
+    uint32_t version;
     int len;
     int32_t mark_status;
     bool wrapped;
@@ -1290,6 +1327,8 @@ struct reflow_target {
     int count;
     int out_cap;
     int cursor_x, cursor_y, saved_x, saved_y, prompt_y;
+    uint64_t uid;
+    uint32_t version;
     /* The marks of the rows in progress, and the marks that wait for the next
      * source row. A mark joins the row that holds the first cell of its source
      * row. */
@@ -1329,7 +1368,10 @@ static bool reflow_target_end_row(struct reflow_target *r, bool wrapped)
     dst->len = len;
     dst->wrapped = wrapped;
     dst->size = r->size;
+    dst->uid = r->uid;
+    dst->version = r->version;
     r->size = 0;
+    r->uid = 0;
     dst->mark_status = r->mark.status;
     dst->mark_flags = r->mark.flags;
     dst->mark_state = r->mark.state;
@@ -1765,6 +1807,10 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
                 r.saved_x = t->saved.x < cols ? t->saved.x : cols - 1;
                 r.saved_set = true;
             }
+            if (t->graphics_receive) {
+                r.uid = src->uid;
+                r.version = src->version + 1;
+            }
             int keep = len > cols ? cols : len;
             memcpy(r.cells, cells, (size_t)keep * sizeof(struct cell));
             r.x = keep;
@@ -1801,6 +1847,12 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
 
         int cur_x = (y == t->cursor_y) ? t->cursor_x + (t->pending_wrap ? 1 : 0) : -1;
         int sav_x = (y == t->saved.y) ? t->saved.x : -1;
+        /* A row that maps to one row keeps its graphics anchor. Bump its
+         * version because reflow can add padding or clip the row. */
+        if (t->graphics_receive && !r.x && !wrapped && len <= cols) {
+            r.uid = src->uid;
+            r.version = src->version + 1;
+        }
         if (!reflow_append(&r, in_cells, len, cur_x, sav_x))
             goto reflow_failed;
         /* An empty row places no cell. Its marks stay on its own row. */
@@ -1821,8 +1873,7 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
             wsap_vtcore_marks_hist_drop(t, open_id);
         }
     }
-    /* The new rows get new uids. Their marks come from the output rows of
-     * the reflow. */
+    /* The marks of the new rows come from the output of the reflow. */
     wsap_vtcore_marks_rows_clear(t);
     wsap_vtcore_hist_set_width(&t->hist, cols);
 
@@ -1867,9 +1918,20 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
         dst->kind = ROW_CELLS;
         dst->len = (uint16_t)len;
         dst->flags = (uint8_t)((r.out[i].wrapped ? RF_WRAPPED : 0) | RF_TAIL_PADDED | r.out[i].size);
-        dst->version = 1;
-        dst->uid = ++t->next_row_uid;
+        dst->version = r.out[i].uid ? r.out[i].version : 1;
+        dst->uid = r.out[i].uid ? r.out[i].uid : ++t->next_row_uid;
         wsap_vtcore_marks_row_put(t, dst, reflow_out_mark(&r.out[i]));
+    }
+    if (t->graphics_receive) {
+        /* Trailing blank rows can still hold images. Match them to the
+         * blank tail of the new screen rather than the reflow buffer. */
+        int tail = pull + out_idx;
+        for (int y = active; y < old_rows && tail < rows; y++, tail++) {
+            const struct srow *src = screen_row_at(&t->scr, y);
+            struct srow *dst = &new_scr.slot[tail];
+            dst->uid = src->uid;
+            dst->version = src->version + 1;
+        }
     }
 
     t->spare = t->scr;

@@ -22,7 +22,7 @@ struct pty {
 };
 
 struct pty_spec {
-    struct vector2i grid;
+    struct vector2i grid, cell_pixels;
     const char *command;
     const char *cwd;
     const char *locale;
@@ -62,7 +62,8 @@ int pty_spawn(struct pty *p, const struct pty_spec *spec);
  */
 void pty_destroy(struct pty *p);
 
-/* Sets the pseudo-terminal window size to `grid.x` columns and `grid.y` rows. */
-void pty_resize(struct pty *p, struct vector2i grid);
+/* Sets the grid in columns and rows, and reports grid times cell_pixels as
+ * the pixel dimensions. Zero cell size reports unknown dimensions. */
+void pty_resize(struct pty *p, struct vector2i grid, struct vector2i cell_pixels);
 
 #endif

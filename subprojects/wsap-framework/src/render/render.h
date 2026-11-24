@@ -67,6 +67,9 @@ struct render_options {
  */
 struct renderer_frame {
     const struct render_grid_view *grid;
+    /* Borrows an image scene for this draw. It paints over the grid and
+     * under the UI. The CPU repaints the canvas while the scene is present. */
+    const struct ui_scene *graphics;
     const struct ui_scene *ui;
     struct font_instance *ui_font;
     const struct ui_damage *ui_damage;

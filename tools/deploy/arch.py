@@ -39,6 +39,7 @@ license = {meta.license}
 depend = freetype2
 depend = fontconfig
 depend = harfbuzz
+depend = libpng
 depend = wayland
 depend = libxkbcommon
 """

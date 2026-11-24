@@ -12,6 +12,7 @@ static struct renderer_frame resolve_frame(const struct render_frame *frame,
     }
     return (struct renderer_frame){
         .grid = has_grid ? grid : NULL,
+        .graphics = frame->graphics,
         .ui = frame->ui,
         .ui_font = frame->ui_font,
         .ui_damage = frame->ui_damage,

@@ -5,12 +5,14 @@ root=$(cd "$root" && pwd)
 cd "$root"
 command -v zig >/dev/null || { echo "zig not found; skipping"; exit 77; }
 
-# Source list from src/meson.build and src/osc/meson.build.
-# Keep this synchronized with those files.
+# Source list from the Meson files under src/.
 sources=(
     src/core.c
     src/csi/fast.c
     src/escape.c
+    src/graphics/graphics.c
+    src/graphics/kitty.c
+    src/graphics/sixel.c
     src/hist/view.c
     src/input.c
     src/isa.c

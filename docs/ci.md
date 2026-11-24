@@ -27,7 +27,7 @@ The macOS job runs on `macos-14` (Apple Silicon).
 It installs these Homebrew packages:
 
 ```sh
-brew install llvm meson ninja pkgconf yyjson harfbuzz icu4c rust
+brew install llvm meson ninja pkgconf yyjson harfbuzz icu4c libpng rust
 ```
 
 The macOS job runs `make release` with LTO before the regular tests.

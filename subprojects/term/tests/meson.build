@@ -45,6 +45,7 @@ wsap_vtcore_tests = [
   ['view-test', files('view_test.c'), [], []],
   ['resize-property-test', files('resize_property_test.c'), [], []],
   ['dcs-test', files('dcs_test.c'), [], []],
+  ['graphics-test', files('graphics_test.c'), [], []],
   ['osc-test', files('osc_test.c'), [], []],
   ['api-args-test', files('api_args_test.c'), [], []],
   ['public-helpers-test', files('public_helpers_test.c'), [], []],
@@ -99,7 +100,7 @@ wsap_vtcore_amalgamation_lib = static_library(
   build_by_default: false,
 )
 foreach entry : wsap_vtcore_tests
-  if entry[0] in ['term-test', 'spec-test', 'view-test', 'dcs-test', 'osc-test',
+  if entry[0] in ['term-test', 'spec-test', 'view-test', 'dcs-test', 'graphics-test', 'osc-test',
                   'history-text-test', 'term-input-test', 'model-test', 'model-row-test',
                   'resize-property-test', 'api-args-test', 'public-helpers-test',
                   'snapshot-lifetime-test']

@@ -9,6 +9,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdint.h>
@@ -26,11 +27,19 @@
 #define PTY_HANGUP_GRACE_MS 2000
 #define PTY_REAP_POLL_MS 10
 
-static struct winsize winsize_of(struct vector2i grid)
+static unsigned short winsize_component(int n, int cell)
+{
+    int64_t pixels = (int64_t)n * cell;
+    return pixels > 0 && pixels <= USHRT_MAX ? (unsigned short)pixels : 0;
+}
+
+static struct winsize winsize_of(struct vector2i grid, struct vector2i cell)
 {
     return (struct winsize){
         .ws_row = (unsigned short)grid.y,
         .ws_col = (unsigned short)grid.x,
+        .ws_xpixel = winsize_component(grid.x, cell.x),
+        .ws_ypixel = winsize_component(grid.y, cell.y),
     };
 }
 
@@ -49,7 +58,7 @@ int pty_spawn(struct pty *p, const struct pty_spec *spec)
         return -1;
     }
 
-    struct winsize ws = winsize_of(spec->grid);
+    struct winsize ws = winsize_of(spec->grid, spec->cell_pixels);
     int master_fd = -1, slave_fd = -1;
     if (openpty(&master_fd, &slave_fd, NULL, NULL, &ws) < 0) {
         perror("openpty");
@@ -155,11 +164,11 @@ void pty_destroy(struct pty *p)
     *p = (struct pty){0};
 }
 
-void pty_resize(struct pty *p, struct vector2i grid)
+void pty_resize(struct pty *p, struct vector2i grid, struct vector2i cell_pixels)
 {
     int fd = pty_master_fd(p);
     if (fd < 0)
         return;
-    struct winsize ws = winsize_of(grid);
+    struct winsize ws = winsize_of(grid, cell_pixels);
     ioctl(fd, TIOCSWINSZ, &ws);
 }

@@ -30,6 +30,7 @@ struct render_grid {
  * the UI fields. The grid is empty if its terminal frame is NULL or invalid. */
 struct render_frame {
     struct render_grid grid;
+    const struct ui_scene *graphics;
     const struct ui_scene *ui;
     struct font_instance *ui_font;
     const struct ui_damage *ui_damage;

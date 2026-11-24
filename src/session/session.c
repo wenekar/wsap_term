@@ -275,6 +275,7 @@ static bool start_pty(struct session *s, const struct session_spec *spec)
     struct wsap_vtcore_vector2i size = wsap_vtcore_size(s->term);
     struct pty_spec pty_spec = {
         .grid = { .x = size.x, .y = size.y },
+        .cell_pixels = s->cell_pixels,
         .command = spec->command,
         .cwd = spec->cwd,
         .locale = spec->locale,
@@ -329,6 +330,8 @@ bool session_init(struct session *s, struct yasl_loop *loop,
         return false;
     }
     wsap_vtcore_set_color_scheme(s->term, spec->color_scheme);
+    session_set_cell_pixels(s, spec->cell_pixels);
+    wsap_vtcore_set_graphics(s->term, spec->graphics, spec->graphics_ud);
 
     s->next_live = live_sessions;
     live_sessions = s;
@@ -376,7 +379,7 @@ void session_set_host(struct session *s, const struct session_host *host, void *
 
 static void send_pty_size(struct session *s, struct vector2i grid)
 {
-    pty_resize(&s->pty, grid);
+    pty_resize(&s->pty, grid, s->cell_pixels);
     s->pty_resize_ns = yasl_time_ns();
     s->pty_pending = (struct vector2i){0};
 }
@@ -392,13 +395,8 @@ static uint64_t on_pty_resize_timer(void *ud, uint64_t id, uint64_t delay_ns)
     return 0;
 }
 
-void session_resize(struct session *s, struct vector2i grid)
+static void schedule_pty_size(struct session *s, struct vector2i grid)
 {
-    struct wsap_vtcore_vector2i size = wsap_vtcore_size(s->term);
-    if (grid.x == size.x && grid.y == size.y)
-        return;
-    if (!wsap_vtcore_resize(s->term, (struct wsap_vtcore_vector2i){ .x = grid.x, .y = grid.y }))
-        return;
     if (pty_master_fd(&s->pty) < 0)
         return;
     uint64_t now = yasl_time_ns();
@@ -414,6 +412,27 @@ void session_resize(struct session *s, struct vector2i grid)
     s->pty_resize_timer = yasl_loop_add_timer(s->loop, interval - age, on_pty_resize_timer, s);
     if (!s->pty_resize_timer)
         send_pty_size(s, grid);
+}
+
+void session_resize(struct session *s, struct vector2i grid)
+{
+    struct wsap_vtcore_vector2i size = wsap_vtcore_size(s->term);
+    if (grid.x == size.x && grid.y == size.y)
+        return;
+    if (wsap_vtcore_resize(s->term, (struct wsap_vtcore_vector2i){ .x = grid.x, .y = grid.y }))
+        schedule_pty_size(s, grid);
+}
+
+void session_set_cell_pixels(struct session *s, struct vector2i cell)
+{
+    if (cell.x <= 0 || cell.y <= 0)
+        cell = (struct vector2i){0};
+    if (vector2i_eq(cell, s->cell_pixels))
+        return;
+    s->cell_pixels = cell;
+    wsap_vtcore_set_cell_pixels(s->term, (struct wsap_vtcore_vector2i){cell.x, cell.y});
+    struct wsap_vtcore_vector2i size = wsap_vtcore_size(s->term);
+    schedule_pty_size(s, (struct vector2i){.x = size.x, .y = size.y});
 }
 
 bool session_write_bytes(struct session *s, const char *data, size_t len)

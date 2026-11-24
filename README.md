@@ -24,6 +24,7 @@ Install the prerequisites for your platform from the [build guide](docs/build.md
 |---|---|
 | Open Settings | Linux: `Ctrl+Shift+,`; macOS: `Cmd+,` |
 | Change fonts, colors, or themes | [Settings guide](docs/settings.md) |
+| Display inline images | [SIXEL and Kitty graphics](docs/graphics.md) |
 | List command-line options | `wsap_term --help` |
 | Set up terminal capabilities on a remote host | [SSH guide](docs/ssh.md) |
 

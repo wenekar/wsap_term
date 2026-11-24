@@ -59,6 +59,22 @@ static void bell(void *userdata)
     event(userdata, 'a', "", 0);
 }
 
+static enum wsap_vtcore_graphics_result graphics(void *userdata,
+    const struct wsap_vtcore_graphics *cmd, struct wsap_vtcore_vector2i *extent)
+{
+    const uint32_t fields[] = {cmd->action, cmd->format, cmd->image_id, cmd->placement_id,
+        (uint32_t)cmd->size.x, (uint32_t)cmd->size.y, (uint32_t)cmd->len};
+    struct effects *effects = userdata;
+    event(effects, 'g', (const char *)fields, sizeof fields);
+    /* Declared SIXEL dimensions can produce a large image from small input. */
+    if (cmd->len)
+        event(effects, 'p', (const char *)cmd->data, cmd->len < INPUT_MAX ? cmd->len : INPUT_MAX);
+    if (cmd->format == WSAP_VTCORE_GRAPHICS_PNG)
+        return WSAP_VTCORE_GRAPHICS_UNSUPPORTED;
+    *extent = cmd->placement_size;
+    return WSAP_VTCORE_GRAPHICS_OK;
+}
+
 static struct wsap_vtcore *new_terminal(struct effects *effects)
 {
     struct wsap_vtcore_options options = {
@@ -73,7 +89,9 @@ static struct wsap_vtcore *new_terminal(struct effects *effects)
             .bell = bell,
         },
     };
-    return wsap_vtcore_new(&options);
+    struct wsap_vtcore *t = wsap_vtcore_new(&options);
+    wsap_vtcore_set_graphics(t, graphics, effects);
+    return t;
 }
 
 static void same_snapshot(const struct wsap_vtcore_snapshot *a,

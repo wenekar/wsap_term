@@ -3,6 +3,7 @@
 
 #include <assert.h>
 #include "compat.h"
+#include "graphics/graphics.h"
 #include "internal.h"
 #include "kernels.h"
 #include "simd.h"
@@ -458,6 +459,10 @@ static inline void erase_span(struct wsap_vtcore *t, int p, int from, int to)
     int len = row->len;
     int width = to;
     if (to > WSAP_VTCORE_MAX_COLS) to = WSAP_VTCORE_MAX_COLS;
+    if (WSAP_VTCORE_EXPECT(t->graphics_receive != NULL, 0)) {
+        int y = p - t->scr.top;
+        wsap_vtcore_graphics_erase(t, from, y < 0 ? y + t->scr.rows : y, to - from, 1);
+    }
     /* A whole-row erase removes the row marks, even when the row is empty. */
     if (from == 0 && width >= len)
         row->flags &= (uint8_t)~RF_MARKS;

@@ -34,8 +34,10 @@ static void test_zero_lifecycle(void)
         pty_destroy(&p);
         assert(fcntl(STDIN_FILENO, F_GETFD) >= 0);
         assert(pty_master_fd(&p) == -1 && pty_pipe_fd(&p) == -1);
-        pty_resize(&p, (struct vector2i){ .x = 120, .y = 40 });
+        pty_resize(&p, (struct vector2i){ .x = 120, .y = 40 },
+                   (struct vector2i){ .x = 8, .y = 16 });
         assert(ioctl(STDIN_FILENO, TIOCGWINSZ, &size) == 0);
+        assert(size.ws_xpixel == 0 && size.ws_ypixel == 0);
         assert(size.ws_row == 24 && size.ws_col == 80);
         close(master);
         close(slave);

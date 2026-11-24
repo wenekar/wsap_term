@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "terminal/graphics.h"
 #include "terminal/internal.h"
 #include "platform/platform.h"
 #include "util/app_identity.h"
@@ -91,8 +92,7 @@ static void sync_cell_pixels(struct terminal *t)
     if (!t->session.term)
         return;
     const struct font_metrics *m = terminal_font_metrics(t);
-    wsap_vtcore_set_cell_pixels(t->session.term,
-        (struct wsap_vtcore_vector2i){ .x = m->cell_w, .y = m->cell_h });
+    session_set_cell_pixels(&t->session, (struct vector2i){.x = m->cell_w, .y = m->cell_h});
 }
 
 /* The unit of font_instance_acquire(). 120 is the 1x scale. */
@@ -192,7 +192,8 @@ struct terminal *terminal_create(struct window *window,
     struct vector2i px = spec->content_size;
     if (px.x <= 0 || px.y <= 0)
         px = default_content_size(window);
-    struct vector2i grid = content_grid(terminal_font_metrics(t), px);
+    const struct font_metrics *metrics = terminal_font_metrics(t);
+    struct vector2i grid = content_grid(metrics, px);
     const struct app_identity *identity = app_identity_current();
     const struct session_spec session_spec = {
         .app_id = identity ? identity->id : "",
@@ -200,6 +201,9 @@ struct terminal *terminal_create(struct window *window,
         .cwd = spec->cwd,
         .locale = locale,
         .grid = grid,
+        .cell_pixels = {.x = metrics->cell_w, .y = metrics->cell_h},
+        .graphics = terminal_graphics_receive,
+        .graphics_ud = t,
         .scrollback = spec->config->scrollback,
         .theme = t->theme,
         .color_scheme = t->host_scheme,
@@ -217,6 +221,7 @@ struct terminal *terminal_create(struct window *window,
 fail:
     if (t->session.term)
         session_fini(&t->session);
+    terminal_graphics_destroy(t->graphics);
     wsap_vtcore_snapshot_free(t->snapshot);
     font_instance_unref(t->font);
     free(t->applied_font_family);
@@ -230,6 +235,7 @@ void terminal_destroy(struct terminal *t)
         return;
     ui_widget_destroy(&t->scrollview.widget);
     session_fini(&t->session);
+    terminal_graphics_destroy(t->graphics);
     font_instance_unref(t->font);
     free(t->menu_theme_items);
     if (t->view.accessibility_timer && t->loop)
@@ -411,6 +417,19 @@ void terminal_adjust_font_size(struct terminal *t, int delta_pt)
         window_redraw(t->window);
 }
 
+static bool capture_frame(struct terminal *t, struct wsap_vtcore *term)
+{
+    wsap_vtcore_lock(term);
+    bool ok = wsap_vtcore_snapshot_update(t->snapshot, term);
+    if (ok) {
+        const struct wsap_vtcore_view *view = wsap_vtcore_snapshot_view(t->snapshot);
+        t->frame_graphics = terminal_graphics_capture(t, terminal_view_rect(t), view->size.y,
+                                                       view->scroll_offset == 0);
+    }
+    wsap_vtcore_unlock(term);
+    return ok;
+}
+
 void terminal_prepare(struct terminal *t, uint64_t now_ms)
 {
     (void)now_ms;
@@ -420,7 +439,7 @@ void terminal_prepare(struct terminal *t, uint64_t now_ms)
     struct wsap_vtcore *term = t->session.term;
     if (!term || !t->window || window_closed(t->window))
         return;
-    if (!wsap_vtcore_snapshot_update(t->snapshot, term))
+    if (!capture_frame(t, term))
         return;
     t->snapshot_frame = t->frame_serial;
     t->snapshot_term = term;
@@ -445,11 +464,12 @@ bool terminal_frame_source(struct terminal *t, uint64_t now_ms,
      * keys a second time. A frame without terminal_prepare() updates here. */
     if (t->snapshot_frame == t->frame_serial && t->snapshot_term == term) {
         t->snapshot_frame = 0;
-    } else if (!wsap_vtcore_snapshot_update(snap, term)) {
+    } else if (!capture_frame(t, term)) {
         return false;
     }
     *out = (struct terminal_frame_source){
         .snapshot = snap,
+        .graphics = t->frame_graphics,
         .font = t->font,
         .rect = terminal_view_rect(t),
         .cursor_visible = terminal_cursor_visible(t, now_ms),

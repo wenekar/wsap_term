@@ -1,6 +1,7 @@
 #include "escape.h"
 #include "compat.h"
 #include "core.h"
+#include "graphics/graphics.h"
 #include "kernels.h"
 #include "pen.h"
 #include "rect.h"
@@ -348,12 +349,15 @@ static bool dcs_reserve(struct wsap_vtcore *t, size_t extra)
     return need <= cap;
 }
 
-static void dcs_dispatch(struct wsap_vtcore *t)
+static void dcs_dispatch(struct wsap_vtcore *t, bool st)
 {
     if (wsap_vtcore_str_was_truncated(t))
         return;
     const char *buf = t->dcs_buf;
     int len = t->dcs_len;
+    if (st && t->graphics_receive && !t->dcs_graphics_disabled &&
+        wsap_vtcore_sixel_dispatch(t, buf, (size_t)len))
+        return;
     char resp[512];
     if (len < 2) return;
     if (buf[0] == '+' && buf[1] == 'q') {
@@ -1001,7 +1005,7 @@ static inline WSAP_VTCORE_ALWAYS_INLINE void dispatch_csi(struct wsap_vtcore *t,
         if (csi->prefix == '>')
             send_response(t, "\x1b[>0;10;0c");
         else if (!csi->prefix && csi->params[0] == 0)
-            send_response(t, "\x1b[?62;6;21;22;28c");
+            send_response(t, t->graphics_receive ? "\x1b[?62;4;6;21;22;28c" : "\x1b[?62;6;21;22;28c");
         else if (csi->prefix == '=' && csi->params[0] == 0)
             send_response(t, "\x1bP!|00000000\x1b\\");
         break;
@@ -1107,6 +1111,7 @@ static void dispatch_esc(struct wsap_vtcore *t, unsigned char ch)
         wsap_vtcore_tab_set(t, t->cursor_x);
         break;
     case 'c':
+        wsap_vtcore_graphics_reset(t);
         if (t->alternate) wsap_vtcore_screen_set_alternate(t, false);
         soft_reset(t);
         t->saved_modes_len = 0;
@@ -1129,8 +1134,13 @@ static void dispatch_esc(struct wsap_vtcore *t, unsigned char ch)
         t->state = ST_DCS;
         t->dcs_len = 0;
         t->str_truncated = false;
+        t->dcs_graphics_disabled = false;
         break;
     case '_':
+        t->state = t->graphics_receive ? ST_APC_START : ST_IGNORE;
+        t->dcs_len = 0;
+        t->str_truncated = false;
+        break;
     case '^':
     case 'X':
         t->state = ST_IGNORE;
@@ -1203,10 +1213,20 @@ static void dispatch_esc(struct wsap_vtcore *t, unsigned char ch)
     }
 }
 
+static void apc_finish(struct wsap_vtcore *t, bool st)
+{
+    if (st && t->dcs_len && !wsap_vtcore_str_was_truncated(t))
+        wsap_vtcore_kitty_dispatch(t, t->dcs_buf, (size_t)t->dcs_len);
+    else
+        wsap_vtcore_kitty_abort(t);
+    t->dcs_len = 0;
+    t->state = ST_GROUND;
+}
+
 void wsap_vtcore_escape_byte(struct wsap_vtcore *t, unsigned char ch)
 {
-    if (ch >= 0x80 && t->state != ST_OSC && t->state != ST_DCS &&
-        t->state != ST_IGNORE) {
+    if (ch >= 0x80 && t->state != ST_OSC && t->state != ST_DCS && t->state != ST_IGNORE &&
+        t->state != ST_APC_START && t->state != ST_APC && t->state != ST_APC_ESC) {
         ESC_TRACE(t, "  0x%02x in state %d → abort → ST_GROUND", ch, t->state);
         t->osc_len = 0;
         t->dcs_len = 0;
@@ -1283,6 +1303,27 @@ void wsap_vtcore_escape_byte(struct wsap_vtcore *t, unsigned char ch)
             wsap_vtcore_escape_byte(t, ch);
         }
         break;
+    case ST_APC_START:
+        t->state = ch == 'G' ? ST_APC : ST_IGNORE;
+        if (ch != 'G') wsap_vtcore_escape_byte(t, ch);
+        break;
+    case ST_APC:
+        if (ch == 0x1b)
+            t->state = ST_APC_ESC;
+        else if (ch == 0x9c)
+            apc_finish(t, true);
+        else if (ch == 0x07 || ch == 0x18 || ch == 0x1a)
+            apc_finish(t, false);
+        else
+            t->str_truncated = true;
+        break;
+    case ST_APC_ESC:
+        apc_finish(t, ch == '\\');
+        if (ch != '\\' && ch != 0x07 && ch != 0x18 && ch != 0x1a && ch != 0x9c) {
+            t->state = ST_ESC;
+            wsap_vtcore_escape_byte(t, ch);
+        }
+        break;
     case ST_OSC:
         if (ch == 0x07) {
             wsap_vtcore_osc_finish(t);
@@ -1300,14 +1341,16 @@ void wsap_vtcore_escape_byte(struct wsap_vtcore *t, unsigned char ch)
             t->str_truncated = true;
         }
         break;
-    case ST_DCS:
-        if (ch == 0x07) {
-            dcs_dispatch(t);
+    case ST_DCS: {
+        bool sixel_control = (ch == 0x9c || ch == '\r' || ch == '\n' || ch == '\t') &&
+            wsap_vtcore_sixel_header(t->dcs_buf, (size_t)t->dcs_len);
+        if (ch == 0x07 || (ch == 0x9c && sixel_control)) {
+            dcs_dispatch(t, ch != 0x07);
             t->dcs_len = 0;
             t->state = ST_GROUND;
         } else if (ch == 0x1b) {
             t->state = ST_DCS_ESC;
-        } else if (ch < 0x20) {
+        } else if (ch < 0x20 && !sixel_control) {
             t->dcs_len = 0;
             t->state = ST_GROUND;
             wsap_vtcore_text_ground(t, ch);
@@ -1317,9 +1360,10 @@ void wsap_vtcore_escape_byte(struct wsap_vtcore *t, unsigned char ch)
             t->str_truncated = true;
         }
         break;
+    }
     case ST_DCS_ESC:
         if (ch == '\\') {
-            dcs_dispatch(t);
+            dcs_dispatch(t, true);
             t->dcs_len = 0;
             t->state = ST_GROUND;
         } else {
@@ -1354,7 +1398,16 @@ size_t wsap_vtcore_escape_str(struct wsap_vtcore *t, const char *buf, size_t len
     }
     int is_osc = t->state == ST_OSC;
     size_t take = scan_printable_span(buf, len, 0x80);
-    if (is_osc) {
+    if (t->state == ST_APC) {
+        if (take && !t->str_truncated) {
+            if (take <= WSAP_VTCORE_APC_MAX - (size_t)t->dcs_len && dcs_reserve(t, take)) {
+                memcpy(t->dcs_buf + t->dcs_len, buf, take);
+                t->dcs_len += (int)take;
+            } else {
+                t->str_truncated = true;
+            }
+        }
+    } else if (is_osc) {
         size_t room = wsap_vtcore_osc_room(t);
         if (take > room && wsap_vtcore_osc_grow(t))
             room = wsap_vtcore_osc_room(t);

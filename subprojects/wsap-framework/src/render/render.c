@@ -663,8 +663,10 @@ struct render_result renderer_draw(struct renderer *r, struct framebuffer *fb,
     const struct ui_damage *ui_damage = frame->ui_damage;
     if ((scene && !scene_ok) || ufont_version != s->ui_font_version)
         ui_damage = NULL;
+    const struct ui_scene *graphics = frame->graphics;
+    bool graphics_ok = graphics && ui_scene_is_valid(graphics);
     bool invalid = !keep || !s->valid || fb->fresh || frame->repaint || r->force_full ||
-                   !render_surface_key_eq(&s->key, &key);
+                   graphics_ok || !render_surface_key_eq(&s->key, &key);
 
     /* 3. Plan. */
     struct plan_input in = {
@@ -796,7 +798,9 @@ struct render_result renderer_draw(struct renderer *r, struct framebuffer *fb,
         cell_cache_publish(r->cache, klass, r->cache_workers, n_cache);
     }
 
-    /* 8. The UI regions: the base outside the grid, then the scene. */
+    /* 8. Graphics over the grid, then the UI over both. */
+    if (graphics_ok)
+        (void)ui_scene_paint_clipped(ufont, px, canvas.x, canvas.y, graphics, grid);
     struct rect2i bounds = scene_ok ? ui_scene_bounds(scene) : (struct rect2i){0};
     for (int i = 0; i < out.ui.n; i++) {
         struct rect2i q = out.ui.rects[i];
@@ -810,7 +814,7 @@ struct render_result renderer_draw(struct renderer *r, struct framebuffer *fb,
 
     /* 9. Flush. 10. Commit. */
     glyph_cache_flush_frame();
-    if (keep) {
+    if (keep && !graphics_ok) {
         render_surface_commit(s, &key, rows, r->keys, r->ui, r->reach);
         s->ui_font_version = ufont_version;
     } else {

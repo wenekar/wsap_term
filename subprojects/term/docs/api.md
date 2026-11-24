@@ -64,6 +64,26 @@ A true return does not guarantee support for every sequence or success of every 
 The core does not retain input buffers after the function returns.
 The parser accepts arbitrary chunk boundaries, including splits inside multibyte characters or escape sequences.
 
+## Graphics
+
+Install a receiver with `wsap_vtcore_set_graphics()` to consume image commands from the terminal stream. Without a receiver, the core does not emit graphics or answer Kitty graphics queries. Images are not part of text snapshots. The receiver owns image storage, placement lifetimes, clipping, and drawing, including keeping placements synchronized with scrolling, erasure, resize, and screen changes. Copy any command data that must outlive the callback. The core advertises SIXEL in primary device attributes when a receiver is installed.
+
+| Protocol | Accepted input |
+|---|---|
+| [Kitty graphics](https://sw.kovidgoyal.net/kitty/graphics-protocol/) | Direct `t=d` transfers, including chunked uploads; RGB, RGBA, and PNG; query, transmit, transmit-and-place, place, and delete by ID or position |
+| [SIXEL](https://vt100.net/docs/vt3xx-gp/chapter14.html) | DCS `q` raster data, raster attributes, repeats, band advances and overstrikes, RGB and HLS color registers, and transparent or opaque backgrounds |
+
+Kitty queries invoke the receiver before the core replies. A receiver can reject an unsupported format or an image that exceeds its storage quota. The core checks PNG dimensions in the header; the receiver must validate and decode the PNG stream. Kitty file and shared-memory transfers, extra zlib compression, indexed color formats, animation, feature queries, image numbers, and virtual or relative placements are not supported. The core advances the Kitty cursor right and down by the receiver's cell extent and clamps it to the screen edges without scrolling. An interrupted or truncated APC is discarded without a reply.
+
+SIXEL uses the terminal's palette as the initial color registers and resets the registers for each image. The receiver gets RGBA pixels and the pixel aspect ratio separately. SIXEL uses the current cursor as the origin. With a known cell height in pixels, the core scrolls if necessary to make room before delivering the image. The receiver can request vertical cursor advancement with the returned cell extent. The core does not implement DECSDM.
+
+| Limit | Value |
+|---|---|
+| Image width or height | 4,096 pixels |
+| Kitty encoded payload per chunk | 4,096 bytes |
+| Kitty assembled bytes or SIXEL bitmap | 32 MiB |
+| SIXEL DCS body, including parameters | 16 MiB |
+
 ## Character sets
 
 The core decodes input as UTF-8.

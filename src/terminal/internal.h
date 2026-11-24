@@ -162,6 +162,8 @@ struct terminal {
     /* The last grid that the content widget gave the session. */
     struct vector2i grid;
     struct wsap_vtcore_snapshot *snapshot;
+    struct terminal_graphics *graphics;
+    const struct ui_scene *frame_graphics;
     /* terminal_prepare() updates the snapshot once for each frame. It hands
      * that update to terminal_frame_source() in the same frame. These fields
      * hold the frame serial and the terminal of the waiting update.

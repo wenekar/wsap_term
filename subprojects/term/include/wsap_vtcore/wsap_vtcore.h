@@ -215,6 +215,93 @@ enum wsap_vtcore_feed_flags {
  */
 WSAP_VTCORE_API bool wsap_vtcore_feed(struct wsap_vtcore *t, const char *bytes, size_t len, unsigned flags);
 
+enum wsap_vtcore_graphics_action {
+    WSAP_VTCORE_GRAPHICS_SIXEL,
+    WSAP_VTCORE_GRAPHICS_QUERY,
+    WSAP_VTCORE_GRAPHICS_TRANSMIT,
+    WSAP_VTCORE_GRAPHICS_TRANSMIT_AND_PLACE,
+    WSAP_VTCORE_GRAPHICS_PLACE,
+    WSAP_VTCORE_GRAPHICS_DELETE,
+    WSAP_VTCORE_GRAPHICS_RESET,
+    WSAP_VTCORE_GRAPHICS_ERASE,
+    WSAP_VTCORE_GRAPHICS_DISCARD_SCREEN,
+};
+
+enum wsap_vtcore_graphics_format {
+    WSAP_VTCORE_GRAPHICS_NO_DATA,
+    WSAP_VTCORE_GRAPHICS_RGB = 24,
+    WSAP_VTCORE_GRAPHICS_RGBA = 32,
+    WSAP_VTCORE_GRAPHICS_PNG = 100,
+};
+
+/* An image command for the active screen. Raw RGB and straight-alpha RGBA
+ * pixels are packed from the top left, one row at a time. PNG data is a
+ * complete encoded payload that the receiver must validate and decode.
+ * The cursor is a zero-based live cell position. Source geometry and offsets
+ * are in pixels; placement size is in cells. A zero size component requests
+ * the protocol default. In SIXEL commands, pixel_aspect is the horizontal
+ * and vertical size ratio of a source pixel. In delete commands, delete_mode
+ * is the Kitty selector and source_pos holds the unmodified x and y keys.
+ * In erase commands, source_pos and source_size define the zero-based live
+ * cell rectangle being erased. cell_pixels is zero when unknown.
+ */
+struct wsap_vtcore_graphics {
+    enum wsap_vtcore_graphics_action action;
+    enum wsap_vtcore_graphics_format format;
+    const uint8_t *data;
+    size_t len;
+    struct wsap_vtcore_vector2i size, cursor, pixel_aspect, cell_pixels, grid;
+    struct wsap_vtcore_vector2i source_pos, source_size, offset, placement_size;
+    uint32_t image_id, placement_id;
+    int32_t z_index;
+    char delete_mode;
+    bool alternate;
+    bool keep_cursor;
+};
+
+enum wsap_vtcore_graphics_result {
+    WSAP_VTCORE_GRAPHICS_OK,
+    WSAP_VTCORE_GRAPHICS_INVALID,
+    WSAP_VTCORE_GRAPHICS_NOT_FOUND,
+    WSAP_VTCORE_GRAPHICS_NO_SPACE,
+    WSAP_VTCORE_GRAPHICS_UNSUPPORTED,
+};
+
+/* Receives a parsed command under the same lock and with the same reentry
+ * restrictions as wsap_vtcore_callbacks. The command and its data are borrowed
+ * until the callback returns. For commands without image data, data is NULL
+ * and len is zero. The receiver owns image storage and placement lifetimes.
+ * A query validates without storing or placing an image. Return OK to
+ * acknowledge success; other results reject the command. For a successful
+ * Kitty placement, set extent to the actual nonnegative size in cells to
+ * advance the cursor. The core initializes extent to {0, 0}; C=1 ignores it.
+ * For SIXEL, a positive extent.y requests that many line advances. With a
+ * known cell height, the core can scroll before delivery and clamps the
+ * advance so a full-height image stays visible. RESET drops all graphics;
+ * DISCARD_SCREEN drops graphics on the named screen. The core ignores
+ * results from erase, discard, and reset.
+ */
+typedef enum wsap_vtcore_graphics_result (*wsap_vtcore_graphics_fn)(
+    void *ud, const struct wsap_vtcore_graphics *command, struct wsap_vtcore_vector2i *extent);
+
+/* Installs or removes the graphics receiver and discards any in-progress
+ * graphics command or upload. A NULL receiver disables graphics; an installed
+ * receiver enables Kitty replies and advertises SIXEL. A NULL terminal is
+ * ignored. The core borrows ud until the next call or terminal destruction.
+ */
+WSAP_VTCORE_API void wsap_vtcore_set_graphics(struct wsap_vtcore *t,
+                                            wsap_vtcore_graphics_fn receive, void *ud);
+
+/* Copies count row IDs starting at first into out. With live set, row zero
+ * is the top of the active screen; otherwise it is the top of the view.
+ * An invalid row, a history row, or a NULL terminal yields zero. IDs track
+ * rows across scrolling within the screen. A row that enters history or
+ * changes its wrapping during reflow can lose its ID. This read-only call is
+ * allowed inside a graphics callback. A NULL out or a nonpositive count does
+ * nothing. */
+WSAP_VTCORE_API void wsap_vtcore_graphics_rows(const struct wsap_vtcore *t, bool live,
+                                             int first, int count, uint64_t *out);
+
 WSAP_VTCORE_API void wsap_vtcore_focus(struct wsap_vtcore *t, bool focused);
 /* Zero disables history. Valid limits are 0 to WSAP_VTCORE_SCROLLBACK_MAX.
  * Return false for any other limit or an allocation failure; keep the old

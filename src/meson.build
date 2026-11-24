@@ -44,7 +44,7 @@ terminal_lib = static_library(
     link_with: [session_lib, render_term_lib],
     include_directories: inc,
     dependencies: [wsap_ui_yasl_dep, wsap_ui_dep, wsap_font_dep,
-                   wsap_paint_dep, wsap_base_dep, yasl_dep, term_dep],
+                   wsap_paint_dep, wsap_base_dep, yasl_dep, term_dep, png_dep],
     install: false,
 )
 

@@ -12,6 +12,7 @@ struct session;
 struct window;
 struct font_instance;
 struct ui_widget;
+struct ui_scene;
 struct wsap_vtcore_snapshot;
 struct terminal_held_keys;
 
@@ -21,6 +22,7 @@ struct terminal;
  * the destruction of the content. */
 struct terminal_frame_source {
     struct wsap_vtcore_snapshot *snapshot;
+    const struct ui_scene *graphics;
     struct font_instance *font;
     struct rect2i rect;
     bool cursor_visible;

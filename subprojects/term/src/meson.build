@@ -1,3 +1,4 @@
+subdir('graphics')
 subdir('osc')
 
 wsap_vtcore_soversion = meson.project_version().split('.')[0]
@@ -21,7 +22,7 @@ wsap_vtcore_sources = files(
   'text/charset.c',
   'text/run.c',
   'text/text.c',
-) + wsap_vtcore_osc_src
+) + wsap_vtcore_osc_src + wsap_vtcore_graphics_src
 
 wsap_vtcore_lib = both_libraries('wsap_vtcore', wsap_vtcore_sources,
   include_directories: wsap_vtcore_private_inc,

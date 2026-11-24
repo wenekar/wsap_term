@@ -31,7 +31,9 @@ struct session_spec {
     const char *command;
     const char *cwd;
     const char *locale;
-    struct vector2i grid;
+    struct vector2i grid, cell_pixels;
+    wsap_vtcore_graphics_fn graphics;
+    void *graphics_ud;
     int scrollback;
     struct wsap_vtcore_theme theme;
     enum wsap_vtcore_color_scheme color_scheme;
@@ -77,6 +79,7 @@ struct session {
     uint64_t pty_resize_ns;
     uint64_t pty_resize_timer;
     struct vector2i pty_pending;
+    struct vector2i cell_pixels;
 };
 
 /*
@@ -111,6 +114,9 @@ void session_set_host(struct session *s, const struct session_host *host, void *
  * size.
  */
 void session_resize(struct session *s, struct vector2i grid);
+
+/* Updates the cell size in device pixels for terminal and PTY size reports. */
+void session_set_cell_pixels(struct session *s, struct vector2i cell);
 
 /*
  * Enqueues raw bytes for the pseudo-terminal. Any thread can call this. The
