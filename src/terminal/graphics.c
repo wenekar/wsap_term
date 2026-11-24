@@ -76,6 +76,7 @@ struct terminal_graphics {
     uint64_t *row_ids;
     struct graphics_row *view_rows;
     uint32_t next_id;
+    unsigned sixel_placements;
     int row_cap, view_cap;
 };
 
@@ -93,6 +94,8 @@ static void placement_remove(struct terminal_graphics *g, struct graphics_placem
 {
     struct graphics_placement *p = *link;
     *link = p->next;
+    if (p->image->sixel)
+        g->sixel_placements--;
     p->image->placements--;
     image_unref(p->image);
     free(p->cuts);
@@ -362,6 +365,8 @@ static void store_placement(struct terminal_graphics *g, struct graphics_placeme
     *link = p;
     p->image->refs++;
     p->image->placements++;
+    if (p->image->sixel)
+        g->sixel_placements++;
     g->placement_count++;
 }
 
@@ -441,14 +446,15 @@ static bool rows_capture(struct terminal_graphics *g, struct wsap_vtcore *term,
 static void erase_region(struct terminal_graphics *g, struct wsap_vtcore *term,
                          const struct wsap_vtcore_graphics *cmd)
 {
-    if (!g->placements) return;
+    if (!g->placements || (cmd->sixel_only && !g->sixel_placements)) return;
     int x = cmd->source_pos.x, w = cmd->source_size.x;
     int y = cmd->source_pos.y, h = cmd->source_size.y;
     if (!rows_capture(g, term, true, y, h))
         return;
     for (struct graphics_placement **link = &g->placements; *link;) {
         struct graphics_placement *p = *link;
-        if (p->image->alternate != cmd->alternate || !covers_column(p, x, x + w)) {
+        if (p->image->alternate != cmd->alternate || (cmd->sixel_only && !p->image->sixel) ||
+            !covers_column(p, x, x + w)) {
             link = &p->next;
             continue;
         }
@@ -469,7 +475,8 @@ static void erase_region(struct terminal_graphics *g, struct wsap_vtcore *term,
 }
 
 static enum wsap_vtcore_graphics_result delete_images(struct terminal_graphics *g,
-    struct wsap_vtcore *term, const struct wsap_vtcore_graphics *cmd)
+    struct wsap_vtcore *term, const struct wsap_vtcore_graphics *cmd,
+    struct wsap_vtcore_graphics_reply *reply)
 {
     char mode = cmd->delete_mode;
     bool hard = mode >= 'A' && mode <= 'Z';
@@ -479,8 +486,17 @@ static enum wsap_vtcore_graphics_result delete_images(struct terminal_graphics *
         col = cmd->cursor.x;
         row = cmd->cursor.y;
     }
-    if ((mode == 'i' && !cmd->image_id) ||
-        ((mode == 'x' || mode == 'p' || mode == 'q') && col < 0) ||
+    uint32_t target_id = cmd->image_id;
+    if (mode == 'i' && !target_id) {
+        if (!cmd->image_number)
+            return WSAP_VTCORE_GRAPHICS_INVALID;
+        struct graphics_image *image = *find_image(g, 0, cmd->image_number, cmd->alternate);
+        if (!image)
+            return WSAP_VTCORE_GRAPHICS_OK;
+        target_id = image->id;
+        reply->image_id = target_id;
+    }
+    if (((mode == 'x' || mode == 'p' || mode == 'q') && col < 0) ||
         ((mode == 'y' || mode == 'p' || mode == 'q') && row < 0))
         return WSAP_VTCORE_GRAPHICS_INVALID;
     if (mode == 'a' && !rows_capture(g, term, true, 0, cmd->grid.y))
@@ -497,8 +513,8 @@ static enum wsap_vtcore_graphics_result delete_images(struct terminal_graphics *
                 for (int y = 0; y < cmd->grid.y && !match; y++)
                     match = covers_row(p, g->row_ids[y]);
                 break;
-            case 'i': match = p->image->id == cmd->image_id && (!cmd->placement_id ||
-                                                              p->id == cmd->placement_id); break;
+            case 'i': match = p->image->id == target_id && (!cmd->placement_id ||
+                                                            p->id == cmd->placement_id); break;
             case 'r': match = p->image->id && p->image->id >= (uint32_t)cmd->source_pos.x &&
                                              p->image->id <= (uint32_t)cmd->source_pos.y; break;
             case 'z': match = p->z == cmd->z_index; break;
@@ -522,7 +538,7 @@ static enum wsap_vtcore_graphics_result delete_images(struct terminal_graphics *
         }
     }
     if (hard && mode == 'i' && !cmd->placement_id)
-        free_unplaced(g, false, cmd->alternate, cmd->image_id, true);
+        free_unplaced(g, false, cmd->alternate, target_id, true);
     free_unplaced(g, true, cmd->alternate, 0, false);
     return WSAP_VTCORE_GRAPHICS_OK;
 }
@@ -632,7 +648,7 @@ enum wsap_vtcore_graphics_result terminal_graphics_receive(
         if (g) erase_region(g, t->session.term, cmd);
         return WSAP_VTCORE_GRAPHICS_OK;
     case WSAP_VTCORE_GRAPHICS_DELETE:
-        return g ? delete_images(g, t->session.term, cmd) : WSAP_VTCORE_GRAPHICS_OK;
+        return g ? delete_images(g, t->session.term, cmd, reply) : WSAP_VTCORE_GRAPHICS_OK;
     default: break;
     }
     bool place = cmd->action == WSAP_VTCORE_GRAPHICS_SIXEL ||
@@ -685,8 +701,7 @@ enum wsap_vtcore_graphics_result terminal_graphics_receive(
     }
     if (p) {
         reply->extent = (struct wsap_vtcore_vector2i){p->extent.x, p->extent.y};
-        if (!cmd->alternate)
-            wsap_vtcore_graphics_track_rows(t->session.term, cmd->cursor.y, p->count);
+        wsap_vtcore_graphics_track_rows(t->session.term, cmd->cursor.y, p->count);
         store_placement(g, p);
     }
     return WSAP_VTCORE_GRAPHICS_OK;

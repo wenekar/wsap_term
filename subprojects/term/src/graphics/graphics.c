@@ -178,15 +178,27 @@ enum wsap_vtcore_graphics_result wsap_vtcore_graphics_emit(struct wsap_vtcore *t
     return result;
 }
 
-void wsap_vtcore_graphics_erase(struct wsap_vtcore *t, int x, int y, int width, int height)
+static void graphics_erase(struct wsap_vtcore *t, int x, int y, int width, int height,
+                           bool sixel_only)
 {
-    if (width <= 0 || height <= 0)
+    if (!t->graphics_receive || width <= 0 || height <= 0)
         return;
     struct wsap_vtcore_graphics erase = {
         .action = WSAP_VTCORE_GRAPHICS_ERASE,
         .source_pos = {x, y}, .source_size = {width, height},
+        .sixel_only = sixel_only,
     };
     wsap_vtcore_graphics_emit(t, &erase);
+}
+
+void wsap_vtcore_graphics_erase(struct wsap_vtcore *t, int x, int y, int width, int height)
+{
+    graphics_erase(t, x, y, width, height, false);
+}
+
+void wsap_vtcore_graphics_erase_sixel(struct wsap_vtcore *t, int x, int y, int width, int height)
+{
+    graphics_erase(t, x, y, width, height, true);
 }
 
 void wsap_vtcore_graphics_discard_screen(struct wsap_vtcore *t)

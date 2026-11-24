@@ -569,6 +569,13 @@ static inline void screen_new_row(struct wsap_vtcore *t, struct srow *row)
     }
 }
 
+static inline void sc_graphics_overwrite(struct wsap_vtcore *t, const struct srow *row,
+                                         int x, int y, int width)
+{
+    if (WSAP_VTCORE_EXPECT((row->uid & GRAPHICS_ROW_BIT) != 0, 0))
+        wsap_vtcore_graphics_erase_sixel(t, x, y, width, 1);
+}
+
 static inline void wsap_vtcore_screen_scroll_up(struct wsap_vtcore *t)
 {
     struct screen *s = &t->scr;

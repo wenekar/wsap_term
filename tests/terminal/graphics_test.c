@@ -202,6 +202,30 @@ int main(void)
     grid = paint_at(&app, terminal, &fb, 1200);
     assert(pixel(&fb, grid, 0, 0) == 0xFFFF0000u);
 
+    /* Overwriting cells with spaces on the alternate screen clears only those
+     * SIXEL cells, whereas writing text over a negative-z Kitty placement
+     * leaves the Kitty image visible behind the text. */
+    feed(term, "\033c\033[?1049h\033[?25l"
+               "\033[2;2H\033P7;1q#1;2;0;100;0!40~\033\\"
+               "\033[2;2H  ");
+    grid = paint(&app, terminal, &fb);
+    assert(pixel(&fb, grid, cw, ch) != 0xFF00FF00u);
+    assert(pixel(&fb, grid, cw * 3, ch) == 0xFF00FF00u);
+
+    feed(term, "\033[2;2H\033[2K"
+               "\033[1;1H\033_Ga=T,f=24,s=1,v=1,c=2,z=-1,C=1,q=2;/wAA\033\\"
+               "\033[1;1H  ");
+    grid = paint(&app, terminal, &fb);
+    assert(pixel(&fb, grid, 0, 0) == 0xFFFF0000u);
+
+    /* Deleting by image_number resolves the allocated image ID. */
+    feed(term, "\033[3;1H\033_Ga=T,f=24,s=1,v=1,I=12,C=1,q=2;/wAA\033\\");
+    grid = paint(&app, terminal, &fb);
+    assert(pixel(&fb, grid, 0, 2 * ch) == 0xFFFF0000u);
+    feed(term, "\033_Ga=d,d=I,I=12,q=2\033\\");
+    grid = paint(&app, terminal, &fb);
+    assert(pixel(&fb, grid, 0, 2 * ch) != 0xFFFF0000u);
+
     if (history.destroy)
         history.destroy(history.data);
     free(fb.pixels);

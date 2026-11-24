@@ -71,6 +71,7 @@ void wsap_vtcore_sc_print_glyph(struct wsap_vtcore *t, uint32_t cp, int width, u
             struct cell *row = srow->cells;
             if (WSAP_VTCORE_EXPECT(!((cx < len && (row[cx].flags & CELL_TRAIL)) ||
                                    (cx + 1 < len && (row[cx + 1].flags & CELL_TRAIL))), 1)) {
+                sc_graphics_overwrite(t, srow, cx, t->cursor_y, 1);
                 row[cx] = (struct cell){cp,
                     t->inverse ? t->cur_bg : t->cur_fg,
                     t->inverse ? t->cur_fg : t->cur_bg,
@@ -114,6 +115,7 @@ void wsap_vtcore_sc_print_glyph(struct wsap_vtcore *t, uint32_t cp, int width, u
     }
 
     if (WSAP_VTCORE_EXPECT(width == 2 && cols > 1 && cx == right && t->autowrap, 0)) {
+        sc_graphics_overwrite(t, srow, cx, t->cursor_y, 1);
         wsap_vtcore_row_fill_gap(srow, cx);
         clear_wide_edges(row, cx, right + 1, srow->len);
         row[cx] = (struct cell){ ' ', WSAP_VTCORE_COLOR_FG, WSAP_VTCORE_COLOR_BG, CELL_WRAP_PAD, 0 };
@@ -159,6 +161,8 @@ void wsap_vtcore_sc_print_glyph(struct wsap_vtcore *t, uint32_t cp, int width, u
         repair_wide_row(row, right, right + 1, cols, srow->len);
     }
     clear_wide_edges(row, cx, cx + span, srow->len);
+    sc_graphics_overwrite(t, srow, cx, t->cursor_y,
+                          t->insert_mode ? right + 1 - cx : span);
 
     uint32_t fg = t->inverse ? t->cur_bg : t->cur_fg;
     uint32_t bg = t->inverse ? t->cur_fg : t->cur_bg;
@@ -763,6 +767,7 @@ void wsap_vtcore_sc_decrara(struct wsap_vtcore *t, const struct csi *csi)
 
 void wsap_vtcore_sc_decaln(struct wsap_vtcore *t)
 {
+    wsap_vtcore_graphics_erase_sixel(t, 0, 0, t->cols, t->rows);
     struct cell fill = { .c = 'E', .fg = WSAP_VTCORE_COLOR_FG, .bg = WSAP_VTCORE_COLOR_BG };
     struct cell *row0 = NULL;
     for (int y = 0; y < t->rows; y++) {

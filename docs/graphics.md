@@ -17,7 +17,7 @@ SIXEL supports RGB and HLS palettes, transparency, repeats, pixel aspect ratios,
 | Local file or shared-memory transfer | Not supported |
 | Unicode placeholders | Not supported |
 
-Images move with their rows into scrollback and appear when you scroll back. Resize preserves placements on rows that keep their boundaries; reflow can discard bands on rows it splits or joins. Erasing text cells also erases the corresponding part of an image. The alternate screen keeps a separate set of images. Tab thumbnails omit inline images.
+Images move with their rows into scrollback and appear when you scroll back. Resize preserves placements on rows that keep their boundaries; reflow can discard bands on rows it splits or joins. Erasing text cells also erases the corresponding part of an image, and writing characters over SIXEL cells erases the overwritten part of the SIXEL image. The alternate screen keeps a separate set of images. Tab thumbnails omit inline images.
 
 | Kitty z-index | Draws |
 |---|---|

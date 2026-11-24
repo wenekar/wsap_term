@@ -400,6 +400,7 @@ void wsap_vtcore_screen_delete_chars(struct wsap_vtcore *t, int n)
     int p = phys_row(t, t->cursor_y);
     struct cell *row = row_cells(t, p);
     struct srow *srow = wsap_vtcore_row(t, t->cursor_y);
+    sc_graphics_overwrite(t, srow, x, t->cursor_y, right - x);
     int len = srow->len;
     clear_wide_edges(row, x, x + n, len);
     if (len > cols) {
@@ -451,6 +452,7 @@ void wsap_vtcore_screen_insert_chars(struct wsap_vtcore *t, int n)
     int p = phys_row(t, t->cursor_y);
     struct cell *row = row_cells(t, p);
     struct srow *srow = wsap_vtcore_row(t, t->cursor_y);
+    sc_graphics_overwrite(t, srow, x, t->cursor_y, right - x);
     wsap_vtcore_row_fill_gap(srow, x);
     int len = srow->len;
     if (x > 0 && x < len && (row[x].flags & CELL_TRAIL)) {
@@ -1057,6 +1059,7 @@ void wsap_vtcore_screen_scroll_rect(struct wsap_vtcore *t, int top, int bottom, 
         int p = phys_row(t, y);
         struct cell *cells = row_cells(t, p);
         struct srow *row = &t->scr.slot[p];
+        sc_graphics_overwrite(t, row, left, y, right - left + 1);
         clear_wide_edges(cells, left, right + 1, row->len);
         row_set_wrapped(row, false);
     }

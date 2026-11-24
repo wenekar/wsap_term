@@ -40,6 +40,7 @@ static inline void sc_print_cell(struct wsap_vtcore *t, uint32_t cp, int width, 
             struct cell *row = srow->cells;
             if (WSAP_VTCORE_EXPECT(!((cx < len && (row[cx].flags & CELL_TRAIL)) ||
                               (cx + 1 < len && (row[cx + 1].flags & CELL_TRAIL))), 1)) {
+                sc_graphics_overwrite(t, srow, cx, t->cursor_y, 1);
                 row[cx] = (struct cell){cp,
                     t->inverse ? t->cur_bg : t->cur_fg,
                     t->inverse ? t->cur_fg : t->cur_bg,
@@ -249,6 +250,7 @@ static inline int sc_text_ascii(struct wsap_vtcore *t, const char *s, int n, str
     int take = n < avail ? n : avail;
     if (take <= 0)
         return 0;
+    sc_graphics_overwrite(t, row, x, t->cursor_y, take);
     text_append(row, (const uint8_t *)s, take, take, take, HLINE_NARROW, pen);
     t->last_char = (unsigned char)s[take - 1];
     sc_text_advance(t, x, take, avail);
@@ -273,6 +275,7 @@ static inline void sc_print_ascii(struct wsap_vtcore *t, const char *s, int n)
             if (take <= 0)
                 break;
         }
+        sc_graphics_overwrite(t, span.row, span.x, t->cursor_y, take);
         put_ascii_chunk(span.cells, s, take, pen.fg, pen.bg, pen.sl);
         sc_span_end(t, &span, take, 0, (unsigned char)s[take - 1]);
         if (WSAP_VTCORE_EXPECT(n <= take, 1)) break;
@@ -303,6 +306,7 @@ static inline bool sc_ascii_fast(struct wsap_vtcore *t, const char *s, int n,
     if (WSAP_VTCORE_EXPECT((cx < len && (cells[cx].flags & CELL_TRAIL)) ||
                          (cx + n < len && (cells[cx + n].flags & CELL_TRAIL)), 0))
         return false;
+    sc_graphics_overwrite(t, row, cx, t->cursor_y, n);
     put_ascii_chunk(cells + cx, s, n, pen.fg, pen.bg, pen.sl);
     cx += n;
     if (cx > len)
@@ -356,6 +360,7 @@ static inline bool sc_put1_fast(struct wsap_vtcore *t, char ch, struct text_pen 
                          (cx + 1 < len && (cells[cx + 1].flags & CELL_TRAIL)), 0))
         return false;
 
+    sc_graphics_overwrite(t, row, cx, t->cursor_y, 1);
     cells[cx] = (struct cell){ (uint8_t)ch, pen.fg, pen.bg,
                                (uint16_t)pen.sl, (uint16_t)(pen.sl >> 16) };
     t->last_char = (uint8_t)ch;

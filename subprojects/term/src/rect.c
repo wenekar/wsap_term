@@ -82,6 +82,7 @@ void wsap_vtcore_sc_decfra(struct wsap_vtcore *t, const struct csi *csi)
         int p = phys_row(t, y);
         struct cell *cells = row_cells(t, p);
         struct srow *row = &t->scr.slot[p];
+        sc_graphics_overwrite(t, row, a.left, y, a.right - a.left + 1);
         clear_wide_edges(cells, a.left, a.right + 1, row->len);
         wsap_vtcore_row_fill_gap(row, a.left);
         for (int x = a.left; x <= a.right; x++)
@@ -143,6 +144,7 @@ static void deccra_row(struct wsap_vtcore *t, int sy, int sx, int dy, int dx, in
     int pd = phys_row(t, dy);
     struct cell *dst = row_cells(t, pd);
     struct srow *drow = &t->scr.slot[pd];
+    sc_graphics_overwrite(t, drow, dx, dy, width);
     int old_len = drow->len;
     clear_wide_edges(dst, dx, dx + width, old_len);
     area_put_cells(drow, dx, dx + width - 1, tmp, ext);

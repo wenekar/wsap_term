@@ -142,6 +142,7 @@ static inline bool try_text_run(struct wsap_vtcore *t, const char *buf, size_t l
             if (!r.bytes)
                 break;
             wrote = true;
+            sc_graphics_overwrite(t, text, x, t->cursor_y, r.cols);
             text_commit(text, r.out, r.chars, r.cols,
                         (uint8_t)((r.narrow ? HLINE_NARROW : 0) | (r.wide ? HLINE_HAS_WIDE : 0)),
                         pen);
@@ -158,6 +159,7 @@ static inline bool try_text_run(struct wsap_vtcore *t, const char *buf, size_t l
             if (!r.bytes)
                 break;
             wrote = true;
+            sc_graphics_overwrite(t, span.row, span.x, t->cursor_y, r.cols);
             sc_span_end(t, &span, r.cols, 0, r.last);
             i += (size_t)r.bytes;
         }

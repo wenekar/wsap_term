@@ -5,7 +5,9 @@
 
 struct receiver {
     struct wsap_vtcore_graphics last;
+    struct wsap_vtcore_graphics last_erase;
     unsigned calls;
+    unsigned erases;
     uint8_t pixels[128];
     char replies[256];
     size_t replied;
@@ -15,8 +17,12 @@ static enum wsap_vtcore_graphics_result receive(void *ud,
     const struct wsap_vtcore_graphics *cmd, struct wsap_vtcore_graphics_reply *reply)
 {
     struct receiver *r = ud;
-    if (cmd->action == WSAP_VTCORE_GRAPHICS_ERASE)
+    if (cmd->action == WSAP_VTCORE_GRAPHICS_ERASE) {
+        r->last_erase = *cmd;
+        r->last_erase.data = NULL;
+        r->erases++;
         return WSAP_VTCORE_GRAPHICS_OK;
+    }
     r->last = *cmd;
     r->last.data = NULL;
     r->calls++;
@@ -184,6 +190,21 @@ static void test_sixel(void)
     wsap_vtcore_set_graphics(t, NULL, NULL);
     feed(t, "\033Pq~\r\n~\033\\Z");
     assert(r.calls == 2 && wsap_vtcore_cursor(t).pos.x == 3 && wsap_vtcore_cursor(t).pos.y == 1);
+
+    /* Writing text over tracked rows emits sixel_only erases, including on the
+     * alternate screen; explicit cell erases leave sixel_only false. */
+    wsap_vtcore_set_graphics(t, receive, &r);
+    feed(t, "\033[?1049h\033[2;3H\033P0;1q#1;2;100;0;0!2@\033\\");
+    wsap_vtcore_graphics_track_rows(t, 1, 1);
+    unsigned before = r.erases;
+    feed(t, "\033[2;3H ");
+    assert(r.erases == before + 1 && r.last_erase.action == WSAP_VTCORE_GRAPHICS_ERASE &&
+           r.last_erase.sixel_only && r.last_erase.alternate &&
+           r.last_erase.source_pos.x == 2 && r.last_erase.source_pos.y == 1 &&
+           r.last_erase.source_size.x == 1 && r.last_erase.source_size.y == 1);
+    feed(t, "\033[2;3H\033[X");
+    assert(r.erases == before + 2 && r.last_erase.action == WSAP_VTCORE_GRAPHICS_ERASE &&
+           !r.last_erase.sixel_only);
     wsap_vtcore_free(t);
 }
 

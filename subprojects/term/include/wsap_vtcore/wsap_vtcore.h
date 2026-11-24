@@ -249,7 +249,8 @@ enum wsap_vtcore_graphics_format {
  * and vertical size ratio of a source pixel. In delete commands, delete_mode
  * is the Kitty selector and source_pos holds the unmodified x and y keys.
  * In erase commands, source_pos and source_size define the zero-based live
- * cell rectangle being erased. cell_pixels is zero when unknown.
+ * cell rectangle being erased, and sixel_only limits the erasure to SIXEL
+ * placements. cell_pixels is zero when unknown.
  * A nonzero image_number names images that the client does not address by
  * ID; such commands leave image_id zero.
  */
@@ -274,6 +275,7 @@ struct wsap_vtcore_graphics {
     bool alternate;
     bool keep_cursor;
     bool zlib;
+    bool sixel_only;
     /* A feature query: the core reports the supported keys of this command. */
     bool feature_query;
 };
