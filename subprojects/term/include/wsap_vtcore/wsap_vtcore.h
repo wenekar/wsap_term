@@ -223,6 +223,9 @@ enum wsap_vtcore_graphics_action {
     WSAP_VTCORE_GRAPHICS_PLACE,
     WSAP_VTCORE_GRAPHICS_DELETE,
     WSAP_VTCORE_GRAPHICS_RESET,
+    /* A frame of an animation, and its playback control. */
+    WSAP_VTCORE_GRAPHICS_FRAME,
+    WSAP_VTCORE_GRAPHICS_ANIMATE,
     WSAP_VTCORE_GRAPHICS_ERASE,
     WSAP_VTCORE_GRAPHICS_DISCARD_SCREEN,
 };
@@ -247,6 +250,8 @@ enum wsap_vtcore_graphics_format {
  * is the Kitty selector and source_pos holds the unmodified x and y keys.
  * In erase commands, source_pos and source_size define the zero-based live
  * cell rectangle being erased. cell_pixels is zero when unknown.
+ * A nonzero image_number names images that the client does not address by
+ * ID; such commands leave image_id zero.
  */
 struct wsap_vtcore_graphics {
     enum wsap_vtcore_graphics_action action;
@@ -255,12 +260,22 @@ struct wsap_vtcore_graphics {
     size_t len, uncompressed_size;
     struct wsap_vtcore_vector2i size, cursor, pixel_aspect, cell_pixels, grid;
     struct wsap_vtcore_vector2i source_pos, source_size, offset, placement_size;
-    uint32_t image_id, placement_id;
+    uint32_t image_id, image_number, placement_id;
+    /* The 1-based frame that a frame or control command addresses. */
+    uint32_t frame, frame_target;
+    /* The gap of a frame in milliseconds; a negative gap is gapless. */
+    int32_t frame_gap;
+    /* Playback control: 0 none, 1 stop, 2 run in loading mode, 3 run. */
+    uint32_t animation;
+    /* Loops plus one; 1 runs forever, and 0 runs once. */
+    uint32_t loops;
     int32_t z_index;
     char delete_mode;
     bool alternate;
     bool keep_cursor;
     bool zlib;
+    /* A feature query: the core reports the supported keys of this command. */
+    bool feature_query;
 };
 
 enum wsap_vtcore_graphics_result {
@@ -284,9 +299,21 @@ enum wsap_vtcore_graphics_result {
  * advance so a full-height image stays visible. RESET drops all graphics;
  * DISCARD_SCREEN drops graphics on the named screen. The core ignores
  * results from erase, discard, and reset.
+ *
+ * A command that names an image by number asks the receiver to allocate the
+ * ID. For a successful or rejected transmission that stored no image, the
+ * receiver sets image_id to the ID that the new image now uses, or zero.
  */
+struct wsap_vtcore_graphics_reply {
+    /* The placed size in cells, for cursor advancement. */
+    struct wsap_vtcore_vector2i extent;
+    /* The ID of a newly stored image, for a command with image_number. */
+    uint32_t image_id;
+};
+
 typedef enum wsap_vtcore_graphics_result (*wsap_vtcore_graphics_fn)(
-    void *ud, const struct wsap_vtcore_graphics *command, struct wsap_vtcore_vector2i *extent);
+    void *ud, const struct wsap_vtcore_graphics *command,
+    struct wsap_vtcore_graphics_reply *reply);
 
 /* Installs or removes the graphics receiver and discards any in-progress
  * graphics command or upload. A NULL receiver disables graphics; an installed

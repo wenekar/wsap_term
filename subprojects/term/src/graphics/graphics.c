@@ -147,8 +147,10 @@ enum wsap_vtcore_graphics_result wsap_vtcore_graphics_emit(struct wsap_vtcore *t
     cmd->alternate = t->alternate;
     cmd->cell_pixels = t->cell_pixels;
     cmd->grid = (struct wsap_vtcore_vector2i){t->cols, t->rows};
-    struct wsap_vtcore_vector2i extent = {0};
-    enum wsap_vtcore_graphics_result result = t->graphics_receive(t->graphics_ud, cmd, &extent);
+    struct wsap_vtcore_graphics_reply reply = {0};
+    enum wsap_vtcore_graphics_result result = t->graphics_receive(t->graphics_ud, cmd, &reply);
+    struct wsap_vtcore_vector2i extent = reply.extent;
+    if (reply.image_id) cmd->image_id = reply.image_id;
     if (result == WSAP_VTCORE_GRAPHICS_OK && cmd->action == WSAP_VTCORE_GRAPHICS_SIXEL &&
         !fixed && extent.y > 0) {
         int visible = t->rows - t->cursor_y;

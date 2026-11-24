@@ -11,9 +11,12 @@
 
 struct kitty_control {
     struct wsap_vtcore_graphics command;
-    char action, medium;
+    char action, medium, feature;
     uint32_t format, quiet, more;
-    bool continuation, quiet_set, unsupported;
+    bool continuation, quiet_set, unsupported, both_ids;
+    /* The control data, for a feature query reply. */
+    const char *control;
+    size_t control_len;
 };
 
 struct wsap_vtcore_kitty_upload {
@@ -49,6 +52,9 @@ static bool kitty_uint(const char *p, const char *end, uint32_t *out)
 static bool kitty_parse(struct kitty_control *k, const char *p, const char *end)
 {
     struct wsap_vtcore_graphics *g = &k->command;
+    /* Keys whose meaning depends on the action wait here. */
+    uint32_t raw_c = 0, raw_r = 0, raw_s = 0, raw_v = 0, raw_z = 0;
+    bool has_c = false, has_r = false, has_s = false, has_v = false, has_z = false, z_neg = false;
     uint64_t seen = 0;
     while (p < end) {
         unsigned key = (unsigned char)*p++;
@@ -74,7 +80,8 @@ static bool kitty_parse(struct kitty_control *k, const char *p, const char *end)
             int *field = NULL;
             bool negative = key == 'z' && v < p && *v == '-';
             if (key == 'e') {
-                k->unsupported = true;
+                if (p - v != 1) return false;
+                k->feature = *v;
             } else if (!kitty_uint(v + negative, p, &n)) {
                 return false;
             } else switch (key) {
@@ -82,25 +89,26 @@ static bool kitty_parse(struct kitty_control *k, const char *p, const char *end)
             case 'q': k->quiet_set = true; k->quiet = n; break;
             case 'm': k->more = n; break;
             case 'i': g->image_id = n; break;
+            case 'I': g->image_number = n; break;
             case 'p': g->placement_id = n; break;
             case 'S': g->uncompressed_size = n; break;
-            case 's': field = &g->size.x; break;
-            case 'v': field = &g->size.y; break;
             case 'x': field = &g->source_pos.x; break;
             case 'y': field = &g->source_pos.y; break;
             case 'w': field = &g->source_size.x; break;
             case 'h': field = &g->source_size.y; break;
             case 'X': field = &g->offset.x; break;
             case 'Y': field = &g->offset.y; break;
-            case 'c': field = &g->placement_size.x; break;
-            case 'r': field = &g->placement_size.y; break;
+            case 'c': has_c = true; raw_c = n; break;
+            case 'r': has_r = true; raw_r = n; break;
+            case 's': has_s = true; raw_s = n; break;
+            case 'v': has_v = true; raw_v = n; break;
             case 'C':
                 if (n > 1) return false;
                 g->keep_cursor = n == 1;
                 break;
             case 'z':
                 if (n > (uint32_t)INT32_MAX + negative) return false;
-                g->z_index = (int32_t)(negative ? -(int64_t)n : n);
+                has_z = true; z_neg = negative; raw_z = n;
                 break;
             case 'N': break;
             default: k->unsupported = true; break;
@@ -113,7 +121,37 @@ static bool kitty_parse(struct kitty_control *k, const char *p, const char *end)
         if (key != 'm' && key != 'q') k->continuation = false;
         if (p < end && ++p == end) return false;
     }
-    return k->quiet <= 2 && k->more <= 1;
+    k->both_ids = (seen & (UINT64_C(1) << ('i' - 'a'))) &&
+                  (seen & (UINT64_C(1) << ('I' - 'A' + 26)));
+    bool control = k->action == 'a';
+    bool frames = k->action == 'f';
+    if (has_c && !control && !frames && raw_c > INT_MAX) return false;
+    if (has_r && !control && raw_r > INT_MAX) return false;
+    if (has_c) {
+        if (control) g->frame = raw_c;
+        else if (frames) g->frame_target = raw_c;
+        else g->placement_size.x = (int)raw_c;
+    }
+    if (has_r) {
+        if (control) g->frame_target = raw_r;
+        else g->placement_size.y = (int)raw_r;
+    }
+    if (has_s) {
+        if (k->action == 'a') g->animation = raw_s;
+        else g->size.x = (int)raw_s;
+    }
+    if (has_v) {
+        if (control) g->loops = raw_v;
+        else g->size.y = (int)raw_v;
+    }
+    if (frames && has_r)
+        k->unsupported = true;
+    if (has_z) {
+        int32_t value = (int32_t)(z_neg ? -(int64_t)raw_z : raw_z);
+        if (control || frames) g->frame_gap = value;
+        else g->z_index = value;
+    }
+    return k->quiet <= 2 && k->more <= 1 && !k->both_ids;
 }
 
 static void kitty_reply(struct wsap_vtcore *t, const struct kitty_control *k,
@@ -130,12 +168,46 @@ static void kitty_reply(struct wsap_vtcore *t, const struct kitty_control *k,
     case WSAP_VTCORE_GRAPHICS_UNSUPPORTED: message = "ENOTSUP:Unsupported graphics command"; break;
     default: message = "EINVAL:Invalid graphics command"; break;
     }
-    char response[112];
+    char response[160];
+    int n = snprintf(response, sizeof response, "\033_Gi=%" PRIu32, k->command.image_id);
+    if (k->command.image_number)
+        n += snprintf(response + n, sizeof response - (size_t)n, ",I=%" PRIu32,
+                      k->command.image_number);
     if (k->command.placement_id)
-        snprintf(response, sizeof response, "\033_Gi=%" PRIu32 ",p=%" PRIu32 ";%s\033\\",
-                 k->command.image_id, k->command.placement_id, message);
-    else
-        snprintf(response, sizeof response, "\033_Gi=%" PRIu32 ";%s\033\\", k->command.image_id, message);
+        n += snprintf(response + n, sizeof response - (size_t)n, ",p=%" PRIu32,
+                      k->command.placement_id);
+    snprintf(response + n, sizeof response - (size_t)n, ";%s\033\\", message);
+    send_response(t, response);
+}
+
+/* A feature query reports the keys of the query that the action supports.
+ * A missing `e` in the reply means that the action is unsupported. */
+static void kitty_feature_reply(struct wsap_vtcore *t, const struct kitty_control *k)
+{
+    static const char actions[] = "qtTpd";
+    char response[512];
+    int n = snprintf(response, sizeof response, "\033_Gi=%" PRIu32, k->command.image_id);
+    if (strchr(actions, k->feature) && k->feature)
+        n += snprintf(response + n, sizeof response - (size_t)n, ",e=%c", k->feature);
+    for (const char *p = k->control; p < k->control + k->control_len && n < 400;) {
+        const char *end = memchr(p, ',', (size_t)(k->control + k->control_len - p));
+        if (!end) end = k->control + k->control_len;
+        const char *eq = memchr(p, '=', (size_t)(end - p));
+        size_t len = (size_t)(end - p);
+        if (eq == p + 1 && !strchr("aiImqe", eq[-1]) && strchr("tfsvxywhXYCrzoSN", eq[-1])) {
+            const char *v = eq + 1;
+            size_t vlen = (size_t)(end - v);
+            bool ok = !((eq[-1] == 't' && (vlen != 1 || *v != 'd')) ||
+                        (eq[-1] == 'f' && !((vlen == 2 && !memcmp(v, "24", 2)) ||
+                                            (vlen == 2 && !memcmp(v, "32", 2)) ||
+                                            (vlen == 3 && !memcmp(v, "100", 3)))) ||
+                        (eq[-1] == 'o' && (vlen != 1 || *v != 'z')));
+            if (ok)
+                n += snprintf(response + n, sizeof response - (size_t)n, ",%.*s", (int)len, p);
+        }
+        p = end + 1;
+    }
+    snprintf(response + n, sizeof response - (size_t)n, ";OK\033\\");
     send_response(t, response);
 }
 
@@ -211,7 +283,7 @@ void wsap_vtcore_kitty_dispatch(struct wsap_vtcore *t, const char *buf, size_t l
     size_t encoded = (size_t)(end - payload);
     struct kitty_control k = {
         .action = 't', .medium = 'd', .format = 32, .continuation = true,
-        .command.delete_mode = 'a',
+        .command.delete_mode = 'a', .control = buf, .control_len = len,
     };
     enum wsap_vtcore_graphics_result result = WSAP_VTCORE_GRAPHICS_INVALID;
     if (!kitty_parse(&k, buf, sep ? sep : end))
@@ -230,26 +302,44 @@ void wsap_vtcore_kitty_dispatch(struct wsap_vtcore *t, const char *buf, size_t l
             goto done;
         }
     }
+    if (k.feature && k.action == 'q' && k.command.image_id) {
+        /* A feature query ignores unknown keys and any payload. */
+        kitty_feature_reply(t, &k);
+        return;
+    }
     if (k.unsupported || k.medium != 'd') {
         result = WSAP_VTCORE_GRAPHICS_UNSUPPORTED;
         goto done;
     }
     switch (k.action) {
     case 'q':
-        if (!k.command.image_id) goto done;
+        if (!k.command.image_id && !k.command.image_number) goto done;
         k.command.action = WSAP_VTCORE_GRAPHICS_QUERY;
         break;
     case 't': k.command.action = WSAP_VTCORE_GRAPHICS_TRANSMIT; break;
     case 'T': k.command.action = WSAP_VTCORE_GRAPHICS_TRANSMIT_AND_PLACE; break;
     case 'p':
         k.command.action = WSAP_VTCORE_GRAPHICS_PLACE;
-        if (!k.command.image_id || encoded || more) goto done;
+        if ((!k.command.image_id && !k.command.image_number) || encoded || more) goto done;
+        result = wsap_vtcore_graphics_emit(t, &k.command);
+        goto done;
+    case 'f':
+        k.command.action = WSAP_VTCORE_GRAPHICS_FRAME;
+        if (!k.command.image_id && !k.command.image_number) goto done;
+        break;
+    case 'a':
+        k.command.action = WSAP_VTCORE_GRAPHICS_ANIMATE;
+        if ((!k.command.image_id && !k.command.image_number) || encoded || more)
+            goto done;
         result = wsap_vtcore_graphics_emit(t, &k.command);
         goto done;
     case 'd':
         k.command.action = WSAP_VTCORE_GRAPHICS_DELETE;
+        if (!k.command.image_id && !k.command.image_number &&
+            (k.command.delete_mode == 'i' || k.command.delete_mode == 'I'))
+            goto done;
         if (encoded || more) goto done;
-        if (!strchr("aAiIcCpPqQrRxXyYzZ", k.command.delete_mode)) {
+        if (!strchr("aAiIcCpPqQrRxXyYzZfF", k.command.delete_mode)) {
             result = WSAP_VTCORE_GRAPHICS_UNSUPPORTED;
             goto done;
         }

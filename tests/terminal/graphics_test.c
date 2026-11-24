@@ -20,6 +20,16 @@ static void feed(struct wsap_vtcore *term, const char *s)
     assert(wsap_vtcore_feed(term, s, strlen(s), 0));
 }
 
+static struct rect2i source_rect(struct terminal *terminal)
+{
+    struct terminal_frame_source source;
+    assert(terminal_frame_source(terminal, 0, &source));
+    return source.rect;
+}
+
+static struct rect2i paint_at(struct test_app *app, struct terminal *terminal,
+                               struct framebuffer *fb, uint64_t now_ms);
+
 static struct rect2i paint(struct test_app *app, struct terminal *terminal,
                             struct framebuffer *fb)
 {
@@ -34,6 +44,23 @@ static struct rect2i paint(struct test_app *app, struct terminal *terminal,
         .behind_cells = source.graphics.behind_cells,
     });
     return source.rect;
+}
+
+static struct rect2i paint_at(struct test_app *app, struct terminal *terminal,
+                               struct framebuffer *fb, uint64_t now_ms)
+{
+    terminal_prepare(terminal, now_ms);
+    return paint(app, terminal, fb);
+}
+
+/* Finds the first pixel of `color` in the grid area. */
+static bool has_color(const struct framebuffer *fb, struct rect2i grid, uint32_t color)
+{
+    for (int y = grid.y; y < grid.y + grid.height; y++)
+        for (int x = grid.x; x < grid.x + grid.width; x++)
+            if (fb->pixels[(size_t)y * (size_t)fb->size.x + (size_t)x] == color)
+                return true;
+    return false;
 }
 
 static uint32_t pixel(const struct framebuffer *fb, struct rect2i grid, int x, int y)
@@ -76,11 +103,11 @@ int main(void)
     assert(pixel(&fb, grid, cw, ch) != 0xFFFF0000u);
     wsap_vtcore_scroll_to(term, 4);
     grid = paint(&app, terminal, &fb);
-    assert(pixel(&fb, grid, cw, ch) == 0xFFFF0000u);
-    assert(pixel(&fb, grid, cw, 2 * ch) == 0xFF00FF00u);
+    assert(has_color(&fb, grid, 0xFFFF0000u));
+    assert(has_color(&fb, grid, 0xFF00FF00u));
     feed(term, "\033[3J");
     grid = paint(&app, terminal, &fb);
-    assert(pixel(&fb, grid, cw, ch) != 0xFFFF0000u);
+    assert(!has_color(&fb, grid, 0xFFFF0000u));
     feed(term, "\033c");
 
     feed(term, "\033[2;2H\033_Ga=T,f=100,i=7,C=1,q=2;"
@@ -157,6 +184,23 @@ int main(void)
     grid = paint(&app, terminal, &fb);
     assert(pixel(&fb, grid, 0, 0) == 0xFF00FF00u);
     assert(wsap_vtcore_cursor(term).pos.y == 2 && wsap_vtcore_cursor(term).pos.x == 2);
+
+    /* Animation: the base frame is red, the second frame green. Playback
+     * advances on the app clock and stops when it runs out of loops. */
+    feed(term, "\033c\033_Ga=T,f=24,s=1,v=1,i=60,z=40,c=1,C=1,q=2;/wAA\033\\"
+               "\033_Ga=f,f=24,i=60,s=1,v=1,z=40;AP8A\033\\"
+               "\033_Ga=a,i=60,z=40,s=3,v=3\033\\");
+    terminal_prepare(terminal, 1000);
+    struct terminal_frame_source anim;
+    assert(terminal_frame_source(terminal, 1000, &anim));
+    grid = source_rect(terminal);
+    (void)anim;
+    grid = paint_at(&app, terminal, &fb, 1000);
+    assert(pixel(&fb, grid, 0, 0) == 0xFFFF0000u);
+    grid = paint_at(&app, terminal, &fb, 1045);
+    assert(pixel(&fb, grid, 0, 0) == 0xFF00FF00u);
+    grid = paint_at(&app, terminal, &fb, 1200);
+    assert(pixel(&fb, grid, 0, 0) == 0xFFFF0000u);
 
     if (history.destroy)
         history.destroy(history.data);

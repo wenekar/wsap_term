@@ -1,5 +1,6 @@
 #include <wsap_vtcore/wsap_vtcore.h>
 #include <assert.h>
+#include <stdio.h>
 #include <string.h>
 
 struct receiver {
@@ -11,7 +12,7 @@ struct receiver {
 };
 
 static enum wsap_vtcore_graphics_result receive(void *ud,
-    const struct wsap_vtcore_graphics *cmd, struct wsap_vtcore_vector2i *extent)
+    const struct wsap_vtcore_graphics *cmd, struct wsap_vtcore_graphics_reply *reply)
 {
     struct receiver *r = ud;
     if (cmd->action == WSAP_VTCORE_GRAPHICS_ERASE)
@@ -27,7 +28,9 @@ static enum wsap_vtcore_graphics_result receive(void *ud,
         return WSAP_VTCORE_GRAPHICS_NOT_FOUND;
     if (cmd->action == WSAP_VTCORE_GRAPHICS_PLACE ||
         cmd->action == WSAP_VTCORE_GRAPHICS_TRANSMIT_AND_PLACE)
-        *extent = (struct wsap_vtcore_vector2i){2, 1};
+        reply->extent = (struct wsap_vtcore_vector2i){2, 1};
+    if (cmd->image_number && cmd->action != WSAP_VTCORE_GRAPHICS_QUERY)
+        reply->image_id = 1000 + cmd->image_number;
     return WSAP_VTCORE_GRAPHICS_OK;
 }
 
@@ -42,6 +45,8 @@ static void reply(void *ud, const char *bytes, size_t len)
 
 static void expect_reply(struct receiver *r, const char *expected)
 {
+    if (r->replied != strlen(expected))
+        fprintf(stderr, "reply: got \"%s\" want \"%s\"\n", r->replies, expected);
     assert(r->replied == strlen(expected));
     assert(memcmp(r->replies, expected, r->replied) == 0);
     r->replied = 0;
@@ -94,6 +99,24 @@ static void test_kitty(void)
     expect_reply(&r, "");
     feed(t, "\033_Ga=p,i=99,q=1\033\\");
     expect_reply(&r, "\033_Gi=99;ENOENT:Image not found\033\\");
+    feed(t, "\033_Ga=T,f=24,s=1,v=1,I=12,c=1;/wAA\033\\");
+    assert(r.last.image_number == 12 && r.last.image_id == 0);
+    expect_reply(&r, "\033_Gi=1012,I=12;OK\033\\");
+    feed(t, "\033_Ga=p,I=12\033\\");
+    assert(r.last.action == WSAP_VTCORE_GRAPHICS_PLACE && r.last.image_number == 12);
+    expect_reply(&r, "\033_Gi=1012,I=12;OK\033\\");
+    feed(t, "\033_Ga=d,d=I,I=12\033\\");
+    assert(r.last.delete_mode == 'I' && r.last.image_number == 12);
+    expect_reply(&r, "\033_Gi=1012,I=12;OK\033\\");
+    feed(t, "\033_Ga=T,i=1,I=2;AAAA\033\\\033_Ga=q,i=5,e=T,U=1,C=1\033\\\033_Ga=q,i=5,e=f\033\\");
+    expect_reply(&r, "\033_Gi=1,I=2;EINVAL:Invalid graphics command\033\\"
+                     "\033_Gi=5,e=T,C=1;OK\033\\\033_Gi=5;OK\033\\");
+    /* Feature queries are answered by the core and reach no receiver. */
+    unsigned calls = r.calls;
+    feed(t, "\033_Ga=q,i=6,s=1,v=1,f=24;AAAA\033\\");
+    assert(r.calls == calls + 1 && r.last.action == WSAP_VTCORE_GRAPHICS_QUERY &&
+           !r.last.feature_query);
+    expect_reply(&r, "\033_Gi=6;OK\033\\");
     feed(t, "\033_Ga=d,d=I,i=4294967295,p=7,q=2\033\\");
     assert(r.last.action == WSAP_VTCORE_GRAPHICS_DELETE && r.last.delete_mode == 'I');
     expect_reply(&r, "");

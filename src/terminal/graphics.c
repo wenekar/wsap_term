@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <zlib.h>
+#include <stdio.h>
 
 #define IMAGE_BYTES_MAX (64u << 20)
 #define IMAGE_DECODE_BYTES_MAX (32u << 20)
@@ -13,14 +14,30 @@
 #define IMAGE_COUNT_MAX 256
 #define PLACEMENT_COUNT_MAX 256
 #define PLACEMENT_PIXELS_MAX 65536
+#define FRAME_COUNT_MAX 64
+
+struct graphics_frame {
+    uint32_t *pixels;
+    /* The scene keeps this address, so it must stay stable. */
+    struct ui_image image;
+    size_t bytes;
+    int32_t gap;
+};
 
 struct graphics_image {
     struct graphics_image *next;
     struct ui_image image;
     size_t bytes;
     unsigned refs, placements;
-    uint32_t id;
+    uint32_t id, number;
     bool alternate, sixel;
+    /* frames[0] is the base image, which lives in pixels. */
+    struct graphics_frame *frames;
+    int n_frames, frames_cap;
+    int current;
+    uint32_t loops_left;
+    uint64_t frame_since_ms;
+    bool playing, frame_start_pending;
     uint32_t pixels[];
 };
 
@@ -58,13 +75,18 @@ struct terminal_graphics {
     unsigned n_frame_refs;
     uint64_t *row_ids;
     struct graphics_row *view_rows;
+    uint32_t next_id;
     int row_cap, view_cap;
 };
 
 static void image_unref(struct graphics_image *image)
 {
-    if (--image->refs == 0)
-        free(image);
+    if (--image->refs)
+        return;
+    for (int i = 1; i < image->n_frames; i++)
+        free(image->frames[i].pixels);
+    free(image->frames);
+    free(image);
 }
 
 static void placement_remove(struct terminal_graphics *g, struct graphics_placement **link)
@@ -167,7 +189,8 @@ static enum wsap_vtcore_graphics_result decode_pixels(const struct wsap_vtcore_g
         goto done;
     *image = (struct graphics_image){
         .image = {.pixels = image->pixels, .size = {.x = (int)w, .y = (int)h}},
-        .bytes = bytes, .refs = 1, .id = cmd->image_id, .alternate = cmd->alternate,
+        .bytes = bytes, .refs = 1, .id = cmd->image_id, .number = cmd->image_number,
+        .alternate = cmd->alternate,
         .sixel = cmd->action == WSAP_VTCORE_GRAPHICS_SIXEL,
     };
     if (is_png) {
@@ -213,10 +236,13 @@ static enum wsap_vtcore_graphics_result decode(const struct wsap_vtcore_graphics
     return result;
 }
 
-static struct graphics_image **find_image(struct terminal_graphics *g, uint32_t id, bool alternate)
+/* Images are newest first, so a number finds the newest image with it. */
+static struct graphics_image **find_image(struct terminal_graphics *g, uint32_t id,
+                                          uint32_t number, bool alternate)
 {
     struct graphics_image **link = &g->images;
-    while (*link && (!id || (*link)->id != id || (*link)->alternate != alternate))
+    while (*link && ((*link)->alternate != alternate ||
+                     (id ? (*link)->id != id : !number || (*link)->number != number)))
         link = &(*link)->next;
     return link;
 }
@@ -227,8 +253,8 @@ static void store_image(struct terminal_graphics *g, struct graphics_image *imag
     /* The GPU cache can retain a key after the allocator reuses its address. */
     static _Atomic uint64_t generation = UINT64_C(1) << 63;
     image->image.gen = atomic_fetch_add_explicit(&generation, 1, memory_order_relaxed);
-    struct graphics_image **same = find_image(g, image->id, image->alternate);
-    if (*same)
+    struct graphics_image **same = image->id ? find_image(g, image->id, 0, image->alternate) : NULL;
+    if (same && *same)
         image_remove(g, same);
     while (g->bytes + image->bytes > IMAGE_BYTES_MAX || g->image_count >= IMAGE_COUNT_MAX) {
         struct graphics_image **oldest = &g->images, **unused = NULL;
@@ -238,6 +264,17 @@ static void store_image(struct terminal_graphics *g, struct graphics_image *imag
         }
         image_remove(g, unused ? unused : oldest);
     }
+    image->frames_cap = 4;
+    image->frames = calloc((size_t)image->frames_cap, sizeof(*image->frames));
+    if (!image->frames) {
+        image_unref(image);
+        return;
+    }
+    /* The base image is frame one. */
+    image->frames[0] = (struct graphics_frame){
+        .pixels = image->pixels, .image = image->image, .bytes = image->bytes, .gap = 0,
+    };
+    image->n_frames = 1;
     image->next = g->images;
     g->images = image;
     g->bytes += image->bytes;
@@ -490,12 +527,101 @@ static enum wsap_vtcore_graphics_result delete_images(struct terminal_graphics *
     return WSAP_VTCORE_GRAPHICS_OK;
 }
 
+static enum wsap_vtcore_graphics_result store_frame(struct graphics_image *image,
+                                                    const struct wsap_vtcore_graphics *cmd)
+{
+    struct graphics_image *frame = NULL;
+    enum wsap_vtcore_graphics_result result = decode(cmd, &frame);
+    if (result != WSAP_VTCORE_GRAPHICS_OK)
+        return result;
+    if (!vector2i_eq(frame->image.size, image->image.size) ||
+        image->n_frames >= FRAME_COUNT_MAX) {
+        image_unref(frame);
+        return image->n_frames >= FRAME_COUNT_MAX ? WSAP_VTCORE_GRAPHICS_NO_SPACE
+                                                  : WSAP_VTCORE_GRAPHICS_INVALID;
+    }
+    if (image->n_frames == image->frames_cap) {
+        if (!util_grow(&image->frames, &image->frames_cap, image->n_frames + 1,
+                       sizeof(*image->frames))) {
+            image_unref(frame);
+            return WSAP_VTCORE_GRAPHICS_NO_SPACE;
+        }
+    }
+    uint32_t *pixels = malloc(frame->bytes);
+    if (!pixels) {
+        image_unref(frame);
+        return WSAP_VTCORE_GRAPHICS_NO_SPACE;
+    }
+    memcpy(pixels, frame->pixels, frame->bytes);
+    /* A frame that names a background composes over it with the straight
+     * alpha of its pixels. Full frames are the only sizes accepted. */
+    if (cmd->frame_target >= 1 && (int)cmd->frame_target < image->n_frames &&
+        cmd->source_size.x == 0 && cmd->source_size.y == 0 &&
+        cmd->source_pos.x == 0 && cmd->source_pos.y == 0 &&
+        cmd->offset.x == 0 && cmd->offset.y == 0) {
+        const uint32_t *below = image->frames[cmd->frame_target - 1].pixels;
+        size_t count = frame->bytes / sizeof(*pixels);
+        for (size_t i = 0; i < count; i++) {
+            unsigned a = pixels[i] >> 24;
+            if (a == 255) continue;
+            unsigned inv = 255 - a;
+            unsigned r = ((pixels[i] >> 16 & 255) * 255 + (below[i] >> 16 & 255) * inv) / 255;
+            unsigned g = ((pixels[i] >> 8 & 255) * 255 + (below[i] >> 8 & 255) * inv) / 255;
+            unsigned b = ((pixels[i] & 255) * 255 + (below[i] & 255) * inv) / 255;
+            pixels[i] = 0xFF000000u | r << 16 | g << 8 | b;
+        }
+    }
+    image->frames[image->n_frames] = (struct graphics_frame){
+        .pixels = pixels, .bytes = frame->bytes, .gap = cmd->frame_gap,
+        .image = {.pixels = pixels, .size = image->image.size,
+                  .gen = image->image.gen + (uint64_t)image->n_frames},
+    };
+    image->n_frames++;
+    image->bytes += frame->bytes;
+    image_unref(frame);
+
+    return WSAP_VTCORE_GRAPHICS_OK;
+}
+
+static enum wsap_vtcore_graphics_result play_image(struct graphics_image *image,
+                                                  const struct wsap_vtcore_graphics *cmd)
+{
+    if (cmd->frame && (int)cmd->frame > image->n_frames)
+        return WSAP_VTCORE_GRAPHICS_NOT_FOUND;
+    if (cmd->frame_target && (int)cmd->frame_target > image->n_frames)
+        return WSAP_VTCORE_GRAPHICS_NOT_FOUND;
+    if (cmd->frame) image->current = (int)cmd->frame - 1;
+    if (cmd->animation) {
+        image->playing = cmd->animation != 1;
+        /* One loop count plays once forever; two plays twice, and so on. */
+        image->loops_left = cmd->loops == 0 ? 1 : cmd->loops == 1 ? UINT32_MAX
+                                                                    : cmd->loops - 1;
+        image->frame_start_pending = true;
+    }
+    if (cmd->frame_gap) {
+        int at = cmd->frame_target ? (int)cmd->frame_target - 1 : image->current;
+        image->frames[at].gap = cmd->frame_gap;
+    }
+    return WSAP_VTCORE_GRAPHICS_OK;
+}
+
 enum wsap_vtcore_graphics_result terminal_graphics_receive(
-    void *ud, const struct wsap_vtcore_graphics *cmd, struct wsap_vtcore_vector2i *extent)
+    void *ud, const struct wsap_vtcore_graphics *cmd, struct wsap_vtcore_graphics_reply *reply)
 {
     struct terminal *t = ud;
     struct terminal_graphics *g = t->graphics;
     switch (cmd->action) {
+    case WSAP_VTCORE_GRAPHICS_FRAME:
+    case WSAP_VTCORE_GRAPHICS_ANIMATE: {
+        struct graphics_image *image = g
+            ? *find_image(g, cmd->image_id, cmd->image_number, cmd->alternate) : NULL;
+        if (!image || image->sixel)
+            return WSAP_VTCORE_GRAPHICS_NOT_FOUND;
+        if (cmd->image_number) reply->image_id = image->id;
+        if (cmd->action == WSAP_VTCORE_GRAPHICS_FRAME)
+            return store_frame(image, cmd);
+        return play_image(image, cmd);
+    }
     case WSAP_VTCORE_GRAPHICS_RESET:
         if (g) while (g->images) image_remove(g, &g->images);
         return WSAP_VTCORE_GRAPHICS_OK;
@@ -517,14 +643,19 @@ enum wsap_vtcore_graphics_result terminal_graphics_receive(
         enum wsap_vtcore_graphics_result result = decode(cmd, &image);
         if (result != WSAP_VTCORE_GRAPHICS_OK)
             return result;
-        if (cmd->action == WSAP_VTCORE_GRAPHICS_QUERY || (!place && !image->id)) {
+        if (cmd->action == WSAP_VTCORE_GRAPHICS_QUERY) {
+            image_unref(image);
+            return WSAP_VTCORE_GRAPHICS_OK;
+        }
+        if (!place && !image->id && !image->number) {
             image_unref(image);
             return WSAP_VTCORE_GRAPHICS_OK;
         }
     } else {
-        image = g ? *find_image(g, cmd->image_id, cmd->alternate) : NULL;
+        image = g ? *find_image(g, cmd->image_id, cmd->image_number, cmd->alternate) : NULL;
         if (!image)
             return WSAP_VTCORE_GRAPHICS_NOT_FOUND;
+        if (cmd->image_number) reply->image_id = image->id;
     }
     if (!g) {
         g = calloc(1, sizeof(*g));
@@ -534,6 +665,11 @@ enum wsap_vtcore_graphics_result terminal_graphics_receive(
         }
         t->graphics = g;
     }
+    if (transmit && image->number && !image->id) {
+        do {
+            image->id = ++g->next_id;
+        } while (*find_image(g, image->id, 0, image->alternate));
+    }
     struct graphics_placement *p = NULL;
     if (place) {
         enum wsap_vtcore_graphics_result result = make_placement(t->session.term, image, cmd, &p);
@@ -542,14 +678,37 @@ enum wsap_vtcore_graphics_result terminal_graphics_receive(
             return result;
         }
     }
-    if (transmit) store_image(g, image);
+    if (transmit) {
+        if (image->id && image->number)
+            reply->image_id = image->id;
+        store_image(g, image);
+    }
     if (p) {
-        *extent = (struct wsap_vtcore_vector2i){p->extent.x, p->extent.y};
+        reply->extent = (struct wsap_vtcore_vector2i){p->extent.x, p->extent.y};
         if (!cmd->alternate)
             wsap_vtcore_graphics_track_rows(t->session.term, cmd->cursor.y, p->count);
         store_placement(g, p);
     }
     return WSAP_VTCORE_GRAPHICS_OK;
+}
+
+uint64_t terminal_graphics_next_ms(const struct terminal *t, uint64_t now_ms)
+{
+    const struct terminal_graphics *g = t ? t->graphics : NULL;
+    if (!g)
+        return 0;
+    uint64_t next = 0;
+    for (const struct graphics_placement *p = g->placements; p; p = p->next) {
+        struct graphics_image *image = p->image;
+        if (!image->playing || image->n_frames < 2)
+            continue;
+        int32_t gap = image->frames[image->current].gap;
+        uint64_t due = image->frame_since_ms + (uint64_t)(gap < 0 ? 0 : gap);
+        if (due <= now_ms)
+            due = now_ms + 1;
+        if (!next || due < next) next = due;
+    }
+    return next;
 }
 
 static int compare_rows(const void *ap, const void *bp)
@@ -572,17 +731,53 @@ static int scale_pixels(int px, int target, int base)
     return geom_sat_i(((int64_t)px * target + base / 2) / base);
 }
 
-static bool draw_image_clip(struct ui_scene *scene, const struct graphics_placement *p,
-                            struct rect2i dst, struct rect2i clip)
+/* The frame that an image shows at `now_ms`, advancing the playback. */
+static const struct ui_image *frame_image(struct graphics_image *image, uint64_t now_ms)
 {
+    if (!image->playing || image->n_frames < 2)
+        return &image->frames[image->current].image;
+    /* The first frame of a new playback starts at the frame that follows
+     * the control command. */
+    if (image->frame_start_pending) {
+        image->frame_since_ms = now_ms;
+        image->frame_start_pending = false;
+    }
+    /* Gapless frames are skipped instantly; the gap of a frame times the
+     * wait before the next one. */
+    for (int steps = 0; steps < FRAME_COUNT_MAX * 2; steps++) {
+        const struct graphics_frame *f = &image->frames[image->current];
+        int32_t gap = f->gap < 0 ? 0 : f->gap;
+        uint64_t due = image->frame_since_ms + (uint64_t)gap;
+        if (now_ms < due)
+            break;
+        image->frame_since_ms = due;
+        if (++image->current == image->n_frames) {
+            if (image->loops_left == 1 && image->loops_left != UINT32_MAX) {
+                image->playing = false;
+                image->current = 0;
+                return &image->frames[0].image;
+            }
+            if (image->loops_left != UINT32_MAX) image->loops_left--;
+            image->current = 0;
+        }
+        if (image->frames[image->current].gap >= 0 && image->frame_since_ms == due)
+            break;
+    }
+    return &image->frames[image->current].image;
+}
+
+static bool draw_image_clip(struct ui_scene *scene, const struct graphics_placement *p,
+                            struct rect2i dst, struct rect2i clip, uint64_t now_ms)
+{
+    const struct ui_image *frame = frame_image(p->image, now_ms);
     return ui_scene_push_clip(scene, clip) &&
-           ui_scene_image_rect(scene, dst, &p->image->image, &(struct ui_image_options){.uv = p->uv}) &&
+           ui_scene_image_rect(scene, dst, frame, &(struct ui_image_options){.uv = p->uv}) &&
            ui_scene_pop_clip(scene);
 }
 
 static bool draw_placement(const struct terminal_graphics *g, struct ui_scene *scene,
-                           const struct graphics_placement *p, struct rect2i bounds,
-                           struct vector2i cell, int count)
+                           struct graphics_placement *p, struct rect2i bounds,
+                           struct vector2i cell, int count, uint64_t now_ms)
 {
     struct rect2i dst = {
         .x = geom_sat_i((int64_t)bounds.x + (int64_t)p->col * cell.x +
@@ -619,7 +814,7 @@ static bool draw_placement(const struct terminal_graphics *g, struct ui_scene *s
                 struct rect2i piece = clip;
                 piece.x = left;
                 piece.width = stop - left;
-                if (!draw_image_clip(scene, p, dst, piece)) return drew;
+                if (!draw_image_clip(scene, p, dst, piece, now_ms)) return drew;
                 drew = true;
             }
             x = geom_sat_i((int64_t)bounds.x + (int64_t)span->end * cell.x);
@@ -628,7 +823,7 @@ static bool draw_placement(const struct terminal_graphics *g, struct ui_scene *s
         if (right > left) {
             clip.x = left;
             clip.width = right - left;
-            if (!draw_image_clip(scene, p, dst, clip)) return drew;
+            if (!draw_image_clip(scene, p, dst, clip, now_ms)) return drew;
             drew = true;
         }
     }
@@ -636,7 +831,7 @@ static bool draw_placement(const struct terminal_graphics *g, struct ui_scene *s
 }
 
 struct terminal_graphics_layers terminal_graphics_capture(struct terminal *t, struct rect2i bounds,
-                                                            int rows, bool live_view)
+                                                            int rows, bool live_view, uint64_t now_ms)
 {
     struct terminal_graphics_layers result = {0};
     struct terminal_graphics *g = t->graphics;
@@ -675,7 +870,7 @@ struct terminal_graphics_layers terminal_graphics_capture(struct terminal *t, st
             }
             enum graphics_layer layer = p->z < INT32_MIN / 2 ? BEHIND_CELLS :
                                         p->z < 0 ? BEHIND_TEXT : ABOVE_TEXT;
-            if (draw_placement(g, &g->scenes[layer], p, bounds, cell, rows)) {
+            if (draw_placement(g, &g->scenes[layer], p, bounds, cell, rows, now_ms)) {
                 p->image->refs++;
                 g->frame_refs[g->n_frame_refs++] = p->image;
             }

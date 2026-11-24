@@ -1,4 +1,5 @@
 #include "terminal/internal.h"
+#include "terminal/graphics.h"
 
 #include "input/input.h"
 #include "input/keybind.h"
@@ -1467,6 +1468,9 @@ static uint64_t view_tick(struct ui_widget *widget, uint64_t now_ms)
     uint64_t text_flip = terminal_next_text_blink_ms(t, now_ms);
     if (text_flip && (!next || text_flip < next))
         next = text_flip;
+    uint64_t frame = terminal_graphics_next_ms(t, now_ms);
+    if (frame && (!next || frame < next))
+        next = frame;
     return next;
 }
 

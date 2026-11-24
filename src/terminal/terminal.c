@@ -417,14 +417,14 @@ void terminal_adjust_font_size(struct terminal *t, int delta_pt)
         window_redraw(t->window);
 }
 
-static bool capture_frame(struct terminal *t, struct wsap_vtcore *term)
+static bool capture_frame(struct terminal *t, struct wsap_vtcore *term, uint64_t now_ms)
 {
     wsap_vtcore_lock(term);
     bool ok = wsap_vtcore_snapshot_update(t->snapshot, term);
     if (ok) {
         const struct wsap_vtcore_view *view = wsap_vtcore_snapshot_view(t->snapshot);
         t->frame_graphics = terminal_graphics_capture(t, terminal_view_rect(t), view->size.y,
-                                                       view->scroll_offset == 0);
+                                                       view->scroll_offset == 0, now_ms);
     }
     wsap_vtcore_unlock(term);
     return ok;
@@ -439,7 +439,7 @@ void terminal_prepare(struct terminal *t, uint64_t now_ms)
     struct wsap_vtcore *term = t->session.term;
     if (!term || !t->window || window_closed(t->window))
         return;
-    if (!capture_frame(t, term))
+    if (!capture_frame(t, term, now_ms))
         return;
     t->snapshot_frame = t->frame_serial;
     t->snapshot_term = term;
@@ -464,7 +464,7 @@ bool terminal_frame_source(struct terminal *t, uint64_t now_ms,
      * keys a second time. A frame without terminal_prepare() updates here. */
     if (t->snapshot_frame == t->frame_serial && t->snapshot_term == term) {
         t->snapshot_frame = 0;
-    } else if (!capture_frame(t, term)) {
+    } else if (!capture_frame(t, term, now_ms)) {
         return false;
     }
     *out = (struct terminal_frame_source){

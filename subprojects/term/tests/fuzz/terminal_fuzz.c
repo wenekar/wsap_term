@@ -60,7 +60,7 @@ static void bell(void *userdata)
 }
 
 static enum wsap_vtcore_graphics_result graphics(void *userdata,
-    const struct wsap_vtcore_graphics *cmd, struct wsap_vtcore_vector2i *extent)
+    const struct wsap_vtcore_graphics *cmd, struct wsap_vtcore_graphics_reply *reply)
 {
     const uint32_t fields[] = {cmd->action, cmd->format, cmd->image_id, cmd->placement_id,
         (uint32_t)cmd->size.x, (uint32_t)cmd->size.y, (uint32_t)cmd->len};
@@ -71,7 +71,8 @@ static enum wsap_vtcore_graphics_result graphics(void *userdata,
         event(effects, 'p', (const char *)cmd->data, cmd->len < INPUT_MAX ? cmd->len : INPUT_MAX);
     if (cmd->format == WSAP_VTCORE_GRAPHICS_PNG)
         return WSAP_VTCORE_GRAPHICS_UNSUPPORTED;
-    *extent = cmd->placement_size;
+    reply->extent = cmd->placement_size;
+    reply->image_id = cmd->image_number ? 1000 + cmd->image_number : 0;
     return WSAP_VTCORE_GRAPHICS_OK;
 }
 
