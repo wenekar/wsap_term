@@ -106,6 +106,13 @@ _Static_assert(offsetof(struct srow, text) == 32,
 _Static_assert(sizeof(struct srow) == 128,
                "struct srow must stay 128 bytes");
 
+#define GRAPHICS_ROW_BIT (UINT64_C(1) << 63)
+
+static inline uint64_t row_uid(const struct srow *row)
+{
+    return row->uid & ~GRAPHICS_ROW_BIT;
+}
+
 struct screen {
     struct srow *slot;
     uint64_t top_id;
@@ -246,6 +253,7 @@ struct wsap_vtcore {
     wsap_vtcore_graphics_fn graphics_receive;
     void *graphics_ud;
     struct wsap_vtcore_kitty_upload *kitty_upload;
+    struct wsap_vtcore_graphics_history *graphics_history;
     void *links;
     struct wsap_vtcore_styles *styles;
     char *cwd;
@@ -279,6 +287,7 @@ struct wsap_vtcore {
 
     /* Cold 1-byte fields and string buffers. */
     bool dcs_graphics_disabled;
+    bool sixel_fixed, sixel_scroll_right;
     bool alt_allocated;
     bool normal_cursor_visible;
     uint8_t normal_cursor_style;

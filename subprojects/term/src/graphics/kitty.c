@@ -62,16 +62,18 @@ static bool kitty_parse(struct kitty_control *k, const char *p, const char *end)
         seen |= bit;
         const char *v = p;
         while (p < end && *p != ',') p++;
-        if (key == 'a' || key == 't' || key == 'd') {
+        if (key == 'a' || key == 't' || key == 'd' || key == 'o') {
             if (p - v != 1) return false;
             if (key == 'a') k->action = *v;
             else if (key == 't') k->medium = *v;
-            else g->delete_mode = *v;
+            else if (key == 'd') g->delete_mode = *v;
+            else if (*v == 'z') g->zlib = true;
+            else k->unsupported = true;
         } else {
             uint32_t n;
             int *field = NULL;
             bool negative = key == 'z' && v < p && *v == '-';
-            if (key == 'o' || key == 'e') {
+            if (key == 'e') {
                 k->unsupported = true;
             } else if (!kitty_uint(v + negative, p, &n)) {
                 return false;
@@ -81,6 +83,7 @@ static bool kitty_parse(struct kitty_control *k, const char *p, const char *end)
             case 'm': k->more = n; break;
             case 'i': g->image_id = n; break;
             case 'p': g->placement_id = n; break;
+            case 'S': g->uncompressed_size = n; break;
             case 's': field = &g->size.x; break;
             case 'v': field = &g->size.y; break;
             case 'x': field = &g->source_pos.x; break;
@@ -150,6 +153,13 @@ static enum wsap_vtcore_graphics_result kitty_image(struct wsap_vtcore *t, struc
     g->len = len;
     uint32_t w = (uint32_t)g->size.x, h = (uint32_t)g->size.y;
     if (g->format == WSAP_VTCORE_GRAPHICS_PNG) {
+        if (g->zlib) {
+            if (!len || !g->uncompressed_size) return WSAP_VTCORE_GRAPHICS_INVALID;
+            if (g->uncompressed_size > WSAP_VTCORE_GRAPHICS_BYTES_MAX)
+                return WSAP_VTCORE_GRAPHICS_NO_SPACE;
+            g->size = (struct wsap_vtcore_vector2i){0};
+            return wsap_vtcore_graphics_emit(t, g);
+        }
         static const uint8_t png_header[] = "\x89" "PNG\r\n\x1a\n\0\0\0\x0d" "IHDR";
         if (len < 33 || memcmp(g->data, png_header, sizeof png_header - 1))
             return WSAP_VTCORE_GRAPHICS_INVALID;
@@ -162,8 +172,13 @@ static enum wsap_vtcore_graphics_result kitty_image(struct wsap_vtcore *t, struc
     unsigned channels = g->format == WSAP_VTCORE_GRAPHICS_RGB ? 3 : 4;
     if (pixels > WSAP_VTCORE_GRAPHICS_BYTES_MAX / channels)
         return WSAP_VTCORE_GRAPHICS_NO_SPACE;
-    if (g->format != WSAP_VTCORE_GRAPHICS_PNG && len != pixels * channels)
+    if (g->zlib) {
+        if (!len || (g->uncompressed_size && g->uncompressed_size != pixels * channels))
+            return WSAP_VTCORE_GRAPHICS_INVALID;
+        g->uncompressed_size = pixels * channels;
+    } else if (g->format != WSAP_VTCORE_GRAPHICS_PNG && len != pixels * channels) {
         return WSAP_VTCORE_GRAPHICS_INVALID;
+    }
     g->size = (struct wsap_vtcore_vector2i){(int)w, (int)h};
     return wsap_vtcore_graphics_emit(t, g);
 }

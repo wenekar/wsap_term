@@ -8,9 +8,15 @@
 | Kitty | `kitten icat --transfer-mode=stream image.png` |
 | Kitty with Chafa | `chafa -f kitty image.png` |
 
-SIXEL supports RGB and HLS palettes, transparency, repeats, and pixel aspect ratios. Kitty accepts inline RGB, RGBA, and PNG images, including chunked transfers. It supports storing images by ID and placing, replacing, and deleting them. Local file and shared-memory transfers, extra zlib compression, animation, and Unicode placeholders are not supported.
+SIXEL supports RGB and HLS palettes, transparency, repeats, pixel aspect ratios, and the xterm display and cursor modes. Kitty accepts inline RGB, RGBA, and PNG images, including chunked and zlib-compressed transfers. It supports storing images by ID and placing, replacing, and deleting them. Local file and shared-memory transfers, animation, and Unicode placeholders are not supported.
 
-Images move with their rows on the active screen. The alternate screen keeps a separate set of images. Images do not enter scrollback, and reflow can discard their placements. Kitty z-index orders images relative to each other, but even negative z-index images draw over text. Inline images are not included in tab thumbnails.
+Images move with their rows into scrollback and appear when you scroll back. Resize preserves placements on rows that keep their boundaries; reflow can discard bands on rows it splits or joins. Erasing text cells also erases the corresponding part of an image. The alternate screen keeps a separate set of images. Tab thumbnails omit inline images.
+
+| Kitty z-index | Draws |
+|---|---|
+| Zero or greater | Above text |
+| Negative | Behind text but above cell backgrounds |
+| Less than −1,073,741,824 | Behind text and non-default cell backgrounds |
 
 | Storage limit per terminal | Value |
 |---|---|

@@ -5,8 +5,11 @@
 #include <png.h>
 #include <stdlib.h>
 #include <string.h>
+#include <zlib.h>
 
 #define IMAGE_BYTES_MAX (64u << 20)
+#define IMAGE_DECODE_BYTES_MAX (32u << 20)
+#define IMAGE_DIM_MAX 4096
 #define IMAGE_COUNT_MAX 256
 #define PLACEMENT_COUNT_MAX 256
 #define PLACEMENT_PIXELS_MAX 65536
@@ -21,12 +24,18 @@ struct graphics_image {
     uint32_t pixels[];
 };
 
+struct graphics_cut {
+    int band, first, end;
+};
+
 struct graphics_placement {
     struct graphics_placement *next;
     struct graphics_image *image;
     struct rect2i uv, dst;
     struct vector2i cell, extent;
     int col, count;
+    struct graphics_cut *cuts;
+    int n_cuts, cut_cap;
     int32_t z;
     uint32_t id;
     uint64_t rows[];
@@ -37,12 +46,14 @@ struct graphics_row {
     int y;
 };
 
+enum graphics_layer { BEHIND_CELLS, BEHIND_TEXT, ABOVE_TEXT, GRAPHICS_LAYERS };
+
 struct terminal_graphics {
     struct graphics_image *images;
     struct graphics_placement *placements;
     size_t bytes;
     unsigned image_count, placement_count;
-    struct ui_scene scene;
+    struct ui_scene scenes[GRAPHICS_LAYERS];
     struct graphics_image *frame_refs[PLACEMENT_COUNT_MAX];
     unsigned n_frame_refs;
     uint64_t *row_ids;
@@ -62,6 +73,7 @@ static void placement_remove(struct terminal_graphics *g, struct graphics_placem
     *link = p->next;
     p->image->placements--;
     image_unref(p->image);
+    free(p->cuts);
     free(p);
     g->placement_count--;
 }
@@ -106,7 +118,8 @@ static void discard_screen(struct terminal_graphics *g, bool alternate)
 
 static void clear_frame(struct terminal_graphics *g)
 {
-    ui_scene_init(&g->scene);
+    for (int layer = 0; layer < GRAPHICS_LAYERS; layer++)
+        ui_scene_init(&g->scenes[layer]);
     for (unsigned i = 0; i < g->n_frame_refs; i++)
         image_unref(g->frame_refs[i]);
     g->n_frame_refs = 0;
@@ -119,39 +132,50 @@ void terminal_graphics_destroy(struct terminal_graphics *g)
     clear_frame(g);
     while (g->images)
         image_remove(g, &g->images);
-    ui_scene_destroy(&g->scene);
+    for (int layer = 0; layer < GRAPHICS_LAYERS; layer++)
+        ui_scene_destroy(&g->scenes[layer]);
     free(g->row_ids);
     free(g->view_rows);
     free(g);
 }
 
-static enum wsap_vtcore_graphics_result decode(const struct wsap_vtcore_graphics *cmd,
-                                               struct graphics_image **out)
+static enum wsap_vtcore_graphics_result decode_pixels(const struct wsap_vtcore_graphics *cmd,
+    const uint8_t *input, size_t len, struct graphics_image **out)
 {
-    size_t count = (size_t)cmd->size.x * (size_t)cmd->size.y;
+    bool is_png = cmd->format == WSAP_VTCORE_GRAPHICS_PNG;
+    png_image png = {.version = PNG_IMAGE_VERSION};
+    unsigned w = (unsigned)cmd->size.x, h = (unsigned)cmd->size.y;
+    enum wsap_vtcore_graphics_result result = WSAP_VTCORE_GRAPHICS_INVALID;
+    if (is_png) {
+        if (!png_image_begin_read_from_memory(&png, input, len))
+            goto done;
+        w = png.width;
+        h = png.height;
+    }
+    if (!w || !h || w > IMAGE_DIM_MAX || h > IMAGE_DIM_MAX)
+        goto done;
+    size_t count = (size_t)w * h;
     size_t bytes = count * sizeof(uint32_t);
+    unsigned channels = cmd->format == WSAP_VTCORE_GRAPHICS_RGB ? 3 : 4;
+    if (!is_png && len != count * channels)
+        goto done;
+    result = WSAP_VTCORE_GRAPHICS_NO_SPACE;
+    if (bytes > IMAGE_DECODE_BYTES_MAX)
+        goto done;
     struct graphics_image *image = malloc(sizeof(*image) + bytes);
     if (!image)
-        return WSAP_VTCORE_GRAPHICS_NO_SPACE;
+        goto done;
     *image = (struct graphics_image){
-        .image = {.pixels = image->pixels, .size = {.x = cmd->size.x, .y = cmd->size.y}},
+        .image = {.pixels = image->pixels, .size = {.x = (int)w, .y = (int)h}},
         .bytes = bytes, .refs = 1, .id = cmd->image_id, .alternate = cmd->alternate,
         .sixel = cmd->action == WSAP_VTCORE_GRAPHICS_SIXEL,
     };
-    const uint8_t *input = cmd->data;
-    unsigned channels = cmd->format == WSAP_VTCORE_GRAPHICS_RGB ? 3 : 4;
-    if (cmd->format == WSAP_VTCORE_GRAPHICS_PNG) {
-        png_image png = {.version = PNG_IMAGE_VERSION};
-        bool ok = png_image_begin_read_from_memory(&png, cmd->data, cmd->len) &&
-            png.width == (unsigned)cmd->size.x && png.height == (unsigned)cmd->size.y;
-        if (ok) {
-            png.format = PNG_FORMAT_RGBA;
-            ok = png_image_finish_read(&png, NULL, image->pixels, 0, NULL) != 0;
-        }
-        png_image_free(&png);
-        if (!ok) {
+    if (is_png) {
+        png.format = PNG_FORMAT_RGBA;
+        if (!png_image_finish_read(&png, NULL, image->pixels, 0, NULL)) {
             image_unref(image);
-            return WSAP_VTCORE_GRAPHICS_INVALID;
+            result = WSAP_VTCORE_GRAPHICS_INVALID;
+            goto done;
         }
         input = (const uint8_t *)image->pixels;
     }
@@ -163,7 +187,30 @@ static enum wsap_vtcore_graphics_result decode(const struct wsap_vtcore_graphics
         image->pixels[i] = a << 24 | r << 16 | g << 8 | b;
     }
     *out = image;
-    return WSAP_VTCORE_GRAPHICS_OK;
+    result = WSAP_VTCORE_GRAPHICS_OK;
+done:
+    if (is_png) png_image_free(&png);
+    return result;
+}
+
+static enum wsap_vtcore_graphics_result decode(const struct wsap_vtcore_graphics *cmd,
+                                               struct graphics_image **out)
+{
+    if (!cmd->zlib)
+        return decode_pixels(cmd, cmd->data, cmd->len, out);
+    if (!cmd->uncompressed_size || cmd->uncompressed_size > IMAGE_DECODE_BYTES_MAX)
+        return WSAP_VTCORE_GRAPHICS_INVALID;
+    uint8_t *raw = malloc(cmd->uncompressed_size);
+    if (!raw)
+        return WSAP_VTCORE_GRAPHICS_NO_SPACE;
+    uLongf size = (uLongf)cmd->uncompressed_size;
+    uLong used = (uLong)cmd->len;
+    bool ok = uncompress2(raw, &size, cmd->data, &used) == Z_OK &&
+              size == cmd->uncompressed_size && used == cmd->len;
+    enum wsap_vtcore_graphics_result result = ok ? decode_pixels(cmd, raw, size, out)
+                                                : WSAP_VTCORE_GRAPHICS_INVALID;
+    free(raw);
+    return result;
 }
 
 static struct graphics_image **find_image(struct terminal_graphics *g, uint32_t id, bool alternate)
@@ -281,10 +328,60 @@ static void store_placement(struct terminal_graphics *g, struct graphics_placeme
     g->placement_count++;
 }
 
+static int first_column(const struct graphics_placement *p)
+{
+    return p->col + p->dst.x / p->cell.x;
+}
+
+static int end_column(const struct graphics_placement *p)
+{
+    return p->col + extent_cells(p->dst.x + p->dst.width, p->cell.x);
+}
+
 static bool covers_column(const struct graphics_placement *p, int first, int end)
 {
-    return first < p->col + extent_cells(p->dst.x + p->dst.width, p->cell.x) &&
-           end > p->col + p->dst.x / p->cell.x;
+    return first < end_column(p) && end > first_column(p);
+}
+
+static int cut_offset(const struct graphics_placement *p, int band)
+{
+    int lo = 0, hi = p->n_cuts;
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        if (p->cuts[mid].band < band) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
+}
+
+/* Records erased spans in cell coordinates so they scale with the image.
+ * If the span budget is full, drop the band rather than keep erased pixels. */
+static void cut_band(struct graphics_placement *p, int band, int first, int end)
+{
+    enum { CUT_LIMIT = 1024 };
+    first = geom_max_i(first, first_column(p));
+    end = geom_min_i(end, end_column(p));
+    int at = cut_offset(p, band);
+    while (at < p->n_cuts && p->cuts[at].band == band && p->cuts[at].end < first)
+        at++;
+    int stop = at;
+    while (stop < p->n_cuts && p->cuts[stop].band == band && p->cuts[stop].first <= end) {
+        first = geom_min_i(first, p->cuts[stop].first);
+        end = geom_max_i(end, p->cuts[stop].end);
+        stop++;
+    }
+    bool whole = first == first_column(p) && end == end_column(p);
+    int count = p->n_cuts - (stop - at) + !whole;
+    if (count > CUT_LIMIT || !util_grow(&p->cuts, &p->cut_cap, count, sizeof(*p->cuts))) {
+        p->rows[band] = 0;
+        return;
+    }
+    if (p->n_cuts > stop)
+        memmove(p->cuts + at + !whole, p->cuts + stop,
+                (size_t)(p->n_cuts - stop) * sizeof(*p->cuts));
+    p->n_cuts = count;
+    if (whole) p->rows[band] = 0;
+    else p->cuts[at] = (struct graphics_cut){band, first, end};
 }
 
 static bool covers_row(const struct graphics_placement *p, uint64_t row)
@@ -310,8 +407,7 @@ static void erase_region(struct terminal_graphics *g, struct wsap_vtcore *term,
     if (!g->placements) return;
     int x = cmd->source_pos.x, w = cmd->source_size.x;
     int y = cmd->source_pos.y, h = cmd->source_size.y;
-    bool whole = x == 0 && w >= cmd->grid.x && y == 0 && h >= cmd->grid.y;
-    if (!whole && !rows_capture(g, term, true, y, h))
+    if (!rows_capture(g, term, true, y, h))
         return;
     for (struct graphics_placement **link = &g->placements; *link;) {
         struct graphics_placement *p = *link;
@@ -320,12 +416,14 @@ static void erase_region(struct terminal_graphics *g, struct wsap_vtcore *term,
             continue;
         }
         bool any = false;
-        if (!whole) {
-            for (int band = 0; band < p->count; band++) {
-                for (int j = 0; p->rows[band] && j < h; j++)
-                    if (p->rows[band] == g->row_ids[j]) p->rows[band] = 0;
-                any |= p->rows[band] != 0;
+        for (int band = 0; band < p->count; band++) {
+            for (int j = 0; p->rows[band] && j < h; j++) {
+                if (p->rows[band] == g->row_ids[j]) {
+                    cut_band(p, band, x, x + w);
+                    break;
+                }
             }
+            any |= p->rows[band] != 0;
         }
         if (any) link = &p->next;
         else placement_remove(g, link);
@@ -348,6 +446,8 @@ static enum wsap_vtcore_graphics_result delete_images(struct terminal_graphics *
         ((mode == 'x' || mode == 'p' || mode == 'q') && col < 0) ||
         ((mode == 'y' || mode == 'p' || mode == 'q') && row < 0))
         return WSAP_VTCORE_GRAPHICS_INVALID;
+    if (mode == 'a' && !rows_capture(g, term, true, 0, cmd->grid.y))
+        return WSAP_VTCORE_GRAPHICS_NO_SPACE;
     uint64_t row_id = 0;
     if (mode == 'y' || mode == 'p' || mode == 'q' || mode == 'c')
         wsap_vtcore_graphics_rows(term, true, row, 1, &row_id);
@@ -356,7 +456,10 @@ static enum wsap_vtcore_graphics_result delete_images(struct terminal_graphics *
         bool match = false;
         if (p->image->alternate == cmd->alternate && !p->image->sixel) {
             switch (mode) {
-            case 'a': match = true; break;
+            case 'a':
+                for (int y = 0; y < cmd->grid.y && !match; y++)
+                    match = covers_row(p, g->row_ids[y]);
+                break;
             case 'i': match = p->image->id == cmd->image_id && (!cmd->placement_id ||
                                                               p->id == cmd->placement_id); break;
             case 'r': match = p->image->id && p->image->id >= (uint32_t)cmd->source_pos.x &&
@@ -383,8 +486,6 @@ static enum wsap_vtcore_graphics_result delete_images(struct terminal_graphics *
     }
     if (hard && mode == 'i' && !cmd->placement_id)
         free_unplaced(g, false, cmd->alternate, cmd->image_id, true);
-    if (hard && mode == 'a')
-        free_unplaced(g, false, cmd->alternate, 0, false);
     free_unplaced(g, true, cmd->alternate, 0, false);
     return WSAP_VTCORE_GRAPHICS_OK;
 }
@@ -444,6 +545,8 @@ enum wsap_vtcore_graphics_result terminal_graphics_receive(
     if (transmit) store_image(g, image);
     if (p) {
         *extent = (struct wsap_vtcore_vector2i){p->extent.x, p->extent.y};
+        if (!cmd->alternate)
+            wsap_vtcore_graphics_track_rows(t->session.term, cmd->cursor.y, p->count);
         store_placement(g, p);
     }
     return WSAP_VTCORE_GRAPHICS_OK;
@@ -469,8 +572,17 @@ static int scale_pixels(int px, int target, int base)
     return geom_sat_i(((int64_t)px * target + base / 2) / base);
 }
 
-static bool draw_placement(struct terminal_graphics *g, const struct graphics_placement *p,
-                           struct rect2i bounds, struct vector2i cell, int count)
+static bool draw_image_clip(struct ui_scene *scene, const struct graphics_placement *p,
+                            struct rect2i dst, struct rect2i clip)
+{
+    return ui_scene_push_clip(scene, clip) &&
+           ui_scene_image_rect(scene, dst, &p->image->image, &(struct ui_image_options){.uv = p->uv}) &&
+           ui_scene_pop_clip(scene);
+}
+
+static bool draw_placement(const struct terminal_graphics *g, struct ui_scene *scene,
+                           const struct graphics_placement *p, struct rect2i bounds,
+                           struct vector2i cell, int count)
 {
     struct rect2i dst = {
         .x = geom_sat_i((int64_t)bounds.x + (int64_t)p->col * cell.x +
@@ -484,50 +596,73 @@ static bool draw_placement(struct terminal_graphics *g, const struct graphics_pl
         int y = find_row(g, count, p->rows[i]);
         if (y < 0) { i++; continue; }
         int start = i++;
-        while (i < p->count && find_row(g, count, p->rows[i]) == y + i - start)
-            i++;
+        int cut = cut_offset(p, start);
+        bool clipped = cut < p->n_cuts && p->cuts[cut].band == start;
+        if (!clipped)
+            while (i < p->count && (cut == p->n_cuts || i < p->cuts[cut].band) &&
+                   find_row(g, count, p->rows[i]) == y + i - start)
+                i++;
         struct rect2i clip = {
             .x = bounds.x, .y = geom_sat_i((int64_t)bounds.y + (int64_t)y * cell.y),
             .width = bounds.width, .height = geom_sat_i((int64_t)(i - start) * cell.y),
         };
         dst.y = geom_sat_i((int64_t)clip.y + offset - (int64_t)start * cell.y);
-        if (rect2i_is_empty(rect2i_intersect(clip, dst)))
+        clip = rect2i_intersect(clip, dst);
+        if (rect2i_is_empty(clip))
             continue;
-        if (!ui_scene_push_clip(&g->scene, clip) ||
-            !ui_scene_image_rect(&g->scene, dst, &p->image->image,
-                                  &(struct ui_image_options){.uv = p->uv}) ||
-            !ui_scene_pop_clip(&g->scene))
-            return drew;
-        drew = true;
+        int left = clip.x, right = rect2i_end(clip).x;
+        while (cut < p->n_cuts && p->cuts[cut].band == start && left < right) {
+            const struct graphics_cut *span = &p->cuts[cut++];
+            int x = geom_sat_i((int64_t)bounds.x + (int64_t)span->first * cell.x);
+            int stop = geom_min_i(x, right);
+            if (stop > left) {
+                struct rect2i piece = clip;
+                piece.x = left;
+                piece.width = stop - left;
+                if (!draw_image_clip(scene, p, dst, piece)) return drew;
+                drew = true;
+            }
+            x = geom_sat_i((int64_t)bounds.x + (int64_t)span->end * cell.x);
+            left = geom_max_i(left, x);
+        }
+        if (right > left) {
+            clip.x = left;
+            clip.width = right - left;
+            if (!draw_image_clip(scene, p, dst, clip)) return drew;
+            drew = true;
+        }
     }
     return drew;
 }
 
-const struct ui_scene *terminal_graphics_capture(struct terminal *t, struct rect2i bounds,
-                                                 int rows, bool live_view)
+struct terminal_graphics_layers terminal_graphics_capture(struct terminal *t, struct rect2i bounds,
+                                                            int rows, bool live_view)
 {
+    struct terminal_graphics_layers result = {0};
     struct terminal_graphics *g = t->graphics;
     if (!g)
-        return NULL;
+        return result;
     clear_frame(g);
     if (!g->placements || rows <= 0 || rect2i_is_empty(bounds))
-        return NULL;
+        return result;
     const struct font_metrics *m = terminal_font_metrics(t);
     struct vector2i cell = {.x = m->cell_w, .y = m->cell_h};
     if (cell.x <= 0 || cell.y <= 0 ||
         !util_grow(&g->view_rows, &g->view_cap, rows, sizeof(*g->view_rows)) ||
         !rows_capture(g, t->session.term, live_view, 0, rows))
-        return NULL;
+        return result;
     for (int y = 0; y < rows; y++)
         g->view_rows[y] = (struct graphics_row){g->row_ids[y], y};
     qsort(g->view_rows, (size_t)rows, sizeof(*g->view_rows), compare_rows);
     bool alternate = wsap_vtcore_modes(t->session.term).alternate;
-    if (!ui_scene_push_clip(&g->scene, bounds))
-        return NULL;
+    bool prune = live_view && !wsap_vtcore_graphics_has_history(t->session.term);
+    for (int layer = 0; layer < GRAPHICS_LAYERS; layer++)
+        if (!ui_scene_push_clip(&g->scenes[layer], bounds))
+            return result;
     for (struct graphics_placement **link = &g->placements; *link;) {
         struct graphics_placement *p = *link;
         if (p->image->alternate == alternate) {
-            if (live_view) {
+            if (prune) {
                 bool any = false;
                 for (int i = 0; i < p->count; i++) {
                     if (find_row(g, rows, p->rows[i]) < 0) p->rows[i] = 0;
@@ -538,7 +673,9 @@ const struct ui_scene *terminal_graphics_capture(struct terminal *t, struct rect
                     continue;
                 }
             }
-            if (draw_placement(g, p, bounds, cell, rows)) {
+            enum graphics_layer layer = p->z < INT32_MIN / 2 ? BEHIND_CELLS :
+                                        p->z < 0 ? BEHIND_TEXT : ABOVE_TEXT;
+            if (draw_placement(g, &g->scenes[layer], p, bounds, cell, rows)) {
                 p->image->refs++;
                 g->frame_refs[g->n_frame_refs++] = p->image;
             }
@@ -546,7 +683,11 @@ const struct ui_scene *terminal_graphics_capture(struct terminal *t, struct rect
         link = &p->next;
     }
     free_unplaced(g, true, alternate, 0, false);
-    if (!ui_scene_pop_clip(&g->scene) || !g->n_frame_refs || !ui_scene_is_valid(&g->scene))
-        return NULL;
-    return &g->scene;
+    const struct ui_scene **layers[] = {&result.behind_cells, &result.behind_text, &result.above_text};
+    for (int layer = 0; layer < GRAPHICS_LAYERS; layer++) {
+        struct ui_scene *scene = &g->scenes[layer];
+        if (ui_scene_pop_clip(scene) && scene->n_ops > 2 && ui_scene_is_valid(scene))
+            *layers[layer] = scene;
+    }
+    return result;
 }

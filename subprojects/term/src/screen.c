@@ -118,10 +118,13 @@ static void screen_push_row_inner(struct wsap_vtcore *t, struct srow *row)
 
 void wsap_vtcore_screen_push_row(struct wsap_vtcore *t, struct srow *row)
 {
-    if (WSAP_VTCORE_EXPECT(row->flags & RF_MARKS, 0)) {
+    bool graphics = (row->uid & GRAPHICS_ROW_BIT) != 0;
+    if (WSAP_VTCORE_EXPECT(graphics || (row->flags & RF_MARKS), 0)) {
         struct mark_at at = wsap_vtcore_marks_hist_at(&t->hist);
         struct mark_info info = wsap_vtcore_marks_row(t, row);
         screen_push_row_inner(t, row);
+        if (graphics)
+            wsap_vtcore_graphics_history_add(t, at.open ? at.end - 1 : at.end, at.cell, row_uid(row));
         wsap_vtcore_marks_hist_add(t, at, info);
     } else {
         screen_push_row_inner(t, row);
@@ -223,7 +226,7 @@ uint64_t wsap_vtcore_screen_view_row_key(const struct wsap_vtcore *t, int y)
     const struct srow *row = screen_row_at(&t->scr, pos.screen_y);
     if (!row)
         return 0;
-    return mix64(row->uid ^ ((uint64_t)row->version << 32) ^ mix64(t->serial));
+    return mix64(row_uid(row) ^ ((uint64_t)row->version << 32) ^ mix64(t->serial));
 }
 
 void wsap_vtcore_graphics_rows(const struct wsap_vtcore *t, bool live,
@@ -245,12 +248,14 @@ void wsap_vtcore_graphics_rows(const struct wsap_vtcore *t, bool live,
         if (!live && t->view.anchor.active) {
             struct hist_view_pos pos;
             if (wsap_vtcore_hist_view_row_pos(&t->view, &t->hist, t->cols, t->rows,
-                                             screen_top_line(t), (int)y, &pos))
+                                             screen_top_line(t), (int)y, &pos)) {
+                out[i] = wsap_vtcore_graphics_history_row(t, pos.id, pos.seg, t->cols);
                 continue;
+            }
             y = pos.screen_y;
         }
         const struct srow *row = screen_row_at(&t->scr, (int)y);
-        if (row) out[i] = row->uid;
+        if (row) out[i] = row_uid(row);
     }
     wsap_vtcore_unlock(locked);
 }
@@ -288,7 +293,7 @@ void wsap_vtcore_screen_view_row_keys(const struct wsap_vtcore *t, uint64_t *key
     uint64_t serial_mix = mix64(t->serial);
     for (int y = 0; y < t->rows; y++) {
         const struct srow *row = &t->scr.slot[phys_row(t, y)];
-        keys[y] = mix64(row->uid ^ ((uint64_t)row->version << 32) ^ serial_mix);
+        keys[y] = mix64(row_uid(row) ^ ((uint64_t)row->version << 32) ^ serial_mix);
         sizes[y] = (uint8_t)((row->flags & RF_LINE_SIZE) |
                              ((row->flags & RF_WRAPPED) ? ROW_FLAG_WRAPPED : 0));
     }
@@ -622,6 +627,7 @@ void wsap_vtcore_screen_erase(struct wsap_vtcore *t, int mode)
     t->pending_wrap = false;
     if (mode == 3) {
         wsap_vtcore_hist_clear(&t->hist);
+        wsap_vtcore_graphics_history_free(t);
         t->view.anchor = (struct view_anchor){0};
         t->view.index_cols = 0;
         wsap_vtcore_select_clear(t);
@@ -744,7 +750,8 @@ void wsap_vtcore_screen_selective_erase(struct wsap_vtcore *t, int mode)
     bool pristine = using_default_colors(t);
     for (int y = first; y <= last; y++) {
         int p = phys_row(t, y);
-        if (pristine && t->scr.slot[p].len == 0 && !(t->scr.slot[p].flags & (RF_WRAPPED | RF_MARKS)))
+        if (!t->graphics_receive && pristine && t->scr.slot[p].len == 0 &&
+            !(t->scr.slot[p].flags & (RF_WRAPPED | RF_MARKS)))
             continue;
         erase_span_selective(t, p, 0, erase_width(t, p));
     }
@@ -1290,6 +1297,7 @@ void wsap_vtcore_free(struct wsap_vtcore *t)
     free(t->tabs);
     wsap_vtcore_osc_cleanup(t);
     wsap_vtcore_kitty_abort(t);
+    wsap_vtcore_graphics_history_free(t);
     wsap_vtcore_marks_free(t);
     wsap_vtcore_style_free(t);
     wsap_vtcore_gstore_free(t->gstore);
@@ -1584,8 +1592,12 @@ static int pull_history_rows(struct wsap_vtcore *t, struct screen *dst_scr, int 
             dst->len = (uint16_t)got;
             dst->flags = (wrapped ? RF_WRAPPED : 0) | RF_TAIL_PADDED;
             dst->version = 1;
-            dst->uid = ++t->next_row_uid;
+            uint64_t image_uid = wsap_vtcore_graphics_history_row(t, id, seg, cols);
+            dst->uid = image_uid ? image_uid | GRAPHICS_ROW_BIT : ++t->next_row_uid;
         }
+        if (t->graphics_history)
+            wsap_vtcore_graphics_history_cut(t, id,
+                wsap_vtcore_hist_segment_cell(h, id, first, cols));
         wsap_vtcore_marks_pull(t, id, first, &dst_scr->slot[slot], cols);
         if (first == 0) {
             wsap_vtcore_hist_pop_line(h, NULL, 0, t->gstore);
@@ -1869,6 +1881,7 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
             wsap_vtcore_hist_close_open_line(&t->hist);
         } else {
             uint64_t open_id = hist_end_id(&t->hist) - 1;
+            wsap_vtcore_graphics_history_cut(t, open_id, 0);
             wsap_vtcore_hist_pop_line(&t->hist, NULL, 0, t->gstore);
             wsap_vtcore_marks_hist_drop(t, open_id);
         }
@@ -1899,6 +1912,9 @@ static bool wsap_vtcore_resize_internal(struct wsap_vtcore *t, int cols, int row
             int push_len = (r.out[i].wrapped && len < cols && !r.out[i].size) ? cols : len;
             struct mark_at at = wsap_vtcore_marks_hist_at(&t->hist);
             wsap_vtcore_hist_push_row(&t->hist, out, push_len, r.out[i].wrapped, t->gstore);
+            if (r.out[i].uid & GRAPHICS_ROW_BIT)
+                wsap_vtcore_graphics_history_add(t, at.open ? at.end - 1 : at.end, at.cell,
+                                                  r.out[i].uid & ~GRAPHICS_ROW_BIT);
             wsap_vtcore_marks_hist_add(t, at, reflow_out_mark(&r.out[i]));
         }
     } else if (r.count < visible && t->hist.lines > 0) {

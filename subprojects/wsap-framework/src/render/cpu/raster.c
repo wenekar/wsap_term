@@ -75,6 +75,7 @@ struct row_ctx {
      * cell callback, so that the callback needs no large frame. */
     uint8_t tmp[3 * COV_CHUNK];
     bool double_w;
+    bool preserve_background;
 };
 
 _Static_assert(offsetof(struct row_ctx, tmp) % 64 == 0,
@@ -178,6 +179,8 @@ static inline RENDER_ALWAYS_INLINE void run_flush(struct row_ctx *c, run_fill_fn
 static inline RENDER_ALWAYS_INLINE void run_add(struct row_ctx *c, int x0, int x1, uint32_t bg,
                                                 run_fill_fn fill)
 {
+    if (c->preserve_background)
+        return;
     if (c->run_x1 == x0 && c->run_bg == bg) {
         c->run_x1 = x1;
         return;
@@ -342,14 +345,17 @@ static inline RENDER_ALWAYS_INLINE void compose(int isa, struct row_ctx *c, uint
     const int cw = c->cw, ch = c->ch;
     const int cell_w = c->cell_w;
     const uint32_t fg = cell->fg, bg = cell->bg;
+    const bool preserve = c->preserve_background;
     const uint16_t fl = cell->flags;
     const uint32_t ul = (fl & RENDER_CELL_UL_COLOR) ? cell->ul : fg;
     const bool faint = (fl & RENDER_CELL_FAINT) != 0;
-    if (ds == (size_t)cell_w) {
-        render_kernel_fill(isa, dst, cell_w * ch, bg);
-    } else {
-        for (int y = 0; y < ch; y++)
-            render_kernel_fill(isa, dst + (size_t)y * ds, cell_w, bg);
+    if (!preserve) {
+        if (ds == (size_t)cell_w) {
+            render_kernel_fill(isa, dst, cell_w * ch, bg);
+        } else {
+            for (int y = 0; y < ch; y++)
+                render_kernel_fill(isa, dst + (size_t)y * ds, cell_w, bg);
+        }
     }
 
     if (!c->double_w) {
@@ -361,7 +367,7 @@ static inline RENDER_ALWAYS_INLINE void compose(int isa, struct row_ctx *c, uint
                 uint32_t *d = dst + (ox + lo);
                 switch (ink->kind) {
                 case KIND_ALPHA: {
-                    const uint32_t *lut = pair_lut_alpha(&c->w->lut, fg, bg, faint);
+                    const uint32_t *lut = preserve ? NULL : pair_lut_alpha(&c->w->lut, fg, bg, faint);
                     for (int y = ink->y0; y < ink->y1; y++) {
                         const uint8_t *a = g->alpha[y] + lo;
                         if (lut)
@@ -374,7 +380,7 @@ static inline RENDER_ALWAYS_INLINE void compose(int isa, struct row_ctx *c, uint
                 case KIND_SUBPX: {
                     /* The table matches the per-pixel blend only over an opaque bg. */
                     const struct subpx_lut *lut =
-                        bg >> 24 == 255 ? pair_lut_subpx(&c->w->lut, fg, bg, faint) : NULL;
+                        !preserve && bg >> 24 == 255 ? pair_lut_subpx(&c->w->lut, fg, bg, faint) : NULL;
                     for (int y = ink->y0; y < ink->y1; y++) {
                         const uint8_t *s = g->subpx[y] + (size_t)lo * 3;
                         if (lut)
@@ -423,8 +429,8 @@ static inline RENDER_ALWAYS_INLINE void compose(int isa, struct row_ctx *c, uint
             int n = hi - lo;
             int sx0 = ox + 2 * lo;
             uint32_t *d = dst + sx0;
-            const uint32_t *lut = (ink->kind == KIND_ALPHA) ? pair_lut_alpha(&c->w->lut, fg, bg, faint) : NULL;
-            const struct subpx_lut *subpx_lut = (ink->kind == KIND_SUBPX && (bg >> 24 == 255))
+            const uint32_t *lut = (!preserve && ink->kind == KIND_ALPHA) ? pair_lut_alpha(&c->w->lut, fg, bg, faint) : NULL;
+            const struct subpx_lut *subpx_lut = (!preserve && ink->kind == KIND_SUBPX && (bg >> 24 == 255))
                                                 ? pair_lut_subpx(&c->w->lut, fg, bg, faint) : NULL;
             uint8_t a_exp[256];
             uint8_t s_exp[768];
@@ -726,6 +732,15 @@ static inline RENDER_ALWAYS_INLINE void cell_slow(int isa, struct row_ctx *c, in
     } else if (sx0 >= c->x0 && sx0 + cell_w <= c->x1) {
         compose(isa, c, c->row + sx0, c->stride, cell, g, &ink, half);
     } else if (c->w->scratch) {
+        if (c->preserve_background) {
+            int lo = geom_max_i(sx0, c->x0), hi = geom_min_i(sx0 + cell_w, c->x1);
+            for (int y = 0; y < c->ch; y++) {
+                uint32_t *scratch = c->w->scratch + (size_t)y * cell_w;
+                render_kernel_fill(isa, scratch, cell_w, cell->bg);
+                memcpy(scratch + lo - sx0, c->row + (size_t)y * c->stride + lo,
+                       (size_t)(hi - lo) * sizeof(*scratch));
+            }
+        }
         compose(isa, c, c->w->scratch, (size_t)cell_w, cell, g, &ink, half);
         put_tile_w(isa, c, sx0, c->w->scratch, cell_w);
     }
@@ -869,6 +884,7 @@ static inline RENDER_ALWAYS_INLINE int row_body(int isa, const struct raster_fra
         .cell_w = cell_w,
         .line_size = line,
         .double_w = double_w,
+        .preserve_background = f->preserve_background,
         .x0 = geom_max_i(job->x0, 0),
         .x1 = geom_min_i(job->x1, f->width),
         .area = row_cols * cell_w,

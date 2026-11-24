@@ -108,8 +108,8 @@ static inline bool can_stream_bottom(const struct wsap_vtcore *t)
            t->utf8_state == WSAP_VTCORE_UTF8_ACCEPT && !t->inverse &&
            t->scroll_top == 0 && t->scroll_bottom == t->rows - 1 &&
            t->cursor_y == t->rows - 1 &&
-           !t->alternate && t->sb_capacity > 0 &&
-           using_default_colors(t);
+           !t->alternate && t->sb_capacity > 0 && using_default_colors(t) &&
+           (!t->graphics_receive || !(wsap_vtcore_row(t, t->cursor_y)->uid & GRAPHICS_ROW_BIT));
 }
 
 static inline bool try_text_run(struct wsap_vtcore *t, const char *buf, size_t len,

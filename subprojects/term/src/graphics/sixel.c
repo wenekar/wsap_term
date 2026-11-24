@@ -180,7 +180,8 @@ static void sixel_make_room(struct wsap_vtcore *t, const struct sixel_scan *scan
         height = (height * scan->aspect.y + scan->aspect.x / 2) / scan->aspect.x;
     int rows = (int)(((int64_t)height - 1) / t->cell_pixels.y) + 1;
     int region = t->scroll_bottom - t->scroll_top + 1;
-    int needed = rows < region ? rows + 1 : region;
+    int needed = rows + !t->sixel_scroll_right;
+    if (needed > region) needed = region;
     int scroll = needed - (t->scroll_bottom - t->cursor_y + 1);
     if (scroll > 0) {
         wsap_vtcore_screen_scroll_region(t, t->scroll_top, t->scroll_bottom, scroll, false, true);
@@ -220,9 +221,10 @@ bool wsap_vtcore_sixel_dispatch(struct wsap_vtcore *t, const char *buf, size_t l
             .len = count * sizeof(*scan.pixels),
             .size = {scan.width, scan.height},
             .pixel_aspect = scan.aspect,
-            .keep_cursor = true,
+            .keep_cursor = t->sixel_fixed,
         };
-        sixel_make_room(t, &scan);
+        if (!t->sixel_fixed)
+            sixel_make_room(t, &scan);
         wsap_vtcore_graphics_emit(t, &cmd);
     }
     free(scan.pixels);

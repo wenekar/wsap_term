@@ -172,6 +172,7 @@ struct raster_frame {
     int cols;
     int width;
     int row0;
+    bool preserve_background;
 };
 
 /*

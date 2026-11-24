@@ -40,6 +40,7 @@ depend = freetype2
 depend = fontconfig
 depend = harfbuzz
 depend = libpng
+depend = zlib
 depend = wayland
 depend = libxkbcommon
 """

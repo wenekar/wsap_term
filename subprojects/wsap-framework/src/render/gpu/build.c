@@ -1017,7 +1017,27 @@ static bool build_frame(struct gpu_build *b, const struct renderer_frame *frame,
     if (grid_geometry_of(frame->grid, canvas, &geo)) {
         if (!build_grid(b, &geo))
             return false;
-        cmd_whole_stream(b, GPU_CMD_GLYPH, GPU_ST_BG, canvas_rect);
+        if (frame->behind_cells && ui_scene_is_valid(frame->behind_cells)) {
+            /* The first background instance fills the grid. The rest are
+             * non-default cell backgrounds and must cover this layer. */
+            struct gpu_cmd *base = cmd_open(b, GPU_CMD_GLYPH, GPU_ST_BG, canvas_rect, 0, GPU_BLEND_PREMUL);
+            if (!base) return false;
+            base->start = 0;
+            base->count = 1;
+            if (!build_scene(b, geo.font, frame->behind_cells, canvas_rect, geo.rect))
+                return false;
+            if (b->streams[GPU_ST_BG].n > 1) {
+                struct gpu_cmd *cells = cmd_open(b, GPU_CMD_GLYPH, GPU_ST_BG, canvas_rect, 0, GPU_BLEND_PREMUL);
+                if (!cells) return false;
+                cells->start = 1;
+                cells->count = b->streams[GPU_ST_BG].n - 1;
+            }
+        } else {
+            cmd_whole_stream(b, GPU_CMD_GLYPH, GPU_ST_BG, canvas_rect);
+        }
+        if (frame->behind_text && ui_scene_is_valid(frame->behind_text) &&
+            !build_scene(b, geo.font, frame->behind_text, canvas_rect, geo.rect))
+            return false;
         cmd_whole_stream(b, GPU_CMD_GLYPH, GPU_ST_INK, (struct rect2i){
             .pos = geo.rect.pos, .size = { .x = geo.cols * geo.cw, .y = geo.rows * geo.ch } });
         cmd_whole_stream(b, GPU_CMD_SUBPX, GPU_ST_SUBPX, (struct rect2i){

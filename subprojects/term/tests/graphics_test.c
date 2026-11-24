@@ -164,8 +164,48 @@ static void test_sixel(void)
     wsap_vtcore_free(t);
 }
 
+static void test_history_anchors(void)
+{
+    struct receiver r = {0};
+    struct wsap_vtcore *t = wsap_vtcore_new(&(struct wsap_vtcore_options){
+        .size = {10, 3}, .scrollback = 20,
+    });
+    assert(t);
+    wsap_vtcore_set_graphics(t, receive, &r);
+    uint64_t anchor, above;
+    feed(t, "one\r\nimage\r\nlast");
+    wsap_vtcore_graphics_rows(t, true, 1, 1, &anchor);
+    wsap_vtcore_graphics_track_rows(t, 1, 1);
+    feed(t, "\r\nline\r\nline\r\n");
+    wsap_vtcore_scroll_to(t, 3);
+    wsap_vtcore_graphics_rows(t, false, 1, 1, &above);
+    assert(anchor && above == anchor);
+    wsap_vtcore_graphics_rows(t, false, 0, 1, &above);
+    assert(!above);
+
+    assert(wsap_vtcore_resize(t, (struct wsap_vtcore_vector2i){10, 6}));
+    wsap_vtcore_graphics_rows(t, true, 1, 1, &above);
+    assert(above == anchor);
+    wsap_vtcore_free(t);
+
+    t = wsap_vtcore_new(&(struct wsap_vtcore_options){.size = {80, 40}, .scrollback = 200});
+    assert(t);
+    wsap_vtcore_set_graphics(t, receive, &r);
+    wsap_vtcore_graphics_rows(t, true, 3, 1, &anchor);
+    wsap_vtcore_graphics_track_rows(t, 3, 1);
+    feed(t, "\033[20;1H");
+    char burst[75 * 6];
+    for (int i = 0; i < 75; i++) memcpy(burst + i * 6, "line\r\n", 6);
+    assert(wsap_vtcore_feed(t, burst, sizeof burst, 0));
+    wsap_vtcore_scroll_to(t, 200);
+    wsap_vtcore_graphics_rows(t, false, 3, 1, &above);
+    assert(above == anchor);
+    wsap_vtcore_free(t);
+}
+
 int main(void)
 {
+    test_history_anchors();
     test_kitty();
     test_recovery();
     test_sixel();

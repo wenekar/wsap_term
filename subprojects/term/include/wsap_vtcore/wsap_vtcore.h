@@ -237,6 +237,9 @@ enum wsap_vtcore_graphics_format {
 /* An image command for the active screen. Raw RGB and straight-alpha RGBA
  * pixels are packed from the top left, one row at a time. PNG data is a
  * complete encoded payload that the receiver must validate and decode.
+ * If zlib is set, data holds a zlib stream and uncompressed_size is the
+ * exact byte count after decompression. Compressed PNG has zero size until
+ * the receiver reads its header.
  * The cursor is a zero-based live cell position. Source geometry and offsets
  * are in pixels; placement size is in cells. A zero size component requests
  * the protocol default. In SIXEL commands, pixel_aspect is the horizontal
@@ -249,7 +252,7 @@ struct wsap_vtcore_graphics {
     enum wsap_vtcore_graphics_action action;
     enum wsap_vtcore_graphics_format format;
     const uint8_t *data;
-    size_t len;
+    size_t len, uncompressed_size;
     struct wsap_vtcore_vector2i size, cursor, pixel_aspect, cell_pixels, grid;
     struct wsap_vtcore_vector2i source_pos, source_size, offset, placement_size;
     uint32_t image_id, placement_id;
@@ -257,6 +260,7 @@ struct wsap_vtcore_graphics {
     char delete_mode;
     bool alternate;
     bool keep_cursor;
+    bool zlib;
 };
 
 enum wsap_vtcore_graphics_result {
@@ -294,13 +298,22 @@ WSAP_VTCORE_API void wsap_vtcore_set_graphics(struct wsap_vtcore *t,
 
 /* Copies count row IDs starting at first into out. With live set, row zero
  * is the top of the active screen; otherwise it is the top of the view.
- * An invalid row, a history row, or a NULL terminal yields zero. IDs track
- * rows across scrolling within the screen. A row that enters history or
- * changes its wrapping during reflow can lose its ID. This read-only call is
+ * An invalid row, an untracked history row, or a NULL terminal yields zero.
+ * IDs track live rows across scrolling. Tracked rows can keep their IDs in
+ * history. Reflow can discard an ID if it changes the row boundary. This call is
  * allowed inside a graphics callback. A NULL out or a nonpositive count does
  * nothing. */
 WSAP_VTCORE_API void wsap_vtcore_graphics_rows(const struct wsap_vtcore *t, bool live,
                                              int first, int count, uint64_t *out);
+
+/* Tracks the given range of active screen rows for graphics in scrollback.
+ * Rows outside the screen are ignored. This call is allowed from a graphics
+ * callback. A NULL terminal or a nonpositive count does nothing. */
+WSAP_VTCORE_API void wsap_vtcore_graphics_track_rows(struct wsap_vtcore *t, int first, int count);
+
+/* Returns whether scrollback retains any tracked graphics rows. Returns
+ * false for the alternate screen or a NULL terminal. */
+WSAP_VTCORE_API bool wsap_vtcore_graphics_has_history(const struct wsap_vtcore *t);
 
 WSAP_VTCORE_API void wsap_vtcore_focus(struct wsap_vtcore *t, bool focused);
 /* Zero disables history. Valid limits are 0 to WSAP_VTCORE_SCROLLBACK_MAX.

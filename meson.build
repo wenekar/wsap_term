@@ -279,7 +279,8 @@ if has_vulkan
     graphics_deps += [vulkan_dep.partial_dependency(compile_args: true, includes: true), dl_dep]
 endif
 png_dep = dependency('libpng', version: '>=1.6')
-lib_deps = base_deps + font_deps + graphics_deps + [png_dep]
+zlib_dep = dependency('zlib', version: '>=1.2.9')
+lib_deps = base_deps + font_deps + graphics_deps + [png_dep, zlib_dep]
 wsap_deps = [
     wsap_base_dep, wsap_input_dep, wsap_paint_dep, wsap_font_dep,
     wsap_ui_dep, wsap_theme_dep, wsap_render_dep, wsap_ui_yasl_dep,

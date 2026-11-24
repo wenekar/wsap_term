@@ -12,6 +12,7 @@ The build requires these tools and libraries:
 - Python 3.10 or later
 - HarfBuzz 7 or later
 - libpng 1.6 or later
+- zlib 1.2.9 or later
 - yyjson 0.12 or later
 
 ### Linux prerequisites
@@ -20,7 +21,7 @@ Linux builds require these additional packages:
 
 - Wayland development files (`libwayland-dev`, `wayland-protocols`)
 - FreeType and Fontconfig
-- libpng development files (`libpng-dev`)
+- libpng and zlib development files (`libpng-dev`, `zlib1g-dev`)
 - xkbcommon development files (`libxkbcommon-dev`)
 
 For Vulkan GPU rendering, Linux builds also require:

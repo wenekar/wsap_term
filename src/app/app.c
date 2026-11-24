@@ -166,7 +166,9 @@ static void app_compose_frame(struct window *w, struct window_frame *frame,
             update_cursor_overlay(a, w, content, &source, &ui,
                                   frame->target.size, now_ms, &grid);
             grid.blink_on = source.text_blink_on;
-            render.graphics = source.graphics;
+            render.graphics = source.graphics.above_text;
+            render.behind_text = source.graphics.behind_text;
+            render.behind_cells = source.graphics.behind_cells;
             render.grid = (struct render_grid){
                 .frame = &grid,
                 .font = source.font,

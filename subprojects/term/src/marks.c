@@ -84,7 +84,7 @@ static void rows_prune(struct wsap_vtcore *t)
     for (uint32_t i = 0; i < m->nrows; i++) {
         bool live = false;
         for (int y = 0; y < s->rows && !live; y++)
-            live = s->slot[y].uid == m->rows[i].uid && (s->slot[y].flags & RF_PROMPT);
+            live = row_uid(&s->slot[y]) == m->rows[i].uid && (s->slot[y].flags & RF_PROMPT);
         if (live)
             m->rows[kept++] = m->rows[i];
     }
@@ -124,7 +124,7 @@ struct mark_info wsap_vtcore_marks_row(const struct wsap_vtcore *t, const struct
 {
     struct mark_info info = { .flags = (uint8_t)(row->flags & RF_MARKS) };
     if (info.flags & RF_PROMPT) {
-        int i = rows_find(t->marks, row->uid);
+        int i = rows_find(t->marks, row_uid(row));
         if (i >= 0) {
             info.state = t->marks->rows[i].state;
             info.status = t->marks->rows[i].status;
@@ -137,7 +137,7 @@ void wsap_vtcore_marks_row_put(struct wsap_vtcore *t, struct srow *row, struct m
 {
     row->flags |= info.flags & RF_MARKS;
     if (info.state && (info.flags & RF_PROMPT))
-        rows_set(t, row->uid, info.state, info.status, false);
+        rows_set(t, row_uid(row), info.state, info.status, false);
 }
 
 void wsap_vtcore_marks_rows_clear(struct wsap_vtcore *t)
@@ -288,7 +288,7 @@ void wsap_vtcore_marks_set(struct wsap_vtcore *t, uint8_t flag)
      * update rebuild the row, so leave the version alone. A new prompt
      * starts a new command: drop the state recorded for the row. */
     if (flag & RF_PROMPT)
-        rows_drop(t, row->uid);
+        rows_drop(t, row_uid(row));
     row->flags |= flag;
 }
 
@@ -304,7 +304,7 @@ void wsap_vtcore_marks_finish(struct wsap_vtcore *t, bool has_status, int32_t st
              * finished command unchanged. */
             if (wsap_vtcore_marks_row(t, row).state & MARK_DONE)
                 return;
-            rows_set(t, row->uid, state, status, true);
+            rows_set(t, row_uid(row), state, status, true);
             return;
         }
     }

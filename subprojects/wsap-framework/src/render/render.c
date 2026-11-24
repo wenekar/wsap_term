@@ -581,6 +581,66 @@ static bool pixels_ensure(struct framebuffer *fb)
     return fb->pixels != NULL;
 }
 
+struct background_walk {
+    const struct renderer *renderer;
+    uint32_t *pixels;
+    struct rect2i clip;
+    struct vector2i origin, cell;
+    int stride;
+    uint32_t base;
+};
+
+static void background_run(void *ud, int first, int end, uint32_t color)
+{
+    const struct background_walk *w = ud;
+    if (color == w->base)
+        return;
+    struct rect2i rect = {
+        .x = w->origin.x + first * w->cell.x, .y = w->origin.y,
+        .width = (end - first) * w->cell.x, .height = w->cell.y,
+    };
+    rect = rect2i_intersect(rect, w->clip);
+    if (!rect2i_is_empty(rect))
+        fill_rect(w->renderer, w->pixels, w->stride, rect, color);
+}
+
+static void background_cell(void *ud, int col, const struct render_cell *cell,
+                            const struct render_glyph_ref *ref)
+{
+    (void)ref;
+    background_run(ud, col, col + 1, cell->bg);
+}
+
+static int background_text(void *ud, int first, int end, uint32_t fg, uint32_t bg,
+                           uint16_t style, const uint32_t *text, int stride)
+{
+    (void)fg; (void)style; (void)text; (void)stride;
+    background_run(ud, first, end, bg);
+    return end;
+}
+
+static int background_span(void *ud, int first, int end, uint32_t fg, uint32_t bg,
+                           const uint64_t *ids)
+{
+    (void)fg; (void)ids;
+    background_run(ud, first, end, bg);
+    return end;
+}
+
+static void paint_cell_backgrounds(struct background_walk *w, const struct render_grid_view *grid,
+                                   struct font_instance *font, int cols, int rows)
+{
+    const struct render_walk_sink sink = {.cell = background_cell, .run = background_run,
+        .text = background_text, .span = background_span, .ctx = w};
+    int cw = w->cell.x;
+    for (int y = 0; y < rows; y++, w->origin.y += w->cell.y) {
+        bool wide = grid->ops->line_size(grid->source, y) != RENDER_LINE_SINGLE;
+        w->cell.x = wide ? 2 * cw : cw;
+        grid->ops->walk(font, grid->source, y, 0, wide ? geom_max_i(1, cols / 2) : cols,
+                        RENDER_WALK_PEEK, &sink);
+    }
+}
+
 struct render_result renderer_draw(struct renderer *r, struct framebuffer *fb,
                                    const struct renderer_frame *frame)
 {
@@ -665,8 +725,11 @@ struct render_result renderer_draw(struct renderer *r, struct framebuffer *fb,
         ui_damage = NULL;
     const struct ui_scene *graphics = frame->graphics;
     bool graphics_ok = graphics && ui_scene_is_valid(graphics);
+    bool behind_cells = has_grid && frame->behind_cells && ui_scene_is_valid(frame->behind_cells);
+    bool behind_text = has_grid && frame->behind_text && ui_scene_is_valid(frame->behind_text);
+    bool underlay = behind_cells || behind_text;
     bool invalid = !keep || !s->valid || fb->fresh || frame->repaint || r->force_full ||
-                   graphics_ok || !render_surface_key_eq(&s->key, &key);
+                   graphics_ok || underlay || !render_surface_key_eq(&s->key, &key);
 
     /* 3. Plan. */
     struct plan_input in = {
@@ -737,8 +800,23 @@ struct render_result renderer_draw(struct renderer *r, struct framebuffer *fb,
         .pos = { .x = grid.x, .y = grid.y + rows * ch },
         .size = { .x = grid.width, .y = grid.height - rows * ch },
     };
-    if (out.all)
+    if (underlay) {
+        /* Cells normally rasterize into opaque tiles. Lay down the image
+         * backgrounds first, then blend the glyphs into the same pixels. */
+        fill_rect(r, px, stride, grid, grid_view->default_bg);
+        if (behind_cells)
+            (void)ui_scene_paint_clipped(ufont, px, canvas.x, canvas.y, frame->behind_cells, grid);
+        reserve_walk(r, grid_view->ops, grid_view->cells.x);
+        struct background_walk bg = {
+            .renderer = r, .pixels = px, .clip = grid, .origin = grid.pos,
+            .stride = stride, .cell = {.x = cw, .y = ch}, .base = grid_view->default_bg,
+        };
+        paint_cell_backgrounds(&bg, grid_view, gfont, cols, rows);
+        if (behind_text)
+            (void)ui_scene_paint_clipped(ufont, px, canvas.x, canvas.y, frame->behind_text, grid);
+    } else if (out.all) {
         fill_rect(r, px, stride, margin, has_grid ? grid_view->default_bg : frame->base);
+    }
     for (int i = 0; i < out.n_windows; i++) {
         const struct plan_window *win = &out.windows[i];
         if (win->row >= rows) {
@@ -764,7 +842,7 @@ struct render_result renderer_draw(struct renderer *r, struct framebuffer *fb,
         uint32_t l0_bg = grid_view->reverse_video ? grid_view->default_fg : grid_view->default_bg;
         bool serial = cells < POOL_SERIAL_CELLS || !r->pool;
         int n_cache = serial ? 1 : r->n_workers;
-        struct cell_class *klass =
+        struct cell_class *klass = underlay ? NULL :
             cell_cache_begin(r->cache, key.cell, key.font_version, l0_fg, l0_bg,
                              cells > INT32_MAX ? INT32_MAX : (int)cells, r->cache_workers,
                              n_cache);
@@ -780,6 +858,7 @@ struct render_result renderer_draw(struct renderer *r, struct framebuffer *fb,
             .ch = ch,
             .cols = cols,
             .width = grid.width,
+            .preserve_background = underlay,
         };
         struct phase ph = {
             .r = r, .rf = &rf, .jobs = r->jobs, .n_full = n_full, .reach = r->reach,
@@ -814,7 +893,7 @@ struct render_result renderer_draw(struct renderer *r, struct framebuffer *fb,
 
     /* 9. Flush. 10. Commit. */
     glyph_cache_flush_frame();
-    if (keep && !graphics_ok) {
+    if (keep && !graphics_ok && !underlay) {
         render_surface_commit(s, &key, rows, r->keys, r->ui, r->reach);
         s->ui_font_version = ufont_version;
     } else {

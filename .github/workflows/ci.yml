@@ -101,6 +101,7 @@ jobs:
             libicu-dev \
             libfreetype-dev \
             libpng-dev \
+            zlib1g-dev \
             libfontconfig-dev \
             libglib2.0-dev \
             libx11-dev \

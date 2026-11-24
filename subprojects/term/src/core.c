@@ -279,7 +279,8 @@ static void scroll_up_bce(struct wsap_vtcore *t, size_t count)
     if (!skip && !hist_is_open(&t->hist)) {
         skip = true;
         for (size_t y = 0; y < rows && skip; y++)
-            skip = t->scr.slot[y].len == 0 && !(t->scr.slot[y].flags & (RF_WRAPPED | RF_MARKS));
+            skip = t->scr.slot[y].len == 0 && !(t->scr.slot[y].flags & (RF_WRAPPED | RF_MARKS)) &&
+                   !(t->scr.slot[y].uid & GRAPHICS_ROW_BIT);
     }
     if (skip) {
         for (size_t y = 0; y < rows; y++)
@@ -867,7 +868,7 @@ static void flush_orig_rows(struct wsap_vtcore *t, struct screen *s,
                 size_t next_span = span + (size_t)row->len + (wrapped ? 0 : (size_t)term);
                 /* A row with marks takes the per-row path below, which keeps
                  * them. */
-                if (row->kind != ROW_ASCII || (flags & RF_MARKS) ||
+                if (row->kind != ROW_ASCII || (flags & RF_MARKS) || (row->uid & GRAPHICS_ROW_BIT) ||
                     (uintptr_t)row->text.text != base + span ||
                     next_span > max_span) break;
                 span = next_span;
@@ -892,7 +893,8 @@ static void flush_orig_rows(struct wsap_vtcore *t, struct screen *s,
         while (y + n < end && n < 64) {
             struct text_row *tr = &row->text;
             bool wrapped = (row->flags & RF_WRAPPED) != 0;
-            if ((wrapped && row->len < s->cols) || (row->flags & RF_MARKS)) break;
+            if ((wrapped && row->len < s->cols) || (row->flags & RF_MARKS) ||
+                (row->uid & GRAPHICS_ROW_BIT)) break;
             if (row->kind == ROW_TEXT) {
                 if (!(tr->flags & HLINE_NARROW) || tr->runs.len || tr->fill_to > tr->cells ||
                     !pen_attr_is_default(&tr->start) || !pen_attr_is_default(&tr->runs.pen)) break;

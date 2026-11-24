@@ -439,6 +439,7 @@ static void soft_reset(struct wsap_vtcore *t)
     t->insert_mode = t->origin_mode = t->reverse_video = t->lnm = false;
     t->focus_events = t->synchronized_output = t->lr_margin_mode = false;
     t->reverse_wrap = t->reverse_wrap_ext = false;
+    t->sixel_fixed = t->sixel_scroll_right = false;
     t->mouse_mode = t->mouse_encoding = 0;
     t->bracketed_paste = false;
     t->color_scheme_reports = t->resize_reports = false;
@@ -587,6 +588,8 @@ static int mode_get(const struct wsap_vtcore *t, int mode, bool priv)
         case 7: return t->autowrap;
         case 47: case 1047: case 1049: return t->alternate;
         case 69: return t->lr_margin_mode;
+        case 80: return t->graphics_receive ? (int)t->sixel_fixed : -1;
+        case 8452: return t->graphics_receive ? (int)t->sixel_scroll_right : -1;
         case 1048: return 0;
         case 2: case 1046: case 2027: return MODE_PERMANENT;
         case 2031: return t->color_scheme_reports;
@@ -654,6 +657,10 @@ static void mode_set(struct wsap_vtcore *t, int mode, bool enabled, bool priv)
         sc_move(t, 0, cursor_top(t));
     } else if (mode_is_mouse_enc(mode)) {
         t->mouse_encoding = enabled ? mode : 0;
+    } else if (mode == 80 && t->graphics_receive) {
+        t->sixel_fixed = enabled;
+    } else if (mode == 8452 && t->graphics_receive) {
+        t->sixel_scroll_right = enabled;
     } else if (mode == 2031) {
         t->color_scheme_reports = enabled;
     } else if (mode == 2048) {

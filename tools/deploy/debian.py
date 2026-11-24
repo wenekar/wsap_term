@@ -80,7 +80,7 @@ Maintainer: {meta.maintainer}
 Homepage: {meta.url}
 Description: {meta.summary}
  {meta.description}
-Depends: libc6, libfreetype6, libfontconfig1, libharfbuzz0b, libpng16-16t64 | libpng16-16, libwayland-client0, libxkbcommon0
+Depends: libc6, libfreetype6, libfontconfig1, libharfbuzz0b, libpng16-16t64 | libpng16-16, zlib1g, libwayland-client0, libxkbcommon0
 """
         (debian_dir / "control").write_text(control_content, encoding="utf-8")
 

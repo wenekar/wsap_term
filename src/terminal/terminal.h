@@ -18,11 +18,15 @@ struct terminal_held_keys;
 
 struct terminal;
 
+struct terminal_graphics_layers {
+    const struct ui_scene *behind_cells, *behind_text, *above_text;
+};
+
 /* The frame data of one content. It stays valid until the next prepare or
  * the destruction of the content. */
 struct terminal_frame_source {
     struct wsap_vtcore_snapshot *snapshot;
-    const struct ui_scene *graphics;
+    struct terminal_graphics_layers graphics;
     struct font_instance *font;
     struct rect2i rect;
     bool cursor_visible;

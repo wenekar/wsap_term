@@ -67,9 +67,10 @@ struct render_options {
  */
 struct renderer_frame {
     const struct render_grid_view *grid;
-    /* Borrows an image scene for this draw. It paints over the grid and
-     * under the UI. The CPU repaints the canvas while the scene is present. */
-    const struct ui_scene *graphics;
+    /* Borrows image scenes for this draw. behind_cells paints below cell
+     * backgrounds, behind_text paints above backgrounds but below glyphs,
+     * and graphics paints above glyphs. All three paint below the UI. */
+    const struct ui_scene *graphics, *behind_text, *behind_cells;
     const struct ui_scene *ui;
     struct font_instance *ui_font;
     const struct ui_damage *ui_damage;
