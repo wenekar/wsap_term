@@ -110,6 +110,10 @@ Out-of-order feedback cannot complete a different sample.
 - `render-bench` measures the CPU render path only.
   It reports no presentation data.
 
+## Diagnose intermittent artifacts on macOS
+
+Check that `vsync = true`, then open a new window: the setting applies at window creation. Repeat the same workload with `WSAP_RENDER_GPU=0` to compare CPU presentation against Metal. Note whether the artifact crosses the window or affects only the cursor, and whether it coincides with scrolling, live resize, or a move between displays. Record the display's refresh rate and `wsap_term --stats-ms 1000` output. The counters can identify dropped frames but cannot confirm scanout tearing.
+
 ## Limitations
 
 - The project measured 120 Hz on physical hardware.

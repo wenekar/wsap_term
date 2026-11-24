@@ -658,6 +658,8 @@ static CGFloat surface_scale(const struct cocoa_surface *w)
     return w && w->scale_120 ? (CGFloat)w->scale_120 / YASL_PRIVATE_SCALE_UNIT : 1.0;
 }
 
+static void sync_titlebar(struct cocoa_surface *w);
+
 static void sync_size(struct cocoa_surface *w, bool force)
 {
     if (!w || w->destroyed || w->closed || !w->view || !w->window)
@@ -677,12 +679,15 @@ static void sync_size(struct cocoa_surface *w, bool force)
     bool rescaled = force || scale_120 != w->scale_120;
     bool resized = force || (size.x != w->size.x || size.y != w->size.y);
     bool layer_rescaled = w->layer && w->layer.contentsScale != scale;
-    if (!rescaled && !resized && !layer_rescaled)
+    if (!rescaled && !resized && !layer_rescaled) {
+        sync_titlebar(w);
         return;
+    }
     darwin_ctx.depth++;
     if (layer_rescaled)
         w->layer.contentsScale = scale;
     if (!rescaled && !resized) {
+        sync_titlebar(w);
         darwin_ctx.depth--;
         return;
     }
@@ -696,6 +701,8 @@ static void sync_size(struct cocoa_surface *w, bool force)
     yasl_private_surface_notify_configure(&w->base, (struct yasl_private_geometry){
             .size = size, .scale_120 = scale_120,
         });
+    /* A synchronous refresh must see the title bar and size from the same layout. */
+    sync_titlebar(w);
     /* A popup takes its scale from the parent, which can change while the popup
      * keeps its display. */
     if (rescaled)
@@ -2245,7 +2252,6 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
     set_state(w, YASL_PRIVATE_STATE_MAXIMIZED, !fullscreen && self.window.isZoomed);
     set_state(w, YASL_PRIVATE_STATE_CSD, !(self.window.styleMask & NSWindowStyleMaskTitled));
     sync_size(w, false);
-    sync_titlebar(w);
     darwin_ctx.depth--;
 }
 
@@ -2281,7 +2287,6 @@ static void push_composition(struct cocoa_surface *w, const char *text, int begi
     struct cocoa_surface *w = self.surface;
     trace_window_move(w, "screen-change", NULL);
     sync_size(w, false);
-    sync_titlebar(w);
     /* The link follows the window to its new screen. Wake it so it measures
      * the new cadence. A frame that already waits still waits for its tick. */
     if (w && !w->closed) {
@@ -2351,6 +2356,11 @@ bool cocoa_surface_present(struct cocoa_surface *w, const struct yasl_private_fr
     if (w->software_queue) {
         if (fb->pixels != w->pixels || fb->size.x != w->size.x || fb->size.y != w->size.y)
             return false;
+        id<MTLTexture> texture = w->drawable.texture;
+        /* During a resize, the layer can still return a drawable of the old
+         * size. Drop the frame rather than blitting into a mismatched texture. */
+        if (texture.width != (NSUInteger)fb->size.x || texture.height != (NSUInteger)fb->size.y)
+            return false;
         NSUInteger row_bytes = ((NSUInteger)w->size.x * 4 + 255) & ~(NSUInteger)255;
         NSUInteger length = row_bytes * (NSUInteger)w->size.y;
         if (!w->software_stages)
@@ -2377,7 +2387,7 @@ bool cocoa_surface_present(struct cocoa_surface *w, const struct yasl_private_fr
         id<CAMetalDrawable> drawable = w->drawable;
         [blit copyFromBuffer:buffer sourceOffset:0 sourceBytesPerRow:row_bytes
            sourceBytesPerImage:length sourceSize:MTLSizeMake(w->size.x, w->size.y, 1)
-                    toTexture:drawable.texture destinationSlice:0 destinationLevel:0
+                    toTexture:texture destinationSlice:0 destinationLevel:0
             destinationOrigin:MTLOriginMake(0, 0, 0)];
         [blit endEncoding];
         /* The command reads the buffer from the commit on and returns it when it
@@ -3143,7 +3153,6 @@ struct cocoa_surface *cocoa_surface_create_toplevel(struct cocoa_display *d,
         }
 
         sync_size(w, true);
-        sync_titlebar(w);
         if (spec->tearing) {
             if (w->metal_layer) w->metal_layer.displaySyncEnabled = NO;
             w->unpaced = true;

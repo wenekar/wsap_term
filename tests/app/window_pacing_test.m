@@ -373,6 +373,34 @@ static void test_drawable_lifetime(void *device)
     close_window(&p);
 }
 
+static void acquire_without_presenting(const struct window_gpu_frame *frame, void *ud)
+{
+    bool *acquired = ud;
+    *acquired = frame->acquire && frame->acquire(frame->acquire_ud);
+}
+
+/* Drops more frames than the layer has drawables. This distinguishes a
+ * drawable that was not presented from one retained by an in-flight frame. */
+static void test_drawable_available_after_drops(void *device)
+{
+    struct probe p = {0};
+    open_window(&p, false, device);
+    yasl_surface *surface = window_surface(p.w);
+    CAMetalLayer *layer = (CAMetalLayer *)yasl_metal_get_layer(surface);
+    assert(layer);
+    for (NSUInteger i = 0; i <= layer.maximumDrawableCount; i++) {
+        bool acquired = false;
+        bool drew = window_gpu_draw(layer, surface, (struct window_gpu_watch){0}, false,
+                                    acquire_without_presenting, &acquired);
+        if (i == 0 && (!drew || !acquired)) {
+            printf("window: no drawable in this session; the drop check is skipped\n");
+            break;
+        }
+        assert(drew && acquired);
+    }
+    close_window(&p);
+}
+
 /* The native surface of the window that owns the display feedback. */
 static struct window_native *main_native(struct window *w)
 {
@@ -452,6 +480,7 @@ int main(void)
     test_unpaced_draw(device);
     test_presentation_report(device);
     test_drawable_lifetime(device);
+    test_drawable_available_after_drops(device);
     test_idle_presentation_stats(device);
     [device release];
     return 0;
